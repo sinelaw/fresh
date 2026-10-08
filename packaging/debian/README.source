@@ -41,3 +41,15 @@ To build from a checkout:
     rm -rf debian && cp -r packaging/debian debian
     sudo apt-get build-dep ./
     dpkg-buildpackage -us -uc
+
+Copyright
+---------
+
+debian/copyright was audited against the whole source tree: licensecheck
+over every file, and the git history of every file that could be
+third-party (grammars, queries, themes, fonts, images, fixtures). To
+re-check after upstream changes, in the unpacked source:
+
+    lrc          # licenserecon: compares debian/copyright with licensecheck
+
+debian/lrc.config lists, with reasons, the files that only mention a license.

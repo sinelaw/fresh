@@ -3,17 +3,26 @@ Upstream-Name: fresh-editor
 Upstream-Contact: Noam Lewis <i9uqoqj7k@mozmail.com>
 Source: https://github.com/sinelaw/fresh
 Comment:
- Incomplete: most of the Sublime syntax definitions under
- crates/fresh-editor-core/src/grammars/ come from third-party projects, and
- each needs its origin and license recorded here before an upload. Only the
- ones that carry their license in the tree are listed so far.
+ Audited against the whole source tree (licensecheck, plus the history of
+ every file that could be third-party); see debian/README.source. Besides
+ the files listed below, everything is Fresh's own, contributed under
+ GPL-3+, including:
+ .
+  * the Sublime syntax definitions under
+    crates/fresh-editor-core/src/grammars/ other than those listed below,
+    and the tree-sitter queries under crates/fresh-editor-core/queries/,
+    written for Fresh;
+  * the themes under crates/fresh-editor-core/themes/; the Dracula, Nord,
+    Solarized, Gruvbox and Tokyo Night ones take their colour values from
+    those palettes and contain nothing else from those projects;
+  * screenshots, recordings, icons and other images, made by upstream.
 
 Files: *
-Copyright: 2024-2026 Noam Lewis <i9uqoqj7k@mozmail.com>
+Copyright: 2024-2026 Noam Lewis <i9uqoqj7k@mozmail.com> and the Fresh contributors
 License: GPL-3+
 
 Files: crates/fresh-js/src/system/*
-Copyright: 2024-2026 Noam Lewis <i9uqoqj7k@mozmail.com>
+Copyright: 2024-2026 Noam Lewis <i9uqoqj7k@mozmail.com> and the Fresh contributors
            2020 Mees Delzenne
 License: GPL-3+ and Expat
 Comment: Fresh's own code; parts follow rquickjs closely (memory model,
@@ -22,21 +31,46 @@ Comment: Fresh's own code; parts follow rquickjs closely (memory model,
 Files: crates/fresh-editor-core/src/grammars/autohotkey/*
 Copyright: 2019 SALZKARTOFFEEEL
 License: Expat
+Comment: From https://github.com/SALZKARTOFFEEEL/ahk-sublime-syntax
 
 Files: crates/fresh-editor-core/src/grammars/odin/*
 Copyright: 2019 Ginger Bill
 License: Expat
+Comment: From https://github.com/Tetralux/sublime-odin
 
 Files: crates/fresh-editor-core/src/grammars/gdscript.sublime-syntax
 Copyright: 2016 Michael Alexander
+           2026 the Fresh contributors
 License: Expat
+Comment: Based on https://github.com/beefsack/GDScript-sublime; the file
+ carries the upstream notice.
 
 Files: crates/fresh-editor-core/src/grammars/rust.sublime-syntax
-Copyright: see crates/fresh-editor-core/src/grammars/rust.sublime-syntax.LICENSE.txt
+       crates/fresh-editor-core/src/grammars/rust.sublime-syntax.LICENSE.txt
+Copyright: Sublime HQ Pty Ltd and the sublimehq/Packages contributors
 License: Expat
+Comment: Rust/Rust.sublime-syntax from https://github.com/sublimehq/Packages
+ at commit a83f263f2b1cfd65a25ad45b1b05441244cc9d34, with that package's
+ LICENSE.txt alongside (which names no copyright holder).
 
-Files: crates/fresh-editor/fonts/* crates/fresh-gui/fonts/*
-Copyright: 2020 The JetBrains Mono Project Authors
+Files: crates/fresh-editor-core/src/grammars/typst.sublime-syntax
+Copyright: 2026 the Fresh contributors
+           2023-2026 The Typst Project Developers
+License: GPL-3+ and Apache-2.0
+Comment: Based on the Typst TextMate grammar from the Typst project
+ (https://github.com/typst/typst, Apache-2.0).
+
+Files: crates/fresh-editor/fonts/*
+       crates/fresh-gui/fonts/*
+Copyright: 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)
+License: OFL-1.1
+
+Files: homepage/public/fonts/inter-*
+Copyright: 2016 The Inter Project Authors (https://github.com/rsms/inter)
+License: OFL-1.1
+
+Files: homepage/public/fonts/instrument-serif-*
+Copyright: 2022 The Instrument Serif Project Authors (https://github.com/Instrument/instrument-serif)
 License: OFL-1.1
 
 Files: crates/fresh-editor/flatpak/io.github.sinelaw.fresh.metainfo.xml
@@ -84,10 +118,28 @@ License: Expat
  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  THE SOFTWARE.
 
+License: Apache-2.0
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+ .
+ https://www.apache.org/licenses/LICENSE-2.0
+ .
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+ .
+ On Debian systems, the complete text of the Apache License, Version 2.0
+ can be found in "/usr/share/common-licenses/Apache-2.0".
+
 License: OFL-1.1
  This Font Software is licensed under the SIL Open Font License, Version 1.1.
- The full text is in crates/fresh-editor/fonts/LICENSE-OFL.txt and at
- https://openfontlicense.org/open-font-license-official-text/
+ .
+ On Debian systems, the complete text of the SIL Open Font License,
+ Version 1.1 can be found in "/usr/share/common-licenses/OFL-1.1"; it is
+ also in crates/fresh-editor/fonts/LICENSE-OFL.txt.
 
 License: CC0-1.0
  To the extent possible under law, the author(s) have dedicated all
