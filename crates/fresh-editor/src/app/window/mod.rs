@@ -348,6 +348,24 @@ pub struct Window {
     /// way to "rename" the root.
     pub root: PathBuf,
 
+    /// Unnamed buffers this window's workspace listed that this session could
+    /// not find in the recovery store it can see.
+    ///
+    /// Non-empty means the window knows less than its workspace file does, so
+    /// it must not overwrite that file — see `Editor::save_workspace_for`.
+    /// Only *absent* entries count: one that is present but unusable will
+    /// never resolve, and would stop the file being saved for good.
+    pub unresolved_unnamed_buffers: Vec<crate::workspace::UnnamedBufferRef>,
+
+    /// Things the user needs told about this window's restore, queued by
+    /// `restore_unnamed_buffers` and shown by `log_restore_summary`.
+    ///
+    /// The summary sets the status bar last, so a message set during the
+    /// restore itself is overwritten by "Restored N buffer(s)" — which is
+    /// how a half-recovered buffer came back looking ordinary. Queued here,
+    /// the warning is what the user is left looking at.
+    pub recovery_notices: Vec<String>,
+
     /// File-explorer view (expansion, scroll, selection). `None`
     /// means "never opened" — the caller rebuilds at `root` on first
     /// toggle. Each window has its own view; switching windows shows
@@ -2395,6 +2413,8 @@ impl Window {
             last_focused_at: crate::workspace::now_millis(),
             workspace_restored: false,
             root,
+            unresolved_unnamed_buffers: Vec::new(),
+            recovery_notices: Vec::new(),
             connection,
             file_explorer: None,
             file_mod_times: HashMap::new(),
