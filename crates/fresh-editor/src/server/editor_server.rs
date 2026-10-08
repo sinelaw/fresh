@@ -1558,10 +1558,23 @@ impl EditorServer {
         // use — as the in-process editor does on a console. Set every frame,
         // since it is a property of the active window and windows switch.
         let gpm_pointer = self.sizing_client().is_some_and(|c| c.gpm_pointer);
+        // And in the colors that terminal can show, detected from the
+        // environment its client sent, as an in-process editor detects its
+        // own. Assuming truecolor everywhere turned a Linux console's
+        // backgrounds black — the console keeps only each channel's top bit —
+        // so selections, and anything else told apart by background, vanished.
+        let colors = self.sizing_client().map(|c| {
+            crate::view::color_support::ColorCapability::detect_from(|name| {
+                c.env.get(name).cloned().flatten()
+            })
+        });
         let Some(ref mut editor) = self.editor else {
             return Ok(());
         };
         editor.set_gpm_active(gpm_pointer);
+        if let Some(colors) = colors {
+            editor.set_color_capability(colors);
+        }
 
         let Some(ref mut terminal) = self.terminal else {
             return Ok(());

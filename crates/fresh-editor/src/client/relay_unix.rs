@@ -125,7 +125,10 @@ pub fn relay_loop(
                 .revents()
                 .is_some_and(|r| r.contains(PollFlags::POLLIN))
             {
-                forward_gpm_events(gpm, conn)?;
+                let reports = gpm.read_sgr_reports();
+                if !reports.is_empty() {
+                    conn.write_data(&reports)?;
+                }
             }
         }
 
@@ -217,45 +220,6 @@ pub fn relay_loop(
             return Ok(ClientExitReason::ServerQuit);
         }
     }
-}
-
-/// Send the server every report GPM has ready, as the SGR mouse reports a
-/// terminal would have written to stdin.
-///
-/// `read_event` blocks when nothing is pending, so the fd is re-polled with
-/// a zero timeout before each further read.
-#[cfg(target_os = "linux")]
-fn forward_gpm_events(
-    gpm: &crate::services::gpm::GpmClient,
-    conn: &mut ClientConnection,
-) -> io::Result<()> {
-    use crate::services::gpm::{gpm_to_crossterm, mouse_to_sgr};
-
-    let mut reports = Vec::new();
-    loop {
-        match gpm.read_event() {
-            Ok(Some(event)) => {
-                if let Some(mouse) = gpm_to_crossterm(&event) {
-                    reports.extend_from_slice(&mouse_to_sgr(&mouse));
-                }
-            }
-            Ok(None) => break,
-            Err(e) => {
-                tracing::warn!("GPM: read_event error: {}", e);
-                break;
-            }
-        }
-        // SAFETY: the GPM connection outlives this scope.
-        let fd = unsafe { BorrowedFd::borrow_raw(gpm.fd()) };
-        let mut again = [PollFd::new(fd, PollFlags::POLLIN)];
-        if poll(&mut again, nix::poll::PollTimeout::from(0u16)).unwrap_or(0) == 0 {
-            break;
-        }
-    }
-    if !reports.is_empty() {
-        conn.write_data(&reports)?;
-    }
-    Ok(())
 }
 
 /// Suspend the client with SIGTSTP and restore its terminal on resume.

@@ -43,8 +43,13 @@ use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 
+mod encode;
+#[cfg(target_os = "linux")]
+pub mod gpm;
 pub mod keypad;
 pub mod media_modifier;
+
+pub use encode::mouse_to_sgr;
 
 /// A key press, as the terminal reported it, plus the character the key
 /// actually types on the user's keyboard layout when the chord's own spelling

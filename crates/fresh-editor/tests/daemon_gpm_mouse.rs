@@ -225,11 +225,14 @@ fn the_console_mouse_reaches_a_daemon_session() {
         });
 
         // The pointer is drawn where GPM puts it: the cell under it, the
-        // "n" of "line 07", turns reverse-video.
+        // "n" of "line 07", takes colors of its own.
         let (col, row) = find(client.modes(), "line 07").unwrap();
         gpm.send(col + 2, row, MOVE, 0, 0);
         wait_for(&mut client, "no pointer drawn for the GPM mouse", |s| {
-            s.cell(row, col + 2).is_some_and(|c| c.inverse())
+            let (Some(at), Some(beside)) = (s.cell(row, col + 2), s.cell(row, col + 3)) else {
+                return false;
+            };
+            at.bgcolor() != beside.bgcolor() && at.fgcolor() != at.bgcolor()
         });
 
         // A click on the "0" of "line 07" puts the cursor there.

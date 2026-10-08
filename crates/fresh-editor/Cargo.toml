@@ -104,7 +104,6 @@ runtime = [
     "dep:ignore",
     "dep:notify",
     "dep:libc",
-    "dep:libloading",
     "dep:nix",
     "dep:pulldown-cmark",
     "dep:sha2",
@@ -244,7 +243,6 @@ notify = { version = "8.2", default-features = false, features = ["macos_kqueue"
 # regex is always needed for model::buffer search functionality
 regex = { version = "1.12" }
 libc = { version = "0.2", optional = true }
-libloading = { version = "0.9", optional = true }
 nix = { version = "0.31", features = ["signal", "pthread", "resource", "poll", "fs"], optional = true }
 
 # anyhow is always needed for model error handling

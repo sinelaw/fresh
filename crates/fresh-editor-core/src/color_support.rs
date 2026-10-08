@@ -31,8 +31,15 @@ impl ColorCapability {
     /// Detect the terminal's color capability
     /// Can be overridden with FRESH_COLOR_MODE env var: "truecolor", "256", or "16"
     pub fn detect() -> Self {
+        Self::detect_from(|name| std::env::var(name).ok())
+    }
+
+    /// As [`detect`](Self::detect), reading the variables through `var`
+    /// rather than from this process — for a daemon rendering for a terminal
+    /// whose environment arrived with its client.
+    pub fn detect_from(var: impl Fn(&str) -> Option<String>) -> Self {
         // Check for manual override first
-        if let Ok(mode) = std::env::var("FRESH_COLOR_MODE") {
+        if let Some(mode) = var("FRESH_COLOR_MODE") {
             match mode.to_lowercase().as_str() {
                 "truecolor" | "24bit" | "true" => return ColorCapability::TrueColor,
                 "256" | "256color" => return ColorCapability::Color256,
@@ -43,7 +50,7 @@ impl ColorCapability {
 
         // Check TERM first for multiplexers that don't support truecolor
         // (they may pass through COLORTERM from the outer terminal)
-        if let Ok(term) = std::env::var("TERM") {
+        if let Some(term) = var("TERM") {
             let t = term.to_lowercase();
 
             // GNU Screen doesn't support truecolor - cap at 256
@@ -57,7 +64,7 @@ impl ColorCapability {
                     return ColorCapability::TrueColor;
                 }
                 // Check COLORTERM - tmux can pass through truecolor if configured
-                if let Ok(colorterm) = std::env::var("COLORTERM") {
+                if let Some(colorterm) = var("COLORTERM") {
                     let ct = colorterm.to_lowercase();
                     if ct == "truecolor" || ct == "24bit" {
                         return ColorCapability::TrueColor;
@@ -68,7 +75,7 @@ impl ColorCapability {
         }
 
         // Check COLORTERM - reliable for truecolor (but not inside Screen/tmux)
-        if let Ok(colorterm) = std::env::var("COLORTERM") {
+        if let Some(colorterm) = var("COLORTERM") {
             let ct = colorterm.to_lowercase();
             if ct == "truecolor" || ct == "24bit" {
                 return ColorCapability::TrueColor;
@@ -76,12 +83,12 @@ impl ColorCapability {
         }
 
         // Windows Terminal sets WT_SESSION and supports truecolor
-        if std::env::var("WT_SESSION").is_ok() {
+        if var("WT_SESSION").is_some() {
             return ColorCapability::TrueColor;
         }
 
         // Check TERM for other indicators
-        if let Ok(term) = std::env::var("TERM") {
+        if let Some(term) = var("TERM") {
             let t = term.to_lowercase();
 
             // Check for truecolor indicators

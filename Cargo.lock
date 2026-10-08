@@ -1452,7 +1452,6 @@ dependencies = [
  "interprocess",
  "jsonc-parser",
  "libc",
- "libloading 0.9.0",
  "lsp-types",
  "nix 0.31.2",
  "notify",
@@ -1558,6 +1557,8 @@ name = "fresh-input-parser"
 version = "0.5.2"
 dependencies = [
  "crossterm",
+ "libloading 0.9.0",
+ "nix 0.31.2",
  "proptest",
  "tracing",
 ]

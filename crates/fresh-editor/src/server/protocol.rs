@@ -42,7 +42,8 @@ pub struct ClientHello {
     /// Initial terminal size
     pub term_size: TermSize,
     /// Environment variables relevant for rendering
-    /// Keys: TERM, COLORTERM, LANG, LC_ALL
+    /// Keys: TERM, COLORTERM, LANG, LC_ALL, and the two color-depth hints
+    /// `ColorCapability::detect` reads, FRESH_COLOR_MODE and WT_SESSION
     pub env: HashMap<String, Option<String>>,
     /// Per-workspace capability token (from `$FRESH_CMD_TOKEN`), presented so
     /// the server can authorize `RunScript` against this workspace's grant.
@@ -58,7 +59,14 @@ impl ClientHello {
         let mut env = HashMap::new();
 
         // Collect terminal-relevant environment variables
-        for key in &["TERM", "COLORTERM", "LANG", "LC_ALL"] {
+        for key in &[
+            "TERM",
+            "COLORTERM",
+            "LANG",
+            "LC_ALL",
+            "FRESH_COLOR_MODE",
+            "WT_SESSION",
+        ] {
             env.insert(key.to_string(), std::env::var(key).ok());
         }
 

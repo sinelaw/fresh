@@ -70,6 +70,7 @@ pub mod floating_modal_frame_chrome;
 pub mod folding;
 pub mod frame_once_per_pane;
 pub mod glob_language_detection;
+pub mod gpm_pointer;
 #[cfg(feature = "gui")]
 pub mod gui;
 pub mod hot_exit_flows;

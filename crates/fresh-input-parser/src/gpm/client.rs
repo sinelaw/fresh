@@ -145,13 +145,47 @@ impl GpmClient {
         }
     }
 
+    /// Every event GPM has ready, as the SGR mouse reports a terminal would
+    /// have written to stdin — for a daemon client, which forwards bytes
+    /// rather than events. Call when [`fd`](Self::fd) polls readable.
+    ///
+    /// `read_event` blocks when nothing is pending, so the fd is re-polled
+    /// with a zero timeout before each further read.
+    pub fn read_sgr_reports(&self) -> Vec<u8> {
+        use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
+        use std::os::unix::io::BorrowedFd;
+
+        let mut reports = Vec::new();
+        loop {
+            match self.read_event() {
+                Ok(Some(event)) => {
+                    if let Some(mouse) = super::gpm_to_crossterm(&event) {
+                        reports.extend_from_slice(&crate::mouse_to_sgr(&mouse));
+                    }
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    tracing::warn!("GPM: read_event error: {}", e);
+                    break;
+                }
+            }
+            // SAFETY: the connection, and so its fd, outlives this call.
+            let fd = unsafe { BorrowedFd::borrow_raw(self.fd) };
+            let mut again = [PollFd::new(fd, PollFlags::POLLIN)];
+            if poll(&mut again, PollTimeout::from(0u16)).unwrap_or(0) == 0 {
+                break;
+            }
+        }
+        reports
+    }
+
     /// Check if we're running on a Linux virtual console (TTY)
     fn is_linux_console() -> bool {
         use std::fs;
         use std::io;
 
         // Check if stdin is a TTY
-        let is_tty = nix::unistd::isatty(io::stdin()).unwrap_or(false);
+        let is_tty = io::IsTerminal::is_terminal(&io::stdin());
         tracing::debug!("GPM: stdin isatty = {}", is_tty);
         if !is_tty {
             return false;

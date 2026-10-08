@@ -1093,6 +1093,51 @@ mod integration_tests {
         std::fs::remove_dir_all(&temp_dir).ok();
     }
 
+    /// The session renders in the colors the terminal in use can show,
+    /// detected from the environment its client sent — not truecolor for
+    /// everyone. A Linux console approximates 24-bit backgrounds by each
+    /// channel's top bit, so a dark theme's backgrounds, the selection's
+    /// included, all came out black (#3517).
+    #[test]
+    fn test_session_renders_in_the_terminals_colors() {
+        fn first_frame(env: &[(&str, Option<&str>)]) -> String {
+            let temp_dir = test_temp_dir("colors");
+            let session_name = unique_session_name("colors");
+            let (socket_paths, shutdown, server) =
+                spawn_editor_server(&temp_dir, &session_name, Some(Duration::from_secs(30)));
+            let conn = ClientConnection::connect(&socket_paths).unwrap();
+            let mut hello = ClientHello::new(TermSize::new(80, 24));
+            hello.env.clear();
+            for (k, v) in env {
+                hello.env.insert(k.to_string(), v.map(str::to_string));
+            }
+            conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
+                .unwrap();
+            drop(conn.read_control().unwrap());
+            let mut out = Vec::new();
+            read_until_grid_rows(&conn, &mut out, 24);
+            shutdown.store(true, Ordering::SeqCst);
+            drop(server.join());
+            drop(socket_paths.cleanup());
+            std::fs::remove_dir_all(&temp_dir).ok();
+            String::from_utf8_lossy(&out).into_owned()
+        }
+
+        let console = first_frame(&[("TERM", Some("linux")), ("COLORTERM", None)]);
+        assert!(
+            !console.contains("38;2;") && !console.contains("48;2;"),
+            "a Linux console must not be sent 24-bit colors"
+        );
+        let truecolor = first_frame(&[
+            ("TERM", Some("xterm-256color")),
+            ("COLORTERM", Some("truecolor")),
+        ]);
+        assert!(
+            truecolor.contains("48;2;"),
+            "a truecolor terminal still gets 24-bit colors"
+        );
+    }
+
     // ===========================================================================
     // E2E regression tests for issue #1089:
     //   "Mouse codes after pressing Escape"
