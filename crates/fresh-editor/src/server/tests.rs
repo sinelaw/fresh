@@ -1325,6 +1325,41 @@ mod integration_tests {
         teardown_editor_server_e2e(conn, shutdown_handle, server_handle, socket_paths, temp_dir);
     }
 
+    /// The window title used to be written to the daemon's own stdout, which
+    /// is no terminal, so an attached client never got one.
+    #[test]
+    fn test_attached_client_receives_set_title_control_message() {
+        let (conn, _output, shutdown_handle, server_handle, socket_paths, temp_dir) =
+            setup_editor_server_e2e("title-ctrl");
+
+        let mut ctrl_buf = Vec::new();
+        #[allow(clippy::let_underscore_must_use)]
+        let _ = conn.control.set_nonblocking(true);
+        let title = loop {
+            let title = poll_control_lines(&conn, &mut ctrl_buf)
+                .into_iter()
+                .find_map(|line| match serde_json::from_str(&line) {
+                    Ok(ServerControl::SetTitle { title }) => Some(title),
+                    _ => None,
+                });
+            if let Some(title) = title {
+                break title;
+            }
+            thread::sleep(Duration::from_millis(5));
+        };
+
+        assert!(
+            title.ends_with("\u{2014} Fresh"),
+            "SetTitle should carry the editor window title, got {title:?}"
+        );
+
+        // Restore blocking mode before teardown writes Quit
+        #[allow(clippy::let_underscore_must_use)]
+        let _ = conn.control.set_nonblocking(false);
+
+        teardown_editor_server_e2e(conn, shutdown_handle, server_handle, socket_paths, temp_dir);
+    }
+
     /// `EditorServerConfig.startup_authority` lets a caller (notably
     /// the `ssh://` / `user@host:path` CLI forms) hand the daemon a
     /// non-local authority to boot into.  The paired

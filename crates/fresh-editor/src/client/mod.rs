@@ -128,6 +128,10 @@ impl fresh_winterm::RelayConnection for ClientConnection {
                     set_client_clipboard(&text, use_osc52, use_system_clipboard);
                     None
                 }
+                ServerControl::SetTitle { title } => {
+                    crate::services::terminal_title::write_terminal_title(&title);
+                    None
+                }
                 ServerControl::SuspendClient => {
                     // Windows has no SIGTSTP; surface the limitation and keep running.
                     tracing::warn!("SuspendClient received on Windows — suspend is not supported");

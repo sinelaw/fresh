@@ -156,6 +156,9 @@ pub fn relay_loop(
                         } => {
                             super::set_client_clipboard(&text, use_osc52, use_system_clipboard);
                         }
+                        crate::server::protocol::ServerControl::SetTitle { title } => {
+                            crate::services::terminal_title::write_terminal_title(&title);
+                        }
                         crate::server::protocol::ServerControl::SuspendClient => {
                             suspend_client(&mut stdout, conn)?;
                         }
