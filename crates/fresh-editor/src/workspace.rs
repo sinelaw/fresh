@@ -1129,6 +1129,17 @@ fn candidate_files_for_root(working_dir: &Path) -> io::Result<Vec<WorkspaceFileI
                 path,
                 working_dir
             );
+            // Move it out of the way, keeping every byte under a new name.
+            // Left where it is, it is a file this directory can never use
+            // again and never stops finding: the window takes a fresh
+            // identity and saves beside it, so each damaged start leaves
+            // another dead file claiming the same root. Renaming is also
+            // what lets a reader tell the live workspace from the wreckage.
+            let aside = path.with_extension("json.corrupt");
+            match std::fs::rename(&path, &aside) {
+                Ok(()) => tracing::warn!("Moved it aside to {:?}", aside),
+                Err(e) => tracing::warn!("Could not move {:?} aside: {e}", path),
+            }
             continue;
         };
         // Authoritative check: the file must itself claim this directory.

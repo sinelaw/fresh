@@ -313,6 +313,21 @@ pub enum RecoveryResult {
     },
     /// Original file was modified since recovery was saved
     OriginalFileModified { id: String, original_path: PathBuf },
+    /// Content was read, but less of it than the metadata recorded.
+    ///
+    /// Each recovery file is written with its own atomic rename, so a crash
+    /// can leave a chunk that is in place but short. The content is still
+    /// worth having — it is the user's work, minus the tail — but it must
+    /// never be passed off as the whole buffer: the next save would write
+    /// the short version over the real file.
+    RecoveredPartial {
+        original_path: Option<PathBuf>,
+        content: Vec<u8>,
+        /// What the metadata says the buffer held.
+        expected: usize,
+        /// What was actually on disk.
+        found: usize,
+    },
     /// Recovery file was corrupted
     Corrupted { id: String, reason: String },
     /// Recovery file not found

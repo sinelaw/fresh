@@ -357,6 +357,15 @@ pub struct Window {
     /// never resolve, and would stop the file being saved for good.
     pub unresolved_unnamed_buffers: Vec<crate::workspace::UnnamedBufferRef>,
 
+    /// Things the user needs told about this window's restore, queued by
+    /// `restore_unnamed_buffers` and shown by `log_restore_summary`.
+    ///
+    /// The summary sets the status bar last, so a message set during the
+    /// restore itself is overwritten by "Restored N buffer(s)" — which is
+    /// how a half-recovered buffer came back looking ordinary. Queued here,
+    /// the warning is what the user is left looking at.
+    pub recovery_notices: Vec<String>,
+
     /// File-explorer view (expansion, scroll, selection). `None`
     /// means "never opened" — the caller rebuilds at `root` on first
     /// toggle. Each window has its own view; switching windows shows
@@ -2405,6 +2414,7 @@ impl Window {
             workspace_restored: false,
             root,
             unresolved_unnamed_buffers: Vec::new(),
+            recovery_notices: Vec::new(),
             connection,
             file_explorer: None,
             file_mod_times: HashMap::new(),
