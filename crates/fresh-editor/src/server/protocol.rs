@@ -129,6 +129,10 @@ pub enum ClientControl {
     Hello(ClientHello),
     /// Terminal was resized
     Resize { cols: u16, rows: u16 },
+    /// This terminal is a Linux console whose mouse the client forwards from
+    /// GPM. GPM cannot draw its pointer over a full-screen program, so the
+    /// editor draws one itself while this terminal is the one in use.
+    GpmPointer,
     /// Keepalive ping
     Ping,
     /// Request to detach (keep server running)

@@ -48,6 +48,10 @@ pub fn relay_loop(
     #[cfg(target_os = "linux")]
     if gpm.is_some() {
         tracing::info!("Forwarding the GPM mouse to the server");
+        // GPM cannot draw its pointer over a full-screen program; ask the
+        // editor to draw one, as it does when it reads GPM itself.
+        let msg = serde_json::to_string(&ClientControl::GpmPointer).unwrap_or_default();
+        conn.write_control(&msg)?;
     }
 
     loop {

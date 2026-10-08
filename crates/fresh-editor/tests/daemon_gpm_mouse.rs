@@ -12,7 +12,9 @@
 //! is a few lines of C compiled here: `Gpm_Open` hands back a FIFO and
 //! `Gpm_GetEvent` reads one `Gpm_Event` from it, so the test writes mouse
 //! reports exactly as the GPM daemon would and watches the editor answer
-//! them — click, wheel and drag — through the client's real FFI path.
+//! them — click, wheel and drag — through the client's real FFI path. GPM
+//! cannot draw its pointer over a full-screen program, so the editor draws
+//! one; the daemon has to know to.
 //!
 //! Skipped where there is no pty or no C compiler, like the other
 //! binary-driving tests skip without a pty.
@@ -222,8 +224,15 @@ fn the_console_mouse_reaches_a_daemon_session() {
             find(s, "line 07").is_some()
         });
 
-        // A click on the "0" of "line 07" puts the cursor there.
+        // The pointer is drawn where GPM puts it: the cell under it, the
+        // "n" of "line 07", turns reverse-video.
         let (col, row) = find(client.modes(), "line 07").unwrap();
+        gpm.send(col + 2, row, MOVE, 0, 0);
+        wait_for(&mut client, "no pointer drawn for the GPM mouse", |s| {
+            s.cell(row, col + 2).is_some_and(|c| c.inverse())
+        });
+
+        // A click on the "0" of "line 07" puts the cursor there.
         gpm.click(col + 5, row);
         wait_for(&mut client, "a GPM click did not move the cursor", |s| {
             s.contents().contains("Ln 7, Col 6")

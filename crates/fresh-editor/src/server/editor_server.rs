@@ -207,6 +207,11 @@ struct ConnectedClient {
     needs_full_render: bool,
     /// If set, this client is waiting for a --wait completion signal
     wait_id: Option<u64>,
+    /// Control-socket bytes not yet ending in a newline.
+    control_buf: Vec<u8>,
+    /// The client forwards a Linux console mouse from GPM
+    /// (`ClientControl::GpmPointer`), so the editor draws the pointer.
+    gpm_pointer: bool,
     /// Per-workspace capability token presented in this client's `Hello`
     /// (from `$FRESH_CMD_TOKEN`). Authorizes `RunScript` against the token's
     /// grant; `None` for clients that carry no token.
@@ -1098,6 +1103,8 @@ impl EditorServer {
             input_parser: ClientInputParser::new(),
             needs_full_render: true,
             wait_id: None,
+            gpm_pointer: false,
+            control_buf: Vec::new(),
             cmd_token: hello.cmd_token,
         })
     }
@@ -1181,53 +1188,39 @@ impl EditorServer {
             #[allow(clippy::let_underscore_must_use)]
             let _ = client.conn.control.set_nonblocking(true);
 
-            // On Windows, use try_read pattern instead of blocking read_line
-            #[cfg(windows)]
-            {
-                let mut buf = [0u8; 1024];
-                match client.conn.control.try_read(&mut buf) {
+            // Drain whatever the control socket holds into this client's
+            // buffer, then take every complete newline-delimited message.
+            // Reading one line through a fresh `BufReader` per pass (as this
+            // did on unix) dropped every message buffered past the first: a
+            // client that sends `OpenFiles` and then `Resize` straight after
+            // lost the `Resize`. A partial trailing message stays buffered
+            // for the next pass.
+            let mut chunk = [0u8; 4096];
+            loop {
+                match client.conn.control.try_read(&mut chunk) {
                     Ok(0) => {
                         tracing::debug!("Client {} control stream closed (EOF)", client.id);
                         disconnected.push(idx);
+                        break;
                     }
-                    Ok(n) => {
-                        // Try to parse as control message
-                        if let Ok(s) = std::str::from_utf8(&buf[..n]) {
-                            for line in s.lines() {
-                                if !line.trim().is_empty() {
-                                    if let Ok(msg) = serde_json::from_str::<ClientControl>(line) {
-                                        control_messages.push((idx, msg));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
+                    Ok(n) => client.control_buf.extend_from_slice(&chunk[..n]),
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                     Err(e) => {
                         tracing::warn!("Client {} control read error: {}", client.id, e);
+                        break;
                     }
                 }
             }
-
-            #[cfg(not(windows))]
-            {
-                let mut reader = std::io::BufReader::new(&client.conn.control);
-                let mut line = String::new();
-                match std::io::BufRead::read_line(&mut reader, &mut line) {
-                    Ok(0) => {
-                        tracing::debug!("Client {} control stream closed (EOF)", client.id);
-                        disconnected.push(idx);
-                    }
-                    Ok(_) if !line.trim().is_empty() => {
-                        if let Ok(msg) = serde_json::from_str::<ClientControl>(&line) {
-                            control_messages.push((idx, msg));
-                        }
-                    }
-                    Ok(_) => {}
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
-                    Err(e) => {
-                        tracing::warn!("Client {} control read error: {}", client.id, e);
-                    }
+            while let Some(pos) = client.control_buf.iter().position(|&b| b == b'\n') {
+                let line: Vec<u8> = client.control_buf.drain(..=pos).collect();
+                let Ok(line) = std::str::from_utf8(&line) else {
+                    continue;
+                };
+                if line.trim().is_empty() {
+                    continue;
+                }
+                if let Ok(msg) = serde_json::from_str::<ClientControl>(line) {
+                    control_messages.push((idx, msg));
                 }
             }
         }
@@ -1273,6 +1266,12 @@ impl EditorServer {
                         // it while a one-shot `fresh FILE` client does not.
                         claimed_by = Some(client.id);
                         resize_occurred = true;
+                    }
+                }
+                ClientControl::GpmPointer => {
+                    if let Some(client) = self.clients.get_mut(idx) {
+                        client.gpm_pointer = true;
+                        resize_occurred = true; // repaint with the pointer
                     }
                 }
                 ClientControl::Ping => {
@@ -1555,9 +1554,14 @@ impl EditorServer {
 
     /// Render the editor and broadcast output to all clients
     fn render_and_broadcast(&mut self) -> io::Result<()> {
+        // The pointer is drawn for a GPM console while it is the terminal in
+        // use — as the in-process editor does on a console. Set every frame,
+        // since it is a property of the active window and windows switch.
+        let gpm_pointer = self.sizing_client().is_some_and(|c| c.gpm_pointer);
         let Some(ref mut editor) = self.editor else {
             return Ok(());
         };
+        editor.set_gpm_active(gpm_pointer);
 
         let Some(ref mut terminal) = self.terminal else {
             return Ok(());

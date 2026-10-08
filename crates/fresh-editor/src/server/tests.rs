@@ -1062,6 +1062,37 @@ mod integration_tests {
         std::fs::remove_dir_all(&temp_dir).ok();
     }
 
+    /// Control messages that arrive together are all handled. The daemon read
+    /// one line per pass through a fresh `BufReader`, so whatever was
+    /// buffered past the first newline was dropped — a client attached with
+    /// a file sends `OpenFiles` and its size back to back, and lost the size.
+    #[test]
+    fn test_control_messages_sent_together_are_all_handled() {
+        let temp_dir = test_temp_dir("control-batch");
+        let session_name = unique_session_name("control-batch");
+        let (socket_paths, shutdown, server) =
+            spawn_editor_server(&temp_dir, &session_name, Some(Duration::from_secs(30)));
+
+        let conn = ClientConnection::connect(&socket_paths).unwrap();
+        let hello = ClientHello::new(TermSize::new(80, 24));
+        conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
+            .unwrap();
+        drop(conn.read_control().unwrap());
+        let mut out = Vec::new();
+        read_until_grid_rows(&conn, &mut out, 24);
+
+        // Two messages in one write: the second is the one that used to go.
+        let ping = serde_json::to_string(&ClientControl::Ping).unwrap();
+        let resize = serde_json::to_string(&ClientControl::Resize { cols: 60, rows: 18 }).unwrap();
+        conn.write_control(&format!("{ping}\n{resize}")).unwrap();
+        read_until_grid_rows(&conn, &mut out, 18);
+
+        shutdown.store(true, Ordering::SeqCst);
+        drop(server.join());
+        drop(socket_paths.cleanup());
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
     // ===========================================================================
     // E2E regression tests for issue #1089:
     //   "Mouse codes after pressing Escape"
