@@ -28,8 +28,13 @@ installed, or with `QUICKJS_INCLUDE_DIR`/`QUICKJS_LIB_DIR` pointing at an
 unpacked `.deb`):
 
 ```sh
-RUSTFLAGS="--cfg fresh_js_system" cargo test -p fresh-js -p fresh-plugin-runtime
+RUSTFLAGS="--cfg fresh_js_system" RUSTDOCFLAGS="--cfg fresh_js_system" \
+    cargo test -p fresh-js -p fresh-plugin-runtime
 ```
+
+Set the cfg in `RUSTDOCFLAGS` too: doctests are compiled by rustdoc, which does
+not read `RUSTFLAGS`, and would otherwise build `fresh-js` for the rquickjs
+backend without rquickjs in the dependency graph.
 
 The backend is a cfg rather than a cargo feature on purpose: CI builds with
 `--all-features` on Linux, macOS and Windows, and a feature would make every one
