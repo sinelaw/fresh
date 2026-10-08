@@ -5153,6 +5153,7 @@ impl Editor {
                 &self.config.editor,
                 self.background_fade,
                 self.software_cursor_only,
+                self.linux_console,
             ),
         };
         let __win = self

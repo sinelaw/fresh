@@ -760,6 +760,12 @@ impl Editor {
         self.active_window_mut().gpm_active = active;
     }
 
+    /// Whether the terminal is a Linux console (`TERM=linux`), whose fonts
+    /// lack some of the glyphs Fresh draws by default.
+    pub fn set_linux_console(&mut self, linux_console: bool) {
+        self.linux_console = linux_console;
+    }
+
     /// The colors the terminal can show, which every frame is converted to.
     /// A daemon sets it per frame from the terminal in use.
     pub fn set_color_capability(

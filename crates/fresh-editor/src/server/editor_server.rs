@@ -1568,10 +1568,14 @@ impl EditorServer {
                 c.env.get(name).cloned().flatten()
             })
         });
+        let linux_console = self
+            .sizing_client()
+            .is_some_and(|c| c.term() == Some("linux"));
         let Some(ref mut editor) = self.editor else {
             return Ok(());
         };
         editor.set_gpm_active(gpm_pointer);
+        editor.set_linux_console(linux_console);
         if let Some(colors) = colors {
             editor.set_color_capability(colors);
         }
@@ -1672,7 +1676,6 @@ fn claims_session_size(event: &Event) -> bool {
 
 impl ConnectedClient {
     /// Get the client's TERM environment variable
-    #[allow(dead_code)]
     pub fn term(&self) -> Option<&str> {
         self.env.get("TERM").and_then(|v| v.as_deref())
     }

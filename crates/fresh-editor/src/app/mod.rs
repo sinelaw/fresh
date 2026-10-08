@@ -1447,6 +1447,11 @@ pub struct Editor {
     /// Terminal color capability (true color, 256, or 16 colors)
     color_capability: crate::view::color_support::ColorCapability,
 
+    /// The terminal is a Linux console (`TERM=linux`), whose fonts lack some
+    /// glyphs Fresh draws by default — the indentation guide's `▏` shows as
+    /// `#` there. Set from the environment, per frame in a daemon.
+    pub(crate) linux_console: bool,
+
     /// Hunks for the Review Diff tool
     // `review_hunks` moved onto `Window`.
 

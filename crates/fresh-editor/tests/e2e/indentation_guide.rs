@@ -533,3 +533,42 @@ fn per_language_indentation_guide_false_suppresses_guides() {
         "a language with indentation_guide = false should suppress guides\n{screen}"
     );
 }
+
+/// The default guide, `▏`, is a block element the Linux console's fonts lack:
+/// the console shows it as `#` (#3517). On a console the default is drawn as
+/// `│`, which every console font has; a glyph the user chose is left alone.
+#[test]
+fn indentation_guide_on_a_linux_console_draws_a_line_the_font_has() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("guides.rs");
+    std::fs::write(
+        &file_path,
+        "fn main() {\n    let child = 1;\n        let grand = child + 1;\n}\n",
+    )
+    .unwrap();
+
+    let render = |glyph: Option<&str>| {
+        let mut config = Config::default();
+        config.editor.indentation_guide = IndentationGuideMode::All;
+        if let Some(glyph) = glyph {
+            config.editor.indentation_guide_glyph = glyph.to_string();
+        }
+        let mut harness =
+            EditorTestHarness::create(80, 24, HarnessOptions::new().with_config(config)).unwrap();
+        harness.editor_mut().set_linux_console(true);
+        harness.open_file(&file_path).unwrap();
+        harness.render().unwrap();
+        harness.screen_to_string()
+    };
+
+    let screen = render(None);
+    assert!(
+        screen.contains("│   │   let grand = child + 1;") && !screen.contains('▏'),
+        "the default guide must be drawn as `│` on a Linux console\n{screen}"
+    );
+    let screen = render(Some("┊"));
+    assert!(
+        screen.contains("┊   ┊   let grand = child + 1;"),
+        "a configured glyph is drawn as configured\n{screen}"
+    );
+}

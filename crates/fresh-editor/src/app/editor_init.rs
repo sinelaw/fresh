@@ -677,6 +677,7 @@ impl Editor {
             mouse_capture: parts.mouse_capture,
             time_source: parts.time_source,
             color_capability: parts.color_capability,
+            linux_console: false,
             update_checker: parts.update_checker,
             key_translator: parts.key_translator,
 
