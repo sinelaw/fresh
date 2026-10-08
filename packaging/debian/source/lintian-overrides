@@ -1,0 +1,3 @@
+# A sample file the syntax-highlighting tests open as CMake cache syntax, not
+# a leftover from a CMake build; nothing in the build reads it.
+fresh-editor source: source-contains-cmake-cache-file [crates/fresh-editor/tests/fixtures/syntax_highlighting/CMakeCache.txt]

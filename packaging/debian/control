@@ -123,7 +123,7 @@ Build-Depends:
  librust-which-8+default-dev (>= 8-~~),
  librust-xattr-1+default-dev (>= 1.6-~~),
  librust-xz2-0.1+default-dev (>= 0.1-~~),
-Standards-Version: 4.7.2
+Standards-Version: 4.7.4
 Homepage: https://sinelaw.github.io/fresh/
 Vcs-Browser: https://github.com/sinelaw/fresh
 Vcs-Git: https://github.com/sinelaw/fresh.git
