@@ -42,14 +42,21 @@ override_dh_auto_configure:
 	rm -f Cargo.lock
 	cargo prepare-debian debian/cargo_registry --link-from-system
 
+# Upstream's release profile uses fat LTO and no debug info. dh-cargo adds full
+# debug info (for the -dbgsym package) and links with GNU ld, and that
+# combination fails: the debug info still refers to statics that fat LTO
+# dropped (e.g. encoding_rs's encodings), which ld.bfd rejects. Build this
+# package without LTO.
+CARGO_PROFILE := --config profile.release.lto=false
+
 override_dh_auto_build:
-	cargo build --release -p fresh-editor --no-default-features --features $(FEATURES)
+	cargo build --release $(CARGO_PROFILE) -p fresh-editor --no-default-features --features $(FEATURES)
 
 # The engine boundary (both backends' shared behaviour), TypeScript through
 # the real esbuild, and the plugin runtime. The editor's own end-to-end suite
 # drives a virtual terminal for a long time and runs upstream instead.
 override_dh_auto_test:
-	cargo test --release -p fresh-js -p fresh-parser-js -p fresh-plugin-runtime \
+	cargo test --release $(CARGO_PROFILE) -p fresh-js -p fresh-parser-js -p fresh-plugin-runtime \
 		--no-default-features --features fresh-core/plugins
 
 override_dh_auto_install:
