@@ -133,21 +133,40 @@ User plugins and `init.ts` are type-checked against `lib: ["ES2020"]`
 
 ## What the port would take
 
-1. Grow `fresh-quickjs` to what `quickjs_backend.rs` uses:
-   - `Opt`/`Rest`, and `FromJs`/`IntoJs`-style conversions;
-   - one class instance (`JsEditorApi`) with about 100 methods.
+**Engine boundary (done).** `crates/fresh-js` is now the one crate that names
+the JS engine. `fresh-core` and `fresh-plugin-runtime` reach rquickjs only
+through it. Today every item in it is a plain re-export of rquickjs, so it
+changes no behaviour. Its explicit export list is the contract a second
+backend has to meet:
+- the types `Runtime`, `Context`, `Ctx`, `Value`, `Object`, `Array`, `String`,
+  `Function`, `Persistent`, `Class`, `Type`, `Error`, `Result`;
+- the traits `FromJs`, `IntoJs`, `JsLifetime` and `class::Trace`;
+- `function::{Opt, Rest}` and `context::EvalOptions`;
+- `serde::{from_value, to_value}`.
 
-   `rquickjs_serde` becomes the JSON bridge above.
+rquickjs's proc macros (`#[class]`, `#[methods]`, `#[derive(Trace,
+JsLifetime)]`) cannot go through the boundary: they find rquickjs by reading
+the calling crate's manifest. So the plugin runtime keeps a direct rquickjs
+dependency for those four attributes alone.
+
+**Remaining:**
+1. Add an `engine-system` backend to `fresh-js` that provides the same names
+   over the spike's binding:
+   - `'js` lifetimes become marker types only, and values are reference-counted
+     handles;
+   - `Opt`/`Rest` and the `FromJs`/`IntoJs` conversions are implemented for the
+     types Fresh uses;
+   - `serde::{from_value, to_value}` becomes the JSON bridge above.
+
+   The two backends are mutually exclusive features.
 2. Have `fresh-plugin-api-macros` generate the method glue. It already parses the
-   `#[qjs(rename)]` methods. That removes `#[rquickjs::methods]` and
-   rquickjs-macro.
-3. Port `quickjs_backend.rs` (15k lines, about 550 rquickjs references, mostly
-   `Ctx`/`Value`/`Object`) and `fresh-core`'s `FromJs` impls.
-4. Add a `bundled` feature that vendors the same Bellard release, so upstream
+   `#[qjs(rename)]` methods. That replaces the four rquickjs attributes and drops
+   the runtime's direct rquickjs dependency.
+3. Add a `bundled` feature that vendors the same Bellard release, so upstream
    builds and CI run the engine Debian ships. Debian's source package then
    excludes the vendored copy.
-5. Move the crates into the main workspace and run the end-to-end suite with
-   CI on the system engine.
+4. Build and test both backends in CI, with the end-to-end suite on the system
+   engine.
 
 Together with the rest of the Debian plan (ts-rs dev-only, oxc replaced by
 esbuild at build time, no tree-sitter, manifest version bumps), this leaves
