@@ -55,7 +55,30 @@ mod backend {
 
     /// Conversion between JS values and serde types.
     pub mod serde {
-        pub use rquickjs_serde::{from_value, to_value};
+        pub use rquickjs_serde::to_value;
+
+        /// `rquickjs_serde::from_value`, minus the exception it leaves behind.
+        ///
+        /// rquickjs-serde (0.5) looks up `toJSON` on every field's value with
+        /// a raw `JS_GetProperty`, which throws on `null` and `undefined`
+        /// ("cannot read property 'toJSON' of null"). It takes the failed
+        /// lookup as "no toJSON" and carries on, but the exception stays
+        /// pending in the context, where the plugin runtime's next check
+        /// reports it as the plugin's error. So when the conversion succeeds
+        /// and nothing was pending before it, whatever it left pending is
+        /// that artefact and is cleared.
+        pub fn from_value<T: ::serde::de::DeserializeOwned>(
+            value: rquickjs::Value<'_>,
+        ) -> Result<T, rquickjs_serde::Error> {
+            let ctx = value.ctx().clone();
+            // SAFETY: `ctx` is a live context; JS_HasException only reads it.
+            let pending_before = unsafe { rquickjs::qjs::JS_HasException(ctx.as_raw().as_ptr()) };
+            let result = rquickjs_serde::from_value(value);
+            if result.is_ok() && !pending_before {
+                let _ = ctx.catch();
+            }
+            result
+        }
     }
 }
 
