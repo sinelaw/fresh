@@ -633,12 +633,12 @@ pub(super) fn inject_virtual_lines(
     result
 }
 
-/// One inline inlay-hint cell to splice into the token stream, already
-/// padded to match the legacy render-time spacing and resolved to a wire
-/// style.
+/// One inline inlay-hint cell to splice into the token stream, with spacing
+/// policy and resolved wire style.
 struct InlineHintCell {
     text: String,
     style: Option<ViewTokenStyle>,
+    pad_with_space: bool,
     /// See [`InlineHint::pad_to_column`].
     pad_to_column: Option<u32>,
 }
@@ -713,6 +713,7 @@ pub struct InlineHint {
     /// Draw the hint at the END of the row its anchor falls in, left-padded to
     /// end at this column. See [`splice_inline_virtual_text`].
     pub pad_to_column: Option<u32>,
+    pub pad_with_space: bool,
     /// `None` when the caller passed no theme — the scroll-math and index
     /// paths, where only the cell's *width* matters and nothing is drawn.
     pub style: Option<ViewTokenStyle>,
@@ -754,6 +755,7 @@ pub fn resolve_inline_hints(
             position: vtext.position,
             gravity: vtext.gravity,
             pad_to_column: vtext.pad_to_column,
+            pad_with_space: vtext.pad_with_space,
             style: theme.map(|t| token_style_from_ratatui(vtext.resolved_style(t))),
         })
         .collect()
@@ -772,11 +774,13 @@ pub fn resolve_inline_hints(
 /// pushed real text past the row edge) and clipped the end of hinted lines
 /// when scrolling.
 ///
-/// Padding mirrors the old render-time injection exactly so output is
-/// unchanged except for the bug fix:
+/// When `VirtualText::pad_with_space` is true, padding mirrors the old
+/// render-time injection exactly so normal inlay-hint output is unchanged:
 ///   - `BeforeChar`: `"{text} "`, or `" {text} "` when anchored on a
 ///     newline (an end-of-line hint).
 ///   - `AfterChar`:  `" {text}"`.
+/// Ghost text uses `pad_with_space = false`, so its suffix stays adjacent to
+/// the typed prefix.
 ///
 /// Takes hints already resolved by [`resolve_inline_hints`] rather than
 /// `&EditorState`, which is what lets the wrap index call it: the index builds
@@ -792,9 +796,8 @@ pub fn splice_inline_virtual_text(
     }
 
     // Group by anchor byte, preserving the resolver's (position, priority)
-    // order. `before` stores the raw hint text — its leading-space padding
-    // depends on whether the anchor cell is a newline, decided while
-    // walking the token stream below.
+    // order. `BeforeChar` leading-space padding depends on whether the anchor
+    // cell is a newline, decided while walking the token stream below.
     let mut before: HashMap<usize, Vec<InlineHintCell>> = HashMap::new();
     let mut after: HashMap<usize, Vec<InlineHintCell>> = HashMap::new();
     for hint in hints {
@@ -803,6 +806,7 @@ pub fn splice_inline_virtual_text(
                 before.entry(hint.anchor).or_default().push(InlineHintCell {
                     text: hint.text.clone(),
                     style: hint.style.clone(),
+                    pad_with_space: hint.pad_with_space,
                     pad_to_column: hint.pad_to_column,
                 });
             }
@@ -811,6 +815,7 @@ pub fn splice_inline_virtual_text(
                     text: hint.text.clone(),
                     style: hint.style.clone(),
                     pad_to_column: hint.pad_to_column,
+                    pad_with_space: hint.pad_with_space,
                 });
             }
             // Line-level positions are handled by `inject_virtual_lines`.
@@ -857,16 +862,17 @@ pub fn splice_inline_virtual_text(
                             });
                         }
                         seg_start = anchor;
-                        for InlineHintCell {
-                            text,
-                            style,
-                            pad_to_column: target,
-                        } in hints
-                        {
-                            match target {
-                                Some(t) => out.defer_to_row_end(text.clone(), style.clone(), *t),
-                                None => out.push(virt(format!("{text} "), style.clone())),
+                        for hint in hints {
+                            if let Some(t) = hint.pad_to_column {
+                                out.defer_to_row_end(hint.text.clone(), hint.style.clone(), t);
+                                continue;
                             }
+                            let text = if hint.pad_with_space {
+                                format!("{} ", hint.text)
+                            } else {
+                                hint.text.clone()
+                            };
+                            out.push(virt(text, hint.style.clone()));
                         }
                     }
                     seg.push(ch);
@@ -879,14 +885,16 @@ pub fn splice_inline_virtual_text(
                         });
                         seg_start = token_start + byte_idx;
                         for hint in hints {
-                            match hint.pad_to_column {
-                                Some(t) => {
-                                    out.defer_to_row_end(hint.text.clone(), hint.style.clone(), t)
-                                }
-                                None => {
-                                    out.push(virt(format!(" {}", hint.text), hint.style.clone()))
-                                }
+                            if let Some(t) = hint.pad_to_column {
+                                out.defer_to_row_end(hint.text.clone(), hint.style.clone(), t);
+                                continue;
                             }
+                            let text = if hint.pad_with_space {
+                                format!(" {}", hint.text)
+                            } else {
+                                hint.text.clone()
+                            };
+                            out.push(virt(text, hint.style.clone()));
                         }
                     }
                 }
@@ -912,34 +920,37 @@ pub fn splice_inline_virtual_text(
                 let anchor_is_newline = matches!(kind, ViewTokenWireKind::Newline);
                 let empty_line = anchor_is_newline && line_start_cell;
                 if let Some(hints) = before.get(&anchor) {
-                    for InlineHintCell {
-                        text,
-                        style,
-                        pad_to_column: target,
-                    } in hints
-                    {
-                        if let Some(t) = target {
-                            out.defer_to_row_end(text.clone(), style.clone(), *t);
+                    for hint in hints {
+                        if let Some(t) = hint.pad_to_column {
+                            out.defer_to_row_end(hint.text.clone(), hint.style.clone(), t);
                             continue;
                         }
-                        let padded = match (anchor_is_newline, empty_line) {
-                            (_, true) => text.clone(),
-                            (true, false) => format!(" {text} "),
-                            (false, _) => format!("{text} "),
+                        let text = if hint.pad_with_space {
+                            match (anchor_is_newline, empty_line) {
+                                (_, true) => hint.text.clone(),
+                                (true, false) => format!(" {} ", hint.text),
+                                (false, _) => format!("{} ", hint.text),
+                            }
+                        } else {
+                            hint.text.clone()
                         };
-                        out.push(virt(padded, style.clone()));
+                        out.push(virt(text, hint.style.clone()));
                     }
                 }
                 let after_hints = after.get(&anchor);
                 out.push(token);
                 if let Some(hints) = after_hints {
                     for hint in hints {
-                        match hint.pad_to_column {
-                            Some(t) => {
-                                out.defer_to_row_end(hint.text.clone(), hint.style.clone(), t)
-                            }
-                            None => out.push(virt(format!(" {}", hint.text), hint.style.clone())),
+                        if let Some(t) = hint.pad_to_column {
+                            out.defer_to_row_end(hint.text.clone(), hint.style.clone(), t);
+                            continue;
                         }
+                        let text = if hint.pad_with_space {
+                            format!(" {}", hint.text)
+                        } else {
+                            hint.text.clone()
+                        };
+                        out.push(virt(text, hint.style.clone()));
                     }
                 }
             }
@@ -1076,6 +1087,7 @@ mod line_break_hint_tests {
             position,
             gravity: MarkerGravity::Right,
             pad_to_column: None,
+            pad_with_space: true,
             style: None,
         }
     }
@@ -1162,6 +1174,31 @@ mod line_break_hint_tests {
         // Past the target there is nothing left to pad with, so the row simply
         // runs long rather than the glyph being dropped.
         assert_eq!(col_of_glyph(&"x".repeat(25)), 26);
+    }
+
+    #[test]
+    fn unpadded_ghost_text_and_column_aligned_hints_share_a_row() {
+        for (anchor, position, expected) in [
+            (1, VirtualTextPosition::BeforeChar, "o_suggestionne"),
+            (0, VirtualTextPosition::AfterChar, "o_suggestionne"),
+            (3, VirtualTextPosition::BeforeChar, "one_suggestion"),
+        ] {
+            let mut ghost = hint(anchor, position);
+            ghost.text = "_suggestion".to_string();
+            ghost.pad_with_space = false;
+            let mut rail = hint(0, VirtualTextPosition::BeforeChar);
+            rail.pad_to_column = Some(20);
+            let out = splice_inline_virtual_text(line_with_break(), &[rail, ghost]);
+            let rendered: String = out
+                .iter()
+                .filter_map(|t| match &t.kind {
+                    ViewTokenWireKind::Text(s) => Some(s.as_str()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(rendered, format!("{expected:<19}|"));
+            assert_eq!(past_the_break(&out), "");
+        }
     }
 
     /// Why the break is a safe anchor: deleting the character in front of it

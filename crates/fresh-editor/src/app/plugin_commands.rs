@@ -496,6 +496,7 @@ impl Editor {
                 0, // priority
                 virtual_text_id,
                 pad_to_column,
+                crate::view::virtual_text::MarkerGravity::Right,
             );
         }
     }
