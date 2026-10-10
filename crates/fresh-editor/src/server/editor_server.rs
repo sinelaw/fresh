@@ -101,8 +101,12 @@ pub struct EditorServer {
     terminal: Option<Terminal<CaptureBackend>>,
     last_client_activity: Instant,
     shutdown: Arc<AtomicBool>,
-    /// Effective terminal size (from the primary/first client)
+    /// Effective terminal size (from the client that sizes the session)
     term_size: TermSize,
+    /// Id of the terminal that sizes the session: the one last used — typed
+    /// in, clicked in, focused or resized. `None` (or an id that has since
+    /// disconnected) falls back to the oldest attached terminal.
+    size_owner: Option<u64>,
     /// Index of the client that most recently provided input (for per-client detach)
     last_input_client: Option<usize>,
     /// Next wait ID for --wait tracking
@@ -203,6 +207,11 @@ struct ConnectedClient {
     needs_full_render: bool,
     /// If set, this client is waiting for a --wait completion signal
     wait_id: Option<u64>,
+    /// Control-socket bytes not yet ending in a newline.
+    control_buf: Vec<u8>,
+    /// The client forwards a Linux console mouse from GPM
+    /// (`ClientControl::GpmPointer`), so the editor draws the pointer.
+    gpm_pointer: bool,
     /// Per-workspace capability token presented in this client's `Hello`
     /// (from `$FRESH_CMD_TOKEN`). Authorizes `RunScript` against the token's
     /// grant; `None` for clients that carry no token.
@@ -257,6 +266,7 @@ impl EditorServer {
             last_client_activity: Instant::now(),
             shutdown: Arc::new(AtomicBool::new(false)),
             term_size: TermSize::new(80, 24), // Default until first client connects
+            size_owner: None,
             last_input_client: None,
             next_wait_id: 1,
             waiting_clients: std::collections::HashMap::new(),
@@ -690,18 +700,18 @@ impl EditorServer {
     }
 
     /// The size the shared editor renders at: the element-wise MIN of every
-    /// viewport watching it — the primary attached terminal and, when this
-    /// daemon hosts the web bridge, the smallest connected browser. One editor
-    /// draws one grid, so the grid has to fit them all; a larger window
-    /// letterboxes rather than being shown a grid it can't display. Terminals
-    /// keep the daemon's long-standing "first client sizes the session" rule.
+    /// viewport watching it — the terminal that sizes the session (see
+    /// [`Self::sizing_client`]) and, when this daemon hosts the web bridge,
+    /// the smallest connected browser. One editor draws one grid, so the grid
+    /// has to fit them all; a larger window letterboxes rather than being
+    /// shown a grid it can't display.
     ///
     /// Returns whether the size actually moved (the caller then pushes it into
     /// the capture backend and the editor via `update_terminal_size`).
     fn recompute_term_size(&mut self) -> bool {
         // `mut` is exercised only by the `web` branch below.
         #[cfg_attr(not(feature = "web"), allow(unused_mut))]
-        let mut fit: Option<TermSize> = self.clients.first().map(|c| c.term_size);
+        let mut fit: Option<TermSize> = self.sizing_client().map(|c| c.term_size);
         #[cfg(feature = "web")]
         if let Some((wc, wr)) = self.web.as_ref().and_then(|b| b.wanted_size()) {
             fit = Some(match fit {
@@ -716,6 +726,22 @@ impl EditorServer {
             }
             _ => false,
         }
+    }
+
+    /// The terminal the session is sized for: the one last used (see
+    /// `size_owner`), else the oldest attached.
+    ///
+    /// Terminals do not share a size, and one grid is drawn for all of them,
+    /// so one of them has to win. It used to be the first to attach, for as
+    /// long as it stayed attached — so with Fresh left open on a Linux VT, a
+    /// desktop terminal attached to the same session was drawn at the VT's
+    /// size and resizing its window did nothing (#3517). The terminal in use
+    /// is the one whose size matters; the others get its grid until they are
+    /// used in turn, the way tmux's `window-size latest` behaves.
+    fn sizing_client(&self) -> Option<&ConnectedClient> {
+        self.size_owner
+            .and_then(|id| self.clients.iter().find(|c| c.id == id))
+            .or_else(|| self.clients.first())
     }
 
     /// True while a browser is connected to the hosted web bridge.
@@ -835,13 +861,21 @@ impl EditorServer {
                     ),
                 )),
             ),
-            false,
+            // Plugins load on the plugin thread and arrive through the async
+            // bridge, as they do for an in-process launch, so the first frame
+            // is not held back by them. Loading them inline kept a bare
+            // `fresh` on a blank screen for the whole plugin load — over a
+            // second on a fast machine and several on a slow one (#3517).
+            // The lifecycle hooks `initialize_editor` fires queue behind the
+            // loads on the same FIFO thread, so they still run after them.
+            true,
             self.config.orchestrator_mode,
         )
         .map_err(|e| io::Error::other(format!("Failed to create editor: {}", e)))?;
 
-        // Auto-load init.ts via the same pipeline as the non-server entry point.
-        editor.load_init_script(self.config.init_enabled);
+        // Auto-load init.ts via the same pipeline as the non-server entry
+        // point, queued behind the plugin loads.
+        editor.load_init_script_async(self.config.init_enabled);
 
         // Enable session mode - use hardware cursor only, no REVERSED software cursor
         editor.set_session_mode(true);
@@ -1069,6 +1103,8 @@ impl EditorServer {
             input_parser: ClientInputParser::new(),
             needs_full_render: true,
             wait_id: None,
+            gpm_pointer: false,
+            control_buf: Vec::new(),
             cmd_token: hello.cmd_token,
         })
     }
@@ -1081,6 +1117,9 @@ impl EditorServer {
         let mut input_events = Vec::new();
         let mut resize_occurred = false;
         let mut control_messages: Vec<(usize, ClientControl)> = Vec::new();
+        // The last terminal this pass that was used, and so takes over sizing
+        // the session (see `sizing_client`).
+        let mut claimed_by: Option<u64> = None;
 
         for (idx, client) in self.clients.iter_mut().enumerate() {
             // Read from data socket
@@ -1112,6 +1151,9 @@ impl EditorServer {
                     if !events.is_empty() {
                         input_source_client = Some(idx);
                     }
+                    if events.iter().any(claims_session_size) {
+                        claimed_by = Some(client.id);
+                    }
                     input_events.extend(events);
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
@@ -1135,6 +1177,7 @@ impl EditorServer {
             let flushed = client.input_parser.flush_idle(Instant::now());
             if !flushed.is_empty() {
                 input_source_client = Some(idx);
+                claimed_by = Some(client.id);
                 input_events.extend(flushed);
             }
 
@@ -1145,53 +1188,39 @@ impl EditorServer {
             #[allow(clippy::let_underscore_must_use)]
             let _ = client.conn.control.set_nonblocking(true);
 
-            // On Windows, use try_read pattern instead of blocking read_line
-            #[cfg(windows)]
-            {
-                let mut buf = [0u8; 1024];
-                match client.conn.control.try_read(&mut buf) {
+            // Drain whatever the control socket holds into this client's
+            // buffer, then take every complete newline-delimited message.
+            // Reading one line through a fresh `BufReader` per pass (as this
+            // did on unix) dropped every message buffered past the first: a
+            // client that sends `OpenFiles` and then `Resize` straight after
+            // lost the `Resize`. A partial trailing message stays buffered
+            // for the next pass.
+            let mut chunk = [0u8; 4096];
+            loop {
+                match client.conn.control.try_read(&mut chunk) {
                     Ok(0) => {
                         tracing::debug!("Client {} control stream closed (EOF)", client.id);
                         disconnected.push(idx);
+                        break;
                     }
-                    Ok(n) => {
-                        // Try to parse as control message
-                        if let Ok(s) = std::str::from_utf8(&buf[..n]) {
-                            for line in s.lines() {
-                                if !line.trim().is_empty() {
-                                    if let Ok(msg) = serde_json::from_str::<ClientControl>(line) {
-                                        control_messages.push((idx, msg));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
+                    Ok(n) => client.control_buf.extend_from_slice(&chunk[..n]),
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                     Err(e) => {
                         tracing::warn!("Client {} control read error: {}", client.id, e);
+                        break;
                     }
                 }
             }
-
-            #[cfg(not(windows))]
-            {
-                let mut reader = std::io::BufReader::new(&client.conn.control);
-                let mut line = String::new();
-                match std::io::BufRead::read_line(&mut reader, &mut line) {
-                    Ok(0) => {
-                        tracing::debug!("Client {} control stream closed (EOF)", client.id);
-                        disconnected.push(idx);
-                    }
-                    Ok(_) if !line.trim().is_empty() => {
-                        if let Ok(msg) = serde_json::from_str::<ClientControl>(&line) {
-                            control_messages.push((idx, msg));
-                        }
-                    }
-                    Ok(_) => {}
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
-                    Err(e) => {
-                        tracing::warn!("Client {} control read error: {}", client.id, e);
-                    }
+            while let Some(pos) = client.control_buf.iter().position(|&b| b == b'\n') {
+                let line: Vec<u8> = client.control_buf.drain(..=pos).collect();
+                let Ok(line) = std::str::from_utf8(&line) else {
+                    continue;
+                };
+                if line.trim().is_empty() {
+                    continue;
+                }
+                if let Ok(msg) = serde_json::from_str::<ClientControl>(line) {
+                    control_messages.push((idx, msg));
                 }
             }
         }
@@ -1228,12 +1257,21 @@ impl EditorServer {
                 ClientControl::Resize { cols, rows } => {
                     if let Some(client) = self.clients.get_mut(idx) {
                         client.term_size = TermSize::new(cols, rows);
-                        // The first client sizes the session; the main loop
+                        // A terminal being resized is a terminal in use, so it
+                        // takes over sizing the session; the main loop
                         // recomputes the shared grid from it (mins'd against
-                        // any browsers on the hosted web bridge).
-                        if idx == 0 {
-                            resize_occurred = true;
-                        }
+                        // any browsers on the hosted web bridge). A client
+                        // also sends one as it starts relaying, which is how a
+                        // newly attached terminal gets the session fitted to
+                        // it while a one-shot `fresh FILE` client does not.
+                        claimed_by = Some(client.id);
+                        resize_occurred = true;
+                    }
+                }
+                ClientControl::GpmPointer => {
+                    if let Some(client) = self.clients.get_mut(idx) {
+                        client.gpm_pointer = true;
+                        resize_occurred = true; // repaint with the pointer
                     }
                 }
                 ClientControl::Ping => {
@@ -1358,13 +1396,20 @@ impl EditorServer {
             }
         }
 
+        if let Some(id) = claimed_by {
+            if self.size_owner != Some(id) {
+                self.size_owner = Some(id);
+                resize_occurred = true;
+            }
+        }
+
         // Deduplicate and sort for safe reverse removal
         disconnected.sort_unstable();
         disconnected.dedup();
 
-        // Remove disconnected clients. Losing one changes the shared fit: the
-        // primary terminal sizes the session, so when it goes away the next
-        // client inherits that role and the grid has to be recomputed for it —
+        // Remove disconnected clients. Losing one changes the shared fit: if
+        // it was the terminal sizing the session, the oldest remaining one
+        // inherits that role and the grid has to be recomputed for it —
         // otherwise a survivor keeps being rendered at the dead client's size
         // and shows a clipped screen until it happens to send a resize. Flag it
         // like any other resize so the main loop refits and repaints; when the
@@ -1509,9 +1554,31 @@ impl EditorServer {
 
     /// Render the editor and broadcast output to all clients
     fn render_and_broadcast(&mut self) -> io::Result<()> {
+        // The pointer is drawn for a GPM console while it is the terminal in
+        // use — as the in-process editor does on a console. Set every frame,
+        // since it is a property of the active window and windows switch.
+        let gpm_pointer = self.sizing_client().is_some_and(|c| c.gpm_pointer);
+        // And in the colors that terminal can show, detected from the
+        // environment its client sent, as an in-process editor detects its
+        // own. Assuming truecolor everywhere turned a Linux console's
+        // backgrounds black — the console keeps only each channel's top bit —
+        // so selections, and anything else told apart by background, vanished.
+        let colors = self.sizing_client().map(|c| {
+            crate::view::color_support::ColorCapability::detect_from(|name| {
+                c.env.get(name).cloned().flatten()
+            })
+        });
+        let linux_console = self
+            .sizing_client()
+            .is_some_and(|c| c.term() == Some("linux"));
         let Some(ref mut editor) = self.editor else {
             return Ok(());
         };
+        editor.set_gpm_active(gpm_pointer);
+        editor.set_linux_console(linux_console);
+        if let Some(colors) = colors {
+            editor.set_color_capability(colors);
+        }
 
         let Some(ref mut terminal) = self.terminal else {
             return Ok(());
@@ -1593,9 +1660,22 @@ impl EditorServer {
     }
 }
 
+/// Whether an input event means its terminal is the one in use, and so takes
+/// over sizing the session (see `EditorServer::sizing_client`).
+///
+/// Everything but bare pointer motion and losing focus: a pointer passing
+/// over a window you are not using reports motion too, and two windows side
+/// by side would otherwise trade the session's size back and forth under it.
+fn claims_session_size(event: &Event) -> bool {
+    match event {
+        Event::FocusLost => false,
+        Event::Mouse(m) => !matches!(m.kind, crossterm::event::MouseEventKind::Moved),
+        _ => true,
+    }
+}
+
 impl ConnectedClient {
     /// Get the client's TERM environment variable
-    #[allow(dead_code)]
     pub fn term(&self) -> Option<&str> {
         self.env.get("TERM").and_then(|v| v.as_deref())
     }

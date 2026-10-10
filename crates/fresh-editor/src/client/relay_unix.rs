@@ -34,6 +34,26 @@ pub fn relay_loop(
     let mut ctrl_buf: Vec<u8> = Vec::new();
     let mut ctrl_read = [0u8; 4096];
 
+    // On a Linux VT the mouse reaches us over GPM's socket, not stdin, so it
+    // has to be read here and forwarded like the keyboard — the server has
+    // no terminal of its own to ask (#3517). `None` everywhere else.
+    #[cfg(target_os = "linux")]
+    let gpm = match crate::services::gpm::GpmClient::connect() {
+        Ok(gpm) => gpm,
+        Err(e) => {
+            tracing::warn!("Failed to connect to GPM: {}", e);
+            None
+        }
+    };
+    #[cfg(target_os = "linux")]
+    if gpm.is_some() {
+        tracing::info!("Forwarding the GPM mouse to the server");
+        // GPM cannot draw its pointer over a full-screen program; ask the
+        // editor to draw one, as it does when it reads GPM itself.
+        let msg = serde_json::to_string(&ClientControl::GpmPointer).unwrap_or_default();
+        conn.write_control(&msg)?;
+    }
+
     loop {
         // Check for resize
         if resize_flag.swap(false, Ordering::SeqCst) {
@@ -52,11 +72,19 @@ pub fn relay_loop(
         let stdin_borrowed = unsafe { BorrowedFd::borrow_raw(stdin_fd) };
         let data_borrowed = unsafe { BorrowedFd::borrow_raw(data_fd) };
         let ctrl_borrowed = unsafe { BorrowedFd::borrow_raw(ctrl_fd) };
-        let mut fds = [
+        // A `Vec` for the GPM fd that only Linux pushes.
+        #[cfg_attr(not(target_os = "linux"), allow(clippy::useless_vec))]
+        let mut fds = vec![
             PollFd::new(stdin_borrowed, PollFlags::POLLIN),
             PollFd::new(data_borrowed, PollFlags::POLLIN),
             PollFd::new(ctrl_borrowed, PollFlags::POLLIN),
         ];
+        #[cfg(target_os = "linux")]
+        if let Some(gpm) = &gpm {
+            // SAFETY: the GPM connection outlives this scope.
+            let gpm_borrowed = unsafe { BorrowedFd::borrow_raw(gpm.fd()) };
+            fds.push(PollFd::new(gpm_borrowed, PollFlags::POLLIN));
+        }
 
         match poll(&mut fds, nix::poll::PollTimeout::from(100u8)) {
             // 100ms timeout for resize check
@@ -88,6 +116,19 @@ pub fn relay_loop(
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
                 Err(e) => return Err(e),
+            }
+        }
+
+        #[cfg(target_os = "linux")]
+        if let Some(gpm) = &gpm {
+            if fds[3]
+                .revents()
+                .is_some_and(|r| r.contains(PollFlags::POLLIN))
+            {
+                let reports = gpm.read_sgr_reports();
+                if !reports.is_empty() {
+                    conn.write_data(&reports)?;
+                }
             }
         }
 

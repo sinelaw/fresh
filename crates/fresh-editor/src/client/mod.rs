@@ -53,7 +53,10 @@ pub fn run_client_relay(
     // Run the platform-specific relay loop
     #[cfg(unix)]
     {
-        let resize_flag = Arc::new(AtomicBool::new(false));
+        // Raised from the start, so the relay's first act is to report this
+        // terminal's size: that is what tells the server a terminal is now
+        // in use here, and fits the session to it (#3517).
+        let resize_flag = Arc::new(AtomicBool::new(true));
         relay_unix::setup_resize_handler(resize_flag.clone())?;
         relay_unix::relay_loop(&mut conn, resize_flag)
     }

@@ -1447,6 +1447,11 @@ pub struct Editor {
     /// Terminal color capability (true color, 256, or 16 colors)
     color_capability: crate::view::color_support::ColorCapability,
 
+    /// The terminal is a Linux console (`TERM=linux`), whose fonts lack some
+    /// glyphs Fresh draws by default — the indentation guide's `▏` shows as
+    /// `#` there. Set from the environment, per frame in a daemon.
+    pub(crate) linux_console: bool,
+
     /// Hunks for the Review Diff tool
     // `review_hunks` moved onto `Window`.
 
@@ -1572,11 +1577,14 @@ pub struct Editor {
     /// [`Editor::dock_slot_reserved`], never bare.
     pub(crate) dock_reserved: bool,
 
-    /// The dock's explicit width in columns (a drag, or a plugin's
-    /// `dock_width` op); `None` while it follows [`Self::dock_width_rule`].
-    /// Once set it sticks across resizes and launches (`chrome.json`, see
-    /// `app::chrome::dock`) until the next drag.
-    pub(crate) dock_width: Option<u16>,
+    /// The dock's explicit width, as a percent of the frame (a drag, or a
+    /// plugin's `dock_width` op); `None` while it follows
+    /// [`Self::dock_width_rule`]. A share rather than columns, like the file
+    /// explorer's width, so the dock narrows with the terminal instead of
+    /// keeping a wide window's columns on a narrow one. Once set it sticks
+    /// across launches (`chrome.json`, see `app::chrome::dock`) until the next
+    /// drag. Set through [`Self::set_dock_width_cols`].
+    pub(crate) dock_width_percent: Option<u8>,
     /// How wide the dock opens with no explicit width: the rule the plugin's
     /// manifest declared, or the default. Read on every frame, which is what
     /// makes the dock responsive.

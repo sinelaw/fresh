@@ -70,6 +70,7 @@ pub mod floating_modal_frame_chrome;
 pub mod folding;
 pub mod frame_once_per_pane;
 pub mod glob_language_detection;
+pub mod gpm_pointer;
 #[cfg(feature = "gui")]
 pub mod gui;
 pub mod hot_exit_flows;
@@ -270,6 +271,7 @@ pub mod orchestrator_dialog_trust_repro;
 pub mod orchestrator_dock;
 pub mod orchestrator_dock_settings;
 pub mod orchestrator_dock_startup;
+pub mod orchestrator_dock_width;
 pub mod orchestrator_external_sessions;
 pub mod orchestrator_new_workspace_open_file;
 pub mod orchestrator_window_lsp;

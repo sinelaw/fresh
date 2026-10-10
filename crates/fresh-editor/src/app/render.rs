@@ -1182,9 +1182,10 @@ impl Editor {
         // whose ink resolved to literal colours files nothing — defect
         // `Paint::Lit` in `docs/internal/retained-mode-ui.md` "Smaller residue".
 
-        // Software mouse cursor (GPM) and keyboard-capture dimming — both
-        // read already-painted cells, so they run after the main draw.
-        self.render_software_cursor_and_capture(frame, size);
+        // Keyboard-capture dimming reads already-painted cells, so it runs
+        // after the main draw. (The GPM pointer goes on after the color
+        // conversion, at the end of the frame.)
+        self.render_software_cursor_and_capture(frame);
 
         // **The frame's caret is the display list's cursor.** Every surface
         // that has one placed it there — the pane's leaf from the caret its
@@ -1221,6 +1222,9 @@ impl Editor {
             frame.buffer_mut(),
             self.color_capability,
         );
+
+        // The GPM pointer, over the colors the terminal will actually show.
+        self.render_gpm_pointer(frame);
 
         // **What this frame's settle decided reaches the editor with this
         // frame**, not with the next input. The settle moves the tree's focus
@@ -1533,31 +1537,57 @@ impl Editor {
     /// Draw the software mouse cursor (GPM, which can't paint its own caret on
     /// the alt-screen) and the keyboard-capture dimming. Both read cells that
     /// the main draw already painted, so they run near the end of `render`.
-    fn render_software_cursor_and_capture(
-        &mut self,
-        frame: &mut Frame,
-        size: ratatui::layout::Rect,
-    ) {
-        // Render software mouse cursor when GPM is active
-        // GPM can't draw its cursor on the alternate screen buffer used by TUI apps,
-        // so we draw our own cursor at the tracked mouse position.
-        // This must happen LAST in the render flow so we can read the already-rendered
-        // cell content and invert it.
-        if self.active_window().gpm_active {
-            if let Some((col, row)) = self.active_window().mouse_cursor_position {
-                use ratatui::style::Modifier;
+    /// The mouse pointer on a Linux console, where GPM reads the mouse.
+    ///
+    /// GPM cannot draw its pointer over a full-screen program, so the editor
+    /// draws one at the last reported position. It used to reverse the cell's
+    /// own colors, which shows nothing where those colors look alike — and a
+    /// modal's dimmed backdrop is exactly that on a 16-color console, so the
+    /// pointer vanished over everything behind a dialog. Instead the cell is
+    /// painted in a fixed pair chosen against its background: light on a dark
+    /// cell, dark on a light one. Run after the color conversion so the
+    /// background it judges is the one the terminal shows.
+    fn render_gpm_pointer(&self, frame: &mut Frame) {
+        use ratatui::style::{Color, Modifier};
 
-                // Only render if within screen bounds
-                if col < size.width && row < size.height {
-                    // Get the cell at this position and add REVERSED modifier to invert colors
-                    let buf = frame.buffer_mut();
-                    if let Some(cell) = buf.cell_mut((col, row)) {
-                        cell.set_style(cell.style().add_modifier(Modifier::REVERSED));
-                    }
-                }
-            }
+        if !self.active_window().gpm_active {
+            return;
         }
+        let Some((col, row)) = self.active_window().mouse_cursor_position else {
+            return;
+        };
+        let Some(cell) = frame.buffer_mut().cell_mut((col, row)) else {
+            return;
+        };
+        let dark = match cell.bg {
+            // The console's own background, which is black.
+            Color::Reset | Color::Black | Color::DarkGray => true,
+            Color::Red | Color::Green | Color::Blue | Color::Magenta | Color::Cyan => true,
+            Color::Yellow | Color::Gray | Color::White => false,
+            Color::LightRed
+            | Color::LightGreen
+            | Color::LightYellow
+            | Color::LightBlue
+            | Color::LightMagenta
+            | Color::LightCyan => false,
+            bg => crate::view::color_support::painted_rgb(
+                bg,
+                crate::view::color_support::ColorCapability::TrueColor,
+            )
+            .is_none_or(|(r, g, b)| {
+                (u32::from(r) * 299 + u32::from(g) * 587 + u32::from(b) * 114) / 1000 < 128
+            }),
+        };
+        let (fg, bg) = if dark {
+            (Color::Black, Color::White)
+        } else {
+            (Color::White, Color::Black)
+        };
+        cell.set_fg(fg).set_bg(bg);
+        cell.modifier.remove(Modifier::REVERSED | Modifier::DIM);
+    }
 
+    fn render_software_cursor_and_capture(&mut self, frame: &mut Frame) {
         // When keyboard capture mode is active, dim all UI elements outside the terminal
         // to visually indicate that focus is exclusively on the terminal
         if self.active_window().keyboard_capture && self.active_window().focused_terminal_live() {
@@ -5123,6 +5153,7 @@ impl Editor {
                 &self.config.editor,
                 self.background_fade,
                 self.software_cursor_only,
+                self.linux_console,
             ),
         };
         let __win = self

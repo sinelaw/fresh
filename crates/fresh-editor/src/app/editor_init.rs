@@ -677,6 +677,7 @@ impl Editor {
             mouse_capture: parts.mouse_capture,
             time_source: parts.time_source,
             color_capability: parts.color_capability,
+            linux_console: false,
             update_checker: parts.update_checker,
             key_translator: parts.key_translator,
 
@@ -783,7 +784,7 @@ impl Editor {
             dock_covered: false,
             dock: None,
             dock_reserved: false,
-            dock_width: None,
+            dock_width_percent: None,
             dock_width_rule: crate::view::shell::frame::DockWidthRule::default(),
             dock_resizing: false,
             sidebar_sections: vec![sidebar::SidebarSection::explorer()],

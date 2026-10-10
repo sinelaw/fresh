@@ -3253,7 +3253,7 @@ mod tests {
         )
         .unwrap();
         // Pin the dock to the 30 columns `frame_the_shell` hands the tree.
-        editor.dock_width = Some(30);
+        editor.set_dock_width_cols(30);
         (editor, temp_dir)
     }
 
@@ -4183,7 +4183,7 @@ mod tests {
         );
 
         // Widen the dock: the same bytes wrap into fewer rows.
-        editor.dock_width = Some(60);
+        editor.set_dock_width_cols(60);
         editor.shell_description_stale = true;
         let dock = ratatui::layout::Rect::new(0, 0, 60, 24);
         let chrome = ratatui::layout::Rect::new(60, 0, 20, 24);

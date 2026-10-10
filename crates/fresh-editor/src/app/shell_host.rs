@@ -787,6 +787,7 @@ fn with_grid<R>(
         &editor.config.editor,
         editor.background_fade,
         editor.software_cursor_only,
+        editor.linux_console,
     );
     let session_mode = editor.session_mode || !editor.software_cursor_only;
 

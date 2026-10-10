@@ -18,6 +18,11 @@ path = "src/lib.rs"
 crossterm.workspace = true
 tracing.workspace = true
 
+# The Linux console mouse (`gpm`): libgpm is loaded at runtime.
+[target.'cfg(target_os = "linux")'.dependencies]
+libloading = "0.9"
+nix = { version = "0.31", features = ["poll"] }
+
 [dev-dependencies]
 proptest = "1.9"
 

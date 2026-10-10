@@ -91,13 +91,29 @@ const LIBGPM_PATHS: &[&str] = &[
     "/lib64/libgpm.so",
 ];
 
+/// Names a stand-in libgpm, loaded in place of the system one, for the tests
+/// that drive the binary (`tests/daemon_gpm_mouse.rs`). It also waives the
+/// Linux-console check, since a test's terminal is a pty rather than a VT.
+/// Never set outside tests.
+const TEST_LIB_ENV: &str = "FRESH_TEST_GPM_LIB";
+
+/// The stand-in libgpm named by [`TEST_LIB_ENV`], if any.
+pub fn test_lib_path() -> Option<std::ffi::OsString> {
+    std::env::var_os(TEST_LIB_ENV).filter(|p| !p.is_empty())
+}
+
 impl GpmLib {
     /// Try to load libgpm from common system paths
     fn try_load() -> Option<Self> {
+        if let Some(path) = test_lib_path() {
+            return Self::load_from_path(&path)
+                .map_err(|e| tracing::warn!("GPM FFI: cannot load {:?}: {}", path, e))
+                .ok();
+        }
         tracing::debug!("GPM FFI: Attempting to load libgpm...");
         for path in LIBGPM_PATHS {
             tracing::trace!("GPM FFI: Trying path: {}", path);
-            match Self::load_from_path(path) {
+            match Self::load_from_path(std::ffi::OsStr::new(path)) {
                 Ok(lib) => {
                     tracing::debug!("GPM FFI: Loaded libgpm from: {}", path);
                     return Some(lib);
@@ -112,7 +128,7 @@ impl GpmLib {
     }
 
     /// Load libgpm from a specific path
-    fn load_from_path(path: &str) -> Result<Self, libloading::Error> {
+    fn load_from_path(path: &std::ffi::OsStr) -> Result<Self, libloading::Error> {
         // SAFETY: We're loading a well-known system library with a stable ABI
         unsafe {
             let library = Library::new(path)?;

@@ -6266,6 +6266,7 @@ fn real_main() -> AnyhowResult<()> {
 
         // Detect terminal color capability
         let color_capability = fresh::view::color_support::ColorCapability::detect();
+        let linux_console = std::env::var("TERM").is_ok_and(|t| t == "linux");
 
         // The editor is constructed with the *real* authority it runs
         // under — local or a connected remote — so that every later step
@@ -6360,6 +6361,7 @@ fn real_main() -> AnyhowResult<()> {
         // `TerminalModes::enable` turned on above (#2504). Re-applied on every
         // editor instance (authority-swap restarts rebuild the editor).
         editor.set_mouse_capture(terminal_modes.mouse_capture_enabled());
+        editor.set_linux_console(linux_console);
 
         if let Some(p) = status_log_path {
             editor.set_status_log_path(p);

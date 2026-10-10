@@ -67,7 +67,7 @@ pub fn gpm_to_crossterm(event: &GpmEvent) -> Option<crossterm::event::MouseEvent
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::gpm::types::{GpmButtons, GpmEventType, GpmModifiers};
+    use crate::gpm::types::{GpmButtons, GpmEventType, GpmModifiers};
     use crossterm::event::{MouseButton, MouseEventKind};
 
     #[test]
