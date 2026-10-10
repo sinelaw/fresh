@@ -4,6 +4,8 @@
 
 ### Features
 
+* **A package for Debian testing and unstable** - each release also attaches `fresh-editor_<version>-1_<arch>.debian-testing.deb` (amd64 and arm64), built the way Debian's own archive would build it: from Debian's packaged Rust crates, with Debian's QuickJS running plugins and Debian's `esbuild` compiling their TypeScript. It installs only on Debian testing or unstable and needs the `esbuild` package; it leaves out the update checker, telemetry and tree-sitter. Its source package is attached as `fresh-editor_<version>-1.debian-testing-source.tar.gz`. The usual `.deb`, for any Debian or Ubuntu, is unchanged
+
 * **Find Next selects the whole match and marks it as the current match** - F3 / Shift+F3 (and Enter in the search bar) select the entire match, so a regex shows exactly how far it reaches and Delete removes the whole match; F3 after a Delete lands on a match that slid into its place. The current match, in Find Next and in Query Replace alike, is drawn bold in its own color, set by the new theme keys `search.current_match_bg` / `search.current_match_fg`. Reopening Ctrl+F on it brings back the query (e.g. the regex), not the matched text
 
 ### Bug Fixes

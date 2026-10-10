@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 /// A text property that associates metadata with a range of text
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ts_rs::TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, crate::TS)]
 #[ts(export)]
 pub struct TextProperty {
     /// Start byte offset (inclusive)
@@ -77,7 +77,7 @@ impl TextProperty {
 /// units and let the host convert them to byte offsets at
 /// consumption time — which is free in Rust against the entry's
 /// final text.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, crate::TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, rename_all = "camelCase")]
 pub enum OffsetUnit {
@@ -94,7 +94,7 @@ fn is_byte_unit(u: &OffsetUnit) -> bool {
 }
 
 /// An inline overlay specifying styling for a sub-range within a text entry
-#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, crate::TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, rename_all = "camelCase")]
 pub struct InlineOverlay {
@@ -121,7 +121,7 @@ pub struct InlineOverlay {
 /// computing byte/char offsets for overlays themselves. The host
 /// concatenates segment text and emits the corresponding overlays
 /// during `normalize_widths`.
-#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, crate::TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, rename_all = "camelCase")]
 pub struct StyledSegment {
@@ -141,7 +141,7 @@ pub struct StyledSegment {
 }
 
 /// An entry with text and its properties
-#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, crate::TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, rename_all = "camelCase")]
 pub struct TextPropertyEntry {

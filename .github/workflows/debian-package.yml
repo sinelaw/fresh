@@ -1,0 +1,148 @@
+# The Debian-archive build of Fresh (packaging/debian): source and binary
+# packages built the way Debian's buildds would, offline from the librust-*-dev
+# packages, with Debian's cargo and rustc, Debian's QuickJS and esbuild, and no
+# crates.io. See packaging/debian/README.source and
+# docs/internal/debian-quickjs-spike.md.
+#
+# The release's main .deb is a different thing: debian/ (linux-packages.yml)
+# builds it from crates.io with the default features, for any Debian or Ubuntu.
+# Releases also attach this build (release.yml calls this with `release: true`),
+# named so that neither the updater nor install.sh mistakes it for that one:
+#
+#   fresh-editor_<ver>-1_<arch>.debian-testing.deb
+#   fresh-editor_<ver>-1.debian-testing-source.tar.gz  (.dsc, orig and debian
+#                                                       tarballs, as dpkg-source
+#                                                       -x wants them)
+
+name: Debian package
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      release:
+        description: Stage the packages as release assets (artifacts-* with .sha256 sidecars)
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  debian-package:
+    name: Debian package (testing, ${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          # A native arm64 runner rather than emulation: the build compiles
+          # several hundred crates and runs the package's tests.
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container: debian:testing
+    timeout-minutes: 90
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Install packaging tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git dpkg-dev lintian xz-utils
+
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      # A `3.0 (quilt)` source package: the orig tarball is the tree as
+      # committed, and packaging/debian becomes its debian/ (replacing the
+      # release one, which the orig tarball also carries).
+      # The package version follows the workspace's, as debian/changelog does
+      # for the main .deb (scripts/update-debian-changelog.sh).
+      - name: Make the orig tarball and the source tree
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          cargo_version=$(awk -F'"' '/^\[workspace\.package\]/ { p = 1; next } /^\[/ { p = 0 }
+            p && /^version[[:space:]]*=/ { print $2; exit }' Cargo.toml)
+          sed -i "1s/([^)]*)/(${cargo_version}-1)/" packaging/debian/changelog
+          version=$(dpkg-parsechangelog -l packaging/debian/changelog -S Version)
+          test "$version" = "${cargo_version}-1"
+          upstream=${version%-*}
+          mkdir -p /build
+          git archive --prefix="fresh-editor-$upstream/" HEAD | xz -T0 > "/build/fresh-editor_$upstream.orig.tar.xz"
+          tar -xf "/build/fresh-editor_$upstream.orig.tar.xz" -C /build
+          rm -rf "/build/fresh-editor-$upstream/debian"
+          cp -r packaging/debian "/build/fresh-editor-$upstream/debian"
+          echo "SRC=/build/fresh-editor-$upstream" >> "$GITHUB_ENV"
+
+      - name: Install build dependencies
+        run: |
+          cd "$SRC"
+          apt-get build-dep -y ./
+
+      - name: Build the source and binary packages
+        run: |
+          cd "$SRC"
+          dpkg-buildpackage -us -uc
+
+      - name: Lintian
+        run: lintian --info --display-info --fail-on error /build/*.changes
+
+      - name: Install and smoke-test
+        run: |
+          test "$(dpkg --print-architecture)" = "${{ matrix.arch }}"
+          apt-get install -y /build/fresh-editor_*.deb
+          dpkg-deb --field /build/fresh-editor_*.deb Depends Built-Using Static-Built-Using
+          fresh --version
+          # init.ts is TypeScript: checking it runs the packaged esbuild.
+          mkdir -p "$HOME/.config/fresh"
+          printf 'const answer: number = 42;\neditor.setStatus(`answer ${answer}`);\n' > "$HOME/.config/fresh/init.ts"
+          fresh --cmd init check
+
+      - name: Stage release assets
+        if: ${{ inputs.release }}
+        run: |
+          version=$(dpkg-parsechangelog -l "$SRC/debian/changelog" -S Version)
+          upstream=${version%-*}
+          mkdir -p /release
+          cp "/build/fresh-editor_${version}_${{ matrix.arch }}.deb" \
+            "/release/fresh-editor_${version}_${{ matrix.arch }}.debian-testing.deb"
+          # The source package is the same from either architecture; one copy.
+          if [ "${{ matrix.arch }}" = amd64 ]; then
+            tar -czf "/release/fresh-editor_${version}.debian-testing-source.tar.gz" -C /build \
+              "fresh-editor_${version}.dsc" \
+              "fresh-editor_${upstream}.orig.tar.xz" \
+              "fresh-editor_${version}.debian.tar.xz"
+          fi
+          cd /release
+          for f in *; do sha256sum "$f" > "$f.sha256"; done
+          ls -la
+
+      - uses: actions/upload-artifact@v6
+        if: ${{ inputs.release }}
+        with:
+          name: artifacts-debian-testing-${{ matrix.arch }}
+          if-no-files-found: error
+          path: /release/*
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: fresh-editor-debian-testing-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            /build/*.deb
+            /build/*.dsc
+            /build/*.tar.xz
+            /build/*.buildinfo
+            /build/*.changes

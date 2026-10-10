@@ -19,24 +19,21 @@ serde_json.workspace = true
 schemars.workspace = true
 anyhow.workspace = true
 lsp-types.workspace = true
-ts-rs.workspace = true
+# ts-rs's derive, for the `fresh.d.ts` generator (feature `ts`); the no-op
+# stand-in from fresh-plugin-api-macros otherwise.
+ts-rs = { workspace = true, optional = true }
+fresh-plugin-api-macros.workspace = true
 unicode-width = "0.2"
-rquickjs = { workspace = true, optional = true }
-rquickjs-serde = { workspace = true, optional = true }
-
-# rquickjs-sys has no pre-generated bindings for FreeBSD
-[target.'cfg(target_os = "freebsd")'.dependencies]
-rquickjs = { workspace = true, optional = true, features = ["bindgen"] }
-
-# rquickjs-sys has no pre-generated bindings for NetBSD
-[target.'cfg(target_os = "netbsd")'.dependencies]
-rquickjs = { workspace = true, optional = true, features = ["bindgen"] }
+# The JS engine, behind Fresh's engine boundary (only with `plugins`).
+fresh-js = { workspace = true, optional = true }
 
 [dev-dependencies]
 proptest = "1.9"
 
 [features]
-plugins = ["dep:rquickjs", "dep:rquickjs-serde"]
+plugins = ["dep:fresh-js"]
+# Real `#[derive(TS)]` implementations, for generating fresh.d.ts.
+ts = ["dep:ts-rs"]
 
 [lints]
 workspace = true

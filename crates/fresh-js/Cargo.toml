@@ -1,0 +1,41 @@
+[package]
+name = "fresh-js"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "The JavaScript engine boundary for Fresh's plugin runtime: the one crate that names the engine, so it can be swapped without touching its users"
+
+# Two backends, chosen by a cfg rather than a cargo feature so that
+# `--all-features` builds never need libquickjs:
+#
+# - default: rquickjs (with its bundled quickjs-ng), re-exported as-is;
+# - RUSTFLAGS="--cfg fresh_js_system": Fresh's own backend over the system
+#   QuickJS (Debian's libquickjs) through fresh-quickjs-sys.
+
+[target.'cfg(not(fresh_js_system))'.dependencies]
+rquickjs.workspace = true
+rquickjs-serde.workspace = true
+serde.workspace = true
+
+# rquickjs-sys has no pre-generated bindings for FreeBSD
+[target.'cfg(all(not(fresh_js_system), target_os = "freebsd"))'.dependencies]
+rquickjs = { workspace = true, features = ["bindgen"] }
+
+# rquickjs-sys has no pre-generated bindings for NetBSD
+[target.'cfg(all(not(fresh_js_system), target_os = "netbsd"))'.dependencies]
+rquickjs = { workspace = true, features = ["bindgen"] }
+
+[target.'cfg(fresh_js_system)'.dependencies]
+fresh-quickjs-sys = { workspace = true, features = ["system"] }
+fresh-js-macros.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+serde.workspace = true
+
+[lints]
+workspace = true

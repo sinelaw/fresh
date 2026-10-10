@@ -1,0 +1,20 @@
+[package]
+name = "fresh-js-macros"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Proc macros for fresh-js's system-QuickJS backend: #[class], #[methods] and the Trace/JsLifetime derives, matching rquickjs's"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = { version = "2.0", features = ["full", "parsing", "extra-traits", "visit-mut"] }
+
+[lints]
+workspace = true

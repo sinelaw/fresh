@@ -1,0 +1,79 @@
+#!/usr/bin/make -f
+# Fresh as Debian's archive would build it: offline, from the librust-*-dev
+# packages in /usr/share/cargo/registry, through dh-cargo's cargo wrapper; on
+# Debian's QuickJS (libquickjs) instead of rquickjs, and with Debian's esbuild
+# compiling plugin TypeScript instead of oxc. See debian/README.source.
+
+include /usr/share/dpkg/pkg-info.mk
+include /usr/share/dpkg/architecture.mk
+include /usr/share/dpkg/buildflags.mk
+include /usr/share/rustc/architecture.mk
+export CFLAGS CXXFLAGS CPPFLAGS LDFLAGS
+export DEB_HOST_RUST_TYPE DEB_HOST_GNU_TYPE
+export DEB_BUILD_MAINT_OPTIONS := hardening=+all
+
+export PATH := /usr/share/cargo/bin:$(PATH)
+export CARGO_HOME := $(CURDIR)/debian/cargo_home
+export DEB_CARGO_CRATE := fresh-editor_$(DEB_VERSION_UPSTREAM)
+# Selects fresh-js's system QuickJS backend. The cargo wrapper moves RUSTFLAGS
+# into the config `prepare-debian` writes, so it must be set by then.
+export RUSTFLAGS := --cfg fresh_js_system
+export RUSTDOCFLAGS := --cfg fresh_js_system
+
+# runtime: the editor; plugins + embed-plugins: the plugin runtime and the
+# bundled plugins. Left out: oxc and tree-sitter (crates Debian lacks), http
+# and self-update (update checks, telemetry, self-update), gui.
+FEATURES := runtime,plugins,embed-plugins
+TARGET_DIR := target/$(DEB_HOST_RUST_TYPE)/release
+
+%:
+	dh $@
+
+# The manifests name crates Debian does not package (oxc, ts-rs, three
+# tree-sitter grammars, fresh-gui's renderer), as optional or other-target
+# dependencies; cargo still has to resolve them. Rewrite the manifests so the
+# workspace resolves from the registry alone (keeping the originals for
+# `clean`), and drop the upstream Cargo.lock: the registry decides versions.
+override_dh_auto_configure:
+	[ -f debian/upstream-manifests.tar ] || \
+		tar -cf debian/upstream-manifests.tar Cargo.lock \
+			$$(find . -name Cargo.toml -not -path './debian/*' -not -path './spikes/*')
+	python3 scripts/debian.py patch-manifests /usr/share/cargo/registry
+	rm -f Cargo.lock
+	cargo prepare-debian debian/cargo_registry --link-from-system
+
+# Upstream's release profile uses fat LTO and no debug info. dh-cargo adds full
+# debug info (for the -dbgsym package) and links with GNU ld, and that
+# combination fails: the debug info still refers to statics that fat LTO
+# dropped (e.g. encoding_rs's encodings), which ld.bfd rejects. Build this
+# package without LTO.
+CARGO_PROFILE := --config profile.release.lto=false
+
+override_dh_auto_build:
+	cargo build --release $(CARGO_PROFILE) -p fresh-editor --no-default-features --features $(FEATURES)
+
+# The engine boundary (both backends' shared behaviour), TypeScript through
+# the real esbuild, and the plugin runtime. The editor's own end-to-end suite
+# drives a virtual terminal for a long time and runs upstream instead.
+override_dh_auto_test:
+	cargo test --release $(CARGO_PROFILE) -p fresh-js -p fresh-parser-js -p fresh-plugin-runtime \
+		--no-default-features --features fresh-core/plugins
+
+override_dh_auto_install:
+	install -D -m 755 $(TARGET_DIR)/fresh debian/fresh-editor/usr/bin/fresh
+	# Tells the editor it was installed by apt, so it leaves updates to apt.
+	sh scripts/write-install-receipt.sh apt \
+		debian/fresh-editor/usr/share/fresh-editor/install-receipt.toml \
+		target=$(DEB_HOST_RUST_TYPE) pkg_arch=$(DEB_HOST_ARCH)
+	# fresh-quickjs-sys's C shim is built from this source package; telling
+	# dh-cargo-built-using where that crate lives keeps it out of Built-Using.
+	CARGO_BUILT_USING_SRC_DIR=$(CURDIR)/crates/fresh-quickjs-sys \
+		/usr/share/cargo/bin/dh-cargo-built-using fresh-editor
+
+override_dh_installchangelogs:
+	dh_installchangelogs CHANGELOG.md
+
+override_dh_auto_clean:
+	if [ -f debian/upstream-manifests.tar ]; then \
+		tar -xf debian/upstream-manifests.tar && rm debian/upstream-manifests.tar; fi
+	rm -rf debian/cargo_home debian/cargo_registry target

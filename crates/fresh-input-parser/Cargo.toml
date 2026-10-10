@@ -18,10 +18,12 @@ path = "src/lib.rs"
 crossterm.workspace = true
 tracing.workspace = true
 
-# The Linux console mouse (`gpm`): libgpm is loaded at runtime.
+# The Linux console mouse (`gpm`): libgpm is loaded at runtime. Both accept
+# the versions Debian ships (libloading 0.8, nix 0.30) as well as the current
+# ones.
 [target.'cfg(target_os = "linux")'.dependencies]
-libloading = "0.9"
-nix = { version = "0.31", features = ["poll"] }
+libloading = ">=0.8, <0.10"
+nix = { version = ">=0.30, <0.32", features = ["poll"] }
 
 [dev-dependencies]
 proptest = "1.9"

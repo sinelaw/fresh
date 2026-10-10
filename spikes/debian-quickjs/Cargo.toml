@@ -1,0 +1,21 @@
+# Spike: bind Fresh's plugin runtime to the system QuickJS that Debian ships
+# (libquickjs), instead of rquickjs's bundled quickjs-ng. See
+# docs/internal/debian-quickjs-spike.md.
+#
+# A separate workspace on purpose: these crates need libquickjs installed to
+# build, so they stay out of the main workspace (and `cargo check --workspace`
+# in CI) until that question is settled.
+[workspace]
+resolver = "2"
+members = ["fresh-quickjs-sys", "fresh-quickjs", "compat-ng"]
+
+[workspace.package]
+version = "0.0.0"
+authors = ["Noam Lewis"]
+edition = "2021"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/sinelaw/fresh"
+publish = false
+
+[workspace.dependencies]
+serde_json = "1.0"

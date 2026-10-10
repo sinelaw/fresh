@@ -17,8 +17,11 @@ By contributing, you agree that your contributions are licensed under GPL-3.0-or
 | `fresh-core` | Shared core types and plugin API |
 | `fresh-languages` | Tree-sitter language grammars |
 | `fresh-plugin-runtime` | QuickJS-based plugin runtime |
+| `fresh-js` | The JS engine boundary: the only crate that names the engine (rquickjs by default; the system QuickJS with `RUSTFLAGS="--cfg fresh_js_system"`) |
+| `fresh-quickjs-sys` | Bindings to the system QuickJS (Debian's `libquickjs`) for `fresh-js`'s system backend |
+| `fresh-js-macros` | Proc-macros for `fresh-js`'s system backend |
 | `fresh-plugin-api-macros` | Proc-macros for the plugin API |
-| `fresh-parser-js` | JavaScript/TypeScript parser |
+| `fresh-parser-js` | TypeScript transpile/bundle for plugins (oxc, or an external `esbuild` without the `oxc` feature) |
 
 The `gui` feature on `fresh-editor` pulls in `fresh-gui` as an optional dependency.
 When it is disabled (the default), no windowing or GPU crates are compiled.

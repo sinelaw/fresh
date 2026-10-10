@@ -14,6 +14,9 @@ members = [
     "crates/fresh-input-parser",
     "crates/fresh-update",
     "crates/fresh-i18n",
+    "crates/fresh-js",
+    "crates/fresh-quickjs-sys",
+    "crates/fresh-js-macros",
 ]
 default-members = [
     "crates/fresh-editor",
@@ -28,6 +31,7 @@ default-members = [
     "crates/fresh-input-parser",
     "crates/fresh-update",
     "crates/fresh-i18n",
+    "crates/fresh-js",
 ]
 
 # A bare `tokio::runtime::Handle` keeps nothing alive, so a runtime can be shut
@@ -35,6 +39,12 @@ default-members = [
 # member via `[lints] workspace = true`, so the rule reaches integration-test
 # crates too — which a crate-root `#![deny]` cannot. See `clippy.toml` for what
 # to hold instead and for the few places a borrowed `Handle` is still right.
+# `fresh_js_system` selects Fresh's system-QuickJS backend (crates/fresh-js);
+# it is set with RUSTFLAGS="--cfg fresh_js_system", not a cargo feature, so
+# `--all-features` builds never require libquickjs.
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fresh_js_system)"] }
+
 [workspace.lints.clippy]
 disallowed_types = "deny"
 disallowed_methods = "deny"
@@ -58,20 +68,25 @@ fresh-core = { version = "0.5.2", path = "crates/fresh-core" }
 # and with them the whole bundled tree-sitter grammar set.
 fresh-editor-core = { version = "0.5.2", path = "crates/fresh-editor-core", default-features = false }
 fresh-gui = { version = "0.5.2", path = "crates/fresh-gui" }
-fresh-parser-js = { version = "0.5.2", path = "crates/fresh-parser-js" }
+# `default-features = false` on these two so a member can build them without
+# oxc (their `oxc` feature); members that want it enable it explicitly.
+fresh-parser-js = { version = "0.5.2", path = "crates/fresh-parser-js", default-features = false }
 fresh-languages = { version = "0.5.2", path = "crates/fresh-languages" }
-fresh-plugin-runtime = { version = "0.5.2", path = "crates/fresh-plugin-runtime" }
+fresh-plugin-runtime = { version = "0.5.2", path = "crates/fresh-plugin-runtime", default-features = false }
 fresh-plugin-api-macros = { version = "0.5.2", path = "crates/fresh-plugin-api-macros" }
 fresh-winterm = { version = "0.5.2", path = "crates/fresh-winterm" }
 fresh-input-parser = { version = "0.5.2", path = "crates/fresh-input-parser" }
 fresh-update = { version = "0.5.2", path = "crates/fresh-update" }
 fresh-ui = { version = "0.5.2", path = "crates/fresh-ui" }
 fresh-i18n = { version = "0.5.2", path = "crates/fresh-i18n" }
+fresh-js = { version = "0.5.2", path = "crates/fresh-js" }
+fresh-quickjs-sys = { version = "0.5.2", path = "crates/fresh-quickjs-sys" }
+fresh-js-macros = { version = "0.5.2", path = "crates/fresh-js-macros" }
 
 # External crates
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
-jsonc-parser = { version = "0.32", features = ["serde", "serde_json", "cst"] }
+jsonc-parser = { version = "0.33", features = ["serde", "serde_json", "cst"] }
 anyhow = { version = "1.0.100", default-features = false }
 tokio = { version = "1.49", features = ["fs", "io-util", "process", "rt", "rt-multi-thread", "sync", "time", "macros"] }
 once_cell = "1.20"

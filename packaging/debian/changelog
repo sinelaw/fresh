@@ -1,0 +1,6 @@
+fresh-editor (0.5.2-1) UNRELEASED; urgency=medium
+
+  * Initial release, built from Debian's packaged crates with Debian's
+    QuickJS and esbuild. (ITP bug to be filed.)
+
+ -- Noam Lewis <i9uqoqj7k@mozmail.com>  Thu, 08 Oct 2026 20:00:00 +0000
