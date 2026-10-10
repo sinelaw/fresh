@@ -286,6 +286,16 @@ jobs:
     uses: ./.github/workflows/linux-packages.yml
     secrets: inherit
 
+  # The Debian-archive build (packaging/debian): built on debian:testing from
+  # Debian's own crates, QuickJS and esbuild, so it installs on Debian
+  # testing/unstable only. Attached under its own names beside the main .deb.
+  build-debian-testing:
+    needs: [plan]
+    if: ${{ needs.plan.outputs.publishing == 'true' }}
+    uses: ./.github/workflows/debian-package.yml
+    with:
+      release: true
+
   # Build Flatpak bundle
   build-flatpak:
     needs: [plan, build]
@@ -456,7 +466,7 @@ jobs:
   # Only runs if ALL needed jobs succeed - uses !cancelled() to run after all jobs complete,
   # then !failure() ensures none failed
   release:
-    needs: [plan, build, build-freebsd, build-musl, build-min-size, build-linux-packages, build-flatpak, build-appimage, build-gui, build-npm-package, build-homebrew-formula, test-nix-build]
+    needs: [plan, build, build-freebsd, build-musl, build-min-size, build-linux-packages, build-debian-testing, build-flatpak, build-appimage, build-gui, build-npm-package, build-homebrew-formula, test-nix-build]
     if: ${{ !cancelled() && !failure() && needs.plan.outputs.publishing == 'true' }}
     runs-on: ubuntu-22.04
     env:
