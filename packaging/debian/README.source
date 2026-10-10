@@ -34,6 +34,11 @@ and `scripts/debian.py check Packages.xz` checks that the archive can supply
 every dependency of the build. Upstream CI runs the check, and the
 `Debian package` workflow (.github/workflows/debian-package.yml) builds
 this package from a fresh orig tarball on every pull request.
+Releases attach its output beside the main .deb, under names the updater
+and install.sh never pick: fresh-editor_<ver>-1_<arch>.debian-testing.deb
+(amd64, arm64) and fresh-editor_<ver>-1.debian-testing-source.tar.gz (the
+.dsc with its orig and debian tarballs). The package version follows the
+workspace version in Cargo.toml.
 
 To build from a checkout:
 
