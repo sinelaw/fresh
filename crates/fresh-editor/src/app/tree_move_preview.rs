@@ -18,6 +18,15 @@ use fresh_core::text_property::{InlineOverlay, OffsetUnit, StyledSegment, TextPr
 use crate::view::move_preview::{typed_runs, typed_split, MovePreview, GHOST_BG};
 use crate::widgets::{PanelKey, WidgetInstanceState};
 
+/// The item key a preview's empty row carries: no plugin's, so it can be
+/// told apart from every row the plugin made.
+const PREVIEW_ROW_PREFIX: &str = "\u{0}move-preview:";
+
+/// Whether `key` is a preview's empty row rather than one of the plugin's.
+pub(crate) fn is_preview_row(key: &str) -> bool {
+    key.starts_with(PREVIEW_ROW_PREFIX)
+}
+
 /// One plugin tree's preview in flight.
 #[derive(Debug, Clone)]
 pub(crate) struct TreeMovePreview {
@@ -221,7 +230,7 @@ pub(crate) fn splice_tree(
         cells: Vec::new(),
     };
     nodes.insert(at, phantom);
-    let phantom_key = format!("\u{0}move-preview:{}", p.source_key);
+    let phantom_key = format!("{PREVIEW_ROW_PREFIX}{}", p.source_key);
     std::sync::Arc::make_mut(item_keys).insert(at, phantom_key);
 
     // The selection is an index into `nodes`, so a row inserted above it

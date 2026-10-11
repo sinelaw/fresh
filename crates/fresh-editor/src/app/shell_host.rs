@@ -68,20 +68,35 @@ pub(crate) struct WidgetDrag {
     /// the plugin hears where the drag is (`drag`, then `dragend`), so a
     /// plain click never flashes a drag's styling.
     pub strayed: bool,
-    /// The row the plugin was last told the drag is over.
+    /// The row the drag is over.
     pub target: Option<String>,
+    /// The row the plugin was last told the drag is over. Told once per
+    /// pointer event ([`crate::app::Editor::flush_widget_drag`]), so the
+    /// leave from one row and the enter on the next — one move — reach it as
+    /// the one change they are, not as "off every row" and then the row.
+    pub announced: Option<String>,
+    /// The pointer is on a move preview's empty row, which stands for where
+    /// the drag already was ([`Self::announced`]) — whatever order the leave
+    /// from that row and the enter on this one arrived in.
+    pub on_preview_row: bool,
 }
 
 impl crate::app::Editor {
-    /// Tell the plugin where the held drag is: `drag`, `{ key, target }` —
-    /// the row lifted and the row under the pointer (`null` off every row).
-    /// What a drop there would do is the plugin's to show.
-    fn announce_widget_drag(&mut self) {
-        let Some(d) = self.widget_drag.as_ref() else {
+    /// Tell the plugin where the held drag is, if that changed since it was
+    /// last told: `drag`, `{ key, target }` — the row lifted and the row under
+    /// the pointer (`null` off every row). What a drop there would do is the
+    /// plugin's to show. Called once a pointer event's facts are all applied.
+    pub(crate) fn flush_widget_drag(&mut self) {
+        let Some(d) = self.widget_drag.as_mut() else {
             return;
         };
+        if !d.strayed || d.on_preview_row || d.target == d.announced {
+            return;
+        }
+        d.announced = d.target.clone();
+        let d = d.clone();
         let payload = serde_json::json!({ "key": row_key(&d.press), "target": d.target });
-        self.fire_drag_event(d, "drag", payload);
+        self.fire_drag_event(&d, "drag", payload);
     }
 
     /// The tree's drag is over: forget the held row, and tell the plugin the
@@ -1822,7 +1837,10 @@ impl Editor {
         // dropped, released off every row, or its row gone before the
         // release — the tree knows which drag is held, and nothing else
         // needs to be told.
-        if !dragging {
+        if dragging {
+            // Where a held tree drag is now, told once for the whole event.
+            self.flush_widget_drag();
+        } else {
             self.end_widget_drag();
             self.explorer_drag = None;
         }
@@ -2375,6 +2393,8 @@ impl Editor {
                     clicks,
                     strayed: false,
                     target: None,
+                    announced: None,
+                    on_preview_row: false,
                 });
             }
             UiFact::WidgetDragOver { slot, event } => {
@@ -2382,11 +2402,18 @@ impl Editor {
                     return;
                 }
                 let over = row_key(&event).map(str::to_string);
+                // A move preview's empty row is there because of where the
+                // drag already is: over it, the drag is still there.
+                let preview_row = over
+                    .as_deref()
+                    .is_some_and(crate::app::tree_move_preview::is_preview_row);
                 if let Some(d) = self.widget_drag.as_mut() {
-                    d.strayed |= row_key(&d.press) != over.as_deref();
-                    if d.strayed {
-                        d.target = over.clone();
-                        self.announce_widget_drag();
+                    d.on_preview_row = preview_row;
+                    if !preview_row {
+                        d.strayed |= row_key(&d.press) != over.as_deref();
+                        if d.strayed {
+                            d.target = over.clone();
+                        }
                     }
                 }
                 // A card's hover band is the panel's memo; a compact row's is
@@ -2405,9 +2432,13 @@ impl Editor {
                 }
                 let off = row_key(&event).map(str::to_string);
                 if let Some(d) = self.widget_drag.as_mut() {
-                    if d.strayed && d.target == off {
+                    if off
+                        .as_deref()
+                        .is_some_and(crate::app::tree_move_preview::is_preview_row)
+                    {
+                        d.on_preview_row = false;
+                    } else if d.strayed && d.target == off {
                         d.target = None;
-                        self.announce_widget_drag();
                     }
                 }
                 let hover = UiFact::WidgetHover {
@@ -2432,6 +2463,12 @@ impl Editor {
                     return;
                 };
                 let (from, to) = (row_key(&drag.press), row_key(&event));
+                // Dropped on a move preview's empty row: on where the drag
+                // was, which is what that row is showing.
+                let to = match to.is_some_and(crate::app::tree_move_preview::is_preview_row) {
+                    true => drag.announced.as_deref(),
+                    false => to,
+                };
                 if from == to {
                     if !drag.strayed {
                         let click = UiFact::WidgetHit {
