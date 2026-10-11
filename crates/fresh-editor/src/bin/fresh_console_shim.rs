@@ -33,7 +33,8 @@ where
 }
 
 /// Set on the child, so a launcher that ends up starting another launcher
-/// (a copy or hard link of it named `.exe`) stops instead of recursing.
+/// (a copy or hard link of it named `.exe`) stops instead of recursing. The
+/// editor removes it at startup so nothing it spawns inherits it.
 #[cfg_attr(not(windows), allow(dead_code))]
 const NESTED_MARKER: &str = "FRESH_CONSOLE_SHIM";
 
