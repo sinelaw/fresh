@@ -8,3 +8,7 @@ pub mod thread;
 pub mod ts_export;
 
 pub use thread::{PluginConfig, PluginThreadHandle};
+
+/// The TypeScript/JavaScript toolchain the runtime compiles plugins with, for
+/// the editor's own uses (syntax checks, scripts, the precompiled registry).
+pub use fresh_parser_js;

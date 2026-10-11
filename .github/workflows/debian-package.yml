@@ -99,15 +99,22 @@ jobs:
       - name: Lintian
         run: lintian --info --display-info --fail-on error /build/*.changes
 
+      # Installed without Recommends first: esbuild is only for the user's own
+      # TypeScript, so without it Fresh runs and says what to install. With it,
+      # init.ts (TypeScript) checks out.
       - name: Install and smoke-test
         run: |
           test "$(dpkg --print-architecture)" = "${{ matrix.arch }}"
-          apt-get install -y /build/fresh-editor_*.deb
-          dpkg-deb --field /build/fresh-editor_*.deb Depends Built-Using Static-Built-Using
+          apt-get purge -y esbuild
+          apt-get install -y --no-install-recommends /build/fresh-editor_*.deb
+          dpkg-deb --field /build/fresh-editor_*.deb Depends Recommends Built-Using Static-Built-Using
+          if command -v esbuild; then echo "esbuild should not be installed"; exit 1; fi
           fresh --version
-          # init.ts is TypeScript: checking it runs the packaged esbuild.
           mkdir -p "$HOME/.config/fresh"
           printf 'const answer: number = 42;\neditor.setStatus(`answer ${answer}`);\n' > "$HOME/.config/fresh/init.ts"
+          if fresh --cmd init check > /tmp/check.txt 2>&1; then echo "init check passed without esbuild"; exit 1; fi
+          grep "apt install esbuild" /tmp/check.txt
+          apt-get install -y --no-install-recommends esbuild
           fresh --cmd init check
 
       - name: Stage release assets

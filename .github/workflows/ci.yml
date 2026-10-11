@@ -253,11 +253,15 @@ jobs:
       - name: Engine boundary, TypeScript (esbuild) and plugin runtime
         run: cargo test --locked -p fresh-js -p fresh-core -p fresh-parser-js -p fresh-plugin-runtime --no-default-features --features fresh-core/plugins
       - name: Editor plugin tests (Debian package features)
-        run: cargo test --locked -p fresh-editor --no-default-features --features runtime,plugins,embed-plugins --test all_tests plugin
+        run: cargo test --locked -p fresh-editor --no-default-features --features runtime,plugins,embed-plugins,precompiled-plugins --test all_tests plugin
+      # Every bundled plugin has build-time JavaScript, so the package runs
+      # them without esbuild.
+      - name: Bundled plugins are precompiled
+        run: cargo test --locked -p fresh-editor --no-default-features --features runtime,plugins,embed-plugins,precompiled-plugins --lib embedded
       - name: Debian testing can supply every Rust dependency
         run: |
           curl -fsSL -o /tmp/Packages.xz https://deb.debian.org/debian/dists/testing/main/binary-amd64/Packages.xz
-          python3 scripts/debian.py check /tmp/Packages.xz --features runtime,plugins,embed-plugins
+          python3 scripts/debian.py check /tmp/Packages.xz --features runtime,plugins,embed-plugins,precompiled-plugins
 
   # The release pipeline gets one shot per tag: a typo in a workflow expression
   # or a `run:` block surfaces when a release is already half-published, where

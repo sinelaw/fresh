@@ -98,10 +98,7 @@ use fresh_core::overlay::OverlayNamespace;
 use fresh_core::text_property::TextPropertyEntry;
 use fresh_core::{BufferId, SplitId};
 use fresh_js::{Context, Function, Object, Runtime, Value};
-use fresh_parser_js::{
-    bundle_module, has_es_imports, has_es_module_syntax, strip_imports_and_exports,
-    transpile_typescript,
-};
+use fresh_parser_js::has_es_imports;
 use fresh_plugin_api_macros::{plugin_api, plugin_api_impl};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -10443,43 +10440,22 @@ impl QuickJsBackend {
         let source = std::fs::read_to_string(&path_buf)
             .map_err(|e| anyhow!("Failed to read plugin {}: {}", path, e))?;
 
-        let filename = path_buf
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("plugin.ts");
-
-        // Check for ES imports - these need bundling to resolve dependencies
-        if has_es_imports(&source) {
-            // Try to bundle (this also strips imports and exports)
-            match bundle_module(&path_buf) {
-                Ok(bundled) => {
-                    self.execute_js(&bundled, path)?;
-                }
-                Err(e) => {
-                    // An error, not a silent skip: "Load Plugin from Buffer"
-                    // and `reloadPlugin` report it, and the startup scan
-                    // (`thread.rs`) already fails the same way.
+        // Compile to JS, unless this build compiled the plugin already
+        // (fresh_parser_js::precompiled).
+        let js_code = match fresh_parser_js::precompiled::lookup(&path_buf, &source) {
+            Some(js) => js.to_string(),
+            None => match fresh_parser_js::compile_plugin(&path_buf, &source) {
+                Ok(js) => js,
+                // An error, not a silent skip: "Load Plugin from Buffer" and
+                // `reloadPlugin` report it, and the startup scan (`thread.rs`)
+                // already fails the same way.
+                Err(e) if has_es_imports(&source) => {
                     return Err(anyhow!("Failed to bundle plugin {}: {}", path, e));
                 }
-            }
-        } else if has_es_module_syntax(&source) {
-            // Has exports but no imports - strip exports and transpile
-            let stripped = strip_imports_and_exports(&source);
-            let js_code = if filename.ends_with(".ts") {
-                transpile_typescript(&stripped, filename)?
-            } else {
-                stripped
-            };
-            self.execute_js(&js_code, path)?;
-        } else {
-            // Plain code - just transpile if TypeScript
-            let js_code = if filename.ends_with(".ts") {
-                transpile_typescript(&source, filename)?
-            } else {
-                source
-            };
-            self.execute_js(&js_code, path)?;
-        }
+                Err(e) => return Err(e),
+            },
+        };
+        self.execute_js(&js_code, path)?;
 
         Ok(())
     }

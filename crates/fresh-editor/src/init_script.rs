@@ -644,15 +644,16 @@ pub fn check(config_dir: &Path) -> CheckReport {
     // The same parser the runtime compiles init.ts with: oxc in-process, or
     // the `esbuild` executable in builds without the `oxc` feature.
     let filename = path.to_string_lossy();
-    let diagnostics: Vec<CheckDiagnostic> = fresh_parser_js::syntax_errors(&source, &filename)
-        .into_iter()
-        .map(|e| CheckDiagnostic {
-            severity: CheckSeverity::Error,
-            message: e.message,
-            line: e.line,
-            column: e.column,
-        })
-        .collect();
+    let diagnostics: Vec<CheckDiagnostic> =
+        fresh_plugin_runtime::fresh_parser_js::syntax_errors(&source, &filename)
+            .into_iter()
+            .map(|e| CheckDiagnostic {
+                severity: CheckSeverity::Error,
+                message: e.message,
+                line: e.line,
+                column: e.column,
+            })
+            .collect();
 
     CheckReport {
         ok: diagnostics.is_empty(),

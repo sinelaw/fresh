@@ -1427,11 +1427,13 @@ fn prepare_plugin(path: &Path) -> Result<PreparedPlugin> {
         None
     };
 
-    // Transpile/bundle to JS (same logic as QuickJsBackend::load_module_with_source)
-    let js_code = if fresh_parser_js::has_es_imports(&source) {
-        match fresh_parser_js::bundle_module(path) {
-            Ok(bundled) => bundled,
-            Err(e) => {
+    // Compile to JS (as QuickJsBackend::load_module_with_source does), unless
+    // this build compiled the plugin already (fresh_parser_js::precompiled).
+    let js_code = match fresh_parser_js::precompiled::lookup(path, &source) {
+        Some(js) => js.to_string(),
+        None => match fresh_parser_js::compile_plugin(path, &source) {
+            Ok(js) => js,
+            Err(e) if fresh_parser_js::has_es_imports(&source) => {
                 tracing::warn!(
                     "Plugin {} uses ES imports but bundling failed: {}. Skipping.",
                     path.display(),
@@ -1439,18 +1441,8 @@ fn prepare_plugin(path: &Path) -> Result<PreparedPlugin> {
                 );
                 return Err(anyhow!("Bundling failed for {}: {}", plugin_name, e));
             }
-        }
-    } else if fresh_parser_js::has_es_module_syntax(&source) {
-        let stripped = fresh_parser_js::strip_imports_and_exports(&source);
-        if filename.ends_with(".ts") {
-            fresh_parser_js::transpile_typescript(&stripped, filename)?
-        } else {
-            stripped
-        }
-    } else if filename.ends_with(".ts") {
-        fresh_parser_js::transpile_typescript(&source, filename)?
-    } else {
-        source
+            Err(e) => return Err(e),
+        },
     };
 
     // Load accompanying .i18n.json file

@@ -21,9 +21,11 @@ export RUSTFLAGS := --cfg fresh_js_system
 export RUSTDOCFLAGS := --cfg fresh_js_system
 
 # runtime: the editor; plugins + embed-plugins: the plugin runtime and the
-# bundled plugins. Left out: oxc and tree-sitter (crates Debian lacks), http
-# and self-update (update checks, telemetry, self-update), gui.
-FEATURES := runtime,plugins,embed-plugins
+# bundled plugins; precompiled-plugins: the bundled plugins compiled with
+# esbuild now, so running them needs no esbuild (see debian/control). Left out:
+# oxc and tree-sitter (crates Debian lacks), http and self-update (update
+# checks, telemetry, self-update), gui.
+FEATURES := runtime,plugins,embed-plugins,precompiled-plugins
 TARGET_DIR := target/$(DEB_HOST_RUST_TYPE)/release
 
 %:

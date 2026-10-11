@@ -34,6 +34,8 @@ pub use esbuild_backend::{
     transpile_typescript,
 };
 
+pub mod precompiled;
+
 /// Whether [`emit_isolated_declarations`] works with this build's backend
 /// (only oxc can emit `.d.ts` declarations).
 pub const CAN_EMIT_DECLARATIONS: bool = cfg!(feature = "oxc");
@@ -63,6 +65,32 @@ pub fn has_es_module_syntax(source: &str) -> bool {
 /// Kept for backwards compatibility
 pub fn has_es_imports(source: &str) -> bool {
     source.contains("import ") && source.contains(" from ")
+}
+
+/// Compile the plugin at `path`, whose contents are `source`, to the
+/// JavaScript the plugin runtime evaluates: bundled with its relative imports
+/// if it has any, otherwise with module syntax stripped, and transpiled if it
+/// is TypeScript. Every plugin load goes through this (or through a
+/// [`precompiled`] result of it).
+pub fn compile_plugin(path: &std::path::Path, source: &str) -> Result<String> {
+    let filename = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("plugin.ts");
+    if has_es_imports(source) {
+        bundle_module(path)
+    } else if has_es_module_syntax(source) {
+        let stripped = strip_imports_and_exports(source);
+        if filename.ends_with(".ts") {
+            transpile_typescript(&stripped, filename)
+        } else {
+            Ok(stripped)
+        }
+    } else if filename.ends_with(".ts") {
+        transpile_typescript(source, filename)
+    } else {
+        Ok(source.to_string())
+    }
 }
 
 /// Extract plugin dependency names from `import ... from "fresh:plugin/NAME"` statements.

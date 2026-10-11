@@ -564,7 +564,7 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("check")
     p.add_argument("packages", help="Debian Packages index (plain or .xz)")
-    p.add_argument("--features", default="runtime,plugins,embed-plugins")
+    p.add_argument("--features", default="runtime,plugins,embed-plugins,precompiled-plugins")
     p = sub.add_parser("packages")
     p.add_argument("packages", help="Debian Packages index (plain or .xz)")
     p.add_argument("--control", action="store_true",

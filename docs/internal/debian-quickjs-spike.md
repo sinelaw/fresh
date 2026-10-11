@@ -240,12 +240,28 @@ Debian build drops oxc and runs esbuild instead:
 The Debian CI job builds with `--no-default-features` (so no oxc) and runs the
 `fresh-parser-js` tests (including ones against the real esbuild), the plugin
 runtime's tests, and the editor's plugin end-to-end tests with exactly the
-Debian package's features (`runtime,plugins,embed-plugins`).
+Debian package's features (`runtime,plugins,embed-plugins,precompiled-plugins`).
+
+### Bundled plugins compiled at build time
+
+The `precompiled-plugins` feature (on in the Debian package) compiles the
+bundled plugins while Fresh builds: `fresh-editor`'s build script runs
+`fresh_parser_js::compile_plugin` (with esbuild) over every top-level
+`plugins/*.ts` and embeds the JavaScript, keyed by file name and a hash of the
+source. At run time, a plugin loaded from the embedded-plugins directory whose
+source still matches uses that JavaScript (`fresh_parser_js::precompiled`);
+anything else is compiled as usual. So the Debian package needs esbuild only at
+build time and *recommends* it for the user's own TypeScript (`init.ts`, user
+and package-manager plugins, scripts); without it Fresh says what to install.
+Installed with `--no-install-recommends`, the package adds just `fresh-editor`,
+`libonig5` and nothing else from Fresh's side (esbuild's own Recommends pull in
+Node.js, which is why this matters). Plugin preparation at startup also drops
+from about 200 ms to about 50 ms on a cold start, since nothing is compiled.
 
 ## The Debian build's dependencies
 
 With the system QuickJS, esbuild in place of oxc, and the Debian feature set
-(`runtime,plugins,embed-plugins`), **Debian needs no new Rust packages**:
+(`runtime,plugins,embed-plugins,precompiled-plugins`), **Debian needs no new Rust packages**:
 every dependency of `fresh-editor` is in testing at a version Fresh accepts,
 with the features Fresh asks for. Getting there also took:
 
@@ -308,8 +324,9 @@ features:
 - `debian/control` lists the `librust-*-dev` Build-Depends that
   `scripts/debian.py packages --control` generates (debcargo-style:
   `librust-<crate>-<semver>+<feature>-dev`, dev-only ones `<!nocheck>`),
-  plus `libquickjs`, `dh-cargo`, `python3-tomlkit` and, for the tests,
-  `esbuild`. The binary package `Depends: esbuild` and records QuickJS in
+  plus `libquickjs`, `dh-cargo`, `python3-tomlkit` and `esbuild` (which
+  compiles the bundled plugins and runs the tests). The binary package
+  `Recommends: esbuild` (for the user's own TypeScript) and records QuickJS in
   `Static-Built-Using` (`fresh-quickjs-sys`'s build script tells
   `dh-cargo-built-using` that QuickJS is MIT and comes from `libquickjs`).
 - `debian/rules` runs `patch-manifests` (restoring the originals on `clean`),
@@ -385,7 +402,8 @@ builds the upstream `.deb` with the default features):
 Build-Depends: debhelper-compat (= 13), dh-cargo, cargo, rustc,
  libquickjs, esbuild, libclang-dev, pkg-config,
  librust-…-dev (the crates in Cargo.toml)
-Depends: ${shlibs:Depends}, ${misc:Depends}, esbuild
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Recommends: esbuild, git
 Built-Using: ${cargo:Built-Using}, quickjs (= <version>)
 ```
 
@@ -394,7 +412,7 @@ export RUSTFLAGS += --cfg fresh_js_system
 export RUSTDOCFLAGS += --cfg fresh_js_system
 override_dh_auto_build:
 	cargo build --release -p fresh-editor --no-default-features \
-	    --features runtime,plugins,embed-plugins
+	    --features runtime,plugins,embed-plugins,precompiled-plugins
 ```
 
 `Built-Using: quickjs` is needed because QuickJS is linked statically
