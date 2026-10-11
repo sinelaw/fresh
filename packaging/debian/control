@@ -135,8 +135,9 @@ Depends:
  ${shlibs:Depends},
  ${misc:Depends},
 Recommends:
- esbuild,
  git,
+Suggests:
+ esbuild,
 Built-Using: ${cargo:Built-Using}
 Static-Built-Using: ${cargo:Static-Built-Using}
 Description: terminal text editor with LSP support and TypeScript plugins
@@ -148,8 +149,8 @@ Description: terminal text editor with LSP support and TypeScript plugins
  It is extended with plugins written in TypeScript, which run in an embedded
  QuickJS engine. The bundled plugins are compiled when the package is built;
  your own TypeScript (init.ts, your plugins, plugins installed by the
- package manager from git repositories) is compiled with esbuild, which is
- recommended for that.
+ package manager from git repositories) is compiled with esbuild: install the
+ esbuild package to use those.
  .
  This build uses Debian's QuickJS and esbuild, and leaves out the network
  features (update checks, telemetry, self-update) and the tree-sitter

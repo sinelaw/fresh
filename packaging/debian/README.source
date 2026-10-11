@@ -16,8 +16,10 @@ How it differs from an upstream build:
  * Plugin TypeScript is compiled by Debian's esbuild instead of the oxc
    crates. The bundled plugins are compiled when the package builds (the
    precompiled-plugins feature; esbuild is a Build-Depends), so esbuild is
-   only Recommended: it compiles the user's own TypeScript (init.ts, user and
-   package-manager plugins), cached under ~/.cache/fresh/esbuild.
+   only Suggested: it compiles the user's own TypeScript (init.ts, user and
+   package-manager plugins), cached under ~/.cache/fresh/esbuild. Suggests
+   rather than Recommends keeps a default install small: esbuild itself
+   Recommends nodejs, which apt would pull in too.
  * Features: runtime, plugins, embed-plugins. No tree-sitter (its JavaScript,
    TypeScript and Templ grammars are not packaged), no http/self-update
    (update checks, telemetry, self-update), no gui.

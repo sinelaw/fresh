@@ -99,15 +99,14 @@ jobs:
       - name: Lintian
         run: lintian --info --display-info --fail-on error /build/*.changes
 
-      # Installed without Recommends first: esbuild is only for the user's own
-      # TypeScript, so without it Fresh runs and says what to install. With it,
-      # init.ts (TypeScript) checks out.
+      # esbuild is only Suggested, for the user's own TypeScript: without it
+      # Fresh runs and says what to install; with it, init.ts checks out.
       - name: Install and smoke-test
         run: |
           test "$(dpkg --print-architecture)" = "${{ matrix.arch }}"
           apt-get purge -y esbuild
           apt-get install -y --no-install-recommends /build/fresh-editor_*.deb
-          dpkg-deb --field /build/fresh-editor_*.deb Depends Recommends Built-Using Static-Built-Using
+          dpkg-deb --field /build/fresh-editor_*.deb Depends Recommends Suggests Built-Using Static-Built-Using
           if command -v esbuild; then echo "esbuild should not be installed"; exit 1; fi
           fresh --version
           mkdir -p "$HOME/.config/fresh"

@@ -254,11 +254,11 @@ anything else is compiled as usual. Without esbuild at build time the feature
 does nothing but warn, so `--all-features` builds elsewhere keep working;
 `debian/rules` sets `FRESH_REQUIRE_PRECOMPILED_PLUGINS=1`, which makes that an
 error. So the Debian package needs esbuild only at
-build time and *recommends* it for the user's own TypeScript (`init.ts`, user
+build time and *suggests* it for the user's own TypeScript (`init.ts`, user
 and package-manager plugins, scripts); without it Fresh says what to install.
-Installed with `--no-install-recommends`, the package adds just `fresh-editor`,
-`libonig5` and nothing else from Fresh's side (esbuild's own Recommends pull in
-Node.js, which is why this matters). Plugin preparation at startup also drops
+A default install adds just `fresh-editor` and `libonig5` (plus `git`, which it
+recommends). esbuild is a Suggests rather than a Recommends because it
+Recommends Node.js itself, and apt would install that too: about 100 packages. Plugin preparation at startup also drops
 from about 200 ms to about 50 ms on a cold start, since nothing is compiled.
 
 ## The Debian build's dependencies
@@ -329,7 +329,7 @@ features:
   `librust-<crate>-<semver>+<feature>-dev`, dev-only ones `<!nocheck>`),
   plus `libquickjs`, `dh-cargo`, `python3-tomlkit` and `esbuild` (which
   compiles the bundled plugins and runs the tests). The binary package
-  `Recommends: esbuild` (for the user's own TypeScript) and records QuickJS in
+  `Suggests: esbuild` (for the user's own TypeScript) and records QuickJS in
   `Static-Built-Using` (`fresh-quickjs-sys`'s build script tells
   `dh-cargo-built-using` that QuickJS is MIT and comes from `libquickjs`).
 - `debian/rules` runs `patch-manifests` (restoring the originals on `clean`),
@@ -406,7 +406,8 @@ Build-Depends: debhelper-compat (= 13), dh-cargo, cargo, rustc,
  libquickjs, esbuild, libclang-dev, pkg-config,
  librust-…-dev (the crates in Cargo.toml)
 Depends: ${shlibs:Depends}, ${misc:Depends}
-Recommends: esbuild, git
+Recommends: git
+Suggests: esbuild
 Built-Using: ${cargo:Built-Using}, quickjs (= <version>)
 ```
 
