@@ -20,6 +20,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
   - Drag and drop to move files and folders
   - Rename accepts a path, which moves the entry
   - Refresh button
+* **Kotlin uses JetBrains' official `kotlin-lsp`** by default; set `lsp.kotlin.command` to keep `kotlin-language-server` (#3481 by @karczews)
 * **Plugin docs** - the [API reference](https://getfresh.dev/docs/plugins/api/) is generated from the source, and there is a new "Asking for Input" guide
 
 ### Bug Fixes
