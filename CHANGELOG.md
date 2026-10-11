@@ -1,31 +1,59 @@
 # Release Notes
 
-## Unreleased
+## 0.5.3
+
+For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
+
+> Most config options below can be changed in the **Settings UI** - run **Open Settings** from the command palette (`Ctrl+P`).
 
 ### Features
 
-* **Find Next selects the whole match and marks it as the current match** - F3 / Shift+F3 (and Enter in the search bar) select the entire match, so a regex shows exactly how far it reaches and Delete removes the whole match; F3 after a Delete lands on a match that slid into its place. The current match, in Find Next and in Query Replace alike, is drawn bold in its own color, set by the new theme keys `search.current_match_bg` / `search.current_match_fg`. Reopening Ctrl+F on it brings back the query (e.g. the regex), not the matched text
+* **Find Next selects the whole match** - F3 / Shift+F3 select the entire match, and the current match is highlighted in its own color
+* **Theme text attributes** - any theme color accepts bold, italic or underline, e.g. to draw diagnostics as underlines (#3494, requested by @zeevro)
+* **Theme color fallbacks** - colors a theme omits are derived from its other colors. Complete user themes may look slightly different after upgrading; see [Themes → Fallbacks](https://getfresh.dev/docs/features/themes#fallbacks)
+* **Full internationalization of the Settings UI** - setting names, descriptions and categories are translated in all locales (#3479 by @neatsorg)
+* **Import coding agent and terminal sessions in Orchestrator**
+  - Claude and Codex sessions running outside Fresh are listed in the dock, grouped by product
+  - Open a session as a workspace, or fork a cloud session into one
+  - **Move to Folder** files workspaces and sessions into folders, by click or drag
+* **File Explorer** (#3427, requested by @akarinotomoshibi)
+  - Drag and drop to move files and folders
+  - Rename accepts a path, which moves the entry
+  - Refresh button
+* **Plugin docs** - the [API reference](https://getfresh.dev/docs/plugins/api/) is generated from the source, and there is a new "Asking for Input" guide
 
 ### Bug Fixes
 
-* **`AutoOpenDock` works, and a workspace dock you closed stays closed** - a bare `fresh` (Orchestrator mode, the default since 0.5.2) opened the dock whatever you had asked for, so turning the setting off did nothing and a dock closed from `View ▸ Orchestrator Dock` was back on the next start. The launch mode is now only the default for a first launch, under both the setting and what you left behind (#3442)
-* **`AutoOpenDock` is now `auto` / `always` / `never`** - the old on/off couldn't say "dock in the orchestrator, never in a plain `fresh .`", and its "on" meant *allow* rather than *open*, so ticking it on while you had left the dock closed appeared to do nothing. `auto` (the default) keeps today's behaviour until you first open or close the dock yourself - the dock comes back as you left it, and a bare `fresh` opens it on a first run - while `always` and `never` settle it outright. Your existing setting is carried over: `false` becomes `never`, `true` becomes `auto` (#3442)
-* **The workspace dock starts the way you last left it, whatever `AutoOpenDock` said** - opening the dock from `View ▸ Orchestrator Dock` while `AutoOpenDock` was `never` (which an old `false` becomes) lasted only until the next start, and closing it under `always` likewise. Opening or closing the dock yourself now sets `AutoOpenDock` to `always` or `never`, and choosing `always` or `never` in Settings opens or closes the dock right away, so the next start follows your last instruction either way (#3516)
-* **The Orchestrator dock narrows with the terminal, as the File Explorer does** - it kept at least 24 columns, and a width you dragged it to was kept in columns, so on a small terminal (an 80-column Linux console, or after a drag on a big window) it took a large part of the screen and its title strip crowded the menu bar. Its width is now a share of the terminal, dragged or not, and the title strip shortens to `Orchestrator ▾`, then `Menu ▾`, when it runs out of room. A width saved by an older Fresh is converted the first time it is read (#3517)
-* **A session follows the terminal you are using** - with Fresh open on a Linux console and in a desktop terminal at once (both attached to the same session, as a bare `fresh` does), the session stayed at the size of whichever terminal attached first, so resizing the other window did nothing. The terminal you last typed in, clicked in, focused or resized now sets the size, and a newly attached terminal gets the session fitted to it straight away (#3517)
-* **A bare `fresh` draws its first frame without waiting for every plugin to load** - the background session loaded all plugins before painting anything, so a bare `fresh` sat on a blank screen for over a second on a fast machine and several on a slow one; an in-process launch never waited. The session now loads them the same way (#3517)
-* **The console mouse (GPM) works in a session again** - a bare `fresh` on a Linux console runs as a client of a background session, and only the in-process editor read the mouse from GPM, so on a console the mouse did nothing at all. The client now forwards it, and the editor draws the mouse pointer as it does when run directly (#3517)
-* **A session draws in the colors your terminal can show** - the background session always sent 24-bit color, which a Linux console turns to black for any dark background, so a selection was never highlighted there (dragging seemed to do nothing). It now picks the color depth of the terminal in use, as Fresh run directly does (#3517)
-* **Indentation guides draw as lines on a Linux console** - the default guide, `▏`, is a block element the console's fonts lack, so it showed as `#`. On a console (`TERM=linux`) the default is drawn as `│`; a glyph you configured is drawn as configured (#3517)
-* **The console mouse pointer stays visible over a dialog's dimmed backdrop** - it was drawn by swapping the cell's colors, and the dimmed backdrop's colors are both black on a Linux console, so the pointer vanished until it reached the dialog. It is now drawn in a pair of colors that contrasts with whatever is under it (#3517)
-* **A session no longer drops control messages that arrive together** - the background session handled one message per read from a client and threw away the rest, so a client that opened a file and reported its terminal size at the same moment lost the size (#3517)
-* **A global View toggle reaches every open document** - toggling **View | Line Numbers** or **View | Line Wrap** changed the document in front of you, Settings and `config.json`, but left every other open document rendering the old setting, and the View menu's checkmark reported that stale state once one of them became current. Both are editor-wide preferences, so they now apply to all open documents at once and the menu shows the resolved setting whichever document you are on. Setting either through **Settings** has the same effect, as does a plugin reloading the config. **View | Current Line Highlight** had the same fault and is fixed with them. A per-buffer pin from the matching **(Current Buffer)** toggles, a language's own `line_wrap`, and the gutter a mode hides (Markdown page view, terminals, grouped panels) all keep winning as before (#3449)
+* **`AutoOpenDock` honored, with `auto` / `always` / `never` values** - opening or closing the dock is remembered across restarts, and the old on/off value is migrated (#3442, #3516, reported by @sjsepan3)
+* **Bare `fresh` on a Linux console and with several terminals attached** (#3517, reported by @MAT-services)
+  - Faster startup: the first frame no longer waits for plugins to load
+  - The session is sized by the terminal last used
+  - Console mouse (GPM) works again; selections and indentation guides are visible
+  - The dock width scales with the terminal instead of crowding the menu bar
+* **Line Numbers, Line Wrap and Current Line Highlight apply to all open documents**, and the View menu reflects the current state (#3449, reported by @sjsepan3)
+* **File Explorer** (#3427, reported by @akarinotomoshibi)
+  - New File / New Folder create the entry only after the name is confirmed
+  - Rename no longer overwrites an existing file
+  - Right-click uses the entry under the pointer: empty space selects the project root, and each segment of a `dir1/dir2/dir3` row is selectable
+* **Project Search/Replace** - `$1` capture groups are expanded in regex mode, hidden files are searched in current-file scope, and Replace All asks for confirmation in a dialog
+* **Selection keys** - Up/Down work when a selection touches the first or last line (#3486, reported by @Korkman); repeated Ctrl+L extends the selection by a line (#3495, reported by @sjsepan3)
+* **Plugin timers and crash-recovery saves run in the background session** (#3440, reported by @neatsorg)
+* **Restored unnamed buffers use the configured editor settings**, e.g. current line highlight (#3426, reported by @neatsorg)
+* **LSP diagnostics are shown on the only line of an empty file** (#3484, reported by @akarinotomoshibi)
+* **Mouse release no longer printed at the shell prompt after quitting with a click** (#3474, reported by @odjbo)
+* **Update check on Android/Termux no longer panics** (#3453, reported by @dsvarela)
+* **Syntax highlighting**
+  - Nim: an unpaired apostrophe no longer colors the rest of the file, and `'suffix` number literals are highlighted (#3455, reported by @codic12)
+  - JavaScript/TypeScript: a `<` comparison no longer starts JSX highlighting (#3527)
+* **Empty pane is dimmed behind Settings** (#3452, reported by @akarinotomoshibi)
+* **List selection follows its item** when the list is re-sorted or filtered, and Page Up/Down move by the visible rows
+* **Word wrap of long CJK text** no longer drops the end of a line (#3438 by @neatsorg)
+* **Review Diff** no longer draws the scrollbar of the hidden file behind it (#3434)
 
-### Themes
+### Internals
 
-* **Theme colors come from other colors, never from values built into Fresh** - the 49 colors of the first theme format are required; every other color names a fallback color, and a theme that sets all 49 takes each color it leaves out from its fallback chain. The built-in themes look the same, except that Dracula, Nord, Solarized Dark, Nostalgia, Light and Terminal now derive colors they never set (menus, diff and indicator backgrounds, bracket colors…) from their own palette instead of generic dark-theme grays. See [Themes → Fallbacks](https://getfresh.dev/docs/features/themes#fallbacks)
-* **`extends` takes precedence** - a theme with `extends` takes every color it doesn't set from its base, even when it changes the color that one would fall back to. Themes that extend a built-in and change `editor.selection_bg` or `editor.whitespace_indicator_fg` no longer get the selected-whitespace and indentation-guide colors re-derived from them; set those keys explicitly if the base's clash
-* **Complete user themes stand on their own** - a user theme that sets all 49 required colors (as most full themes and theme packs do) no longer takes its remaining colors from the built-in dark or light theme but from its own fallback colors, so its menus, diff backgrounds and similar may look different after upgrading. A theme missing any required color still gets a light or dark base as before
+* **Plugin API breaking change** - `setPromptSuggestions` throws unless every suggestion has a unique `id` (new, required); `showActionPopup` / `setLspMenuContributions` throw on duplicate ids; widget `List` / `Tree` specs whose `itemKeys` don't match their items one to one are refused
+* Flaky e2e test fixes and internal cleanups
 
 ## 0.5.2
 
@@ -55,7 +83,6 @@ Fresh is now licensed **GPL-3.0-or-later**, up from GPL-2.0-only (#3328).
 
 ### Bug Fixes
 
-* **A selection stays on its item when the list changes under it** - re-sorting the Open File browser kept the same row number selected, so a different file was highlighted; searching the keybinding editor did the same to the selected binding. Both now follow the item
 * **`echo 123 | fresh` opens the pipe instead of hanging** - piping into `fresh` with no file and no `-` brought up an editor that took no input at all, spun on a full CPU core, and could not even be quit with Ctrl+Q. Stdin with nothing else to open now means `fresh -`; with a file to open it is left unread, but the keyboard works either way. Any redirect counts, not just a pipe - `fresh < file` and `fresh < /dev/null` hung the same way (#3252)
 * **Orchestrator dock polish** - the welcome screen and dock could fail to appear in a daemon session, a context menu could close itself too fast, and a workspace just created from the dock could end up not taking keyboard input (#3306, #3275)
 * **The workspace dock is there from the first frame** - the editor used to come up full width and the dock shoved it aside a moment later, once the plugins had loaded. The column is now laid out before any plugin runs. The dock also **remembers whether you left it open and how wide you dragged it** across launches; `autoOpenDock: false` keeps it closed until you open it, and a bare `fresh` always opens it (#3321)
@@ -131,9 +158,6 @@ Fresh is now licensed **GPL-3.0-or-later**, up from GPL-2.0-only (#3328).
 * **`writeFile` refuses to overwrite an existing file, as it always claimed to.** The docs said it "fails if the file already exists to prevent plugins from accidentally overwriting user data"; the implementation wrote a temp file and renamed it over whatever was there, so a plugin trusting the documentation destroyed the file. Replacing one is now `replaceFile`, asked for by name
 * **`editor.setInputMode(name | null)` sets an editor-wide input mode** for modal-editing plugins like vi, beside `setEditorMode`, which is now documented as window-scoped. Keys resolve against a focused panel's mode, then the buffer's, the window's editor mode, the input mode, and the base keymap. `getInputMode()` reads it and `input_mode_changed` announces changes (#3395)
 * **The orchestrator's saved machines moved into the editor-owned state store** and are imported from the old directory on first load. The old files are left in place — a plugin can no longer delete a path it names — and are inert
-* **Prompt suggestions carry a required `id`**, unique in the list: `setPromptSuggestions` throws on a missing or repeated one. The list keys its rows by it, so a re-ranked or growing list keeps each row's selection and state on the item rather than on a position. The finder library's `DisplayEntry` gains the same required `id`. Third-party plugins that set suggestions will need to supply one
-* **Widget `List` and `Tree` specs require `itemKeys`, one per item and no two alike**, and so do `setItems` and `appendTreeNodes`. A spec or mutation whose keys don't match its items one to one is refused (the call returns `false` and the reason is logged), and an append whose key the tree already has is dropped. The host keeps rows, selection, hover and expansion by these keys and no longer falls back to row positions. The `list()`/`tree()` helpers in `lib/widgets.ts` now require the field
-* **Action popups and LSP menu contributions require unique ids**; `showActionPopup` and `setLspMenuContributions` throw on a repeated one
 
 ## 0.5.1
 
