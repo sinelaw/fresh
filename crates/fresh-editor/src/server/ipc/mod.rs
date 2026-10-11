@@ -37,6 +37,9 @@ pub struct SocketPaths {
     pub control: PathBuf,
     /// PID file path (for detecting stale daemons)
     pub pid: PathBuf,
+    /// Lock file path: whoever holds the lock on it owns the session (see
+    /// [`ServerListener::bind`]). Never removed, unlike the files above.
+    pub lock: PathBuf,
 }
 
 /// Whether a session's server is running, as far as *this* process can tell.
@@ -66,6 +69,7 @@ impl SocketPaths {
             data: socket_dir.join(format!("{}.data.sock", encoded)),
             control: socket_dir.join(format!("{}.ctrl.sock", encoded)),
             pid: socket_dir.join(format!("{}.pid", encoded)),
+            lock: socket_dir.join(format!("{}.lock", encoded)),
         })
     }
 
@@ -82,6 +86,7 @@ impl SocketPaths {
             data: socket_dir.join(format!("{}.data.sock", name)),
             control: socket_dir.join(format!("{}.ctrl.sock", name)),
             pid: socket_dir.join(format!("{}.pid", name)),
+            lock: socket_dir.join(format!("{}.lock", name)),
         }
     }
 
@@ -157,6 +162,10 @@ impl SocketPaths {
     }
 
     /// Remove socket and PID files (cleanup)
+    ///
+    /// Not the lock file: removing it while a server holds its lock would
+    /// let the next one lock a new file at the same path and take the
+    /// session from under it.
     pub fn cleanup(&self) -> io::Result<()> {
         if self.data.exists() {
             std::fs::remove_file(&self.data)?;
@@ -180,21 +189,119 @@ pub struct ServerListener {
     data_listener: LocalListener,
     control_listener: LocalListener,
     paths: SocketPaths,
+    /// The session's lock, held for as long as this listener lives; `None`
+    /// where the filesystem cannot lock (see [`lock_session`]).
+    _session_lock: Option<std::fs::File>,
+}
+
+/// Binding a session that another server owns. Carried inside the
+/// `io::Error` (kind `AddrInUse`) that [`ServerListener::bind`] returns.
+#[derive(Debug)]
+pub struct SessionTaken {
+    /// The owner's pid, as its pid file gives it
+    pub pid: Option<u32>,
+}
+
+impl std::fmt::Display for SessionTaken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.pid {
+            Some(pid) => write!(
+                f,
+                "a daemon for this session is already running (pid {pid})"
+            ),
+            None => write!(f, "a daemon for this session is already running"),
+        }
+    }
+}
+
+impl std::error::Error for SessionTaken {}
+
+fn session_taken(pid: Option<u32>) -> io::Error {
+    io::Error::new(io::ErrorKind::AddrInUse, SessionTaken { pid })
+}
+
+/// Take ownership of the session at `paths`: an exclusive lock on its lock
+/// file, which the OS releases when the owner exits, however it exits. The
+/// lock is what makes "is a server running?" and "then this one is" a single
+/// step: two servers starting at once can both see none running, but only
+/// one gets the lock.
+///
+/// When another server holds it, wait until that one has published its pid
+/// (it does so right after binding), then refuse with [`SessionTaken`]: a
+/// client that started this server and sees it exit then finds the owner
+/// running, and attaches to it. If the owner exits before publishing, the
+/// lock comes free and this server takes the session after all.
+///
+/// Where the filesystem cannot lock (some network filesystems), fall back to
+/// the pid file and a connect probe, and refuse unless they say no server
+/// runs: they cannot rule out two servers starting at the same moment, but
+/// they never take a session from a running one.
+fn lock_session(paths: &SocketPaths) -> io::Result<Option<std::fs::File>> {
+    use crate::server::daemon::is_process_running;
+    use std::fs::TryLockError;
+
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let file = options.open(&paths.lock)?;
+
+    match file.try_lock() {
+        Ok(()) => return Ok(Some(file)),
+        Err(TryLockError::WouldBlock) => {}
+        Err(TryLockError::Error(e)) if e.kind() == io::ErrorKind::Unsupported => {
+            tracing::warn!(
+                "Cannot lock {} ({e}); telling whether the session is taken from its pid file",
+                paths.lock.display()
+            );
+            return match paths.probe_server() {
+                ServerLiveness::Dead => Ok(None),
+                ServerLiveness::Alive | ServerLiveness::Unreachable => {
+                    Err(session_taken(paths.read_pid().ok().flatten()))
+                }
+            };
+        }
+        Err(TryLockError::Error(e)) => return Err(e),
+    }
+
+    tracing::debug!("{} is locked; waiting for its owner", paths.lock.display());
+    loop {
+        if let Ok(Some(pid)) = paths.read_pid() {
+            if is_process_running(pid) {
+                return Err(session_taken(Some(pid)));
+            }
+        }
+        match file.try_lock() {
+            Ok(()) => return Ok(Some(file)),
+            Err(TryLockError::WouldBlock) => {}
+            Err(TryLockError::Error(e)) => return Err(e),
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
 impl ServerListener {
-    /// Create a new server listener for the given socket paths
+    /// Create a new server listener for the given socket paths, owning the
+    /// session for as long as it lives, and publish this process's pid in
+    /// its pid file.
+    ///
+    /// Refused with [`SessionTaken`] (kind `AddrInUse`) when another server
+    /// owns the session; see [`lock_session`].
     pub fn bind(paths: SocketPaths) -> io::Result<Self> {
         tracing::debug!("ServerListener::bind starting for {:?}", paths.data);
-
-        // Clean up any stale sockets
-        paths.cleanup()?;
 
         // Ensure socket directory exists
         if let Some(parent) = paths.data.parent() {
             tracing::debug!("Creating socket directory: {:?}", parent);
             std::fs::create_dir_all(parent)?;
         }
+
+        // Own the session before touching its files: whatever is left of
+        // them now is a dead server's
+        let session_lock = lock_session(&paths)?;
+
+        // Clean up any stale sockets
+        paths.cleanup()?;
 
         let data_name = platform::socket_name_for_path(&paths.data)?;
         let control_name = platform::socket_name_for_path(&paths.control)?;
@@ -226,13 +333,22 @@ impl ServerListener {
             std::fs::write(&paths.control, "socket")?;
         }
 
-        tracing::info!("Server listening on {:?}", paths.data);
-
-        Ok(Self {
+        let listener = Self {
             data_listener,
             control_listener,
             paths,
-        })
+            _session_lock: session_lock,
+        };
+
+        // Publish the pid: clients take it for a running server, and a server
+        // waiting on the lock (see `lock_session`) for its cue to stand down.
+        // Without it that one would wait for good, so this fails the bind
+        // (dropping the listener removes the sockets again).
+        listener.paths.write_pid(std::process::id())?;
+
+        tracing::info!("Server listening on {:?}", listener.paths.data);
+
+        Ok(listener)
     }
 
     /// Accept a new client connection (both data and control sockets)
@@ -747,6 +863,73 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let paths = SocketPaths::for_session_name_in_dir("test-session", temp_dir.path());
         assert_eq!(paths.read_pid().unwrap(), None);
+    }
+
+    /// A second listener for a session that is already served is refused,
+    /// and the first one keeps serving it. Binding used to clear the
+    /// session's files whoever owned them, so the second took the session
+    /// over and left the first running where no client could reach it.
+    #[test]
+    fn a_second_bind_of_a_served_session_is_refused() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = SocketPaths::for_session_name_in_dir("served", temp_dir.path());
+        let mut first = ServerListener::bind(paths.clone()).unwrap();
+        paths.write_pid(std::process::id()).unwrap();
+
+        let err = ServerListener::bind(paths.clone())
+            .err()
+            .expect("a second bind of a served session must be refused");
+        assert_eq!(err.kind(), io::ErrorKind::AddrInUse, "{err}");
+        assert_eq!(paths.read_pid().unwrap(), Some(std::process::id()));
+
+        // A client still reaches the first listener.
+        let client_paths = paths.clone();
+        let client = std::thread::spawn(move || ClientConnection::connect(&client_paths));
+        let accepted = loop {
+            if let Some(conn) = first.accept().unwrap() {
+                break conn;
+            }
+        };
+        client
+            .join()
+            .unwrap()
+            .expect("connect to the first listener");
+        drop(accepted);
+    }
+
+    /// A server that finds the session locked by one that never published
+    /// its pid (it died starting up, or is still binding) waits, and takes
+    /// the session once the lock comes free.
+    #[test]
+    fn a_bind_waiting_on_the_lock_takes_the_session_when_it_comes_free() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let temp_dir = TempDir::new().unwrap();
+        let paths = SocketPaths::for_session_name_in_dir("orphaned", temp_dir.path());
+        let owner = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&paths.lock)
+            .unwrap();
+        owner.try_lock().unwrap();
+
+        let released = Arc::new(AtomicBool::new(false));
+        let waiter = {
+            let paths = paths.clone();
+            let released = Arc::clone(&released);
+            std::thread::spawn(move || {
+                let bound = ServerListener::bind(paths);
+                (bound.map(drop), released.load(Ordering::SeqCst))
+            })
+        };
+        released.store(true, Ordering::SeqCst);
+        drop(owner);
+
+        let (bound, after_release) = waiter.join().unwrap();
+        bound.expect("the waiting bind takes the session");
+        assert!(after_release, "bind returned while the lock was held");
     }
 
     #[test]

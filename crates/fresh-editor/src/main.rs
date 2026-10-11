@@ -3160,6 +3160,10 @@ fn redirect_stderr_to_server_log() {
 
 /// Wait for a daemon this client just spawned to bind its sockets (the pid
 /// file is written after `bind()`); fail, naming its log, if it exits first.
+///
+/// Any running daemon of the session will do, not only the one spawned
+/// here: when another starts for it at the same time, one of the two stands
+/// down, but only once the other has written its pid.
 fn wait_for_spawned_daemon(socket_paths: &SocketPaths, pid: u32) -> AnyhowResult<()> {
     use fresh::server::daemon::{is_process_running, spawned_daemon_exited};
     const STARTUP_LIMIT: std::time::Duration = std::time::Duration::from_secs(30);
@@ -3174,12 +3178,15 @@ fn wait_for_spawned_daemon(socket_paths: &SocketPaths, pid: u32) -> AnyhowResult
 
     let deadline = std::time::Instant::now() + STARTUP_LIMIT;
     loop {
+        // Before reading the pid file: a daemon that stood down did so only
+        // after the one it stood down for wrote it
+        let exited = spawned_daemon_exited(pid);
         if let Ok(Some(ready)) = socket_paths.read_pid() {
             if is_process_running(ready) {
                 return Ok(());
             }
         }
-        if spawned_daemon_exited(pid) {
+        if exited {
             anyhow::bail!("The daemon exited during startup{log}");
         }
         if std::time::Instant::now() >= deadline {

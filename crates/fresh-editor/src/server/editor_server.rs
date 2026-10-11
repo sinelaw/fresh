@@ -227,13 +227,8 @@ impl EditorServer {
             SocketPaths::for_working_dir(&config.working_dir)?
         };
 
+        // Also writes the PID file, which clients check for a running daemon
         let listener = ServerListener::bind(socket_paths)?;
-
-        // Write PID file so clients can detect stale daemons
-        let pid = std::process::id();
-        if let Err(e) = listener.paths().write_pid(pid) {
-            tracing::warn!("Failed to write PID file: {}", e);
-        }
 
         // Workspace Trust is born in `main.rs` (already rooted at the working
         // dir, store attached, persisted level loaded) and threaded in via the
