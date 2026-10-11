@@ -69,10 +69,13 @@ jobs:
           if [ "${{ matrix.cross }}" = "true" ] && [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
             export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
           fi
+          features=gui
           if [ "${{ matrix.target }}" = "x86_64-pc-windows-msvc" ]; then
             export RUSTFLAGS="-C target-feature=+crt-static"
+            # Also builds fresh-console-shim.exe, shipped as fresh-gui.com.
+            features=gui,windows-console-shim
           fi
-          cargo build --release --features gui --target ${{ matrix.target }}
+          cargo build --release --features "$features" --target ${{ matrix.target }}
 
       - name: Verify macOS binary links only system libraries
         if: runner.os == 'macOS'
@@ -108,7 +111,7 @@ jobs:
           $dir = "fresh-gui-${{ matrix.target }}"
           New-Item -ItemType Directory -Path $dir | Out-Null
           Copy-Item $src "$dir/fresh-gui.exe"
-          # Built by the `gui` feature above (fresh-editor's fresh-console-shim bin).
+          # Built by the `windows-console-shim` feature above.
           Copy-Item "target/${{ matrix.target }}/release/fresh-console-shim.exe" "$dir/fresh-gui.com"
           Compress-Archive -Path "$dir/*" -DestinationPath "$dir.zip"
           $hash = (Get-FileHash "$dir.zip" -Algorithm SHA256).Hash.ToLower()
