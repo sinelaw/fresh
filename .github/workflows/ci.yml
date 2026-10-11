@@ -253,10 +253,14 @@ jobs:
       - name: Engine boundary, TypeScript (esbuild) and plugin runtime
         run: cargo test --locked -p fresh-js -p fresh-core -p fresh-parser-js -p fresh-plugin-runtime --no-default-features --features fresh-core/plugins
       - name: Editor plugin tests (Debian package features)
+        env:
+          FRESH_REQUIRE_PRECOMPILED_PLUGINS: "1"
         run: cargo test --locked -p fresh-editor --no-default-features --features runtime,plugins,embed-plugins,precompiled-plugins --test all_tests plugin
       # Every bundled plugin has build-time JavaScript, so the package runs
       # them without esbuild.
       - name: Bundled plugins are precompiled
+        env:
+          FRESH_REQUIRE_PRECOMPILED_PLUGINS: "1"
         run: cargo test --locked -p fresh-editor --no-default-features --features runtime,plugins,embed-plugins,precompiled-plugins --lib embedded
       - name: Debian testing can supply every Rust dependency
         run: |

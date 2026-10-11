@@ -26,6 +26,8 @@ export RUSTDOCFLAGS := --cfg fresh_js_system
 # oxc and tree-sitter (crates Debian lacks), http and self-update (update
 # checks, telemetry, self-update), gui.
 FEATURES := runtime,plugins,embed-plugins,precompiled-plugins
+# Fail the build rather than ship plugins that would need esbuild to run.
+export FRESH_REQUIRE_PRECOMPILED_PLUGINS := 1
 TARGET_DIR := target/$(DEB_HOST_RUST_TYPE)/release
 
 %:

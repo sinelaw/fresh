@@ -95,7 +95,9 @@ embed-plugins = ["plugins", "dep:include_dir", "dep:trash"]
 # Compile the embedded plugins to JavaScript at build time, with the `esbuild`
 # executable, so loading them needs no TypeScript compiler at run time. For a
 # build without `oxc` (Debian's) esbuild is then needed only for the user's own
-# TypeScript (init.ts, user and package-manager plugins, scripts).
+# TypeScript (init.ts, user and package-manager plugins, scripts). Without
+# esbuild at build time this does nothing (with a warning) unless
+# FRESH_REQUIRE_PRECOMPILED_PLUGINS=1 makes it an error; see build.rs.
 precompiled-plugins = ["embed-plugins", "dep:fresh-parser-js"]
 # Feature for optional development binaries (generate_schema, event_debug)
 # Includes ratatui for theme type definitions needed by schema generation

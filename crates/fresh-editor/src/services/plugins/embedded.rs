@@ -220,8 +220,9 @@ mod tests {
     use super::*;
 
     /// Every plugin loaded from the embedded directory has its JavaScript
-    /// already: none would need a compiler at run time.
-    #[cfg(feature = "precompiled-plugins")]
+    /// already: none would need a compiler at run time. (Only when the build
+    /// script could compile them; see build.rs.)
+    #[cfg(fresh_plugins_precompiled)]
     #[test]
     fn every_embedded_plugin_is_precompiled() {
         let dir = get_embedded_plugins_dir().expect("embedded plugins extract");

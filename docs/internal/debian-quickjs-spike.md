@@ -250,7 +250,10 @@ bundled plugins while Fresh builds: `fresh-editor`'s build script runs
 `plugins/*.ts` and embeds the JavaScript, keyed by file name and a hash of the
 source. At run time, a plugin loaded from the embedded-plugins directory whose
 source still matches uses that JavaScript (`fresh_parser_js::precompiled`);
-anything else is compiled as usual. So the Debian package needs esbuild only at
+anything else is compiled as usual. Without esbuild at build time the feature
+does nothing but warn, so `--all-features` builds elsewhere keep working;
+`debian/rules` sets `FRESH_REQUIRE_PRECOMPILED_PLUGINS=1`, which makes that an
+error. So the Debian package needs esbuild only at
 build time and *recommends* it for the user's own TypeScript (`init.ts`, user
 and package-manager plugins, scripts); without it Fresh says what to install.
 Installed with `--no-install-recommends`, the package adds just `fresh-editor`,
