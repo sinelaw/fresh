@@ -93,6 +93,36 @@ pub enum RevealOutcome {
     OutsideRoot(std::path::PathBuf),
 }
 
+/// A drop in the explorer, playing out before it is asked about.
+///
+/// The drop has already been resolved into the move it would make; this
+/// holds the question until the tree has shown that move — an empty row
+/// opening in `dest`, each source's name typed into it while the same
+/// characters ghost out of the source's own row (`view::move_preview`) — and
+/// then keeps the finished picture on screen for as long as the question is
+/// open, so what is being asked about stays in sight behind the dialog.
+pub(crate) struct ExplorerMovePreview {
+    pub clock: crate::view::move_preview::MovePreview,
+    /// The directory the entries would land in.
+    pub dest: PathBuf,
+    /// What would move, in the order the drop named them.
+    pub sources: Vec<PathBuf>,
+    /// The confirmation to open when the preview has played out; `None`
+    /// once it is open.
+    pub ask: Option<(String, PromptType, crate::view::confirm::Confirm)>,
+}
+
+impl ExplorerMovePreview {
+    /// How many characters of each name have moved across at `now`: all of
+    /// them once the question is up.
+    pub fn typed(&self, now: std::time::Instant) -> usize {
+        match self.ask {
+            Some(_) => self.clock.typed(now),
+            None => usize::MAX,
+        }
+    }
+}
+
 impl Editor {
     pub fn file_explorer_visible(&self) -> bool {
         self.active_window().file_explorer_visible
@@ -1730,11 +1760,70 @@ impl Editor {
         };
         let confirm =
             crate::app::confirm_dialog::move_entries(body).detail(dest.display().to_string());
-        self.start_confirm_prompt(
+        let sources: Vec<PathBuf> = pairs.iter().map(|(src, _)| src.clone()).collect();
+        let ask = (
             confirm.body.clone(),
             PromptType::ConfirmExplorerMove { pairs },
             confirm,
         );
+        // With animations off the question is asked at once, as it always
+        // was; with them on, the move is first played out in the tree and
+        // the question waits for it (`step_explorer_move_preview`).
+        if !self.config.editor.animations {
+            let (message, prompt_type, confirm) = ask;
+            self.start_confirm_prompt(message, prompt_type, confirm);
+            return;
+        }
+        let now = self.time_source().now();
+        self.explorer_move_preview = Some(ExplorerMovePreview {
+            clock: crate::view::move_preview::MovePreview::new(
+                sources
+                    .iter()
+                    .map(|p| p.file_name().and_then(|n| n.to_str()).unwrap_or_default()),
+                now,
+            ),
+            dest: dest.to_path_buf(),
+            sources,
+            ask: Some(ask),
+        });
+        self.shell_description_stale = true;
+    }
+
+    /// Move the explorer's drop preview along: once its name is across, ask
+    /// the question it was holding; once that question is answered (either
+    /// way) or replaced, let the preview go. True when something changed.
+    pub(crate) fn step_explorer_move_preview(&mut self) -> bool {
+        let now = self.time_source().now();
+        let Some(preview) = self.explorer_move_preview.as_mut() else {
+            return false;
+        };
+        if preview.ask.is_some() {
+            // Still playing: every tick is a frame, as an animation's is.
+            if !preview.clock.finished(now) {
+                return true;
+            }
+            let (message, prompt_type, confirm) = preview.ask.take().expect("checked above");
+            self.start_confirm_prompt(message, prompt_type, confirm);
+            return true;
+        }
+        let asking = self
+            .active_window()
+            .prompt
+            .as_ref()
+            .is_some_and(|p| matches!(p.prompt_type, PromptType::ConfirmExplorerMove { .. }));
+        if asking {
+            return false;
+        }
+        self.explorer_move_preview = None;
+        self.shell_description_stale = true;
+        true
+    }
+
+    /// When the explorer's drop preview next changes, for the loop to wake.
+    pub(crate) fn explorer_move_preview_deadline(&self) -> Option<std::time::Instant> {
+        let preview = self.explorer_move_preview.as_ref()?;
+        preview.ask.as_ref()?;
+        preview.clock.next_deadline(self.time_source().now())
     }
 
     /// Move entries a confirmed drop asked for, each to the full path paired

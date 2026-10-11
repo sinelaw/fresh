@@ -2235,7 +2235,8 @@ function buildDockTree(filtered: number[]): DockTree {
   const searching = (openDialog?.filter.value ?? "") !== "";
   // A drag in progress: the row lifted, and the row a drop now would land in.
   const lifted = dockDrag?.key ?? null;
-  const dropKey = dockDropTargetKey();
+  // A drop being previewed keeps its folder lit until the row lands.
+  const dropKey = dockDropTargetKey() ?? pendingDockDrop?.landKey ?? null;
   const liftedGroup = lifted?.startsWith(LIVE_NODE_PREFIX)
     ? liveByKey(lifted.slice(LIVE_NODE_PREFIX.length))?.agent ?? null
     : null;
@@ -5743,9 +5744,11 @@ function closeOpenDialog(): void {
   noteLayoutChange();
   // A pick waiting for a folder, and a drag the dock was drawing, belong to
   // the panel going away: neither may come back with the next one. (A drag's
-  // `dragend` cannot reach a panel that is gone.)
+  // `dragend` cannot reach a panel that is gone, nor a drop preview's
+  // `movepreviewend`.)
   movePick = null;
   dockDrag = null;
+  pendingDockDrop = null;
   if (openPanel) {
     openPanel.unmount();
     openPanel = null;
@@ -7122,6 +7125,45 @@ function dropTargetEntry(e: TextPropertyEntry): TextPropertyEntry {
     ...e,
     style: { ...(e.style ?? {}), bg: "ui.list_drop_target_bg", bold: true, extendToLineEnd: true },
   };
+}
+
+// ── A drop being previewed ────────────────────────────────────────────────
+// A row dropped on a folder does not jump there: the host first plays the
+// move in the tree (an empty row opens in the folder and the row's name is
+// typed into it while it ghosts out of the row — the file explorer's
+// preview), then fires `movepreviewend`, and the row is filed then. This is
+// the drop waiting for that: the rows it named, and the row it lands under
+// (lit meanwhile, as the drop target was during the drag).
+let pendingDockDrop: { fromKey: string; toKey: string; landKey: string | null } | null = null;
+
+/** A row dropped on another dock row: preview the move, then file it
+ *  (`movepreviewend`). A drop that would not move it is filed at once —
+ *  there is nothing to show. */
+function previewDockDrop(fromKey: string, toKey: string): void {
+  const from = dockNodeAt(fromKey);
+  const to = dockNodeAt(toKey);
+  if (!from || !to || from.kind === "folder" || !openPanel) return;
+  const folderId = dropFolderFor(from, to);
+  if (folderId === undefined) return;
+  const current = from.kind === "session" ? folderOfSession(from.sessionId) : externalFolderOf(from.liveKey);
+  const label = from.kind === "session"
+    ? orchestratorSessions.get(from.sessionId)?.label
+    : liveByKey(from.liveKey)?.title;
+  if (folderId === current || !label) {
+    dropOnDockRow(fromKey, toKey);
+    return;
+  }
+  // The row it will be listed under: the folder, or for an external session
+  // sent home, its product's group. A workspace's top level has no row; it
+  // opens at the top of the tree, where unfiled workspaces are listed.
+  let landKey: string | null = null;
+  if (folderId !== null) landKey = folderNodeKey(folderId);
+  else if (from.kind === "live") {
+    const s = liveByKey(from.liveKey);
+    landKey = s ? externalGroupKey(s.agent) : null;
+  }
+  pendingDockDrop = { fromKey, toKey, landKey };
+  openPanel.previewTreeMove("sessions", fromKey, landKey, label);
 }
 
 /** A row dragged onto another dock row with the mouse. */
@@ -18232,8 +18274,17 @@ editor.on("widget_event", (e) => {
       dockDrag = null;
       const payload = (e.payload ?? {}) as Record<string, unknown>;
       if (typeof payload.key === "string" && typeof payload.target === "string") {
-        dropOnDockRow(payload.key, payload.target);
+        previewDockDrop(payload.key, payload.target);
       }
+      return;
+    }
+    // The drop's preview has played out: file the row now.
+    if (e.event_type === "movepreviewend" && e.widget_key === "sessions") {
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      const p = pendingDockDrop;
+      if (!p || payload.key !== p.fromKey) return;
+      pendingDockDrop = null;
+      dropOnDockRow(p.fromKey, p.toKey);
       return;
     }
     // Right-click on a tree node → open its context menu. Only the dock

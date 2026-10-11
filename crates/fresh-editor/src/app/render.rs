@@ -34,9 +34,121 @@ struct ExplorerRows {
     theme: std::sync::Arc<std::sync::RwLock<crate::view::theme::Theme>>,
     collapsed: String,
     expanded: String,
+    /// A drop's preview, laid over the rows: see [`ExplorerPreviewRows`].
+    preview: Option<ExplorerPreviewRows>,
+}
+
+/// Where a drop's move preview sits in the explorer's rows, for one frame.
+///
+/// The rows the window shows are the projection's with the preview's empty
+/// rows spliced in (`view::move_preview::Splice`). Every index a row *says* —
+/// its hit answer, its parent, the selection, the window's start — stays the
+/// projection's, so a press during the preview means what it would have
+/// meant without one; only the window's own counting is spliced.
+struct ExplorerPreviewRows {
+    splice: crate::view::move_preview::Splice,
+    /// Per empty row, in splice order: the target directory's row, the indent
+    /// a child of it has, and the name being typed in.
+    inserted: Vec<(usize, usize, String)>,
+    /// The entries being moved, whose names ghost out as they are typed.
+    sources: std::collections::HashSet<std::path::PathBuf>,
+    /// The target directory's row, drawn open while a row opens under it.
+    dest_row: Option<usize>,
+    typed: usize,
+}
+
+impl ExplorerPreviewRows {
+    /// The preview of `p` over `projection` at `now`.
+    fn new(
+        projection: &crate::view::file_tree::view::Projection,
+        p: &crate::app::file_explorer::ExplorerMovePreview,
+        now: std::time::Instant,
+    ) -> Self {
+        use crate::view::file_tree::tree::entry_order;
+        let rows = &projection.rows;
+        // The directory's own row, or the compact row that folds it in.
+        let dest_row = rows
+            .iter()
+            .position(|r| r.entry.path == p.dest || r.chain.iter().any(|c| c.path == p.dest));
+        let is_dir = |path: &std::path::Path| {
+            rows.iter()
+                .find(|r| r.entry.path == path)
+                .is_some_and(|r| r.is_dir())
+        };
+        let mut moving: Vec<(bool, String)> = p
+            .sources
+            .iter()
+            .filter_map(|src| {
+                let name = src.file_name()?.to_string_lossy().into_owned();
+                Some((is_dir(src), name))
+            })
+            .collect();
+        // In the order the directory will list them, so two rows opening in
+        // one place open in that order too.
+        moving.sort_by(|a, b| entry_order((a.0, &a.1), (b.0, &b.1)));
+        let mut at = Vec::new();
+        let mut inserted = Vec::new();
+        if let Some(d) = dest_row {
+            let dir = &rows[d];
+            for (entry_is_dir, name) in moving {
+                // Where the directory will list it: before the first child
+                // that sorts after it, or after the last of its rows. A
+                // directory that is not open (or is only a folded part of
+                // its row) shows no children to place it among, so it
+                // opens straight under the directory's row.
+                let mut j = d + 1;
+                if dir.entry.path == p.dest && dir.is_expanded() {
+                    while j < rows.len() && rows[j].indent > dir.indent {
+                        let child = &rows[j];
+                        let after = child.parent == Some(d)
+                            && entry_order(
+                                (entry_is_dir, &name),
+                                (child.is_dir(), &child.entry.name),
+                            )
+                            .is_lt();
+                        if after {
+                            break;
+                        }
+                        j += 1;
+                    }
+                }
+                at.push(j);
+                inserted.push((d, dir.indent + 1, name));
+            }
+        }
+        Self {
+            splice: crate::view::move_preview::Splice::new(at),
+            inserted,
+            sources: p.sources.iter().cloned().collect(),
+            dest_row,
+            typed: p.typed(now),
+        }
+    }
 }
 
 impl ExplorerRows {
+    /// Row `j` of the window: a projection row, or one of a preview's empty
+    /// rows.
+    fn describe_at(&self, j: usize) -> crate::view::shell::file_explorer::Row {
+        use crate::view::move_preview::Spot;
+        match self.preview.as_ref().map(|p| p.splice.spot(j)) {
+            Some(Spot::Inserted(k)) => {
+                let p = self.preview.as_ref().expect("spot came from it");
+                let (dest, indent, name) = &p.inserted[k];
+                crate::view::ui::file_explorer::describe_preview_row(
+                    *dest,
+                    *indent,
+                    name,
+                    p.typed,
+                    &self.collapsed,
+                    &self.expanded,
+                )
+            }
+            Some(Spot::Row(i)) => self.describe(i),
+            None => self.describe(j),
+        }
+    }
+
     fn describe(&self, i: usize) -> crate::view::shell::file_explorer::Row {
         let node = &self.projection.rows[i];
         let fuzzy = self
@@ -60,6 +172,12 @@ impl ExplorerRows {
             theme: &theme,
             collapsed: &self.collapsed,
             expanded: &self.expanded,
+            ghost: self
+                .preview
+                .as_ref()
+                .filter(|p| p.sources.contains(&node.entry.path))
+                .map(|p| p.typed),
+            opening: self.preview.as_ref().is_some_and(|p| p.dest_row == Some(i)),
         })
     }
 }
@@ -3284,8 +3402,28 @@ impl Editor {
             .filter(|cb| cb.is_cut)
             .map(|cb| cb.paths.clone())
             .unwrap_or_default();
-        let drop_target = self.explorer_drag.as_ref().and_then(|d| d.target.clone());
+        // A drop being previewed keeps its target lit until it is answered.
+        let drop_target = self
+            .explorer_drag
+            .as_ref()
+            .and_then(|d| d.target.clone())
+            .or_else(|| self.explorer_move_preview.as_ref().map(|p| p.dest.clone()));
+        let preview = self
+            .explorer_move_preview
+            .as_ref()
+            .map(|p| ExplorerPreviewRows::new(&projection, p, self.time_source().now()));
+        // The window counts in spliced rows; everything the model says about
+        // a row is in projection rows (see `ExplorerPreviewRows`).
+        let splice = std::rc::Rc::new(preview.as_ref().map(|p| p.splice.clone()));
+        let to_window = {
+            let splice = splice.clone();
+            move |i: usize| match splice.as_ref() {
+                Some(s) => s.index_of(i),
+                None => i,
+            }
+        };
         let rows = std::rc::Rc::new(ExplorerRows {
+            preview,
             projection: projection.clone(),
             drop_target,
             selected,
@@ -3301,28 +3439,78 @@ impl Editor {
             collapsed: self.config.file_explorer.tree_indicator_collapsed.clone(),
             expanded: self.config.file_explorer.tree_indicator_expanded.clone(),
         });
+        use crate::view::move_preview::Spot;
+        // What window row `j` is: a projection row, or the `k`th preview row.
+        let spot = {
+            let splice = splice.clone();
+            move |j: usize| match splice.as_ref() {
+                Some(s) => s.spot(j),
+                None => Spot::Row(j),
+            }
+        };
         let (keys, parents, nodes) = (projection.clone(), projection.clone(), projection.clone());
+        let (key_spot, parent_spot, node_spot) = (spot.clone(), spot.clone(), spot);
+        let (parent_window, described, node_rows) = (to_window.clone(), rows.clone(), rows.clone());
         fe::Body::Tree(fe::Tree {
-            count: projection.len(),
-            key: std::rc::Rc::new(move |i| fe::row_key(&keys.rows[i].entry.path)),
-            row: std::rc::Rc::new(move |i| rows.describe(i)),
-            parent: std::rc::Rc::new(move |i| parents.rows.get(i).and_then(|r| r.parent)),
-            node: std::rc::Rc::new(move |i| {
-                let r = &nodes.rows[i];
-                fresh_ui::widgets::TreeRow {
-                    depth: r.indent,
-                    has_children: r.is_dir(),
-                    open: r.is_expanded(),
-                }
+            count: splice
+                .as_ref()
+                .as_ref()
+                .map_or(projection.len(), |s| s.len(projection.len())),
+            key: std::rc::Rc::new(move |j| match key_spot(j) {
+                Spot::Row(i) => fe::row_key(&keys.rows[i].entry.path),
+                Spot::Inserted(k) => fresh_ui::Key::Pair("explorer_move_preview".into(), k as u64),
             }),
-            selected,
+            row: std::rc::Rc::new(move |j| rows.describe_at(j)),
+            parent: std::rc::Rc::new(move |j| {
+                let parent = match parent_spot(j) {
+                    Spot::Row(i) => parents.rows.get(i).and_then(|r| r.parent),
+                    Spot::Inserted(k) => described.preview.as_ref().map(|p| p.inserted[k].0),
+                };
+                parent.map(&parent_window)
+            }),
+            node: std::rc::Rc::new(move |j| match node_spot(j) {
+                Spot::Row(i) => {
+                    let r = &nodes.rows[i];
+                    fresh_ui::widgets::TreeRow {
+                        depth: r.indent,
+                        has_children: r.is_dir(),
+                        open: r.is_expanded(),
+                    }
+                }
+                Spot::Inserted(k) => fresh_ui::widgets::TreeRow {
+                    depth: node_rows.preview.as_ref().map_or(0, |p| p.inserted[k].1),
+                    has_children: false,
+                    open: false,
+                },
+            }),
+            selected: selected.map(&to_window),
             reveal: view.reveal_token(),
             answered: view.answered_token(),
             caret: focused,
-            start: view.window_top(),
+            start: to_window(view.window_top()),
             owner: win.id.0,
             pager: Some(win.file_explorer_pager.clone()),
         })
+    }
+
+    /// The projection row at the top of a window that starts at window row
+    /// `j` — the same row while no drop is being previewed, and the row a
+    /// preview's empty rows push down while one is.
+    pub(crate) fn explorer_window_row(&self, j: usize) -> usize {
+        use crate::view::move_preview::Spot;
+        let (Some(view), Some(p)) = (self.file_explorer(), self.explorer_move_preview.as_ref())
+        else {
+            return j;
+        };
+        let projection = view.projection();
+        let preview = ExplorerPreviewRows::new(&projection, p, self.time_source().now());
+        // An empty row at the top stands for the row it pushed down.
+        (j..preview.splice.len(projection.len()))
+            .find_map(|j| match preview.splice.spot(j) {
+                Spot::Row(i) => Some(i),
+                Spot::Inserted(_) => None,
+            })
+            .unwrap_or_else(|| projection.len().saturating_sub(1))
     }
 
     /// Paths with unsaved changes, which a row's status slot reads.
@@ -5897,15 +6085,20 @@ impl Editor {
         let panel = self.panel(slot)?;
         let key = panel.panel_key.clone();
         let spec = self.widget_registry.get(&key)?.spec.clone();
-        Some(crate::view::shell::panel::Interior {
-            // A handle on the registry's storage, not a copy of it.
+        // A handle on the registry's storage, not a copy of it — unless a
+        // drop's move preview is playing in one of the panel's trees, which is
+        // drawn into a copy (`tree_move_preview`).
+        let (spec, states) = self.with_tree_move_previews(
+            &key,
             spec,
-            states: Rc::new(
-                self.widget_registry
-                    .instance_states(&key)
-                    .cloned()
-                    .unwrap_or_default(),
-            ),
+            self.widget_registry
+                .instance_states(&key)
+                .cloned()
+                .unwrap_or_default(),
+        );
+        Some(crate::view::shell::panel::Interior {
+            spec,
+            states: Rc::new(states),
             h_pan: Rc::new(
                 self.widget_registry
                     .get(&key)

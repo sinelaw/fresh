@@ -795,6 +795,8 @@ impl Editor {
             prose_drag: None,
             widget_drag: None,
             explorer_drag: None,
+            explorer_move_preview: None,
+            tree_move_previews: Vec::new(),
             prose_reveal: std::cell::RefCell::new(HashMap::new()),
             tree_projections: std::cell::RefCell::new(HashMap::new()),
         };

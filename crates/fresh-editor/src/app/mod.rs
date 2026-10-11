@@ -98,6 +98,7 @@ mod split_actions;
 mod stdin_stream;
 mod tab_drag;
 mod terminal;
+pub(crate) mod tree_move_preview;
 pub use terminal::PluginTerminalSpec;
 mod terminal_input;
 mod terminal_link;
@@ -184,6 +185,15 @@ pub fn editor_tick(
         needs_render = true;
     }
     if editor.check_mouse_hover_timer() {
+        needs_render = true;
+    }
+    // A drop's move preview, in the explorer and in plugin trees: a frame per
+    // character while it types, and what follows it (the explorer's
+    // confirmation, the plugin's `movepreviewend`) once it has played out.
+    if editor.step_explorer_move_preview() {
+        needs_render = true;
+    }
+    if editor.step_tree_move_previews() {
         needs_render = true;
     }
     // Hide the dock's keyboard-flashed overlay scrollbar once its deadline
@@ -1615,6 +1625,13 @@ pub struct Editor {
     pub(crate) widget_drag: Option<shell_host::WidgetDrag>,
     /// The explorer row the pointer is holding, if any.
     pub(crate) explorer_drag: Option<shell_host::ExplorerDrag>,
+    /// The move a drop in the explorer asked for, while its preview plays
+    /// and then while its confirmation is open. See
+    /// [`file_explorer::ExplorerMovePreview`].
+    pub(crate) explorer_move_preview: Option<file_explorer::ExplorerMovePreview>,
+    /// The moves plugin trees are previewing (`WidgetMutation::PreviewTreeMove`),
+    /// at most one per tree.
+    pub(crate) tree_move_previews: Vec<crate::app::tree_move_preview::TreeMovePreview>,
     /// Each mounted panel's memoised tree projections, kept across frames so
     /// the description of an unchanged tree is not an O(nodes) walk. Keyed
     /// the way `prose_reveal` is, and dropped with the panel.

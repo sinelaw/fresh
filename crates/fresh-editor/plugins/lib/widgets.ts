@@ -1335,6 +1335,22 @@ export class WidgetPanel {
     return this.mutate({ kind: "setCheckedKeys", widgetKey, checked, keys });
   }
 
+  /** Play a drop's move preview in the named `Tree` — the one the file
+   * explorer plays: an empty row opens directly under `afterKey` (the
+   * folder the row lands in; `null` for the top of the tree), and `label`
+   * is typed into it a character at a time while the same characters ghost
+   * out of `sourceKey`'s row. The host then fires `movepreviewend`
+   * (`{ key: sourceKey }`) on the tree: make the move there. With the
+   * editor's animations off it fires straight away. */
+  previewTreeMove(
+    widgetKey: string,
+    sourceKey: string,
+    afterKey: string | null,
+    label: string,
+  ): boolean {
+    return this.mutate({ kind: "previewTreeMove", widgetKey, sourceKey, afterKey, label });
+  }
+
   /** Append `newNodes` (and parallel `newItemKeys`) to an existing
    * `Tree`'s node list — the streaming-friendly counterpart to
    * `setItems`. Existing selection, scroll, and expansion state are
@@ -1584,6 +1600,15 @@ export class FloatingWidgetPanel {
 
   setCheckedKeys(widgetKey: string, checked: boolean, keys: string[]): boolean {
     return this.mutate({ kind: "setCheckedKeys", widgetKey, checked, keys });
+  }
+
+  previewTreeMove(
+    widgetKey: string,
+    sourceKey: string,
+    afterKey: string | null,
+    label: string,
+  ): boolean {
+    return this.mutate({ kind: "previewTreeMove", widgetKey, sourceKey, afterKey, label });
   }
 
   /** Set the panel's focused widget by key. Passing a key that isn't

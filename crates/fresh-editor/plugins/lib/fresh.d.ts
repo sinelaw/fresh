@@ -2879,6 +2879,12 @@ type WidgetMutation = {
 } | {
 	"kind": "setFocusKey";
 	widgetKey: string;
+} | {
+	"kind": "previewTreeMove";
+	widgetKey: string;
+	sourceKey: string;
+	afterKey: string | null;
+	label: string;
 };
 /**
 * Per-call result from `SearchHandle.take()` — the matches accumulated since

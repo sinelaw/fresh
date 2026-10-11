@@ -3798,6 +3798,9 @@ impl Editor {
                 self.active_window().wheel_plugin_hook(x, y, delta);
             }
             UiFact::ExplorerScrollTo(offset) => {
+                // The window counts a drop preview's empty rows; the model
+                // does not.
+                let offset = self.explorer_window_row(offset);
                 self.active_window_mut().scroll_file_explorer_to(offset);
             }
 

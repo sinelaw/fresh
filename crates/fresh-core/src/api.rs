@@ -3712,6 +3712,26 @@ pub enum WidgetMutation {
     /// after mount, or to snap focus back to a "home" widget after a
     /// navigation event.
     SetFocusKey { widget_key: String },
+    /// Play a drop's move preview in a `Tree` before the move happens: an
+    /// empty row opens directly under `after_key` (the folder the row lands
+    /// in, opened if it is folded; `None` for the top of the tree), and
+    /// `label` is typed into it a character at a time in the diff colour for
+    /// an addition while the same characters ghost out of `source_key`'s row
+    /// in the diff colour for a removal.
+    ///
+    /// When it has played out the host fires `movepreviewend`
+    /// (`{ key: source_key }`) on the tree; the plugin makes the move then.
+    /// With the editor's animations off it fires straight away. A second
+    /// preview on the same tree ends the first (its `movepreviewend` fires
+    /// first). Nothing in the plugin's spec changes: the rows are the
+    /// host's, for the length of the preview.
+    PreviewTreeMove {
+        widget_key: String,
+        source_key: String,
+        #[serde(default)]
+        after_key: Option<String>,
+        label: String,
+    },
 }
 
 impl WidgetMutation {
