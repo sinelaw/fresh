@@ -643,3 +643,266 @@ fn expected_frame_inner(viewport_w: u16) -> usize {
     let target = ((w as f64 * 0.9).floor() as usize).saturating_sub(2);
     INNER_MAX.min(avail).min(target.max(INNER_MIN)).max(1)
 }
+
+// ── Weather section ─────────────────────────────────────────────────────
+//
+// The weather section is opt-in (init.ts registers
+// `builtinHandlers.weather`) and shells out to `curl`. These tests register
+// it from a sidecar plugin and put a fake `curl` first on `$PATH` that
+// answers with canned wttr.in JSON and records its arguments, so they never
+// touch the network and can assert on both the URL requested and the units
+// rendered. The canned payload carries distinct metric and imperial values
+// so a mix-up between the two is visible on screen.
+
+#[cfg(unix)]
+const WTTR_FIXTURE_JSON: &str = r#"{
+  "current_condition": [{
+    "temp_C": "21", "temp_F": "70",
+    "FeelsLikeC": "20", "FeelsLikeF": "68",
+    "windspeedKmph": "11", "windspeedMiles": "7",
+    "humidity": "55",
+    "weatherDesc": [{"value": "Sunny"}]
+  }],
+  "weather": [
+    {
+      "maxtempC": "25", "mintempC": "14", "maxtempF": "77", "mintempF": "57",
+      "hourly": [
+        {"time": "1500", "tempC": "23", "tempF": "73", "FeelsLikeC": "23", "FeelsLikeF": "73",
+         "weatherDesc": [{"value": "Clear"}]},
+        {"time": "1800", "tempC": "19", "tempF": "66", "FeelsLikeC": "18", "FeelsLikeF": "64",
+         "weatherDesc": [{"value": "Cloudy"}]}
+      ]
+    },
+    {
+      "maxtempC": "24", "mintempC": "12", "maxtempF": "75", "mintempF": "54",
+      "hourly": [{"time": "1200", "weatherDesc": [{"value": "Rain"}]}]
+    }
+  ]
+}"#;
+
+#[cfg(unix)]
+const WEATHER_SIDECAR: &str = r#"/// <reference path="./lib/fresh.d.ts" />
+/// @depends-on dashboard
+const editor = getEditor();
+
+const dash = editor.getPluginApi("dashboard") as
+    | {
+        registerSection: (name: string, refresh: (ctx: unknown) => Promise<void>) => () => void;
+        builtinHandlers: { weather: (ctx: unknown) => Promise<void> };
+    }
+    | null;
+
+if (dash) {
+    dash.registerSection("weather", dash.builtinHandlers.weather);
+}
+"#;
+
+/// A dashboard with the weather section registered, `curl` faked, and the
+/// given `plugins.dashboard.settings` applied. Field order is drop order:
+/// the editor goes first, the `$PATH` pin is released last.
+#[cfg(unix)]
+struct WeatherFixture {
+    harness: EditorTestHarness,
+    curl_log: PathBuf,
+    _pin: crate::common::global_state::PathPin,
+    _tmp: tempfile::TempDir,
+}
+
+#[cfg(unix)]
+impl WeatherFixture {
+    /// Boot the dashboard and wait until `ready` is on screen. `ready` must be
+    /// text that only appears once the weather rows have rendered at the real
+    /// panel width: the first refresh runs before the panel is measured, so
+    /// its rows are clipped (`Sunny · 7…`) until the section re-runs.
+    fn open(extra_settings: serde_json::Value, ready: &str) -> Self {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let working_dir = tmp.path().join("work");
+        let plugins_dir = working_dir.join("plugins");
+        fs::create_dir_all(&plugins_dir).unwrap();
+        copy_plugin(&plugins_dir, "dashboard");
+        copy_plugin_lib(&plugins_dir);
+        fs::write(plugins_dir.join("weather_sidecar.ts"), WEATHER_SIDECAR).unwrap();
+
+        // Paths are baked into the script rather than passed through the
+        // environment, so env capture can't rewrite what the child sees.
+        let fake_bin = tmp.path().join("fake-bin");
+        fs::create_dir_all(&fake_bin).unwrap();
+        let curl_log = tmp.path().join("curl.log");
+        let body = tmp.path().join("wttr.json");
+        fs::write(&body, WTTR_FIXTURE_JSON).unwrap();
+        let curl = fake_bin.join("curl");
+        fs::write(
+            &curl,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\ncat '{}'\n",
+                curl_log.display(),
+                body.display()
+            ),
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&curl).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&curl, perms).unwrap();
+        let pin = crate::common::global_state::pin_path_with_dir_first(&fake_bin);
+
+        let mut settings = extra_settings;
+        settings["autoOpen"] = serde_json::json!(true);
+        let mut config = Config::default();
+        config.plugins.insert(
+            "dashboard".to_string(),
+            PluginConfig {
+                enabled: true,
+                path: None,
+                settings,
+            },
+        );
+        let mut harness =
+            EditorTestHarness::with_config_and_working_dir(120, 40, config, working_dir)
+                .expect("harness");
+
+        harness.editor_mut().fire_ready_hook();
+        harness
+            .wait_until(|h| h.screen_to_string().contains(ready))
+            .unwrap();
+        harness.assert_no_plugin_errors();
+
+        Self {
+            harness,
+            curl_log,
+            _pin: pin,
+            _tmp: tmp,
+        }
+    }
+
+    fn screen(&self) -> String {
+        self.harness.screen_to_string()
+    }
+
+    /// The URL (last argument) of every `curl` invocation so far.
+    fn requested_urls(&self) -> Vec<String> {
+        fs::read_to_string(&self.curl_log)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| l.split_whitespace().last())
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn assert_requested_only(&self, url: &str) {
+        let urls = self.requested_urls();
+        assert!(!urls.is_empty(), "weather section never invoked curl");
+        assert!(
+            urls.iter().all(|u| u == url),
+            "expected every weather fetch to request {url}, got {urls:?}"
+        );
+    }
+}
+
+/// With nothing configured the section keeps its original behaviour: no
+/// location in the URL, so wttr.in falls back to IP geolocation, and metric
+/// units.
+#[cfg(unix)]
+#[test]
+fn weather_defaults_to_ip_geolocation_and_metric() {
+    let fx = WeatherFixture::open(serde_json::json!({}), "12°..24°C · Rain");
+
+    fx.assert_requested_only("https://wttr.in?format=j1");
+
+    let screen = fx.screen();
+    for expected in ["21°C", "feels 20°C", "11 km/h", "19°C", "12°..24°C"] {
+        assert!(
+            screen.contains(expected),
+            "missing {expected:?} in:\n{screen}"
+        );
+    }
+    for unexpected in ["°F", "mph"] {
+        assert!(
+            !screen.contains(unexpected),
+            "metric output leaked {unexpected:?}:\n{screen}"
+        );
+    }
+}
+
+/// `weatherLocation` pins the location in the URL path, replacing the
+/// IP-geolocation lookup. Surrounding whitespace is ignored.
+#[cfg(unix)]
+#[test]
+fn weather_location_setting_pins_the_wttr_path() {
+    let fx = WeatherFixture::open(
+        serde_json::json!({ "weatherLocation": "  LAX " }),
+        "12°..24°C · Rain",
+    );
+    fx.assert_requested_only("https://wttr.in/LAX?format=j1");
+}
+
+/// Locations with spaces or other reserved characters are percent-encoded
+/// rather than corrupting the URL.
+#[cfg(unix)]
+#[test]
+fn weather_location_is_url_encoded() {
+    let fx = WeatherFixture::open(
+        serde_json::json!({ "weatherLocation": "New York" }),
+        "12°..24°C · Rain",
+    );
+    fx.assert_requested_only("https://wttr.in/New%20York?format=j1");
+}
+
+/// A blank (or whitespace-only) location is "not configured": the URL stays
+/// path-free so wttr.in geolocates by IP, exactly as with no setting at all.
+#[cfg(unix)]
+#[test]
+fn weather_blank_location_falls_back_to_ip_geolocation() {
+    let fx = WeatherFixture::open(
+        serde_json::json!({ "weatherLocation": "   " }),
+        "12°..24°C · Rain",
+    );
+    fx.assert_requested_only("https://wttr.in?format=j1");
+}
+
+/// `weatherUnits = "Imperial"` renders every weather row — now, 5pm and
+/// tomorrow — in °F and mph, with no metric values left over.
+#[cfg(unix)]
+#[test]
+fn weather_imperial_units_render_fahrenheit_and_mph() {
+    let fx = WeatherFixture::open(
+        serde_json::json!({ "weatherUnits": "Imperial" }),
+        "54°..75°F · Rain",
+    );
+
+    let screen = fx.screen();
+    for expected in ["70°F", "feels 68°F", "7 mph", "66°F", "54°..75°F"] {
+        assert!(
+            screen.contains(expected),
+            "missing {expected:?} in:\n{screen}"
+        );
+    }
+    for unexpected in ["°C", "km/h"] {
+        assert!(
+            !screen.contains(unexpected),
+            "imperial output leaked {unexpected:?}:\n{screen}"
+        );
+    }
+    // Units are a display choice: the request itself doesn't change.
+    fx.assert_requested_only("https://wttr.in?format=j1");
+}
+
+/// An explicit `"Metric"` behaves the same as the default.
+#[cfg(unix)]
+#[test]
+fn weather_explicit_metric_units_render_celsius_and_kmh() {
+    let fx = WeatherFixture::open(
+        serde_json::json!({ "weatherUnits": "Metric" }),
+        "12°..24°C · Rain",
+    );
+
+    let screen = fx.screen();
+    for expected in ["21°C", "11 km/h", "12°..24°C"] {
+        assert!(
+            screen.contains(expected),
+            "missing {expected:?} in:\n{screen}"
+        );
+    }
+    assert!(!screen.contains("°F"), "metric output leaked °F:\n{screen}");
+}
