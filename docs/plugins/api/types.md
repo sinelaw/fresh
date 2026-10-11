@@ -4734,6 +4734,10 @@ type WidgetMutation = {
   sourceKey: string;
   afterKey: string | null;
   label: string;
+} | {
+  "kind": "endTreeMovePreview";
+  widgetKey: string;
+  commit: boolean;
 };
 ```
 

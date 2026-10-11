@@ -1,12 +1,14 @@
 //! The preview a drag-and-drop move plays before it happens.
 //!
-//! A row dropped into another directory (the file explorer) or folder (a
-//! plugin tree, such as the orchestrator dock) does not jump there. First an
-//! empty row opens where the entry will land; then its name is *typed* into
-//! that row a character at a time, in the diff colour for an addition, while
-//! the same characters ghost out of the original row in the diff colour for a
-//! removal. Only once the whole name has moved across does the move go on —
-//! to the explorer's confirmation, or straight to the plugin's filing.
+//! While a row is dragged over another directory (the file explorer) or
+//! folder (a plugin tree, such as the orchestrator dock), the tree shows the
+//! move a drop there would make: an empty row opens where the entry would
+//! land, then its name is *typed* into that row a character at a time, in the
+//! diff colour for an addition, while the same characters ghost out of the
+//! original row in the diff colour for a removal. Moving on to another target
+//! drops the preview and starts it over there. Once dropped, the move goes on
+//! when the name is across — to the explorer's confirmation, or to the
+//! plugin's filing.
 //!
 //! Everything here is the part the two surfaces share and nothing that
 //! belongs to either: the clock ([`MovePreview`]), where the empty rows go in
@@ -26,14 +28,14 @@ pub const GHOST_BG: &str = "editor.diff_remove_bg";
 
 /// How long the empty row stands open before the first character arrives,
 /// so the opening reads as its own step.
-const OPEN: Duration = Duration::from_millis(300);
+const OPEN: Duration = Duration::from_millis(150);
 /// One character's turn — the same for every name, so typing reads at one
 /// steady pace. The count is read off the clock each frame rather than
 /// stepped per frame, so a frame that comes late skips ahead instead of
 /// slowing the typing down.
-const PER_CHAR: Duration = Duration::from_millis(100);
+const PER_CHAR: Duration = Duration::from_millis(60);
 /// How long the finished picture holds before the move goes on.
-const HOLD: Duration = Duration::from_millis(350);
+const HOLD: Duration = Duration::from_millis(200);
 
 /// The clock of one move's preview: how many characters have been typed by a
 /// given instant, and when it is over.

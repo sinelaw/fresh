@@ -1335,13 +1335,13 @@ export class WidgetPanel {
     return this.mutate({ kind: "setCheckedKeys", widgetKey, checked, keys });
   }
 
-  /** Play a drop's move preview in the named `Tree` — the one the file
-   * explorer plays: an empty row opens directly under `afterKey` (the
-   * folder the row lands in; `null` for the top of the tree), and `label`
-   * is typed into it a character at a time while the same characters ghost
-   * out of `sourceKey`'s row. The host then fires `movepreviewend`
-   * (`{ key: sourceKey }`) on the tree: make the move there. With the
-   * editor's animations off it fires straight away. */
+  /** Show a move in the named `Tree` before it happens — the file
+   * explorer's drag preview: an empty row opens directly under `afterKey`
+   * (the folder the row would land in; `null` for the top of the tree), and
+   * `label` is typed into it a character at a time while the same
+   * characters ghost out of `sourceKey`'s row. It stays until
+   * `endTreeMovePreview`; calling this again replaces it (the same move
+   * keeps playing rather than starting over). */
   previewTreeMove(
     widgetKey: string,
     sourceKey: string,
@@ -1349,6 +1349,13 @@ export class WidgetPanel {
     label: string,
   ): boolean {
     return this.mutate({ kind: "previewTreeMove", widgetKey, sourceKey, afterKey, label });
+  }
+
+  /** End the named `Tree`'s move preview: `commit: false` drops it;
+   * `commit: true` lets it finish and then fires `movepreviewend`
+   * (`{ key: sourceKey }`) on the tree — make the move there. */
+  endTreeMovePreview(widgetKey: string, commit: boolean): boolean {
+    return this.mutate({ kind: "endTreeMovePreview", widgetKey, commit });
   }
 
   /** Append `newNodes` (and parallel `newItemKeys`) to an existing
@@ -1609,6 +1616,13 @@ export class FloatingWidgetPanel {
     label: string,
   ): boolean {
     return this.mutate({ kind: "previewTreeMove", widgetKey, sourceKey, afterKey, label });
+  }
+
+  /** End the named `Tree`'s move preview: `commit: false` drops it;
+   * `commit: true` lets it finish and then fires `movepreviewend`
+   * (`{ key: sourceKey }`) on the tree — make the move there. */
+  endTreeMovePreview(widgetKey: string, commit: boolean): boolean {
+    return this.mutate({ kind: "endTreeMovePreview", widgetKey, commit });
   }
 
   /** Set the panel's focused widget by key. Passing a key that isn't

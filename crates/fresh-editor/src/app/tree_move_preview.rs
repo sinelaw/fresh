@@ -1,12 +1,13 @@
-//! A drop's move preview in a plugin's `Tree` (`WidgetMutation::PreviewTreeMove`).
+//! A move preview in a plugin's `Tree` (`WidgetMutation::PreviewTreeMove`).
 //!
-//! The same preview the file explorer plays before it asks about a move
-//! (`view::move_preview`), for a tree whose rows are a plugin's: the
-//! orchestrator dock's, when a workspace is dragged onto a folder. The plugin
-//! names the row that moves, the row it lands under and the name to type;
-//! the host lays the preview into the spec the panel is drawn from — never
-//! into the plugin's own copy — and, when it has played out, tells the plugin
-//! with `movepreviewend` so it makes the move.
+//! The same preview the file explorer plays while a drag is held over a
+//! directory (`view::move_preview`), for a tree whose rows are a plugin's:
+//! the orchestrator dock's, when a workspace is dragged over a folder. The
+//! plugin names the row that moves, the row it lands under and the name to
+//! type; the host lays the preview into the spec the panel is drawn from —
+//! never into the plugin's own copy. The plugin ends it: dropped, or
+//! committed (`EndTreeMovePreview`), in which case the host lets it play out
+//! and then tells the plugin with `movepreviewend` so it makes the move.
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -30,12 +31,15 @@ pub(crate) struct TreeMovePreview {
     /// What is typed across.
     pub label: String,
     pub clock: MovePreview,
+    /// The plugin has committed the move: it is made (`movepreviewend`) once
+    /// the preview has played out.
+    pub committed: bool,
 }
 
 impl crate::app::Editor {
-    /// Start `label`'s preview in `widget_key`'s tree. A preview already
-    /// playing in that tree ends first, so its move is not lost; with
-    /// animations off this one ends at once too.
+    /// Show `label`'s move in `widget_key`'s tree, replacing whatever move
+    /// that tree was showing — unless it is this same move, which keeps
+    /// playing rather than starting over.
     pub(crate) fn start_tree_move_preview(
         &mut self,
         panel_key: &PanelKey,
@@ -44,57 +48,79 @@ impl crate::app::Editor {
         after_key: Option<String>,
         label: String,
     ) {
-        if let Some(i) = self
-            .tree_move_previews
-            .iter()
-            .position(|p| &p.panel_key == panel_key && p.widget_key == widget_key)
-        {
-            let earlier = self.tree_move_previews.remove(i);
-            self.end_tree_move_preview(earlier);
+        let same_tree =
+            |p: &TreeMovePreview| &p.panel_key == panel_key && p.widget_key == widget_key;
+        if let Some(p) = self.tree_move_previews.iter().find(|p| same_tree(p)) {
+            if p.source_key == source_key && p.after_key == after_key && p.label == label {
+                return;
+            }
         }
-        let preview = TreeMovePreview {
+        self.tree_move_previews.retain(|p| !same_tree(p));
+        self.tree_move_previews.push(TreeMovePreview {
             panel_key: panel_key.clone(),
             widget_key,
             source_key,
             after_key,
             clock: MovePreview::new([label.as_str()], self.time_source().now()),
             label,
+            committed: false,
+        });
+        self.shell_description_stale = true;
+    }
+
+    /// End `widget_key`'s preview: drop it, or commit it to be made once it
+    /// has played out (`step_tree_move_previews`) — at once with animations
+    /// off, or when it already has.
+    pub(crate) fn end_tree_move_preview(
+        &mut self,
+        panel_key: &PanelKey,
+        widget_key: &str,
+        commit: bool,
+    ) {
+        let Some(i) = self
+            .tree_move_previews
+            .iter()
+            .position(|p| &p.panel_key == panel_key && p.widget_key == widget_key)
+        else {
+            return;
         };
-        if !self.config.editor.animations {
-            self.end_tree_move_preview(preview);
+        self.shell_description_stale = true;
+        if !commit {
+            self.tree_move_previews.remove(i);
             return;
         }
-        self.tree_move_previews.push(preview);
-        self.shell_description_stale = true;
+        self.tree_move_previews[i].committed = true;
+        self.step_tree_move_previews();
     }
 
-    /// The preview is over: the panel is drawn from its own spec again, and
-    /// the plugin hears `movepreviewend` to make the move.
-    fn end_tree_move_preview(&mut self, p: TreeMovePreview) {
-        self.fire_widget_event(
-            &p.panel_key,
-            p.widget_key,
-            "movepreviewend".to_string(),
-            serde_json::json!({ "key": p.source_key }),
-        );
-        self.shell_description_stale = true;
-    }
-
-    /// End every preview that has played out. True while any is in flight,
-    /// because each tick of one is a frame.
+    /// Make every committed move whose preview has played out: the panel is
+    /// drawn from its own spec again, and the plugin hears `movepreviewend`.
+    /// True while a preview still owes frames.
     pub(crate) fn step_tree_move_previews(&mut self) -> bool {
         if self.tree_move_previews.is_empty() {
             return false;
         }
         let now = self.time_source().now();
+        let animations = self.config.editor.animations;
         let (done, playing): (Vec<_>, Vec<_>) = std::mem::take(&mut self.tree_move_previews)
             .into_iter()
-            .partition(|p| p.clock.finished(now));
+            .partition(|p| p.committed && (!animations || p.clock.finished(now)));
         self.tree_move_previews = playing;
+        let owes_frames = animations
+            && self
+                .tree_move_previews
+                .iter()
+                .any(|p| p.clock.next_deadline(now).is_some());
         for p in done {
-            self.end_tree_move_preview(p);
+            self.fire_widget_event(
+                &p.panel_key,
+                p.widget_key,
+                "movepreviewend".to_string(),
+                serde_json::json!({ "key": p.source_key }),
+            );
+            self.shell_description_stale = true;
         }
-        true
+        owes_frames
     }
 
     /// When a plugin tree's preview next changes, for the loop to wake.
@@ -118,6 +144,9 @@ impl crate::app::Editor {
         std::rc::Rc<WidgetSpec>,
         HashMap<String, WidgetInstanceState>,
     ) {
+        if !self.config.editor.animations {
+            return (spec, states);
+        }
         let now = self.time_source().now();
         for p in self
             .tree_move_previews
@@ -330,6 +359,7 @@ mod tests {
             after_key: after.map(str::to_string),
             label: "beta".into(),
             clock: MovePreview::new(["beta"], Instant::now()),
+            committed: false,
         }
     }
 

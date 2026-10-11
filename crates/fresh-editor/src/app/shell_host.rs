@@ -1826,6 +1826,9 @@ impl Editor {
             self.end_widget_drag();
             self.explorer_drag = None;
         }
+        // The explorer's move preview follows the drag: where it is now, or
+        // gone with it if it ended without a drop.
+        self.sync_explorer_drag_preview();
         // **The claim is the tree's word, and only the tree's.** A seam that
         // hands a key to a host interior — the prompt's, a focused panel's —
         // `stop()`s it, because the key *is* that surface's: what the surface

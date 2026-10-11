@@ -93,32 +93,42 @@ pub enum RevealOutcome {
     OutsideRoot(std::path::PathBuf),
 }
 
-/// A drop in the explorer, playing out before it is asked about.
+/// A move a drag in the explorer is showing, from the moment it is over a
+/// directory it would move into until its drop is answered.
 ///
-/// The drop has already been resolved into the move it would make; this
-/// holds the question until the tree has shown that move — an empty row
-/// opening in `dest`, each source's name typed into it while the same
+/// While the drag is held it shows the move a release would make — an empty
+/// row opening in `dest`, each source's name typed into it while the same
 /// characters ghost out of the source's own row (`view::move_preview`) — and
-/// then keeps the finished picture on screen for as long as the question is
-/// open, so what is being asked about stays in sight behind the dialog.
+/// a new target starts it over. Released, it holds the question until the
+/// name is across, then keeps the finished picture on screen for as long as
+/// the question is open, so what is being asked about stays in sight behind
+/// the dialog.
 pub(crate) struct ExplorerMovePreview {
     pub clock: crate::view::move_preview::MovePreview,
     /// The directory the entries would land in.
     pub dest: PathBuf,
-    /// What would move, in the order the drop named them.
+    /// What would move, in the order the drag named them.
     pub sources: Vec<PathBuf>,
-    /// The confirmation to open when the preview has played out; `None`
-    /// once it is open.
-    pub ask: Option<(String, PromptType, crate::view::confirm::Confirm)>,
+    pub stage: MovePreviewStage,
+}
+
+/// Where an [`ExplorerMovePreview`] is in its drag.
+pub(crate) enum MovePreviewStage {
+    /// The drag is still held over `dest`.
+    Dragging,
+    /// Dropped: the confirmation to open once the preview has played out.
+    Dropped(Box<(String, PromptType, crate::view::confirm::Confirm)>),
+    /// The confirmation is open.
+    Asked,
 }
 
 impl ExplorerMovePreview {
     /// How many characters of each name have moved across at `now`: all of
     /// them once the question is up.
     pub fn typed(&self, now: std::time::Instant) -> usize {
-        match self.ask {
-            Some(_) => self.clock.typed(now),
-            None => usize::MAX,
+        match self.stage {
+            MovePreviewStage::Asked => usize::MAX,
+            _ => self.clock.typed(now),
         }
     }
 }
@@ -1682,20 +1692,18 @@ impl Editor {
         Some(get_parent_dir_path(explorer.tree().get_node(id)?))
     }
 
-    /// Ask to move what the held drag lifted into `dest`.
+    /// The moves dropping the held drag into `dest` would make: what it
+    /// lifted, each paired with where it would land.
     ///
-    /// The whole multi-selection when the lifted entry is part of one, which is
-    /// what dragging one of several highlighted rows means; otherwise the one
-    /// entry. Nothing moves on the release itself: a drag is easy to end over
-    /// the wrong row, and a move it did not mean takes a reader's files out
-    /// from under them, so it is asked about first, and done by
-    /// [`Self::perform_explorer_move`] once the answer is yes.
-    pub(crate) fn explorer_drop_into(&mut self, dest: &Path) {
+    /// The whole multi-selection when the lifted entry is part of one, which
+    /// is what dragging one of several highlighted rows means; otherwise the
+    /// one entry. Empty when nothing would move.
+    fn explorer_drag_moves(&self, dest: &Path) -> Vec<(PathBuf, PathBuf)> {
         let Some(drag) = self.explorer_drag.as_ref() else {
-            return;
+            return Vec::new();
         };
         let Some(lifted) = self.explorer_entry_path(drag.index, drag.segment.as_deref()) else {
-            return;
+            return Vec::new();
         };
         let mut sources = self
             .file_explorer()
@@ -1711,8 +1719,7 @@ impl Editor {
         if !sources.contains(&lifted) {
             sources = vec![lifted];
         }
-
-        let pairs: Vec<(PathBuf, PathBuf)> = sources
+        sources
             .into_iter()
             .filter_map(|src| {
                 let name = src.file_name()?;
@@ -1725,7 +1732,71 @@ impl Editor {
                 let pointless = dst == src || dest.starts_with(&src);
                 (!pointless).then_some((src, dst))
             })
+            .collect()
+    }
+
+    /// Keep the drag's preview on the directory it is over: a new target
+    /// drops the old preview and starts one there; no target (off every row,
+    /// or back where it started) drops it; a drag that ended without a drop
+    /// leaves nothing behind. Called after every dispatch, so the leave from
+    /// one row and the enter on the next — one pointer move — are seen as
+    /// the one change they are, and two rows of the same directory do not
+    /// restart it.
+    pub(crate) fn sync_explorer_drag_preview(&mut self) {
+        let dragging = matches!(
+            self.explorer_move_preview.as_ref().map(|p| &p.stage),
+            None | Some(MovePreviewStage::Dragging)
+        );
+        if !dragging {
+            return;
+        }
+        let target = self
+            .explorer_drag
+            .as_ref()
+            .filter(|d| d.strayed)
+            .and_then(|d| d.target.clone())
+            .filter(|_| self.config.editor.animations);
+        let Some(dest) = target else {
+            if self.explorer_move_preview.take().is_some() {
+                self.shell_description_stale = true;
+            }
+            return;
+        };
+        if self
+            .explorer_move_preview
+            .as_ref()
+            .is_some_and(|p| p.dest == dest)
+        {
+            return;
+        }
+        let sources: Vec<PathBuf> = self
+            .explorer_drag_moves(&dest)
+            .into_iter()
+            .map(|(src, _)| src)
             .collect();
+        self.explorer_move_preview = (!sources.is_empty()).then(|| ExplorerMovePreview {
+            clock: crate::view::move_preview::MovePreview::new(
+                sources
+                    .iter()
+                    .map(|p| p.file_name().and_then(|n| n.to_str()).unwrap_or_default()),
+                self.time_source().now(),
+            ),
+            dest,
+            sources,
+            stage: MovePreviewStage::Dragging,
+        });
+        self.shell_description_stale = true;
+    }
+
+    /// Ask to move what the held drag lifted into `dest`.
+    ///
+    /// Nothing moves on the release itself: a drag is easy to end over the
+    /// wrong row, and a move it did not mean takes a reader's files out from
+    /// under them, so it is asked about first, and done by
+    /// [`Self::perform_explorer_move`] once the answer is yes. With animations
+    /// on, the question waits for the drag's preview to finish playing.
+    pub(crate) fn explorer_drop_into(&mut self, dest: &Path) {
+        let pairs = self.explorer_drag_moves(dest);
         if pairs.is_empty() {
             return;
         }
@@ -1761,68 +1832,86 @@ impl Editor {
         let confirm =
             crate::app::confirm_dialog::move_entries(body).detail(dest.display().to_string());
         let sources: Vec<PathBuf> = pairs.iter().map(|(src, _)| src.clone()).collect();
-        let ask = (
+        let ask = Box::new((
             confirm.body.clone(),
             PromptType::ConfirmExplorerMove { pairs },
             confirm,
-        );
+        ));
         // With animations off the question is asked at once, as it always
-        // was; with them on, the move is first played out in the tree and
-        // the question waits for it (`step_explorer_move_preview`).
+        // was; with them on, it waits for the preview the drag has been
+        // playing (`step_explorer_move_preview`) — at once if that is done.
         if !self.config.editor.animations {
-            let (message, prompt_type, confirm) = ask;
+            let (message, prompt_type, confirm) = *ask;
             self.start_confirm_prompt(message, prompt_type, confirm);
             return;
         }
-        let now = self.time_source().now();
-        self.explorer_move_preview = Some(ExplorerMovePreview {
-            clock: crate::view::move_preview::MovePreview::new(
-                sources
-                    .iter()
-                    .map(|p| p.file_name().and_then(|n| n.to_str()).unwrap_or_default()),
-                now,
-            ),
-            dest: dest.to_path_buf(),
-            sources,
-            ask: Some(ask),
-        });
+        match self.explorer_move_preview.as_mut() {
+            Some(p) if p.dest == dest && matches!(p.stage, MovePreviewStage::Dragging) => {
+                p.stage = MovePreviewStage::Dropped(ask);
+            }
+            _ => {
+                self.explorer_move_preview = Some(ExplorerMovePreview {
+                    clock: crate::view::move_preview::MovePreview::new(
+                        sources
+                            .iter()
+                            .map(|p| p.file_name().and_then(|n| n.to_str()).unwrap_or_default()),
+                        self.time_source().now(),
+                    ),
+                    dest: dest.to_path_buf(),
+                    sources,
+                    stage: MovePreviewStage::Dropped(ask),
+                });
+            }
+        }
         self.shell_description_stale = true;
+        self.step_explorer_move_preview();
     }
 
-    /// Move the explorer's drop preview along: once its name is across, ask
-    /// the question it was holding; once that question is answered (either
-    /// way) or replaced, let the preview go. True when something changed.
+    /// Move the explorer's move preview along: once a dropped one's name is
+    /// across, ask the question it was holding; once that question is
+    /// answered (either way) or replaced, let the preview go. True when it
+    /// owes a frame.
     pub(crate) fn step_explorer_move_preview(&mut self) -> bool {
         let now = self.time_source().now();
         let Some(preview) = self.explorer_move_preview.as_mut() else {
             return false;
         };
-        if preview.ask.is_some() {
-            // Still playing: every tick is a frame, as an animation's is.
-            if !preview.clock.finished(now) {
-                return true;
+        match &preview.stage {
+            // Every tick of the typing is a frame, as an animation's is.
+            MovePreviewStage::Dragging => preview.clock.next_deadline(now).is_some(),
+            MovePreviewStage::Dropped(_) => {
+                if !preview.clock.finished(now) {
+                    return true;
+                }
+                let MovePreviewStage::Dropped(ask) =
+                    std::mem::replace(&mut preview.stage, MovePreviewStage::Asked)
+                else {
+                    unreachable!("matched above");
+                };
+                let (message, prompt_type, confirm) = *ask;
+                self.start_confirm_prompt(message, prompt_type, confirm);
+                true
             }
-            let (message, prompt_type, confirm) = preview.ask.take().expect("checked above");
-            self.start_confirm_prompt(message, prompt_type, confirm);
-            return true;
+            MovePreviewStage::Asked => {
+                let asking = self.active_window().prompt.as_ref().is_some_and(|p| {
+                    matches!(p.prompt_type, PromptType::ConfirmExplorerMove { .. })
+                });
+                if asking {
+                    return false;
+                }
+                self.explorer_move_preview = None;
+                self.shell_description_stale = true;
+                true
+            }
         }
-        let asking = self
-            .active_window()
-            .prompt
-            .as_ref()
-            .is_some_and(|p| matches!(p.prompt_type, PromptType::ConfirmExplorerMove { .. }));
-        if asking {
-            return false;
-        }
-        self.explorer_move_preview = None;
-        self.shell_description_stale = true;
-        true
     }
 
-    /// When the explorer's drop preview next changes, for the loop to wake.
+    /// When the explorer's move preview next changes, for the loop to wake.
     pub(crate) fn explorer_move_preview_deadline(&self) -> Option<std::time::Instant> {
         let preview = self.explorer_move_preview.as_ref()?;
-        preview.ask.as_ref()?;
+        if matches!(preview.stage, MovePreviewStage::Asked) {
+            return None;
+        }
         preview.clock.next_deadline(self.time_source().now())
     }
 

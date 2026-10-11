@@ -6048,6 +6048,9 @@ impl Editor {
             } => {
                 self.start_tree_move_preview(panel_key, widget_key, source_key, after_key, label);
             }
+            WidgetMutation::EndTreeMovePreview { widget_key, commit } => {
+                self.end_tree_move_preview(panel_key, &widget_key, commit);
+            }
         }
 
         // Re-render with the mutated state. `rerender_widget_panel`
