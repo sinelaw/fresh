@@ -5438,7 +5438,11 @@ impl Editor {
         if self.last_window_title.as_deref() == Some(new_title.as_str()) {
             return;
         }
-        crate::services::terminal_title::write_terminal_title(&new_title);
+        if self.session_mode {
+            self.pending_window_title = Some(new_title.clone());
+        } else {
+            crate::services::terminal_title::write_terminal_title(&new_title);
+        }
         self.last_window_title = Some(new_title);
     }
 

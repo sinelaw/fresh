@@ -730,6 +730,10 @@ pub struct Editor {
     /// than on every frame.
     last_window_title: Option<String>,
 
+    /// Session mode: a title change for the server to send to the clients,
+    /// since the daemon's own stdout is no terminal.
+    pending_window_title: Option<String>,
+
     // `plugin_errors` moved onto `Window`.
     /// Terminal dimensions (for creating new buffers)
     terminal_width: u16,
