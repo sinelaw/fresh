@@ -21,6 +21,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
   - Rename accepts a path, which moves the entry
   - Refresh button
 * **Kotlin uses JetBrains' official `kotlin-lsp`** by default; set `lsp.kotlin.command` to keep `kotlin-language-server` (#3481 by @karczews)
+* **`terminal.close_on_exit` closes a shell's tab when the shell exits** - with it on, `exit` or Ctrl+D in an integrated terminal closes its tab, and the pane too when the terminal was its only tab, instead of leaving it as read-only "(exited)" scrollback. Off by default; terminals running a command (agents, plugins) keep their output either way
 * **Plugin docs** - the [API reference](https://getfresh.dev/docs/plugins/api/) is generated from the source, and there is a new "Asking for Input" guide
 
 ### Bug Fixes

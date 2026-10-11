@@ -211,7 +211,8 @@
         "skip_app_execution_alias": true,
         "resume_agents": true,
         "mouse_drag_selects": true,
-        "mouse_forwarding": "requested"
+        "mouse_forwarding": "requested",
+        "close_on_exit": false
       }
     },
     "keybindings": {
@@ -1426,6 +1427,11 @@
           "description": "When programs in the terminal get mouse events. `requested` (default):\nonly programs that ask for the mouse (plus wheel for full-screen apps);\nShift+drag still selects. `alt_screen`: every full-screen program gets all events.",
           "$ref": "#/$defs/TerminalMouseForwarding",
           "default": "requested"
+        },
+        "close_on_exit": {
+          "description": "Close a shell's tab (and its pane, if it was the only tab) when the\nshell exits (`exit`, Ctrl+D) instead of keeping it as read-only\nscrollback. Terminals running a command (agents, plugins) are kept.\nDefault: false",
+          "type": "boolean",
+          "default": false
         }
       }
     },
