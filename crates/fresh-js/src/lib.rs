@@ -64,18 +64,29 @@ mod backend {
         /// ("cannot read property 'toJSON' of null"). It takes the failed
         /// lookup as "no toJSON" and carries on, but the exception stays
         /// pending in the context, where the plugin runtime's next check
-        /// reports it as the plugin's error. So when the conversion succeeds
-        /// and nothing was pending before it, whatever it left pending is
-        /// that artefact and is cleared.
+        /// reports it as the plugin's error. So when nothing was pending
+        /// before the conversion, what it left pending is cleared if it is
+        /// that artefact: always when the conversion succeeds, and when it
+        /// fails only if it is the `toJSON` lookup's error (a real exception,
+        /// say from a getter, stays pending for the caller).
         pub fn from_value<T: ::serde::de::DeserializeOwned>(
             value: rquickjs::Value<'_>,
         ) -> Result<T, rquickjs_serde::Error> {
             let ctx = value.ctx().clone();
             // SAFETY: `ctx` is a live context; JS_HasException only reads it.
-            let pending_before = unsafe { rquickjs::qjs::JS_HasException(ctx.as_raw().as_ptr()) };
+            let has_exception = || unsafe { rquickjs::qjs::JS_HasException(ctx.as_raw().as_ptr()) };
+            let pending_before = has_exception();
             let result = rquickjs_serde::from_value(value);
-            if result.is_ok() && !pending_before {
-                let _ = ctx.catch();
+            if !pending_before && has_exception() {
+                let exception = ctx.catch();
+                let artefact = result.is_ok()
+                    || exception
+                        .as_exception()
+                        .and_then(|e| e.message())
+                        .is_some_and(|m| m.contains("'toJSON'"));
+                if !artefact {
+                    ctx.throw(exception);
+                }
             }
             result
         }

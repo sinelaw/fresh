@@ -220,9 +220,9 @@ jobs:
   #   crates Debian does not package): the `oxc` feature is off.
   #
   # The editor is built with the Debian package's features (runtime, plugins,
-  # embed-plugins: no tree-sitter, http, self-update or oxc). The job also
-  # checks that Debian testing's archive can supply every Rust dependency of
-  # that build. The Debian package itself (packaging/debian) is built by
+  # embed-plugins, precompiled-plugins: no tree-sitter, http, self-update or
+  # oxc). The job also checks that Debian testing's archive can supply every
+  # Rust dependency of that build. The Debian package itself (packaging/debian) is built by
   # debian-package.yml.
   # See docs/internal/debian-quickjs-spike.md.
   system-quickjs:

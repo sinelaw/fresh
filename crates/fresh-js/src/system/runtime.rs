@@ -191,6 +191,7 @@ impl Runtime {
         unsafe { ffi::JS_UpdateStackTop(self.inner.rt) };
         let mut job_ctx: *mut ffi::JSContext = std::ptr::null_mut();
         let r = unsafe { ffi::JS_ExecutePendingJob(self.inner.rt, &mut job_ctx) };
+        super::function::resume_pending_panic();
         match r {
             0 => Ok(false),
             r if r > 0 => Ok(true),

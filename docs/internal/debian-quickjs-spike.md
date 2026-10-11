@@ -75,7 +75,11 @@ What it copies from rquickjs, because Fresh depends on it:
   ones too), under its camelCase name or `#[qjs(rename)]`.
 - **Strict mode.** `eval` is a strict global script by default.
 - **Panics.** A panic in a native call is caught at the FFI boundary, carried
-  through JS as an exception and resumed once control is back in Rust.
+  through JS as an exception and resumed once control is back in Rust. The
+  system backend resumes it as soon as the engine call returns, even when the
+  script caught the exception; rquickjs resumes it only when an engine call
+  returns an exception, so there a script that catches it runs on and the
+  panic surfaces at the next exception.
 
 Where it differs:
 
@@ -371,9 +375,10 @@ handled:
   `libquickjs.a` (MIT, from `libquickjs`) and its own C shim (GPL-3+, built
   from this source package).
 
-The resulting package depends on `libc6`, `libgcc-s1`, `libonig5` and
-`esbuild`, lists QuickJS in `Static-Built-Using`, installs, and checks an
-`init.ts` through the packaged esbuild; lintian reports only
+The resulting package depends on `libc6`, `libgcc-s1` and `libonig5` only
+(recommending `git` and suggesting `esbuild`), lists QuickJS in
+`Static-Built-Using`, installs, runs its precompiled bundled plugins without
+esbuild, and checks an `init.ts` once esbuild is installed; lintian reports only
 `initial-upload-closes-no-bugs`, until there is an ITP bug.
 
 What the first offline build found that the archive check could not: Debian's
@@ -420,6 +425,6 @@ override_dh_auto_build:
 ```
 
 `Built-Using: quickjs` is needed because QuickJS is linked statically
-(`libquickjs` ships only a static library). `esbuild` is a run-time
-dependency because plugins are TypeScript and are compiled when they load;
-it is needed at build time only for the tests.
+(`libquickjs` ships only a static library). `esbuild` is a build dependency,
+to precompile the bundled plugins and for the tests, and only suggested at
+run time, for the user's own TypeScript.

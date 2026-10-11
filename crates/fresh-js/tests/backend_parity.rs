@@ -372,6 +372,26 @@ fn serde_leaves_no_exception_pending() {
 }
 
 #[test]
+fn failed_serde_conversion_leaves_no_exception_pending() {
+    #[derive(serde::Deserialize, Debug)]
+    #[serde(deny_unknown_fields)]
+    #[allow(dead_code)]
+    struct Strict {
+        a: Option<u32>,
+    }
+    with_ctx(|ctx| {
+        let value: Value = ctx.eval("({ a: null, extra: 1 })").unwrap();
+        assert!(fresh_js::serde::from_value::<Strict>(value).is_err());
+        let pending = ctx.catch();
+        assert!(
+            pending.as_exception().is_none(),
+            "the failed conversion left an exception pending: {:?}",
+            pending.as_exception().and_then(|e| e.message())
+        );
+    });
+}
+
+#[test]
 fn persistent_values_outlive_with() {
     let rt = Runtime::new().unwrap();
     let ctx = Context::full(&rt).unwrap();
@@ -433,6 +453,21 @@ fn panics_in_native_calls_resume_in_rust() {
         let f = Function::new(ctx.clone(), || -> i32 { panic!("boom from rust") }).unwrap();
         ctx.globals().set("boom", f).unwrap();
         let _: fresh_js::Result<()> = ctx.eval("boom()");
+    });
+}
+
+// The system backend only: rquickjs resumes a panic only when an engine call
+// returns an exception, so a script that catches the one a panic raised (and
+// leaves it alone) runs on, and the panic surfaces at the next exception.
+#[cfg(fresh_js_system)]
+#[test]
+#[should_panic(expected = "boom from rust")]
+fn panics_in_native_calls_are_not_caught_by_js() {
+    with_ctx(|ctx| {
+        let f = Function::new(ctx.clone(), || -> i32 { panic!("boom from rust") }).unwrap();
+        ctx.globals().set("boom", f).unwrap();
+        let _: fresh_js::Result<String> =
+            ctx.eval("try { boom(); 'returned' } catch (e) { 'caught' }");
     });
 }
 

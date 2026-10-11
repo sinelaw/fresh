@@ -536,8 +536,9 @@ pub fn take_fatal_js_error() -> Option<String> {
     }
 }
 
-/// Take the context's pending exception, if it is an `Error` object, as
-/// "message: stack".
+/// Take the context's pending exception, and describe it as "message: stack"
+/// if it is an `Error` object. Any other thrown value (`throw "x"`) is taken
+/// but not reported.
 ///
 /// `Value::is_exception` is not the test for this: it means the engine's
 /// exception *marker*, which a value returned by `ctx.catch()` never is, so a

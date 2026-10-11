@@ -20,9 +20,10 @@ How it differs from an upstream build:
    package-manager plugins), cached under ~/.cache/fresh/esbuild. Suggests
    rather than Recommends keeps a default install small: esbuild itself
    Recommends nodejs, which apt would pull in too.
- * Features: runtime, plugins, embed-plugins. No tree-sitter (its JavaScript,
-   TypeScript and Templ grammars are not packaged), no http/self-update
-   (update checks, telemetry, self-update), no gui.
+ * Features: runtime, plugins, embed-plugins, precompiled-plugins. No
+   tree-sitter (its JavaScript, TypeScript and Templ grammars are not
+   packaged), no http/self-update (update checks, telemetry, self-update), no
+   gui.
 
 The manifests still name the crates Debian lacks, as optional or
 other-target dependencies, and cargo resolves those too. debian/rules runs

@@ -59,7 +59,6 @@ impl<'js> Ctx<'js> {
     /// exception pending for [`Ctx::catch`].
     pub(crate) fn handle_exception(&self, raw: ffi::JSValue) -> Result<ffi::JSValue> {
         if unsafe { ffi::fqjs_tag(raw) } == ffi::JS_TAG_EXCEPTION as i32 {
-            super::function::resume_pending_panic();
             Err(Error::Exception)
         } else {
             Ok(raw)
@@ -67,13 +66,23 @@ impl<'js> Ctx<'js> {
     }
 
     /// Wrap an owned raw value, or report the pending exception.
+    ///
+    /// A panic in a native call made along the way is resumed here, after the
+    /// value is wrapped (so unwinding frees it), whether or not the script
+    /// caught the exception it was raised as. (rquickjs resumes it only when
+    /// the call returns an exception, so there a `catch` defers it to the
+    /// next exception.)
     pub(crate) fn wrap(&self, raw: ffi::JSValue) -> Result<Value<'js>> {
-        self.handle_exception(raw)
-            .map(|raw| unsafe { Value::from_raw(self.clone(), raw) })
+        let result = self
+            .handle_exception(raw)
+            .map(|raw| unsafe { Value::from_raw(self.clone(), raw) });
+        super::function::resume_pending_panic();
+        result
     }
 
     /// Turn a `0`/`1`/`-1` engine status into a `Result`.
     pub(crate) fn check_status(&self, status: i32) -> Result<i32> {
+        super::function::resume_pending_panic();
         if status < 0 {
             Err(Error::Exception)
         } else {
@@ -139,6 +148,7 @@ impl<'js> Ctx<'js> {
     pub fn execute_pending_job(&self) -> bool {
         let mut job_ctx: *mut ffi::JSContext = std::ptr::null_mut();
         let r = unsafe { ffi::JS_ExecutePendingJob(self.runtime_ptr(), &mut job_ctx) };
+        super::function::resume_pending_panic();
         r != 0
     }
 

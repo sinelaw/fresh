@@ -144,7 +144,9 @@ fn run(args: &[String], stdin: Option<&str>) -> Result<String> {
 ///     init.ts:2:6:
 /// ```
 ///
-/// The line is 1-based and the column 0-based; both come back 1-based.
+/// The line is 1-based and the column 0-based; both come back 1-based. The
+/// column counts UTF-8 bytes, where oxc's counts characters, so the two differ
+/// on lines with non-ASCII text before the error.
 fn parse_errors(stderr: &str) -> Vec<SyntaxError> {
     let mut out: Vec<SyntaxError> = Vec::new();
     let mut pending: Option<String> = None;

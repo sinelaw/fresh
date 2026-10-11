@@ -45,10 +45,6 @@ fn space_doc_paragraphs(text: &str) -> String {
     text.replace("\n\n", "\x00").replace(['\n', '\x00'], "\n\n")
 }
 
-/// Whether an LSP range (half-open end, like `[start, end)`) contains the given
-/// `(line, character)` LSP position. Zero-length ranges (start == end) are
-/// treated as containing their single anchor point so point-style diagnostics
-/// still match a hover that lands exactly on them.
 /// A URI's scheme (`file`, `jdt`, …), read from its text. `Uri::scheme()`
 /// returns `Option<&Scheme>` with the fluent-uri 0.1 that lsp-types uses
 /// upstream but `&Scheme` with the fluent-uri 0.4 Debian builds it against,
@@ -61,6 +57,10 @@ fn uri_scheme(uri: &lsp_types::Uri) -> Option<&str> {
     valid.then_some(scheme)
 }
 
+/// Whether an LSP range (half-open end, like `[start, end)`) contains the given
+/// `(line, character)` LSP position. Zero-length ranges (start == end) are
+/// treated as containing their single anchor point so point-style diagnostics
+/// still match a hover that lands exactly on them.
 fn lsp_range_contains(range: &lsp_types::Range, line: u32, character: u32) -> bool {
     let start = range.start;
     let end = range.end;

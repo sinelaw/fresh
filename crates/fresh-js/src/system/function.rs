@@ -138,8 +138,9 @@ unsafe extern "C" fn closure_trampoline(
 }
 
 thread_local! {
-    /// A panic caught in a native call, resumed once control is back in Rust
-    /// (as rquickjs does), so a panic is never unwound through QuickJS.
+    /// A panic caught in a native call, resumed as soon as the engine call
+    /// that led to it returns to Rust, so a panic is never unwound through
+    /// QuickJS, nor held back by a JS `catch`.
     static PENDING_PANIC: RefCell<Option<Box<dyn Any + Send>>> = const { RefCell::new(None) };
 }
 
@@ -160,7 +161,7 @@ pub(crate) fn catch_panic(f: impl FnOnce()) {
 
 /// Run a native call, turning its error into a JS exception. A panic is
 /// stored and raised as an exception, then resumed in Rust by
-/// [`resume_pending_panic`].
+/// [`resume_pending_panic`] when the engine call returns.
 pub(crate) fn invoke<'js>(ctx: &Ctx<'js>, f: impl FnOnce() -> Result<Value<'js>>) -> ffi::JSValue {
     match catch_unwind(AssertUnwindSafe(f)) {
         Ok(Ok(v)) => v.into_raw(),

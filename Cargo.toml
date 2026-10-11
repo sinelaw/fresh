@@ -32,6 +32,10 @@ default-members = [
     "crates/fresh-update",
     "crates/fresh-i18n",
     "crates/fresh-js",
+    # Not built into the default backend, but fresh-js depends on them, so
+    # `cargo publish` (which publishes the default members) must publish them too.
+    "crates/fresh-quickjs-sys",
+    "crates/fresh-js-macros",
 ]
 
 # A bare `tokio::runtime::Handle` keeps nothing alive, so a runtime can be shut
