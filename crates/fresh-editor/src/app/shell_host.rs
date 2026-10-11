@@ -41,6 +41,9 @@ pub(crate) struct ExplorerDrag {
     pub strayed: bool,
     /// The directory a drop would land in, as last reported by a row.
     pub target: Option<std::path::PathBuf>,
+    /// The entry of the row the pointer was last over — where a move preview
+    /// opens its empty rows, so the rows above the pointer stay put.
+    pub over: Option<std::path::PathBuf>,
     /// The press landed on a directory, so a release in the same place has an
     /// expand or collapse to do. Deferred because expanding re-lays out every
     /// row below it, and doing that under a pointer that is still down slides
@@ -2076,6 +2079,51 @@ impl Editor {
         applied: &mut Applied,
     ) {
         use crate::view::shell::msg::UiFact;
+        // A plugin tree drawn with a move preview's empty row in it reports
+        // indexes counting that row; the plugin's rows do not.
+        let fact = match fact {
+            UiFact::WidgetHit {
+                slot,
+                event,
+                byte,
+                clicks,
+            } => match self.unsplice_tree_event(&slot, event, false) {
+                Some(event) => UiFact::WidgetHit {
+                    slot,
+                    event,
+                    byte,
+                    clicks,
+                },
+                None => return,
+            },
+            UiFact::WidgetContext { slot, event, x, y } => {
+                match self.unsplice_tree_event(&slot, event, false) {
+                    Some(event) => UiFact::WidgetContext { slot, event, x, y },
+                    None => return,
+                }
+            }
+            UiFact::WidgetDragStart {
+                slot,
+                event,
+                byte,
+                clicks,
+            } => match self.unsplice_tree_event(&slot, event, false) {
+                Some(event) => UiFact::WidgetDragStart {
+                    slot,
+                    event,
+                    byte,
+                    clicks,
+                },
+                None => return,
+            },
+            UiFact::WidgetDrop { slot, event } => {
+                match self.unsplice_tree_event(&slot, event, true) {
+                    Some(event) => UiFact::WidgetDrop { slot, event },
+                    None => return,
+                }
+            }
+            other => other,
+        };
         match fact {
             UiFact::ChordPending { code, modifiers } => {
                 self.active_window_mut().chord_state.push((code, modifiers));
@@ -3071,6 +3119,7 @@ impl Editor {
                     segment,
                     strayed: false,
                     target: None,
+                    over: None,
                     pending_toggle,
                 });
             }
@@ -3164,9 +3213,11 @@ impl Editor {
                         && dest != path
                         && !dest.starts_with(&path)
                 });
+                let over = self.explorer_entry_path(index, None);
                 if let Some(drag) = self.explorer_drag.as_mut() {
                     drag.strayed |= strayed;
                     drag.target = strayed.then_some(dest);
+                    drag.over = over;
                 }
             }
             UiFact::ExplorerRowDragLeave => {

@@ -265,6 +265,7 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
         }),
         error: matches!(node.state, crate::view::file_tree::NodeState::Error(_))
             .then(|| (" [Error]".to_string(), pair("diagnostic.error_fg", ground))),
+        segment: None,
     }
 }
 
@@ -273,11 +274,12 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
 /// (`view::move_preview::typed_runs`). Nothing else — no glyph, no status —
 /// because nothing is there yet.
 ///
-/// `index` is the target directory's row, so a press or a drop on the
-/// preview row means that directory, as a press on any of its children's
-/// rows would mean that child.
+/// `index` is the target directory's row and `segment` the directory when it
+/// is a folded part of that row, so a press or a drop on the preview row
+/// means that directory.
 pub fn describe_preview_row(
     index: usize,
+    segment: Option<std::path::PathBuf>,
     indent: usize,
     name: &str,
     typed: usize,
@@ -301,6 +303,7 @@ pub fn describe_preview_row(
             .collect(),
         trailing: None,
         error: None,
+        segment,
     }
 }
 

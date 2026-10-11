@@ -1609,6 +1609,7 @@ export class FloatingWidgetPanel {
     return this.mutate({ kind: "setCheckedKeys", widgetKey, checked, keys });
   }
 
+  /** See `WidgetPanel.previewTreeMove`. */
   previewTreeMove(
     widgetKey: string,
     sourceKey: string,

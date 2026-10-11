@@ -93,6 +93,10 @@ pub struct Row {
     pub trailing: Option<Slot>,
     /// `" [Error]"` for a node that failed to load.
     pub error: Option<(String, String)>,
+    /// The folded directory a press on the row's own parts names, for a row
+    /// that stands for one: a move preview's empty row opening in a compact
+    /// row's folded directory. `None` — the row's anchor — for every other.
+    pub segment: Option<std::path::PathBuf>,
 }
 
 /// One folded ancestor of a compact `dir1/dir2/dir3` row: the runs that draw
@@ -546,7 +550,7 @@ fn node_row(caret: bool, r: &Row) -> Node<UiMsg> {
     //
     // The wheel is not the row's: it is the window's, declared in
     // `build_rows`, and the library moves the window for it.
-    presses(body, r.index, None)
+    presses(body, r.index, r.segment.clone())
 }
 
 /// The gestures every part of a row answers: left lifts it, right opens the
@@ -803,6 +807,7 @@ mod tests {
             name: vec![(name.to_string(), Explorer::panel())],
             trailing: None,
             error: None,
+            segment: None,
         };
         match trailing {
             Some(t) => with_marker(row, t),
@@ -848,6 +853,7 @@ mod tests {
             name: vec![(name.to_string(), Explorer::panel())],
             trailing: None,
             error: None,
+            segment: None,
         }
     }
 

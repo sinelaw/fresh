@@ -107,9 +107,36 @@ pub(crate) struct ExplorerMovePreview {
     pub clock: crate::view::move_preview::MovePreview,
     /// The directory the entries would land in.
     pub dest: PathBuf,
-    /// What would move, in the order the drag named them.
-    pub sources: Vec<PathBuf>,
+    /// What would move: the rows whose names ghost out.
+    pub source_set: std::rc::Rc<std::collections::HashSet<PathBuf>>,
+    /// The entry of the row the drag was over when the preview opened: its
+    /// empty rows open right under that row, so none of the rows above the
+    /// pointer move and it stays over the row it was on.
+    over: Option<PathBuf>,
+    /// The names typed across, in the order the directory will list them.
+    names: Vec<String>,
     pub stage: MovePreviewStage,
+    /// [`ExplorerPreviewLayout`] for the projection it was made from — the
+    /// rows only change when the tree does, not every frame.
+    layout: std::cell::RefCell<Option<(usize, std::rc::Rc<ExplorerPreviewLayout>)>>,
+}
+
+/// Where a move preview's empty rows sit among the explorer's rows.
+///
+/// The rows the window shows are the projection's with these spliced in
+/// (`view::move_preview::Splice`). Every index a row *says* — its hit answer,
+/// its parent, the selection — stays the projection's, so a press during the
+/// preview means what it would have meant without one; only the window's own
+/// counting is spliced.
+pub(crate) struct ExplorerPreviewLayout {
+    pub splice: crate::view::move_preview::Splice,
+    /// Per empty row, in splice order: the hit answer it gives (the target
+    /// directory's row, and the directory itself when it is a folded part of
+    /// that row), the indent a child of the directory has, and the name typed
+    /// in.
+    pub inserted: Vec<(usize, Option<PathBuf>, usize, String)>,
+    /// The target directory's row, drawn open while rows open under it.
+    pub dest_row: Option<usize>,
 }
 
 /// Where an [`ExplorerMovePreview`] is in its drag.
@@ -123,12 +150,112 @@ pub(crate) enum MovePreviewStage {
 }
 
 impl ExplorerMovePreview {
+    fn new(
+        dest: PathBuf,
+        sources: Vec<PathBuf>,
+        over: Option<PathBuf>,
+        stage: MovePreviewStage,
+        tree: Option<&crate::view::file_tree::FileTree>,
+        now: std::time::Instant,
+    ) -> Self {
+        use crate::view::file_tree::tree::entry_order;
+        let is_dir = |p: &Path| {
+            tree.and_then(|t| t.get_node_by_path(p))
+                .is_some_and(|n| n.entry.is_dir())
+        };
+        let mut moving: Vec<(bool, String)> = sources
+            .iter()
+            .filter_map(|src| Some((is_dir(src), src.file_name()?.to_string_lossy().into_owned())))
+            .collect();
+        // In the order the directory will list them, so several rows opening
+        // in one place open in that order too.
+        moving.sort_by(|a, b| entry_order((a.0, &a.1), (b.0, &b.1)));
+        let names: Vec<String> = moving.into_iter().map(|(_, n)| n).collect();
+        Self {
+            clock: crate::view::move_preview::MovePreview::new(
+                names.iter().map(String::as_str),
+                now,
+            ),
+            dest,
+            source_set: std::rc::Rc::new(sources.into_iter().collect()),
+            over,
+            names,
+            stage,
+            layout: std::cell::RefCell::new(None),
+        }
+    }
+
     /// How many characters of each name have moved across at `now`: all of
     /// them once the question is up.
     pub fn typed(&self, now: std::time::Instant) -> usize {
         match self.stage {
             MovePreviewStage::Asked => usize::MAX,
             _ => self.clock.typed(now),
+        }
+    }
+
+    /// Where the empty rows sit in `projection`, made once per projection.
+    pub fn layout(
+        &self,
+        projection: &std::sync::Arc<crate::view::file_tree::view::Projection>,
+        tree: &crate::view::file_tree::FileTree,
+    ) -> std::rc::Rc<ExplorerPreviewLayout> {
+        let key = std::sync::Arc::as_ptr(projection) as usize;
+        if let Some((k, layout)) = self.layout.borrow().as_ref() {
+            if *k == key {
+                return layout.clone();
+            }
+        }
+        let layout = std::rc::Rc::new(self.lay_out(projection, tree));
+        *self.layout.borrow_mut() = Some((key, layout.clone()));
+        layout
+    }
+
+    fn lay_out(
+        &self,
+        projection: &crate::view::file_tree::view::Projection,
+        tree: &crate::view::file_tree::FileTree,
+    ) -> ExplorerPreviewLayout {
+        let row_of = |p: &Path| {
+            tree.get_node_by_path(p)
+                .and_then(|n| projection.index_of(n.id))
+        };
+        // The directory's own row; a folded part of a compact row has none,
+        // so the row that folds it in — the one place this walks the rows.
+        let (dest_row, segment) = match row_of(&self.dest) {
+            Some(d) => (Some(d), None),
+            None => (
+                projection
+                    .rows
+                    .iter()
+                    .position(|r| r.chain.iter().any(|c| c.path == self.dest)),
+                Some(self.dest.clone()),
+            ),
+        };
+        let Some(d) = dest_row else {
+            return ExplorerPreviewLayout {
+                splice: Default::default(),
+                inserted: Vec::new(),
+                dest_row: None,
+            };
+        };
+        // Under the row the drag was over — the directory's own, or one of
+        // its children's — and never above it.
+        let under = self
+            .over
+            .as_deref()
+            .and_then(row_of)
+            .filter(|&h| h >= d)
+            .unwrap_or(d);
+        let indent = projection.rows[d].indent + 1;
+        ExplorerPreviewLayout {
+            splice: crate::view::move_preview::Splice::new(vec![under + 1; self.names.len()]),
+            inserted: self
+                .names
+                .iter()
+                .map(|n| (d, segment.clone(), indent, n.clone()))
+                .collect(),
+            dest_row: Some(d),
         }
     }
 }
@@ -1774,16 +1901,17 @@ impl Editor {
             .into_iter()
             .map(|(src, _)| src)
             .collect();
-        self.explorer_move_preview = (!sources.is_empty()).then(|| ExplorerMovePreview {
-            clock: crate::view::move_preview::MovePreview::new(
-                sources
-                    .iter()
-                    .map(|p| p.file_name().and_then(|n| n.to_str()).unwrap_or_default()),
-                self.time_source().now(),
-            ),
-            dest,
-            sources,
-            stage: MovePreviewStage::Dragging,
+        let over = self.explorer_drag.as_ref().and_then(|d| d.over.clone());
+        let now = self.time_source().now();
+        self.explorer_move_preview = (!sources.is_empty()).then(|| {
+            ExplorerMovePreview::new(
+                dest,
+                sources,
+                over,
+                MovePreviewStage::Dragging,
+                self.file_explorer().map(|e| e.tree()),
+                now,
+            )
         });
         self.shell_description_stale = true;
     }
@@ -1849,18 +1977,23 @@ impl Editor {
             Some(p) if p.dest == dest && matches!(p.stage, MovePreviewStage::Dragging) => {
                 p.stage = MovePreviewStage::Dropped(ask);
             }
+            // An earlier drop is still playing out before its question: this
+            // one does not take its place, or that move would never be asked.
+            Some(p) if matches!(p.stage, MovePreviewStage::Dropped(_)) => {
+                self.set_status_message(t!("explorer.move_cancelled").to_string());
+                return;
+            }
             _ => {
-                self.explorer_move_preview = Some(ExplorerMovePreview {
-                    clock: crate::view::move_preview::MovePreview::new(
-                        sources
-                            .iter()
-                            .map(|p| p.file_name().and_then(|n| n.to_str()).unwrap_or_default()),
-                        self.time_source().now(),
-                    ),
-                    dest: dest.to_path_buf(),
+                let over = self.explorer_drag.as_ref().and_then(|d| d.over.clone());
+                let now = self.time_source().now();
+                self.explorer_move_preview = Some(ExplorerMovePreview::new(
+                    dest.to_path_buf(),
                     sources,
-                    stage: MovePreviewStage::Dropped(ask),
-                });
+                    over,
+                    MovePreviewStage::Dropped(ask),
+                    self.file_explorer().map(|e| e.tree()),
+                    now,
+                ));
             }
         }
         self.shell_description_stale = true;
@@ -1873,6 +2006,7 @@ impl Editor {
     /// owes a frame.
     pub(crate) fn step_explorer_move_preview(&mut self) -> bool {
         let now = self.time_source().now();
+        let prompt_open = self.active_window().prompt.is_some();
         let Some(preview) = self.explorer_move_preview.as_mut() else {
             return false;
         };
@@ -1881,6 +2015,15 @@ impl Editor {
             MovePreviewStage::Dragging => preview.clock.next_deadline(now).is_some(),
             MovePreviewStage::Dropped(_) => {
                 if !preview.clock.finished(now) {
+                    return true;
+                }
+                // Something else was opened while the move played out: it is
+                // not replaced by a question the reader may no longer expect.
+                // The move is let go, and said so.
+                if prompt_open {
+                    self.explorer_move_preview = None;
+                    self.shell_description_stale = true;
+                    self.set_status_message(t!("explorer.move_cancelled").to_string());
                     return true;
                 }
                 let MovePreviewStage::Dropped(ask) =

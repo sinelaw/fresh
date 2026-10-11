@@ -38,89 +38,25 @@ struct ExplorerRows {
     preview: Option<ExplorerPreviewRows>,
 }
 
-/// Where a drop's move preview sits in the explorer's rows, for one frame.
-///
-/// The rows the window shows are the projection's with the preview's empty
-/// rows spliced in (`view::move_preview::Splice`). Every index a row *says* —
-/// its hit answer, its parent, the selection, the window's start — stays the
-/// projection's, so a press during the preview means what it would have
-/// meant without one; only the window's own counting is spliced.
+/// A move preview over the explorer's rows, for one frame: where its empty
+/// rows sit (made once per tree change), whose names ghost out, and how far
+/// the typing has got.
 struct ExplorerPreviewRows {
-    splice: crate::view::move_preview::Splice,
-    /// Per empty row, in splice order: the target directory's row, the indent
-    /// a child of it has, and the name being typed in.
-    inserted: Vec<(usize, usize, String)>,
-    /// The entries being moved, whose names ghost out as they are typed.
-    sources: std::collections::HashSet<std::path::PathBuf>,
-    /// The target directory's row, drawn open while a row opens under it.
-    dest_row: Option<usize>,
+    layout: std::rc::Rc<crate::app::file_explorer::ExplorerPreviewLayout>,
+    sources: std::rc::Rc<std::collections::HashSet<std::path::PathBuf>>,
     typed: usize,
 }
 
 impl ExplorerPreviewRows {
-    /// The preview of `p` over `projection` at `now`.
     fn new(
-        projection: &crate::view::file_tree::view::Projection,
+        projection: &std::sync::Arc<crate::view::file_tree::view::Projection>,
+        tree: &crate::view::file_tree::FileTree,
         p: &crate::app::file_explorer::ExplorerMovePreview,
         now: std::time::Instant,
     ) -> Self {
-        use crate::view::file_tree::tree::entry_order;
-        let rows = &projection.rows;
-        // The directory's own row, or the compact row that folds it in.
-        let dest_row = rows
-            .iter()
-            .position(|r| r.entry.path == p.dest || r.chain.iter().any(|c| c.path == p.dest));
-        let is_dir = |path: &std::path::Path| {
-            rows.iter()
-                .find(|r| r.entry.path == path)
-                .is_some_and(|r| r.is_dir())
-        };
-        let mut moving: Vec<(bool, String)> = p
-            .sources
-            .iter()
-            .filter_map(|src| {
-                let name = src.file_name()?.to_string_lossy().into_owned();
-                Some((is_dir(src), name))
-            })
-            .collect();
-        // In the order the directory will list them, so two rows opening in
-        // one place open in that order too.
-        moving.sort_by(|a, b| entry_order((a.0, &a.1), (b.0, &b.1)));
-        let mut at = Vec::new();
-        let mut inserted = Vec::new();
-        if let Some(d) = dest_row {
-            let dir = &rows[d];
-            for (entry_is_dir, name) in moving {
-                // Where the directory will list it: before the first child
-                // that sorts after it, or after the last of its rows. A
-                // directory that is not open (or is only a folded part of
-                // its row) shows no children to place it among, so it
-                // opens straight under the directory's row.
-                let mut j = d + 1;
-                if dir.entry.path == p.dest && dir.is_expanded() {
-                    while j < rows.len() && rows[j].indent > dir.indent {
-                        let child = &rows[j];
-                        let after = child.parent == Some(d)
-                            && entry_order(
-                                (entry_is_dir, &name),
-                                (child.is_dir(), &child.entry.name),
-                            )
-                            .is_lt();
-                        if after {
-                            break;
-                        }
-                        j += 1;
-                    }
-                }
-                at.push(j);
-                inserted.push((d, dir.indent + 1, name));
-            }
-        }
         Self {
-            splice: crate::view::move_preview::Splice::new(at),
-            inserted,
-            sources: p.sources.iter().cloned().collect(),
-            dest_row,
+            layout: p.layout(projection, tree),
+            sources: p.source_set.clone(),
             typed: p.typed(now),
         }
     }
@@ -131,12 +67,13 @@ impl ExplorerRows {
     /// rows.
     fn describe_at(&self, j: usize) -> crate::view::shell::file_explorer::Row {
         use crate::view::move_preview::Spot;
-        match self.preview.as_ref().map(|p| p.splice.spot(j)) {
+        match self.preview.as_ref().map(|p| p.layout.splice.spot(j)) {
             Some(Spot::Inserted(k)) => {
                 let p = self.preview.as_ref().expect("spot came from it");
-                let (dest, indent, name) = &p.inserted[k];
+                let (dest, segment, indent, name) = &p.layout.inserted[k];
                 crate::view::ui::file_explorer::describe_preview_row(
                     *dest,
+                    segment.clone(),
                     *indent,
                     name,
                     p.typed,
@@ -177,7 +114,10 @@ impl ExplorerRows {
                 .as_ref()
                 .filter(|p| p.sources.contains(&node.entry.path))
                 .map(|p| p.typed),
-            opening: self.preview.as_ref().is_some_and(|p| p.dest_row == Some(i)),
+            opening: self
+                .preview
+                .as_ref()
+                .is_some_and(|p| p.layout.dest_row == Some(i)),
         })
     }
 }
@@ -3408,13 +3348,12 @@ impl Editor {
             .as_ref()
             .and_then(|d| d.target.clone())
             .or_else(|| self.explorer_move_preview.as_ref().map(|p| p.dest.clone()));
-        let preview = self
-            .explorer_move_preview
-            .as_ref()
-            .map(|p| ExplorerPreviewRows::new(&projection, p, self.time_source().now()));
+        let preview = self.explorer_move_preview.as_ref().map(|p| {
+            ExplorerPreviewRows::new(&projection, view.tree(), p, self.time_source().now())
+        });
         // The window counts in spliced rows; everything the model says about
         // a row is in projection rows (see `ExplorerPreviewRows`).
-        let splice = std::rc::Rc::new(preview.as_ref().map(|p| p.splice.clone()));
+        let splice = std::rc::Rc::new(preview.as_ref().map(|p| p.layout.splice.clone()));
         let to_window = {
             let splice = splice.clone();
             move |i: usize| match splice.as_ref() {
@@ -3464,7 +3403,7 @@ impl Editor {
             parent: std::rc::Rc::new(move |j| {
                 let parent = match parent_spot(j) {
                     Spot::Row(i) => parents.rows.get(i).and_then(|r| r.parent),
-                    Spot::Inserted(k) => described.preview.as_ref().map(|p| p.inserted[k].0),
+                    Spot::Inserted(k) => described.preview.as_ref().map(|p| p.layout.inserted[k].0),
                 };
                 parent.map(&parent_window)
             }),
@@ -3478,7 +3417,10 @@ impl Editor {
                     }
                 }
                 Spot::Inserted(k) => fresh_ui::widgets::TreeRow {
-                    depth: node_rows.preview.as_ref().map_or(0, |p| p.inserted[k].1),
+                    depth: node_rows
+                        .preview
+                        .as_ref()
+                        .map_or(0, |p| p.layout.inserted[k].2),
                     has_children: false,
                     open: false,
                 },
@@ -3494,8 +3436,10 @@ impl Editor {
     }
 
     /// The projection row at the top of a window that starts at window row
-    /// `j` — the same row while no drop is being previewed, and the row a
-    /// preview's empty rows push down while one is.
+    /// `j` — the same row while no drop is being previewed. While one is, a
+    /// window starting on an empty row starts on the real row in the
+    /// direction it was scrolled: the one above when it moved up, so it can
+    /// move past the empty rows at all, the one below when it moved down.
     pub(crate) fn explorer_window_row(&self, j: usize) -> usize {
         use crate::view::move_preview::Spot;
         let (Some(view), Some(p)) = (self.file_explorer(), self.explorer_move_preview.as_ref())
@@ -3503,14 +3447,17 @@ impl Editor {
             return j;
         };
         let projection = view.projection();
-        let preview = ExplorerPreviewRows::new(&projection, p, self.time_source().now());
-        // An empty row at the top stands for the row it pushed down.
-        (j..preview.splice.len(projection.len()))
-            .find_map(|j| match preview.splice.spot(j) {
-                Spot::Row(i) => Some(i),
-                Spot::Inserted(_) => None,
-            })
-            .unwrap_or_else(|| projection.len().saturating_sub(1))
+        let splice = &p.layout(&projection, view.tree()).splice;
+        let up = j < splice.index_of(view.window_top());
+        let row = |j: usize| match splice.spot(j) {
+            Spot::Row(i) => Some(i),
+            Spot::Inserted(_) => None,
+        };
+        let found = match up {
+            true => (0..=j).rev().find_map(row),
+            false => (j..splice.len(projection.len())).find_map(row),
+        };
+        found.unwrap_or_else(|| projection.len().saturating_sub(1))
     }
 
     /// Paths with unsaved changes, which a row's status slot reads.

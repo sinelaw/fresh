@@ -5742,6 +5742,9 @@ function restoreDockBehindPicker(): boolean {
 
 function closeOpenDialog(): void {
   noteLayoutChange();
+  // A dropped move still playing out is filed now: the preview goes with
+  // the panel, and so would its `movepreviewend`.
+  flushCommittedDockDrops();
   // A pick waiting for a folder, and a drag the dock was drawing, belong to
   // the panel going away: neither may come back with the next one. (A drag's
   // `dragend` cannot reach a panel that is gone, nor a drop preview's
@@ -7142,6 +7145,18 @@ let pendingDockDrop: {
   committed: boolean;
 } | null = null;
 
+// Every dropped move not yet filed, by the row that moves: where it was
+// dropped. More than one when a second drag starts before the first has
+// played out (the host then makes the first at once).
+const committedDockDrops = new Map<string, string>();
+
+/** File every dropped move now — the dock is going away, and its previews
+ *  with it. */
+function flushCommittedDockDrops(): void {
+  for (const [fromKey, toKey] of [...committedDockDrops]) dropOnDockRow(fromKey, toKey);
+  committedDockDrops.clear();
+}
+
 /** What dropping `fromKey` on `toKey` would show: the row it would be listed
  *  under and the name typed across. Null when the drop would move nothing,
  *  or is no place for the row. */
@@ -7168,11 +7183,12 @@ function dockMoveFor(fromKey: string, toKey: string): { landKey: string | null; 
 /** Keep the previewed move on the folder the drag is over, or drop it when
  *  the drag is over no place for the row or has ended without a drop. */
 function syncDockMovePreview(): void {
-  if (!openPanel || pendingDockDrop?.committed) return;
   const drag = dockDrag;
+  // A dropped move plays out on its own; only a new target replaces it.
+  if (!openPanel || (pendingDockDrop?.committed && !drag?.target)) return;
   const move = drag?.target ? dockMoveFor(drag.key, drag.target) : null;
   if (!drag?.target || !move) {
-    if (pendingDockDrop) openPanel.endTreeMovePreview("sessions", false);
+    if (pendingDockDrop && !pendingDockDrop.committed) openPanel.endTreeMovePreview("sessions", false);
     pendingDockDrop = null;
     return;
   }
@@ -7187,13 +7203,16 @@ function syncDockMovePreview(): void {
 function commitDockDrop(fromKey: string, toKey: string): void {
   const move = dockMoveFor(fromKey, toKey);
   if (!move || !openPanel) {
-    if (pendingDockDrop && openPanel) openPanel.endTreeMovePreview("sessions", false);
+    if (pendingDockDrop && !pendingDockDrop.committed && openPanel) {
+      openPanel.endTreeMovePreview("sessions", false);
+    }
     pendingDockDrop = null;
     dropOnDockRow(fromKey, toKey);
     return;
   }
   openPanel.previewTreeMove("sessions", fromKey, move.landKey, move.label);
   pendingDockDrop = { fromKey, toKey, landKey: move.landKey, committed: true };
+  committedDockDrops.set(fromKey, toKey);
   openPanel.endTreeMovePreview("sessions", true);
 }
 
@@ -18313,10 +18332,12 @@ editor.on("widget_event", (e) => {
     // The drop's preview has played out: file the row now.
     if (e.event_type === "movepreviewend" && e.widget_key === "sessions") {
       const payload = (e.payload ?? {}) as Record<string, unknown>;
-      const p = pendingDockDrop;
-      if (!p || payload.key !== p.fromKey) return;
-      pendingDockDrop = null;
-      dropOnDockRow(p.fromKey, p.toKey);
+      if (typeof payload.key !== "string") return;
+      const toKey = committedDockDrops.get(payload.key);
+      if (pendingDockDrop?.committed && pendingDockDrop.fromKey === payload.key) pendingDockDrop = null;
+      if (toKey === undefined) return;
+      committedDockDrops.delete(payload.key);
+      dropOnDockRow(payload.key, toKey);
       return;
     }
     // Right-click on a tree node → open its context menu. Only the dock

@@ -64,6 +64,16 @@ impl crate::app::Editor {
                 return;
             }
         }
+        // A move already dropped is made now rather than lost: the plugin is
+        // waiting for its `movepreviewend`.
+        if let Some(i) = self
+            .tree_move_previews
+            .iter()
+            .position(|p| same_tree(p) && p.committed)
+        {
+            let dropped = self.tree_move_previews.remove(i);
+            self.fire_move_preview_end(dropped);
+        }
         self.tree_move_previews.retain(|p| !same_tree(p));
         self.tree_move_previews.push(TreeMovePreview {
             panel_key: panel_key.clone(),
@@ -121,19 +131,74 @@ impl crate::app::Editor {
                 .iter()
                 .any(|p| p.clock.next_deadline(now).is_some());
         for p in done {
-            self.fire_widget_event(
-                &p.panel_key,
-                p.widget_key,
-                "movepreviewend".to_string(),
-                serde_json::json!({ "key": p.source_key }),
-            );
-            self.shell_description_stale = true;
+            self.fire_move_preview_end(p);
         }
         owes_frames
     }
 
+    /// The move is made: the panel is drawn from its own spec again, and the
+    /// plugin hears `movepreviewend`.
+    fn fire_move_preview_end(&mut self, p: TreeMovePreview) {
+        self.fire_widget_event(
+            &p.panel_key,
+            p.widget_key,
+            "movepreviewend".to_string(),
+            serde_json::json!({ "key": p.source_key }),
+        );
+        self.shell_description_stale = true;
+    }
+
+    /// A tree event raised on the panel as drawn — with a preview's empty
+    /// row in it — told in the plugin's own rows: an `index` past the empty
+    /// row is one less. `None` for a press on the empty row itself, which is
+    /// no row of the plugin's and does nothing. Drag facts are left to name
+    /// the empty row (the drag's own handling knows what it stands for).
+    pub(crate) fn unsplice_tree_event(
+        &self,
+        slot: &crate::view::shell::widgets::Slot,
+        mut event: crate::widgets::WidgetEvent,
+        drag: bool,
+    ) -> Option<crate::widgets::WidgetEvent> {
+        if event.widget_kind != "tree" || self.tree_move_previews.is_empty() {
+            return Some(event);
+        }
+        let Some(panel_key) = self.panel_key_of_slot(slot) else {
+            return Some(event);
+        };
+        let Some(p) = self
+            .tree_move_previews
+            .iter()
+            .find(|p| p.panel_key == panel_key && p.widget_key == event.widget_key)
+            .filter(|_| self.config.editor.animations)
+        else {
+            return Some(event);
+        };
+        let Some(at) = self
+            .widget_registry
+            .get(&panel_key)
+            .and_then(|panel| preview_insertion(&panel.spec, p))
+            .map(|(at, _)| at)
+        else {
+            return Some(event);
+        };
+        let Some(index) = event.payload.get("index").and_then(|v| v.as_u64()) else {
+            return Some(event);
+        };
+        let index = index as usize;
+        if index == at {
+            return drag.then_some(event);
+        }
+        if index > at {
+            event.payload["index"] = serde_json::json!(index - 1);
+        }
+        Some(event)
+    }
+
     /// When a plugin tree's preview next changes, for the loop to wake.
     pub(crate) fn tree_move_previews_deadline(&self) -> Option<Instant> {
+        if !self.config.editor.animations {
+            return None;
+        }
         let now = self.time_source().now();
         self.tree_move_previews
             .iter()
@@ -169,6 +234,36 @@ impl crate::app::Editor {
     }
 }
 
+/// Where `p`'s empty row goes in the tree it names inside `spec`, and at
+/// what depth: directly under the `after_key` row, or at the top. `None` when
+/// the tree, its source row, or the row it opens under is not there — a
+/// preview that cannot show where the row lands shows nothing.
+fn preview_insertion(spec: &WidgetSpec, p: &TreeMovePreview) -> Option<(usize, u32)> {
+    let tree = crate::widgets::find_widget_by_key(spec, &p.widget_key)?;
+    let WidgetSpec::Tree {
+        nodes, item_keys, ..
+    } = tree
+    else {
+        return None;
+    };
+    insertion_in(nodes, item_keys, p)
+}
+
+fn insertion_in(
+    nodes: &[TreeNode],
+    item_keys: &[String],
+    p: &TreeMovePreview,
+) -> Option<(usize, u32)> {
+    item_keys.iter().position(|k| *k == p.source_key)?;
+    match &p.after_key {
+        Some(a) => {
+            let i = item_keys.iter().position(|k| k == a)?;
+            Some((i + 1, nodes[i].depth + 1))
+        }
+        None => Some((0, 0)),
+    }
+}
+
 /// Lay `p`'s preview at `typed` characters into the tree it names inside
 /// `spec`: the empty row in, the source row's name ghosting out, the row it
 /// opens under open, and the tree's selection kept on the row it was on.
@@ -195,17 +290,13 @@ pub(crate) fn splice_tree(
     if *key != p.widget_key {
         return false;
     }
-    let Some(src) = item_keys.iter().position(|k| *k == p.source_key) else {
+    let Some((at, depth)) = insertion_in(nodes, item_keys, p) else {
         return false;
     };
-    let after = p
-        .after_key
-        .as_ref()
-        .and_then(|a| item_keys.iter().position(|k| k == a));
-    let (at, depth) = match after {
-        Some(a) => (a + 1, nodes[a].depth + 1),
-        None => (0, 0),
-    };
+    let src = item_keys
+        .iter()
+        .position(|k| *k == p.source_key)
+        .expect("insertion_in found it");
 
     let nodes = std::sync::Arc::make_mut(nodes);
     let source = &mut nodes[src];
@@ -262,7 +353,7 @@ pub(crate) fn splice_tree(
 
 /// Ghost the first `typed` characters of `label` out of `node`'s row: the
 /// first line of it that shows the label. Where the label starts on that
-/// line, in characters; `None` when no line shows it.
+/// line, in display columns; `None` when no line shows it.
 fn ghost(node: &mut TreeNode, label: &str, typed: usize) -> Option<usize> {
     if label.is_empty() {
         return None;
@@ -288,12 +379,14 @@ fn ghost(node: &mut TreeNode, label: &str, typed: usize) -> Option<usize> {
                 unit: OffsetUnit::Byte,
             });
         }
-        return Some(line.text[..start].chars().count());
+        return Some(crate::primitives::display_width::str_width(
+            &line.text[..start],
+        ));
     }
     None
 }
 
-/// The new row's text: blank up to column `col`, then the typed part of
+/// The new row's text: blank up to display column `col`, then the typed part of
 /// `label` in the addition's colours.
 fn typed_entry(col: usize, label: &str, typed: usize) -> TextPropertyEntry {
     let mut entry = TextPropertyEntry::text("");
@@ -421,6 +514,17 @@ mod tests {
         assert_eq!(nodes[0].depth, 0, "at the top of the tree");
         assert!(nodes[3].text.inline_overlays.is_empty());
         assert_eq!(*selected_index, 1);
+    }
+
+    #[test]
+    fn a_preview_whose_folder_is_gone_shows_nothing() {
+        let mut spec = tree(0);
+        assert!(!splice_tree(
+            &mut spec,
+            &mut HashMap::new(),
+            &preview(Some("hidden")),
+            1
+        ));
     }
 
     #[test]

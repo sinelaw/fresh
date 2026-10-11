@@ -51,9 +51,10 @@ pub struct MovePreview {
 
 impl MovePreview {
     pub fn new<'a>(names: impl IntoIterator<Item = &'a str>, now: Instant) -> Self {
+        use unicode_segmentation::UnicodeSegmentation;
         let chars = names
             .into_iter()
-            .map(|n| n.chars().count())
+            .map(|n| n.graphemes(true).count())
             .max()
             .unwrap_or(0);
         Self {
@@ -106,10 +107,12 @@ impl MovePreview {
 }
 
 /// `name` split after its first `typed` characters (clamped to its length):
-/// what has been typed, and what has not.
+/// what has been typed, and what has not. A character is a grapheme — what
+/// the reader sees as one — so an accent or an emoji sequence is typed whole.
 pub fn typed_split(name: &str, typed: usize) -> (&str, &str) {
+    use unicode_segmentation::UnicodeSegmentation;
     let at = name
-        .char_indices()
+        .grapheme_indices(true)
         .nth(typed)
         .map(|(i, _)| i)
         .unwrap_or(name.len());
@@ -120,8 +123,9 @@ pub fn typed_split(name: &str, typed: usize) -> (&str, &str) {
 /// characters before the last on [`ADDED_BG`], the last on
 /// [`ADDED_CARET_BG`]. Empty while nothing has been typed.
 pub fn typed_runs(name: &str, typed: usize) -> Vec<(&str, &'static str)> {
+    use unicode_segmentation::UnicodeSegmentation;
     let (done, _) = typed_split(name, typed);
-    let Some((last_at, _)) = done.char_indices().last() else {
+    let Some((last_at, _)) = done.grapheme_indices(true).last() else {
         return Vec::new();
     };
     // The caret stays only while characters are still arriving: a finished
@@ -256,6 +260,16 @@ mod tests {
             at = p.next_deadline(at).unwrap();
             assert_eq!(p.typed(at), k);
         }
+    }
+
+    #[test]
+    fn a_character_is_what_the_reader_sees_as_one() {
+        // "e" + combining acute, then "x": two characters, three chars.
+        let name = "e\u{301}x";
+        assert_eq!(typed_split(name, 1), ("e\u{301}", "x"));
+        assert_eq!(typed_runs(name, 1), vec![("e\u{301}", ADDED_CARET_BG)]);
+        let t0 = Instant::now();
+        assert!(MovePreview::new([name], t0).typed(t0 + OPEN + TYPING) == 2);
     }
 
     #[test]

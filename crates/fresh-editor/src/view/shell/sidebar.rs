@@ -714,6 +714,7 @@ mod tests {
             name: vec![(name.to_string(), Explorer::panel())],
             trailing: None,
             error: None,
+            segment: None,
         }
     }
 
