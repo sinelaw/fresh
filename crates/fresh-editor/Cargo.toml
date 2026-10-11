@@ -20,6 +20,15 @@ name = "fresh"
 path = "src/main.rs"
 required-features = ["runtime"]
 
+# Windows GUI build only: shipped as `fresh-gui.com` beside `fresh-gui.exe` so
+# cmd.exe and PowerShell wait for the editor (#2965). Cargo cannot gate a bin
+# by target, so it sits behind its own feature, which only the Windows GUI
+# release build enables.
+[[bin]]
+name = "fresh-console-shim"
+path = "src/bin/fresh_console_shim.rs"
+required-features = ["windows-console-shim"]
+
 [[bin]]
 name = "generate_schema"
 path = "src/bin/generate_schema.rs"
@@ -86,6 +95,9 @@ embed-plugins = ["plugins", "dep:include_dir", "dep:trash"]
 # Feature for optional development binaries (generate_schema, event_debug)
 # Includes ratatui for theme type definitions needed by schema generation
 dev-bins = ["dep:ratatui", "dep:vt100"]
+# Builds the `fresh-console-shim` bin (fresh-gui.com). Windows only; pass it
+# alongside `gui` when building the Windows GUI release.
+windows-console-shim = []
 # Runtime feature includes all heavy dependencies needed for the actual editor
 runtime = [
     "fresh-editor-core/runtime",
