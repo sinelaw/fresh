@@ -259,17 +259,18 @@ impl Editor {
         // snapped a wheel-scrolled view back to the cursor the moment the
         // user reached for Ctrl (issue #3324).
         let is_bare_modifier = matches!(code, crossterm::event::KeyCode::Modifier(_));
-        let active_split = self.effective_active_split();
-        if let Some(view_state) = self
-            .active_window_mut()
-            .split_view_states_mut()
-            .get_mut(&active_split)
-            .filter(|_| !is_bare_modifier)
-        {
-            view_state
-                .buffer_tab_state_mut()
-                .viewport
-                .release_hold_for_key();
+        if !is_bare_modifier {
+            let active_split = self.effective_active_split();
+            if let Some(view_state) = self
+                .active_window_mut()
+                .split_view_states_mut()
+                .get_mut(&active_split)
+            {
+                view_state
+                    .buffer_tab_state_mut()
+                    .viewport
+                    .release_hold_for_key();
+            }
         }
 
         // The pre-band's chrome keyboard grabs are gone. The stage existed
