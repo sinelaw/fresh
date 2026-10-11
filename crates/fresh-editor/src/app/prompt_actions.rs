@@ -563,6 +563,12 @@ impl Editor {
                     self.set_status_message(t!("explorer.delete_cancelled").to_string());
                 }
             }
+            PromptType::ConfirmExplorerMove { pairs } => {
+                match input.trim().to_lowercase().as_str() {
+                    "m" | "move" => self.perform_explorer_move(pairs),
+                    _ => self.set_status_message(t!("explorer.move_cancelled").to_string()),
+                }
+            }
             PromptType::ConfirmMultiPasteConflict {
                 safe,
                 confirmed,

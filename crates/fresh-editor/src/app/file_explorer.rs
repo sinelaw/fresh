@@ -1652,13 +1652,14 @@ impl Editor {
         Some(get_parent_dir_path(explorer.tree().get_node(id)?))
     }
 
-    /// Move what the held drag lifted into `dest`.
+    /// Ask to move what the held drag lifted into `dest`.
     ///
     /// The whole multi-selection when the lifted entry is part of one, which is
     /// what dragging one of several highlighted rows means; otherwise the one
-    /// entry. Either way this is the clipboard's move path with the clipboard
-    /// left out of it, so a drag gets the cross-device fallback, the buffer
-    /// relocation and the reload of both directories for free.
+    /// entry. Nothing moves on the release itself: a drag is easy to end over
+    /// the wrong row, and a move it did not mean takes a reader's files out
+    /// from under them, so it is asked about first, and done by
+    /// [`Self::perform_explorer_move`] once the answer is yes.
     pub(crate) fn explorer_drop_into(&mut self, dest: &Path) {
         let Some(drag) = self.explorer_drag.as_ref() else {
             return;
@@ -1681,7 +1682,6 @@ impl Editor {
             sources = vec![lifted];
         }
 
-        let fs = std::sync::Arc::clone(&self.authority().filesystem);
         let pairs: Vec<(PathBuf, PathBuf)> = sources
             .into_iter()
             .filter_map(|src| {
@@ -1700,6 +1700,51 @@ impl Editor {
             return;
         }
 
+        let dest_name = truncate_name_for_prompt(
+            &dest
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| dest.display().to_string()),
+            40,
+        );
+        let body = match pairs.as_slice() {
+            [(src, _)] => t!(
+                "explorer.move_confirm",
+                name = truncate_name_for_prompt(
+                    &src.file_name().unwrap_or_default().to_string_lossy(),
+                    40
+                ),
+                dest = &dest_name
+            )
+            .to_string(),
+            _ => {
+                let srcs: Vec<PathBuf> = pairs.iter().map(|(src, _)| src.clone()).collect();
+                t!(
+                    "explorer.move_multi_confirm",
+                    count = pairs.len(),
+                    names = format_path_preview_for_prompt(&srcs, 3),
+                    dest = &dest_name
+                )
+                .to_string()
+            }
+        };
+        let confirm =
+            crate::app::confirm_dialog::move_entries(body).detail(dest.display().to_string());
+        self.start_confirm_prompt(
+            confirm.body.clone(),
+            PromptType::ConfirmExplorerMove { pairs },
+            confirm,
+        );
+    }
+
+    /// Move entries a confirmed drop asked for, each to the full path paired
+    /// with it.
+    ///
+    /// This is the clipboard's move path with the clipboard left out of it, so
+    /// a drag gets the cross-device fallback, the buffer relocation and the
+    /// reload of both directories for free.
+    pub(super) fn perform_explorer_move(&mut self, pairs: Vec<(PathBuf, PathBuf)>) {
+        let fs = std::sync::Arc::clone(&self.authority().filesystem);
         // The same split paste makes: what can land untouched goes now, and a
         // collision asks, through the prompt paste already uses for it — the
         // one-entry question for one entry, so a drag is offered the same

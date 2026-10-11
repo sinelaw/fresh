@@ -1052,6 +1052,8 @@ fn test_dragging_an_entry_onto_a_directory_moves_it() {
         explorer_row_of(&h, "dest").expect("the directory's row"),
     );
     h.mouse_drag(EXPLORER_COL, from, EXPLORER_COL, to).unwrap();
+    confirm_move(&mut h);
+    h.wait_for_prompt_closed().unwrap();
     h.render().unwrap();
 
     assert!(
@@ -1067,6 +1069,50 @@ fn test_dragging_an_entry_onto_a_directory_moves_it() {
     assert!(
         !root.join("moved.txt").exists(),
         "and it should be gone from the root"
+    );
+}
+
+/// A drop asks before it moves anything, and cancelling leaves every entry
+/// where it was.
+///
+/// A drag is easy to end over the wrong row; the release used to be the move,
+/// so a slip took a file out from under the reader with no chance to say no.
+#[test]
+fn test_a_drop_asks_first_and_cancel_moves_nothing() {
+    let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let root = h.project_dir().unwrap();
+    fs::create_dir_all(root.join("dest")).unwrap();
+    fs::write(root.join("kept.txt"), "payload").unwrap();
+
+    h.editor_mut().focus_file_explorer();
+    h.wait_for_file_explorer().unwrap();
+    h.wait_for_file_explorer_item("kept.txt").unwrap();
+    h.render().unwrap();
+
+    let (from, to) = (
+        explorer_row_of(&h, "kept.txt").expect("the file's row"),
+        explorer_row_of(&h, "dest").expect("the directory's row"),
+    );
+    h.mouse_drag(EXPLORER_COL, from, EXPLORER_COL, to).unwrap();
+    h.wait_for_prompt().unwrap();
+    let asked = h.screen_to_string();
+    assert!(
+        asked.contains("kept.txt") && asked.contains("dest"),
+        "the question should name what moves and where.\n{asked}"
+    );
+    assert!(
+        root.join("kept.txt").is_file() && !root.join("dest/kept.txt").exists(),
+        "nothing may move while the question is open"
+    );
+
+    // The dialog opens on Cancel, so Enter is as safe as Esc.
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_for_prompt_closed().unwrap();
+    h.render().unwrap();
+    assert!(
+        root.join("kept.txt").is_file() && !root.join("dest/kept.txt").exists(),
+        "a cancelled drop must leave the entry where it was.\n{}",
+        h.screen_to_string()
     );
 }
 
@@ -1119,6 +1165,11 @@ fn test_dropping_an_entry_where_it_already_is_does_nothing() {
     h.mouse_drag(EXPLORER_COL, from, EXPLORER_COL, to).unwrap();
     h.render().unwrap();
 
+    assert!(
+        !h.editor().is_prompting(),
+        "a drop that moves nothing has nothing to ask.\n{}",
+        h.screen_to_string()
+    );
     assert!(root.join("a.txt").is_file(), "a.txt should still be there");
     assert_eq!(
         fs::read_to_string(root.join("b.txt")).unwrap(),
@@ -1154,6 +1205,8 @@ fn test_a_drag_from_a_directory_lands_where_it_was_aimed() {
         explorer_row_of(&h, "target").expect("the destination's row"),
     );
     h.mouse_drag(EXPLORER_COL, from, EXPLORER_COL, to).unwrap();
+    confirm_move(&mut h);
+    h.wait_for_prompt_closed().unwrap();
     h.render().unwrap();
 
     assert!(
@@ -1263,7 +1316,8 @@ fn test_dropping_onto_a_taken_name_asks_and_spares_the_clipboard() {
         explorer_row_of(&h, "dest").expect("the directory's row"),
     );
     h.mouse_drag(EXPLORER_COL, from, EXPLORER_COL, to).unwrap();
-    h.wait_for_prompt().unwrap();
+    confirm_move(&mut h);
+    h.wait_for_screen_contains("exists").unwrap();
 
     let asked = h.screen_to_string();
     assert!(
@@ -1317,6 +1371,13 @@ fn test_dropping_onto_a_taken_name_asks_and_spares_the_clipboard() {
         "the drag must not have emptied the clipboard.\n{}",
         h.screen_to_string()
     );
+}
+
+/// Answer the move question a drop asks with its Move button's accelerator.
+fn confirm_move(h: &mut EditorTestHarness) {
+    h.wait_for_prompt().unwrap();
+    h.wait_for_screen_contains("Move").unwrap();
+    h.send_key(KeyCode::Char('m'), KeyModifiers::NONE).unwrap();
 }
 
 /// The screen row an entry is drawn on, by its name.

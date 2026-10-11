@@ -179,6 +179,14 @@ pub enum PromptType {
     },
     /// Confirm deleting multiple items from the file explorer
     ConfirmMultiDelete { paths: Vec<std::path::PathBuf> },
+    /// Confirm a move a drag in the file explorer asked for.
+    ///
+    /// `pairs` are the entries and the full paths they would land at. Nothing
+    /// is moved, and no collision is looked for, until this is answered: the
+    /// filesystem is read again then, not trusted from the moment of the drop.
+    ConfirmExplorerMove {
+        pairs: Vec<(std::path::PathBuf, std::path::PathBuf)>,
+    },
     /// Per-conflict prompt for multi-file paste.
     /// `pending[0]` is the conflict currently being shown.
     /// User choices: (o)verwrite this, (O) all, (s)kip this, (S) all, (c)ancel.

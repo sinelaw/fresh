@@ -4406,6 +4406,30 @@ function startDiscardFilePrompt(f: FileEntry): void {
     editor.setPromptSuggestions(suggestions);
 }
 
+/**
+ * Ask before discarding a visual line selection, as the hunk and file
+ * discards do: it reverse-applies the lines to the working tree, and nothing
+ * keeps a copy. The selection stays up while the question is open — it is
+ * what the answer applies to, and it already holds off the auto-refresh poll.
+ */
+function startDiscardLinesPrompt() {
+    const sel = selectionLineRange();
+    if (!sel) {
+        editor.setStatus(editor.t("status.visual_invalid") || "Selection has no add/remove lines or crosses hunk boundary");
+        return;
+    }
+    editor.startPrompt(
+        editor.t("prompt.discard_lines", { file: sel.hunk.file }) ||
+        `Discard the selected lines in "${sel.hunk.file}"? This cannot be undone.`,
+        "review-discard-lines-confirm"
+    );
+    const suggestions: PromptSuggestion[] = [
+        { id: "discard", text: "Discard lines", description: "Permanently lose these changes", value: "discard" },
+        { id: "cancel", text: "Cancel", description: "Keep the lines as-is", value: "cancel" },
+    ];
+    editor.setPromptSuggestions(suggestions);
+}
+
 /** Always-file-level discard (D). Acts on the file the cursor is in. */
 function review_discard_file_only() {
     if (state.files.length === 0) return;
@@ -4418,7 +4442,7 @@ registerHandler("review_discard_file_only", review_discard_file_only);
 
 function review_discard_file() {
     if (state.files.length === 0) return;
-    if (state.lineSelection) { void applyLineSelection('discard'); return; }
+    if (state.lineSelection) { startDiscardLinesPrompt(); return; }
     const headerFile = fileHeaderUnderCursor();
     const f = headerFile ?? currentFileFromCursor();
     if (!headerFile) {
@@ -7197,6 +7221,16 @@ editor.on("prompt_confirmed", async (args) => {
                 setReviewConfirmation(editor.t("status.hunk_discarded") || "Hunk discarded");
             }
         }
+    } else {
+        editor.setStatus("Discard cancelled");
+    }
+    return false;
+});
+editor.on("prompt_confirmed", async (args) => {
+    if (args.prompt_type !== "review-discard-lines-confirm") return true;
+    const response = args.input.trim().toLowerCase();
+    if ((response === "discard" || args.selected_index === 0) && state.lineSelection) {
+        await applyLineSelection('discard');
     } else {
         editor.setStatus("Discard cancelled");
     }

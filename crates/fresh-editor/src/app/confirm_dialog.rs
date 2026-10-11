@@ -148,6 +148,22 @@ pub fn delete(body: String) -> Confirm {
     .selecting(1)
 }
 
+/// Moving entries a drag dropped on a directory. **Opens on Cancel**, for the
+/// reason [`delete`] does and one of its own: a drag can end somewhere the
+/// reader did not mean it to — a slip of the wrist over the tree — so the
+/// release must not be the move, and neither must the next stray Enter.
+pub fn move_entries(body: String) -> Confirm {
+    Confirm::new(
+        t!("dialog.title.move").into_owned(),
+        body,
+        vec![
+            Choice::new(t!("dialog.btn.move").into_owned(), "m", Tone::Safe),
+            cancel(),
+        ],
+    )
+    .selecting(1)
+}
+
 impl Editor {
     /// Ask whether to scan a large file for exact line numbers.
     ///
