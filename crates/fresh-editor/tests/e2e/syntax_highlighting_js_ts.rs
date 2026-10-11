@@ -252,3 +252,30 @@ fn test_large_ts_file_parses_lazily_and_edits_reach_the_end() {
         Some(theme.syntax_comment)
     );
 }
+
+/// A spaced `<` comparison is not the start of a JSX tag (or, in `.ts`, a
+/// `<T>` cast) that a later `>` would close, leaving the rest uncoloured.
+#[test]
+fn test_less_than_comparison_does_not_open_jsx_or_cast() {
+    let src = "function f() {\n    if (i < n && j > 0) up++;\n    const above = st.drum || up >= 0;\n    const last = evs[j - 1];\n}\nfunction after() { return <div>{last}</div>; }\n";
+    for name in ["probe.js", "probe.ts"] {
+        let mut harness = create_harness();
+        open(&mut harness, name, src);
+        let theme = harness.editor().theme().clone();
+        assert_eq!(
+            fg_of(&harness, "const above"),
+            Some(theme.syntax_keyword),
+            "{name}"
+        );
+        assert_eq!(
+            fg_of(&harness, "const last"),
+            Some(theme.syntax_keyword),
+            "{name}"
+        );
+        assert_eq!(
+            fg_of(&harness, "function after"),
+            Some(theme.syntax_keyword),
+            "{name}"
+        );
+    }
+}

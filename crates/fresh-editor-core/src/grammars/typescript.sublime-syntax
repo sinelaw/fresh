@@ -148,6 +148,11 @@ contexts:
       scope: variable.other.readwrite
     - include: type-arguments
     - include: angle-cast
+    # Comparison after an operand, spaces included, so `i < n` does not open
+    # a cast or JSX tag that the next `>` (say of `>=`) would close.
+    - match: '(?<=[_$[:alnum:])\]])\s*(<<=?|<=?)'
+      captures:
+        1: keyword.operator
     - match: '=>'
       scope: storage.type.function.arrow
     - match: '\?(?![.?:=])'
