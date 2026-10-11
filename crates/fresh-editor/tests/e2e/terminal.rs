@@ -933,6 +933,8 @@ fn terminal_size_harness(working_dir: Option<std::path::PathBuf>) -> Option<Edit
     Some(harness)
 }
 
+const MENU_BAR_ROW: &str = "File   Edit";
+
 fn assert_terminal_height(harness: &mut EditorTestHarness, height: u16, tag: &str) {
     harness.type_text(tag).unwrap();
     harness
@@ -1007,10 +1009,12 @@ editor.registerCommand("geometry_reload", "Reload terminal geometry", "geometry_
         return;
     };
     assert_terminal_height(&mut harness, 26, "initial");
-    for (command, height) in [("geometry_hide", 29), ("geometry_show", 26)] {
+    // Wait on the menu bar itself: status text is transient and races.
+    let steps = [("geometry_hide", 29, false), ("geometry_show", 26, true)];
+    for (command, height, menu_visible) in steps {
         harness.run_palette_command(command).unwrap();
         harness
-            .wait_for_screen_contains(&format!("{command}_applied"))
+            .wait_until(|h| h.screen_to_string().contains(MENU_BAR_ROW) == menu_visible)
             .unwrap();
         assert_terminal_height(&mut harness, height, command);
     }
@@ -1024,7 +1028,7 @@ editor.registerCommand("geometry_reload", "Reload terminal geometry", "geometry_
     .unwrap();
     harness.run_palette_command("geometry_reload").unwrap();
     harness
-        .wait_for_screen_contains("geometry_reload_applied")
+        .wait_until(|h| !h.screen_to_string().contains(MENU_BAR_ROW))
         .unwrap();
     assert_terminal_height(&mut harness, 29, "reloaded");
 }
@@ -1051,7 +1055,9 @@ fn test_terminal_resize_when_settings_are_saved() {
     harness
         .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
         .unwrap();
-    harness.wait_for_screen_contains("Settings saved").unwrap();
+    harness
+        .wait_until(|h| !h.screen_to_string().contains(MENU_BAR_ROW))
+        .unwrap();
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness
         .wait_until(|h| !h.screen_to_string().contains("Settings ["))
