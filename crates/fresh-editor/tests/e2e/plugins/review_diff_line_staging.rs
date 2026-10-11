@@ -250,6 +250,61 @@ fn test_review_visual_stage_modified_line_pair() {
         .unwrap();
 }
 
+/// `d` on a line selection asks first, like the hunk and file discards; Enter
+/// takes the default answer ("Discard lines").
+fn confirm_discard(harness: &mut EditorTestHarness) {
+    harness.wait_for_prompt().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+}
+
+/// `v` then `d` asks before discarding, and Esc keeps the lines: the discard
+/// reverse-applies them to the working tree and nothing keeps a copy, so it
+/// must not happen on one key the way it used to.
+#[test]
+fn test_review_visual_discard_asks_and_esc_keeps_the_lines() {
+    init_tracing_from_env();
+    let repo = repo_with_one_added_line();
+    let mut harness = harness_for(&repo);
+    open_review_diff(&mut harness);
+
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_screen_contains("+extra line").unwrap();
+    move_cursor_onto(&mut harness, "+extra line");
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness
+        .wait_for_screen_contains("Discard the selected lines")
+        .unwrap();
+    assert!(
+        fs::read_to_string(repo.path.join("README.md"))
+            .unwrap()
+            .contains("extra line"),
+        "nothing may be discarded while the question is open"
+    );
+
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness.render().unwrap();
+    assert!(
+        fs::read_to_string(repo.path.join("README.md"))
+            .unwrap()
+            .contains("extra line"),
+        "Esc must keep the selected lines.\n{}",
+        harness.screen_to_string()
+    );
+}
+
 /// #2317 — `v` then `d` discards the selected added line from the working tree.
 #[test]
 fn test_review_visual_discard_single_added_line() {
@@ -272,6 +327,7 @@ fn test_review_visual_discard_single_added_line() {
     harness
         .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
         .unwrap();
+    confirm_discard(&mut harness);
 
     // Wait for the discard to remove the added line from the working tree; the
     // worktree read is the assertion.
@@ -310,6 +366,7 @@ fn test_review_visual_discard_status_is_localized() {
     harness
         .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
         .unwrap();
+    confirm_discard(&mut harness);
 
     // The plugin holds the confirmation until the user moves off the row it
     // was issued on, so this is a stable frame rather than the one-frame
