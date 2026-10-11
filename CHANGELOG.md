@@ -51,6 +51,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Word wrap of long CJK text** no longer drops the end of a line (#3438 by @neatsorg)
 * **Review Diff** no longer draws the scrollbar of the hidden file behind it (#3434)
 * **Windows GUI build from cmd.exe and PowerShell** - a new `fresh-gui-<target>.zip` ships `fresh-gui.exe` with a `fresh-gui.com` console launcher, so typing `fresh-gui` runs the TUI without the shell competing for keyboard and mouse input (#2965, reported by @mokurin000)
+* **macOS honors `XDG_CONFIG_HOME` and `XDG_DATA_HOME`** - an absolute `XDG_CONFIG_HOME` now replaces `~/.config/fresh` instead of adding to it (#3497 by @LuisAlejandro)
 
 ### Internals
 
