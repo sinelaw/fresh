@@ -1,0 +1,22 @@
+[package]
+name = "fresh-console-shim"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Console front door (fresh-gui.com) for the Windows GUI build of fresh editor"
+publish = false
+
+[[bin]]
+name = "fresh-console-shim"
+path = "src/main.rs"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Console",
+] }
+
+[lints]
+workspace = true

@@ -73,6 +73,10 @@ jobs:
             export RUSTFLAGS="-C target-feature=+crt-static"
           fi
           cargo build --release --features gui --target ${{ matrix.target }}
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            # The console launcher shipped as fresh-gui.com (#2965).
+            cargo build --release -p fresh-console-shim --target ${{ matrix.target }}
+          fi
 
       - name: Verify macOS binary links only system libraries
         if: runner.os == 'macOS'
@@ -98,6 +102,20 @@ jobs:
           $hash = (Get-FileHash $dst -Algorithm SHA256).Hash.ToLower()
           # LF, not CRLF: `sha256sum -c` folds a trailing \r into the filename.
           Set-Content -Path "$dst.sha256" -Encoding ascii -NoNewline -Value "$hash  $dst`n"
+
+          # The same exe plus its console launcher (#2965). A "windows"
+          # subsystem program is not waited for by interactive cmd.exe or
+          # PowerShell, so its TUI fights the shell for console input. Both
+          # shells resolve `fresh-gui` to the .com first (PATHEXT order), and
+          # the .com runs fresh-gui.exe and waits for it; Explorer and
+          # shortcuts still open the .exe directly, with no console.
+          $dir = "fresh-gui-${{ matrix.target }}"
+          New-Item -ItemType Directory -Path $dir | Out-Null
+          Copy-Item $src "$dir/fresh-gui.exe"
+          Copy-Item "target/${{ matrix.target }}/release/fresh-console-shim.exe" "$dir/fresh-gui.com"
+          Compress-Archive -Path "$dir/*" -DestinationPath "$dir.zip"
+          $hash = (Get-FileHash "$dir.zip" -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path "$dir.zip.sha256" -Encoding ascii -NoNewline -Value "$hash  $dir.zip`n"
 
       # ── macOS: .app bundle → .pkg installer ──────────────────────────
       - name: Package GUI (macOS)
@@ -228,6 +246,8 @@ jobs:
           path: |
             fresh-gui-*.exe
             fresh-gui-*.exe.sha256
+            fresh-gui-*.zip
+            fresh-gui-*.zip.sha256
 
       - name: Upload GUI artifacts (macOS)
         if: runner.os == 'macOS'

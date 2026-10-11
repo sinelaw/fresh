@@ -49,6 +49,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **List selection follows its item** when the list is re-sorted or filtered, and Page Up/Down move by the visible rows
 * **Word wrap of long CJK text** no longer drops the end of a line (#3438 by @neatsorg)
 * **Review Diff** no longer draws the scrollbar of the hidden file behind it (#3434)
+* **Windows GUI build from cmd.exe and PowerShell** - a new `fresh-gui-<target>.zip` ships `fresh-gui.exe` with a `fresh-gui.com` console launcher, so typing `fresh-gui` runs the TUI without the shell competing for keyboard and mouse input (#2965, reported by @mokurin000)
 
 ### Internals
 
