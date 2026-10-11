@@ -425,7 +425,7 @@
       "type": "object",
       "properties": {
         "animations": {
-          "description": "Enable UI animations (tab-switch slides, dashboard, plugin effects).\nTurn off for a fully static UI, e.g. on slow terminals or over SSH.",
+          "description": "Enable UI animations (tab-switch slides, dashboard, drag-and-drop move previews, plugin effects).\nTurn off for a fully static UI, e.g. on slow terminals or over SSH.",
           "type": "boolean",
           "default": true,
           "x-section": "Display"

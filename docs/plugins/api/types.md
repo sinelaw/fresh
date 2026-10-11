@@ -1282,7 +1282,7 @@ Editor behavior configuration
 ```typescript
 interface EditorConfig {
     /**
-    * Enable UI animations (tab-switch slides, dashboard, plugin effects).
+    * Enable UI animations (tab-switch slides, dashboard, drag-and-drop move previews, plugin effects).
     * Turn off for a fully static UI, e.g. on slow terminals or over SSH.
     *
     * Default: `true`
