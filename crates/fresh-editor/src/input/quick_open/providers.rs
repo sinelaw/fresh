@@ -310,11 +310,38 @@ const IGNORED_DIRS: &[&str] = &[
     ".DS_Store",
 ];
 
+/// `IGNORED_DIRS` plus heavy tool and cache directories, for walks that include hidden entries.
+const IGNORED_DIRS_WITH_HIDDEN: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    "__pycache__",
+    ".hg",
+    ".svn",
+    ".DS_Store",
+    ".cache",
+    ".cargo",
+    ".rustup",
+    ".npm",
+    ".venv",
+    "venv",
+    ".tox",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".gradle",
+    ".next",
+    ".idea",
+];
+
 const MAX_FILES: usize = 50_000;
 
 fn walk_options(show_hidden: bool) -> crate::model::filesystem::WalkOptions<'static> {
     crate::model::filesystem::WalkOptions {
-        skip_dirs: IGNORED_DIRS,
+        skip_dirs: if show_hidden {
+            IGNORED_DIRS_WITH_HIDDEN
+        } else {
+            IGNORED_DIRS
+        },
         include_hidden: show_hidden,
         max_entries: usize::MAX,
         ..Default::default()
@@ -1482,6 +1509,13 @@ mod tests {
 
         assert_eq!(suggestions.len(), 1);
         assert_eq!(suggestions[0].value.as_deref(), Some("visible.txt"));
+    }
+
+    #[test]
+    fn test_hidden_walk_still_skips_every_ignored_dir() {
+        for dir in IGNORED_DIRS {
+            assert!(IGNORED_DIRS_WITH_HIDDEN.contains(dir), "{dir}");
+        }
     }
 
     #[test]
