@@ -29,11 +29,11 @@ pub const GHOST_BG: &str = "editor.diff_remove_bg";
 /// How long the empty row stands open before the first character arrives,
 /// so the opening reads as its own step.
 const OPEN: Duration = Duration::from_millis(150);
-/// One character's turn — the same for every name, so typing reads at one
-/// steady pace. The count is read off the clock each frame rather than
-/// stepped per frame, so a frame that comes late skips ahead instead of
-/// slowing the typing down.
-const PER_CHAR: Duration = Duration::from_millis(60);
+/// How long the typing takes, whatever the name's length: a long name types
+/// faster, a short one slower, and every preview reads in the same time. The
+/// count is read off the clock each frame rather than stepped per frame, so
+/// a frame that comes late skips characters instead of slowing the typing.
+const TYPING: Duration = Duration::from_millis(500);
 /// How long the finished picture holds before the move goes on.
 const HOLD: Duration = Duration::from_millis(200);
 
@@ -62,12 +62,16 @@ impl MovePreview {
         }
     }
 
-    fn typing(&self) -> Duration {
-        PER_CHAR * self.chars as u32
+    /// When character `k` (1-based) is across, after the row has opened:
+    /// the characters share [`TYPING`] evenly, the last landing at its end.
+    fn char_at(&self, k: usize) -> Duration {
+        let n = self.chars.max(1) as u128;
+        // Rounded up, so `typed` at this instant already counts it.
+        Duration::from_nanos((TYPING.as_nanos() * k as u128).div_ceil(n) as u64)
     }
 
     /// How many characters have been typed at `now`: none while the row is
-    /// opening, then one more every turn, up to the longest name.
+    /// opening, then evenly across [`TYPING`], up to the longest name.
     pub fn typed(&self, now: Instant) -> usize {
         let Some(t) = now
             .saturating_duration_since(self.started)
@@ -75,12 +79,13 @@ impl MovePreview {
         else {
             return 0;
         };
-        ((t.as_nanos() / PER_CHAR.as_nanos()) as usize + 1).min(self.chars)
+        let n = self.chars as u128;
+        ((t.as_nanos() * n / TYPING.as_nanos()) as usize).min(self.chars)
     }
 
     /// The preview has played out: the name is across and the hold is over.
     pub fn finished(&self, now: Instant) -> bool {
-        now.saturating_duration_since(self.started) >= OPEN + self.typing() + HOLD
+        now.saturating_duration_since(self.started) >= OPEN + TYPING + HOLD
     }
 
     /// When the picture next changes — the next character, or the end —
@@ -89,15 +94,12 @@ impl MovePreview {
         if self.finished(now) {
             return None;
         }
-        let elapsed = now.saturating_duration_since(self.started);
-        let end = OPEN + self.typing() + HOLD;
-        let next = match elapsed.checked_sub(OPEN) {
-            None => OPEN,
-            Some(t) if t < self.typing() => {
-                let done = (t.as_nanos() / PER_CHAR.as_nanos()) as u32 + 1;
-                OPEN + PER_CHAR * done
-            }
-            Some(_) => end,
+        let end = OPEN + TYPING + HOLD;
+        let typed = self.typed(now);
+        let next = match now.saturating_duration_since(self.started) < OPEN {
+            true => OPEN,
+            false if typed < self.chars => OPEN + self.char_at(typed + 1),
+            false => end,
         };
         Some(self.started + next.min(end))
     }
@@ -201,53 +203,59 @@ mod tests {
     use super::*;
 
     #[test]
-    fn typing_opens_first_then_types_one_char_per_turn() {
+    fn typing_opens_first_then_spreads_the_name_over_the_typing_time() {
         let t0 = Instant::now();
-        let p = MovePreview::new(["abc"], t0);
+        let p = MovePreview::new(["abcde"], t0);
+        let ms = Duration::from_millis;
         assert_eq!(p.typed(t0), 0);
-        assert_eq!(p.typed(t0 + OPEN - Duration::from_millis(1)), 0);
-        assert_eq!(p.typed(t0 + OPEN), 1);
-        assert_eq!(p.typed(t0 + OPEN + PER_CHAR), 2);
-        assert_eq!(p.typed(t0 + OPEN + PER_CHAR * 2), 3);
-        assert_eq!(p.typed(t0 + OPEN + PER_CHAR * 50), 3);
-        assert!(!p.finished(t0 + OPEN + PER_CHAR * 3));
-        assert!(p.finished(t0 + OPEN + PER_CHAR * 3 + HOLD));
+        assert_eq!(p.typed(t0 + OPEN), 0);
+        assert_eq!(p.typed(t0 + OPEN + ms(99)), 0);
+        assert_eq!(p.typed(t0 + OPEN + ms(100)), 1);
+        assert_eq!(p.typed(t0 + OPEN + ms(250)), 2);
+        assert_eq!(p.typed(t0 + OPEN + TYPING), 5);
+        assert!(!p.finished(t0 + OPEN + TYPING));
+        assert!(p.finished(t0 + OPEN + TYPING + HOLD));
     }
 
     #[test]
-    fn every_character_takes_the_same_time_however_long_the_name() {
+    fn every_name_takes_the_same_time_whatever_its_length() {
         let t0 = Instant::now();
-        let name = "x".repeat(40);
-        let p = MovePreview::new([name.as_str()], t0);
-        assert_eq!(p.typed(t0 + OPEN + PER_CHAR * 9), 10);
-        assert!(!p.finished(t0 + OPEN + PER_CHAR * 40));
-        assert!(p.finished(t0 + OPEN + PER_CHAR * 40 + HOLD));
+        for len in [1, 9, 200] {
+            let name = "x".repeat(len);
+            let p = MovePreview::new([name.as_str()], t0);
+            assert!(p.typed(t0 + OPEN + TYPING - Duration::from_millis(1)) < len);
+            assert_eq!(p.typed(t0 + OPEN + TYPING), len);
+            assert!(p.finished(t0 + OPEN + TYPING + HOLD));
+        }
     }
 
     #[test]
     fn a_late_frame_skips_ahead_rather_than_slowing_down() {
         let t0 = Instant::now();
-        let p = MovePreview::new(["abcdef"], t0);
-        // No frame between the first character and this one: it shows
-        // what the clock says, not one more than last time.
-        assert_eq!(p.typed(t0 + OPEN + PER_CHAR * 4), 5);
+        let p = MovePreview::new(["abcde"], t0);
+        // No frame since the row opened: it shows what the clock says.
+        assert_eq!(p.typed(t0 + OPEN + Duration::from_millis(400)), 4);
     }
 
     #[test]
     fn deadlines_walk_every_change_and_stop_at_the_end() {
         let t0 = Instant::now();
         let p = MovePreview::new(["ab"], t0);
+        let half = TYPING / 2;
         assert_eq!(p.next_deadline(t0), Some(t0 + OPEN));
-        assert_eq!(p.next_deadline(t0 + OPEN), Some(t0 + OPEN + PER_CHAR));
+        assert_eq!(p.next_deadline(t0 + OPEN), Some(t0 + OPEN + half));
+        assert_eq!(p.next_deadline(t0 + OPEN + half), Some(t0 + OPEN + TYPING));
         assert_eq!(
-            p.next_deadline(t0 + OPEN + PER_CHAR),
-            Some(t0 + OPEN + PER_CHAR * 2)
+            p.next_deadline(t0 + OPEN + TYPING),
+            Some(t0 + OPEN + TYPING + HOLD)
         );
-        assert_eq!(
-            p.next_deadline(t0 + OPEN + PER_CHAR * 2),
-            Some(t0 + OPEN + PER_CHAR * 2 + HOLD)
-        );
-        assert_eq!(p.next_deadline(t0 + OPEN + PER_CHAR * 2 + HOLD), None);
+        assert_eq!(p.next_deadline(t0 + OPEN + TYPING + HOLD), None);
+        // Every deadline is an instant the count has changed by.
+        let mut at = t0 + OPEN;
+        for k in 1..=2 {
+            at = p.next_deadline(at).unwrap();
+            assert_eq!(p.typed(at), k);
+        }
     }
 
     #[test]
