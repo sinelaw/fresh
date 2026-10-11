@@ -1391,3 +1391,167 @@ fn explorer_row_of(h: &EditorTestHarness, name: &str) -> Option<u16> {
         })
         .map(|(i, _)| i as u16)
 }
+
+// ── the drop's move preview ──────────────────────────────────────────────────
+
+/// The cell where `name` starts on screen row `row`, within the explorer's
+/// lane, as `(column, row)`.
+fn lane_pos(h: &EditorTestHarness, row: u16, name: &str) -> Option<(u16, u16)> {
+    let screen = h.screen_to_string();
+    let line = screen.lines().nth(row as usize)?;
+    let lane: String = line.chars().take(30).collect();
+    let b = lane.find(name)?;
+    Some((lane[..b].chars().count() as u16, row))
+}
+
+/// The background `key` resolves to in the editor's theme.
+fn theme_bg(h: &EditorTestHarness, key: &str) -> ratatui::style::Color {
+    h.editor()
+        .theme()
+        .resolve_theme_key(key)
+        .unwrap_or_else(|| panic!("the theme has {key}"))
+}
+
+/// **With animations on, a drop plays the move before it asks**: an empty
+/// row opens in the directory, the name is typed into it a character at a
+/// time on the diff-addition ground while the same characters ghost out of
+/// the original row on the diff-removal ground, and only then does the
+/// confirmation open — with the finished preview still in the tree behind it.
+#[test]
+fn test_a_drop_types_the_move_into_the_directory_before_it_asks() {
+    use std::time::Duration;
+    let config = fresh::config::Config::default();
+    assert!(config.editor.animations, "animations are on by default");
+    let mut h = EditorTestHarness::with_temp_project_and_config(100, 30, config).unwrap();
+    let root = h.project_dir().unwrap();
+    fs::create_dir_all(root.join("dest")).unwrap();
+    fs::write(root.join("moved.txt"), "payload").unwrap();
+
+    h.editor_mut().focus_file_explorer();
+    h.wait_for_file_explorer().unwrap();
+    h.wait_for_file_explorer_item("moved.txt").unwrap();
+    h.render().unwrap();
+
+    let (from, to) = (
+        explorer_row_of(&h, "moved.txt").expect("the file's row"),
+        explorer_row_of(&h, "dest").expect("the directory's row"),
+    );
+    assert!(from > to, "the fixture lists the directory first");
+    h.mouse_drag(EXPLORER_COL, from, EXPLORER_COL, to).unwrap();
+    h.render().unwrap();
+
+    // 1. The empty row: under the directory, pushing the file down one.
+    let screen = h.screen_to_string();
+    let lane = |h: &EditorTestHarness, row: u16| -> String {
+        let s = h.screen_to_string();
+        s.lines()
+            .nth(row as usize)
+            .unwrap_or_default()
+            .chars()
+            .take(30)
+            .collect()
+    };
+    assert!(
+        lane(&h, to + 1)
+            .trim_matches(|c: char| c == ' ' || c == '│')
+            .is_empty(),
+        "an empty row opens under the directory:\n{screen}"
+    );
+    assert_eq!(
+        explorer_row_of(&h, "moved.txt"),
+        Some(from + 1),
+        "the file's own row is pushed down by it:\n{screen}"
+    );
+    assert!(
+        !screen.contains("Move 'moved.txt'"),
+        "nothing is asked yet:\n{screen}"
+    );
+
+    // 2. Typing: three characters across, and three ghosted on the source.
+    h.advance_time(Duration::from_millis(300 + 100 * 2));
+    h.tick_and_render().unwrap();
+    let screen = h.screen_to_string();
+    let typed = lane(&h, to + 1);
+    assert!(
+        typed.contains("mov") && !typed.contains("move"),
+        "the name is typed a character at a time:\n{screen}"
+    );
+    let (col, row) = lane_pos(&h, to + 1, "mov").expect("the typed name");
+    let added = theme_bg(&h, "editor.diff_add_bg");
+    assert_eq!(
+        h.get_cell_style(col, row).and_then(|s| s.bg),
+        Some(added),
+        "typed characters sit on the diff-addition ground"
+    );
+    let (col, row) = lane_pos(&h, from + 1, "moved.txt").expect("the source row");
+    let removed = theme_bg(&h, "editor.diff_remove_bg");
+    for dx in 0..3 {
+        assert_eq!(
+            h.get_cell_style(col + dx, row).and_then(|s| s.bg),
+            Some(removed),
+            "the typed characters ghost out of the source row"
+        );
+    }
+    assert_ne!(
+        h.get_cell_style(col + 3, row).and_then(|s| s.bg),
+        Some(removed),
+        "the rest of the name has not moved yet"
+    );
+    assert!(!h.screen_to_string().contains("Move 'moved.txt'"));
+
+    // 3. Played out: the question, with the finished preview behind it.
+    h.advance_time(Duration::from_secs(2));
+    h.tick_and_render().unwrap();
+    h.wait_for_prompt().unwrap();
+    let screen = h.screen_to_string();
+    assert!(
+        screen.contains("Move 'moved.txt'") && lane(&h, to + 1).contains("moved.txt"),
+        "the confirmation opens over the finished preview:\n{screen}"
+    );
+    assert!(root.join("moved.txt").is_file(), "nothing moved yet");
+
+    h.send_key(KeyCode::Char('m'), KeyModifiers::NONE).unwrap();
+    h.wait_for_prompt_closed().unwrap();
+    h.wait_until(|_| root.join("dest/moved.txt").is_file())
+        .unwrap();
+    assert!(!root.join("moved.txt").exists());
+}
+
+/// Cancelling the question a preview led to moves nothing and takes the
+/// preview away: the tree is as it was.
+#[test]
+fn test_cancelling_a_previewed_drop_restores_the_tree() {
+    use std::time::Duration;
+    let mut h =
+        EditorTestHarness::with_temp_project_and_config(100, 30, fresh::config::Config::default())
+            .unwrap();
+    let root = h.project_dir().unwrap();
+    fs::create_dir_all(root.join("dest")).unwrap();
+    fs::write(root.join("kept.txt"), "payload").unwrap();
+
+    h.editor_mut().focus_file_explorer();
+    h.wait_for_file_explorer().unwrap();
+    h.wait_for_file_explorer_item("kept.txt").unwrap();
+    h.render().unwrap();
+    let before = h.screen_to_string();
+
+    let (from, to) = (
+        explorer_row_of(&h, "kept.txt").expect("the file's row"),
+        explorer_row_of(&h, "dest").expect("the directory's row"),
+    );
+    h.mouse_drag(EXPLORER_COL, from, EXPLORER_COL, to).unwrap();
+    h.advance_time(Duration::from_secs(2));
+    h.tick_and_render().unwrap();
+    h.wait_for_prompt().unwrap();
+
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_for_prompt_closed().unwrap();
+    h.tick_and_render().unwrap();
+    assert_eq!(
+        explorer_row_of(&h, "kept.txt"),
+        Some(from),
+        "the file is back in its own row, alone:\n{}\nbefore:\n{before}",
+        h.screen_to_string()
+    );
+    assert!(root.join("kept.txt").is_file() && !root.join("dest/kept.txt").exists());
+}

@@ -26,14 +26,14 @@ pub const GHOST_BG: &str = "editor.diff_remove_bg";
 
 /// How long the empty row stands open before the first character arrives,
 /// so the opening reads as its own step.
-const OPEN: Duration = Duration::from_millis(150);
-/// One character's turn, for a name short enough to type at full speed.
-const PER_CHAR: Duration = Duration::from_millis(35);
-/// The most the typing takes, however long the name: a long name types
-/// faster rather than holding the move up.
-const MAX_TYPING: Duration = Duration::from_millis(900);
+const OPEN: Duration = Duration::from_millis(300);
+/// One character's turn — the same for every name, so typing reads at one
+/// steady pace. The count is read off the clock each frame rather than
+/// stepped per frame, so a frame that comes late skips ahead instead of
+/// slowing the typing down.
+const PER_CHAR: Duration = Duration::from_millis(100);
 /// How long the finished picture holds before the move goes on.
-const HOLD: Duration = Duration::from_millis(200);
+const HOLD: Duration = Duration::from_millis(350);
 
 /// The clock of one move's preview: how many characters have been typed by a
 /// given instant, and when it is over.
@@ -60,15 +60,8 @@ impl MovePreview {
         }
     }
 
-    fn per_char(&self) -> Duration {
-        match self.chars {
-            0 => PER_CHAR,
-            n => PER_CHAR.min(MAX_TYPING / n as u32),
-        }
-    }
-
     fn typing(&self) -> Duration {
-        self.per_char() * self.chars as u32
+        PER_CHAR * self.chars as u32
     }
 
     /// How many characters have been typed at `now`: none while the row is
@@ -80,8 +73,7 @@ impl MovePreview {
         else {
             return 0;
         };
-        let per = self.per_char().as_nanos().max(1);
-        ((t.as_nanos() / per) as usize + 1).min(self.chars)
+        ((t.as_nanos() / PER_CHAR.as_nanos()) as usize + 1).min(self.chars)
     }
 
     /// The preview has played out: the name is across and the hold is over.
@@ -100,9 +92,8 @@ impl MovePreview {
         let next = match elapsed.checked_sub(OPEN) {
             None => OPEN,
             Some(t) if t < self.typing() => {
-                let per = self.per_char();
-                let done = (t.as_nanos() / per.as_nanos().max(1)) as u32 + 1;
-                OPEN + per * done
+                let done = (t.as_nanos() / PER_CHAR.as_nanos()) as u32 + 1;
+                OPEN + PER_CHAR * done
             }
             Some(_) => end,
         };
@@ -222,12 +213,22 @@ mod tests {
     }
 
     #[test]
-    fn a_long_name_types_faster_rather_than_longer() {
+    fn every_character_takes_the_same_time_however_long_the_name() {
         let t0 = Instant::now();
-        let name = "x".repeat(200);
+        let name = "x".repeat(40);
         let p = MovePreview::new([name.as_str()], t0);
-        assert!(p.finished(t0 + OPEN + MAX_TYPING + HOLD));
-        assert_eq!(p.typed(t0 + OPEN + MAX_TYPING), 200);
+        assert_eq!(p.typed(t0 + OPEN + PER_CHAR * 9), 10);
+        assert!(!p.finished(t0 + OPEN + PER_CHAR * 40));
+        assert!(p.finished(t0 + OPEN + PER_CHAR * 40 + HOLD));
+    }
+
+    #[test]
+    fn a_late_frame_skips_ahead_rather_than_slowing_down() {
+        let t0 = Instant::now();
+        let p = MovePreview::new(["abcdef"], t0);
+        // No frame between the first character and this one: it shows
+        // what the clock says, not one more than last time.
+        assert_eq!(p.typed(t0 + OPEN + PER_CHAR * 4), 5);
     }
 
     #[test]
