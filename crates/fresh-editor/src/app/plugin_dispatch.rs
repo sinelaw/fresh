@@ -5525,10 +5525,29 @@ impl Editor {
             let process_id = callback_id.as_u64();
 
             runtime.spawn(async move {
-                let fetch = tokio::task::spawn_blocking(move || {
-                    crate::services::http::download_to_file(&url, &target_path, &headers)
-                })
-                .await;
+                // The download runs on its own thread rather than the
+                // runtime's blocking pool. Dropping the runtime at quit waits
+                // for every blocking task to finish, and a request cannot be
+                // cut short, so one in flight held the exit until the server
+                // answered — seconds on a slow link, up to the 30s timeout.
+                // Left detached, an unfinished fetch just dies with the
+                // process; nothing waits on its result once the editor is gone.
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                let fetch = match std::thread::Builder::new()
+                    .name("http-fetch".to_string())
+                    .spawn(move || {
+                        #[allow(clippy::let_underscore_must_use)]
+                        let _ = tx.send(crate::services::http::download_to_file(
+                            &url,
+                            &target_path,
+                            &headers,
+                        ));
+                    }) {
+                    Ok(_) => rx
+                        .await
+                        .map_err(|_| "fetch thread ended without a result".to_string()),
+                    Err(e) => Err(format!("could not start fetch thread: {}", e)),
+                };
 
                 let (stdout, stderr, exit_code) = match fetch {
                     Ok(Ok(status)) => {
@@ -7553,5 +7572,63 @@ mod tests {
     fn clamp_text_range_pins_overlarge_start_to_empty() {
         // start beyond the live length must not yield start > end.
         assert_eq!(clamp_buffer_text_range(200, 250, 165), (165, 165));
+    }
+
+    /// Quitting must not wait for a plugin's `httpFetch` to come back. The
+    /// fetch used to run on the runtime's blocking pool, which dropping the
+    /// editor waits out, so a request in flight held the exit until the
+    /// server answered — up to the 30s request timeout.
+    #[cfg(feature = "http")]
+    #[test]
+    fn dropping_the_editor_does_not_wait_for_an_http_fetch() {
+        use crate::config::Config;
+        use crate::config_io::DirectoryContext;
+        use crate::model::filesystem::StdFileSystem;
+        use std::sync::Arc;
+        use std::time::{Duration, Instant};
+
+        // Accepts the connection (the kernel does, from the backlog) and
+        // never answers, so the request stays in flight.
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/never", server.local_addr().unwrap());
+
+        let temp = tempfile::tempdir().unwrap();
+        let mut editor = crate::app::Editor::for_test(
+            Config::default(),
+            80,
+            24,
+            None,
+            DirectoryContext::for_testing(temp.path()),
+            crate::view::color_support::ColorCapability::TrueColor,
+            Arc::new(StdFileSystem),
+            None,
+            None,
+            false,
+            false,
+            false,
+        )
+        .unwrap();
+        assert!(
+            editor.tokio_runtime.is_some(),
+            "the fetch needs the runtime"
+        );
+
+        editor.handle_http_fetch(
+            url,
+            temp.path().join("body"),
+            Vec::new(),
+            fresh_core::api::JsCallbackId::new(1),
+        );
+        // Let the request get as far as waiting on the server.
+        std::thread::sleep(Duration::from_millis(300));
+
+        let started = Instant::now();
+        drop(editor);
+        let took = started.elapsed();
+        drop(server);
+        assert!(
+            took < Duration::from_secs(5),
+            "dropping the editor waited {took:?} for an unanswered fetch"
+        );
     }
 }

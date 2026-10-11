@@ -46,18 +46,22 @@ use fresh_input_parser::{Event as InputEvent, InputParser, MouseReportScanner, M
 /// terminal (sinelaw/fresh#2793, a residue of #2745).
 const ESC_GRACE: Duration = Duration::from_millis(15);
 
-/// How long teardown waits for the button-release report matching a press the
-/// editor already acted on. Only ever paid when a button is actually still
-/// down (see [`mouse_button_down`]), and returned from the moment the release
-/// lands, so in practice this is the slack between the user clicking Quit and
-/// letting go — not a delay added to every exit. A keyboard quit owes no
-/// release and never reaches the wait at all.
+/// How long after a press teardown will still wait for its release — the
+/// release of a click the editor quit on. Only ever paid when a button is
+/// actually still down (see [`mouse_button_down`]), and returned from the
+/// moment the release lands, so in practice this is the slack between the user
+/// clicking Quit and letting go — not a delay added to every exit.
 ///
 /// It needs to outlast a whole click, including a deliberate one: people hold
-/// a button for roughly 50-150ms and a slow click runs past 300ms. The cost of
-/// erring long is only paid when a release never comes at all — a press the
-/// terminal never completes — because any release that does arrive ends the
-/// wait immediately.
+/// a button for roughly 50-150ms and a slow click runs past 300ms.
+///
+/// It is measured from the press, not from the start of teardown. A press
+/// whose release never reaches us — dragged off the pane and let go over
+/// tmux's status line, or outside the window — leaves the button "down" for
+/// good, and a grace counted from teardown charged every later exit for it,
+/// keyboard quits included. Counted from the press, a release that is owed has
+/// either arrived by the time the grace is up, where the sweep still takes it,
+/// or is not coming at all.
 const MOUSE_RELEASE_GRACE: Duration = Duration::from_millis(400);
 
 /// Set to true by the `SIGWINCH` handler; consumed by [`TtyReader::take_resize`].
@@ -74,8 +78,33 @@ static RAW_INPUT_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// The grammar lives in `fresh-input-parser` rather than here: recognising a
 /// mouse report is parser work, and keeping a second copy next to the I/O is
 /// how the two come to disagree.
-static MOUSE_SCAN: std::sync::Mutex<MouseReportScanner> =
-    std::sync::Mutex::new(MouseReportScanner::new());
+static MOUSE_SCAN: std::sync::Mutex<MouseTracker> = std::sync::Mutex::new(MouseTracker {
+    scan: MouseReportScanner::new(),
+    pressed_at: None,
+});
+
+/// The scanner, plus when the button it reports down went down — which is what
+/// [`MOUSE_RELEASE_GRACE`] counts from.
+struct MouseTracker {
+    scan: MouseReportScanner,
+    pressed_at: Option<Instant>,
+}
+
+impl MouseTracker {
+    /// Until when teardown should wait for a release, as of `now`.
+    ///
+    /// A release is owed only while a button is still down, and only within
+    /// the grace of its press. Otherwise there is nothing to wait for, and the
+    /// deadline is `now` — which still sweeps whatever is already queued.
+    fn release_deadline(&self, now: Instant) -> Instant {
+        match self.pressed_at {
+            Some(pressed_at) if self.scan.button_down() => {
+                (pressed_at + MOUSE_RELEASE_GRACE).max(now)
+            }
+            _ => now,
+        }
+    }
+}
 
 /// Track button state from raw host input.
 ///
@@ -83,15 +112,24 @@ static MOUSE_SCAN: std::sync::Mutex<MouseReportScanner> =
 /// client as it relays stdin to the server. The client never parses the bytes
 /// itself — the server does — so it has no event stream to learn this from.
 pub fn note_mouse_bytes(bytes: &[u8]) {
-    if let Ok(mut scan) = MOUSE_SCAN.lock() {
-        scan.feed(bytes);
+    if let Ok(mut tracker) = MOUSE_SCAN.lock() {
+        for &b in bytes {
+            if let MouseScan::Complete {
+                kind: Some(MouseEventKind::Down(_)),
+            } = tracker.scan.step(b)
+            {
+                tracker.pressed_at = Some(Instant::now());
+            }
+        }
     }
 }
 
 /// Whether a mouse button is currently held — a press was reported and no
 /// release has followed it.
 pub fn mouse_button_down() -> bool {
-    MOUSE_SCAN.lock().is_ok_and(|scan| scan.button_down())
+    MOUSE_SCAN
+        .lock()
+        .is_ok_and(|tracker| tracker.scan.button_down())
 }
 
 /// Whether host input is being read by a [`TtyReader`] (rather than crossterm).
@@ -167,17 +205,11 @@ fn read_one_byte(fd: RawFd) -> Option<u8> {
 /// the bytes are only identifiable as reports while both are still on.
 pub fn drain_pending_mouse_report() {
     let fd = std::io::stdin().as_raw_fd();
-    let Ok(mut scan) = MOUSE_SCAN.lock() else {
+    let Ok(mut tracker) = MOUSE_SCAN.lock() else {
         return;
     };
-    // A release is owed only while a button is still down. Otherwise there is
-    // nothing to wait for — but whatever is already queued is still ours.
-    let deadline = if scan.button_down() {
-        Instant::now() + MOUSE_RELEASE_GRACE
-    } else {
-        Instant::now()
-    };
-    consume_mouse_reports(fd, deadline, &mut scan);
+    let deadline = tracker.release_deadline(Instant::now());
+    consume_mouse_reports(fd, deadline, &mut tracker.scan);
 }
 
 /// Take whole mouse reports off `fd` until the release lands, the queue runs
@@ -446,6 +478,33 @@ mod tests {
                 libc::close(self.1);
             }
         }
+    }
+
+    /// A press whose release never reached us — dragged off the pane and let
+    /// go over tmux's status line — must not charge a later quit the whole
+    /// grace. Only a press still inside its grace is owed a wait, and only
+    /// for what is left of it.
+    #[test]
+    fn release_wait_is_counted_from_the_press() {
+        let mut tracker = MouseTracker {
+            scan: MouseReportScanner::new(),
+            pressed_at: None,
+        };
+        tracker.scan.feed(b"\x1b[<0;60;5M");
+        assert!(tracker.scan.button_down());
+        let now = Instant::now();
+
+        tracker.pressed_at = Some(now - Duration::from_secs(2));
+        assert_eq!(tracker.release_deadline(now), now, "stale press waits");
+
+        tracker.pressed_at = Some(now - Duration::from_millis(100));
+        assert_eq!(
+            tracker.release_deadline(now),
+            now + MOUSE_RELEASE_GRACE - Duration::from_millis(100)
+        );
+
+        tracker.scan.feed(b"\x1b[<0;60;5m");
+        assert_eq!(tracker.release_deadline(now), now, "released, yet waits");
     }
 
     fn drain_events(r: &mut TtyReader) -> Vec<InputEvent> {
