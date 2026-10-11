@@ -2283,6 +2283,13 @@ pub struct TerminalConfig {
     /// Shift+drag still selects. `alt_screen`: every full-screen program gets all events.
     #[serde(default)]
     pub mouse_forwarding: TerminalMouseForwarding,
+
+    /// Close a shell's tab (and its pane, if it was the only tab) when the
+    /// shell exits (`exit`, Ctrl+D) instead of keeping it as read-only
+    /// scrollback. Terminals running a command (agents, plugins) are kept.
+    /// Default: false
+    #[serde(default)]
+    pub close_on_exit: bool,
 }
 
 /// When programs in the terminal get mouse events.
@@ -2305,6 +2312,7 @@ impl Default for TerminalConfig {
             resume_agents: true,
             mouse_drag_selects: true,
             mouse_forwarding: TerminalMouseForwarding::default(),
+            close_on_exit: false,
         }
     }
 }
