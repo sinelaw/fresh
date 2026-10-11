@@ -286,6 +286,22 @@ pub struct JsonRpcError {
     pub data: Option<Value>,
 }
 
+/// `textDocument/diagnostic` params. `lsp_types::DocumentDiagnosticParams`
+/// sends unset optional fields as `null`, which some servers (tsgo) reject.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DocumentDiagnosticRequest {
+    text_document: TextDocumentIdentifier,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    identifier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    previous_result_id: Option<String>,
+    #[serde(flatten)]
+    work_done_progress_params: WorkDoneProgressParams,
+    #[serde(flatten)]
+    partial_result_params: PartialResultParams,
+}
+
 /// LSP client state machine
 ///
 /// Tracks the lifecycle of the LSP client connection with proper state transitions.
@@ -2506,8 +2522,6 @@ impl LspState {
         previous_result_id: Option<String>,
         pending: &PendingRequests,
     ) -> Result<(), String> {
-        use lsp_types::DocumentDiagnosticParams;
-
         // Check if server supports pull diagnostics (diagnosticProvider capability).
         // This raw `ServerCapabilities` snapshot is kept in sync with dynamic
         // `client/registerCapability` updates (sinelaw/fresh#2195) by the stdout
@@ -2534,7 +2548,7 @@ impl LspState {
             previous_result_id
         );
 
-        let params = DocumentDiagnosticParams {
+        let params = DocumentDiagnosticRequest {
             text_document: TextDocumentIdentifier { uri: uri.clone() },
             identifier: None,
             previous_result_id,
@@ -7463,5 +7477,23 @@ mod tests {
         assert_eq!(contents, "");
         assert!(!is_markdown);
         assert_eq!(range, None);
+    }
+
+    #[test]
+    fn document_diagnostic_params_omit_unset_optional_fields() {
+        let params = super::DocumentDiagnosticRequest {
+            text_document: lsp_types::TextDocumentIdentifier {
+                uri: "file:///a.ts".parse::<lsp_types::Uri>().unwrap(),
+            },
+            identifier: None,
+            previous_result_id: None,
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+        let json = serde_json::to_value(&params).unwrap();
+        let object = json.as_object().unwrap();
+        assert!(!object.contains_key("identifier"), "{json}");
+        assert!(!object.contains_key("previousResultId"), "{json}");
+        assert_eq!(json["textDocument"]["uri"], "file:///a.ts");
     }
 }
