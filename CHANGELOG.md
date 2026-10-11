@@ -8,58 +8,49 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Features
 
-* **Find Next selects the whole match** - F3 / Shift+F3 select the entire match, and the current match is drawn in its own color (new `search.current_match_*` theme keys)
-* **Themes**
-  - Any theme color accepts text attributes (bold, italic, underline…), so a theme can draw LSP diagnostics as underlines (#3494, requested by @zeevro)
-  - Colors a theme leaves out are derived from its other colors instead of built-in grays, and `extends` takes precedence. Complete user themes may look slightly different after upgrading. See [Themes → Fallbacks](https://getfresh.dev/docs/features/themes#fallbacks)
-* **Settings is translated** - every setting's name, description and the screen's chrome, in all locales (#3479 by @neatsorg)
-* **Orchestrator: external sessions in the dock**
-  - Claude and Codex sessions open outside the editor (local, cloud, Desktop) are listed in the dock, grouped by product
-  - Open one as a workspace, or fork a cloud session here (teleport); the row notes where its copy went
-  - File workspaces and external sessions into folders with **Move to Folder** by click or drag
-* **Explorer** (#3427, requested by @akarinotomoshibi)
-  - Drag to move entries
-  - Rename accepts a path, so it can move the entry
-  - Refresh button re-reads the tree
-* **Plugin docs**
-  - The [plugin API reference](https://getfresh.dev/docs/plugins/api/) is now generated from the source
-  - New "Asking for Input" guide
+* **Find Next selects the whole match** - F3 / Shift+F3 select the entire match, so Delete removes it, and the current match is drawn in its own color
+* **Themes can style text, not just color it**
+  - Any theme color accepts bold, italic or underline, so diagnostics can be drawn as underlines (#3494, requested by @zeevro)
+  - Colors a theme omits are now derived from its other colors, so built-in themes look more consistent. Complete user themes may look slightly different after upgrading; see [Themes → Fallbacks](https://getfresh.dev/docs/features/themes#fallbacks)
+* **Settings in your language** - setting names, descriptions and categories are translated in every locale (#3479 by @neatsorg)
+* **Orchestrator dock lists your external sessions**
+  - Claude and Codex sessions running outside Fresh appear in the dock, grouped by product
+  - Open one as a workspace, or fork a cloud session here
+  - Organize workspaces and sessions into folders with **Move to Folder**, by click or drag
+* **Explorer**: drag to move files and folders, rename to a path to move, and a ⟳ button to refresh (#3427, requested by @akarinotomoshibi)
+* **Plugin docs**: the [API reference](https://getfresh.dev/docs/plugins/api/) is now generated from the source, plus a new "Asking for Input" guide
 
 ### Bug Fixes
 
-* **Bare `fresh` on a Linux console and alongside other terminals** (#3517, reported by @MAT-services)
-  - The session follows the terminal you last used for its size, so resizing a second window works
-  - The console mouse (GPM) works in a session again, with a visible pointer, including over dialogs
-  - First frame no longer waits for every plugin to load
-  - Uses the colors the terminal can show, so selections are visible, and indentation guides draw as lines
-  - Control messages arriving together are no longer dropped
-* **The Orchestrator dock narrows with the terminal** - its width is a share of the terminal and its title strip shortens when space runs out (#3517, reported by @MAT-services)
-* **Explorer fixes** (#3427, reported by @akarinotomoshibi)
-  - New File / New Folder create the entry only once you confirm the name, so cancelling leaves nothing behind
-  - Renaming onto an existing file no longer overwrites it silently
-  - Right-click acts on the entry under the pointer: blank area selects the project root, and each segment of a `dir1/dir2/dir3` row is reachable
-* **Project Search/Replace** - `$1` capture groups expand in regex mode, and the current file is searched even if hidden; replace is confirmed in a modal dialog
-* **`AutoOpenDock` works, and a closed dock stays closed** - the setting is now `auto` / `always` / `never`; existing values carry over. Opening or closing the dock yourself updates the setting, so the next start follows your last choice (#3442, #3516; reported by @sjsepan3)
-* **View toggles reach every open document** - Line Numbers, Line Wrap and Current Line Highlight now apply editor-wide, and the menu checkmark is correct (#3449, reported by @sjsepan3)
-* **Plugin timers and recovery saves work in daemon sessions** (#3440, reported by @neatsorg)
-* **Restored unnamed buffers follow the editor config** - e.g. `highlight_current_line: false` (#3426, reported by @neatsorg)
-* **Selection keys fixed**
-  - Up/Down under a selection touching the first/last line no longer do nothing (#3486, reported by @Korkman)
-  - Ctrl+L keeps extending the selection a line per press (#3495, reported by @sjsepan3)
-* **Diagnostics on the only line of an empty file are drawn** (#3484, reported by @akarinotomoshibi)
-* **Quitting with a mouse click no longer leaks `0;37;17m` into the shell** (#3474, reported by @odjbo)
-* **Android: update check no longer panics** on TLS verification (#3453, reported by @dsvarela)
-* **Nim: an unpaired apostrophe no longer colors the rest of the file**, and `'suffix` numeric literals highlight correctly (#3455, reported by @codic12)
-* **Settings backdrop darkens the empty pane** left after closing the last buffer (#3452, reported by @akarinotomoshibi)
-* **Lists behave consistently**
-  - Selection follows its item when a list changes (re-sorting Open File, searching the keybinding editor)
-  - Page keys move by the visible rows in Live Grep and Open File
-* **Long wide-character words wrap correctly** instead of losing the end of the line (#3438 by @neatsorg)
-* **A pane showing a group tab (e.g. Review Diff) no longer paints or reacts as the hidden buffer** (#3434)
+* **The dock behaves the way you left it** - `AutoOpenDock` is now `auto` / `always` / `never`. Opening or closing the dock yourself is remembered across restarts, and old settings carry over (#3442, #3516, reported by @sjsepan3)
+* **Bare `fresh` works better on a Linux console and next to other terminals** (#3517, reported by @MAT-services)
+  - Starts faster: the first screen no longer waits for plugins
+  - Follows whichever terminal you last used when resizing
+  - Console mouse works again, and selections and indentation guides are visible
+  - The dock narrows with the terminal instead of crowding the menu bar
+* **Line Numbers, Line Wrap and Current Line Highlight apply to every open file**, and the View menu checkmark is right (#3449, reported by @sjsepan3)
+* **Explorer** (#3427, reported by @akarinotomoshibi)
+  - New File / New Folder create the entry only after you confirm the name
+  - Renaming onto an existing file no longer overwrites it
+  - Right-click acts on what's under the pointer: blank space selects the project root, and each part of `dir1/dir2/dir3` is selectable
+* **Project Search/Replace** - `$1` capture groups work in regex mode, hidden files are searched in the current-file scope, and Replace All asks for confirmation in a dialog
+* **Selection keys** - Up/Down no longer do nothing when a selection touches the first or last line (#3486, reported by @Korkman), and Ctrl+L keeps adding a line per press (#3495, reported by @sjsepan3)
+* **Plugin timers and crash-recovery saves work in the background session** (#3440, reported by @neatsorg)
+* **Restored unnamed buffers respect your settings**, such as current-line highlight (#3426, reported by @neatsorg)
+* **LSP errors on the only line of an empty file are shown** (#3484, reported by @akarinotomoshibi)
+* **No stray `0;37;17m` at the shell prompt after quitting with a mouse click** (#3474, reported by @odjbo)
+* **Android/Termux: the update check no longer crashes** (#3453, reported by @dsvarela)
+* **Syntax highlighting**
+  - Nim: a lone apostrophe no longer colors the rest of the file, and `5'big`-style literals highlight (#3455, reported by @codic12)
+  - JavaScript/TypeScript: a spaced `<` comparison no longer turns the rest of the file into JSX (#3527)
+* **The empty pane is dimmed behind Settings** like the rest of the screen (#3452, reported by @akarinotomoshibi)
+* **Lists keep your place** - the selection follows its item when a list is re-sorted or filtered, and Page Up/Down move by the visible rows
+* **Long Japanese, Chinese and Korean text wraps instead of being cut off** (#3438 by @neatsorg)
+* **Review Diff no longer shows scrollbars or reacts as the hidden file behind it** (#3434)
 
 ### Internals
 
-* **Plugin API breaking change** - `setPromptSuggestions` now throws unless every suggestion has a unique `id` (new, required), and `showActionPopup` / `setLspMenuContributions` throw on duplicate ids; widget `List` / `Tree` specs with `itemKeys` that don't match their items one to one are refused
+* **Plugin API breaking change** - `setPromptSuggestions` now throws unless every suggestion has a unique `id` (new, required), and `showActionPopup` / `setLspMenuContributions` throw on duplicate ids; widget `List` / `Tree` specs whose `itemKeys` don't match their items one to one are refused
 * Flaky e2e test fixes and internal cleanups
 
 ## 0.5.2
