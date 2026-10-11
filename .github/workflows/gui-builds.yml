@@ -73,10 +73,6 @@ jobs:
             export RUSTFLAGS="-C target-feature=+crt-static"
           fi
           cargo build --release --features gui --target ${{ matrix.target }}
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            # The console launcher shipped as fresh-gui.com (#2965).
-            cargo build --release -p fresh-console-shim --target ${{ matrix.target }}
-          fi
 
       - name: Verify macOS binary links only system libraries
         if: runner.os == 'macOS'
@@ -112,6 +108,7 @@ jobs:
           $dir = "fresh-gui-${{ matrix.target }}"
           New-Item -ItemType Directory -Path $dir | Out-Null
           Copy-Item $src "$dir/fresh-gui.exe"
+          # Built by the `gui` feature above (fresh-editor's fresh-console-shim bin).
           Copy-Item "target/${{ matrix.target }}/release/fresh-console-shim.exe" "$dir/fresh-gui.com"
           Compress-Archive -Path "$dir/*" -DestinationPath "$dir.zip"
           $hash = (Get-FileHash "$dir.zip" -Algorithm SHA256).Hash.ToLower()

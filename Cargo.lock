@@ -1404,13 +1404,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
 
 [[package]]
-name = "fresh-console-shim"
-version = "0.5.2"
-dependencies = [
- "windows-sys 0.61.2",
-]
-
-[[package]]
 name = "fresh-core"
 version = "0.5.2"
 dependencies = [

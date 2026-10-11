@@ -20,6 +20,13 @@ name = "fresh"
 path = "src/main.rs"
 required-features = ["runtime"]
 
+# Windows GUI build only: shipped as `fresh-gui.com` beside `fresh-gui.exe` so
+# cmd.exe and PowerShell wait for the editor (#2965). A no-op elsewhere.
+[[bin]]
+name = "fresh-console-shim"
+path = "src/bin/fresh_console_shim.rs"
+required-features = ["gui"]
+
 [[bin]]
 name = "generate_schema"
 path = "src/bin/generate_schema.rs"
