@@ -6090,11 +6090,6 @@ fn real_main() -> AnyhowResult<()> {
     // Early check, otherwise terminal check would fail.
     #[cfg(all(windows, feature = "gui"))]
     let console_available = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) != 0 };
-    // Set by the fresh-gui.com console launcher to stop it recursing. Drop it
-    // before anything is spawned, or running `fresh-gui` in our own terminal
-    // pane would look like the launcher starting itself.
-    #[cfg(all(windows, feature = "gui"))]
-    std::env::remove_var("FRESH_CONSOLE_SHIM");
     #[cfg(all(not(windows), feature = "gui"))]
     let console_available = true;
 

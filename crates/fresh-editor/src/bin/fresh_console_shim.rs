@@ -32,12 +32,6 @@ where
         .any(|a| a == "--gui")
 }
 
-/// Set on the child, so a launcher that ends up starting another launcher
-/// (a copy or hard link of it named `.exe`) stops instead of recursing. The
-/// editor removes it at startup so nothing it spawns inherits it.
-#[cfg_attr(not(windows), allow(dead_code))]
-const NESTED_MARKER: &str = "FRESH_CONSOLE_SHIM";
-
 #[cfg(windows)]
 mod shim {
     use std::path::{Path, PathBuf};
@@ -56,12 +50,6 @@ mod shim {
     }
 
     pub fn run() -> i32 {
-        if std::env::var_os(super::NESTED_MARKER).is_some() {
-            eprintln!(
-                "fresh: the console launcher started itself; fresh-gui.com needs the real fresh-gui.exe beside it"
-            );
-            return 1;
-        }
         let target = match gui_exe() {
             Ok(path) => path,
             Err(msg) => {
@@ -71,7 +59,7 @@ mod shim {
         };
         let args: Vec<_> = std::env::args_os().skip(1).collect();
         let mut command = Command::new(&target);
-        command.args(&args).env(super::NESTED_MARKER, "1");
+        command.args(&args);
 
         if super::launches_gui(&args) {
             return match command.spawn() {
