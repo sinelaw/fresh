@@ -94,6 +94,7 @@ Or, pick your preferred method:
 | OpenSUSE | [.rpm](#opensuse-rpm) |
 | FreeBSD | [ports / pkg](https://www.freshports.org/editors/fresh) |
 | Gentoo | [GURU](#gentoo-guru) |
+| Solus | [eopkg](#solus-eopkg) |
 | Linux (sandboxed / portable) | [AppImage](#appimage), [Flatpak](#flatpak) |
 | All platforms | [Pre-built binaries](#pre-built-binaries) |
 | npm | [npm / npx](#npm) |
@@ -218,6 +219,15 @@ Enable the repository as read in [Project:GURU/Information for End Users](https:
 
 ```bash
 emerge --ask app-editors/fresh
+```
+
+### Solus (eopkg)
+
+Fresh is the official repository. Run eopkg to install:
+
+
+```bash
+sudo eopkg it fresh
 ```
 
 ### AppImage
