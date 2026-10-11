@@ -548,10 +548,17 @@ impl RecoveryStorage {
             )
         })?;
 
-        // Require at least one chunk file
+        // Metadata with no content is not an absent entry, it is a broken
+        // one: the two are separate atomic writes, so a crash between them
+        // leaves exactly this. Reporting it as absent told callers the
+        // content was gone, and one of them deletes the only reference to
+        // it on that word.
         let chunk_paths = self.list_chunk_paths(id)?;
         if chunk_paths.is_empty() {
-            return Ok(None);
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("recovery entry {id} has metadata but no content files"),
+            ));
         }
 
         Ok(Some(RecoveryEntry {
@@ -560,6 +567,25 @@ impl RecoveryStorage {
             content_path,
             metadata_path: meta_path,
         }))
+    }
+
+    /// Whether an entry was ever recorded for `id`, usable or not.
+    ///
+    /// `list_entries` can only offer entries it can actually load, so a
+    /// caller that finds `id` missing from it learns nothing about why. This
+    /// separates the three reasons: `Ok(false)` is the only one that means
+    /// the content is gone, `Ok(true)` means it is there but unusable (a
+    /// half-written entry, which a later session may well read), and `Err`
+    /// means this process cannot tell — the directory is unreadable.
+    pub fn entry_recorded(&self, id: &str) -> io::Result<bool> {
+        let (meta_path, _) = self.recovery_paths(id);
+        // `Path::exists` folds every error into `false`, including the
+        // "cannot look" ones, which is the conflation being removed here.
+        match fs::metadata(&meta_path) {
+            Ok(_) => Ok(true),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(e),
+        }
     }
 
     /// Delete recovery files for a buffer
@@ -2001,6 +2027,46 @@ mod tests {
         assert_eq!(
             storage.recovery_dir,
             base_dir.join("sessions").join("test-session")
+        );
+    }
+
+    /// An entry whose metadata is present but whose content is not must not
+    /// read as "no such entry".
+    ///
+    /// `load_entry` returns `Ok(None)` when no chunk file is there, and
+    /// `list_entries` drops both that and any read error, so three different
+    /// things arrive at the caller identically: the entry was deleted, the
+    /// entry is half-written (metadata and chunks are separate atomic
+    /// writes, so a crash between them leaves exactly this), and the
+    /// metadata could not be read at all. Only the first means the content
+    /// is gone, and a caller that drops a workspace reference needs to know
+    /// which it is looking at.
+    #[test]
+    fn an_entry_whose_content_is_missing_does_not_read_as_absent() {
+        let (storage, temp) = create_test_storage();
+        let id = "unsaved_halfwritten";
+        storage
+            .save_recovery_owned(
+                id,
+                vec![RecoveryChunk::new(0, 0, b"unsaved work".to_vec())],
+                None,
+                None,
+                Some(1),
+                0,
+                12,
+                None,
+            )
+            .unwrap();
+
+        // Lose the content, keep the metadata — a crash between the two
+        // writes, or a chunk whose rename never landed.
+        std::fs::remove_file(temp.path().join(format!("{id}.chunk.0"))).unwrap();
+
+        assert!(
+            !matches!(storage.load_entry(id), Ok(None)),
+            "a metadata file with no content must not be reported as absent: \
+             absence is the one answer that licenses destroying the only \
+             reference to the content"
         );
     }
 }

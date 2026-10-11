@@ -210,6 +210,35 @@ impl Editor {
             .map(|(id, _)| *id)
     }
 
+    /// An unnamed entry stamped for a workspace that no window holds.
+    ///
+    /// A workspace file that cannot be parsed is dropped from the candidate
+    /// set, so its window comes up with a fresh `stable_id` — and the entry
+    /// it stamped is left naming an identity nobody has. Ownership can never
+    /// be re-established, and an unnamed entry has no path to place it by
+    /// either, so nothing would ever claim it.
+    ///
+    /// Only in standalone mode, where the whole store belongs to one launch
+    /// directory (#1550): there the work can only have been done in this
+    /// directory, so this window taking it keeps it where it was made. A
+    /// session store holds many workspaces, and an entry nobody claims there
+    /// may just belong to one that is not open yet — claiming it would
+    /// shuffle unsaved work between projects, which is what #3189 fixed.
+    fn unnamed_entry_stranded_here(
+        &self,
+        entry: &crate::services::recovery::RecoveryEntry,
+        window: WindowId,
+    ) -> bool {
+        if entry.metadata.workspace_id.is_none() || entry.metadata.original_path.is_some() {
+            return false;
+        }
+        let Some(root) = self.windows.get(&window).map(|w| w.root.clone()) else {
+            return false;
+        };
+        let service = self.recovery_service.lock().unwrap();
+        service.is_standalone() && service.covers_root(&root)
+    }
+
     /// Restore this workspace's own leftover recovery entries into it, on
     /// activation, so unsaved work returns to the workspace it was done in
     /// rather than whichever one is in front (issue #3189).
@@ -241,13 +270,25 @@ impl Editor {
             .iter()
             .filter_map(|(_, state)| state.buffer.file_path().map(|p| p.to_path_buf()))
             .collect();
+        // Entries this workspace already has a buffer for. An unnamed buffer
+        // has no path, so the path filter below cannot match it, and adoption
+        // runs on every activation — so each switch back adopted the same
+        // entry into a new tab and saved another copy of the record for it
+        // (issue #3476).
+        let already_adopted: std::collections::HashSet<String> = self
+            .active_window()
+            .buffer_metadata
+            .values()
+            .filter_map(|meta| meta.recovery_id.clone())
+            .collect();
 
         let mine: Vec<_> = entries
-            .into_iter()
+            .iter()
             .filter(|entry| match self.recovery_entry_owner(entry) {
                 Some(owner) => owner == active,
-                None => claim_unowned,
+                None => claim_unowned || self.unnamed_entry_stranded_here(entry, active),
             })
+            .filter(|entry| !already_adopted.contains(&entry.id))
             .filter(|entry| {
                 entry
                     .metadata
@@ -255,6 +296,7 @@ impl Editor {
                     .as_ref()
                     .is_none_or(|p| !already_open.contains(p))
             })
+            .cloned()
             .collect();
 
         let mut adopted = 0;
@@ -418,6 +460,45 @@ impl Editor {
         let mut restored = 0;
         for entry in entries {
             let loaded = self.recovery_service.lock().unwrap().load_recovery(&entry);
+            // A short read means different things depending on whether the
+            // buffer has a file behind it. With no file this is the only
+            // copy, so it is restored — loudly. With a file, the file on
+            // disk is the better copy, and replacing its contents with a
+            // prefix would stage that truncation for the next save.
+            let loaded = match loaded {
+                Ok(RecoveryResult::RecoveredPartial {
+                    original_path,
+                    content,
+                    expected,
+                    found,
+                }) => match original_path {
+                    None => {
+                        tracing::warn!(
+                            "Hot-exit restore: unnamed buffer {} holds {found} of \
+                             {expected} bytes; restoring what is there",
+                            entry.id
+                        );
+                        self.set_status_message(format!(
+                            "Recovered an unsaved buffer incompletely: {found} of \
+                             {expected} bytes. The end is missing — check before saving."
+                        ));
+                        Ok(RecoveryResult::Recovered {
+                            original_path: None,
+                            content,
+                        })
+                    }
+                    Some(path) => {
+                        tracing::warn!(
+                            "Hot-exit restore skipped {}: it holds {found} of {expected} \
+                             bytes, so {} on disk is the better copy",
+                            entry.id,
+                            path.display()
+                        );
+                        continue;
+                    }
+                },
+                other => other,
+            };
             match loaded {
                 Ok(RecoveryResult::Recovered {
                     original_path,
@@ -533,6 +614,9 @@ impl Editor {
                 Ok(RecoveryResult::NotFound { id }) => {
                     tracing::warn!("Hot-exit restore: recovery file {} missing", id);
                 }
+                // Turned into one of the arms above, or skipped, before this
+                // match; spelled out so the compiler can see it is covered.
+                Ok(RecoveryResult::RecoveredPartial { .. }) => {}
                 Err(e) => {
                     tracing::warn!("Hot-exit restore: failed to load {}: {}", entry.id, e);
                 }

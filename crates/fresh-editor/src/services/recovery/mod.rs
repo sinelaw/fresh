@@ -89,6 +89,9 @@ impl Default for RecoveryConfig {
 pub struct RecoveryService {
     /// Storage backend
     storage: RecoveryStorage,
+    /// The scope `storage` was built from, so callers can ask whether a given
+    /// workspace's entries would live in this store at all.
+    scope: RecoveryScope,
     /// Configuration
     config: RecoveryConfig,
     /// Last auto-recovery-save time per buffer
@@ -112,9 +115,39 @@ impl RecoveryService {
         }
         Self {
             storage: RecoveryStorage::with_scope(base_recovery_dir, scope),
+            scope: scope.clone(),
             config,
             last_save_times: HashMap::new(),
             session_started: false,
+        }
+    }
+
+    /// Whether this store belongs to a single launch directory.
+    ///
+    /// True in standalone mode, where everything in the store was done in
+    /// one directory (#1550), so an entry nobody claims still has only one
+    /// place it could have come from. False for a session store, which
+    /// holds many workspaces and where an unclaimed entry may simply belong
+    /// to one that is not open yet.
+    pub fn is_standalone(&self) -> bool {
+        matches!(self.scope, RecoveryScope::Standalone { .. })
+    }
+
+    /// Whether this store is the one that would hold `root`'s entries.
+    ///
+    /// A session-scoped store — a named daemon, and the Orchestrator — keeps
+    /// one store for the whole editor and stamps each entry with the workspace
+    /// that owns it, so it holds them all. A standalone store is scoped to the
+    /// launch directory (#1550), so an entry for another project is invisible
+    /// here rather than gone.
+    ///
+    /// This decides what a missing entry means: in the store that owns the
+    /// project, missing proves the content is gone and a workspace reference
+    /// to it is safe to drop; anywhere else it proves nothing.
+    pub fn covers_root(&self, root: &Path) -> bool {
+        match self.scope {
+            RecoveryScope::Session { .. } => true,
+            RecoveryScope::Standalone { ref working_dir } => working_dir == root,
         }
     }
 
@@ -313,6 +346,14 @@ impl RecoveryService {
         Ok(())
     }
 
+    /// Whether an entry was ever recorded for `id`, usable or not. See
+    /// [`RecoveryStorage::entry_recorded`]: only `Ok(false)` means the
+    /// content is gone, which is the one answer that licenses dropping a
+    /// workspace's reference to it.
+    pub fn entry_recorded(&self, id: &str) -> io::Result<bool> {
+        self.storage.entry_recorded(id)
+    }
+
     /// List all recoverable entries
     pub fn list_recoverable(&self) -> io::Result<Vec<RecoveryEntry>> {
         self.storage.list_entries()
@@ -383,9 +424,22 @@ impl RecoveryService {
 
         // For original_file_size == 0, we expect exactly one chunk with offset=0
         if chunked_data.chunks.len() == 1 && chunked_data.chunks[0].offset == 0 {
+            let content = chunked_data.chunks[0].content.clone();
+            // The metadata recorded how big the buffer was. Checking it is
+            // the difference between handing back the user's work and
+            // handing back a prefix of it that looks just as complete.
+            let expected = entry.metadata.content_size as usize;
+            if content.len() < expected {
+                return Ok(RecoveryResult::RecoveredPartial {
+                    original_path: entry.metadata.original_path.clone(),
+                    found: content.len(),
+                    expected,
+                    content,
+                });
+            }
             Ok(RecoveryResult::Recovered {
                 original_path: entry.metadata.original_path.clone(),
-                content: chunked_data.chunks[0].content.clone(),
+                content,
             })
         } else {
             Ok(RecoveryResult::Corrupted {
@@ -406,6 +460,12 @@ mod tests {
         let storage = RecoveryStorage::with_dir(temp_dir.path().to_path_buf());
         let service = RecoveryService {
             storage,
+            // `with_dir` points storage at the temp directory itself rather
+            // than at a scope under it, so the matching scope is the
+            // standalone one for that directory.
+            scope: RecoveryScope::Standalone {
+                working_dir: temp_dir.path().to_path_buf(),
+            },
             config: RecoveryConfig::default(),
             last_save_times: HashMap::new(),
             session_started: false,
@@ -656,6 +716,58 @@ mod tests {
                 assert_eq!(chunks[0].content, b"PREFIX: ");
             }
             _ => panic!("Expected RecoveredChunks result, got {:?}", result),
+        }
+    }
+
+    /// A chunk file shorter than the metadata says must not come back as if
+    /// it were the whole buffer.
+    ///
+    /// Each recovery file is written with its own atomic rename, so a crash
+    /// can leave a chunk that is in place but incomplete. The sizes to check
+    /// it against are right there in the metadata; without that check the
+    /// editor hands back a buffer that looks like the user's unsaved work
+    /// minus the end, with nothing saying so, and the next save writes that
+    /// over the real thing.
+    #[test]
+    fn a_truncated_chunk_is_not_reported_as_whole_content() {
+        let (mut service, temp) = create_test_service();
+        service.start_session().unwrap();
+
+        let content = b"COMPLETE-UNSAVED-WORK".to_vec();
+        let id = service.get_buffer_id(None);
+        let chunks = vec![RecoveryChunk::new(0, 0, content.clone())];
+        service
+            .save_buffer_owned(&id, chunks, None, None, Some(1), 0, content.len(), None)
+            .unwrap();
+
+        // Truncate the chunk on disk, leaving the metadata's sizes intact.
+        let chunk_path = temp.path().join(format!("{id}.chunk.0"));
+        let whole = std::fs::read(&chunk_path).unwrap();
+        assert_eq!(whole, content, "the chunk holds the content verbatim");
+        std::fs::write(&chunk_path, &whole[..8]).unwrap();
+
+        let entry = service
+            .list_recoverable()
+            .unwrap()
+            .into_iter()
+            .find(|e| e.id == id)
+            .expect("a truncated entry is still listed");
+
+        match service.load_recovery(&entry).unwrap() {
+            RecoveryResult::Recovered { content: got, .. } => panic!(
+                "silently returned {} of {} bytes as a complete recovery: {:?}",
+                got.len(),
+                content.len(),
+                String::from_utf8_lossy(&got)
+            ),
+            other => {
+                let text = format!("{other:?}");
+                assert!(
+                    text.contains("8") && text.contains(&content.len().to_string()),
+                    "the result should say how much was found against how much \
+                     was expected, got: {text}"
+                );
+            }
         }
     }
 }
