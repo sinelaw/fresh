@@ -18,7 +18,8 @@ use std::ffi::OsStr;
 
 /// True when the arguments ask Fresh for its window. Such a launch is handed
 /// off without waiting, so the prompt comes back as it does for any GUI app.
-/// Only arguments before a bare `--` count; after it, `--gui` is a file name.
+/// Only arguments before a bare `--` or `--cmd` count: after `--` it is a
+/// file name, and `--cmd` takes every remaining argument as its own value.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn launches_gui<I, S>(args: I) -> bool
 where
@@ -27,17 +28,39 @@ where
 {
     args.into_iter()
         .map(|a| a.as_ref().to_owned())
-        .take_while(|a| a != "--")
+        .take_while(|a| a != "--" && a != "--cmd")
         .any(|a| a == "--gui")
 }
+
+/// Set on the child, so a launcher that ends up starting another launcher
+/// (a copy or hard link of it named `.exe`) stops instead of recursing.
+#[cfg_attr(not(windows), allow(dead_code))]
+const NESTED_MARKER: &str = "FRESH_CONSOLE_SHIM";
 
 #[cfg(windows)]
 mod shim {
     use std::path::{Path, PathBuf};
     use std::process::Command;
-    use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
+    use windows_sys::core::BOOL;
+    use windows_sys::Win32::System::Console::{
+        SetConsoleCtrlHandler, CTRL_BREAK_EVENT, CTRL_C_EVENT,
+    };
+
+    /// Swallows Ctrl+C and Ctrl+Break; close, logoff and shutdown fall
+    /// through to the default handler. A real handler, not the null one: the
+    /// "ignore Ctrl+C" flag a null handler sets is inherited by the editor
+    /// and everything it starts, and it does not cover Ctrl+Break.
+    unsafe extern "system" fn ignore_interrupts(ctrl_type: u32) -> BOOL {
+        BOOL::from(ctrl_type == CTRL_C_EVENT || ctrl_type == CTRL_BREAK_EVENT)
+    }
 
     pub fn run() -> i32 {
+        if std::env::var_os(super::NESTED_MARKER).is_some() {
+            eprintln!(
+                "fresh: the console launcher started itself; fresh-gui.com needs the real fresh-gui.exe beside it"
+            );
+            return 1;
+        }
         let target = match gui_exe() {
             Ok(path) => path,
             Err(msg) => {
@@ -47,7 +70,7 @@ mod shim {
         };
         let args: Vec<_> = std::env::args_os().skip(1).collect();
         let mut command = Command::new(&target);
-        command.args(&args);
+        command.args(&args).env(super::NESTED_MARKER, "1");
 
         if super::launches_gui(&args) {
             return match command.spawn() {
@@ -63,8 +86,8 @@ mod shim {
         // handles them itself (in raw mode they arrive as keys); this process
         // has to outlive them so the shell keeps waiting and gets the real
         // exit code.
-        // SAFETY: a null handler with `add = TRUE` only sets a process flag.
-        unsafe { SetConsoleCtrlHandler(None, 1) };
+        // SAFETY: registers a handler that only compares its argument.
+        unsafe { SetConsoleCtrlHandler(Some(ignore_interrupts), 1) };
 
         match command.status() {
             // `code()` is always `Some` on Windows; an NTSTATUS such as
@@ -87,7 +110,7 @@ mod shim {
         for base in [&me, &resolved] {
             let exe = base.with_extension("exe");
             if exe.is_file() {
-                if is_same_file(&exe, &resolved) {
+                if exe == me || is_same_file(&exe, &resolved) {
                     // Renamed to `.exe`: launching "the sibling" would start
                     // this shim again, forever.
                     return Err(format!(
@@ -143,5 +166,6 @@ mod tests {
         assert!(!launches_gui(["file.rs"]));
         assert!(!launches_gui(["--guide"]));
         assert!(!launches_gui(["--", "--gui"]));
+        assert!(!launches_gui(["--cmd", "agent", "--gui"]));
     }
 }
