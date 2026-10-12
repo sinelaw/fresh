@@ -48,6 +48,12 @@ pub struct RowDesc<'a> {
     pub theme: &'a Theme,
     pub collapsed: &'a str,
     pub expanded: &'a str,
+    /// A drop's preview is moving this entry: how many characters of its
+    /// name have ghosted out (`view::move_preview`).
+    pub ghost: Option<usize>,
+    /// A drop's preview is opening a row under this directory, so it is drawn
+    /// open whatever its state.
+    pub opening: bool,
 }
 
 /// One row of the tree, as the shell describes it.
@@ -144,7 +150,7 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
     let indicator_width = collapsed_w.max(expanded_w).max(1) + 1;
     if node.is_dir() {
         use crate::view::file_tree::NodeState;
-        let (glyph, w) = if node.state == NodeState::Expanded {
+        let (glyph, w) = if node.state == NodeState::Expanded || d.opening {
             (format!("{} ", d.expanded), expanded_w + 1)
         } else if node.state == NodeState::Collapsed {
             (format!("{} ", d.collapsed), collapsed_w + 1)
@@ -198,8 +204,19 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
 
     // The anchor's own name, which is no segment's: a press on it is the row's.
     let mut name: fe::Runs = Vec::new();
-    match d.fuzzy {
-        Some(fm) => {
+    match (d.ghost, d.fuzzy) {
+        // The characters already typed into the preview row have left this
+        // one: they wear the removal's ground, the rest the row's own.
+        (Some(typed), _) => {
+            use crate::view::move_preview::{typed_split, GHOST_BG};
+            let (gone, kept) = typed_split(&node.entry.name, typed);
+            for (text, ground) in [(gone, GHOST_BG), (kept, ground)] {
+                if !text.is_empty() {
+                    name.push((text.to_string(), pair(&name_fg, ground)));
+                }
+            }
+        }
+        (None, Some(fm)) => {
             let matched: std::collections::HashSet<usize> =
                 fm.match_positions.iter().copied().collect();
             let hit = pair("search.match_fg", "search.match_bg");
@@ -223,7 +240,7 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
                 name.push((run, if run_is_match { hit } else { base }));
             }
         }
-        None => name.push((node.entry.name.clone(), pair(&name_fg, ground))),
+        (None, None) => name.push((node.entry.name.clone(), pair(&name_fg, ground))),
     }
 
     // The cell that holds the name off the status slot. Part of the label
@@ -248,6 +265,45 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
         }),
         error: matches!(node.state, crate::view::file_tree::NodeState::Error(_))
             .then(|| (" [Error]".to_string(), pair("diagnostic.error_fg", ground))),
+        segment: None,
+    }
+}
+
+/// The row a drop's preview opens where a moved entry will land: the indent a
+/// child of the target directory has, and the part of `name` typed so far
+/// (`view::move_preview::typed_runs`). Nothing else — no glyph, no status —
+/// because nothing is there yet.
+///
+/// `index` is the target directory's row and `segment` the directory when it
+/// is a folded part of that row, so a press or a drop on the preview row
+/// means that directory.
+pub fn describe_preview_row(
+    index: usize,
+    segment: Option<std::path::PathBuf>,
+    indent: usize,
+    name: &str,
+    typed: usize,
+    collapsed: &str,
+    expanded: &str,
+) -> crate::view::shell::file_explorer::Row {
+    use crate::app::shell_host::shell_theme::pair;
+    let ground = "editor.bg";
+    // The same head a file row at this depth has, so the typed name starts
+    // in the column the real one will.
+    let indicator_width = str_width(collapsed).max(str_width(expanded)).max(1) + 1;
+    let head = " ".repeat(indent * 2 + indicator_width);
+    crate::view::shell::file_explorer::Row {
+        index,
+        theme: pair("editor.fg", ground),
+        left: vec![(head, pair("editor.fg", ground))],
+        chain: Vec::new(),
+        name: crate::view::move_preview::typed_runs(name, typed)
+            .into_iter()
+            .map(|(text, bg)| (text.to_string(), pair("editor.fg", bg)))
+            .collect(),
+        trailing: None,
+        error: None,
+        segment,
     }
 }
 
@@ -329,6 +385,8 @@ mod tests {
             theme,
             collapsed: ">",
             expanded: "▼",
+            ghost: None,
+            opening: false,
         });
         let resolve = |name: &str| crate::app::shell_host::shell_theme::resolve(name, theme);
         // The label's parts in the order the row draws them.
@@ -536,6 +594,8 @@ mod tests {
                 theme: &theme,
                 collapsed: ">",
                 expanded: "▼",
+                ghost: None,
+                opening: false,
             })
         };
 
@@ -585,6 +645,8 @@ mod tests {
             theme: &theme,
             collapsed: ">",
             expanded: "▼",
+            ghost: None,
+            opening: false,
         });
 
         let drawn =
@@ -643,6 +705,8 @@ mod tests {
                 theme: &theme,
                 collapsed: ">",
                 expanded: "▼",
+                ghost: None,
+                opening: false,
             })
         };
         let themes = |row: &crate::view::shell::file_explorer::Row| {

@@ -323,9 +323,19 @@ impl Editor {
             .iter()
             .filter_map(|(_, state)| state.reference_highlight_overlay.next_deadline())
             .min();
+        // A drop's move preview types a character at a time, and what it was
+        // holding back (a confirmation, a plugin's filing) is due when it ends.
+        let move_preview_deadline = [
+            self.explorer_move_preview_deadline(),
+            self.tree_move_previews_deadline(),
+        ]
+        .into_iter()
+        .flatten()
+        .min();
         [
             lsp_progress_deadline,
             anim_deadline,
+            move_preview_deadline,
             paste_deadline,
             wheel_deadline,
             drag_deadline,

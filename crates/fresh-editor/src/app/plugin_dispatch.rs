@@ -6040,6 +6040,17 @@ impl Editor {
                 self.seat_reading_row_on_focused_widget(panel_key, &widget_key);
                 self.shell_description_stale = true;
             }
+            WidgetMutation::PreviewTreeMove {
+                widget_key,
+                source_key,
+                after_key,
+                label,
+            } => {
+                self.start_tree_move_preview(panel_key, widget_key, source_key, after_key, label);
+            }
+            WidgetMutation::EndTreeMovePreview { widget_key, commit } => {
+                self.end_tree_move_preview(panel_key, &widget_key, commit);
+            }
         }
 
         // Re-render with the mutated state. `rerender_widget_panel`
@@ -6053,6 +6064,8 @@ impl Editor {
         self.pane_mirrors.remove(panel_key);
         self.prose_reveal.borrow_mut().remove(panel_key);
         self.tree_projections.borrow_mut().remove(panel_key);
+        self.tree_move_previews
+            .retain(|p| &p.panel_key != panel_key);
         match self.widget_registry.unmount(panel_key) {
             Some(buffer_id) => {
                 tracing::debug!(

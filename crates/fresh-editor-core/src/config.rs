@@ -1112,7 +1112,7 @@ impl Default for StatusBarConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EditorConfig {
     // ===== Display =====
-    /// Enable UI animations (tab-switch slides, dashboard, plugin effects).
+    /// Enable UI animations (tab-switch slides, dashboard, drag-and-drop move previews, plugin effects).
     /// Turn off for a fully static UI, e.g. on slow terminals or over SSH.
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Display"))]

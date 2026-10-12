@@ -544,3 +544,78 @@ fn pressing_the_dock_menu_glyph_again_closes_the_menu() {
     })
     .unwrap();
 }
+
+/// **A drop plays the move before it files the row** — the file explorer's
+/// preview, in the dock's tree: an empty row opens under the folder, the
+/// workspace's name is typed into it on the diff-addition ground while the
+/// same characters ghost out of the workspace's row on the diff-removal
+/// ground, and the workspace is filed only once the name is across.
+#[test]
+fn a_drop_types_the_workspace_into_the_folder_before_filing_it() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h = launch(root);
+    assert!(h.editor().config().editor.animations, "animations are on");
+    create_empty_folder(&mut h, "Docs");
+
+    let (scol, srow) = pos_of(&h, "alphaproj");
+    let (_, drow) = pos_of(&h, "Docs");
+    h.mouse_drag(scol, srow, scol, drow).unwrap();
+
+    // Each pass of the wait moves the clock on a little, so some frame shows
+    // the name part-way across: a prefix of it on the row under the folder,
+    // with the workspace not filed yet.
+    let line = |h: &EditorTestHarness, row: u16| -> String {
+        let s = h.screen_to_string();
+        s.lines()
+            .nth(row as usize)
+            .unwrap_or_default()
+            .chars()
+            .take(30)
+            .collect()
+    };
+    h.wait_until(|h| {
+        let (_, drow) = pos_of(h, "Docs");
+        let under = line(h, drow + 1);
+        let typed = under.trim();
+        !typed.is_empty()
+            && typed.len() < "alphaproj".len()
+            && "alphaproj".starts_with(typed)
+            && !line(h, drow).contains("(1)")
+    })
+    .unwrap();
+
+    // Mid-way, the colours: typed on the addition, ghosted on the removal.
+    let (_, drow) = pos_of(&h, "Docs");
+    let under = line(&h, drow + 1);
+    let tcol = under.chars().position(|c| c == 'a').unwrap() as u16;
+    let theme_bg = |key: &str| h.editor().theme().resolve_theme_key(key).unwrap();
+    let (added, removed) = (
+        theme_bg("editor.diff_add_bg"),
+        theme_bg("editor.diff_remove_bg"),
+    );
+    let typed_bg = h.get_cell_style(tcol, drow + 1).and_then(|s| s.bg);
+    assert!(
+        typed_bg == Some(added) || typed_bg == Some(theme_bg("editor.diff_add_highlight_bg")),
+        "typed on the addition's ground, got {typed_bg:?}"
+    );
+    let (gcol, grow) = pos_of(&h, "alphaproj");
+    assert_eq!(
+        h.get_cell_style(gcol, grow).and_then(|s| s.bg),
+        Some(removed),
+        "the first character has ghosted out of the workspace's row"
+    );
+
+    // Then it is filed, and the preview row is the real one.
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("Docs") && s.contains("(1)")
+    })
+    .unwrap();
+    let (_, drow) = pos_of(&h, "Docs");
+    assert_eq!(
+        pos_of(&h, "alphaproj").1,
+        drow + 1,
+        "the workspace sits under Docs:\n{}",
+        h.screen_to_string()
+    );
+}

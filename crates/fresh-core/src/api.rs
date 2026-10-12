@@ -2196,8 +2196,9 @@ pub struct TreeNode {
     /// The row can be picked up with the pointer and dropped on another row
     /// of the same tree. The plugin hears, as `widget_event`s on the tree:
     /// `drag` (`{ key, target }`: the row lifted and the row under the
-    /// pointer, `null` off every row) each time that changes, from the first
-    /// row the drag leaves its own for; `drop` (`{ key, target, index }`)
+    /// pointer, `null` off every row) each time that changes — once per
+    /// pointer event, so a release can land on a row the plugin was not yet
+    /// told about — from the first row the drag leaves its own for; `drop` (`{ key, target, index }`)
     /// when it is released on another row; and `dragend` (`{ key }`) when
     /// the drag is over, dropped or not. A plain click hears none of them. A
     /// press on the row activates on release, not on the press, so a drag
@@ -3712,6 +3713,30 @@ pub enum WidgetMutation {
     /// after mount, or to snap focus back to a "home" widget after a
     /// navigation event.
     SetFocusKey { widget_key: String },
+    /// Show a move in a `Tree` before it happens — while a row is dragged
+    /// over a folder, say: an empty row opens directly under `after_key` (the
+    /// folder the row would land in, opened if it is folded; `None` for the
+    /// top of the tree), and `label` is typed into it a character at a time in
+    /// the diff colour for an addition while the same characters ghost out of
+    /// `source_key`'s row in the diff colour for a removal.
+    ///
+    /// The preview stays until `EndTreeMovePreview`. A second one on the same
+    /// tree replaces it (a drag that moved on to another folder). Nothing in
+    /// the plugin's spec changes: the rows are the host's, for the length of
+    /// the preview. With the editor's animations off nothing is shown.
+    PreviewTreeMove {
+        widget_key: String,
+        source_key: String,
+        #[serde(default)]
+        after_key: Option<String>,
+        label: String,
+    },
+    /// End the tree's move preview. `commit: false` drops it now (the drag
+    /// left the folder, or ended without a drop). `commit: true` lets it play
+    /// out — at once if the name is already across — and then fires
+    /// `movepreviewend` (`{ key: source_key }`) on the tree, which is when
+    /// the plugin makes the move; with animations off that is straight away.
+    EndTreeMovePreview { widget_key: String, commit: bool },
 }
 
 impl WidgetMutation {

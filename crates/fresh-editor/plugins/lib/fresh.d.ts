@@ -1820,8 +1820,9 @@ type TreeNode = {
 	* The row can be picked up with the pointer and dropped on another row
 	* of the same tree. The plugin hears, as `widget_event`s on the tree:
 	* `drag` (`{ key, target }`: the row lifted and the row under the
-	* pointer, `null` off every row) each time that changes, from the first
-	* row the drag leaves its own for; `drop` (`{ key, target, index }`)
+	* pointer, `null` off every row) each time that changes — once per
+	* pointer event, so a release can land on a row the plugin was not yet
+	* told about — from the first row the drag leaves its own for; `drop` (`{ key, target, index }`)
 	* when it is released on another row; and `dragend` (`{ key }`) when
 	* the drag is over, dropped or not. A plain click hears none of them. A
 	* press on the row activates on release, not on the press, so a drag
@@ -2879,6 +2880,16 @@ type WidgetMutation = {
 } | {
 	"kind": "setFocusKey";
 	widgetKey: string;
+} | {
+	"kind": "previewTreeMove";
+	widgetKey: string;
+	sourceKey: string;
+	afterKey: string | null;
+	label: string;
+} | {
+	"kind": "endTreeMovePreview";
+	widgetKey: string;
+	commit: boolean;
 };
 /**
 * Per-call result from `SearchHandle.take()` — the matches accumulated since
@@ -3742,7 +3753,7 @@ type CursorStyle = "default" | "blinking_block" | "steady_block" | "blinking_bar
 	*/
 interface EditorConfig {
 		/**
-		* Enable UI animations (tab-switch slides, dashboard, plugin effects).
+		* Enable UI animations (tab-switch slides, dashboard, drag-and-drop move previews, plugin effects).
 		* Turn off for a fully static UI, e.g. on slow terminals or over SSH.
 		*
 		* Default: `true`
