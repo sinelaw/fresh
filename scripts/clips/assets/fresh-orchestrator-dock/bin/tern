@@ -1,0 +1,11 @@
+#!/bin/sh
+# `tern` — an invented coding agent, so the clip can film the orchestrator
+# without an API key, a network, or a transcript that changes between takes.
+# It renders the shape of an agent session and nothing else, and it is nobody's
+# product: see the fixture's docstring.
+#
+# It runs at its own pace: the clip is filmed with `xwd-capture.py`, which
+# samples fast enough to show one. `--warm` gives it a backlog, so the pane is
+# already at work when the camera arrives rather than three lines in.
+AGENT="${FRESH_CLIP_AGENT:-$HOME/repos/fresh/crates/fresh-editor/tests/fixtures/coding_agent.py}"
+exec python3 "$AGENT" --as tern --warm 9 --ask 1 rate-limit "$@"
