@@ -2557,6 +2557,9 @@ impl crate::app::window::Window {
         };
 
         for unnamed_ref in unnamed_buffers {
+            if unnamed_buffer_map.contains_key(&unnamed_ref.recovery_id) {
+                continue;
+            }
             let Some(entry) = entries.iter().find(|e| e.id == unnamed_ref.recovery_id) else {
                 self.account_for_unlisted_unnamed(unnamed_ref, &root);
                 continue;
@@ -3261,6 +3264,8 @@ impl crate::app::window::Window {
             .values()
             .filter(|meta| !meta.hidden_from_tabs && !meta.is_virtual())
             .filter_map(|meta| meta.file_path())
+            // Unnamed buffers are saved in `unnamed_buffers`.
+            .filter(|abs_path| !abs_path.as_os_str().is_empty())
             .filter(|abs_path| abs_path.strip_prefix(&self.root).is_err())
             .cloned()
             .collect();
