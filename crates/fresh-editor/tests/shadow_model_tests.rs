@@ -793,8 +793,8 @@ fn text_strategy() -> impl Strategy<Value = Vec<u8>> {
     ]
 }
 
-/// Generate a single operation
-fn op_strategy() -> impl Strategy<Value = Op> {
+/// Generate a single operation that stays in memory (never touches the disk)
+fn edit_op_strategy() -> impl Strategy<Value = Op> {
     prop_oneof![
         // Insert (most common)
         5 => (0usize..2000, text_strategy())
@@ -804,18 +804,20 @@ fn op_strategy() -> impl Strategy<Value = Op> {
             .prop_map(|(offset, len)| Op::Delete { offset, len }),
         // Replace content (occasional)
         1 => text_strategy().prop_map(|text| Op::ReplaceContent { text }),
-        // Save and reload (occasional)
-        2 => Just(Op::SaveAndReload),
-        // Toggle file ownership (tests both atomic and in-place write paths)
-        1 => prop::bool::ANY.prop_map(|owned| Op::SetFileOwnership { owned }),
         // Scan line index (exercises incremental line scan flow)
         1 => Just(Op::ScanLineIndex),
     ]
 }
 
-/// Generate a sequence of operations
-fn ops_strategy(max_ops: usize) -> impl Strategy<Value = Vec<Op>> {
-    prop::collection::vec(op_strategy(), 1..max_ops)
+/// Generate a single operation, including saves to disk
+fn op_strategy() -> impl Strategy<Value = Op> {
+    prop_oneof![
+        10 => edit_op_strategy(),
+        // Save and reload (occasional)
+        2 => Just(Op::SaveAndReload),
+        // Toggle file ownership (tests both atomic and in-place write paths)
+        1 => prop::bool::ANY.prop_map(|owned| Op::SetFileOwnership { owned }),
+    ]
 }
 
 /// Generate initial content
@@ -833,9 +835,37 @@ fn initial_content_strategy() -> impl Strategy<Value = Vec<u8>> {
 }
 
 // ============================================================================
-// 6. THE SINGLE COMPREHENSIVE PROPERTY TEST
+// 6. THE COMPREHENSIVE PROPERTY TESTS
 // ============================================================================
 
+/// Run `ops` against a fresh context holding `initial`, checking the model
+/// and the SUT agree after every one.
+fn run_shadow_model(initial: Vec<u8>, ops: &[Op]) -> Result<(), TestCaseError> {
+    let mut ctx = if initial.is_empty() {
+        TestContext::new()
+    } else {
+        TestContext::with_initial_content(initial)
+    };
+
+    // Verify initial state
+    ctx.verify()
+        .map_err(|e| TestCaseError::fail(format!("Initial: {}", e)))?;
+
+    // Apply all operations
+    for op in ops {
+        if let Err(msg) = ctx.apply(op) {
+            return Err(TestCaseError::fail(format!(
+                "{}\n\nOperation: {:?}\n\nHistory:\n{}",
+                msg,
+                op,
+                ctx.history()
+            )));
+        }
+    }
+    Ok(())
+}
+
+// The in-memory API is cheap to exercise, so it gets many cases.
 proptest! {
     #![proptest_config(ProptestConfig {
         cases: 500,
@@ -844,12 +874,12 @@ proptest! {
         ..ProptestConfig::default()
     })]
 
-    /// Comprehensive shadow model test for the entire TextBuffer API
+    /// Shadow model test for the in-memory TextBuffer API
     ///
-    /// This single property test covers:
+    /// Covers:
     /// - Insert operations at any valid position
     /// - Delete operations of any valid range
-    /// - Save/Load persistence roundtrips
+    /// - Whole-content replacement and line index scans
     /// - Empty, small, and large initial content
     /// - Newlines and line counting
     /// - Boundary conditions (start, end, middle)
@@ -862,28 +892,36 @@ proptest! {
     #[test]
     fn prop_textbuffer_shadow_model(
         initial in initial_content_strategy(),
-        ops in ops_strategy(100)
+        ops in prop::collection::vec(edit_op_strategy(), 1..100)
     ) {
-        let mut ctx = if initial.is_empty() {
-            TestContext::new()
-        } else {
-            TestContext::with_initial_content(initial)
-        };
+        run_shadow_model(initial, &ops)?;
+    }
+}
 
-        // Verify initial state
-        ctx.verify().map_err(|e| TestCaseError::fail(format!("Initial: {}", e)))?;
+// Every save syncs one to three files to disk (the file itself, and for an
+// in-place write also its staged copy and recovery metadata) and creates,
+// renames and removes several more; a case averages about eight saves.
+// That is cheap on Linux but not on Windows, where 500 such cases took
+// longer than nextest's 180s limit. Fewer cases keep it well inside that;
+// the edits between saves are covered at volume above.
+proptest! {
+    #![proptest_config(ProptestConfig {
+        cases: 64,
+        max_shrink_iters: 5000,
+        verbose: 1,
+        ..ProptestConfig::default()
+    })]
 
-        // Apply all operations
-        for op in &ops {
-            if let Err(msg) = ctx.apply(op) {
-                return Err(TestCaseError::fail(format!(
-                    "{}\n\nOperation: {:?}\n\nHistory:\n{}",
-                    msg,
-                    op,
-                    ctx.history()
-                )));
-            }
-        }
+    /// Shadow model test for the TextBuffer API with persistence: the edits
+    /// above interleaved with save/load roundtrips, as owner (atomic write)
+    /// and non-owner (in-place write), checking after every save that the
+    /// file on disk holds what the model does.
+    #[test]
+    fn prop_textbuffer_shadow_model_with_persistence(
+        initial in initial_content_strategy(),
+        ops in prop::collection::vec(op_strategy(), 1..100)
+    ) {
+        run_shadow_model(initial, &ops)?;
     }
 }
 

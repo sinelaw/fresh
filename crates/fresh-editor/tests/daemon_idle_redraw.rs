@@ -25,6 +25,7 @@
 //! config and socket trees works there, and `common::pty` is Linux-only.
 #![cfg(target_os = "linux")]
 
+use crate::common::daemon::spawn_daemon;
 use crate::common::pty::{pty_available, spawn_on_pty, ChildStdin};
 use std::path::Path;
 use std::process::Command;
@@ -76,11 +77,15 @@ fn setup(home: &Path) {
     .unwrap();
 }
 
+/// The pid file a daemon named `session` writes under this isolated tree.
+fn daemon_pid_file(home: &Path, session: &str) -> std::path::PathBuf {
+    home.join("run").join("fresh").join(format!("{session}.pid"))
+}
+
 /// Stop the daemon this test started, so it does not idle on in the
 /// background holding a socket in the temp tree.
 fn kill_daemon(home: &Path, session: &str) {
-    let pid_file = home.join("run").join("fresh").join(format!("{session}.pid"));
-    if let Ok(pid) = std::fs::read_to_string(pid_file) {
+    if let Ok(pid) = std::fs::read_to_string(daemon_pid_file(home, session)) {
         if let Ok(pid) = pid.trim().parse::<i32>() {
             // SAFETY: a plain `kill(2)`; an already-dead pid just returns
             // ESRCH, which is ignored.
@@ -105,14 +110,15 @@ fn a_daemon_paints_the_occurrence_highlight_without_further_input() {
     // plugins, because the property under test is "nothing else causes a
     // frame". A plugin that asks for a render on its own schedule hides the
     // bug: the stranded update then rides somebody else's frame, which is
-    // precisely the accident the fix removes.
+    // precisely the accident the fix removes. It has to be listening
+    // before the client starts, or the client starts a daemon of its own.
     let mut server = isolated_fresh(home);
     server
         .args(["--server", "--session-name", session, "--no-plugins"])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    let mut server = server.spawn().expect("spawn the daemon");
+    let mut server = spawn_daemon(server, &daemon_pid_file(home, session));
 
     let mut cmd = isolated_fresh(home);
     cmd.args(["--no-plugins", "-a", session, "note.md"]);

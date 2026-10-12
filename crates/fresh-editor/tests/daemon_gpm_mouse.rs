@@ -20,6 +20,7 @@
 //! binary-driving tests skip without a pty.
 #![cfg(target_os = "linux")]
 
+use crate::common::daemon::spawn_daemon;
 use crate::common::pty::{pty_available, spawn_on_pty, ChildStdin, PtyChild};
 use std::ffi::CString;
 use std::fs::File;
@@ -164,9 +165,13 @@ fn find(screen: &vt100::Screen, text: &str) -> Option<(u16, u16)> {
     None
 }
 
+/// The pid file a daemon named `session` writes under this isolated tree.
+fn daemon_pid_file(home: &Path, session: &str) -> PathBuf {
+    home.join("run").join("fresh").join(format!("{session}.pid"))
+}
+
 fn kill_daemon(home: &Path, session: &str) {
-    let pid_file = home.join("run").join("fresh").join(format!("{session}.pid"));
-    if let Ok(pid) = std::fs::read_to_string(pid_file) {
+    if let Ok(pid) = std::fs::read_to_string(daemon_pid_file(home, session)) {
         if let Ok(pid) = pid.trim().parse::<i32>() {
             // SAFETY: a plain `kill(2)`; an already-dead pid just returns
             // ESRCH, which is ignored.
@@ -211,7 +216,8 @@ fn the_console_mouse_reaches_a_daemon_session() {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    let mut server = server.spawn().expect("spawn the daemon");
+    // Listening before the client starts, or the client starts its own
+    let mut server = spawn_daemon(server, &daemon_pid_file(home, session));
 
     let mut cmd = isolated_fresh(home);
     cmd.args(["--no-plugins", "-a", session, "note.txt"])
