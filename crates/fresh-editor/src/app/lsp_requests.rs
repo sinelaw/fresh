@@ -3419,6 +3419,8 @@ impl Editor {
         self.active_window_mut()
             .send_lsp_changes_for_buffer(buffer_id, lsp_changes);
 
+        self.fire_buffer_modified_after_bulk_edit(buffer_id);
+
         Ok(())
     }
 

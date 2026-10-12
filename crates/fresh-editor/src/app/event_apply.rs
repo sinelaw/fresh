@@ -750,7 +750,34 @@ impl Editor {
         // decorations onto the line below, where the next pass clears them.
         self.handle_refresh_lines(buffer_id);
 
+        // Not applied through `apply_event_to_active_buffer`, which fires this.
+        self.fire_buffer_modified_after_bulk_edit(buffer_id);
+
         Some(bulk_edit)
+    }
+
+    /// Fire `buffer_modified` for a bulk edit that did not go through
+    /// `apply_event_to_active_buffer`.
+    ///
+    /// The plugin state snapshot is rebuilt first, as
+    /// `trigger_plugin_hooks_for_event` does for a single edit: the hook runs
+    /// on the plugin thread, and a handler that reads the buffer (its length,
+    /// its text) before the next rebuild would see it as it was before the
+    /// edit.
+    pub(crate) fn fire_buffer_modified_after_bulk_edit(
+        &mut self,
+        buffer_id: crate::model::event::BufferId,
+    ) {
+        #[cfg(feature = "plugins")]
+        self.update_plugin_state_snapshot();
+
+        self.plugin_manager.read().unwrap().run_hook(
+            "buffer_modified",
+            crate::services::plugins::hooks::HookArgs::BufferModified {
+                buffer_id,
+                window_id: self.active_window.0,
+            },
+        );
     }
 
     /// Trigger plugin hooks for an event (if any)
