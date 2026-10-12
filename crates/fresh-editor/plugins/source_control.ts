@@ -52,6 +52,10 @@ editor.defineConfigInteger("autoRefreshMs", {
   maximum: 600000,
   description: "Refresh the Source Control view every N milliseconds while it is open (0 disables).",
 });
+editor.defineConfigBoolean("copilotCommitMessages", {
+  default: true,
+  description: "Let GitHub Copilot write a first draft of the commit message (needs the Copilot language server and a signed-in account, e.g. through the fresh-copilot plugin).",
+});
 editor.defineConfigBoolean("treeView", {
   default: false,
   description: "Show changed files as a folder tree instead of a flat list (the t key toggles it).",
@@ -81,6 +85,7 @@ interface Settings {
   diffContextLines?: number;
   nativeDiffView?: boolean;
   treeView?: boolean;
+  copilotCommitMessages?: boolean;
 }
 
 function settings(): Settings {
@@ -1331,21 +1336,381 @@ async function scm_discard(): Promise<void> {
 }
 registerHandler("scm_discard", scm_discard);
 
+// =============================================================================
+// Commit message editor (with GitHub Copilot)
+// =============================================================================
+//
+// `c` opens the repository's COMMIT_EDITMSG as an ordinary buffer — git's own
+// commit-message file, so it gets the git-commit highlighting — with the
+// staged files listed in comments, as `git commit` does. Ctrl+S (or
+// Ctrl+Enter) commits what is written, Esc cancels. When Copilot is
+// available it writes a first draft from the staged diff; Alt+G asks again.
+//
+// Copilot is reached through its own language server (the one the
+// fresh-copilot plugin uses, and its sign-in): a short-lived Node helper
+// starts it, asks `git/commitGenerate` — the request VS Code's sparkle button
+// makes — and exits. Fresh's process API has no stdin, hence the helper.
+
+// The helper is plain JavaScript kept free of backticks and `${`, so it can
+// live in this raw template literal unchanged.
+const COPILOT_HELPER = String.raw`
+import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+import { basename } from "node:path";
+
+const req = JSON.parse(readFileSync(process.argv[2], "utf8"));
+let child = null;
+const done = (out) => {
+  process.stdout.write(JSON.stringify(out) + "\n");
+  try { if (child) child.kill(); } catch {}
+  process.exit(0);
+};
+const timer = setTimeout(() => done({ ok: false, error: "Copilot did not answer within 90 s" }), 90000);
+child = spawn(req.serverCommand || "copilot-language-server", req.serverArgs || ["--stdio"], {
+  cwd: req.cwd,
+  stdio: ["pipe", "pipe", "pipe"],
+});
+child.on("error", (e) => done({ ok: false, error: "cannot start " + req.serverCommand + ": " + e.message }));
+child.on("exit", (code) => done({ ok: false, error: "the Copilot language server exited (" + code + ")" }));
+child.stderr.on("data", () => {});
+
+let nextId = 1;
+const pending = new Map();
+const send = (msg) => {
+  msg.jsonrpc = "2.0";
+  const body = Buffer.from(JSON.stringify(msg), "utf8");
+  child.stdin.write("Content-Length: " + body.length + "\r\n\r\n");
+  child.stdin.write(body);
+};
+const request = (method, params) => new Promise((resolve, reject) => {
+  const id = nextId++;
+  pending.set(id, { resolve, reject });
+  send({ id, method, params });
+});
+const folder = { uri: pathToFileURL(req.cwd).href, name: basename(req.cwd) || "workspace" };
+let buf = Buffer.alloc(0);
+child.stdout.on("data", (chunk) => {
+  buf = Buffer.concat([buf, chunk]);
+  for (;;) {
+    const sep = buf.indexOf("\r\n\r\n");
+    if (sep < 0) return;
+    const m = /Content-Length: *(\d+)/i.exec(buf.subarray(0, sep).toString("ascii"));
+    const len = m ? parseInt(m[1], 10) : 0;
+    if (buf.length < sep + 4 + len) return;
+    const msg = JSON.parse(buf.subarray(sep + 4, sep + 4 + len).toString("utf8"));
+    buf = buf.subarray(sep + 4 + len);
+    if (msg.id !== undefined && msg.method) {
+      let result = null;
+      if (msg.method === "workspace/configuration") result = ((msg.params && msg.params.items) || []).map(() => ({}));
+      else if (msg.method === "workspace/workspaceFolders") result = [folder];
+      send({ id: msg.id, result });
+    } else if (msg.id !== undefined && pending.has(msg.id)) {
+      const p = pending.get(msg.id);
+      pending.delete(msg.id);
+      if (msg.error) p.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+      else p.resolve(msg.result);
+    }
+  }
+});
+try {
+  await request("initialize", {
+    processId: process.pid,
+    rootUri: folder.uri,
+    workspaceFolders: [folder],
+    capabilities: { workspace: { configuration: true, workspaceFolders: true } },
+    initializationOptions: {
+      editorInfo: { name: "Fresh", version: "0.5" },
+      editorPluginInfo: { name: "fresh-source-control", version: "0.1.0" },
+    },
+  });
+  send({ method: "initialized", params: {} });
+  const status = await request("checkStatus", {});
+  if (status && status.status && !/^(OK|AlreadySignedIn|MaybeOk)$/i.test(status.status)) {
+    done({ ok: false, error: "Copilot is not signed in (" + status.status + "): run Copilot: Sign In" });
+  }
+  const result = await request("git/commitGenerate", {
+    changes: req.changes,
+    userCommits: req.userCommits || [],
+    recentCommits: req.recentCommits || [],
+    workspaceFolder: folder.uri,
+    userLanguage: req.userLanguage,
+  });
+  clearTimeout(timer);
+  done(result && result.commitMessage
+    ? { ok: true, commitMessage: result.commitMessage }
+    : { ok: false, error: "Copilot returned no message" });
+} catch (e) {
+  clearTimeout(timer);
+  done({ ok: false, error: e.message });
+}
+`;
+
+interface CopilotCommands {
+  node: string;
+  server: string;
+  args: string[];
+}
+
+/** Reuse the fresh-copilot plugin's settings when they are there. */
+function copilotCommands(): CopilotCommands {
+  const cfg = editor.getConfig() as {
+    plugins?: Record<string, { settings?: { nodeCommand?: string; serverCommand?: string; serverArgs?: string[] } }>;
+  } | null;
+  const s = cfg?.plugins?.["fresh-copilot"]?.settings ?? {};
+  return {
+    node: s.nodeCommand || "node",
+    server: s.serverCommand || "copilot-language-server",
+    args: Array.isArray(s.serverArgs) && s.serverArgs.length ? s.serverArgs : ["--stdio"],
+  };
+}
+
+function copilotCommitsOn(): boolean {
+  return settings().copilotCommitMessages !== false;
+}
+
+/** Commit messages of `git log`, newest first. */
+async function commitMessages(repo: Repo, extra: string[]): Promise<string[]> {
+  const r = await git(repo.root, ["--no-optional-locks", "log", "-n", "10", "--format=%B%x00", ...extra]);
+  if (r.exit_code !== 0) return [];
+  return r.stdout.split("\0").map((m) => m.trim()).filter((m) => m.length > 0).map((m) => m.slice(0, 1000));
+}
+
+/** Ask Copilot for a message describing the staged changes. */
+async function copilotCommitMessage(repo: Repo): Promise<{ message?: string; error?: string }> {
+  const diff = await git(repo.root, diffArgs("--cached", "-M"));
+  if (diff.exit_code !== 0) return { error: firstLine(diff.stderr) || "git diff failed" };
+  const changes: string[] = [];
+  let total = 0;
+  for (const block of diff.stdout.split(/^(?=diff --git )/m)) {
+    if (!block.startsWith("diff --git ")) continue;
+    // Big files and binaries add tokens, not meaning: a stub keeps the file in view.
+    const text = block.length > 12000 || /^Binary files /m.test(block) ? block.split("\n")[0] + "\n(large or binary change)\n" : block;
+    if (total + text.length > 80000) break;
+    changes.push(text);
+    total += text.length;
+  }
+  if (changes.length === 0) return { error: "nothing staged" };
+  const email = (await git(repo.root, ["config", "user.email"])).stdout.trim();
+  const cfg = editor.getConfig() as { locale?: string } | null;
+  const cmds = copilotCommands();
+  const dir = scratchDir();
+  const helper = editor.pathJoin(dir, "copilot-commit.mjs");
+  const reqPath = editor.pathJoin(dir, "copilot-commit-request.json");
+  const request = {
+    cwd: repo.root,
+    serverCommand: cmds.server,
+    serverArgs: cmds.args,
+    changes,
+    userCommits: email ? await commitMessages(repo, [`--author=${email}`]) : [],
+    recentCommits: await commitMessages(repo, []),
+    userLanguage: cfg?.locale || "en",
+  };
+  if (!writeTemp(helper, COPILOT_HELPER) || !writeTemp(reqPath, JSON.stringify(request))) {
+    return { error: "could not write the helper script" };
+  }
+  const r = await editor.spawnProcess(cmds.node, [helper, reqPath], repo.root);
+  const line = lastLine(r.stdout);
+  try {
+    const out = JSON.parse(line) as { ok: boolean; commitMessage?: string; error?: string };
+    return out.ok ? { message: out.commitMessage } : { error: out.error };
+  } catch {
+    return { error: firstLine(r.stderr) || `${cmds.node} failed (exit ${r.exit_code})` };
+  }
+}
+
+interface CommitEditor {
+  repo: Repo;
+  path: string;
+  bufferId: number;
+  /** Bumped per Copilot request, so a slow answer cannot land on a newer one. */
+  token: number;
+}
+
+let commitEd: CommitEditor | null = null;
+
+const COMMIT_HINT = "Ctrl+S commit · Esc cancel · Alt+G ask Copilot again";
+
+/** Byte length of the message part: everything before the first comment line. */
+async function messagePart(ce: CommitEditor): Promise<{ text: string; end: number }> {
+  const len = editor.getBufferLength(ce.bufferId);
+  const all = await editor.getBufferText(ce.bufferId, 0, len);
+  const m = /^#/m.exec(all);
+  const text = m ? all.slice(0, m.index) : all;
+  return { text, end: utf8Len(text) };
+}
+
+/** Put Copilot's draft in the editor. `replace` is false for the automatic
+ *  first draft, which must not clobber anything the user already typed. */
+async function fillWithCopilot(ce: CommitEditor, replace: boolean): Promise<void> {
+  const token = ++ce.token;
+  editor.setStatus(`Copilot is writing a commit message for ${ce.repo.label}…`);
+  const res = await copilotCommitMessage(ce.repo);
+  if (commitEd !== ce || token !== ce.token) return;
+  if (!res.message) {
+    editor.setStatus(`Copilot: ${res.error ?? "no message"} · ${COMMIT_HINT}`);
+    return;
+  }
+  const part = await messagePart(ce);
+  if (!replace && part.text.trim() !== "") {
+    editor.setStatus(`Copilot has a message ready; your text was kept (Alt+G replaces it) · ${COMMIT_HINT}`);
+    return;
+  }
+  editor.deleteRange(ce.bufferId, 0, part.end);
+  editor.insertText(ce.bufferId, 0, res.message.trim() + "\n\n");
+  editor.setBufferCursor(ce.bufferId, 0);
+  editor.setStatus(`Copilot wrote the message — edit it if needed · ${COMMIT_HINT}`);
+}
+
+// A file buffer has no mode of its own, so the commit keys are a window
+// editor mode switched on while the commit buffer is the active one — the
+// way fresh-copilot adds Tab-to-accept — and the previous mode is put back
+// when it is not. Only from no mode or vi insert: another plugin's mode is
+// left alone rather than fought over.
+let commitModeOn = false;
+let commitModePrev: string | null = null;
+
+function syncCommitMode(): void {
+  const want = commitEd !== null && editor.getActiveBufferId() === commitEd.bufferId;
+  if (want && !commitModeOn) {
+    // No mode reads back as undefined, not null.
+    const prev = editor.getEditorMode() ?? null;
+    if (prev !== null && prev !== "vi-insert") return;
+    if (editor.setEditorMode("scm-commit")) {
+      commitModeOn = true;
+      commitModePrev = prev;
+    }
+  } else if (!want && commitModeOn) {
+    commitModeOn = false;
+    if (editor.getEditorMode() === "scm-commit") editor.setEditorMode(commitModePrev);
+    commitModePrev = null;
+  }
+}
+
+editor.on("buffer_activated", () => syncCommitMode());
+
+function closeCommitEditor(): void {
+  const ce = commitEd;
+  commitEd = null;
+  syncCommitMode();
+  if (ce) editor.closeBuffer(ce.bufferId, true);
+  if (state.open && state.groupId !== null) editor.focusBufferGroupPanel(state.groupId, "tree");
+}
+
+/** Stage-all offer shared by both commit commands. Returns the staged count. */
+async function ensureStaged(repo: Repo): Promise<number> {
+  let staged = repo.changes.filter((c) => c.group === "staged").length;
+  if (staged > 0) return staged;
+  if (repo.changes.length === 0) {
+    editor.setStatus(`${repo.label}: nothing to commit`);
+    return 0;
+  }
+  if (!(await confirm(`${repo.label}: nothing staged. Stage ALL ${repo.changes.length} changes and commit?`))) return 0;
+  if (!(await runGitOp(repo, ["add", "-A"], ""))) return 0;
+  staged = repo.changes.length;
+  return staged;
+}
+
 async function scm_commit(): Promise<void> {
   const repo = rowRepo(selectedRow());
   if (!repo) return;
-  let staged = repo.changes.filter((c) => c.group === "staged").length;
+  state.busy = true;
+  let staged = 0;
+  try {
+    staged = await ensureStaged(repo);
+  } finally {
+    state.busy = false;
+  }
+  if (staged === 0) return;
+  const gp = await git(repo.root, ["rev-parse", "--git-path", "COMMIT_EDITMSG"]);
+  if (gp.exit_code !== 0) {
+    editor.setStatus(`${repo.label}: ${firstLine(gp.stderr)}`);
+    return;
+  }
+  const rel = gp.stdout.trim();
+  const path = rel.startsWith("/") ? rel : editor.pathJoin(repo.root, rel);
+  const names = await git(repo.root, ["--no-optional-locks", "-c", "core.quotepath=false", "diff", "--cached", "--name-status", "-M"]);
+  const files = names.stdout.split("\n").filter((l) => l).map((l) => {
+    const [code, ...paths] = l.split("\t");
+    const what = { M: "modified", A: "new file", D: "deleted", R: "renamed", C: "copied", T: "typechange" }[code[0]] ?? code;
+    return `#\t${what}:   ${paths.join(" -> ")}`;
+  });
+  const template = [
+    "",
+    "",
+    `# ${COMMIT_HINT}.`,
+    "# Lines starting with '#' are ignored; an empty message aborts the commit.",
+    "#",
+    `# On branch ${repo.branch} (${repo.label})`,
+    "# Changes to be committed:",
+    ...files,
+    "",
+  ].join("\n");
+  if (commitEd) closeCommitEditor();
+  // A buffer already showing the file (a cancelled editor restored with the
+  // session, say) would be reused as is, and the new template never shown.
+  const stale = editor.findBufferByPath(path);
+  if (stale) editor.closeBuffer(stale, true);
+  if (!writeTemp(path, template)) return;
+  editor.openFile(path, 1, 1);
+  await editor.flush();
+  const bufferId = editor.findBufferByPath(path);
+  if (!bufferId) {
+    editor.setStatus(`Could not open ${path}`);
+    return;
+  }
+  const ce: CommitEditor = { repo, path, bufferId, token: 0 };
+  commitEd = ce;
+  syncCommitMode();
+  if (copilotCommitsOn()) void fillWithCopilot(ce, false);
+  else editor.setStatus(`Write the commit message for ${repo.label} · ${COMMIT_HINT}`);
+}
+registerHandler("scm_commit", scm_commit);
+
+async function scm_commit_confirm(): Promise<void> {
+  const ce = commitEd;
+  if (!ce) return;
+  const len = editor.getBufferLength(ce.bufferId);
+  const text = await editor.getBufferText(ce.bufferId, 0, len);
+  const message = text.split("\n").filter((l) => !l.startsWith("#")).join("\n").trim();
+  if (!message) {
+    editor.setStatus(`Empty message: nothing committed · ${COMMIT_HINT}`);
+    return;
+  }
+  if (!writeTemp(ce.path, text)) return;
+  editor.setStatus(`Committing to ${ce.repo.label}…`);
+  const r = await git(ce.repo.root, ["commit", "--cleanup=strip", "-F", ce.path]);
+  if (r.exit_code !== 0) {
+    // Keep the editor open: a failed hook should not cost the message.
+    editor.setStatus(`Commit failed: ${firstLine(r.stderr) || firstLine(r.stdout)}`);
+    return;
+  }
+  closeCommitEditor();
+  editor.setStatus(`${ce.repo.label}: ${firstLine(r.stdout)}`);
+  await refresh(false, true);
+}
+registerHandler("scm_commit_confirm", scm_commit_confirm);
+
+function scm_commit_cancel(): void {
+  if (!commitEd) return;
+  closeCommitEditor();
+  editor.setStatus("Commit cancelled");
+}
+registerHandler("scm_commit_cancel", scm_commit_cancel);
+
+function scm_commit_copilot(): void {
+  if (commitEd) void fillWithCopilot(commitEd, true);
+}
+registerHandler("scm_commit_copilot", scm_commit_copilot);
+
+/** `C`: the quick one-line commit, through the prompt. */
+async function scm_commit_quick(): Promise<void> {
+  const repo = rowRepo(selectedRow());
+  if (!repo) return;
   state.busy = true;
   try {
-    if (staged === 0) {
-      if (repo.changes.length === 0) {
-        editor.setStatus(`${repo.label}: nothing to commit`);
-        return;
-      }
-      if (!(await confirm(`${repo.label}: nothing staged. Stage ALL ${repo.changes.length} changes and commit?`))) return;
-      if (!(await runGitOp(repo, ["add", "-A"], ""))) return;
-      staged = repo.changes.length;
-    }
+    const staged = await ensureStaged(repo);
+    if (staged === 0) return;
     const msg = await editor.prompt(`Commit ${plural(staged, "file")} to ${repo.label} (${repo.branch}) — message: `, "");
     if (msg === null || !msg.trim()) {
       editor.setStatus("Commit cancelled");
@@ -1353,17 +1718,36 @@ async function scm_commit(): Promise<void> {
     }
     editor.setStatus(`Committing to ${repo.label}…`);
     const r = await git(repo.root, ["commit", "-m", msg.trim()]);
-    if (r.exit_code !== 0) {
-      editor.setStatus(`Commit failed: ${firstLine(r.stderr) || firstLine(r.stdout)}`);
-    } else {
-      editor.setStatus(`${repo.label}: ${firstLine(r.stdout)}`);
-    }
+    editor.setStatus(r.exit_code !== 0
+      ? `Commit failed: ${firstLine(r.stderr) || firstLine(r.stdout)}`
+      : `${repo.label}: ${firstLine(r.stdout)}`);
   } finally {
     state.busy = false;
   }
   await refresh(false, true);
 }
-registerHandler("scm_commit", scm_commit);
+registerHandler("scm_commit_quick", scm_commit_quick);
+
+// The commit buffer keeps ordinary editing; these keys are added on top.
+editor.defineMode(
+  "scm-commit",
+  [
+    ["C-s", "scm_commit_confirm"],
+    ["C-Enter", "scm_commit_confirm"],
+    ["Escape", "scm_commit_cancel"],
+    ["M-g", "scm_commit_copilot"],
+  ],
+  false, // editable
+  true, // allow_text_input
+  true, // inherit Normal-context bindings for unbound keys
+);
+
+editor.on("buffer_closed", (data) => {
+  if (commitEd && data.buffer_id === commitEd.bufferId) {
+    commitEd = null;
+    syncCommitMode();
+  }
+});
 
 async function networkOp(verb: string, build: (repo: Repo) => string[] | null): Promise<void> {
   const repo = rowRepo(selectedRow());
@@ -1554,7 +1938,8 @@ function scm_help(): void {
     ["s", "stage (file, group or whole repo)"],
     ["u", "unstage"],
     ["x", "discard changes (asks first; untracked files are deleted)"],
-    ["c", "commit the selected repo (offers to stage all if nothing staged)"],
+    ["c", "commit: message editor, drafted by Copilot (Ctrl+S commit · Esc cancel · Alt+G redo)"],
+    ["C", "quick one-line commit"],
     ["b", "switch / create branch in the selected repo"],
     ["+ / − buttons", "click to stage / unstage a file or a whole group"],
     ["p / P / f", "pull --ff-only / push / fetch --prune"],
@@ -2635,6 +3020,7 @@ editor.defineMode(
     ["u", "scm_unstage"],
     ["x", "scm_discard"],
     ["c", "scm_commit"],
+    ["C", "scm_commit_quick"],
     ["b", "scm_branch"],
     ["o", "scm_open_file"],
     ["p", "scm_pull"],
