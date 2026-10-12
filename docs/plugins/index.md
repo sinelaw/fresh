@@ -66,7 +66,8 @@ This installs only the `packages/rainbow-brackets` directory from the repository
 Installed packages are stored in:
 - **Plugins:** `~/.config/fresh/plugins/packages/`
 - **Themes:** `~/.config/fresh/themes/packages/`
-- **Language Packs:** `~/.config/fresh/grammars/`
+- **Language Packs:** `~/.config/fresh/languages/packages/`
+- **Bundles:** `~/.config/fresh/bundles/packages/`
 
 Each package is a git repository, so you can update manually with `git pull` if needed.
 
