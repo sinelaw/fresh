@@ -63,16 +63,17 @@ impl MovePreview {
         }
     }
 
-    /// When character `k` (1-based) is across, after the row has opened:
-    /// the characters share [`TYPING`] evenly, the last landing at its end.
+    /// When character `k` (1-based) arrives, after the row has opened: the
+    /// first at once, the rest evenly through [`TYPING`], so a one-character
+    /// name does not sit in an empty row for the whole of it.
     fn char_at(&self, k: usize) -> Duration {
         let n = self.chars.max(1) as u128;
         // Rounded up, so `typed` at this instant already counts it.
-        Duration::from_nanos((TYPING.as_nanos() * k as u128).div_ceil(n) as u64)
+        Duration::from_nanos((TYPING.as_nanos() * (k as u128 - 1)).div_ceil(n) as u64)
     }
 
     /// How many characters have been typed at `now`: none while the row is
-    /// opening, then evenly across [`TYPING`], up to the longest name.
+    /// opening, then the first, then the rest evenly through [`TYPING`].
     pub fn typed(&self, now: Instant) -> usize {
         let Some(t) = now
             .saturating_duration_since(self.started)
@@ -81,7 +82,7 @@ impl MovePreview {
             return 0;
         };
         let n = self.chars as u128;
-        ((t.as_nanos() * n / TYPING.as_nanos()) as usize).min(self.chars)
+        ((t.as_nanos() * n / TYPING.as_nanos()) as usize + 1).min(self.chars)
     }
 
     /// The preview has played out: the name is across and the hold is over.
@@ -212,11 +213,12 @@ mod tests {
         let p = MovePreview::new(["abcde"], t0);
         let ms = Duration::from_millis;
         assert_eq!(p.typed(t0), 0);
-        assert_eq!(p.typed(t0 + OPEN), 0);
-        assert_eq!(p.typed(t0 + OPEN + ms(99)), 0);
-        assert_eq!(p.typed(t0 + OPEN + ms(100)), 1);
-        assert_eq!(p.typed(t0 + OPEN + ms(250)), 2);
-        assert_eq!(p.typed(t0 + OPEN + TYPING), 5);
+        assert_eq!(p.typed(t0 + OPEN - ms(1)), 0);
+        assert_eq!(p.typed(t0 + OPEN), 1, "the first arrives as the row opens");
+        assert_eq!(p.typed(t0 + OPEN + ms(99)), 1);
+        assert_eq!(p.typed(t0 + OPEN + ms(100)), 2);
+        assert_eq!(p.typed(t0 + OPEN + ms(250)), 3);
+        assert_eq!(p.typed(t0 + OPEN + ms(400)), 5);
         assert!(!p.finished(t0 + OPEN + TYPING));
         assert!(p.finished(t0 + OPEN + TYPING + HOLD));
     }
@@ -227,8 +229,9 @@ mod tests {
         for len in [1, 9, 200] {
             let name = "x".repeat(len);
             let p = MovePreview::new([name.as_str()], t0);
-            assert!(p.typed(t0 + OPEN + TYPING - Duration::from_millis(1)) < len);
+            assert_eq!(p.typed(t0 + OPEN), 1);
             assert_eq!(p.typed(t0 + OPEN + TYPING), len);
+            assert!(!p.finished(t0 + OPEN + TYPING));
             assert!(p.finished(t0 + OPEN + TYPING + HOLD));
         }
     }
@@ -238,7 +241,7 @@ mod tests {
         let t0 = Instant::now();
         let p = MovePreview::new(["abcde"], t0);
         // No frame since the row opened: it shows what the clock says.
-        assert_eq!(p.typed(t0 + OPEN + Duration::from_millis(400)), 4);
+        assert_eq!(p.typed(t0 + OPEN + Duration::from_millis(300)), 4);
     }
 
     #[test]
@@ -248,14 +251,13 @@ mod tests {
         let half = TYPING / 2;
         assert_eq!(p.next_deadline(t0), Some(t0 + OPEN));
         assert_eq!(p.next_deadline(t0 + OPEN), Some(t0 + OPEN + half));
-        assert_eq!(p.next_deadline(t0 + OPEN + half), Some(t0 + OPEN + TYPING));
         assert_eq!(
-            p.next_deadline(t0 + OPEN + TYPING),
+            p.next_deadline(t0 + OPEN + half),
             Some(t0 + OPEN + TYPING + HOLD)
         );
         assert_eq!(p.next_deadline(t0 + OPEN + TYPING + HOLD), None);
         // Every deadline is an instant the count has changed by.
-        let mut at = t0 + OPEN;
+        let mut at = t0;
         for k in 1..=2 {
             at = p.next_deadline(at).unwrap();
             assert_eq!(p.typed(at), k);

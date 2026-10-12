@@ -1468,7 +1468,7 @@ fn test_a_drop_types_the_move_into_the_directory_before_it_asks() {
     );
 
     // 2. Typing: three characters across, and three ghosted on the source.
-    h.advance_time(Duration::from_millis(150 + 200));
+    h.advance_time(Duration::from_millis(150 + 150));
     h.tick_and_render().unwrap();
     let screen = h.screen_to_string();
     let typed = lane(&h, to + 1);
