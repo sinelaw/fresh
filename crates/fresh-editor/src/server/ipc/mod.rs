@@ -15,6 +15,9 @@ use interprocess::local_socket::{
     prelude::*, Listener, ListenerNonblockingMode, ListenerOptions, Stream,
 };
 
+use crate::server::protocol::{
+    ClientControl, ClientHello, ServerControl, VersionMismatch, PROTOCOL_VERSION,
+};
 use crate::workspace::encode_path_for_filename;
 
 // Platform-specific implementations
@@ -192,6 +195,188 @@ pub struct ServerListener {
     /// The session's lock, held for as long as this listener lives; `None`
     /// where the filesystem cannot lock (see [`lock_session`]).
     _session_lock: Option<std::fs::File>,
+    /// Control streams accepted but not yet matched to a data stream
+    pending_controls: Vec<PendingControl>,
+    /// Data streams accepted but not yet matched to a control stream
+    pending_data: Vec<PendingData>,
+}
+
+/// What a client sends first on its data stream: this, then its pair token.
+const PAIR_MAGIC: &[u8] = b"fresh-pair:";
+/// A pair token: 32 hex digits (see [`new_pair_token`]).
+const PAIR_TOKEN_LEN: usize = 32;
+const PAIR_PREAMBLE_LEN: usize = PAIR_MAGIC.len() + PAIR_TOKEN_LEN;
+/// The longest Hello line a pending control stream may send.
+const MAX_HELLO_LEN: usize = 64 * 1024;
+/// How many unmatched streams of each kind are kept; past that the oldest is
+/// dropped. Each is a client that connected one stream and has not finished
+/// connecting or sending its first bytes: a handful at most, normally none.
+const MAX_PENDING: usize = 32;
+
+/// A token unique among this host's live connections: the process id, the
+/// time, and a per-process count. Nothing secret rides on it — only a
+/// process that can already open the sockets ever sees one.
+fn new_pair_token() -> String {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    format!(
+        "{:08x}{:016x}{:08x}",
+        std::process::id(),
+        nanos,
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
+/// What reading a pending stream came to.
+enum Progress {
+    /// More bytes are needed
+    Waiting,
+    /// The stream has sent its first message (or preamble) in full
+    Ready,
+    /// Closed, broken, or sending too much: drop it
+    Drop,
+}
+
+/// Read what a pending stream has sent so far into `buf`, up to `limit`
+/// bytes in all and never past `stop` (a byte that ends the message), one
+/// byte at a time so nothing after the message is consumed: those bytes are
+/// the connection's, for whoever reads it next.
+fn read_pending(
+    stream: &StreamWrapper,
+    buf: &mut Vec<u8>,
+    limit: usize,
+    stop: Option<u8>,
+) -> Progress {
+    let mut byte = [0u8; 1];
+    while buf.len() < limit {
+        match stream.try_read(&mut byte) {
+            Ok(0) => return Progress::Drop,
+            Ok(_) => {
+                buf.push(byte[0]);
+                if stop == Some(byte[0]) {
+                    return Progress::Ready;
+                }
+            }
+            Err(e)
+                if e.kind() == io::ErrorKind::WouldBlock
+                    || e.kind() == io::ErrorKind::Interrupted =>
+            {
+                return Progress::Waiting
+            }
+            Err(_) => return Progress::Drop,
+        }
+    }
+    if stop.is_some() {
+        // A line longer than any Hello
+        Progress::Drop
+    } else {
+        Progress::Ready
+    }
+}
+
+/// A control stream waiting for its client's Hello, and then for its data
+/// stream.
+struct PendingControl {
+    stream: StreamWrapper,
+    line: Vec<u8>,
+    /// The client's Hello and its pair token, once read
+    hello: Option<(ClientHello, String)>,
+}
+
+impl PendingControl {
+    /// Read on toward the Hello; `false` to drop this stream.
+    fn advance(&mut self) -> bool {
+        if self.hello.is_some() {
+            return true;
+        }
+        match read_pending(&self.stream, &mut self.line, MAX_HELLO_LEN, Some(b'\n')) {
+            Progress::Waiting => true,
+            Progress::Drop => false,
+            Progress::Ready => {
+                self.hello = self.take_hello();
+                self.hello.is_some()
+            }
+        }
+    }
+
+    /// The Hello in the line just read and its pair token, or `None` for a
+    /// client this server cannot pair. One speaking another protocol version
+    /// is told so (it cannot read anything else), as is one that sent no
+    /// pair token.
+    fn take_hello(&self) -> Option<(ClientHello, String)> {
+        let hello = match serde_json::from_slice::<ClientControl>(&self.line) {
+            Ok(ClientControl::Hello(hello)) => hello,
+            Ok(_) | Err(_) => {
+                tracing::debug!("Dropping a connection that did not open with a Hello");
+                return None;
+            }
+        };
+        let reply = if hello.protocol_version != PROTOCOL_VERSION {
+            ServerControl::VersionMismatch(VersionMismatch::for_client(&hello))
+        } else {
+            match hello.pair_token.clone() {
+                Some(token) => return Some((hello, token)),
+                None => ServerControl::Error {
+                    message: "Hello carries no pair token".to_string(),
+                },
+            }
+        };
+        tracing::debug!("Refusing a client: {reply:?}");
+        if let Ok(json) = serde_json::to_string(&reply) {
+            // Best-effort: the stream is dropped either way
+            #[allow(clippy::let_underscore_must_use)]
+            let _ = write_line(&self.stream, &json);
+        }
+        None
+    }
+
+    fn token(&self) -> Option<&str> {
+        self.hello.as_ref().map(|(_, token)| token.as_str())
+    }
+}
+
+/// A data stream waiting for its pair token, and then for its control stream.
+struct PendingData {
+    stream: StreamWrapper,
+    preamble: Vec<u8>,
+    token: Option<String>,
+}
+
+impl PendingData {
+    /// Read on toward the pair token; `false` to drop this stream.
+    fn advance(&mut self) -> bool {
+        if self.token.is_some() {
+            return true;
+        }
+        match read_pending(&self.stream, &mut self.preamble, PAIR_PREAMBLE_LEN, None) {
+            Progress::Waiting => true,
+            Progress::Drop => false,
+            Progress::Ready => {
+                let Some(token) = self.preamble.strip_prefix(PAIR_MAGIC) else {
+                    tracing::debug!("Dropping a data stream that did not open with a pair token");
+                    return false;
+                };
+                if !token.iter().all(u8::is_ascii_hexdigit) {
+                    return false;
+                }
+                self.token = Some(String::from_utf8_lossy(token).into_owned());
+                true
+            }
+        }
+    }
+}
+
+/// Write one control line, all of it, whatever mode the stream is in.
+fn write_line(stream: &StreamWrapper, msg: &str) -> io::Result<()> {
+    #[cfg(not(windows))]
+    stream.set_nonblocking(false)?;
+    stream.write_all(msg.as_bytes())?;
+    stream.write_all(b"\n")?;
+    stream.flush()
 }
 
 /// Binding a session that another server owns. Carried inside the
@@ -333,11 +518,18 @@ impl ServerListener {
             std::fs::write(&paths.control, "socket")?;
         }
 
+        // Neither accept may block: the two streams of a connection are
+        // accepted separately (see `accept`)
+        data_listener.set_nonblocking(ListenerNonblockingMode::Accept)?;
+        control_listener.set_nonblocking(ListenerNonblockingMode::Accept)?;
+
         let listener = Self {
             data_listener,
             control_listener,
             paths,
             _session_lock: session_lock,
+            pending_controls: Vec::new(),
+            pending_data: Vec::new(),
         };
 
         // Publish the pid: clients take it for a running server, and a server
@@ -351,30 +543,65 @@ impl ServerListener {
         Ok(listener)
     }
 
-    /// Accept a new client connection (both data and control sockets)
-    /// Returns None if no connection is pending
+    /// Accept a client connection whose control and data streams have both
+    /// arrived and whose Hello has been read, or `None` if there is none yet.
+    /// Never blocks.
+    ///
+    /// The two streams are accepted separately, as they come, and matched by
+    /// the pair token the client sends on both: in its Hello on the control
+    /// stream, and before anything else on the data stream. Nothing about one
+    /// connection holds up another — a client that connects one stream and
+    /// stops (a liveness probe does, on purpose) is dropped when it closes,
+    /// and two clients connecting at once each get their own streams back.
+    /// Pairing them by arrival order instead let a stream from one go with
+    /// a stream from the other, and waiting for a data stream after each
+    /// control stream let a probe stall the server for good.
+    ///
+    /// A client speaking another protocol version is answered with a
+    /// [`VersionMismatch`] here and never returned.
     pub fn accept(&mut self) -> io::Result<Option<ServerConnection>> {
-        // Try to accept on control socket first (client connects here first)
-        // Use set_nonblocking for non-blocking accept
-        self.control_listener
-            .set_nonblocking(ListenerNonblockingMode::Accept)?;
+        while let Some(stream) = accept_ready(&self.control_listener)? {
+            push_bounded(
+                &mut self.pending_controls,
+                PendingControl {
+                    stream: StreamWrapper::new(stream),
+                    line: Vec::new(),
+                    hello: None,
+                },
+            );
+        }
+        while let Some(stream) = accept_ready(&self.data_listener)? {
+            push_bounded(
+                &mut self.pending_data,
+                PendingData {
+                    stream: StreamWrapper::new(stream),
+                    preamble: Vec::new(),
+                    token: None,
+                },
+            );
+        }
 
-        let control_stream = match self.control_listener.accept() {
-            Ok(stream) => stream,
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                return Ok(None);
-            }
-            #[cfg(windows)]
-            Err(e) if platform_windows::is_transient_pipe_error(&e) => {
-                return Ok(None);
-            }
-            Err(e) => return Err(e),
+        self.pending_controls.retain_mut(PendingControl::advance);
+        self.pending_data.retain_mut(PendingData::advance);
+
+        let Some((c, d)) = self
+            .pending_controls
+            .iter()
+            .enumerate()
+            .find_map(|(c, control)| {
+                let token = control.token()?;
+                let d = self
+                    .pending_data
+                    .iter()
+                    .position(|data| data.token.as_deref() == Some(token))?;
+                Some((c, d))
+            })
+        else {
+            return Ok(None);
         };
-
-        // Now wait for data socket connection (blocking)
-        self.data_listener
-            .set_nonblocking(ListenerNonblockingMode::Neither)?;
-        let data_stream = self.data_listener.accept()?;
+        let control = self.pending_controls.remove(c);
+        let data = self.pending_data.remove(d);
+        let (hello, _) = control.hello.expect("matched by its token");
 
         // On Windows, DON'T set nonblocking here - the try_read() function handles it
         // Setting nonblocking early can cause issues with named pipes where read()
@@ -383,13 +610,14 @@ impl ServerListener {
         {
             // Set data stream to nonblocking for polling (Unix only)
             #[allow(clippy::let_underscore_must_use)]
-            let _ = data_stream.set_nonblocking(true);
-            control_stream.set_nonblocking(true)?;
+            let _ = data.stream.set_nonblocking(true);
+            control.stream.set_nonblocking(true)?;
         }
 
         Ok(Some(ServerConnection {
-            data: StreamWrapper::new(data_stream),
-            control: StreamWrapper::new(control_stream),
+            data: data.stream,
+            control: control.stream,
+            hello,
         }))
     }
 
@@ -397,6 +625,26 @@ impl ServerListener {
     pub fn paths(&self) -> &SocketPaths {
         &self.paths
     }
+}
+
+/// The next stream waiting on `listener`, if any.
+fn accept_ready(listener: &LocalListener) -> io::Result<Option<LocalStream>> {
+    match listener.accept() {
+        Ok(stream) => Ok(Some(stream)),
+        Err(e) if e.kind() == io::ErrorKind::WouldBlock => Ok(None),
+        #[cfg(windows)]
+        Err(e) if platform_windows::is_transient_pipe_error(&e) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// Add `item`, dropping the oldest past [`MAX_PENDING`].
+fn push_bounded<T>(pending: &mut Vec<T>, item: T) {
+    if pending.len() >= MAX_PENDING {
+        tracing::debug!("Too many half-made connections; dropping the oldest");
+        pending.remove(0);
+    }
+    pending.push(item);
 }
 
 impl Drop for ServerListener {
@@ -597,6 +845,9 @@ pub struct ServerConnection {
     pub data: StreamWrapper,
     /// Control stream for JSON messages
     pub control: StreamWrapper,
+    /// The Hello the client opened with, already read off the control stream
+    /// (and of this server's protocol version)
+    pub hello: ClientHello,
 }
 
 impl ServerConnection {
@@ -673,6 +924,9 @@ pub struct ClientConnection {
     pub data: StreamWrapper,
     /// Control stream for JSON messages
     pub control: StreamWrapper,
+    /// Sent at the start of the data stream and in the Hello, so the server
+    /// can tell the two streams belong together
+    pair_token: String,
 }
 
 /// Normalize a connect failure, keeping a permission denial distinguishable.
@@ -696,15 +950,30 @@ impl ClientConnection {
         let control_name = platform::socket_name_for_path(&paths.control)?;
         let data_name = platform::socket_name_for_path(&paths.data)?;
 
-        // Connect control socket first, then data (matching server's accept order)
         let control = Stream::connect(control_name).map_err(connect_error)?;
+        let data = StreamWrapper::new(Stream::connect(data_name).map_err(connect_error)?);
 
-        let data = Stream::connect(data_name).map_err(connect_error)?;
+        // Mark the data stream as this connection's: the Hello sent on the
+        // control stream (`send_hello`) carries the same token
+        let pair_token = new_pair_token();
+        data.write_all(PAIR_MAGIC)?;
+        data.write_all(pair_token.as_bytes())?;
+        data.flush()?;
 
         Ok(Self {
-            data: StreamWrapper::new(data),
+            data,
             control: StreamWrapper::new(control),
+            pair_token,
         })
+    }
+
+    /// Open the handshake: send `hello`, carrying this connection's pair
+    /// token. The server matches the control and data streams by it, and
+    /// answers nothing until it has both.
+    pub fn send_hello(&self, mut hello: ClientHello) -> io::Result<()> {
+        hello.pair_token = Some(self.pair_token.clone());
+        let json = serde_json::to_string(&ClientControl::Hello(hello)).map_err(io::Error::other)?;
+        self.write_control(&json)
     }
 
     /// Set data socket to non-blocking mode
@@ -770,6 +1039,7 @@ impl ClientConnection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::server::protocol::TermSize;
     use tempfile::TempDir;
 
     #[test]
@@ -883,18 +1153,9 @@ mod tests {
         assert_eq!(paths.read_pid().unwrap(), Some(std::process::id()));
 
         // A client still reaches the first listener.
-        let client_paths = paths.clone();
-        let client = std::thread::spawn(move || ClientConnection::connect(&client_paths));
-        let accepted = loop {
-            if let Some(conn) = first.accept().unwrap() {
-                break conn;
-            }
-        };
-        client
-            .join()
-            .unwrap()
-            .expect("connect to the first listener");
-        drop(accepted);
+        let client = ClientConnection::connect(&paths).expect("connect to the first listener");
+        client.send_hello(hello(TermSize::new(80, 24))).unwrap();
+        drop(accept_one(&mut first));
     }
 
     /// A server that finds the session locked by one that never published
@@ -941,6 +1202,135 @@ mod tests {
         assert!(!paths.cleanup_if_stale());
     }
 
+    /// A liveness probe connects to the control socket and hangs up at once.
+    /// The next real client must still get its own connection: accepting
+    /// used to take the probe's control stream and then wait for a data
+    /// stream to go with it, pairing it with the next client's, so that
+    /// client's Hello went unanswered.
+    #[cfg(unix)]
+    #[test]
+    fn a_probe_does_not_take_the_next_clients_connection() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = SocketPaths::for_session_name_in_dir("probed", temp_dir.path());
+        let mut listener = ServerListener::bind(paths.clone()).unwrap();
+
+        assert_eq!(
+            platform::probe_server_by_connect(&paths.control),
+            platform::ConnectProbe::Alive
+        );
+
+        let client = ClientConnection::connect(&paths).unwrap();
+        client.send_hello(hello(TermSize::new(81, 25))).unwrap();
+
+        let server_conn = accept_one(&mut listener);
+        assert_eq!(server_conn.hello.term_size, TermSize::new(81, 25));
+        server_conn.write_control("{\"reply\":1}").unwrap();
+        server_conn.write_data(b"data").unwrap();
+        assert_eq!(
+            client.read_control().unwrap().as_deref().map(str::trim),
+            Some("{\"reply\":1}")
+        );
+        assert_eq!(read_exactly(&client.data, 4), b"data");
+    }
+
+    /// Two clients whose streams arrive interleaved each get their own back.
+    #[cfg(unix)]
+    #[test]
+    fn streams_arriving_out_of_order_are_matched_by_their_token() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = SocketPaths::for_session_name_in_dir("interleaved", temp_dir.path());
+        let mut listener = ServerListener::bind(paths.clone()).unwrap();
+        let connect = |path: &Path| {
+            StreamWrapper::new(
+                Stream::connect(platform::socket_name_for_path(path).unwrap()).unwrap(),
+            )
+        };
+
+        // A's control, B's control, B's data, A's data
+        let (token_a, token_b) = (new_pair_token(), new_pair_token());
+        let control_a = connect(&paths.control);
+        let control_b = connect(&paths.control);
+        let data_b = connect(&paths.data);
+        let data_a = connect(&paths.data);
+        for (data, token) in [(&data_b, &token_b), (&data_a, &token_a)] {
+            data.write_all(PAIR_MAGIC).unwrap();
+            data.write_all(token.as_bytes()).unwrap();
+        }
+        for (control, token, cols) in [(&control_a, &token_a, 10), (&control_b, &token_b, 20)] {
+            let mut hello = hello(TermSize::new(cols, 5));
+            hello.pair_token = Some(token.clone());
+            write_line(
+                control,
+                &serde_json::to_string(&ClientControl::Hello(hello)).unwrap(),
+            )
+            .unwrap();
+        }
+
+        for _ in 0..2 {
+            let conn = accept_one(&mut listener);
+            conn.write_data(&[conn.hello.term_size.cols as u8]).unwrap();
+        }
+        assert_eq!(read_exactly(&data_a, 1), [10]);
+        assert_eq!(read_exactly(&data_b, 1), [20]);
+    }
+
+    /// A client of another protocol version cannot send a pair token the
+    /// way this one expects, so it is told of the mismatch on its control
+    /// stream alone, as before.
+    #[test]
+    fn a_client_of_another_protocol_version_is_told_so() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = SocketPaths::for_session_name_in_dir("old-client", temp_dir.path());
+        let mut listener = ServerListener::bind(paths.clone()).unwrap();
+
+        let control = StreamWrapper::new(
+            Stream::connect(platform::socket_name_for_path(&paths.control).unwrap()).unwrap(),
+        );
+        let mut old = hello(TermSize::new(80, 24));
+        old.protocol_version = PROTOCOL_VERSION - 1;
+        write_line(
+            &control,
+            &serde_json::to_string(&ClientControl::Hello(old)).unwrap(),
+        )
+        .unwrap();
+
+        let reply = std::thread::spawn(move || {
+            let mut line = String::new();
+            BufReader::new(&control).read_line(&mut line).unwrap();
+            line
+        });
+        while !reply.is_finished() {
+            assert!(listener.accept().unwrap().is_none());
+        }
+        let reply: ServerControl = serde_json::from_str(&reply.join().unwrap()).unwrap();
+        assert!(
+            matches!(reply, ServerControl::VersionMismatch(_)),
+            "{reply:?}"
+        );
+    }
+
+    fn hello(term_size: TermSize) -> ClientHello {
+        ClientHello::new(term_size)
+    }
+
+    /// Accept until a whole connection comes through.
+    fn accept_one(listener: &mut ServerListener) -> ServerConnection {
+        loop {
+            if let Some(conn) = listener.accept().unwrap() {
+                return conn;
+            }
+        }
+    }
+
+    /// Read exactly `n` bytes off `stream`, waiting for them.
+    #[cfg(unix)]
+    fn read_exactly(stream: &StreamWrapper, n: usize) -> Vec<u8> {
+        stream.set_nonblocking(false).unwrap();
+        let mut buf = vec![0u8; n];
+        Read::read_exact(&mut &*stream, &mut buf).unwrap();
+        buf
+    }
+
     /// Connect a client to a freshly bound listener and return both ends.
     #[cfg(unix)]
     fn connected_pair(paths: &SocketPaths) -> (ServerConnection, ClientConnection) {
@@ -948,12 +1338,12 @@ mod tests {
 
         let mut listener = ServerListener::bind(paths.clone()).unwrap();
         let client_paths = paths.clone();
-        let client = thread::spawn(move || ClientConnection::connect(&client_paths).unwrap());
-        let server_conn = loop {
-            if let Some(c) = listener.accept().unwrap() {
-                break c;
-            }
-        };
+        let client = thread::spawn(move || {
+            let conn = ClientConnection::connect(&client_paths).unwrap();
+            conn.send_hello(hello(TermSize::new(80, 24))).unwrap();
+            conn
+        });
+        let server_conn = accept_one(&mut listener);
         // The listener owns the socket files; keep it alive for the caller's
         // lifetime by leaking it (the temp dir cleans up).
         std::mem::forget(listener);
@@ -1066,6 +1456,7 @@ mod tests {
         let paths_client = paths.clone();
         let reader = thread::spawn(move || {
             let conn = ClientConnection::connect(&paths_client).unwrap();
+            conn.send_hello(hello(TermSize::new(80, 24))).unwrap();
             // Signal connected, then delay before reading so the server writes
             // while nothing is draining the socket — recreating the buffer
             // pressure that triggered the partial-write bug. The delay only
