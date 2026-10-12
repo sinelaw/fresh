@@ -19,7 +19,9 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **File Explorer** (#3427, requested by @akarinotomoshibi)
   - Drag and drop to move files and folders
   - Rename accepts a path, which moves the entry
+  - Dropping a file asks for confirmation before moving it, and the move is animated
   - Refresh button
+* **Weather location and units** can be set for the dashboard plugin (#3344 by @KyleKorndoerfer)
 * **Kotlin uses JetBrains' official `kotlin-lsp`** by default; set `lsp.kotlin.command` to keep `kotlin-language-server` (#3481 by @karczews)
 * **Plugin docs** - the [API reference](https://getfresh.dev/docs/plugins/api/) is generated from the source, and there is a new "Asking for Input" guide
 
@@ -43,6 +45,15 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **LSP diagnostics are shown on the only line of an empty file** (#3484, reported by @akarinotomoshibi)
 * **Mouse release no longer printed at the shell prompt after quitting with a click** (#3474, reported by @odjbo)
 * **Update check on Android/Termux no longer panics** (#3453, reported by @dsvarela)
+* **Unsaved buffers are kept when switching projects** - they are restored in the project they belong to and no longer multiply across workspace switches and restarts (#3475, #3476, reported by @Korkman; #3530 by @neatsorg)
+* **Scroll position is kept when a modifier key is pressed alone** (#3324, reported by @akarinotomoshibi; #3373 by @56steve)
+* **Quit is no longer delayed by a background request or a lost mouse release**
+* **A second daemon can no longer take over a running session** and leave it unreachable
+* **TypeScript 7 (`tsc --lsp`) diagnostics work** (#3061, reported by @defaultkavy; #3413 by @atk)
+* **Window title is set in Orchestrator sessions** (#3515 by @neatsorg)
+* **Dev container remote indicator is cleared once the container is attached** (#3487 by @cychitivav)
+* **Occurrence highlight skips the indentation of a wrapped line** (#3466, reported by @mandolyte)
+* **Review mode asks for confirmation before discarding a line selection**
 * **Syntax highlighting**
   - Nim: an unpaired apostrophe no longer colors the rest of the file, and `'suffix` number literals are highlighted (#3455, reported by @codic12)
   - JavaScript/TypeScript: a `<` comparison no longer starts JSX highlighting (#3527)
