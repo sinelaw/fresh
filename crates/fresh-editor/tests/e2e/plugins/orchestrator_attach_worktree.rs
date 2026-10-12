@@ -562,6 +562,135 @@ fn bulk_delete_removes_selected_worktrees() {
 /// Build a repo with `n` linked worktrees `feat-1..feat-n`, plus the
 /// orchestrator plugin installed. Used to overflow the session list so
 /// it grows a scrollbar.
+/// Lets the parked fake `gh`s of [`bulk_delete_kills_probes_parked_in_the_worktrees`]
+/// exit when the test ends, pass or fail, so none outlive it.
+#[cfg(unix)]
+struct ReleaseParkedGh(PathBuf);
+
+#[cfg(unix)]
+impl Drop for ReleaseParkedGh {
+    fn drop(&mut self) {
+        #[allow(clippy::let_underscore_must_use)]
+        let _ = std::fs::write(&self.0, ""); // best effort: a panic is already being reported
+    }
+}
+
+#[cfg(unix)]
+fn write_executable(path: &Path, body: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::write(path, body).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// The dock's background probes (`git status`, `gh pr view`) run with their
+/// cwd inside each worktree, and Windows will not delete a directory a live
+/// process is sitting in: a probe still running in the second row of a bulk
+/// Delete failed it with "deleted 1/2; … Permission denied". Delete has to
+/// stop a worktree's probes before it removes the worktree.
+///
+/// Unix deletes a process's cwd without complaint, so the Windows rule is put
+/// on `$PATH`: a fake `gh` that parks in its cwd until the test ends, and a
+/// `git` that refuses `worktree remove` on a directory a parked `gh` is still
+/// alive in.
+#[test]
+#[cfg(unix)]
+fn bulk_delete_kills_probes_parked_in_the_worktrees() {
+    let (temp, repo, wt1, wt2) = set_up_repo_with_two_worktrees();
+    let real_git = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+        .map(|dir| dir.join("git"))
+        .find(|p| p.is_file())
+        .expect("git on PATH");
+    let park = temp.path().join("park");
+    let bin = temp.path().join("bin");
+    std::fs::create_dir(&park).unwrap();
+    std::fs::create_dir(&bin).unwrap();
+    let park_s = park.display();
+    write_executable(
+        &bin.join("gh"),
+        &format!(
+            "#!/bin/sh\n\
+             echo $$ > \"{park_s}/$$.tmp\" && mv \"{park_s}/$$.tmp\" \"{park_s}/$(basename \"$PWD\").pid\"\n\
+             while [ ! -e \"{park_s}/release\" ]; do sleep 0.05; done\n\
+             exit 1\n"
+        ),
+    );
+    write_executable(
+        &bin.join("git"),
+        &format!(
+            "#!/bin/sh\n\
+             if [ \"$1\" = -C ] && [ \"$3\" = worktree ] && [ \"$4\" = remove ]; then\n\
+             \x20 for target; do :; done\n\
+             \x20 pidfile=\"{park_s}/$(basename \"$target\").pid\"\n\
+             \x20 if [ -e \"$pidfile\" ] && kill -0 \"$(cat \"$pidfile\")\" 2>/dev/null; then\n\
+             \x20   echo \"error: failed to delete '$target': Permission denied\" >&2\n\
+             \x20   exit 128\n\
+             \x20 fi\n\
+             fi\n\
+             exec \"{}\" \"$@\"\n",
+            real_git.display()
+        ),
+    );
+    let _path = crate::common::global_state::pin_path_with_dir_first(&bin);
+    let _release = ReleaseParkedGh(park.join("release"));
+
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, repo.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_command(&mut harness, "Orchestrator: Open");
+
+    open_orchestrator_dialog(&mut harness);
+    ensure_worktrees_shown(&mut harness);
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("feature-x") && s.contains("feature-y") && s.contains("· on-disk")
+        })
+        .unwrap();
+    // Both worktrees have a `gh` probe parked in them.
+    let parked =
+        |wt: &Path| park.join(format!("{}.pid", wt.file_name().unwrap().to_string_lossy()));
+    harness
+        .wait_until(|_| parked(&wt1).exists() && parked(&wt2).exists())
+        .unwrap();
+
+    navigate_to_discovered_row(&mut harness);
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::NONE)
+        .unwrap();
+    harness.tick_and_render().unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Delete (2)"))
+        .unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Confirm Delete"))
+        .unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    harness
+        .wait_until(|h| {
+            !wt1.exists() && !wt2.exists() && h.screen_to_string().contains("deleted 2")
+        })
+        .unwrap_or_else(|_| {
+            panic!(
+                "bulk delete should stop the probes in both worktrees and remove them.\n\
+                 wt1.exists()={} wt2.exists()={}\nScreen:\n{}",
+                wt1.exists(),
+                wt2.exists(),
+                harness.screen_to_string()
+            )
+        });
+}
+
 fn set_up_repo_with_many_worktrees(n: usize) -> (tempfile::TempDir, PathBuf) {
     fresh::i18n::set_locale("en");
     let temp = tempfile::tempdir().unwrap();
