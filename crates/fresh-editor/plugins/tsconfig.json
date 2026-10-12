@@ -70,6 +70,7 @@
     "pkg.ts",
     "rust-lsp.ts",
     "search_replace.ts",
+    "source_control.ts",
     "test_i18n.ts",
     "theme_editor.ts",
     "vi_mode.ts",
