@@ -2994,6 +2994,16 @@ impl TextBuffer {
         (line, utf16_offset)
     }
 
+    /// The LSP position one past the last character — the document's end.
+    ///
+    /// A `didChange` that replaces the whole document has to name the extent of
+    /// the text the *server* currently holds; this is that extent, taken from
+    /// the buffer after the edit has been applied and carried forward to the
+    /// next full-document change. See `LspState::handle_did_change_sequential`.
+    pub fn lsp_end_position(&self) -> (usize, usize) {
+        self.position_to_lsp_position(self.len())
+    }
+
     /// Convert LSP position (line, UTF-16 code units) to byte position
     /// LSP uses UTF-16 code units for character offsets, not bytes
     /// Optimized to use single line_range() call instead of two
