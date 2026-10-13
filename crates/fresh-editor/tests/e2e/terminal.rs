@@ -3665,6 +3665,136 @@ fn test_terminal_exit_keeps_buffer_with_message() {
     );
 }
 
+fn close_on_exit_harness_or_skip() -> Option<EditorTestHarness> {
+    if native_pty_system()
+        .openpty(PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .is_err()
+    {
+        eprintln!("Skipping terminal test: PTY not available in this environment");
+        return None;
+    }
+    let mut config = Config::default();
+    config.terminal.close_on_exit = true;
+    EditorTestHarness::with_config(80, 24, config).ok()
+}
+
+/// With `terminal.close_on_exit`, a shell that exits takes its tab with it,
+/// and a pane the terminal was the only tab of collapses — instead of the
+/// default read-only "(exited)" scrollback.
+#[test]
+#[cfg(not(windows))] // Uses Unix shell
+fn test_terminal_close_on_exit_closes_tab_and_split() {
+    let Some(mut harness) = close_on_exit_harness_or_skip() else {
+        return;
+    };
+
+    harness
+        .editor_mut()
+        .open_terminal_split(fresh::model::event::SplitDirection::Vertical);
+    harness.render().unwrap();
+    assert!(harness.editor().is_terminal_mode());
+    assert_eq!(harness.editor().active_window().get_split_count(), 2);
+    let buffer_id = harness.editor().active_buffer_id();
+
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(b"exit\n");
+
+    harness
+        .wait_until(|h| h.editor().active_window().get_split_count() == 1)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        harness.editor().get_buffer_content(buffer_id).is_none(),
+        "the exited terminal's buffer should be closed"
+    );
+    assert!(
+        harness
+            .editor()
+            .active_window()
+            .exited_terminal(buffer_id)
+            .is_none(),
+        "a closed tab must not leave a restart record behind"
+    );
+    assert!(!harness.editor().is_terminal_mode());
+    assert!(!harness.screen_to_string().contains("(exited)"));
+}
+
+/// Run `echo <marker>` in a command terminal and wait for it to exit with
+/// `terminal.close_on_exit` on; `setup` marks the terminal as whatever kind it
+/// should be before the exit is processed. Once the tab shows the exit, the
+/// terminal must still be the active buffer with its output intact.
+#[cfg(not(windows))]
+fn assert_command_terminal_survives_exit(
+    setup: impl FnOnce(
+        &mut EditorTestHarness,
+        fresh::services::terminal::TerminalId,
+        fresh::model::event::BufferId,
+    ),
+) {
+    let Some(mut harness) = close_on_exit_harness_or_skip() else {
+        return;
+    };
+    let argv = vec![
+        "/bin/sh".to_string(),
+        "-c".to_string(),
+        "echo COMMAND_OUTPUT_MARKER".to_string(),
+    ];
+    let (terminal_id, buffer_id) = harness
+        .editor_mut()
+        .active_window_mut()
+        .open_local_command_terminal(argv, "cmd".to_string())
+        .expect("spawn command terminal");
+    setup(&mut harness, terminal_id, buffer_id);
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("(exited)"))
+        .unwrap();
+
+    assert_eq!(harness.editor().active_buffer_id(), buffer_id);
+    let content = harness
+        .editor()
+        .get_buffer_content(buffer_id)
+        .unwrap_or_default();
+    assert!(
+        content.contains("COMMAND_OUTPUT_MARKER"),
+        "Content:\n{content}"
+    );
+}
+
+/// `terminal.close_on_exit` is for the user's shells: an agent's terminal keeps
+/// its output when it finishes, since reading it is the point.
+#[test]
+#[cfg(not(windows))] // Uses Unix shell
+fn test_terminal_close_on_exit_keeps_agent_terminals() {
+    assert_command_terminal_survives_exit(|harness, terminal_id, _| {
+        harness
+            .editor_mut()
+            .active_window_mut()
+            .mark_terminal_restorable(terminal_id, Some(vec!["agent".to_string()]), None);
+    });
+}
+
+/// The self-update terminal is where the update's outcome is read, so it stays
+/// open under `terminal.close_on_exit` too.
+#[test]
+#[cfg(not(windows))] // Uses Unix shell
+fn test_terminal_close_on_exit_keeps_self_update_terminal() {
+    assert_command_terminal_survives_exit(|harness, terminal_id, buffer_id| {
+        let window = harness.editor().active_window_id();
+        harness
+            .editor_mut()
+            .begin_self_update(terminal_id, window, buffer_id);
+    });
+}
+
 /// Test Windows terminal shows prompt and responds to commands
 ///
 /// This test verifies that the DSR (Device Status Report) cursor position

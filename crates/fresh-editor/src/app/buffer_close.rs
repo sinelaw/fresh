@@ -119,6 +119,8 @@ impl Editor {
         if let Some(tb) = self.active_window_mut().terminal_buffers.remove(&id) {
             self.cleanup_closed_terminal(id, tb.terminal_id);
         }
+        // An exited terminal has nothing left to restart once its tab is gone.
+        self.active_window_mut().exited_terminals.remove(&id);
 
         // Capture before resolving the replacement: the last-resort
         // `new_buffer()` path calls `set_active_buffer`, which would change
