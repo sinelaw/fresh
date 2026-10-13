@@ -42,7 +42,7 @@ Settings are loaded from multiple layers, with higher layers overriding lower on
 | Layer | Location | Scope | Use Case |
 |-------|----------|-------|----------|
 | **System** | Built-in defaults | Global | Factory defaults (read-only) |
-| **User** | `~/.config/fresh/config.json` | All projects | Personal preferences |
+| **User** | `~/.config/fresh/config.json`, or `$XDG_CONFIG_HOME/fresh/config.json` when that variable is set | All projects | Personal preferences |
 | **Project** | `.fresh/config.json` in project root | Single project | Project-specific settings |
 | **Session** | `.fresh/session.json` (temporary) | Current run | Temporary overrides |
 

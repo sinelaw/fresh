@@ -7,8 +7,6 @@
 use std::cell::RefCell;
 #[cfg(any(target_os = "macos", test))]
 use std::ffi::OsStr;
-#[cfg(any(target_os = "macos", test))]
-use std::path::Path;
 use std::path::PathBuf;
 
 thread_local! {
@@ -65,15 +63,16 @@ pub fn get_data_dir() -> std::io::Result<PathBuf> {
 
 /// The system `fresh` data directory, ignoring any test override.
 ///
-/// On macOS, an absolute `XDG_DATA_HOME` selects `$XDG_DATA_HOME/fresh`.
-/// Otherwise this stays `dirs::data_dir()/fresh` (`~/Library/Application Support/fresh`).
-/// A relative or empty value is ignored. `HOME` is not consulted for this override.
+/// On macOS, an absolute `XDG_DATA_HOME` selects `$XDG_DATA_HOME/fresh`; see
+/// [`xdg_dir_with_continuity`] for why an install that predates that may still
+/// be on `~/Library/Application Support/fresh`. Otherwise this is
+/// `dirs::data_dir()/fresh`. A relative or empty value is ignored.
 pub(crate) fn system_data_dir() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
-        macos_data_dir(
-            std::env::var_os("XDG_DATA_HOME").as_deref(),
-            dirs::data_dir().as_deref(),
+        xdg_dir_with_continuity(
+            fresh_dir_from_xdg(std::env::var_os("XDG_DATA_HOME").as_deref()),
+            dirs::data_dir().map(|p| p.join("fresh")),
         )
     }
 
@@ -99,19 +98,34 @@ pub(crate) fn fresh_dir_from_xdg(value: Option<&OsStr>) -> Option<PathBuf> {
     }
 }
 
-/// macOS data directory: the XDG override, or `platform_data_dir/fresh`.
+/// Resolve the `$XDG_*/fresh` directory against the location Fresh used before
+/// it honoured the variable.
+///
+/// Honouring the variable is a change on Fresh's side, not the user's, so an
+/// install that already keeps its files at `previous` stays there until the new
+/// directory exists: upgrading must not silently strand its sessions, workspace
+/// trust decisions and crash-recovery files. The new directory wins as soon as
+/// it is there, which makes the whole migration "create it" — and a launcher
+/// that pre-creates the directory is always on the new path from its first run.
+///
+/// `previous` is `$HOME`-derived, so a redirected `HOME` never resolves to the
+/// real user's directory behind it.
 #[cfg(any(target_os = "macos", test))]
-fn macos_data_dir(
-    xdg_data_home: Option<&OsStr>,
-    platform_data_dir: Option<&Path>,
+pub(crate) fn xdg_dir_with_continuity(
+    new: Option<PathBuf>,
+    previous: Option<PathBuf>,
 ) -> Option<PathBuf> {
-    let platform = platform_data_dir.map(|p| p.join("fresh"));
-    fresh_dir_from_xdg(xdg_data_home).or(platform)
+    match new {
+        Some(new) if !new.exists() => previous.filter(|p| p.exists()).or(Some(new)),
+        Some(new) => Some(new),
+        None => previous,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[test]
     fn absolute_xdg_dir_selects_fresh_subdirectory() {
@@ -128,24 +142,43 @@ mod tests {
     }
 
     #[test]
-    fn macos_data_dir_uses_xdg_and_otherwise_the_platform_dir() {
-        let xdg = std::env::temp_dir().join("data-home");
-        let platform = std::env::temp_dir()
-            .join("Library")
-            .join("Application Support");
-        let overridden = macos_data_dir(Some(xdg.as_os_str()), Some(&platform)).unwrap();
-        assert_eq!(overridden, xdg.join("fresh"));
-        let fallback = macos_data_dir(Some(OsStr::new("relative")), Some(&platform)).unwrap();
-        assert_eq!(fallback, platform.join("fresh"));
+    fn a_new_xdg_dir_wins_over_an_existing_install() {
+        let base = TempDir::new().unwrap();
+        let new = base.path().join("xdg").join("fresh");
+        let previous = base.path().join("Library/Application Support/fresh");
+        std::fs::create_dir_all(&previous).unwrap();
+        std::fs::create_dir_all(&new).unwrap();
+        assert_eq!(
+            xdg_dir_with_continuity(Some(new.clone()), Some(previous)),
+            Some(new)
+        );
     }
 
     #[test]
-    fn macos_data_dir_without_xdg_uses_the_platform_dir() {
-        let platform = std::env::temp_dir().join("platform-data");
+    fn an_existing_install_outlives_the_xdg_variable_until_the_new_dir_exists() {
+        let base = TempDir::new().unwrap();
+        let new = base.path().join("xdg").join("fresh");
+        let previous = base.path().join("Library/Application Support/fresh");
+        std::fs::create_dir_all(&previous).unwrap();
         assert_eq!(
-            macos_data_dir(None, Some(&platform)),
-            Some(platform.join("fresh"))
+            xdg_dir_with_continuity(Some(new.clone()), Some(previous.clone())),
+            Some(previous)
         );
-        assert!(macos_data_dir(None, None).is_none());
+        assert_eq!(
+            xdg_dir_with_continuity(Some(new.clone()), None),
+            Some(new),
+            "with nothing to continue, the variable is what the user asked for"
+        );
+    }
+
+    #[test]
+    fn the_platform_dir_stands_when_xdg_is_absent() {
+        let base = TempDir::new().unwrap();
+        let previous = base.path().join("fresh");
+        assert_eq!(
+            xdg_dir_with_continuity(None, Some(previous.clone())),
+            Some(previous)
+        );
+        assert_eq!(xdg_dir_with_continuity(None, None), None);
     }
 }
