@@ -362,7 +362,6 @@ pub(crate) fn decoration_context(
     } else {
         BTreeMap::new()
     };
-
     DecorationContext {
         highlight_spans,
         semantic_token_spans,

@@ -26,6 +26,7 @@ pub(super) fn token_style_from_ratatui(style: Style) -> ViewTokenStyle {
         bold: style.add_modifier.contains(Modifier::BOLD),
         italic: style.add_modifier.contains(Modifier::ITALIC),
         underline: style.add_modifier.contains(Modifier::UNDERLINED),
+        dim: style.add_modifier.contains(Modifier::DIM),
     }
 }
 
@@ -51,6 +52,7 @@ pub(super) fn fold_placeholder_style(theme: &Theme) -> ViewTokenStyle {
         bold: false,
         italic: true,
         underline: false,
+        dim: false,
     }
 }
 

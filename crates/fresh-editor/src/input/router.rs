@@ -659,6 +659,8 @@ pub fn cancels_pending_lsp(action: &Action) -> bool {
             | Action::LspReferences
             | Action::LspImplementation
             | Action::LspHover
+            | Action::CompletionAccept
+            | Action::InsertTab
             | Action::None
     )
 }
@@ -1292,6 +1294,8 @@ mod tests {
         assert!(cancels_pending_lsp(&Action::Save));
         assert!(cancels_pending_lsp(&Action::InsertChar('x')));
         assert!(!cancels_pending_lsp(&Action::LspHover));
+        assert!(!cancels_pending_lsp(&Action::CompletionAccept));
+        assert!(!cancels_pending_lsp(&Action::InsertTab));
         assert!(!cancels_pending_lsp(&Action::None));
     }
 
