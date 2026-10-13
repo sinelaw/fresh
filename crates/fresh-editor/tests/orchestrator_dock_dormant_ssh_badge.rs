@@ -17,7 +17,7 @@
 //! dive it drives only connects with the plugin runtime present. Linux-gated
 //! like `remote_restore_terminal_e2e.rs`, which shares the same scaffolding
 //! constraints: persistence isolation rides `XDG_DATA_HOME` (ignored by the
-//! macOS/Windows data dirs) and the fake `ssh` is a Unix shell script.
+//! Windows data dirs) and the fake `ssh` is a Unix shell script.
 #![cfg(all(target_os = "linux", feature = "plugins"))]
 
 use crate::common::dormant_ssh::{

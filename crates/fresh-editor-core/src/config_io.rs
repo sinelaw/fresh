@@ -755,26 +755,18 @@ impl Config {
     /// Get the system config file paths (without local/working directory).
     ///
     /// On macOS, prioritizes the resolved config directory (`$XDG_CONFIG_HOME/fresh`
-    /// when that variable is absolute, otherwise `~/.config/fresh`) if its file exists.
-    /// An absolute `XDG_CONFIG_HOME` does not also search the personal macOS locations.
-    /// Otherwise this checks the standard system config directory.
+    /// when that variable is absolute, otherwise `~/.config/fresh`) if its file
+    /// exists, then the standard system config directory. An install that predates
+    /// `XDG_CONFIG_HOME` therefore still finds the config it wrote before the
+    /// upgrade — see [`crate::data_dir::xdg_dir_with_continuity`].
     fn system_config_paths() -> Vec<PathBuf> {
         let mut paths = Vec::with_capacity(2);
 
         #[cfg(target_os = "macos")]
-        {
-            if let Some(config_dir) = DirectoryContext::default_config_dir() {
-                let path = config_dir.join(Config::FILENAME);
-                if path.exists() {
-                    paths.push(path);
-                }
-            }
-            // The variable selected a directory. Do not fall through to the
-            // personal config when that file is not there yet.
-            if crate::data_dir::fresh_dir_from_xdg(std::env::var_os("XDG_CONFIG_HOME").as_deref())
-                .is_some()
-            {
-                return paths;
+        if let Some(config_dir) = DirectoryContext::default_config_dir() {
+            let path = config_dir.join(Config::FILENAME);
+            if path.exists() {
+                paths.push(path);
             }
         }
 
@@ -1066,10 +1058,10 @@ impl DirectoryContext {
     ///
     /// This is used internally by `from_system()` to determine the config directory.
     ///
-    /// On macOS, an absolute `XDG_CONFIG_HOME` selects `$XDG_CONFIG_HOME/fresh`.
-    /// Otherwise this is `~/.config/fresh`, matching the documented location.
-    /// A relative or empty value is ignored. Linux already follows the variable
-    /// through `dirs::config_dir()`.
+    /// On macOS, an absolute `XDG_CONFIG_HOME` selects `$XDG_CONFIG_HOME/fresh`,
+    /// unless the install is still on `~/.config/fresh` — see
+    /// [`crate::data_dir::xdg_dir_with_continuity`]. A relative or empty value is
+    /// ignored. Linux already follows the variable through `dirs::config_dir()`.
     fn default_config_dir() -> Option<PathBuf> {
         #[cfg(target_os = "macos")]
         {
@@ -1088,8 +1080,10 @@ impl DirectoryContext {
     /// macOS config directory: the XDG override, or `home/.config/fresh`.
     #[cfg(any(target_os = "macos", test))]
     fn macos_config_dir(xdg_config_home: Option<&OsStr>, home: Option<&Path>) -> Option<PathBuf> {
-        crate::data_dir::fresh_dir_from_xdg(xdg_config_home)
-            .or_else(|| home.map(|p| p.join(".config").join("fresh")))
+        crate::data_dir::xdg_dir_with_continuity(
+            crate::data_dir::fresh_dir_from_xdg(xdg_config_home),
+            home.map(|p| p.join(".config").join("fresh")),
+        )
     }
 }
 
@@ -1100,11 +1094,11 @@ mod tests {
 
     #[test]
     fn macos_config_dir_uses_xdg_without_changing_home() {
-        let xdg = std::env::temp_dir().join("config-home");
+        let base = std::env::temp_dir().join("config-home");
         let home = std::env::temp_dir().join("real-home");
         let resolved =
-            DirectoryContext::macos_config_dir(Some(xdg.as_os_str()), Some(&home)).unwrap();
-        assert_eq!(resolved, xdg.join("fresh"));
+            DirectoryContext::macos_config_dir(Some(base.as_os_str()), Some(&home)).unwrap();
+        assert_eq!(resolved, base.join("fresh"));
         assert_ne!(resolved, home.join(".config").join("fresh"));
     }
 
@@ -1113,6 +1107,28 @@ mod tests {
         let home = std::env::temp_dir().join("real-home");
         let resolved = DirectoryContext::macos_config_dir(None, Some(&home)).unwrap();
         assert_eq!(resolved, home.join(".config").join("fresh"));
+    }
+
+    #[test]
+    fn macos_config_dir_stays_on_dot_config_until_the_install_moves() {
+        let base = TempDir::new().unwrap();
+        let home = base.path().join("home");
+        let xdg = base.path().join("xdg");
+        let dot_config = home.join(".config").join("fresh");
+        std::fs::create_dir_all(&dot_config).unwrap();
+
+        assert_eq!(
+            DirectoryContext::macos_config_dir(Some(xdg.as_os_str()), Some(&home)),
+            Some(dot_config.clone()),
+            "an existing config keeps being read after the upgrade"
+        );
+
+        std::fs::create_dir_all(xdg.join("fresh")).unwrap();
+        assert_eq!(
+            DirectoryContext::macos_config_dir(Some(xdg.as_os_str()), Some(&home)),
+            Some(xdg.join("fresh")),
+            "once the new directory exists it wins"
+        );
     }
 
     fn create_test_resolver() -> (TempDir, ConfigResolver) {
