@@ -2161,3 +2161,49 @@ fn test_command_palette_page_down_moves_by_the_clamped_window() {
         "a page is the {rows} rows on screen:\n{screen}"
     );
 }
+
+/// Quick Open in a non-Git folder lists dotfiles only while Show Hidden Files is on.
+#[test]
+fn test_quick_open_follows_show_hidden_files_in_non_git_folder() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+    fs::write(project_root.join(".quickopen_dotfile"), "hidden").unwrap();
+    fs::write(project_root.join("quickopen_dot_visible.txt"), "visible").unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness
+        .wait_for_file_explorer_item("quickopen_dot_visible.txt")
+        .unwrap();
+
+    // Hide the explorer so only Quick Open can put the dotfile on screen.
+    harness.editor_mut().file_explorer_toggle_hidden();
+    harness.editor_mut().toggle_file_explorer();
+    harness.render().unwrap();
+
+    let open_quick_open = |harness: &mut EditorTestHarness| {
+        harness
+            .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
+        harness.type_text("quickopen_dot").unwrap();
+        harness
+            .wait_until(|h| h.screen_to_string().contains("quickopen_dot_visible.txt"))
+            .unwrap();
+    };
+
+    open_quick_open(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains(".quickopen_dotfile"))
+        .unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+
+    harness.editor_mut().file_explorer_toggle_hidden();
+    harness.render().unwrap();
+    open_quick_open(&mut harness);
+    harness.assert_screen_not_contains(".quickopen_dotfile");
+}

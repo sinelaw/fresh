@@ -707,6 +707,10 @@ impl Editor {
         // drops the binding), so this correctly leaves it read-only.
         if id == self.active_window {
             self.sync_terminal_mode_to_active_buffer();
+            // Quick Open follows a restored Show Hidden Files even before the explorer opens.
+            if workspace.file_explorer.show_hidden {
+                self.quick_open_registry.set_file_visibility(true);
+            }
         }
 
         // Active-window only: refresh the plugin snapshot and fire
