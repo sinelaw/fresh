@@ -893,6 +893,32 @@ fn reopen_stdin_from_tty() -> AnyhowResult<()> {
     Ok(())
 }
 
+/// Refuse to start the terminal UI from mintty (Git Bash, MSYS2, Cygwin).
+///
+/// mintty hands a native program MSYS pty pipes instead of a console. Rust's
+/// `IsTerminal` calls those terminals, so the launch went ahead and the first
+/// console call on stdin failed with a bare "os error 6" (#3547). Keys typed
+/// into mintty only reach that pipe, so no console handle would get them
+/// either: say what is wrong and how to run fresh instead, before any
+/// terminal setup happens. Printed and exited like `web_unavailable`: a
+/// user error deserves a clean line, not `real_main`'s backtrace.
+#[cfg(windows)]
+fn require_windows_console() {
+    let Some(stream) = fresh_winterm::msys_pty_stream() else {
+        return;
+    };
+    eprintln!(
+        "Error: fresh cannot run directly in mintty (the Git Bash / MSYS2 / Cygwin terminal)."
+    );
+    eprintln!(
+        "Its {stream} is an MSYS pty pipe, not a Windows console, so fresh has no console to use."
+    );
+    eprintln!("Instead, either:");
+    eprintln!("  - start it through winpty: winpty fresh ... (keyboard only, no mouse)");
+    eprintln!("  - run it in Windows Terminal, PowerShell or cmd (Git Bash works inside Windows Terminal)");
+    std::process::exit(1);
+}
+
 fn handle_first_run_setup(
     editor: &mut Editor,
     args: &Args,
@@ -5415,6 +5441,9 @@ fn run_attach(
     };
     use fresh::server::spawn_server_detached;
 
+    #[cfg(windows)]
+    require_windows_console();
+
     // Initialize tracing to a file for debugging
     use tracing_subscriber::{fmt, EnvFilter};
     let log_path = fresh::services::log_dirs::log_dir()
@@ -6204,6 +6233,9 @@ fn real_main() -> AnyhowResult<()> {
     if let Some(result) = try_forward_nested(&args) {
         return result;
     }
+
+    #[cfg(windows)]
+    require_windows_console();
 
     // Save the original console mode BEFORE anything modifies it (raw mode,
     // enable_vt_input, etc.). Restored at the very end after all cleanup.
