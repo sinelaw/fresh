@@ -1,0 +1,236 @@
+{
+  "name": "fresh-0.5.2-themes",
+  "capture": {
+    "geometry": "150x34",
+    "font": "JetBrains Mono 24",
+    "screen": "3200x1700x24",
+    "display": ":98",
+    "term": "xterm",
+    "workdir": "~/repos/fresh/target/clips/fresh-0.5.2-repo",
+    "settle": 10,
+    "copy_dirs": {
+      "~/repos/fresh/scripts/clips/assets/fresh-0.5.2/fresh": "{scratch}/config/fresh"
+    },
+    "env": {
+      "XDG_CONFIG_HOME": "{scratch}/config",
+      "XDG_DATA_HOME": "{scratch}/data-{pane}",
+      "XDG_STATE_HOME": "{scratch}/state-{pane}",
+      "XDG_RUNTIME_DIR": "{scratch}/run-{pane}"
+    },
+    "keys": [
+      {
+        "sleep": 1
+      },
+      {
+        "shot": "hc"
+      },
+      {
+        "key": "ctrl+p"
+      },
+      {
+        "type": "Select Theme"
+      },
+      {
+        "key": "Return",
+        "settle": 0.6
+      },
+      {
+        "type": "tokyo"
+      },
+      {
+        "key": "Return",
+        "settle": 0.8
+      },
+      {
+        "key": "Escape"
+      },
+      {
+        "sleep": 0.5
+      },
+      {
+        "shot": "tokyo"
+      },
+      {
+        "key": "ctrl+p"
+      },
+      {
+        "type": "Select Theme"
+      },
+      {
+        "key": "Return",
+        "settle": 0.6
+      },
+      {
+        "type": "gruvbox"
+      },
+      {
+        "key": "Return",
+        "settle": 0.8
+      },
+      {
+        "key": "Escape"
+      },
+      {
+        "sleep": 0.5
+      },
+      {
+        "shot": "gruvbox"
+      }
+    ],
+    "panes": {
+      "themes": {
+        "argv": [
+          "~/repos/fresh/target/debug/fresh",
+          "--no-restore",
+          "--no-upgrade-check",
+          "src/tides.rs:24:1"
+        ]
+      }
+    }
+  },
+  "render": {
+    "rows": 34,
+    "cols": 150,
+    "annotations": [
+      {
+        "rows": [
+          18,
+          27
+        ],
+        "view": "all",
+        "band": false,
+        "swipe": {
+          "to": "tokyo",
+          "rows": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33
+          ],
+          "at": 0.15,
+          "row": 0.16,
+          "stagger": 0.012,
+          "edge": 4
+        },
+        "hold": 1.5,
+        "shot": "hc",
+        "cols": [
+          4,
+          90
+        ],
+        "tag": {
+          "text": "Tokyo Night",
+          "at": "center",
+          "size": 76,
+          "width": 0.7
+        }
+      },
+      {
+        "rows": [
+          18,
+          27
+        ],
+        "view": "all",
+        "band": false,
+        "swipe": {
+          "to": "gruvbox",
+          "rows": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33
+          ],
+          "at": 0.15,
+          "row": 0.16,
+          "stagger": 0.012,
+          "edge": 4
+        },
+        "hold": 1.5,
+        "shot": "tokyo",
+        "cols": [
+          4,
+          90
+        ],
+        "transition": "wipe",
+        "tag": {
+          "text": "Gruvbox",
+          "at": "center",
+          "size": 76,
+          "width": 0.7
+        }
+      }
+    ],
+    "views": {
+      "all": {
+        "rows": [
+          0,
+          34
+        ],
+        "cols": [
+          0,
+          150
+        ]
+      }
+    }
+  }
+}

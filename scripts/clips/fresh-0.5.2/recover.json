@@ -1,0 +1,76 @@
+{
+  "name": "fresh-0.5.2-recover",
+  "capture": {
+    "geometry": "150x34",
+    "font": "JetBrains Mono 24",
+    "screen": "3200x1700x24",
+    "display": ":98",
+    "term": "xterm",
+    "workdir": "~/repos/fresh/target/clips/fresh-0.5.2-repo",
+    "settle": 10,
+    "copy_dirs": {
+      "~/repos/fresh/scripts/clips/assets/fresh-0.5.2/fresh": "{scratch}/config/fresh"
+    },
+    "env": {
+      "XDG_CONFIG_HOME": "{scratch}/config",
+      "XDG_DATA_HOME": "{scratch}/data-{pane}",
+      "XDG_STATE_HOME": "{scratch}/state-{pane}",
+      "XDG_RUNTIME_DIR": "{scratch}/run-{pane}"
+    },
+    "keys": [
+      {
+        "sleep": 1
+      },
+      {
+        "shot": "dialog"
+      }
+    ],
+    "panes": {
+      "recover": {
+        "argv": [
+          "sh",
+          "-c",
+          "$HOME/repos/fresh/scripts/clips/assets/fresh-0.5.2/seed-interrupted-save.sh && exec $HOME/repos/fresh/target/debug/fresh --no-restore --no-upgrade-check src/tides.rs"
+        ]
+      }
+    }
+  },
+  "render": {
+    "rows": 34,
+    "cols": 150,
+    "annotations": [
+      {
+        "rows": [
+          21,
+          23
+        ],
+        "view": "card",
+        "band": false,
+        "shot": "dialog",
+        "cols": [
+          58,
+          106
+        ],
+        "tag": {
+          "text": "Interrupted saves recover",
+          "at": "center",
+          "size": 76,
+          "width": 0.7,
+          "y": 0.17
+        }
+      }
+    ],
+    "views": {
+      "card": {
+        "rows": [
+          6,
+          26
+        ],
+        "cols": [
+          36,
+          114
+        ]
+      }
+    }
+  }
+}

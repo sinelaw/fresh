@@ -1,0 +1,82 @@
+{
+  "name": "fresh-0.5.2",
+  "reel": [
+    "orchestrator.json",
+    {
+      "spec": "confirm.json",
+      "transition": "push"
+    },
+    {
+      "spec": "themes.json",
+      "transition": "wipe"
+    },
+    {
+      "spec": "grep.json",
+      "transition": "wipe"
+    },
+    {
+      "spec": "settings.json",
+      "transition": "push"
+    },
+    {
+      "spec": "cjk.json",
+      "transition": "wipe"
+    },
+    {
+      "spec": "sidebar.json",
+      "transition": "push"
+    },
+    {
+      "spec": "recover.json",
+      "transition": "shatter"
+    }
+  ],
+  "render": {
+    "size": [
+      1920,
+      1080
+    ],
+    "fps": 60,
+    "rows": 34,
+    "cols": 150,
+    "title": "fresh 0.5.2",
+    "labels": {
+      "solo": "NEW"
+    },
+    "title_card": {
+      "lines": [
+        {
+          "text": "fresh",
+          "effect": "shine",
+          "at": 0.05
+        },
+        {
+          "text": "0.5.2",
+          "small": true,
+          "at": 0.35
+        }
+      ]
+    },
+    "outro_caption": [
+      "…and 60+ fixes",
+      "github.com/sinelaw/fresh"
+    ],
+    "timing": {
+      "title": 1.2,
+      "intro": 0.5,
+      "zoom": 0.35,
+      "hold": 1.6,
+      "pan": 0.35,
+      "push": 0.3,
+      "wipe": 0.3,
+      "shatter": 0.5,
+      "outro": 1.6
+    },
+    "header_height": 72,
+    "note_size": 58
+  },
+  "encode": {
+    "crf": 18,
+    "preset": "slow"
+  }
+}

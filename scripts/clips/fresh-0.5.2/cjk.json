@@ -1,0 +1,76 @@
+{
+  "name": "fresh-0.5.2-cjk",
+  "capture": {
+    "geometry": "150x34",
+    "font": "JetBrains Mono 24",
+    "screen": "3200x1700x24",
+    "display": ":98",
+    "term": "xterm",
+    "workdir": "~/repos/fresh/target/clips/fresh-0.5.2-repo",
+    "settle": 10,
+    "copy_dirs": {
+      "~/repos/fresh/scripts/clips/assets/fresh-0.5.2/fresh": "{scratch}/config/fresh"
+    },
+    "env": {
+      "XDG_CONFIG_HOME": "{scratch}/config",
+      "XDG_DATA_HOME": "{scratch}/data-{pane}",
+      "XDG_STATE_HOME": "{scratch}/state-{pane}",
+      "XDG_RUNTIME_DIR": "{scratch}/run-{pane}"
+    },
+    "keys": [
+      {
+        "sleep": 1
+      },
+      {
+        "shot": "tabs"
+      }
+    ],
+    "panes": {
+      "cjk": {
+        "argv": [
+          "~/repos/fresh/target/debug/fresh",
+          "--no-restore",
+          "--no-upgrade-check",
+          "docs/cjk.md:1:1"
+        ]
+      }
+    }
+  },
+  "render": {
+    "rows": 34,
+    "cols": 150,
+    "annotations": [
+      {
+        "rows": [
+          3,
+          6
+        ],
+        "view": "text",
+        "band": false,
+        "shot": "tabs",
+        "cols": [
+          0,
+          22
+        ],
+        "tag": {
+          "text": "CJK + tabs, fixed",
+          "at": "center-right",
+          "size": 76,
+          "width": 0.7
+        }
+      }
+    ],
+    "views": {
+      "text": {
+        "rows": [
+          0,
+          7
+        ],
+        "cols": [
+          0,
+          30
+        ]
+      }
+    }
+  }
+}

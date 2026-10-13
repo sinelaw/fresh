@@ -1,0 +1,10 @@
+{
+  "check_for_updates": false,
+  "plugins": {
+    "dashboard": {"enabled": false},
+    "git_heatmap": {"enabled": false},
+    "vi_mode": {"enabled": false},
+    "orchestrator": {"settings": {"autoOpenDock": false}},
+    "welcome_screen": {"settings": {"showOnStartup": false}}
+  }
+}

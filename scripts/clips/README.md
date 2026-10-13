@@ -33,6 +33,7 @@ specific to filming *this* program.
 | `fresh-review-syntax.json` | comparison | source highlighted inside a Review Diff stream |
 | `fresh-ui-anatomy.json` | explode | the retained UI tree, one element at a time |
 | `fresh-welcome-scroll.json` | solo, stepped | the Welcome screen, scrolled from the wordmark to the theme card, then restyled live |
+| `fresh-0.5.2/reel.json` | reel | the 0.5.2 release: eight scenes (one solo spec each, beside it) cut into one 1080p clip |
 
 `assets/<clip>/fresh/config.json` is a config directory a spec copies in, so a
 capture gets a deliberate theme and a known set of enabled plugins instead of
@@ -44,6 +45,9 @@ straight out of git, checking that the lines it films are still the ones it
 means to. `assets/fresh-welcome-scroll/make-repo.sh` builds a small repo with no
 project manifest in it, which is the only way the Welcome screen's live cards
 film as live — see below.
+`assets/fresh-0.5.2/make-repo.sh` builds the small project every scene of the
+0.5.2 reel opens, and `seed-interrupted-save.sh` leaves the recovery files a
+save that died partway would, so the Interrupted Save dialog is up at start.
 
 ## Filming fresh specifically
 
