@@ -923,7 +923,7 @@ impl Editor {
 
                 if let Some(buffer_to_close) = self.active_window_mut().pending_close_buffer.take()
                 {
-                    if let Err(e) = self.force_close_buffer(buffer_to_close) {
+                    if let Err(e) = self.close_confirmed_buffer(buffer_to_close) {
                         self.set_status_message(
                             t!("file.saved_cannot_close", error = e.to_string()).to_string(),
                         );
@@ -1422,13 +1422,21 @@ impl Editor {
             return;
         }
         if close_after_save {
-            match self.force_close_buffer(buffer_id) {
+            match self.close_confirmed_buffer(buffer_id) {
                 Ok(()) => self.set_status_message(t!("buffer.saved_and_closed").to_string()),
                 Err(e) => self.set_status_message(
                     t!("file.saved_cannot_close", error = e.to_string()).to_string(),
                 ),
             }
         }
+    }
+
+    /// Make `split_id` the active split without changing its tabs.
+    fn activate_split(&mut self, split_id: crate::model::event::LeafId) {
+        self.active_window_mut()
+            .split_manager_mut()
+            .set_active_split(split_id);
+        self.sync_terminal_mode_to_active_buffer();
     }
 
     /// Handle ConfirmCloseBuffer prompt. Returns true if early return is needed.
@@ -1464,6 +1472,24 @@ impl Editor {
 
             if has_path {
                 let old_active = self.active_buffer();
+                // Save from a split that shows the buffer. The tab menu can
+                // close a tab of an unfocused split, and focusing the buffer
+                // in the focused split would add it there as a tab, so the
+                // close would no longer find its own split emptied.
+                let old_split = self.active_window().split_manager().active_split();
+                let host = self
+                    .active_window()
+                    .split_view_states()
+                    .iter()
+                    .find(|(_, vs)| vs.has_buffer(buffer_id))
+                    .map(|(&split_id, _)| split_id);
+                let refocus_after = match host {
+                    Some(host) if host != old_split => {
+                        self.activate_split(host);
+                        Some(old_split)
+                    }
+                    _ => None,
+                };
                 self.set_active_buffer(buffer_id);
                 match self.save_active(true) {
                     Ok(SaveProgress::Saved) => {}
@@ -1477,12 +1503,18 @@ impl Editor {
                         self.set_status_message(
                             t!("file.save_failed", error = e.to_string()).to_string(),
                         );
+                        if let Some(split_id) = refocus_after {
+                            self.activate_split(split_id);
+                        }
                         self.set_active_buffer(old_active);
                         return true; // Early return
                     }
                 }
+                if let Some(split_id) = refocus_after {
+                    self.activate_split(split_id);
+                }
                 self.set_active_buffer(old_active);
-                if let Err(e) = self.force_close_buffer(buffer_id) {
+                if let Err(e) = self.close_confirmed_buffer(buffer_id) {
                     self.set_status_message(
                         t!("file.cannot_close", error = e.to_string()).to_string(),
                     );
@@ -1499,7 +1531,7 @@ impl Editor {
             }
         } else if first_char == discard_first {
             // Discard and close
-            if let Err(e) = self.force_close_buffer(buffer_id) {
+            if let Err(e) = self.close_confirmed_buffer(buffer_id) {
                 self.set_status_message(t!("file.cannot_close", error = e.to_string()).to_string());
             } else {
                 self.set_status_message(t!("buffer.changes_discarded").to_string());
