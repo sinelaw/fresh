@@ -373,8 +373,10 @@ fn test_session_file_location() {
     // Get expected session path
     let session_path = get_workspace_path(&project_dir).unwrap();
 
-    // Verify XDG location
-    let data_dir = dirs::data_dir().unwrap();
+    // Verify the data directory the path was derived from. `dirs::data_dir()`
+    // is only a guess at it: on macOS an absolute `XDG_DATA_HOME` overrides the
+    // platform directory, which is what the resolver itself decides.
+    let data_dir = fresh::input::input_history::get_data_dir().unwrap();
     assert!(
         session_path.starts_with(&data_dir),
         "Session should be in XDG data directory: {:?}",
