@@ -24,6 +24,7 @@ This directory contains production-ready plugins for the editor. Plugins are wri
 | `git_find_file.ts` | Fuzzy file finder for git repositories |
 | `git_blame.ts` | Git blame view with commit navigation |
 | `git_log.ts` | Git log viewer with history browsing |
+| `source_control.ts` | VS Code-style Source Control view over every repository under the workspace: stage/unstage/discard by file, folder or hunk, commit, branch switch, pull/push, compact side-by-side diff |
 
 ### Code Enhancement
 
