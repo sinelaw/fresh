@@ -32,7 +32,7 @@ const WEB_THEME_DESC = {
   cosmos: "Wallpaper, glass & hardware bezel",
   macos: "Native macOS — light & vibrant",
   "macos-dark": "Native macOS — dark & vibrant",
-  compact: "Dense, chrome-light IDE",
+  compact: "Quiet IDE frame that follows your editor theme",
   winamp: "Brushed metal, bevels & LCD green",
 };
 // The macOS variants share one structural stylesheet (title bar, traffic
@@ -46,7 +46,7 @@ function shellTheme() { return SHELL_THEMES.includes(webTheme); }
 // The inline custom properties applyTheme() (js/20-cells.js) owns. applyWebTheme
 // must NOT clear these when a theme leaves them unset — applyTheme just re-wrote
 // them from the live TUI theme, and that is exactly what Cosmos wants.
-const THEME_KEYS = ["--bg", "--fg", "--accent", "--muted", "--bg2", "--bg3",
+const THEME_KEYS = ["--bg", "--fg", "--accent", "--muted", "--muted-menu", "--bg2", "--bg3",
   "--menuhi", "--border", "--status-bg", "--status-fg", "--on-accent", "--on-sel", "--shell"];
 // Density multiplier per theme (layered under user zoom in measureMetrics).
 const WEB_THEME_SCALE = { cosmos: 1, macos: 1, "macos-dark": 1, compact: 0.92, winamp: 1 };
@@ -105,21 +105,26 @@ const WEB_THEME_VARS = {
     "--mac-btn": "linear-gradient(180deg,#3c3c3f,#353538)", "--mac-btn-fg": "#e3e3e6",
     "--mac-sidebar": "#252527",
   },
+  // Compact — the static fallback for an editor theme with no parseable
+  // background (terminal reset). Normally every value here is replaced by
+  // deriveCompact() below, which reads the editor's own ground; the key set
+  // must stay a superset of what it returns, so a switch away clears them.
   compact: {
-    "--fg": "#c9d1d9", "--muted": "#7d8590",
-    "--bg2": "#1b1e24", "--bg3": "#16181d",
-    "--menuhi": "#213a54", "--border": "#2b2f37",
-    "--status-bg": "#16181d", "--status-fg": "#8b949e",
-    "--shell": "#16181d",
-    "--accent": "#4a9eff", "--ui-accent": "#4a9eff",
-    "--on-ui-accent": "#04121f", "--on-accent": "#04121f", "--on-sel": "#e6edf3",
-    "--surface": "#1b1e24", "--surface-2": "#20242b",
-    "--hairline": "rgba(255,255,255,.07)", "--hairline-strong": "rgba(255,255,255,.14)",
+    "--fg": "#d4d7dd", "--muted": "#8b919b", "--muted-menu": "#8b919b",
+    "--bg2": "#252526", "--bg3": "#252526",
+    "--menuhi": "#2b4a70", "--border": "#333438",
+    "--status-bg": "#1d1d1e", "--status-fg": "#9aa0aa",
+    "--shell": "#1d1d1e",
+    "--accent": "#4d8ff5", "--ui-accent": "#4d8ff5",
+    "--on-ui-accent": "#ffffff", "--on-accent": "#ffffff", "--on-sel": "#e8eaee",
+    "--ok": "#3fb950", "--danger": "#f47067",
+    "--surface": "#252526", "--surface-2": "#2a2a2c",
+    "--hairline": "rgba(255,255,255,.075)", "--hairline-strong": "rgba(255,255,255,.13)",
     "--hover": "rgba(255,255,255,.06)",
-    "--sel": "color-mix(in srgb, var(--ui-accent) 22%, transparent)",
-    "--sel-ring": "inset 0 0 0 1px color-mix(in srgb, var(--ui-accent) 42%, transparent)",
-    "--shadow": "0 10px 28px rgba(0,0,0,.5)",
-    "--r-sm": "3px", "--r-md": "4px", "--r-lg": "6px",
+    "--sel": "color-mix(in srgb, var(--ui-accent) 24%, transparent)",
+    "--sel-ring": "none",
+    "--shadow": "0 12px 32px rgba(0,0,0,.45), 0 2px 6px rgba(0,0,0,.3)",
+    "--r-sm": "4px", "--r-md": "6px", "--r-lg": "8px",
   },
   // Winamp Classic — the base skin's palette: brushed-graphite chrome, LCD
   // green readouts, the playlist editor's navy selection, square corners and a
@@ -203,6 +208,61 @@ function renderFurniture() {
   for (const node of (WEB_THEME_FURNITURE[webTheme] || [])) build(node, host);
 }
 
+// Compact's chrome, derived from the editor's own background.
+//
+// **The chrome is a step off the buffer, never a second palette.** A fixed
+// dark chrome put a near-black dock and explorer beside a white buffer the
+// moment the editor theme was light, and even on a dark theme its blue-grey
+// sat oddly against a neutral one. Professional editors keep the frame one
+// shade from the editor ground — lighter on a dark theme, darker on a light
+// one — with neutral greys for chrome text and a single calm accent, so the
+// window reads as one surface whatever the user's theme. The inks are fixed
+// neutrals rather than the theme's own: a chrome label in nostalgia's yellow
+// or gruvbox's amber reads as an error, not as a menu.
+//
+// Reads `--bg` as applyTheme() just set it (web themes never override it).
+// Null when it cannot be parsed, which leaves the static fallback above.
+function deriveCompact() {
+  const bg = document.documentElement.style.getPropertyValue("--bg").trim();
+  const c = hexRgb(bg);
+  if (!c) return null;
+  const dark = relLum(c) < 0.25;
+  const step = k => mix(bg, dark ? "#ffffff" : "#000000", k);
+  if (dark) {
+    const card = step(.075);
+    return {
+      "--shell": step(.035), "--status-bg": step(.035),
+      "--bg2": card, "--bg3": card, "--surface": card, "--surface-2": step(.1),
+      "--border": step(.14),
+      "--fg": "#d4d7dd", "--muted": "#8b919b", "--muted-menu": "#8b919b",
+      "--status-fg": "#9aa0aa",
+      "--accent": "#4d8ff5", "--ui-accent": "#4d8ff5",
+      "--on-ui-accent": "#ffffff", "--on-accent": "#ffffff", "--on-sel": "#eef0f3",
+      "--menuhi": mix(card, "#4d8ff5", .38), "--danger": "#f47067",
+      "--hairline": "rgba(255,255,255,.075)", "--hairline-strong": "rgba(255,255,255,.13)",
+      "--hover": "rgba(255,255,255,.06)",
+      "--shadow": "0 12px 32px rgba(0,0,0,.45), 0 2px 6px rgba(0,0,0,.3)",
+    };
+  }
+  const card = mix(bg, "#ffffff", .7);
+  return {
+    "--shell": step(.04), "--status-bg": step(.04),
+    "--bg2": card, "--bg3": card, "--surface": card, "--surface-2": step(.06),
+    "--border": step(.14),
+    "--fg": "#1f2328", "--muted": "#5f6670", "--muted-menu": "#5f6670",
+    "--status-fg": "#4b525c",
+    "--accent": "#1a6fd9", "--ui-accent": "#1a6fd9",
+    "--on-ui-accent": "#ffffff", "--on-accent": "#ffffff", "--on-sel": "#1f2328",
+    "--menuhi": mix(card, "#1a6fd9", .22), "--danger": "#cf222e",
+    "--hairline": "rgba(0,0,0,.085)", "--hairline-strong": "rgba(0,0,0,.15)",
+    "--hover": "rgba(0,0,0,.05)",
+    "--shadow": "0 12px 32px rgba(0,0,0,.14), 0 2px 6px rgba(0,0,0,.08)",
+  };
+}
+// Web themes whose palette is computed from the editor theme at apply time,
+// layered over their static WEB_THEME_VARS entry.
+const WEB_THEME_DERIVE = { compact: deriveCompact };
+
 // Union of every override key, for stale-clearing on theme switch.
 const WEB_THEME_ALL_KEYS = (() => {
   const s = new Set();
@@ -225,7 +285,8 @@ function applyWebTheme() {
   b.classList.toggle("macfam", MACOS_THEMES.includes(webTheme));
   renderFurniture();
   const r = document.documentElement.style;
-  const vars = WEB_THEME_VARS[webTheme] || {};
+  const derive = WEB_THEME_DERIVE[webTheme];
+  const vars = { ...(WEB_THEME_VARS[webTheme] || {}), ...((derive && derive()) || {}) };
   for (const k of WEB_THEME_ALL_KEYS) {
     if (k in vars) r.setProperty(k, vars[k]);
     else if (!THEME_KEYS.includes(k)) r.removeProperty(k);   // back to the :root default

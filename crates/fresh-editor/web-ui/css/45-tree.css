@@ -39,11 +39,18 @@
    leaves the item unpainted, which is what a `Color::Reset` half means. */
 .tree-item{position:absolute;pointer-events:auto;overflow:hidden;box-sizing:border-box;
   background:var(--ink-bg,var(--fold-bg,transparent))}
-.tree-item.k-lines{color:var(--ink-fg,var(--fold-fg,inherit))}
+/* A rule is ink too: without its own colour it inherited the page's text
+   colour, so every divider a panel drew came out at full strength. */
+.tree-item.k-lines,.tree-item.k-rule{color:var(--ink-fg,var(--fold-fg,inherit))}
 .tree-item.k-wash{opacity:.45}
 .tree-item.k-border{border:1px solid;border-color:var(--ink-fg,var(--fold-fg,currentColor))}
 .tree-item.k-border.rounded{border-radius:6px}
 .tree-item.k-scrim.dim{background:rgba(0,0,0,.45)}
+/* A confirmation dims the WHOLE window, as the terminal does — menu bar, tabs
+   and status bar included. Those are native chrome stacked above the tree
+   layer, so while the card is up the layer is lifted over them; it drops back
+   the moment the card goes. */
+.tree:has(> .tree-surface.confirm){z-index:110}
 .tree-item.k-selectable{pointer-events:none}
 /* A run of the display list's text, one row tall at its cell origin. It is
    GRID text, not chrome text: pinned to the buffer's monospace stack at the

@@ -107,7 +107,10 @@ function treeItemEl(it,kindOf){
       el.classList.add(it.dim?"dim":"opaque");
       break;
     case "lines": {
-      if(it.bold) el.style.fontWeight="bold";
+      // The attributes travel as data too, so a web theme can tell a
+      // heading from the body it sits over when both name the same keys (the
+      // confirm card's title and its rules are one ink; only the title is bold).
+      if(it.bold){ el.style.fontWeight="bold"; el.dataset.bold=""; }
       if(it.italic) el.style.fontStyle="italic";
       if(it.underline) el.style.textDecoration="underline";
       // The item's own origin can sit left of / above the visible rect when
