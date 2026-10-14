@@ -1,7 +1,13 @@
 %YAML 1.2
 ---
 # Typst syntax highlighting for Fresh editor
-# Based on the official Typst TextMate grammar from https://github.com/typst/typst
+#
+# Derived from Typst's TextMate grammar, tools/support/typst.tmLanguage.json
+# in https://github.com/typst/typst (Copyright The Typst Project Developers,
+# licensed under the Apache License, Version 2.0:
+# https://www.apache.org/licenses/LICENSE-2.0). Many of its patterns are
+# taken from there unchanged; Fresh converted it to sublime-syntax and changed
+# its structure and patterns (2026). Fresh's changes are GPL-3.0-or-later.
 name: Typst
 file_extensions:
   - typ

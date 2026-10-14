@@ -1,7 +1,7 @@
+use crate::TS;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use ts_rs::TS;
 
 /// Menu state context — provides named boolean states for menu item conditions.
 ///

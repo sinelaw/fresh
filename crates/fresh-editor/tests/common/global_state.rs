@@ -245,7 +245,9 @@ pub fn isolated_dir_context(
 /// Serializes every test that shadows a binary on `$PATH`.
 ///
 /// Held by [`PathPin`] for the body of such a test, so exactly one shim
-/// directory is installed at a time.
+/// directory is installed at a time. A test that also takes
+/// [`pin_config_globals`] takes this first: harnesses take the config
+/// globals after it, so the opposite order can deadlock against them.
 fn path_env_lock() -> &'static std::sync::Mutex<()> {
     static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
     LOCK.get_or_init(|| std::sync::Mutex::new(()))

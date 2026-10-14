@@ -45,7 +45,7 @@ export async function genFeed(config: SiteConfig) {
     language: "en",
     image: `${hostname}${base}logo.svg`,
     favicon: `${hostname}${base}logo.svg`,
-    copyright: "Released under the Apache 2.0 License",
+    copyright: "Released under the GNU General Public License v3.0 or later",
   });
 
   // Only the top-level blog posts (blog/<slug>/index.md), not the nested

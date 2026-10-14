@@ -16,6 +16,10 @@ static EMBEDDED_PLUGINS: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/plugins");
 /// Cached path to the extracted plugins directory
 static EXTRACTED_PLUGINS_DIR: OnceLock<PathBuf> = OnceLock::new();
 
+// The embedded plugins compiled to JavaScript at build time (`PRECOMPILED`).
+#[cfg(feature = "precompiled-plugins")]
+include!(concat!(env!("OUT_DIR"), "/precompiled_plugins.rs"));
+
 /// Get the path to the embedded plugins directory.
 ///
 /// On first call, this extracts the embedded plugins to a cache directory.
@@ -32,6 +36,9 @@ pub fn get_embedded_plugins_dir() -> Option<&'static PathBuf> {
     });
 
     let path = EXTRACTED_PLUGINS_DIR.get()?;
+    // Plugins loaded from here use their build-time JavaScript.
+    #[cfg(feature = "precompiled-plugins")]
+    fresh_plugin_runtime::fresh_parser_js::precompiled::register(path.clone(), PRECOMPILED);
     if path.exists()
         && path
             .read_dir()
@@ -211,6 +218,32 @@ fn count_files(dir: &Dir<'_>) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every plugin loaded from the embedded directory has its JavaScript
+    /// already: none would need a compiler at run time. (Only when the build
+    /// script could compile them; see build.rs.)
+    #[cfg(fresh_plugins_precompiled)]
+    #[test]
+    fn every_embedded_plugin_is_precompiled() {
+        let dir = get_embedded_plugins_dir().expect("embedded plugins extract");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            if !name.ends_with(".ts") || name.contains(".i18n.") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).unwrap();
+            assert!(
+                fresh_plugin_runtime::fresh_parser_js::precompiled::lookup(&path, &source)
+                    .is_some(),
+                "{name} has no precompiled JavaScript"
+            );
+            checked += 1;
+        }
+        assert_eq!(checked, PRECOMPILED.len());
+        assert!(checked > 40, "only {checked} plugins found");
+    }
 
     #[test]
     fn test_embedded_plugins_exist() {

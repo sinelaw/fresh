@@ -298,6 +298,7 @@ fn rust_leaks(page: &str) -> Vec<String> {
         "Arc<",
         "serde",
         "rquickjs",
+        "fresh_js",
         "schemars",
         "Exposed to JS",
         "#[",

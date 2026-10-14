@@ -8,9 +8,26 @@ repository.workspace = true
 homepage.workspace = true
 description = "JavaScript plugin runtime for Fresh editor"
 
+[features]
+default = ["oxc"]
+# Compile plugin TypeScript in-process with oxc (fresh-parser-js's `oxc`), and
+# build the fresh.d.ts / API-doc generators (with ts-rs). Without it, plugins
+# are compiled by the `esbuild` executable and the generators are left out.
+oxc = [
+    "fresh-parser-js/oxc",
+    "fresh-core/ts",
+    "dep:ts-rs",
+    "dep:oxc_allocator",
+    "dep:oxc_ast",
+    "dep:oxc_parser",
+    "dep:oxc_codegen",
+    "dep:oxc_span",
+    "dep:oxc_diagnostics",
+]
+
 [dependencies]
-rquickjs.workspace = true
-rquickjs-serde.workspace = true
+# The JS engine. Code reaches it through `fresh-js`, macros included.
+fresh-js.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 jsonc-parser.workspace = true
@@ -20,22 +37,22 @@ tracing.workspace = true
 fresh-core = { workspace = true, features = ["plugins"] }
 fresh-parser-js.workspace = true
 fresh-plugin-api-macros.workspace = true
-ts-rs.workspace = true
 lsp-types.workspace = true
-oxc_allocator.workspace = true
-oxc_ast.workspace = true
-oxc_parser.workspace = true
-oxc_codegen.workspace = true
-oxc_span.workspace = true
-oxc_diagnostics.workspace = true
+# Only for generating fresh.d.ts and the plugin API docs (ts_export, api_docs).
+ts-rs = { workspace = true, optional = true }
+oxc_allocator = { workspace = true, optional = true }
+oxc_ast = { workspace = true, optional = true }
+oxc_parser = { workspace = true, optional = true }
+oxc_codegen = { workspace = true, optional = true }
+oxc_span = { workspace = true, optional = true }
+oxc_diagnostics = { workspace = true, optional = true }
 
-# rquickjs-sys has no pre-generated bindings for FreeBSD
-[target.'cfg(target_os = "freebsd")'.dependencies]
-rquickjs = { workspace = true, features = ["bindgen"] }
-
-# rquickjs-sys has no pre-generated bindings for NetBSD
-[target.'cfg(target_os = "netbsd")'.dependencies]
-rquickjs = { workspace = true, features = ["bindgen"] }
+# With the default (rquickjs) backend, rquickjs's proc macros (re-exported as
+# `fresh_js::{class, methods}` and the `Trace`/`JsLifetime` derives) find
+# rquickjs through the manifest of the crate that invokes them, so it is listed
+# here for them alone. The system backend brings its own macros.
+[target.'cfg(not(fresh_js_system))'.dependencies]
+rquickjs.workspace = true
 
 [lints]
 workspace = true

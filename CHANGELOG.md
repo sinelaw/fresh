@@ -1,5 +1,11 @@
 # Release Notes
 
+## Unreleased
+
+### Features
+
+* **A package for Debian testing and unstable** - each release also attaches `fresh-editor_<version>-1_<arch>.debian-testing.deb` (amd64 and arm64), built the way Debian's own archive would build it: from Debian's packaged Rust crates, with Debian's QuickJS running plugins and Debian's `esbuild` compiling their TypeScript. It installs only on Debian testing or unstable. Its bundled plugins are compiled when it is built, so it runs them without a TypeScript compiler; install the `esbuild` package (suggested, not pulled in) for your own `init.ts` and plugins, including those the package manager installs. It leaves out the update checker, telemetry and tree-sitter. Its source package is attached as `fresh-editor_<version>-1.debian-testing-source.tar.gz`. The usual `.deb`, for any Debian or Ubuntu, is unchanged
+
 ## 0.5.3
 
 For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).

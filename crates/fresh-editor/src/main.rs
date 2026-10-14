@@ -2138,7 +2138,9 @@ fn run_editor_iteration(
 /// Check a plugin by bundling it and printing the output
 #[cfg(feature = "plugins")]
 fn check_plugin_bundle(plugin_path: &std::path::Path) -> AnyhowResult<()> {
-    use fresh_parser_js::{bundle_module, has_es_module_syntax, transpile_typescript};
+    use fresh_plugin_runtime::fresh_parser_js::{
+        bundle_module, has_es_module_syntax, transpile_typescript,
+    };
 
     eprintln!("Checking plugin: {}", plugin_path.display());
 
@@ -5276,7 +5278,9 @@ fn script_check(from: &[&str]) -> AnyhowResult<()> {
     #[cfg(feature = "plugins")]
     {
         let wrapped = format!("(async () => {{\n{}\n}})();", source);
-        if let Err(e) = fresh_parser_js::transpile_typescript(&wrapped, "script.ts") {
+        if let Err(e) =
+            fresh_plugin_runtime::fresh_parser_js::transpile_typescript(&wrapped, "script.ts")
+        {
             eprintln!("{}", e);
             std::process::exit(1);
         }
@@ -7185,7 +7189,7 @@ mod tests {
         #[cfg(feature = "plugins")]
         for (verb, source) in &sources {
             let wrapped = format!("(async () => {{\n{source}\n}})();");
-            fresh_parser_js::transpile_typescript(&wrapped, "verb.ts")
+            fresh_plugin_runtime::fresh_parser_js::transpile_typescript(&wrapped, "verb.ts")
                 .unwrap_or_else(|e| panic!("`{verb}` submits a script that does not parse: {e}"));
         }
 

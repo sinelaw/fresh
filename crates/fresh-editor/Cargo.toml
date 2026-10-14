@@ -72,15 +72,15 @@ path = "tests/scene_parity.rs"
 required-features = ["web"]
 
 [features]
-default = ["plugins", "runtime", "embed-plugins", "tree-sitter", "http", "self-update"]
+default = ["plugins", "runtime", "embed-plugins", "tree-sitter", "http", "self-update", "oxc"]
 plugins = [
     "dep:fresh-plugin-runtime",
-    "dep:fresh-parser-js",
-    # oxc parses init.ts, which only the plugin runtime can execute.
-    "dep:oxc_allocator",
-    "dep:oxc_parser",
-    "dep:oxc_span",
 ]
+# Compile plugin TypeScript (bundled plugins, user and package-manager plugins,
+# init.ts, scripts) in-process with oxc. Without it, the same code runs the
+# `esbuild` executable instead — what a Debian build does, since esbuild is a
+# Debian package and oxc's crates are not.
+oxc = ["fresh-plugin-runtime?/oxc"]
 # Tree-sitter AST features (precise indent, scope-aware reference highlighting,
 # and tree-sitter syntax highlighting for the languages syntect can't cover).
 # Enabled by default, but only bundles the grammars that *must* use tree-sitter
@@ -92,6 +92,13 @@ plugins = [
 tree-sitter = ["fresh-editor-core/tree-sitter", "fresh-languages/bundled-languages"]
 # Embed plugins into the binary as a fallback when no disk plugins are found
 embed-plugins = ["plugins", "dep:include_dir", "dep:trash"]
+# Compile the embedded plugins to JavaScript at build time, with the `esbuild`
+# executable, so loading them needs no TypeScript compiler at run time. For a
+# build without `oxc` (Debian's) esbuild is then needed only for the user's own
+# TypeScript (init.ts, user and package-manager plugins, scripts). Without
+# esbuild at build time this does nothing (with a warning) unless
+# FRESH_REQUIRE_PRECOMPILED_PLUGINS=1 makes it an error; see build.rs.
+precompiled-plugins = ["embed-plugins", "dep:fresh-parser-js"]
 # Feature for optional development binaries (generate_schema, event_debug)
 # Includes ratatui for theme type definitions needed by schema generation
 dev-bins = ["dep:ratatui", "dep:vt100"]
@@ -195,7 +202,6 @@ fresh-editor-core = { workspace = true, default-features = false }
 # The retained UI tree; see docs/internal/retained-mode-ui.md.
 fresh-ui.workspace = true
 fresh-update.workspace = true
-fresh-parser-js = { workspace = true, optional = true }
 # Provides the shared `Language` / `HighlightCategory` types (small, always
 # needed by the syntect grammar catalog). The heavy tree-sitter grammar
 # crates are pulled in separately via the `tree-sitter` feature so they can
@@ -205,14 +211,6 @@ fresh-plugin-runtime = { workspace = true, optional = true }
 # Terminal input (VT/ANSI) parser — turns the raw client byte stream into
 # crossterm events. Pulled in wherever crossterm is (runtime / wasm).
 fresh-input-parser = { workspace = true, optional = true }
-
-# oxc syntax-checks the user's `init.ts` (`fresh --cmd init check` and the
-# pre-load check). `init.ts` is config-as-code executed by the QuickJS plugin
-# runtime, so it is only meaningful when `plugins` is enabled — these deps are
-# pulled in by that feature and dropped from plugin-less builds.
-oxc_allocator = { workspace = true, optional = true }
-oxc_parser = { workspace = true, optional = true }
-oxc_span = { workspace = true, optional = true }
 
 # Always required (for schema generation and runtime)
 serde.workspace = true
@@ -229,7 +227,7 @@ once_cell.workspace = true
 # (.CMD/.BAT/.PS1 wrappers that npm -g creates for Node-based LSPs),
 # the Unix executable bit, symlinks, and App Execution Aliases on
 # Windows — all of which our previous hand-rolled probe missed.
-which = "6"
+which = "8"
 
 # Runtime dependencies (optional, enabled by "runtime" feature)
 crossterm = { version = "0.29.0", features = ["osc52"], optional = true }
@@ -251,11 +249,14 @@ ignore = { version = "0.4", default-features = false, optional = true }
 # features stay off; we want raw events forwarded straight to
 # plugins so the collision-radar matrix can dedupe at the plugin
 # level (different debouncing policy than auto-revert wants).
-notify = { version = "8.2", default-features = false, features = ["macos_kqueue"], optional = true }
+# `macos_kqueue` is added for macOS only, below: Debian's notify
+# package does not offer it.
+notify = { version = "8.2", default-features = false, optional = true }
 # regex is always needed for model::buffer search functionality
 regex = { version = "1.12" }
 libc = { version = "0.2", optional = true }
-nix = { version = "0.31", features = ["signal", "pthread", "resource", "poll", "fs"], optional = true }
+# nix accepts the version Debian ships (0.30) as well as the current one.
+nix = { version = ">=0.30, <0.32", features = ["signal", "pthread", "resource", "poll", "fs"], optional = true }
 
 # anyhow is always needed for model error handling
 anyhow = { workspace = true }
@@ -325,9 +326,12 @@ proptest = "1.9"
 tempfile = "3.25"
 insta = { version = "1.46", features = ["yaml"] }
 vt100 = "0.16"  # Virtual terminal emulator for testing real ANSI output
-ctor = "0.6.3"
+ctor = ">=0.6.3, <2"  # 1.x is what Debian ships
 tiny_http = "0.12"  # Lightweight HTTP server for testing release checker
 unicode-segmentation = "1.12"  # For grapheme cluster testing
+
+[target.'cfg(target_os = "macos")'.dependencies]
+notify = { version = "8.2", default-features = false, features = ["macos_kqueue"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
 fresh-winterm.workspace = true
@@ -344,10 +348,14 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_JobObjects",
 ] }
 
-# No `[build-dependencies]`: the syntect packdump, the builtin-theme table and
-# the locale list are generated by `fresh-editor-core`'s build script now, so
-# this crate's build.rs is plain std and does not drag a second (host-target)
-# copy of syntect + onig into the build graph.
+# The syntect packdump, the builtin-theme table and the locale list are
+# generated by `fresh-editor-core`'s build script, so this crate's build.rs does
+# not drag a second (host-target) copy of syntect + onig into the build graph.
+# Its one build dependency is small and only for `precompiled-plugins`.
+# (The editor uses fresh-parser-js through fresh-plugin-runtime's re-export,
+# so this, the build script's copy, keeps its own features: no oxc.)
+[build-dependencies]
+fresh-parser-js = { workspace = true, optional = true }
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"

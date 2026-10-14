@@ -1,6 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-use ts_rs::TS;
+// `#[derive(TS)]` describes a plugin API type for `fresh.d.ts`. With the `ts`
+// feature (which the `fresh.d.ts` generator turns on) it is ts-rs's derive;
+// without it, a no-op stand-in that accepts the same `#[ts(...)]` attributes,
+// so other builds do not need ts-rs.
+#[cfg(not(feature = "ts"))]
+pub(crate) use fresh_plugin_api_macros::TS;
+#[cfg(feature = "ts")]
+pub(crate) use ts_rs::TS;
 
 /// Unique identifier for a cursor
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]

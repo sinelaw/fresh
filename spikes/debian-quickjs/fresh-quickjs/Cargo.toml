@@ -1,0 +1,20 @@
+[package]
+name = "fresh-quickjs"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Small safe wrapper over the system QuickJS (Debian's libquickjs) for Fresh's plugin runtime"
+keywords = ["quickjs", "javascript"]
+categories = ["api-bindings"]
+
+[lib]
+name = "fresh_quickjs"
+path = "src/lib.rs"
+
+[dependencies]
+fresh-quickjs-sys = { path = "../fresh-quickjs-sys" }
+serde_json.workspace = true
+

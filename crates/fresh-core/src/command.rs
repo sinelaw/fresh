@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Source of a command (builtin or from a plugin)
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, crate::TS)]
 #[ts(export)]
 pub enum CommandSource {
     /// Built-in editor command
@@ -12,7 +12,7 @@ pub enum CommandSource {
 
 /// A command registered by a plugin via the service bridge.
 /// This is a simplified version that the editor converts to its internal Command type.
-#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, crate::TS)]
 #[ts(export)]
 pub struct Command {
     /// Command name (e.g., "Open File")
@@ -38,7 +38,7 @@ pub struct Command {
 }
 
 /// A single suggestion item for autocomplete
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, crate::TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export, rename = "PromptSuggestion")]
 pub struct Suggestion {
@@ -83,9 +83,9 @@ pub struct Suggestion {
 }
 
 #[cfg(feature = "plugins")]
-impl<'js> rquickjs::FromJs<'js> for Suggestion {
-    fn from_js(_ctx: &rquickjs::Ctx<'js>, value: rquickjs::Value<'js>) -> rquickjs::Result<Self> {
-        rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
+impl<'js> fresh_js::FromJs<'js> for Suggestion {
+    fn from_js(_ctx: &fresh_js::Ctx<'js>, value: fresh_js::Value<'js>) -> fresh_js::Result<Self> {
+        fresh_js::serde::from_value(value).map_err(|e| fresh_js::Error::FromJs {
             from: "object",
             to: "Suggestion",
             message: Some(e.to_string()),
@@ -142,7 +142,7 @@ mod tests {
     #[cfg(feature = "plugins")]
     #[test]
     fn suggestion_from_js_decodes_distinguishing_fields() {
-        use rquickjs::{Context, FromJs, Runtime, Value};
+        use fresh_js::{Context, FromJs, Runtime, Value};
         let rt = Runtime::new().unwrap();
         let ctx = Context::full(&rt).unwrap();
         ctx.with(|ctx| {

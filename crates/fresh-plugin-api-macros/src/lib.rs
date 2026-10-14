@@ -1084,6 +1084,18 @@ pub fn plugin_api(_attr: TokenStream, item: TokenStream) -> TokenStream {
 // Unit Tests
 // ============================================================================
 
+/// A stand-in for ts-rs's `#[derive(TS)]` that generates nothing.
+///
+/// `fresh-core` describes the plugin API types for `fresh.d.ts` with
+/// `#[derive(TS)]` and `#[ts(...)]`. Only the `fresh.d.ts` generator reads
+/// those descriptions, so builds without fresh-core's `ts` feature use this
+/// derive instead of ts-rs: it accepts the same attributes and emits no code,
+/// and the build needs no ts-rs (Debian, for one, does not package it).
+#[proc_macro_derive(TS, attributes(ts))]
+pub fn ts_stub(_item: TokenStream) -> TokenStream {
+    TokenStream::new()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
