@@ -442,8 +442,8 @@ impl HarnessOptions {
     /// Wire the test process so that `devcontainer` and `docker` resolve
     /// to the in-tree fake CLIs at `scripts/fake-devcontainer/bin`. The
     /// returned `HarnessOptions` carries a per-test state directory and
-    /// a process-global mutex guard so concurrent harness instances
-    /// don't clobber each other's `FAKE_DEVCONTAINER_STATE`.
+    /// a [`PathPin`](super::global_state::PathPin), so concurrent tests
+    /// don't clobber each other's `$PATH` or `FAKE_DEVCONTAINER_STATE`.
     ///
     /// The fake state path is reachable via
     /// [`EditorTestHarness::fake_devcontainer_state`].
@@ -469,26 +469,18 @@ impl HarnessOptions {
         let temp = TempDir::new().expect("tempdir for fake-devcontainer state");
         let state_path = temp.path().to_path_buf();
 
-        // Serialize against other harness instances using the fake CLI:
-        // FAKE_DEVCONTAINER_STATE is process-global env, so a parallel
-        // test setting its own state would steal ours mid-run.
-        let guard = fake_devcontainer_lock()
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-
-        // PATH prepend is idempotent — every harness call points at the
-        // same in-tree fake bin dir, so racing threads only ever
-        // converge on the same prefix.
-        let path = std::env::var("PATH").unwrap_or_default();
-        let already_on_path = path.split(':').any(|p| std::path::Path::new(p) == fake_bin);
-        if !already_on_path {
-            std::env::set_var("PATH", format!("{}:{}", fake_bin.display(), path));
-        }
-        std::env::set_var("FAKE_DEVCONTAINER_STATE", &state_path);
-        std::env::set_var("FAKE_DC_UP_DELAY_MS", "0");
+        // `$PATH` and `FAKE_DEVCONTAINER_STATE` are process-global, so this
+        // takes the same pin as every other test that shadows a binary on
+        // `$PATH`: one at a time, and both restored when the harness drops.
+        // (With a lock of its own, a test pinning `$PATH` concurrently could
+        // restore the `$PATH` it saw before the fake was prepended, and the
+        // attach would find no `devcontainer`.)
+        let mut pin = super::global_state::pin_path_with_dir_first(&fake_bin);
+        pin.set_env("FAKE_DEVCONTAINER_STATE", &state_path);
+        pin.set_env("FAKE_DC_UP_DELAY_MS", "0");
 
         self.fake_devcontainer = Some(FakeDevcontainerHandle {
-            _guard: guard,
+            _pin: pin,
             _temp: temp,
             state_path,
         });
@@ -496,23 +488,15 @@ impl HarnessOptions {
     }
 }
 
-/// Lock that serializes harness instances using the fake devcontainer CLI.
-/// Held in `FakeDevcontainerHandle::_guard` for the lifetime of the test.
-#[cfg(unix)]
-fn fake_devcontainer_lock() -> &'static std::sync::Mutex<()> {
-    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-    LOCK.get_or_init(|| std::sync::Mutex::new(()))
-}
-
-/// State directory + lock guard for a single harness's fake-devcontainer
+/// State directory + `$PATH` pin for a single harness's fake-devcontainer
 /// session. Kept inside `EditorTestHarness` so dropping the harness
-/// drops the guard (releasing the lock for the next test) and the
-/// tempdir (cleaning up state files).
+/// drops the pin (restoring `$PATH` and the fake's variables, and letting
+/// the next test pin them) and the tempdir (cleaning up state files).
 #[cfg(unix)]
 pub struct FakeDevcontainerHandle {
     /// Held for the harness's lifetime so concurrent tests can't race
-    /// on the global `FAKE_DEVCONTAINER_STATE` env var.
-    _guard: std::sync::MutexGuard<'static, ()>,
+    /// on `$PATH` or the global `FAKE_DEVCONTAINER_STATE` env var.
+    _pin: super::global_state::PathPin,
     /// Tempdir kept alive for the harness's lifetime.
     _temp: TempDir,
     /// Path to the fake's state directory (`<temp>/`).

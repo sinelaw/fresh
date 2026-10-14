@@ -133,8 +133,9 @@ fn settle_plugins(harness: &mut EditorTestHarness) {
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
 fn deno_project_with_the_runtime_installed_uses_deno_lsp() {
-    let _pin = pin_config_globals();
+    // `$PATH` first: every test that pins both takes them in this order.
     let _deno = DenoOnPath::install();
+    let _pin = pin_config_globals();
     let (_temp, root) = project(&[
         ("deno.json", "{ \"tasks\": {} }\n"),
         ("index.ts", "export const x: number = 1;\n"),
@@ -198,8 +199,9 @@ fn deno_project_without_the_runtime_keeps_the_configured_server() {
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
 fn a_plain_typescript_project_is_untouched() {
-    let _pin = pin_config_globals();
+    // `$PATH` first: every test that pins both takes them in this order.
     let _deno = DenoOnPath::install();
+    let _pin = pin_config_globals();
     let (_temp, root) = project(&[
         ("package.json", "{ \"name\": \"p\" }\n"),
         ("index.ts", "export const x: number = 1;\n"),
@@ -221,8 +223,9 @@ fn a_plain_typescript_project_is_untouched() {
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
 fn a_language_the_user_disabled_is_left_alone() {
-    let _pin = pin_config_globals();
+    // `$PATH` first: every test that pins both takes them in this order.
     let _deno = DenoOnPath::install();
+    let _pin = pin_config_globals();
     let (_temp, root) = project(&[
         ("deno.json", "{ \"tasks\": {} }\n"),
         ("index.ts", "export const x: number = 1;\n"),
@@ -263,8 +266,9 @@ fn a_language_the_user_disabled_is_left_alone() {
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
 fn leaving_a_deno_project_restores_the_configured_server() {
-    let _pin = pin_config_globals();
+    // `$PATH` first: every test that pins both takes them in this order.
     let _deno = DenoOnPath::install();
+    let _pin = pin_config_globals();
     let (_temp, deno_root) = project(&[
         ("deno.json", "{ \"tasks\": {} }\n"),
         ("index.ts", "export const x: number = 1;\n"),
