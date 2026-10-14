@@ -1,0 +1,71 @@
+# Fresh Desktop packaging. Run `node scripts/stage.js <fresh binary>` first:
+# it puts the bundled editor in bin/ and the icons in build/.
+#
+# Release artifacts (built by .github/workflows/desktop-builds.yml):
+#   fresh-desktop-<version>-linux-x86_64.AppImage
+#   fresh-desktop-<version>-macos-universal.dmg
+#   fresh-desktop-<version>-windows-x64-setup.exe
+# The `fresh-desktop-` prefix keeps them clear of the names the terminal
+# edition's self-updater looks for (`fresh-editor-…`).
+
+appId: dev.getfresh.FreshDesktop
+productName: Fresh Desktop
+copyright: Copyright © Noam Lewis
+
+directories:
+  output: dist
+  buildResources: build
+
+files:
+  - package.json
+  - src/**
+  - assets/**
+
+# The editor itself, next to the app's resources: process.resourcesPath/bin.
+extraResources:
+  - from: bin
+    to: bin
+
+publish: null
+
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch: universal
+  artifactName: fresh-desktop-${version}-macos-universal.${ext}
+  # No Developer ID in CI: ad-hoc sign, which Apple Silicon requires to run
+  # at all. Hardened runtime would refuse Electron's differently-signed
+  # frameworks under an ad-hoc signature.
+  identity: "-"
+  hardenedRuntime: false
+  # The staged `fresh` is already a universal (lipo'd) binary, so the x64 and
+  # arm64 builds carry the identical file and there is nothing to merge.
+  x64ArchFiles: Contents/Resources/bin/fresh
+
+dmg:
+  writeUpdateInfo: false
+
+win:
+  target:
+    - target: nsis
+      arch: x64
+  artifactName: fresh-desktop-${version}-windows-x64-setup.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  differentialPackage: false
+  shortcutName: Fresh Desktop
+
+linux:
+  target:
+    - target: AppImage
+      arch: x64
+  artifactName: fresh-desktop-${version}-linux-x86_64.${ext}
+  executableName: fresh-desktop
+  category: Development
+  synopsis: Fresh text editor as a desktop application
+  mimeTypes:
+    - text/plain

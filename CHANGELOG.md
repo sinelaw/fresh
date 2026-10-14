@@ -4,6 +4,7 @@
 
 ### Features
 
+* **Fresh Desktop** - Fresh as a standalone desktop application, in its own window with the editor bundled inside: no browser, no terminal, nothing else to install. Each release attaches `fresh-desktop-<version>-windows-x64-setup.exe`, `fresh-desktop-<version>-macos-universal.dmg` (Intel and Apple Silicon) and `fresh-desktop-<version>-linux-x86_64.AppImage`. It is the web UI served by the same editor (`fresh --web`), so sessions, workspaces and hot exit work as in the terminal. The builds are not yet signed with a developer certificate
 * **A package for Debian testing and unstable** - each release also attaches `fresh-editor_<version>-1_<arch>.debian-testing.deb` (amd64 and arm64), built the way Debian's own archive would build it: from Debian's packaged Rust crates, with Debian's QuickJS running plugins and Debian's `esbuild` compiling their TypeScript. It installs only on Debian testing or unstable. Its bundled plugins are compiled when it is built, so it runs them without a TypeScript compiler; install the `esbuild` package (suggested, not pulled in) for your own `init.ts` and plugins, including those the package manager installs. It leaves out the update checker, telemetry and tree-sitter. Its source package is attached as `fresh-editor_<version>-1.debian-testing-source.tar.gz`. The usual `.deb`, for any Debian or Ubuntu, is unchanged
 
 ## 0.5.3

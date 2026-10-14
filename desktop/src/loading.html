@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+<title>Fresh</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: #1e1e1e;
+    color: #8a8a8a;
+    font: 13px/1.4 -apple-system, "Segoe UI", system-ui, sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .dot {
+    width: 6px; height: 6px; margin: 0 3px; border-radius: 50%;
+    background: currentColor; display: inline-block;
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  .dot:nth-child(2) { animation-delay: .2s; }
+  .dot:nth-child(3) { animation-delay: .4s; }
+  @keyframes pulse { 0%, 80%, 100% { opacity: .2; } 40% { opacity: 1; } }
+</style>
+</head>
+<body><span class="dot"></span><span class="dot"></span><span class="dot"></span></body>
+</html>
