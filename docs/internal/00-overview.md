@@ -77,7 +77,7 @@ Entry runs through `main`, which wraps a fallible `real_main`. Startup sequence:
 4. Nested-launch forwarding — if launched from inside Fresh's own embedded terminal (detected by an environment marker), file/dir opens are forwarded to the parent editor instead of starting a second one.
 5. App initialization builds the terminal, config, tracing, key translator, terminal modes, and the startup `Authority` (local or SSH).
 6. The local-control listener binds this process's control socket so nested `fresh` launches can forward opens back here.
-7. The **restart loop** constructs an `Editor`, runs the event loop, and reconstructs on a restart request (Open-Folder context switch or a plugin's `setAuthority`). The `Authority` is single-owner and non-`Clone`, so it is moved into the editor and re-extracted on restart.
+7. One `Editor` is constructed and runs the event loop until it quits. This used to be a restart loop, rebuilding the editor on an Open-Folder context switch or a plugin's `setAuthority`; both now land in a window (see [remote-authority-trust.md](remote-authority-trust.md) §1.4), so there is nothing to reconstruct. The `Authority` is single-owner and non-`Clone`, and lives inside the `Connection` its window holds.
 
 The TUI loop is a shared `run_event_loop_common`, reached via one of three wrappers selected by `cfg`: Linux GPM mouse polling, a Windows VT-input reader thread, and the default crossterm poller. All three differ only in their event-poll closure.
 
@@ -85,7 +85,7 @@ Per-iteration loop structure:
 
 1. Pump local control — drain nested forward requests.
 2. Editor tick — shared per-tick housekeeping: drains async messages (§5), timers, auto-save, file-change polling.
-3. Quit handling: auto-save buffers, end recovery session, save every window's workspace, write orchestrator state, then break.
+3. Quit handling (`Editor::persist_on_exit`, shared with the GUI, the daemon and the test harness): auto-save buffers, end recovery session, save every window's workspace, write orchestrator state, then break. The quit itself is decided before this: with auto-save on, nothing is written until the quit is confirmed (`Ctrl+Q`, and the `confirm_quit` question when that is on); only then are the buffers saved, and one the save can't write — its file changed on disk, or the write failed (say, it needs sudo) — raises the unsaved-changes prompt instead of the exit dropping its edits. Buffers hidden from the tabs (a plugin's replace-in-file) are saved where they can be, but never hold the quit. What gets written and what gets asked about come from one plan (`Editor::exit_save_plan`); the auto-save is `persist_on_exit`'s (`auto_save_on_exit`), and a confirmed quit runs it early so a buffer it can't write can still hold the quit.
 4. Suspend handling — tears down terminal modes, raises `SIGTSTP`, restores on `SIGCONT`.
 5. Force a render if animations are active, an LSP `$/progress` spinner is live, or terminal titles need a poll — these are wall-clock-driven and need periodic frames even with no input.
 6. **Render gate**: render only when one is needed, the frame duration has elapsed since the last render, and rendering is not suppressed. The frame duration is the 60fps cap (~16ms). The draw is bracketed in the terminal's synchronized-update sequences so the terminal shows a coherent frame.
@@ -103,7 +103,7 @@ Communication is **uniformly one-directional**: every background OS thread / tok
 - **Main thread** — the render/event loop. Sole owner of `EditorState`; renders via ratatui, polls crossterm input, runs the editor tick → async-message processing every iteration.
 - **Tokio runtime: 2 worker threads** — a multi-thread runtime named `editor-async`, created once during editor init, held as a shared handle on the `Editor` and mirrored into windows. Hosts all LSP I/O tasks, file-explorer scans, plugin spawn/HTTP, remote connect/reconnect, and quick-open scans. If the runtime fails to build, async features degrade gracefully — every use is optional.
 - **Plugin thread** — one dedicated OS thread running the QuickJS/TS runtime. Returns results to the main loop via the async bridge as plugin messages; health-checked each frame.
-- **Terminal threads (per PTY)** — each spawned terminal gets a plain `std::thread` reader thread (PTY → alacritty emulator → posts terminal output) and a wait thread (blocks on the child process, posts a terminal-exited message). Not tokio.
+- **Terminal threads (per PTY)** — each spawned terminal gets a plain `std::thread` reader thread (PTY → alacritty emulator → posts terminal output) and a wait thread (blocks on the child process, then waits for the reader to drain the PTY to EOF, bounded by a short grace, before posting a terminal-exited message, so the child's last output is on screen before the terminal turns into read-only scrollback), plus a writer thread that owns the PTY master. Not tokio.
 - **File-watch thread** — `notify`'s own backend thread; a `'static` callback translates events to path-changed messages.
 - **stdin-stream thread** — when launched with piped stdin, a `std::thread` spools input to a temp file. This one is **polled, not bridged**.
 - **Remote runtimes** — the authority subsystem builds additional multi-thread tokio runtimes for SSH/k8s carriers, separate from the editor-async runtime.

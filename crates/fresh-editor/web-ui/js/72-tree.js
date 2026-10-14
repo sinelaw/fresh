@@ -199,7 +199,12 @@ function treeEls(t){
     // cell the tree draws its wall into. The document's cell mapping already
     // forwards the drag (the layer is not `onChrome`), so this adds only the
     // affordance: the col-resize cursor over the one column that has it.
-    if(s.kind==="dock"&&s.x===0&&!isMobile()) layer.appendChild(borderDragHandle(s.x+s.w-1,s.y,s.h));
+    // Full height, unlike the explorer's: the dock's grip strip is a direct
+    // child of the dock's own `stack()` (`view/shell/dock.rs`, `dock`), so it
+    // covers every row of the surface — there is no header row above it whose
+    // last column belongs to a control. The layer is at the screen origin, so
+    // the grip draws where it reports.
+    if(s.kind==="dock"&&s.x===0&&!isMobile()) layer.appendChild(borderDragHandle(s.x+s.w-1,s.y,s.h,ORIGIN_SCREEN));
   });
   const kindOf=i=>(t.surfaces[i]||{}).kind;
   for(const it of (t.items||[])) layer.appendChild(treeItemEl(it,kindOf(it.surface)));

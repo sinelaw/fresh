@@ -35,12 +35,16 @@ pub enum HoverTarget {
     TabName(crate::view::split::TabTarget, LeafId),
     /// Hovering over a tab close button (target, split_id)
     TabCloseButton(crate::view::split::TabTarget, LeafId),
+    /// Hovering over a pane's `+` new-tab button (split_id)
+    NewTabButton(LeafId),
     /// Hovering over a close split button (split_id)
     CloseSplitButton(LeafId),
     /// Hovering over a maximize/unmaximize split button (split_id)
     MaximizeSplitButton(LeafId),
     /// Hovering over the file explorer close button
     FileExplorerCloseButton,
+    /// The `⟳` on the explorer's title line.
+    FileExplorerRefreshButton,
     /// Hovering over a file explorer item's status indicator (path)
     FileExplorerStatusIndicator(std::path::PathBuf),
     /// Hovering over a clickable status-bar segment (LSP / encoding / line

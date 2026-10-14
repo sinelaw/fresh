@@ -75,6 +75,7 @@ impl TreeNode {
     }
 
     /// Check if this node is a leaf (file, not a directory)
+    #[cfg(test)]
     pub fn is_leaf(&self) -> bool {
         self.state == NodeState::Leaf
     }

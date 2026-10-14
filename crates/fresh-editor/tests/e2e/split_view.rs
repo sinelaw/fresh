@@ -395,7 +395,7 @@ fn test_close_last_buffer_in_split_closes_split() {
     harness.assert_buffer_content("File 1 content");
 
     // Verify we have 1 split
-    assert_eq!(harness.editor().get_split_count(), 1);
+    assert_eq!(harness.editor().active_window().get_split_count(), 1);
 
     // Create a vertical split via command palette
     // This creates a new split showing the same buffer (Emacs-style)
@@ -414,12 +414,13 @@ fn test_close_last_buffer_in_split_closes_split() {
         .unwrap();
 
     // Verify we now have 2 splits (both showing file1)
-    assert_eq!(harness.editor().get_split_count(), 2);
+    assert_eq!(harness.editor().active_window().get_split_count(), 2);
 
     // The new split has 1 tab (file1) - same buffer as the other split
     let tabs = harness
         .editor()
-        .get_split_tabs(harness.editor().get_active_split());
+        .active_window()
+        .get_split_tabs(harness.editor().active_window().get_active_split());
     assert_eq!(tabs.len(), 1, "New split should have exactly 1 tab");
 
     // Now close the tab (Alt+W) - since this buffer is also in the other split,
@@ -431,7 +432,7 @@ fn test_close_last_buffer_in_split_closes_split() {
 
     // Should be back to 1 split (split was closed)
     assert_eq!(
-        harness.editor().get_split_count(),
+        harness.editor().active_window().get_split_count(),
         1,
         "Expected split to be closed when closing last buffer"
     );
@@ -471,7 +472,7 @@ fn test_close_unique_buffer_in_split_closes_split() {
         .unwrap();
 
     // Verify we now have 2 splits (both showing file1)
-    assert_eq!(harness.editor().get_split_count(), 2);
+    assert_eq!(harness.editor().active_window().get_split_count(), 2);
 
     // Open file2 in the new split - now tabs = [file1, file2], active is file2
     harness.open_file(&file2).unwrap();
@@ -492,8 +493,11 @@ fn test_close_unique_buffer_in_split_closes_split() {
     harness.render().unwrap();
 
     // Now the second split should only have file2, which is NOT in the first split
-    let active_split = harness.editor().get_active_split();
-    let tabs = harness.editor().get_split_tabs(active_split);
+    let active_split = harness.editor().active_window().get_active_split();
+    let tabs = harness
+        .editor()
+        .active_window()
+        .get_split_tabs(active_split);
     assert_eq!(
         tabs.len(),
         1,
@@ -501,7 +505,7 @@ fn test_close_unique_buffer_in_split_closes_split() {
     );
 
     // Both splits still exist
-    assert_eq!(harness.editor().get_split_count(), 2);
+    assert_eq!(harness.editor().active_window().get_split_count(), 2);
 
     // Now close file2 - since it's the only buffer in this split and NOT in other splits,
     // the split should close (this is the bug scenario)
@@ -512,7 +516,7 @@ fn test_close_unique_buffer_in_split_closes_split() {
 
     // Should be back to 1 split (the bug would leave 2 splits with an empty buffer)
     assert_eq!(
-        harness.editor().get_split_count(),
+        harness.editor().active_window().get_split_count(),
         1,
         "Expected split to be closed when closing last unique buffer"
     );
@@ -554,7 +558,7 @@ fn test_close_terminal_in_split_closes_split() {
     // Open file in the first split
     harness.open_file(&file1).unwrap();
     harness.assert_buffer_content("File 1 content");
-    assert_eq!(harness.editor().get_split_count(), 1);
+    assert_eq!(harness.editor().active_window().get_split_count(), 1);
 
     // Create a vertical split
     harness
@@ -572,7 +576,7 @@ fn test_close_terminal_in_split_closes_split() {
         .unwrap();
 
     // Verify we now have 2 splits
-    assert_eq!(harness.editor().get_split_count(), 2);
+    assert_eq!(harness.editor().active_window().get_split_count(), 2);
 
     // Disable jump_to_end_on_output so terminal output doesn't interfere
     harness
@@ -589,8 +593,11 @@ fn test_close_terminal_in_split_closes_split() {
     );
 
     // Close the file1 tab in this split via API (terminal remains)
-    let active_split = harness.editor().get_active_split();
-    let tabs = harness.editor().get_split_tabs(active_split);
+    let active_split = harness.editor().active_window().get_active_split();
+    let tabs = harness
+        .editor()
+        .active_window()
+        .get_split_tabs(active_split);
     // Find the non-terminal buffer (file1)
     let file1_buffer = tabs
         .iter()
@@ -604,7 +611,7 @@ fn test_close_terminal_in_split_closes_split() {
 
     // Now terminal is the only buffer in this split
     // Still have 2 splits
-    assert_eq!(harness.editor().get_split_count(), 2);
+    assert_eq!(harness.editor().active_window().get_split_count(), 2);
 
     // Close the terminal buffer - split should close
     // Use close_tab() which is what Action::Close calls
@@ -613,7 +620,7 @@ fn test_close_terminal_in_split_closes_split() {
 
     // Should be back to 1 split
     assert_eq!(
-        harness.editor().get_split_count(),
+        harness.editor().active_window().get_split_count(),
         1,
         "Expected split to be closed when closing terminal (the last buffer in split)"
     );

@@ -11,7 +11,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-BUILTIN_THEMES=(dark light high-contrast nostalgia dracula nord solarized-dark)
+BUILTIN_THEMES=(dark light high-contrast nostalgia dracula nord solarized-dark tokyo-night gruvbox)
 
 cd "$ROOT_DIR"
 

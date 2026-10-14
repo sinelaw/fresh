@@ -108,10 +108,21 @@ pub enum PromptType {
     ConfirmRevert,
     /// Confirm saving over a file that changed on disk
     ConfirmSaveConflict,
-    /// Confirm saving with sudo after permission denied
+    /// Confirm saving with sudo after permission denied. Holds the save's
+    /// temp file, which is deleted when the last copy of this prompt type
+    /// drops — however the prompt ends.
+    ///
+    /// `buffer_id` is the buffer being saved, which the sudo write finalizes
+    /// whichever buffer is active by then; with `close_after_save` it is
+    /// closed once saved (Save on closing its tab).
     ConfirmSudoSave {
-        info: crate::model::buffer::SudoSaveRequired,
+        info: std::sync::Arc<crate::model::buffer::SudoSaveRequired>,
+        buffer_id: crate::model::event::BufferId,
+        close_after_save: bool,
     },
+    /// Restore, show the difference from, or discard the copy an
+    /// interrupted in-place save of `dest_path` kept (or decide later)
+    ConfirmInterruptedSave { dest_path: std::path::PathBuf },
     /// Confirm overwriting an existing file during SaveAs
     ConfirmOverwriteFile { path: std::path::PathBuf },
     /// Confirm creating parent directories for a save target
@@ -127,14 +138,22 @@ pub enum PromptType {
     /// Issued only when no buffer is modified; otherwise
     /// `ConfirmQuitWithModified` runs instead.
     ConfirmQuit,
+    /// Quit from an attached daemon client: Detach, Quit (stopping the
+    /// daemon and everything it runs), or Cancel.
+    ConfirmQuitDaemon,
     /// File Explorer rename operation
     /// Stores the original path and name for the file/directory being renamed
     FileExplorerRename {
         original_path: std::path::PathBuf,
         original_name: String,
-        /// True if this rename is for a newly created file (should switch focus to editor after)
-        /// False if renaming an existing file (should keep focus in file explorer)
-        is_new_file: bool,
+    },
+    /// Name a new file or directory in the file explorer.
+    ///
+    /// Nothing exists yet: the entry is created when this is confirmed, so
+    /// cancelling leaves no trace. `parent` is the directory it will land in.
+    FileExplorerCreate {
+        parent: std::path::PathBuf,
+        is_dir: bool,
     },
     /// Confirm deleting a file or directory in the file explorer
     ConfirmDeleteFile {
@@ -146,15 +165,28 @@ pub enum PromptType {
         src: std::path::PathBuf,
         dst: std::path::PathBuf,
         is_cut: bool,
+        /// Whether the clipboard is what `src` came from — see
+        /// [`PromptType::ConfirmMultiPasteConflict`]. A drag of one entry asks
+        /// this same question, and must not empty a clipboard it never filled.
+        from_clipboard: bool,
     },
     /// Rename destination when pasting (user chose 'r' in conflict prompt)
     FileExplorerPasteRename {
         src: std::path::PathBuf,
         dst_dir: std::path::PathBuf,
         is_cut: bool,
+        from_clipboard: bool,
     },
     /// Confirm deleting multiple items from the file explorer
     ConfirmMultiDelete { paths: Vec<std::path::PathBuf> },
+    /// Confirm a move a drag in the file explorer asked for.
+    ///
+    /// `pairs` are the entries and the full paths they would land at. Nothing
+    /// is moved, and no collision is looked for, until this is answered: the
+    /// filesystem is read again then, not trusted from the moment of the drop.
+    ConfirmExplorerMove {
+        pairs: Vec<(std::path::PathBuf, std::path::PathBuf)>,
+    },
     /// Per-conflict prompt for multi-file paste.
     /// `pending[0]` is the conflict currently being shown.
     /// User choices: (o)verwrite this, (O) all, (s)kip this, (S) all, (c)ancel.
@@ -163,6 +195,10 @@ pub enum PromptType {
         confirmed: Vec<(std::path::PathBuf, std::path::PathBuf)>,
         pending: Vec<(std::path::PathBuf, std::path::PathBuf)>,
         is_cut: bool,
+        /// Whether the clipboard is what these paths came from, and so whether
+        /// finishing them empties it. A paste owns it; a drag does not, and
+        /// must not discard a cut the reader is still holding.
+        from_clipboard: bool,
     },
     /// Confirm loading a large file with non-resynchronizable encoding
     /// (like GB18030, GBK, Shift-JIS, EUC-KR) that requires full file loading
@@ -221,23 +257,29 @@ pub struct Prompt {
     edit: crate::primitives::text_edit::TextEdit,
     /// What to do when user confirms
     pub prompt_type: PromptType,
-    /// Autocomplete suggestions (filtered)
-    pub suggestions: Vec<Suggestion>,
+    /// Autocomplete suggestions (filtered), in shared storage.
+    ///
+    /// The list's description holds this handle and converts the rows its
+    /// window asks for, so a frame costs the window rather than the list.
+    /// Replaced, never edited in place: every writer assigns a new list, so
+    /// the allocation's identity is "these suggestions" and
+    /// [`Prompt::names_are_paths`] can be kept against it.
+    pub suggestions: std::rc::Rc<Vec<Suggestion>>,
+    /// [`Prompt::names_are_paths`]'s answer, and the list it was worked out
+    /// for (held, so its address cannot be reused by another list).
+    names_are_paths_of: std::cell::RefCell<Option<(std::rc::Rc<Vec<Suggestion>>, bool)>>,
     /// Original unfiltered suggestions (for prompts that filter client-side like SwitchToTab)
     pub original_suggestions: Option<Vec<Suggestion>>,
     /// Currently selected suggestion index
-    pub selected_suggestion: Option<usize>,
-    /// Index of the first suggestion shown in the popup viewport.
-    /// Updated minimally by the renderer to keep `selected_suggestion`
-    /// visible — selection changes inside the viewport never scroll
-    /// (issue #1660).
-    pub scroll_offset: usize,
-    /// When true, the user has scrolled the result list with the mouse wheel,
-    /// so the renderer must NOT pull `scroll_offset` back to keep the
-    /// selection in view (issue #2119). Reset whenever the selection moves by
-    /// keyboard or the suggestion list is rebuilt, so normal navigation
-    /// re-engages the keep-selection-visible behaviour.
-    pub manual_scroll: bool,
+    ///
+    /// Held by the suggestion's id, not its position
+    /// (`view::keyed_selection`): a list that grows or re-ranks keeps the
+    /// selection on its suggestion. Read and written through
+    /// [`Prompt::selected_suggestion`] and [`Prompt::select_suggestion`].
+    selection: crate::view::keyed_selection::KeyedSelection,
+    /// The suggestion list's page: its layout records the window it was
+    /// given here, and PageUp/PageDown ask it for the row a page away.
+    pub pager: std::rc::Rc<fresh_ui::behavior::Pager>,
     /// Tracks the input value when suggestions were last set by a plugin.
     /// Used to skip Rust-side filtering when plugin has already filtered for this input.
     pub suggestions_set_for_input: Option<String>,
@@ -268,6 +310,12 @@ pub struct Prompt {
     /// session_preview delegate region was already provided by
     /// Primitive #1 — `editor.previewWindowInRect`).
     pub footer: Vec<fresh_core::api::StyledText>,
+    /// Centre the overlay's card on the whole frame (90% of it, over the
+    /// dock and sidebar, as Settings is) rather than on the chrome beside
+    /// the dock. Plugin-controlled
+    /// via `editor.setPromptFullscreen(on)`; no effect on non-overlay
+    /// prompts.
+    pub fullscreen: bool,
     /// The plugin's toolbar for the overlay's header band, when it set one
     /// (`editor.setPromptToolbar(spec)`): the key of the registry panel that
     /// holds its spec, its widgets' state and its focus fact. Described in the
@@ -280,6 +328,18 @@ pub struct Prompt {
     /// `selected / total` count (e.g. "Searching…", "No matches"). Plugin-
     /// controlled via `editor.setPromptStatus(text)`; overlay-only.
     pub status: String,
+    /// The question this prompt is, when it is a confirmation rather than
+    /// something to type into.
+    ///
+    /// **`Some` moves the prompt off the bottom row entirely.** The renderer
+    /// draws a centred modal over a dimmed frame instead of the minibuffer
+    /// line (`view::shell::confirm`), and `dispatch_prompt_key` hands every
+    /// key to the dialog's own dispatcher rather than to the text editor
+    /// below. Confirming feeds the selected choice's `input` to
+    /// `Editor::confirm_prompt`, so the prompt type's existing handler is
+    /// reached by exactly the string the single-letter answer used to
+    /// produce. See [`crate::view::confirm`] for why.
+    pub confirm: Option<crate::view::confirm::Confirm>,
 }
 
 /// Maximum number of suggestion rows a bottom-anchored dropdown shows at once.
@@ -296,24 +356,77 @@ pub struct Prompt {
 pub const MAX_VISIBLE_SUGGESTIONS: usize = 10;
 
 impl Prompt {
+    /// Replace the suggestions. The one way they change: every id in the
+    /// list must be unique (it is the row's key), which a plugin's list was
+    /// already made to prove at the API and the editor's own lists are built
+    /// to.
+    pub fn set_suggestions(&mut self, suggestions: Vec<Suggestion>) {
+        debug_assert!(
+            Suggestion::duplicate_id(&suggestions).is_none(),
+            "suggestion ids must be unique, {:?} repeats",
+            Suggestion::duplicate_id(&suggestions)
+        );
+        self.suggestions = std::rc::Rc::new(suggestions);
+    }
+
+    /// Where the selected suggestion is in the current list: `None` when
+    /// nothing is selected, or when the selected suggestion has left the
+    /// list.
+    pub fn selected_suggestion(&self) -> Option<usize> {
+        let list = &self.suggestions;
+        self.selection.index(list.len(), |i| list[i].id.as_str())
+    }
+
+    /// Select the suggestion at `index` in the current list — or nothing,
+    /// for `None` or an index the list does not have.
+    pub fn select_suggestion(&mut self, index: Option<usize>) {
+        self.selection = match index.and_then(|i| self.suggestions.get(i).map(|s| (i, s))) {
+            Some((i, s)) => crate::view::keyed_selection::KeyedSelection::at(i, s.id.clone()),
+            None => Default::default(),
+        };
+    }
+
+    /// Whether the suggestions' names are paths, which decides the end a
+    /// narrow row keeps (`view::shell::prompt::names_are_paths`).
+    ///
+    /// A fact about the whole list, so it is worked out once per list — the
+    /// list is replaced, never edited, so the one it was worked out for is
+    /// the one still here until a writer assigns another.
+    pub fn names_are_paths(&self) -> bool {
+        let mut memo = self.names_are_paths_of.borrow_mut();
+        if let Some((list, answer)) = memo.as_ref() {
+            if std::rc::Rc::ptr_eq(list, &self.suggestions) {
+                return *answer;
+            }
+        }
+        let answer = crate::view::shell::prompt::names_are_paths(
+            self.suggestions.iter().any(|s| s.keybinding.is_some()),
+            self.suggestions.iter().any(|s| s.source.is_some()),
+        );
+        *memo = Some((self.suggestions.clone(), answer));
+        answer
+    }
+
     /// Create a new prompt
     pub fn new(message: String, prompt_type: PromptType) -> Self {
         Self {
             message,
             edit: crate::primitives::text_edit::TextEdit::single_line(),
             prompt_type,
-            suggestions: Vec::new(),
+            suggestions: Default::default(),
+            names_are_paths_of: Default::default(),
             original_suggestions: None,
-            selected_suggestion: None,
-            scroll_offset: 0,
-            manual_scroll: false,
+            selection: Default::default(),
+            pager: fresh_ui::behavior::Pager::new(),
             suggestions_set_for_input: None,
             sync_input_on_navigate: false,
             overlay: false,
             title: Vec::new(),
             footer: Vec::new(),
+            fullscreen: false,
             toolbar: None,
             status: String::new(),
+            confirm: None,
         }
     }
 
@@ -326,27 +439,35 @@ impl Prompt {
         prompt_type: PromptType,
         suggestions: Vec<Suggestion>,
     ) -> Self {
-        let selected_suggestion = if suggestions.is_empty() {
-            None
-        } else {
-            Some(0)
+        let selection = match suggestions.first() {
+            Some(first) => crate::view::keyed_selection::KeyedSelection::at(0, first.id.clone()),
+            None => Default::default(),
         };
         Self {
             message,
             edit: crate::primitives::text_edit::TextEdit::single_line(),
             prompt_type,
             original_suggestions: Some(suggestions.clone()),
-            suggestions,
-            selected_suggestion,
-            scroll_offset: 0,
-            manual_scroll: false,
+            suggestions: {
+                debug_assert!(
+                    Suggestion::duplicate_id(&suggestions).is_none(),
+                    "suggestion ids must be unique: {:?} repeats",
+                    Suggestion::duplicate_id(&suggestions)
+                );
+                suggestions.into()
+            },
+            names_are_paths_of: Default::default(),
+            selection,
+            pager: fresh_ui::behavior::Pager::new(),
             suggestions_set_for_input: None,
             sync_input_on_navigate: false,
             overlay: false,
             title: Vec::new(),
             footer: Vec::new(),
+            fullscreen: false,
             toolbar: None,
             status: String::new(),
+            confirm: None,
         }
     }
 
@@ -387,19 +508,28 @@ impl Prompt {
             message,
             edit,
             prompt_type,
-            suggestions: Vec::new(),
+            suggestions: Default::default(),
+            names_are_paths_of: Default::default(),
             original_suggestions: None,
-            selected_suggestion: None,
-            scroll_offset: 0,
-            manual_scroll: false,
+            selection: Default::default(),
+            pager: fresh_ui::behavior::Pager::new(),
             suggestions_set_for_input: None,
             sync_input_on_navigate: false,
             overlay: false,
             title: Vec::new(),
             footer: Vec::new(),
+            fullscreen: false,
             toolbar: None,
             status: String::new(),
+            confirm: None,
         }
+    }
+
+    /// Whether this prompt is drawn as a modal dialog instead of the
+    /// bottom row. The one question three separate places have to agree on —
+    /// the frame's row budget, the row's content, and the keyboard.
+    pub fn is_confirm_dialog(&self) -> bool {
+        self.confirm.is_some()
     }
 
     /// Move cursor left (to previous grapheme cluster boundary)
@@ -534,57 +664,6 @@ impl Prompt {
         self.edit.move_end();
     }
 
-    /// Select next suggestion
-    pub fn select_next_suggestion(&mut self) {
-        if !self.suggestions.is_empty() {
-            // Keyboard navigation re-engages keep-selection-visible scrolling.
-            self.manual_scroll = false;
-            self.selected_suggestion = Some(match self.selected_suggestion {
-                Some(idx) if idx + 1 < self.suggestions.len() => idx + 1,
-                Some(_) => 0, // Wrap to start
-                None => 0,
-            });
-        }
-    }
-
-    /// Select previous suggestion
-    pub fn select_prev_suggestion(&mut self) {
-        if !self.suggestions.is_empty() {
-            self.manual_scroll = false;
-            self.selected_suggestion = Some(match self.selected_suggestion {
-                Some(0) => self.suggestions.len() - 1, // Wrap to end
-                Some(idx) => idx - 1,
-                None => 0,
-            });
-        }
-    }
-
-    /// Scroll the result list by `delta` rows without moving the selection
-    /// (mouse wheel over the Live Grep overlay results pane, issue #2119).
-    /// `visible` is the number of result rows currently on screen, used to
-    /// clamp the offset so it can't scroll past the end of the list.
-    pub fn scroll_results(&mut self, delta: i32, visible: usize) {
-        let total = self.suggestions.len();
-        if total == 0 {
-            return;
-        }
-        let max_offset = total.saturating_sub(visible.max(1));
-        let next = (self.scroll_offset as i32 + delta).clamp(0, max_offset as i32) as usize;
-        if next != self.scroll_offset {
-            self.scroll_offset = next;
-        }
-        // Latch manual scroll even when clamped at an edge, so a follow-up
-        // render doesn't immediately yank the offset back to the selection.
-        self.manual_scroll = true;
-    }
-
-    /// Get the currently selected suggestion value
-    pub fn selected_value(&self) -> Option<String> {
-        self.selected_suggestion
-            .and_then(|idx| self.suggestions.get(idx))
-            .map(|s| s.get_value().to_string())
-    }
-
     /// Get the final input (use selected suggestion if available, otherwise raw input)
     /// The query text. Accessor for the §4.5 state collapse: external
     /// readers go through this (not the field) so the storage can
@@ -631,10 +710,6 @@ impl Prompt {
             let a = anchor.min(self.input_str().len());
             self.edit.selection_anchor = Some((0, a));
         }
-    }
-
-    pub fn get_final_input(&self) -> String {
-        self.selected_value().unwrap_or_else(|| self.edit.value())
     }
 
     /// Apply fuzzy filtering to suggestions based on current input
@@ -684,43 +759,12 @@ impl Prompt {
             .collect();
 
         filtered.sort_by_key(|b| std::cmp::Reverse(b.1));
-        self.suggestions = filtered.into_iter().map(|(s, _)| s).collect();
-        self.selected_suggestion = if self.suggestions.is_empty() {
+        self.set_suggestions(filtered.into_iter().map(|(s, _)| s).collect());
+        self.select_suggestion(if self.suggestions.is_empty() {
             None
         } else {
             Some(0)
-        };
-        self.scroll_offset = 0;
-        self.manual_scroll = false;
-    }
-
-    /// Adjust `scroll_offset` so that `selected_suggestion` is inside a
-    /// viewport of `visible_count` rows, scrolling the minimum amount
-    /// required. A selection that's already on-screen leaves the viewport
-    /// untouched — this is what stops a click on a near-bottom item from
-    /// snapping the list upward and recentering under the cursor (issue
-    /// #1660). Callers pass the actual rendered height of their list
-    /// (bottom-anchored popup and floating Live Grep overlay alike), so
-    /// the scroll only moves when the selection genuinely leaves the
-    /// visible window.
-    pub fn ensure_selected_visible_within(&mut self, visible_count: usize) {
-        let total = self.suggestions.len();
-        let visible = total.min(visible_count.max(1));
-        let max_offset = total.saturating_sub(visible);
-        if visible == 0 {
-            self.scroll_offset = 0;
-            return;
-        }
-        if let Some(selected) = self.selected_suggestion {
-            if selected < self.scroll_offset {
-                self.scroll_offset = selected;
-            } else if selected >= self.scroll_offset + visible {
-                self.scroll_offset = selected + 1 - visible;
-            }
-        }
-        if self.scroll_offset > max_offset {
-            self.scroll_offset = max_offset;
-        }
+        });
     }
 
     // ========================================================================
@@ -845,7 +889,7 @@ impl Prompt {
     pub fn clear(&mut self) {
         self.edit.clear();
         // Also clear selection when clearing input
-        self.selected_suggestion = None;
+        self.select_suggestion(None);
     }
 
     /// Insert text at cursor position (used for paste operation).
@@ -1136,13 +1180,13 @@ mod tests {
         let mut prompt = Prompt::new("Find: ".to_string(), PromptType::OpenFile);
         prompt.set_input_plain("some text".to_string());
         prompt.set_cursor_byte(5);
-        prompt.selected_suggestion = Some(0);
+        prompt.select_suggestion(Some(0));
 
         prompt.clear();
 
         assert_eq!(prompt.input_str(), "");
         assert_eq!(prompt.cursor_byte(), 0);
-        assert_eq!(prompt.selected_suggestion, None);
+        assert_eq!(prompt.selected_suggestion(), None);
     }
 
     #[test]

@@ -580,16 +580,16 @@ impl Window {
         self.event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
 
-        if let Some(view_states) = self.split_view_states_mut() {
+        if let Some(view_states) = self.buffers.split_view_states_mut() {
             if let Some(view_state) = view_states.get_mut(&split_id) {
                 view_state.add_buffer(buffer_id);
                 // Terminal buffers grid-wrap: exact-column rows at the PTY
                 // width so scroll-back lays out like the live grid
                 // (fresh#2649). The width is filled in on scroll-back entry
                 // / by the per-frame healer once the PTY reports its size.
-                view_state.viewport.line_wrap_enabled = true;
-                view_state.viewport.grid_wrap = true;
-                view_state.viewport.wrap_indent = false;
+                view_state.buffer_tab_state_mut().viewport.line_wrap_enabled = true;
+                view_state.buffer_tab_state_mut().viewport.grid_wrap = true;
+                view_state.buffer_tab_state_mut().viewport.wrap_indent = false;
                 // Disable line numbers + current-line highlight for the
                 // terminal buffer's per-buffer view state so exiting
                 // terminal mode doesn't suddenly add a gutter / row
@@ -690,10 +690,9 @@ impl Window {
                     let rulers = self.resources.config.editor.rulers.clone();
                     let terminal_width = self.terminal_width;
                     let terminal_height = self.terminal_height;
-                    let split_result = self
-                        .split_manager_mut()
-                        .expect("active split implies populated layout")
-                        .split_active(split_dir, buffer_id, split_ratio);
+                    let split_result =
+                        self.split_manager_mut()
+                            .split_active(split_dir, buffer_id, split_ratio);
                     match split_result {
                         Ok(new_split_id) => {
                             let mut view_state = SplitViewState::with_buffer(
@@ -713,7 +712,7 @@ impl Window {
                             // is independent.
                             let _ = line_numbers;
                             let _ = highlight_current_line;
-                            view_state.apply_config_defaults(
+                            view_state.buffer_tab_state_mut().apply_config_defaults(
                                 crate::view::split::ViewConfigDefaults {
                                     line_numbers: false,
                                     highlight_current_line: false,
@@ -727,15 +726,12 @@ impl Window {
                             // Terminal buffers grid-wrap at the PTY
                             // width (fresh#2649); the per-frame healer
                             // fills in the column count.
-                            view_state.viewport.line_wrap_enabled = true;
-                            view_state.viewport.grid_wrap = true;
+                            view_state.buffer_tab_state_mut().viewport.line_wrap_enabled = true;
+                            view_state.buffer_tab_state_mut().viewport.grid_wrap = true;
                             self.split_view_states_mut()
-                                .expect("active split implies populated layout")
                                 .insert(new_split_id, view_state);
                             if focus {
-                                self.split_manager_mut()
-                                    .expect("active split implies populated layout")
-                                    .set_active_split(new_split_id);
+                                self.split_manager_mut().set_active_split(new_split_id);
                             }
                             (buffer_id, Some(new_split_id))
                         }
@@ -747,12 +743,13 @@ impl Window {
                             // Graceful fallback: attach to the active
                             // split so the buffer isn't orphaned.
                             if let Some(view_state) = self
+                                .buffers
                                 .split_view_states_mut()
                                 .and_then(|m| m.get_mut(&parent))
                             {
                                 view_state.add_buffer(buffer_id);
-                                view_state.viewport.line_wrap_enabled = true;
-                                view_state.viewport.grid_wrap = true;
+                                view_state.buffer_tab_state_mut().viewport.line_wrap_enabled = true;
+                                view_state.buffer_tab_state_mut().viewport.grid_wrap = true;
                             }
                             self.set_active_buffer(buffer_id);
                             (buffer_id, None)
@@ -771,8 +768,8 @@ impl Window {
                         self.terminal_height,
                         buffer_id,
                     );
-                    vs.viewport.line_wrap_enabled = true;
-                    vs.viewport.grid_wrap = true;
+                    vs.buffer_tab_state_mut().viewport.line_wrap_enabled = true;
+                    vs.buffer_tab_state_mut().viewport.grid_wrap = true;
                     view_states.insert(active_leaf, vs);
                     self.buffers.set_splits((manager, view_states));
                     (buffer_id, Some(active_leaf))
@@ -800,8 +797,8 @@ impl Window {
                         self.terminal_height,
                         buffer_id,
                     );
-                    vs.viewport.line_wrap_enabled = true;
-                    vs.viewport.grid_wrap = true;
+                    vs.buffer_tab_state_mut().viewport.line_wrap_enabled = true;
+                    vs.buffer_tab_state_mut().viewport.grid_wrap = true;
                     view_states.insert(active_leaf, vs);
                     self.buffers.set_splits((manager, view_states));
                     (buffer_id, Some(active_leaf))
@@ -1094,9 +1091,14 @@ impl Window {
     /// one (e.g. the terminal sits in a background tab), and `None`
     /// when the window has no terminals at all.
     pub fn last_focused_terminal(&self) -> Option<TerminalId> {
-        if let Some((mgr, _)) = self.buffers.splits() {
+        if let Some((mgr, vs_map)) = self.buffers.splits() {
+            // The terminal a pane *shows*: a pane showing a group has its
+            // buffer tab behind the group, and that is not what the user
+            // was last looking at.
             let terminal_of_leaf = |leaf: LeafId| {
-                mgr.get_buffer_id(leaf.into())
+                vs_map
+                    .get(&leaf)
+                    .and_then(|vs| vs.shown_buffer())
                     .and_then(|buffer_id| self.terminal_buffers.get(&buffer_id))
                     .map(|tb| tb.terminal_id)
             };
@@ -1122,17 +1124,15 @@ impl Window {
     /// through `Authority::terminal_command`, so the new PTY runs on the remote
     /// backend by construction — never the local host.
     ///
-    /// Only terminals whose handle is missing or no longer alive are respawned;
-    /// a still-live terminal is left untouched (respawning it would orphan its
-    /// PTY). Terminal ids change on respawn — the manager allocates fresh ones —
+    /// `include_live` is `false` on a reconnect, where the PTYs died with the
+    /// carrier, and `true` on an authority change, where they are alive on the
+    /// machine the window just left. Terminal ids change on respawn,
     /// so every terminal-id-keyed entry (buffer→terminal binding, backing/log
     /// files, launch/resume commands, ephemeral marker) is remapped to the new
     /// id and the dead handle is torn down.
     ///
-    /// Returns the number of terminals actually revived (dead handles that were
-    /// respawned), so callers can tailor a status message and skip it when the
-    /// window had no terminals to restore.
-    pub fn respawn_terminals_through_authority(&mut self) -> usize {
+    /// Returns how many terminals were respawned.
+    pub fn respawn_terminals_through_authority(&mut self, include_live: bool) -> usize {
         // Snapshot the (buffer, old terminal id) pairs up front — the loop
         // mutates `terminal_buffers` as it remaps ids.
         let bindings: Vec<(BufferId, TerminalId)> = self
@@ -1143,9 +1143,8 @@ impl Window {
 
         let mut revived = 0usize;
         for (buffer_id, old_id) in bindings {
-            // Leave a still-live terminal alone; only revive the dead ones.
             let handle = self.terminal_manager.get(old_id);
-            if handle.is_some_and(|h| h.is_alive()) {
+            if !include_live && handle.is_some_and(|h| h.is_alive()) {
                 continue;
             }
 
@@ -1534,15 +1533,8 @@ impl Editor {
         };
         self.begin_self_update(terminal_id, window, buffer_id);
 
-        // Editor-wide: refresh the plugin-state snapshot and fire
-        // `buffer_activated`, matching `open_terminal`.
-        #[cfg(feature = "plugins")]
-        self.update_plugin_state_snapshot();
-        #[cfg(feature = "plugins")]
-        self.plugin_manager.read().unwrap().run_hook(
-            "buffer_activated",
-            crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
-        );
+        // Editor-wide: announce the focus change, matching `open_terminal`.
+        self.announce_focus();
     }
 
     /// Size the active window's visible terminal PTYs to their panes — as
@@ -1579,15 +1571,8 @@ impl Editor {
             return;
         };
 
-        // Editor-wide: refresh the plugin-state snapshot so plugin
-        // hooks see the new active buffer, then fire `buffer_activated`.
-        #[cfg(feature = "plugins")]
-        self.update_plugin_state_snapshot();
-        #[cfg(feature = "plugins")]
-        self.plugin_manager.read().unwrap().run_hook(
-            "buffer_activated",
-            crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
-        );
+        // Editor-wide: announce the focus change to plugins.
+        self.announce_focus();
 
         // Status bar with the terminal-mode exit key. Looked up here
         // (not in Window) because the keybinding resolver is shared
@@ -1639,10 +1624,8 @@ impl Editor {
         // Split the active pane, placing the new terminal leaf after
         // (right for Vertical, below for Horizontal).
         let new_leaf = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_manager_mut())
-            .expect("active window must have a populated split layout")
+            .active_window_mut()
+            .split_manager_mut()
             .split_active(direction, buffer_id, 0.5);
         let new_leaf = match new_leaf {
             Ok(leaf) => leaf,
@@ -1656,31 +1639,29 @@ impl Editor {
             SplitViewState::with_buffer(self.terminal_width, self.terminal_height, buffer_id);
         // Terminal-dedicated splits never show line numbers or current-line
         // highlight (mirrors the dock + plugin-terminal split setup).
-        view_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
-            line_numbers: false,
-            highlight_current_line: false,
-            line_wrap: self.active_window().resolve_line_wrap_for_buffer(buffer_id),
-            wrap_indent: self.config.editor.wrap_indent,
-            wrap_column: self
-                .active_window()
-                .resolve_wrap_column_for_buffer(buffer_id),
-            rulers: self.config.editor.rulers.clone(),
-            scroll_offset: 0,
-        });
+        view_state.buffer_tab_state_mut().apply_config_defaults(
+            crate::view::split::ViewConfigDefaults {
+                line_numbers: false,
+                highlight_current_line: false,
+                line_wrap: self.active_window().resolve_line_wrap_for_buffer(buffer_id),
+                wrap_indent: self.config.editor.wrap_indent,
+                wrap_column: self
+                    .active_window()
+                    .resolve_wrap_column_for_buffer(buffer_id),
+                rulers: self.config.editor.rulers.clone(),
+                scroll_offset: 0,
+            },
+        );
         // Terminals grid-wrap at the PTY width (fresh#2649).
-        view_state.viewport.line_wrap_enabled = true;
-        view_state.viewport.grid_wrap = true;
-        view_state.viewport.wrap_indent = false;
+        view_state.buffer_tab_state_mut().viewport.line_wrap_enabled = true;
+        view_state.buffer_tab_state_mut().viewport.grid_wrap = true;
+        view_state.buffer_tab_state_mut().viewport.wrap_indent = false;
 
-        self.windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
+        self.active_window_mut()
+            .split_view_states_mut()
             .insert(new_leaf, view_state);
-        self.windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_manager_mut())
-            .expect("active window must have a populated split layout")
+        self.active_window_mut()
+            .split_manager_mut()
             .set_active_split(new_leaf);
 
         // Mirror open_terminal's post-attach bookkeeping. The new terminal was
@@ -1694,15 +1675,8 @@ impl Editor {
         // single layout funnel so existing terminals fit their new panes.
         self.relayout();
 
-        // Editor-wide: refresh the plugin-state snapshot so plugin hooks see
-        // the new active buffer, then fire `buffer_activated`.
-        #[cfg(feature = "plugins")]
-        self.update_plugin_state_snapshot();
-        #[cfg(feature = "plugins")]
-        self.plugin_manager.read().unwrap().run_hook(
-            "buffer_activated",
-            crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
-        );
+        // Editor-wide: announce the focus change to plugins.
+        self.announce_focus();
 
         let exit_key = self
             .keybindings
@@ -1879,7 +1853,10 @@ impl Editor {
         let target_split = self.active_window().buffers.splits().and_then(|(mgr, vs)| {
             mgr.splits_for_buffer(buffer_id)
                 .into_iter()
-                .next()
+                .find(|leaf| {
+                    vs.get(leaf)
+                        .is_some_and(|v| v.shown_buffer() == Some(buffer_id))
+                })
                 .or_else(|| {
                     vs.iter()
                         .find(|(_, view_state)| view_state.has_buffer(buffer_id))
@@ -2022,19 +1999,26 @@ impl Editor {
                 state.editing_disabled = false;
                 state.margins.configure_for_line_numbers(false);
             }
-            let __active_split = self.split_manager().active_split();
-            if let Some(view_state) = self.split_view_states_mut().get_mut(&__active_split) {
+            let __active_split = self.active_window().effective_active_split();
+            if let Some(view_state) = self
+                .active_window_mut()
+                .split_view_states_mut()
+                .get_mut(&__active_split)
+            {
                 // Keep the grid-wrap config (fresh#2649) — the live grid
                 // overlays the buffer view, but scroll math still reads
                 // these flags until the next scroll-back visit re-syncs.
-                view_state.viewport.line_wrap_enabled = true;
-                view_state.viewport.grid_wrap = true;
+                view_state.buffer_tab_state_mut().viewport.line_wrap_enabled = true;
+                view_state.buffer_tab_state_mut().viewport.grid_wrap = true;
                 // A selection made in the scrollback view must not outlive
                 // the visit: the anchor would otherwise re-materialize as a
                 // phantom selection on the next scrollback entry (the sync
                 // pins only the cursor *position*) and re-suppress the
                 // output-driven auto-resume in `handle_terminal_output`.
-                view_state.cursors.map(|c| c.clear_selection());
+                view_state
+                    .buffer_tab_state_mut()
+                    .cursors
+                    .map(|c| c.clear_selection());
             }
 
             // Truncate backing file to remove visible screen tail and scroll to bottom
@@ -2180,20 +2164,22 @@ impl Window {
     }
 
     /// Send a key event to this window's active terminal. Picks
-    /// "application cursor" vs "normal cursor" escape sequences
+    /// "application cursor" vs "normal cursor" escape sequences, and
+    /// the kitty keyboard protocol encoding when the child enabled it,
     /// based on the terminal's current state.
     pub fn send_terminal_key(
         &mut self,
         code: crossterm::event::KeyCode,
         modifiers: crossterm::event::KeyModifiers,
     ) {
-        let app_cursor = self
+        use crate::services::terminal::pty::{key_to_pty_bytes, kitty_encoded_key, KittyKeyFlags};
+        let (app_cursor, kitty) = self
             .get_active_terminal_state()
-            .map(|s| s.is_app_cursor())
-            .unwrap_or(false);
-        if let Some(bytes) =
-            crate::services::terminal::pty::key_to_pty_bytes(code, modifiers, app_cursor)
-        {
+            .map(|s| (s.is_app_cursor(), s.kitty_key_flags()))
+            .unwrap_or((false, KittyKeyFlags::empty()));
+        let bytes = kitty_encoded_key(code, modifiers, kitty)
+            .or_else(|| key_to_pty_bytes(code, modifiers, app_cursor));
+        if let Some(bytes) = bytes {
             self.send_terminal_input(&bytes);
         }
     }
@@ -2569,9 +2555,20 @@ impl Window {
             let anchor_byte = history_end_byte
                 .map(|h| (h as usize).min(total_bytes))
                 .unwrap_or(total_bytes);
-            if let Some((mgr, view_states)) = self.buffers.splits_mut() {
-                let active_split = mgr.active_split();
-                if let Some(view_state) = view_states.get_mut(&active_split) {
+            // `effective_active_split` needs a split layout; the guard
+            // below is the one this path always had.
+            let focused = self
+                .buffers
+                .splits()
+                .is_some()
+                .then(|| self.effective_active_split());
+            if let (Some(focused), Some((_, view_states))) = (focused, self.buffers.splits_mut()) {
+                // The terminal's own view state in the pane the user is in —
+                // not whatever buffer that pane has as its tab.
+                if let Some(view_state) = view_states
+                    .get_mut(&focused)
+                    .and_then(|vs| vs.buffer_state_mut(buffer_id))
+                {
                     // The anchor line may carry a re-attached in-history
                     // head (a tall in-progress line, fresh#2649): the grid
                     // view starts `prepended.rows` visual rows into it so
@@ -2611,9 +2608,15 @@ impl Window {
         // single missed spot leaks a gutter pop-in on exit — pinning
         // them on this path covers any terminal regardless of how its
         // view state was created.
-        if let Some((mgr, view_states)) = self.buffers.splits_mut() {
-            let active_split = mgr.active_split();
-            // The active split's view state may not yet have a keyed
+        // The pane the user is in (a shown group's focused panel included),
+        // resolved before the view states are borrowed.
+        let focused = self
+            .buffers
+            .splits()
+            .is_some()
+            .then(|| self.effective_active_split());
+        if let (Some(focused), Some((_, view_states))) = (focused, self.buffers.splits_mut()) {
+            // The focused split's view state may not yet have a keyed
             // entry for the terminal buffer (e.g. user just pressed
             // Alt+] into a split that has the terminal as a tab but
             // never displayed it before). ensure_buffer_state will
@@ -2650,15 +2653,18 @@ impl Window {
                     }
                 }
             }
-            if let Some(view_state) = view_states.get_mut(&active_split) {
-                view_state.viewport.line_wrap_enabled = true;
-                view_state.viewport.grid_wrap = true;
-                view_state.viewport.wrap_indent = false;
-                if let Some(cols) = grid_cols {
-                    view_state.viewport.wrap_column = Some(cols);
-                }
-                view_state.viewport.set_skip_ensure_visible();
+            // The terminal's own view state in that pane — the one the
+            // anchor was pinned on — not whatever buffer the pane has as
+            // its tab.
+            if let Some(view_state) = view_states.get_mut(&focused) {
                 let buf_state = view_state.ensure_buffer_state(buffer_id);
+                buf_state.viewport.line_wrap_enabled = true;
+                buf_state.viewport.grid_wrap = true;
+                buf_state.viewport.wrap_indent = false;
+                if let Some(cols) = grid_cols {
+                    buf_state.viewport.wrap_column = Some(cols);
+                }
+                buf_state.viewport.set_skip_ensure_visible();
                 buf_state.show_line_numbers = false;
                 buf_state.highlight_current_line = false;
             }
@@ -2711,14 +2717,16 @@ impl Window {
             .and_then(|h| (h.buffer_id == buffer_id).then(|| (h.row, h.cols.clone())));
         ratatui::widgets::Widget::render(ratatui::widgets::Clear, content_rect, buf);
         let theme = self.resources.theme.read().unwrap();
+        use crate::view::theme::ThemeStyle;
+        use ratatui::style::Style;
         render::render_terminal_content(
             &content,
             cursor_pos,
             cursor_visible,
             content_rect,
             buf,
-            theme.terminal_fg,
-            theme.terminal_bg,
+            Style::default().theme_fg(&theme, "ui.terminal_fg"),
+            Style::default().theme_bg(&theme, "ui.terminal_bg"),
             link_highlight,
         );
     }
@@ -2780,35 +2788,6 @@ impl Editor {
             .and_then(|state| state.buffer.to_string())
     }
 
-    /// Get cursor position for a buffer (for testing)
-    pub fn get_cursor_position(&self, buffer_id: BufferId) -> Option<usize> {
-        // Find cursor from any split view state that has this buffer
-        self.windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
-            .values()
-            .find_map(|vs| {
-                if vs.keyed_states.contains_key(&buffer_id) {
-                    Some(vs.keyed_states.get(&buffer_id)?.cursors.primary().position)
-                } else {
-                    None
-                }
-            })
-            .or_else(|| {
-                // Fallback: check active cursors
-                self.windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(_, vs)| vs)
-                    .expect("active window must have a populated split layout")
-                    .values()
-                    .map(|vs| vs.cursors.primary().position)
-                    .next()
-            })
-    }
-
     // `render_terminal_splits` moved to `impl Window`. Active-window
     // callers reach it via `self.active_window().render_terminal_splits(...)`;
     // the picker preview path reaches it via the previewed window
@@ -2831,15 +2810,23 @@ pub mod render {
         cursor_visible: bool,
         area: Rect,
         buf: &mut Buffer,
-        default_fg: Color,
-        default_bg: Color,
+        default_fg: Style,
+        default_bg: Style,
         link_highlight: Option<(u16, std::ops::Range<usize>)>,
     ) {
         // Fill the rendered area with the theme's terminal bg first so any
         // cells past the PTY grid (e.g. transiently smaller than the rect
         // mid-resize) show the theme background rather than leaking the
         // host terminal's default bg. Issue #1890.
-        buf.set_style(area, Style::default().fg(default_fg).bg(default_bg));
+        //
+        // Colors only: a cell takes the area's style as its base and
+        // `set_string` can add text attributes but not clear them, so the
+        // default keys' attributes here would reach cells that carry colors
+        // of their own. Those go on default-colored cells, below.
+        let mut ground = Style::default();
+        ground.fg = default_fg.fg;
+        ground.bg = default_bg.bg;
+        buf.set_style(area, ground);
 
         for (row_idx, row) in content.iter().enumerate() {
             if row_idx as u16 >= area.height {
@@ -2855,17 +2842,17 @@ pub mod render {
 
                 let x = area.x + col_idx as u16;
 
-                // Build style from cell attributes, using theme defaults
-                let mut style = Style::default().fg(default_fg).bg(default_bg);
-
-                // Override with cell-specific colors if present
-                if let Some((r, g, b)) = cell.fg {
-                    style = style.fg(Color::Rgb(r, g, b));
-                }
-
-                if let Some((r, g, b)) = cell.bg {
-                    style = style.bg(Color::Rgb(r, g, b));
-                }
+                // Build style from cell attributes. A cell without a color of
+                // its own takes the theme's default — with that key's text
+                // attributes, which belong to the default, not to the cell.
+                let mut style = match cell.fg {
+                    Some((r, g, b)) => Style::default().fg(Color::Rgb(r, g, b)),
+                    None => default_fg,
+                };
+                style = match cell.bg {
+                    Some((r, g, b)) => style.bg(Color::Rgb(r, g, b)),
+                    None => style.patch(default_bg),
+                };
 
                 // Apply modifiers
                 if cell.bold {
@@ -2930,8 +2917,8 @@ pub mod render {
                 false,
                 area,
                 &mut buf,
-                default_fg,
-                default_bg,
+                Style::default().fg(default_fg),
+                Style::default().bg(default_bg),
                 None,
             );
 
@@ -2968,8 +2955,8 @@ pub mod render {
                 false,
                 area,
                 &mut buf,
-                Color::White,
-                Color::Black,
+                Style::default().fg(Color::White),
+                Style::default().bg(Color::Black),
                 Some((0, 2..5)), // underline columns 2,3,4
             );
 
@@ -3184,5 +3171,28 @@ mod mouse_encoding_tests {
         assert_eq!(cb(TerminalMouseEventKind::ScrollDown), 65 + 32);
         assert_eq!(cb(TerminalMouseEventKind::ScrollLeft), 66 + 32);
         assert_eq!(cb(TerminalMouseEventKind::ScrollRight), 67 + 32);
+    }
+}
+
+impl crate::app::window::Window {
+    /// Get cursor position for a buffer (for testing)
+    pub fn get_cursor_position(&self, buffer_id: BufferId) -> Option<usize> {
+        // Find cursor from any split view state that has this buffer
+        self.split_view_states()
+            .values()
+            .find_map(|vs| {
+                if vs.has_buffer_state(buffer_id) {
+                    Some(vs.buffer_state(buffer_id)?.cursors.primary().position)
+                } else {
+                    None
+                }
+            })
+            .or_else(|| {
+                // Fallback: check active cursors
+                self.split_view_states()
+                    .values()
+                    .map(|vs| vs.buffer_tab_state().cursors.primary().position)
+                    .next()
+            })
     }
 }

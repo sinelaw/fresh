@@ -763,64 +763,6 @@ pub fn should_show_line_number(line: &ViewLine) -> bool {
     true
 }
 
-// ============================================================================
-// Layout: The computed display state for a view
-// ============================================================================
-
-/// The Layout represents the computed display state for a view.
-///
-/// This is **View state**, not Buffer state. Each split has its own Layout
-/// computed from its base tokens.
-///
-/// **Nothing reads one.** The only `Layout` in the editor is
-/// `SplitView::layout`, written by `SplitView::ensure_layout` and read by
-/// `SplitView::get_layout` — neither of which has a caller. Its query
-/// methods (`source_byte_to_view_position`, `view_position_to_source_byte`,
-/// `get_source_byte_for_line`, `find_nearest_view_line`, `max_top_line`,
-/// `has_content_below`) and the `byte_to_line` index they walked are gone;
-/// the type itself should follow once `view::split` can be touched.
-#[derive(Debug, Clone)]
-pub struct Layout {
-    /// Display lines for the current viewport region
-    pub lines: Vec<ViewLine>,
-
-    /// Source byte range this layout covers
-    pub source_range: Range<usize>,
-
-    /// Total view lines in entire document (estimated or exact)
-    pub total_view_lines: usize,
-
-    /// Total injected lines in entire document (from view transform)
-    pub total_injected_lines: usize,
-}
-
-impl Layout {
-    /// Create a new Layout from ViewLines
-    pub fn new(lines: Vec<ViewLine>, source_range: Range<usize>) -> Self {
-        // Estimate total view lines (for now, just use what we have)
-        let total_view_lines = lines.len();
-        let total_injected_lines = lines.iter().filter(|l| !should_show_line_number(l)).count();
-
-        Self {
-            lines,
-            source_range,
-            total_view_lines,
-            total_injected_lines,
-        }
-    }
-
-    /// Build a Layout from a token stream
-    pub fn from_tokens(
-        tokens: &[ViewTokenWire],
-        source_range: Range<usize>,
-        tab_size: usize,
-    ) -> Self {
-        let lines: Vec<ViewLine> =
-            ViewLineIterator::new(tokens, false, false, tab_size, false).collect();
-        Self::new(lines, source_range)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -95,6 +95,56 @@ log_error()   { printf "${RED}[ERROR]${NC} %s\n" "$1" >&2; exit 1; }
 
 check_cmd() { command -v "$1" >/dev/null 2>&1; }
 
+# Refuse to `rm -rf` anything that is not ours.
+#
+# Installing replaces INSTALL_DIR wholesale, and INSTALL_DIR comes from
+# $FRESH_INSTALL_DIR. Rejecting only "", "/" and $HOME was not enough: a
+# plausible typo or a habit like FRESH_INSTALL_DIR=$HOME/.local wiped a
+# directory full of unrelated software, without a prompt and with nothing in
+# the trash. An existing directory now has to look like a previous Fresh
+# install before it is removed -- it must hold the binary, the install
+# receipt, or the file manifest this script writes. Anything else is a path
+# the user did not mean, and the install stops instead of clearing it.
+assert_safe_install_dir() {
+    # A trailing slash names the same directory, so normalise rather than
+    # refuse: failing here would break a FRESH_INSTALL_DIR that had been
+    # working for someone, in the middle of an upgrade. `/` itself survives
+    # the strip and is caught below.
+    while :; do
+        case "$INSTALL_DIR" in
+            /) break ;;
+            */) INSTALL_DIR="${INSTALL_DIR%/}" ;;
+            *) break ;;
+        esac
+    done
+
+    case "$INSTALL_DIR" in
+        ""|"/"|"$HOME") log_error "refusing to install into '$INSTALL_DIR'." ;;
+        /*) ;;
+        *) log_error "refusing to install into '$INSTALL_DIR': an absolute path is required." ;;
+    esac
+
+    # A path that does not exist yet is created fresh -- nothing to destroy.
+    [ -e "$INSTALL_DIR" ] || return 0
+
+    [ -d "$INSTALL_DIR" ] || log_error "refusing to install into '$INSTALL_DIR': not a directory."
+
+    if [ -x "$INSTALL_DIR/$REPO_NAME" ] ||
+       [ -f "$INSTALL_DIR/$MANIFEST_NAME" ] ||
+       [ -f "$INSTALL_DIR/install-receipt.toml" ] ||
+       [ -f "$INSTALL_DIR/usr/bin/install-receipt.toml" ] ||
+       [ -x "$INSTALL_DIR/usr/bin/$REPO_NAME" ]; then
+        return 0
+    fi
+
+    # An empty directory is safe to replace: there is nothing in it to lose.
+    if [ -z "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ]; then
+        return 0
+    fi
+
+    log_error "refusing to replace '$INSTALL_DIR': it is not empty and does not look like a Fresh install. Set FRESH_INSTALL_DIR to a dedicated directory, or remove that one yourself first."
+}
+
 usage() {
     cat <<EOF
 Fresh Editor installer
@@ -479,9 +529,7 @@ asset = "$ASSET"
 EOF
     fi
 
-    case "$INSTALL_DIR" in
-        ""|"/"|"$HOME") log_error "refusing to install into '$INSTALL_DIR'." ;;
-    esac
+    assert_safe_install_dir
 
     log_info "Finalizing installation..."
     mkdir -p "$(dirname "$INSTALL_DIR")" "$BIN_DIR"
@@ -629,9 +677,7 @@ do_install_appimage() {
         log_error "Extraction completed but source files are missing."
     fi
 
-    case "$INSTALL_DIR" in
-        ""|"/"|"$HOME") log_error "refusing to install into '$INSTALL_DIR'." ;;
-    esac
+    assert_safe_install_dir
 
     log_info "Finalizing installation..."
     mkdir -p "$(dirname "$INSTALL_DIR")" "$BIN_DIR"

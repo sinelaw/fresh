@@ -1,55 +1,25 @@
-//! What is left of the menu bar's chrome component: the reaction half of
-//! hover.
+//! What is left of the menu bar's chrome: the handlers the tree's messages
+//! call.
 //!
 //! Paint, pointer and keyboard have all migrated. The bar row is a native
 //! region in the shell's tree, the open dropdown chain is a stack of `Layer`s,
 //! the full-frame close guard is the outermost layer's `OUTSIDE_POINTER`
 //! dismissal, and the keys are shortcuts and intents on the open chain with
 //! `Modality::Keyboard` owning the ones it declines.
+//!
+//! **No keyboard handler here at all any more.** What was left of it was the
+//! swallow: an open menu is modal to the keyboard, so a key it does not act on
+//! must not reach the buffer underneath and type into the document. The
+//! library says that now — the open chain declares `Modality::Keyboard`, which
+//! owns the keys its focus chain declines while leaving the bar underneath
+//! clickable — so `MenuInputHandler` is gone and `view/ui/menu_input.rs` with
+//! it. The navigation itself has been the tree's since the bindings became
+//! shortcuts on the open chain (`Editor::menu_shortcuts`).
+//!
+//! The hover reaction is `Editor::menu_hover_reaction`, in `menu_actions`,
+//! which `UiFact::Hover` calls directly.
 
-use super::{ChromeComponent, Editor};
-use crate::app::types::HoverTarget;
-
-pub(crate) struct Menu;
-
-impl ChromeComponent for Menu {
-    /// Opening a submenu is a *reaction to hover*, and it lives here.
-    ///
-    /// Paint and pointer input migrated, so this component pushes no boxes —
-    /// which means the legacy hover walk can no longer reach it. The shell's
-    /// `UiFact::Hover` fans out to every registered component precisely so a
-    /// migrated surface keeps its reactions; the menu was registered but had
-    /// no `on_hover_change`, so it took the trait's `false` and
-    /// `menu_hover_reaction` was left with no callers at all. Hovering a
-    /// submenu parent therefore opened nothing
-    /// (`test_submenu_first_item_aligns_with_parent_item`).
-    ///
-    /// The fan-out was the right shape; this is the half that was missing
-    /// from it.
-    fn on_hover_change(
-        &self,
-        ed: &mut Editor,
-        old: Option<&HoverTarget>,
-        new: Option<&HoverTarget>,
-        _col: u16,
-        _row: u16,
-    ) -> bool {
-        if old == new {
-            return false;
-        }
-        ed.menu_hover_reaction(new)
-    }
-
-    // **No keyboard here at all any more.** What was left of this handler was
-    // the swallow: an open menu is modal to the keyboard, so a key it does not
-    // act on must not reach the buffer underneath and type into the document.
-    // The library says that now — the open chain declares
-    // `Modality::Keyboard`, which owns the keys its focus chain declines while
-    // leaving the bar underneath clickable — so the walk never reaches this
-    // component, `MenuInputHandler` is gone, and `view/ui/menu_input.rs` with
-    // it. The navigation itself has been the tree's since the bindings became
-    // shortcuts on the open chain (`Editor::menu_shortcuts`).
-}
+use super::Editor;
 
 impl Editor {
     /// Carry out one menu-bar navigation step.

@@ -10,55 +10,7 @@ use anyhow::Result as AnyhowResult;
 
 use crate::model::event::{BufferId, LeafId};
 
-/// Columns a single scroll step moves a split's tab strip, shared by the
-/// wheel and by a click on the bar's `<` / `>` indicators so both nudge the
-/// strip by the same amount.
-pub(crate) const TAB_SCROLL_STEP_COLUMNS: usize = 10;
-
 impl crate::app::window::Window {
-    /// Pan a split's tab strip by one scroll step: negative moves toward the
-    /// first tab, positive toward the last.
-    ///
-    /// Which split is the strip node's own — it is that pane's. The cell was
-    /// compared against every recorded `bar_area` in turn to recover it, which
-    /// is what a keyed node makes unnecessary. The wheel routing's ruling is
-    /// unchanged and lives with the surfaces: there is no "whatever has focus"
-    /// fallback, and chrome that owns no scrollable content drops the wheel
-    /// (sinelaw/fresh#2969, the base component's).
-    ///
-    /// Scrolling right stops at the last tab — whether anything is still
-    /// hidden off the right edge is the strip's layout's to say, so the offset
-    /// can't run out into empty space and leave the user wheeling back through
-    /// nothing. Which tab is *active* never changes: the wheel moves the view,
-    /// like every other wheel surface in the editor.
-    ///
-    /// `overflows_right` is whether the strip has tabs past its right edge —
-    /// a fact of the strip's layout, which the caller reads off the tree
-    /// (`Editor::scroll_pane_tab_strip`); stepping right stops there.
-    pub(crate) fn scroll_tab_strip(&mut self, split_id: LeafId, delta: i32, overflows_right: bool) {
-        if delta == 0 {
-            return;
-        }
-        if delta > 0 && !overflows_right {
-            return;
-        }
-        if let Some(view_state) = self
-            .split_view_states_mut()
-            .expect("active window must have a populated split layout")
-            .get_mut(&split_id)
-        {
-            view_state.tab_scroll_offset = if delta < 0 {
-                view_state
-                    .tab_scroll_offset
-                    .saturating_sub(TAB_SCROLL_STEP_COLUMNS)
-            } else {
-                view_state
-                    .tab_scroll_offset
-                    .saturating_add(TAB_SCROLL_STEP_COLUMNS)
-            };
-        }
-    }
-
     /// Fire the `mouse_scroll` plugin hook — plugins can react to the
     /// wheel for virtual buffers. Fired by every scroll-surface arm
     /// (splits, tab strips, the file explorer) before acting, exactly
@@ -76,23 +28,15 @@ impl crate::app::window::Window {
         );
     }
 
-    /// Scroll the file explorer's viewport. The wheel moves the view,
-    /// not the selection — moving the selected entry (and letting it
-    /// drag the viewport) is jumpy and surprising.
-    pub(super) fn scroll_file_explorer_view(&mut self, delta: i32) {
+    /// Record where the file explorer's window went — the list's report
+    /// after a wheel, a bar drag or a reveal. The window is the list's and
+    /// is already there; the record is what a list mounted again starts from
+    /// (see `FileTreeView::window_top`). The wheel moves the view, not the
+    /// selection: moving the selected entry (and letting it drag the
+    /// viewport) is jumpy and surprising.
+    pub(super) fn scroll_file_explorer_to(&mut self, offset: usize) {
         if let Some(explorer) = self.file_explorer.as_mut() {
-            let count = explorer.visible_count();
-            if count == 0 {
-                return;
-            }
-            let max_scroll = explorer.max_scroll_offset();
-            let current_offset = explorer.get_scroll_offset();
-            let new_offset = if delta < 0 {
-                current_offset.saturating_sub(delta.unsigned_abs() as usize)
-            } else {
-                (current_offset + delta as usize).min(max_scroll)
-            };
-            explorer.set_scroll_offset(new_offset);
+            explorer.note_window(offset);
         }
     }
 
@@ -168,18 +112,14 @@ impl crate::app::window::Window {
             return Ok(());
         }
 
-        if let Some(view_state) = self
-            .split_view_states_mut()
-            .expect("active window must have a populated split layout")
-            .get_mut(&target_split)
-        {
+        if let Some(view_state) = self.split_view_states_mut().get_mut(&target_split) {
             // Line wrap makes horizontal scroll a no-op.
-            if view_state.viewport.line_wrap_enabled {
+            if view_state.buffer_tab_state_mut().viewport.line_wrap_enabled {
                 return Ok(());
             }
 
             let columns_to_scroll = delta.unsigned_abs() as usize;
-            let viewport = &mut view_state.viewport;
+            let viewport = &mut view_state.buffer_tab_state_mut().viewport;
             if delta < 0 {
                 viewport.left_column = viewport.left_column.saturating_sub(columns_to_scroll);
             } else {
@@ -204,76 +144,70 @@ impl crate::app::window::Window {
     pub(super) fn handle_scrollbar_drag_relative(
         &mut self,
         row: u16,
+        grab: crate::app::types::VerticalGrab,
         split_id: LeafId,
         buffer_id: BufferId,
         scrollbar_rect: ratatui::layout::Rect,
     ) -> AnyhowResult<()> {
-        let drag_start_row = match self.mouse_state.drag_start_row {
-            Some(r) => r,
-            None => return Ok(()), // No drag start, shouldn't happen
+        use crate::app::types::VerticalScroll;
+        let drag_start_row = grab.row;
+        let (drag_start_top_byte, drag_start_view_line_offset) = match grab.from {
+            // A composite view scrolls by row.
+            VerticalScroll::Composite { scroll_row } => {
+                return self.handle_composite_scrollbar_drag_relative(
+                    row,
+                    drag_start_row,
+                    scroll_row,
+                    split_id,
+                    buffer_id,
+                    scrollbar_rect,
+                );
+            }
+            VerticalScroll::Buffer {
+                top_byte,
+                view_line_offset,
+            } => (top_byte, view_line_offset),
         };
-
-        // Handle composite buffers - use row-based scrolling
-        if self.is_composite_buffer(buffer_id) {
-            return self.handle_composite_scrollbar_drag_relative(
-                row,
-                drag_start_row,
-                split_id,
-                buffer_id,
-                scrollbar_rect,
-            );
-        }
-
-        let drag_start_top_byte = match self.mouse_state.drag_start_top_byte {
-            Some(b) => b,
-            None => return Ok(()), // No drag start, shouldn't happen
-        };
-
-        let drag_start_view_line_offset = self.mouse_state.drag_start_view_line_offset.unwrap_or(0);
 
         // Calculate the offset in rows (still used for large files)
         let row_offset = (row as i32) - (drag_start_row as i32);
 
         // Get viewport height from SplitViewState
         let viewport_height = self
-            .buffers
-            .splits()
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .split_view_states()
             .get(&split_id)
-            .map(|vs| vs.viewport.height as usize)
+            .map(|vs| vs.buffer_tab_state().viewport.height as usize)
             .unwrap_or(10);
 
         // Check if line wrapping is enabled
         let line_wrap_enabled = self
-            .buffers
-            .splits()
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .split_view_states()
             .get(&split_id)
-            .map(|vs| vs.viewport.line_wrap_enabled)
+            .map(|vs| vs.buffer_tab_state().viewport.line_wrap_enabled)
             .unwrap_or(false);
 
         // Effective wrap width / gutter for scroll math.  Must match
         // what the renderer uses or `max_scroll_row` ends up wrong on
         // wide terminals with `composeWidth` set (mouse-wheel /
         // scrollbar-drag stop short of the buffer's tail).
-        let (wrap_width, show_line_numbers, grid_cols) = self
-            .buffers
-            .splits()
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+        let gutter_width = self.buffers.get(&buffer_id).map_or(0, |state| {
+            crate::view::viewport::gutter_width(&state.buffer)
+        });
+        let (wrap_width, grid_cols) = self
+            .split_view_states()
             .get(&split_id)
             .map(|vs| {
                 (
-                    vs.viewport.effective_width() as usize,
-                    vs.show_line_numbers,
+                    vs.buffer_tab_state().viewport.effective_width(gutter_width) as usize,
                     // Terminal-grid wrap (fresh#2649): scroll-back rows
                     // break at the capture-time PTY width.
-                    vs.viewport.grid_wrap.then(|| vs.viewport.grid_cols()),
+                    vs.buffer_tab_state()
+                        .viewport
+                        .grid_wrap
+                        .then(|| vs.buffer_tab_state().viewport.grid_cols()),
                 )
             })
-            .unwrap_or((80, true, None));
+            .unwrap_or((80, None));
 
         // Snapshot config values up front so the mutable borrow on `self.buffers`
         // below doesn't conflict with `self.config()`.
@@ -306,7 +240,6 @@ impl crate::app::window::Window {
                         drag_start_view_line_offset,
                         viewport_height,
                         wrap_width,
-                        show_line_numbers,
                         grid_cols,
                         pipeline_inputs_ver,
                         fold_ranges.clone(),
@@ -401,17 +334,20 @@ impl crate::app::window::Window {
         };
 
         // Set viewport top to this position in SplitViewState
-        if let Some(view_state) = self
-            .split_view_states_mut()
-            .expect("active window must have a populated split layout")
-            .get_mut(&split_id)
-        {
-            view_state.viewport.set_top_byte(scroll_position.0);
+        if let Some(view_state) = self.split_view_states_mut().get_mut(&split_id) {
             view_state
+                .buffer_tab_state_mut()
+                .viewport
+                .set_top_byte(scroll_position.0);
+            view_state
+                .buffer_tab_state_mut()
                 .viewport
                 .set_top_view_line_offset(scroll_position.1);
             // Skip ensure_visible so the scroll position isn't undone during render
-            view_state.viewport.set_skip_ensure_visible();
+            view_state
+                .buffer_tab_state_mut()
+                .viewport
+                .set_skip_ensure_visible();
         }
 
         Ok(())
@@ -456,40 +392,36 @@ impl crate::app::window::Window {
 
         // Get viewport height from SplitViewState
         let viewport_height = self
-            .buffers
-            .splits()
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .split_view_states()
             .get(&split_id)
-            .map(|vs| vs.viewport.height as usize)
+            .map(|vs| vs.buffer_tab_state().viewport.height as usize)
             .unwrap_or(10);
 
         // Check if line wrapping is enabled
         let line_wrap_enabled = self
-            .buffers
-            .splits()
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .split_view_states()
             .get(&split_id)
-            .map(|vs| vs.viewport.line_wrap_enabled)
+            .map(|vs| vs.buffer_tab_state().viewport.line_wrap_enabled)
             .unwrap_or(false);
 
-        let (wrap_width, show_line_numbers, grid_cols) = self
-            .buffers
-            .splits()
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+        let gutter_width = self.buffers.get(&buffer_id).map_or(0, |state| {
+            crate::view::viewport::gutter_width(&state.buffer)
+        });
+        let (wrap_width, grid_cols) = self
+            .split_view_states()
             .get(&split_id)
             .map(|vs| {
                 (
-                    vs.viewport.effective_width() as usize,
-                    vs.show_line_numbers,
+                    vs.buffer_tab_state().viewport.effective_width(gutter_width) as usize,
                     // Terminal-grid wrap (fresh#2649): scroll-back rows
                     // break at the capture-time PTY width.
-                    vs.viewport.grid_wrap.then(|| vs.viewport.grid_cols()),
+                    vs.buffer_tab_state()
+                        .viewport
+                        .grid_wrap
+                        .then(|| vs.buffer_tab_state().viewport.grid_cols()),
                 )
             })
-            .unwrap_or((80, true, None));
+            .unwrap_or((80, None));
 
         // Snapshot config up front so the mutable borrow on `self.buffers`
         // below doesn't conflict with `self.config()`.
@@ -515,7 +447,6 @@ impl crate::app::window::Window {
                         ratio,
                         viewport_height,
                         wrap_width,
-                        show_line_numbers,
                         grid_cols,
                         pipeline_inputs_ver,
                         fold_ranges.clone(),
@@ -585,17 +516,20 @@ impl crate::app::window::Window {
         };
 
         // Set viewport top to this position in SplitViewState
-        if let Some(view_state) = self
-            .split_view_states_mut()
-            .expect("active window must have a populated split layout")
-            .get_mut(&split_id)
-        {
-            view_state.viewport.set_top_byte(scroll_position.0);
+        if let Some(view_state) = self.split_view_states_mut().get_mut(&split_id) {
             view_state
+                .buffer_tab_state_mut()
+                .viewport
+                .set_top_byte(scroll_position.0);
+            view_state
+                .buffer_tab_state_mut()
                 .viewport
                 .set_top_view_line_offset(scroll_position.1);
             // Skip ensure_visible so the scroll position isn't undone during render
-            view_state.viewport.set_skip_ensure_visible();
+            view_state
+                .buffer_tab_state_mut()
+                .viewport
+                .set_skip_ensure_visible();
         }
 
         Ok(())
@@ -632,15 +566,11 @@ impl crate::app::window::Window {
         &mut self,
         row: u16,
         drag_start_row: u16,
+        drag_start_scroll_row: usize,
         split_id: LeafId,
         buffer_id: BufferId,
         scrollbar_rect: ratatui::layout::Rect,
     ) -> AnyhowResult<()> {
-        let drag_start_scroll_row = match self.mouse_state.drag_start_composite_scroll_row {
-            Some(r) => r,
-            None => return Ok(()),
-        };
-
         let total_rows = self
             .composite_buffers
             .get(&buffer_id)
@@ -715,7 +645,7 @@ fn fold_ranges_for_split(
         .splits()
         .map(|(_, vs)| vs)
         .and_then(|vs| vs.get(&split_id))
-        .map(|vs| &vs.folds)
+        .map(|vs| &vs.buffer_tab_state().folds)
     else {
         return Vec::new();
     };

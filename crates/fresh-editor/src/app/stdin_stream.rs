@@ -224,16 +224,17 @@ mod tests {
 
     #[test]
     fn mark_complete_disables_is_active() {
-        let mut s = StdinStream::default();
         // Simulate a stream with a handle that never completes.
-        s.active = Some(ActiveStream {
-            temp_path: PathBuf::from("/tmp/x"),
-            filesystem: test_fs(),
-            buffer_id: BufferId(1),
-            last_known_size: 0,
-            complete: false,
-            thread_handle: None,
-        });
+        let mut s = StdinStream {
+            active: Some(ActiveStream {
+                temp_path: PathBuf::from("/tmp/x"),
+                filesystem: test_fs(),
+                buffer_id: BufferId(1),
+                last_known_size: 0,
+                complete: false,
+                thread_handle: None,
+            }),
+        };
         assert!(s.is_active());
         s.mark_complete();
         assert!(!s.is_active());

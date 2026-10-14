@@ -1,3 +1,5 @@
+#[cfg(feature = "plugins")]
+use crate::common::harness::HarnessOptions;
 /// E2E tests for split view with markdown compose mode.
 ///
 /// Tests the use case: same markdown document shown in two vertical splits,
@@ -7,7 +9,7 @@
 /// 1. Compose mode only applies to the right panel (conceals, soft breaks)
 /// 2. Line numbers visible in source panel, hidden in compose panel
 /// 3. Scroll synchronization between panels
-use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
+use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
 
@@ -597,7 +599,7 @@ Text after the code.
     // in source, is the split the assertions look at.
     run_palette_command(&mut harness, "Split Vertical");
     harness.wait_for_async_quiescence(6).unwrap();
-    let source_pane = harness.editor().get_active_split();
+    let source_pane = harness.editor().active_window().get_active_split();
 
     run_palette_command(&mut harness, "Previous Split");
     harness.render().unwrap();
@@ -664,7 +666,7 @@ fn test_composing_one_split_leaves_a_sibling_splits_line_wrap_alone() {
 
     run_palette_command(&mut harness, "Split Vertical");
     harness.wait_for_async_quiescence(6).unwrap();
-    let source_pane = harness.editor().get_active_split();
+    let source_pane = harness.editor().active_window().get_active_split();
 
     // The new right split is active. Get its wrap *off*, whichever way
     // `editor.line_wrap` happens to default — asserting the toggle's direction
@@ -682,7 +684,7 @@ fn test_composing_one_split_leaves_a_sibling_splits_line_wrap_alone() {
     // `buffer_activated`, which is where the wrap request lives.
     run_palette_command(&mut harness, "Previous Split");
     harness.render().unwrap();
-    let compose_pane = harness.editor().get_active_split();
+    let compose_pane = harness.editor().active_window().get_active_split();
     assert_ne!(
         compose_pane, source_pane,
         "the test needs focus on the other split before composing"

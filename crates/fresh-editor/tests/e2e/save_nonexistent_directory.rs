@@ -5,6 +5,7 @@
 //! 1. Open a new file with Ctrl+O, type a path with a non-existent parent directory
 //! 2. Type some content
 //! 3. Press Ctrl+S to save
+//!
 //! Expected: Prompt asking to create the directory
 //! Actual (before fix): Editor crashes with "No such file or directory (os error 2)"
 
@@ -45,11 +46,8 @@ fn test_issue_1434_save_file_in_nonexistent_directory_confirm() {
     // Should see the confirmation prompt about creating the directory
     harness.assert_screen_contains("does not exist");
 
-    // Confirm creation by typing "c"
-    harness.type_text("c").unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
+    // Confirm creation with the Create Folder button's letter (`c` is Cancel)
+    harness.type_text("f").unwrap();
     harness.render().unwrap();
 
     // The file should be saved successfully

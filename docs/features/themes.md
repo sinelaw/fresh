@@ -43,7 +43,7 @@ Fresh includes a visual Theme Editor for creating and customizing themes:
    - Press `Enter` on any color field to edit it
    - Enter a hex color (`#RRGGBB`) or named color (e.g., `red`, `blue`)
    - Colors are applied immediately as you edit
-   - Each syntax color has an `Attributes` row accepting comma-separated text
+   - Each color has an `Attributes` row accepting comma-separated text
      attributes: `bold`, `italic`, `underlined`, `dim`, and `reversed`
 
 4. **Theme Editor Shortcuts**:
@@ -89,14 +89,49 @@ Themes are stored as JSON files. You can also edit them directly at `~/.config/f
 }
 ```
 
-Colors are specified as `[R, G, B]` arrays with values from 0-255.
-A syntax category is either a bare color or an object bundling that color with
-a `modifier` list of `bold`, `italic`, `underlined`, `dim`, or `reversed`. Use
-a bare color (or omit `modifier`) for normal text.
+Colors are specified as `[R, G, B]` arrays with values from 0-255, or by
+name (`"Red"`, `"LightBlue"`, …; `"Default"` is the terminal's own color).
 
-Only `name` is required. Any section or field you omit is filled in from a
-**base theme** (see [Inheritance](#inheritance) below), so a partial theme
-only needs to spell out the colors that differ from its base.
+### Text attributes
+
+Every color in a theme — in `editor`, `ui`, `search`, `diagnostic` and
+`syntax` alike — is either a bare color or an object bundling that color with
+a `modifier` list of `bold`, `italic`, `underlined`, `dim`, or `reversed`. Use
+a bare color (or omit `modifier`) for no attributes. A cell gets the
+attributes of every color it is drawn with, foreground and background, so an
+attribute on a `*_bg` color applies to the text drawn over it.
+
+For example, to show LSP errors and warnings as underlines rather than as a
+background wash (`"Default"` leaves the background as it is):
+
+```json
+{
+  "name": "underlined-diagnostics",
+  "extends": "builtin://dark",
+  "diagnostic": {
+    "error_bg": { "color": "Default", "modifier": ["underlined"] },
+    "warning_bg": { "color": "Default", "modifier": ["underlined"] }
+  }
+}
+```
+
+Attributes mean nothing on colors that are not drawn behind or as text, such
+as the scrollbar colors; those colors use only the color.
+
+The older attribute-only keys `editor.selection_modifier` and
+`ui.semantic_highlight_modifier` still work, and win over attributes bundled
+with `editor.selection_bg` / `ui.semantic_highlight_bg` when a theme gives
+both.
+
+A key Fresh does not know (a typo, or a key from another editor's theme
+format) is ignored, with a warning naming it. A theme with a value Fresh
+cannot read is not loaded, with a warning naming the file and the key.
+
+Only `name` is required. A color you omit comes from another color, never
+from a value built into Fresh: from a **base theme** (see
+[Inheritance](#inheritance) below), or, in a complete theme, from the color
+it falls back to (see [Fallbacks](#fallbacks)). So a partial theme only needs
+to spell out the colors that differ from its base.
 
 ## Inheritance
 
@@ -118,18 +153,36 @@ just `"light"`. The available built-ins are `dark`, `light`, and
 **Select Theme** menu for the full list). Inheriting from another *user*
 theme is not supported in this version.
 
-If `extends` is omitted, Fresh tries to pick a sensible base for you:
+If `extends` is omitted and the theme leaves out any of the
+[required colors](#fallbacks), Fresh picks a base for you:
 
 - If your theme sets `editor.bg`, Fresh looks at the relative luminance of
   that color and picks `builtin://light` for bright backgrounds and
   `builtin://dark` for dim ones. So a custom theme that only sets a cream
   background gets light-flavored UI chrome automatically.
-- If your theme doesn't set `editor.bg` either, every unset field falls
-  back to a per-field hardcoded default.
+- If your theme doesn't set `editor.bg` either, it extends `builtin://dark`.
 
 This means the partial example at the top of this section works without
 needing to spell out every UI/diagnostic color — Fresh fills the rest in
 from the matching built-in.
+
+## Fallbacks
+
+A theme without `extends` that sets every **required** color stands on its
+own, with no base theme. The required colors are the 49 that theme files have
+had since the first theme format: the `editor` background, text, cursor,
+selection, current line and line numbers; the tab, status bar, prompt, popup,
+suggestion, help and split-separator colors in `ui`; `search.match_bg` and
+`match_fg`; the eight `diagnostic` colors; and eight `syntax` categories.
+
+Every other color names a fallback color, and a standalone theme that leaves
+it out takes that color's value (and text attributes), following the chain
+to the first color the theme sets. For example `ui.menu_hover_bg` falls back
+to `ui.menu_highlight_bg`, which falls back to the required
+`ui.popup_selection_bg`. Every chain ends at a required color.
+
+`extends` takes precedence: in a theme with a base, a color you leave out is
+the base's, even if you changed the color it would fall back to.
 
 ## Inspecting Theme Colors
 

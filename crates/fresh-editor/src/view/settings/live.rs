@@ -258,7 +258,6 @@ pub fn seed_list(store: &mut WidgetPanelState, key: &str, row: usize) {
         key.to_string(),
         WidgetInstanceState::List {
             selected_index: row as i32,
-            user_scrolled: false,
         },
     );
     store.focus_key = key.to_string();
@@ -380,7 +379,6 @@ pub fn seed_text(
             completion_selected_index: 0,
             completion_scroll_offset: 0,
             completion_navigated: false,
-            user_scrolled: false,
         },
     );
 }

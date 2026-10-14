@@ -143,8 +143,10 @@ impl<'a> ExplorerRoot<'a> {
 /// `window.root` with native separators, so a naïve `starts_with` / hash
 /// lookup would silently drop every decoration/slot override on Windows.
 ///
-/// Single-path form. A batch should build one [`ExplorerRoot`] and call
-/// [`ExplorerRoot::admit`], which resolves the root once for all of them.
+/// Single-path form, kept as the tests' statement of what
+/// [`ExplorerRoot::admit`] must do for one path; the editor builds one
+/// [`ExplorerRoot`] per batch and admits through it.
+#[cfg(test)]
 pub(crate) fn normalize_explorer_plugin_path(path: &Path, root: &Path) -> PathBuf {
     ExplorerRoot::new(root)
         .admit(path)
@@ -154,7 +156,7 @@ pub(crate) fn normalize_explorer_plugin_path(path: &Path, root: &Path) -> PathBu
 /// Return true when `path` lies under `root`, tolerant of Windows separator
 /// and `\\?\` extended-prefix differences between plugin and tree paths.
 ///
-/// Single-path form, as above.
+/// Single-path form.
 pub(crate) fn explorer_path_under_root(path: &Path, root: &Path) -> bool {
     ExplorerRoot::new(root).admit(path).is_some()
 }

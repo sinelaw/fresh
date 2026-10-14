@@ -17,27 +17,11 @@ pub struct Interval {
     pub end: u64,
 }
 
-/// Type of marker - either a position marker or a line anchor
+/// Type of marker
 #[derive(Debug, Clone, PartialEq)]
 pub enum MarkerType {
     /// Regular position marker (for overlays, cursors, etc.)
     Position,
-    /// Line anchor with estimated/exact line number
-    LineAnchor {
-        estimated_line: usize,
-        confidence: AnchorConfidence,
-    },
-}
-
-/// Confidence level for line anchor estimates
-#[derive(Debug, Clone, PartialEq)]
-pub enum AnchorConfidence {
-    /// Exact line number (scanned from known position)
-    Exact,
-    /// Estimated from average line length
-    Estimated,
-    /// Relative to another anchor
-    Relative(MarkerId),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -319,24 +303,6 @@ impl IntervalTree {
         });
         self.root = Self::build_from_sorted(&nodes);
         ids
-    }
-
-    /// Insert a line anchor at a specific position
-    pub fn insert_line_anchor(
-        &mut self,
-        start: u64,
-        end: u64,
-        estimated_line: usize,
-        confidence: AnchorConfidence,
-    ) -> MarkerId {
-        self.insert_with_type(
-            start,
-            end,
-            MarkerType::LineAnchor {
-                estimated_line,
-                confidence,
-            },
-        )
     }
 
     /// Finds the current true position of a marker by its ID. Performance: O(log n)
@@ -769,33 +735,6 @@ impl IntervalTree {
     pub fn get_marker(&self, id: MarkerId) -> Option<Marker> {
         let node_rc = self.marker_map.get(&id)?;
         Some(node_rc.borrow().marker.clone())
-    }
-
-    /// Update a line anchor's estimated line number and confidence
-    pub fn update_line_anchor(
-        &mut self,
-        id: MarkerId,
-        estimated_line: usize,
-        confidence: AnchorConfidence,
-    ) -> bool {
-        if let Some(node_rc) = self.marker_map.get(&id) {
-            let mut node = node_rc.borrow_mut();
-            node.marker.marker_type = MarkerType::LineAnchor {
-                estimated_line,
-                confidence,
-            };
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Query only line anchors in a range
-    pub fn query_line_anchors(&self, query_start: u64, query_end: u64) -> Vec<Marker> {
-        self.query(query_start, query_end)
-            .into_iter()
-            .filter(|m| matches!(m.marker_type, MarkerType::LineAnchor { .. }))
-            .collect()
     }
 }
 

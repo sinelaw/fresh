@@ -169,11 +169,13 @@ impl EventBroadcaster {
     }
 
     /// Convenience: emit simple event (no data)
+    #[cfg(test)]
     pub fn emit_simple(&self, name: impl Into<String>) {
         self.emit(ControlEvent::simple(name));
     }
 
     /// Check if any event matches pattern
+    #[cfg(test)]
     pub fn has_match(&self, name_pattern: &str, data_pattern: &Value) -> bool {
         let events = self.events.lock().unwrap();
         events
@@ -182,6 +184,7 @@ impl EventBroadcaster {
     }
 
     /// Take first event matching pattern (removes it and all events before it)
+    #[cfg(test)]
     pub fn take_match(&self, name_pattern: &str, data_pattern: &Value) -> Option<ControlEvent> {
         let mut events = self.events.lock().unwrap();
         let pos = events

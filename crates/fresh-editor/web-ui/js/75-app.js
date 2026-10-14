@@ -410,7 +410,10 @@ document.addEventListener("keydown",e=>{
         return; }
     }
     e.preventDefault();
-    const d={key:e.key,ctrl:e.ctrlKey,meta:e.metaKey,shift:e.shiftKey,alt:e.altKey};
+    // `code` is the PHYSICAL key (e.g. "Digit1" for the key that types '!'
+    // with Shift). The bridge needs it because bindings are written against
+    // the unshifted key plus SHIFT, the way a terminal reports them.
+    const d={key:e.key,code:e.code,ctrl:e.ctrlKey,meta:e.metaKey,shift:e.shiftKey,alt:e.altKey};
     // On mobile, fold in any armed sticky modifiers so e.g. tap-Ctrl then a
     // native-keyboard letter sends Ctrl+<letter>. Record the time so the
     // beforeinput fallback (Android) knows this key was already handled.

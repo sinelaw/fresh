@@ -175,7 +175,7 @@ impl Editor {
     /// that index is the round trip the migration removes.
     pub(crate) fn select_suggestion(&mut self, item_idx: usize) -> Option<AnyhowResult<()>> {
         let prompt = self.active_window_mut().prompt.as_mut()?;
-        prompt.selected_suggestion = Some(item_idx);
+        prompt.select_suggestion(Some(item_idx));
         let confirms = prompt.prompt_type.click_confirms();
         if !confirms {
             // Mirror keyboard navigation / scroll: sync the input
@@ -196,7 +196,7 @@ impl Editor {
     /// click, which is the whole reason this variant exists.
     pub(crate) fn confirm_suggestion(&mut self, item_idx: usize) -> Option<AnyhowResult<()>> {
         let prompt = self.active_window_mut().prompt.as_mut()?;
-        prompt.selected_suggestion = Some(item_idx);
+        prompt.select_suggestion(Some(item_idx));
         if let Some(suggestion) = prompt.suggestions.get(item_idx) {
             prompt.set_input_plain(suggestion.get_value().to_string());
         }

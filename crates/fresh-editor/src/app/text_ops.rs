@@ -29,14 +29,7 @@ impl Editor {
             .collect();
 
         let split_id = if line_wrap {
-            Some(
-                self.windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .active_split(),
-            )
+            Some(self.active_window().split_manager().active_split())
         } else {
             None
         };
@@ -148,13 +141,10 @@ impl Editor {
             .visual_line_start(split_id, cursor_pos, false)?;
 
         // Determine the physical line start to tell first-row from continuation.
-        let buffer_id = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_buffer_id()?;
+        // The buffer the user is on, which `split_id`'s pane shows — not
+        // the split manager's active leaf, whose buffer tab is behind the
+        // group while a group is shown.
+        let buffer_id = self.active_buffer();
         let state = self
             .windows
             .get_mut(&self.active_window)

@@ -18,6 +18,7 @@ use super::contexts::{DecorationContext, SelectionContext};
 use super::overlay_sweep::OverlayActiveSet;
 use super::selection_sweep::SelectionActiveSet;
 use super::tail_fill::{overlay_bg_style, resolve_tail_fill, TailFillInput};
+use crate::view::theme::ThemeStyle;
 use cells::{render_line_cells, CellPassInput};
 use trailing::{fill_eof_rows, render_implicit_trailing_line, PostRowAccumulator, PostRowContext};
 
@@ -455,7 +456,10 @@ fn append_blank_line_guides(
         let tab_size = normalized_tab_size(tab_size);
         for col in start..=end_col {
             let (ch, cell_style) = if guide_columns.contains(&col) {
-                (glyph, style.fg(theme.indent_rainbow_color(col / tab_size)))
+                (
+                    glyph,
+                    style.theme_fg(theme, Theme::indent_rainbow_key(col / tab_size)),
+                )
             } else {
                 (' ', style)
             };
@@ -512,6 +516,10 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
     prefill_cell_theme_map(cell_theme_map, screen_width, render_area, gutter_width);
 
     let primary_cursor_position = selection.primary_cursor_position;
+    // The line relative line numbers count from: this split's own primary
+    // cursor, derived here rather than read from a per-buffer cache that
+    // another split or window could have left behind.
+    let cursor_line_number = state.line_of_position(primary_cursor_position);
 
     // Compute cursor line start byte — universal key for cursor line highlight
     // Or-floor rather than the exact start: on a line longer than the scan
@@ -525,9 +533,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
     // belongs to the same logical line as the cursor — even if a plugin
     // soft-break (compose-mode wrapping) put the sub-row's start mid-line.
     // Without this, the highlight only landed on the *first* visual sub-row
-    // of a soft-wrapped paragraph (issue #1790). Computed by direct byte scan
-    // so it doesn't depend on the cached `primary_cursor_line_number` being
-    // in sync with the cursor position.
+    // of a soft-wrapped paragraph (issue #1790). Computed by direct byte scan.
     let cursor_line_end_byte =
         indent_folding::line_end_byte_or_ceiling(&state.buffer, primary_cursor_position);
 
@@ -699,6 +705,26 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
             None
         };
 
+        // Byte the diagnostics on this row are keyed off. Normally the row's
+        // own start, but the single row of an empty buffer has none: it holds
+        // no characters, and with no preceding newline it arrives here as
+        // `Beginning` rather than `AfterSourceNewline`, so the fallback above
+        // does not catch it. Its logical position is byte 0. Without this, a
+        // diagnostic on a brand-new file — "`main` function not found", say —
+        // was counted in the status bar but drew neither its gutter marker nor
+        // its inline message, and only a typed line break brought it out
+        // (issue #3484).
+        //
+        // Deliberately separate from `line_start_byte`: that value also decides
+        // whether the row takes the cursor-line highlight, and a row with no
+        // content cells can only have its gutter painted, so widening it there
+        // would half-light the first row of every empty file. That is a change
+        // this fix has no reason to make.
+        // `is_empty_buffer` is the same flag that decides whether this row
+        // exists at all, so the row's existence and its position cannot drift.
+        let diagnostic_anchor_byte: Option<usize> =
+            line_start_byte.or_else(|| (!is_continuation && is_empty_buffer).then_some(0));
+
         // Track whether this line is the cursor line (for current line highlighting).
         // Non-continuation lines check their start byte; continuation lines inherit.
         // We use a range check (rather than equality with the logical-line start)
@@ -747,13 +773,14 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 theme,
                 is_continuation,
                 line_start_byte,
+                diagnostic_anchor_byte,
                 gutter_num,
                 estimated_lines,
                 diagnostic_lines: &decorations.diagnostic_lines,
                 line_indicators: &decorations.line_indicators,
                 fold_indicators: &decorations.fold_indicators,
                 cursor_line_start_byte,
-                cursor_line_number: state.primary_cursor_line_number.value(),
+                cursor_line_number,
                 relative_line_numbers,
                 show_line_numbers,
                 byte_offset_mode,
@@ -918,7 +945,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                         &mut line_spans,
                         &mut line_view_map,
                         " ".repeat(sel_len),
-                        Style::default().bg(theme.selection_bg),
+                        Style::default().theme_bg(theme, "editor.selection_bg"),
                         None,
                     );
                     rendered_cols += sel_len;
@@ -992,9 +1019,9 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 IndentationGuideMode::Active => active_guide_col.as_slice(),
                 IndentationGuideMode::None => &[],
             };
-            let mut guide_style = Style::default().fg(theme.indentation_guide_fg);
+            let mut guide_style = Style::default().theme_fg(theme, "editor.indentation_guide_fg");
             if cursor_line_active {
-                guide_style = guide_style.bg(theme.current_line_bg);
+                guide_style = guide_style.theme_bg(theme, "editor.current_line_bg");
             } else if cells.first_line_byte_pos.is_some() && cells.last_line_byte_pos.is_some() {
                 // Match the tail fill: a full-width overlay band must run
                 // under the synthesised guide cells too, or blank rows in
@@ -1024,14 +1051,14 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
 
         // Inline diagnostic text: render after line content (before extend_to_line_end fill).
         // Only for non-continuation lines that have a diagnostic overlay.
-        if let Some(lsb) = line_start_byte {
+        if let Some(lsb) = diagnostic_anchor_byte {
             if let Some((message, diag_style)) = decorations.diagnostic_inline_texts.get(&lsb) {
                 append_inline_diagnostic(
                     message,
                     diag_style,
                     content_width,
                     cursor_line_active,
-                    theme.current_line_bg,
+                    Style::default().theme_bg(theme, "editor.current_line_bg"),
                     &mut rendered_cols,
                     &mut line_spans,
                     &mut line_view_map,
@@ -1067,7 +1094,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         if cursor_line_active && remaining_cols > 0 {
             line_spans.push(Span::styled(
                 " ".repeat(remaining_cols),
-                Style::default().bg(theme.current_line_bg),
+                Style::default().theme_bg(theme, "editor.current_line_bg"),
             ));
         }
 
@@ -1115,9 +1142,25 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         };
         let line_len_chars = line_content.chars().count();
 
+        // A plugin's virtual row is no more the buffer's last content line
+        // than the iterator's trailing empty one, and for a sharper reason:
+        // it is rendered from an *injected* newline, so standing as
+        // `last_line_end` it makes a buffer with no trailing newline of its
+        // own look newline-terminated. The implicit empty line that only a
+        // final newline can have is then drawn below it — and takes the caret
+        // of a cursor sitting at the buffer end, which is how deleting the `a`
+        // of a `- a` in markdown compose (a list hangs a virtual row under it)
+        // threw the caret two rows down and to the left edge.
+        //
+        // Read off the mapping just pushed for this row, so "virtual" means
+        // here exactly what it means to `move_visual_line`.
+        let is_plugin_virtual_row = view_line_mappings
+            .last()
+            .is_some_and(|m: &ViewLineMapping| m.is_plugin_virtual);
+
         // Don't update last_line_end for the iterator's trailing empty
         // line — it's a display aid, not actual content.
-        if !is_iterator_trailing_empty {
+        if !is_iterator_trailing_empty && !is_plugin_virtual_row {
             last_line_end = Some(LastLineEnd {
                 pos: (end_x, current_row),
                 terminated_with_newline: line_has_newline,
@@ -1208,7 +1251,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
 
 /// Fill the content area with default gutter/editor theme info so the
 /// theme inspector has an answer for cells the per-cell pass never touches.
-fn prefill_cell_theme_map(
+pub(super) fn prefill_cell_theme_map(
     cell_theme_map: &mut [crate::app::types::CellThemeInfo],
     screen_width: u16,
     render_area: Rect,
@@ -1248,13 +1291,13 @@ fn prefill_cell_theme_map(
 fn cursor_indicator_style(theme: &Theme, is_active: bool) -> Style {
     if is_active {
         Style::default()
-            .fg(theme.editor_fg)
-            .bg(theme.editor_bg)
+            .theme_fg(theme, "editor.fg")
+            .theme_bg(theme, "editor.bg")
             .add_modifier(Modifier::REVERSED)
     } else {
         Style::default()
-            .fg(theme.editor_fg)
-            .bg(theme.inactive_cursor)
+            .theme_fg(theme, "editor.fg")
+            .theme_bg(theme, "editor.inactive_cursor")
     }
 }
 
@@ -1393,6 +1436,7 @@ fn place_line_end_cursor(
 /// cursor drew a phantom cursor at the top of the new viewport).
 ///
 /// Returns the x of the last visible cell, if any.
+#[allow(clippy::too_many_arguments)]
 fn locate_cursor_in_view_map(
     line_view_map: &[Option<usize>],
     primary_cursor_position: usize,
@@ -1471,7 +1515,7 @@ fn append_inline_diagnostic(
     diag_style: &Style,
     content_width: usize,
     cursor_line_active: bool,
-    current_line_bg: Color,
+    current_line_bg: Style,
     rendered_cols: &mut usize,
     line_spans: &mut Vec<Span<'static>>,
     line_view_map: &mut Vec<Option<usize>>,
@@ -1497,7 +1541,7 @@ fn append_inline_diagnostic(
     let padding = available.saturating_sub(display_width);
     if padding > 0 {
         let pad_style = if cursor_line_active {
-            Style::default().bg(current_line_bg)
+            current_line_bg
         } else {
             Style::default()
         };
@@ -1513,7 +1557,7 @@ fn append_inline_diagnostic(
 
     // Apply current line background to diagnostic text when on cursor line
     let effective_diag_style = if cursor_line_active && diag_style.bg.is_none() {
-        diag_style.bg(current_line_bg)
+        diag_style.patch(current_line_bg)
     } else {
         *diag_style
     };

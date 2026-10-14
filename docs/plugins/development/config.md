@@ -1,7 +1,7 @@
 # Plugin Configuration
 
 Plugins can expose user-configurable settings that appear in the editor's
-Settings UI under their own "Plugin: \<name\>" category. The values are
+Settings UI under their own "\<name\>" category, nested under "Plugins". The values are
 saved alongside the rest of the user config and respect the same
 User/Project/Session layering as built-in settings.
 
@@ -94,9 +94,9 @@ All methods accept `description` (string). Numeric methods accept
 typed — unknown keys (`defualt` → "Did you mean 'default'?"), wrong
 default types, and out-of-range defaults are all compile-time errors.
 
-The Settings UI renders one **Plugin: \<name\>** top-level category per
-enabled plugin that has registered at least one field, sorted alongside
-the built-in categories.
+The Settings UI renders one **\<name\>** category per enabled plugin
+that has registered at least one field, nested under the **Plugins**
+category in the left panel (expanded when Settings opens).
 
 ## What's not supported
 

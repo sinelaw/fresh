@@ -73,12 +73,6 @@ impl WidgetImpl for Radio {
         super::PointerDisposition::Consumed
     }
 
-    fn arrows_advance_focus(&self) -> bool {
-        // The options run left-to-right; the vertical axis belongs to
-        // the form around the control.
-        true
-    }
-
     fn box_meta(&self, spec: &WidgetSpec) -> super::BoxMeta {
         let mut m = super::BoxMeta::plain("radio");
         if let WidgetSpec::Radio { key: Some(k), .. } = spec {
@@ -219,14 +213,14 @@ mod tests {
         states: &HashMap<String, WidgetInstanceState>,
         width: u32,
     ) -> RenderedRadio {
-        let (WidgetSpec::Radio {
+        let WidgetSpec::Radio {
             options,
             selected_index,
             label,
             label_width,
             key,
             ..
-        }) = spec
+        } = spec
         else {
             unreachable!("a radio")
         };
@@ -246,7 +240,7 @@ mod tests {
         let out = resolve_panel(spec, &HashMap::new(), "", true, None);
         crate::widgets::WidgetPanelState {
             buffer_id: Some(crate::model::event::BufferId(1)),
-            spec: spec.clone(),
+            spec: std::rc::Rc::new(spec.clone()),
             instance_states: out.instance_states,
             focus_key: out.focus_key,
             auto_focus_first: true,

@@ -96,6 +96,12 @@ pub(crate) struct PersistedWindow {
     /// even before the shell materializes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) stable_id: Option<String>,
+    /// When this workspace was last the foreground one, from the workspace
+    /// file's `last_focused_at` (Unix epoch milliseconds). `None` for files
+    /// written before the field existed. Orchestrator mode's boot pick
+    /// takes the highest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) last_focused_at: Option<u64>,
 }
 
 fn is_local_authority_spec(spec: &crate::services::authority::SessionAuthoritySpec) -> bool {
@@ -238,6 +244,7 @@ fn discover_sessions(
         authority_spec: crate::services::authority::SessionAuthoritySpec,
         stable_id: Option<String>,
         saved_at: u64,
+        last_focused_at: Option<u64>,
     }
     let mut found: Vec<Candidate> = Vec::new();
     for entry in entries {
@@ -314,6 +321,7 @@ fn discover_sessions(
                 .and_then(|v| v.as_str())
                 .map(str::to_owned),
             saved_at: val.get("saved_at").and_then(|v| v.as_u64()).unwrap_or(0),
+            last_focused_at: val.get("last_focused_at").and_then(|v| v.as_u64()),
         });
     }
     // Session identity is the durable `stable_id`, not the directory: several
@@ -387,6 +395,7 @@ fn discover_sessions(
                 authority_spec: c.authority_spec,
                 plugin_state: c.plugin_state,
                 stable_id: c.stable_id,
+                last_focused_at: c.last_focused_at,
             }
         })
         .collect()
@@ -585,6 +594,46 @@ pub(crate) fn pick_active_window_for_cwd<'a>(
         .iter()
         .filter(|w| window_matches_cwd(w, cwd))
         .max_by_key(|w| w.id)
+}
+
+/// Pick which persisted session to bring up at boot in **Orchestrator
+/// mode** — the mode a bare `fresh` launches into.
+///
+/// The rule is the one the dock already implies: you are switching between
+/// workspaces, not opening a directory, so the editor comes back where you
+/// left it. The most recently focused workspace wins *whatever directory it
+/// is rooted at* — which is the whole difference from
+/// [`pick_active_window_for_cwd`], and the reason this is a separate
+/// function rather than a flag on that one. Deliberately ignoring the launch
+/// cwd is the feature here; in every other launch it is a bug (issue #2056).
+///
+/// Recency comes from each workspace's own `last_focused_at`, not from a
+/// single "active session" pointer: there is no such pointer on disk
+/// (`PersistedWindows::active` is synthesised as 0 by the loader — the
+/// registry is the set of workspace files, and nothing writes an index over
+/// them), and a per-workspace stamp is the more robust shape anyway. It
+/// cannot dangle, and deleting the most recent workspace simply promotes
+/// the next one.
+///
+/// Falls back to the cwd-scoped rule when no workspace carries a stamp —
+/// every file predates the field — so an upgrade opens something sensible
+/// rather than nothing. `None` means the caller boots a clean base window at
+/// `cwd`, which in orchestrator mode is the first-run path: a workspace for
+/// the directory you typed `fresh` in.
+pub(crate) fn pick_active_window_globally<'a>(
+    env: Option<&'a PersistedWindows>,
+    cwd: &Path,
+) -> Option<&'a PersistedWindow> {
+    let env = env?;
+    if let Some(w) = env
+        .windows
+        .iter()
+        .filter(|w| w.last_focused_at.is_some())
+        .max_by_key(|w| w.last_focused_at)
+    {
+        return Some(w);
+    }
+    pick_active_window_for_cwd(Some(env), cwd)
 }
 
 fn window_matches_cwd(w: &PersistedWindow, cwd: &Path) -> bool {
@@ -1138,6 +1187,7 @@ mod tests {
             authority_spec: Default::default(),
             plugin_state: HashMap::new(),
             stable_id: None,
+            last_focused_at: None,
         }
     }
 
@@ -1405,6 +1455,7 @@ mod tests {
             window: true,
             label: Some("ssh-session".into()),
             command: None,
+            adopt_window: None,
         });
         std::fs::write(
             ws_dir.join("ssh.json"),

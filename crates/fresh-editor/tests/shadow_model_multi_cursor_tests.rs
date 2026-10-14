@@ -99,7 +99,7 @@ impl MultiCursorShadow {
         let mut new_content = String::new();
         let mut read_pos = 0;
 
-        for &(ref edit_pos, ref del_len, ref ins_text, _) in &sorted_asc {
+        for (edit_pos, del_len, ins_text, _) in &sorted_asc {
             // Copy unmodified content before this edit
             if *edit_pos > read_pos {
                 new_content.push_str(&self.content[read_pos..*edit_pos]);
@@ -642,15 +642,13 @@ fn test_debug_proptest_regression() {
 fn test_debug_proptest_regression_2() {
     let (mut harness, mut shadow) = setup_multi_cursor_editor("aaa\nbbb\nccc", 1).unwrap();
 
-    let ops = vec![
-        MultiCursorOp::SelectLeft,
+    let ops = [MultiCursorOp::SelectLeft,
         MultiCursorOp::SelectLeft,
         MultiCursorOp::Left,
         MultiCursorOp::TypeChar(' '),
         MultiCursorOp::Delete,
         MultiCursorOp::Right,
-        MultiCursorOp::Backspace,
-    ];
+        MultiCursorOp::Backspace];
 
     for (i, op) in ops.iter().enumerate() {
         op.apply_to_editor(&mut harness).unwrap();

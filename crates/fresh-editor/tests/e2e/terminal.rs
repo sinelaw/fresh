@@ -417,8 +417,8 @@ fn menu_item_fg(
 /// A terminal is a real buffer, so it satisfied the menu's `has_buffer`
 /// condition and Save ran on it: the terminal's own scrollback transcript was
 /// written back over its backing file, reporting "Saved" — and once the
-/// terminal had appended to that file since the last sync, a "File changed on
-/// disk. (o)verwrite, (C)ancel?" prompt for a file the user never edited.
+/// terminal had appended to that file since the last sync, a "File Changed on
+/// Disk" confirmation for a file the user never edited.
 #[test]
 fn test_file_menu_disables_save_for_a_terminal_buffer() {
     let mut harness = harness_or_return!(120, 30);
@@ -1005,7 +1005,10 @@ fn test_terminal_buffer_cursor_movement() {
     // Get initial cursor position. Exiting terminal mode anchors the cursor
     // at the top of the just-exited visible screen (see
     // `sync_terminal_to_buffer`), so navigate downward into the content.
-    let initial_pos = harness.editor().get_cursor_position(buffer_id);
+    let initial_pos = harness
+        .editor()
+        .active_window()
+        .get_cursor_position(buffer_id);
 
     // Move cursor down
     harness
@@ -1013,7 +1016,10 @@ fn test_terminal_buffer_cursor_movement() {
         .handle_key(KeyCode::Down, KeyModifiers::NONE)
         .unwrap();
 
-    let pos_after_down = harness.editor().get_cursor_position(buffer_id);
+    let pos_after_down = harness
+        .editor()
+        .active_window()
+        .get_cursor_position(buffer_id);
 
     // Cursor should have moved (arrow keys do buffer navigation, not PTY input,
     // once terminal mode is disabled).
@@ -4058,7 +4064,7 @@ fn test_arrow_keys_in_less() {
             }
 
             // Periodic progress logging (every ~5s)
-            if iter % 100 == 0 && iter > 0 {
+            if iter.is_multiple_of(100) && iter > 0 {
                 let screen = harness.screen_to_string();
                 let elapsed = start.elapsed();
                 tracing::info!(
@@ -4649,7 +4655,11 @@ fn test_terminal_buffers_always_grid_wrap() {
     harness.render().unwrap();
     let win = harness.editor().active_window();
     let (mgr, view_states) = win.buffers.splits().unwrap();
-    let vp = &view_states.get(&mgr.active_split()).unwrap().viewport;
+    let vp = &view_states
+        .get(&mgr.active_split())
+        .unwrap()
+        .buffer_tab_state()
+        .viewport;
     assert!(
         vp.line_wrap_enabled && vp.grid_wrap,
         "terminal viewport must be healed into grid-wrap mode (line_wrap_enabled={}, grid_wrap={})",
@@ -4687,7 +4697,7 @@ fn primary_selection_active(harness: &EditorTestHarness) -> bool {
     view_states
         .get(&mgr.active_split())
         .map(|vs| {
-            let c = vs.cursors.primary();
+            let c = vs.buffer_tab_state().cursors.primary();
             c.anchor.is_some_and(|a| a != c.position)
         })
         .unwrap_or(false)

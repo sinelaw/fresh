@@ -132,6 +132,42 @@ const s2 = await scene(page);
 check('typed text appears in the real pipeline-rendered cells', paneText(s2).includes('QWZX'), `head="${paneText(s2).slice(0, 40)}"`);
 await page.screenshot({ path: `${SHOTS}/21-real-pipeline-typed.png` });
 
+console.log('\n[unicode: the grid walks GRAPHEME CLUSTERS, not UTF-16 units]');
+// Every cell gets one x in the SVG. A ZWJ sequence, a flag, a skin tone or a
+// base+combining pair is ONE cell made of several UTF-16 units, so counting
+// `.length` used to hand each piece its own column: the emoji broke into
+// fragments and the rest of the line drifted right. The rendered row must stay
+// exactly as wide (in cells) as a plain ASCII row of the same pane.
+const UNI = 'UNI[\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}|\u{1F1EE}\u{1F1F1}|\u{1F44D}\u{1F3FD}|a\u0301e\u0300o\u0302]';
+await page.keyboard.press('Home');
+await page.keyboard.insertText(UNI + '\n');
+await page.waitForFunction(t => window.fresh.scene.regions.panes[0].cells
+  .some(r => r.map(x => x.t).join('').includes(t)), 'UNI[', { timeout: 5000 }).catch(() => {});
+const uni = await page.evaluate(() => {
+  const texts = [...document.querySelectorAll('.region.pane-content svg.cells text')];
+  const xs = t => [...t.querySelectorAll('tspan')]
+    .reduce((n, sp) => n + (sp.getAttribute('x') || '').trim().split(/\s+/).filter(Boolean).length, 0);
+  const row = texts.find(t => t.textContent.includes('UNI['));
+  if (!row) return null;
+  const plain = texts.find(t => t !== row && /^[\x20-\x7E]*$/.test(t.textContent));
+  const cluster = [...row.querySelectorAll('tspan')].find(sp => sp.textContent === '\u{1F44D}\u{1F3FD}');
+  return {
+    cells: xs(row),
+    plainCells: plain ? xs(plain) : null,
+    clusterXs: cluster ? (cluster.getAttribute('x') || '').trim().split(/\s+/).filter(Boolean).length : null,
+  };
+});
+check('the unicode row rendered', !!uni, 'row not found');
+check('a multi-unit cluster is ONE positioned cell', uni && uni.clusterXs === 1, JSON.stringify(uni));
+check('the unicode row is exactly as wide (in cells) as an ASCII row',
+  !!uni && uni.plainCells != null && uni.cells === uni.plainCells, JSON.stringify(uni));
+await page.screenshot({ path: `${SHOTS}/21-unicode-graphemes.png` });
+// Undo the probe line so the rest of the suite sees the file it expected.
+for (let i = 0; i < 8 && (await scene(page)).regions.panes[0].cells
+  .some(r => r.map(x => x.t).join('').includes('UNI[')); i++) {
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(120);
+}
+
 console.log('\n[file explorer = native tree, NOT cells]');
 await page.locator('body').click();
 // Open the sidebar if it isn't already (Ctrl+B toggles; the live editor may
@@ -330,18 +366,42 @@ if (webDockPanels) {
   }
 
   console.log('\n[dock clicks are cells routed over the tree]');
-  // The "empty" toggle (hide trivial): its row's text changes state when
-  // clicked, and again when clicked once more.
-  const toggleText = async () => { const it = findLine(await treeOf(), 'dock', /empty/i); return it ? it.text : null; };
+  // The "Empty workspaces" toggle: its row's marker changes state when
+  // clicked, and again when clicked once more. It lives in the menu the
+  // header's `Menu ▾` button opens, which is an anchored layer over the
+  // editor (a `floating` surface), not rows inside the dock column. A
+  // settings row leaves the menu open, so both clicks land on the same menu.
+  const DOCK_MENU = /Menu ▾/;
+  const openDockMenu = async () => {
+    const trigger = findLine(await treeOf(), 'dock', DOCK_MENU);
+    if (trigger) await clickLine(trigger);
+    await waitTree((t, lines) => lines('floating').some(l => /empty/i.test(l)), null, 5000);
+  };
+  const toggleLine = async () => findLine(await treeOf(), 'floating', /empty/i);
+  const toggleText = async () => { const it = await toggleLine(); return it ? it.text : null; };
+  // The toggle's own row, within the menu's text: the item is the whole menu.
+  const clickToggle = async () => {
+    const it = await toggleLine();
+    if (!it) return;
+    // The menu is two columns side by side: click the label's own cell.
+    const rows = it.text.split('\n');
+    const row = rows.findIndex(l => /empty/i.test(l));
+    await clickCell(it.x + rows[row].search(/empty/i), it.y + row);
+  };
+  await openDockMenu();
   const t0 = await toggleText();
-  let tg = findLine(await treeOf(), 'dock', /empty/i); if (tg) await clickLine(tg);
-  await waitTree((t, lines, v0) => lines('dock').some(l => /empty/i.test(l) && l !== v0), t0, 5000);
+  await clickToggle();
+  await waitTree((t, lines, v0) => lines('floating').some(l => /empty/i.test(l) && l !== v0), t0, 5000);
   const t1 = await toggleText();
   check('dock toggle click flips real plugin state', t1 !== null && t1 !== t0, `${JSON.stringify(t0)} -> ${JSON.stringify(t1)}`);
-  tg = findLine(await treeOf(), 'dock', /empty/i); if (tg) await clickLine(tg);
-  await waitTree((t, lines, v1) => lines('dock').some(l => /empty/i.test(l) && l !== v1), t1, 5000);
+  await clickToggle();
+  await waitTree((t, lines, v1) => lines('floating').some(l => /empty/i.test(l) && l !== v1), t1, 5000);
   const t2 = await toggleText();
   check('a second click flips it back (the frame the click landed on was rebuilt)', t2 === t0, `${JSON.stringify(t1)} -> ${JSON.stringify(t2)}`);
+  // Esc closes the menu and puts the dock back to its plain state for what
+  // follows.
+  await page.keyboard.press('Escape');
+  await waitTree((t) => !t.surfaces.some(s => s.kind === 'floating'), null, 5000);
 
   console.log('\n[dock right-click = plugin context menu (anchored popup, like the TUI)]');
   // Right-click on a session row fires the plugin's `context` event exactly as
@@ -395,17 +455,23 @@ if (webDockPanels) {
     await page.keyboard.press('Escape'); await page.waitForTimeout(200);
   }
 
-  console.log('\n[dock dropdowns are layers over the column]');
-  // "New Task… ▾" opens a create dropdown as a layer inside the dock's
-  // subtree; its rows are display-list items below the trigger.
-  const newTask = findLine(await treeOf(), 'dock', /New Task/);
-  if (newTask) await clickLine(newTask);
-  await waitTree((t, lines, before) => lines('dock').length > before, treeLines(await treeOf(), 'dock').length, 5000);
-  const opened = await treeOf();
-  const option = treeLines(opened, 'dock').find(i => /^\s*New Task…\s*$/.test(i.text));
-  check('New Task dropdown rows are items below the trigger', !!option && !!newTask && option.y > newTask.y, JSON.stringify({ trigger: newTask && newTask.y, option: option && option.y }));
+  console.log('\n[the dock menu is an anchored layer under its trigger]');
+  // The header's `Menu ▾` opens the dock's menu as a floating layer anchored
+  // to the button; its rows are display-list items below the trigger.
+  const menuTrigger = findLine(await treeOf(), 'dock', DOCK_MENU);
+  if (menuTrigger) await clickLine(menuTrigger);
+  await waitTree((t, lines) => lines('floating').some(l => /Import sessions/i.test(l)), null, 5000);
+  const option = findLine(await treeOf(), 'floating', /Import sessions/i);
+  const optionRow = option ? option.y + option.text.split('\n').findIndex(l => /Import sessions/i.test(l)) : null;
+  check('dock menu rows are items below the trigger', !!option && !!menuTrigger && optionRow > menuTrigger.y, JSON.stringify({ trigger: menuTrigger && menuTrigger.y, option: optionRow }));
+  // One row is checked for the clipping a `list` inside a narrow column
+  // silently does: it came back as "Discover agent ses" until the rows were
+  // padded to the widest. "Import sessions…" because it is long enough to
+  // have been clipped, and its wording is not in play.
+  check('dock menu rows are not clipped',
+    !!option && /Import sessions…/.test(option.text), JSON.stringify(option && option.text));
   await page.keyboard.press('Escape');
-  await waitTree((t, lines, n) => lines('dock').length <= n, treeLines(opened, 'dock').length - 1, 5000);
+  await waitTree((t) => !t.surfaces.some(s => s.kind === 'floating'), null, 5000);
   await page.keyboard.press('Escape'); await page.waitForTimeout(150);
 } else {
   skip('the dock panel sections (clicks, context menu, text field, dropdowns)');
@@ -437,6 +503,16 @@ check('Add-binding dialog renders natively (fields)', (await page.locator('.kbed
 await page.screenshot({ path: `${SHOTS}/29-native-keybindings.png` });
 await page.keyboard.press('Escape'); await page.waitForTimeout(150); await page.keyboard.press('Escape'); await page.waitForTimeout(200);
 
+// Select a Settings category by clicking its row in the tree.
+async function openSettingsCategory(name) {
+  await page.locator('.settings-modal .set-cat', { hasText: name }).first().click();
+  await page.waitForFunction(n => {
+    const s = window.fresh.scene.regions.settings;
+    return s && s.categories.some(c => c.selected && c.name === n);
+  }, name, { timeout: 5000 }).catch(() => {});
+  await page.waitForTimeout(150);
+}
+
 console.log('\n[Settings = full native modal incl. entry dialog]');
 await page.keyboard.press('Escape'); await page.waitForTimeout(120);
 await page.request.post(URL + '/action', { data: { action: 'open_settings' } });
@@ -444,6 +520,8 @@ await page.waitForFunction(() => !!window.fresh.scene.regions.settings, { timeou
 await page.waitForTimeout(300);
 check('Settings is a native modal (categories+items)', (await page.locator('.settings-modal .set-cat').count()) >= 5 && (await page.locator('.settings-modal .set-item').count()) >= 3);
 check('NO svg/cells in the settings modal', (await page.locator('.settings-modal svg').count()) === 0);
+// The Languages map lives on the "Syntax & Languages" page.
+await openSettingsCategory('Syntax & Languages');
 await page.keyboard.press('Tab'); await page.waitForTimeout(120);
 for (let i = 0; i < 4; i++) { await page.keyboard.press('ArrowDown'); await page.waitForTimeout(80); }
 await page.keyboard.press('Enter');
@@ -512,6 +590,7 @@ console.log('\n[Settings map entry rows: mouse + keyboard, TUI-parity interactio
 await page.request.post(URL + '/action', { data: { action: 'open_settings' } });
 await page.waitForFunction(() => !!window.fresh.scene.regions.settings, { timeout: 8000 }).catch(() => {});
 await page.waitForTimeout(250);
+await openSettingsCategory('Syntax & Languages');
 const langIdx = await page.evaluate(() => [...document.querySelectorAll('.set-items > .set-item')]
   .findIndex(r => (r.querySelector('.set-name') || {}).textContent === 'Languages'));
 const langRowsLoc = page.locator('.set-items > .set-item').nth(langIdx).locator('.set-list-row:not(.set-list-head)');
@@ -956,12 +1035,11 @@ if (webDockPanels) {
   }
   await page.waitForTimeout(200);
   check('dock alone (no modal) has no scrim item', !(await treeOf()).items.some(i => i.kind === 'scrim'));
-  // "New Task… ▾" opens a create dropdown first; pick the "New Task…" option.
-  const nt = findLine(await treeOf(), 'dock', /New Task/);
+  // `+ New` goes straight to the dialog — one click since the dock's header
+  // collapsed to two controls (it used to be "New Task… ▾" and then an option
+  // row in the dropdown it opened).
+  const nt = findLine(await treeOf(), 'dock', /\+ New/);
   if (nt) await clickLine(nt);
-  await waitTree((t, lines) => lines('dock').some(l => /^\s*New Task…\s*$/.test(l)), null, 5000);
-  const opt = treeLines(await treeOf(), 'dock').find(i => /^\s*New Task…\s*$/.test(i.text));
-  if (opt) await clickLine(opt);
   await waitTree((t) => t.surfaces.some(s => s.kind === 'floating' && !s.anchored));
   await page.waitForTimeout(200);
   const modal = (await treeOf()).surfaces.find(s => s.kind === 'floating' && !s.anchored);
@@ -978,7 +1056,8 @@ if (webDockPanels) {
   const rowAfter = treeLines(await treeOf(), 'dock').find(i => /fresh/.test(i.text));
   check('a click over the dock is eaten by the modal (row unchanged, modal still open)',
     stillModal && !!rowIt && !!rowAfter && rowAfter.text === rowIt.text && rowAfter.bg === rowIt.bg,
-    JSON.stringify({ stillModal, before: rowIt && rowIt.text, after: rowAfter && rowAfter.text }));
+    JSON.stringify({ stillModal, before: rowIt && { t: rowIt.text, bg: rowIt.bg, fg: rowIt.fg },
+      after: rowAfter && { t: rowAfter.text, bg: rowAfter.bg, fg: rowAfter.fg } }));
   await page.screenshot({ path: `${SHOTS}/34-new-workspace-modal.png` });
   await page.keyboard.press('Escape');
   await waitTree((t) => !t.surfaces.some(s => s.kind === 'floating'));
@@ -1300,6 +1379,7 @@ await page.keyboard.press('Escape'); await page.waitForTimeout(200);
 await page.request.post(URL + '/action', { data: { action: 'open_settings' } });
 await page.waitForFunction(() => !!window.fresh.scene.regions.settings, { timeout: 8000 }).catch(() => {});
 await page.waitForTimeout(300);
+await openSettingsCategory('Syntax & Languages');
 const langPill = page.locator('.settings-modal .set-item', { hasText: 'Default Language' }).locator('.set-pill');
 await langPill.scrollIntoViewIfNeeded().catch(() => {});
 const lpBox = await langPill.boundingBox();

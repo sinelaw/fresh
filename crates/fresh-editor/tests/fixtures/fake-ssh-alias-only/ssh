@@ -1,0 +1,33 @@
+#!/bin/sh
+# Fake `ssh` that answers **only when it is given the config alias**.
+#
+# The orchestrator reads `~/.ssh/config` to *list* hosts, but ssh is the thing
+# that interprets the file: a destination the plugin has already resolved to
+# `user@hostname:port` matches no `Host` block, so `IdentityFile`,
+# `UserKnownHostsFile`, `StrictHostKeyChecking`, `ProxyJump` and the rest of
+# the user's entry silently stop applying. This shim makes that difference
+# observable without a network: give it `aliasbox` and it replies like the
+# form's git probe; give it the resolved target and it refuses the way a real
+# ssh refuses a host it cannot place.
+#
+# The destination is the argument after `--`, which is how every ssh argv the
+# plugin builds is shaped.
+dest=""
+while [ $# -gt 0 ]; do
+  if [ "$1" = "--" ]; then
+    shift
+    dest="$1"
+    break
+  fi
+  shift
+done
+
+if [ "$dest" != "aliasbox" ]; then
+  echo "ssh: Could not resolve hostname $dest (alias-only fake ssh)" 1>&2
+  exit 255
+fi
+
+# What `probeRemoteGit` expects on stdout: repository root, then branch.
+printf '%s\n' "/srv/aliasrepo"
+printf '%s\n' "remote-main-branch"
+exit 0

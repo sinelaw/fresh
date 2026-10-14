@@ -724,7 +724,7 @@ editor.setStatus("Nonblocking test plugin loaded");
 
 /// Ensure the clangd plugin reacts to file-status notifications
 #[test]
-#[ignore]
+#[cfg_attr(windows, ignore)] // Uses bash script for fake LSP server
 fn test_clangd_plugin_file_status_notification() -> anyhow::Result<()> {
     init_tracing_from_env();
 
@@ -771,29 +771,14 @@ fn test_clangd_plugin_file_status_notification() -> anyhow::Result<()> {
 
     harness.open_file(&source_file)?;
     harness.render()?;
-    for _ in 0..10 {
-        harness.sleep(Duration::from_millis(100));
-        let _ = harness.editor_mut().process_async_messages();
-        harness.render()?;
-    }
 
-    let mut seen_status = false;
-    for _ in 0..20 {
-        harness.sleep(Duration::from_millis(50));
-        let _ = harness.editor_mut().process_async_messages();
-        harness.render()?;
-        if let Some(msg) = harness.editor().get_status_message() {
-            if msg == "Clangd file status: ready" {
-                seen_status = true;
-                break;
-            }
-        }
-    }
-
-    assert!(
-        seen_status,
-        "Expected clangd file status notification to set the plugin status"
-    );
+    // The fake server answers `textDocument/didOpen` with a
+    // `textDocument/clangd.fileStatus` notification; the plugin's
+    // `lsp/custom_notification` handler turns it into a status message.
+    // Semantic wait: nextest times the test out if it never arrives.
+    harness.wait_until(|h| {
+        h.editor().get_status_message().map(|m| m.as_str()) == Some("Clangd file status: ready")
+    })?;
 
     Ok(())
 }

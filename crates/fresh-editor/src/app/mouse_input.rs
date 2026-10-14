@@ -28,6 +28,29 @@ const WHEEL_COLUMNS: i32 = crate::widgets::render::PAN_COLUMNS;
 /// short enough that the view never feels behind the wheel.
 const SMOOTH_SCROLL_LINE: Duration = Duration::from_millis(16);
 
+/// How often a drag resting past a list's edge scrolls it another step
+/// (`fresh_ui::Ui::drag_autoscroll`). Slow enough to stop on the row wanted,
+/// fast enough to cross a long list; the tree makes the step bigger the
+/// farther past the edge the pointer is.
+const DRAG_AUTOSCROLL_STEP: Duration = Duration::from_millis(60);
+
+/// A drag held past the edge of the list it was lifted from, which keeps
+/// scrolling it while it rests there.
+///
+/// **The tree decides what the drag means; this only supplies the time.**
+/// A step is a pointer move — the tree scrolls the window toward a drag
+/// that moves past its edge — and a drag held still produces no moves, so
+/// the host repeats the pointer where it rests, through the same dispatch
+/// the real moves took, for as long as the tree says a repeat would scroll.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DragAutoscroll {
+    col: u16,
+    row: u16,
+    /// When the last step was taken. Advanced by the interval, so the pace
+    /// does not drift with frame times.
+    last_step: Instant,
+}
+
 /// A wheel gesture still playing out.
 ///
 /// One notch asks for several lines at once. Handing them over one at a
@@ -101,6 +124,7 @@ impl Editor {
         // a fact says whether it changed anything routing reads
         // (`UiFact::is_pointer_transient`), and the legacy walk, which cannot,
         // marks the description stale for every press and release it takes.
+        self.mark_plugin_snapshot_dirty();
         self.lay_out_shell_if_stale();
         self.handle_mouse_routed(mouse_event)
     }
@@ -211,11 +235,15 @@ impl Editor {
         // dispatch and the legacy walk — which meant it applied only to the
         // notches the tree *declined*, and once a surface's wheel became a node
         // that was none of that surface's.
-        let wheel_lines = self.arm_wheel_walk(mouse_event, col, row, wheel_lines);
-        if let Some(input) =
+        //
+        // The walk is only *armed* once routing has said where the notch went
+        // (`arm_wheel_walk`, below): a terminal child takes a notch whole.
+        let (wheel_lines, walk) = self.plan_wheel_walk(mouse_event, col, row, wheel_lines);
+        let dispatched =
             crate::view::shell::input::mouse(mouse_event, clicks, wheel_lines, WHEEL_COLUMNS)
-        {
-            let d = self.shell_dispatch(input);
+                .map(|input| self.shell_dispatch(input));
+        self.arm_wheel_walk(walk, dispatched.map(|d| d.applied).unwrap_or_default());
+        if let Some(d) = dispatched {
             if d.claimed {
                 return Ok(true);
             }
@@ -253,26 +281,10 @@ impl Editor {
             // not — the markdown document's drag-to-select — is the run's.
             MouseEventKind::Drag(MouseButton::Left) => {}
             MouseEventKind::Up(MouseButton::Left) => {
-                // Release is GRAB-KEYED like the Drag arm: the derived
-                // `pointer_grab` names which press-to-release routing is
-                // ending, and its arm runs that grab's finalizer — no
-                // more per-surface field-poke ladder that had to be kept
-                // in sync with the grab roster by hand. Grabs without a
-                // finalizer just fall to the blanket clear below.
-                // A tab drop was finalized here, keyed on its grab. The
-                // tab's node holds the pointer for the drag now, so the
-                // release comes back to it (`UiFact::PaneTabDrop`) and never
-                // reaches this walk.
-
-                // Blanket sweep: every remaining drag flag drops here,
-                // so no grab can outlive its release even if its
-                // finalizer above was skipped.
-                self.clear_active_window_drag_state();
-
-                // The separator's reflow was here, keyed on its grab. It is
-                // the divider node's own release now — the grip keeps the
-                // pointer it took, so its release never reaches this walk.
-
+                // A release ends whatever press was held. Every gesture's own
+                // release is captured by the node that took the press and
+                // never reaches this walk; this is for a press that was not.
+                self.active_window_mut().mouse_state.drag = None;
                 needs_render = true;
             }
             MouseEventKind::Moved => {
@@ -366,20 +378,26 @@ impl Editor {
         (is_double, is_triple)
     }
 
-    /// Split one wheel notch into the line that lands now and the lines the
-    /// walk still owes, returning the first. `lines` is the notch's full worth.
+    /// Split one wheel notch into the line that lands now and the walk that
+    /// would owe the rest, returning both. `lines` is the notch's full worth.
     ///
     /// A notch is worth `mouse_wheel_scroll_lines`. The first lands with the
     /// event itself, so the view answers the wheel on the same frame; the rest
     /// are owed and walked one at a time by [`Self::step_pending_wheel_scroll`],
-    /// which is what makes a multi-line notch slide rather than jump.
-    fn arm_wheel_walk(
+    /// which is what makes a multi-line notch slide rather than jump. The walk
+    /// is returned, not armed: whether the notch's surface wants its lines one
+    /// at a time is known only once the notch is routed
+    /// ([`Self::arm_wheel_walk`]).
+    ///
+    /// A gesture still playing out is settled here, before the notch is
+    /// routed: its lines carry into this walk, or are delivered now.
+    fn plan_wheel_walk(
         &mut self,
         ev: crossterm::event::MouseEvent,
         col: u16,
         row: u16,
         lines: i32,
-    ) -> i32 {
+    ) -> (i32, Option<PendingWheelScroll>) {
         use crossterm::event::{KeyModifiers, MouseEventKind};
         // Only a vertical notch walks. Anything else — a press, a motion, a
         // sideways wheel — leaves the gesture in progress alone; it plays out
@@ -387,7 +405,7 @@ impl Editor {
         let direction = match ev.kind {
             MouseEventKind::ScrollDown => 1,
             MouseEventKind::ScrollUp => -1,
-            _ => return lines,
+            _ => return (lines, None),
         };
         // Shift turns the wheel horizontal. That pans by columns, which the
         // line-oriented setting has nothing to say about and there is no
@@ -402,7 +420,7 @@ impl Editor {
             && self.config.editor.animations;
         if !walk {
             self.flush_pending_wheel_scroll();
-            return lines;
+            return (lines, None);
         }
 
         // A flick sends notches faster than they can be walked, so the lines
@@ -424,15 +442,32 @@ impl Editor {
             }
             None => 0,
         };
-        self.pending_wheel_scroll = Some(PendingWheelScroll {
+        let walk = PendingWheelScroll {
             col,
             row,
             direction,
             remaining: carried + lines - 1,
             max_backlog: lines * 2,
             last_step: Instant::now(),
-        });
-        1
+        };
+        (1, Some(walk))
+    }
+
+    /// Arm the walk a notch planned, now that routing has said where the
+    /// notch went. A live terminal whose child takes the mouse got the notch
+    /// forwarded whole — the child scrolls by its own rule, one report per
+    /// notch — so it has no lines owed; a replay would forward it again.
+    fn arm_wheel_walk(
+        &mut self,
+        walk: Option<PendingWheelScroll>,
+        applied: crate::app::shell_host::Applied,
+    ) {
+        if applied.wheel_forwarded {
+            return;
+        }
+        if let Some(walk) = walk {
+            self.pending_wheel_scroll = Some(walk);
+        }
     }
 
     /// Hand a gesture the lines it still owes, all at once, to the
@@ -456,7 +491,13 @@ impl Editor {
     /// came from did, so the surface that took the first line takes the rest
     /// — rather than the walk having a delivery path of its own that could
     /// route somewhere else.
-    fn deliver_wheel(&mut self, col: u16, row: u16, direction: i32, lines: u32) {
+    fn deliver_wheel(
+        &mut self,
+        col: u16,
+        row: u16,
+        direction: i32,
+        lines: u32,
+    ) -> crate::app::shell_host::Applied {
         use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
         let ev = MouseEvent {
             kind: match direction {
@@ -467,9 +508,9 @@ impl Editor {
             row,
             modifiers: KeyModifiers::empty(),
         };
-        if let Some(input) = crate::view::shell::input::mouse(ev, 1, lines as i32, WHEEL_COLUMNS) {
-            self.shell_dispatch(input);
-        }
+        crate::view::shell::input::mouse(ev, 1, lines as i32, WHEEL_COLUMNS)
+            .map(|input| self.shell_dispatch(input).applied)
+            .unwrap_or_default()
     }
 
     /// End any playing-out gesture, delivering what it still owes rather
@@ -523,7 +564,62 @@ impl Editor {
             self.pending_wheel_scroll = None;
         }
 
-        self.deliver_wheel(col, row, direction, due);
+        // The surface under the walk can stop wanting its lines one at a
+        // time — a terminal's child that turned the mouse on mid-walk takes
+        // the line whole — and then the rest of the walk is not owed either.
+        if self.deliver_wheel(col, row, direction, due).wheel_forwarded {
+            self.pending_wheel_scroll = None;
+        }
+    }
+
+    /// Record where the tree says a drag rests past a list's edge, after a
+    /// dispatch. A drag that was already scrolling keeps its pace; one that
+    /// has just arrived there took its first step with the move that
+    /// brought it.
+    pub(crate) fn note_drag_autoscroll(&mut self, at: Option<fresh_ui::Point>) {
+        let last_step = self
+            .drag_autoscroll
+            .map_or_else(Instant::now, |d| d.last_step);
+        self.drag_autoscroll = at.map(|p| DragAutoscroll {
+            col: p.x.max(0) as u16,
+            row: p.y.max(0) as u16,
+            last_step,
+        });
+    }
+
+    /// True while a drag rests where the tree would scroll the list under
+    /// it. The event loop keeps producing frames while it does.
+    pub fn has_drag_autoscroll(&self) -> bool {
+        self.drag_autoscroll.is_some()
+    }
+
+    /// When the held drag's next step comes due, for the loop's wait.
+    pub fn drag_autoscroll_deadline(&self) -> Option<Instant> {
+        self.drag_autoscroll
+            .map(|d| d.last_step + DRAG_AUTOSCROLL_STEP)
+    }
+
+    /// Repeat the pointer where a drag rests past a list's edge, once its
+    /// step is due. Called once per frame, before layout, beside the wheel
+    /// walk, so the step lands in the frame about to be painted.
+    pub(crate) fn step_drag_autoscroll(&mut self) {
+        let Some(d) = self.drag_autoscroll.as_mut() else {
+            return;
+        };
+        if d.last_step.elapsed() < DRAG_AUTOSCROLL_STEP {
+            return;
+        }
+        d.last_step += DRAG_AUTOSCROLL_STEP;
+        // A loop away for a long while does not owe the steps it missed: the
+        // pace restarts from now rather than scrolling them all at once.
+        if d.last_step.elapsed() >= DRAG_AUTOSCROLL_STEP {
+            d.last_step = Instant::now();
+        }
+        let pos = fresh_ui::Point::new(d.col as i32, d.row as i32);
+        self.shell_dispatch(fresh_ui::Input::Move {
+            pos,
+            mods: fresh_ui::Mods::NONE,
+        });
     }
 
     /// Update LSP hover state based on mouse position
@@ -661,13 +757,10 @@ impl Editor {
 
         // Get compose width for this split
         let compose_width = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .active_window()
+            .split_view_states()
             .get(&split_id)
-            .and_then(|vs| vs.compose_width);
+            .and_then(|vs| vs.buffer_tab_state().compose_width);
 
         // Convert screen position to buffer byte position
         let Some(byte_pos) = super::click_geometry::screen_to_buffer_position(
@@ -703,21 +796,14 @@ impl Editor {
         let line_info = cached_mappings
             .as_ref()
             .and_then(|mappings| mappings.get(visual_row))
-            .map(|line_mapping| {
-                (
-                    line_mapping.visual_to_char.len(),
-                    line_mapping.line_end_byte,
-                )
-            });
+            .map(|line_mapping| (line_mapping.content_end_col(), line_mapping.line_end_byte));
 
+        // Past the last content cell (the newline and decoration cells
+        // don't count, so an empty line is always "past") there is no
+        // symbol to hover. The cell count can't be used here: a
+        // one-character line has one cell (issue #3351).
         let is_past_line_end_or_empty = line_info
-            .map(|(line_len, _)| {
-                // Empty lines (just newline) should not trigger hover
-                if line_len <= 1 {
-                    return true;
-                }
-                text_col >= line_len
-            })
+            .map(|(content_end_col, _)| text_col >= content_end_col)
             // If mouse is below all mapped lines (no mapping), don't trigger hover
             .unwrap_or(true);
 
@@ -800,10 +886,16 @@ impl Editor {
         if !self.transient_popup_showing() {
             return false;
         }
-        self.active_chrome()
-            .popup_areas
+        // The boxes the tree placed, asked by key. This read
+        // `ChromeLayout::popup_areas`, a cache `render` filled from this same
+        // read — one of the two whose deletion retires the paint-recorded
+        // roster. Only the buffer's stack is on screen for this question, and
+        // those are the description's first `buffer_n` popups.
+        let (buffer_n, _) = self.popup_counts();
+        self.popup_rects()
             .iter()
-            .any(|(_, outer, ..)| in_rect(col, row, *outer))
+            .take(buffer_n)
+            .any(|outer| in_rect(col, row, *outer))
     }
 
     /// Is a transient popup (hover, signature help) actually on screen?
@@ -922,30 +1014,6 @@ impl Editor {
             }
         }
         self.try_open_terminal_link(col, row, mouse_event)
-    }
-
-    /// Clear all in-progress drag state on the active window's mouse state.
-    /// The active text/popup selection is intentionally preserved — only the
-    /// drag bookkeeping fields are reset.
-    pub(crate) fn clear_active_window_drag_state(&mut self) {
-        let ms = &mut self.active_window_mut().mouse_state;
-        ms.dragging_scrollbar = None;
-        ms.drag_start_row = None;
-        ms.drag_start_top_byte = None;
-        ms.dragging_horizontal_scrollbar = None;
-        ms.drag_start_hcol = None;
-        ms.drag_start_left_column = None;
-        ms.dragging_separator = None;
-        ms.drag_start_position = None;
-        ms.drag_start_ratio = None;
-        ms.dragging_file_explorer = false;
-        ms.drag_start_explorer_width = None;
-        ms.dragging_text_selection = false;
-        ms.drag_selection_split = None;
-        ms.drag_selection_anchor = None;
-        ms.drag_selection_by_words = false;
-        ms.drag_selection_word_end = None;
-        ms.terminal_drag_pending = None;
     }
 }
 

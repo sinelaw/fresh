@@ -16,6 +16,7 @@
 //! positioning the popup — stay on `Editor` as orchestrators. This module
 //! is pure data with no `Editor` or I/O access.
 
+use crate::model::event::BufferId;
 use crate::view::overlay::OverlayHandle;
 use std::collections::HashSet;
 
@@ -62,6 +63,11 @@ pub(crate) struct HoverState {
     /// when a mouse-triggered hover request is fired; consumed when the
     /// popup is rendered.
     screen_position: Option<(u16, u16)>,
+    /// A keyboard hover asked for while the buffer's server was still
+    /// starting, so no server could take it: `(buffer, cursor byte)`.
+    /// Re-issued once that server finishes initializing, if the cursor is
+    /// still there.
+    deferred: Option<(BufferId, usize)>,
 }
 
 impl HoverState {
@@ -107,6 +113,16 @@ impl HoverState {
     /// Payloads accumulated for the current batch, in arrival order.
     pub(crate) fn accumulated(&self) -> &[HoverPayload] {
         &self.accumulated
+    }
+
+    /// Remember (or, with `None`, forget) a keyboard hover that waits on a
+    /// server still starting.
+    pub(crate) fn set_deferred(&mut self, deferred: Option<(BufferId, usize)>) {
+        self.deferred = deferred;
+    }
+
+    pub(crate) fn deferred(&self) -> Option<(BufferId, usize)> {
+        self.deferred
     }
 
     /// Clear any in-flight batch without consuming a position — used

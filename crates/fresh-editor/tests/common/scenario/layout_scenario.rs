@@ -329,6 +329,10 @@ pub struct MarginAnnotationSpec {
 /// `events` runs. When `initial_focus_hunk` is `Some(_)`, the
 /// runner also sets the composite's `initial_focus_hunk` field
 /// before the first render.
+/// A diff hunk as `(old_start, old_count, new_start, new_count)`,
+/// 0-indexed line numbers — same shape as `DiffHunk::new`.
+pub type HunkSpec = (usize, usize, usize, usize);
+
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct CompositeBufferSpec {
     /// Tab/title for the composite buffer (e.g. `"Diff View"`).
@@ -342,7 +346,7 @@ pub struct CompositeBufferSpec {
     pub new_content: String,
     /// Hunks as `(old_start, old_count, new_start, new_count)`,
     /// 0-indexed line numbers — same shape as `DiffHunk::new`.
-    pub hunks: Vec<(usize, usize, usize, usize)>,
+    pub hunks: Vec<HunkSpec>,
     /// Optional one-shot scroll-to-hunk-N on the first render.
     /// The first render consumes the field and resets it to
     /// `None`. `None` ⇒ start at the buffer top.

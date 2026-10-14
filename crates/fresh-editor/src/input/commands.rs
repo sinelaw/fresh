@@ -85,6 +85,18 @@ pub struct Command {
 }
 
 impl Command {
+    /// What this command is, as a suggestion row's id: its source and its
+    /// internal name. Built-in names are unique among built-ins and plugin
+    /// names among plugins (`CommandRegistry::register`), so the pair is
+    /// unique in the palette — unlike the localized name the row shows,
+    /// which a plugin can share with a built-in.
+    pub fn id(&self) -> String {
+        match &self.source {
+            CommandSource::Builtin => format!("builtin:{}", self.name),
+            CommandSource::Plugin(_) => format!("plugin:{}", self.name),
+        }
+    }
+
     /// Get the localized name of the command
     pub fn get_localized_name(&self) -> String {
         if self.name.starts_with('%') {
@@ -117,6 +129,15 @@ impl Command {
 /// A single suggestion item for autocomplete
 #[derive(Debug, Clone, PartialEq)]
 pub struct Suggestion {
+    /// What this row *is*, unique within its list: a command's name, a
+    /// file's path, a buffer's id, an option's value.
+    ///
+    /// **Required, and never derived from the row's position or its label.**
+    /// The list keys its rows by it, so an insertion moves the other rows'
+    /// elements instead of rewriting them, and the selection is held by it.
+    /// A label is not an identity — two commands can share a name, two
+    /// search hits the same text.
+    pub id: String,
     /// The text to display
     pub text: String,
     /// Optional description
@@ -137,9 +158,10 @@ pub struct Suggestion {
 }
 
 impl Suggestion {
-    /// Create an active (selectable) suggestion
-    pub fn new(text: String) -> Self {
+    /// Create an active (selectable) suggestion identified by `id`.
+    pub fn new(id: impl Into<String>, text: String) -> Self {
         Self {
+            id: id.into(),
             text,
             description: None,
             description_spans: None,
@@ -150,9 +172,11 @@ impl Suggestion {
         }
     }
 
-    /// Create a disabled (greyed-out) suggestion used for hints or errors
-    pub fn disabled(text: String) -> Self {
+    /// Create a disabled (greyed-out) suggestion used for hints or errors,
+    /// identified by `id`.
+    pub fn disabled(id: impl Into<String>, text: String) -> Self {
         Self {
+            id: id.into(),
             text,
             description: None,
             description_spans: None,
@@ -165,14 +189,6 @@ impl Suggestion {
 
     pub fn with_description(mut self, description: String) -> Self {
         self.description = Some(description);
-        self
-    }
-
-    pub fn with_description_spans(
-        mut self,
-        spans: Option<Vec<fresh_core::api::StyledText>>,
-    ) -> Self {
-        self.description_spans = spans;
         self
     }
 
@@ -194,6 +210,16 @@ impl Suggestion {
     pub fn set_disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
+    }
+
+    /// The first id `suggestions` repeats, if any. A list's ids are its row
+    /// keys, so a repeat is a bug in whoever built the list.
+    pub fn duplicate_id(suggestions: &[Suggestion]) -> Option<&str> {
+        let mut seen = std::collections::HashSet::with_capacity(suggestions.len());
+        suggestions
+            .iter()
+            .map(|s| s.id.as_str())
+            .find(|id| !seen.insert(*id))
     }
 
     pub fn get_value(&self) -> &str {
@@ -289,6 +315,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         name_key: "cmd.toggle_auto_revert",
         desc_key: "cmd.toggle_auto_revert_desc",
         action: || Action::ToggleAutoRevert,
+        contexts: &[],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.review_interrupted_saves",
+        desc_key: "cmd.review_interrupted_saves_desc",
+        action: || Action::ReviewInterruptedSaves,
         contexts: &[],
         custom_contexts: &[],
     },
@@ -976,6 +1009,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         name_key: "cmd.focus_next_sidebar_section",
         desc_key: "cmd.focus_next_sidebar_section_desc",
         action: || Action::FocusNextSidebarSection,
+        contexts: &[Normal, FileExplorer, Terminal, CompositeBuffer, Dock],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.focus_prev_sidebar_section",
+        desc_key: "cmd.focus_prev_sidebar_section_desc",
+        action: || Action::FocusPrevSidebarSection,
         contexts: &[Normal, FileExplorer, Terminal, CompositeBuffer, Dock],
         custom_contexts: &[],
     },
@@ -1705,64 +1745,4 @@ pub fn get_all_commands() -> Vec<Command> {
             terminal_bypass: false,
         })
         .collect()
-}
-
-/// Filter commands by fuzzy matching the query, with context awareness
-pub fn filter_commands(
-    query: &str,
-    current_context: KeyContext,
-    keybinding_resolver: &crate::input::keybindings::KeybindingResolver,
-) -> Vec<Suggestion> {
-    let query_lower = query.to_lowercase();
-    let commands = get_all_commands();
-
-    // Helper function to check if command is available in current context
-    let is_available = |cmd: &Command| -> bool {
-        // Empty contexts means available in all contexts
-        cmd.contexts.is_empty() || cmd.contexts.contains(&current_context)
-    };
-
-    // Helper function for fuzzy matching
-    let matches_query = |cmd: &Command| -> bool {
-        if query.is_empty() {
-            return true;
-        }
-
-        let name_lower = cmd.name.to_lowercase();
-        let mut query_chars = query_lower.chars();
-        let mut current_char = query_chars.next();
-
-        for name_char in name_lower.chars() {
-            if let Some(qc) = current_char {
-                if qc == name_char {
-                    current_char = query_chars.next();
-                }
-            } else {
-                break;
-            }
-        }
-
-        current_char.is_none() // All query characters matched
-    };
-
-    // Filter and convert to suggestions
-    let current_context_ref = &current_context;
-    let mut suggestions: Vec<Suggestion> = commands
-        .into_iter()
-        .filter(|cmd| matches_query(cmd))
-        .map(|cmd| {
-            let available = is_available(&cmd);
-            let keybinding = keybinding_resolver
-                .get_keybinding_for_action(&cmd.action, current_context_ref.clone());
-            Suggestion::new(cmd.name.clone())
-                .with_description(cmd.description)
-                .set_disabled(!available)
-                .with_keybinding(keybinding)
-        })
-        .collect();
-
-    // Sort: available commands first, then disabled ones
-    suggestions.sort_by_key(|s| s.disabled);
-
-    suggestions
 }

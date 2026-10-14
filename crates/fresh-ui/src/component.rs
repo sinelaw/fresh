@@ -146,8 +146,11 @@ fn short_name(full: &'static str) -> &'static str {
 /// change is a bug this cannot detect.
 pub struct Memo<P, M> {
     props: P,
-    build: std::rc::Rc<dyn Fn(&P) -> Node<M>>,
+    build: Build<P, M>,
 }
+
+/// A `Memo`'s builder: the description for a value of its props.
+type Build<P, M> = std::rc::Rc<dyn Fn(&P) -> Node<M>>;
 
 impl<P: PartialEq + 'static, M: 'static> Component<M> for Memo<P, M> {
     type State = ();

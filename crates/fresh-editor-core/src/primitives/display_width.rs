@@ -34,9 +34,22 @@ impl DisplayWidth for String {
 /// Calculate the visual column (display width) at a given byte offset within a string.
 ///
 /// Returns the sum of display widths of all characters before the given byte offset.
+///
+/// An offset inside a character counts up to that character's start. Callers
+/// are expected to pass boundaries — one that does not has an offset from
+/// somewhere that does not respect characters, which is a bug worth finding
+/// (issue #3285) — but a column is not worth crashing the editor over.
 #[inline]
 pub fn visual_column_at_byte(s: &str, byte_offset: usize) -> usize {
-    s[..byte_offset.min(s.len())].chars().map(char_width).sum()
+    let end = byte_offset.min(s.len());
+    debug_assert!(
+        s.is_char_boundary(end),
+        "byte offset {byte_offset} is inside a character"
+    );
+    s[..s.floor_char_boundary(end)]
+        .chars()
+        .map(char_width)
+        .sum()
 }
 
 /// Convert a visual column to a byte offset within a string.
@@ -93,15 +106,23 @@ pub fn grapheme_byte_at_visual_column(s: &str, visual_col: usize) -> usize {
 /// Returns `None` when the offset's line can't be resolved. The offset may
 /// sit anywhere in the line, including on the line ending (which yields the
 /// width of the full line content).
+///
+/// The line is cut at the offset *before* it is decoded. Cutting the decoded
+/// string instead measured the offset against text of a different length
+/// wherever the line holds invalid UTF-8 — each invalid byte decodes to a
+/// three-byte U+FFFD — so a perfectly good offset could land inside a
+/// character of the decoded text and panic (issue #3285).
 pub fn visual_column_of(buffer: &crate::model::buffer::Buffer, offset: usize) -> Option<usize> {
     let line = buffer.get_line_number(offset);
     let line_start = buffer.line_start_offset(line)?;
     let content = buffer.get_line(line)?;
-    let text = String::from_utf8_lossy(&content);
-    Some(visual_column_at_byte(
-        &text,
-        offset.saturating_sub(line_start),
-    ))
+    let prefix = &content[..offset.saturating_sub(line_start).min(content.len())];
+    Some(
+        String::from_utf8_lossy(prefix)
+            .chars()
+            .map(char_width)
+            .sum(),
+    )
 }
 
 #[cfg(test)]
@@ -192,5 +213,25 @@ mod tests {
 
         let string = String::from("Hello🚀");
         assert_eq!(string.display_width(), 7);
+    }
+
+    /// The line is cut at the offset before decoding. Cutting the decoded
+    /// string measured the offset against text in which each invalid byte had
+    /// become a three-byte U+FFFD, so a valid offset after one landed inside a
+    /// character there and panicked (issue #3285).
+    #[test]
+    fn visual_column_of_counts_bytes_as_the_buffer_holds_them() {
+        let mut bytes = vec![0xFF];
+        bytes.extend_from_slice("信信\n".as_bytes());
+        // Declared UTF-8, so the bytes are kept as they are rather than
+        // detected as some other encoding and converted.
+        let buffer = crate::model::buffer::Buffer::from_bytes_with_encoding(
+            bytes,
+            crate::model::encoding::Encoding::Utf8,
+            std::sync::Arc::new(crate::model::filesystem::StdFileSystem),
+        );
+        // After the invalid byte (one column) and the first 信 (two).
+        assert_eq!(visual_column_of(&buffer, 4), Some(3));
+        assert_eq!(visual_column_of(&buffer, 7), Some(5));
     }
 }

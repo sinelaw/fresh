@@ -8,6 +8,7 @@
 //! the keymap's answer, declared on the popup's own layer as shortcuts and
 //! resolved by the tree (`view::shell::popup::keyboard`).
 
+use crate::view::theme::ThemeStyle;
 use ratatui::{layout::Rect, style::Style};
 
 use super::markdown::{parse_markdown, wrap_styled_lines, wrap_text_lines, StyledLine};
@@ -35,13 +36,9 @@ pub enum PopupPosition {
     CenteredOverlay { width_pct: u8, height_pct: u8 },
     /// Bottom right corner (above status bar)
     BottomRight,
-    /// Anchored above the status bar at a specific column (left-aligned at x).
-    /// Used by the LSP-status popup so it appears directly above the LSP
-    /// segment that opened it. `status_row` is the actual row of the status
-    /// bar in the current frame — passing it in lets the popup hug the
-    /// status bar regardless of whether the prompt line is visible (which
-    /// shifts the status bar by a row when it auto-hides).
-    AboveStatusBarAt { x: u16, status_row: u16 },
+    /// Directly above the status-bar element that opened it — the LSP,
+    /// remote, read-only and update menus.
+    AboveStatusBarAt(crate::view::ui::status_bar::StatusBarClickable),
 }
 
 /// Kind of popup - determines input handling behavior
@@ -76,10 +73,6 @@ pub enum PopupResolver {
     None,
     /// LSP completion popup. Confirm inserts the selected item's text.
     Completion,
-    /// "Start LSP server?" confirmation. Confirm dispatches the selected
-    /// row's `data` (e.g. "allow_once") through
-    /// `handle_lsp_confirmation_response`.
-    LspConfirm { language: String },
     /// LSP server-status / auto-prompt popup. Confirm dispatches the
     /// selected row's `data` through `handle_lsp_status_action`.
     LspStatus,
@@ -172,6 +165,15 @@ impl PopupTextSelection {
 /// A single item in a popup list
 #[derive(Debug, Clone, PartialEq)]
 pub struct PopupListItem {
+    /// What this row is, unique within its list: an action's key, an
+    /// LSP item's place in the server's answer, a header's name.
+    ///
+    /// **Required, and never the row's position or its label.** The list
+    /// keys its rows by it — completion labels repeat (one `HashMap` row per
+    /// crate that exports one), and a key taken from the label or the
+    /// position lets an insertion or a re-filter hand one row's element to
+    /// another.
+    pub id: String,
     /// Main text to display
     pub text: String,
     /// Optional secondary text (description, type info, etc.)
@@ -185,8 +187,10 @@ pub struct PopupListItem {
 }
 
 impl PopupListItem {
-    pub fn new(text: String) -> Self {
+    /// A row identified by `id` (unique in its list).
+    pub fn new(id: impl Into<String>, text: String) -> Self {
         Self {
+            id: id.into(),
             text,
             detail: None,
             icon: None,
@@ -195,13 +199,14 @@ impl PopupListItem {
         }
     }
 
-    pub fn with_detail(mut self, detail: String) -> Self {
-        self.detail = Some(detail);
-        self
+    /// An actionable row whose action key is also what the row is: `key`
+    /// is both its id and the data its resolver acts on.
+    pub fn action(key: String, text: String) -> Self {
+        Self::new(key.clone(), text).with_data(key)
     }
 
-    pub fn with_icon(mut self, icon: String) -> Self {
-        self.icon = Some(icon);
+    pub fn with_detail(mut self, detail: String) -> Self {
+        self.detail = Some(detail);
         self
     }
 
@@ -262,6 +267,11 @@ pub struct Popup {
     /// Scroll offset for content (for scrolling through long lists)
     pub scroll_offset: usize,
 
+    /// A list popup's page: the drawn list records the window its layout
+    /// gave it here, which a popup clamped to the space it has can make
+    /// shorter than `max_height` says.
+    pub pager: std::rc::Rc<fresh_ui::behavior::Pager>,
+
     /// Text selection for copy/paste (None if no selection)
     pub text_selection: Option<PopupTextSelection>,
 
@@ -303,9 +313,10 @@ impl Popup {
             width: 50,
             max_height: 15,
             bordered: true,
-            border_style: Style::default().fg(theme.popup_border_fg),
-            background_style: Style::default().bg(theme.popup_bg),
+            border_style: Style::default().theme_fg(theme, "ui.popup_border_fg"),
+            background_style: Style::default().theme_bg(theme, "ui.popup_bg"),
             scroll_offset: 0,
+            pager: Default::default(),
             text_selection: None,
             accept_key_hint: None,
             resolver: PopupResolver::None,
@@ -334,9 +345,10 @@ impl Popup {
             width: 60,      // Wider for markdown content
             max_height: 20, // Taller for documentation
             bordered: true,
-            border_style: Style::default().fg(theme.popup_border_fg),
-            background_style: Style::default().bg(theme.popup_bg),
+            border_style: Style::default().theme_fg(theme, "ui.popup_border_fg"),
+            background_style: Style::default().theme_bg(theme, "ui.popup_bg"),
             scroll_offset: 0,
+            pager: Default::default(),
             text_selection: None,
             accept_key_hint: None,
             resolver: PopupResolver::None,
@@ -357,9 +369,10 @@ impl Popup {
             width: 50,
             max_height: 15,
             bordered: true,
-            border_style: Style::default().fg(theme.popup_border_fg),
-            background_style: Style::default().bg(theme.popup_bg),
+            border_style: Style::default().theme_fg(theme, "ui.popup_border_fg"),
+            background_style: Style::default().theme_bg(theme, "ui.popup_bg"),
             scroll_offset: 0,
+            pager: Default::default(),
             text_selection: None,
             accept_key_hint: None,
             resolver: PopupResolver::None,
@@ -374,61 +387,11 @@ impl Popup {
         self
     }
 
-    /// Set the popup kind (determines input handling behavior)
-    pub fn with_kind(mut self, kind: PopupKind) -> Self {
-        self.kind = kind;
-        self
-    }
-
-    /// Mark this popup as transient (will be dismissed on focus loss)
-    pub fn with_transient(mut self, transient: bool) -> Self {
-        self.transient = transient;
-        self
-    }
-
-    /// Set the position
-    pub fn with_position(mut self, position: PopupPosition) -> Self {
-        self.position = position;
-        self
-    }
-
-    /// Set the width
-    pub fn with_width(mut self, width: u16) -> Self {
-        self.width = width;
-        self
-    }
-
-    /// Set the max height
-    pub fn with_max_height(mut self, max_height: u16) -> Self {
-        self.max_height = max_height;
-        self
-    }
-
-    /// Set border style
-    pub fn with_border_style(mut self, style: Style) -> Self {
-        self.border_style = style;
-        self
-    }
-
-    /// Attach the confirm/cancel resolver so this popup dispatches to
-    /// the right handler regardless of what other popups are on screen.
-    pub fn with_resolver(mut self, resolver: PopupResolver) -> Self {
-        self.resolver = resolver;
-        self
-    }
-
     /// Mark the popup as keyboard-focused (so popup-context bindings
     /// route through it). LSP popups stay unfocused on creation; the
     /// user toggles focus with the `popup_focus` action.
     pub fn with_focused(mut self, focused: bool) -> Self {
         self.focused = focused;
-        self
-    }
-
-    /// Pre-render the focus-key hint shown in the popup title when the
-    /// popup is unfocused.
-    pub fn with_focus_key_hint(mut self, hint: String) -> Self {
-        self.focus_key_hint = Some(hint);
         self
     }
 
@@ -477,8 +440,13 @@ impl Popup {
         }
     }
 
-    /// Get the actual visible content height (accounting for borders)
+    /// The rows the content shows: the window the drawn list was given,
+    /// or, before a list is laid out and for text, `max_height` less the
+    /// borders.
     fn visible_height(&self) -> usize {
+        if let (PopupContent::List { .. }, Some(rows)) = (&self.content, self.pager.window()) {
+            return rows;
+        }
         let border_offset = if self.bordered { 2 } else { 0 };
         (self.max_height as usize).saturating_sub(border_offset)
     }
@@ -768,13 +736,6 @@ impl Popup {
         self.item_count() > self.visible_height()
     }
 
-    /// Get scroll state for scrollbar rendering
-    pub fn scroll_state(&self) -> (usize, usize, usize) {
-        let total = self.item_count();
-        let visible = self.visible_height();
-        (total, visible, self.scroll_offset)
-    }
-
     /// Find the link URL at a given relative position within the popup content area.
     /// `relative_col` and `relative_row` are relative to the inner content area (after borders).
     /// Returns None if:
@@ -804,24 +765,6 @@ impl Popup {
 
         // Find the link at the column position
         line.link_at_column(relative_col).map(|s| s.to_string())
-    }
-
-    /// Get the height of the description area (including blank line separator)
-    /// Returns 0 if there is no description.
-    pub fn description_height(&self) -> u16 {
-        if let Some(desc) = &self.description {
-            let border_width = if self.bordered { 2 } else { 0 };
-            let scrollbar_reserved = 2;
-            let content_width = self
-                .width
-                .saturating_sub(border_width)
-                .saturating_sub(scrollbar_reserved) as usize;
-            let desc_vec = vec![desc.clone()];
-            let wrapped = wrap_text_lines(&desc_vec, content_width.saturating_sub(2));
-            wrapped.len() as u16 + 1 // +1 for blank line after description
-        } else {
-            0
-        }
     }
 
     /// Calculate the actual content height based on the popup content
@@ -965,27 +908,6 @@ impl PopupManager {
         !self.popups.is_empty()
     }
 
-    /// Check if the topmost popup is a completion popup (supports type-to-filter)
-    pub fn is_completion_popup(&self) -> bool {
-        self.top()
-            .map(|p| p.kind == PopupKind::Completion)
-            .unwrap_or(false)
-    }
-
-    /// Check if the topmost popup is a hover popup
-    pub fn is_hover_popup(&self) -> bool {
-        self.top()
-            .map(|p| p.kind == PopupKind::Hover)
-            .unwrap_or(false)
-    }
-
-    /// Check if the topmost popup is an action popup
-    pub fn is_action_popup(&self) -> bool {
-        self.top()
-            .map(|p| p.kind == PopupKind::Action)
-            .unwrap_or(false)
-    }
-
     /// Get all popups (for rendering)
     pub fn all(&self) -> &[Popup] {
         &self.popups
@@ -1019,22 +941,20 @@ mod tests {
 
     #[test]
     fn test_popup_list_item() {
-        let item = PopupListItem::new("test".to_string())
-            .with_detail("detail".to_string())
-            .with_icon("📄".to_string());
+        let item =
+            PopupListItem::new("t930_20", "test".to_string()).with_detail("detail".to_string());
 
         assert_eq!(item.text, "test");
         assert_eq!(item.detail, Some("detail".to_string()));
-        assert_eq!(item.icon, Some("📄".to_string()));
     }
 
     #[test]
     fn test_popup_selection() {
         let theme = crate::view::theme::Theme::load_builtin(theme::THEME_DARK).unwrap();
         let items = vec![
-            PopupListItem::new("item1".to_string()),
-            PopupListItem::new("item2".to_string()),
-            PopupListItem::new("item3".to_string()),
+            PopupListItem::new("t940_13", "item1".to_string()),
+            PopupListItem::new("t941_13", "item2".to_string()),
+            PopupListItem::new("t942_13", "item3".to_string()),
         ];
 
         let mut popup = Popup::list(items, &theme);

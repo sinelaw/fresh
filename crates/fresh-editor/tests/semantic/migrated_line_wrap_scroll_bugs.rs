@@ -329,7 +329,7 @@ fn migrated_scrollbar_thumb_drag_no_jump_on_start() {
     let content: String = (1..=100)
         .map(|i| format!("Line {} content here\n", i))
         .collect();
-    let move_down_30: Vec<Action> = std::iter::repeat(Action::MoveDown).take(30).collect();
+    let move_down_30: Vec<Action> = std::iter::repeat_n(Action::MoveDown, 30).collect();
     assert_layout_scenario(LayoutScenario {
         description: "horizontal thumb drag does not change scroll position".into(),
         initial_text: content,

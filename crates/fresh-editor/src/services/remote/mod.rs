@@ -11,6 +11,7 @@ mod spawner;
 mod transport;
 
 pub use channel::AgentChannel;
+pub use channel::ChannelError;
 /// Test-only global: microseconds to sleep per chunk in the consumer loop.
 /// Defaults to 0 (no delay). Set non-zero from tests to simulate slow consumers.
 #[doc(hidden)]
@@ -25,8 +26,8 @@ pub use connection::spawn_local_agent_transport;
 #[doc(hidden)]
 pub use connection::spawn_local_agent_with_capacity;
 pub use connection::{
-    spawn_heartbeat_task, spawn_reconnect_task, spawn_reconnect_task_with, ReconnectConfig,
-    DEFAULT_HEARTBEAT_INTERVAL,
+    spawn_heartbeat_task, spawn_reconnect_task, spawn_reconnect_task_with, Carrier,
+    ReconnectConfig, DEFAULT_HEARTBEAT_INTERVAL,
 };
 pub use connection::{ConnectionParams, SshConnection, SshError};
 pub use filesystem::RemoteFileSystem;
@@ -37,8 +38,8 @@ pub use protocol::{
 pub use spawner::{
     build_kube_agent_terminal_args, build_kube_terminal_args, build_ssh_agent_terminal_args,
     build_ssh_terminal_args, ssh_remote_env_launcher, LocalLongRunningSpawner, LocalProcessSpawner,
-    LongRunningSpawner, ProcessSpawner, RemoteLongRunningSpawner, RemoteProcessSpawner, SpawnError,
-    SpawnResult, StdioChild, SSH_EXEC_LOGIN_SHELL,
+    LongRunningSpawner, ProcessSpawner, RawSpawnResult, RemoteLongRunningSpawner,
+    RemoteProcessSpawner, SpawnError, SpawnResult, StdioChild, SSH_EXEC_LOGIN_SHELL,
 };
 /// Shared `kubectl exec` argv builder, used by the agent transport, the
 /// terminal wrapper, and the long-running (LSP) spawner. Crate-internal.

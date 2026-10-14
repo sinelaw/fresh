@@ -27,9 +27,11 @@ mod label;
 pub mod list;
 pub mod number;
 mod popup;
+pub mod popup_list;
 pub mod radio;
 mod raw;
 mod spacer;
+pub mod table;
 pub mod text;
 mod toggle;
 pub mod tree;
@@ -198,6 +200,8 @@ impl Viewport {
             WidgetSpec::List { visible_rows, .. } | WidgetSpec::Tree { visible_rows, .. } => {
                 *visible_rows
             }
+            // A text box's editing rows, as the spec states them.
+            WidgetSpec::Text { rows, .. } => Some(*rows),
             _ => None,
         }
         .unwrap_or(fresh_core::api::LEGACY_VISIBLE_ROWS_FALLBACK)
@@ -365,15 +369,6 @@ pub trait WidgetImpl: Sync {
     /// only Button and Toggle answer.
     fn activate_event(&self, _spec: &WidgetSpec) -> Option<(&'static str, serde_json::Value)> {
         None
-    }
-
-    /// CAPABILITY: panel-level Up/Down lands on a focused widget of
-    /// this kind that has no vertical axis of its own — advance focus
-    /// instead (arrows walk the controls like Tab, the dock's
-    /// button-only context menus). Declared by Button/Toggle; the
-    /// panel key router asks this instead of matching kinds.
-    fn arrows_advance_focus(&self) -> bool {
-        false
     }
 
     /// CAPABILITY: how panel-level Up/Down treats this kind when it is

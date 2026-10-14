@@ -500,6 +500,7 @@ impl Editor {
                     Some(info.key.clone())
                 };
                 crate::input::commands::Suggestion {
+                    id: info.key.clone(),
                     description_spans: None,
                     text: info.name.clone(),
                     description,
@@ -519,7 +520,7 @@ impl Editor {
 
         if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
-                prompt.selected_suggestion = Some(current_index);
+                prompt.select_suggestion(Some(current_index));
                 prompt.set_input_plain(current_theme_key.to_string());
             }
         }
@@ -1187,6 +1188,7 @@ impl Editor {
     /// hidden buffer). Returns `false` when no panel owns the keyboard,
     /// so the caller falls back to the normal `paste_text` path.
     pub(crate) fn paste_bracketed_into_focused_panel(&mut self, text: &str) -> bool {
+        self.mark_plugin_snapshot_dirty();
         // The Settings dialog is a capture-all modal overlay that owns the
         // keyboard above any panel. A bracketed paste must reach its focused
         // text input (or be swallowed when no field is focused) rather than
@@ -1289,6 +1291,7 @@ impl Editor {
     /// - Atomic undo (single undo step for entire operation)
     /// - Routing to prompt if one is open
     pub fn paste_text(&mut self, paste_text: String) {
+        self.mark_plugin_snapshot_dirty();
         if paste_text.is_empty() {
             return;
         }

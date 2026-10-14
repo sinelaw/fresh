@@ -160,6 +160,7 @@ fn test_page_down_to_bottom_crossterm_backend_no_memory_explosion() {
         None,  // grammar registry
         false, // enable_plugins (memory test doesn't need them)
         false, // enable_embedded_plugins
+        false,
     )
     .unwrap();
     editor.process_async_messages();

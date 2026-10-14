@@ -23,6 +23,7 @@
 
 pub mod buffer_host;
 pub mod calibration;
+pub mod confirm;
 pub mod context_menu;
 pub mod dock;
 pub mod entry;
@@ -40,6 +41,7 @@ pub mod modal;
 pub mod msg;
 pub mod overlay_prompt;
 pub mod panel;
+pub mod path_display;
 pub mod popup;
 pub mod prompt;
 pub mod prompt_line;

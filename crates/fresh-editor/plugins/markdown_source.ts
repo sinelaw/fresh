@@ -329,14 +329,19 @@ function updateMarkdownMode(): void {
   if (!info) return;
 
   const currentMode = editor.getEditorMode();
+  // A modal-editing input mode (vi) owns the keys while it is on. The
+  // window's editor mode outranks it, so markdown-source steps aside rather
+  // than shadow vi in markdown files.
+  const inputModeOn = editor.getInputMode() != null;
 
-  if (isMarkdownBuffer(info) && info.view_mode === "source") {
-    // Only activate if no other mode is already set (e.g., vi-mode)
+  if (isMarkdownBuffer(info) && info.view_mode === "source" && !inputModeOn) {
+    // Only activate if no other window mode is already set
     if (currentMode == null) {
       editor.setEditorMode("markdown-source");
     }
   } else {
-    // Leaving a markdown file or switching to compose mode: deactivate
+    // Leaving a markdown file, switching to compose mode, or an input mode
+    // turned on: deactivate
     if (currentMode === "markdown-source") {
       editor.setEditorMode(null);
     }
@@ -351,6 +356,9 @@ editor.on("buffer_activated", () => {
   updateMarkdownMode();
 });
 editor.on("language_changed", () => {
+  updateMarkdownMode();
+});
+editor.on("input_mode_changed", () => {
   updateMarkdownMode();
 });
 

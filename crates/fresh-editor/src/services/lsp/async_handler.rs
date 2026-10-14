@@ -16,6 +16,7 @@ use crate::services::async_bridge::{
     LspServerStatus,
 };
 use crate::services::process_limits::ProcessLimits;
+use crate::services::runtime::LiveRuntime;
 use lsp_types::{
     notification::{
         DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, DidSaveTextDocument,
@@ -42,6 +43,9 @@ use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, ChildStdout};
 use tokio::sync::{mpsc, oneshot};
+
+/// An LSP range as `((start_line, start_char), (end_line, end_char))`.
+type LspRange = ((u32, u32), (u32, u32));
 
 /// Maps an in-flight LSP request id to the request method and the channel
 /// awaiting its response. The method is retained so error responses can be
@@ -282,6 +286,22 @@ pub struct JsonRpcError {
     pub data: Option<Value>,
 }
 
+/// `textDocument/diagnostic` params. `lsp_types::DocumentDiagnosticParams`
+/// sends unset optional fields as `null`, which some servers (tsgo) reject.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DocumentDiagnosticRequest {
+    text_document: TextDocumentIdentifier,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    identifier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    previous_result_id: Option<String>,
+    #[serde(flatten)]
+    work_done_progress_params: WorkDoneProgressParams,
+    #[serde(flatten)]
+    partial_result_params: PartialResultParams,
+}
+
 /// LSP client state machine
 ///
 /// Tracks the lifecycle of the LSP client connection with proper state transitions.
@@ -355,19 +375,6 @@ impl LspClientState {
     /// Check if the client can accept initialization
     pub fn can_initialize(&self) -> bool {
         matches!(self, Self::Initial | Self::Starting | Self::Stopped)
-    }
-
-    /// Convert to LspServerStatus for UI reporting
-    pub fn to_server_status(&self) -> LspServerStatus {
-        match self {
-            Self::Initial => LspServerStatus::Starting,
-            Self::Starting => LspServerStatus::Starting,
-            Self::Initializing => LspServerStatus::Initializing,
-            Self::Running => LspServerStatus::Running,
-            Self::Stopping => LspServerStatus::Shutdown,
-            Self::Stopped => LspServerStatus::Shutdown,
-            Self::Error => LspServerStatus::Error,
-        }
     }
 }
 
@@ -2005,7 +2012,7 @@ impl LspState {
     /// that routine outcome from surfacing as an ERROR-level parse
     /// failure. An empty `contents` string means the same and is reported
     /// as no-hover.
-    fn parse_hover_response(result: Value) -> (String, bool, Option<((u32, u32), (u32, u32))>) {
+    fn parse_hover_response(result: Value) -> (String, bool, Option<LspRange>) {
         let no_contents = result
             .as_object()
             .is_some_and(|obj| !obj.contains_key("contents"));
@@ -2515,8 +2522,6 @@ impl LspState {
         previous_result_id: Option<String>,
         pending: &PendingRequests,
     ) -> Result<(), String> {
-        use lsp_types::DocumentDiagnosticParams;
-
         // Check if server supports pull diagnostics (diagnosticProvider capability).
         // This raw `ServerCapabilities` snapshot is kept in sync with dynamic
         // `client/registerCapability` updates (sinelaw/fresh#2195) by the stdout
@@ -2543,7 +2548,7 @@ impl LspState {
             previous_result_id
         );
 
-        let params = DocumentDiagnosticParams {
+        let params = DocumentDiagnosticRequest {
             text_document: TextDocumentIdentifier { uri: uri.clone() },
             identifier: None,
             previous_result_id,
@@ -4671,7 +4676,20 @@ async fn handle_notification_dispatch(
             }
         }
         _ => {
-            tracing::debug!("Unhandled notification: {}", notification.method);
+            // Non-standard / server-specific notification (clangd's
+            // `textDocument/clangd.fileStatus`, `$/memoryUsage`, ...): hand it
+            // to plugins, which subscribe via `lsp/custom_notification`.
+            tracing::debug!(
+                "LSP ({}) notification for plugins: {}",
+                language,
+                notification.method
+            );
+            let _ = async_tx.send(AsyncMessage::LspCustomNotification {
+                language: language.to_string(),
+                server_name: server_name.to_string(),
+                method: notification.method,
+                params: notification.params,
+            });
         }
     }
 
@@ -4695,8 +4713,11 @@ pub struct LspHandle {
     /// Client state
     state: Arc<Mutex<LspClientState>>,
 
-    /// Runtime handle for blocking operations
-    runtime: tokio::runtime::Handle,
+    /// The runtime the LSP task runs on. Owned rather than a bare `Handle`
+    /// so the work put on it later cannot be silently discarded: a `Handle`
+    /// whose runtime has gone away still accepts a task and then drops it,
+    /// which for the shutdown path means the server is never told to stop.
+    runtime: LiveRuntime,
 
     /// Document version tracking (shared with the async LSP task).
     /// Used to check document versions in workspace/applyEdit.
@@ -4741,7 +4762,7 @@ impl LspHandle {
     /// (Local honors it, Docker logs and skips).
     #[allow(clippy::too_many_arguments)]
     pub fn spawn(
-        runtime: &tokio::runtime::Handle,
+        runtime: &LiveRuntime,
         command: &str,
         args: &[String],
         env: std::collections::HashMap<String, String>,
@@ -6384,7 +6405,7 @@ mod tests {
     async fn test_lsp_handle_spawn_and_drop() {
         // This test spawns a mock LSP server (cat command that echoes input)
         // and tests the spawn/drop lifecycle
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = LiveRuntime::multi_thread("lsp-test", 1).expect("test runtime");
         let async_bridge = AsyncBridge::new();
 
         // Use 'cat' as a mock LSP server (it will just echo stdin to stdout)
@@ -6416,7 +6437,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_lsp_handle_did_open_queues_before_initialization() {
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = LiveRuntime::multi_thread("lsp-test", 1).expect("test runtime");
         let async_bridge = AsyncBridge::new();
 
         let handle = LspHandle::spawn(
@@ -6446,7 +6467,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_lsp_handle_did_change_queues_before_initialization() {
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = LiveRuntime::multi_thread("lsp-test", 1).expect("test runtime");
         let async_bridge = AsyncBridge::new();
 
         let handle = LspHandle::spawn(
@@ -6492,7 +6513,7 @@ mod tests {
             scope: LanguageScope::single("test"),
             command_tx,
             state: Arc::new(Mutex::new(LspClientState::Starting)),
-            runtime: tokio::runtime::Handle::current(),
+            runtime: LiveRuntime::current_thread().expect("test runtime"),
             // Seeded as already open: only documents the server holds can desync.
             document_versions: Arc::new(std::sync::Mutex::new(HashMap::from([(
                 path.clone(),
@@ -6597,7 +6618,7 @@ mod tests {
                     scope: LanguageScope::single("test"),
                     command_tx,
                     state: Arc::new(Mutex::new(LspClientState::Starting)),
-                    runtime: tokio::runtime::Handle::current(),
+                    runtime: LiveRuntime::current_thread().expect("test runtime"),
                     document_versions: versions.clone(),
                     desynced: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
                     pending_saves: Arc::new(std::sync::Mutex::new(HashMap::new())),
@@ -7090,7 +7111,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_lsp_handle_incremental_change_with_range() {
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = LiveRuntime::multi_thread("lsp-test", 1).expect("test runtime");
         let async_bridge = AsyncBridge::new();
 
         let handle = LspHandle::spawn(
@@ -7126,7 +7147,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_lsp_handle_spawn_invalid_command() {
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = LiveRuntime::multi_thread("lsp-test", 1).expect("test runtime");
         let async_bridge = AsyncBridge::new();
 
         // Try to spawn with an invalid command
@@ -7147,17 +7168,16 @@ mod tests {
         // The error will be sent to async_bridge
         assert!(result.is_ok());
 
-        // Give the task time to fail
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-        // Check that we received an error message
-        let messages = async_bridge.try_recv_all();
-        assert!(!messages.is_empty());
-
-        let has_error = messages
+        // Wait for the spawn task to report the missing binary. The lookup
+        // walks PATH x PATHEXT on Windows, so how long it takes is up to the
+        // runner; nextest bounds the wait.
+        while !async_bridge
+            .try_recv_all()
             .iter()
-            .any(|msg| matches!(msg, AsyncMessage::LspError { .. }));
-        assert!(has_error, "Expected LspError message");
+            .any(|msg| matches!(msg, AsyncMessage::LspError { .. }))
+        {
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        }
     }
 
     #[test]
@@ -7170,7 +7190,7 @@ mod tests {
             let async_bridge = AsyncBridge::new();
 
             let handle = rt.block_on(async {
-                let runtime = tokio::runtime::Handle::current();
+                let runtime = LiveRuntime::multi_thread("lsp-test", 1).expect("test runtime");
                 LspHandle::spawn(
                     &runtime,
                     "cat",
@@ -7240,7 +7260,7 @@ mod tests {
         // The bug manifested as:
         // ERROR: Failed to send initialize command for rust: Cannot initialize: client is in state Starting
 
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = LiveRuntime::multi_thread("lsp-test", 1).expect("test runtime");
         let async_bridge = AsyncBridge::new();
 
         // Spawn creates the handle with state = Starting
@@ -7277,7 +7297,7 @@ mod tests {
         // 3. get_or_spawn() immediately calls handle.initialize()
         // 4. initialize() should succeed even though state is Starting
 
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = LiveRuntime::multi_thread("lsp-test", 1).expect("test runtime");
         let async_bridge = AsyncBridge::new();
 
         // Create a simple fake LSP server script that responds to initialize
@@ -7292,8 +7312,11 @@ mod tests {
             echo ""
             echo -n "$response"
 
-            # Keep running to avoid EOF
-            sleep 10
+            # Keep running to avoid EOF, until the editor closes stdin.
+            # A builtin rather than `sleep`: a `sleep` child outlives the
+            # test holding its inherited stdout/stderr, which nextest
+            # reports as a LEAK on Windows.
+            while read -r _; do :; done
         "#;
 
         // Spawn with bash to execute the fake LSP
@@ -7319,19 +7342,14 @@ mod tests {
             init_result.err()
         );
 
-        // Give the async task time to process
-        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-
-        // Check that we received status update messages
-        let messages = async_bridge.try_recv_all();
-        let has_status_update = messages
+        // Wait for the status update the initialization sends.
+        while !async_bridge
+            .try_recv_all()
             .iter()
-            .any(|msg| matches!(msg, AsyncMessage::LspStatusUpdate { .. }));
-
-        assert!(
-            has_status_update,
-            "Expected status update messages from LSP initialization"
-        );
+            .any(|msg| matches!(msg, AsyncMessage::LspStatusUpdate { .. }))
+        {
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        }
 
         // Cleanup - best-effort, test is ending
         #[allow(clippy::let_underscore_must_use)]
@@ -7365,7 +7383,7 @@ mod tests {
         // be able to advance the state past Error (to Stopping or
         // Stopped) — before the fix it stayed stuck at Error and
         // emitted `Invalid state transition from Error to Stopping`.
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = LiveRuntime::multi_thread("lsp-test", 1).expect("test runtime");
         let async_bridge = AsyncBridge::new();
 
         let handle = LspHandle::spawn(
@@ -7384,17 +7402,9 @@ mod tests {
 
         // Wait until the spawn task observes the missing binary and
         // pushes the state to Error.
-        for _ in 0..200 {
-            if handle.state() == LspClientState::Error {
-                break;
-            }
+        while handle.state() != LspClientState::Error {
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
         }
-        assert_eq!(
-            handle.state(),
-            LspClientState::Error,
-            "spawn task should have transitioned to Error after failed spawn"
-        );
 
         // Shutdown from Error: the channel send may fail because the
         // spawn task already exited, but state must advance past Error.
@@ -7467,5 +7477,23 @@ mod tests {
         assert_eq!(contents, "");
         assert!(!is_markdown);
         assert_eq!(range, None);
+    }
+
+    #[test]
+    fn document_diagnostic_params_omit_unset_optional_fields() {
+        let params = super::DocumentDiagnosticRequest {
+            text_document: lsp_types::TextDocumentIdentifier {
+                uri: "file:///a.ts".parse::<lsp_types::Uri>().unwrap(),
+            },
+            identifier: None,
+            previous_result_id: None,
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+        let json = serde_json::to_value(&params).unwrap();
+        let object = json.as_object().unwrap();
+        assert!(!object.contains_key("identifier"), "{json}");
+        assert!(!object.contains_key("previousResultId"), "{json}");
+        assert_eq!(json["textDocument"]["uri"], "file:///a.ts");
     }
 }

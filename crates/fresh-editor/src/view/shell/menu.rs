@@ -114,7 +114,6 @@ fn build_menu_bar(bar: &MenuBar) -> Node<UiMsg> {
                 // outright, so nothing else will clear it when the pointer
                 // moves off into the gap between labels.
                 .on_leave(hover(None))
-                .into()
         })
         .collect();
 
@@ -355,7 +354,6 @@ fn dropdown(
                 } else {
                     HoverTarget::SubmenuItem(depth, index)
                 })))
-                .into()
         })
         .collect();
 

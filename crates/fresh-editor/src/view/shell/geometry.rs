@@ -257,14 +257,16 @@ mod tests {
         }
     }
 
-    /// The tree's answer is the model's own walk's answer, pane for pane, for
-    /// the box and for the content slot — which is what let the scratch grid
-    /// go. The oracle is `reference_leaves_with_rects`, the recursion over
-    /// `split_rect_ext` that was the layout before the description was, kept
-    /// under `cfg(test)` for exactly this; and for this fixed grid the rects
-    /// are also spelled out by hand, so the oracle is checked too.
+    /// **Every pane's box and content slot, spelled out.**
+    ///
+    /// This used to compare the tree against `reference_leaves_with_rects` and
+    /// `split_layout` — the recursion the description was derived from and a
+    /// second layout of each pane's interior, both kept under `cfg(test)` as
+    /// oracles — *and* against the rects written out by hand below, so the
+    /// oracles were checked too. The hand-written rects were always the real
+    /// assertion; the oracles are gone and these stay.
     #[test]
-    fn the_tree_places_panes_where_the_model_walk_does() {
+    fn the_tree_places_every_pane_and_its_content_slot() {
         let root = split(
             SplitDirection::Vertical,
             leaf(0),
@@ -295,21 +297,7 @@ mod tests {
         let _ = stats::take();
         let rects = PaneRects::offscreen(&s, area);
 
-        let want = root.reference_leaves_with_rects(area);
-        // By hand: a column is reserved for the separator, and 99 columns at
-        // 0.6 round to 59 for pane 0, leaving 40 for the right half past the
-        // separator; a row is reserved there too, and 39 rows at 0.3 round to
-        // 12 for pane 1, leaving 27 for pane 2 below the separator.
-        assert_eq!(
-            want,
-            vec![
-                (id(0), BufferId(0), Rect::new(3, 2, 59, 40)),
-                (id(1), BufferId(1), Rect::new(63, 2, 40, 12)),
-                (id(2), BufferId(2), Rect::new(63, 15, 40, 27)),
-            ]
-        );
-        // The instrument sees the one offscreen layout and nothing else: the
-        // oracle is a walk of the model, not a layout.
+        // The instrument sees the one offscreen layout and nothing else.
         assert_eq!(
             stats::take(),
             stats::LayoutCounts {
@@ -317,13 +305,26 @@ mod tests {
                 offscreen_grids: 1,
             }
         );
-        for (leaf, _, r) in want {
-            assert_eq!(rects.pane(leaf), Some(r), "{leaf:?}'s box");
-            let c = s.chrome[&leaf];
-            let content = crate::view::ui::split_rendering::layout::split_layout(leaf, r, c);
+        // The boxes, by hand: a column is reserved for the separator, and 99
+        // columns at 0.6 round to 59 for pane 0, leaving 40 for the right half
+        // past the separator; a row is reserved there too, and 39 rows at 0.3
+        // round to 12 for pane 1, leaving 27 for pane 2 below the separator.
+        //
+        // And the content slot each pane's chrome carves out of its box: a row
+        // off the top for a strip, a column off the right for the vertical
+        // bar, a row off the bottom for the horizontal one.
+        for (leaf, box_rect, content) in [
+            // tabs, vscroll and hscroll: a row off each end, a column off the side.
+            (id(0), Rect::new(3, 2, 59, 40), Rect::new(3, 3, 58, 38)),
+            // tabs only.
+            (id(1), Rect::new(63, 2, 40, 12), Rect::new(63, 3, 40, 11)),
+            // the vertical bar only.
+            (id(2), Rect::new(63, 15, 40, 27), Rect::new(63, 15, 39, 27)),
+        ] {
+            assert_eq!(rects.pane(leaf), Some(box_rect), "{leaf:?}'s box");
             assert_eq!(
                 rects.content(leaf),
-                Some(content.content_rect),
+                Some(content),
                 "{leaf:?}'s content slot"
             );
         }
@@ -389,15 +390,12 @@ mod tests {
         let rects = PaneRects::offscreen(&s, area);
         let outer = rects.content(id(0)).expect("the outer content slot");
         assert_eq!(outer, Rect::new(0, 1, 79, 23));
-        let want = group.reference_leaves_with_rects(outer);
-        assert_eq!(
-            want,
-            vec![
-                (id(20), BufferId(20), Rect::new(0, 1, 39, 23)),
-                (id(21), BufferId(21), Rect::new(40, 1, 39, 23)),
-            ]
-        );
-        for (leaf, _, r) in want {
+        // The two panels split the outer content slot, a column reserved
+        // between them — written out rather than recomputed by a second walk.
+        for (leaf, r) in [
+            (id(20), Rect::new(0, 1, 39, 23)),
+            (id(21), Rect::new(40, 1, 39, 23)),
+        ] {
             assert_eq!(rects.pane(leaf), Some(r), "{leaf:?} inside the outer pane");
         }
         // A panel with a scrollbar column gives it up from its own box.

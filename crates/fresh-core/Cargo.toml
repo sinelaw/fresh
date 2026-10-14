@@ -37,3 +37,6 @@ proptest = "1.9"
 
 [features]
 plugins = ["dep:rquickjs", "dep:rquickjs-serde"]
+
+[lints]
+workspace = true

@@ -56,6 +56,7 @@ impl Editor {
         if self.active_window_mut().pending_file_opens.is_empty() {
             return false;
         }
+        self.mark_plugin_snapshot_dirty();
 
         // Take all pending files to process
         let pending = std::mem::take(&mut self.active_window_mut().pending_file_opens);

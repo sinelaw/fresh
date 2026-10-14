@@ -53,7 +53,7 @@ fn make_drift_scenario(
     n_presses: usize,
 ) -> LayoutScenario {
     let mut actions = vec![anchor];
-    actions.extend(std::iter::repeat(arrow).take(n_presses));
+    actions.extend(std::iter::repeat_n(arrow, n_presses));
     // One step assertion per arrow press, snapshotting top_byte.
     let step_assertions: Vec<StepAssertion> = (1..=n_presses)
         .map(|i| StepAssertion {

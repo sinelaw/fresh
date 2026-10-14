@@ -315,6 +315,53 @@ same-plugin re-registration (hot reload) is allowed.
 After discovery and the init plugin, the editor fires the plugins-loaded hook
 then the ready hook.
 
+### 6.2a Manifests: what a plugin declares before it runs
+
+Plugin code runs after every plugin has loaded, so anything the host needs
+**before the first frame** comes from the `<plugin>.manifest.json` sidecar,
+read synchronously at discovery (`services::plugins::manifest::read_manifests`)
+on both load paths, next to the `.i18n.json` and `.schema.json` sidecars.
+Only *enabled* plugins' manifests count; a file that does not parse is
+logged and skipped.
+
+Today a manifest declares one thing, chrome:
+
+```json
+{ "chrome": { "dock": {
+    "open": true,
+    "open_setting": "autoOpenDock",
+    "width": { "fraction": 0.28, "min": 24, "max": 40 } } } }
+```
+
+`chrome.dock` says the plugin fills the editor-global left dock. From it the
+host decides at construction whether the slot is open and how wide
+(`Editor::apply_startup_dock_chrome`). `open_setting` names a key in
+`plugins.<name>.settings` holding one of three modes, and each means what it
+says: `never` keeps the slot closed and `always` opens it, both outright;
+`auto` (the default) brings it back as the user left it
+(`<data>/chrome.json`), and on a first launch lets a bare `fresh` in
+Orchestrator mode open it, else `open` decides. So the launch mode is the
+default *under* the setting, not an override over it (#3442). The host reads
+the setting (and rewrites a legacy boolean, below) but never writes it on the
+user's behalf; keeping it in step with the user is the plugin's job — the
+orchestrator writes `always` / `never` when the user opens or closes the dock,
+so a start follows their last instruction. The width rule
+is the host's from then on; the plugin reads it back with
+`editor.dockCols()`.
+
+`open_setting` used to be a plain boolean. Both spellings are read — `false`
+as `never`, `true` as `auto` — so behaviour never depends on the migration
+having run; and a boolean found at startup is rewritten as its mode, in memory
+and on disk. That rewrite is not cosmetic: `handle_add_plugin_config_field`
+only fills a value in when one is *absent*, so a surviving boolean would sit
+under an enum schema and the Settings UI would draw the enum's default beside
+a startup that had honoured the boolean.
+
+A manifest is a declaration, not a command. The plugin still mounts its dock
+from `ready`, gated on `editor.dockOpen()`, into a column that is already
+there; a column held for a dock that never arrives is handed back when the
+hook's `HookCompleted` sentinel lands.
+
 ### 6.3 Unload cleanup
 
 Unload removes the JS context, event handlers, actions and callback contexts,
@@ -380,6 +427,23 @@ authoritative. Stable `key` fields preserve instance state across spec re-emits.
 Updating a panel re-renders preserving state; a widget mutate is a fast path for
 targeted updates (set value, set checked, set items, set expanded keys, set
 completions, append tree nodes, set focus key, …).
+
+**A panel's keymap is the one it names.** A floating or dock panel's keys go to
+its focused control first, then to the `mode` it was mounted with, then to the
+panel's own defaults (Tab, Esc). A panel mounted without a `mode` has no keymap
+at all. It used to fall back to the window's editor mode (`setEditorMode`), so
+a menu that bound nothing handed its arrows and Esc to whatever plugin held
+that slot — vi-normal's `j`/`k`, for one — and plugins defined empty modes just
+to block the fallback. *Change for third-party plugins:* a plugin that keyed a
+centred panel by calling `setEditorMode` before mounting it must now pass that
+mode as the mount's `mode` option (`FloatingWidgetPanel.mount(spec, { mode })`).
+The window's editor mode is the buffer's.
+
+**Window mode vs input mode.** `setEditorMode` sets the *active window's*
+mode: window-scoped, invisible in other windows. A modal-editing plugin that
+should apply everywhere (vi) calls `setInputMode` instead, which sets the
+editor-wide input mode; the window's mode outranks it where both are set.
+See input-keybindings-actions.md §6.
 
 ### 7.3 Events back to the plugin
 

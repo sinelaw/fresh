@@ -22,7 +22,7 @@ function spec(): any {
       { text: "beta", properties: {} },
       { text: "gamma", properties: {} },
     ],
-    item_keys: ["alpha", "beta", "gamma"],
+    itemKeys: ["alpha", "beta", "gamma"],
     selected_index: 0,
     focusable: true,
     key: "outline",

@@ -9,7 +9,17 @@ use std::path::PathBuf;
 use crate::action::Action;
 use crate::{BufferId, CursorId, SplitId};
 
-/// Arguments passed to hook callbacks
+/// A buffer named together with the window it belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct BufferRef {
+    pub window_id: u64,
+    pub buffer_id: BufferId,
+}
+
+/// Arguments passed to hook callbacks.
+///
+/// A `window_id` next to a `buffer_id` is the window (`WindowId.0`) the
+/// buffer belongs to; a buffer lives in one window, so hold the pair together.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(untagged)]
 pub enum HookArgs {
@@ -17,13 +27,25 @@ pub enum HookArgs {
     BeforeFileOpen { path: PathBuf },
 
     /// After a file is successfully opened
-    AfterFileOpen { buffer_id: BufferId, path: PathBuf },
+    AfterFileOpen {
+        buffer_id: BufferId,
+        window_id: u64,
+        path: PathBuf,
+    },
 
     /// Before a buffer is saved to disk
-    BeforeFileSave { buffer_id: BufferId, path: PathBuf },
+    BeforeFileSave {
+        buffer_id: BufferId,
+        window_id: u64,
+        path: PathBuf,
+    },
 
     /// After a buffer is successfully saved
-    AfterFileSave { buffer_id: BufferId, path: PathBuf },
+    AfterFileSave {
+        buffer_id: BufferId,
+        window_id: u64,
+        path: PathBuf,
+    },
 
     /// A buffer was reloaded from disk — auto-revert picked up an external
     /// change (e.g. `git checkout <ref> -- <file>` run in another terminal)
@@ -43,11 +65,12 @@ pub enum HookArgs {
     AfterFileExplorerChange { path: PathBuf },
 
     /// A buffer was closed
-    BufferClosed { buffer_id: BufferId },
+    BufferClosed { buffer_id: BufferId, window_id: u64 },
 
     /// Before text is inserted
     BeforeInsert {
         buffer_id: BufferId,
+        window_id: u64,
         position: usize,
         text: String,
     },
@@ -55,6 +78,7 @@ pub enum HookArgs {
     /// After text was inserted
     AfterInsert {
         buffer_id: BufferId,
+        window_id: u64,
         position: usize,
         text: String,
         /// Byte position where the affected range starts
@@ -72,6 +96,7 @@ pub enum HookArgs {
     /// Before text is deleted
     BeforeDelete {
         buffer_id: BufferId,
+        window_id: u64,
         start: usize,
         end: usize,
     },
@@ -79,6 +104,7 @@ pub enum HookArgs {
     /// After text was deleted
     AfterDelete {
         buffer_id: BufferId,
+        window_id: u64,
         start: usize,
         end: usize,
         deleted_text: String,
@@ -94,9 +120,16 @@ pub enum HookArgs {
         lines_removed: usize,
     },
 
+    /// A buffer's content changed: after any applied edit, including the
+    /// bulk edits (multi-cursor typing, a whole-buffer replace, and the undo
+    /// or redo of either) that fire no `AfterInsert` / `AfterDelete`. Carries
+    /// no positions; it tells a plugin to re-read the buffer, not what moved.
+    BufferModified { buffer_id: BufferId, window_id: u64 },
+
     /// Cursor moved to a new position
     CursorMoved {
         buffer_id: BufferId,
+        window_id: u64,
         cursor_id: CursorId,
         old_position: usize,
         new_position: usize,
@@ -107,10 +140,10 @@ pub enum HookArgs {
     },
 
     /// Buffer became active
-    BufferActivated { buffer_id: BufferId },
+    BufferActivated { buffer_id: BufferId, window_id: u64 },
 
     /// Buffer was deactivated
-    BufferDeactivated { buffer_id: BufferId },
+    BufferDeactivated { buffer_id: BufferId, window_id: u64 },
 
     /// LSP diagnostics were updated for a file
     DiagnosticsUpdated {
@@ -182,6 +215,16 @@ pub enum HookArgs {
     /// re-configures itself from this handler would otherwise wake
     /// itself (and every other plugin) right back up.
     ConfigChanged {},
+
+    /// The editor-wide input mode changed (`setInputMode`): a modal-editing
+    /// personality such as vi was turned on or off, or moved between its
+    /// sub-modes. For a plugin whose window-scoped mode should step aside
+    /// while one is on (markdown-source), since a window's editor mode
+    /// outranks the input mode.
+    InputModeChanged {
+        /// The new input mode, or `None` when it was cleared.
+        mode: Option<String>,
+    },
 
     /// Rendering is starting for a buffer (called once per buffer before render_line hooks)
     RenderStart { buffer_id: BufferId },
@@ -333,10 +376,27 @@ pub enum HookArgs {
         params: Option<String>,
     },
 
+    /// LSP server notification (server -> client) with a method the editor
+    /// does not handle itself, e.g. `textDocument/clangd.fileStatus` or
+    /// `$/memoryUsage`. Fired as the `lsp/custom_notification` hook.
+    LspCustomNotification {
+        /// The language of the server that sent the notification
+        language: String,
+        /// The name of the server that sent it (disambiguates multiple
+        /// servers configured for one language)
+        server_name: String,
+        /// The JSON-RPC method name
+        method: String,
+        /// The notification parameters as a JSON value (not a string);
+        /// `null` when the server sent none
+        params: Option<serde_json::Value>,
+    },
+
     /// Viewport changed (scrolled or resized)
     ViewportChanged {
         split_id: SplitId,
         buffer_id: BufferId,
+        window_id: u64,
         top_byte: usize,
         top_line: Option<usize>,
         width: u16,
@@ -433,6 +493,38 @@ pub enum HookArgs {
         /// The newly active session id. Always present in the
         /// `sessions` list.
         active_id: u64,
+    },
+
+    /// Which chrome region holds the keyboard changed: `"editor"` (a pane),
+    /// `"explorer"` (the file tree), `"dock"`, or `"section"` (a sidebar
+    /// section — `plugin` and `panel_id` name it). The answer to "does the
+    /// pane have the keyboard?" a plugin used to have to guess from its own
+    /// focus events (sinelaw/fresh#3326, G).
+    ChromeFocusChanged {
+        /// The active window.
+        window_id: u64,
+        region: String,
+        plugin: Option<String>,
+        panel_id: Option<u64>,
+    },
+
+    /// What the user is looking at changed: the active buffer of the active
+    /// window is a different `(window, buffer)` than it was. One hook for
+    /// the twelve plugins that want exactly this and used to approximate it
+    /// with `buffer_activated` alone — which fires for every reason below
+    /// too, and keeps firing. Fires after `active_window_changed` and
+    /// `buffer_activated` for the same change.
+    ActiveBufferChanged {
+        /// The window now active.
+        window_id: u64,
+        /// The buffer now active in it.
+        buffer_id: BufferId,
+        /// What was active before, or `None` on the first announcement.
+        previous: Option<BufferRef>,
+        /// Why: `"window"` — a window switch; `"buffer"` — a tab, split or
+        /// open changed the buffer within the same window; `"open"` — the
+        /// same buffer was re-pointed at another file in place.
+        reason: String,
     },
 
     /// PTY terminal received output bytes from the spawned process.
@@ -553,6 +645,9 @@ pub enum HookArgs {
     /// At v1 only widgets that have user-driven behaviour fire this
     /// hook. The HintBar widget is read-only and does not emit events.
     WidgetEvent {
+        /// The window that was active when the widget fired. A panel
+        /// scoped to a buffer or window belongs to this one.
+        window_id: u64,
         /// The plugin-allocated panel ID from the original
         /// `MountWidgetPanel`.
         panel_id: u64,
@@ -564,6 +659,12 @@ pub enum HookArgs {
         /// Event-specific JSON payload.
         #[serde(default)]
         payload: serde_json::Value,
+        /// The key of the widget that holds the panel's focus *now*, after
+        /// whatever the event did (`""` when nothing is focused). The
+        /// host's fact — a plugin reads it here instead of mirroring focus
+        /// from `focus` events and guessing at the moves it was not told of.
+        #[serde(default)]
+        focus_key: String,
     },
 }
 
@@ -834,6 +935,33 @@ mod tests {
         assert_eq!(json["count"], 7);
     }
 
+    /// Custom LSP notification params reach plugins as a JSON object (so
+    /// `payload.params.status` works), not as a pre-serialized string like
+    /// `LspServerRequest` uses; absent params become `null`.
+    #[test]
+    fn hook_args_to_json_lsp_custom_notification_params_are_an_object() {
+        let json = hook_args_to_json(&HookArgs::LspCustomNotification {
+            language: "cpp".into(),
+            server_name: "clangd".into(),
+            method: "textDocument/clangd.fileStatus".into(),
+            params: Some(serde_json::json!({"uri": "file:///a.cpp", "status": "ready"})),
+        })
+        .unwrap();
+        assert_eq!(json["language"], "cpp");
+        assert_eq!(json["server_name"], "clangd");
+        assert_eq!(json["method"], "textDocument/clangd.fileStatus");
+        assert_eq!(json["params"]["status"], "ready");
+
+        let json = hook_args_to_json(&HookArgs::LspCustomNotification {
+            language: "cpp".into(),
+            server_name: "clangd".into(),
+            method: "$/memoryUsage".into(),
+            params: None,
+        })
+        .unwrap();
+        assert!(json["params"].is_null());
+    }
+
     #[test]
     fn hook_args_to_json_empty_variants_produce_empty_object() {
         for args in [
@@ -908,6 +1036,7 @@ mod tests {
     fn hook_args_to_json_delete_fields_are_flat() {
         let json = hook_args_to_json(&HookArgs::BeforeDelete {
             buffer_id: crate::BufferId(1),
+            window_id: 1,
             start: 10,
             end: 20,
         })

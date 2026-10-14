@@ -55,11 +55,13 @@ jobs:
           fi
 
       - name: Build release binary
+        # `--features web`: opt-in in Cargo.toml, so the static tarballs would
+        # otherwise ship a `fresh` that rejects `--web` (#3316).
         run: |
           if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
-            cross build --release --target ${{ matrix.target }}
+            cross build --release --features web --target ${{ matrix.target }}
           else
-            cargo build --release --target ${{ matrix.target }}
+            cargo build --release --features web --target ${{ matrix.target }}
           fi
 
       - name: Get version from Cargo.toml

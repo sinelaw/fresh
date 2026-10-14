@@ -104,11 +104,6 @@ impl<M: 'static> Geometry<'_, M> {
     pub fn band(&self) -> Option<Band> {
         self.ui.band(self.id)
     }
-
-    /// Another element's rectangle, addressed by key.
-    pub fn rect_of_key(&self, k: &crate::key::Key) -> Option<Rect> {
-        self.ui.find_by_key(k).map(|e| self.ui.rect_of(e))
-    }
 }
 
 // ---------------------------------------------------------------------------

@@ -79,10 +79,12 @@ impl QuickOpenProvider for CommandProvider {
         };
 
         let registry = self.command_registry.read().unwrap();
+        // By identity, not by the label: a plugin command can share a
+        // built-in's name, and the row the user chose is the one to run.
         let cmd = registry
             .get_all()
             .into_iter()
-            .find(|c| c.get_localized_name() == suggestion.text);
+            .find(|c| c.id() == suggestion.id);
 
         let Some(cmd) = cmd else {
             return QuickOpenResult::None;
@@ -162,7 +164,9 @@ impl QuickOpenProvider for BufferProvider {
                     Some(leaf) => format!("{GROUP_VALUE_PREFIX}{leaf}"),
                     None => buf.id.to_string(),
                 };
-                let suggestion = Suggestion::new(display_name)
+                // The value is the row's identity too: a buffer id, or a
+                // group's leaf in its own namespace.
+                let suggestion = Suggestion::new(value.clone(), display_name)
                     .with_description(buf.path.clone())
                     .with_value(value);
                 Some((suggestion, m.score, buf.id))
@@ -230,18 +234,20 @@ impl QuickOpenProvider for GotoLineProvider {
 
     fn suggestions(&self, query: &str, _context: &QuickOpenContext) -> Vec<Suggestion> {
         if query.is_empty() {
-            return vec![
-                Suggestion::disabled(t!("quick_open.goto_line_hint").to_string())
-                    .with_description(t!("quick_open.goto_line_desc").to_string()),
-            ];
+            return vec![Suggestion::disabled(
+                "status:goto-line-hint",
+                t!("quick_open.goto_line_hint").to_string(),
+            )
+            .with_description(t!("quick_open.goto_line_desc").to_string())];
         }
 
         // A bare sign isn't yet a valid number — show a hint and wait for digits.
         if query == "-" || query == "+" {
-            return vec![
-                Suggestion::disabled(t!("quick_open.goto_line_hint").to_string())
-                    .with_description(t!("quick_open.relative_line_desc").to_string()),
-            ];
+            return vec![Suggestion::disabled(
+                "status:relative-line-hint",
+                t!("quick_open.goto_line_hint").to_string(),
+            )
+            .with_description(t!("quick_open.relative_line_desc").to_string())];
         }
 
         match parse_goto_line_input(query) {
@@ -255,14 +261,15 @@ impl QuickOpenProvider for GotoLineProvider {
                         t!("quick_open.goto_line", line = format!("{:+}", d)).to_string()
                     }
                 };
-                vec![Suggestion::new(label)
+                vec![Suggestion::new(format!("line:{query}"), label)
                     .with_description(t!("quick_open.press_enter").to_string())
                     .with_value(query.to_string())]
             }
-            None => vec![
-                Suggestion::disabled(t!("quick_open.invalid_line").to_string())
-                    .with_description(query.to_string()),
-            ],
+            None => vec![Suggestion::disabled(
+                "status:invalid-line",
+                t!("quick_open.invalid_line").to_string(),
+            )
+            .with_description(query.to_string())],
         }
     }
 
@@ -351,7 +358,7 @@ pub struct FileProvider {
     frecency: std::sync::Arc<std::sync::RwLock<std::collections::HashMap<String, FrecencyData>>>,
     filesystem: std::sync::Arc<dyn crate::model::filesystem::FileSystem + Send + Sync>,
     process_spawner: std::sync::Arc<dyn crate::services::remote::ProcessSpawner>,
-    runtime_handle: Option<tokio::runtime::Handle>,
+    runtime: Option<crate::services::runtime::LiveRuntime>,
     async_sender: Option<std::sync::mpsc::Sender<crate::services::async_bridge::AsyncMessage>>,
     /// Cancel flag shared with the background walk task.
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -361,7 +368,7 @@ impl FileProvider {
     pub fn new(
         filesystem: std::sync::Arc<dyn crate::model::filesystem::FileSystem + Send + Sync>,
         process_spawner: std::sync::Arc<dyn crate::services::remote::ProcessSpawner>,
-        runtime_handle: Option<tokio::runtime::Handle>,
+        runtime: Option<crate::services::runtime::LiveRuntime>,
         async_sender: Option<std::sync::mpsc::Sender<crate::services::async_bridge::AsyncMessage>>,
     ) -> Self {
         Self {
@@ -373,7 +380,7 @@ impl FileProvider {
             frecency: std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
             filesystem,
             process_spawner,
-            runtime_handle,
+            runtime,
             async_sender,
             cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
@@ -576,8 +583,8 @@ impl FileProvider {
 
         // No cache for this cwd, not loading — kick off background load
         cache.loaded_cwd = Some(cwd.to_string());
-        let (sender, handle) = match (&self.async_sender, &self.runtime_handle) {
-            (Some(s), Some(h)) => (s.clone(), h.clone()),
+        let (sender, runtime) = match (&self.async_sender, &self.runtime) {
+            (Some(s), Some(rt)) => (s.clone(), rt.clone()),
             _ => {
                 // No async support — fall back to synchronous load
                 drop(cache);
@@ -595,7 +602,7 @@ impl FileProvider {
         let process_spawner = std::sync::Arc::clone(&self.process_spawner);
         let cwd = cwd.to_string();
 
-        handle.spawn_blocking(move || {
+        runtime.spawn_blocking(move || {
             // Fast path: git ls-files returns everything at once.
             if let Some(files) = try_git_files_blocking(&process_spawner, &cwd) {
                 let frecency_map = frecency.read().ok();
@@ -655,8 +662,8 @@ impl FileProvider {
 
     /// Synchronous `try_git_files` — used by the sync fallback path.
     fn try_git_files(&self, cwd: &str) -> Option<Vec<String>> {
-        let handle = self.runtime_handle.as_ref()?;
-        try_git_files_with_handle(&self.process_spawner, cwd, handle)
+        let runtime = self.runtime.as_ref()?;
+        try_git_files_with_handle(&self.process_spawner, cwd, runtime.handle())
     }
 
     /// Synchronous `try_walk_dir` — used by the sync fallback path.
@@ -672,23 +679,32 @@ impl FileProvider {
 
 /// List files via `git ls-files` using a `ProcessSpawner` (blocking).
 ///
-/// Called from `spawn_blocking` so we can't hold a tokio runtime handle —
-/// `ProcessSpawner::spawn` is async, so we use `tokio::runtime::Handle::block_on`
-/// from *inside* the blocking thread.
+/// Called from `spawn_blocking`, which is already running on the runtime's
+/// blocking pool — so the runtime provably exists for the duration, and
+/// `Handle::current` is sound here in a way that storing one never is.
 fn try_git_files_blocking(
     spawner: &std::sync::Arc<dyn crate::services::remote::ProcessSpawner>,
     cwd: &str,
 ) -> Option<Vec<String>> {
-    // Inside spawn_blocking we can use Handle::current() since the runtime is alive.
+    // Running on the runtime's own blocking pool, so the runtime provably
+    // exists for as long as this closure does — the liveness a `Handle` cannot
+    // carry on its own is established by where we are, not by the handle.
+    #[allow(clippy::disallowed_types)]
     let handle = tokio::runtime::Handle::try_current().ok()?;
     try_git_files_with_handle(spawner, cwd, &handle)
 }
 
+/// `handle` must belong to a runtime the caller has already established is
+/// alive — either by holding a `LiveRuntime` or by running on that runtime's
+/// blocking pool. A `Handle` carries no such guarantee on its own, which is
+/// why nothing stores one; see `services::runtime::LiveRuntime`.
+#[allow(clippy::disallowed_types)] // liveness established by both callers, above
 fn try_git_files_with_handle(
     spawner: &std::sync::Arc<dyn crate::services::remote::ProcessSpawner>,
     cwd: &str,
     handle: &tokio::runtime::Handle,
 ) -> Option<Vec<String>> {
+    #[allow(clippy::disallowed_methods)] // liveness established by the caller, above
     let result = handle
         .block_on(spawner.spawn(
             "git".to_string(),
@@ -869,6 +885,7 @@ impl QuickOpenProvider for FileProvider {
         // Show a clear error when the remote connection is lost
         if !self.filesystem.is_remote_connected() {
             return vec![Suggestion::disabled(
+                "status:remote-lost",
                 "Remote connection lost — cannot list files".to_string(),
             )];
         }
@@ -893,9 +910,15 @@ impl QuickOpenProvider for FileProvider {
 
         if !has_files && prefix_entries.is_empty() {
             if still_loading {
-                return vec![Suggestion::disabled("Loading files…".to_string())];
+                return vec![Suggestion::disabled(
+                    "status:loading",
+                    "Loading files…".to_string(),
+                )];
             } else {
-                return vec![Suggestion::disabled(t!("quick_open.no_files").to_string())];
+                return vec![Suggestion::disabled(
+                    "status:no-files",
+                    t!("quick_open.no_files").to_string(),
+                )];
             }
         }
 
@@ -970,7 +993,7 @@ impl QuickOpenProvider for FileProvider {
 
         let mut suggestions: Vec<Suggestion> = scored
             .into_iter()
-            .map(|(path, _)| Suggestion::new(path.clone()).with_value(path))
+            .map(|(path, _)| Suggestion::new(format!("file:{path}"), path.clone()).with_value(path))
             .collect();
 
         if still_loading {
@@ -979,7 +1002,7 @@ impl QuickOpenProvider for FileProvider {
             } else {
                 "Scanning for more files…"
             };
-            suggestions.push(Suggestion::disabled(msg.to_string()));
+            suggestions.push(Suggestion::disabled("status:scanning", msg.to_string()));
         }
 
         suggestions
@@ -1276,12 +1299,12 @@ mod tests {
 
     #[async_trait::async_trait]
     impl crate::services::remote::ProcessSpawner for FailingSpawner {
-        async fn spawn(
+        async fn spawn_raw(
             &self,
             _command: String,
             _args: Vec<String>,
             _cwd: Option<String>,
-        ) -> Result<crate::services::remote::SpawnResult, crate::services::remote::SpawnError>
+        ) -> Result<crate::services::remote::RawSpawnResult, crate::services::remote::SpawnError>
         {
             Err(crate::services::remote::SpawnError::Process(
                 "no git in test".to_string(),
@@ -1306,12 +1329,12 @@ mod tests {
 
     #[async_trait::async_trait]
     impl crate::services::remote::ProcessSpawner for OtherSpawner {
-        async fn spawn(
+        async fn spawn_raw(
             &self,
             _command: String,
             _args: Vec<String>,
             _cwd: Option<String>,
-        ) -> Result<crate::services::remote::SpawnResult, crate::services::remote::SpawnError>
+        ) -> Result<crate::services::remote::RawSpawnResult, crate::services::remote::SpawnError>
         {
             Err(crate::services::remote::SpawnError::Process(
                 "other".to_string(),

@@ -11,7 +11,7 @@ mod integration_tests {
     use crate::server::protocol::{
         ClientControl, ClientHello, ServerControl, ServerHello, TermSize, PROTOCOL_VERSION,
     };
-    use crate::server::runner::{Server, ServerConfig};
+    use crate::server::test_support::recovery_chunk_files;
 
     /// Read from the client data pipe until the accumulated output contains `needle`.
     /// Appends to `output` so callers can accumulate across multiple calls.
@@ -45,102 +45,132 @@ mod integration_tests {
         )
     }
 
+    /// Config for an `EditorServer` with plugins and init.ts off, rooted at
+    /// `temp_dir`. Tests that need a variation build their own.
+    fn editor_server_config(
+        temp_dir: &std::path::Path,
+        session_name: &str,
+        idle_timeout: Option<Duration>,
+    ) -> crate::server::editor_server::EditorServerConfig {
+        crate::server::editor_server::EditorServerConfig {
+            working_dir: temp_dir.to_path_buf(),
+            session_name: Some(session_name.to_string()),
+            idle_timeout,
+            editor_config: crate::config::Config::default(),
+            dir_context: crate::config_io::DirectoryContext::for_testing(temp_dir),
+            plugins_enabled: false,
+            init_enabled: false,
+            orchestrator_mode: false,
+            startup_authority: None,
+            workspace_trust: std::sync::Arc::new(
+                crate::services::workspace_trust::WorkspaceTrust::permissive(),
+            ),
+            env_provider: std::sync::Arc::new(
+                crate::services::env_provider::EnvProvider::inactive(),
+            ),
+            session_keepalive: None,
+            startup_files: Vec::new(),
+            #[cfg(feature = "web")]
+            web_addr: None,
+        }
+    }
+
+    type ServerThread = thread::JoinHandle<std::io::Result<()>>;
+
+    /// Start an `EditorServer` on its own thread (the editor is not `Send`, so
+    /// it has to be built there). Returns once the server has bound its
+    /// sockets and written its PID file, which `EditorServer::new` does.
+    fn spawn_editor_server(
+        temp_dir: &std::path::Path,
+        session_name: &str,
+        idle_timeout: Option<Duration>,
+    ) -> (
+        SocketPaths,
+        std::sync::Arc<std::sync::atomic::AtomicBool>,
+        ServerThread,
+    ) {
+        use crate::server::editor_server::EditorServer;
+
+        let config = editor_server_config(temp_dir, session_name, idle_timeout);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handle = thread::spawn(move || {
+            let mut server = EditorServer::new(config).unwrap();
+            tx.send((server.socket_paths().clone(), server.shutdown_handle()))
+                .unwrap();
+            server.run()
+        });
+        let (paths, shutdown) = rx.recv().unwrap();
+        (paths, shutdown, handle)
+    }
+
+    /// Send the client hello and return the server's reply.
+    fn client_hello(conn: &ClientConnection) -> ServerControl {
+        let hello = ClientHello::new(TermSize::new(80, 24));
+        conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
+            .unwrap();
+        let response = conn.read_control().unwrap().unwrap();
+        serde_json::from_str(&response).unwrap()
+    }
+
+    fn test_temp_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(unique_session_name(&format!("fresh-test-{tag}")));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
     /// Test basic server startup and shutdown
     #[test]
     fn test_server_creates_sockets_on_bind() {
-        let temp_dir = std::env::temp_dir().join(format!("fresh-test-{}", std::process::id()));
-        std::fs::create_dir_all(&temp_dir).unwrap();
-
-        let config = ServerConfig {
-            working_dir: temp_dir.clone(),
-            session_name: Some(unique_session_name("lifecycle")),
-            idle_timeout: Some(Duration::from_millis(100)),
-            mouse_hover_enabled: true,
-        };
-
-        let mut server = Server::new(config).unwrap();
-        let shutdown = server.shutdown_handle();
+        let temp_dir = test_temp_dir("lifecycle");
+        let (paths, shutdown, handle) =
+            spawn_editor_server(&temp_dir, &unique_session_name("lifecycle"), None);
 
         // Sockets should exist after bind
-        let paths = server.socket_paths();
         assert!(paths.data.exists());
         assert!(paths.control.exists());
 
         shutdown.store(true, Ordering::SeqCst);
-        drop(server.run());
-
+        drop(handle.join());
+        drop(paths.cleanup());
         std::fs::remove_dir_all(&temp_dir).ok();
     }
 
     /// Test client-server handshake protocol
     #[test]
     fn test_handshake_exchanges_protocol_version() {
-        let temp_dir = std::env::temp_dir().join(format!("fresh-test-hs-{}", std::process::id()));
-        std::fs::create_dir_all(&temp_dir).unwrap();
-
+        let temp_dir = test_temp_dir("handshake");
         let session_name = unique_session_name("handshake");
+        let (paths, _shutdown, handle) =
+            spawn_editor_server(&temp_dir, &session_name, Some(Duration::from_secs(5)));
 
-        let config = ServerConfig {
-            working_dir: temp_dir.clone(),
-            session_name: Some(session_name.clone()),
-            idle_timeout: Some(Duration::from_secs(5)),
-            mouse_hover_enabled: true,
-        };
-
-        let mut server = Server::new(config).unwrap();
-        let socket_paths = server.socket_paths().clone();
-        let server_handle = thread::spawn(move || server.run());
-
-        thread::sleep(Duration::from_millis(50));
-
-        let conn = ClientConnection::connect(&socket_paths).unwrap();
-
-        // Send hello
-        let hello = ClientHello::new(TermSize::new(80, 24));
-        let hello_json = serde_json::to_string(&ClientControl::Hello(hello)).unwrap();
-        conn.write_control(&hello_json).unwrap();
+        let conn = ClientConnection::connect(&paths).unwrap();
 
         // Verify server responds with matching protocol version
-        let response = conn.read_control().unwrap().unwrap();
-        let server_msg: ServerControl = serde_json::from_str(&response).unwrap();
-
-        match server_msg {
+        match client_hello(&conn) {
             ServerControl::Hello(server_hello) => {
                 assert_eq!(server_hello.protocol_version, PROTOCOL_VERSION);
                 assert_eq!(server_hello.session_id, session_name);
             }
-            _ => panic!("Expected Hello response"),
+            other => panic!("Expected Hello response, got {:?}", other),
         }
 
-        thread::sleep(Duration::from_millis(100));
         drop(conn.write_control(&serde_json::to_string(&ClientControl::Quit).unwrap()));
-
-        drop(server_handle.join());
+        drop(handle.join());
+        drop(paths.cleanup());
         std::fs::remove_dir_all(&temp_dir).ok();
     }
 
     /// Test server rejects clients with incompatible protocol version
     #[test]
     fn test_version_mismatch_rejected() {
-        let temp_dir = std::env::temp_dir().join(format!("fresh-test-ver-{}", std::process::id()));
-        std::fs::create_dir_all(&temp_dir).unwrap();
+        let temp_dir = test_temp_dir("version");
+        let (paths, shutdown, handle) = spawn_editor_server(
+            &temp_dir,
+            &unique_session_name("version"),
+            Some(Duration::from_secs(5)),
+        );
 
-        let config = ServerConfig {
-            working_dir: temp_dir.clone(),
-            session_name: Some(unique_session_name("version")),
-            idle_timeout: Some(Duration::from_secs(5)),
-            mouse_hover_enabled: true,
-        };
-
-        let mut server = Server::new(config).unwrap();
-        let shutdown = server.shutdown_handle();
-        let socket_paths = server.socket_paths().clone();
-
-        let server_handle = thread::spawn(move || server.run());
-
-        thread::sleep(Duration::from_millis(50));
-
-        let conn = ClientConnection::connect(&socket_paths).unwrap();
+        let conn = ClientConnection::connect(&paths).unwrap();
 
         // Send hello with incompatible version
         let hello_json = serde_json::json!({
@@ -158,29 +188,26 @@ mod integration_tests {
         assert!(matches!(server_msg, ServerControl::VersionMismatch(_)));
 
         shutdown.store(true, Ordering::SeqCst);
-        drop(server_handle.join());
+        drop(handle.join());
+        drop(paths.cleanup());
         std::fs::remove_dir_all(&temp_dir).ok();
     }
 
     /// Test idle timeout causes server shutdown
     #[test]
     fn test_idle_timeout_triggers_shutdown() {
-        let temp_dir = std::env::temp_dir().join(format!("fresh-test-idle-{}", std::process::id()));
-        std::fs::create_dir_all(&temp_dir).unwrap();
-
-        let config = ServerConfig {
-            working_dir: temp_dir.clone(),
-            session_name: Some(unique_session_name("idle")),
-            idle_timeout: Some(Duration::from_millis(50)), // Very short timeout
-            mouse_hover_enabled: true,
-        };
-
-        let mut server = Server::new(config).unwrap();
+        let temp_dir = test_temp_dir("idle");
+        let (paths, _shutdown, handle) = spawn_editor_server(
+            &temp_dir,
+            &unique_session_name("idle"),
+            Some(Duration::from_millis(50)), // Very short timeout
+        );
 
         // Without any client connections, server should exit due to idle timeout
-        let result = server.run();
+        let result = handle.join().unwrap();
         assert!(result.is_ok());
 
+        drop(paths.cleanup());
         std::fs::remove_dir_all(&temp_dir).ok();
     }
 
@@ -191,44 +218,36 @@ mod integration_tests {
         ignore = "Windows named pipe handling needs further investigation for sustained connections"
     )]
     fn test_ping_pong_keepalive() {
-        let temp_dir = std::env::temp_dir().join(format!("fresh-test-ping-{}", std::process::id()));
-        std::fs::create_dir_all(&temp_dir).unwrap();
+        let temp_dir = test_temp_dir("ping");
+        let (paths, _shutdown, handle) = spawn_editor_server(
+            &temp_dir,
+            &unique_session_name("ping"),
+            Some(Duration::from_secs(5)),
+        );
 
-        let config = ServerConfig {
-            working_dir: temp_dir.clone(),
-            session_name: Some(unique_session_name("ping")),
-            idle_timeout: Some(Duration::from_secs(5)),
-            mouse_hover_enabled: true,
-        };
+        let conn = ClientConnection::connect(&paths).unwrap();
+        assert!(matches!(client_hello(&conn), ServerControl::Hello(_)));
 
-        let mut server = Server::new(config).unwrap();
-        let socket_paths = server.socket_paths().clone();
-        let server_handle = thread::spawn(move || server.run());
-
-        thread::sleep(Duration::from_millis(50));
-
-        let conn = ClientConnection::connect(&socket_paths).unwrap();
-
-        // Handshake
-        let hello = ClientHello::new(TermSize::new(80, 24));
-        conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
-            .unwrap();
-        let _ = conn.read_control().unwrap();
-
-        thread::sleep(Duration::from_millis(100));
-
-        // Send ping
         conn.write_control(&serde_json::to_string(&ClientControl::Ping).unwrap())
             .unwrap();
 
-        // Should receive pong
-        thread::sleep(Duration::from_millis(50));
-
-        // Due to non-blocking reads, we need to handle the response carefully
-        // The server processes ping and sends pong
+        // The server may send other control messages first; skip to the pong.
+        loop {
+            let line = conn
+                .read_control()
+                .unwrap()
+                .expect("server closed the control channel before answering the ping");
+            if matches!(
+                serde_json::from_str::<ServerControl>(&line),
+                Ok(ServerControl::Pong)
+            ) {
+                break;
+            }
+        }
 
         drop(conn.write_control(&serde_json::to_string(&ClientControl::Quit).unwrap()));
-        drop(server_handle.join());
+        drop(handle.join());
+        drop(paths.cleanup());
         std::fs::remove_dir_all(&temp_dir).ok();
     }
 
@@ -239,40 +258,23 @@ mod integration_tests {
         ignore = "Windows named pipe handling needs further investigation for sustained connections"
     )]
     fn test_quit_command_shuts_down_server() {
-        let temp_dir = std::env::temp_dir().join(format!("fresh-test-quit-{}", std::process::id()));
-        std::fs::create_dir_all(&temp_dir).unwrap();
+        let temp_dir = test_temp_dir("quit");
+        // No idle timeout: only the quit can end the server.
+        let (paths, _shutdown, handle) =
+            spawn_editor_server(&temp_dir, &unique_session_name("quit"), None);
 
-        let config = ServerConfig {
-            working_dir: temp_dir.clone(),
-            session_name: Some(unique_session_name("quit")),
-            idle_timeout: None, // No idle timeout
-            mouse_hover_enabled: true,
-        };
-
-        let mut server = Server::new(config).unwrap();
-        let socket_paths = server.socket_paths().clone();
-
-        let server_handle = thread::spawn(move || server.run());
-        thread::sleep(Duration::from_millis(50));
-
-        let conn = ClientConnection::connect(&socket_paths).unwrap();
-
-        // Handshake
-        let hello = ClientHello::new(TermSize::new(80, 24));
-        conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
-            .unwrap();
-        let _ = conn.read_control().unwrap();
-
-        thread::sleep(Duration::from_millis(100));
+        let conn = ClientConnection::connect(&paths).unwrap();
+        assert!(matches!(client_hello(&conn), ServerControl::Hello(_)));
 
         // Send quit - server should shutdown
         conn.write_control(&serde_json::to_string(&ClientControl::Quit).unwrap())
             .unwrap();
 
         // Server should exit
-        let result = server_handle.join().unwrap();
+        let result = handle.join().unwrap();
         assert!(result.is_ok());
 
+        drop(paths.cleanup());
         std::fs::remove_dir_all(&temp_dir).ok();
     }
 
@@ -286,74 +288,40 @@ mod integration_tests {
     /// No arbitrary sleeps - uses semantic signaling via PID file.
     #[test]
     fn test_pid_file_signals_server_readiness() {
-        let temp_dir = std::env::temp_dir().join(format!("fresh-test-pid-{}", std::process::id()));
-        std::fs::create_dir_all(&temp_dir).unwrap();
-
-        let session_name = unique_session_name("pid-ready");
-
-        // Start server in background thread and get socket paths from it
-        let config = ServerConfig {
-            working_dir: temp_dir.clone(),
-            session_name: Some(session_name.clone()),
-            idle_timeout: Some(Duration::from_secs(5)),
-            mouse_hover_enabled: true,
-        };
-
-        // Use channel to get socket paths from server thread
-        let (paths_tx, paths_rx) = std::sync::mpsc::channel();
-
-        let server_handle = thread::spawn(move || {
-            let mut server = Server::new(config).unwrap();
-            let socket_paths = server.socket_paths().clone();
-            // Write PID file after bind (simulating EditorServer behavior)
-            socket_paths.write_pid(std::process::id()).unwrap();
-            // Send paths to waiting client
-            paths_tx.send(socket_paths).unwrap();
-            server.run()
-        });
-
-        // Get socket paths from server (this blocks until server sends them)
-        let socket_paths = paths_rx.recv().unwrap();
+        let temp_dir = test_temp_dir("pid");
+        let (paths, _shutdown, handle) = spawn_editor_server(
+            &temp_dir,
+            &unique_session_name("pid-ready"),
+            Some(Duration::from_secs(5)),
+        );
 
         // PID file exists with valid running PID - server is ready
-        let pid = socket_paths.read_pid().unwrap().unwrap();
+        let pid = paths.read_pid().unwrap().unwrap();
         assert!(
             is_process_running(pid),
             "PID file should contain running process ID"
         );
 
         // Now we can connect reliably
-        let conn = ClientConnection::connect(&socket_paths);
+        let conn = ClientConnection::connect(&paths);
         assert!(
             conn.is_ok(),
             "Connection should succeed after PID file is ready: {:?}",
             conn.err()
         );
-
         let conn = conn.unwrap();
 
-        // Perform handshake
-        let hello = ClientHello::new(TermSize::new(80, 24));
-        conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
-            .unwrap();
-
-        let response = conn.read_control().unwrap().unwrap();
-        let server_msg: ServerControl = serde_json::from_str(&response).unwrap();
-
-        match server_msg {
+        match client_hello(&conn) {
             ServerControl::Hello(server_hello) => {
                 assert_eq!(server_hello.protocol_version, PROTOCOL_VERSION);
             }
             other => panic!("Expected Hello, got {:?}", other),
         }
 
-        // Give server time to process the handshake
-        thread::sleep(Duration::from_millis(50));
-
         // Clean shutdown
         drop(conn.write_control(&serde_json::to_string(&ClientControl::Quit).unwrap()));
-
-        drop(server_handle.join());
+        drop(handle.join());
+        drop(paths.cleanup());
         std::fs::remove_dir_all(&temp_dir).ok();
     }
 
@@ -529,18 +497,12 @@ mod integration_tests {
         // Give waiter thread time to start waiting
         thread::yield_now();
 
-        // Now start server (after waiter is already waiting)
-        let config = ServerConfig {
-            working_dir: temp_dir.clone(),
-            session_name: Some(session_name.clone()),
-            idle_timeout: Some(Duration::from_secs(5)),
-            mouse_hover_enabled: true,
-        };
-
+        // Now start server (after waiter is already waiting). EditorServer
+        // writes the PID file as soon as it has bound its sockets.
+        let config = editor_server_config(&temp_dir, &session_name, Some(Duration::from_secs(5)));
         let paths_for_cleanup = socket_paths.clone();
         let server_handle = thread::spawn(move || {
-            let mut server = Server::new(config).unwrap();
-            server.socket_paths().write_pid(std::process::id()).unwrap();
+            let mut server = crate::server::editor_server::EditorServer::new(config).unwrap();
             server.run()
         });
 
@@ -562,6 +524,97 @@ mod integration_tests {
 
         drop(server_handle.join());
         drop(paths_for_cleanup.cleanup());
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    /// E2E regression test for issue #3440: the daemon's main loop must run the
+    /// shared per-iteration housekeeping (`app::editor_tick`), not a hand-copied
+    /// subset of it.
+    ///
+    /// This drives `EditorServer::run()` itself over real IPC rather than calling
+    /// the housekeeping directly, so it pins the *wiring*: delete the
+    /// `run_editor_tick()` call from the loop and this fails, where a test that
+    /// calls `run_editor_tick()` itself would still pass.
+    ///
+    /// A recovery chunk is the observable: `auto_recovery_save_dirty_buffers` is
+    /// only ever called from `editor_tick`, so before the fix a daemon session
+    /// wrote `session.lock` at startup and then never a chunk, losing every
+    /// unsaved buffer on a crash.
+    #[test]
+    fn daemon_loop_runs_editor_tick_so_a_dirty_buffer_gets_a_recovery_chunk() {
+        use crate::server::editor_server::EditorServer;
+        use std::sync::mpsc;
+
+        let temp_dir = std::env::temp_dir().join(unique_session_name("fresh-e2e-3440"));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let session_name = unique_session_name("e2e-3440");
+
+        let mut config =
+            editor_server_config(&temp_dir, &session_name, Some(Duration::from_secs(30)));
+        // The interval is a rate limit on a check that runs every iteration;
+        // zero lets the first iteration after the edit write, so the test does
+        // not have to wait out the 2s default.
+        config.editor_config.editor.auto_recovery_save_interval_secs = 0;
+        let recovery_dir = config.dir_context.recovery_dir();
+
+        let (paths_tx, paths_rx) = mpsc::channel();
+        let (shutdown_tx, shutdown_rx) = mpsc::channel();
+
+        // EditorServer must be created in the thread: Editor is not Send.
+        let server_handle = thread::spawn(move || {
+            let mut server = EditorServer::new(config).unwrap();
+            paths_tx.send(server.socket_paths().clone()).unwrap();
+            shutdown_tx.send(server.shutdown_handle()).unwrap();
+            server.run()
+        });
+
+        let socket_paths = paths_rx.recv().unwrap();
+        let shutdown_handle = shutdown_rx.recv().unwrap();
+        while !socket_paths.pid.exists() || socket_paths.read_pid().ok().flatten().is_none() {
+            thread::yield_now();
+        }
+
+        let conn = ClientConnection::connect(&socket_paths).expect("connect to server");
+        let hello = ClientHello::new(TermSize::new(80, 24));
+        conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
+            .unwrap();
+        let _ = conn.read_control().unwrap().unwrap();
+
+        let mut output = Vec::new();
+        read_until_contains(&conn, &mut output, "\x1b[");
+
+        // Type into the unnamed startup buffer — the `[No Name]*` case from the
+        // report — and wait until the server has rendered it, so the edit is
+        // known to have landed before we look for its recovery chunk.
+        conn.write_data(b"abc").unwrap();
+        read_until_contains(&conn, &mut output, "abc");
+
+        // The loop writes the chunk on one of its next iterations; poll rather
+        // than assume a single iteration has elapsed.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let mut wrote_chunk = false;
+        while !wrote_chunk && std::time::Instant::now() < deadline {
+            wrote_chunk = !recovery_chunk_files(&recovery_dir).is_empty();
+            if !wrote_chunk {
+                thread::sleep(Duration::from_millis(25));
+            }
+        }
+
+        conn.write_control(&serde_json::to_string(&ClientControl::Quit).unwrap())
+            .unwrap();
+        shutdown_handle.store(true, Ordering::SeqCst);
+        let result = server_handle.join().unwrap();
+
+        assert!(
+            wrote_chunk,
+            "the daemon loop must run the shared editor_tick, so an unsaved \
+             buffer gets a recovery chunk (issue #3440); recovery dir {:?} \
+             holds no *.chunk.* file",
+            recovery_dir
+        );
+        assert!(result.is_ok(), "server should exit cleanly: {:?}", result);
+
+        drop(socket_paths.cleanup());
         std::fs::remove_dir_all(&temp_dir).ok();
     }
 
@@ -603,6 +656,7 @@ mod integration_tests {
             dir_context,
             plugins_enabled: false,
             init_enabled: false,
+            orchestrator_mode: false,
             startup_authority: None,
             workspace_trust: std::sync::Arc::new(
                 crate::services::workspace_trust::WorkspaceTrust::permissive(),
@@ -780,6 +834,7 @@ mod integration_tests {
             dir_context,
             plugins_enabled: false,
             init_enabled: false,
+            orchestrator_mode: false,
             startup_authority: None,
             workspace_trust: std::sync::Arc::new(
                 crate::services::workspace_trust::WorkspaceTrust::permissive(),
@@ -922,6 +977,167 @@ mod integration_tests {
         eprintln!("[multi] === END test_second_client_gets_full_screen ===");
     }
 
+    /// Read until the latest full repaint (everything after the last erase)
+    /// has drawn row `rows` and nothing below it — i.e. the session is now
+    /// rendered `rows` tall. No timeout, like `read_until_contains`.
+    fn read_until_grid_rows(conn: &ClientConnection, output: &mut Vec<u8>, rows: u16) {
+        let mut buf = [0u8; 8192];
+        loop {
+            let text = String::from_utf8_lossy(output);
+            if let Some(at) = text.rfind("\x1b[2J") {
+                let frame = &text[at..];
+                if frame.contains(&format!("\x1b[{rows};"))
+                    && !frame.contains(&format!("\x1b[{};", rows + 1))
+                {
+                    return;
+                }
+            }
+            match conn.data.try_read(&mut buf) {
+                Ok(0) => panic!("server closed the connection while waiting for {rows} rows"),
+                Ok(n) => output.extend_from_slice(&buf[..n]),
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(5));
+                }
+                Err(e) => panic!("read error while waiting for {rows} rows: {e}"),
+            }
+        }
+    }
+
+    /// The session follows the terminal in use, not the first to attach
+    /// (#3517): with Fresh left open on a Linux VT, a desktop terminal
+    /// attached to the same session was drawn at the VT's size, and resizing
+    /// its window did nothing.
+    #[test]
+    fn test_session_is_sized_for_the_terminal_in_use() {
+        let temp_dir = test_temp_dir("sized-for-use");
+        let session_name = unique_session_name("sized-for-use");
+        let (socket_paths, shutdown, server) =
+            spawn_editor_server(&temp_dir, &session_name, Some(Duration::from_secs(30)));
+
+        let hello = |conn: &ClientConnection, cols, rows| {
+            let hello = ClientHello::new(TermSize::new(cols, rows));
+            conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
+                .unwrap();
+            drop(conn.read_control().unwrap());
+        };
+        let resize = |conn: &ClientConnection, cols, rows| {
+            conn.write_control(
+                &serde_json::to_string(&ClientControl::Resize { cols, rows }).unwrap(),
+            )
+            .unwrap();
+        };
+
+        // The first terminal (the VT) attaches at 80x24.
+        let vt = ClientConnection::connect(&socket_paths).unwrap();
+        hello(&vt, 80, 24);
+        let mut vt_out = Vec::new();
+        read_until_grid_rows(&vt, &mut vt_out, 24);
+
+        // A second terminal attaches at 60x18 and, as the relay does when it
+        // starts, reports its size: the session is fitted to it.
+        let desktop = ClientConnection::connect(&socket_paths).unwrap();
+        hello(&desktop, 60, 18);
+        resize(&desktop, 60, 18);
+        let mut desktop_out = Vec::new();
+        read_until_grid_rows(&desktop, &mut desktop_out, 18);
+        read_until_grid_rows(&vt, &mut vt_out, 18);
+
+        // Resizing the desktop window resizes the session.
+        resize(&desktop, 70, 20);
+        read_until_grid_rows(&desktop, &mut desktop_out, 20);
+        read_until_grid_rows(&vt, &mut vt_out, 20);
+
+        // Typing on the VT takes the session back to the VT's size.
+        vt.write_data(b"x").unwrap();
+        read_until_grid_rows(&vt, &mut vt_out, 24);
+        read_until_grid_rows(&desktop, &mut desktop_out, 24);
+
+        // And typing in the desktop terminal takes it back again.
+        desktop.write_data(b"y").unwrap();
+        read_until_grid_rows(&desktop, &mut desktop_out, 20);
+
+        shutdown.store(true, Ordering::SeqCst);
+        drop(server.join());
+        drop(socket_paths.cleanup());
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    /// Control messages that arrive together are all handled. The daemon read
+    /// one line per pass through a fresh `BufReader`, so whatever was
+    /// buffered past the first newline was dropped — a client attached with
+    /// a file sends `OpenFiles` and its size back to back, and lost the size.
+    #[test]
+    fn test_control_messages_sent_together_are_all_handled() {
+        let temp_dir = test_temp_dir("control-batch");
+        let session_name = unique_session_name("control-batch");
+        let (socket_paths, shutdown, server) =
+            spawn_editor_server(&temp_dir, &session_name, Some(Duration::from_secs(30)));
+
+        let conn = ClientConnection::connect(&socket_paths).unwrap();
+        let hello = ClientHello::new(TermSize::new(80, 24));
+        conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
+            .unwrap();
+        drop(conn.read_control().unwrap());
+        let mut out = Vec::new();
+        read_until_grid_rows(&conn, &mut out, 24);
+
+        // Two messages in one write: the second is the one that used to go.
+        let ping = serde_json::to_string(&ClientControl::Ping).unwrap();
+        let resize = serde_json::to_string(&ClientControl::Resize { cols: 60, rows: 18 }).unwrap();
+        conn.write_control(&format!("{ping}\n{resize}")).unwrap();
+        read_until_grid_rows(&conn, &mut out, 18);
+
+        shutdown.store(true, Ordering::SeqCst);
+        drop(server.join());
+        drop(socket_paths.cleanup());
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    /// The session renders in the colors the terminal in use can show,
+    /// detected from the environment its client sent — not truecolor for
+    /// everyone. A Linux console approximates 24-bit backgrounds by each
+    /// channel's top bit, so a dark theme's backgrounds, the selection's
+    /// included, all came out black (#3517).
+    #[test]
+    fn test_session_renders_in_the_terminals_colors() {
+        fn first_frame(env: &[(&str, Option<&str>)]) -> String {
+            let temp_dir = test_temp_dir("colors");
+            let session_name = unique_session_name("colors");
+            let (socket_paths, shutdown, server) =
+                spawn_editor_server(&temp_dir, &session_name, Some(Duration::from_secs(30)));
+            let conn = ClientConnection::connect(&socket_paths).unwrap();
+            let mut hello = ClientHello::new(TermSize::new(80, 24));
+            hello.env.clear();
+            for (k, v) in env {
+                hello.env.insert(k.to_string(), v.map(str::to_string));
+            }
+            conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
+                .unwrap();
+            drop(conn.read_control().unwrap());
+            let mut out = Vec::new();
+            read_until_grid_rows(&conn, &mut out, 24);
+            shutdown.store(true, Ordering::SeqCst);
+            drop(server.join());
+            drop(socket_paths.cleanup());
+            std::fs::remove_dir_all(&temp_dir).ok();
+            String::from_utf8_lossy(&out).into_owned()
+        }
+
+        let console = first_frame(&[("TERM", Some("linux")), ("COLORTERM", None)]);
+        assert!(
+            !console.contains("38;2;") && !console.contains("48;2;"),
+            "a Linux console must not be sent 24-bit colors"
+        );
+        let truecolor = first_frame(&[
+            ("TERM", Some("xterm-256color")),
+            ("COLORTERM", Some("truecolor")),
+        ]);
+        assert!(
+            truecolor.contains("48;2;"),
+            "a truecolor terminal still gets 24-bit colors"
+        );
+    }
+
     // ===========================================================================
     // E2E regression tests for issue #1089:
     //   "Mouse codes after pressing Escape"
@@ -931,21 +1147,21 @@ mod integration_tests {
     // codes don't leak into the document as literal text.
     // ===========================================================================
 
-    /// Helper: start an EditorServer, connect a client, wait for initial render.
-    /// Returns (client_conn, accumulated_output, shutdown_handle, server_thread, socket_paths, temp_dir).
-    fn setup_editor_server_e2e(
-        test_name: &str,
-    ) -> (
+    /// What `setup_editor_server_e2e` hands back: (client_conn,
+    /// accumulated_output, shutdown_handle, server_thread, socket_paths,
+    /// temp_dir).
+    type ServerRig = (
         ClientConnection,
         Vec<u8>,
         std::sync::Arc<std::sync::atomic::AtomicBool>,
         thread::JoinHandle<std::io::Result<()>>,
         SocketPaths,
         std::path::PathBuf,
-    ) {
-        use crate::config::Config;
-        use crate::config_io::DirectoryContext;
-        use crate::server::editor_server::{EditorServer, EditorServerConfig};
+    );
+
+    /// Helper: start an EditorServer, connect a client, wait for initial render.
+    fn setup_editor_server_e2e(test_name: &str) -> ServerRig {
+        use crate::server::editor_server::EditorServer;
         use std::sync::mpsc;
 
         let temp_dir =
@@ -953,29 +1169,8 @@ mod integration_tests {
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let session_name = unique_session_name(test_name);
-        let config = Config::default();
-        let dir_context = DirectoryContext::for_testing(&temp_dir);
-
-        let server_config = EditorServerConfig {
-            working_dir: temp_dir.clone(),
-            session_name: Some(session_name),
-            idle_timeout: Some(Duration::from_secs(30)),
-            editor_config: config,
-            dir_context,
-            plugins_enabled: false,
-            init_enabled: false,
-            startup_authority: None,
-            workspace_trust: std::sync::Arc::new(
-                crate::services::workspace_trust::WorkspaceTrust::permissive(),
-            ),
-            env_provider: std::sync::Arc::new(
-                crate::services::env_provider::EnvProvider::inactive(),
-            ),
-            session_keepalive: None,
-            startup_files: Vec::new(),
-            #[cfg(feature = "web")]
-            web_addr: None,
-        };
+        let server_config =
+            editor_server_config(&temp_dir, &session_name, Some(Duration::from_secs(30)));
 
         let (paths_tx, paths_rx) = mpsc::channel();
         let (shutdown_tx, shutdown_rx) = mpsc::channel();
@@ -1048,7 +1243,7 @@ mod integration_tests {
             for col in 0..80 {
                 let cell = screen.cell(row, col);
                 if let Some(cell) = cell {
-                    result.push_str(&cell.contents());
+                    result.push_str(cell.contents());
                 } else {
                     result.push(' ');
                 }
@@ -1291,224 +1486,39 @@ mod integration_tests {
         teardown_editor_server_e2e(conn, shutdown_handle, server_handle, socket_paths, temp_dir);
     }
 
-    /// Authority transitions in session mode must rebuild the editor in
-    /// place (not shut the daemon down).  This test drives the rebuild
-    /// path directly against an `EditorServer`, without running the
-    /// full event loop — it's enough to assert the public contract: the
-    /// Editor instance is replaced, `current_authority` tracks the new
-    /// authority, and `should_quit` is cleared so the main loop
-    /// wouldn't shut down on the next tick.
+    /// The window title used to be written to the daemon's own stdout, which
+    /// is no terminal, so an attached client never got one.
     #[test]
-    fn test_session_rebuild_swaps_editor_and_authority() {
-        use crate::config::Config;
-        use crate::config_io::DirectoryContext;
-        use crate::server::editor_server::{EditorServer, EditorServerConfig};
-        use crate::services::authority::{
-            Authority, AuthorityPayload, FilesystemSpec, SpawnerSpec, TerminalWrapperSpec,
+    fn test_attached_client_receives_set_title_control_message() {
+        let (conn, _output, shutdown_handle, server_handle, socket_paths, temp_dir) =
+            setup_editor_server_e2e("title-ctrl");
+
+        let mut ctrl_buf = Vec::new();
+        #[allow(clippy::let_underscore_must_use)]
+        let _ = conn.control.set_nonblocking(true);
+        let title = loop {
+            let title = poll_control_lines(&conn, &mut ctrl_buf)
+                .into_iter()
+                .find_map(|line| match serde_json::from_str(&line) {
+                    Ok(ServerControl::SetTitle { title }) => Some(title),
+                    _ => None,
+                });
+            if let Some(title) = title {
+                break title;
+            }
+            thread::sleep(Duration::from_millis(5));
         };
 
-        let temp_dir =
-            std::env::temp_dir().join(format!("fresh-rebuild-test-{}", std::process::id()));
-        std::fs::create_dir_all(&temp_dir).unwrap();
+        assert!(
+            title.ends_with("\u{2014} Fresh"),
+            "SetTitle should carry the editor window title, got {title:?}"
+        );
 
-        let dir_context = DirectoryContext::for_testing(&temp_dir);
-        let server_config = EditorServerConfig {
-            working_dir: temp_dir.clone(),
-            session_name: Some(unique_session_name("rebuild")),
-            idle_timeout: Some(Duration::from_secs(30)),
-            editor_config: Config::default(),
-            dir_context,
-            plugins_enabled: false,
-            init_enabled: false,
-            startup_authority: None,
-            workspace_trust: std::sync::Arc::new(
-                crate::services::workspace_trust::WorkspaceTrust::permissive(),
-            ),
-            env_provider: std::sync::Arc::new(
-                crate::services::env_provider::EnvProvider::inactive(),
-            ),
-            session_keepalive: None,
-            startup_files: Vec::new(),
-            #[cfg(feature = "web")]
-            web_addr: None,
-        };
+        // Restore blocking mode before teardown writes Quit
+        #[allow(clippy::let_underscore_must_use)]
+        let _ = conn.control.set_nonblocking(false);
 
-        // `Editor` isn't `Send`, so construction + rebuild must happen
-        // on the same thread.  Wrap the whole assertion block in a
-        // spawned thread to avoid smuggling the server across `await`
-        // points; use a channel to propagate the test result out.
-        let handle = thread::spawn(move || -> Result<(), String> {
-            let mut server =
-                EditorServer::new(server_config).map_err(|e| format!("EditorServer::new: {e}"))?;
-
-            // Pretend a client has connected — `initialize_editor`
-            // doesn't actually need one, it only needs the term_size
-            // to have been written.
-            server
-                .initialize_editor()
-                .map_err(|e| format!("initialize_editor: {e}"))?;
-
-            // Sanity: we booted with a local authority.
-            let label_before = server
-                .editor()
-                .expect("editor after init")
-                .authority()
-                .display_label
-                .clone();
-            if !label_before.is_empty() {
-                return Err(format!("expected empty label, got {:?}", label_before));
-            }
-
-            // Build a container-style authority via the plugin payload
-            // path, to exercise the same code plugins hit.
-            let payload = AuthorityPayload {
-                filesystem: FilesystemSpec::Local,
-                spawner: SpawnerSpec::DockerExec {
-                    container_id: "deadbeef".into(),
-                    user: Some("vscode".into()),
-                    workspace: Some("/workspaces/proj".into()),
-                    env: Vec::new(),
-                },
-                terminal_wrapper: TerminalWrapperSpec::Explicit {
-                    command: "docker".into(),
-                    args: vec![
-                        "exec".into(),
-                        "-it".into(),
-                        "deadbeef".into(),
-                        "bash".into(),
-                    ],
-                    manages_cwd: true,
-                },
-                display_label: "Container:deadbeef".into(),
-                path_translation: None,
-            };
-            let new_auth = Authority::from_plugin_payload(
-                payload,
-                std::sync::Arc::new(crate::services::workspace_trust::WorkspaceTrust::permissive()),
-                std::sync::Arc::new(crate::services::env_provider::EnvProvider::inactive()),
-            )
-            .map_err(|e| format!("from_plugin_payload: {e}"))?;
-
-            // Capture the pre-rebuild editor's address.  We can't
-            // compare `Editor` by identity directly (it moves), but the
-            // `authority()` pointer is a Arc so it should change.
-            // Snapshot the filesystem Arc via strong_count parity:
-            // after rebuild the old editor is gone, so any Arc it
-            // uniquely held is dropped. We keep a clone to compare.
-            let before_filesystem = server
-                .editor()
-                .expect("editor before rebuild")
-                .authority()
-                .filesystem
-                .clone();
-
-            server
-                .rebuild_editor(None, Some(new_auth), None)
-                .map_err(|e| format!("rebuild_editor: {e}"))?;
-
-            // After rebuild: new editor exists, carries the new label.
-            let editor = server.editor().expect("editor after rebuild");
-            if editor.authority().display_label != "Container:deadbeef" {
-                return Err(format!(
-                    "expected Container:deadbeef label, got {:?}",
-                    editor.authority().display_label
-                ));
-            }
-            if editor.should_quit() {
-                return Err("rebuilt editor still has should_quit=true".into());
-            }
-            // The pre-rebuild filesystem Arc should now only be held
-            // by our local clone (strong_count == 1) because the old
-            // editor was dropped. If it were still referenced by the
-            // new editor, the count would be >= 2.
-            let remaining = std::sync::Arc::strong_count(&before_filesystem);
-            if remaining != 1 {
-                return Err(format!(
-                    "expected pre-rebuild filesystem Arc to be unique after rebuild; strong_count={}",
-                    remaining
-                ));
-            }
-
-            Ok(())
-        });
-
-        let result = handle.join().expect("rebuild test thread panicked");
-        std::fs::remove_dir_all(&temp_dir).ok();
-        result.expect("rebuild test failed");
-    }
-
-    /// Working-directory changes (the "switch project root" flow) must
-    /// also rebuild in place under session mode.  Mirrors the authority
-    /// test above but with the working_dir slot instead.
-    #[test]
-    fn test_session_rebuild_switches_working_dir() {
-        use crate::config::Config;
-        use crate::config_io::DirectoryContext;
-        use crate::server::editor_server::{EditorServer, EditorServerConfig};
-
-        let parent = std::env::temp_dir().join(format!("fresh-rebuild-cwd-{}", std::process::id()));
-        let dir_a = parent.join("project_a");
-        let dir_b = parent.join("project_b");
-        std::fs::create_dir_all(&dir_a).unwrap();
-        std::fs::create_dir_all(&dir_b).unwrap();
-
-        let dir_context = DirectoryContext::for_testing(&parent);
-        let server_config = EditorServerConfig {
-            working_dir: dir_a.clone(),
-            session_name: Some(unique_session_name("rebuild-cwd")),
-            idle_timeout: Some(Duration::from_secs(30)),
-            editor_config: Config::default(),
-            dir_context,
-            plugins_enabled: false,
-            init_enabled: false,
-            startup_authority: None,
-            workspace_trust: std::sync::Arc::new(
-                crate::services::workspace_trust::WorkspaceTrust::permissive(),
-            ),
-            env_provider: std::sync::Arc::new(
-                crate::services::env_provider::EnvProvider::inactive(),
-            ),
-            session_keepalive: None,
-            startup_files: Vec::new(),
-            #[cfg(feature = "web")]
-            web_addr: None,
-        };
-
-        let dir_b_clone = dir_b.clone();
-        let handle = thread::spawn(move || -> Result<(), String> {
-            let mut server =
-                EditorServer::new(server_config).map_err(|e| format!("EditorServer::new: {e}"))?;
-
-            server
-                .initialize_editor()
-                .map_err(|e| format!("initialize_editor: {e}"))?;
-
-            server
-                .rebuild_editor(Some(dir_b_clone.clone()), None, None)
-                .map_err(|e| format!("rebuild_editor: {e}"))?;
-
-            let editor = server.editor().expect("editor after rebuild");
-            if editor.should_quit() {
-                return Err("rebuilt editor still has should_quit=true".into());
-            }
-            let current = editor.working_dir();
-            // working_dir may canonicalize — compare via canonical form.
-            let want = dir_b_clone
-                .canonicalize()
-                .unwrap_or_else(|_| dir_b_clone.clone());
-            if current != want {
-                return Err(format!(
-                    "expected working_dir {}, got {}",
-                    want.display(),
-                    current.display()
-                ));
-            }
-            Ok(())
-        });
-
-        let result = handle.join().expect("cwd-rebuild thread panicked");
-        std::fs::remove_dir_all(&parent).ok();
-        result.expect("cwd-rebuild test failed");
+        teardown_editor_server_e2e(conn, shutdown_handle, server_handle, socket_paths, temp_dir);
     }
 
     /// `EditorServerConfig.startup_authority` lets a caller (notably
@@ -1584,7 +1594,10 @@ mod integration_tests {
             dir_context,
             plugins_enabled: false,
             init_enabled: false,
-            startup_authority: Some(startup_auth),
+            orchestrator_mode: false,
+            startup_authority: Some(std::sync::Arc::new(
+                crate::services::authority::Connection::plain(startup_auth),
+            )),
             workspace_trust: std::sync::Arc::new(
                 crate::services::workspace_trust::WorkspaceTrust::permissive(),
             ),
@@ -1740,6 +1753,7 @@ mod integration_tests {
             dir_context,
             plugins_enabled: false,
             init_enabled: false,
+            orchestrator_mode: false,
             startup_authority: None,
             workspace_trust: std::sync::Arc::new(
                 crate::services::workspace_trust::WorkspaceTrust::permissive(),
@@ -1808,8 +1822,9 @@ mod integration_tests {
             "both transports write to the same buffer"
         );
 
-        // (5) The primary terminal sizes the session, so when it goes away the
-        //     next client inherits that role and the grid refits to IT. Without
+        // (5) The terminal in use sizes the session, so when it goes away the
+        //     oldest remaining one inherits that role and the grid refits to
+        //     IT. Without
         //     the refit on disconnect the survivor keeps being rendered at the
         //     dead client's size and shows a clipped screen until it happens to
         //     send a resize of its own.
@@ -1819,7 +1834,8 @@ mod integration_tests {
             .write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
             .unwrap();
         drop(second.read_control().unwrap());
-        // A second client is not the primary — it must not resize the session.
+        // A second client that has only said Hello (a one-shot `fresh FILE`,
+        // say) is not in use — it must not resize the session.
         thread::sleep(Duration::from_millis(300));
         let still = state_until(port, |v| v["w"].as_u64().is_some());
         assert_eq!(

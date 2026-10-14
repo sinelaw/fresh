@@ -20,12 +20,45 @@ impl Editor {
     /// modal's while its layer is up, which is what `Modality::Exclusive`
     /// says. The interior is eleven modules of `InputHandler` and stays
     /// exactly where it is.
+    ///
+    /// A key the interior ignores is looked up in the `settings` keymap
+    /// context, so a binding declared `"when": "settings"` runs its action.
+    /// Only the dialog's own actions are honoured: anything else a key
+    /// resolves to (an application-wide fallthrough, an editor motion) has
+    /// no meaning while the dialog holds the keyboard.
     pub(crate) fn dispatch_settings_key(&mut self, event: &crossterm::event::KeyEvent) {
-        use crate::input::handler::{InputContext, InputHandler};
+        use crate::input::handler::{InputContext, InputHandler, InputResult};
+        use crate::input::keybindings::{Action, KeyContext};
         let mut ctx = InputContext::new();
-        if let Some(settings) = self.settings_state.as_mut() {
-            settings.dispatch_input(event, &mut ctx);
-        }
+        let result = self
+            .settings_state
+            .as_mut()
+            .map(|settings| settings.dispatch_input(event, &mut ctx));
         self.process_deferred_actions(ctx);
+        if result != Some(InputResult::Ignored) {
+            return;
+        }
+        let action = self
+            .keybindings
+            .read()
+            .unwrap()
+            .resolve(event, KeyContext::Settings);
+        if matches!(
+            action,
+            Action::CloseSettings
+                | Action::SettingsSave
+                | Action::SettingsReset
+                | Action::SettingsToggleFocus
+                | Action::SettingsActivate
+                | Action::SettingsSearch
+                | Action::SettingsHelp
+                | Action::SettingsIncrement
+                | Action::SettingsDecrement
+                | Action::SettingsInherit
+        ) {
+            if let Err(e) = self.handle_action(action) {
+                tracing::warn!("settings keybinding action failed: {e}");
+            }
+        }
     }
 }

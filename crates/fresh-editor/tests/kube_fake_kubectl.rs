@@ -328,3 +328,53 @@ fn kube_authority_spawns_one_shot_and_lsp_through_fake_kubectl() {
 
     rt.block_on(child.kill()).ok();
 }
+
+/// A machine opened only to be read (`openMachine` with no window behind it)
+/// gets `TrustLevel::Blocked`: it can read the disk and run nothing.
+#[test]
+fn a_blocked_authority_reads_the_machine_but_runs_nothing_on_it() {
+    ensure_fake_kubectl_on_path();
+    if !python3_available() {
+        eprintln!("skipping: python3 not found on PATH");
+        return;
+    }
+
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let ws = workspace.path().to_path_buf();
+    std::fs::write(ws.join("transcript.jsonl"), b"{\"cwd\":\"/srv\"}\n").expect("seed a transcript");
+
+    let rt = multi_thread_rt();
+    let (authority, _keepalive) = rt
+        .block_on(connect_kube_authority(
+            target(&ws),
+            vec![],
+            // What `start_remote_connect(.., for_machine = true)` passes.
+            Arc::new(WorkspaceTrust::new(
+                None,
+                fresh::services::workspace_trust::TrustLevel::Blocked,
+            )),
+            Arc::new(EnvProvider::inactive()),
+            None,
+        ))
+        .expect("connect over fake kubectl");
+
+    assert_eq!(
+        authority
+            .filesystem
+            .read_file(&ws.join("transcript.jsonl"))
+            .expect("a blocked authority still reads files"),
+        b"{\"cwd\":\"/srv\"}\n"
+    );
+
+    // The refusal is the trust gate, not a missing binary: `true` exists.
+    let spawned = rt.block_on(authority.process_spawner.spawn(
+        "true".to_string(),
+        Vec::new(),
+        None,
+    ));
+    assert!(
+        spawned.is_err(),
+        "a machine opened only to be read must refuse to run commands, got {:?}",
+        spawned.map(|o| o.exit_code)
+    );
+}

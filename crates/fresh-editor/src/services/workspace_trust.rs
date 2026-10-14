@@ -101,7 +101,7 @@ pub enum SpawnDecision {
 
 /// Shared, interior-mutable trust state for one workspace.
 ///
-/// Held behind an `Arc` by the server (so the level survives editor rebuilds)
+/// Held behind an `Arc` by the server (so the daemon owns the level)
 /// and by the guarding spawners (so they read the current level on every
 /// spawn). The workspace root is mutable because a session can change its
 /// working directory in place.
@@ -129,6 +129,7 @@ impl WorkspaceTrust {
 
     /// Build trust state backed by `store` (a per-project trust file), so
     /// [`Self::set_level`] persists the decision for this workspace.
+    #[cfg(test)]
     pub fn new_persistent(root: Option<PathBuf>, level: TrustLevel, store: TrustStore) -> Self {
         Self::build(root, level, Some(store))
     }
@@ -596,21 +597,39 @@ pub struct DetectedEnv {
 /// `require` evidence — at least one required path also exists (e.g. a `.venv`
 /// directory that actually contains an interpreter). The returned snippet has
 /// `{dir}` expanded to `root`.
-pub fn detect_env(root: &Path, detectors: &[crate::config::EnvDetector]) -> Option<DetectedEnv> {
+pub fn detect_env(
+    fs: &dyn crate::model::filesystem::FileSystem,
+    root: &Path,
+    detectors: &[crate::config::EnvDetector],
+) -> Option<DetectedEnv> {
+    probe_env(fs, root, detectors).0
+}
+
+/// [`detect_env`], plus whether a detector's marker was found without its
+/// `require` evidence: a venv still being written can finish inside the
+/// marker directory, where a watch on the root does not see it.
+pub fn probe_env(
+    fs: &dyn crate::model::filesystem::FileSystem,
+    root: &Path,
+    detectors: &[crate::config::EnvDetector],
+) -> (Option<DetectedEnv>, bool) {
+    let mut incomplete = false;
     for d in detectors {
-        if !d.markers.iter().any(|m| root.join(m).exists()) {
+        if !d.markers.iter().any(|m| fs.exists(&root.join(m))) {
             continue;
         }
-        if !d.require.is_empty() && !d.require.iter().any(|r| root.join(r).exists()) {
+        if !d.require.is_empty() && !d.require.iter().any(|r| fs.exists(&root.join(r))) {
+            incomplete = true;
             continue;
         }
-        return Some(DetectedEnv {
+        let env = DetectedEnv {
             name: d.name.clone(),
             kind: d.kind,
             snippet: d.snippet.replace("{dir}", &root.to_string_lossy()),
-        });
+        };
+        return (Some(env), incomplete);
     }
-    None
+    (None, incomplete)
 }
 
 /// Map a trust decision for `command` (with the child's `cwd`) onto a spawn
@@ -913,9 +932,10 @@ mod tests {
     // === detect_env (the single activation-detection entry point) ===
 
     use crate::config::{default_env_detectors, EnvKind};
+    use crate::model::filesystem::StdFileSystem;
 
     fn detect_default(root: &Path) -> Option<DetectedEnv> {
-        detect_env(root, &default_env_detectors())
+        detect_env(&StdFileSystem, root, &default_env_detectors())
     }
 
     #[test]
@@ -1007,7 +1027,7 @@ mod tests {
             snippet: "eval \"$(fnm env)\"".into(),
             require: vec![],
         }];
-        let det = detect_env(root, &detectors).expect("custom env detected");
+        let det = detect_env(&StdFileSystem, root, &detectors).expect("custom env detected");
         assert_eq!(det.name, "node");
         assert_eq!(det.snippet, "eval \"$(fnm env)\"");
     }

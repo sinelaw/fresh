@@ -248,7 +248,12 @@ impl Window {
             .buffers
             .splits()
             .and_then(|(_, vs)| vs.get(&split_id))
-            .map(|vs| (vs.viewport.top_byte(), vs.compose_width))
+            .map(|vs| {
+                (
+                    vs.buffer_tab_state().viewport.top_byte(),
+                    vs.buffer_tab_state().compose_width,
+                )
+            })
             .unwrap_or((0, None));
 
         // `allow_gutter_click = false`: a click in the gutter isn't on a path.
@@ -339,51 +344,10 @@ fn convert_kind(kind: MouseEventKind) -> TerminalMouseEventKind {
     }
 }
 
-#[cfg(test)]
-mod convert_kind_tests {
-    use super::*;
-
-    #[test]
-    fn horizontal_wheel_has_a_wire_representation() {
-        assert_eq!(
-            convert_kind(MouseEventKind::ScrollLeft),
-            TerminalMouseEventKind::ScrollLeft
-        );
-        assert_eq!(
-            convert_kind(MouseEventKind::ScrollRight),
-            TerminalMouseEventKind::ScrollRight
-        );
-    }
-
-    #[test]
-    fn other_kinds_are_unchanged() {
-        assert_eq!(
-            convert_kind(MouseEventKind::Down(MouseButton::Left)),
-            TerminalMouseEventKind::Down(TerminalMouseButton::Left)
-        );
-        assert_eq!(
-            convert_kind(MouseEventKind::Drag(MouseButton::Middle)),
-            TerminalMouseEventKind::Drag(TerminalMouseButton::Middle)
-        );
-        assert_eq!(
-            convert_kind(MouseEventKind::Moved),
-            TerminalMouseEventKind::Moved
-        );
-        assert_eq!(
-            convert_kind(MouseEventKind::ScrollUp),
-            TerminalMouseEventKind::ScrollUp
-        );
-        assert_eq!(
-            convert_kind(MouseEventKind::ScrollDown),
-            TerminalMouseEventKind::ScrollDown
-        );
-    }
-}
-
 impl super::Editor {
     /// Begin a text-selection drag on a terminal split that was showing the
     /// live PTY grid when the mouse went down (see
-    /// `MouseState::terminal_drag_pending` — a bare click only focuses).
+    /// `PointerDrag::TerminalPress` — a bare click only focuses).
     ///
     /// Live terminals have no cursor/selection model of their own, so the
     /// split is dropped into read-only scrollback first — exactly the
@@ -406,7 +370,7 @@ impl super::Editor {
         col: u16,
         row: u16,
     ) -> AnyhowResult<()> {
-        self.active_window_mut().mouse_state.terminal_drag_pending = None;
+        self.active_window_mut().mouse_state.drag = None;
 
         let Some(content_rect) =
             self.drop_terminal_grid_into_selection_scrollback(split_id, buffer_id)
@@ -432,16 +396,19 @@ impl super::Editor {
             .and_then(|w| w.buffers.splits_mut())
             .and_then(|(_, vs)| vs.get_mut(&split_id))
         {
-            let cursor = view_state.cursors.primary_mut();
+            let cursor = view_state.buffer_tab_state_mut().cursors.primary_mut();
             cursor.position = head;
             cursor.anchor = Some(anchor);
         }
 
         // Hand off to the standard drag machinery for subsequent motion.
-        let ms = &mut self.active_window_mut().mouse_state;
-        ms.dragging_text_selection = true;
-        ms.drag_selection_split = Some(split_id);
-        ms.drag_selection_anchor = Some(anchor);
+        self.active_window_mut().mouse_state.drag = Some(
+            crate::app::types::PointerDrag::Selection(crate::app::types::SelectionDrag {
+                pane: split_id,
+                anchor: Some(anchor),
+                word_end: None,
+            }),
+        );
         Ok(())
     }
 
@@ -457,7 +424,7 @@ impl super::Editor {
         col: u16,
         row: u16,
     ) -> AnyhowResult<()> {
-        self.active_window_mut().mouse_state.terminal_drag_pending = None;
+        self.active_window_mut().mouse_state.drag = None;
 
         let Some(content_rect) =
             self.drop_terminal_grid_into_selection_scrollback(split_id, buffer_id)
@@ -475,7 +442,7 @@ impl super::Editor {
             .and_then(|w| w.buffers.splits_mut())
             .and_then(|(_, vs)| vs.get_mut(&split_id))
         {
-            let cursor = view_state.cursors.primary_mut();
+            let cursor = view_state.buffer_tab_state_mut().cursors.primary_mut();
             cursor.position = pos;
             cursor.anchor = None;
         }
@@ -488,16 +455,17 @@ impl super::Editor {
             .and_then(|w| w.buffers.splits())
             .and_then(|(_, vs)| vs.get(&split_id))
             .map(|vs| {
-                let c = vs.cursors.primary();
+                let c = vs.buffer_tab_state().cursors.primary();
                 (c.selection_start(), c.selection_end())
             })
         {
-            let ms = &mut self.active_window_mut().mouse_state;
-            ms.dragging_text_selection = true;
-            ms.drag_selection_split = Some(split_id);
-            ms.drag_selection_anchor = Some(sel_start);
-            ms.drag_selection_by_words = true;
-            ms.drag_selection_word_end = Some(sel_end);
+            self.active_window_mut().mouse_state.drag = Some(
+                crate::app::types::PointerDrag::Selection(crate::app::types::SelectionDrag {
+                    pane: split_id,
+                    anchor: Some(sel_start),
+                    word_end: Some(sel_end),
+                }),
+            );
         }
         Ok(())
     }
@@ -511,7 +479,7 @@ impl super::Editor {
         col: u16,
         row: u16,
     ) -> AnyhowResult<()> {
-        self.active_window_mut().mouse_state.terminal_drag_pending = None;
+        self.active_window_mut().mouse_state.drag = None;
 
         let Some(content_rect) =
             self.drop_terminal_grid_into_selection_scrollback(split_id, buffer_id)
@@ -529,7 +497,7 @@ impl super::Editor {
             .and_then(|w| w.buffers.splits_mut())
             .and_then(|(_, vs)| vs.get_mut(&split_id))
         {
-            let cursor = view_state.cursors.primary_mut();
+            let cursor = view_state.buffer_tab_state_mut().cursors.primary_mut();
             cursor.position = pos;
             cursor.anchor = None;
         }
@@ -600,12 +568,14 @@ impl super::Editor {
         let (_, view_states) = win.buffers.splits()?;
         let vs = view_states.get(&split_id)?;
         let state = win.buffers.get(&buffer_id)?;
-        let (top_line, _) = state.buffer.position_to_line_col(vs.viewport.top_byte());
+        let (top_line, _) = state
+            .buffer
+            .position_to_line_col(vs.buffer_tab_state().viewport.top_byte());
         let grid_row = row.saturating_sub(content_rect.y) as usize;
         // Account for horizontal scroll (a pinned view starts at 0, but an
         // explicit scrollback view may have been scrolled right).
-        let grid_col =
-            col.saturating_sub(content_rect.x) as usize + vs.viewport.left_column as usize;
+        let grid_col = col.saturating_sub(content_rect.x) as usize
+            + vs.buffer_tab_state().viewport.left_column;
 
         // Grid-wrapped scroll-back (fresh#2649): visual rows are exact-column
         // wrap segments of the logical lines, so walk the segments from the
@@ -613,9 +583,11 @@ impl super::Editor {
         // line per grid row (which was only ever true for unwrapped lines —
         // a grid row that continued a wrapped line used to resolve to the
         // wrong buffer line entirely).
-        if vs.viewport.grid_wrap && vs.viewport.line_wrap_enabled {
-            let cols = vs.viewport.grid_cols();
-            let mut remaining = vs.viewport.top_view_line_offset() + grid_row;
+        if vs.buffer_tab_state().viewport.grid_wrap
+            && vs.buffer_tab_state().viewport.line_wrap_enabled
+        {
+            let cols = vs.buffer_tab_state().viewport.grid_cols();
+            let mut remaining = vs.buffer_tab_state().viewport.top_view_line_offset() + grid_row;
             let mut line_idx = top_line;
             loop {
                 let Some(bytes) = state.buffer.get_line(line_idx) else {
@@ -663,5 +635,46 @@ impl super::Editor {
             .buffer
             .line_col_to_position(top_line + grid_row, grid_col);
         Some(state.buffer.snap_to_char_boundary(pos))
+    }
+}
+
+#[cfg(test)]
+mod convert_kind_tests {
+    use super::*;
+
+    #[test]
+    fn horizontal_wheel_has_a_wire_representation() {
+        assert_eq!(
+            convert_kind(MouseEventKind::ScrollLeft),
+            TerminalMouseEventKind::ScrollLeft
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::ScrollRight),
+            TerminalMouseEventKind::ScrollRight
+        );
+    }
+
+    #[test]
+    fn other_kinds_are_unchanged() {
+        assert_eq!(
+            convert_kind(MouseEventKind::Down(MouseButton::Left)),
+            TerminalMouseEventKind::Down(TerminalMouseButton::Left)
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::Drag(MouseButton::Middle)),
+            TerminalMouseEventKind::Drag(TerminalMouseButton::Middle)
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::Moved),
+            TerminalMouseEventKind::Moved
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::ScrollUp),
+            TerminalMouseEventKind::ScrollUp
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::ScrollDown),
+            TerminalMouseEventKind::ScrollDown
+        );
     }
 }

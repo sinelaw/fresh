@@ -542,3 +542,119 @@ fn test_block_selection_copy_copies_rectangular_region() {
         "Block selection copy should produce exactly the rectangular region"
     );
 }
+
+// Regression: a block (column) selection must end when the cursor is moved
+// with a plain, non-selecting key. It used to survive `Event::MoveCursor`
+// (only `anchor` was rewritten, not `selection_mode`/`block_anchor`), so the
+// stale rectangle kept being painted from the old block anchor to the new
+// cursor, `has_block_selection()` stayed true, and the next typed character
+// was multiplied across that rectangle by `convert_block_selection_to_cursors`.
+
+/// Build "0123456789" x4, put a 2x2 block selection over columns 2..4 of
+/// lines 0-1 (block anchor (0,2), cursor (1,4)).
+fn harness_with_block_selection() -> EditorTestHarness {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness
+        .type_text("0123456789\n0123456789\n0123456789\n0123456789")
+        .unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    for _ in 0..2 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::ALT | KeyModifiers::SHIFT)
+        .unwrap();
+    for _ in 0..2 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::ALT | KeyModifiers::SHIFT)
+            .unwrap();
+    }
+    harness.render().unwrap();
+    assert!(
+        harness
+            .editor()
+            .active_cursors()
+            .primary()
+            .has_block_selection(),
+        "precondition: Alt+Shift+Arrow must create a block selection"
+    );
+    harness
+}
+
+/// Plain Down after a block selection ends block mode.
+#[test]
+fn test_block_selection_cleared_by_plain_down() {
+    let mut harness = harness_with_block_selection();
+
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        !harness
+            .editor()
+            .active_cursors()
+            .primary()
+            .has_block_selection(),
+        "plain Down must end the block selection (selection_mode/block_anchor left set)"
+    );
+    harness.assert_no_selection();
+
+    // Nothing may still be painted with the selection background: the
+    // stale rectangle would cover columns 2..4 of lines 0-2.
+    let buffer = harness.buffer();
+    let selection_bg = harness.editor().theme().selection_bg;
+    let (content_first_row, _) = harness.content_area_rows();
+    let first_line_row = content_first_row as u16;
+    let gutter_width = harness.editor().active_state().margins.left_total_width() as u16;
+    let cell = &buffer.content[buffer.index_of(gutter_width + 2, first_line_row)];
+    assert_eq!(cell.symbol(), "2");
+    assert_ne!(
+        cell.bg, selection_bg,
+        "line 0 column 2 is still painted as part of a block selection after plain Down"
+    );
+}
+
+/// Plain Right after a block selection ends block mode.
+#[test]
+fn test_block_selection_cleared_by_plain_right() {
+    let mut harness = harness_with_block_selection();
+
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        !harness
+            .editor()
+            .active_cursors()
+            .primary()
+            .has_block_selection(),
+        "plain Right must end the block selection"
+    );
+    harness.assert_no_selection();
+}
+
+/// The user-visible damage: after moving away with plain Down, typing one
+/// character must insert it once at the cursor — not replace a stale 3-line
+/// rectangle with three copies.
+#[test]
+fn test_type_after_plain_move_out_of_block_selection_inserts_once() {
+    let mut harness = harness_with_block_selection();
+
+    // Cursor is at (1,4); plain Down puts it at (2,4).
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.type_text("X").unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(
+        harness.cursor_count(),
+        1,
+        "typing after a plain move must not fan out into block cursors"
+    );
+    harness.assert_buffer_content("0123456789\n0123456789\n0123X456789\n0123456789");
+}

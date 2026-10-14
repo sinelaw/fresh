@@ -78,6 +78,7 @@ function entriesToSuggestions(entries: DirEntry[], basePath: string): PromptSugg
     const value = entry.is_dir ? fullPath + "/" : fullPath;
 
     return {
+      id: value,
       text: displayName,
       description: entry.is_dir ? editor.t("suggestion.directory") : undefined,
       value: value,
@@ -110,6 +111,9 @@ function missingFileSuggestion(
   }
 
   return {
+    // Its own namespace: the file does not exist, but a directory entry
+    // above it may spell the same path.
+    id: `new:${input}`,
     text: editor.t("suggestion.new_file", { filename: input }),
     description: editor.t("suggestion.new_file_desc"),
     value: input,

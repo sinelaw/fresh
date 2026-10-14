@@ -137,9 +137,14 @@ fn distinct_after_eof_bg_paints_only_the_post_eof_rows() {
     let project_root = temp_dir.path().join("project_root");
     fs::create_dir_all(project_root.join("plugins")).unwrap();
 
-    let mut config = Config::default();
-    config.theme = "eof-shaded".to_string().into();
-    config.editor.show_tilde = true;
+    let config = Config {
+        theme: "eof-shaded".to_string().into(),
+        editor: fresh::config::EditorConfig {
+            show_tilde: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
 
     let mut harness = EditorTestHarness::create(
         80,

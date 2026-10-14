@@ -140,3 +140,258 @@ fn vi_mode_autostart_false_leaves_vi_dormant() {
          Screen:\n{screen}"
     );
 }
+
+/// vi_mode (autoStart) and the Orchestrator together, the dock mounted from
+/// `ready` and `two_lines.txt` open in the editor.
+fn vi_with_orchestrator_dock() -> (EditorTestHarness, tempfile::TempDir) {
+    use crate::common::harness::HarnessOptions;
+
+    init_tracing_from_env();
+    let temp = tempfile::TempDir::new().unwrap();
+    let project_root = temp.path().join("project_root");
+    fs::create_dir_all(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "vi_mode");
+    copy_plugin(&plugins_dir, "orchestrator");
+    copy_plugin_lib(&plugins_dir);
+    let file = project_root.join("two_lines.txt");
+    fs::write(&file, "alpha\nbeta\n").unwrap();
+    // A git project, so the dock lists this workspace as a session row.
+    let ok = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&project_root)
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok);
+
+    let mut config = Config::default();
+    config.plugins.insert(
+        "vi_mode".to_string(),
+        PluginConfig {
+            enabled: true,
+            path: None,
+            settings: serde_json::json!({ "autoStart": true }),
+        },
+    );
+    let mut h = EditorTestHarness::create(
+        120,
+        32,
+        HarnessOptions::new()
+            .with_config(config)
+            .with_working_dir(project_root)
+            .without_empty_plugins_dir()
+            .with_startup_chrome(),
+    )
+    .unwrap();
+    h.editor_mut().set_clipboard_for_test(String::new());
+
+    // vi_mode has run its top-level body (and so `enableVi()`) once its
+    // toggle command is registered; the dock mounts from `ready`, after.
+    {
+        use fresh::input::keybindings::Action::PluginAction;
+        h.wait_until(|h| {
+            let cmds = h.editor().command_registry().read().unwrap().get_all();
+            cmds.iter()
+                .any(|c| c.action == PluginAction("vi_mode_toggle".to_string()))
+        })
+        .unwrap();
+    }
+    h.editor_mut().fire_ready_hook();
+    h.wait_until(|h| h.screen_to_string().contains("+ New"))
+        .unwrap();
+
+    h.open_file(&file).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("two_lines.txt"))
+        .unwrap();
+    (h, temp)
+}
+
+/// With the cursor on line 1 of `two_lines.txt` and the editor holding the
+/// keyboard, `j` must be vi-normal's move-down, not a typed `j`.
+fn assert_vi_j_moves_down(h: &mut EditorTestHarness) {
+    h.send_key(KeyCode::Char('j'), KeyModifiers::NONE).unwrap();
+    // Either outcome settles the question: the cursor moved, or a `j` was
+    // typed into the buffer.
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("Ln 2, Col 1") || s.contains("jalpha")
+    })
+    .unwrap();
+    let screen = h.screen_to_string();
+    assert!(
+        !screen.contains("jalpha") && screen.contains("Ln 2, Col 1"),
+        "vi-normal `j` moves down instead of typing:\n{screen}"
+    );
+}
+
+/// Give the dock the keyboard (Alt+O, vi-normal leaves it to the editor).
+fn focus_dock(h: &mut EditorTestHarness) {
+    h.send_key(KeyCode::Char('o'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| h.editor().is_dock_focused()).unwrap();
+}
+
+/// autoStart with the Orchestrator dock up: the dock's mount (from `ready`,
+/// after vi_mode has enabled itself at load) used to reset the editor mode
+/// to none, so the status bar said vi was on while `j` typed a `j`
+/// (issue #3305).
+#[test]
+fn vi_mode_autostart_survives_the_orchestrator_dock_mount() {
+    let (mut h, _tmp) = vi_with_orchestrator_dock();
+    assert_vi_j_moves_down(&mut h);
+}
+
+/// An Orchestrator dialog opened and cancelled from the dock hands vi its
+/// mode back: the dialog used to take the window's one mode slot for its
+/// keymap and empty it on close, so after Alt+N, Esc, Esc a `j` typed a `j`.
+#[test]
+fn vi_mode_survives_an_orchestrator_dialog_opened_from_the_dock() {
+    let (mut h, _tmp) = vi_with_orchestrator_dock();
+    focus_dock(&mut h);
+    h.send_key(KeyCode::Char('n'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Workspace"))
+        .unwrap();
+    // Esc cancels the form and hands the keyboard back to the dock…
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| {
+        !h.screen_to_string().contains("New Workspace") && h.editor().is_dock_focused()
+    })
+    .unwrap();
+    // …and a second Esc leaves the dock for the editor.
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.editor().is_dock_focused()).unwrap();
+    assert_vi_j_moves_down(&mut h);
+}
+
+/// Switching windows with an Orchestrator dialog up leaves vi's mode alone.
+/// The host used to clear the outgoing window's editor mode on any switch
+/// made with a floating panel mounted — a guard from when dialogs kept their
+/// keymap there — so after switching away and back and closing the dialog,
+/// a `j` typed a `j`.
+#[test]
+fn vi_mode_survives_a_window_switch_under_an_orchestrator_dialog() {
+    let (mut h, _tmp) = vi_with_orchestrator_dock();
+    let window_a = h.editor().active_window_id();
+    let other_root = tempfile::TempDir::new().unwrap();
+    let window_b = h
+        .editor_mut()
+        .create_window_at(other_root.path().to_path_buf(), "other".into());
+
+    focus_dock(&mut h);
+    h.send_key(KeyCode::Char('n'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Workspace"))
+        .unwrap();
+
+    // Away and back while the dialog's floating panel is mounted.
+    h.editor_mut().set_active_window(window_b);
+    h.editor_mut().set_active_window(window_a);
+    h.render().unwrap();
+
+    // Esc cancels the form and hands the keyboard back to the dock…
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| {
+        !h.screen_to_string().contains("New Workspace") && h.editor().is_dock_focused()
+    })
+    .unwrap();
+    // …and a second Esc leaves the dock for the editor.
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.editor().is_dock_focused()).unwrap();
+    assert_vi_j_moves_down(&mut h);
+}
+
+/// Enter on the dock's session row hands the keyboard to the editor and
+/// must leave vi's mode in place (it used to empty the mode slot).
+#[test]
+fn vi_mode_survives_enter_on_a_dock_row() {
+    let (mut h, _tmp) = vi_with_orchestrator_dock();
+    focus_dock(&mut h);
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.editor().is_dock_focused()).unwrap();
+    assert_vi_j_moves_down(&mut h);
+}
+
+/// The dock's F2 context menu keeps its own keys with vi on: ↓ walks the
+/// entries and Esc closes it. The menu has no mode of its own, so the host
+/// resolved the keys it leaves against the window's mode — vi-normal's —
+/// and ↓ / Esc went to vi instead.
+#[test]
+fn dock_context_menu_navigates_with_vi_mode_on() {
+    let (mut h, _tmp) = vi_with_orchestrator_dock();
+    focus_dock(&mut h);
+
+    // Esc closes the menu.
+    h.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Move to Folder"))
+        .unwrap();
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("Move to Folder"))
+        .unwrap();
+
+    // ↓↓ walks Visit… → Rename… → Move to Folder…, and Enter runs that one:
+    // the "move to" dropdown replaces the menu. Had ↓ gone to vi, Enter
+    // would have run Visit… instead.
+    h.wait_until(|h| h.editor().is_dock_focused()).unwrap();
+    h.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Move to Folder"))
+        .unwrap();
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Top level"))
+        .unwrap();
+}
+
+/// The Import sessions (Discover) dialog, opened and closed, hands vi its
+/// mode back: it took the window's one mode slot for its keymap on open and
+/// emptied it on close, so afterwards a `j` typed a `j`.
+#[test]
+fn vi_mode_survives_the_discover_dialog() {
+    use fresh::input::keybindings::Action::PluginAction;
+
+    init_tracing_from_env();
+    let temp = tempfile::TempDir::new().unwrap();
+    let project_root = temp.path().join("project_root");
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "vi_mode");
+    copy_plugin(&plugins_dir, "agent_discovery");
+    copy_plugin_lib(&plugins_dir);
+    let file = project_root.join("two_lines.txt");
+    fs::write(&file, "alpha\nbeta\n").unwrap();
+
+    let mut config = Config::default();
+    config.plugins.insert(
+        "vi_mode".to_string(),
+        PluginConfig {
+            enabled: true,
+            path: None,
+            settings: serde_json::json!({ "autoStart": true }),
+        },
+    );
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, config, project_root).unwrap();
+    h.wait_until(|h| {
+        let cmds = h.editor().command_registry().read().unwrap().get_all();
+        ["vi_mode_toggle", "agent_discovery_open"]
+            .iter()
+            .all(|name| {
+                cmds.iter()
+                    .any(|c| c.action == PluginAction(name.to_string()))
+            })
+    })
+    .unwrap();
+    h.open_file(&file).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("two_lines.txt"))
+        .unwrap();
+
+    h.editor_mut()
+        .dispatch_action_for_tests(PluginAction("agent_discovery_open".to_string()));
+    h.wait_until(|h| h.screen_to_string().contains("Import sessions"))
+        .unwrap();
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("Import sessions"))
+        .unwrap();
+
+    assert_vi_j_moves_down(&mut h);
+}

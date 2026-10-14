@@ -58,8 +58,21 @@ fn plus_button_opens_menu_and_new_file_creates_buffer() {
     harness.assert_screen_contains("[No Name] 2");
 }
 
+/// **The `+` rides at the end of the tabs, and an overflowing strip still
+/// shows it.**
+///
+/// This asserted that the `+` was *pinned* to the right edge, which is what
+/// the painter did: it placed the button against the edge when the tabs
+/// overflowed and inline after them when they did not — a placement that
+/// depends on the overflow, which is the window's answer and not something a
+/// description can know. The `+` is now simply the last thing in the strip's
+/// content, and the window is asked to show the active tab; since the button
+/// follows the last tab, revealing either brings the other.
+///
+/// What still has to hold is what this test was really for: on a strip too
+/// narrow for its tabs, the `+` is on screen and it opens the menu.
 #[test]
-fn plus_button_pins_to_right_edge_on_overflow() {
+fn plus_button_is_reachable_on_an_overflowing_strip() {
     // A narrow bar with many tabs forces the buffer tabs to overflow.
     let width: u16 = 50;
     let mut harness = EditorTestHarness::new(width, 24).unwrap();
@@ -69,19 +82,21 @@ fn plus_button_pins_to_right_edge_on_overflow() {
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
-    let plus_col = col_of_char_on_row(&screen, 1, '+').unwrap_or_else(|| {
-        panic!("expected a pinned '+' button on the tab row. Screen:\n{screen}")
-    });
+    let plus_col = col_of_char_on_row(&screen, 1, '+')
+        .unwrap_or_else(|| panic!("expected a '+' button on the tab row. Screen:\n{screen}"));
 
-    // Pinned: the "+" cell occupies the rightmost columns of the bar
-    // (" + " => '+' sits one column in from the right edge).
+    // The strip overflows, so it caps its near end — and the `+` is inside the
+    // window, not under a cap.
     assert!(
-        plus_col >= width - 3,
-        "expected '+' pinned near the right edge (col >= {}), got {plus_col}. Screen:\n{screen}",
-        width - 3
+        screen.lines().nth(1).is_some_and(|r| r.contains('<')),
+        "precondition: the strip overflows, so its near end is capped. Screen:\n{screen}"
+    );
+    assert!(
+        plus_col < width,
+        "the + is on screen, at {plus_col} of {width}. Screen:\n{screen}"
     );
 
-    // It is still interactive: clicking the pinned button opens the popup.
+    // It is still interactive: clicking it opens the popup.
     harness.mouse_click(plus_col, 1).unwrap();
     harness.assert_screen_contains("New Terminal");
     harness.assert_screen_contains("New File");
@@ -95,10 +110,13 @@ fn plus_button_pins_to_right_edge_on_overflow() {
 /// menu instead of activating it.
 #[test]
 fn plus_button_menu_near_right_edge_clicks_land_on_drawn_items() {
-    // Narrow bar + overflow pins the "+" (and thus the popup anchor) hard
-    // against the right edge, where `NEW_TAB_MENU_WIDTH` (18) overflows and
-    // forces the clamp.
+    // Narrow bar + overflow puts the "+" (and thus the popup anchor) near the
+    // right edge, where `NEW_TAB_MENU_WIDTH` (18) overflows and forces the
+    // clamp. The precondition is that it overflows, not that the button is
+    // pinned against the edge — the `+` rides the end of the tabs now, a few
+    // columns in from it.
     let width: u16 = 50;
+    const NEW_TAB_MENU_WIDTH: u16 = 18;
     let mut harness = EditorTestHarness::new(width, 24).unwrap();
     for _ in 0..8 {
         harness.new_buffer().unwrap();
@@ -106,12 +124,12 @@ fn plus_button_menu_near_right_edge_clicks_land_on_drawn_items() {
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
-    let plus_col = col_of_char_on_row(&screen, 1, '+').unwrap_or_else(|| {
-        panic!("expected a pinned '+' button on the tab row. Screen:\n{screen}")
-    });
+    let plus_col = col_of_char_on_row(&screen, 1, '+')
+        .unwrap_or_else(|| panic!("expected a '+' button on the tab row. Screen:\n{screen}"));
     assert!(
-        plus_col >= width - 3,
-        "precondition: '+' pinned near the right edge, got {plus_col}. Screen:\n{screen}"
+        plus_col + NEW_TAB_MENU_WIDTH > width,
+        "precondition: the menu opened at {plus_col} would overflow a {width}-wide screen, \
+         so it has to clamp. Screen:\n{screen}"
     );
 
     harness.mouse_click(plus_col, 1).unwrap();

@@ -384,7 +384,7 @@ fn test_issue_1577_full_ticket_sample_renders_consistently_at_137_cols_real_term
     for row in 0..TICKET_HEIGHT {
         for col in 0..TICKET_WIDTH {
             if let Some(cell) = screen.cell(row, col) {
-                vt100_text.push_str(&cell.contents());
+                vt100_text.push_str(cell.contents());
             }
         }
         vt100_text.push('\n');

@@ -125,8 +125,10 @@ fn test_steady_block_skips_reversed_with_hardware_cursor() {
 /// the theme's own foreground on its own background.
 #[test]
 fn end_of_line_cursor_cell_states_both_halves_of_the_ground() {
-    let mut config = Config::default();
-    config.theme = "light".into();
+    let config = Config {
+        theme: "light".into(),
+        ..Default::default()
+    };
     let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
     // The caret ends up one cell past the last character: end of line, which
     // is where nothing used to be painted.

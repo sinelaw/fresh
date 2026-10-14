@@ -40,18 +40,27 @@ fn open_replace(harness: &mut EditorTestHarness) {
         .send_key(KeyCode::Char('r'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
-    // The toolbar should now be on screen with Case Sensitive checked
-    // (its default state).
+    // The toolbar should now be on screen with Case Sensitive checked —
+    // `dracula_config` presets it on, because what both tests below need
+    // is a *checked* option to read the style of, and the shipped default
+    // for `editor.search.case_sensitive` is off.
     harness.assert_screen_contains("Case Sensitive");
+}
+
+/// Dracula, with the Case toggle preset on so the toolbar shows a checked
+/// option the moment Replace opens.
+fn dracula_config() -> Config {
+    let mut config = Config {
+        theme: "dracula".into(),
+        ..Default::default()
+    };
+    config.editor.search.case_sensitive = true;
+    config
 }
 
 #[test]
 fn test_dracula_checked_option_is_visible() {
-    let config = Config {
-        theme: "dracula".into(),
-        ..Default::default()
-    };
-    let mut harness = EditorTestHarness::with_config(120, 30, config).unwrap();
+    let mut harness = EditorTestHarness::with_config(120, 30, dracula_config()).unwrap();
 
     let (active_fg, active_bg) = {
         let theme = harness.editor().theme();
@@ -101,11 +110,7 @@ fn test_dracula_checked_option_is_visible() {
 /// must name, and the "Open in Theme Editor" button has somewhere to go.
 #[test]
 fn test_theme_inspector_reports_the_toolbars_theme_keys() {
-    let config = Config {
-        theme: "dracula".into(),
-        ..Default::default()
-    };
-    let mut harness = EditorTestHarness::with_config(120, 30, config).unwrap();
+    let mut harness = EditorTestHarness::with_config(120, 30, dracula_config()).unwrap();
 
     harness.type_text("hello").unwrap();
     harness.render().unwrap();

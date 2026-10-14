@@ -344,23 +344,6 @@ impl SystemResources {
             "Could not parse MemTotal from /proc/meminfo",
         ))
     }
-
-    /// Get total number of CPU cores
-    pub fn cpu_count() -> io::Result<usize> {
-        #[cfg(target_os = "linux")]
-        {
-            Ok(num_cpus())
-        }
-
-        #[cfg(not(target_os = "linux"))]
-        {
-            // TODO: Implement for other platforms
-            Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "CPU detection not implemented for this platform",
-            ))
-        }
-    }
 }
 
 /// Apply memory limit via setrlimit (fallback method)
@@ -374,14 +357,6 @@ fn apply_memory_limit_setrlimit(bytes: u64) -> io::Result<()> {
     let limit = bytes as nix::libc::rlim_t;
     setrlimit(Resource::RLIMIT_AS, limit, limit)
         .map_err(|e| io::Error::other(format!("setrlimit AS failed: {}", e)))
-}
-
-/// Get the number of CPU cores (Linux)
-#[cfg(target_os = "linux")]
-fn num_cpus() -> usize {
-    std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(1)
 }
 
 #[cfg(test)]
@@ -436,18 +411,6 @@ mod tests {
         if let Ok(mem) = mem_mb {
             assert!(mem > 0);
             println!("Total system memory: {} MB", mem);
-        }
-    }
-
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn test_system_resources_cpu() {
-        let cpu_count = SystemResources::cpu_count();
-        assert!(cpu_count.is_ok());
-
-        if let Ok(count) = cpu_count {
-            assert!(count > 0);
-            println!("Total CPU cores: {}", count);
         }
     }
 

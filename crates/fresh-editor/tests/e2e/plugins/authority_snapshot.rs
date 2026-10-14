@@ -68,7 +68,9 @@ fn set_boot_authority_refreshes_plugin_state_snapshot() {
         std::sync::Arc::new(fresh::services::env_provider::EnvProvider::inactive()),
     )
     .unwrap();
-    harness.editor_mut().set_boot_authority(authority);
+    harness.editor_mut().set_boot_authority(std::sync::Arc::new(
+        fresh::services::authority::Connection::plain(authority),
+    ));
 
     // The plugin state snapshot must now reflect the container
     // authority. Before the fix this stayed empty and the devcontainer
@@ -103,15 +105,19 @@ fn set_boot_authority_back_to_local_clears_plugin_state_snapshot_label() {
         std::sync::Arc::new(fresh::services::env_provider::EnvProvider::inactive()),
     )
     .unwrap();
-    harness.editor_mut().set_boot_authority(container);
+    harness.editor_mut().set_boot_authority(std::sync::Arc::new(
+        fresh::services::authority::Connection::plain(container),
+    ));
     assert_eq!(
         snapshot_handle.read().unwrap().authority_label,
         "Container:feedface"
     );
 
-    harness.editor_mut().set_boot_authority(Authority::local(
-        std::sync::Arc::new(fresh::services::workspace_trust::WorkspaceTrust::permissive()),
-        std::sync::Arc::new(fresh::services::env_provider::EnvProvider::inactive()),
+    harness.editor_mut().set_boot_authority(std::sync::Arc::new(
+        fresh::services::authority::Connection::plain(Authority::local(
+            std::sync::Arc::new(fresh::services::workspace_trust::WorkspaceTrust::permissive()),
+            std::sync::Arc::new(fresh::services::env_provider::EnvProvider::inactive()),
+        )),
     ));
     assert_eq!(
         snapshot_handle.read().unwrap().authority_label,

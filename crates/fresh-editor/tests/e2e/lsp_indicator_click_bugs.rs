@@ -275,6 +275,7 @@ fn issue_1_click_stacks_plugin_popup_and_lsp_servers_popup() -> anyhow::Result<(
         transient: false,
         content: PopupContentData::List {
             items: vec![PopupListItemData {
+                id: "t277_25".into(),
                 text: "Disable Rust LSP".to_string(),
                 detail: None,
                 icon: None,
@@ -358,6 +359,7 @@ fn issue_2_show_popup_ignores_theme_popup_bg() -> anyhow::Result<()> {
         transient: false,
         content: PopupContentData::List {
             items: vec![PopupListItemData {
+                id: "t360_25".into(),
                 text: "An item".to_string(),
                 detail: None,
                 icon: None,

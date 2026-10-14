@@ -86,7 +86,7 @@ fn migrated_issue_1147_up_arrow_does_not_drift_viewport_at_end_of_wrapped_file()
     // post-Up value).
     let content = make_issue_1147_content();
     let mut actions = vec![Action::MoveDocumentEnd];
-    actions.extend(std::iter::repeat(Action::MoveUp).take(4));
+    actions.extend(std::iter::repeat_n(Action::MoveUp, 4));
 
     // Step assertions snapshot top_byte after each action so the
     // `viewport_top_byte_distinct_at_most` invariant has all 5
@@ -212,11 +212,13 @@ fn end_key_scenario(num_end_presses: usize, expected_cursor_byte: usize) -> Layo
             Action::InsertChar('6'),
             Action::PromptConfirm,
         ],
-        events: std::iter::repeat(InputEvent::SendKey {
-            code: KeySpec::End,
-            modifiers: KeyMods::NONE,
-        })
-        .take(num_end_presses)
+        events: std::iter::repeat_n(
+            InputEvent::SendKey {
+                code: KeySpec::End,
+                modifiers: KeyMods::NONE,
+            },
+            num_end_presses,
+        )
         .collect(),
         expected_snapshot: RenderSnapshotExpect {
             cursor_byte: Some(expected_cursor_byte),
@@ -291,7 +293,7 @@ fn migrated_issue_1147_viewport_stable_while_navigating_up_through_wrapped_conte
     // baseline) and bounding distinct values to ≤ 2 (the original
     // post-MoveDocumentEnd value plus at most one scrolled value).
     let mut actions = vec![Action::MoveDocumentEnd];
-    actions.extend(std::iter::repeat(Action::MoveUp).take(8));
+    actions.extend(std::iter::repeat_n(Action::MoveUp, 8));
     // Snapshot at the MoveDocumentEnd baseline and after each Up.
     let step_assertions: Vec<StepAssertion> = (0..actions.len())
         .map(|i| StepAssertion {

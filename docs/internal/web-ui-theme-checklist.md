@@ -475,10 +475,19 @@ row: teal translucent pill (Cosmos) vs soft neutral pill + dark label (macOS).
 - Bottom **hint bar**: `↕ switch  →← fold` / `Enter edit  F2 menu` — plain text
   with the **keys** (`Enter`, `F2`) in the accent colour.
 
-**Live-grep toolbar:** `Search in:` then toggles `Files / Ignored / Buffers /
-Terminals`, each a sliding switch + label + a muted `Alt+<key>` hint; on-toggles
-colour their label with the accent. `Match:` `Word / Regex`. `Provider:` a
-value pill (`git-grep`) + `Alt+M save matches`. Empty result reads `0 / 0`.
+**Live-grep toolbar:** the card is 90% of the whole screen, centred over the dock as Settings is. A label column
+(`Search` / `Scope` / `Match` / `Provider`) runs beside the controls; the
+`Search` row is the query as a standard text field — `[query]` on the field
+background, its brackets banded while it has the keyboard — with the
+`N / M` count after it. `Scope` toggles `Files / Ignored / Buffers /
+Terminals / Diagnostics`, each a sliding switch + label whose accelerator
+letter is underlined in the accent colour (the `l` of `Files` for `Alt+L`);
+on-toggles colour their label with the accent, and toggles that wrap stay in
+the control column. A blank row, then `Match` `Word / Case / Regex` with
+`Provider` (a `git-grep ▼` dropdown) beside it when the width allows, on the
+next line otherwise. The card title reads `Live grep`; the footer reads
+`Alt+M save matches · Alt + underlined letter toggles`. Empty result reads
+`0 / 0`.
 
 **Status popup** (e.g. `Remote: Local`): bold title row, an action row
 (`Create Dev Container Config`) with the menu-selection highlight, and a muted

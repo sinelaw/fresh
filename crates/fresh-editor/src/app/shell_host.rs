@@ -23,6 +23,132 @@
 //! leaf is what belongs to no pane: the pass they share, and the separators
 //! between them.
 
+use crate::app::types::PointerDrag;
+
+/// An explorer row held by the pointer.
+///
+/// Same shape as [`WidgetDrag`] and for the same reason: the press builds it
+/// whole and the release takes it, because whether the gesture was a drag or a
+/// click is only known when it ends.
+#[derive(Debug, Clone)]
+pub(crate) struct ExplorerDrag {
+    /// The row the press lifted, as the press named it.
+    pub index: usize,
+    pub segment: Option<std::path::PathBuf>,
+    /// The drag has been over a directory other than the one it started in.
+    /// Until it has, the release has nothing left to do — the press that
+    /// started it already selected and opened.
+    pub strayed: bool,
+    /// The directory a drop would land in, as last reported by a row.
+    pub target: Option<std::path::PathBuf>,
+    /// The entry of the row the pointer was last over — where a move preview
+    /// opens its empty rows, so the rows above the pointer stay put.
+    pub over: Option<std::path::PathBuf>,
+    /// The press landed on a directory, so a release in the same place has an
+    /// expand or collapse to do. Deferred because expanding re-lays out every
+    /// row below it, and doing that under a pointer that is still down slides
+    /// a different row beneath the drag — see `explorer_row_pressed`.
+    pub pending_toggle: bool,
+}
+
+/// A draggable tree row held by the pointer (`TreeNode::draggable`).
+///
+/// **The press builds it whole, and the release takes it** — the rules of
+/// `docs/internal/retained-mode-ui.md`, *A drag's state is the gesture's*.
+/// The row took the pointer with `fresh_ui::Event::start_drag`, so the tree
+/// routes the release back to it and tells the row under the pointer; this is
+/// what the drag has to remember in between.
+#[derive(Debug, Clone)]
+pub(crate) struct WidgetDrag {
+    pub slot: crate::view::shell::widgets::Slot,
+    /// The press, whole: what a release back on its own row delivers as the
+    /// click it was.
+    pub press: crate::widgets::WidgetEvent,
+    pub byte: Option<usize>,
+    pub clicks: u8,
+    /// The drag has been over another row. Back on its own row, the release
+    /// is a drag given up rather than a click — and from the first stray on,
+    /// the plugin hears where the drag is (`drag`, then `dragend`), so a
+    /// plain click never flashes a drag's styling.
+    pub strayed: bool,
+    /// The row the drag is over.
+    pub target: Option<String>,
+    /// The row the plugin was last told the drag is over. Told once per
+    /// pointer event ([`crate::app::Editor::flush_widget_drag`]), so the
+    /// leave from one row and the enter on the next — one move — reach it as
+    /// the one change they are, not as "off every row" and then the row.
+    pub announced: Option<String>,
+    /// The pointer is on a move preview's empty row, which stands for where
+    /// the drag already was ([`Self::announced`]) — whatever order the leave
+    /// from that row and the enter on this one arrived in.
+    pub on_preview_row: bool,
+}
+
+impl crate::app::Editor {
+    /// Tell the plugin where the held drag is, if that changed since it was
+    /// last told: `drag`, `{ key, target }` — the row lifted and the row under
+    /// the pointer (`null` off every row). What a drop there would do is the
+    /// plugin's to show. Called once a pointer event's facts are all applied.
+    pub(crate) fn flush_widget_drag(&mut self) {
+        let Some(d) = self.widget_drag.as_mut() else {
+            return;
+        };
+        if !d.strayed || d.on_preview_row || d.target == d.announced {
+            return;
+        }
+        d.announced = d.target.clone();
+        let d = d.clone();
+        let payload = serde_json::json!({ "key": row_key(&d.press), "target": d.target });
+        self.fire_drag_event(&d, "drag", payload);
+    }
+
+    /// The tree's drag is over: forget the held row, and tell the plugin the
+    /// drag it heard about has ended (`dragend`), dropped or not.
+    fn end_widget_drag(&mut self) {
+        let Some(d) = self.widget_drag.take() else {
+            return;
+        };
+        if d.strayed {
+            let payload = serde_json::json!({ "key": row_key(&d.press) });
+            self.fire_drag_event(&d, "dragend", payload);
+        }
+    }
+
+    /// Tell the tree's plugin something about the drag — `drag`, `drop`,
+    /// `dragend` — **as an event, not as a click.** A click is delivered
+    /// through `deliver_widget_hit`, which moves the panel's focus onto the
+    /// widget and marks the payload `via: "click"`; a drag passing over a row
+    /// is neither, and routing it that way pulled the keyboard off the dock's
+    /// search field the moment a drag strayed.
+    fn fire_drag_event(&self, d: &WidgetDrag, event_type: &str, payload: serde_json::Value) {
+        if let Some(panel_key) = self.panel_key_of_slot(&d.slot) {
+            self.fire_widget_event(
+                &panel_key,
+                d.press.owner().to_string(),
+                event_type.to_string(),
+                payload,
+            );
+        }
+    }
+
+    /// Whether `event` is a row of the tree the held drag was lifted from.
+    /// Rows of another tree can take drops too, but not this drag's.
+    fn in_dragged_tree(
+        &self,
+        slot: crate::view::shell::widgets::Slot,
+        event: &crate::widgets::WidgetEvent,
+    ) -> bool {
+        self.widget_drag
+            .as_ref()
+            .is_some_and(|d| d.slot == slot && d.press.widget_key == event.widget_key)
+    }
+}
+
+/// The row a tree event names: its `key` in the payload.
+fn row_key(ev: &crate::widgets::WidgetEvent) -> Option<&str> {
+    ev.payload.get("key").and_then(|v| v.as_str())
+}
+use crate::view::settings::surface::SettingsSurface as _;
 use std::collections::HashSet;
 
 use ratatui::buffer::Buffer;
@@ -94,6 +220,19 @@ pub(crate) struct Dispatched {
     pub claimed: bool,
     /// The tree changed something, so the frame is stale.
     pub changed: bool,
+    /// What applying the event's messages reported back.
+    pub applied: Applied,
+}
+
+/// What the host learned while applying one event's messages, for the
+/// caller that routed the event.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Applied {
+    /// A wheel notch reached a live terminal whose child takes the mouse,
+    /// and was forwarded to it. The child scrolls by its own rule, one report
+    /// per notch, so the notch's remaining lines are not walked: a replay
+    /// would forward it again. See `Editor::arm_wheel_walk`.
+    pub wheel_forwarded: bool,
 }
 
 /// The split grid's painter, for the length of one fold.
@@ -218,7 +357,7 @@ impl<'a> BodyPainter<'a> {
                 prepared.unwrap_or_else(|| {
                     // The panes at the boxes the tree placed them in —
                     // not a second layout of the grid.
-                    let base_visible = rects.visible(&mgr.visible_leaves());
+                    let base_visible = mgr.visible_leaves();
                     let pass = prepare_content(
                         rects,
                         &base_visible,
@@ -260,23 +399,22 @@ impl<'a> BodyPainter<'a> {
         // A pane the tree mounts and the pass does not list: the window's
         // splits changed under the description. It paints nothing rather than
         // painting a stale leaf's buffer.
-        let Some(mut pane) = pass.visible.iter().copied().find(|(_, id, ..)| *id == leaf) else {
+        let Some(pane) = pass.visible.iter().copied().find(|(_, id, ..)| *id == leaf) else {
             return;
         };
-        // **The fold's rect is the content leaf's.** The pane's box — the
-        // strip and the bars the painter still fills beside the content — is
-        // read off the same tree the leaf was placed in (`PaneRects`), so the
-        // two are one layout's answers; the content rect the pass carves from
-        // that box is asserted equal to this one in `paint_leaf`.
+        // **The fold's rect is the content leaf's.** The pane's box and its
+        // content slot are both read off the tree the leaf was placed in
+        // (`PaneRects`), so they are one layout's two answers, and `paint_leaf`
+        // takes the content slot from the same read rather than carving one of
+        // its own. This says the fold agrees with what it will paint into.
         debug_assert_eq!(
             self.rects.content(leaf),
             Some(rect),
             "pane {leaf:?}: the fold's rect is not the content slot the tree placed"
         );
-        let Some(pane_box) = self.rects.pane(leaf) else {
+        if self.rects.pane(leaf).is_none() {
             return;
-        };
-        pane.3 = pane_box;
+        }
         let state = self.state;
         let window = self.window;
         let contents = &mut self.contents;
@@ -296,7 +434,7 @@ impl<'a> BodyPainter<'a> {
         // grid over the mirror the text pass drew, or — for text — the fade
         // at the pane's scrolled edges. Per pane, inside the host's callback,
         // so the fold is the frame's one paint (design §3.3).
-        let (_, _, buffer_id, _, _) = pane;
+        let (_, _, buffer_id, _) = pane;
         let live_terminal = !self.scrollback.contains(&leaf)
             && self
                 .editor
@@ -398,7 +536,7 @@ fn shade_pane_edges(
     // leaves no row here. Exact where the thumb only rounds, and it can only
     // ever withdraw the shading.
     let content_below = below_the_bottom_row && rows_drawn >= rect.height as usize;
-    let anchor = view_state.viewport.anchor;
+    let anchor = view_state.buffer_tab_state().viewport.anchor;
     let content_above = anchor.byte > 0 || anchor.row_offset != 0;
 
     // The band the caret is in is left alone, both of them if the pane is
@@ -513,7 +651,12 @@ pub(crate) fn settle_pane_view(
         .buffers
         .splits()
         .and_then(|(_, vs)| vs.get(&pane))
-        .map(|vs| (vs.compose_width, vs.viewport.top_byte()))
+        .map(|vs| {
+            (
+                vs.buffer_tab_state().compose_width,
+                vs.buffer_tab_state().viewport.top_byte(),
+            )
+        })
         .unwrap_or((None, 0));
     win.pane_handle_for(pane).settle(
         rect,
@@ -544,7 +687,10 @@ fn frame_pane_sets(
             win.buffers.splits().map(|(_, vs_map)| {
                 vs_map
                     .iter()
-                    .filter(|(leaf, svs)| win.split_terminal_scrollback(**leaf, svs.active_buffer))
+                    .filter(|(leaf, svs)| {
+                        svs.shown_buffer()
+                            .is_some_and(|b| win.split_terminal_scrollback(**leaf, b))
+                    })
                     .map(|(leaf, _)| *leaf)
                     .collect()
             })
@@ -586,7 +732,7 @@ pub fn reconcile_body(
         pane_chrome,
         &described_panes,
         |facts, stores, mgr| {
-            let base_visible = rects.visible(&mgr.visible_leaves());
+            let base_visible = mgr.visible_leaves();
             let pass = prepare_content(
                 rects,
                 &base_visible,
@@ -608,7 +754,7 @@ pub fn reconcile_body(
                         pass.visible
                             .iter()
                             .filter_map(|(_, leaf, ..)| {
-                                let v = &vs.get(leaf)?.active_state().viewport;
+                                let v = &vs.get(leaf)?.buffer_tab_state().viewport;
                                 Some((*leaf, v.top_byte(), v.left_column))
                             })
                             .collect()
@@ -659,6 +805,7 @@ fn with_grid<R>(
         &editor.config.editor,
         editor.background_fade,
         editor.software_cursor_only,
+        editor.linux_console,
     );
     let session_mode = editor.session_mode || !editor.software_cursor_only;
 
@@ -857,7 +1004,7 @@ pub(crate) fn paint_embed(
     // the panes paint their grids — a PTY left at the size it had when last
     // active draws a taller frame than the box shows.
     if let Some(win) = editor.windows.get_mut(&window) {
-        for (leaf, buffer_id) in win.panes_with_buffers() {
+        for (leaf, buffer_id) in win.buffer_panes() {
             let Some(content) = rects.content(leaf) else {
                 continue;
             };
@@ -941,7 +1088,7 @@ pub mod shell_theme {
 
     use ratatui::style::{Color, Modifier, Style};
 
-    use crate::view::theme::Theme;
+    use crate::view::theme::{Theme, ThemeStyle};
 
     /// One half of an [`Ink`]: where a colour comes from.
     #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1264,14 +1411,16 @@ pub mod shell_theme {
 
         /// What ratatui paints for this.
         ///
-        /// The attribute the theme declares for the foreground key composes
-        /// with the structural ones the ink asked for.
+        /// The attributes the theme declares for either key compose with the
+        /// structural ones the ink asked for — every key may carry them, so a
+        /// background key's (an underlined `diagnostic.error_bg`, say) counts
+        /// as much as a foreground key's.
         pub fn style(&self, theme: &Theme) -> Option<Style> {
             let (fg, bg) = (self.fg.color(theme)?, self.bg.color(theme)?);
-            let declared = match self.fg.name() {
-                Some(k) => theme.resolve_modifier_key(k),
-                None => Modifier::empty(),
-            };
+            let declared = [self.fg.name(), self.bg.name()]
+                .into_iter()
+                .flatten()
+                .fold(Modifier::empty(), |m, k| m | theme.resolve_modifier_key(k));
             Some(
                 Style::default()
                     .fg(fg)
@@ -1373,214 +1522,9 @@ pub mod shell_theme {
     }
 
     fn base(theme: &Theme) -> Style {
-        Style::default().fg(theme.editor_fg).bg(theme.editor_bg)
-    }
-}
-
-#[cfg(test)]
-mod shell_theme_tests {
-    use super::shell_theme::{literal, names, pair, resolve, Attrs, Ink, Paint};
-    use ratatui::style::Color;
-
-    fn theme() -> crate::view::theme::Theme {
-        crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
-            .expect("a theme of nothing but defaults")
-    }
-
-    /// **A block caret is an attribute the grammar has to carry.** A form
-    /// control on a modal overlay draws its caret as one reverse-video cell —
-    /// there is no hardware cursor to place there — and a word the grammar
-    /// does not know is dropped on the way in, so the caret simply did not
-    /// appear. Reading is forgiving on purpose; that is exactly why the word
-    /// has to exist.
-    #[test]
-    fn a_reversed_cell_survives_the_written_form_and_reaches_the_style() {
-        let ink = Ink::keys("editor.fg", "editor.bg").plus(Attrs::REVERSED);
-        let written = ink.to_string();
-        assert!(written.ends_with("+reversed"), "{written:?}");
-        assert_eq!(Ink::parse(&written), Some(ink));
-        let style = resolve(&written, &theme());
-        assert!(
-            style
-                .add_modifier
-                .contains(ratatui::style::Modifier::REVERSED),
-            "the caret's cell reverses: {style:?}"
-        );
-    }
-
-    /// **What is written is what is read.** The name is a serialisation, so
-    /// the only thing that makes it safe to keep passing strings through
-    /// `fresh-ui` is that the round trip is lossless — including for the parts
-    /// the string form used to lose.
-    #[test]
-    fn an_ink_survives_the_written_form() {
-        for ink in [
-            Ink::keys("editor.fg", "editor.bg"),
-            Ink::keys("editor.fg", "editor.bg").plus(Attrs::BOLD | Attrs::DIM),
-            Ink::new(
-                Paint::Lit(Color::Rgb(126, 231, 135)),
-                Paint::key("editor.bg"),
-            ),
-            Ink::new(Paint::key("editor.fg"), Paint::Lit(Color::Indexed(42)))
-                .plus(Attrs::UNDERLINE),
-            Ink::new(Paint::Lit(Color::Yellow), Paint::Lit(Color::Black))
-                .plus(Attrs::ITALIC | Attrs::STRIKETHROUGH),
-            Ink::keys("editor.fg", "editor.bg").plus(Attrs::REVERSED),
-        ] {
-            let written = ink.to_string();
-            assert_eq!(
-                Ink::parse(&written),
-                Some(ink.clone()),
-                "{written:?} did not read back"
-            );
-        }
-    }
-
-    /// **Swapping one half leaves the other alone — attributes included.**
-    ///
-    /// This is the divergence the type exists to remove. The string form had
-    /// two spellings of "layer something over this name" and they disagreed:
-    /// swapping a background re-spliced the `+attrs` tail back on while setting
-    /// attributes dropped it, so a plugin span that named both a background and
-    /// an attribute silently un-dimmed a disabled suggestion row.
-    #[test]
-    fn layering_over_an_ink_keeps_what_it_does_not_mention() {
-        let row = Ink::keys("ui.suggestion_fg", "ui.suggestion_bg").plus(Attrs::DIM);
-        let both = row
-            .clone()
-            .with_bg(Paint::key("ui.menu_hover_bg"))
-            .plus(Attrs::BOLD);
-        assert_eq!(both.fg, row.fg, "the foreground was not mentioned");
-        assert!(both.attrs.contains(Attrs::DIM), "the row's dim survived");
-        assert!(both.attrs.contains(Attrs::BOLD), "the span's bold applied");
-    }
-
-    /// A word the grammar does not know is dropped rather than failing the
-    /// whole name: the alternative turns one typo into a surface painted in
-    /// the editor's plain ground. Nothing can *write* such a word — [`Attrs`]
-    /// has five constants and no other constructor — so this is the reading
-    /// half being forgiving, not the writing half being loose.
-    #[test]
-    fn an_unknown_attribute_is_dropped_not_fatal() {
-        let ink = Ink::parse("editor.fg/editor.bg+bold+wobble").expect("the pair is readable");
-        assert_eq!(ink.attrs, Attrs::BOLD);
-        assert_eq!(
-            resolve("editor.fg/editor.bg+wobble", &theme()).fg,
-            Some(theme().editor_fg)
-        );
-    }
-
-    /// **A plugin's key that the theme does not know leaves the rest of the
-    /// run alone.** `Ink::style` is all-or-nothing, so before `Paint::Asked`
-    /// existed one such name — `git_history.ts` colours commit hashes
-    /// `syntax.number`, which no theme has ever had — dropped the whole run to
-    /// the editor's plain ground, and tripped `resolve`'s assertion on the way
-    /// past. The painter's behaviour was to leave the row's own foreground in
-    /// place, and that is what this reproduces.
-    #[test]
-    fn a_plugin_key_the_theme_does_not_know_falls_back_to_what_was_under_it() {
-        let t = theme();
-        let asked = |k: &str| {
-            Ink::new(
-                Paint::asked(k.to_string(), Paint::key("ui.suggestion_fg")),
-                Paint::key("ui.suggestion_bg"),
-            )
-        };
-        let unknown = asked("syntax.number");
-        let style = resolve(&unknown.to_string(), &t);
-        assert_eq!(
-            style.fg,
-            Some(t.suggestion_fg),
-            "an unknown plugin key leaves the row's own foreground"
-        );
-        assert_eq!(
-            style.bg,
-            Some(t.suggestion_bg),
-            "and does not take the background down with it"
-        );
-
-        // One the theme *does* know still wins over what is under it.
-        let known = asked("syntax.keyword");
-        assert_eq!(resolve(&known.to_string(), &t).fg, Some(t.syntax_keyword));
-
-        // And the whole thing survives the written form, fallback included.
-        for ink in [unknown, known] {
-            let written = ink.to_string();
-            assert_eq!(
-                Ink::parse(&written),
-                Some(ink),
-                "{written:?} did not read back"
-            );
-        }
-    }
-
-    /// A literal has no name by construction, and the inspector should say so
-    /// rather than attributing a plugin's colour to a theme entry.
-    #[test]
-    fn a_literal_half_reports_no_name() {
-        let ink = Ink::new(Paint::Lit(Color::Rgb(1, 2, 3)), Paint::key("editor.bg"));
-        assert_eq!(ink.names(), (None, Some("editor.bg")));
-        let (fg, bg) = names(&ink.to_string());
-        assert_eq!((fg, bg), (None, Some("editor.bg".to_string())));
-    }
-
-    /// **Every colour round-trips.** The literal form exists because a plugin's
-    /// colour arrives already resolved, with no key to name it; it is only
-    /// honest if it loses nothing.
-    ///
-    /// It did lose something. An earlier version answered `editor.fg` for
-    /// anything that was not `Color::Rgb`, and theme colours are frequently one
-    /// of the sixteen names — `file_status_modified_fg` is `Yellow` in the
-    /// built-in dark theme — so every plugin-decorated row in the file explorer
-    /// silently painted in the panel's ordinary ink instead of its status
-    /// colour. Nothing failed; it just looked undecorated.
-    #[test]
-    fn a_literal_colour_survives_the_round_trip() {
-        let theme = crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
-            .expect("a theme of nothing but defaults");
-        for c in [
-            Color::Rgb(126, 231, 135),
-            Color::Rgb(0, 0, 0),
-            Color::Yellow,
-            Color::LightMagenta,
-            Color::Black,
-            Color::White,
-            Color::Reset,
-            Color::Indexed(0),
-            Color::Indexed(42),
-            Color::Indexed(255),
-        ] {
-            let style = resolve(&pair(&literal(c), "editor.bg"), &theme);
-            assert_eq!(style.fg, Some(c), "{c:?} did not survive {:?}", literal(c));
-        }
-    }
-
-    /// A literal composes with the rest of the grammar, so a plugin colour can
-    /// still be bold or underlined.
-    #[test]
-    fn a_literal_composes_with_attributes() {
-        use ratatui::style::Modifier;
-        let theme = crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
-            .expect("a theme of nothing but defaults");
-        let style = resolve("#7ee787/editor.bg+bold", &theme);
-        assert_eq!(style.fg, Some(Color::Rgb(126, 231, 135)));
-        assert!(style.add_modifier.contains(Modifier::BOLD));
-    }
-
-    /// A malformed literal falls back to the editor's ground rather than to a
-    /// colour nobody asked for.
-    #[test]
-    fn a_malformed_literal_falls_back() {
-        let theme = crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
-            .expect("a theme of nothing but defaults");
-        for bad in [
-            "#zzzzzz/editor.bg",
-            "#12345/editor.bg",
-            "#NotAColour/editor.bg",
-        ] {
-            let style = resolve(bad, &theme);
-            assert_eq!(style.fg, Some(theme.editor_fg), "{bad}");
-        }
+        Style::default()
+            .theme_fg(theme, "editor.fg")
+            .theme_bg(theme, "editor.bg")
     }
 }
 
@@ -1720,7 +1664,28 @@ impl Editor {
 /// painter's rectangles produced, so deleting those rectangles would have
 /// taken the web's path with them.
 impl Editor {
+    /// A click on a category row, anywhere on it. A category not yet under
+    /// the cursor is selected and expanded; a click on the one already under
+    /// it toggles it open or shut when it can be, and otherwise takes its
+    /// page back to the top as any other selection does.
     pub(crate) fn settings_select_category(&mut self, idx: usize) {
+        use crate::view::settings::state::FocusTarget;
+        if let Some(s) = self.settings_state.as_mut() {
+            s.focus_on(FocusTarget::Categories);
+            if s.selected_category == idx
+                && s.tree_cursor_section.is_none()
+                && s.is_category_expandable(idx)
+            {
+                s.toggle_category_expanded(idx);
+                return;
+            }
+        }
+        self.settings_pick_category(idx);
+    }
+
+    /// Select a category and take its page to the top, expanding it in the
+    /// tree — a click on an unselected row, or any click in the narrow strip.
+    pub(crate) fn settings_pick_category(&mut self, idx: usize) {
         use crate::view::settings::state::FocusTarget;
         if let Some(s) = self.settings_state.as_mut() {
             s.focus_on(FocusTarget::Categories);
@@ -1735,6 +1700,14 @@ impl Editor {
         }
     }
 
+    /// Open or shut a category without selecting it — the web UI's chevron.
+    #[cfg_attr(not(feature = "web"), allow(dead_code))]
+    pub(crate) fn settings_toggle_category(&mut self, idx: usize) {
+        if let Some(s) = self.settings_state.as_mut() {
+            s.toggle_category_expanded(idx);
+        }
+    }
+
     pub(crate) fn settings_jump_to_section(&mut self, cat: usize, section: usize) {
         use crate::view::settings::state::FocusTarget;
         if let Some(s) = self.settings_state.as_mut() {
@@ -1743,12 +1716,6 @@ impl Editor {
             // moving focus to the body is right; a click in the tree keeps
             // the tree focused.
             s.focus_on(FocusTarget::Categories);
-        }
-    }
-
-    pub(crate) fn settings_toggle_category(&mut self, idx: usize) {
-        if let Some(s) = self.settings_state.as_mut() {
-            s.toggle_category_expanded(idx);
         }
     }
 }
@@ -1842,7 +1809,10 @@ impl Editor {
         // a behavior with something to deliver — and it is the right one to
         // ask here.
         let tree_stale = ui.needs_frame();
+        let autoscroll = ui.drag_autoscroll();
+        let dragging = ui.dragging();
         self.shell_ui = Some(ui);
+        self.note_drag_autoscroll(autoscroll);
         // Claimed is reported, not inferred. Producing a message and taking
         // the event are different things: a hover moves a highlight without
         // claiming the pointer, and a dismissal closes a menu while leaving a
@@ -1865,7 +1835,21 @@ impl Editor {
         let changed = tree_stale || !result.msgs.is_empty();
         let mut msgs = result.msgs;
         msgs.extend(settled);
-        self.apply_shell_messages(msgs, facts);
+        let applied = self.apply_shell_messages(msgs, facts);
+        // **A drag ends when the tree's does**, after its drop was applied:
+        // dropped, released off every row, or its row gone before the
+        // release — the tree knows which drag is held, and nothing else
+        // needs to be told.
+        if dragging {
+            // Where a held tree drag is now, told once for the whole event.
+            self.flush_widget_drag();
+        } else {
+            self.end_widget_drag();
+            self.explorer_drag = None;
+        }
+        // The explorer's move preview follows the drag: where it is now, or
+        // gone with it if it ended without a drop.
+        self.sync_explorer_drag_preview();
         // **The claim is the tree's word, and only the tree's.** A seam that
         // hands a key to a host interior — the prompt's, a focused panel's —
         // `stop()`s it, because the key *is* that surface's: what the surface
@@ -1874,7 +1858,11 @@ impl Editor {
         // (`Editor::hand_key_to_editor`, from the applier). There is no
         // second verdict folded in after the fact; the `Option<bool>` that
         // used to carry one is gone (L2).
-        Dispatched { claimed, changed }
+        Dispatched {
+            claimed,
+            changed,
+            applied,
+        }
     }
 
     /// A key a surface holding the keyboard does not bind is still the
@@ -1886,6 +1874,21 @@ impl Editor {
         if let Err(e) = self.dispatch_base_key(ev.code, ev.modifiers) {
             tracing::warn!("key handed on from a keyboard seam failed: {e}");
         }
+    }
+
+    /// The widget the *tree* holds the keyboard on right now, as the panel's
+    /// own key — `None` when focus is outside any described widget, or when
+    /// there is no tree yet.
+    ///
+    /// Read by [`UiFact::WidgetFocus`] to tell a live landing from one a later
+    /// settle has already replaced; see the note there.
+    pub(super) fn tree_focused_widget_key(&self) -> Option<String> {
+        let ui = self.shell_ui.as_ref()?;
+        let id = ui.focused()?;
+        ui.key_of(id)
+            .as_ref()
+            .and_then(crate::view::shell::widgets::widget_key_of)
+            .map(str::to_string)
     }
 
     /// Apply what the tree decided on its own since the last input: the
@@ -1929,7 +1932,8 @@ impl Editor {
         &mut self,
         msgs: Vec<crate::view::shell::msg::UiMsg>,
         facts: EventFacts,
-    ) {
+    ) -> Applied {
+        let mut applied = Applied::default();
         // A message is a change to something the description reads — that
         // is what a `UiFact` is for — so the description is stale once one
         // has been applied, and the next reader lays it out again. Except
@@ -1957,12 +1961,15 @@ impl Editor {
                         tracing::warn!("shell action {action:?} failed: {e}");
                     }
                 }
-                crate::view::shell::msg::UiMsg::Ui(fact) => self.apply_ui_fact(fact, facts),
+                crate::view::shell::msg::UiMsg::Ui(fact) => {
+                    self.apply_ui_fact(fact, facts, &mut applied)
+                }
             }
             if stales {
                 self.shell_description_stale = true;
             }
         }
+        applied
     }
 
     /// Whether a wheel notch over a pane's content was taken by a live
@@ -2004,7 +2011,7 @@ impl Editor {
             Slot::PromptToolbar => self.prompt_toolbar_key(),
             Slot::Pane(leaf) => {
                 let buffer = self
-                    .window_panes()
+                    .window_buffer_panes()
                     .into_iter()
                     .find(|(l, _)| l == leaf)
                     .map(|(_, b)| b)?;
@@ -2065,8 +2072,58 @@ impl Editor {
 
     /// Apply a positional fact — the half of a message that never becomes a
     /// keybinding.
-    fn apply_ui_fact(&mut self, fact: crate::view::shell::msg::UiFact, ev: EventFacts) {
+    fn apply_ui_fact(
+        &mut self,
+        fact: crate::view::shell::msg::UiFact,
+        ev: EventFacts,
+        applied: &mut Applied,
+    ) {
         use crate::view::shell::msg::UiFact;
+        // A plugin tree drawn with a move preview's empty row in it reports
+        // indexes counting that row; the plugin's rows do not.
+        let fact = match fact {
+            UiFact::WidgetHit {
+                slot,
+                event,
+                byte,
+                clicks,
+            } => match self.unsplice_tree_event(&slot, event, false) {
+                Some(event) => UiFact::WidgetHit {
+                    slot,
+                    event,
+                    byte,
+                    clicks,
+                },
+                None => return,
+            },
+            UiFact::WidgetContext { slot, event, x, y } => {
+                match self.unsplice_tree_event(&slot, event, false) {
+                    Some(event) => UiFact::WidgetContext { slot, event, x, y },
+                    None => return,
+                }
+            }
+            UiFact::WidgetDragStart {
+                slot,
+                event,
+                byte,
+                clicks,
+            } => match self.unsplice_tree_event(&slot, event, false) {
+                Some(event) => UiFact::WidgetDragStart {
+                    slot,
+                    event,
+                    byte,
+                    clicks,
+                },
+                None => return,
+            },
+            UiFact::WidgetDrop { slot, event } => {
+                match self.unsplice_tree_event(&slot, event, true) {
+                    Some(event) => UiFact::WidgetDrop { slot, event },
+                    None => return,
+                }
+            }
+            other => other,
+        };
         match fact {
             UiFact::ChordPending { code, modifiers } => {
                 self.active_window_mut().chord_state.push((code, modifiers));
@@ -2166,12 +2223,18 @@ impl Editor {
                         self.focus_pane(pane);
                         if let Some(panel_key) = self.pane_panel_key(pane) {
                             self.deliver_widget_hit(&panel_key, &hit, clicked_byte);
+                            if clicks >= 2 {
+                                self.activate_on_double_click(&panel_key, &hit);
+                            }
                         }
                         return;
                     }
                 };
                 if let Some(panel_key) = self.panel(slot).map(|p| p.panel_key.clone()) {
                     self.deliver_widget_hit(&panel_key, &hit, clicked_byte);
+                    if clicks >= 2 {
+                        self.activate_on_double_click(&panel_key, &hit);
+                    }
                 }
             }
             UiFact::SettingsItem(idx) => {
@@ -2197,6 +2260,7 @@ impl Editor {
                     let ev = crate::widgets::WidgetEvent {
                         row_target: false,
                         context_click: false,
+                        drag_source: false,
                         widget_key: key,
                         widget_kind: "overlay",
                         payload: serde_json::json!({}),
@@ -2253,6 +2317,7 @@ impl Editor {
                             let ev = crate::widgets::WidgetEvent {
                                 row_target: false,
                                 context_click: false,
+                                drag_source: false,
                                 widget_key,
                                 widget_kind: "dropdown",
                                 payload: serde_json::json!({}),
@@ -2260,6 +2325,12 @@ impl Editor {
                                 owner_key: None,
                             };
                             self.deliver_widget_hit(&panel_key, &ev, None);
+                        } else if let Some(panel_key) =
+                            self.panel(panel).map(|p| p.panel_key.clone())
+                        {
+                            // No dropdown is up, so it is the focused field's
+                            // suggestion list the press landed outside of.
+                            self.dismiss_focused_completions(&panel_key);
                         }
                     }
                 }
@@ -2300,6 +2371,17 @@ impl Editor {
                 byte,
                 mods,
             } => {
+                // **The pane half of the press, as the `WidgetHit` arm above
+                // makes it.** The prose run calls `e.stop()` like any other
+                // `hit_node`, so the pane's own pointer surface never sees
+                // this press and nothing else moves the *editor's* focus to
+                // the split the panel is mounted in. Only the widget focus
+                // key moved, so a click on the code tour's description while
+                // the file beside it held the keyboard put a caret in the
+                // prose and left every keystroke going to the file.
+                if let crate::view::shell::widgets::Slot::Pane(pane) = slot {
+                    self.focus_pane(pane);
+                }
                 let Some(pk) = self.panel_key_of_slot(&slot) else {
                     return;
                 };
@@ -2310,6 +2392,7 @@ impl Editor {
                             widget: widget.clone(),
                         },
                         ev,
+                        applied,
                     );
                 }
                 self.move_prose_caret(&pk, &widget, byte, mods.shift);
@@ -2342,6 +2425,117 @@ impl Editor {
             UiFact::WidgetProseRelease { .. } => {
                 self.prose_drag = None;
             }
+            UiFact::WidgetDragStart {
+                slot,
+                event,
+                byte,
+                clicks,
+            } => {
+                // A drag whose release was lost ends here, told as any other
+                // end is — otherwise the plugin goes on drawing it.
+                self.end_widget_drag();
+                self.widget_drag = Some(WidgetDrag {
+                    slot,
+                    press: event,
+                    byte,
+                    clicks,
+                    strayed: false,
+                    target: None,
+                    announced: None,
+                    on_preview_row: false,
+                });
+            }
+            UiFact::WidgetDragOver { slot, event } => {
+                if !self.in_dragged_tree(slot, &event) {
+                    return;
+                }
+                let over = row_key(&event).map(str::to_string);
+                // A move preview's empty row is there because of where the
+                // drag already is: over it, the drag is still there.
+                let preview_row = over
+                    .as_deref()
+                    .is_some_and(crate::app::tree_move_preview::is_preview_row);
+                if let Some(d) = self.widget_drag.as_mut() {
+                    d.on_preview_row = preview_row;
+                    if !preview_row {
+                        d.strayed |= row_key(&d.press) != over.as_deref();
+                        if d.strayed {
+                            d.target = over.clone();
+                        }
+                    }
+                }
+                // A card's hover band is the panel's memo; a compact row's is
+                // its list's, which takes the drag's hover itself.
+                let hover = UiFact::WidgetHover {
+                    slot,
+                    widget: event.widget_key.clone(),
+                    item: over.unwrap_or_default(),
+                    entered: true,
+                };
+                self.apply_ui_fact(hover, ev, applied);
+            }
+            UiFact::WidgetDragLeave { slot, event } => {
+                if !self.in_dragged_tree(slot, &event) {
+                    return;
+                }
+                let off = row_key(&event).map(str::to_string);
+                if let Some(d) = self.widget_drag.as_mut() {
+                    if off
+                        .as_deref()
+                        .is_some_and(crate::app::tree_move_preview::is_preview_row)
+                    {
+                        d.on_preview_row = false;
+                    } else if d.strayed && d.target == off {
+                        d.target = None;
+                    }
+                }
+                let hover = UiFact::WidgetHover {
+                    slot,
+                    widget: event.widget_key.clone(),
+                    item: off.unwrap_or_default(),
+                    entered: false,
+                };
+                self.apply_ui_fact(hover, ev, applied);
+            }
+            // **Where it landed decides what the drag was.** On another row
+            // of the same widget it is a drop, which the plugin hears; back
+            // on its own row without having left it, it was a click all
+            // along, and the press it deferred is delivered now. Anything
+            // else — another widget, its own row after straying — is a drag
+            // given up. The drag ends when the tree's does, after this.
+            UiFact::WidgetDrop { slot, event } => {
+                if !self.in_dragged_tree(slot, &event) {
+                    return;
+                }
+                let Some(drag) = self.widget_drag.clone() else {
+                    return;
+                };
+                let (from, to) = (row_key(&drag.press), row_key(&event));
+                // Dropped on a move preview's empty row: on where the drag
+                // was, which is what that row is showing.
+                let to = match to.is_some_and(crate::app::tree_move_preview::is_preview_row) {
+                    true => drag.announced.as_deref(),
+                    false => to,
+                };
+                if from == to {
+                    if !drag.strayed {
+                        let click = UiFact::WidgetHit {
+                            slot,
+                            event: drag.press,
+                            byte: drag.byte,
+                            clicks: drag.clicks,
+                        };
+                        self.apply_ui_fact(click, ev, applied);
+                    }
+                    return;
+                }
+                let payload = serde_json::json!({
+                    "key": from,
+                    "target": to,
+                    "index": event.payload.get("index"),
+                });
+                self.fire_drag_event(&drag, "drop", payload);
+            }
             UiFact::WidgetFocus { slot, widget } => {
                 // **The one slot→panel resolver.** This match was a copy of
                 // [`Self::panel_key_of_slot`] with its `Pane` leg missing, so
@@ -2353,6 +2547,26 @@ impl Editor {
                     return;
                 };
                 if self.widget_registry.focus_key(&key) == Some(widget.as_str()) {
+                    return;
+                }
+                // **Only while it is still true.**
+                //
+                // This fact is a *gain* the tree fired at some past settle, and
+                // gains are queued (`Ui::pending_messages`) until the next
+                // input drains them — so a batch can carry two, and the first
+                // is a landing the second already superseded. The tree itself
+                // is the authority on where focus is *now*: a gain it no longer
+                // agrees with describes a frame that has been laid out over,
+                // and applying it walks the panel's focus backwards.
+                //
+                // The dock's `⋯` was that walk. Its press focused the button
+                // (click-to-focus), the menu opened and took the keyboard, and
+                // the two frames in between queued `dock-menu` and then
+                // `menu-pick`. Both landed on the release: `dock-menu` first,
+                // which the plugin reads as focus leaving its menu — so the
+                // menu closed on the release of the very click that opened it,
+                // and only a click fast enough to beat the frames left it up.
+                if self.tree_focused_widget_key().is_some_and(|k| k != widget) {
                     return;
                 }
                 // **Through the same door every other focus move uses.** This
@@ -2438,7 +2652,7 @@ impl Editor {
                     // surface, so a mounted panel's rows never lit under the
                     // pointer at all.
                     Slot::Pane(leaf) => self
-                        .window_panes()
+                        .window_buffer_panes()
                         .into_iter()
                         .find(|(l, _)| *l == leaf)
                         .and_then(|(_, buffer)| {
@@ -2640,7 +2854,6 @@ impl Editor {
                 }
             }
             UiFact::PaneTabDrop => self.finish_tab_drag(),
-            UiFact::PaneTabsScroll { pane, delta } => self.scroll_pane_tab_strip(pane, delta),
             UiFact::PaneNewTab { pane, x, y } => self.new_tab_button(pane, x, y),
             // The two strip buttons. They carry no coordinates: each is a node
             // that knows its pane, so what used to be a scan of two recorded
@@ -2650,9 +2863,9 @@ impl Editor {
             UiFact::PaneTabsWheel { pane, x, y, delta } => {
                 self.dismiss_transient_popups();
                 self.active_window().wheel_plugin_hook(x, y, delta);
-                self.scroll_pane_tab_strip(pane, delta);
+                self.pan_pane_tab_strip(pane, delta);
             }
-            UiFact::PaneTabsPan { pane, delta } => self.scroll_pane_tab_strip(pane, delta),
+            UiFact::PaneTabsPan { pane, delta } => self.pan_pane_tab_strip(pane, delta),
             UiFact::PaneContentPress {
                 pane,
                 byte,
@@ -2717,11 +2930,16 @@ impl Editor {
             // `mouse_state.dragging_scrollbar` on every event to decide whose
             // drag it was, ranked against nine other flags.
             UiFact::PaneScrollbarDrag { pane, axis, x, y } => {
-                let ms = &self.active_window().mouse_state;
-                let dragging = match axis {
-                    fresh_ui::Axis::Vertical => ms.dragging_scrollbar.is_some(),
-                    fresh_ui::Axis::Horizontal => ms.dragging_horizontal_scrollbar.is_some(),
-                };
+                let dragging = matches!(
+                    (&self.active_window().mouse_state.drag, axis),
+                    (
+                        Some(PointerDrag::VerticalScrollbar { .. }),
+                        fresh_ui::Axis::Vertical
+                    ) | (
+                        Some(PointerDrag::HorizontalScrollbar { .. }),
+                        fresh_ui::Axis::Horizontal
+                    )
+                );
                 if !dragging {
                     if axis == fresh_ui::Axis::Vertical {
                         self.shell_hover = self.scrollbar_hover(pane, y);
@@ -2738,25 +2956,14 @@ impl Editor {
             }
             // The finalizer the blanket clear used to run for this grab. The
             // release is the captured bar's, so it never reaches that walk.
-            UiFact::PaneScrollbarRelease { pane: _, axis } => {
-                let ms = &mut self.active_window_mut().mouse_state;
-                match axis {
-                    fresh_ui::Axis::Vertical => {
-                        ms.dragging_scrollbar = None;
-                        ms.drag_start_row = None;
-                        ms.drag_start_top_byte = None;
-                    }
-                    fresh_ui::Axis::Horizontal => {
-                        ms.dragging_horizontal_scrollbar = None;
-                        ms.drag_start_hcol = None;
-                        ms.drag_start_left_column = None;
-                    }
-                }
-            }
+            UiFact::PaneScrollbarRelease { .. } => self.active_window_mut().mouse_state.drag = None,
             UiFact::PaneWheel { pane, x, y, delta } => {
                 // A live terminal that asked for the mouse gets the notch —
                 // the same gate the content's press asks, for the same reason.
+                // The child scrolls by its own rule, one report per notch, so
+                // this says so, and the notch's other lines are not walked.
                 if self.pane_content_took_wheel(x, y) {
+                    applied.wheel_forwarded = true;
                     return;
                 }
                 // A plugin's panel inside the pane's content scrolls itself:
@@ -2854,16 +3061,17 @@ impl Editor {
                 if old == target {
                     return;
                 }
-                // **Every registered reaction, not one hand-picked one.**
-                // The tree says where the pointer is; what each surface does
-                // about it stays with that surface. Calling
-                // `menu_hover_reaction` directly instead silently dropped the
-                // reactions belonging to two surfaces that had *also*
-                // migrated: the explorer's git-status tooltip
+                // **Every reaction, and each one called by name.** The tree
+                // says where the pointer is; what each surface does about it
+                // stays with that surface. Calling `menu_hover_reaction`
+                // directly and nothing else once dropped two surfaces that had
+                // *also* migrated — the explorer's git-status tooltip
                 // (`FileExplorerStatusIndicator`) and the status bar's
-                // indicator styling. This is the only thing that reaches any
-                // of them — a reaction this fact does not run is a reaction
-                // that never runs.
+                // indicator styling — and the registry that replaced that call
+                // then dropped the menu's, because its trait method had a
+                // `false` default body and the menu had not written one. Two
+                // surfaces react. Both are named here, so a reaction that is
+                // not run is a name that does not resolve.
                 //
                 // The pointer cell the reactions want is the one the fact
                 // arrived at; a hover fact is always produced by a pointer
@@ -2871,11 +3079,15 @@ impl Editor {
                 // A reaction that changed state — a submenu opened under the
                 // pointer — is a change the next input's routing reads, and
                 // the hover fact itself is transient: this is where it says so.
+                // `|`, not `||`: both reactions run. One surface answering
+                // "yes, that changed something" must not decide whether the
+                // other is offered the move at all — that early return is the
+                // bug the central ladder had.
                 let (col, row) = ev.at;
-                for c in crate::app::chrome::components() {
-                    if c.on_hover_change(self, old.as_ref(), target.as_ref(), col, row) {
-                        self.shell_description_stale = true;
-                    }
+                let changed = self.menu_hover_reaction(target.as_ref())
+                    | self.explorer_hover_reaction(old.as_ref(), target.as_ref(), col, row);
+                if changed {
+                    self.shell_description_stale = true;
                 }
             }
             UiFact::MenuBarPress { index } => {
@@ -2892,8 +3104,31 @@ impl Editor {
                 }
             }
             // -- file explorer ---------------------------------------------
-            UiFact::ExplorerRowPress { index, clicks } => self.explorer_row_pressed(index, clicks),
-            UiFact::ExplorerRowContext { index, x, y } => self.explorer_row_context(index, x, y),
+            UiFact::ExplorerRowPress {
+                index,
+                segment,
+                clicks,
+            } => {
+                // The press is also the lift: the row took the pointer, so
+                // remember what it took in case the pointer leaves. A drag
+                // whose release was lost ends here rather than leaking into
+                // this one.
+                let pending_toggle = self.explorer_row_pressed(index, segment.clone(), clicks);
+                self.explorer_drag = Some(ExplorerDrag {
+                    index,
+                    segment,
+                    strayed: false,
+                    target: None,
+                    over: None,
+                    pending_toggle,
+                });
+            }
+            UiFact::ExplorerRowContext {
+                index,
+                segment,
+                x,
+                y,
+            } => self.explorer_row_context(index, segment, x, y),
             UiFact::ExplorerBodyContext { x, y } => self.explorer_body_context(x, y),
             // Focus, and nothing else: a press that reached the panel's own
             // box hit no row, so there is nothing to select or open. This is
@@ -2955,7 +3190,62 @@ impl Editor {
                     tracing::warn!("suggestion confirm failed: {e}");
                 }
             }
+            UiFact::ExplorerRowDragOver { index, segment } => {
+                let Some(dest) = self.explorer_drop_dir(index, segment.as_deref()) else {
+                    return;
+                };
+                let Some((lifted, lifted_segment)) = self
+                    .explorer_drag
+                    .as_ref()
+                    .map(|d| (d.index, d.segment.clone()))
+                else {
+                    return;
+                };
+                // A hover that would move nothing does not make the gesture a
+                // drag: the directory the entry already lives in, the entry
+                // itself, or anywhere inside it. The last two are why this is
+                // not just "somewhere else" — a *directory* row's own drop
+                // target is itself, so a press on one and the smallest wobble
+                // would otherwise read as a drag and swallow the click.
+                let lifted_path = self.explorer_entry_path(lifted, lifted_segment.as_deref());
+                let strayed = lifted_path.is_some_and(|path| {
+                    Some(dest.as_path()) != path.parent()
+                        && dest != path
+                        && !dest.starts_with(&path)
+                });
+                let over = self.explorer_entry_path(index, None);
+                if let Some(drag) = self.explorer_drag.as_mut() {
+                    drag.strayed |= strayed;
+                    drag.target = strayed.then_some(dest);
+                    drag.over = over;
+                }
+            }
+            UiFact::ExplorerRowDragLeave => {
+                if let Some(drag) = self.explorer_drag.as_mut() {
+                    drag.target = None;
+                }
+            }
+            UiFact::ExplorerRowDrop { index, segment } => {
+                // Released without ever straying: the press that lifted it
+                // already selected and opened, so the only thing left is the
+                // directory toggle the press held back — and only for a
+                // release in the place it was pressed, which is what makes
+                // the gesture a click rather than a drag that came home.
+                if !self.explorer_drag.as_ref().is_some_and(|d| d.strayed) {
+                    let clicked = self.explorer_drag.as_ref().is_some_and(|d| {
+                        d.pending_toggle && d.index == index && d.segment == segment
+                    });
+                    if clicked {
+                        self.file_explorer_toggle_expand();
+                    }
+                    return;
+                }
+                if let Some(dest) = self.explorer_drop_dir(index, segment.as_deref()) {
+                    self.explorer_drop_into(&dest);
+                }
+            }
             UiFact::ExplorerClose => self.toggle_file_explorer(),
+            UiFact::ExplorerRefresh => self.file_explorer_refresh(),
             // A section header's press, move and release, and the two things
             // the header does besides dividing. See `app::sidebar`.
             UiFact::SectionResizeBegin { index, y } => {
@@ -2965,12 +3255,12 @@ impl Editor {
             UiFact::SectionClose { index } => self.close_sidebar_section(index),
             UiFact::SectionFocus { index } => self.focus_sidebar_section(index),
             UiFact::SidebarBlur => self.blur_sidebar_panels(),
-            UiFact::ExplorerResizeBegin { x, y } => {
-                let w = self.active_window().file_explorer_width;
-                let st = &mut self.active_window_mut().mouse_state;
-                st.dragging_file_explorer = true;
-                st.drag_start_position = Some((x, y));
-                st.drag_start_explorer_width = Some(w);
+            UiFact::ExplorerResizeBegin { x, .. } => {
+                let start_width = self.active_window().file_explorer_width;
+                self.active_window_mut().mouse_state.drag = Some(PointerDrag::ExplorerBorder {
+                    press_x: x,
+                    start_width,
+                });
             }
             // The dock's column, all four of its gestures. Each body is the
             // arm `chrome::Dock::on_pointer` ran; what is gone is the pair of
@@ -3012,18 +3302,20 @@ impl Editor {
             // ladder these three replace read `chrome::pointer_grab` on every
             // event to decide whose drag it was; the node says so.
             //
-            // The gate is still here and still belongs here: a grip's `Move`
-            // fires on a bare hover too, and whether a drag is in progress is
-            // state the editor holds. What is gone is deciding *which* drag
-            // from that state.
+            // A grip's `Move` only fires while it holds the pointer, so a
+            // bare hover never arrives here. Each arm still reads its own
+            // gesture's state, because that state carries what the drag
+            // needs (the press and the width or ratio it started from); a
+            // move with none, after the state was lost, does nothing.
             UiFact::GripDrag { which, x, y } => {
                 use crate::view::shell::msg::Grip;
                 match which {
                     Grip::DockWidth if self.dock_resizing => self.handle_dock_resize_drag(x),
                     Grip::Separator => {
-                        if let Some((id, dir)) = self.active_window().mouse_state.dragging_separator
+                        if let Some(PointerDrag::Separator(drag)) =
+                            self.active_window().mouse_state.drag
                         {
-                            if let Err(e) = self.handle_separator_drag(x, y, id, dir) {
+                            if let Err(e) = self.handle_separator_drag(x, y, drag) {
                                 tracing::warn!("separator drag failed: {e}");
                             }
                         }
@@ -3040,33 +3332,28 @@ impl Editor {
             UiFact::GripRelease { which } => {
                 use crate::view::shell::msg::Grip;
                 match which {
-                    // End a dock-resize drag and persist the chosen width so
-                    // it survives toggling the dock off and on.
+                    // End a dock-resize drag. The width itself landed in
+                    // `dock_width` with every step of the drag (so the
+                    // responsive re-fit never snapped it back); the release
+                    // is when it is worth a write to disk.
                     Grip::DockWidth => {
                         self.dock_resizing = false;
-                        if let Some(crate::app::PanelPlacement::LeftDock { width_cols }) =
-                            self.dock.as_ref().map(|f| f.placement)
-                        {
-                            self.dock_width = Some(width_cols);
-                        }
+                        self.persist_dock_width();
                     }
                     // A finished separator drag changed the ratios, so the
                     // frame reflows through the one layout funnel.
                     Grip::Separator => {
-                        self.active_window_mut().mouse_state.dragging_separator = None;
+                        self.active_window_mut().mouse_state.drag = None;
                         self.relayout();
                     }
-                    Grip::ExplorerWidth => {
-                        let ms = &mut self.active_window_mut().mouse_state;
-                        ms.dragging_file_explorer = false;
-                        ms.drag_start_explorer_width = None;
-                    }
+                    Grip::ExplorerWidth => self.active_window_mut().mouse_state.drag = None,
                     // A release where the press landed is a click, and a click
                     // on a header toggles the section; either way the drag is
                     // over and the rows it set stay set.
                     Grip::SectionDivider(_) => self.end_sidebar_section_drag(),
                 }
             }
+            UiFact::PanelKeyboard { slot, held } => self.panel_keyboard_changed(slot, held),
             UiFact::DockBlur => {
                 if self.dock.as_ref().is_some_and(|f| f.focused) {
                     self.blur_floating_panel(crate::app::PanelSlot::Dock);
@@ -3075,8 +3362,9 @@ impl Editor {
             // A split divider. The node is the container, so there is no hit
             // test: `handle_click_split_separator` walked a recorded list of
             // separator rectangles comparing the click against each in turn,
-            // to arrive at the identity the node already had. The drag it arms
-            // is still the legacy grab.
+            // to arrive at the identity the node already had. The press also
+            // records the whole gesture in one value, which the release
+            // takes; a container with no ratio to move records nothing.
             UiFact::SeparatorPress {
                 container,
                 direction,
@@ -3084,15 +3372,18 @@ impl Editor {
                 y,
             } => {
                 let ratio = self
+                    .active_window_mut()
                     .split_manager_mut()
                     .get_ratio(container.into())
                     .or_else(|| self.grouped_split_ratio(container));
-                let st = &mut self.active_window_mut().mouse_state;
-                st.dragging_separator = Some((container, direction));
-                st.drag_start_position = Some((x, y));
-                if let Some(ratio) = ratio {
-                    self.active_window_mut().mouse_state.drag_start_ratio = Some(ratio);
-                }
+                self.active_window_mut().mouse_state.drag = ratio.map(|start_ratio| {
+                    PointerDrag::Separator(crate::app::types::SeparatorDrag {
+                        container,
+                        direction,
+                        press: (x, y),
+                        start_ratio,
+                    })
+                });
             }
             UiFact::SeparatorHover(at) => {
                 // The tree's field, not the walk's. The walk runs after this on
@@ -3118,7 +3409,7 @@ impl Editor {
             UiFact::KeybindingRow(i) => {
                 if let Some(e) = self.keybinding_editor.as_mut() {
                     if i < e.display_rows.len() {
-                        e.selected = i;
+                        e.select(i);
                         if e.selected_is_section_header() {
                             e.toggle_section_at_selected();
                         }
@@ -3192,10 +3483,10 @@ impl Editor {
             // what is gone is the five families of rectangle that decided
             // *which* arm, and the walk over them.
             UiFact::SettingsCategory(idx) => self.settings_select_category(idx),
+            UiFact::SettingsStripCategory(idx) => self.settings_pick_category(idx),
             UiFact::SettingsCategorySection(cat, section) => {
                 self.settings_jump_to_section(cat, section)
             }
-            UiFact::SettingsCategoryDisclosure(idx) => self.settings_toggle_category(idx),
             // **The tree's own keys, arriving as what they mean.** The eight
             // arms behind this are the eight `handle_categories_input` still
             // has: one implementation (`SettingsState::tree_key`), reached
@@ -3356,6 +3647,9 @@ impl Editor {
                     KeySlot::WorkspaceTrust => {
                         let _ = self.handle_workspace_trust_key(&ev);
                     }
+                    KeySlot::Confirm => {
+                        self.handle_confirm_dialog_key(&ev);
+                    }
                 }
             }
             // **The prompt: the same seam, and the claim it completes.**
@@ -3496,12 +3790,16 @@ impl Editor {
                 if let crate::app::PanelSlot::Sidebar(_) = slot {
                     let ctx = self.get_key_context();
                     let resolved = self.keybindings.read().ok().map(|kb| kb.resolve(&ev, ctx));
-                    if matches!(
-                        resolved,
-                        Some(crate::input::keybindings::Action::FocusNextSidebarSection)
-                    ) {
-                        self.focus_next_sidebar_section();
-                        return;
+                    match resolved {
+                        Some(crate::input::keybindings::Action::FocusNextSidebarSection) => {
+                            self.focus_next_sidebar_section();
+                            return;
+                        }
+                        Some(crate::input::keybindings::Action::FocusPrevSidebarSection) => {
+                            self.focus_prev_sidebar_section();
+                            return;
+                        }
+                        _ => {}
                     }
                 }
                 // A `false` here is the interior declining —
@@ -3534,6 +3832,10 @@ impl Editor {
                     self.should_quit = true;
                 }
             }
+            // A button on the confirmation modal. One press is the answer —
+            // see `UiFact::ConfirmChoose`.
+            UiFact::ConfirmChoose(i) => self.confirm_dialog_choose(i),
+            UiFact::ConfirmHover(i) => self.confirm_dialog_hover(i),
             // The inspector. Dismissing it is the same statement three
             // places used to make: an outside-press guard returning
             // `PassAfter`, an `on_key` that cleared the field and returned
@@ -3576,14 +3878,21 @@ impl Editor {
             UiFact::ThemeInfoButtonHover(on) => {
                 self.shell_hover = on.then_some(crate::app::types::HoverTarget::ThemeInfoButton);
             }
-            UiFact::ExplorerScroll { delta, x, y } => {
-                // The surface's wheel, with the surface. Unchanged from the
-                // chrome component's `on_wheel`, including the plugin hook —
-                // the position it reports is the pointer's, which the tree
-                // carries on the event.
+            UiFact::ExplorerWheel { delta, x, y } => {
+                // The panel's own reactions to the wheel, unchanged from the
+                // chrome component's `on_wheel`: the plugin hook — the
+                // position it reports is the pointer's, which the tree
+                // carries on the event — and the popup dismissal. The window
+                // itself is moved by the library and arrives as the fact
+                // below.
                 self.dismiss_transient_popups();
                 self.active_window().wheel_plugin_hook(x, y, delta);
-                self.active_window_mut().scroll_file_explorer_view(delta);
+            }
+            UiFact::ExplorerScrollTo(offset) => {
+                // The window counts a drop preview's empty rows; the model
+                // does not.
+                let offset = self.explorer_window_row(offset);
+                self.active_window_mut().scroll_file_explorer_to(offset);
             }
 
             UiFact::MenuItemClick { depth, index } => {
@@ -3612,6 +3921,226 @@ impl Editor {
                     self.close_menu_with_auto_hide();
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod shell_theme_tests {
+    use super::shell_theme::{literal, names, pair, resolve, Attrs, Ink, Paint};
+    use ratatui::style::{Color, Modifier};
+
+    fn theme() -> crate::view::theme::Theme {
+        crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
+            .expect("a theme of nothing but defaults")
+    }
+
+    /// **A block caret is an attribute the grammar has to carry.** A form
+    /// control on a modal overlay draws its caret as one reverse-video cell —
+    /// there is no hardware cursor to place there — and a word the grammar
+    /// does not know is dropped on the way in, so the caret simply did not
+    /// appear. Reading is forgiving on purpose; that is exactly why the word
+    /// has to exist.
+    #[test]
+    fn a_reversed_cell_survives_the_written_form_and_reaches_the_style() {
+        let ink = Ink::keys("editor.fg", "editor.bg").plus(Attrs::REVERSED);
+        let written = ink.to_string();
+        assert!(written.ends_with("+reversed"), "{written:?}");
+        assert_eq!(Ink::parse(&written), Some(ink));
+        let style = resolve(&written, &theme());
+        assert!(
+            style
+                .add_modifier
+                .contains(ratatui::style::Modifier::REVERSED),
+            "the caret's cell reverses: {style:?}"
+        );
+    }
+
+    /// **What is written is what is read.** The name is a serialisation, so
+    /// the only thing that makes it safe to keep passing strings through
+    /// `fresh-ui` is that the round trip is lossless — including for the parts
+    /// the string form used to lose.
+    #[test]
+    fn an_ink_survives_the_written_form() {
+        for ink in [
+            Ink::keys("editor.fg", "editor.bg"),
+            Ink::keys("editor.fg", "editor.bg").plus(Attrs::BOLD | Attrs::DIM),
+            Ink::new(
+                Paint::Lit(Color::Rgb(126, 231, 135)),
+                Paint::key("editor.bg"),
+            ),
+            Ink::new(Paint::key("editor.fg"), Paint::Lit(Color::Indexed(42)))
+                .plus(Attrs::UNDERLINE),
+            Ink::new(Paint::Lit(Color::Yellow), Paint::Lit(Color::Black))
+                .plus(Attrs::ITALIC | Attrs::STRIKETHROUGH),
+            Ink::keys("editor.fg", "editor.bg").plus(Attrs::REVERSED),
+        ] {
+            let written = ink.to_string();
+            assert_eq!(
+                Ink::parse(&written),
+                Some(ink.clone()),
+                "{written:?} did not read back"
+            );
+        }
+    }
+
+    /// **Swapping one half leaves the other alone — attributes included.**
+    ///
+    /// This is the divergence the type exists to remove. The string form had
+    /// two spellings of "layer something over this name" and they disagreed:
+    /// swapping a background re-spliced the `+attrs` tail back on while setting
+    /// attributes dropped it, so a plugin span that named both a background and
+    /// an attribute silently un-dimmed a disabled suggestion row.
+    #[test]
+    fn layering_over_an_ink_keeps_what_it_does_not_mention() {
+        let row = Ink::keys("ui.suggestion_fg", "ui.suggestion_bg").plus(Attrs::DIM);
+        let both = row
+            .clone()
+            .with_bg(Paint::key("ui.menu_hover_bg"))
+            .plus(Attrs::BOLD);
+        assert_eq!(both.fg, row.fg, "the foreground was not mentioned");
+        assert!(both.attrs.contains(Attrs::DIM), "the row's dim survived");
+        assert!(both.attrs.contains(Attrs::BOLD), "the span's bold applied");
+    }
+
+    /// A word the grammar does not know is dropped rather than failing the
+    /// whole name: the alternative turns one typo into a surface painted in
+    /// the editor's plain ground. Nothing can *write* such a word — [`Attrs`]
+    /// has five constants and no other constructor — so this is the reading
+    /// half being forgiving, not the writing half being loose.
+    #[test]
+    fn a_background_keys_attributes_reach_the_style() {
+        // Every key may carry attributes, a background key included.
+        let mut t = theme();
+        t.set_modifier_key("ui.status_bar_bg", Modifier::UNDERLINED);
+        t.set_modifier_key("ui.status_bar_fg", Modifier::BOLD);
+        let style = resolve(&pair("ui.status_bar_fg", "ui.status_bar_bg"), &t);
+        assert!(style
+            .add_modifier
+            .contains(Modifier::BOLD | Modifier::UNDERLINED));
+        assert_eq!(style.bg, Some(t.status_bar_bg));
+    }
+
+    #[test]
+    fn an_unknown_attribute_is_dropped_not_fatal() {
+        let ink = Ink::parse("editor.fg/editor.bg+bold+wobble").expect("the pair is readable");
+        assert_eq!(ink.attrs, Attrs::BOLD);
+        assert_eq!(
+            resolve("editor.fg/editor.bg+wobble", &theme()).fg,
+            Some(theme().editor_fg)
+        );
+    }
+
+    /// **A plugin's key that the theme does not know leaves the rest of the
+    /// run alone.** `Ink::style` is all-or-nothing, so before `Paint::Asked`
+    /// existed one such name — `git_history.ts` colours commit hashes
+    /// `syntax.number`, which no theme has ever had — dropped the whole run to
+    /// the editor's plain ground, and tripped `resolve`'s assertion on the way
+    /// past. The painter's behaviour was to leave the row's own foreground in
+    /// place, and that is what this reproduces.
+    #[test]
+    fn a_plugin_key_the_theme_does_not_know_falls_back_to_what_was_under_it() {
+        let t = theme();
+        let asked = |k: &str| {
+            Ink::new(
+                Paint::asked(k.to_string(), Paint::key("ui.suggestion_fg")),
+                Paint::key("ui.suggestion_bg"),
+            )
+        };
+        let unknown = asked("syntax.number");
+        let style = resolve(&unknown.to_string(), &t);
+        assert_eq!(
+            style.fg,
+            Some(t.suggestion_fg),
+            "an unknown plugin key leaves the row's own foreground"
+        );
+        assert_eq!(
+            style.bg,
+            Some(t.suggestion_bg),
+            "and does not take the background down with it"
+        );
+
+        // One the theme *does* know still wins over what is under it.
+        let known = asked("syntax.keyword");
+        assert_eq!(resolve(&known.to_string(), &t).fg, Some(t.syntax_keyword));
+
+        // And the whole thing survives the written form, fallback included.
+        for ink in [unknown, known] {
+            let written = ink.to_string();
+            assert_eq!(
+                Ink::parse(&written),
+                Some(ink),
+                "{written:?} did not read back"
+            );
+        }
+    }
+
+    /// A literal has no name by construction, and the inspector should say so
+    /// rather than attributing a plugin's colour to a theme entry.
+    #[test]
+    fn a_literal_half_reports_no_name() {
+        let ink = Ink::new(Paint::Lit(Color::Rgb(1, 2, 3)), Paint::key("editor.bg"));
+        assert_eq!(ink.names(), (None, Some("editor.bg")));
+        let (fg, bg) = names(&ink.to_string());
+        assert_eq!((fg, bg), (None, Some("editor.bg".to_string())));
+    }
+
+    /// **Every colour round-trips.** The literal form exists because a plugin's
+    /// colour arrives already resolved, with no key to name it; it is only
+    /// honest if it loses nothing.
+    ///
+    /// It did lose something. An earlier version answered `editor.fg` for
+    /// anything that was not `Color::Rgb`, and theme colours are frequently one
+    /// of the sixteen names — `file_status_modified_fg` is `Yellow` in the
+    /// built-in dark theme — so every plugin-decorated row in the file explorer
+    /// silently painted in the panel's ordinary ink instead of its status
+    /// colour. Nothing failed; it just looked undecorated.
+    #[test]
+    fn a_literal_colour_survives_the_round_trip() {
+        let theme = crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
+            .expect("a theme of nothing but defaults");
+        for c in [
+            Color::Rgb(126, 231, 135),
+            Color::Rgb(0, 0, 0),
+            Color::Yellow,
+            Color::LightMagenta,
+            Color::Black,
+            Color::White,
+            Color::Reset,
+            Color::Indexed(0),
+            Color::Indexed(42),
+            Color::Indexed(255),
+        ] {
+            let style = resolve(&pair(&literal(c), "editor.bg"), &theme);
+            assert_eq!(style.fg, Some(c), "{c:?} did not survive {:?}", literal(c));
+        }
+    }
+
+    /// A literal composes with the rest of the grammar, so a plugin colour can
+    /// still be bold or underlined.
+    #[test]
+    fn a_literal_composes_with_attributes() {
+        use ratatui::style::Modifier;
+        let theme = crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
+            .expect("a theme of nothing but defaults");
+        let style = resolve("#7ee787/editor.bg+bold", &theme);
+        assert_eq!(style.fg, Some(Color::Rgb(126, 231, 135)));
+        assert!(style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    /// A malformed literal falls back to the editor's ground rather than to a
+    /// colour nobody asked for.
+    #[test]
+    fn a_malformed_literal_falls_back() {
+        let theme = crate::view::theme::Theme::from_json(r#"{"name":"test"}"#)
+            .expect("a theme of nothing but defaults");
+        for bad in [
+            "#zzzzzz/editor.bg",
+            "#12345/editor.bg",
+            "#NotAColour/editor.bg",
+        ] {
+            let style = resolve(bad, &theme);
+            assert_eq!(style.fg, Some(theme.editor_fg), "{bad}");
         }
     }
 }

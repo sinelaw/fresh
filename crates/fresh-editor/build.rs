@@ -76,7 +76,7 @@ fn main() {
             res.set("ProductName", "Fresh");
             res.set("FileDescription", "Fresh — fast terminal text editor");
             res.set("CompanyName", "Fresh");
-            res.set("LegalCopyright", "Licensed under GPL-2.0");
+            res.set("LegalCopyright", "Licensed under GPL-3.0-or-later");
             res.set("OriginalFilename", "fresh.exe");
             res.set("InternalName", "fresh");
 
@@ -130,7 +130,6 @@ fn generate_plugins_hash() -> Result<(), Box<dyn std::error::Error>> {
     let dest_path = Path::new(&out_dir).join("plugins_hash.txt");
     fs::write(&dest_path, &hash)?;
 
-    println!("cargo::warning=Generated plugins hash: {}", hash);
     Ok(())
 }
 

@@ -26,10 +26,10 @@
 use std::collections::VecDeque;
 use std::os::unix::io::{AsRawFd, BorrowedFd, RawFd};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossterm::event::MouseEventKind;
-use fresh_input_parser::{Event as InputEvent, InputParser};
+use fresh_input_parser::{Event as InputEvent, InputParser, MouseReportScanner, MouseScan};
 
 /// How long a buffered lone `ESC` waits for a continuation before it is
 /// resolved as the Escape key. This bounds two waits: the in-`drain_stdin`
@@ -46,12 +46,91 @@ use fresh_input_parser::{Event as InputEvent, InputParser};
 /// terminal (sinelaw/fresh#2793, a residue of #2745).
 const ESC_GRACE: Duration = Duration::from_millis(15);
 
+/// How long after a press teardown will still wait for its release — the
+/// release of a click the editor quit on. Only ever paid when a button is
+/// actually still down (see [`mouse_button_down`]), and returned from the
+/// moment the release lands, so in practice this is the slack between the user
+/// clicking Quit and letting go — not a delay added to every exit.
+///
+/// It needs to outlast a whole click, including a deliberate one: people hold
+/// a button for roughly 50-150ms and a slow click runs past 300ms.
+///
+/// It is measured from the press, not from the start of teardown. A press
+/// whose release never reaches us — dragged off the pane and let go over
+/// tmux's status line, or outside the window — leaves the button "down" for
+/// good, and a grace counted from teardown charged every later exit for it,
+/// keyboard quits included. Counted from the press, a release that is owed has
+/// either arrived by the time the grace is up, where the sweep still takes it,
+/// or is not coming at all.
+const MOUSE_RELEASE_GRACE: Duration = Duration::from_millis(400);
+
 /// Set to true by the `SIGWINCH` handler; consumed by [`TtyReader::take_resize`].
 static SIGWINCH_PENDING: AtomicBool = AtomicBool::new(false);
 
 /// True while a [`TtyReader`] owns stdin. Lets `coalesce_mouse_moves` know it
 /// must not also poke crossterm's global reader (which would race us on fd 0).
 static RAW_INPUT_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Tracks whether a mouse button is held, from the raw bytes both input paths
+/// already handle. Teardown reads it to decide whether a release is still owed
+/// (sinelaw/fresh#3474).
+///
+/// The grammar lives in `fresh-input-parser` rather than here: recognising a
+/// mouse report is parser work, and keeping a second copy next to the I/O is
+/// how the two come to disagree.
+static MOUSE_SCAN: std::sync::Mutex<MouseTracker> = std::sync::Mutex::new(MouseTracker {
+    scan: MouseReportScanner::new(),
+    pressed_at: None,
+});
+
+/// The scanner, plus when the button it reports down went down — which is what
+/// [`MOUSE_RELEASE_GRACE`] counts from.
+struct MouseTracker {
+    scan: MouseReportScanner,
+    pressed_at: Option<Instant>,
+}
+
+impl MouseTracker {
+    /// Until when teardown should wait for a release, as of `now`.
+    ///
+    /// A release is owed only while a button is still down, and only within
+    /// the grace of its press. Otherwise there is nothing to wait for, and the
+    /// deadline is `now` — which still sweeps whatever is already queued.
+    fn release_deadline(&self, now: Instant) -> Instant {
+        match self.pressed_at {
+            Some(pressed_at) if self.scan.button_down() => {
+                (pressed_at + MOUSE_RELEASE_GRACE).max(now)
+            }
+            _ => now,
+        }
+    }
+}
+
+/// Track button state from raw host input.
+///
+/// Both input paths feed this: direct mode as it reads stdin, and the daemon
+/// client as it relays stdin to the server. The client never parses the bytes
+/// itself — the server does — so it has no event stream to learn this from.
+pub fn note_mouse_bytes(bytes: &[u8]) {
+    if let Ok(mut tracker) = MOUSE_SCAN.lock() {
+        for &b in bytes {
+            if let MouseScan::Complete {
+                kind: Some(MouseEventKind::Down(_)),
+            } = tracker.scan.step(b)
+            {
+                tracker.pressed_at = Some(Instant::now());
+            }
+        }
+    }
+}
+
+/// Whether a mouse button is currently held — a press was reported and no
+/// release has followed it.
+pub fn mouse_button_down() -> bool {
+    MOUSE_SCAN
+        .lock()
+        .is_ok_and(|tracker| tracker.scan.button_down())
+}
 
 /// Whether host input is being read by a [`TtyReader`] (rather than crossterm).
 pub fn raw_input_active() -> bool {
@@ -96,6 +175,88 @@ fn poll_readable(fd: RawFd, timeout: Duration) -> bool {
     }
 }
 
+/// Read exactly one byte from `fd`, or `None` if the read did not yield one.
+fn read_one_byte(fd: RawFd) -> Option<u8> {
+    let mut b = 0u8;
+    // SAFETY: a one-byte read into a local we own, from a borrowed stdin fd.
+    let n = unsafe { libc::read(fd, std::ptr::addr_of_mut!(b).cast::<libc::c_void>(), 1) };
+    (n == 1).then_some(b)
+}
+
+/// Consume mouse reports left in the terminal's input queue at teardown.
+///
+/// Two different things end up there, and either reaches the shell as text if
+/// it is left behind:
+///
+/// * The **release** of the click the editor quit on. Quitting from the menu
+///   bar acts on the press, so the terminal is torn down while the release is
+///   still unsent; over a link with any latency the disable is in flight when
+///   the user lets go, so the release is sent anyway and arrives once raw mode
+///   is already off. bash binds `ESC <` to `beginning-of-history`, which
+///   swallows the report's `ESC[<` prefix and leaves the rest on the command
+///   line as e.g. `0;37;17m` (sinelaw/fresh#3474). This one has to be *waited*
+///   for: at teardown it has not been sent yet.
+/// * **Motion reports** the pointer produced during the shutdown window. Those
+///   are already queued, so they need no wait at all, only taking.
+///
+/// So the two differ only in their deadline, and one loop serves both.
+///
+/// Call this at teardown *before* mouse reporting and raw mode are turned off:
+/// the bytes are only identifiable as reports while both are still on.
+pub fn drain_pending_mouse_report() {
+    let fd = std::io::stdin().as_raw_fd();
+    let Ok(mut tracker) = MOUSE_SCAN.lock() else {
+        return;
+    };
+    let deadline = tracker.release_deadline(Instant::now());
+    consume_mouse_reports(fd, deadline, &mut tracker.scan);
+}
+
+/// Take whole mouse reports off `fd` until the release lands, the queue runs
+/// dry, or `deadline` passes.
+///
+/// Deliberately narrow rather than a blanket flush of pending input (the shape
+/// of both the reporter's shell-wrapper workaround and of `tcflush`): the
+/// scanner is offered one byte at a time and the loop stops at the first byte
+/// that cannot belong to a report, instead of eating ahead into something the
+/// user typed for their shell. A `deadline` of now makes it a non-blocking
+/// sweep of what is already queued, since the poll below still runs once.
+fn consume_mouse_reports(fd: RawFd, mut deadline: Instant, scan: &mut MouseReportScanner) {
+    // Backstop only — `deadline` is what really bounds this. It has to be far
+    // more than one report's worth: motion tracking is still on, so a pointer
+    // that drifts while the button is held puts a run of drag reports in front
+    // of the release.
+    const MAX_BYTES: usize = 4096;
+
+    for _ in 0..MAX_BYTES {
+        // A zero remainder leaves this a non-blocking probe rather than a skip,
+        // which is what lets one deadline express both "wait for the release"
+        // and "take what is already here".
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if !poll_readable(fd, remaining) {
+            return;
+        }
+        let Some(b) = read_one_byte(fd) else {
+            return;
+        };
+        match scan.step(b) {
+            // The byte is gone, but stopping here is what keeps the sweep off
+            // the user's own input.
+            MouseScan::NotAReport => return,
+            MouseScan::Partial => {}
+            MouseScan::Complete { kind } => {
+                // The release is the report the wait exists for. Stop waiting,
+                // but keep sweeping whatever is already queued behind it. A
+                // press, drag or motion report is not it: returning on one
+                // would leave the release behind, which is the leak itself.
+                if matches!(kind, Some(MouseEventKind::Up(_))) {
+                    deadline = Instant::now();
+                }
+            }
+        }
+    }
+}
+
 /// Streaming reader that converts raw stdin bytes into crossterm events.
 pub struct TtyReader {
     parser: InputParser,
@@ -105,6 +266,9 @@ pub struct TtyReader {
 
 impl TtyReader {
     /// Install the `SIGWINCH` handler and take ownership of stdin input.
+    ///
+    /// Not `Default`: constructing one has process-wide side effects.
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         install_sigwinch_handler();
         RAW_INPUT_ACTIVE.store(true, Ordering::Relaxed);
@@ -184,6 +348,7 @@ impl TtyReader {
         if n <= 0 {
             return false;
         }
+        note_mouse_bytes(&buf[..n as usize]);
         let events = self.parser.parse(&buf[..n as usize]);
         for ev in events {
             self.push_coalesced(ev);
@@ -215,17 +380,9 @@ impl TtyReader {
     /// presses, releases and wheel notches each mean something at the moment
     /// they happened, so they always queue.
     fn push_coalesced(&mut self, ev: InputEvent) {
-        if let InputEvent::Mouse(m) = &ev {
-            if matches!(m.kind, MouseEventKind::Moved | MouseEventKind::Drag(_)) {
-                if let Some(InputEvent::Mouse(last)) = self.queue.back() {
-                    if last.kind == m.kind && last.modifiers == m.modifiers {
-                        *self.queue.back_mut().expect("back() was Some") = ev;
-                        return;
-                    }
-                }
-            }
+        if let Some(ev) = fresh_input_parser::coalesce_motion_into(self.queue.back_mut(), ev) {
+            self.queue.push_back(ev);
         }
-        self.queue.push_back(ev);
     }
 
     /// Queue an event that did not come from stdin, through the same motion
@@ -267,18 +424,6 @@ impl TtyReader {
             self.flush_pending_escape();
         }
         Ok(self.next_buffered().or_else(|| self.take_resize()))
-    }
-
-    /// Non-blocking peek at the next event: drains stdin once if data is already
-    /// pending. Used by mouse-move coalescing to look ahead without blocking.
-    pub fn try_next(&mut self) -> Option<InputEvent> {
-        if let Some(ev) = self.next_buffered() {
-            return Some(ev);
-        }
-        if poll_readable(self.stdin_fd, Duration::ZERO) {
-            self.drain_stdin();
-        }
-        self.next_buffered().or_else(|| self.take_resize())
     }
 }
 
@@ -333,6 +478,33 @@ mod tests {
                 libc::close(self.1);
             }
         }
+    }
+
+    /// A press whose release never reached us — dragged off the pane and let
+    /// go over tmux's status line — must not charge a later quit the whole
+    /// grace. Only a press still inside its grace is owed a wait, and only
+    /// for what is left of it.
+    #[test]
+    fn release_wait_is_counted_from_the_press() {
+        let mut tracker = MouseTracker {
+            scan: MouseReportScanner::new(),
+            pressed_at: None,
+        };
+        tracker.scan.feed(b"\x1b[<0;60;5M");
+        assert!(tracker.scan.button_down());
+        let now = Instant::now();
+
+        tracker.pressed_at = Some(now - Duration::from_secs(2));
+        assert_eq!(tracker.release_deadline(now), now, "stale press waits");
+
+        tracker.pressed_at = Some(now - Duration::from_millis(100));
+        assert_eq!(
+            tracker.release_deadline(now),
+            now + MOUSE_RELEASE_GRACE - Duration::from_millis(100)
+        );
+
+        tracker.scan.feed(b"\x1b[<0;60;5m");
+        assert_eq!(tracker.release_deadline(now), now, "released, yet waits");
     }
 
     fn drain_events(r: &mut TtyReader) -> Vec<InputEvent> {

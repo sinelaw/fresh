@@ -16,7 +16,7 @@ use tokio::process::Command;
 
 use crate::services::process_hidden::HideWindow;
 use crate::services::remote::{
-    LongRunningSpawner, ProcessSpawner, SpawnError, SpawnResult, StdioChild,
+    LongRunningSpawner, ProcessSpawner, RawSpawnResult, SpawnError, SpawnResult, StdioChild,
 };
 use crate::services::workspace_trust::{gate, WorkspaceTrust};
 
@@ -128,12 +128,12 @@ impl DockerExecSpawner {
 
 #[async_trait]
 impl ProcessSpawner for DockerExecSpawner {
-    async fn spawn(
+    async fn spawn_raw(
         &self,
         command: String,
         args: Vec<String>,
         cwd: Option<String>,
-    ) -> Result<SpawnResult, SpawnError> {
+    ) -> Result<RawSpawnResult, SpawnError> {
         gate(&self.trust, &command, cwd.as_deref())?;
         let cwd_path = cwd.as_deref().map(Path::new);
         let docker_args = self.build_exec_args(&command, &args, cwd_path, false, &[]);
@@ -147,8 +147,8 @@ impl ProcessSpawner for DockerExecSpawner {
             .await
             .map_err(|e| SpawnError::Process(e.to_string()))?;
 
-        Ok(SpawnResult {
-            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        Ok(RawSpawnResult {
+            stdout: output.stdout,
             stderr: String::from_utf8_lossy(&output.stderr).to_string(),
             exit_code: output.status.code().unwrap_or(-1),
         })

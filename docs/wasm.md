@@ -73,7 +73,7 @@ Every primitive feature now has a pure-Rust WASM-compatible implementation:
 
 | Feature | WASM Module | Runtime Module | Notes |
 |---------|-------------|----------------|-------|
-| Syntax highlighting | `textmate_engine.rs` | `highlight_engine.rs` | Syntect with fancy-regex |
+| Syntax highlighting | — | `highlight_engine.rs` | The syntect-only `textmate_engine.rs` mirror was removed unused; a WASM build would need a syntect-only mode of `highlight_engine.rs` |
 | Auto-indentation | `indent_pattern.rs` | `indent.rs` | Pattern-based heuristics |
 | Reference highlighting | `reference_highlight_text.rs` | `reference_highlighter.rs` | Text matching |
 
@@ -94,7 +94,6 @@ Every primitive feature now has a pure-Rust WASM-compatible implementation:
 | **visual_layout.rs** | ✅ Ready | ansi, display_width |
 | **grammar/types.rs** | ✅ Ready | syntect with fancy-regex |
 | **highlight_types.rs** | ✅ Ready | Common highlighting types |
-| **textmate_engine.rs** | ✅ Ready | Syntect-only highlighting |
 | **indent_pattern.rs** | ✅ Ready | Pattern-based indentation |
 | **reference_highlight_text.rs** | ✅ Ready | Text-based word matching |
 
@@ -105,8 +104,8 @@ WASM builds use the pure-Rust alternatives above.
 
 | File | Enhancement | WASM Alternative |
 |------|-------------|------------------|
-| highlight_engine.rs | Unified engine with tree-sitter | `textmate_engine.rs` |
-| highlighter.rs | Tree-sitter highlighting | `textmate_engine.rs` |
+| highlight_engine.rs | Unified engine with tree-sitter | — |
+| highlighter.rs | Tree-sitter highlighting | — |
 | indent.rs | AST-aware smart indentation | `indent_pattern.rs` |
 | reference_highlighter.rs | Scope-aware semantic highlighting | `reference_highlight_text.rs` |
 
@@ -340,7 +339,6 @@ Completed:
 - ✅ **Syntect enabled for WASM** with `fancy-regex` feature (pure Rust regex)
 - ✅ **Grammar module WASM-compatible** (TextMate grammar loading via syntect)
 - ✅ **Theme types WASM-compatible** (view/theme/types.rs)
-- ✅ **Syntax highlighting**: `textmate_engine.rs` (100+ languages)
 - ✅ **Auto-indentation**: `indent_pattern.rs` (pattern-based)
 - ✅ **Reference highlighting**: `reference_highlight_text.rs` (text matching)
 

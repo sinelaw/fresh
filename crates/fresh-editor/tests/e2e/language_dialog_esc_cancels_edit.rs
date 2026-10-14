@@ -43,6 +43,9 @@ fn row_is_focused(harness: &EditorTestHarness, label: &str) -> bool {
 /// Open the single language entry's Edit Value dialog. Leaves it open.
 fn open_language_dialog(harness: &mut EditorTestHarness) {
     harness.open_settings().unwrap();
+    harness
+        .select_settings_category("Syntax & Languages")
+        .unwrap();
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     for _ in 0..60 {

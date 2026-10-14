@@ -344,21 +344,19 @@ impl<A: GuiApplication + 'static> ApplicationHandler for WgpuRunner<A> {
                 event_loop.exit();
             }
 
-            WindowEvent::Resized(size) => {
-                if size.width > 0 && size.height > 0 {
-                    state.terminal.backend_mut().resize(size.width, size.height);
-                    // Re-derive cell size from the backend after resize
-                    if let Ok(ws) = state.terminal.backend_mut().window_size() {
-                        let cols = ws.columns_rows.width;
-                        let rows = ws.columns_rows.height;
-                        state.cell_size = (
-                            ws.pixels.width as f64 / cols.max(1) as f64,
-                            ws.pixels.height as f64 / rows.max(1) as f64,
-                        );
-                        state.app.resize(cols, rows);
-                    }
-                    state.needs_render = true;
+            WindowEvent::Resized(size) if size.width > 0 && size.height > 0 => {
+                state.terminal.backend_mut().resize(size.width, size.height);
+                // Re-derive cell size from the backend after resize
+                if let Ok(ws) = state.terminal.backend_mut().window_size() {
+                    let cols = ws.columns_rows.width;
+                    let rows = ws.columns_rows.height;
+                    state.cell_size = (
+                        ws.pixels.width as f64 / cols.max(1) as f64,
+                        ws.pixels.height as f64 / rows.max(1) as f64,
+                    );
+                    state.app.resize(cols, rows);
                 }
+                state.needs_render = true;
             }
 
             WindowEvent::ModifiersChanged(mods) => {
@@ -493,14 +491,14 @@ impl<A: GuiApplication + 'static> ApplicationHandler for WgpuRunner<A> {
                 }
             }
 
-            WindowEvent::RedrawRequested => {
-                if state.needs_render && state.last_render.elapsed() >= FRAME_DURATION {
-                    if let Err(e) = state.terminal.draw(|frame| state.app.render(frame)) {
-                        tracing::error!("Render error: {}", e);
-                    }
-                    state.last_render = Instant::now();
-                    state.needs_render = false;
+            WindowEvent::RedrawRequested
+                if state.needs_render && state.last_render.elapsed() >= FRAME_DURATION =>
+            {
+                if let Err(e) = state.terminal.draw(|frame| state.app.render(frame)) {
+                    tracing::error!("Render error: {}", e);
                 }
+                state.last_render = Instant::now();
+                state.needs_render = false;
             }
 
             _ => {}

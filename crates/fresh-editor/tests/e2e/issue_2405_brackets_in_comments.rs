@@ -42,7 +42,11 @@ fn brackets_in_comments_are_not_rainbow_colored() {
     ];
 
     let buffer = &harness.editor().active_state().buffer;
-    let gutter = harness.editor().active_viewport().gutter_width(buffer) as u16;
+    let gutter = harness
+        .editor()
+        .active_window()
+        .active_viewport()
+        .gutter_width(buffer) as u16;
     let (first_row, _) = harness.content_area_rows();
     let first_row = first_row as u16;
 

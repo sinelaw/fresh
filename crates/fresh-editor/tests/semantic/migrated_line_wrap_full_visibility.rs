@@ -84,7 +84,7 @@ fn interesting_lines() -> Vec<String> {
 
     for rep in [2usize, 3, 5] {
         for ch in ['.', '!', '?', ',', '-', '*', '='] {
-            let run: String = std::iter::repeat(ch).take(rep).collect();
+            let run: String = std::iter::repeat_n(ch, rep).collect();
             lines.push(format!("run of {ch}s{run}"));
         }
     }
@@ -125,7 +125,7 @@ fn interesting_lines() -> Vec<String> {
     lines.push("abcdefghijklmnopqrstuvwxyz0123456789".into());
 
     for indent in [4usize, 8, 12, 16, 20] {
-        let pad: String = std::iter::repeat(' ').take(indent).collect();
+        let pad: String = std::iter::repeat_n(' ', indent).collect();
         lines.push(format!(
             "{pad}dialog.getButton(DialogInterface.BUTTON_NEUTRAL).setOnClickListener {{"
         ));

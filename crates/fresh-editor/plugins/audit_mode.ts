@@ -34,7 +34,6 @@ import {
   styledRow,
   text,
   textInputChar,
-  textInputKey,
   tree,
   treeNode,
 } from "./lib/widgets.ts";
@@ -664,7 +663,7 @@ function persistReview(): void {
         updated_at: new Date().toISOString(),
     };
     try {
-        editor.writeFile(editor.localPath(path), JSON.stringify(payload, null, 2));
+        editor.replaceFile(editor.localPath(path), JSON.stringify(payload, null, 2));
     } catch {}
 }
 
@@ -2292,6 +2291,17 @@ function filesInDisplayOrder(): FileEntry[] {
  *  it is acting on. */
 let filesSelectedNodeKey = "";
 
+/** The directory / category rows the reader folded. Every group is open
+ *  by default, so the tree's expansion is `groupKeys` minus these — kept
+ *  here because a rebuild can bring groups the host has never seen (a new
+ *  directory, a filter cleared), and those must arrive open. */
+let filesCollapsedKeys = new Set<string>();
+
+/** The FILES tree's expanded set: every group but the folded ones. */
+function filesExpandedKeys(): string[] {
+    return filesTree.groupKeys.filter((k) => !filesCollapsedKeys.has(k));
+}
+
 /** The sidebar tree as last built — the map from a `select` event's node
  *  key back to a file. */
 let filesTree: FilesTree = {
@@ -2345,7 +2355,9 @@ function buildFilesPanelSpec(): WidgetSpec {
             // panel kept the old, shorter window until some unrelated
             // event happened to repaint it — the rows below the window
             // stayed blank with files still to show.
-            expandedKeys: filesTree.groupKeys,
+            // A seed only: the host owns expansion once the tree is up,
+            // so `renderFilesPanel` pushes the same set after every build.
+            expandedKeys: filesExpandedKeys(),
             indentCols: FILES_TREE_INDENT,
             key: FILES_TREE_KEY,
         }));
@@ -2495,6 +2507,9 @@ function panelVisible(panel: 'files' | 'diff' | 'comments'): boolean {
 function renderFilesPanel(): void {
     if (filesPanel === null || !panelVisible('files')) return;
     filesPanel.set(buildFilesPanelSpec());
+    // The spec's `expandedKeys` is ignored once the tree has state, and a
+    // rebuild can add groups that must open by default.
+    filesPanel.setExpandedKeys(FILES_TREE_KEY, filesExpandedKeys());
     pointSidebarAtCurrentFile();
 }
 
@@ -2632,8 +2647,15 @@ editor.on("widget_event", (data) => {
             }
             return;
         }
+        if (data.event_type === "expand") {
+            // The host has already flipped the row; remember the fold so
+            // the next rebuild keeps it.
+            const expanded = (data.payload as Record<string, unknown>)?.["expanded"] === true;
+            if (expanded) filesCollapsedKeys.delete(nodeKey);
+            else filesCollapsedKeys.add(nodeKey);
+        }
         adoptPanelFocusFromWidget('files');
-        return; // `expand` is host-owned; nothing else to mirror.
+        return;
     }
     if (data.widget_key === FILES_FILTER_KEY) {
         if (data.event_type === "focus") {
@@ -4065,18 +4087,32 @@ function buildHunkPatch(filePath: string, hunk: Hunk, lineRange?: { start: numbe
  * Returns true on success.
  */
 async function applyHunkPatch(patch: string, flags: string[]): Promise<boolean> {
-    const tmpDir = editor.getTempDir();
-    const patchPath = editor.pathJoin(tmpDir, `fresh-review-${Date.now()}.patch`);
-    editor.writeFile(editor.localPath(patchPath), patch);
-    const cwd = gitCwd();
-    // Validate first
-    const check = await editor.spawnProcess("git", ["apply", "--check", ...flags, patchPath], cwd);
-    if (check.exit_code !== 0) {
-        editor.setStatus("Patch failed: " + (check.stderr || "").trim());
+    // A staging directory rather than a path of our own under the temp dir:
+    // this used to leave a `fresh-review-*.patch` file behind for every hunk
+    // applied, because there was never any cleanup here. The editor takes the
+    // directory back on `scratchDiscard`, on every path out of this function.
+    const token = editor.scratchCreate("review-patch");
+    if (!token) return false;
+    const dir = editor.scratchPath(token);
+    if (!dir) return false;
+    const patchPath = editor.pathJoin(dir, "hunk.patch");
+    if (!editor.writeFile(editor.localPath(patchPath), patch)) {
+        editor.scratchDiscard(token);
         return false;
     }
-    const result = await editor.spawnProcess("git", ["apply", ...flags, patchPath], cwd);
-    return result.exit_code === 0;
+    try {
+        const cwd = gitCwd();
+        // Validate first
+        const check = await editor.spawnProcess("git", ["apply", "--check", ...flags, patchPath], cwd);
+        if (check.exit_code !== 0) {
+            editor.setStatus("Patch failed: " + (check.stderr || "").trim());
+            return false;
+        }
+        const result = await editor.spawnProcess("git", ["apply", ...flags, patchPath], cwd);
+        return result.exit_code === 0;
+    } finally {
+        editor.scratchDiscard(token);
+    }
 }
 
 /**
@@ -4364,8 +4400,32 @@ function startDiscardFilePrompt(f: FileEntry): void {
             : (tr("prompt.discard_file_lose") ?? "Permanently lose changes");
     editor.startPrompt(`${action} "${f.path}"? This cannot be undone.`, "review-discard-confirm");
     const suggestions: PromptSuggestion[] = [
-        { text: `${action} file`, description, value: "discard" },
-        { text: "Cancel", description: "Keep the file as-is", value: "cancel" },
+        { id: "discard", text: `${action} file`, description, value: "discard" },
+        { id: "cancel", text: "Cancel", description: "Keep the file as-is", value: "cancel" },
+    ];
+    editor.setPromptSuggestions(suggestions);
+}
+
+/**
+ * Ask before discarding a visual line selection, as the hunk and file
+ * discards do: it reverse-applies the lines to the working tree, and nothing
+ * keeps a copy. The selection stays up while the question is open — it is
+ * what the answer applies to, and it already holds off the auto-refresh poll.
+ */
+function startDiscardLinesPrompt() {
+    const sel = selectionLineRange();
+    if (!sel) {
+        editor.setStatus(editor.t("status.visual_invalid") || "Selection has no add/remove lines or crosses hunk boundary");
+        return;
+    }
+    editor.startPrompt(
+        editor.t("prompt.discard_lines", { file: sel.hunk.file }) ||
+        `Discard the selected lines in "${sel.hunk.file}"? This cannot be undone.`,
+        "review-discard-lines-confirm"
+    );
+    const suggestions: PromptSuggestion[] = [
+        { id: "discard", text: "Discard lines", description: "Permanently lose these changes", value: "discard" },
+        { id: "cancel", text: "Cancel", description: "Keep the lines as-is", value: "cancel" },
     ];
     editor.setPromptSuggestions(suggestions);
 }
@@ -4382,7 +4442,7 @@ registerHandler("review_discard_file_only", review_discard_file_only);
 
 function review_discard_file() {
     if (state.files.length === 0) return;
-    if (state.lineSelection) { void applyLineSelection('discard'); return; }
+    if (state.lineSelection) { startDiscardLinesPrompt(); return; }
     const headerFile = fileHeaderUnderCursor();
     const f = headerFile ?? currentFileFromCursor();
     if (!headerFile) {
@@ -4396,8 +4456,8 @@ function review_discard_file() {
             "review-discard-hunk-confirm"
         );
         const suggestions: PromptSuggestion[] = [
-            { text: "Discard hunk", description: "Permanently lose this change", value: "discard" },
-            { text: "Cancel", description: "Keep the hunk as-is", value: "cancel" },
+            { id: "discard", text: "Discard hunk", description: "Permanently lose this change", value: "discard" },
+            { id: "cancel", text: "Cancel", description: "Keep the hunk as-is", value: "cancel" },
         ];
         editor.setPromptSuggestions(suggestions);
         return;
@@ -6179,16 +6239,6 @@ function review_filter_text_input(args: { text: string }): void {
 // unqualified legacy dispatch, which other plugins also answer to.
 registerHandler("mode_text_input", review_filter_text_input);
 
-/** Editing keys (Backspace, arrows, …) and the tree-walking keys, both
- *  handed to the host's smart-key dispatch for the focused field. */
-function review_filter_key(name: string): void {
-    if (filesPanel === null) return;
-    filesPanel.command(name === "Backspace" || name === "Delete"
-        ? textInputKey(name)
-        : key(name));
-}
-registerHandler("review_filter_backspace", () => review_filter_key("Backspace"));
-registerHandler("review_filter_delete", () => review_filter_key("Delete"));
 /** ↑ / ↓ from the field step into the results: focus moves to the tree
  *  (which puts the panel back in command mode) and the key walks it. */
 function review_filter_step(name: "Up" | "Down"): void {
@@ -6199,18 +6249,15 @@ function review_filter_step(name: "Up" | "Down"): void {
 }
 registerHandler("review_filter_up", () => review_filter_step("Up"));
 registerHandler("review_filter_down", () => review_filter_step("Down"));
-registerHandler("review_filter_left", () => review_filter_key("Left"));
-registerHandler("review_filter_right", () => review_filter_key("Right"));
 
+// The filter field answers its own editing keys (Backspace, Delete, the
+// caret) before these; what it leaves — Enter, Esc, Tab and ↑/↓ — are the
+// filter's commands.
 editor.defineMode(REVIEW_FILTER_MODE, [
     ["Esc", "review_filter_cancel"],
     ["Enter", "review_filter_accept"],
-    ["Backspace", "review_filter_backspace"],
-    ["Delete", "review_filter_delete"],
     ["Up", "review_filter_up"],
     ["Down", "review_filter_down"],
-    ["Left", "review_filter_left"],
-    ["Right", "review_filter_right"],
     ["Tab", "review_filter_accept"],
 ], true, true, false);
 
@@ -7054,8 +7101,8 @@ async function review_delete_comment() {
     const preview = target.text.length > 40 ? target.text.substring(0, 37) + '...' : target.text;
     editor.startPrompt(`Delete "${preview}"?`, "review-delete-comment-confirm");
     const suggestions: PromptSuggestion[] = [
-        { text: "Delete", description: "Remove this comment", value: "delete" },
-        { text: "Cancel", description: "Keep the comment", value: "cancel" },
+        { id: "delete", text: "Delete", description: "Remove this comment", value: "delete" },
+        { id: "cancel", text: "Cancel", description: "Keep the comment", value: "cancel" },
     ];
     editor.setPromptSuggestions(suggestions);
 }
@@ -7179,6 +7226,16 @@ editor.on("prompt_confirmed", async (args) => {
     }
     return false;
 });
+editor.on("prompt_confirmed", async (args) => {
+    if (args.prompt_type !== "review-discard-lines-confirm") return true;
+    const response = args.input.trim().toLowerCase();
+    if ((response === "discard" || args.selected_index === 0) && state.lineSelection) {
+        await applyLineSelection('discard');
+    } else {
+        editor.setStatus("Discard cancelled");
+    }
+    return false;
+});
 editor.on("prompt_confirmed", (args) => {
     if (args.prompt_type !== "review-edit-note") return true;
     if (args.input && args.input.trim()) {
@@ -7297,7 +7354,7 @@ async function review_export_session() {
     }
 
     const filePath = editor.pathJoin(reviewDir, "session.md");
-    await editor.writeFile(editor.authorityPath(filePath), md);
+    await editor.replaceFile(editor.authorityPath(filePath), md);
     editor.setStatus(editor.t("status.exported", { path: filePath }));
 }
 registerHandler("review_export_session", review_export_session);
@@ -7321,7 +7378,7 @@ async function review_export_json() {
     };
 
     const filePath = editor.pathJoin(reviewDir, "session.json");
-    await editor.writeFile(editor.authorityPath(filePath), JSON.stringify(session, null, 2));
+    await editor.replaceFile(editor.authorityPath(filePath), JSON.stringify(session, null, 2));
     editor.setStatus(editor.t("status.exported", { path: filePath }));
 }
 registerHandler("review_export_json", review_export_json);
@@ -7551,6 +7608,7 @@ function stop_review_diff() {
     toolbarPanel = null;
     filesPanel = null;
     commentsPanel = null;
+    filesCollapsedKeys = new Set<string>();
     if (state.groupId !== null) {
         editor.closeBufferGroup(state.groupId);
         state.groupId = null;
@@ -7673,13 +7731,14 @@ async function fetchRangeDiff(range: ReviewRange): Promise<{ hunks: Hunk[]; file
 async function buildRangeSuggestions(): Promise<PromptSuggestion[]> {
     const suggestions: PromptSuggestion[] = [];
     // HEAD last commit.
-    suggestions.push({ text: "HEAD", description: "Review last commit", value: "HEAD" });
+    suggestions.push({ id: "HEAD", text: "HEAD", description: "Review last commit", value: "HEAD" });
     // Current-branch-vs-main style ranges.
     const tryRange = async (base: string) => {
         const cwd = gitCwd();
         const exists = await editor.spawnProcess("git", ["rev-parse", "--verify", base], cwd);
         if (exists.exit_code === 0) {
             suggestions.push({
+                id: `${base}..HEAD`,
                 text: `${base}..HEAD`,
                 description: `Review all commits on current branch vs ${base}`,
                 value: `${base}..HEAD`,
@@ -7699,6 +7758,7 @@ async function buildRangeSuggestions(): Promise<PromptSuggestion[]> {
                 const m = line.match(/^([0-9a-f]+)\s+(.*)$/);
                 if (m) {
                     suggestions.push({
+                        id: m[1],
                         text: m[1],
                         description: `Review commit: ${m[2]}`,
                         value: m[1],
@@ -8743,9 +8803,12 @@ editor.on("buffer_closed", (data) => {
 
 const REVIEW_MODE_BINDINGS: string[][] = [
     // Native cursor motion in the unified diff stream.
-    ["Up", "review_nav_up"], ["Down", "review_nav_down"],
+    // The comments panel steps one *comment* at a time (a note wraps over
+    // several list rows), so these run ahead of the focused list as
+    // declared dialog-wide shortcuts rather than after it.
+    ["Up", "review_nav_up", "shortcut"], ["Down", "review_nav_down", "shortcut"],
     ["k", "review_nav_up"], ["j", "review_nav_down"],
-    ["PageUp", "review_page_up"], ["PageDown", "review_page_down"],
+    ["PageUp", "review_page_up", "shortcut"], ["PageDown", "review_page_down", "shortcut"],
     // Home / End — start / end of line in the diff (the editor's normal
     // meaning), first / last row in a focused side panel. Mode bindings
     // replace globals, so these are bound explicitly.

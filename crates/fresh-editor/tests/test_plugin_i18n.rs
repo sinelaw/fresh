@@ -13,6 +13,13 @@ use std::fs;
 #[cfg(feature = "plugins")]
 #[test]
 fn test_plugin_i18n_loading_and_translation() {
+    // This test switches the locale mid-body and reads the result back, so it
+    // is one of the tests `global_state` exists for: without the pin, any
+    // other test that builds a harness — or that drops a pin of its own,
+    // which resets the locale to `en` — lands in the middle of it. Cargo
+    // runs the roots of this binary in parallel threads, so "some other
+    // test" is every test in the suite.
+    let _pin = crate::common::global_state::pin_config_globals();
     init_tracing_from_env();
     let temp_dir = tempfile::TempDir::new().unwrap();
     let project_root = temp_dir.path().join("project_root");

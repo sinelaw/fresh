@@ -58,7 +58,13 @@ pub mod api;
 pub mod command;
 pub mod hooks;
 
-/// Unique identifier for a terminal session
+/// Unique identifier for a terminal session.
+///
+/// Ids are allocated from one editor-wide counter shared by every window's
+/// terminal manager, so a bare `TerminalId` names at most one terminal in the
+/// whole editor: looking it up in a window that doesn't own it finds nothing,
+/// never a different terminal that happens to share the number. Ids are not
+/// stable across editor runs (a restored terminal gets a fresh id).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, TS)]
 #[ts(export)]
 pub struct TerminalId(pub usize);
@@ -94,16 +100,14 @@ impl std::fmt::Display for WindowId {
     }
 }
 
-/// A terminal identified across the whole editor.
+/// A terminal together with the window that owns it.
 ///
-/// `TerminalId`s are only unique *within* their owning window's
-/// `TerminalManager` — every window numbers its terminals from 0, so two
-/// windows each have a `Terminal-0`. Any layer that resolves a terminal
-/// without already holding its window — most importantly the async
-/// PTY-output messages routed through the main loop — must carry this
-/// `(window, terminal)` pair. Resolving by bare `TerminalId` across
-/// windows is ambiguous: it silently attributes output to whichever
-/// window happens to hold the same local id first.
+/// `TerminalId`s are unique editor-wide, so the bare id never collides
+/// across windows. This pair is the *routing* tag: layers that must act on
+/// the terminal without already holding its window — most importantly the
+/// async PTY-output and exit messages routed through the main loop — use
+/// `window` to reach the owning window directly instead of searching every
+/// window for the id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WindowTerminalId {
     pub window: WindowId,

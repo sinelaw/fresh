@@ -163,6 +163,9 @@ pub(crate) struct FocusConfig<M: 'static> {
     pub shortcuts: Vec<Shortcut>,
     pub actions: Vec<(Intent, crate::desc::Handler<M>)>,
     pub on_change: Option<crate::desc::Handler<M>>,
+    /// Focus entering or leaving the subtree. See
+    /// [`crate::Node::on_focus_within_change`].
+    pub on_within: Option<crate::desc::Handler<M>>,
 }
 
 impl<M: 'static> Ui<M> {
@@ -175,6 +178,7 @@ impl<M: 'static> Ui<M> {
                 shortcuts: f.shortcuts.clone(),
                 actions: f.actions.clone(),
                 on_change: f.on_focus_change.clone(),
+                on_within: f.on_focus_within_change.clone(),
             });
         }
         el.behaviors.iter().find_map(|b| {
@@ -186,6 +190,7 @@ impl<M: 'static> Ui<M> {
                     shortcuts: f.shortcuts.clone(),
                     actions: f.actions.clone(),
                     on_change: f.on_change.clone(),
+                    on_within: None,
                 })
         })
     }
@@ -244,14 +249,14 @@ impl<M: 'static> Ui<M> {
             self.fire_focus_change(o, false, out);
         }
         self.fire_focus_change(id, true, out);
-        self.invalidate_focus_within(old, Some(id));
+        self.invalidate_focus_within(old, Some(id), out);
     }
 
     pub fn blur(&mut self) {
         let mut out = Vec::new();
         if let Some(o) = self.focus.take() {
             self.fire_focus_change(o, false, &mut out);
-            self.invalidate_focus_within(Some(o), None);
+            self.invalidate_focus_within(Some(o), None, &mut out);
         }
         self.pending_messages.extend(out);
     }
@@ -306,23 +311,46 @@ impl<M: 'static> Ui<M> {
 
     /// Only registrants below the common ancestor of the old and new positions
     /// are invalidated: for the common ancestor and everything above it, the
-    /// answer to "is focus inside me" did not change.
-    fn invalidate_focus_within(&mut self, old: Option<ElementId>, new: Option<ElementId>) {
+    /// answer to "is focus inside me" did not change. The same registrants are
+    /// the ones focus entered or left, and each that asked is told
+    /// ([`crate::Node::on_focus_within_change`]) — the side focus left before
+    /// the side it entered, as [`Self::focus_element`] orders its own.
+    fn invalidate_focus_within(
+        &mut self,
+        old: Option<ElementId>,
+        new: Option<ElementId>,
+        out: &mut Vec<M>,
+    ) {
         let ca = match (old, new) {
             (Some(a), Some(b)) => self.common_ancestor(a, b),
             _ => None,
         };
-        for end in [old, new].into_iter().flatten() {
-            let mut cur = Some(end);
+        for (end, gained) in [(old, false), (new, true)] {
+            let mut cur = end;
             while let Some(c) = cur {
                 if Some(c) == ca {
                     break;
                 }
                 if self.registers_focus_within(c) {
                     self.mark_dirty(c, DirtyCause::Focus);
+                    self.fire_focus_within_change(c, gained, out);
                 }
                 cur = self.arena.get(c).and_then(|e| e.parent);
             }
+        }
+    }
+
+    fn fire_focus_within_change(&mut self, id: ElementId, gained: bool, out: &mut Vec<M>) {
+        let Some(h) = self.focus_config(id).and_then(|c| c.on_within) else {
+            return;
+        };
+        let kind = match gained {
+            true => GestureKind::FocusGained,
+            false => GestureKind::FocusLost,
+        };
+        let ev = self.synth_event(id, kind, None, Rc::new(Ctl::default()));
+        if let Some(m) = h(&ev) {
+            out.push(m);
         }
     }
 
@@ -426,7 +454,38 @@ impl<M: 'static> Ui<M> {
         dir: FocusDir,
     ) -> Option<ElementId> {
         let scope = self.scope_under(root);
-        self.traversal.next(&scope, from, dir)
+        self.traverse(&scope, from.or(Some(root)), from, dir)
+    }
+
+    /// One step of traversal over `scope`, by the policy that governs
+    /// `site`: the nearest element at or above it that declares one
+    /// ([`crate::Node::traversal`]), else the installed policy.
+    fn traverse(
+        &self,
+        scope: &FocusScope,
+        site: Option<ElementId>,
+        from: Option<ElementId>,
+        dir: FocusDir,
+    ) -> Option<ElementId> {
+        match self.declared_traversal(site) {
+            Some(policy) => policy.next(scope, from, dir),
+            None => self.traversal.next(scope, from, dir),
+        }
+    }
+
+    /// The traversal policy the nearest element at or above `site` declares.
+    fn declared_traversal(&self, site: Option<ElementId>) -> Option<Rc<dyn TraversalPolicy>> {
+        let mut cur = site;
+        while let Some(e) = cur {
+            let el = self.arena.get(e)?;
+            if let Desc::Focusable(f) = &resolve(&el.desc).desc {
+                if let Some(p) = &f.traversal {
+                    return Some(p.clone());
+                }
+            }
+            cur = el.parent;
+        }
+        None
     }
 
     fn scope_under(&self, root: ElementId) -> FocusScope {
@@ -617,7 +676,14 @@ impl<M: 'static> Ui<M> {
     /// Move focus in a direction, using the installed traversal policy.
     pub fn move_focus(&mut self, dir: FocusDir) -> bool {
         let scope = self.focus_scope();
-        match self.traversal.next(&scope, self.focus, dir) {
+        // The policy is the one governing where focus is — or, with nothing
+        // focused, the scope traversal is confined to.
+        let site = self.focus.or_else(|| {
+            self.active_scope()
+                .and_then(|f| self.focus_tree.get(f))
+                .map(|n| n.element)
+        });
+        match self.traverse(&scope, site, self.focus, dir) {
             // **Landing where you started is not a move.**
             //
             // Reading order wraps, so a scope holding one focusable answers
@@ -645,8 +711,11 @@ impl<M: 'static> Ui<M> {
     /// the scope's `autofocus` mark is where it was when this scope last
     /// settled — nothing happens; focus is inside the scope and **the mark
     /// moved** — focus follows it ([`Self::follow_moved_mark`]); a scope has
-    /// just opened and focus moves into it, remembering where it was; the
-    /// scope has closed and focus goes back.
+    /// just opened and focus moves into it, remembering where it was **and
+    /// what was confining it there**; the scope has closed and focus goes
+    /// back — unless that confinement is gone, in which case the memory
+    /// names a surface that has given the keyboard up and focus lands on the
+    /// mark like any other entry.
     ///
     /// The second case is what lets a description *say* where focus is while
     /// the tree's own ring is free to move it. A host that keeps the focused
@@ -665,12 +734,39 @@ impl<M: 'static> Ui<M> {
         let modal = self.topmost_modal();
 
         if modal.is_some() {
-            // Entering a scope: remember where focus was so it can come back.
+            // Entering a scope: remember where focus was so it can come back,
+            // and what was confining it there — the restore is only good for
+            // as long as that confinement is (see below).
             if let Some(f) = self.focus.filter(|f| self.arena.get(*f).is_some()) {
                 self.focus_restore = Some(f);
+                self.focus_restore_scope = self.settled_scope;
             }
         } else if let Some(prev) = self.focus_restore.take() {
-            if self.arena.get(prev).is_some() {
+            // **A restore into a surface that has since given the keyboard
+            // up is void.** Focus was inside that surface because a layer
+            // confined it there, not because the description left it there,
+            // so once the layer is gone the memory names a place focus may
+            // no longer rest — the same fact `follow_moved_mark`'s
+            // `released` states for a confinement that ends while focus is
+            // still inside it, which that path cannot see here because the
+            // scope being restored *from* overwrote it.
+            //
+            // The editor's case: a centred modal blurs the dock as it
+            // mounts, so the dock's keyboard layer is already gone by the
+            // time the modal closes. Restoring into it left every key
+            // resolving in the dock's context and dying — the Orchestrator's
+            // New-Workspace form did exactly that, and the workspace it
+            // created could not be typed into.
+            //
+            // A restore taken from the unconfined base (nothing was
+            // confining focus when the scope opened) is unconditional, as it
+            // always was: that is the ring's own position, which no mark
+            // overrides.
+            let released = self
+                .focus_restore_scope
+                .take()
+                .is_some_and(|s| self.confinement() != Some(s));
+            if !released && self.arena.get(prev).is_some() {
                 let mut out = Vec::new();
                 self.focus_element(prev, SelectionOnFocus::Preserve, &mut out);
                 self.pending_messages.extend(out);
@@ -721,7 +817,7 @@ impl<M: 'static> Ui<M> {
             None => {
                 if let Some(o) = self.focus.take() {
                     self.fire_focus_change(o, false, &mut out);
-                    self.invalidate_focus_within(Some(o), None);
+                    self.invalidate_focus_within(Some(o), None, &mut out);
                 }
             }
         }
@@ -1072,7 +1168,7 @@ impl<M: 'static> Ui<M> {
             let depth = self.arena.get(root).map_or(0, |e| e.depth);
             held.push((depth, l));
         }
-        held.sort_by(|a, b| b.0.cmp(&a.0));
+        held.sort_by_key(|&(depth, _)| std::cmp::Reverse(depth));
         held.into_iter().map(|(_, e)| e).collect()
     }
 

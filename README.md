@@ -94,6 +94,7 @@ Or, pick your preferred method:
 | OpenSUSE | [.rpm](#opensuse-rpm) |
 | FreeBSD | [ports / pkg](https://www.freshports.org/editors/fresh) |
 | Gentoo | [GURU](#gentoo-guru) |
+| Solus | [eopkg](#solus-eopkg) |
 | Linux (sandboxed / portable) | [AppImage](#appimage), [Flatpak](#flatpak) |
 | All platforms | [Pre-built binaries](#pre-built-binaries) |
 | npm | [npm / npx](#npm) |
@@ -218,6 +219,15 @@ Enable the repository as read in [Project:GURU/Information for End Users](https:
 
 ```bash
 emerge --ask app-editors/fresh
+```
+
+### Solus (eopkg)
+
+Fresh is the official repository. Run eopkg to install:
+
+
+```bash
+sudo eopkg it fresh
 ```
 
 ### AppImage
@@ -346,4 +356,14 @@ To disable both upgrade checks and telemetry, use `--no-upgrade-check` or set `c
 
 Copyright (c) Noam Lewis
 
-This project is licensed under the GNU General Public License v2.0 (GPL-2.0).
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version (GPL-3.0-or-later).
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the [GNU General Public License](LICENSE) for more
+details.
+
+SPDX-License-Identifier: GPL-3.0-or-later

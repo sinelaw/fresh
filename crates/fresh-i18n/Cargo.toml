@@ -17,3 +17,6 @@ path = "src/lib.rs"
 [dependencies]
 once_cell.workspace = true
 serde_json.workspace = true
+
+[lints]
+workspace = true

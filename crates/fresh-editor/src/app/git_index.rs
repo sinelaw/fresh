@@ -12,6 +12,7 @@
 
 use super::Editor;
 use crate::model::filesystem::FileSystem;
+use crate::services::runtime::LiveRuntime;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -99,7 +100,7 @@ fn resolve_git_indexes_blocking(
     spawner: Arc<dyn crate::services::remote::ProcessSpawner>,
     fs: Arc<dyn FileSystem + Send + Sync>,
     working_dir: PathBuf,
-    rt: Arc<tokio::runtime::Runtime>,
+    rt: LiveRuntime,
 ) -> Vec<PathBuf> {
     let mut indexes: Vec<PathBuf> = Vec::new();
 
@@ -159,7 +160,7 @@ fn resolve_git_indexes_blocking(
 fn git_dir_index(
     spawner: &Arc<dyn crate::services::remote::ProcessSpawner>,
     dir: &std::path::Path,
-    rt: &Arc<tokio::runtime::Runtime>,
+    rt: &LiveRuntime,
 ) -> Option<PathBuf> {
     let cwd = dir.to_string_lossy().to_string();
     let result = rt.block_on(spawner.spawn(

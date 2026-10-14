@@ -8,6 +8,7 @@
 //! the right buffer byte offset.
 
 use crate::input::actions::action_to_events as convert_action_to_events;
+use crate::input::actions::clear_block_selection_if_active;
 use crate::input::keybindings::Action;
 use crate::model::event::{Event, LeafId};
 
@@ -26,13 +27,26 @@ impl crate::app::window::Window {
         // group host's.
         let active_split = self.effective_active_split();
         let viewport_height = self
-            .buffers
-            .splits()
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .split_view_states()
             .get(&active_split)
-            .map(|vs| vs.viewport.height)
+            .map(|vs| vs.buffer_tab_state().viewport.height)
             .unwrap_or(24);
+
+        // A cursor motion that is not a block-select step ends block
+        // (column) mode, the same way a plain move drops a normal selection.
+        // Done up front so every motion path below (visual-line, page,
+        // logical) sees it; a Shift+motion keeps the byte `anchor` and so
+        // continues as a normal selection. Editing actions are left to
+        // `convert_block_selection_to_cursors`, which needs the block.
+        if ends_block_selection(&action) {
+            if let Some(vs) = self
+                .buffers
+                .splits_mut()
+                .and_then(|(_, vs_map)| vs_map.get_mut(&active_split))
+            {
+                clear_block_selection_if_active(&mut vs.buffer_tab_state_mut().cursors);
+            }
+        }
 
         // Always try visual line movement first — it uses the cached layout to
         // move through soft-wrapped rows.  Returns None when the layout can't
@@ -119,13 +133,34 @@ impl crate::app::window::Window {
         // PageDown-overshoots bug on minified files).
         let viewport_pos = |w: &Self| -> Option<(usize, usize)> {
             let vp = &w
-                .buffers
-                .splits()
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
+                .split_view_states()
                 .get(&split_id)?
+                .buffer_tab_state()
                 .viewport;
             Some((vp.top_byte(), vp.top_view_line_offset()))
+        };
+
+        // Where the primary caret is on screen, and the column it is aiming
+        // for. The page keeps both: the caret lands on the same screen row of
+        // the new page, at the same goal column, the way Up and Down keep the
+        // column. Landing it on the page's first row instead put it inside the
+        // scroll-off margin, so the very next Down or Right scrolled the view
+        // back to restore the margin, and it reset the column to 1 (#3398).
+        let (caret_row, goal_col) = {
+            let primary = *self
+                .split_view_states()
+                .get(&split_id)?
+                .buffer_tab_state()
+                .cursors
+                .primary();
+            let row = self
+                .pane_view(split_id)
+                .and_then(|view| view.find_visual_row(primary.position));
+            let col = primary
+                .sticky_column
+                .or_else(|| self.byte_to_visual_column(split_id, primary.position))
+                .unwrap_or(0);
+            (row, col)
         };
 
         let old_pos = viewport_pos(self)?;
@@ -145,12 +180,16 @@ impl crate::app::window::Window {
             return None;
         }
 
-        // Byte of the visual row now shown at the very top of the viewport.
-        // For a soft-wrapped line this is `top_byte` advanced by
-        // `top_view_line_offset` wrap segments — NOT `top_byte` itself,
-        // which on a single hugely-wrapped line is always the document
-        // start (landing the cursor there would re-introduce the overshoot
-        // / jump-to-top bugs).
+        // The caret's landing, counted from the visual row now shown at the
+        // very top of the viewport. For a soft-wrapped line that row starts
+        // at `top_byte` advanced by `top_view_line_offset` wrap segments —
+        // NOT `top_byte` itself, which on a single hugely-wrapped line is
+        // always the document start (counting from there would re-introduce
+        // the overshoot / jump-to-top bugs).
+        //
+        // The row is the caret's old screen row, kept out of the scroll-off
+        // margins so the next ordinary motion does not have to scroll; a
+        // caret that was off screen lands on the first row past the margin.
         let target_byte = {
             let buffer_id = self.buffer_for_leaf(split_id)?;
             self.buffers
@@ -165,25 +204,35 @@ impl crate::app::window::Window {
                         .into_iter()
                         .map(|r| (r.start_byte, r.end_byte))
                         .collect();
-                    vs.viewport.top_visual_row_source_byte(
+                    let top_row_byte = vs.viewport.top_visual_row_source_byte(
                         &mut state.buffer,
                         &soft_breaks,
                         &virtual_lines,
+                        &hidden_ranges,
+                    );
+                    let height = vs.viewport.visible_line_count().max(1);
+                    let margin = vs.viewport.scroll_offset.min((height - 1) / 2);
+                    let row = caret_row
+                        .unwrap_or(margin)
+                        .clamp(margin, height - 1 - margin);
+                    vs.viewport.byte_at_row_below(
+                        &mut state.buffer,
+                        top_row_byte,
+                        row,
+                        goal_col,
                         &hidden_ranges,
                     )
                 })?
         };
 
-        // Emit a MoveCursor event placing each cursor at the new viewport
-        // top.  The cursor is guaranteed visible (it's at row 0 of the new
-        // viewport) and each press advances by exactly a full page of view
-        // rows — the same way it does when line wrap is off.
+        // Emit a MoveCursor event placing each cursor at the landing. The
+        // cursor is on screen by construction, and each press advances the
+        // view by exactly a full page of rows — the same way it does when
+        // line wrap is off.
         let cursors = &self
-            .buffers
-            .splits()
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .split_view_states()
             .get(&split_id)?
+            .buffer_tab_state()
             .cursors;
         let events: Vec<Event> = cursors
             .iter()
@@ -202,7 +251,7 @@ impl crate::app::window::Window {
                     old_anchor: cursor.anchor,
                     new_anchor,
                     old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: cursor.sticky_column,
+                    new_sticky_column: Some(goal_col),
                 }
             })
             .collect();
@@ -218,7 +267,7 @@ impl crate::app::window::Window {
             .splits()
             .map(|(_, vs)| vs)
             .and_then(|vs| vs.get(&split_id))
-            .map(|vs| vs.viewport.line_wrap_enabled)
+            .map(|vs| vs.buffer_tab_state().viewport.line_wrap_enabled)
             .unwrap_or_else(|| self.config().editor.line_wrap)
     }
 
@@ -291,13 +340,10 @@ impl crate::app::window::Window {
             if let Some(state) = self.buffers.get(&active_buffer) {
                 if state.buffer_settings.virtual_space.cursor_beyond_eol() {
                     let has_virtual_line_cursor = self
-                        .buffers
-                        .splits()
-                        .map(|(_, vs)| vs)
-                        .expect("active window must have a populated split layout")
+                        .split_view_states()
                         .get(&active_split)
                         .is_some_and(|vs| {
-                            vs.cursors.iter().any(|(_, c)| {
+                            vs.buffer_tab_state().cursors.iter().any(|(_, c)| {
                                 c.position == state.buffer.len() && c.virtual_lines_below > 0
                             })
                         });
@@ -316,12 +362,10 @@ impl crate::app::window::Window {
             let active_split = self.effective_active_split();
             let active_buffer = self.active_buffer();
             let cursors = &self
-                .buffers
-                .splits()
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
+                .split_view_states()
                 .get(&active_split)
                 .unwrap()
+                .buffer_tab_state()
                 .cursors;
             let state = self.buffers.get(&active_buffer).unwrap();
             cursors
@@ -426,7 +470,20 @@ impl crate::app::window::Window {
                                 _estimated_line_length,
                             ) {
                                 Some((pos, goal)) => (pos, Some(goal)),
-                                None => continue, // Genuinely at buffer boundary
+                                // Either wrap is off, or this cursor is at the
+                                // buffer's edge. Both are cases the byte-based
+                                // movers answer — including the edge, where
+                                // they clear the selection and take the cursor
+                                // as far as there is — so hand them the whole
+                                // action.
+                                //
+                                // Skipping just this cursor instead left it
+                                // stranded whenever another cursor did produce
+                                // an event: the vector came back non-empty, so
+                                // nothing fell through, and the cursor at the
+                                // edge kept its selection and never moved. That
+                                // is issue #3486 surviving under multi-cursor.
+                                None => return None,
                             }
                         }
                     }
@@ -461,13 +518,14 @@ impl crate::app::window::Window {
                 VisualAction::LineStart { is_select } => *is_select,
             };
 
-            let new_anchor = if is_select {
-                Some(anchor.unwrap_or(position))
-            } else if deselect_on_move {
-                None
-            } else {
-                anchor
-            };
+            // The same rule the byte-based movers use, from the same place:
+            // it does not depend on the cursor having found anywhere to go.
+            let new_anchor = crate::input::actions::vertical_move_anchor(
+                position,
+                anchor,
+                deselect_on_move,
+                is_select,
+            );
 
             events.push(Event::MoveCursor {
                 cursor_id,
@@ -718,15 +776,15 @@ impl crate::app::window::Window {
         let state = self.buffers.get(&active_buffer)?;
         let vs = self.buffers.splits().map(|(_, vs)| vs)?.get(&split_id)?;
         // Terminal-grid wrap (fresh#2649): rows are exactly the grid width.
-        if vs.viewport.grid_wrap {
-            return Some(vs.viewport.grid_cols());
+        if vs.buffer_tab_state().viewport.grid_wrap {
+            return Some(vs.buffer_tab_state().viewport.grid_cols());
         }
-        let gutter = vs.viewport.gutter_width(&state.buffer);
+        let gutter = vs.buffer_tab_state().viewport.gutter_width(&state.buffer);
         let wrap = WrapConfig::new(
-            vs.viewport.effective_width() as usize,
+            vs.buffer_tab_state().viewport.effective_width(gutter) as usize,
             gutter,
             true,
-            vs.viewport.wrap_indent,
+            vs.buffer_tab_state().viewport.wrap_indent,
         );
         Some(wrap.first_line_width)
     }
@@ -847,4 +905,20 @@ fn char_at(buffer: &crate::model::buffer::Buffer, pos: usize) -> Option<char> {
     };
     let bytes = buffer.slice_bytes(pos..pos.saturating_add(width));
     std::str::from_utf8(&bytes).ok()?.chars().next()
+}
+
+/// Whether `action` moves the cursor (or re-selects) without being a
+/// block-select step, and so should end an active block selection.
+fn ends_block_selection(action: &Action) -> bool {
+    action.is_movement_or_editing()
+        && !action.is_editing()
+        && !matches!(
+            action,
+            Action::BlockSelectLeft
+                | Action::BlockSelectRight
+                | Action::BlockSelectUp
+                | Action::BlockSelectDown
+                | Action::Undo
+                | Action::Redo
+        )
 }

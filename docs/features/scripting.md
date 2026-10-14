@@ -49,7 +49,7 @@ Worth wiring into a test or build wrapper: when it fails, put the failure on scr
 ### Show output as a buffer, not as scrollback
 
 ```sh
-echo 'editor.writeFile(editor.localPath("/tmp/summary.md"), "# Test run\n\n- 42 passed\n- 1 failed\n"); return editor.splitWindow({ direction: "horizontal", file: "/tmp/summary.md", keepFocus: true })' | fresh --cmd script run
+echo 'editor.replaceFile(editor.localPath("/tmp/summary.md"), "# Test run\n\n- 42 passed\n- 1 failed\n"); return editor.splitWindow({ direction: "horizontal", file: "/tmp/summary.md", keepFocus: true })' | fresh --cmd script run
 ```
 
 Write the file, open the file. You get syntax highlighting, search, and a buffer that stays put — none of which a wall of terminal output gives you.

@@ -107,6 +107,7 @@ impl TextPropertyManager {
     }
 
     /// Get all properties overlapping a range
+    #[cfg(test)]
     pub fn get_overlapping(&self, range: &Range<usize>) -> Vec<&TextProperty> {
         // An empty range is not short-circuited: `overlaps` reports a
         // property straddling the point as overlapping it, and callers
@@ -149,6 +150,7 @@ impl TextPropertyManager {
     }
 
     /// Set all properties at once (replaces existing)
+    #[cfg(test)]
     pub fn set_all(&mut self, mut properties: Vec<TextProperty>) {
         // Ensure sorted by start position
         properties.sort_by_key(|p| p.start);

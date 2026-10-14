@@ -36,8 +36,7 @@ impl Editor {
         let shell = detect_shell();
 
         // Execute the command
-        let mut child = Command::new(&shell)
-            .args(["-c", command])
+        let mut child = shell_command(&shell, command)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -243,49 +242,6 @@ impl Editor {
 
         self.set_status_message(t!("shell.output_in", buffer = buffer_name).to_string());
     }
-
-    /// Execute a shell command blocking the UI.
-    /// This is used for commands like `sudo` where we might need to wait for completion.
-    #[allow(dead_code)]
-    pub(crate) fn run_shell_command_blocking(&mut self, command: &str) -> anyhow::Result<()> {
-        use crossterm::terminal::{
-            disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
-        };
-        use crossterm::ExecutableCommand;
-        use std::io::stdout;
-
-        // Suspend TUI — best-effort, nothing useful to do on failure.
-        #[allow(clippy::let_underscore_must_use)]
-        let _ = disable_raw_mode();
-        #[allow(clippy::let_underscore_must_use)]
-        let _ = stdout().execute(LeaveAlternateScreen);
-
-        let shell = detect_shell();
-        let mut child = Command::new(&shell)
-            .args(["-c", command])
-            .hide_window()
-            .spawn()
-            .map_err(|e| anyhow::anyhow!("Failed to spawn shell: {}", e))?;
-
-        let status = child
-            .wait()
-            .map_err(|e| anyhow::anyhow!("Failed to wait for command: {}", e))?;
-
-        // Resume TUI — best-effort, nothing useful to do on failure.
-        #[allow(clippy::let_underscore_must_use)]
-        let _ = stdout().execute(EnterAlternateScreen);
-        #[allow(clippy::let_underscore_must_use)]
-        let _ = enable_raw_mode();
-
-        // Request a full hard redraw to clear any ghost text from the external command
-        self.request_full_redraw();
-
-        if status.success() {
-            Ok(())
-        } else {
-            anyhow::bail!("Command failed with exit code: {:?}", status.code())
-        }
-    }
 }
 
 /// Detect the shell to use for executing commands.
@@ -320,6 +276,35 @@ fn detect_shell() -> String {
     "sh".to_string()
 }
 
+/// Build a `Command` that runs `command` through `shell` and exits.
+///
+/// cmd.exe takes `/c`, not `-c`, and parses its own command line, so the
+/// command is passed raw rather than with Rust's argv escaping.
+pub(super) fn shell_command(shell: &str, command: &str) -> Command {
+    let mut cmd = Command::new(shell);
+    if is_cmd_shell(shell) {
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // `/S` makes cmd strip exactly the outer quotes, keeping inner ones.
+            cmd.args(["/S", "/C"]).raw_arg(format!("\"{}\"", command));
+        }
+        #[cfg(not(windows))]
+        cmd.args(["/c", command]);
+    } else {
+        cmd.args(["-c", command]);
+    }
+    cmd
+}
+
+fn is_cmd_shell(shell: &str) -> bool {
+    let name = shell.rsplit(['/', '\\']).next().unwrap_or(shell);
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "cmd" | "cmd.exe" | "command.com"
+    )
+}
+
 /// Truncate a command string for display purposes.
 ///
 /// Counts characters (not bytes) so non-ASCII commands like
@@ -338,7 +323,17 @@ fn truncate_command(command: &str, max_len: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::truncate_command;
+    use super::{is_cmd_shell, truncate_command};
+
+    #[test]
+    fn is_cmd_shell_detects_cmd_by_file_name() {
+        assert!(is_cmd_shell("cmd.exe"));
+        assert!(is_cmd_shell(r"C:\Windows\System32\CMD.EXE"));
+        assert!(is_cmd_shell("cmd"));
+        assert!(!is_cmd_shell("/bin/bash"));
+        assert!(!is_cmd_shell(r"C:\Program Files\Git\bin\bash.exe"));
+        assert!(!is_cmd_shell("/usr/bin/cmdshell"));
+    }
 
     #[test]
     fn truncate_command_ascii_fits() {

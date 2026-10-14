@@ -110,6 +110,113 @@ fn a_directional_policy_moves_by_geometry() {
     assert_eq!(ui.focused(), Some(bl));
 }
 
+/// **A subtree says how traversal moves inside it.** The application keeps
+/// reading order; a grid that declares `Directional` moves ↓ to the stop
+/// under this one — not the next in reading order — while Tab inside it still
+/// reads in order.
+#[test]
+fn a_subtree_that_declares_directional_traversal_moves_by_position() {
+    let mut ui: Ui<()> = Ui::new();
+    let stop = |n: &'static str| focusable(text(n)).key(n).w(Sizing::Cells(10));
+    let grid = focusable(col().children([
+        row().h(Sizing::Cells(1)).children([stop("a"), stop("b")]),
+        row().h(Sizing::Cells(1)).children([stop("c"), stop("d")]),
+    ]))
+    .skip_traversal()
+    .traversal(Directional);
+    ui.frame(grid, FRAME);
+    let (a, b, c) = (
+        ui.find_by_key(&"a".into()).unwrap(),
+        ui.find_by_key(&"b".into()).unwrap(),
+        ui.find_by_key(&"c".into()).unwrap(),
+    );
+
+    ui.request_focus(a, SelectionOnFocus::None);
+    ui.dispatch(Input::Key(KeyPress::new(KeyCode::Down)));
+    assert_eq!(
+        ui.focused(),
+        Some(c),
+        "↓ reaches the stop under, by position"
+    );
+    ui.request_focus(a, SelectionOnFocus::None);
+    ui.dispatch(Input::Key(KeyPress::new(KeyCode::Tab)));
+    assert_eq!(ui.focused(), Some(b), "Tab still reads in order");
+}
+
+/// **In the beam beats nearer but aside**: ↓ from a field reaches the field
+/// under it, not a button that starts sooner off to one side.
+#[test]
+fn directional_traversal_prefers_what_is_in_line() {
+    let mut ui: Ui<()> = Ui::new();
+    ui.set_traversal_policy(Box::new(Directional));
+    let gap = |w: u16| text("").w(Sizing::Cells(w));
+    ui.frame(
+        col().children([
+            row()
+                .h(Sizing::Cells(1))
+                .children([gap(10), field("field").w(Sizing::Cells(10))]),
+            row()
+                .h(Sizing::Cells(1))
+                .children([gap(25), field("aside").w(Sizing::Cells(5))]),
+            row()
+                .h(Sizing::Cells(1))
+                .children([gap(10), field("under").w(Sizing::Cells(10))]),
+        ]),
+        FRAME,
+    );
+    let from = ui.find_by_key(&"field".into()).unwrap();
+    let under = ui.find_by_key(&"under".into()).unwrap();
+    ui.request_focus(from, SelectionOnFocus::None);
+    ui.dispatch(Input::Key(KeyPress::new(KeyCode::Down)));
+    assert_eq!(ui.focused(), Some(under));
+}
+
+/// **An arrow at the edge goes nowhere, and is not claimed**, so whatever
+/// surrounds the surface can still answer it — directional traversal does not
+/// wrap the way reading order does.
+#[test]
+fn directional_traversal_at_the_edge_declines_the_arrow() {
+    let mut ui: Ui<()> = Ui::new();
+    ui.set_traversal_policy(Box::new(Directional));
+    ui.frame(form(), FRAME);
+    let one = ui.find_by_key(&"one".into()).unwrap();
+    ui.request_focus(one, SelectionOnFocus::None);
+    let d = ui.dispatch(Input::Key(KeyPress::new(KeyCode::Up)));
+    assert_eq!(ui.focused(), Some(one));
+    assert!(!d.claimed, "nothing above: the arrow is someone else's");
+}
+
+/// **A subtree is told when focus enters and leaves it — not when it moves
+/// inside.** A panel's keyboard is its subtree: a layer opening over it takes
+/// focus out without any control in it changing, and that is the one move the
+/// panel has to hear about.
+#[test]
+fn a_subtree_is_told_when_focus_enters_and_leaves_it() {
+    let log: Log = Rc::new(RefCell::new(Vec::new()));
+    let panel = {
+        let log = log.clone();
+        focusable(col().children([field("a"), field("b")]))
+            .skip_traversal()
+            .on_focus_within_change(move |e: &Event| {
+                log.borrow_mut().push(format!("{:?}", e.kind));
+                None
+            })
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(col().children([panel, field("outside")]), FRAME);
+    let id = |ui: &Ui<()>, k: &'static str| ui.find_by_key(&k.into()).unwrap();
+
+    ui.request_focus(id(&ui, "a"), SelectionOnFocus::None);
+    ui.request_focus(id(&ui, "b"), SelectionOnFocus::None);
+    ui.request_focus(id(&ui, "outside"), SelectionOnFocus::None);
+    ui.request_focus(id(&ui, "b"), SelectionOnFocus::None);
+    assert_eq!(
+        *log.borrow(),
+        vec!["FocusGained", "FocusLost", "FocusGained"],
+        "in, (a move inside says nothing), out, in again"
+    );
+}
+
 // -- preservation ------------------------------------------------------------
 
 struct Counter;
@@ -1219,6 +1326,117 @@ fn a_layer_that_stops_confining_releases_focus_to_the_enclosing_mark() {
     // And stays there across frames that change nothing.
     ui.frame(build(false), FRAME);
     assert_eq!(ui.focused(), Some(pane));
+}
+
+/// **A modal that opened over a confinement does not restore focus into it
+/// once that confinement is gone.**
+///
+/// The editor's case: a centred modal blurs the dock as it mounts, so the
+/// dock's keyboard layer is gone for as long as the modal is up — and is
+/// still gone when it closes. Coming back is a memory of where focus *was*,
+/// and it is only good while the surface it names still holds the keyboard;
+/// restoring into the blurred dock left every key resolving in the dock's
+/// context, which is how a workspace created from the dock's New-Workspace
+/// form could not be typed into.
+#[test]
+fn a_restore_into_a_confinement_that_has_gone_lands_on_the_mark_instead() {
+    let build = |dock_keys: bool, modal: bool| {
+        let pane = focusable(text("pane"))
+            .key("pane")
+            .skip_traversal()
+            .h(Sizing::Cells(1));
+        let pane = match dock_keys {
+            true => pane,
+            false => pane.autofocus(),
+        };
+        let widget = focusable(text("w")).key("w").h(Sizing::Cells(1));
+        let widget = match dock_keys {
+            true => widget.autofocus(),
+            false => widget,
+        };
+        let dock = col().key("dock").children([widget, field("x")]);
+        let root = col().children([dock, pane]);
+        let root = match dock_keys {
+            true => root.child(
+                layer()
+                    .anchor(Anchor::Screen(Align::Start))
+                    .modality(Modality::Focus)
+                    .scope_at("dock".into()),
+            ),
+            false => root,
+        };
+        // Declared last, so it is the topmost keyboard layer while it is up.
+        match modal {
+            true => root.child(
+                layer()
+                    .anchor(Anchor::Screen(Align::Center))
+                    .modality(Modality::Exclusive)
+                    .child(col().child(field("modal"))),
+            ),
+            false => root,
+        }
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(build(true, false), FRAME);
+    assert_eq!(ui.focused(), ui.find_by_key(&"w".into()), "the dock's mark");
+
+    // The modal opens, and the host blurs the dock in the same breath: its
+    // keyboard layer goes with it, and the mark moves to the pane.
+    ui.frame(build(false, true), FRAME);
+    assert_eq!(
+        ui.focused(),
+        ui.find_by_key(&"modal".into()),
+        "the modal takes the keyboard"
+    );
+
+    // It closes onto a dock that never got the keyboard back.
+    ui.frame(build(false, false), FRAME);
+    assert_eq!(
+        ui.focused(),
+        ui.find_by_key(&"pane".into()),
+        "focus lands on the mark, not back in the blurred dock"
+    );
+}
+
+/// The other half of the rule: a restore taken from the **unconfined base**
+/// is unconditional. Nothing was holding focus where it was — the ring put it
+/// there, by a Tab off the mark — so a modal that comes and goes leaves it
+/// exactly where the user left it, and the mark it is not on does not claim
+/// it back.
+#[test]
+fn a_restore_from_the_unconfined_base_still_comes_back_to_the_ring() {
+    let build = |modal: bool| {
+        let root = col().children([field("one").autofocus(), field("two")]);
+        match modal {
+            true => root.child(
+                layer()
+                    .anchor(Anchor::Screen(Align::Center))
+                    .modality(Modality::Exclusive)
+                    .child(col().child(field("modal"))),
+            ),
+            false => root,
+        }
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(build(false), FRAME);
+    assert_eq!(ui.focused(), ui.find_by_key(&"one".into()), "the mark");
+    // The ring's own move, off the mark.
+    ui.dispatch(Input::Key(KeyPress::new(KeyCode::Tab)));
+    let landed = ui.find_by_key(&"two".into()).expect("two");
+    assert_eq!(ui.focused(), Some(landed));
+
+    ui.frame(build(true), FRAME);
+    assert_eq!(
+        ui.focused(),
+        ui.find_by_key(&"modal".into()),
+        "the modal takes the keyboard"
+    );
+    ui.frame(build(false), FRAME);
+    assert_eq!(
+        ui.focused(),
+        Some(landed),
+        "nothing confined that focus, so it comes back where the ring left it"
+    );
 }
 
 /// Outside every confinement the whole tree is the scope: a mark moving from

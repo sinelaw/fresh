@@ -10,7 +10,9 @@
     "status.toc_on": "Markdown съдържание: ON",
     "status.toc_off": "Markdown съдържание: OFF",
     "status.follow_cursor": "Markdown съдържание: следва курсора",
-    "status.follow_scroll": "Markdown съдържание: следва превъртането"
+    "status.follow_scroll": "Markdown съдържание: следва превъртането",
+    "cmd.focus_toc": "Markdown: Фокус върху съдържанието",
+    "cmd.focus_toc_desc": "Показване на секцията „Съдържание“ и преместване на клавиатурата в нея"
   },
   "cs": {
     "cmd.toggle_toc": "Markdown: Prepnout obsah",
@@ -23,7 +25,9 @@
     "status.toc_on": "Markdown obsah: ZAPNUTO",
     "status.toc_off": "Markdown obsah: VYPNUTO",
     "status.follow_cursor": "Markdown obsah: sleduje kurzor",
-    "status.follow_scroll": "Markdown obsah: sleduje posun"
+    "status.follow_scroll": "Markdown obsah: sleduje posun",
+    "cmd.focus_toc": "Markdown: Zaměřit obsah",
+    "cmd.focus_toc_desc": "Zobrazit sekci Obsah a přesunout do ní klávesnici"
   },
   "de": {
     "cmd.toggle_toc": "Markdown: Inhaltsverzeichnis umschalten",
@@ -36,7 +40,9 @@
     "status.toc_on": "Markdown-Inhalt: AN",
     "status.toc_off": "Markdown-Inhalt: AUS",
     "status.follow_cursor": "Markdown-Inhalt: folgt dem Cursor",
-    "status.follow_scroll": "Markdown-Inhalt: folgt dem Scrollen"
+    "status.follow_scroll": "Markdown-Inhalt: folgt dem Scrollen",
+    "cmd.focus_toc": "Markdown: Inhalt fokussieren",
+    "cmd.focus_toc_desc": "Den Abschnitt „Inhalt“ anzeigen und die Tastatur hineinbewegen"
   },
   "en": {
     "cmd.toggle_toc": "Markdown: Toggle Table of Contents",
@@ -49,7 +55,9 @@
     "status.toc_on": "Markdown Contents: ON",
     "status.toc_off": "Markdown Contents: OFF",
     "status.follow_cursor": "Markdown Contents: following the cursor",
-    "status.follow_scroll": "Markdown Contents: following the scroll position"
+    "status.follow_scroll": "Markdown Contents: following the scroll position",
+    "cmd.focus_toc": "Markdown: Focus Contents",
+    "cmd.focus_toc_desc": "Show the Contents section and move the keyboard into it"
   },
   "es": {
     "cmd.toggle_toc": "Markdown: Alternar índice de contenidos",
@@ -62,7 +70,9 @@
     "status.toc_on": "Contenido Markdown: ACTIVADO",
     "status.toc_off": "Contenido Markdown: DESACTIVADO",
     "status.follow_cursor": "Contenido Markdown: siguiendo al cursor",
-    "status.follow_scroll": "Contenido Markdown: siguiendo el desplazamiento"
+    "status.follow_scroll": "Contenido Markdown: siguiendo el desplazamiento",
+    "cmd.focus_toc": "Markdown: Enfocar contenido",
+    "cmd.focus_toc_desc": "Mostrar la sección Contenido y llevar el teclado a ella"
   },
   "fr": {
     "cmd.toggle_toc": "Markdown : Afficher/masquer la table des matières",
@@ -75,7 +85,9 @@
     "status.toc_on": "Sommaire Markdown : ACTIVÉ",
     "status.toc_off": "Sommaire Markdown : DÉSACTIVÉ",
     "status.follow_cursor": "Sommaire Markdown : suit le curseur",
-    "status.follow_scroll": "Sommaire Markdown : suit le défilement"
+    "status.follow_scroll": "Sommaire Markdown : suit le défilement",
+    "cmd.focus_toc": "Markdown : Focus sur le sommaire",
+    "cmd.focus_toc_desc": "Afficher la section Sommaire et y placer le clavier"
   },
   "it": {
     "cmd.toggle_toc": "Markdown: Attiva/disattiva indice",
@@ -88,7 +100,9 @@
     "status.toc_on": "Indice Markdown: ATTIVO",
     "status.toc_off": "Indice Markdown: DISATTIVATO",
     "status.follow_cursor": "Indice Markdown: segue il cursore",
-    "status.follow_scroll": "Indice Markdown: segue lo scorrimento"
+    "status.follow_scroll": "Indice Markdown: segue lo scorrimento",
+    "cmd.focus_toc": "Markdown: Focus sull'indice",
+    "cmd.focus_toc_desc": "Mostra la sezione Indice e sposta la tastiera al suo interno"
   },
   "ja": {
     "cmd.toggle_toc": "Markdown: 目次の切り替え",
@@ -101,7 +115,9 @@
     "status.toc_on": "Markdown 目次: ON",
     "status.toc_off": "Markdown 目次: OFF",
     "status.follow_cursor": "Markdown 目次: カーソルに追従",
-    "status.follow_scroll": "Markdown 目次: スクロールに追従"
+    "status.follow_scroll": "Markdown 目次: スクロールに追従",
+    "cmd.focus_toc": "Markdown: 目次にフォーカス",
+    "cmd.focus_toc_desc": "目次セクションを表示してキーボードフォーカスを移動します"
   },
   "ko": {
     "cmd.toggle_toc": "Markdown: 목차 전환",
@@ -114,7 +130,9 @@
     "status.toc_on": "Markdown 목차: 켜짐",
     "status.toc_off": "Markdown 목차: 꺼짐",
     "status.follow_cursor": "Markdown 목차: 커서 따라가기",
-    "status.follow_scroll": "Markdown 목차: 스크롤 따라가기"
+    "status.follow_scroll": "Markdown 목차: 스크롤 따라가기",
+    "cmd.focus_toc": "Markdown: 목차에 포커스",
+    "cmd.focus_toc_desc": "목차 섹션을 표시하고 키보드 포커스를 이동합니다"
   },
   "pt-BR": {
     "cmd.toggle_toc": "Markdown: Alternar sumário",
@@ -127,7 +145,9 @@
     "status.toc_on": "Sumário Markdown: LIGADO",
     "status.toc_off": "Sumário Markdown: DESLIGADO",
     "status.follow_cursor": "Sumário Markdown: seguindo o cursor",
-    "status.follow_scroll": "Sumário Markdown: seguindo a rolagem"
+    "status.follow_scroll": "Sumário Markdown: seguindo a rolagem",
+    "cmd.focus_toc": "Markdown: Focar no sumário",
+    "cmd.focus_toc_desc": "Mostrar a seção Sumário e mover o teclado para ela"
   },
   "ru": {
     "cmd.toggle_toc": "Markdown: Переключить оглавление",
@@ -140,7 +160,9 @@
     "status.toc_on": "Оглавление Markdown: ВКЛ",
     "status.toc_off": "Оглавление Markdown: ВЫКЛ",
     "status.follow_cursor": "Оглавление Markdown: следует за курсором",
-    "status.follow_scroll": "Оглавление Markdown: следует за прокруткой"
+    "status.follow_scroll": "Оглавление Markdown: следует за прокруткой",
+    "cmd.focus_toc": "Markdown: Фокус на содержании",
+    "cmd.focus_toc_desc": "Показать секцию «Содержание» и перевести в неё фокус клавиатуры"
   },
   "th": {
     "cmd.toggle_toc": "Markdown: สลับสารบัญ",
@@ -153,7 +175,9 @@
     "status.toc_on": "สารบัญ Markdown: เปิด",
     "status.toc_off": "สารบัญ Markdown: ปิด",
     "status.follow_cursor": "สารบัญ Markdown: ตามเคอร์เซอร์",
-    "status.follow_scroll": "สารบัญ Markdown: ตามการเลื่อน"
+    "status.follow_scroll": "สารบัญ Markdown: ตามการเลื่อน",
+    "cmd.focus_toc": "Markdown: โฟกัสสารบัญ",
+    "cmd.focus_toc_desc": "แสดงส่วนสารบัญและย้ายโฟกัสแป้นพิมพ์ไปที่นั่น"
   },
   "uk": {
     "cmd.toggle_toc": "Markdown: Перемкнути зміст",
@@ -166,7 +190,9 @@
     "status.toc_on": "Зміст Markdown: УВІМК",
     "status.toc_off": "Зміст Markdown: ВИМК",
     "status.follow_cursor": "Зміст Markdown: слідує за курсором",
-    "status.follow_scroll": "Зміст Markdown: слідує за прокруткою"
+    "status.follow_scroll": "Зміст Markdown: слідує за прокруткою",
+    "cmd.focus_toc": "Markdown: Фокус на змісті",
+    "cmd.focus_toc_desc": "Показати секцію «Зміст» і перевести в неї фокус клавіатури"
   },
   "vi": {
     "cmd.toggle_toc": "Markdown: Bật/tắt mục lục",
@@ -179,7 +205,9 @@
     "status.toc_on": "Mục lục Markdown: BẬT",
     "status.toc_off": "Mục lục Markdown: TẮT",
     "status.follow_cursor": "Mục lục Markdown: theo con trỏ",
-    "status.follow_scroll": "Mục lục Markdown: theo vị trí cuộn"
+    "status.follow_scroll": "Mục lục Markdown: theo vị trí cuộn",
+    "cmd.focus_toc": "Markdown: Focus mục lục",
+    "cmd.focus_toc_desc": "Hiện phần Mục lục và chuyển bàn phím vào đó"
   },
   "zh-CN": {
     "cmd.toggle_toc": "Markdown: 切换目录",
@@ -192,6 +220,8 @@
     "status.toc_on": "Markdown 目录: 开",
     "status.toc_off": "Markdown 目录: 关",
     "status.follow_cursor": "Markdown 目录: 跟随光标",
-    "status.follow_scroll": "Markdown 目录: 跟随滚动"
+    "status.follow_scroll": "Markdown 目录: 跟随滚动",
+    "cmd.focus_toc": "Markdown：聚焦目录",
+    "cmd.focus_toc_desc": "显示目录部分并将键盘焦点移入"
   }
 }

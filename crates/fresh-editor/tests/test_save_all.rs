@@ -21,7 +21,8 @@ fn test_save_all_writes_every_modified_buffer() -> anyhow::Result<()> {
     harness.open_file(&b)?;
     harness.type_text("B")?;
 
-    let (saved, failed) = harness.editor_mut().save_all()?;
+    let outcome = harness.editor_mut().save_all()?;
+    let (saved, failed) = (outcome.saved, outcome.failed.len());
     assert_eq!((saved, failed), (2, 0), "both modified files should save");
 
     // Both files on disk reflect the edits.
@@ -47,7 +48,8 @@ fn test_save_all_no_modified_buffers() -> anyhow::Result<()> {
 
     harness.open_file(&a)?;
 
-    let (saved, failed) = harness.editor_mut().save_all()?;
+    let outcome = harness.editor_mut().save_all()?;
+    let (saved, failed) = (outcome.saved, outcome.failed.len());
     assert_eq!((saved, failed), (0, 0), "clean buffer must not be saved");
     assert_eq!(fs::read_to_string(&a)?, "untouched");
 
@@ -71,7 +73,8 @@ fn test_save_all_skips_unnamed_buffer() -> anyhow::Result<()> {
     harness.type_text("scratch")?;
     assert!(harness.editor().active_state().buffer.is_modified());
 
-    let (saved, failed) = harness.editor_mut().save_all()?;
+    let outcome = harness.editor_mut().save_all()?;
+    let (saved, failed) = (outcome.saved, outcome.failed.len());
     assert_eq!(
         (saved, failed),
         (1, 0),
@@ -130,5 +133,30 @@ fn test_save_all_via_command_palette() -> anyhow::Result<()> {
         "second.txt should be saved"
     );
 
+    Ok(())
+}
+
+/// One saved file is "1 file", not "1 files" (issue #3399): the count takes
+/// the grammatical number it needs rather than a fixed plural.
+#[test]
+fn test_save_all_reports_one_file_in_the_singular() -> anyhow::Result<()> {
+    let mut harness = EditorTestHarness::with_temp_project(100, 24)?;
+    let dir = harness.project_dir().unwrap();
+    let a = dir.join("only.txt");
+    fs::write(&a, "one")?;
+    harness.open_file(&a)?;
+    harness.type_text("X")?;
+
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)?;
+    harness.type_text("Save All")?;
+    harness.render()?;
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.render()?;
+
+    let status = harness.get_status_bar();
+    assert!(
+        status.contains("Saved 1 file") && !status.contains("Saved 1 files"),
+        "one saved file must read in the singular, got: {status:?}"
+    );
     Ok(())
 }

@@ -2124,3 +2124,40 @@ fn test_bare_motion_over_the_text_area_requests_no_frame() {
         harness.screen_to_string()
     );
 }
+
+/// **PageDown in the palette moves by the rows the popup shows.** The popup
+/// holds up to ten rows, but a short terminal clamps it; a fixed page of ten
+/// skipped the rows between the clamped window and the tenth.
+#[test]
+fn test_command_palette_page_down_moves_by_the_clamped_window() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(100, 9).unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    let screen = harness.screen_to_string();
+    let selected = |h: &EditorTestHarness| {
+        h.editor()
+            .active_window()
+            .prompt
+            .as_ref()
+            .and_then(|p| p.selected_suggestion())
+    };
+    // The rows inside the popup's ring.
+    let rows = screen.lines().filter(|l| l.starts_with("│  ")).count();
+    assert!(
+        (1..10).contains(&rows),
+        "a short terminal clamps the popup:\n{screen}"
+    );
+    let from = selected(&harness).expect("a selection");
+    harness
+        .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    assert_eq!(
+        selected(&harness),
+        Some(from + rows),
+        "a page is the {rows} rows on screen:\n{screen}"
+    );
+}

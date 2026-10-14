@@ -61,6 +61,8 @@ pub(super) fn render_column_guides(
 /// than in the half the ruler happened to land on.
 ///
 /// `columns` are absolute display columns within the line, gutter included.
+/// `tint` is the column's background, with that theme key's text attributes;
+/// `default_fg` styles the padding cells of a short line.
 /// `rows` bounds how many lines are tinted — the cursor column stops at the
 /// rendered rows, while a ruler runs the pane's full height (#2631), which is
 /// why the caller hands this one a padded `lines`.
@@ -77,8 +79,8 @@ fn start_of(starts: &[usize], at: usize) -> usize {
 pub(super) fn tint_columns_in_lines(
     lines: &mut [Line<'static>],
     columns: &[usize],
-    color: Color,
-    default_fg: Color,
+    tint: Style,
+    default_fg: Style,
     rows: usize,
 ) {
     use unicode_width::UnicodeWidthChar;
@@ -117,7 +119,7 @@ pub(super) fn tint_columns_in_lines(
         while col <= furthest {
             starts.push(col);
             col += 1;
-            chars.push((' ', Style::default().fg(default_fg)));
+            chars.push((' ', default_fg));
         }
         for &column in columns {
             // The cell *covering* `column`, which is a grapheme rather than a
@@ -137,7 +139,7 @@ pub(super) fn tint_columns_in_lines(
                 .max(1);
             if start + width > column {
                 for (_, style) in chars[first..=last].iter_mut() {
-                    *style = style.bg(color);
+                    *style = style.patch(tint);
                 }
             }
         }

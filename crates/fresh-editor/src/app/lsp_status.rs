@@ -49,7 +49,7 @@ fn centered(s: &str) -> String {
 /// Compose the LSP segment of the status bar for a given buffer language.
 ///
 /// Returns (text, indicator-state).  The state drives the indicator's color
-/// in `status_bar::element_style`; the text is what's rendered inside the
+/// in `view::ui::status_bar::lsp_look`; the text is what's rendered inside the
 /// segment.  Priority:
 ///
 /// ```text
@@ -171,7 +171,7 @@ pub(crate) fn compose_lsp_status(
         .unwrap_or(0);
     if configured_count > 0 {
         // User-dismissed languages keep the same `LSP (off)` text — only
-        // the style changes (handled by `element_style` via the
+        // the style changes (handled by `lsp_look` via the
         // `OffDismissed` variant). `enabled = false` on every configured
         // server is the persistent flavour of the same idea, so render
         // it the same way: pill stays visible but dimmed, so the user
@@ -227,9 +227,11 @@ mod tests {
 
     fn configured_for(lang: &str, command: &str) -> HashMap<String, LspLanguageConfig> {
         let mut m = HashMap::new();
-        let mut server = LspServerConfig::default();
-        server.command = command.to_string();
-        server.enabled = true;
+        let server = LspServerConfig {
+            command: command.to_string(),
+            enabled: true,
+            ..Default::default()
+        };
         m.insert(
             lang.to_string(),
             LspLanguageConfig::Single(Box::new(server)),
@@ -362,9 +364,11 @@ mod tests {
     #[test]
     fn off_dismissed_when_all_servers_disabled_in_config() {
         let mut config = HashMap::new();
-        let mut server = LspServerConfig::default();
-        server.command = "rust-analyzer".to_string();
-        server.enabled = false;
+        let server = LspServerConfig {
+            command: "rust-analyzer".to_string(),
+            enabled: false,
+            ..Default::default()
+        };
         config.insert(
             "rust".to_string(),
             LspLanguageConfig::Single(Box::new(server)),

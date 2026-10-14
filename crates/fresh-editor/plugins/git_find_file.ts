@@ -22,6 +22,7 @@ type GitFile = { rel: string; abs: string };
 const finder = new Finder<GitFile>(editor, {
   id: "git-find-file",
   format: (file) => ({
+    id: file.rel,
     label: file.rel,
     location: { file: file.abs, line: 1, column: 1 },
   }),

@@ -136,6 +136,19 @@ interface ViState {
   visual: VisualState | null; // The active visual selection; null outside the visual modes
   insert: InsertSession | null; // The in-progress insert session; null outside insert mode
   pendingInsertCommand: string | null; // Insert-entering command (i/a/I/A/o/O) staged for the next switchMode("insert")
+  // The most recent `captureInsertedText`, settled or not.
+  //
+  // Leaving insert mode starts that capture, and it has to `await` a buffer
+  // read before it can put the typed text on `memory.lastChange`. Nothing used
+  // to wait for it, so a `.` arriving before the read resolved replayed a
+  // change whose `insertedText` was not filled in yet — the delete happened
+  // and the insert did not. `Esc j j .` is fast enough to lose that race on a
+  // loaded machine.
+  //
+  // Never cleared: awaiting a promise that already settled costs nothing, and
+  // clearing it from inside the capture would wipe the handle to a *newer*
+  // capture that started while this one was still awaiting its buffer read.
+  pendingCapture: Promise<void> | null;
 }
 
 const memory: ViMemory = {
@@ -157,6 +170,7 @@ const state: ViState = {
   visual: null,
   insert: null,
   pendingInsertCommand: null,
+  pendingCapture: null,
 };
 
 // Bumped every time the modal state is dropped out from under whatever was
@@ -281,12 +295,16 @@ function switchMode(newMode: ViMode): void {
 
   // Capture inserted text when leaving insert mode (for '.' repeat)
   if (oldMode === "insert" && newMode !== "insert" && state.insert !== null) {
-    captureInsertedText();
+    // Deliberately not awaited here — `switchMode` is called from
+    // synchronous paths and the mode must flip now. The promise is kept so
+    // that whoever *reads* what the capture produces can wait for it; see
+    // `state.pendingCapture`.
+    state.pendingCapture = captureInsertedText();
   }
 
   // All modes use vi-{mode} naming, including insert mode
   // vi-insert has read_only=false so normal typing works, but Escape is bound
-  editor.setEditorMode(`vi-${newMode}`);
+  editor.setInputMode(`vi-${newMode}`);
   editor.setStatus(getModeIndicator(newMode));
 }
 
@@ -2341,7 +2359,7 @@ async function vi_replace_char(): Promise<void> {
   // `vi-<mode>` and so cannot produce the `vi-replace-char` editor mode this
   // needs. The vi-side mode is borrowed purely for the status indicator.
   state.mode = "find-char"; // reuse find-char state slot for status
-  editor.setEditorMode("vi-replace-char");
+  editor.setInputMode("vi-replace-char");
   editor.setStatus("-- REPLACE CHAR --");
 
   editor.beginKeyCapture();
@@ -2453,6 +2471,13 @@ registerHandler("vi_redo", vi_redo);
 
 // Repeat last change (. command)
 async function vi_repeat() : Promise<void> {
+  // Let a capture still in flight finish writing `insertedText` first.
+  // Without this, `.` immediately after Escape replays the change's motion
+  // and deletion but inserts nothing.
+  if (state.pendingCapture !== null) {
+    await state.pendingCapture;
+  }
+
   if (!memory.lastChange) {
     editor.setStatus(editor.t("status.no_change_to_repeat"));
     return;
@@ -3834,14 +3859,14 @@ registerHandler("vi_to_cancel", vi_to_cancel);
 // Implemented via `editor.getNextKey()` (plugin API #1) — the editor
 // hands the next keypress to this awaiting handler before any other
 // dispatch, which means the mode itself does not need any per-key
-// bindings.  Keeps `setEditorMode("vi-find-char")` set across the
+// bindings.  Keeps `setInputMode("vi-find-char")` set across the
 // await purely for the status-bar indicator.
 async function enterFindCharMode(findType: FindCharType): Promise<void> {
   state.pendingFindChar = findType;
   // Set directly rather than through `switchMode`, which would clear the
   // count that `3fx` must still be holding when the target key arrives.
   state.mode = "find-char";
-  editor.setEditorMode("vi-find-char");
+  editor.setInputMode("vi-find-char");
   editor.setStatus(getModeIndicator("find-char"));
 
   // Capture the key losslessly — without this, a user pressing the
@@ -4089,7 +4114,7 @@ async function enterFindCharOperatorMode(findType: FindCharType): Promise<void> 
   // `state.pending` and so blank the operator out of the status indicator
   // while the target key is awaited.
   state.mode = "find-char";
-  editor.setEditorMode("vi-find-char");
+  editor.setInputMode("vi-find-char");
   editor.setStatus(getModeIndicator("find-char"));
 
   editor.beginKeyCapture();
@@ -4369,7 +4394,7 @@ function defineViModes(): void {
 
   // vi-find-char and vi-replace-char modes do not need bindings:
   // their entry-point handlers (vi_find_char_f/t/F/T, vi_replace_char) call
-  // editor.getNextKey() to read the next character.  setEditorMode(...) is
+  // editor.getNextKey() to read the next character.  setInputMode(...) is
   // still set across the await purely so the status bar shows the mode.
 
   // Define vi-operator-pending mode
@@ -5512,6 +5537,13 @@ editor.on("prompt_confirmed", async (args) => {
 // Toggle Command
 // ============================================================================
 
+// Vi is an editor-wide input mode (`editor.setInputMode`), not a window's
+// editor mode. "Vi is on" is a preference about how the user types, so it
+// holds in every window — one created after vi was enabled included — and no
+// window-scoped code (a dialog, a window switch, another plugin's per-window
+// mode) can clear it. The sub-mode (normal/insert/visual/…) is the input
+// mode's value: one for the whole editor, applied wherever the keyboard is,
+// the same way `state` below is one for the plugin.
 let viModeEnabled = false;
 
 function enableVi(): void {
@@ -5524,7 +5556,7 @@ function enableVi(): void {
 function disableVi(): void {
   if (!viModeEnabled) return;
   viModeEnabled = false;
-  editor.setEditorMode(null);
+  editor.setInputMode(null);
   resetModalState();
   editor.setStatus(editor.t("status.disabled"));
 }
@@ -5674,7 +5706,7 @@ editor.on("buffer_activated", (args) => {
   // would land on — and at offset 0 actually move — the cursor in the buffer
   // just opened.
   if (leaving !== "normal") {
-    editor.setEditorMode("vi-normal");
+    editor.setInputMode("vi-normal");
   }
   // Unconditional: `resetModalState` also drops a half-typed count, which the
   // indicator is showing.

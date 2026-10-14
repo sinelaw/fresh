@@ -145,11 +145,8 @@ impl FileTree {
                 // a natural (alphanumeric) comparison so `chapter-2`
                 // sorts before `chapter-10` (issue #2073).
                 let mut sorted_entries = entries;
-                sorted_entries.sort_by(|a, b| match (a.is_dir(), b.is_dir()) {
-                    (true, false) => std::cmp::Ordering::Less,
-                    (false, true) => std::cmp::Ordering::Greater,
-                    _ => natural_cmp(&a.name, &b.name),
-                });
+                sorted_entries
+                    .sort_by(|a, b| entry_order((a.is_dir(), &a.name), (b.is_dir(), &b.name)));
 
                 // Create child nodes
                 let mut child_ids = Vec::new();
@@ -327,6 +324,7 @@ impl FileTree {
     }
 
     /// Find node by relative path from root
+    #[cfg(test)]
     pub fn find_by_relative_path(&self, relative_path: &Path) -> Option<NodeId> {
         let full_path = self.root_path.join(relative_path);
         self.path_to_node.get(&full_path).copied()
@@ -364,6 +362,7 @@ impl FileTree {
     }
 
     /// Get number of nodes currently in memory
+    #[cfg(test)]
     pub fn node_count(&self) -> usize {
         self.nodes.len()
     }
@@ -440,6 +439,17 @@ impl FileTree {
         }
 
         Some(current_id)
+    }
+}
+
+/// The order a directory's children are listed in: directories first, then
+/// by name, naturally. Asked by anything that has to say where an entry *would*
+/// be listed before the tree has it — a drop's preview row.
+pub(crate) fn entry_order(a: (bool, &str), b: (bool, &str)) -> std::cmp::Ordering {
+    match (a.0, b.0) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => natural_cmp(a.1, b.1),
     }
 }
 

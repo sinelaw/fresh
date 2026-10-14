@@ -18,6 +18,12 @@ fn snapshot(spec: &fresh_ui::LayoutSpec) -> String {
             Draw::Rule(g) => format!("rule:{g}"),
             Draw::Border(bs) => format!("border:{bs:?}"),
             Draw::Selectable => "selectable".to_string(),
+            Draw::Overflow { axis, end, hovered } => {
+                format!(
+                    "overflow:{axis:?}:{end:?}{}",
+                    if *hovered { ":hover" } else { "" }
+                )
+            }
             Draw::Scrim(s) => format!("scrim {s:?}"),
             Draw::Lines(l) => format!(
                 "text {:?}",
@@ -424,6 +430,27 @@ fn wrapping_keeps_the_spaces_the_text_came_with() {
         painted_rows(spec),
         vec!["    sep  a string".to_string(), "here".to_string()],
         "the leading four and the inner two are the text's, not the wrapper's"
+    );
+}
+
+/// Text with no spaces in it — Japanese, Chinese — is cut to the row by
+/// display width. Each wide glyph takes two cells, so a six-cell row holds
+/// three of them; cutting after six *chars* would paint twelve cells into it
+/// and lose half the text to the clip.
+#[test]
+fn a_run_of_wide_glyphs_wraps_by_cells_and_loses_nothing() {
+    let mut ui: Ui<()> = Ui::new();
+    let spec = ui.frame(
+        text("日本語の文章です").wrap().w(Sizing::Cells(6)),
+        Size::new(6, 4),
+    );
+    assert_eq!(
+        painted_rows(spec),
+        vec![
+            "日本語".to_string(),
+            "の文章".to_string(),
+            "です".to_string()
+        ],
     );
 }
 

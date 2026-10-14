@@ -26,7 +26,24 @@ const REPORTED: &str = "SIGNAL 15 RECEIVED";
 const SWEPT: &str = "Thread Backtrace Dump";
 
 /// `fresh` with its config, state and logs confined to `home`.
+///
+/// The config is written, not merely pointed at, because these tests run
+/// the binary with an *empty* command line — which is the one invocation
+/// Orchestrator mode claims (`config.orchestrator_mode`, on by default).
+/// Left on, a bare `fresh` hands the editor to a detached daemon and this
+/// process becomes a relay client: the signal would land on the client,
+/// and the banner the assertions read comes from the editor. What is
+/// under test here is a signal reaching the editor in *this* terminal, so
+/// the mode is turned off for the same reason a user would turn it off.
 fn isolated_fresh(home: &Path) -> Command {
+    let config_dir = home.join("config").join("fresh");
+    std::fs::create_dir_all(&config_dir).expect("create the isolated config dir");
+    std::fs::write(
+        config_dir.join("config.json"),
+        "{\n  \"orchestrator_mode\": false,\n  \"check_for_updates\": false\n}\n",
+    )
+    .expect("write the isolated config");
+
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_fresh"));
     cmd.current_dir(home)
         .env("TMPDIR", home)

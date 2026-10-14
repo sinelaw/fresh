@@ -104,7 +104,14 @@ pub(crate) fn reconcile_pane(
         && !viewport.line_wrap_enabled
         && viewport.max_line_length_seen > 0
     {
-        let visible_width = viewport.width as usize;
+        let visible_width = pane_text_width(
+            state,
+            *show_line_numbers,
+            view_mode,
+            *compose_width,
+            viewport.width,
+            viewport.height,
+        );
         let max_scroll = viewport
             .max_line_length_seen
             .max(visible_width)
@@ -325,6 +332,7 @@ pub(crate) fn settle_pane(
     viewport: &mut Viewport,
     left_column: usize,
     show_horizontal_scrollbar: bool,
+    text_width: usize,
 ) -> usize {
     viewport.left_column = left_column;
     let _ = viewport.should_skip_resize_sync();
@@ -333,8 +341,7 @@ pub(crate) fn settle_pane(
         let mcw = compute_max_line_length(state, viewport);
         // Clamp left_column so content can't scroll past the end of the
         // longest line.
-        let visible_width = viewport.width as usize;
-        let max_scroll = mcw.saturating_sub(visible_width);
+        let max_scroll = mcw.saturating_sub(text_width);
         if viewport.left_column > max_scroll {
             viewport.left_column = max_scroll;
         }
@@ -342,6 +349,34 @@ pub(crate) fn settle_pane(
     } else {
         0
     }
+}
+
+/// How many of a pane's `width` columns are text: what the gutter this pane
+/// draws leaves over.
+///
+/// `Viewport::width` is the pane's whole content width, gutter included, so
+/// it is not the window the text scrolls through sideways. A horizontal
+/// scroll range measured against it stops short of the end of the widest
+/// line by exactly the gutter's width. The gutter is resolved the way
+/// [`place_pane`] resolves it, so the two cannot disagree.
+pub(crate) fn pane_text_width(
+    state: &EditorState,
+    show_line_numbers: bool,
+    view_mode: &ViewMode,
+    compose_width: Option<u16>,
+    width: u16,
+    height: u16,
+) -> usize {
+    let gutter = resolve_gutter_layout(
+        &state.margins,
+        show_line_numbers,
+        view_mode,
+        Rect::new(0, 0, width, height),
+        compose_width,
+        gutter_estimated_lines(state),
+        state.diff_gutter.as_ref().map(|g| g.width()),
+    );
+    usize::from(width).saturating_sub(gutter.width)
 }
 
 /// The line count the gutter is sized for: the buffer's line count, or its

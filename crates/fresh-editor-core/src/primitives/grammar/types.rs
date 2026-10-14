@@ -110,6 +110,9 @@ pub struct GrammarEngines {
     pub syntect: Option<usize>,
     /// Tree-sitter language, if one is registered for this grammar.
     pub tree_sitter: Option<fresh_languages::Language>,
+    /// Syntect grammars that replace `syntect` for particular extensions
+    /// (lowercase, no dot), e.g. `.tsx` under TypeScript.
+    pub syntect_dialects: Vec<(String, usize)>,
 }
 
 /// A single entry in the unified grammar catalog.
@@ -140,15 +143,44 @@ pub struct GrammarEntry {
     pub engines: GrammarEngines,
 }
 
+impl GrammarEntry {
+    /// The syntect grammar for a file of this language at `path`: a dialect
+    /// registered for its extension, else the entry's own grammar.
+    pub fn syntect_for_path(&self, path: &Path) -> Option<usize> {
+        let ext = path.extension().and_then(|e| e.to_str());
+        ext.and_then(|ext| {
+            self.engines
+                .syntect_dialects
+                .iter()
+                .find(|(d, _)| d.eq_ignore_ascii_case(ext))
+                .map(|&(_, idx)| idx)
+        })
+        .or(self.engines.syntect)
+    }
+}
+
+/// Syntect grammars folded into another language's catalog entry as a
+/// dialect, keyed by the dialect's own `file_extensions`.
+const SYNTECT_DIALECTS: &[(&str, &str)] = &[("TypeScriptReact", "TypeScript")];
+
 /// Embedded TOML grammar (syntect doesn't include one)
 pub const TOML_GRAMMAR: &str = include_str!("../../grammars/toml.sublime-syntax");
 
-/// Embedded Odin grammar (syntect doesn't include one)
-/// From: https://github.com/Tetralux/sublime-odin (MIT License)
-pub const ODIN_GRAMMAR: &str = include_str!("../../grammars/odin/Odin.sublime-syntax");
+/// Embedded Rust grammar. Unlike the rest of these, syntect *does* bundle a
+/// Rust grammar — an older one that mis-read an unspaced `<` before a string
+/// literal as a generic argument list and ate the string's opening quote
+/// recovering from it, inverting quote parity for the rest of the buffer
+/// (issue #3325). This one is vendored from current sublimehq/Packages, where
+/// both halves of that are fixed. Added after the defaults so it shadows them.
+pub const RUST_GRAMMAR: &str = include_str!("../../grammars/rust.sublime-syntax");
 
 /// Embedded Zig grammar (syntect doesn't include one)
 pub const ZIG_GRAMMAR: &str = include_str!("../../grammars/zig.sublime-syntax");
+
+/// Embedded Odin grammar (syntect doesn't include one)
+/// Vendored from <https://github.com/odin-lang/sublime-odin> (MIT License,
+/// see `grammars/odin/LICENSE`).
+pub const ODIN_GRAMMAR: &str = include_str!("../../grammars/odin/Odin.sublime-syntax");
 
 /// Embedded GDScript grammar
 /// Based on https://github.com/beefsack/GDScript-sublime (MIT License)
@@ -258,10 +290,14 @@ pub const GOMOD_GRAMMAR: &str = include_str!("../../grammars/gomod.sublime-synta
 /// Embedded Vue grammar
 pub const VUE_GRAMMAR: &str = include_str!("../../grammars/vue.sublime-syntax");
 
-/// Embedded TypeScript grammar. Serves embedded contexts only (Vue
-/// `lang="ts"`, Markdown ```ts fences) — `.ts` buffers stay on
-/// tree-sitter via the catalog skip below, mirroring JavaScript.
+/// Embedded TypeScript, TypeScriptReact and JavaScript grammars; build.rs
+/// derives the latter two from the first. JavaScript shadows syntect's bundled
+/// grammar, which leaked template-literal state (issue #899).
 pub const TYPESCRIPT_GRAMMAR: &str = include_str!("../../grammars/typescript.sublime-syntax");
+pub const TYPESCRIPTREACT_GRAMMAR: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/typescriptreact.sublime-syntax"));
+pub const JAVASCRIPT_GRAMMAR: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/javascript.sublime-syntax"));
 /// Embedded Svelte grammar
 pub const SVELTE_GRAMMAR: &str = include_str!("../../grammars/svelte.sublime-syntax");
 /// Embedded Astro grammar
@@ -654,14 +690,14 @@ impl GrammarRegistry {
             }
         }
 
-        // Odin grammar
-        match SyntaxDefinition::load_from_str(ODIN_GRAMMAR, true, Some("Odin")) {
+        // Rust grammar (shadows syntect's older bundled one, see RUST_GRAMMAR)
+        match SyntaxDefinition::load_from_str(RUST_GRAMMAR, true, Some("Rust")) {
             Ok(syntax) => {
                 builder.add(syntax);
-                tracing::debug!("Loaded embedded Odin grammar");
+                tracing::debug!("Loaded embedded Rust grammar");
             }
             Err(e) => {
-                tracing::warn!("Failed to load embedded Odin grammar: {}", e);
+                tracing::warn!("Failed to load embedded Rust grammar: {}", e);
             }
         }
 
@@ -673,6 +709,17 @@ impl GrammarRegistry {
             }
             Err(e) => {
                 tracing::warn!("Failed to load embedded Zig grammar: {}", e);
+            }
+        }
+
+        // Odin grammar
+        match SyntaxDefinition::load_from_str(ODIN_GRAMMAR, true, Some("Odin")) {
+            Ok(syntax) => {
+                builder.add(syntax);
+                tracing::debug!("Loaded embedded Odin grammar");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load embedded Odin grammar: {}", e);
             }
         }
 
@@ -808,6 +855,8 @@ impl GrammarRegistry {
             (GOMOD_GRAMMAR, "Go Module"),
             (VUE_GRAMMAR, "Vue"),
             (TYPESCRIPT_GRAMMAR, "TypeScript"),
+            (TYPESCRIPTREACT_GRAMMAR, "TypeScriptReact"),
+            (JAVASCRIPT_GRAMMAR, "JavaScript"),
             (SVELTE_GRAMMAR, "Svelte"),
             (ASTRO_GRAMMAR, "Astro"),
             (HYPRLANG_GRAMMAR, "Hyprlang"),
@@ -851,8 +900,7 @@ impl GrammarRegistry {
     pub fn find_syntax_for_file(&self, path: &Path) -> Option<&SyntaxReference> {
         let entry = self.find_by_path(path, None)?;
         entry
-            .engines
-            .syntect
+            .syntect_for_path(path)
             .map(|i| &self.syntax_set.syntaxes()[i])
     }
 
@@ -1083,8 +1131,8 @@ impl GrammarRegistry {
         //
         // Seed from the built-in alias table as well as the live `aliases`
         // HashMap: the live map only contains aliases whose target exists in
-        // the syntect set, so tree-sitter-only entries (TypeScript) would
-        // otherwise never get their short name ("ts").
+        // the syntect set, so tree-sitter-only entries would otherwise never
+        // get their short name.
         let mut short_by_full: HashMap<String, String> = HashMap::new();
         let record = |map: &mut HashMap<String, String>, short: &str, full: &str| {
             let key = full.to_lowercase();
@@ -1115,8 +1163,8 @@ impl GrammarRegistry {
         let mut catalog: Vec<GrammarEntry> = Vec::new();
         let mut scope_to_index: HashMap<String, usize> = HashMap::new();
 
-        // Syntect-backed entries (skip Plain Text, JavaScript, and the stock
-        // Diff grammar).
+        // Syntect-backed entries (skip Plain Text, the stock Diff grammar and
+        // dialects, which join their host entry below).
         //
         // Syntect's `file_extensions` is a hybrid list: real extensions like
         // "rb" sit alongside bare filenames like "Gemfile", "Rakefile",
@@ -1126,31 +1174,29 @@ impl GrammarRegistry {
         // `extensions` here and index each entry as *both* an extension and
         // a filename at the bottom of this method.
         //
-        // JavaScript is skipped here so the catalog falls through to the
-        // tree-sitter-only fallback below — the bundled syntect JS grammar
-        // mishandles class fields whose initialiser is an arrow function
-        // returning a template literal (issue #899: state leaks past the
-        // closing backtick and paints the rest of the file as a string).
-        // tree-sitter-javascript parses template literals from the AST and
-        // does not have this failure mode. `find_syntax_by_name("JavaScript")`
-        // still returns syntect's grammar via the catalog's fallback path,
-        // so markdown popup rendering and other code-string highlighters
-        // are unaffected.
-        //
-        // TypeScript is skipped for the same reason in reverse: its bundled
-        // grammar exists only for embedded contexts (Vue `lang="ts"`,
-        // Markdown ```ts fences, resolved via `find_syntax_by_token`), and
-        // `.ts` buffers must keep the richer tree-sitter highlighting.
-        //
         // Syntect's stock Diff grammar is superseded by Fresh Diff, which
         // exposes per-file embedded regions so patch bodies can use their
         // source language's token colors.
+        // An embedded grammar is added after the defaults, so when it reuses a
+        // syntect grammar's name it is meant to replace it — Rust does exactly
+        // that (see `RUST_GRAMMAR`). Keep only the last syntax of each name, so
+        // the catalog lists one entry per language rather than the shadowed
+        // grammar as well. This matches syntect's own lookups, which scan the
+        // set in reverse and so already resolve a name or extension to the last
+        // definition.
+        let mut last_by_name: HashMap<&str, usize> = HashMap::new();
+        for (idx, syntax) in self.syntax_set.syntaxes().iter().enumerate() {
+            last_by_name.insert(syntax.name.as_str(), idx);
+        }
+
         for (idx, syntax) in self.syntax_set.syntaxes().iter().enumerate() {
             if syntax.name == "Plain Text"
-                || syntax.name == "JavaScript"
-                || syntax.name == "TypeScript"
                 || syntax.name == "Diff"
+                || SYNTECT_DIALECTS.iter().any(|(d, _)| *d == syntax.name)
             {
+                continue;
+            }
+            if last_by_name.get(syntax.name.as_str()) != Some(&idx) {
                 continue;
             }
             let (language_id, tree_sitter) = derive_language_id(&syntax.name);
@@ -1197,8 +1243,25 @@ impl GrammarRegistry {
                 engines: GrammarEngines {
                     syntect: Some(idx),
                     tree_sitter,
+                    syntect_dialects: Vec::new(),
                 },
             });
+        }
+
+        for (dialect, host) in SYNTECT_DIALECTS {
+            let Some(&idx) = last_by_name.get(dialect) else {
+                continue;
+            };
+            let Some(entry) = catalog.iter_mut().find(|e| e.display_name == *host) else {
+                continue;
+            };
+            for ext in &self.syntax_set.syntaxes()[idx].file_extensions {
+                let ext = ext.to_lowercase();
+                if !entry.extensions.contains(&ext) {
+                    entry.extensions.push(ext.clone());
+                }
+                entry.engines.syntect_dialects.push((ext, idx));
+            }
         }
 
         // Attach filename_scopes to their entries.
@@ -1221,8 +1284,7 @@ impl GrammarRegistry {
 
         // Ensure every tree-sitter language has an entry. If a syntect entry
         // already maps to the same tree-sitter language, skip it; otherwise
-        // add a tree-sitter-only entry so the catalog is complete (TypeScript
-        // being the motivating example — syntect ships no grammar for it).
+        // add a tree-sitter-only entry so the catalog is complete.
         let mut ts_covered: std::collections::HashSet<fresh_languages::Language> =
             std::collections::HashSet::new();
         for entry in &catalog {
@@ -1249,6 +1311,7 @@ impl GrammarRegistry {
                 engines: GrammarEngines {
                     syntect: None,
                     tree_sitter: Some(*lang),
+                    syntect_dialects: Vec::new(),
                 },
             });
         }
@@ -1315,14 +1378,13 @@ impl GrammarRegistry {
     /// `DeclaredRegion`): the catalog entry for the path, so a region
     /// named by a file picks the grammar the editor would open that file
     /// with, user mappings included — or, when that entry has no syntect
-    /// grammar (TypeScript and JavaScript are served by tree-sitter for
-    /// real buffers) or the token is not a path at all (`py`), the grammar
+    /// grammar or the token is not a path at all (`py`), the grammar
     /// the token, its basename or its extension names. Plain text is not
     /// an answer: `None` leaves the rows as they are.
     pub fn embedded_syntax_index(&self, language: &str) -> Option<usize> {
         if let Some(index) = self
             .find_by_path(Path::new(language), None)
-            .and_then(|entry| entry.engines.syntect)
+            .and_then(|entry| entry.syntect_for_path(Path::new(language)))
         {
             return Some(index);
         }
@@ -1839,20 +1901,68 @@ mod tests {
         assert!(!registry.available_syntaxes().is_empty());
     }
 
+    /// Fresh vendors its own Rust grammar (`RUST_GRAMMAR`) to replace the older
+    /// one syntect bundles, which swallowed a string's opening quote after an
+    /// unspaced `<` (issue #3325). Both live in the syntax set, so check the
+    /// shadowing holds: one catalog entry, and `.rs` resolving to the vendored
+    /// grammar rather than syntect's.
+    #[test]
+    fn test_vendored_rust_grammar_shadows_the_bundled_one() {
+        let registry = GrammarRegistry::default();
+
+        let rust_entries: Vec<_> = registry
+            .catalog()
+            .iter()
+            .filter(|entry| entry.display_name == "Rust")
+            .collect();
+        assert_eq!(
+            rust_entries.len(),
+            1,
+            "the catalog should list Rust once, not once per grammar of that name"
+        );
+
+        // Both grammars claim `.rs`; the vendored one is added last and must win.
+        let syntax_set = registry.syntax_set();
+        let resolved = syntax_set
+            .find_syntax_by_extension("rs")
+            .expect("`.rs` should resolve to a Rust grammar");
+        assert_eq!(resolved.name, "Rust");
+        let rust_indices: Vec<_> = syntax_set
+            .syntaxes()
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.name == "Rust")
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(
+            rust_indices.len(),
+            2,
+            "expected syntect's bundled Rust grammar plus the vendored one"
+        );
+        let resolved_index = syntax_set
+            .syntaxes()
+            .iter()
+            .position(|s| std::ptr::eq(s, resolved))
+            .unwrap();
+        assert_eq!(
+            resolved_index,
+            *rust_indices.last().unwrap(),
+            "`.rs` should resolve to the vendored grammar, not syntect's bundled one"
+        );
+    }
+
     #[test]
     fn test_find_syntax_for_common_extensions() {
         let registry = GrammarRegistry::default();
 
         // Test common extensions that resolve to a syntect (TextMate) grammar
-        // via the catalog. JavaScript is intentionally NOT here — it is routed
-        // exclusively to tree-sitter (issue #899) and so has no catalog-level
-        // syntect entry. Code-block highlighting in popups still finds the
-        // syntect JS grammar through `SyntaxSet::find_syntax_by_token`, which
-        // bypasses the catalog.
+        // via the catalog.
         let test_cases = [
             ("test.py", true),
             ("test.rs", true),
-            ("test.js", false),
+            ("test.js", true),
+            ("test.ts", true),
+            ("test.tsx", true),
             ("test.json", true),
             ("test.md", true),
             ("test.html", true),
@@ -2330,18 +2440,30 @@ mod tests {
             );
         }
 
-        // TypeScript is tree-sitter-only (syntect ships no grammar for it) yet
-        // must still appear in the catalog.
+        // TypeScript is served by the vendored syntect grammar, keeps its
+        // tree-sitter language for indentation, and hosts TSX as a dialect
+        // rather than a separate language.
         let ts = registry
             .find_by_name("TypeScript")
             .expect("TypeScript must be in the catalog");
-        assert!(ts.engines.syntect.is_none());
+        let ts_idx = ts.engines.syntect.expect("TypeScript should be syntect");
+        assert_eq!(registry.syntax_set().syntaxes()[ts_idx].name, "TypeScript");
         assert_eq!(
             ts.engines.tree_sitter,
             Some(fresh_languages::Language::TypeScript)
         );
         assert_eq!(ts.language_id, "typescript");
         assert!(ts.extensions.iter().any(|e| e == "ts"));
+        let tsx = registry
+            .find_by_path(Path::new("app.tsx"), None)
+            .expect("app.tsx should resolve");
+        assert_eq!(tsx.display_name, "TypeScript");
+        let tsx_idx = tsx.syntect_for_path(Path::new("app.tsx")).unwrap();
+        assert_eq!(
+            registry.syntax_set().syntaxes()[tsx_idx].name,
+            "TypeScriptReact"
+        );
+        assert!(registry.find_by_name("TypeScriptReact").is_none());
 
         // Languages that exist in both syntect and tree-sitter (Rust, Python)
         // must appear exactly once and prefer the syntect engine.
@@ -2367,17 +2489,22 @@ mod tests {
             assert_eq!(by_id.display_name, entry.display_name);
         }
 
-        // JavaScript is deliberately routed to tree-sitter only — the
-        // bundled syntect JavaScript grammar mishandles certain template
-        // literals and bleeds string state into the rest of the file
-        // (issue #899). The catalog must therefore expose a tree-sitter-only
-        // entry, even though syntect ships a JavaScript grammar.
+        // JavaScript uses the vendored grammar, which shadows syntect's
+        // bundled one (issue #899).
         let js = registry
             .find_by_name("JavaScript")
             .expect("JavaScript must be in the catalog");
+        let js_idx = js.engines.syntect.expect("JavaScript should be syntect");
+        assert_eq!(
+            registry.syntax_set().syntaxes()[js_idx].scope.to_string(),
+            "source.js"
+        );
         assert!(
-            js.engines.syntect.is_none(),
-            "JavaScript must not be routed to the syntect engine (issue #899)"
+            registry.syntax_set().syntaxes()[js_idx]
+                .file_extensions
+                .iter()
+                .any(|e| e == "jsx"),
+            "the vendored JavaScript grammar (JSX-aware) must win"
         );
         assert_eq!(
             js.engines.tree_sitter,

@@ -165,8 +165,7 @@ fn popup_right_border_col(screen: &str) -> usize {
         .find(|l| l.contains('┐'))
         .expect("popup must render a top-right corner");
     top.char_indices()
-        .filter(|(_, c)| *c == '┐')
-        .last()
+        .rfind(|(_, c)| *c == '┐')
         .map(|(i, _)| top[..i].chars().count())
         .expect("right corner must be locatable")
 }

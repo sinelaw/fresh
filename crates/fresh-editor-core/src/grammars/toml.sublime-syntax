@@ -43,6 +43,8 @@ contexts:
 
   value:
     - include: value-components
+    # A comment may follow the value on the same line.
+    - include: comments
     - match: '$'
       pop: true
 
@@ -84,6 +86,10 @@ contexts:
           scope: punctuation.definition.string.end.toml
           pop: true
         - include: escape-chars
+        # Single-line strings can't span lines: end an unterminated one at
+        # its line instead of painting the rest of the file as a string.
+        - match: '$'
+          pop: true
     # Literal strings
     - match: "'"
       scope: punctuation.definition.string.begin.toml
@@ -91,6 +97,8 @@ contexts:
         - meta_scope: string.quoted.single.toml
         - match: "'"
           scope: punctuation.definition.string.end.toml
+          pop: true
+        - match: '$'
           pop: true
 
   escape-chars:
@@ -166,6 +174,7 @@ contexts:
         - include: inline-key-value
         - match: ','
           scope: punctuation.separator.inline-table.toml
+        - include: comments
 
   inline-key-value:
     - match: '((?:[A-Za-z0-9_-]+|"[^"]*"|''[^'']*'')(?:\s*\.\s*(?:[A-Za-z0-9_-]+|"[^"]*"|''[^'']*''))*)\s*(=)'

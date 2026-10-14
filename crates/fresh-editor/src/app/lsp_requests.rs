@@ -10,6 +10,7 @@
 //! - Rename operations
 //! - Inlay hints
 
+use crate::view::theme::ThemeStyle;
 use anyhow::Result as AnyhowResult;
 use fresh_i18n::t;
 use std::io;
@@ -19,6 +20,15 @@ use crate::app::window::LspCompletionCandidate;
 use crate::model::event::{BufferId, Event};
 use crate::primitives::word_navigation::{find_word_end, find_word_start};
 use crate::view::prompt::{Prompt, PromptType};
+
+/// What applying a `WorkspaceEdit` actually did.
+pub(crate) struct AppliedEdit {
+    /// Text edits and resource operations that changed something.
+    pub changes: usize,
+    /// Resource operations refused because they would have destroyed a file.
+    /// Each has already reported itself on the status line.
+    pub refused: usize,
+}
 
 use crate::services::lsp::async_handler::LspHandle;
 use crate::types::LspFeature;
@@ -154,10 +164,17 @@ impl Editor {
         // each candidate's origin has to be stamped on: once several
         // servers' results sit in one list, nothing else can tell them
         // apart.
-        let candidates = items.into_iter().map(|item| LspCompletionCandidate {
-            item,
-            server: Some(server),
-        });
+        let response = self.active_window().completion_responses;
+        self.active_window_mut().completion_responses += 1;
+        let candidates =
+            items
+                .into_iter()
+                .enumerate()
+                .map(|(ordinal, item)| LspCompletionCandidate {
+                    id: format!("lsp:{response}:{ordinal}"),
+                    item,
+                    server: Some(server),
+                });
         match &mut self.active_window_mut().completion_items {
             Some(existing) => {
                 existing.extend(candidates);
@@ -191,9 +208,9 @@ impl Editor {
             crate::app::popup_actions::build_completion_popup_from_items(all_popup_items, 0);
         let accept_hint = self.completion_accept_key_hint();
         let focus_hint = self.popup_focus_key_hint();
-        let (popup_bg, popup_border_fg) = {
+        let (popup_bg, popup_border) = {
             let theme = self.theme();
-            (theme.popup_bg, theme.popup_border_fg)
+            crate::state::popup_styles(&theme)
         };
 
         {
@@ -207,7 +224,7 @@ impl Editor {
                 .unwrap();
             // Convert PopupData to Popup and use show_or_replace to avoid stacking
             let mut popup_obj =
-                crate::state::convert_popup_data_to_popup(&popup_data, popup_bg, popup_border_fg);
+                crate::state::convert_popup_data_to_popup(&popup_data, popup_bg, popup_border);
             popup_obj.accept_key_hint = accept_hint;
             popup_obj.resolver = crate::view::popup::PopupResolver::Completion;
             popup_obj.focus_key_hint = focus_hint;
@@ -366,13 +383,7 @@ impl Editor {
                 new_sticky_column: None,
             };
 
-            let split_id = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .active_split();
+            let split_id = self.effective_active_split();
             self.active_window_mut()
                 .apply_event_to_buffer(buffer_id, split_id, &event);
             // Without this the cursor lands at the definition but the
@@ -736,9 +747,9 @@ impl Editor {
         let popup_data = crate::app::popup_actions::build_completion_popup_from_items(items, 0);
         let accept_hint = self.completion_accept_key_hint();
         let focus_hint = self.popup_focus_key_hint();
-        let (popup_bg, popup_border_fg) = {
+        let (popup_bg, popup_border) = {
             let theme = self.theme();
-            (theme.popup_bg, theme.popup_border_fg)
+            crate::state::popup_styles(&theme)
         };
 
         let buffer_id = self.active_buffer();
@@ -750,7 +761,7 @@ impl Editor {
             .get_mut(&buffer_id)
             .unwrap();
         let mut popup_obj =
-            crate::state::convert_popup_data_to_popup(&popup_data, popup_bg, popup_border_fg);
+            crate::state::convert_popup_data_to_popup(&popup_data, popup_bg, popup_border);
         popup_obj.accept_key_hint = accept_hint;
         popup_obj.resolver = crate::view::popup::PopupResolver::Completion;
         popup_obj.focus_key_hint = focus_hint;
@@ -936,7 +947,45 @@ impl Editor {
             );
         }
 
+        // No server took it because the buffer's server has not finished
+        // starting: keep the request, and `replay_deferred_hover` asks again
+        // once it has, rather than the key press doing nothing.
+        let language = self.active_state().language.clone();
+        let waiting = results.is_empty()
+            && self
+                .lsp()
+                .is_some_and(|lsp| lsp.has_initializing_handle(&language, LspFeature::Hover));
+        self.active_window_mut()
+            .hover
+            .set_deferred(waiting.then_some((buffer_id, cursor_pos)));
+
         Ok(())
+    }
+
+    /// Re-issue a keyboard hover that was asked for before `language`'s
+    /// server finished initializing (see `request_hover`). Dropped instead
+    /// if the user has since moved the cursor or switched buffers: the
+    /// hover would answer a question no longer being asked.
+    pub(crate) fn replay_deferred_hover(&mut self, language: &str) {
+        let Some((buffer_id, byte)) = self.active_window().hover.deferred() else {
+            return;
+        };
+        match self.buffers().get(&buffer_id) {
+            // Waiting on another language's server.
+            Some(state) if state.language != language => return,
+            Some(_) => {}
+            None => {
+                self.active_window_mut().hover.set_deferred(None);
+                return;
+            }
+        }
+        self.active_window_mut().hover.set_deferred(None);
+        if self.active_buffer() != buffer_id || self.active_cursors().primary().position != byte {
+            return;
+        }
+        if let Err(e) = self.request_hover() {
+            tracing::debug!("Deferred hover request failed: {}", e);
+        }
     }
 
     /// Request LSP hover documentation at a specific byte position
@@ -1225,7 +1274,8 @@ impl Editor {
                         let mut sl = StyledLine::new();
                         sl.push(
                             s.to_string(),
-                            Style::default().fg(self.theme.read().unwrap().popup_text_fg),
+                            Style::default()
+                                .theme_fg(&self.theme.read().unwrap(), "ui.popup_text_fg"),
                         );
                         sl
                     })
@@ -1244,7 +1294,7 @@ impl Editor {
             let mut sep = StyledLine::new();
             sep.push(
                 "─".repeat(12),
-                Style::default().fg(self.theme.read().unwrap().popup_border_fg),
+                Style::default().theme_fg(&self.theme.read().unwrap(), "ui.popup_border_fg"),
             );
             sep
         };
@@ -1300,8 +1350,10 @@ impl Editor {
         };
         popup.width = popup_width;
         popup.max_height = dynamic_height;
-        popup.border_style = Style::default().fg(self.theme.read().unwrap().popup_border_fg);
-        popup.background_style = Style::default().bg(self.theme.read().unwrap().popup_bg);
+        popup.border_style =
+            Style::default().theme_fg(&self.theme.read().unwrap(), "ui.popup_border_fg");
+        popup.background_style =
+            Style::default().theme_bg(&self.theme.read().unwrap(), "ui.popup_bg");
         popup.focus_key_hint = self.popup_focus_key_hint();
 
         // Show the popup. Replace any existing transient (hover/signature)
@@ -1401,7 +1453,7 @@ impl Editor {
                 header.push(
                     format!("  ({})", source),
                     Style::default()
-                        .fg(self.theme.read().unwrap().tab_inactive_fg)
+                        .theme_fg(&self.theme.read().unwrap(), "ui.tab_inactive_fg")
                         .add_modifier(Modifier::ITALIC),
                 );
             }
@@ -1414,7 +1466,7 @@ impl Editor {
                 let mut line = StyledLine::new();
                 line.push(
                     message_line.to_string(),
-                    Style::default().fg(self.theme.read().unwrap().popup_text_fg),
+                    Style::default().theme_fg(&self.theme.read().unwrap(), "ui.popup_text_fg"),
                 );
                 out.push(line);
             }
@@ -1834,8 +1886,10 @@ impl Editor {
         popup.position = PopupPosition::BelowCursor;
         popup.width = 60;
         popup.max_height = 20;
-        popup.border_style = Style::default().fg(self.theme.read().unwrap().popup_border_fg);
-        popup.background_style = Style::default().bg(self.theme.read().unwrap().popup_bg);
+        popup.border_style =
+            Style::default().theme_fg(&self.theme.read().unwrap(), "ui.popup_border_fg");
+        popup.background_style =
+            Style::default().theme_bg(&self.theme.read().unwrap(), "ui.popup_bg");
         popup.focus_key_hint = self.popup_focus_key_hint();
 
         // Show the popup
@@ -2085,6 +2139,10 @@ impl Editor {
                         kind
                     };
                     PopupListItem {
+                        // The action's place in what the servers answered:
+                        // the list is built once from that answer and never
+                        // re-ranked, and `data` indexes it the same way.
+                        id: format!("action:{i}"),
                         text: format!("{}. {}", i + 1, title),
                         detail,
                         icon: None,
@@ -2101,8 +2159,10 @@ impl Editor {
         popup.position = PopupPosition::BelowCursor;
         popup.width = 60;
         popup.max_height = 15;
-        popup.border_style = Style::default().fg(self.theme.read().unwrap().popup_border_fg);
-        popup.background_style = Style::default().bg(self.theme.read().unwrap().popup_bg);
+        popup.border_style =
+            Style::default().theme_fg(&self.theme.read().unwrap(), "ui.popup_border_fg");
+        popup.background_style =
+            Style::default().theme_bg(&self.theme.read().unwrap(), "ui.popup_bg");
         // Confirm reads the selected row's `data` as an index into
         // `self.active_window_mut().pending_code_actions` — the heavy lsp_types payload
         // stays on the Editor to keep the view crate LSP-free.
@@ -2176,9 +2236,18 @@ impl Editor {
         // Apply workspace edit if present
         if let Some(edit) = ca.edit {
             match self.apply_workspace_edit(edit) {
-                Ok(n) => {
+                // A refused operation has already named the file it was
+                // about; leave that message in place rather than reporting
+                // the action as applied.
+                Ok(applied) if applied.refused > 0 => {}
+                Ok(applied) => {
                     self.set_status_message(
-                        t!("lsp.code_action_applied", title = &title, count = n).to_string(),
+                        t!(
+                            "lsp.code_action_applied",
+                            title = &title,
+                            count = applied.changes
+                        )
+                        .to_string(),
                     );
                 }
                 Err(e) => {
@@ -2602,25 +2671,16 @@ impl Editor {
         // Get cursor_id for this buffer from split view state
         let cursor_id = {
             let split_id = self
+                .active_window_mut()
                 .split_manager_mut()
                 .splits_for_buffer(buffer_id)
                 .into_iter()
                 .next()
-                .unwrap_or_else(|| {
-                    self.windows
-                        .get(&self.active_window)
-                        .and_then(|w| w.buffers.splits())
-                        .map(|(mgr, _)| mgr)
-                        .expect("active window must have a populated split layout")
-                        .active_split()
-                });
-            self.windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
+                .unwrap_or_else(|| self.active_window().split_manager().active_split());
+            self.active_window()
+                .split_view_states()
                 .get(&split_id)
-                .map(|vs| vs.cursors.primary_id())
+                .map(|vs| vs.buffer_tab_state().cursors.primary_id())
                 .unwrap_or_else(|| self.active_cursors().primary_id())
         };
 
@@ -2783,7 +2843,11 @@ impl Editor {
     }
 
     /// Apply a resource operation (CreateFile, RenameFile, DeleteFile) from a workspace edit.
-    fn apply_resource_operation(&mut self, op: lsp_types::ResourceOp) -> AnyhowResult<()> {
+    /// Apply one resource operation, answering whether it changed the
+    /// filesystem. A refused operation answers `false`: it must not be
+    /// counted as a change, and the message it left on the status line must
+    /// not be replaced by a caller reporting success.
+    fn apply_resource_operation(&mut self, op: lsp_types::ResourceOp) -> AnyhowResult<bool> {
         // Each URI in a resource operation is wire-side and must be
         // translated back to the host before we touch the host
         // filesystem. Wrapping in [`LspUri`] and calling
@@ -2811,12 +2875,30 @@ impl Editor {
                 if path.exists() {
                     if ignore_if_exists {
                         tracing::debug!("CreateFile: {:?} already exists, ignoring", path);
-                        return Ok(());
+                        return Ok(false);
                     }
-                    if !overwrite {
+                    // `overwrite` is the server asking us to truncate a file
+                    // that already exists — the write below is `""`, so
+                    // honouring it destroys the contents. Same objection as
+                    // the delete arm: server-initiated, unconfirmed, and no
+                    // trash to recover from. The request is reported and the
+                    // file left alone whatever the flag says.
+                    if overwrite {
+                        tracing::warn!(
+                            "CreateFile refused: {:?} exists and the server asked to overwrite it",
+                            path
+                        );
+                        let name = path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| path.display().to_string());
+                        self.set_status_message(
+                            t!("lsp.overwrite_refused", name = &name).to_string(),
+                        );
+                    } else {
                         tracing::warn!("CreateFile: {:?} already exists and overwrite=false", path);
-                        return Ok(());
                     }
+                    return Ok(false);
                 }
 
                 // Create parent directories if needed
@@ -2830,6 +2912,7 @@ impl Editor {
                 if let Err(e) = self.open_file(&path) {
                     tracing::warn!("CreateFile: failed to open created file {:?}: {}", path, e);
                 }
+                Ok(true)
             }
             lsp_types::ResourceOp::Rename(rename) => {
                 let old_path = to_host(&rename.old_uri);
@@ -2848,15 +2931,32 @@ impl Editor {
                 if new_path.exists() {
                     if ignore_if_exists {
                         tracing::debug!("RenameFile: {:?} already exists, ignoring", new_path);
-                        return Ok(());
+                        return Ok(false);
                     }
-                    if !overwrite {
+                    // `overwrite` here means renaming *onto* an existing
+                    // file, which destroys it. Refused for the same reason
+                    // the delete and create arms are: nothing about a
+                    // server-initiated edit was confirmed by the user, and
+                    // `rename(2)` leaves nothing to recover.
+                    if overwrite {
+                        tracing::warn!(
+                            "RenameFile refused: {:?} exists and the server asked to overwrite it",
+                            new_path
+                        );
+                        let name = new_path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| new_path.display().to_string());
+                        self.set_status_message(
+                            t!("lsp.overwrite_refused", name = &name).to_string(),
+                        );
+                    } else {
                         tracing::warn!(
                             "RenameFile: {:?} already exists and overwrite=false",
                             new_path
                         );
-                        return Ok(());
                     }
+                    return Ok(false);
                 }
 
                 // Create parent directories if needed
@@ -2865,47 +2965,45 @@ impl Editor {
                 }
                 std::fs::rename(&old_path, &new_path)?;
                 tracing::info!("RenameFile: {:?} -> {:?}", old_path, new_path);
+                Ok(true)
             }
             lsp_types::ResourceOp::Delete(delete) => {
+                // Fresh does not delete files because a language server asked.
+                //
+                // A server-initiated `workspace/applyEdit` carries no user
+                // confirmation, is not bounded to the workspace, and — unlike
+                // the file explorer's delete, which moves to the system trash —
+                // unlinked whatever URI it named with no way back. One bad
+                // server (or one bad code action from a good one) was enough to
+                // lose a directory. The request is reported and ignored; a user
+                // who agrees with the server can delete the file themselves.
                 let path = to_host(&delete.uri);
-                let recursive = delete
-                    .options
-                    .as_ref()
-                    .and_then(|o| o.recursive)
-                    .unwrap_or(false);
-                let ignore_if_not_exists = delete
-                    .options
-                    .as_ref()
-                    .and_then(|o| o.ignore_if_not_exists)
-                    .unwrap_or(false);
-
-                if !path.exists() {
-                    if ignore_if_not_exists {
-                        tracing::debug!("DeleteFile: {:?} does not exist, ignoring", path);
-                        return Ok(());
-                    }
-                    tracing::warn!("DeleteFile: {:?} does not exist", path);
-                    return Ok(());
-                }
-
-                if path.is_dir() && recursive {
-                    std::fs::remove_dir_all(&path)?;
-                } else if path.is_file() {
-                    std::fs::remove_file(&path)?;
-                }
-                tracing::info!("DeleteFile: deleted {:?}", path);
+                tracing::warn!("DeleteFile refused (server-requested delete): {:?}", path);
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| path.display().to_string());
+                self.set_status_message(t!("lsp.delete_refused", name = &name).to_string());
+                Ok(false)
             }
         }
-        Ok(())
     }
 
     /// Apply an LSP WorkspaceEdit (used by rename, code actions, etc.).
     ///
     /// Returns the total number of text changes applied.
+    /// Apply an LSP `WorkspaceEdit`.
+    ///
+    /// Returns what it did: how many changes landed, and how many resource
+    /// operations were refused because they would have deleted or overwritten
+    /// a file. A caller that reports success must check `refused` first — the
+    /// refusal has already put a message naming the file on the status line,
+    /// and overwriting it with "renamed 3 occurrences" would hide the fact
+    /// that the server asked for something Fresh declined to do.
     pub(crate) fn apply_workspace_edit(
         &mut self,
         workspace_edit: lsp_types::WorkspaceEdit,
-    ) -> AnyhowResult<usize> {
+    ) -> AnyhowResult<AppliedEdit> {
         tracing::debug!(
             "Applying WorkspaceEdit: changes={:?}, document_changes={:?}",
             workspace_edit.changes.as_ref().map(|c| c.len()),
@@ -2916,6 +3014,7 @@ impl Editor {
         );
 
         let mut total_changes = 0;
+        let mut refused = 0;
 
         // Applying edits to a file opens it via `open_file`, which focuses
         // it in the active split. For a cross-file edit (e.g. a rename
@@ -2947,7 +3046,10 @@ impl Editor {
                                         .to_string(),
                                 );
                             }
-                            return Ok(0);
+                            return Ok(AppliedEdit {
+                                changes: 0,
+                                refused: 0,
+                            });
                         }
                     };
                     total_changes += self.apply_lsp_text_edits(buffer_id, edits)?;
@@ -2974,8 +3076,11 @@ impl Editor {
                                 total_changes += self.apply_text_document_edit(text_doc_edit)?;
                             }
                             lsp_types::DocumentChangeOperation::Op(resource_op) => {
-                                self.apply_resource_operation(resource_op)?;
-                                total_changes += 1;
+                                if self.apply_resource_operation(resource_op)? {
+                                    total_changes += 1;
+                                } else {
+                                    refused += 1;
+                                }
                             }
                         }
                     }
@@ -2993,7 +3098,10 @@ impl Editor {
             self.set_active_buffer(original_active);
         }
 
-        Ok(total_changes)
+        Ok(AppliedEdit {
+            changes: total_changes,
+            refused,
+        })
     }
 
     /// Handle rename response from LSP
@@ -3004,9 +3112,14 @@ impl Editor {
     ) -> AnyhowResult<()> {
         match result {
             Ok(workspace_edit) => {
-                let total_changes = self.apply_workspace_edit(workspace_edit)?;
-                self.active_window_mut().status_message =
-                    Some(t!("lsp.renamed", count = total_changes).to_string());
+                let applied = self.apply_workspace_edit(workspace_edit)?;
+                // A refusal has already said which file it was about; saying
+                // "renamed N occurrences" over the top of it would bury the
+                // one thing the user needs to know.
+                if applied.refused == 0 {
+                    self.active_window_mut().status_message =
+                        Some(t!("lsp.renamed", count = applied.changes).to_string());
+                }
             }
             Err(error) => {
                 // Per LSP spec: ContentModified errors (-32801) should NOT be shown to user
@@ -3058,26 +3171,17 @@ impl Editor {
         // Capture old cursor states from split view state
         // Find a split that has this buffer in its keyed_states
         let split_id_for_cursors = self
+            .active_window_mut()
             .split_manager_mut()
             .splits_for_buffer(buffer_id)
             .into_iter()
             .next()
-            .unwrap_or_else(|| {
-                self.windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .active_split()
-            });
+            .unwrap_or_else(|| self.active_window().split_manager().active_split());
         let old_cursors: Vec<(CursorId, usize, Option<usize>)> = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .active_window()
+            .split_view_states()
             .get(&split_id_for_cursors)
-            .and_then(|vs| vs.keyed_states.get(&buffer_id))
+            .and_then(|vs| vs.buffer_state(buffer_id))
             .map(|bvs| {
                 bvs.cursors
                     .iter()
@@ -3172,7 +3276,7 @@ impl Editor {
 
                 // Apply new cursor positions to split view state
                 if let Some(vs) = vs_map.get_mut(&split_id_for_cursors) {
-                    if let Some(bvs) = vs.keyed_states.get_mut(&buffer_id) {
+                    if let Some(bvs) = vs.buffer_state_mut(buffer_id) {
                         for (cursor_id, new_pos, new_anchor) in &new_cursors {
                             if let Some(cursor) = bvs.cursors.get_mut(*cursor_id) {
                                 cursor.position = *new_pos;
@@ -3654,7 +3758,13 @@ impl Editor {
             .map(|state| {
                 (
                     state.buffer.version(),
-                    state.semantic_tokens.as_ref().map(|s| s.version),
+                    // A stale store (server asked for a refresh) is never
+                    // "already up to date", whatever its version.
+                    state
+                        .semantic_tokens
+                        .as_ref()
+                        .filter(|s| !s.stale)
+                        .map(|s| s.version),
                     state
                         .semantic_tokens
                         .as_ref()
@@ -4417,6 +4527,7 @@ mod tests {
             Arc::new(StdFileSystem),
             None,
             None,
+            false,
             false,
             false,
         )

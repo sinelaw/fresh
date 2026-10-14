@@ -25,7 +25,10 @@
     "bracket_rainbow_3": [255, 255, 0],
     "bracket_rainbow_4": [0, 255, 0],
     "bracket_rainbow_5": [255, 255, 85],
-    "bracket_rainbow_6": [255, 0, 255]
+    "bracket_rainbow_6": [255, 0, 255],
+    "diff_add_highlight_bg": [40, 140, 40],
+    "diff_remove_highlight_bg": [210, 40, 40],
+    "whitespace_indicator_selected_fg": [85, 85, 255]
   },
   "ui": {
     "tab_active_fg": [0, 0, 0],
@@ -60,6 +63,7 @@
     "popup_border_fg": [255, 255, 255],
     "popup_bg": [0, 0, 170],
     "popup_selection_bg": [0, 170, 0],
+    "list_drop_target_bg": [0, 170, 170],
     "popup_text_fg": [255, 255, 85],
     "text_input_selection_bg": [0, 170, 0],
     "settings_selected_bg": [170, 0, 170],
@@ -99,7 +103,9 @@
   },
   "search": {
     "match_bg": [170, 85, 0],
-    "match_fg": [255, 255, 255]
+    "match_fg": [255, 255, 255],
+    "current_match_bg": [85, 255, 255],
+    "current_match_fg": {"color": [0, 0, 0], "modifier": ["bold"]}
   },
   "diagnostic": {
     "error_fg": [255, 85, 85],

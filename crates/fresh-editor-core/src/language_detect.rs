@@ -15,9 +15,18 @@
 /// config **key** (`[languages.mylang]` → `"mylang"`) rather than the
 /// catalog entry's `language_id`, which is needed for LSP routing when a
 /// user aliases an existing grammar.
+///
+/// `fs` is the filesystem that actually owns `path` — the buffer's own
+/// filesystem, not the process's. Only the `.h` → `cpp` promotion below
+/// touches it; every other rule is pure path/config matching. It is a
+/// required argument rather than an `Option` precisely because the bug it
+/// fixes was a probe that quietly answered "no" against the wrong
+/// filesystem: on a remote session there is no correct behaviour for a
+/// caller that cannot say which host the file lives on.
 pub fn detect_language(
     path: &std::path::Path,
     languages: &std::collections::HashMap<String, crate::config::LanguageConfig>,
+    fs: &dyn crate::model::filesystem::FileSystem,
 ) -> Option<String> {
     let detected = detect_language_by_config(path, languages);
 
@@ -26,10 +35,15 @@ pub fn detect_language(
     // If the detected language is `c`, the file is `.h`, and the surrounding
     // tree smells like C++ (sibling C++ sources or an ancestor
     // `compile_commands.json`), promote to `cpp` so the LSP binding is right.
+    //
+    // The cheap path/config predicates are deliberately ordered before
+    // `header_in_cpp_tree`, so the only I/O in this function is skipped
+    // entirely for every file that is not a `.h` resolving to `c` in a
+    // config that knows `cpp`.
     if detected.as_deref() == Some("c")
         && path.extension().and_then(|e| e.to_str()) == Some("h")
         && languages.contains_key("cpp")
-        && header_in_cpp_tree(path)
+        && header_in_cpp_tree(path, fs)
     {
         return Some("cpp".to_string());
     }
@@ -81,6 +95,15 @@ fn detect_language_by_config(
     None
 }
 
+/// The build database a C++ tree is recognised by.
+const COMPILE_COMMANDS: &str = "compile_commands.json";
+
+/// Directories the `compile_commands.json` search may examine, counting the
+/// header's own: deep enough for the fmt / Chromium / LLVM / Qt layouts where
+/// a header sits several levels under `include/` while the build DB sits at
+/// the project root.
+const MAX_ANCESTOR_DIRS: usize = 11;
+
 /// Filesystem probe: does this header sit inside something that looks like
 /// a C++ project? Two signals, both conservative:
 ///
@@ -95,31 +118,41 @@ fn detect_language_by_config(
 ///     extension (`c++`, `.cpp`, `.cc`, `.cxx`, `.C` ). This still covers
 ///     the fmt / Chromium / LLVM / Qt-style layouts where the header
 ///     lives deep under `include/` while sources sit in `src/` at the
-///     project root.
+///     project root. The climb goes through [`FileSystem::find_up`], so a
+///     remote host answers it in one request rather than a round trip per
+///     level — local and remote run the same logic.
 ///
-/// Bounded by depth (10), by a single shallow `read_dir` at the start,
-/// and by a capped 1 MiB read of `compile_commands.json`, so the cost is
-/// a handful of `stat`s plus at most one bounded read on file open.
+/// All access goes through `fs` — the filesystem that owns the header —
+/// so the probe answers about the host the file actually lives on. Reading
+/// the process-local disk here made the promotion a silent no-op on every
+/// SSH session: a `.h` in a remote C++ tree found no siblings, fell back to
+/// `c`, and highlighted as C.
+///
 /// Silent on any I/O error — if we can't see the filesystem we fall back
 /// to the default config answer (C), which is the pre-fix behavior.
 ///
-/// NOTE(remote-fs): Uses `std::fs` directly, matching the pre-existing
-/// `detect_workspace_root` in this module. On SSH sessions the probe
-/// sees the local filesystem, so the promotion silently becomes a no-op
-/// (returns `false`, falls back to `c`). Fixing this requires threading
-/// `&dyn FileSystem` through `detect_language` and
-/// `DetectedLanguage::from_path` — a cross-cutting refactor that should
-/// be done alongside the same fix for `detect_workspace_root`.
-fn header_in_cpp_tree(path: &std::path::Path) -> bool {
+/// NOTE(remote-fs): `detect_workspace_root` in `fresh-editor`'s
+/// `services::lsp::manager` still uses
+/// `std::fs` via `Path::exists` and has the same remote blind spot (an
+/// SSH workspace root resolves to the file's own directory instead of the
+/// project root). It is *not* fixed here: its three call sites sit inside
+/// LSP server spawn/initialize, `LspManager` holds no filesystem, and
+/// `resolve_root_uri` deliberately walks *host* paths before applying
+/// `path_translation` for devcontainers — so "which filesystem" is a real
+/// design question there, not a mechanical substitution. (It is now a
+/// smaller one: `find_up` is exactly the primitive it needs.)
+fn header_in_cpp_tree(
+    path: &std::path::Path,
+    fs: &dyn crate::model::filesystem::FileSystem,
+) -> bool {
     let Some(start_dir) = path.parent() else {
         return false;
     };
-
-    // 1. Sibling scan in the header's own directory.
-    if let Ok(entries) = std::fs::read_dir(start_dir) {
-        for entry in entries.flatten() {
-            let p = entry.path();
-            let Some(ext) = p.extension().and_then(|e| e.to_str()) else {
+    // 1. Sibling scan in the header's own directory: one shallow,
+    //    non-recursive listing, and the decisive signal.
+    if let Ok(entries) = fs.read_dir(start_dir) {
+        for entry in &entries {
+            let Some(ext) = entry.path.extension().and_then(|e| e.to_str()) else {
                 continue;
             };
             if matches!(
@@ -131,44 +164,50 @@ fn header_in_cpp_tree(path: &std::path::Path) -> bool {
         }
     }
 
-    // 2. Walk ancestors for compile_commands.json, and only promote if
-    //    the file actually carries a C++ marker — CMake emits it for
-    //    pure-C builds too.
-    let mut current = Some(start_dir);
-    let mut depth = 0u32;
-    while let Some(dir) = current {
-        let cc = dir.join("compile_commands.json");
-        if cc.is_file() && compile_commands_has_cpp_marker(&cc) {
-            return true;
-        }
-        if depth >= 10 {
-            break;
-        }
-        depth += 1;
-        current = dir.parent();
-    }
-
-    false
-}
-
-/// Returns true when `compile_commands.json` contains a C++ marker —
-/// either the literal substring `c++` (covers `-std=c++17`, `clang++`,
-/// `g++`, the `c++` compiler name) or a C++ source extension in a
-/// context where it cannot be confused with an adjacent header path
-/// (`.cpp`, `.cc`, `.cxx`). Reads at most 1 MiB so multi-megabyte
-/// compile DBs from large monorepos don't block file open; a valid CMake
-/// entry fits comfortably in that window.
-fn compile_commands_has_cpp_marker(path: &std::path::Path) -> bool {
-    use std::io::Read;
-    const MAX_READ: u64 = 1_048_576;
-
-    let Ok(file) = std::fs::File::open(path) else {
+    // 2. Walk up looking for compile_commands.json, and only promote if the
+    //    file actually carries a C++ marker — CMake emits it for pure-C
+    //    builds too, so an outer build DB can still be the answer when the
+    //    nearest one does not qualify. `find_up` answers the whole climb in
+    //    one call, which a remote filesystem serves with a single request
+    //    rather than a round trip per level.
+    let Ok(candidates) = fs.find_up(start_dir, &[COMPILE_COMMANDS], Some(MAX_ANCESTOR_DIRS)) else {
         return false;
     };
-    let mut buf = Vec::with_capacity(64 * 1024);
-    if file.take(MAX_READ).read_to_end(&mut buf).is_err() {
+    candidates
+        .iter()
+        .any(|dir| compile_commands_has_cpp_marker(&dir.join(COMPILE_COMMANDS), fs))
+}
+
+/// Returns true when `compile_commands.json` exists at `path` and contains
+/// a C++ marker — either the literal substring `c++` (covers `-std=c++17`,
+/// `clang++`, `g++`, the `c++` compiler name) or a C++ source extension in
+/// a context where it cannot be confused with an adjacent header path
+/// (`.cpp`, `.cc`, `.cxx`).
+///
+/// Existence and size come from a single `metadata_if_exists`, which is one
+/// filesystem op (one round trip on a remote host) and subsumes the former
+/// separate `is_file` check. The read is then clamped to
+/// `min(size, 1 MiB)`: the cap keeps multi-megabyte compile DBs from large
+/// monorepos off the file-open path, and clamping to the real size is
+/// required because `FileSystem::read_range` is `read_exact`-shaped and
+/// fails outright on a short file. A directory or unreadable path simply
+/// fails the read and answers `false`.
+fn compile_commands_has_cpp_marker(
+    path: &std::path::Path,
+    fs: &dyn crate::model::filesystem::FileSystem,
+) -> bool {
+    const MAX_READ: u64 = 1_048_576;
+
+    let Some(meta) = fs.metadata_if_exists(path) else {
+        return false;
+    };
+    let len = meta.size.min(MAX_READ) as usize;
+    if len == 0 {
         return false;
     }
+    let Ok(buf) = fs.read_range(path, 0, len) else {
+        return false;
+    };
     let Ok(text) = std::str::from_utf8(&buf) else {
         return false;
     };

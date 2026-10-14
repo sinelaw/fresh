@@ -253,13 +253,24 @@ function fieldRefersToColorDef(fieldObj: Record<string, unknown>): boolean {
 }
 
 /**
- * Whether a property schema refers to `StyledColorDef` — a syntax value that
- * is either a bare color or a `{color, modifier}` bundle. Such a field is
+ * Whether a property schema refers to `StyledColorDef` — a value that is
+ * either a bare color or a `{color, modifier}` bundle — directly or wrapped
+ * in an `anyOf` (every theme key is optional, so the schema generator wraps
+ * it as `anyOf: [{$ref: StyledColorDef}, {type: null}]`). Such a field is
  * edited as a color plus a synthetic sibling `<name>_modifier` attributes row.
  */
 function fieldRefersToStyledColorDef(fieldObj: Record<string, unknown>): boolean {
   const refStr = fieldObj["$ref"];
-  return typeof refStr === "string" && refStr.endsWith("/StyledColorDef");
+  if (typeof refStr === "string" && refStr.endsWith("/StyledColorDef")) {
+    return true;
+  }
+  const anyOf = fieldObj["anyOf"];
+  return Array.isArray(anyOf) && anyOf.some((variant) => {
+    const r = variant && typeof variant === "object"
+      ? (variant as Record<string, unknown>)["$ref"]
+      : undefined;
+    return typeof r === "string" && r.endsWith("/StyledColorDef");
+  });
 }
 
 /**
@@ -326,10 +337,25 @@ function loadThemeSections(): ThemeSection[] {
       const indentRainbow = /^indent_rainbow_([1-6])$/.exec(key);
       const i18nKey = indentRainbow ? "indent_rainbow" : key;
       const params = indentRainbow ? { level: indentRainbow[1] } : undefined;
+      // A missing translation comes back as the key itself; treat it as none.
+      const tr = (k: string, p?: Record<string, string>): string | undefined => {
+        const s = editor.t(k, p);
+        return s && s !== k ? s : undefined;
+      };
+      // Every color key has a synthetic attributes row. One without a
+      // translation of its own is named after its color field.
+      const colorKey = kind === "modifier" ? key.replace(/_modifier$/, "") : undefined;
+      const colorName = colorKey ? (tr(`field.${colorKey}`) ?? colorKey) : undefined;
+      const displayName = tr(`field.${i18nKey}`, params)
+        ?? (colorName ? tr("field.attributes_of", { field: colorName }) : undefined)
+        ?? (fallbackDesc || key);
+      const description = tr(`field.${i18nKey}_desc`, params)
+        ?? (colorName ? tr("field.attributes_of_desc", { field: colorName }) : undefined)
+        ?? fallbackDesc;
       return {
         key,
-        displayName: editor.t(`field.${i18nKey}`, params) || fallbackDesc || key,
-        description: editor.t(`field.${i18nKey}_desc`, params) || fallbackDesc,
+        displayName,
+        description,
         section: sectionName,
         kind,
       };
@@ -543,10 +569,10 @@ const state: ThemeEditorState = {
  * from `editor.*` and `syntax.*`, and lean on bold + distinct syntax roles
  * to give each UI element its own visual identity.
  *
- * We don't need a client-side fallback chain: the core's `Theme` struct has
- * serde defaults for every field, so `resolve_theme_key` always returns a
- * value for any key listed here — a stub theme file can omit them and the
- * defaults still apply.
+ * We don't need a client-side fallback chain: the core resolves every key a
+ * theme leaves out (from its base theme, or from the key's fallback key), so
+ * `resolve_theme_key` always returns a value for any key listed here — a stub
+ * theme file can omit them.
  */
 const colors = {
   sectionHeader: "syntax.keyword",
@@ -761,43 +787,49 @@ function setNestedValue(obj: Record<string, unknown>, path: string, value: unkno
 }
 
 // =============================================================================
-// Syntax style bundling
+// Style bundling
 //
-// On disk a syntax key is either a bare color (`[r,g,b]` / `"Named"`) or a
-// `{color, modifier}` bundle. Internally the editor works with a flat model —
-// a color at `<key>` and its attributes at `<key>_modifier` — so the whole
-// field pipeline treats attributes like any other value. These two helpers
-// bridge the on-disk bundle and the flat in-memory form.
+// On disk a styled key (every syntax key, and a few others such as
+// `search.current_match_fg`) is either a bare color (`[r,g,b]` / `"Named"`)
+// or a `{color, modifier}` bundle. Internally the editor works with a flat
+// model — a color at `<key>` and its attributes at `<key>_modifier` — so the
+// whole field pipeline treats attributes like any other value. These two
+// helpers bridge the on-disk bundle and the flat in-memory form.
 // =============================================================================
 
 const MODIFIER_SUFFIX = "_modifier";
 
-/** Expand on-disk `{color, modifier}` bundles into flat color + `_modifier`. */
-function expandSyntaxBundles(themeData: Record<string, unknown>): void {
-  const syntax = themeData.syntax;
-  if (!syntax || typeof syntax !== "object" || Array.isArray(syntax)) return;
-  const obj = syntax as Record<string, unknown>;
-  for (const [key, value] of Object.entries(obj)) {
-    // A bundle is a plain object; a bare color is an array or string.
-    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-    const bundle = value as Record<string, unknown>;
-    obj[key] = bundle.color;
-    if (Array.isArray(bundle.modifier) && bundle.modifier.length > 0) {
-      obj[`${key}${MODIFIER_SUFFIX}`] = bundle.modifier;
+/** Expand on-disk `{color, modifier}` bundles into flat color + `_modifier`,
+ * in every section. */
+function expandStyleBundles(themeData: Record<string, unknown>): void {
+  for (const section of Object.values(themeData)) {
+    if (!section || typeof section !== "object" || Array.isArray(section)) continue;
+    const obj = section as Record<string, unknown>;
+    for (const [key, value] of Object.entries(obj)) {
+      // A bundle is a plain object; a bare color is an array or string.
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const bundle = value as Record<string, unknown>;
+      obj[key] = bundle.color;
+      if (Array.isArray(bundle.modifier) && bundle.modifier.length > 0) {
+        obj[`${key}${MODIFIER_SUFFIX}`] = bundle.modifier;
+      }
     }
   }
 }
 
 /**
- * Collapse a flat syntax section (color + `<key>_modifier`) back to the
- * on-disk form: a `{color, modifier}` bundle when attributes are present,
- * otherwise the bare color.
+ * Collapse a flat section (color + `<key>_modifier`) back to the on-disk
+ * form: a `{color, modifier}` bundle when attributes are present, otherwise
+ * the bare color. A `_modifier` key with no color key beside it is a key of
+ * its own (e.g. `editor.selection_modifier`) and is kept as is.
  */
-function collapseSyntaxBundles(syntax: Record<string, unknown>): Record<string, unknown> {
+function collapseStyleBundles(section: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(syntax)) {
-    if (key.endsWith(MODIFIER_SUFFIX)) continue;
-    const modifier = syntax[`${key}${MODIFIER_SUFFIX}`];
+  for (const [key, value] of Object.entries(section)) {
+    if (key.endsWith(MODIFIER_SUFFIX) && key.slice(0, -MODIFIER_SUFFIX.length) in section) {
+      continue;
+    }
+    const modifier = section[`${key}${MODIFIER_SUFFIX}`];
     if (Array.isArray(modifier) && modifier.length > 0) {
       out[key] = { color: value, modifier };
     } else {
@@ -841,7 +873,7 @@ async function loadThemeRegistry(): Promise<void> {
 function loadThemeFile(key: string): Record<string, unknown> | null {
   try {
     const data = editor.getThemeData(key) as Record<string, unknown> | null;
-    if (data) expandSyntaxBundles(data);
+    if (data) expandStyleBundles(data);
     return data;
   } catch (e) {
     editor.debug(`[theme_editor] Failed to load theme data for '${key}': ${e}`);
@@ -1656,17 +1688,19 @@ function getFieldByPath(path: string): ThemeField | null {
 function buildColorSuggestions(field: ThemeField): PromptSuggestion[] {
   const currentValue = formatColorValue(field.value as ColorValue);
   const suggestions: PromptSuggestion[] = [
-    { text: currentValue, description: editor.t("suggestion.current"), value: currentValue },
+    // Namespaced: the current value is often one of the named colours
+    // listed below it, and the two rows are different rows.
+    { id: "current", text: currentValue, description: editor.t("suggestion.current"), value: currentValue },
   ];
 
   // Add special colors (Default/Reset for terminal transparency)
   for (const name of SPECIAL_COLORS) {
-    suggestions.push({ text: name, description: editor.t("suggestion.terminal_native"), value: name });
+    suggestions.push({ id: `special:${name}`, text: name, description: editor.t("suggestion.terminal_native"), value: name });
   }
 
   // Add named colors (terminal native - no hex shown since actual color depends on terminal)
   for (const name of NAMED_COLOR_LIST) {
-    suggestions.push({ text: name, description: editor.t("suggestion.terminal_native"), value: name });
+    suggestions.push({ id: `named:${name}`, text: name, description: editor.t("suggestion.terminal_native"), value: name });
   }
 
   return suggestions;
@@ -1699,6 +1733,7 @@ function editModifierField(field: ThemeField): void {
     currentValue
   );
   editor.setPromptSuggestions(VALID_MODIFIERS.map(value => ({
+    id: value,
     text: value,
     description: "Toggleable text attribute",
     value,
@@ -1969,6 +2004,7 @@ editor.on("prompt_confirmed", async (args) => {
       state.saveAsPreFilled = true;
       editor.startPromptWithInitial(editor.t("prompt.save_as"), "theme-save-as", name);
       editor.setPromptSuggestions([{
+        id: "current",
         text: state.themeName,
         description: state.isBuiltin
           ? editor.t("suggestion.current_builtin")
@@ -1983,6 +2019,7 @@ editor.on("prompt_confirmed", async (args) => {
     if (state.builtinKeys.has(name)) {
       editor.startPromptWithInitial(editor.t("prompt.save_as_builtin_error"), "theme-save-as", name);
       editor.setPromptSuggestions([{
+        id: "current",
         text: state.themeName,
         description: state.isBuiltin
           ? editor.t("suggestion.current_builtin")
@@ -1998,8 +2035,8 @@ editor.on("prompt_confirmed", async (args) => {
       state.pendingSaveName = name;
       editor.startPrompt(editor.t("prompt.overwrite_confirm", { name }), "theme-overwrite-confirm");
       const suggestions: PromptSuggestion[] = [
-        { text: editor.t("prompt.overwrite_yes"), description: "", value: "overwrite" },
-        { text: editor.t("prompt.overwrite_no"), description: "", value: "cancel" },
+        { id: "overwrite", text: editor.t("prompt.overwrite_yes"), description: "", value: "overwrite" },
+        { id: "cancel", text: editor.t("prompt.overwrite_no"), description: "", value: "cancel" },
       ];
       editor.setPromptSuggestions(suggestions);
       return true;
@@ -2132,9 +2169,8 @@ async function saveTheme(name?: string, restorePath?: string | null): Promise<bo
           sectionData[field.key] = value;
         }
       }
-      // Re-bundle syntax color + attributes into the single on-disk value.
-      completeTheme[section.name] =
-        section.name === "syntax" ? collapseSyntaxBundles(sectionData) : sectionData;
+      // Re-bundle color + attributes into the single on-disk value.
+      completeTheme[section.name] = collapseStyleBundles(sectionData);
     }
 
     const content = JSON.stringify(completeTheme, null, 2);
@@ -2810,7 +2846,7 @@ async function open_theme_editor() : Promise<void> {
     const desc = isBuiltin
       ? (isCurrent ? editor.t("suggestion.builtin_theme_current") : editor.t("suggestion.builtin_theme"))
       : (isCurrent ? editor.t("suggestion.user_theme_current") : editor.t("suggestion.user_theme"));
-    const suggestion = { text: name, description: desc, value: key };
+    const suggestion = { id: key, text: name, description: desc, value: key };
     if (isBuiltin) {
       builtinSuggestions.push(suggestion);
     } else {
@@ -2892,9 +2928,9 @@ function theme_editor_close() : void {
     // Show confirmation prompt before closing with unsaved changes
     editor.startPrompt(editor.t("prompt.discard_confirm"), "theme-discard-confirm");
     const suggestions: PromptSuggestion[] = [
-      { text: editor.t("prompt.discard_no"), description: "", value: "keep" },
-      { text: editor.t("prompt.discard_save"), description: "", value: "save" },
-      { text: editor.t("prompt.discard_yes"), description: "", value: "discard" },
+      { id: "keep", text: editor.t("prompt.discard_no"), description: "", value: "keep" },
+      { id: "save", text: editor.t("prompt.discard_save"), description: "", value: "save" },
+      { id: "discard", text: editor.t("prompt.discard_yes"), description: "", value: "discard" },
     ];
     editor.setPromptSuggestions(suggestions);
     return;
@@ -2993,7 +3029,7 @@ function theme_editor_open() : void {
   for (const [key, {name}] of state.themeRegistry) {
     const isBuiltin = state.builtinKeys.has(key);
     const desc = isBuiltin ? editor.t("suggestion.builtin_theme") : editor.t("suggestion.user_theme");
-    const suggestion = { text: name, description: desc, value: key };
+    const suggestion = { id: key, text: name, description: desc, value: key };
     if (isBuiltin) {
       builtinSuggestions.push(suggestion);
     } else {
@@ -3038,8 +3074,8 @@ async function theme_editor_save() : Promise<void> {
     // File exists with this name - ask for confirmation
     editor.startPrompt(editor.t("prompt.overwrite_confirm", { name: state.themeName }), "theme-overwrite-confirm");
     const suggestions: PromptSuggestion[] = [
-      { text: editor.t("prompt.overwrite_yes"), description: "", value: "overwrite" },
-      { text: editor.t("prompt.overwrite_no"), description: "", value: "cancel" },
+      { id: "overwrite", text: editor.t("prompt.overwrite_yes"), description: "", value: "overwrite" },
+      { id: "cancel", text: editor.t("prompt.overwrite_no"), description: "", value: "cancel" },
     ];
     editor.setPromptSuggestions(suggestions);
     return;
@@ -3067,6 +3103,7 @@ function theme_editor_save_as() : void {
   editor.startPrompt(editor.t("prompt.save_as"), "theme-save-as");
 
   editor.setPromptSuggestions([{
+    id: "current",
     text: state.themeName,
     description: state.isBuiltin
       ? editor.t("suggestion.current_builtin")
@@ -3120,8 +3157,8 @@ function theme_editor_delete() : void {
   // Show confirmation dialog
   editor.startPrompt(editor.t("prompt.delete_confirm", { name: state.themeName }), "theme-delete-confirm");
   const suggestions: PromptSuggestion[] = [
-    { text: editor.t("prompt.delete_yes"), description: "", value: "delete" },
-    { text: editor.t("prompt.delete_no"), description: "", value: "cancel" },
+    { id: "delete", text: editor.t("prompt.delete_yes"), description: "", value: "delete" },
+    { id: "cancel", text: editor.t("prompt.delete_no"), description: "", value: "cancel" },
   ];
   editor.setPromptSuggestions(suggestions);
 }

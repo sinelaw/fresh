@@ -153,7 +153,14 @@ let dragging=false, lastCell=null;
 // document fallback would forward a LINEAR pixel→cell hover (cellAt) that is
 // wrong once the menu reflow makes an item's screen position differ from
 // cell×CH — sending a bogus cell that e.g. closes a submenu the item just opened.
-const onChrome = e => e.target.closest("#mobile,.menubar,.dropdown,.mitem,.msep,.mlabel,.tabbar,.statusbar,.palette,.popup,.fileexplorer,.trustdialog,.modal-scrim,.widget-surface,.ctxmenu,.auxmodal,.kbedit,.settings-modal");
+// `.tree-scrim` is in the list for the reason the scrim exists at all: a
+// centered floating panel is modal, and the dim behind it is what swallows the
+// pointer. It was drawn, given `pointer-events:auto`, and then not named here
+// — so a click over the dock hit the scrim, fell through to `cellAt`, and was
+// forwarded to the editor as an ordinary cell click, selecting the row the
+// modal was supposed to be covering. The palette's own `.modal-scrim` was
+// already listed for exactly this.
+const onChrome = e => e.target.closest("#mobile,.menubar,.dropdown,.mitem,.msep,.mlabel,.tabbar,.statusbar,.palette,.popup,.fileexplorer,.trustdialog,.modal-scrim,.tree-scrim,.widget-surface,.ctxmenu,.auxmodal,.kbedit,.settings-modal");
 // `count` carries the browser's click count (event.detail); the bridge primes
 // the editor's own double/triple-click detection with it (see apply_mouse).
 document.addEventListener("mousedown",e=>{ if(onChrome(e)) return; if(mSheetOpen){ mSheetOpen=false; render(); } const c=cellAt(e); dragging=true; lastCell=c; sendMouse({kind:"down",button:btn(e),col:c.col,row:c.row,count:e.detail,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });

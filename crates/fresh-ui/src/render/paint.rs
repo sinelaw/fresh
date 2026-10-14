@@ -184,11 +184,25 @@ impl<M: 'static> Ui<M> {
             })
             .unwrap_or((false, None));
         if names_itself && !rect.is_empty() {
-            list.push(ground.unwrap_or(Draw::Fill), Geom { rect, clip });
+            list.push(
+                ground.unwrap_or(Draw::Fill),
+                Geom {
+                    rect,
+                    clip,
+                    pointer: self.pointer,
+                },
+            );
         }
 
         if let Some(obj) = self.render.get(r).and_then(|n| n.obj.as_ref()) {
-            obj.paint(Geom { rect, clip }, &mut list);
+            obj.paint(
+                Geom {
+                    rect,
+                    clip,
+                    pointer: self.pointer,
+                },
+                &mut list,
+            );
         }
         if let Some(c) = list.cursor {
             spec.cursor = Some(c);
@@ -211,7 +225,14 @@ impl<M: 'static> Ui<M> {
             over.key = key.clone();
             over.theme = ThemeKey(theme.clone());
             over.classes = crate::render::spec::Classes(classes.clone());
-            obj.paint_over(Geom { rect, clip }, &mut over);
+            obj.paint_over(
+                Geom {
+                    rect,
+                    clip,
+                    pointer: self.pointer,
+                },
+                &mut over,
+            );
             spec.items.append(&mut over.items);
         }
 

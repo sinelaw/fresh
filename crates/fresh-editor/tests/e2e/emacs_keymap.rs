@@ -239,3 +239,64 @@ fn default_keymap_minibuffer_ctrl_a_still_selects_all() {
     harness.assert_screen_not_contains("123");
     harness.assert_screen_contains("X");
 }
+
+/// A confirmation dialog is reached and driven the same way under this map.
+///
+/// `C-x C-c` is quit here, and bare `C-n`/`C-p` are line motions in the
+/// buffer — while the dialog is up those are its keyboard, not the buffer's.
+#[test]
+fn a_confirmation_dialog_takes_the_keyboard() {
+    // Hot exit leaves unnamed buffers out of the quit prompt, and it is the
+    // quit prompt this is about — so: the emacs map, and a file to dirty.
+    let config = Config {
+        active_keybinding_map: "emacs".into(),
+        ..Default::default()
+    };
+    let mut harness = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_config(config)
+            .with_preserved_keybinding_map()
+            .with_project_root(),
+    )
+    .unwrap();
+    let file = harness.project_dir().unwrap().join("notes.txt");
+    std::fs::write(&file, "alpha\n").unwrap();
+    harness.open_file(&file).unwrap();
+    harness.type_text("EDITED").unwrap();
+    harness.render().unwrap();
+    let before = harness.get_buffer_content();
+
+    ctrl(&mut harness, 'x');
+    ctrl(&mut harness, 'c');
+    harness.assert_screen_contains("Unsaved Changes");
+    assert!(!harness.should_quit());
+
+    // `C-n` / `C-p` move point in this map. The modal swallows them.
+    ctrl(&mut harness, 'n');
+    ctrl(&mut harness, 'p');
+    harness.assert_screen_contains("Unsaved Changes");
+    assert_eq!(
+        harness.get_buffer_content(),
+        before,
+        "no keystroke may reach the buffer while the dialog is up"
+    );
+
+    // Its own keys still work.
+    key(&mut harness, KeyCode::Right, KeyModifiers::NONE);
+    let row = (0..24)
+        .find(|r| harness.screen_row_text(*r).contains("Save and Quit"))
+        .expect("the button row is on screen");
+    assert!(
+        harness
+            .screen_row_text(row)
+            .contains("[ Discard and Quit ]"),
+        "arrows must move the armed button; row was {:?}",
+        harness.screen_row_text(row)
+    );
+
+    key(&mut harness, KeyCode::Esc, KeyModifiers::NONE);
+    assert!(!harness.should_quit());
+    assert!(!harness.screen_to_string().contains("Unsaved Changes"));
+}

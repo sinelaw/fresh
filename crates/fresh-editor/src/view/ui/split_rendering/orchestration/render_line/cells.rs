@@ -28,6 +28,7 @@ use crate::primitives::display_width::char_width;
 use crate::state::EditorState;
 use crate::view::overlay::Overlay;
 use crate::view::theme::Theme;
+use crate::view::theme::ThemeStyle;
 use crate::view::ui::view_pipeline::{LineStart, ViewLine};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -289,8 +290,14 @@ impl CellPass<'_, '_, '_> {
 
     /// Style and emit one on-screen cell.
     fn render_visible_cell(&mut self, ch: char, byte_pos: Option<usize>, ansi_style: Style) {
-        // Is this view position the START of a tab expansion?
-        let is_tab_start = self.input.view_line.tab_starts.contains(&self.col_offset);
+        // `tab_starts` holds character indices, not columns. Probing it with
+        // `col_offset` put the tab marker on a CJK character instead of the
+        // tab, hiding that character (issue #3218).
+        let is_tab_start = self
+            .input
+            .view_line
+            .tab_starts
+            .contains(&self.display_char_idx);
         // A padding column of a tab expansion — a space the file does not
         // contain (issue #3077).
         let is_tab_padding = self.is_tab_padding(ch, byte_pos);
@@ -414,10 +421,10 @@ impl CellPass<'_, '_, '_> {
         // full-contrast text — louder than the code it sits between.
         let mut style = resolved.style;
         if is_indentation_guide && !is_cursor {
-            style = style.fg(self.indentation_guide_color());
+            style = style.theme_fg(self.input.theme, self.indentation_guide_key());
         } else if is_whitespace_indicator && !style_as_cursor {
             if !is_selected {
-                style = style.fg(self.input.theme.whitespace_indicator_fg);
+                style = style.theme_fg(self.input.theme, "editor.whitespace_indicator_fg");
             } else if !self
                 .input
                 .theme
@@ -427,7 +434,7 @@ impl CellPass<'_, '_, '_> {
                 // A theme that draws its selection by REVERSED swaps fg and
                 // bg, so a subdued foreground there would dim the selection
                 // block rather than the glyph. Those keep the swap intact.
-                style = style.fg(self.input.theme.whitespace_indicator_selected_fg);
+                style = style.theme_fg(self.input.theme, "editor.whitespace_indicator_selected_fg");
             }
         }
 
@@ -587,18 +594,16 @@ impl CellPass<'_, '_, '_> {
         }
     }
 
-    fn indentation_guide_color(&self) -> Color {
+    fn indentation_guide_key(&self) -> &'static str {
         if !self.input.rainbow_indentation {
-            return self.input.theme.indentation_guide_fg;
+            return "editor.indentation_guide_fg";
         }
 
         // The palette slot is a pure function of the guide's column: one slot
         // per tab stop. Both guide modes therefore give a guide at a given
         // column the same color, stable under scrolling and cursor movement.
         let tab_size = super::normalized_tab_size(self.input.state.buffer_settings.tab_size);
-        self.input
-            .theme
-            .indent_rainbow_color(self.col_offset / tab_size)
+        Theme::indent_rainbow_key(self.col_offset / tab_size)
     }
 
     fn is_leading_indent_cell(&self) -> bool {
@@ -689,17 +694,21 @@ impl CellPass<'_, '_, '_> {
         // first glyph the sweep still stands on the previous row, so move it
         // onto this one; after it, it is already on the hint's neighbour.
         let row_start_byte = input.view_line.source_start_byte;
-        if byte_pos.is_none() && self.first_line_byte_pos.is_none() {
+        let before_first_glyph = self.first_line_byte_pos.is_none();
+        if byte_pos.is_none() && before_first_glyph {
             if let Some(bp) = row_start_byte {
                 self.overlay_sweep.advance_to(bp);
             }
         }
         // A row with no source bytes at all (a plugin's virtual line) keeps
-        // its own styling.
-        let cell_overlays: &[&Overlay] = if byte_pos.is_some() || row_start_byte.is_some() {
-            self.overlay_sweep.at_cursor()
-        } else {
-            &[]
+        // its own styling. Before the row's first glyph, only the row-wide
+        // overlays apply: the advance above put the sweep on the row's first
+        // byte, so otherwise a match starting the row painted the wrap's
+        // hanging indent in front of it (#3466).
+        let cell_overlays: &[&Overlay] = match (byte_pos, row_start_byte) {
+            (None, None) => &[],
+            (None, Some(_)) if before_first_glyph => self.overlay_sweep.bands_at_cursor(),
+            _ => self.overlay_sweep.at_cursor(),
         };
 
         let CharStyleOutput {

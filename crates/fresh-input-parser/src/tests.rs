@@ -171,8 +171,11 @@ fn shift_without_control_still_folds_the_character_in() {
     );
 }
 
+/// A raw-mode terminal sends CR for Enter and LF only for Ctrl+J, and
+/// programs in the integrated terminal tell the two apart (sinelaw/fresh#3169:
+/// Ctrl+J inserts a newline where Enter submits). LF used to parse as Enter.
 #[test]
-fn enter_key_cr_and_lf() {
+fn enter_is_cr_and_lf_is_ctrl_j() {
     let mut p = InputParser::new();
     assert_eq!(
         keys(&p.parse(&[0x0D])),
@@ -180,7 +183,14 @@ fn enter_key_cr_and_lf() {
     );
     assert_eq!(
         keys(&p.parse(&[0x0A])),
-        vec![(KeyCode::Enter, KeyModifiers::empty())]
+        vec![(KeyCode::Char('j'), KeyModifiers::CONTROL)]
+    );
+    assert_eq!(
+        keys(&p.parse(&[0x1b, 0x0A])),
+        vec![(
+            KeyCode::Char('j'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT
+        )]
     );
 }
 
@@ -1833,4 +1843,179 @@ fn utf8_lead_bytes_above_rfc3629_are_not_starts() {
     let mut p = InputParser::new();
     let ev = p.parse(&[0xf5, b'a']);
     assert_eq!(keys(&ev), vec![(KeyCode::Char('a'), KeyModifiers::empty())]);
+}
+
+fn mouse(kind: crossterm::event::MouseEventKind, x: u16) -> Event {
+    Event::Mouse(crossterm::event::MouseEvent {
+        kind,
+        column: x,
+        row: 3,
+        modifiers: crossterm::event::KeyModifiers::NONE,
+    })
+}
+
+/// A burst of drag reports collapses to its last one; the press and the
+/// release around it, and a drag of another button, each survive.
+#[test]
+fn coalesce_motion_keeps_only_the_latest_of_each_drag_run() {
+    use crossterm::event::{MouseButton, MouseEventKind as K};
+    let events = vec![
+        mouse(K::Down(MouseButton::Left), 10),
+        mouse(K::Drag(MouseButton::Left), 11),
+        mouse(K::Drag(MouseButton::Left), 12),
+        mouse(K::Drag(MouseButton::Left), 13),
+        mouse(K::Drag(MouseButton::Right), 14),
+        mouse(K::Drag(MouseButton::Left), 15),
+        mouse(K::Up(MouseButton::Left), 15),
+        mouse(K::Moved, 16),
+        mouse(K::Moved, 17),
+    ];
+    let got: Vec<(K, u16)> = coalesce_motion(events)
+        .into_iter()
+        .map(|e| match e {
+            Event::Mouse(m) => (m.kind, m.column),
+            other => panic!("unexpected {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            (K::Down(MouseButton::Left), 10),
+            (K::Drag(MouseButton::Left), 13),
+            (K::Drag(MouseButton::Right), 14),
+            (K::Drag(MouseButton::Left), 15),
+            (K::Up(MouseButton::Left), 15),
+            (K::Moved, 17),
+        ]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// MouseReportScanner
+//
+// The teardown drain (sinelaw/fresh#3474) reads raw bytes with no parser around
+// it, so these cover the scanner directly — no tty required.
+// ---------------------------------------------------------------------------
+
+/// Feed a whole byte string, returning the scan result of each byte.
+fn scan_all(bytes: &[u8]) -> (MouseReportScanner, Vec<MouseScan>) {
+    let mut sc = MouseReportScanner::new();
+    let out = bytes.iter().map(|&b| sc.step(b)).collect();
+    (sc, out)
+}
+
+/// The last byte of a report completes it; everything before is partial.
+fn completed(bytes: &[u8]) -> Option<MouseEventKind> {
+    let (_, out) = scan_all(bytes);
+    match out.last() {
+        Some(MouseScan::Complete { kind }) => *kind,
+        other => panic!("expected a completed report, got {other:?}"),
+    }
+}
+
+#[test]
+fn scanner_classifies_sgr_press_and_release() {
+    assert_eq!(
+        completed(b"\x1b[<0;3;17M"),
+        Some(MouseEventKind::Down(MouseButton::Left))
+    );
+    assert_eq!(
+        completed(b"\x1b[<0;3;17m"),
+        Some(MouseEventKind::Up(MouseButton::Left))
+    );
+}
+
+#[test]
+fn scanner_tracks_the_held_button_across_a_click() {
+    let mut sc = MouseReportScanner::new();
+    assert!(!sc.button_down());
+    sc.feed(b"\x1b[<0;3;17M");
+    assert!(sc.button_down(), "a press leaves the button held");
+    sc.feed(b"\x1b[<0;3;17m");
+    assert!(!sc.button_down(), "the release clears it");
+}
+
+#[test]
+fn scanner_does_not_treat_motion_or_wheel_as_a_held_button() {
+    // Bare motion under DECSET 1003 ends in `M`, like a press.
+    let mut sc = MouseReportScanner::new();
+    sc.feed(b"\x1b[<35;5;9M");
+    assert!(!sc.button_down(), "bare motion is not a press");
+
+    // `Cb` 3 is "no button", even with an `M` terminator and no motion bit —
+    // how JediTerm-based emulators report free movement.
+    let mut sc = MouseReportScanner::new();
+    sc.feed(b"\x1b[<3;5;9M");
+    assert!(!sc.button_down(), "Cb 3 is no button, not a press");
+
+    // A wheel notch reports no release at all, so it must not leave a debt.
+    let mut sc = MouseReportScanner::new();
+    sc.feed(b"\x1b[<64;5;9M");
+    assert!(!sc.button_down(), "a wheel notch is not a press");
+}
+
+#[test]
+fn scanner_keeps_the_button_held_through_a_drag() {
+    let mut sc = MouseReportScanner::new();
+    sc.feed(b"\x1b[<0;3;17M");
+    sc.feed(b"\x1b[<32;4;17M\x1b[<32;5;17M");
+    assert!(sc.button_down(), "drags do not end the press");
+    sc.feed(b"\x1b[<0;5;17m");
+    assert!(!sc.button_down());
+}
+
+#[test]
+fn scanner_rejects_a_byte_that_cannot_start_a_report() {
+    let (_, out) = scan_all(b"e");
+    assert_eq!(out, vec![MouseScan::NotAReport]);
+}
+
+#[test]
+fn scanner_resyncs_on_an_esc_arriving_mid_report() {
+    // `ESC[<` then a stray ESC: the second ESC starts a fresh report rather
+    // than being discarded, so the report that follows is still recognised.
+    let (_, out) = scan_all(b"\x1b[<\x1b[<0;3;17m");
+    assert!(
+        !out.contains(&MouseScan::NotAReport),
+        "an ESC should resync, not abort: {out:?}"
+    );
+    assert_eq!(
+        out.last(),
+        Some(&MouseScan::Complete {
+            kind: Some(MouseEventKind::Up(MouseButton::Left))
+        })
+    );
+}
+
+#[test]
+fn scanner_handles_x10_reports() {
+    // `ESC[M` then Cb+32, x+32, y+32. Cb 0 is a left press; Cb 3 a release.
+    assert_eq!(
+        completed(b"\x1b[M\x20\x21\x22"),
+        Some(MouseEventKind::Down(MouseButton::Left))
+    );
+    let mut sc = MouseReportScanner::new();
+    sc.feed(b"\x1b[M\x20\x21\x22");
+    assert!(sc.button_down());
+    sc.feed(b"\x1b[M\x23\x21\x22");
+    assert!(!sc.button_down(), "X10 reports a release as button 3");
+}
+
+#[test]
+fn scanner_consumes_high_button_reports_without_classifying_them() {
+    // Buttons 8-15 have no `MouseEventKind`, but their bytes are still a report
+    // and must not be left for the shell.
+    assert_eq!(completed(b"\x1b[<128;5;9M"), None);
+    // Likewise a `Cb` past one byte, which is malformed rather than a button.
+    assert_eq!(completed(b"\x1b[<300;5;9M"), None);
+}
+
+#[test]
+fn scanner_survives_keystrokes_mixed_into_the_stream() {
+    let mut sc = MouseReportScanner::new();
+    sc.feed(b"hello\x1b[<0;3;17Mworld");
+    assert!(
+        sc.button_down(),
+        "a report between keystrokes still registers"
+    );
 }

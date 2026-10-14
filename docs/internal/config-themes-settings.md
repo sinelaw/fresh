@@ -194,9 +194,12 @@ point — opening the settings UI — and reused in settings tests.
 
 Custom `x-` extensions that schemars emits or the struct attributes inject
 (present in the committed JSON) include: `x-display-field`,
-`x-standalone-category`, `x-no-add`, `x-section`, `x-order`, `x-enum-from`,
-`x-dual-list-options`, `x-dual-list-sibling`, and a status-bar
-dynamically-extendable marker. For example, the plugin config carries a
+`x-standalone-category`, `x-no-add`, `x-category`, `x-section`, `x-order`,
+`x-enum-from`, `x-dual-list-options`, `x-dual-list-sibling`, and a status-bar
+dynamically-extendable marker. `x-category`, `x-section` and `x-order` only
+decide where a setting is shown (which left-panel page, which section on it,
+and its position — sections are ranked by their lowest `x-order`), never where
+it lives in the config JSON. For example, the plugin config carries a
 display-field pointing at its `enabled` flag and marks `path` and `settings`
 read-only.
 
@@ -211,8 +214,9 @@ feature.
 Schema parsing walks top-level properties. A property becomes a **standalone
 category** when the standalone-category extension is set (maps such as
 `languages`), a **category with nested settings** when the resolved schema has
-properties, else a **top-level setting** folded into a synthesized "General"
-category. Plugin schemas are appended as `Plugin: <name>` categories rooted at
+properties, else a **top-level setting** folded into the category its
+`x-category` names (a synthesized "General" when it names none). Plugin schemas
+are appended as `<name>` categories nested under "Plugins" in the tree, rooted at
 each plugin's settings subtree.
 
 Control-type selection maps the schema to a setting type:
@@ -363,8 +367,8 @@ newtype, not part of the theme module, defaulting to a high-contrast theme.
 
 Built-in themes are embedded JSON. A build script scans the themes directory and
 generates a built-in-themes table that includes each file's JSON, pulled in at
-runtime. Eight files ship: dark, light, high-contrast, nostalgia, dracula, nord,
-solarized-dark, and terminal.
+runtime. Ten files ship: dark, light, high-contrast, nostalgia, dracula, nord,
+solarized-dark, tokyo-night, gruvbox, and terminal.
 
 The theme loader deserializes each built-in JSON to the file form and then to the
 runtime form, then scans user themes (recursively under the config directory's
@@ -373,7 +377,14 @@ built-ins are keyed by bare name, user themes by a `file://` path; resolution
 allows a `builtin://NAME` form to force the built-in, while a relative name
 resolves to a user theme overriding the matching built-in. Inheritance via
 `extends` or auto-base selection (luminance-based light/dark auto-pick) is applied
-on top of overrides. The planned plugin API for listing built-in themes exists.
+on top of overrides. No color comes from the code: a theme that names the 49
+required keys (those of the first theme file format) stands alone, and every
+other key it leaves out takes the value of its fallback key, declared as a
+`fallback` column in the key table (`theme_color_keys!`), with every chain ending
+at a required key. A theme with `extends` (or an auto-picked base, for a theme
+missing a required key) takes every key it leaves out from the base instead. The
+built-in themes are standalone. The planned plugin API for listing built-in
+themes exists.
 
 ### 5.3 Live preview (IMPLEMENTED) and the theme editor
 

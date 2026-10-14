@@ -110,40 +110,6 @@ impl ReleaseCheckResult {
     }
 }
 
-/// Handle to a background update check (one-shot)
-///
-/// Use `try_get_result` to check if the result is ready without blocking.
-pub struct UpdateCheckHandle {
-    receiver: Receiver<Result<ReleaseCheckResult, String>>,
-    #[allow(dead_code)]
-    thread: JoinHandle<()>,
-}
-
-impl UpdateCheckHandle {
-    /// Try to get the result without blocking.
-    /// Returns Some(result) if the check completed, None if still running.
-    /// If still running, the background thread is abandoned (will be killed on process exit).
-    pub fn try_get_result(self) -> Option<Result<ReleaseCheckResult, String>> {
-        match self.receiver.try_recv() {
-            Ok(result) => {
-                tracing::debug!("Update check completed");
-                Some(result)
-            }
-            Err(TryRecvError::Empty) => {
-                // Still running - abandon the thread
-                tracing::debug!("Update check still running, abandoning");
-                drop(self.thread);
-                None
-            }
-            Err(TryRecvError::Disconnected) => {
-                // Thread panicked or exited without sending
-                tracing::debug!("Update check thread disconnected");
-                None
-            }
-        }
-    }
-}
-
 /// Handle to an update checker running in the background.
 ///
 /// Runs a single check at startup (if not already done today).
@@ -253,66 +219,6 @@ pub fn start_periodic_update_check_with_interval(
     start_periodic_update_check(releases_url, time_source, data_dir)
 }
 
-/// Start a background update check
-///
-/// Returns a handle that can be used to query the result later.
-/// The check runs in a background thread and won't block.
-/// Respects daily debouncing - if already checked today, no result will be sent.
-pub fn start_update_check(
-    releases_url: &str,
-    time_source: SharedTimeSource,
-    data_dir: PathBuf,
-) -> UpdateCheckHandle {
-    tracing::debug!("Starting background update check");
-    let url = releases_url.to_string();
-    let (tx, rx) = mpsc::channel();
-
-    let handle = thread::spawn(move || {
-        if let Some(unique_id) =
-            super::telemetry::should_run_daily_check(time_source.as_ref(), &data_dir)
-        {
-            super::telemetry::track_open(&unique_id);
-            let result = check_for_update(&url);
-            // Receiver may be dropped if handle is dropped before result arrives.
-            #[allow(clippy::let_underscore_must_use)]
-            let _ = tx.send(result);
-        }
-    });
-
-    UpdateCheckHandle {
-        receiver: rx,
-        thread: handle,
-    }
-}
-
-/// Fetches release information from the provided URL.
-///
-/// The HTTP/TLS transport lives in `services::http`; without the `http`
-/// feature that call returns an error and we surface it here unchanged.
-pub fn fetch_latest_version(url: &str) -> Result<String, String> {
-    tracing::debug!("Fetching latest version from {}", url);
-    let body = super::http::get_release_json(url)?;
-    let version = parse_version_from_json(&body)?;
-    tracing::debug!("Latest version: {}", version);
-    Ok(version)
-}
-
-/// Parse the version from a GitHub releases API body.
-///
-/// Thin wrapper over `fresh_update::feed::Release` kept because callers/tests
-/// use the `Result` shape.
-fn parse_version_from_json(json: &str) -> Result<String, String> {
-    Ok(fresh_update::feed::Release::parse(json)?
-        .version()
-        .to_string())
-}
-
-/// Compare two versions; `true` if `latest` is newer than `current`.
-/// Delegates to `fresh_update::version`.
-pub fn is_newer_version(current: &str, latest: &str) -> bool {
-    fresh_update::version::is_newer(current, latest)
-}
-
 /// Detect how this copy of `fresh` was installed.
 ///
 /// Delegates entirely to `fresh_update::resolve()` (override → receipt →
@@ -394,55 +300,10 @@ pub fn check_for_update(releases_url: &str) -> Result<ReleaseCheckResult, String
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_is_newer_version() {
-        // (current, latest, expected_newer)
-        let cases = [
-            ("0.1.26", "1.0.0", true),        // major bump
-            ("0.1.26", "0.2.0", true),        // minor bump
-            ("0.1.26", "0.1.27", true),       // patch bump
-            ("0.1.26", "0.1.26", false),      // same
-            ("0.1.26", "0.1.25", false),      // older patch
-            ("0.2.0", "0.1.26", false),       // older minor
-            ("1.0.0", "0.1.26", false),       // older major
-            ("0.1.26-alpha", "0.1.27", true), // prerelease current
-            ("0.1.26", "0.1.27-beta", true),  // prerelease latest
-        ];
-        for (current, latest, expected) in cases {
-            assert_eq!(
-                is_newer_version(current, latest),
-                expected,
-                "is_newer_version({:?}, {:?})",
-                current,
-                latest
-            );
-        }
-    }
-
     // Install-method detection lives in `fresh_update::provenance` (see that
     // crate's tests). release_checker only delegates, so there is nothing to
     // test here — and nothing path-specific anywhere, since provenance is read
     // from what the installer recorded rather than inferred from the exe path.
-
-    #[test]
-    fn test_parse_version_from_json() {
-        // Various JSON formats should all parse correctly
-        let cases = [
-            (r#"{"tag_name": "v0.1.27"}"#, "0.1.27"),
-            (r#"{"tag_name": "0.1.27"}"#, "0.1.27"),
-            (
-                r#"{"tag_name": "v0.2.0", "name": "v0.2.0", "draft": false}"#,
-                "0.2.0",
-            ),
-        ];
-        for (json, expected) in cases {
-            assert_eq!(parse_version_from_json(json).unwrap(), expected);
-        }
-
-        // Verify mock version is detected as newer than current
-        let version = parse_version_from_json(r#"{"tag_name": "v99.0.0"}"#).unwrap();
-        assert!(is_newer_version(CURRENT_VERSION, &version));
-    }
 
     #[test]
     fn test_current_version_is_valid() {

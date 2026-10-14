@@ -226,6 +226,10 @@ impl<M> Index<ElementId> for Arena<M> {
 /// through leaves the last committed content intact; three separate rules
 /// depend on it — the error policy, deferred disposal, and unwinding a failed
 /// constructor.
+// `Desc` holds the displaced description by value so an abort puts it back
+// without a copy; the buffer lives for one transaction, and boxing it would
+// add an allocation to every mutation of a reconcile.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum Undo<M> {
     Created(ElementId),
     Root(Option<ElementId>),
@@ -794,6 +798,14 @@ impl<M: 'static> Ui<M> {
         if self.captured == Some(id) {
             self.captured = None;
         }
+        // A drag outlives its captor (see `hit::Drag`), but nothing it holds
+        // may name an element that is gone. One that goes away mid-drag is
+        // simply no longer under the pointer; it is not told, having nothing
+        // left to tell.
+        if let Some(d) = self.drag.as_mut() {
+            d.under.retain(|&e| e != id);
+            d.lifted_from.retain(|&e| e != id);
+        }
         if self.focus == Some(id) {
             // Nothing is told it lost focus: the element is already gone, and
             // `apply_autofocus` decides where focus goes next.
@@ -801,6 +813,7 @@ impl<M: 'static> Ui<M> {
         }
         if self.focus_restore == Some(id) {
             self.focus_restore = None;
+            self.focus_restore_scope = None;
         }
         self.hover.retain(|h| *h != id);
         if let Some((targets, _, _)) = &mut self.press {
@@ -856,6 +869,9 @@ impl<M: 'static> Ui<M> {
                 self.focus_roots.retain(|x| *x != f);
             }
             self.anchored.retain(|a| *a != id);
+            if let Some(a) = &el.desc.anchor {
+                a.unbind(id);
+            }
             self.renderer.dispose(id, el.ty, el.name);
             self.forget_element(id);
         }

@@ -344,8 +344,8 @@ fn test_macro_move_line_end_uses_current_line_length() {
 }
 
 /// Record a macro, then "Macro: Save to init.ts" — the rendered status must
-/// confirm the macro was persisted (and init.ts reloaded). Drives the palette
-/// + register prompt and asserts only on screen output. The harness uses an
+/// confirm the macro was persisted (and init.ts reloaded). Drives the
+/// palette + register prompt and asserts only on screen output. The harness uses an
 /// isolated tempdir config, so this writes to a throwaway init.ts.
 #[test]
 fn test_macro_save_to_init_shows_confirmation() {

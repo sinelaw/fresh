@@ -266,7 +266,9 @@ editor.registerCommand("%cmd.status", "%cmd.status_desc", "env_status_handler");
  * subscription below.
  */
 function requestCoreTrustPrompt(): void {
-  editor.executeActions([{ action: "workspace_trust_prompt", count: 1 }]);
+  // `args` is required by the type even for a no-arg action (ts-rs renders a
+  // `#[serde(default)]` field as required).
+  editor.executeActions([{ action: "workspace_trust_prompt", count: 1, args: {} }]);
 }
 
 /// Catch the devcontainer attach popup's outcome on the shared
@@ -277,8 +279,8 @@ function requestCoreTrustPrompt(): void {
 /// silently skip its popup that time).
 function onDevcontainerAttachResult(data: ActionPopupResultData): void {
   if (data.action_id === "attach") {
-    // editor.setAuthority restarts the editor; env-manager re-runs
-    // inside the container via the post-restart `plugins_loaded`.
+    // The attach fires `authority_changed`, which re-runs
+    // `env_auto_activate_on_session` inside the container.
     return;
   }
   devcontainerDismissedThisSession = true;
@@ -389,6 +391,9 @@ registerHandler("env_auto_activate_on_session", () => {
   if (!editor.envActive()) maybeAutoActivate();
 });
 editor.on("active_window_changed", "env_auto_activate_on_session");
+// A window that changes machine (attach, detach, reconnect) needs its
+// environment re-decided, and this is the only signal that it happened.
+editor.on("authority_changed", "env_auto_activate_on_session");
 
 // === Status pill (opt-in to a user's status-bar layout) ===
 //

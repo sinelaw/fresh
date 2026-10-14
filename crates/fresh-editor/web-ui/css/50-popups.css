@@ -7,15 +7,33 @@
     border-radius:6px;box-shadow:0 12px 40px rgba(0,0,0,.5);overflow:hidden;display:flex;flex-direction:column}
   .popup .popup-title{padding:3px 10px;color:var(--fg);background:#2d2d30;border-bottom:1px solid #3a3a3a;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .popup .popup-desc{padding:2px 10px;color:var(--muted);border-bottom:1px solid #3a3a3a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .popup .popup-body{overflow:auto;max-height:60vh}
+  .popup .popup-body{overflow:auto;max-height:60vh;flex:1 1 auto}
   .popup .popup-row{display:flex;align-items:center;gap:8px;padding:1px 10px;white-space:nowrap;color:var(--fg);cursor:default}
   .popup .popup-row.sel{background:var(--menuhi);color:#fff}
-  .popup .popup-row.disabled{color:#6a6a6a}
+  .popup .popup-row.disabled{color:color-mix(in srgb,var(--fg) 45%,var(--bg2))}
   .popup .popup-row .ptext2{flex:0 0 auto}
   .popup .popup-row .pdetail{flex:1;color:var(--muted);overflow:hidden;text-overflow:ellipsis}
   .popup .popup-row.sel .pdetail{color:#dfe8ff}
   .popup .popup-row .picon{width:14px;text-align:center;flex:0 0 auto}
-  .popup .popup-line{padding:0 10px;white-space:pre;color:var(--fg)}
+  /* A popup body is EDITOR content (LSP hover docs, the theme inspector), not
+     chrome: it keeps the monospace grid even under a proportional chrome theme
+     (macOS), the same rule the buffer interiors follow, and its runs bring
+     their own colour as inline style. The line only says what a run leaves
+     unsaid. */
+  /* A body of editor content stands on the EDITOR's popup ground, not the
+     chrome skin's surface: its runs carry the editor theme's colours, which
+     were chosen against that ground. Chrome-modelled popups (completion,
+     action, the status indicators) keep the skin's surface. */
+  /* `--ed-popup-ground` is the editor's popup ground as the SKIN wants it
+     painted — opaque by default, re-pointed by a skin whose card is a
+     material (macOS vibrancy) so the body keeps the frame's translucency
+     instead of dropping a solid slab into frosted glass. */
+  .popup .popup-body.ink{background:var(--ed-popup-ground,var(--ed-popup-bg,var(--bg2)));
+    color:var(--ed-popup-fg,var(--fg))}
+  .popup .popup-line{padding:0 10px;white-space:pre;color:inherit;font-family:var(--mono-family)}
+  /* A blank markdown line is an element with no runs in it; keep its row so
+     paragraphs stay apart the way the cell grid spaces them. */
+  .popup .popup-line:empty::after{content:"\200b"}
   /* The cell grid is ALWAYS the monospace stack, even when a web theme gives the
      chrome a proportional --font-family (macOS). Glyphs are x-pinned per column,
      so the family only sets glyph shape, never advance. */

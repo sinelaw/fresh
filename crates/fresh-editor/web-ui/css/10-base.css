@@ -29,6 +29,15 @@
        per theme in applyTheme() so e.g. high-contrast's white accent gets dark
        text instead of the white-on-white it used to render. */
     --on-accent:#04201c;--on-sel:var(--fg);
+    /* Ink on a highlighted row, in the two flavours the chrome actually has.
+       A row whose fill stays a SOLID --menuhi takes --on-menuhi (the theme's
+       own menu_highlight_fg, or a luminance pick); a row the polish/skin
+       layers repaint as a translucent TINT takes --on-sel, because the ground
+       there is the panel surface showing through. The -dim pair is the
+       secondary text on each, defined once instead of at every call site. */
+    --on-menuhi:#ffffff;
+    --on-menuhi-dim:color-mix(in srgb,var(--on-menuhi) 62%,transparent);
+    --on-sel-dim:color-mix(in srgb,var(--on-sel) 62%,transparent);
     /* Chrome identity tokens (independent of the buffer theme): the teal the
        shell is branded with, its readable on-colour, and the "healthy" green
        of the status-bar connection dot. Fixed by design — the buffer theme

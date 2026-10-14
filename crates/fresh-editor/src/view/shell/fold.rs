@@ -252,6 +252,7 @@ pub fn fold_band(
                     | Draw::Border(_)
                     | Draw::Lines(_)
                     | Draw::Scrollbar { .. }
+                    | Draw::Overflow { .. }
             ) {
                 sink.item(rect, clip, &item.theme);
             }
@@ -277,6 +278,31 @@ pub fn fold_band(
             // function of the rectangle, which is the point — the caller
             // never said how wide it is.
             Draw::Rule(g) => tile(buf, rect, g, style, clip),
+            // **The terminal's answer to "there is more content this way".**
+            // The library says which edge of which axis still has content
+            // behind it; the glyph is this backend's, the same `<` and `>` the
+            // tab strip's painter drew, in the cells the window reserved for
+            // them. A vertical window uses a bar instead and never emits
+            // these, but the arrows are the honest fallback if one ever does.
+            //
+            // One glyph, centred, on the cap's own ground — not tiled. A cap
+            // is as wide as the window asked for (`Node::scroll_cap_width`),
+            // and a wide one is a padded button, not a run of arrows: the
+            // strip's caps are three cells because the `+` beside them is,
+            // and `<<<` is not what "same styling as the +" means.
+            Draw::Overflow { axis, end, .. } => {
+                let g = match (axis, end) {
+                    (fresh_ui::Axis::Horizontal, fresh_ui::End::Before) => "<",
+                    (fresh_ui::Axis::Horizontal, fresh_ui::End::After) => ">",
+                    (fresh_ui::Axis::Vertical, fresh_ui::End::Before) => "^",
+                    (fresh_ui::Axis::Vertical, fresh_ui::End::After) => "v",
+                };
+                fill(buf, rect, ' ', style, clip);
+                let x = rect.x + rect.width.saturating_sub(1) / 2;
+                for y in rect.y..rect.y.saturating_add(rect.height) {
+                    put_symbol(buf, x, y, g, 1, style, clip);
+                }
+            }
             Draw::Border(bs) => border(buf, item.rect, style, clip, *bs),
             Draw::Scrim(Scrim::Opaque) => fill(buf, frame, ' ', style, frame),
             // Dimming is a backend decision; the library only says "everything
@@ -322,9 +348,8 @@ pub fn fold_band(
                     }
                 }
             }
-            // **A bar is two background colours, not two glyphs.** The
-            // editor's own scrollbar (`view::ui::scrollbar::render_scrollbar`)
-            // fills each track cell with a space and a background, because
+            // **A bar is two background colours, not two glyphs.** Each
+            // track cell is a space carrying a background, because
             // box-drawing glyphs leave gaps between rows in some terminals —
             // and every test that finds a scrollbar on screen finds it by that
             // background. So the pair the item names reads the way it does
@@ -524,10 +549,19 @@ fn put(buf: &mut Buffer, x: u16, y: u16, ch: char, style: Style, clip: Rect) {
 /// something narrow is painted over the glyph, the stale cell is back on
 /// screen. Blanking it here is what `Buffer::set_stringn` does for the same
 /// reason.
+///
+/// The other direction too: painting into the second column of a wide glyph
+/// cuts it in half, and half a glyph cannot be drawn. Left in place, the
+/// terminal draws all of it and ratatui skips this cell as covered, so a
+/// dialog's left border vanished on every row where the page behind it had
+/// `未` straddling the border's column. What is left of the glyph is a blank,
+/// in its own style, wherever the clip is — the glyph is outside the layer
+/// being painted, which is exactly when this happens.
 fn put_symbol(buf: &mut Buffer, x: u16, y: u16, sym: &str, w: u16, style: Style, clip: Rect) {
     if !contains(clip, x, y) || !contains(buf.area, x, y) {
         return;
     }
+    cut_wide_glyph_before(buf, x, y);
     let cell = &mut buf[(x, y)];
     cell.set_symbol(sym);
     cell.set_style(style);
@@ -539,6 +573,18 @@ fn put_symbol(buf: &mut Buffer, x: u16, y: u16, sym: &str, w: u16, style: Style,
         let cell = &mut buf[(cx, y)];
         cell.set_symbol(" ");
         cell.set_style(style);
+    }
+}
+
+/// Blank a wide glyph that starts left of `(x, y)` and spans into it.
+fn cut_wide_glyph_before(buf: &mut Buffer, x: u16, y: u16) {
+    // Only as far back as the buffer goes: its area need not start at 0.
+    for back in 1..=x.saturating_sub(buf.area.x).min(3) {
+        let cell = &mut buf[(x - back, y)];
+        if fresh_ui::glyph::width(cell.symbol()) > back {
+            cell.set_symbol(" ");
+            return;
+        }
     }
 }
 
@@ -907,6 +953,40 @@ mod width_tests {
         let family = "👨\u{200d}👩\u{200d}👧";
         let buf = fold_into(row().children([text(family), text("|")]), 4);
         assert_eq!(symbols(&buf), [family, " ", "|", "~"]);
+    }
+
+    /// Painting into a wide glyph's second column cuts the glyph: its first
+    /// column becomes a blank rather than a glyph the terminal would draw
+    /// over the new cell. A layer's border over a page of Japanese text kept
+    /// losing its left edge to this.
+    #[test]
+    fn painting_over_a_wide_glyphs_second_column_blanks_the_glyph() {
+        let mut buf = Buffer::filled(Rect::new(0, 0, 5, 1), ratatui::buffer::Cell::new("~"));
+        let all = buf.area;
+        put_symbol(&mut buf, 0, 0, "未", 2, Style::default(), all);
+        put_symbol(&mut buf, 2, 0, "設", 2, Style::default(), all);
+        // A clip that starts at the border's column, as a layer's does.
+        put(&mut buf, 1, 0, '│', Style::default(), Rect::new(1, 0, 1, 1));
+        assert_eq!(symbols(&buf), [" ", "│", "設", " ", "~"]);
+    }
+
+    /// A buffer whose area starts right of column 0 is not read left of it.
+    #[test]
+    fn cutting_stops_at_the_buffers_own_left_edge() {
+        let mut buf = Buffer::filled(Rect::new(10, 0, 3, 1), ratatui::buffer::Cell::new("~"));
+        let all = buf.area;
+        put(&mut buf, 10, 0, '│', Style::default(), all);
+        assert_eq!(buf[(10, 0)].symbol(), "│");
+    }
+
+    /// A glyph painted right after a whole wide glyph leaves it alone.
+    #[test]
+    fn painting_after_a_whole_wide_glyph_keeps_it() {
+        let mut buf = Buffer::filled(Rect::new(0, 0, 4, 1), ratatui::buffer::Cell::new("~"));
+        let all = buf.area;
+        put_symbol(&mut buf, 0, 0, "未", 2, Style::default(), all);
+        put(&mut buf, 2, 0, '│', Style::default(), all);
+        assert_eq!(symbols(&buf), ["未", " ", "│", "~"]);
     }
 
     /// A wide glyph the clip would halve is a blank in its visible column,

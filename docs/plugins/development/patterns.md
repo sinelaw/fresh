@@ -118,7 +118,9 @@ globalThis.process_file = async function(): Promise<void> {
   if (editor.fileExists(path)) {
     const content = await editor.readFile(path);
     const modified = content.replace(/TODO/g, "DONE");
-    await editor.writeFile(path + ".processed", modified);
+    // `replaceFile`, not `writeFile`: running this twice on the same buffer
+    // should rewrite the output, and `writeFile` refuses a path that exists.
+    await editor.replaceFile(path + ".processed", modified);
   }
 };
 ```

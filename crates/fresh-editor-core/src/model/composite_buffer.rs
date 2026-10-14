@@ -66,11 +66,6 @@ impl CompositeBuffer {
         self.sources.len()
     }
 
-    /// Get the source pane at the given index
-    pub fn get_pane(&self, index: usize) -> Option<&SourcePane> {
-        self.sources.get(index)
-    }
-
     /// Get the currently focused pane
     pub fn focused_pane(&self) -> Option<&SourcePane> {
         self.sources.get(self.active_pane)
@@ -163,12 +158,6 @@ impl SourcePane {
     /// Set the visual style
     pub fn with_style(mut self, style: PaneStyle) -> Self {
         self.style = style;
-        self
-    }
-
-    /// Set the byte range to display
-    pub fn with_range(mut self, range: Range<usize>) -> Self {
-        self.range = Some(range);
         self
     }
 }

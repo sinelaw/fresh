@@ -39,19 +39,128 @@ pub(crate) enum Command {
     /// Move the window by this many of its own heights (negative: up),
     /// clamped — a page key, in whatever unit the window counts.
     ScrollByPages(i32),
-    /// Move the window to the end of its content.
-    ScrollToEnd,
 }
 
 #[derive(Debug, Default)]
 pub struct Anchor {
     bound: Cell<Option<ElementId>>,
     queue: RefCell<Vec<Command>>,
+    /// A standing [`Anchor::follow`] request: the index the window keeps in
+    /// view on every layout until the reader scrolls it away.
+    follow: Cell<Option<u32>>,
+    /// Whether the window records its children's bands for
+    /// [`Anchor::page_key`]; see [`Anchor::paged`].
+    paged: bool,
+    /// What the last layout placed, when `paged`: `None` until the window is
+    /// laid out, and again once it is gone.
+    bands: RefCell<Option<Bands>>,
+}
+
+/// The keyed children of a paged window's content, in order, with the bands
+/// the last layout gave them, and the window's own extent and offset — all
+/// along the axis it scrolls.
+#[derive(Debug, Clone)]
+pub(crate) struct Bands {
+    pub(crate) window: i32,
+    pub(crate) offset: i32,
+    pub(crate) run: Vec<(crate::key::Key, i32, i32)>,
+}
+
+/// Where a paged window starts, as the last layout left it. See
+/// [`Anchor::start`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Start {
+    /// How far along the axis it scrolls the window starts.
+    pub offset: i32,
+    /// The keyed child holding the window's first row; `None` when every
+    /// child ends above it.
+    pub first: Option<crate::key::Key>,
 }
 
 impl Anchor {
     pub fn new() -> Rc<Anchor> {
         Rc::new(Anchor::default())
+    }
+
+    /// An anchor whose window also answers [`Anchor::page_key`]: at each
+    /// layout it records where its content's keyed children sit.
+    ///
+    /// For a window over a column of things of different heights — a page
+    /// of setting cards — where a page is not a count of items but a
+    /// window's height of content, and only layout knows which child that
+    /// lands on.
+    pub fn paged() -> Rc<Anchor> {
+        Rc::new(Anchor {
+            paged: true,
+            ..Anchor::default()
+        })
+    }
+
+    pub(crate) fn wants_bands(&self) -> bool {
+        self.paged
+    }
+
+    pub(crate) fn record_bands(&self, bands: Bands) {
+        *self.bands.borrow_mut() = Some(bands);
+    }
+
+    /// The element this anchor addressed is gone: nothing is bound, and a
+    /// paged window has no bands.
+    pub(crate) fn unbind(&self, id: ElementId) {
+        if self.bound.get() == Some(id) {
+            self.bound.set(None);
+            *self.bands.borrow_mut() = None;
+        }
+    }
+
+    /// The keyed child a page from `from` (negative: up): the one whose band
+    /// holds the point a window's height of content past the start of
+    /// `from`'s, clamped to the first and last. A child taller than the
+    /// window still moves: a page from it is at least the next one.
+    ///
+    /// `None` when the window was not built [`paged`](Anchor::paged), has not
+    /// been laid out, is gone, or `from` is not one of its children.
+    pub fn page_key(&self, from: &crate::key::Key, pages: i32) -> Option<crate::key::Key> {
+        let bands = self.bands.borrow();
+        let b = bands.as_ref()?;
+        let at = b.run.iter().position(|(k, _, _)| k == from)?;
+        let last = b.run.len() - 1;
+        let want = b.run[at].1 + pages * b.window.max(1);
+        let holding = b
+            .run
+            .iter()
+            .rposition(|(_, top, _)| *top <= want)
+            .unwrap_or(0);
+        let to = match pages.cmp(&0) {
+            std::cmp::Ordering::Greater => holding.max((at + 1).min(last)),
+            std::cmp::Ordering::Less => holding.min(at.saturating_sub(1)),
+            std::cmp::Ordering::Equal => at,
+        };
+        Some(b.run[to].0.clone())
+    }
+
+    /// Where the window starts: its offset, and the keyed child whose band
+    /// holds its first row — the first child that reaches past the window's
+    /// top, so a card scrolled half away is still the one the window is on.
+    ///
+    /// For an owner whose own state follows what the reader is looking at
+    /// (a list of sections beside a page of cards): which card that is is
+    /// layout's answer, as a page is.
+    ///
+    /// `None` when the window was not built [`paged`](Anchor::paged), has not
+    /// been laid out, or is gone.
+    pub fn start(&self) -> Option<Start> {
+        let bands = self.bands.borrow();
+        let b = bands.as_ref()?;
+        let first = b
+            .run
+            .iter()
+            .find(|(_, top, h)| top + h > b.offset)
+            .map(|(k, _, _)| k.clone());
+        Some(Start {
+            offset: b.offset,
+            first,
+        })
     }
 
     /// The element this anchor addresses, once it has mounted.
@@ -84,15 +193,35 @@ impl Anchor {
         self.queue.borrow_mut().push(Command::ScrollByPages(pages));
     }
 
-    /// Move the target's window to the end of its content.
-    pub fn scroll_to_end(&self) {
-        self.queue.borrow_mut().push(Command::ScrollToEnd);
-    }
-
     /// Move the target's window so that `index` is inside it, by the shortest
     /// distance. Nothing happens if it already is.
     pub fn reveal(&self, index: u32) {
         self.queue.borrow_mut().push(Command::Reveal(index));
+    }
+
+    /// **Keep** `index` inside the target's window — a [`Anchor::reveal`]
+    /// that is re-applied on every layout, against the window's real height,
+    /// until the reader scrolls the window themselves (a wheel over it clears
+    /// the request) or the owner asks again.
+    ///
+    /// For a caret: a one-shot reveal answers the frame it is asked on, and a
+    /// window that changes height a frame later (a box that grows with its
+    /// text) or content that re-wraps under an unchanged row can leave the
+    /// caret out of sight. Standing, the request is answered by whichever
+    /// layout is current. A wheel is the reader saying where they want to look,
+    /// so it wins until the owner's next request — the caret's next move.
+    pub fn follow(&self, index: u32) {
+        self.follow.set(Some(index));
+    }
+
+    /// Drop a standing [`Anchor::follow`] request.
+    pub fn unfollow(&self) {
+        self.follow.set(None);
+    }
+
+    /// The standing follow request, if any.
+    pub(crate) fn following(&self) -> Option<u32> {
+        self.follow.get()
     }
 
     /// Move the target's window so that the descendant carrying `key` is

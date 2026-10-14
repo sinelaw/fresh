@@ -450,7 +450,7 @@
     {
       "key": "l",
       "modifiers": ["ctrl"],
-      "action": "select_line",
+      "action": "expand_line_selection",
       "args": {},
       "when": "normal"
     },
@@ -1451,27 +1451,6 @@
       "when": "settings"
     },
     {
-      "key": "Up",
-      "modifiers": [],
-      "action": "move_up",
-      "args": {},
-      "when": "settings"
-    },
-    {
-      "key": "Down",
-      "modifiers": [],
-      "action": "move_down",
-      "args": {},
-      "when": "settings"
-    },
-    {
-      "key": "Tab",
-      "modifiers": [],
-      "action": "settings_toggle_focus",
-      "args": {},
-      "when": "settings"
-    },
-    {
       "key": "Enter",
       "modifiers": [],
       "action": "settings_activate",
@@ -1489,20 +1468,6 @@
       "key": "?",
       "modifiers": [],
       "action": "settings_help",
-      "args": {},
-      "when": "settings"
-    },
-    {
-      "key": "Right",
-      "modifiers": [],
-      "action": "settings_increment",
-      "args": {},
-      "when": "settings"
-    },
-    {
-      "key": "Left",
-      "modifiers": [],
-      "action": "settings_decrement",
       "args": {},
       "when": "settings"
     },
@@ -1900,6 +1865,77 @@
       "when": "dock"
     },
     {
+      "comment": "Sidebar sections — cycle keyboard focus through the sidebar column: the file explorer, then each plugin section under it (the Markdown Contents outline, say), then back to the editor. Alt+Shift+P runs the same cycle the other way. Bound per context, like toggle_dock_focus, so the cycle continues out of the explorer, a section, the dock and a terminal rather than restarting from the editor. A hidden sidebar is shown and its explorer focused first.",
+      "key": "n",
+      "modifiers": ["alt", "shift"],
+      "action": "focus_next_sidebar_section",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "p",
+      "modifiers": ["alt", "shift"],
+      "action": "focus_prev_sidebar_section",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "n",
+      "modifiers": ["alt", "shift"],
+      "action": "focus_next_sidebar_section",
+      "args": {},
+      "when": "fileExplorer"
+    },
+    {
+      "key": "p",
+      "modifiers": ["alt", "shift"],
+      "action": "focus_prev_sidebar_section",
+      "args": {},
+      "when": "fileExplorer"
+    },
+    {
+      "key": "n",
+      "modifiers": ["alt", "shift"],
+      "action": "focus_next_sidebar_section",
+      "args": {},
+      "when": "dock"
+    },
+    {
+      "key": "p",
+      "modifiers": ["alt", "shift"],
+      "action": "focus_prev_sidebar_section",
+      "args": {},
+      "when": "dock"
+    },
+    {
+      "key": "n",
+      "modifiers": ["alt", "shift"],
+      "action": "focus_next_sidebar_section",
+      "args": {},
+      "when": "terminal"
+    },
+    {
+      "key": "p",
+      "modifiers": ["alt", "shift"],
+      "action": "focus_prev_sidebar_section",
+      "args": {},
+      "when": "terminal"
+    },
+    {
+      "key": "n",
+      "modifiers": ["alt", "shift"],
+      "action": "focus_next_sidebar_section",
+      "args": {},
+      "when": "compositeBuffer"
+    },
+    {
+      "key": "p",
+      "modifiers": ["alt", "shift"],
+      "action": "focus_prev_sidebar_section",
+      "args": {},
+      "when": "compositeBuffer"
+    },
+    {
       "comment": "Live Grep prompt — cycle to the next *available* search provider. Built-ins are git-grep → rg → ag → ack → grep (git-grep first when inside a repo, falls through otherwise); user plugins can register more via editor.getPluginApi(\"live-grep\")?.registerProvider(...). Skips providers whose isAvailable() returns false. Mnemonic: 'p' for Provider.",
       "key": "p",
       "modifiers": ["alt"],
@@ -1916,8 +1952,8 @@
       "when": "prompt"
     },
     {
-      "comment": "Universal Search overlay — toggle the 'Ignored & hidden files' scope (off by default). Mnemonic: 'h' for Hidden ('i' is taken by toggle_search_confirm_each).",
-      "key": "h",
+      "comment": "Universal Search overlay — toggle the 'Ignored & hidden files' scope (off by default). Mnemonic: 'i' for Ignored, the letter the toolbar underlines. The search/replace prompt's own Alt+I (toggle_search_confirm_each) is bound in `searchPrompt`, which is consulted before `prompt`, so the two never collide.",
+      "key": "i",
       "modifiers": ["alt"],
       "action": "live_grep_toggle_ignored",
       "args": {},
@@ -1960,6 +1996,14 @@
       "key": "g",
       "modifiers": ["alt"],
       "action": "live_grep_toggle_regex",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Universal Search overlay — toggle the 'Case' match mode (off by default: a search for 'todo' finds 'TODO'). Alt+C in the *narrower* searchPrompt context is the find prompt's own toggle_search_case_sensitive, which wins there, so one chord means 'flip case sensitivity' in both search UIs.",
+      "key": "c",
+      "modifiers": ["alt"],
+      "action": "live_grep_toggle_case",
       "args": {},
       "when": "prompt"
     }

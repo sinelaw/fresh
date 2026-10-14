@@ -15,7 +15,9 @@ else
   $(error Unsupported architecture: $(DEB_HOST_ARCH))
 endif
 
-CARGO_FLAGS := --release --target $(CARGO_TARGET) --bin fresh
+# `--features web`: the browser UI is opt-in in Cargo.toml, so it must be
+# named or the .deb ships a `fresh` that rejects `--web` (#3316).
+CARGO_FLAGS := --release --features web --target $(CARGO_TARGET) --bin fresh
 
 # Use vendored deps when present (source-package builds ship vendor/)
 ifneq ($(wildcard vendor),)

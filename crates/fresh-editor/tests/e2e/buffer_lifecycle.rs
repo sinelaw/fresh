@@ -33,8 +33,8 @@ fn test_save_unnamed_buffer_shows_save_as_prompt() {
 /// save/discard/cancel close confirmation is up.
 ///
 /// Alt+W is `close_tab` in the normal context. When closing a *modified*
-/// buffer it raises the (s)ave/(d)iscard/(C)ancel prompt — at which point a
-/// second Alt+W used to leak into the search-options toggle (the binding lived
+/// buffer it raises the Save/Discard/Cancel confirmation dialog — at which
+/// point a second Alt+W used to leak into the search-options toggle (the binding lived
 /// in the broad `prompt` context). The toggles now live in the narrower
 /// `searchPrompt` context, active only for find/replace prompts, so Alt+W is
 /// inert here and the close prompt stays put.
@@ -53,7 +53,7 @@ fn test_alt_w_does_not_toggle_whole_word_in_close_prompt() {
         .send_key(KeyCode::Char('w'), KeyModifiers::ALT)
         .unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains("(d)iscard");
+    harness.assert_screen_contains("Discard");
 
     // A second Alt+W must be inert here — not flip whole-word match mode.
     harness
@@ -62,7 +62,7 @@ fn test_alt_w_does_not_toggle_whole_word_in_close_prompt() {
     harness.render().unwrap();
     harness.assert_screen_not_contains("Whole word");
     // The close confirmation is still the active prompt.
-    harness.assert_screen_contains("(d)iscard");
+    harness.assert_screen_contains("Discard");
 }
 
 /// Counterpart to the regression above: inside an actual search prompt Alt+W
@@ -152,9 +152,6 @@ fn test_quit_with_confirmation_discard() {
     harness
         .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
         .unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
     harness.render().unwrap();
 
     // Editor should quit
@@ -185,8 +182,8 @@ fn test_quit_prompt_offers_discard_when_hot_exit_enabled() {
 
     // The prompt must list both the discard ("d") and recoverable-quit ("q")
     // options; previously only the latter appeared in hot_exit mode.
-    harness.assert_screen_contains("(d)iscard and quit");
-    harness.assert_screen_contains("(q)uit (recoverable)");
+    harness.assert_screen_contains("Discard and Quit");
+    harness.assert_screen_contains("Quit (recoverable)");
 }
 
 /// Issue #1839: pressing the discard key in the hot_exit quit prompt must
@@ -212,9 +209,6 @@ fn test_quit_with_discard_key_works_with_hot_exit() {
 
     harness
         .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
 
@@ -244,9 +238,6 @@ fn test_quit_save_chains_save_as_for_unnamed_buffer() {
     harness.render().unwrap();
     harness
         .send_key(KeyCode::Char('s'), KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
 
@@ -296,9 +287,6 @@ fn test_quit_save_chains_save_as_for_multiple_unnamed_buffers() {
     harness.render().unwrap();
     harness
         .send_key(KeyCode::Char('s'), KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
 
@@ -360,9 +348,6 @@ fn test_quit_save_chain_cancel_aborts_quit() {
     harness
         .send_key(KeyCode::Char('s'), KeyModifiers::NONE)
         .unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
     harness.render().unwrap();
     harness.assert_screen_contains("Save as:");
 
@@ -396,9 +381,6 @@ fn test_quit_with_confirmation_cancel() {
     // Cancel with 'c' and Enter (or any non-'d' key, default is cancel)
     harness
         .send_key(KeyCode::Char('c'), KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
 
@@ -635,7 +617,7 @@ fn test_click_tab_close_button_modified_buffer() {
             harness.render().unwrap();
 
             // Should show confirmation prompt for modified buffer
-            harness.assert_screen_contains("modified. (s)ave, (d)iscard, (C)ancel");
+            harness.assert_screen_contains("Unsaved Changes");
         } else {
             panic!("Could not find × close button after * in tab bar");
         }
@@ -675,14 +657,11 @@ fn test_click_tab_close_modified_discard() {
             harness.render().unwrap();
 
             // Should show prompt
-            harness.assert_screen_contains("modified. (s)ave, (d)iscard, (C)ancel");
+            harness.assert_screen_contains("Unsaved Changes");
 
             // Press 'd' to discard and Enter to confirm
             harness
                 .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
-                .unwrap();
-            harness
-                .send_key(KeyCode::Enter, KeyModifiers::NONE)
                 .unwrap();
             harness.render().unwrap();
 
@@ -727,14 +706,11 @@ fn test_click_tab_close_modified_cancel() {
             harness.render().unwrap();
 
             // Should show prompt
-            harness.assert_screen_contains("modified. (s)ave, (d)iscard, (C)ancel");
+            harness.assert_screen_contains("Unsaved Changes");
 
             // Press 'c' to cancel and Enter to confirm
             harness
                 .send_key(KeyCode::Char('c'), KeyModifiers::NONE)
-                .unwrap();
-            harness
-                .send_key(KeyCode::Enter, KeyModifiers::NONE)
                 .unwrap();
             harness.render().unwrap();
 

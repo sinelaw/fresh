@@ -190,12 +190,33 @@ is no single enum.
 
 ### 4.1 Lazy materialization (inert → warm)
 
-At boot only the **foreground** window is restored eagerly. Which one that is, is
-decided by the launch cwd, not by "last used globally":
+At boot only the **foreground** window is restored eagerly. Which one that is
+depends on how the editor was launched.
+
+**Ordinary launch** — decided by the launch cwd, not by "last used globally":
 
 1. If the globally-last-used session belongs to this cwd, reopen it.
 2. Else the most-recently-created session whose `root == cwd` (highest id).
 3. Else none → boot a clean base window at cwd.
+
+> Step 1 is currently unreachable. `PersistedWindows::active` is the field it
+> reads, and `read_persisted_windows_env` synthesises it as `0` — there is no
+> on-disk "active session" index, only the set of workspace files (§3.1). So an
+> ordinary launch resolves by step 2 or 3. Kept as written because the intent
+> is right and `active` is still in the serialized shape; Orchestrator mode
+> below is what actually implements "where I was last", on a per-workspace
+> stamp rather than a single pointer.
+
+**Orchestrator mode** (`pick_active_window_globally`, used when the daemon was
+started by a bare `fresh` — see §4.5): the most recently *focused* workspace
+wins regardless of the launch cwd. Recency is each `Workspace`'s own
+`last_focused_at` (epoch ms), stamped by `set_active_window` and at window
+creation, persisted by `capture_workspace` and re-adopted by
+`apply_workspace_layout`. A per-workspace stamp rather than a global pointer:
+it cannot dangle, and deleting the most recent workspace promotes the next one
+for free. Falls back to the cwd rule when no workspace carries a stamp (every
+file predates the field), and to a clean base window at cwd when there are no
+workspaces at all — which is the mode's first-run path.
 
 Matching is on **`root`, not `project_path`** — a worktree session carries
 `project_path == <parent repo>` but `root == <worktree>`, and matching on
@@ -315,6 +336,84 @@ wrong badge is a bug report with evidence. The CLI verbs (`fresh --cmd
 workspace list`, `agent list|get|explain|wait|start`) are documented in
 agent-fresh-cli-exposure-plan.md.
 
+### 4.5 Orchestrator mode (the bare-`fresh` launch)
+
+`config.orchestrator_mode` (top-level boolean, default **true**) makes a
+command line with *nothing on it* open the workspace switcher rather than an
+editor on the current directory. It is consulted for that one shape of
+invocation and no other: `fresh FILE`, `fresh --cmd …`, `fresh -a …` all behave
+identically whether it is on or off. The gate is literally
+`std::env::args_os().count() == 1` plus "stdin is a terminal"
+(`wants_orchestrator_launch` in `main.rs`) — reading argv rather than parsed
+arguments is deliberate, since *any* flag means "just this, here".
+
+What the mode is, end to end:
+
+- **One shared daemon.** The client attaches to a daemon named
+  `ORCHESTRATOR_DAEMON` (`"orchestrator"`), starting it if it is not up. Named
+  rather than keyed on the working directory, which is the whole point: `fresh`
+  typed anywhere joins the editor you already have. When the daemon is already
+  running the launch does nothing else at all — no files, no cwd, no
+  reconfiguration; the terminal becomes another view onto the session as it
+  stands.
+- **The mode crosses the spawn as a flag.** The daemon is a separate process
+  and cannot see the client's command line, so `DaemonSpawn::orchestrator_mode`
+  forwards `--orchestrator-mode`, which becomes
+  `EditorServerConfig::orchestrator_mode` and then the `orchestrator_mode`
+  parameter of `Editor::with_options`. It is a *parameter*, not a read of
+  `config.orchestrator_mode`: the config field is the user's preference, which
+  can be on while this particular launch named a file.
+- **The last-focused workspace comes back**, regardless of cwd (§4.1).
+- **No empty buffer.** `Editor::fills_an_empty_workspace()` returns `false`,
+  which overrides — not consults — both
+  `editor.auto_create_empty_buffer_on_last_buffer_close` and
+  `file_explorer.auto_open_on_last_buffer_close`; and the boot seed buffer is
+  marked `hidden_from_tabs` + `synthetic_placeholder`, the same state the close
+  path already synthesizes for the blank-workspace settings. An untitled buffer
+  answers "you have nothing open, here is somewhere to type", which is the
+  wrong question when the dock is showing your workspaces.
+- **The dock opens by default** — a bare `fresh` is a request for the
+  switcher, so the mode is what decides on a first launch, where the manifest
+  alone would. It is a default, not an override: it applies under
+  `autoOpenDock: "auto"` only, and a dock the user last closed still wins.
+  `never` and `always` settle it outright — and the user's own open or close
+  (View ▸ Orchestrator Dock, Toggle Dock, the dock's `×`) writes the matching
+  one, so the next start follows the user's last instruction rather than a
+  mode set long ago; a Settings edit to `always` / `never` applies at once. The
+  plugin's own opens and closes (a dive, a new or recovered workspace) write
+  nothing. The mode used to OR itself over
+  the two, which left the setting with no effect at all and reopened a closed
+  dock in the launch mode that is the default since 0.5.2 (#3442). The host
+  makes the call at construction (`Editor::apply_startup_dock_chrome`, from
+  the launch mode it was built with), and the plugin mounts at `ready`
+  because `editor.dockOpen()` says so.
+- **The column is carved before the dock exists.** The dock's content is
+  this plugin's, mounted from `ready` after every plugin has loaded; the
+  column is the host's. The plugin declares it in
+  `orchestrator.manifest.json`, the host remembers what the user left in
+  `<data>/chrome.json`, and `Editor::apply_startup_dock_chrome` decides at
+  construction whether the slot is open and how wide. The plugin mounts at
+  `ready` iff `editor.dockOpen()`, laid out to `editor.dockCols()`; a column
+  nothing mounted into is handed back when the hook's sentinel lands. See
+  `docs/internal/plugins.md` §6.2a.
+- **First run** — no workspaces at all — boots a clean base window at the cwd
+  and lands on the welcome screen. Nothing special-cases the welcome screen to
+  get there: it opens itself as a background tab as always, and a background
+  buffer takes the pane when the pane holds a synthetic placeholder (there is
+  nothing to displace).
+
+The switch is user-visible in two places: **Orchestrator Mode** in Settings
+(schema-driven, no UI code), and the checkbox at the top of the welcome screen,
+which writes the core setting through the `saveSetting` plugin API.
+
+> **The daemon's startup hooks.** Orchestrator mode depends on `ready` firing,
+> and until this landed `EditorServer` fired neither `plugins_loaded` nor
+> `ready` — only the in-process path in `main.rs` did. Plugins loaded and their
+> commands worked, but nothing that keys off "startup finished" ever ran in a
+> daemon: no dock, no welcome screen, in *every* `fresh -a` session.
+> `initialize_editor` and the authority-swap rebuild now fire both, in the
+> in-process path's order.
+
 ---
 
 ## 5. The dock and Open dialog UX
@@ -336,7 +435,7 @@ All UI is plugin-side (orchestrator.ts). Shipped surfaces:
 
 The dock's opening state is user-configurable through the **plugin** config API
 (`editor.defineConfigBoolean` / `defineConfigEnum` at the top of orchestrator.ts,
-rendered by the Settings UI under **Plugin: orchestrator**, stored at
+rendered by the Settings UI under **Plugins › orchestrator**, stored at
 `plugins.orchestrator.settings.*`). They're plugin config rather than core
 config because they're meaningless without this plugin loaded, and the plugin
 API already supplies schema validation, the User/Project/Session layering, and
@@ -344,7 +443,7 @@ the generated settings widgets.
 
 | Setting               | Default  | Effect                                              |
 | --------------------- | -------- | --------------------------------------------------- |
-| `autoOpenDock`        | `true`   | Open the dock (unfocused) on the `ready` event.      |
+| `autoOpenDock`        | `"auto"` | Whether the dock opens (unfocused) on the `ready` event: `never`, `always`, or `auto` — as the user left it, else the launch mode. Opening or closing the dock yourself writes `always` / `never`, so a start follows your last instruction; editing it to `always` / `never` opens or closes the dock now. The pre-#3442 booleans are read as `never` / `auto` and rewritten. |
 | `defaultView`         | `"card"` | Density the dock opens at: `card` or `compact`.      |
 | `showAllWorktrees`    | `false`  | Initial state of the "all worktrees" checkbox.       |
 | `showEmptyWorkspaces` | `true`   | Initial state of the "show empty" checkbox (i.e. `hideTrivial = !showEmptyWorkspaces`). |
@@ -357,6 +456,49 @@ Filters checkboxes still override it for the rest of the session
 (`dockViewOverride`, `lastShowWorktrees`, `lastHideTrivial` — all `null` until
 touched). Settings are re-read on every dock open, so an edit takes effect on
 the next toggle of the dock, no reload required.
+
+### 5.0a Folders
+
+The dock's tree lists workspaces outside every folder first, then the
+folders (depth first), then the external sessions groups (§5.3a). A
+workspace or external session row is a `flush` tree leaf: it draws no
+disclosure gutter, so it starts in the column its folder's child folders
+put their ▼/▶ — a folder's members line up with its subfolders, and a
+top-level row sits at the left edge.
+
+**Move to Folder…** (a row's context menu, or `Orchestrator: Move to
+Folder`) does not open a list of folders. It puts the dock in a pick: a
+banner names what is moving and offers **Top level**, **New folder…** and
+Cancel; workspace and session rows dim, and a click or Enter on a folder
+files the item there. Esc, or leaving the dock, cancels. The pick is the
+same for a workspace (`moveWorkspace`) and an external session row (filed
+as it is, §5.3a).
+
+**Dragging** a workspace or external session row with the mouse onto
+another row files it the same way, where that row is: into a folder, or
+into the folder of the workspace or external session dropped on. An
+external session dropped on an external sessions group goes back to its own
+product's group; a workspace is never filed there. The rows are
+`draggable` tree nodes: a click on one acts on the release, and a drag that
+ends off the tree, or back on its own row after leaving it, does nothing.
+Held past the top or bottom of the list — on the divider above it or the
+key hints below it; on its first or last row only where the list meets the
+screen's edge — a drag scrolls the list toward the pointer while there is
+more that way, faster the farther out, so a folder out of sight can be
+reached.
+
+While a row is dragged the dock shows what is in hand and where it would
+land. The row itself is drawn lifted: its text inverted and slanted, which
+shows on any band (a dimmed colour on the selection band is lifted back to
+a legible one). The row a drop would file it into — the folder, or for an
+external session going home its product's group, kept on screen for the
+drag even when empty — wears `ui.list_drop_target_bg` across the whole row.
+That is a theme colour of its own: the tab drop zone's is the selection
+colour in several themes, and the selected row is on screen too. The host
+tells the plugin where the drag is (`drag`, `{ key, target }`, from the
+first row the drag leaves its own for) and when it is over (`dragend`,
+dropped or not, when the tree's drag ends — `fresh_ui::Ui::dragging`), so
+a plain click never flashes any of it.
 
 ### 5.1 Project scoping (the "yesterday's directories" fix)
 
@@ -390,6 +532,150 @@ Rows can be on-disk worktrees found via `git worktree list` that have **no live
 window yet**. They carry a synthetic **negative id** and no terminal id; diving
 *attaches* a new session to that `root`, and the row is dropped from the
 in-memory session map the moment a real window opens there.
+
+### 5.3a External sessions: sessions open outside the editor
+
+Collapsible groups at the foot of the dock, one per product (**Claude**,
+**Codex**; the external sessions groups), list Claude and Codex sessions that are open right now but are not a workspace here — running
+in another terminal, as a `claude --bg` job, or in the vendor's cloud. It
+complements the on-demand Import dialog (`agent_discovery.ts`), which reads the
+tools' transcript *history*: this answers "what is open", automatically, and
+includes cloud sessions this machine never saw.
+
+- **Feed** — `live_sessions.ts`, a plugin of its own, polls while the dock is
+  open (every `pollSeconds`, default 60, and when it opens; cloud at most once a
+  minute) and pushes to the orchestrator's `setExternalSessions`. Opening the
+  dock asks for a fresh listing (`refreshExternal`). Parsing and the
+  open-a-row rules are pure, in `lib/live_sessions.ts`
+  (`plugins/tests/live_sessions.test.ts`). A separate plugin so the
+  orchestrator's own e2e tests — which load only the orchestrator — never see
+  the real machine's sessions.
+- **Sources** (each a plugin setting under `plugins.live_sessions`):
+
+  | Source | From | Default |
+  | --- | --- | --- |
+  | Claude on this machine | `claude agents --json` (terminal and `--bg` sessions), plus the CLI's registry of running sessions (`~/.claude/sessions/<pid>.json`, live pids only) for the SDK-driven ones it skips — Claude Desktop's and editor extensions' | on |
+  | Claude Desktop (Code tab) | Desktop's own records, `<userData>/claude-code-sessions/<account>/<org>/local_<id>.json` (`userData` = `~/Library/Application Support/Claude`, `~/.config/Claude`, `%APPDATA%\Claude`): every session not `isArchived`, running or not, merged with the running ones by CLI session id; its folder is `worktreePath`, else `cwd`. One over SSH carries its connection (`sshConfig`: `sshHost`, `sshPort`, `sshIdentityFile`; a record naming only an id is resolved from `<userData>/ssh_configs.json` or the `sshConfigs` of the Claude settings), and the CLI Desktop installed on that host comes from `<userData>/ssh-remote-server-state.json` (`hostFacts["ssh:<sshHost>:<port>"].cliRelPath`, e.g. `.claude/remote/ccd-cli/<version>`) | on (with the Claude source) |
+  | Codex on this machine | running `codex` processes (`ps`, cwd via `lsof` or `/proc`); not on Windows | on |
+  | Codex Cloud | `codex cloud list --json` (applied tasks hidden) | on |
+  | Claude cloud + Remote Control | `GET /v1/code/sessions?statuses=active` (paged) — the list `claude --teleport` reads, asked for active sessions only — with the Claude CLI's own sign-in (`~/.claude/.credentials.json`, or the macOS Keychain) | on |
+
+  Every source is on by default; the Claude cloud one is also a checkbox in
+  the dock's Menu ("Claude cloud sessions", saved like any setting), because
+  it is the one a user may want off: it is not a published API and can
+  change with any Claude Code release, and on macOS reading the Keychain may
+  ask once. Remote Control sessions (`environment_kind: "bridge"` — a Claude
+  on one of the user's own machines, driven from the web app) come in the
+  same list; one whose machine is disconnected is still active, so it is
+  listed, marked offline. A session's activity comes from its
+  `worker_status` only (`status: "active"` just means not archived). The
+  token goes out only as a
+  request header (`editor.httpFetch`'s `headers`, added for this), never on a
+  command line, and is never refreshed here: refreshing rotates the refresh
+  token and would sign the CLI out; an expired sign-in reads as a problem
+  line ("run `claude` once") until the CLI next runs. Every active session is
+  listed; `cloudMaxAgeDays` (default 0 = none) can hide idle ones, and
+  archived ones are never shown.
+- **Rows** are kept apart from `orchestratorSessions` (they are not
+  workspaces, so none of Stop / Archive / Delete / rename apply). Each group
+  header is a `folder` node with a reserved id (`__external:claude`,
+  `__external:codex`), so it folds and rolls up `●n ✓n` like a folder; it
+  starts open, and the fold is what is remembered. A row is its state and
+  title only (a tail would be cut off at the dock's edge, and neither the
+  folder ▤ nor a ☁/⇄ glyph is drawn: the tree's ▼/▶ says what a folder is).
+  What the session is goes in the first, read-only lines of its menu:
+  **Source** (`liveSource`: "Claude on claude.ai", "Claude Remote Control",
+  "Claude Desktop over SSH (host)", "Claude background job", "Codex Cloud",
+  …), **Where** (its folder, or a cloud session's repository), **State**,
+  **Last active**, and where a teleported copy went. A group with no sessions is not shown
+  unless one of its sources failed (an expired sign-in): its menu says what
+  went wrong. Rows keep first-seen order. A local session whose directory is
+  already a workspace here is not listed (the workspace stands for it), nor is
+  a cloud session already materialized, nor a session over SSH that is a
+  workspace on its host, in its folder.
+- **Opening** a row (Enter, a click, context menu *Open* / *Take Over
+  Here*) connects to the session or takes it over here. Nothing leaves the
+  editor on a click: a row that could only be opened outside it — a Codex
+  Cloud task's page, a Claude cloud session (teleporting it is a choice of
+  checkout), a Desktop session with no POSIX shell to take it over — opens
+  its menu at the row instead — one row below the click, so the row stays
+  in sight — where **Take Over Here** / **Fork Here (Teleport)…**, **Open in Claude
+  Desktop** (`claude://code/continue?session=<Desktop's local_ id>`) and
+  **Open in Browser** are each named. A Claude cloud row's menu reads **Open
+  in Browser**, **Fork Here (Teleport)…**, **Move to Folder…** (with **Go to
+  <workspace>** first once it has a copy here). Clicking a row that opens
+  its menu leaves the dock's highlight on that row; it does not jump back to
+  the active workspace while the menu is up. `claude --cloud <id>`, which would
+  attach a terminal to a Claude cloud session without moving it, is
+  account-gated ("not enabled for your account" on an ordinary one), so it
+  is not used.
+
+  | Row | Workspace | Terminal runs |
+  | --- | --- | --- |
+  | Claude cloud (Fork Here (Teleport)…) | a checkout the user picks in the New Workspace form, on a fresh worktree | `claude --teleport <id>` |
+  | Claude Desktop session over SSH | a remote workspace on that host (the dialog's SSH create: its placeholder row, host-key prompt, errors), in the session's folder | the takeover (below), resuming with the CLI Desktop installed there, else `claude` |
+  | Claude Desktop session running in Desktop | its folder | the takeover (below) |
+  | Claude Desktop session not running | its folder | `claude --resume <id>` |
+  | Claude `--bg` job | the job's cwd | `claude attach <job>` |
+  | Claude in a terminal inside tmux (the registry records its pane) | its cwd | `env -u TMUX tmux attach-session -t <session> ; select-window ; select-pane` — the live session itself |
+  | Claude / Codex in another terminal | its cwd | a shell — never a second copy of the agent, which would write the same conversation twice |
+
+  **The takeover** (`takeoverArgv`, POSIX `sh`, run where the session runs):
+  find the copy running now in the CLI's registry (`<config>/sessions/<pid>.json`
+  names the session), stop it — only a pid still running `claude`, since a
+  registry file can outlive its process and the pid be reused — wait for it
+  to exit, then `exec <cli> --resume <id>`. One copy writes the conversation
+  at any time. This is what Claude Desktop's own SSH sessions are: Desktop
+  deploys a server to `~/.claude/remote/` on the host, which runs its CLI
+  (`~/.claude/remote/ccd-cli/<version>`) as an SDK session in the session's
+  folder and re-adopts it across reconnects; the conversation is the CLI's
+  own transcript on the host (`~/.claude/projects/<folder>/<id>.jsonl`, which
+  Desktop byte-syncs a copy of). Verified against Desktop 2.9939.4 and a
+  host it deployed to: the taken-over session resumed with its history, and
+  the running copy was stopped. Two caveats: Desktop hands its CLI a sign-in
+  at each spawn and leaves none on the host, so the first takeover on a host
+  where `claude` was never signed in asks for a sign-in there; and Desktop,
+  if the session is opened in it again, starts its own copy once more.
+
+  For a Claude cloud session, **Fork Here (Teleport)…** (named for what it
+  does, below) opens the New Workspace form with `claude --teleport <id>` filled in,
+  on a fresh worktree (the teleport checks the session's branch out), pointed
+  at an open workspace of the same repository when there is one. When the
+  row is filed in a folder, the form files the workspace it creates there
+  (`intoFolder`) the moment it is born.
+
+  Teleport **copies**; it does not move. Per the Claude Code docs, "the
+  terminal gets its own copy of the session: new work there stays local and
+  doesn't appear in the cloud session on claude.ai"; the cloud session is
+  left as it was, still active, until it is archived or its environment
+  expires. Fresh keeps it that way — a fork, never archived — so after a
+  teleport the row stays in its group (it is still an active cloud session),
+  marked `teleported → <workspace>`: the form records which workspace the
+  copy became (global state `orchestrator.teleported`, cloud id → the
+  workspace's durable id), and the row's menu then offers **Go to
+  <workspace>** first, above another teleport (a second copy). The form names the workspace after the session: the
+  worktree and branch get a slug of its title (`liveBranchName`), and the
+  workspace is renamed to the title itself.
+
+  **Connecting to a live session.** There is no general way to attach a
+  terminal to a Claude session another process runs (`claude --resume` of a
+  running conversation starts a second copy). What connects: `claude attach`
+  for a `--bg` job; the tmux pane for a terminal session in tmux. A Claude
+  Desktop session has no terminal to attach to, so it is taken over instead
+  (above); Desktop's own link to it stays in the row's menu.
+
+  Arrowing onto a row never opens it (unlike a workspace row, which
+  live-switches): opening creates a workspace. **Move to Folder…** on a row
+  files the row itself (§5.0a) — nothing is opened, forked or teleported:
+  the row leaves its product group and is drawn in the folder, among the
+  workspaces, while the session stays open (global state
+  `orchestrator.external_folders`, row key → folder id; a row whose folder
+  is gone returns to its group). Once opened it is an ordinary workspace and
+  drops out of the listing.
+- **Gaps** — the Codex desktop app's sessions on its shared app-server have no
+  non-interactive listing and are not shown; Codex processes carry no session
+  id, so their rows open the folder only; sessions running locally on *other*
+  machines appear only if they are cloud sessions.
 
 ### 5.4 Lifecycle actions
 
@@ -559,6 +845,9 @@ Implemented (shipped):
 - Agent resume (provision/continue), resume-spec persistence, deferred-to-dive
   rejoin.
 - One-session-per-canonical-directory enforcement.
+- external sessions group: Claude/Codex sessions open outside the editor (local
+  processes, `--bg` jobs, Codex Cloud, Claude cloud and Remote Control), materialized
+  into workspaces on open, and filed into folders as they are (§5.3a).
 
 Planned / aspirational (in design docs, not in code):
 

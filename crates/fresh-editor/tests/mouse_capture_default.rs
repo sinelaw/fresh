@@ -38,6 +38,7 @@ fn editor_in(project: &Path, dir_context: &DirectoryContext) -> fresh::app::Edit
         None,
         false,
         false,
+        false,
     )
     .unwrap()
 }

@@ -61,7 +61,27 @@ enum TerminalCommand {
     Resize { cols: u16, rows: u16 },
     /// Shutdown the terminal
     Shutdown,
+    /// The child has exited: drop the PTY master so the reader sees EOF.
+    ///
+    /// Only needed on Windows. A ConPTY keeps its output pipe open after
+    /// the child exits until the pseudoconsole is closed (`ClosePseudoConsole`,
+    /// run when the last master/slave handle drops), so without this the
+    /// reader would never reach EOF and the exit notification would always
+    /// wait out the drain grace. On Unix the reader gets EOF/EIO as soon as
+    /// the last slave fd closes, and the master must stay open because
+    /// `TerminalHandle::master_fd` reads the foreground process group from it.
+    #[cfg(windows)]
+    ReleasePty,
 }
+
+/// How long the wait thread lets the reader go without progress, after the
+/// child has exited, before it stops waiting for EOF and reports the exit
+/// anyway. A PTY whose slave is still held open (a background job the shell
+/// left behind, e.g. `sleep 100 & exit`) never delivers EOF.
+const READER_DRAIN_IDLE: std::time::Duration = std::time::Duration::from_millis(500);
+/// Upper bound on the whole post-exit drain wait, so a background job that
+/// keeps writing to the PTY can't hold the exit notification forever.
+const READER_DRAIN_CAP: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// The `(window, terminal)` identity stamped on this terminal's async
 /// messages, shared with the reader and wait threads. A `Mutex` (rather
@@ -182,62 +202,6 @@ impl TerminalHandle {
         }
     }
 
-    /// Send `signal` to the terminal's process group. Returns
-    /// `Ok(false)` when the terminal has no recorded pid
-    /// (Windows, or platforms where portable_pty didn't report
-    /// one) — caller can fall back to `shutdown()` (SIGKILL via
-    /// child_killer). The shell is always its own session
-    /// leader inside a pty, so `kill(-pid, …)` reaches the
-    /// shell *and* any subprocesses it forked.
-    ///
-    /// Recognised signal names: `"SIGTERM"`, `"SIGKILL"`,
-    /// `"SIGINT"`, `"SIGHUP"`. Unknown names return an Err
-    /// instead of dropping silently.
-    #[cfg(unix)]
-    pub fn signal(&self, signal_name: &str) -> Result<bool, String> {
-        let Some(pid) = self.pid else {
-            return Ok(false);
-        };
-        let sig = match signal_name {
-            "SIGTERM" => libc::SIGTERM,
-            "SIGKILL" => libc::SIGKILL,
-            "SIGINT" => libc::SIGINT,
-            "SIGHUP" => libc::SIGHUP,
-            other => return Err(format!("unsupported signal: {}", other)),
-        };
-        // `kill(-pid, sig)` targets the process group whose
-        // leader is `pid`. The pty puts the spawned shell at
-        // the head of its own session, so this catches
-        // sub-processes the shell or agent forked.
-        let rc = unsafe { libc::kill(-(pid as i32), sig) };
-        if rc == 0 {
-            Ok(true)
-        } else {
-            let err = std::io::Error::last_os_error();
-            // ESRCH = no such process group. Treat as
-            // "nothing to signal" rather than an error so the
-            // caller's stop flow stays idempotent.
-            if err.raw_os_error() == Some(libc::ESRCH) {
-                Ok(false)
-            } else {
-                Err(format!("kill(-{}, {}): {}", pid, signal_name, err))
-            }
-        }
-    }
-
-    /// Windows fallback: no real signal semantics. SIGKILL is
-    /// modelled as the existing `shutdown()` (which calls the
-    /// pty child killer); other signals are unsupported and
-    /// return Ok(false).
-    #[cfg(windows)]
-    pub fn signal(&self, signal_name: &str) -> Result<bool, String> {
-        if signal_name == "SIGKILL" {
-            self.shutdown();
-            return Ok(true);
-        }
-        Ok(false)
-    }
-
     /// Get current dimensions
     pub fn size(&self) -> (u16, u16) {
         (self.cols, self.rows)
@@ -272,18 +236,48 @@ impl TerminalHandle {
     }
 }
 
+/// Editor-wide `TerminalId` allocator shared by every window's
+/// [`TerminalManager`].
+///
+/// Terminal ids are unique across the whole editor, not per window: a bare
+/// `TerminalId` (as plugins hold it, or as a stale lookup carries it) names
+/// at most one terminal, so resolving it in the wrong window finds nothing
+/// rather than a different window's terminal. One allocator is created per
+/// `Editor` and cloned (it is an `Arc`) into each window's manager, so two
+/// editors in one process — as in tests — each number from 0.
+#[derive(Debug, Clone, Default)]
+pub struct TerminalIdAllocator(Arc<std::sync::atomic::AtomicUsize>);
+
+impl TerminalIdAllocator {
+    /// A fresh allocator; the first id it hands out is `TerminalId(0)`.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Allocate the next id.
+    fn next(&self) -> TerminalId {
+        TerminalId(self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    }
+
+    /// The id the next allocation will return, without advancing.
+    fn peek(&self) -> TerminalId {
+        TerminalId(self.0.load(std::sync::atomic::Ordering::Relaxed))
+    }
+}
+
 /// Manager for multiple terminal sessions
 pub struct TerminalManager {
-    /// The window that owns this manager. Terminal IDs are only unique
-    /// within a single manager (each starts numbering at 0), so output
-    /// messages are tagged with `(window_id, terminal_id)` — see
-    /// [`fresh_core::WindowTerminalId`] — to stay unambiguous once they
-    /// leave this window's context (e.g. on the async bus).
+    /// The window that owns this manager. Terminal ids are unique
+    /// editor-wide (see [`TerminalIdAllocator`]); output messages are still
+    /// tagged with `(window_id, terminal_id)` — see
+    /// [`fresh_core::WindowTerminalId`] — so they can be routed to the
+    /// owning window once they leave this window's context (e.g. on the
+    /// async bus).
     window_id: fresh_core::WindowId,
     /// Map from terminal ID to handle
     terminals: HashMap<TerminalId, TerminalHandle>,
-    /// Next terminal ID
-    next_id: usize,
+    /// Source of terminal ids, shared with every other window's manager.
+    ids: TerminalIdAllocator,
     /// Async bridge for sending notifications to main loop
     async_bridge: Option<AsyncBridge>,
 }
@@ -292,12 +286,13 @@ impl TerminalManager {
     /// Create a new terminal manager owned by `window_id`. The owner is
     /// required (not defaulted) so output can never be attributed to the
     /// wrong window: every terminal this manager spawns is tagged with
-    /// it.
-    pub fn new(window_id: fresh_core::WindowId) -> Self {
+    /// it. `ids` is the editor-wide allocator shared by every window's
+    /// manager, so ids never collide across windows.
+    pub fn new(window_id: fresh_core::WindowId, ids: TerminalIdAllocator) -> Self {
         Self {
             window_id,
             terminals: HashMap::new(),
-            next_id: 0,
+            ids,
             async_bridge: None,
         }
     }
@@ -313,8 +308,12 @@ impl TerminalManager {
     }
 
     /// Peek at the next terminal ID that would be assigned.
+    ///
+    /// The allocator is shared editor-wide, so the peek holds only until
+    /// any window's manager allocates; callers peek and spawn back to back
+    /// on the UI thread (and re-key by the id `spawn` actually returns).
     pub fn next_terminal_id(&self) -> TerminalId {
-        TerminalId(self.next_id)
+        self.ids.peek()
     }
 
     /// Spawn a new terminal session
@@ -343,8 +342,7 @@ impl TerminalManager {
         env_delta: crate::services::env_provider::EnvDelta,
         extra_env: HashMap<String, String>,
     ) -> Result<TerminalId, String> {
-        let id = TerminalId(self.next_id);
-        self.next_id += 1;
+        let id = self.ids.next();
 
         let handle = self.build_terminal(
             id,
@@ -450,6 +448,7 @@ impl TerminalManager {
 
         // Reader thread: drains PTY output, feeds the emulator, streams
         // scrollback / raw log to disk, and pings the main loop to redraw.
+        let (drain_progress, drain_rx) = mpsc::sync_channel::<()>(1);
         let reader_loop = ReaderLoop {
             reader,
             state: state.clone(),
@@ -460,12 +459,36 @@ impl TerminalManager {
             wt_id: wt_id.clone(),
             terminal_id: id,
             alive: alive.clone(),
+            drain_progress,
         };
         thread::spawn(move || reader_loop.run());
 
         // Wait thread: blocks on `child.wait()` and fires `TerminalExited`
-        // exactly once with the real exit code.
-        spawn_wait_thread(child, self.async_bridge.clone(), wt_id.clone(), id);
+        // exactly once with the real exit code, after the reader has drained
+        // the child's last output.
+        #[cfg(windows)]
+        let release_tx = command_tx.clone();
+        let await_drained = move || {
+            #[cfg(windows)]
+            {
+                // Receiver gone means the writer already dropped the master.
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = release_tx.send(TerminalCommand::ReleasePty);
+            }
+            if !await_reader_drained(&drain_rx, READER_DRAIN_IDLE, READER_DRAIN_CAP) {
+                tracing::debug!(
+                    "Terminal {:?}: no PTY EOF after the child exited; reporting the exit anyway",
+                    id
+                );
+            }
+        };
+        spawn_wait_thread(
+            child,
+            await_drained,
+            self.async_bridge.clone(),
+            wt_id.clone(),
+            id,
+        );
 
         // Capture the PTY master fd before the master moves into the writer
         // thread. Used later by `foreground_process_name` (tab auto-naming).
@@ -507,14 +530,12 @@ impl TerminalManager {
 
     /// Adopt a live terminal released from another window's manager.
     ///
-    /// Assigns the handle a fresh id in this manager's namespace (ids are
-    /// per-window and would otherwise collide) and rewrites the shared
+    /// Assigns the handle a fresh editor-wide id and rewrites the shared
     /// `(window, terminal)` tag, so output/exit messages the terminal's
     /// threads send from now on are attributed to this window. Returns the
     /// new id.
     pub fn adopt(&mut self, handle: TerminalHandle) -> TerminalId {
-        let id = TerminalId(self.next_id);
-        self.next_id += 1;
+        let id = self.ids.next();
         if let Ok(mut wt_id) = handle.wt_id.lock() {
             *wt_id = fresh_core::WindowTerminalId::new(self.window_id, id);
         }
@@ -557,22 +578,6 @@ impl TerminalManager {
         for (_, handle) in self.terminals.drain() {
             handle.shutdown();
         }
-    }
-
-    /// Clean up dead terminals
-    pub fn cleanup_dead(&mut self) -> Vec<TerminalId> {
-        let dead: Vec<TerminalId> = self
-            .terminals
-            .iter()
-            .filter(|(_, h)| !h.is_alive())
-            .map(|(id, _)| *id)
-            .collect();
-
-        for id in &dead {
-            self.terminals.remove(id);
-        }
-
-        dead
     }
 }
 
@@ -742,12 +747,21 @@ fn open_transcript_file(
 /// Wait-thread body: block on the child's exit and fire `TerminalExited` once.
 /// Owns `child` so it is the single source of the exit status (the reader
 /// thread deliberately doesn't fire it, to avoid a racing `exit_code: None`).
+///
+/// Between the child's exit and the notification it runs `await_drained`,
+/// which blocks until the reader thread has drained the PTY (see
+/// [`await_reader_drained`]). The child's last output can still be sitting
+/// in the PTY, or be mid-way through the emulator, when `wait()` returns;
+/// `TerminalExited` switches the terminal's splits to read-only scrollback
+/// straight away, so reporting the exit first would lose that output from
+/// both the grid and the backing file (fresh#3379).
 fn spawn_wait_thread(
     mut child: Box<dyn portable_pty::Child + Send + Sync>,
+    await_drained: impl FnOnce() + Send + 'static,
     async_bridge: Option<AsyncBridge>,
     wt_id: SharedWtId,
     terminal_id: TerminalId,
-) {
+) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let exit_code = match child.wait() {
             Ok(status) => Some(status.exit_code() as i32),
@@ -756,6 +770,7 @@ fn spawn_wait_thread(
                 None
             }
         };
+        await_drained();
         if let Some(bridge) = &async_bridge {
             // Read the tag at exit time — the terminal may have been
             // adopted by another window since it was spawned.
@@ -770,7 +785,30 @@ fn spawn_wait_thread(
                 },
             );
         }
-    });
+    })
+}
+
+/// Block until the reader thread has drained the PTY, i.e. until it drops
+/// its end of `progress` after reaching EOF. The reader pings `progress` for
+/// every chunk it processes, so a reader that is still busy with a large
+/// final burst keeps the wait going; one that has gone `idle` without EOF
+/// (the PTY slave is still held open by a background process) is given up
+/// on, as is any drain that runs past `cap`. Returns whether EOF was seen.
+fn await_reader_drained(
+    progress: &mpsc::Receiver<()>,
+    idle: std::time::Duration,
+    cap: std::time::Duration,
+) -> bool {
+    let deadline = std::time::Instant::now() + cap;
+    loop {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        match progress.recv_timeout(idle.min(left)) {
+            Ok(()) if left.is_zero() => return false,
+            Ok(()) => continue,
+            Err(mpsc::RecvTimeoutError::Timeout) => return false,
+            Err(mpsc::RecvTimeoutError::Disconnected) => return true,
+        }
+    }
 }
 
 /// Writer-thread body: own the master, apply queued writes/resizes, and kill
@@ -804,6 +842,13 @@ fn spawn_writer_thread(
                         tracing::warn!("Failed to resize PTY: {}", e);
                     }
                 }
+                #[cfg(windows)]
+                Ok(TerminalCommand::ReleasePty) => {
+                    // The child is gone; dropping the master (below, when
+                    // this thread returns) closes the pseudoconsole, which
+                    // flushes its remaining output and ends the reader's pipe.
+                    return;
+                }
                 Ok(TerminalCommand::Shutdown) | Err(_) => {
                     break;
                 }
@@ -832,6 +877,10 @@ struct ReaderLoop {
     wt_id: SharedWtId,
     terminal_id: TerminalId,
     alive: Arc<AtomicBool>,
+    /// Drain signal for the wait thread (see [`await_reader_drained`]): a
+    /// best-effort ping per chunk read, and dropped once the PTY is drained
+    /// and the transcripts are flushed.
+    drain_progress: mpsc::SyncSender<()>,
 }
 
 impl ReaderLoop {
@@ -866,6 +915,11 @@ impl ReaderLoop {
                     self.process_output(&buf[..n]);
                     self.append_raw_log(&buf[..n]);
                     self.notify_redraw();
+                    // Full means the wait thread hasn't consumed the last
+                    // ping yet (or isn't waiting at all) - either way one
+                    // pending ping says the same thing.
+                    #[allow(clippy::let_underscore_must_use)]
+                    let _ = self.drain_progress.try_send(());
                 }
                 Err(e) => {
                     tracing::error!("Terminal read error: {}", e);
@@ -887,6 +941,9 @@ impl ReaderLoop {
             #[allow(clippy::let_underscore_must_use)]
             let _ = w.flush();
         }
+        // Everything the child wrote is now in the grid and on disk: release
+        // the wait thread so it can report the exit.
+        drop(self.drain_progress);
     }
 
     /// Feed `bytes` to the emulator, forward any PTY write-responses, and stream
@@ -1072,6 +1129,146 @@ pub fn detect_shell() -> String {
 mod tests {
     use super::*;
 
+    /// A PTY stand-in whose bytes arrive when the test sends them; EOF once
+    /// the sender is dropped.
+    struct GatedPty(mpsc::Receiver<Vec<u8>>);
+
+    impl Read for GatedPty {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            match self.0.recv() {
+                Ok(chunk) => {
+                    let n = chunk.len().min(buf.len());
+                    buf[..n].copy_from_slice(&chunk[..n]);
+                    Ok(n)
+                }
+                Err(_) => Ok(0),
+            }
+        }
+    }
+
+    /// A child that has already exited with status 0.
+    #[derive(Debug)]
+    struct ExitedChild;
+
+    impl portable_pty::ChildKiller for ExitedChild {
+        fn kill(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn clone_killer(&self) -> Box<dyn portable_pty::ChildKiller + Send + Sync> {
+            Box::new(ExitedChild)
+        }
+    }
+
+    impl portable_pty::Child for ExitedChild {
+        fn try_wait(&mut self) -> std::io::Result<Option<portable_pty::ExitStatus>> {
+            Ok(Some(portable_pty::ExitStatus::with_exit_code(0)))
+        }
+        fn wait(&mut self) -> std::io::Result<portable_pty::ExitStatus> {
+            Ok(portable_pty::ExitStatus::with_exit_code(0))
+        }
+        fn process_id(&self) -> Option<u32> {
+            None
+        }
+        #[cfg(windows)]
+        fn as_raw_handle(&self) -> Option<std::os::windows::io::RawHandle> {
+            None
+        }
+    }
+
+    /// `TerminalExited` must not be sent until the reader has fed the child's
+    /// last output to the emulator (fresh#3379). Teardown switches the
+    /// terminal to read-only scrollback on that message, so anything still in
+    /// the PTY when `wait()` returns would otherwise never reach the grid.
+    ///
+    /// The child here has exited before its final line has been read: that
+    /// line only enters the PTY once the wait thread starts waiting for the
+    /// drain, so a wait thread that reports the exit without waiting leaves
+    /// it unread (the reader then sees plain EOF), deterministically.
+    #[test]
+    fn exit_is_reported_after_the_reader_drains_the_last_output() {
+        let bridge = AsyncBridge::new();
+        let state = Arc::new(Mutex::new(TerminalState::new(40, 5)));
+        let wt_id: SharedWtId = Arc::new(Mutex::new(fresh_core::WindowTerminalId::new(
+            fresh_core::WindowId(1),
+            TerminalId(7),
+        )));
+        let (response_tx, _response_rx) = mpsc::channel();
+        let (pty_tx, pty_rx) = mpsc::channel::<Vec<u8>>();
+        let (drain_progress, drain_rx) = mpsc::sync_channel::<()>(1);
+        let reader_loop = ReaderLoop {
+            reader: Box::new(GatedPty(pty_rx)),
+            state: state.clone(),
+            response_tx,
+            backing_writer: None,
+            log_writer: None,
+            async_bridge: Some(bridge.clone()),
+            wt_id: wt_id.clone(),
+            terminal_id: TerminalId(7),
+            alive: Arc::new(AtomicBool::new(true)),
+            drain_progress,
+        };
+        let reader = thread::spawn(move || reader_loop.run());
+
+        let await_drained = move || {
+            // The child's final output, still in the PTY after it was reaped.
+            pty_tx.send(b"STOPPED".to_vec()).expect("reader alive");
+            drop(pty_tx);
+            assert!(await_reader_drained(
+                &drain_rx,
+                std::time::Duration::from_secs(3600),
+                std::time::Duration::from_secs(3600),
+            ));
+        };
+        spawn_wait_thread(
+            Box::new(ExitedChild),
+            await_drained,
+            Some(bridge.clone()),
+            wt_id,
+            TerminalId(7),
+        )
+        .join()
+        .expect("wait thread");
+
+        // The exit has been reported by now; the final line must already be
+        // on screen.
+        let screen = state.lock().unwrap().content_string();
+        assert!(
+            screen.contains("STOPPED"),
+            "exit reported before the last output reached the grid: {screen:?}"
+        );
+        assert!(bridge.try_recv_all().iter().any(|m| matches!(
+            m,
+            crate::services::async_bridge::AsyncMessage::TerminalExited {
+                exit_code: Some(0),
+                ..
+            }
+        )));
+        reader.join().expect("reader thread");
+    }
+
+    /// The drain wait ends as soon as the reader is done, and gives up on a
+    /// reader that never reaches EOF (a PTY still held open elsewhere).
+    #[test]
+    fn await_reader_drained_stops_at_eof_or_when_idle() {
+        let (tx, rx) = mpsc::sync_channel::<()>(1);
+        let long = std::time::Duration::from_secs(3600);
+        tx.try_send(()).unwrap();
+        drop(tx);
+        assert!(await_reader_drained(&rx, long, long), "EOF ends the wait");
+
+        let (_tx, rx) = mpsc::sync_channel::<()>(1);
+        assert!(
+            !await_reader_drained(&rx, std::time::Duration::ZERO, long),
+            "an idle reader without EOF is given up on"
+        );
+        let (tx, rx) = mpsc::sync_channel::<()>(1);
+        tx.try_send(()).unwrap();
+        assert!(
+            !await_reader_drained(&rx, long, std::time::Duration::ZERO),
+            "the cap bounds a reader that keeps making progress"
+        );
+    }
+
     #[test]
     fn test_terminal_id_display() {
         let id = TerminalId(42);
@@ -1179,32 +1376,40 @@ mod tests {
         );
     }
 
-    /// Terminal ids are per-window: each manager numbers from 0, so two
-    /// windows both hand out `Terminal-0`. The owning window is what
-    /// disambiguates them — output messages are tagged with the
-    /// `(window, terminal)` pair so a `Terminal-0` from one session can't
-    /// be attributed to another session's `Terminal-0`. (Regression
-    /// guard for the dock "pending output on the wrong session" bug.)
+    /// Terminal ids are editor-wide: every window's manager draws from one
+    /// shared allocator, so no two windows ever hand out the same id and a
+    /// bare `TerminalId` resolved in the wrong window finds nothing instead
+    /// of that window's own terminal. The owning window still tags output
+    /// messages (`WindowTerminalId`) for routing.
     #[test]
-    fn terminal_ids_collide_across_windows_but_window_disambiguates() {
+    fn terminal_ids_are_unique_across_windows() {
         use fresh_core::{WindowId, WindowTerminalId};
 
-        let win_a = TerminalManager::new(WindowId(1));
-        let win_b = TerminalManager::new(WindowId(2));
+        let ids = TerminalIdAllocator::new();
+        let win_a = TerminalManager::new(WindowId(1), ids.clone());
+        let win_b = TerminalManager::new(WindowId(2), ids.clone());
 
-        // Both managers would assign the same local id to their first
-        // terminal — the namespaces are independent.
+        // Both managers peek the same shared counter...
         assert_eq!(win_a.next_terminal_id(), win_b.next_terminal_id());
-        assert_eq!(win_a.next_terminal_id(), TerminalId(0));
+        // ...and every allocation, from either manager, advances it for both.
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..4 {
+            let a = win_a.ids.next();
+            let b = win_b.ids.next();
+            assert!(seen.insert(a), "id {a} handed out twice");
+            assert!(seen.insert(b), "id {b} handed out twice");
+            assert_eq!(win_a.next_terminal_id(), win_b.next_terminal_id());
+        }
 
-        // Each manager knows its owner, so the global identity differs.
+        // A separate editor (its own allocator) numbers independently.
+        let other_editor = TerminalManager::new(WindowId(1), TerminalIdAllocator::new());
+        assert_eq!(other_editor.next_terminal_id(), TerminalId(0));
+
         assert_eq!(win_a.window_id(), WindowId(1));
         assert_eq!(win_b.window_id(), WindowId(2));
-        let a0 = WindowTerminalId::new(win_a.window_id(), win_a.next_terminal_id());
-        let b0 = WindowTerminalId::new(win_b.window_id(), win_b.next_terminal_id());
         assert_ne!(
-            a0, b0,
-            "same local terminal id in different windows must be distinct globally"
+            WindowTerminalId::new(win_a.window_id(), win_a.next_terminal_id()),
+            WindowTerminalId::new(win_b.window_id(), win_b.next_terminal_id()),
         );
     }
 

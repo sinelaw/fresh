@@ -4,6 +4,7 @@
 
 use fresh_i18n::t;
 
+use super::file_operations::SaveProgress;
 use super::normalize_path;
 use super::BufferId;
 use super::BufferMetadata;
@@ -12,6 +13,7 @@ use crate::config_io::{ConfigLayer, ConfigResolver};
 use crate::input::keybindings::Action;
 use crate::primitives::path_utils::expand_tilde;
 use crate::services::plugins::hooks::HookArgs;
+use crate::view::confirm::{Choice, Confirm, Tone};
 use crate::view::prompt::PromptType;
 
 /// Result of handling a prompt confirmation.
@@ -140,6 +142,10 @@ impl Editor {
             }
             PromptType::GotoLine => {
                 let buffer_id = self.active_buffer();
+                let current_line_1based = self
+                    .active_window()
+                    .primary_cursor_line(self.effective_active_split(), buffer_id)
+                    + 1;
                 if let Some(state) = self
                     .windows
                     .get(&self.active_window)
@@ -148,10 +154,10 @@ impl Editor {
                     .get(&buffer_id)
                 {
                     let max_line = state.buffer.line_count().unwrap_or(1);
-                    let current_line = state.primary_cursor_line_number.value() + 1;
                     match crate::input::quick_open::parse_goto_line_input(&input) {
                         Some(target) => {
-                            let line = resolve_goto_line_target(target, current_line, max_line);
+                            let line =
+                                resolve_goto_line_target(target, current_line_1based, max_line);
                             self.goto_line_col(line, None);
                             self.set_status_message(t!("goto.jumped", line = line).to_string());
                         }
@@ -333,15 +339,30 @@ impl Editor {
                     self.set_status_message(t!("buffer.save_cancelled").to_string());
                 }
             }
-            PromptType::ConfirmSudoSave { info } => {
+            PromptType::ConfirmSudoSave {
+                info,
+                buffer_id,
+                close_after_save,
+            } => {
+                // `info` owns the save's temp file: it is deleted when `info`
+                // drops at the end of this arm, whatever the answer.
                 let input_lower = input.trim().to_lowercase();
                 if input_lower == "y" || input_lower == "yes" {
                     // Hide prompt before starting blocking command to clear the line
                     self.cancel_prompt();
 
+                    let mtime = |this: &Self| {
+                        this.authority()
+                            .filesystem
+                            .metadata(&info.dest_path)
+                            .ok()
+                            .and_then(|m| m.modified)
+                    };
+                    let mtime_before = mtime(self);
+
                     // Read temp file and write via sudo (works for both local and remote)
                     let result = (|| -> anyhow::Result<()> {
-                        let data = self.authority().filesystem.read_file(&info.temp_path)?;
+                        let data = info.read_content()?;
                         self.authority().filesystem.sudo_write(
                             &info.dest_path,
                             &data,
@@ -349,48 +370,51 @@ impl Editor {
                             info.uid,
                             info.gid,
                         )?;
-                        // Best-effort cleanup of temp file.
-                        #[allow(clippy::let_underscore_must_use)]
-                        let _ = self.authority().filesystem.remove_file(&info.temp_path);
+                        // The file now holds the full content, so a copy an
+                        // earlier interrupted in-place attempt staged for it
+                        // is obsolete.
+                        crate::model::buffer::save::resolve_inplace_write_recovery(
+                            &*self.authority().filesystem,
+                            &self.dir_context.recovery_dir(),
+                            &info.dest_path,
+                        );
                         Ok(())
                     })();
 
                     match result {
-                        Ok(_) => {
-                            if let Err(e) = self
-                                .active_state_mut()
-                                .buffer
-                                .finalize_external_save(info.dest_path.clone())
-                            {
-                                tracing::warn!("Failed to finalize sudo save: {}", e);
-                                self.set_status_message(
-                                    t!("prompt.sudo_save_failed", error = e.to_string())
-                                        .to_string(),
-                                );
-                            } else if let Err(e) = self.finalize_save(Some(info.dest_path)) {
-                                tracing::warn!("Failed to finalize save after sudo: {}", e);
-                                self.set_status_message(
-                                    t!("prompt.sudo_save_failed", error = e.to_string())
-                                        .to_string(),
-                                );
-                            }
-                        }
+                        Ok(_) => self.finish_sudo_save(
+                            buffer_id,
+                            info.dest_path.clone(),
+                            close_after_save,
+                        ),
                         Err(e) => {
                             tracing::warn!("Sudo save failed: {}", e);
+                            // `sudo tee` truncates and then writes, and the
+                            // chmod/chown come after: failing part-way, it
+                            // changed the file. That change is our own, not
+                            // someone else's (see `Window::torn_by_own_write`).
+                            // Nothing changed if it failed before writing
+                            // (sudo refused the password, say).
+                            if let Some(after) =
+                                mtime(self).filter(|after| Some(*after) != mtime_before)
+                            {
+                                if let Some(state) = self.buffers_mut().get_mut(&buffer_id) {
+                                    state
+                                        .buffer
+                                        .record_torn_write(info.dest_path.clone(), after);
+                                }
+                            }
                             self.set_status_message(
                                 t!("prompt.sudo_save_failed", error = e.to_string()).to_string(),
                             );
-                            // Best-effort cleanup of temp file.
-                            #[allow(clippy::let_underscore_must_use)]
-                            let _ = self.authority().filesystem.remove_file(&info.temp_path);
                         }
                     }
                 } else {
                     self.set_status_message(t!("buffer.save_cancelled").to_string());
-                    // Best-effort cleanup of temp file.
-                    #[allow(clippy::let_underscore_must_use)]
-                    let _ = self.authority().filesystem.remove_file(&info.temp_path);
                 }
+            }
+            PromptType::ConfirmInterruptedSave { dest_path } => {
+                self.handle_interrupted_save_choice(dest_path, input.trim());
             }
             PromptType::ConfirmOverwriteFile { path } => {
                 let input_lower = input.trim().to_lowercase();
@@ -429,6 +453,11 @@ impl Editor {
             PromptType::ConfirmQuit => {
                 self.handle_confirm_quit(&input);
             }
+            PromptType::ConfirmQuitDaemon => match input.trim() {
+                "detach" => self.should_detach = true,
+                "quit" => self.quit_with_prompts(false),
+                _ => self.set_status_message(t!("buffer.quit_cancelled").to_string()),
+            },
             PromptType::LspRename {
                 original_text,
                 start_pos,
@@ -440,9 +469,11 @@ impl Editor {
             PromptType::FileExplorerRename {
                 original_path,
                 original_name,
-                is_new_file,
             } => {
-                self.perform_file_explorer_rename(original_path, original_name, input, is_new_file);
+                self.perform_file_explorer_rename(original_path, original_name, input);
+            }
+            PromptType::FileExplorerCreate { parent, is_dir } => {
+                self.perform_file_explorer_create(parent, is_dir, input);
             }
             PromptType::ConfirmDeleteFile { path, is_dir } => {
                 let input_lower = input.trim().to_lowercase();
@@ -452,10 +483,20 @@ impl Editor {
                     self.set_status_message(t!("explorer.delete_cancelled").to_string());
                 }
             }
-            PromptType::ConfirmPasteConflict { src, dst, is_cut } => {
+            PromptType::ConfirmPasteConflict {
+                src,
+                dst,
+                is_cut,
+                from_clipboard,
+            } => {
                 match input.trim().to_lowercase().as_str() {
                     "o" | "overwrite" => {
-                        self.perform_file_explorer_paste(src, dst, is_cut);
+                        self.finish_resolved_paste(
+                            Vec::new(),
+                            vec![(src, dst)],
+                            is_cut,
+                            from_clipboard,
+                        );
                     }
                     "r" | "rename" => {
                         let initial = dst
@@ -472,6 +513,7 @@ impl Editor {
                                 src,
                                 dst_dir,
                                 is_cut,
+                                from_clipboard,
                             },
                             initial,
                         );
@@ -484,14 +526,7 @@ impl Editor {
                         // cancel. Losing the clipboard on a typo is
                         // frustrating; make the user explicitly pick a
                         // valid choice.
-                        let name = crate::app::file_explorer::truncate_name_for_prompt(
-                            &dst.file_name().unwrap_or_default().to_string_lossy(),
-                            40,
-                        );
-                        self.start_prompt(
-                            t!("explorer.paste_conflict", name = &name).to_string(),
-                            PromptType::ConfirmPasteConflict { src, dst, is_cut },
-                        );
+                        self.confirm_paste_conflict(src, dst, is_cut, from_clipboard);
                     }
                 }
             }
@@ -499,6 +534,7 @@ impl Editor {
                 src,
                 dst_dir,
                 is_cut,
+                from_clipboard,
             } => {
                 if input.trim().is_empty() {
                     self.set_status_message(t!("explorer.paste_cancelled").to_string());
@@ -506,16 +542,14 @@ impl Editor {
                 }
                 let new_dst = dst_dir.join(input.trim());
                 if self.authority().filesystem.exists(&new_dst) {
-                    self.start_prompt(
-                        t!("explorer.paste_conflict", name = input.trim()).to_string(),
-                        PromptType::ConfirmPasteConflict {
-                            src,
-                            dst: new_dst,
-                            is_cut,
-                        },
-                    );
+                    self.confirm_paste_conflict(src, new_dst, is_cut, from_clipboard);
                 } else {
-                    self.perform_file_explorer_paste(src, new_dst, is_cut);
+                    self.finish_resolved_paste(
+                        vec![(src, new_dst)],
+                        Vec::new(),
+                        is_cut,
+                        from_clipboard,
+                    );
                 }
             }
             PromptType::ConfirmMultiDelete { paths } => {
@@ -529,11 +563,18 @@ impl Editor {
                     self.set_status_message(t!("explorer.delete_cancelled").to_string());
                 }
             }
+            PromptType::ConfirmExplorerMove { pairs } => {
+                match input.trim().to_lowercase().as_str() {
+                    "m" | "move" => self.perform_explorer_move(pairs),
+                    _ => self.set_status_message(t!("explorer.move_cancelled").to_string()),
+                }
+            }
             PromptType::ConfirmMultiPasteConflict {
                 safe,
                 confirmed,
                 mut pending,
                 is_cut,
+                from_clipboard,
             } => {
                 let (cur_src, cur_dst) = pending.remove(0);
                 // Case matters here: `o` / `s` act on the current conflict
@@ -546,26 +587,38 @@ impl Editor {
                         let mut new_confirmed = confirmed;
                         new_confirmed.push((cur_src, cur_dst));
                         if pending.is_empty() {
-                            self.execute_resolved_multi_paste(safe, new_confirmed, is_cut);
+                            self.finish_resolved_paste(safe, new_confirmed, is_cut, from_clipboard);
                         } else {
-                            self.prompt_next_paste_conflict(safe, new_confirmed, pending, is_cut);
+                            self.prompt_next_paste_conflict(
+                                safe,
+                                new_confirmed,
+                                pending,
+                                is_cut,
+                                from_clipboard,
+                            );
                         }
                     }
                     "O" => {
                         let mut new_confirmed = confirmed;
                         new_confirmed.push((cur_src, cur_dst));
                         new_confirmed.extend(pending);
-                        self.execute_resolved_multi_paste(safe, new_confirmed, is_cut);
+                        self.finish_resolved_paste(safe, new_confirmed, is_cut, from_clipboard);
                     }
                     "s" | "skip" => {
                         if pending.is_empty() {
-                            self.execute_resolved_multi_paste(safe, confirmed, is_cut);
+                            self.finish_resolved_paste(safe, confirmed, is_cut, from_clipboard);
                         } else {
-                            self.prompt_next_paste_conflict(safe, confirmed, pending, is_cut);
+                            self.prompt_next_paste_conflict(
+                                safe,
+                                confirmed,
+                                pending,
+                                is_cut,
+                                from_clipboard,
+                            );
                         }
                     }
                     "S" => {
-                        self.execute_resolved_multi_paste(safe, confirmed, is_cut);
+                        self.finish_resolved_paste(safe, confirmed, is_cut, from_clipboard);
                     }
                     "" | "c" | "cancel" => {
                         self.set_status_message(t!("explorer.paste_cancelled").to_string());
@@ -580,6 +633,7 @@ impl Editor {
                             confirmed,
                             pending_with_current,
                             is_cut,
+                            from_clipboard,
                         );
                     }
                 }
@@ -720,9 +774,25 @@ impl Editor {
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| full_path.display().to_string());
-            self.start_prompt(
-                t!("buffer.overwrite_confirm", name = &filename).to_string(),
+            let body = t!("buffer.overwrite_confirm", name = &filename).to_string();
+            let confirm = Confirm::new(
+                t!("dialog.title.file_exists").into_owned(),
+                body.clone(),
+                vec![
+                    Choice::new(
+                        t!("dialog.btn.overwrite").into_owned(),
+                        "o",
+                        Tone::Destructive,
+                    ),
+                    crate::app::confirm_dialog::cancel(),
+                ],
+            )
+            .detail(full_path.display().to_string())
+            .selecting(1);
+            self.start_confirm_prompt(
+                body,
                 PromptType::ConfirmOverwriteFile { path: full_path },
+                confirm,
             );
             return;
         }
@@ -735,9 +805,11 @@ impl Editor {
                     .unwrap_or(parent)
                     .display()
                     .to_string();
-                self.start_prompt(
-                    t!("buffer.create_directory_confirm", name = &dir_name).to_string(),
+                let confirm = crate::app::confirm_dialog::create_directory(&dir_name);
+                self.start_confirm_prompt(
+                    confirm.body.clone(),
                     PromptType::ConfirmCreateDirectory { path: full_path },
+                    confirm,
                 );
                 return;
             }
@@ -757,7 +829,12 @@ impl Editor {
             before_len
         );
 
-        match self.active_state_mut().buffer.save_to_file(&full_path) {
+        let recovery_dir = self.dir_context.recovery_dir();
+        match self
+            .active_state_mut()
+            .buffer
+            .save_to_file(&full_path, &recovery_dir)
+        {
             Ok(()) => {
                 let after_save_idx = self.active_event_log().current_index();
                 let after_save_len = self.active_event_log().len();
@@ -799,6 +876,7 @@ impl Editor {
                                 first_line.as_deref(),
                                 &self.grammar_registry,
                                 &self.config.languages,
+                                state.buffer.filesystem().as_ref(),
                             );
                         new_language = detected.name.clone();
                         state.apply_language(detected);
@@ -825,11 +903,7 @@ impl Editor {
                     self.active_event_log().len()
                 );
 
-                if let Ok(metadata) = self.authority().filesystem.metadata(&full_path) {
-                    if let Some(mtime) = metadata.modified {
-                        self.file_mod_times_mut().insert(full_path.clone(), mtime);
-                    }
-                }
+                self.active_window_mut().record_saved_file(&full_path);
 
                 self.active_window_mut().notify_lsp_save();
 
@@ -842,6 +916,7 @@ impl Editor {
                     "after_file_save",
                     crate::services::plugins::hooks::HookArgs::AfterFileSave {
                         buffer_id: self.active_buffer(),
+                        window_id: self.active_window.0,
                         path: full_path.clone(),
                     },
                 );
@@ -888,37 +963,27 @@ impl Editor {
 
     /// Handle SetPageWidth prompt confirmation.
     fn handle_set_page_width(&mut self, input: &str) {
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        let active_split = self.effective_active_split();
         let trimmed = input.trim();
 
         if trimmed.is_empty() {
             if let Some(vs) = self
-                .windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_view_states_mut())
-                .expect("active window must have a populated split layout")
+                .active_window_mut()
+                .split_view_states_mut()
                 .get_mut(&active_split)
             {
-                vs.compose_width = None;
+                vs.buffer_tab_state_mut().compose_width = None;
             }
             self.set_status_message(t!("settings.page_width_cleared").to_string());
         } else {
             match trimmed.parse::<u16>() {
                 Ok(val) if val > 0 => {
                     if let Some(vs) = self
-                        .windows
-                        .get_mut(&self.active_window)
-                        .and_then(|w| w.split_view_states_mut())
-                        .expect("active window must have a populated split layout")
+                        .active_window_mut()
+                        .split_view_states_mut()
                         .get_mut(&active_split)
                     {
-                        vs.compose_width = Some(val);
+                        vs.buffer_tab_state_mut().compose_width = Some(val);
                     }
                     self.set_status_message(t!("settings.page_width_set", value = val).to_string());
                 }
@@ -936,34 +1001,23 @@ impl Editor {
         let trimmed = input.trim();
         match trimmed.parse::<usize>() {
             Ok(col) if col > 0 => {
-                let active_split = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .active_split();
+                let active_split = self.effective_active_split();
                 if let Some(view_state) = self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_view_states_mut())
-                    .expect("active window must have a populated split layout")
+                    .active_window_mut()
+                    .split_view_states_mut()
                     .get_mut(&active_split)
                 {
-                    if !view_state.rulers.contains(&col) {
-                        view_state.rulers.push(col);
-                        view_state.rulers.sort();
+                    if !view_state.buffer_tab_state_mut().rulers.contains(&col) {
+                        view_state.buffer_tab_state_mut().rulers.push(col);
+                        view_state.buffer_tab_state_mut().rulers.sort();
                     }
                 }
                 // Persist to user config
                 let new_rulers = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(_, vs)| vs)
-                    .expect("active window must have a populated split layout")
+                    .active_window()
+                    .split_view_states()
                     .get(&active_split)
-                    .map(|vs| vs.rulers.clone())
+                    .map(|vs| vs.buffer_tab_state().rulers.clone())
                     .unwrap_or_default();
                 self.config_mut().editor.rulers = new_rulers;
                 self.save_rulers_to_config();
@@ -982,31 +1036,23 @@ impl Editor {
     fn handle_remove_ruler(&mut self, input: &str) {
         let trimmed = input.trim();
         if let Ok(col) = trimmed.parse::<usize>() {
-            let active_split = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .active_split();
+            let active_split = self.effective_active_split();
             if let Some(view_state) = self
-                .windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_view_states_mut())
-                .expect("active window must have a populated split layout")
+                .active_window_mut()
+                .split_view_states_mut()
                 .get_mut(&active_split)
             {
-                view_state.rulers.retain(|&r| r != col);
+                view_state
+                    .buffer_tab_state_mut()
+                    .rulers
+                    .retain(|&r| r != col);
             }
             // Persist to user config
             let new_rulers = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
+                .active_window()
+                .split_view_states()
                 .get(&active_split)
-                .map(|vs| vs.rulers.clone())
+                .map(|vs| vs.buffer_tab_state().rulers.clone())
                 .unwrap_or_default();
             self.config_mut().editor.rulers = new_rulers;
             self.save_rulers_to_config();
@@ -1156,24 +1202,17 @@ impl Editor {
 
                 if file_size >= threshold && enc.requires_full_file_load() {
                     // Show confirmation prompt for large file with non-resynchronizable encoding
-                    let size_mb = file_size as f64 / (1024.0 * 1024.0);
-                    let load_key = t!("file.large_encoding.key.load").to_string();
-                    let encoding_key = t!("file.large_encoding.key.encoding").to_string();
-                    let cancel_key = t!("file.large_encoding.key.cancel").to_string();
-                    let prompt_msg = t!(
-                        "file.large_encoding_prompt",
-                        encoding = enc.display_name(),
-                        size = format!("{:.0}", size_mb),
-                        load_key = load_key,
-                        encoding_key = encoding_key,
-                        cancel_key = cancel_key
-                    )
-                    .to_string();
-                    self.start_prompt(
-                        prompt_msg,
+                    let confirm = crate::app::confirm_dialog::large_file_encoding(
+                        enc.display_name(),
+                        file_size,
+                        path,
+                    );
+                    self.start_confirm_prompt(
+                        confirm.body.clone(),
                         PromptType::ConfirmLargeFileEncoding {
                             path: path.to_path_buf(),
                         },
+                        confirm,
                     );
                     return;
                 }
@@ -1344,6 +1383,54 @@ impl Editor {
         }
     }
 
+    /// Mark `buffer_id` saved to `path` after the sudo write put its
+    /// content there, and close it when the save was Save on closing its
+    /// tab.
+    ///
+    /// By id, not "the active buffer": the prompt may have been opened for a
+    /// buffer other than the one active now. The finalize (on-save actions
+    /// included) runs with it active, as for any save.
+    fn finish_sudo_save(
+        &mut self,
+        buffer_id: BufferId,
+        path: std::path::PathBuf,
+        close_after_save: bool,
+    ) {
+        let Some(state) = self.buffers_mut().get_mut(&buffer_id) else {
+            // Gone while the prompt was open; the file is written regardless.
+            tracing::warn!("Buffer {buffer_id:?} closed before its sudo save finished");
+            return;
+        };
+        if let Err(e) = state.buffer.finalize_external_save(path.clone()) {
+            tracing::warn!("Failed to finalize sudo save: {}", e);
+            self.set_status_message(
+                t!("prompt.sudo_save_failed", error = e.to_string()).to_string(),
+            );
+            return;
+        }
+        let old_active = self.active_buffer();
+        self.set_active_buffer(buffer_id);
+        let finalized = self.finalize_save(Some(path));
+        if old_active != buffer_id && self.buffers().contains_key(&old_active) {
+            self.set_active_buffer(old_active);
+        }
+        if let Err(e) = finalized {
+            tracing::warn!("Failed to finalize save after sudo: {}", e);
+            self.set_status_message(
+                t!("prompt.sudo_save_failed", error = e.to_string()).to_string(),
+            );
+            return;
+        }
+        if close_after_save {
+            match self.force_close_buffer(buffer_id) {
+                Ok(()) => self.set_status_message(t!("buffer.saved_and_closed").to_string()),
+                Err(e) => self.set_status_message(
+                    t!("file.saved_cannot_close", error = e.to_string()).to_string(),
+                ),
+            }
+        }
+    }
+
     /// Handle ConfirmCloseBuffer prompt. Returns true if early return is needed.
     fn handle_confirm_close_buffer(&mut self, input: &str, buffer_id: BufferId) -> bool {
         let input_lower = input.trim().to_lowercase();
@@ -1362,15 +1449,37 @@ impl Editor {
                 .map(|s| s.buffer.file_path().is_some())
                 .unwrap_or(false);
 
+            let changed_on_disk = self
+                .buffers()
+                .get(&buffer_id)
+                .and_then(|s| s.buffer.file_path())
+                .filter(|p| self.changed_on_disk(p).is_some())
+                .map(std::path::Path::to_path_buf);
+            if let Some(path) = changed_on_disk {
+                // Don't write over someone else's change on the way out, and
+                // don't close either, which would drop these edits (#3346).
+                self.set_status_message(Self::not_saved_changed_on_disk_message(&[path]));
+                return true;
+            }
+
             if has_path {
                 let old_active = self.active_buffer();
                 self.set_active_buffer(buffer_id);
-                if let Err(e) = self.save() {
-                    self.set_status_message(
-                        t!("file.save_failed", error = e.to_string()).to_string(),
-                    );
-                    self.set_active_buffer(old_active);
-                    return true; // Early return
+                match self.save_active(true) {
+                    Ok(SaveProgress::Saved) => {}
+                    // The save waits on a prompt (sudo, a missing
+                    // directory): closing now would drop the edits before
+                    // they are written. The sudo prompt closes the buffer
+                    // itself once saved; it stays on screen meanwhile, as
+                    // what the prompt is about.
+                    Ok(SaveProgress::Pending) => return true,
+                    Err(e) => {
+                        self.set_status_message(
+                            t!("file.save_failed", error = e.to_string()).to_string(),
+                        );
+                        self.set_active_buffer(old_active);
+                        return true; // Early return
+                    }
                 }
                 self.set_active_buffer(old_active);
                 if let Err(e) = self.force_close_buffer(buffer_id) {
@@ -1415,9 +1524,11 @@ impl Editor {
         let first_char = input_trim.chars().next();
         let confirms = first_char == quit_first || first_char == Some('y') || input_trim == "yes";
         if confirms {
-            self.should_quit = true;
+            // Only now, with the quit confirmed, does auto-save write
+            // anything; what it can't write is asked about instead.
+            self.quit_after_auto_save();
         } else {
-            self.set_status_message(t!("buffer.close_cancelled").to_string());
+            self.set_status_message(t!("buffer.quit_cancelled").to_string());
         }
     }
 
@@ -1436,8 +1547,19 @@ impl Editor {
         if first_char == save_first {
             // Save all modified file-backed buffers to disk first.
             match self.save_all_on_exit() {
-                Ok(count) => {
-                    tracing::info!("Saved {} buffer(s) on exit", count);
+                Ok(outcome)
+                    if !outcome.failed.is_empty() || !outcome.changed_on_disk.is_empty() =>
+                {
+                    // Quitting now would drop the edits that couldn't be
+                    // written (a file that needs sudo, one changed on disk
+                    // we refused to overwrite); stay so the user can decide.
+                    if let Some(msg) = Self::not_saved_message(&outcome) {
+                        self.set_status_message(msg);
+                    }
+                    return true;
+                }
+                Ok(outcome) => {
+                    tracing::info!("Saved {} buffer(s) on exit", outcome.saved);
                 }
                 Err(e) => {
                     self.set_status_message(
@@ -1473,7 +1595,7 @@ impl Editor {
             self.should_quit = true;
         } else {
             // Cancel (default)
-            self.set_status_message(t!("buffer.close_cancelled").to_string());
+            self.set_status_message(t!("buffer.quit_cancelled").to_string());
         }
         false
     }
@@ -1717,8 +1839,7 @@ impl Editor {
                     .and_then(|view_states| {
                         view_states.iter().find_map(|(split_id, vs)| {
                             vs.open_buffers
-                                .iter()
-                                .any(|t| *t == crate::view::split::TabTarget::Group(group_leaf))
+                                .contains(&crate::view::split::TabTarget::Group(group_leaf))
                                 .then_some(*split_id)
                         })
                     });
@@ -1734,13 +1855,14 @@ impl Editor {
                 // as Ctrl+G / Go to Line instead of silently clamping to
                 // line 1 and jumping to the wrong place (#2597).
                 if !self.active_buffer_has_line_index() {
-                    self.start_prompt(
-                        t!("goto.scan_confirm_prompt", yes = "y", no = "N").to_string(),
-                        PromptType::GotoLineScanConfirm,
-                    );
+                    self.start_goto_line_scan_confirm();
                     return PromptResult::Done;
                 }
                 let buffer_id = self.active_buffer();
+                let current_line_1based = self
+                    .active_window()
+                    .primary_cursor_line(self.effective_active_split(), buffer_id)
+                    + 1;
                 if let Some(state) = self
                     .windows
                     .get(&self.active_window)
@@ -1749,8 +1871,7 @@ impl Editor {
                     .get(&buffer_id)
                 {
                     let max_line = state.buffer.line_count().unwrap_or(1);
-                    let current_line = state.primary_cursor_line_number.value() + 1;
-                    let line = resolve_goto_line_target(target, current_line, max_line);
+                    let line = resolve_goto_line_target(target, current_line_1based, max_line);
                     self.goto_line_col(line, None);
                     self.set_status_message(t!("goto.jumped", line = line).to_string());
                 } else {
@@ -1815,6 +1936,7 @@ impl Editor {
         confirmed: Vec<(std::path::PathBuf, std::path::PathBuf)>,
         pending: Vec<(std::path::PathBuf, std::path::PathBuf)>,
         is_cut: bool,
+        from_clipboard: bool,
     ) {
         let name = crate::app::file_explorer::truncate_name_for_prompt(
             &pending[0]
@@ -1824,14 +1946,17 @@ impl Editor {
                 .to_string_lossy(),
             40,
         );
-        self.start_prompt(
-            t!("explorer.paste_conflict_multi", name = &name).to_string(),
+        let confirm = crate::app::confirm_dialog::multi_paste_conflict(&name);
+        self.start_confirm_prompt(
+            confirm.body.clone(),
             PromptType::ConfirmMultiPasteConflict {
                 safe,
                 confirmed,
                 pending,
                 is_cut,
+                from_clipboard,
             },
+            confirm,
         );
     }
 }

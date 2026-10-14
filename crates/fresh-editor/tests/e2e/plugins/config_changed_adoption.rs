@@ -39,9 +39,8 @@ fn focus_category(h: &mut EditorTestHarness, name: &str) {
 /// Open Settings, land on the plugin's category, move focus into the
 /// panel, step down `steps` fields, toggle with Enter, save, and close.
 ///
-/// `category` is matched as a substring, so pass a prefix short enough to
-/// survive the category pane's truncation ("Plugin: git_ex", not
-/// "Plugin: git_explorer" — that renders as `Plugin: git_ex...`).
+/// `category` is matched as a substring of the selected tree row (a
+/// plugin's page is listed under "Plugins" by the plugin's name).
 fn toggle_plugin_setting(h: &mut EditorTestHarness, category: &str, steps: usize) {
     h.open_settings().unwrap();
     focus_category(h, category);
@@ -132,7 +131,7 @@ fn vi_mode_arrow_keys_setting_applies_without_restart() {
 
     // Turn `arrowKeys` off. Fields render alphabetically: arrowKeys is
     // the first, so no Down steps.
-    toggle_plugin_setting(&mut harness, "Plugin: vi_mode", 0);
+    toggle_plugin_setting(&mut harness, "vi_mode", 0);
 
     // Same keypress, now unbound in vi-normal (which is read-only, so it
     // can't fall through to inserting text either).
@@ -199,7 +198,7 @@ fn git_explorer_color_names_setting_repaints_on_save() {
     let plain = name_fg(&harness);
 
     // Turn `colorNames` on — the plugin's only setting, so no Down steps.
-    toggle_plugin_setting(&mut harness, "Plugin: git_ex", 0);
+    toggle_plugin_setting(&mut harness, "git_ex", 0);
 
     harness
         .wait_until(|h| name_fg(h) != plain)

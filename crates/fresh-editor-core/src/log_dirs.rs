@@ -79,6 +79,12 @@ pub fn main_log_path() -> PathBuf {
     log_dir().join(format!("fresh-{}.log", std::process::id()))
 }
 
+/// Log of the detached session daemon with process id `pid`:
+/// `{log_dir}/fresh-server-{PID}.log`.
+pub fn server_log_path(pid: u32) -> PathBuf {
+    log_dir().join(format!("fresh-server-{pid}.log"))
+}
+
 /// Get the path for the warnings log file for this process.
 ///
 /// Returns `{log_dir}/warnings-{PID}.log`
@@ -345,6 +351,12 @@ pub fn print_all_paths(dir_context: &crate::config_io::DirectoryContext) {
     writeln!(handle).ok();
 
     writeln!(handle, "Logs:       {}", logs_dir.display()).ok();
+    writeln!(
+        handle,
+        "  daemon:       {}",
+        logs_dir.join("fresh-server-<PID>.log").display()
+    )
+    .ok();
     writeln!(handle, "  lsp/:         {}", logs_dir.join("lsp").display()).ok();
 }
 

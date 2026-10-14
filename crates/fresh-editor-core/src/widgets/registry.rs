@@ -133,6 +133,15 @@ pub struct WidgetEvent {
     /// mounted-panel arc, not an oversight at the producer sites,
     /// which declare the capability wherever a row select exists.
     pub context_click: bool,
+    /// Capability, declared by the kind: a press on this target picks the
+    /// row up rather than activating it — a Tree row the plugin marked
+    /// `draggable`. The press starts a drag (`fresh_ui::Event::start_drag`);
+    /// released on another row of the same widget it is a `drop` event, and
+    /// released where it was pressed it is this target's own click.
+    ///
+    /// SCOPE: read by `view::shell::widgets::hit_node` and the tree's rows,
+    /// which are the drop targets.
+    pub drag_source: bool,
 }
 
 impl WidgetEvent {
@@ -166,18 +175,7 @@ pub enum WidgetInstanceState {
     /// and the measured card height used to sit in this variant, and
     /// none of them is the widget's state: they are the viewport's, and
     /// the tree's viewport element holds them.
-    List {
-        selected_index: i32,
-        /// True once the user has scrolled the list by mouse (wheel or
-        /// scrollbar) without moving the selection. While set, the
-        /// renderer respects the painted offset as-is instead of
-        /// snapping it back to keep `selected_index` in view — so a
-        /// mouse scroll can push the selected card off-screen. Cleared
-        /// whenever the selection itself moves (keyboard nav, click, or
-        /// a plugin `SetSelectedIndex`), which re-arms
-        /// scroll-follows-selection.
-        user_scrolled: bool,
-    },
+    List { selected_index: i32 },
     /// `Text` instance state: host-owned `TextEdit` (value + cursor
     /// row/col + selection anchor + multiline flag), plus a viewport
     /// scroll offset. For multi-line (`rows > 1`) variants that's the
@@ -245,13 +243,6 @@ pub enum WidgetInstanceState {
         /// row. The first ↓ flips it true — the dropdown is now
         /// navigable, the selected row highlights, and Enter accepts.
         completion_navigated: bool,
-        /// True once the user wheel-scrolled a multi-line (markdown)
-        /// text viewport without moving the caret. While set, the
-        /// renderer respects `scroll` as-is instead of snapping it
-        /// back to keep the caret visible. Cleared whenever the caret
-        /// itself moves (keys or click), re-arming follow-the-caret.
-        /// Same contract as `List`/`Tree`'s flag.
-        user_scrolled: bool,
     },
     /// `Tree` instance state: host-owned selected index and the set
     /// of expanded item keys. Both become authoritative once a
@@ -267,18 +258,6 @@ pub enum WidgetInstanceState {
     Tree {
         selected_index: i32,
         expanded_keys: HashSet<String>,
-        /// True once the user has scrolled the tree by mouse (wheel or
-        /// scrollbar) without moving the selection. While set, the
-        /// renderer respects the painted offset as-is instead of snapping
-        /// it back to keep `selected_index` in view — so a mouse scroll
-        /// can push the selected node off-screen. Cleared whenever the
-        /// selection itself moves (keyboard nav, click, or a plugin
-        /// `SetSelectedIndex` to a *different* index), which re-arms
-        /// scroll-follows-selection. Same semantics as `List`'s flag —
-        /// without it, a background spec refresh that re-pins the same
-        /// selection (the orchestrator dock's probe poll) yanked a
-        /// wheel-scrolled dock back to the selected card.
-        user_scrolled: bool,
     },
     /// `Number` instance state: the host-owned current value. Becomes
     /// authoritative after first render — the spec's `value` is a
@@ -304,14 +283,15 @@ pub enum WidgetInstanceState {
     /// same overlay-paint path as `Text` completions, no separate
     /// compositor.
     Dropdown {
+        /// The committed value — what the trigger shows and what `change`
+        /// reported last.
         selected_index: i32,
         open: bool,
-        /// The index the list opened on, kept while it is open so Escape
-        /// can put it back: Up/Down move the selection live (the trigger
-        /// shows it and `change` fires), and Escape is the word that the
-        /// move was not meant. `None` while closed, and after Enter or a
-        /// click commits the live selection.
-        restore: Option<i32>,
+        /// The row the open list has highlighted. Moving it — ↑/↓, paging,
+        /// typing — is not a value change and fires nothing; Enter or a click
+        /// commits it into `selected_index` (one `change`), and Esc or a
+        /// press outside closes the list and forgets it. `None` while closed.
+        highlight: Option<i32>,
     },
     /// `Radio` instance state: the host-owned selected index.
     /// Authoritative after first render; the spec's `selected_index`
@@ -340,8 +320,17 @@ pub struct WidgetPanelState {
     /// host-owned surface ([`WidgetPanelState::surface`]), which has no
     /// buffer because nothing paints it but the tree.
     pub buffer_id: Option<BufferId>,
-    /// The currently-mounted spec.
-    pub spec: WidgetSpec,
+    /// The currently-mounted spec, in shared storage.
+    ///
+    /// **The description captures this handle; it never copies the spec.**
+    /// A panel is described every frame and its spec changes only when the
+    /// plugin sends one or a mutation lands, so a spec held by value was
+    /// deep-cloned once per frame per panel (`panel_interior`) for nothing.
+    /// A mutation edits it copy-on-write (`Rc::make_mut`): in place when no
+    /// description is holding the last frame's, into a fresh allocation when
+    /// one is — so what a frame captured never changes under it, and "did
+    /// the spec change?" is `Rc::ptr_eq`.
+    pub spec: std::rc::Rc<WidgetSpec>,
     /// Widget instance state by widget `key`. Survives re-renders —
     /// see `WidgetInstanceState` for what's stored.
     pub instance_states: HashMap<String, WidgetInstanceState>,
@@ -406,7 +395,7 @@ impl WidgetPanelState {
     pub fn surface(spec: WidgetSpec) -> Self {
         WidgetPanelState {
             buffer_id: None,
-            spec,
+            spec: std::rc::Rc::new(spec),
             instance_states: HashMap::new(),
             focus_key: String::new(),
             auto_focus_first: false,
@@ -498,14 +487,6 @@ impl WidgetPanelState {
                 crate::widgets::kinds::tree::resolve(spec, widget_key, &self.instance_states);
             let new_state = WidgetInstanceState::Tree {
                 expanded_keys: current.expanded,
-                // Re-pinning the *same* index (which the orchestrator
-                // dock's `refreshOpenDialog` does on every probe-poll
-                // repaint) must preserve a user scroll — otherwise the
-                // refresh would snap the view back to the selection a
-                // beat after a mouse scroll. Only an actual selection
-                // change re-arms scroll-follows-selection. Mirrors the
-                // List branch below.
-                user_scrolled: current.user_scrolled && index == current.selected,
                 selected_index: index,
             };
             self.instance_states
@@ -513,35 +494,15 @@ impl WidgetPanelState {
             return;
         }
         let new_state = match self.instance_states.get(widget_key) {
-            Some(WidgetInstanceState::Tree {
-                selected_index,
-                expanded_keys,
-                user_scrolled,
-            }) => WidgetInstanceState::Tree {
+            Some(WidgetInstanceState::Tree { expanded_keys, .. }) => WidgetInstanceState::Tree {
                 expanded_keys: expanded_keys.clone(),
                 // A key with no spec mounted here: nothing to resolve
                 // against, so the stored shape is all there is.
-                user_scrolled: *user_scrolled && index == *selected_index,
                 selected_index: index,
             },
-            other => {
-                let (prev_index, prev_user_scrolled) = match other {
-                    Some(WidgetInstanceState::List {
-                        selected_index,
-                        user_scrolled,
-                    }) => (*selected_index, *user_scrolled),
-                    _ => (-1, false),
-                };
-                // Re-pinning the *same* index (which `refreshOpenDialog`
-                // does on every repaint) must preserve a user scroll —
-                // otherwise a probe-poll refresh would snap the view back
-                // to the selection a beat after a mouse scroll. Only an
-                // actual selection change re-arms scroll-follows-selection.
-                WidgetInstanceState::List {
-                    selected_index: index,
-                    user_scrolled: prev_user_scrolled && index == prev_index,
-                }
-            }
+            _ => WidgetInstanceState::List {
+                selected_index: index,
+            },
         };
         self.instance_states
             .insert(widget_key.to_string(), new_state);
@@ -640,7 +601,7 @@ impl WidgetRegistry {
             panel_key,
             WidgetPanelState {
                 buffer_id: Some(buffer_id),
-                spec,
+                spec: std::rc::Rc::new(spec),
                 instance_states,
                 focus_key,
                 auto_focus_first,
@@ -699,7 +660,7 @@ impl WidgetRegistry {
                 state
                     .h_pan
                     .retain(|k, _| rows_are_the_same_subject(&state.spec, &spec, k));
-                state.spec = spec;
+                state.spec = std::rc::Rc::new(spec);
                 state.instance_states = instance_states;
                 state.focus_key = focus_key;
                 state.buffer_id.ok_or(())
@@ -721,6 +682,12 @@ impl WidgetRegistry {
     /// Read-only access to the previous render's focus key.
     pub fn focus_key(&self, panel_key: &PanelKey) -> Option<&str> {
         self.panels.get(panel_key).map(|s| s.focus_key.as_str())
+    }
+
+    /// Every mounted panel with the widget that holds its focus (`""` for
+    /// none) — what the plugins' `getPanelFocusKey` is published from.
+    pub fn focus_keys(&self) -> impl Iterator<Item = (&PanelKey, &str)> {
+        self.panels.iter().map(|(k, s)| (k, s.focus_key.as_str()))
     }
 
     /// Decide which widget holds this panel's focus.
@@ -760,19 +727,13 @@ impl WidgetRegistry {
         state.buffer_id
     }
 
-    /// Borrow the current spec + return the buffer id. Companion to
-    /// `update_side_effects` — render with the borrow and then write
-    /// back only the side-effects, avoiding the deep clone of the spec
-    /// that `buffer_and_spec()` does.
-    pub fn buffer_and_spec_ref(&self, panel_key: &PanelKey) -> Option<(BufferId, &WidgetSpec)> {
-        let s = self.panels.get(panel_key)?;
-        Some((s.buffer_id?, &s.spec))
-    }
-
     /// Find the buffer and current spec for a panel — used by the
     /// dispatcher to re-render after a focus advance / activate
     /// command without the plugin needing to send an UpdateWidgetPanel.
-    pub fn buffer_and_spec(&self, panel_key: &PanelKey) -> Option<(BufferId, WidgetSpec)> {
+    pub fn buffer_and_spec(
+        &self,
+        panel_key: &PanelKey,
+    ) -> Option<(BufferId, std::rc::Rc<WidgetSpec>)> {
         let s = self.panels.get(panel_key)?;
         Some((s.buffer_id?, s.spec.clone()))
     }
@@ -811,46 +772,6 @@ impl WidgetRegistry {
             .filter(|(_, s)| s.buffer_id == Some(buffer_id))
             .map(|(key, _)| key.clone())
             .collect()
-    }
-
-    /// Whether any panel mounted into `buffer_id` asked for
-    /// `focusFollowsCursor`.
-    ///
-    /// The cheap gate in front of the geometry: it is asked on **every
-    /// reading-row move**, almost all of them in ordinary buffers no panel is
-    /// mounted into, so it allocates nothing and never touches the buffer.
-    pub fn has_focus_follower(&self, buffer_id: BufferId) -> bool {
-        self.panels
-            .values()
-            .any(|p| p.buffer_id == Some(buffer_id) && p.focus_follows_cursor)
-    }
-
-    /// The one panel mounted into `buffer_id` that asked for
-    /// `focusFollowsCursor`, or `None`.
-    ///
-    /// **`None` when two of them share a buffer**, deliberately. Two panels
-    /// both tracking one reading row is not a state with a right answer —
-    /// each would seat it where the other did not want it — and picking one
-    /// of them here would pick it out of a `HashMap`, so the pair could
-    /// resolve differently on two consecutive calls in the same frame.
-    /// Answering "no" and saying so in the log leaves the reader alone, which
-    /// is the one behaviour that cannot be wrong.
-    pub fn focus_follower_of(&self, buffer_id: BufferId) -> Option<PanelKey> {
-        let mut found: Option<&PanelKey> = None;
-        for (key, state) in &self.panels {
-            if state.buffer_id != Some(buffer_id) || !state.focus_follows_cursor {
-                continue;
-            }
-            if found.is_some() {
-                tracing::warn!(
-                    "two focusFollowsCursor panels in buffer {:?}; neither will track the reader",
-                    buffer_id
-                );
-                return None;
-            }
-            found = Some(key);
-        }
-        found.cloned()
     }
 }
 

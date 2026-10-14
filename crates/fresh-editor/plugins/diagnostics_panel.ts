@@ -114,6 +114,7 @@ const provider = createLiveProvider(getDiagnostics);
 const finder = new Finder<DiagnosticItem>(editor, {
   id: "diagnostics",
   format: (d) => ({
+    id: `${d.uri}:${d.line}:${d.column}:${d.severity}:${d.source ?? ""}:${d.message}`,
     label: `${d.line}:${d.column} ${d.message}`,
     location: {
       file: d.file,

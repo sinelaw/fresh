@@ -12,6 +12,7 @@
 use crate::app::Editor;
 
 use super::state::FocusTarget;
+use super::surface::SettingsSurface;
 use super::SettingsHit;
 use crate::widgets::kinds::dual_list::DualOp;
 
@@ -38,9 +39,9 @@ impl Editor {
 
         match hit {
             // The wide layout's tree answers for itself now: its rows carry
-            // `UiFact::SettingsCategory`, `SettingsCategorySection` and
-            // `SettingsCategoryDisclosure` — the identity the row has, rather
-            // than a rectangle a cell is compared against. This arm is the
+            // `UiFact::SettingsCategory` and `SettingsCategorySection` — the
+            // identity the row has, rather than a rectangle a cell is compared
+            // against. This arm is the
             // **narrow** strip's, which is still painted.
             SettingsHit::Category(idx) => {
                 if let Some(ref mut state) = self.settings_state {

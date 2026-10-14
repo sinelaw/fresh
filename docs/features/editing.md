@@ -60,6 +60,10 @@ Rows past the end of the buffer keep the theme's editor background, so the empty
 
 Enable `auto_save_enabled` in settings to automatically save modified buffers to disk at a configurable interval (default 30 seconds). This is separate from the crash-recovery auto-save, which runs independently every 2 seconds to a recovery directory.
 
+## Interrupted Saves
+
+A file that can't be replaced by a new one without losing something (it belongs to another user, has other hard links, or carries attributes that can't be copied) is overwritten in place. Before truncating it, Fresh keeps a complete copy of the new content in its recovery directory. If the write fails part-way, or Fresh dies during it, the file may be left damaged; the next session then opens an **Interrupted Save** dialog for it: **Restore** writes the kept copy into the file (and reloads any open buffer of it that has no unsaved changes), **Show Diff** closes the dialog and opens the file on disk beside the kept copy (keeping the copy, so the diff can be read at leisure), **Discard** deletes the copy, and **Later** keeps it and shows where it is. A copy that is still waiting is asked about again at the next start, or any time with **Review Interrupted Saves** from the command palette, including one kept by a save earlier in the same session. While such a copy is kept, or after a save of it failed part-way in this session, a large file (opened without loading it whole) can't be saved again, not even under another name, since its unchanged parts would be read back from the damaged file.
+
 ## Code Folding
 
 Fold and unfold code blocks via gutter indicators or "Toggle Fold" from the command palette. Up/Down navigation skips folded regions. Each split view maintains its own fold state. Folding works in two modes:
@@ -91,6 +95,8 @@ Diagnostic messages can be displayed at the end of each line, right-aligned, wit
 
 When line wrap is enabled (`line_wrap` in settings), wrapped continuation lines preserve the indentation of their parent line (hanging indent).
 
+Lines wrap at the window edge, or at `wrap_column` when it is set and the window is wider. `wrap_column` counts text columns, not the line-number gutter: `"wrap_column": 80` fits 80 characters on a row with or without line numbers. It can be set per language, e.g. to wrap Markdown at 80 while code wraps at the window edge.
+
 **Per-buffer overrides** — **Toggle Line Wrap (Current Buffer)** and **Toggle Line Numbers (Current Buffer)** flip these for the active buffer only, leaving the global default and other buffers untouched. The override persists across restarts; the editor-wide **Toggle Line Wrap** / **Toggle Line Numbers** commands still change the default for everything else and save it to your config. See [Per-Buffer Overrides](../configuration/index.md#per-buffer-overrides) for the naming convention every settings toggle follows.
 
 ## Multiple Cursors
@@ -109,7 +115,6 @@ Edit multiple locations simultaneously:
 | Shortcut | Action |
 |----------|--------|
 | `Ctrl+W` | Select word under cursor |
-| Double-click + drag | Extend selection word-by-word (after double-clicking a word) |
 | `Ctrl+L` | Select current line |
 | `Ctrl+A` | Select all |
 | `Shift+Arrow` | Extend selection in direction |
@@ -117,6 +122,7 @@ Edit multiple locations simultaneously:
 | `Shift+Home/End` | Select to line start/end |
 | `Ctrl+Shift+Home/End` | Select to document start/end |
 | `Shift+PgUp/PgDn` | Select page up/down |
+| Double-click, then drag | Extend the selection a whole word at a time (a plain click-drag extends it by single characters) |
 
 Selected line breaks are drawn too: every line break inside the selection highlights the single column it occupies — column 0 on an empty line, just past the text otherwise — so a selection that spans blank lines is visible instead of leaving them looking untouched. Whitespace inside the selection also gets its `·` / `→` indicators (see [Whitespace Indicators](#whitespace-indicators)).
 
@@ -261,15 +267,15 @@ Compose mode reads the document the way markdown defines it, so a paragraph, lis
 
 ### Contents Panel
 
-The `markdown_toc` plugin adds a **Contents** section to the sidebar, under the file explorer, listing the headings of the active Markdown file as a tree — one row per heading, indented by level, with the `#` markers stripped. Headings inside fenced code blocks are not listed. The section opens when a Markdown file becomes active and closes when the active file is not Markdown; "Markdown: Toggle Table of Contents" opens or closes it by hand.
+The `markdown_toc` plugin adds a **Contents** section to the sidebar, under the file explorer, listing the headings of the active Markdown file as a tree — one row per heading, indented by level, with the `#` markers stripped. Headings inside fenced code blocks are not listed. The section belongs to the file it lists: it shows while that file is the active one in its window, waits out of sight while another file or workspace is active, and goes away when the file closes — another workspace's outline never appears in yours. "Markdown: Toggle Table of Contents" opens or closes it by hand, showing the sidebar if it was hidden; "Markdown: Focus Contents" shows it and moves the keyboard into it, and `Alt+Shift+N` / `Alt+Shift+P` cycle the keyboard through the sidebar's sections from anywhere.
 
-- The highlighted row is the heading whose section contains the cursor. When the pane showing the file is not focused (you are in the sidebar, or reading the file in another split), the row follows the top of the viewport instead. "Markdown: Contents — Follow Cursor/Scroll" pins one or the other for the session.
+- The highlighted row is the heading whose section contains the cursor. When the pane showing the file does not have the keyboard (you are in the file explorer or a sidebar section, or reading the file in another split), the row follows the top of the viewport instead. "Markdown: Contents — Follow Cursor/Scroll" pins one or the other for the session.
 - Click a row to put the cursor on that heading and centre it in the pane; focus stays in the sidebar. Press Enter on a row to jump and move focus to the pane. Up/Down browse the rows, Left/Right fold and unfold them.
 - The disclosure glyphs collapse and expand the outline. With `foldBuffer` on, collapsing a heading also folds its section in the buffer.
 
 The panel works the same way in source and compose mode: compose conceals the markers and re-flows the text but does not move it, so the rows, the highlight and the jump target are identical in both.
 
-Settings live under *Plugin Settings → markdown_toc* (`plugins.markdown_toc.settings` in `config.json`):
+Settings live under *Plugins → markdown_toc* (`plugins.markdown_toc.settings` in `config.json`):
 
 | Setting | Default | Meaning |
 |---------|---------|---------|

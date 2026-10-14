@@ -4,6 +4,7 @@ use super::types::{ThemeInfoPopup, ThemeKeyInfo};
 use super::Editor;
 use crate::services::plugins::hooks::HookArgs;
 use crate::view::theme::color_to_rgb;
+use crate::view::theme::ThemeStyle;
 use anyhow::Result as AnyhowResult;
 use ratatui::style::{Color, Style};
 
@@ -11,9 +12,7 @@ use ratatui::style::{Color, Style};
 ///
 /// **The provenance gate** (design §3.7.9): every cell a frame shows was
 /// written either by the fold, from a display-list item — recorded with the
-/// region `Chrome`, or relabelled by the described surface it belongs to,
-/// as the status bar does — or by the one painter left, the pane's text
-/// pipeline, which records its own two regions ([`PAINTER_REGIONS`]). A
+/// region `Chrome` — or by the one painter left, the pane's text pipeline, which records its own two regions ([`PAINTER_REGIONS`]). A
 /// painter-written cell outside every `Draw::Host` item's rectangle would
 /// be a painter that is not a leaf's, which is the migration's defect;
 /// there are none, and this is what says so.
@@ -122,13 +121,7 @@ impl Editor {
 
     /// Inspect the theme key at the current cursor's screen position and open the theme editor.
     pub(super) fn inspect_theme_at_cursor(&mut self) {
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        let active_split = self.active_window().split_manager().active_split();
         let active_buffer = self.active_buffer();
 
         // Where the active pane's content is, from the tree. The scan this
@@ -153,30 +146,24 @@ impl Editor {
                 .get(&active_buffer)
                 .map(|s| s.margins.left_total_width() as u16)
                 .unwrap_or(0);
-            let vs = match self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
-                .get(&active_split)
-            {
+            let vs = match self.active_window().split_view_states().get(&active_split) {
                 Some(vs) => vs,
                 None => return,
             };
-            (rect, gw, vs.compose_width, *vs.cursors.primary())
+            (
+                rect,
+                gw,
+                vs.buffer_tab_state().compose_width,
+                *vs.buffer_tab_state().cursors.primary(),
+            )
         };
 
         // Compute cursor screen position (needs &mut buffer for line_iterator).
         // Clone the viewport via the Window accessor so we can later
         // pass `&mut buffer` to cursor_screen_position without
         // overlapping with the splits read.
-        let viewport = self
-            .active_window()
-            .buffers
-            .splits()
-            .expect("active window must have a populated split layout")
-            .1[&active_split]
+        let viewport = self.active_window().splits().1[&active_split]
+            .buffer_tab_state()
             .viewport
             .clone();
         let state = match self.active_window_mut().buffers.get_mut(&active_buffer) {
@@ -255,9 +242,9 @@ impl Editor {
         // `menu_highlight_bg` and on some themes (e.g. dracula) equals
         // popup_bg, so the key vanished.
         let key_style = Style::default()
-            .fg(theme.popup_text_fg)
+            .theme_fg(theme, "ui.popup_text_fg")
             .add_modifier(ratatui::style::Modifier::BOLD);
-        let plain = Style::default().fg(theme.popup_text_fg);
+        let plain = Style::default().theme_fg(theme, "ui.popup_text_fg");
         let line = |spans: Vec<(String, Style)>| StyledLine {
             spans: spans
                 .into_iter()
@@ -282,7 +269,7 @@ impl Editor {
             lines.push(one(" No theme key recorded here. ".into(), plain));
             lines.push(one(
                 " This element isn't inspectable yet. ".into(),
-                Style::default().fg(theme.menu_disabled_fg),
+                Style::default().theme_fg(theme, "ui.menu_disabled_fg"),
             ));
             return Some(ThemeInfo {
                 at: popup.position,

@@ -757,7 +757,7 @@ Another line with **bold text** for testing.
     copy_plugin_lib(&plugins_dir);
 
     let md_path = project_root.join("cursor_test.md");
-    std::fs::write(&md_path, &md_content).unwrap();
+    std::fs::write(&md_path, md_content).unwrap();
 
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(80, 40, Default::default(), project_root)
@@ -1054,7 +1054,7 @@ fn test_compose_mode_mouse_scroll_to_bottom() {
         .unwrap();
 
     // Scroll down aggressively with mouse wheel.
-    // README.md is ~278 lines; with compose wrapping at 80 cols it will be
+    // README.md is ~359 lines; with compose wrapping at 80 cols it will be
     // even more visual lines.  Each scroll event moves ~3 lines, so 200
     // scroll events should be more than enough to reach the bottom.
     let (content_start, content_end) = harness.content_area_rows();
@@ -1065,14 +1065,15 @@ fn test_compose_mode_mouse_scroll_to_bottom() {
 
     // Wait for the last line of the README to be visible after scrolling.
     harness
-        .wait_until_stable(|h| h.screen_to_string().contains("GPL-2.0"))
+        .wait_until_stable(|h| h.screen_to_string().contains("SPDX-License-Identifier"))
         .unwrap();
 
-    // The very last line of the README is "...GNU General Public License v2.0 (GPL-2.0)."
-    // It should be visible on screen after scrolling to the bottom.
+    // The very last line of the README is "SPDX-License-Identifier: GPL-3.0-or-later",
+    // and that marker appears nowhere else in the file.  It should be visible on
+    // screen after scrolling to the bottom.
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("GPL-2.0"),
+        screen.contains("SPDX-License-Identifier"),
         "After scrolling to the bottom, the last line of the README should be visible.\n\
          Screen:\n{}",
         screen,
@@ -1254,7 +1255,7 @@ Ampersand: &amp; dash: &mdash; space:&nbsp;here numeric: &#169;
     copy_plugin_lib(&plugins_dir);
 
     let md_path = project_root.join("entity_test.md");
-    std::fs::write(&md_path, &md_content).unwrap();
+    std::fs::write(&md_path, md_content).unwrap();
 
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(80, 40, Default::default(), project_root)
@@ -1353,7 +1354,7 @@ End of table test.
     copy_plugin_lib(&plugins_dir);
 
     let md_path = project_root.join("table_test.md");
-    std::fs::write(&md_path, &md_content).unwrap();
+    std::fs::write(&md_path, md_content).unwrap();
 
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(80, 40, Default::default(), project_root)
@@ -1546,7 +1547,7 @@ Text below the table.
     copy_plugin_lib(&plugins_dir);
 
     let md_path = project_root.join("table_nav_test.md");
-    std::fs::write(&md_path, &md_content).unwrap();
+    std::fs::write(&md_path, md_content).unwrap();
 
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(80, 40, Default::default(), project_root)
@@ -1712,7 +1713,7 @@ End of test.
     copy_plugin_lib(&plugins_dir);
 
     let md_path = project_root.join("table_emphasis_test.md");
-    std::fs::write(&md_path, &md_content).unwrap();
+    std::fs::write(&md_path, md_content).unwrap();
 
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(80, 40, Default::default(), project_root)
@@ -1768,9 +1769,7 @@ End of test.
     // Check for the actual markdown link pattern `](http`.
     let has_markdown_link_syntax = screen.lines().any(|l| {
         // Strip OSC 8 sequences to check for raw markdown syntax
-        let stripped = l
-            .replace(|c: char| c == '\x1B' || c == '\x07', "")
-            .replace("]8;;", "");
+        let stripped = l.replace(['\x1B', '\x07'], "").replace("]8;;", "");
         stripped.contains("](http") || stripped.contains("](https")
     });
     assert!(
@@ -1813,7 +1812,7 @@ Here is a [click me](https://example.com) link.
     copy_plugin_lib(&plugins_dir);
 
     let md_path = project_root.join("link_osc8_test.md");
-    std::fs::write(&md_path, &md_content).unwrap();
+    std::fs::write(&md_path, md_content).unwrap();
 
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(80, 40, Default::default(), project_root)
@@ -1843,7 +1842,7 @@ Here is a [click me](https://example.com) link.
             (s.contains("click me") || s.contains("cl"))
                 && !s.lines().any(|l| {
                     // Check for raw markdown link syntax, ignoring OSC 8 escapes
-                    let stripped = l.replace(|c: char| c == '\x1b' || c == '\x07', "");
+                    let stripped = l.replace(['\x1b', '\x07'], "");
                     let stripped = stripped.replace("]8;;", "");
                     stripped.contains("](http")
                 })
@@ -1909,7 +1908,7 @@ fn test_compose_mode_cursor_visibility_through_emphasis_link() {
     copy_plugin_lib(&plugins_dir);
 
     let md_path = project_root.join("cursor_emphasis_link.md");
-    std::fs::write(&md_path, &md_content).unwrap();
+    std::fs::write(&md_path, md_content).unwrap();
 
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(80, 40, Default::default(), project_root)
@@ -2035,7 +2034,7 @@ fn test_compose_mode_emphasis_auto_expose() {
     copy_plugin_lib(&plugins_dir);
 
     let md_path = project_root.join("auto_expose_test.md");
-    std::fs::write(&md_path, &md_content).unwrap();
+    std::fs::write(&md_path, md_content).unwrap();
 
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(80, 40, Default::default(), project_root)
@@ -2204,7 +2203,7 @@ fn test_compose_mode_link_auto_expose() {
     copy_plugin_lib(&plugins_dir);
 
     let md_path = project_root.join("link_expose_test.md");
-    std::fs::write(&md_path, &md_content).unwrap();
+    std::fs::write(&md_path, md_content).unwrap();
 
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(80, 40, Default::default(), project_root)
@@ -2338,7 +2337,7 @@ End.
     copy_plugin_lib(&plugins_dir);
 
     let md_path = project_root.join("table_wrap_test.md");
-    std::fs::write(&md_path, &md_content).unwrap();
+    std::fs::write(&md_path, md_content).unwrap();
 
     // Use a narrow width (60 cols) to force column compression and wrapping.
     let mut harness =
@@ -2489,7 +2488,7 @@ End of document.
     copy_plugin_lib(&plugins_dir);
 
     let md_path = project_root.join("cursor_test.md");
-    std::fs::write(&md_path, &md_content).unwrap();
+    std::fs::write(&md_path, md_content).unwrap();
 
     // Narrow viewport to force table cell wrapping
     let mut harness =
@@ -2871,7 +2870,7 @@ End.
     copy_plugin_lib(&plugins_dir);
 
     let md_path = project_root.join("monotonic_test.md");
-    std::fs::write(&md_path, &md_content).unwrap();
+    std::fs::write(&md_path, md_content).unwrap();
 
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(60, 30, Default::default(), project_root)
@@ -2974,7 +2973,7 @@ fn test_compose_mode_cursor_column_sticky_on_list() {
     copy_plugin_lib(&plugins_dir);
 
     let md_path = project_root.join("list_test.md");
-    std::fs::write(&md_path, &md_content).unwrap();
+    std::fs::write(&md_path, md_content).unwrap();
 
     // Narrow viewport to force wrapping of the long list items
     let mut harness =
@@ -3038,11 +3037,7 @@ fn test_compose_mode_cursor_column_sticky_on_list() {
 
     // The visual column should stay near column 0 (within a small tolerance
     // for gutter width differences), definitely not jump to the end
-    let col_distance = if visual_col_after > visual_col_before {
-        visual_col_after - visual_col_before
-    } else {
-        visual_col_before - visual_col_after
-    };
+    let col_distance = visual_col_after.abs_diff(visual_col_before);
 
     assert!(
         col_distance <= 3,
@@ -3091,7 +3086,7 @@ fn test_compose_mode_cursor_column_zero_sticky_through_wrapped_list() {
     copy_plugin_lib(&plugins_dir);
 
     let md_path = project_root.join("wrapped_list.md");
-    std::fs::write(&md_path, &md_content).unwrap();
+    std::fs::write(&md_path, md_content).unwrap();
 
     // Narrow viewport to force wrapping
     let mut harness =
@@ -3246,7 +3241,7 @@ Done.
     copy_plugin_lib(&plugins_dir);
 
     let md_path = project_root.join("table_auto_expose.md");
-    std::fs::write(&md_path, &md_content).unwrap();
+    std::fs::write(&md_path, md_content).unwrap();
 
     // Viewport 60 cols: concealed row (57) fits, revealed row (61) overflows
     let mut harness =
@@ -3389,7 +3384,7 @@ End.
     copy_plugin_lib(&plugins_dir);
 
     let md_path = project_root.join("table_cursor_render.md");
-    std::fs::write(&md_path, &md_content).unwrap();
+    std::fs::write(&md_path, md_content).unwrap();
 
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(80, 30, Default::default(), project_root)
@@ -3601,7 +3596,7 @@ Done.
     copy_plugin_lib(&plugins_dir);
 
     let md_path = project_root.join("table_right_wrap.md");
-    std::fs::write(&md_path, &md_content).unwrap();
+    std::fs::write(&md_path, md_content).unwrap();
 
     // Narrow viewport to force the LSP row to wrap when emphasis revealed.
     // Raw cell: "**Language Server Protocol (LSP)**" = 34 chars
@@ -3801,7 +3796,7 @@ Another line here.
     copy_plugin_lib(&plugins_dir);
 
     let md_path = project_root.join("mouse_click.md");
-    std::fs::write(&md_path, &md_content).unwrap();
+    std::fs::write(&md_path, md_content).unwrap();
 
     // Wide viewport (80) so we can set a narrower compose width
     let mut harness =
@@ -3856,10 +3851,12 @@ Another line here.
         .enumerate()
         .find(|(_, l)| l.contains(target_text))
         .map(|(i, _)| i as u16)
-        .expect(&format!(
-            "Should find '{}' on screen.\nScreen:\n{}",
-            target_text, screen,
-        ));
+        .unwrap_or_else(|| {
+            panic!(
+                "Should find '{}' on screen.\nScreen:\n{}",
+                target_text, screen
+            )
+        });
 
     // Find the column offset where "This" starts on screen
     let target_line = screen.lines().nth(target_row as usize).unwrap();
@@ -3936,7 +3933,7 @@ End.
     copy_plugin_lib(&plugins_dir);
 
     let md_path = project_root.join("mouse_expose.md");
-    std::fs::write(&md_path, &md_content).unwrap();
+    std::fs::write(&md_path, md_content).unwrap();
 
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(80, 20, Default::default(), project_root)
@@ -4011,9 +4008,9 @@ End.
             let has_exposed = s.contains("**bold text**");
             let has_stars = s.contains("**");
             let has_bold = s.contains("bold text");
-            if i < 5 || i % 50 == 0 {
+            if i < 5 || i.is_multiple_of(50) {
                 eprintln!("[DIAG] expose wait iter={i} has_exposed={has_exposed} has_stars={has_stars} has_bold={has_bold}");
-                if i % 50 == 0 {
+                if i.is_multiple_of(50) {
                     eprintln!("[DIAG] screen:\n{s}");
                 }
             }
@@ -4587,7 +4584,7 @@ fn test_compose_mode_table_width_respects_file_explorer() {
     copy_plugin_lib(&plugins_dir);
 
     let md_path = project_root.join("table_width.md");
-    std::fs::write(&md_path, &md_content).unwrap();
+    std::fs::write(&md_path, md_content).unwrap();
 
     // Use a wide terminal so the unopened-sidebar path has plenty of room.
     //
@@ -4794,7 +4791,7 @@ fn test_compose_mode_table_width_clamped_when_sidebar_opens() {
     copy_plugin_lib(&plugins_dir);
 
     let md_path = project_root.join("clamp.md");
-    std::fs::write(&md_path, &md_content).unwrap();
+    std::fs::write(&md_path, md_content).unwrap();
 
     // Terminal just slightly wider than the compose width we'll set (80).
     // After the sidebar takes ~30 cols, the editor area will be much
@@ -5001,7 +4998,7 @@ fn test_compose_first_paint_when_commands_land_on_the_render_path() {
             break;
         }
         renders += 1;
-        if renders % 200 == 0 {
+        if renders.is_multiple_of(200) {
             eprintln!("compose has not decorated after {renders} renders — screen:\n{screen}");
         }
         // Real time for the plugin thread to answer, matching what the
@@ -5009,4 +5006,108 @@ fn test_compose_first_paint_when_commands_land_on_the_render_path() {
         // the screen, not on the clock.
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
+}
+
+/// A line edited at its very start must be re-offered to the plugin.
+///
+/// `adjust_seen_byte_ranges_for_edit` decides which of a buffer's already
+/// offered line ranges survive an edit. An *insertion* has `edit_end ==
+/// position`, so the "entirely after the edit, just shift it" branch —
+/// `start >= edit_end` — also caught the line the text was inserted at the
+/// **start** of, whose content plainly changed. That line kept a seen entry,
+/// shifted along, and the set was left holding a range no line has.
+///
+/// The damage lands later. Undo the insertion (or backspace it) and the shift
+/// runs in reverse: the stale entry maps exactly onto the restored line's
+/// range, the line reads as already seen, and `lines_changed` never fires for
+/// it. In compose that means the plugin never rebuilds the line's
+/// decorations — a heading keeps its text but loses its bold — until some
+/// unrelated edit on that line happens to offer it again, which is what makes
+/// typing appear to flicker the rendering back.
+///
+/// Asserted on the rendered cells, since the defect *is* a missing
+/// attribute: the heading's bold, before the round trip and after it.
+#[test]
+fn test_an_edit_at_a_line_start_reoffers_that_line() {
+    use crate::common::harness::{copy_plugin, copy_plugin_lib};
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    std::fs::create_dir(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    std::fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "markdown_compose");
+    copy_plugin_lib(&plugins_dir);
+
+    let md_path = project_root.join("h.md");
+    std::fs::write(&md_path, "# Heading one\n\nplain text here\n").unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 24, Default::default(), project_root)
+            .unwrap();
+    harness.open_file(&md_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .run_palette_command("Toggle Compose/Preview")
+        .unwrap();
+    harness
+        .wait_until_stable(|h| {
+            h.screen_to_string()
+                .lines()
+                .any(|l| l.trim_start().starts_with("plain text"))
+        })
+        .unwrap();
+
+    let row = harness.content_area_rows().0 as u16;
+    // Cells of the heading row carrying bold — the compose plugin's own
+    // emphasis overlay, and the thing that goes missing.
+    let bold_cells = |h: &EditorTestHarness| -> usize {
+        (0..40)
+            .filter(|c| {
+                h.get_cell_style(*c, row)
+                    .is_some_and(|s| s.add_modifier.contains(ratatui::style::Modifier::BOLD))
+            })
+            .count()
+    };
+
+    let before = bold_cells(&harness);
+    assert!(
+        before > 0,
+        "the heading must be bold to begin with, or this test proves nothing\n\
+         Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Insert at the very start of the heading line, then take it back out.
+    // The buffer ends where it started, so the rendering must too.
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Char('Z'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("Z# Heading one"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    let mut prev = String::new();
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            let stable = s == prev;
+            prev = s;
+            stable
+        })
+        .unwrap();
+
+    let after = bold_cells(&harness);
+    assert_eq!(
+        after,
+        before,
+        "the heading lost its compose styling after an edit at the line's start \
+         was undone: the line was never re-offered to the plugin, so its \
+         decorations were never rebuilt\nScreen:\n{}",
+        harness.screen_to_string()
+    );
 }

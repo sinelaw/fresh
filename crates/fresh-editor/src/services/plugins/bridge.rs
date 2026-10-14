@@ -2,6 +2,7 @@ use crate::config_io::DirectoryContext;
 use crate::i18n;
 use crate::input::command_registry::CommandRegistry;
 use crate::model::filesystem::FileSystem;
+use crate::services::plugins::owned_store::OwnedStore;
 use crate::services::signal_handler;
 use crate::view::theme;
 use fresh_core::api::DirEntry as PluginDirEntry;
@@ -115,6 +116,19 @@ impl PluginFilesystem for RoutedFilesystem {
         let Some(fs) = (self.resolve)() else {
             return false;
         };
+        // Create-only, as this has always claimed to be. The underlying
+        // `write_file` replaces its target, so without this check a plugin
+        // aiming at an existing path destroyed it.
+        if fs.exists(path) {
+            return false;
+        }
+        Self::ensure_parent(fs.as_ref(), path) && fs.write_file(path, contents).is_ok()
+    }
+
+    fn replace_file(&self, path: &Path, contents: &[u8]) -> bool {
+        let Some(fs) = (self.resolve)() else {
+            return false;
+        };
         Self::ensure_parent(fs.as_ref(), path) && fs.write_file(path, contents).is_ok()
     }
 
@@ -146,52 +160,6 @@ impl PluginFilesystem for RoutedFilesystem {
         fs.is_dir(path).unwrap_or(false) || fs.create_dir_all(path).is_ok()
     }
 
-    fn remove_path(&self, path: &Path) -> bool {
-        let Some(fs) = (self.resolve)() else {
-            return false;
-        };
-        if fs.is_dir(path).unwrap_or(false) {
-            fs.remove_dir_all(path).is_ok()
-        } else {
-            fs.remove_file(path).is_ok()
-        }
-    }
-
-    fn rename(&self, from: &Path, to: &Path) -> bool {
-        let Some(fs) = (self.resolve)() else {
-            return false;
-        };
-        if fs.rename(from, to).is_ok() {
-            return true;
-        }
-        // Same-backend cross-device fallback: copy then remove the source.
-        let is_dir = fs.is_dir(from).unwrap_or(false);
-        let copied = if is_dir {
-            fs.copy_dir_all(from, to).is_ok()
-        } else {
-            fs.copy(from, to).is_ok()
-        };
-        if !copied {
-            return false;
-        }
-        if is_dir {
-            fs.remove_dir_all(from).is_ok()
-        } else {
-            fs.remove_file(from).is_ok()
-        }
-    }
-
-    fn copy(&self, from: &Path, to: &Path) -> bool {
-        let Some(fs) = (self.resolve)() else {
-            return false;
-        };
-        if fs.is_dir(from).unwrap_or(false) {
-            fs.copy_dir_all(from, to).is_ok()
-        } else {
-            Self::ensure_parent(fs.as_ref(), to) && fs.copy(from, to).is_ok()
-        }
-    }
-
     fn stat(&self, path: &Path) -> Option<PluginFileStat> {
         let fs = (self.resolve)()?;
         let md = fs.metadata(path).ok()?;
@@ -219,6 +187,10 @@ pub struct EditorServiceBridge {
     /// refresh. Backs bare-string paths (active window) and `WindowPath` values
     /// (a specific window).
     pub window_registry: Arc<WindowFsRegistry>,
+    /// Editor-owned removal and replacement, keyed by name rather than path.
+    /// Plugins have no path-taking delete; everything that removes something
+    /// resolves the path here instead. See `owned_store`.
+    pub owned_store: Arc<OwnedStore>,
 }
 
 impl PluginServiceBridge for EditorServiceBridge {
@@ -328,6 +300,55 @@ impl PluginServiceBridge for EditorServiceBridge {
 
     fn data_dir(&self) -> PathBuf {
         self.dir_context.data_dir.clone()
+    }
+
+    // Editor-owned mutation. Each of these takes a name, never a path: the
+    // store resolves it, so a plugin cannot aim a removal at a path of its
+    // own choosing. See `owned_store` for why that distinction is the whole
+    // point.
+
+    fn scratch_create(&self, label: &str) -> Option<String> {
+        self.owned_store.scratch_create(label)
+    }
+
+    fn scratch_path(&self, token: &str) -> Option<PathBuf> {
+        self.owned_store.scratch_path(token)
+    }
+
+    fn scratch_discard(&self, token: &str) -> bool {
+        self.owned_store.scratch_discard(token)
+    }
+
+    fn install_scratch(&self, token: &str, kind: &str, name: &str, subpath: &str) -> bool {
+        self.owned_store.install_scratch(token, kind, name, subpath)
+    }
+
+    fn scratch_from_directory(&self, from: &Path) -> Option<String> {
+        self.owned_store.scratch_from_directory(from)
+    }
+
+    fn uninstall_package(&self, kind: &str, name: &str) -> bool {
+        self.owned_store.uninstall_package(kind, name)
+    }
+
+    fn trash_theme(&self, name: &str) -> bool {
+        self.owned_store.trash_theme(name)
+    }
+
+    fn state_set(&self, namespace: &str, key: &str, value: &str) -> bool {
+        self.owned_store.state_set(namespace, key, value)
+    }
+
+    fn state_get(&self, namespace: &str, key: &str) -> Option<String> {
+        self.owned_store.state_get(namespace, key)
+    }
+
+    fn state_keys(&self, namespace: &str) -> Vec<String> {
+        self.owned_store.state_keys(namespace)
+    }
+
+    fn state_delete(&self, namespace: &str, key: &str) -> bool {
+        self.owned_store.state_delete(namespace, key)
     }
 
     fn home_dir(&self) -> Option<PathBuf> {

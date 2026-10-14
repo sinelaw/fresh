@@ -136,7 +136,7 @@ impl std::fmt::Display for JsCallbackId {
     }
 }
 
-/// Result of creating a terminal
+/// Result of creating a terminal, returned by `createTerminal`
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, rename_all = "camelCase")]
@@ -293,6 +293,14 @@ pub enum PluginResponse {
         request_id: u64,
         result: Result<u64, String>,
     },
+    /// `openMachine` resolved with `{id, platform, home, label}`. A response,
+    /// not a bare callback, so the runtime can record the handle against its
+    /// plugin and close it on unload.
+    MachineOpened {
+        request_id: u64,
+        #[ts(type = "unknown")]
+        info: JsonValue,
+    },
 }
 
 impl PluginResponse {
@@ -310,6 +318,7 @@ impl PluginResponse {
             | Self::SplitByLabel { request_id, .. }
             | Self::SplitWindowCreated { request_id, .. }
             | Self::SnapshotSynced { request_id }
+            | Self::MachineOpened { request_id, .. }
             | Self::WatchPathRegistered { request_id, .. } => *request_id,
         }
     }
@@ -365,7 +374,8 @@ pub enum PluginAsyncMessage {
     },
 }
 
-/// Information about a cursor in the editor
+/// Information about a cursor in the editor: its position, its line, and
+/// its selection if it has one
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct CursorInfo {
@@ -417,11 +427,11 @@ fn default_window_id() -> WindowId {
     WindowId(1)
 }
 
+// Mirrors the editor-side `Session` struct — see
+// `crates/fresh-editor/src/app/session.rs` and
+// `docs/internal/orchestrator-sessions-design.md`.
 /// Information about an editor session (plugin-visible). Returned
-/// by `editor.listWindows()` and carried in the snapshot. Mirrors
-/// the editor-side `Session` struct — see
-/// `crates/fresh-editor/src/app/session.rs` and
-/// `docs/internal/orchestrator-sessions-design.md`.
+/// by `editor.listWindows()` and carried in the snapshot.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct WindowInfo {
@@ -441,17 +451,18 @@ pub struct WindowInfo {
     /// Absolute project root.
     #[ts(type = "string")]
     pub root: PathBuf,
+    // The host normalises this at the API boundary so plugins never
+    // have to deal with `null`/`undefined`/`""` ambiguity (`??` only
+    // falls through on `null`, but the orchestrator's `WindowInfo`
+    // round-trips a `Some(PathBuf::new())` as `""`, which then becomes
+    // a poisoned lex sort key — observed as the Windows-only dock
+    // reorder).
     /// Project this session belongs to — the canonical repo root
     /// (or arbitrary directory) the user pointed the new-session
     /// form at. For sessions without an explicit project (legacy
     /// sessions, the launch session, sessions created outside the
-    /// orchestrator's new-session form) this equals `root` — the
-    /// host normalises at the API boundary so plugins never have
-    /// to deal with `null`/`undefined`/`""` ambiguity (`??` only
-    /// falls through on `null`, but the orchestrator's
-    /// `WindowInfo` round-trips a `Some(PathBuf::new())` as `""`,
-    /// which then becomes a poisoned lex sort key — observed as
-    /// the Windows-only dock reorder).
+    /// orchestrator's new-session form) this equals `root`, so it
+    /// is never empty, `null` or `undefined`.
     #[ts(type = "string")]
     pub project_path: PathBuf,
     /// `true` when the session shares its working tree with
@@ -466,7 +477,7 @@ pub struct WindowInfo {
     /// host-local (SSH / Kubernetes). Carried for live remote windows
     /// *and* for dormant (not-yet-connected / disconnected) sessions, so
     /// the dock can badge a restored SSH session before any connection
-    /// exists. `None` for local sessions and plugin-managed backends
+    /// exists. Omitted for local sessions and plugin-managed backends
     /// (devcontainer), whose facet the owning plugin supplies itself.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub remote: Option<RemoteBackendInfo>,
@@ -476,9 +487,9 @@ fn is_false_field(b: &bool) -> bool {
     !b
 }
 
+// Mirrors the persisted `SessionAuthoritySpec::RemoteAgent` transport.
 /// Backend identity of a non-local session, as surfaced to plugins on
-/// [`WindowInfo`]. Mirrors the persisted `SessionAuthoritySpec::RemoteAgent`
-/// transport, reduced to what the dock renders.
+/// `WindowInfo.remote`, reduced to what the dock renders.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct RemoteBackendInfo {
@@ -493,6 +504,23 @@ pub struct RemoteBackendInfo {
     pub connected: bool,
 }
 
+/// A sidebar section's scope as a plugin asks for it. None set is the
+/// default: the window the mount came from. If more than one is set,
+/// `editor` wins over `buffer`, and `buffer` over `window`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SectionScopeSpec {
+    /// Editor-wide: every window, always.
+    #[serde(default)]
+    pub editor: bool,
+    /// Scoped to this window.
+    #[serde(default)]
+    pub window: Option<u64>,
+    /// Scoped to this buffer, in whichever window owns it.
+    #[serde(default)]
+    pub buffer: Option<u64>,
+}
+
 /// Information about a buffer
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -500,6 +528,13 @@ pub struct BufferInfo {
     /// Buffer ID
     #[ts(type = "number")]
     pub id: BufferId,
+    /// The window this buffer belongs to. A buffer lives in exactly one
+    /// window — the same file open in two windows is two buffers with two
+    /// ids — so a plugin that keeps a buffer id keeps this with it, and
+    /// checks it against the window it is acting in.
+    #[ts(type = "number")]
+    #[serde(default)]
+    pub window_id: u64,
     /// File path (if any)
     #[serde(serialize_with = "serialize_path")]
     #[ts(type = "string")]
@@ -515,11 +550,11 @@ pub struct BufferInfo {
     /// apart — or two panels of your own.
     #[serde(default)]
     pub name: String,
-    /// Whether the buffer has been modified
+    /// Whether the buffer has unsaved changes
     pub modified: bool,
     /// Length of buffer in bytes
     pub length: usize,
-    /// Number of lines, when the buffer has been indexed. `None` for a very
+    /// Number of lines, when the buffer has been indexed. `null` for a very
     /// large file whose line index hasn't been built yet — the one case
     /// where the count genuinely isn't known.
     ///
@@ -649,13 +684,13 @@ pub struct LineDiffHunk {
 pub struct ViewportInfo {
     /// Byte position of the first visible line
     pub top_byte: usize,
-    /// Line number of the first visible line (None when line index unavailable, e.g. large file before scan)
+    /// Line number of the first visible line (`null` when the line index is unavailable, e.g. a large file before its scan)
     pub top_line: Option<usize>,
     /// Left column offset (horizontal scroll)
     pub left_column: usize,
-    /// Viewport width
+    /// Viewport width in columns
     pub width: u16,
-    /// Viewport height
+    /// Viewport height in rows
     pub height: u16,
 }
 
@@ -713,7 +748,7 @@ pub struct PaneDescription {
     /// finds a pane it named in an earlier run.
     #[serde(default)]
     pub label: Option<String>,
-    /// Absolute path when this pane shows a file, else `None`.
+    /// Absolute path when this pane shows a file, else `null`.
     pub path: Option<PathBuf>,
     /// Short label — the file name, or the buffer's name for the rest.
     pub name: String,
@@ -1146,9 +1181,9 @@ impl<'js> rquickjs::FromJs<'js> for ScrollbarMarker {
 }
 
 /// A run of text with optional styling. `style` reuses
-/// [`OverlayOptions`] — the same primitive plugins use for virtual
+/// `OverlayOptions` — the same primitive plugins use for virtual
 /// text — so a hint is just `{ text: "Alt+P cycle", style: { fg:
-/// "ui.help_key_fg" } }`. `None` style means "no styling override";
+/// "ui.help_key_fg" } }`. Omitting `style` means "no styling override";
 /// each consumer applies its own default (e.g. the floating-prompt
 /// title uses `prompt_fg` + bold).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1287,11 +1322,11 @@ fn default_true() -> bool {
 #[serde(deny_unknown_fields)]
 #[ts(export, rename = "TsCompositeSourceConfig")]
 pub struct CompositeSourceConfig {
-    /// Buffer ID of the source buffer (required)
+    /// ID of the source buffer this pane displays (required)
     #[serde(rename = "bufferId")]
     #[ts(rename = "bufferId")]
     pub buffer_id: usize,
-    /// Label for this pane (e.g., "OLD", "NEW")
+    /// Label for this pane (e.g., "OLD", "NEW"), shown in the pane's header
     pub label: String,
     /// Whether this pane is editable
     #[serde(default)]
@@ -1306,8 +1341,8 @@ pub struct CompositeSourceConfig {
 #[serde(deny_unknown_fields)]
 #[ts(export, rename = "TsCompositePaneStyle")]
 pub struct CompositePaneStyle {
+    // Using [u8; 3] instead of (u8, u8, u8) for better rquickjs_serde compatibility
     /// Background color for added lines (RGB)
-    /// Using [u8; 3] instead of (u8, u8, u8) for better rquickjs_serde compatibility
     #[serde(default, rename = "addBg")]
     #[ts(optional, rename = "addBg", type = "[number, number, number]")]
     pub add_bg: Option<[u8; 3]>,
@@ -1470,9 +1505,11 @@ pub enum ViewTokenWireKind {
 /// strings against the active theme at draw time; unknown strings
 /// fall through to the terminal's default color.
 ///
-/// `Color::Indexed(N)` round-trips through the `"Indexed:N"` form so
-/// 256-color values from a ratatui `Color` survive the
-/// `ViewTokenStyle` boundary.
+/// A 256-color palette value is written as `"Indexed:N"` (N from 0 to
+/// 255).
+// `Color::Indexed(N)` round-trips through the `"Indexed:N"` form so
+// 256-color values from a ratatui `Color` survive the `ViewTokenStyle`
+// boundary.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(untagged)]
 #[ts(export)]
@@ -1487,18 +1524,18 @@ pub enum TokenColor {
 /// Styling for view tokens (used for injected annotations)
 ///
 /// This allows plugins to specify styling for tokens that don't have a source
-/// mapping (sourceOffset: None), such as annotation headers in git blame.
-/// For tokens with sourceOffset: Some(_), syntax highlighting is applied instead.
+/// mapping (`source_offset: null`), such as annotation headers in git blame.
+/// For tokens with a `source_offset`, syntax highlighting is applied instead.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct ViewTokenStyle {
     /// Foreground color. Either `[r, g, b]` or a named/theme string —
-    /// see [`TokenColor`].
+    /// see `TokenColor`.
     #[serde(default)]
     pub fg: Option<TokenColor>,
     /// Background color. Either `[r, g, b]` or a named/theme string —
-    /// see [`TokenColor`].
+    /// see `TokenColor`.
     #[serde(default)]
     pub bg: Option<TokenColor>,
     /// Whether to render in bold
@@ -1517,12 +1554,12 @@ pub struct ViewTokenStyle {
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct ViewTokenWire {
-    /// Source byte offset in the buffer. None for injected content (annotations).
+    /// Source byte offset in the buffer. `null` for injected content (annotations).
     #[ts(type = "number | null")]
     pub source_offset: Option<usize>,
     /// The token content
     pub kind: ViewTokenWireKind,
-    /// Optional styling for injected content (only used when source_offset is None)
+    /// Optional styling for injected content (only used when `source_offset` is `null`)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub style: Option<ViewTokenStyle>,
@@ -1557,8 +1594,7 @@ pub struct EditorStateSnapshot {
     /// Primary cursor position for the active buffer
     pub primary_cursor: Option<CursorInfo>,
     /// Primary cursor's line number (0-indexed) for the active buffer.
-    /// Mirrors the editor's `primary_cursor_line_number` cache so plugins
-    /// can read "what line is the cursor on" without scanning the buffer.
+    /// The line the status bar's `Ln` shows (see `Editor::primary_cursor_line`).
     /// `None` when there is no active view state (e.g. before the first
     /// buffer is loaded).
     #[serde(default)]
@@ -1623,6 +1659,19 @@ pub struct EditorStateSnapshot {
     /// after the restart that activation triggers.
     #[serde(default)]
     pub env_active: bool,
+    /// Launched by a bare `fresh` in Orchestrator mode. The launch, not the
+    /// `orchestrator_mode` preference, which stays on for `fresh FILE`.
+    #[serde(default)]
+    pub orchestrator_mode: bool,
+    /// The left dock slot is open: a panel is in it, or the host is holding
+    /// the column for one its manifest declared. The plugin mounts at
+    /// `ready` iff this is set. Read via `editor.dockOpen()`.
+    #[serde(default)]
+    pub dock_open: bool,
+    /// The dock column's width in cells, open or not; `0` when the terminal
+    /// is too narrow for a dock. Read via `editor.dockCols()`.
+    #[serde(default)]
+    pub dock_cols: u16,
     /// The environment core detected in the workspace, as a JSON string
     /// (`{"name","kind","snippet"}`) or empty when none is detected. The
     /// env-manager plugin reads this via `editor.detectedEnv()` instead of
@@ -1681,9 +1730,23 @@ pub struct EditorStateSnapshot {
     #[serde(skip)]
     #[ts(skip)]
     pub last_grammar_gen: u64,
-    /// Global editor mode for modal editing (e.g., "vi-normal", "vi-insert")
-    /// When set, this mode's keybindings take precedence over normal key handling
+    /// The active window's editor mode — a window-scoped plugin mode
+    /// (e.g. "markdown-source"). When set, its keybindings take precedence
+    /// over the input mode and normal key handling in that window.
     pub editor_mode: Option<String>,
+    /// The editor-wide input mode — a modal-editing personality such as vi
+    /// ("vi-normal", "vi-insert"), the same in every window.
+    pub input_mode: Option<String>,
+
+    /// Which widget holds each mounted panel's focus, per owning plugin:
+    /// plugin name → panel id → widget key (`""` for none). The host's
+    /// fact (`WidgetRegistry::decide_focus`), published before every
+    /// `widget_event` and every plugin action runs, so
+    /// `editor.getPanelFocusKey` answers what the host decided rather than
+    /// a copy the plugin keeps and has to keep in step.
+    #[serde(skip)]
+    #[ts(skip)]
+    pub panel_focus: HashMap<String, HashMap<u64, String>>,
 
     /// Plugin-managed per-buffer view state for the active split.
     /// Updated from BufferViewState.plugin_state during snapshot updates.
@@ -1800,6 +1863,9 @@ impl EditorStateSnapshot {
             authority_label: String::new(),
             workspace_trust_level: String::new(),
             env_active: false,
+            orchestrator_mode: false,
+            dock_open: false,
+            dock_cols: 0,
             detected_env: String::new(),
             diagnostics: Arc::new(HashMap::new()),
             folding_ranges: Arc::new(HashMap::new()),
@@ -1808,6 +1874,8 @@ impl EditorStateSnapshot {
             available_grammars: Vec::new(),
             last_grammar_gen: 0,
             editor_mode: None,
+            input_mode: None,
+            panel_focus: HashMap::new(),
             plugin_view_states: HashMap::new(),
             plugin_view_states_split: 0,
             plugin_markers: HashMap::new(),
@@ -1894,16 +1962,19 @@ pub enum ScrollAlign {
     Minimal,
 }
 
+// Grows by adding fields, so every field is optional in both
+// directions: `Option<T>` with `#[ts(optional)]`, so adding one is not
+// a TypeScript break for plugins that already construct the bag; and
+// no `deny_unknown_fields`, so a plugin written against a newer host
+// does not fail to deserialize wholesale on an older one and silently
+// lose the options it *did* set.
 /// How the host should treat a mounted panel, beyond rendering its
 /// spec.
 ///
-/// Grows by adding fields, so every field is optional in both
-/// directions: `Option<T>` with `#[ts(optional)]`, so adding one is not
-/// a TypeScript break for plugins that already construct the bag; and
-/// no `deny_unknown_fields`, so a plugin written against a newer host
-/// does not fail to deserialize wholesale on an older one and silently
-/// lose the options it *did* set. Each unspecified field reads as what
-/// the host did before that field existed.
+/// Every field is optional, and each one you leave out reads as what
+/// the host did before that field existed. Unknown fields are ignored,
+/// so options written for a newer editor don't stop an older one from
+/// applying the ones it knows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", default)]
 pub struct WidgetPanelOptions {
@@ -1920,7 +1991,7 @@ pub struct WidgetPanelOptions {
     /// screen on startup", so the next Space turned the page off with
     /// nothing on screen to say why.
     ///
-    /// `None` is what every plugin written before this field said, and
+    /// Leaving it out is what every plugin written before this field said, and
     /// reads as `true`.
     #[serde(default)]
     #[ts(optional)]
@@ -1939,7 +2010,7 @@ pub struct WidgetPanelOptions {
     pub page: Option<bool>,
     /// Keep this panel's focus and the reader's place on the same thing.
     ///
-    /// For a [`page`](WidgetPanelOptions::page) — a document laid out by
+    /// For a `page` — a document laid out by
     /// widgets, in one window the host scrolls — focus and where the reader is
     /// are two answers
     /// to one question: what am I looking at. Left independent they contradict
@@ -1962,11 +2033,10 @@ pub struct WidgetPanelOptions {
     /// `autoFocusFirst: false` too, and the Tab ring seeds from the reader
     /// rather than from the top of the document.
     ///
-    /// `None` reads as `false`: every panel written before this field keeps
+    /// Leaving it out reads as `false`: every panel written before this field keeps
     /// focus and the window independent.
     ///
-    /// It makes `autoFocusFirst` false whatever the panel said — see
-    /// [`WidgetPanelOptions::auto_focus_first`]. The pair is not a
+    /// It makes `autoFocusFirst` false whatever the panel said. The pair is not a
     /// setting with two useful values; it is one broken combination, so
     /// it is not representable rather than advised against.
     #[serde(default)]
@@ -2116,12 +2186,31 @@ pub struct TreeNode {
     /// the row width occupies the full row.
     #[serde(default)]
     pub has_children: bool,
+    /// A leaf drawn with no disclosure gutter: its text starts at its
+    /// indent, not two columns in. For rows that stand at a tree's top level
+    /// beside folders and should read as flush with the panel's edge (the
+    /// orchestrator dock's unfiled workspaces). Ignored on a node with
+    /// children, whose ▶/▼ is the gutter.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub flush: bool,
+    /// The row can be picked up with the pointer and dropped on another row
+    /// of the same tree. The plugin hears, as `widget_event`s on the tree:
+    /// `drag` (`{ key, target }`: the row lifted and the row under the
+    /// pointer, `null` off every row) each time that changes — once per
+    /// pointer event, so a release can land on a row the plugin was not yet
+    /// told about — from the first row the drag leaves its own for; `drop` (`{ key, target, index }`)
+    /// when it is released on another row; and `dragend` (`{ key }`) when
+    /// the drag is over, dropped or not. A plain click hears none of them. A
+    /// press on the row activates on release, not on the press, so a drag
+    /// does not first act on the row it lifts.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub draggable: bool,
     /// Per-node checkbox state. Only rendered when the parent
-    /// `Tree` has `checkable: true`. `None` = no checkbox glyph;
-    /// `Some(true)` = `[v]`; `Some(false)` = `[ ]`. The plugin
+    /// `Tree` has `checkable: true`. Omitted = no checkbox glyph;
+    /// `true` = `[v]`; `false` = `[ ]`. The plugin
     /// owns the truth — the host fires `widget_event { event_type:
     /// "toggle" }` and the plugin pushes the new state back via
-    /// `WidgetMutation::SetCheckedKeys`.
+    /// `editor.widgetMutate(panel, { kind: "setCheckedKeys", ... })`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checked: Option<bool>,
     /// Continuation lines rendered below the node's primary `text`
@@ -2146,10 +2235,61 @@ pub struct TreeNode {
     /// Out-of-range values are harmless — they resolve to the end of the text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window_anchor: Option<TextWindowAnchor>,
+    /// A button drawn at the row's tail: what this row is *for*, said on
+    /// the row itself rather than only in a footer the eye has to travel
+    /// to. When set to `label`, it renders `[ label ]` against the panel's right
+    /// edge and emits a hit area over it that fires the `action` event
+    /// with the row's `index` and `key`; the keyboard reaches the same
+    /// thing through the tree's `activate`.
+    ///
+    /// The button is pinned like the indent is pinned: it sits outside the
+    /// window the body is fitted into, so a row too wide for the panel
+    /// slides *under* its button rather than pushing it off the edge.
+    /// Ignored on a bordered card (`card_borders` with `item_height > 1`),
+    /// whose chrome has nowhere to put one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+    /// **A table row.** When the parent `Tree` declares `columns`, a node
+    /// that carries cells is drawn from them — one per column, each fitted
+    /// to its column at the width layout gives the tree and elided at the
+    /// end its column says — instead of from `text`. A node with no cells
+    /// (a group heading) is drawn from `text` across the whole row.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cells: Vec<TableCell>,
+}
+
+/// One cell of a table row (`TreeNode.cells`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct TableCell {
+    pub text: String,
+    /// The cell's ink (a theme key or colour), e.g. dimmed secondary cells.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "Partial<OverlayOptions>")]
+    pub style: Option<OverlayOptions>,
+}
+
+/// One column of a table (`Tree.columns`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct TableColumn {
+    /// The header row's title over this column.
+    #[serde(default)]
+    pub title: String,
+    /// Which end of a cell too wide for its column goes: `head` keeps the
+    /// tail (a path), `tail` keeps the head (a name). The default keeps the
+    /// head.
+    #[serde(default)]
+    pub elide: Elide,
+    /// The widest this column grows, in display columns; `0` for no cap.
+    #[serde(default)]
+    pub max_width: u32,
 }
 
 /// How a row asks to be windowed when it is wider than the panel.
-/// See [`TreeNode::window_anchor`].
+/// See `TreeNode.windowAnchor`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(export, rename_all = "camelCase")]
@@ -2228,6 +2368,27 @@ pub enum Elide {
     /// Keep the tail, mark the cut at the start: a path, whose last component
     /// is the part worth seeing.
     Head,
+}
+
+/// A widget's collection — a `List`'s items and keys, a `Tree`'s nodes and
+/// keys — in shared storage.
+///
+/// **Cloning one is a reference count, not a copy.** The host keeps a
+/// mounted panel's spec across frames and describes it every frame; a
+/// collection held by value was deep-copied by every description that
+/// needed to own its rows (`List`'s row builder is `'static`), which made
+/// each frame O(items) before a single row was on screen. Shared, the
+/// description captures a handle and the row builder reads item `i` out of
+/// the owner's storage when layout asks for it. A mutation replaces the
+/// collection, or edits it copy-on-write (`Arc::make_mut`), so a handle a
+/// frame captured never sees a change under it.
+///
+/// `Arc` rather than `Rc` because a spec crosses from the plugin thread.
+/// On the wire it is the plain array it always was.
+pub type Collection<T> = std::sync::Arc<Vec<T>>;
+
+fn collection_is_empty<T>(c: &Collection<T>) -> bool {
+    c.is_empty()
 }
 
 /// Declarative widget tree. Each variant is one node; nested
@@ -2319,6 +2480,12 @@ pub enum WidgetSpec {
         /// before this field was read on that path it stayed flush left.
         #[serde(default)]
         label_width: u32,
+        /// The keyboard accelerator's letter, underlined where it first
+        /// appears in `label` (case-insensitively) — the classic menu-bar
+        /// mnemonic, so `Alt+L` reads as the `l` in `Files`. Absent, or a
+        /// letter the label does not contain, underlines nothing.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mnemonic: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
@@ -2334,7 +2501,7 @@ pub enum WidgetSpec {
     /// after first render: the spec's `value` is initial-only. Every
     /// adjustment fires `widget_event { event_type: "change",
     /// payload: { value } }`; plugins can also push a new value via
-    /// `WidgetMutation::SetNumber`.
+    /// `editor.widgetMutate(panel, { kind: "setNumber", ... })`.
     Number {
         /// Initial value. Read at first render only; instance state
         /// takes over thereafter.
@@ -2350,7 +2517,7 @@ pub enum WidgetSpec {
         #[serde(default = "default_number_step")]
         step: f64,
         /// Render the value as an integer (no decimal point). The
-        /// value is still carried as `f64`; only the display is
+        /// value itself is not rounded; only the display is
         /// truncated. Defaults to `false`.
         #[serde(default)]
         integer: bool,
@@ -2385,7 +2552,7 @@ pub enum WidgetSpec {
     /// state after first render; the spec's `selected_index` is a
     /// seed only. Every change fires `widget_event { event_type:
     /// "change", payload: { index, value } }`; plugins can also set
-    /// it via `WidgetMutation::SetDropdown`.
+    /// it via `editor.widgetMutate(panel, { kind: "setDropdown", ... })`.
     Dropdown {
         /// The selectable options, in display order.
         options: Vec<String>,
@@ -2465,7 +2632,7 @@ pub enum WidgetSpec {
     /// cross-exclusion the Settings status-bar picker uses). Every
     /// change fires `widget_event { event_type: "change", payload:
     /// { included: [values] } }`; plugins can also set the order via
-    /// `WidgetMutation::SetDualIncluded`.
+    /// `editor.widgetMutate(panel, { kind: "setDualIncluded", ... })`.
     DualList {
         /// The full universe of selectable options.
         options: Vec<DualListOption>,
@@ -2588,8 +2755,8 @@ pub enum WidgetSpec {
         /// the tail with an `…`.
         #[serde(default)]
         full_width: bool,
-        /// Style applied while the pointer is over this button. `None`
-        /// (the default) leaves it looking the same hovered as not.
+        /// Style applied while the pointer is over this button. Omit it
+        /// (the default) to leave it looking the same hovered as not.
         ///
         /// Hover is host state — it changes with mouse motion and no
         /// plugin round-trip — so the plugin declares the *appearance*
@@ -2604,15 +2771,15 @@ pub enum WidgetSpec {
         /// shared "close affordance under the pointer" key — the tab
         /// `×` and the file explorer's `×` both read it, so a plugin
         /// naming it gets the same highlight users already know.
-        ///
-        /// `Button` is the first kind to carry this; other widget kinds
-        /// adopt it with the same field plus a `ctx.is_hovered(key)`
-        /// check in their renderer.
+        //
+        // `Button` is the first kind to carry this; other widget kinds
+        // adopt it with the same field plus a `ctx.is_hovered(key)`
+        // check in their renderer.
         #[ts(type = "Partial<OverlayOptions>")]
         #[serde(default, skip_serializing_if = "Option::is_none")]
         hover_style: Option<OverlayOptions>,
         /// How the button looks at rest — not focused, not hovered,
-        /// not disabled. `None` (the default) keeps the look its
+        /// not disabled. Omit it (the default) to keep the look its
         /// `intent` gives it.
         ///
         /// The sibling of `hover_style`, and the answer to the same
@@ -2670,17 +2837,19 @@ pub enum WidgetSpec {
     ///
     /// The plugin passes the *full dataset* of items + a
     /// `visible_rows` count (typically the panel's available
-    /// height). The host owns the scroll offset as widget instance
-    /// state, keyed by the spec's `key` — so a `key` is required for
-    /// any List that should preserve scroll across re-renders. The
-    /// scroll offset auto-clamps to keep `selected_index` in view;
-    /// plugins never compute scroll math.
+    /// height). The scroll offset is the list's viewport's, not
+    /// widget instance state: the viewport is identified by the
+    /// spec's `key`, so a `key` is required for any List that should
+    /// preserve scroll across re-renders. The viewport keeps the
+    /// selected row in view; plugins never compute scroll math.
     ///
     /// Each item is one rendered row (`TextPropertyEntry`).
     /// `item_keys` is a parallel array of stable per-item identifiers
-    /// the plugin uses to map a click event back to its model
-    /// (e.g. `"file:5/match:23"`); the array length must match
-    /// `items.len()`. Missing keys default to empty string.
+    /// (e.g. `"file:5/match:23"`): one per item, no two alike. The host
+    /// keeps each row's state — selection, hover, a card's widgets — by
+    /// its key, and events carry it back so the plugin can map a click
+    /// to its model. A spec whose keys don't match its items one to one
+    /// is rejected (see [`WidgetSpec::item_keys_problem`]).
     ///
     /// `selected_index` is the *absolute* index into `items`
     /// (`-1` for no selection); the host paints the selected row
@@ -2689,7 +2858,7 @@ pub enum WidgetSpec {
     ///                payload: { index, key } }`
     /// where `index` is the absolute (not visible-window) index.
     List {
-        items: Vec<crate::text_property::TextPropertyEntry>,
+        items: Collection<crate::text_property::TextPropertyEntry>,
         /// Optional parallel array of per-item widget specs. When
         /// non-empty it **overrides** `items`: each entry is rendered
         /// via the normal widget renderer into a multi-row block
@@ -2702,14 +2871,13 @@ pub enum WidgetSpec {
         /// still indexed per item. Interactive widgets nested inside a
         /// card aren't routed yet — the whole card is one `select`
         /// hit. Leave empty for the classic one-row-per-`items` list.
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        item_specs: Vec<WidgetSpec>,
-        #[serde(default)]
-        item_keys: Vec<String>,
+        #[serde(default, skip_serializing_if = "collection_is_empty")]
+        item_specs: Collection<WidgetSpec>,
+        item_keys: Collection<String>,
         #[serde(default = "default_list_selected")]
         selected_index: i32,
         /// Number of rows of the panel's available height the list
-        /// should occupy. `None` (omitted) = auto: the host sizes the
+        /// should occupy. Omitted = auto: the host sizes the
         /// window from the panel height it already knows, so the
         /// plugin never re-derives layout arithmetic. An explicit
         /// value pins the window to that many rows, exactly as
@@ -2726,6 +2894,14 @@ pub enum WidgetSpec {
         /// dispatch.
         #[serde(default = "default_true")]
         focusable: bool,
+        /// Typing jumps the selection to the next item whose text starts
+        /// with what was typed (the listbox pattern's type-ahead). Off by
+        /// default: a list that is a command surface — Git Log's `q`, a
+        /// dock's single-key actions — binds those letters in its mode, and
+        /// the focused widget is asked first. Turn it on for a list of names
+        /// to find, such as a file browser.
+        #[serde(default)]
+        type_ahead: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
@@ -2734,18 +2910,25 @@ pub enum WidgetSpec {
     ///
     /// The plugin emits its tree as a depth-first flat list of
     /// `TreeNode`s (each carrying a `depth` and `has_children` flag)
-    /// plus a parallel `item_keys` array. The host filters out
+    /// plus a parallel `item_keys` array — one key per node, no two
+    /// alike, as for `List`. The host filters out
     /// descendants of collapsed nodes when rendering the visible
     /// window, so the plugin always emits the *full* tree — toggling
     /// expansion is host-owned (instance state) rather than the
     /// plugin re-emitting on every `▶`/`▼` press.
     ///
-    /// `expanded_keys` is initial-only (seeded into instance state
-    /// on first render); subsequent expansion changes flow through
-    /// `WidgetCommand::Key` (Right/Left) or click on the disclosure
-    /// glyph — neither requires the plugin to re-emit. Plugins that
+    /// Expansion has one owner, the host's instance state, and the
+    /// tree is drawn from it. `expanded_keys` is only a seed: it is
+    /// what the tree shows until something first sets the host's
+    /// state, and is ignored after that. Right/Left, a click on the
+    /// disclosure glyph (or on the row, with `toggle_on_click`) and
+    /// `editor.widgetMutate(panel, { kind: "setExpandedKeys", ... })` all write that state and
+    /// redraw without the plugin re-emitting the spec. Plugins that
     /// need to react to expansion changes listen for
-    /// `widget_event { event_type: "expand" }`.
+    /// `widget_event { event_type: "expand" }`, and a plugin that
+    /// decides expansion itself (expand-all, open every group while
+    /// filtering) says so with `setExpandedKeys`, never with a later
+    /// spec's `expanded_keys`.
     ///
     /// `selected_index` is the *absolute* index into `nodes`
     /// (initial-only; instance state takes over). Click on a row
@@ -2755,30 +2938,31 @@ pub enum WidgetSpec {
     /// expanded } }`. Enter/Space on the focused tree fires
     /// `widget_event { event_type: "activate", payload: { index, key } }`.
     Tree {
-        nodes: Vec<TreeNode>,
-        #[serde(default)]
-        item_keys: Vec<String>,
+        nodes: Collection<TreeNode>,
+        item_keys: Collection<String>,
         #[serde(default = "default_tree_selected")]
         selected_index: i32,
         /// Rows of the panel's available height the tree occupies.
-        /// `None` (omitted) = auto from the host-known panel height;
+        /// Omitted = auto from the host-known panel height;
         /// an explicit value pins the window as before. (Legacy
         /// fallback when the host has no height: 20 rows.)
         #[serde(default, skip_serializing_if = "Option::is_none")]
         visible_rows: Option<u32>,
-        /// Initial-only set of expanded item keys. Once the widget
-        /// has rendered, the host's instance-state `expanded_keys`
-        /// is authoritative; updating this field on subsequent specs
-        /// has no effect (use `WidgetMutation::SetExpandedKeys` to
-        /// override host state).
+        /// Seed set of expanded item keys, drawn until the host's
+        /// instance state has an expansion of its own (a Right/Left,
+        /// a disclosure click, a selection write, or a
+        /// `setExpandedKeys` mutation). From then on the
+        /// instance state is what is drawn and navigated, and
+        /// changing this field on later specs has no effect — use
+        /// `editor.widgetMutate(panel, { kind: "setExpandedKeys", ... })` to change it.
         #[serde(default)]
         expanded_keys: Vec<String>,
-        /// When true, every node with `checked: Some(_)` renders a
+        /// When true, every node with `checked` set renders a
         /// `[v]` / `[ ]` glyph and emits a `toggle` hit area over
         /// the glyph. Click on the glyph fires `widget_event {
         /// event_type: "toggle", payload: { key, checked: <new> } }`;
         /// the plugin updates its model and pushes the new state
-        /// back via `WidgetMutation::SetCheckedKeys`.
+        /// back via `editor.widgetMutate(panel, { kind: "setCheckedKeys", ... })`.
         #[serde(default)]
         checkable: bool,
         /// Fixed number of screen rows each node occupies. `1` (the
@@ -2809,6 +2993,18 @@ pub enum WidgetSpec {
         /// the disclosure glyph (or the blank standing in for one).
         #[serde(default = "default_tree_indent_cols")]
         indent_cols: u32,
+        /// When true, a click anywhere on a node with children toggles its
+        /// expansion (and selects it), not only a click on the disclosure
+        /// glyph. The toggle fires `expand` with `{ index, key, expanded }`.
+        #[serde(default)]
+        toggle_on_click: bool,
+        /// **A table.** Columns declared here turn every node that carries
+        /// `cells` into a row of them: the host measures the cells, fits the
+        /// columns to the width layout gives the tree (the widest gives
+        /// first), elides each cell at its column's end, and draws a header
+        /// row of the titles above the tree. Empty (default): a plain tree.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        columns: Vec<TableColumn>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
@@ -2843,7 +3039,7 @@ pub enum WidgetSpec {
     ///   current line. The host auto-scrolls vertically to keep
     ///   the cursor's line visible.
     ///
-    /// Smart-key dispatch (`WidgetCommand::Key`) selects the right
+    /// Smart-key dispatch (`editor.widgetCommand(panel, { kind: "key", key })`) selects the right
     /// behaviour from `rows`. Plugins that want a different `Enter`
     /// binding intercept the key in their own mode binding before
     /// dispatching it through the smart-key router.
@@ -2861,9 +3057,9 @@ pub enum WidgetSpec {
         /// instance state takes over thereafter.
         #[serde(default)]
         value: String,
-        /// Initial byte-offset cursor within `value`. Negative
-        /// (encoded as `i32` in JSON) means "no cursor" — clamped
-        /// to `[0, value.len()]` host-side.
+        /// Initial byte-offset cursor within `value`. A negative
+        /// number means "no cursor"; other values are clamped
+        /// host-side to the byte length of `value`.
         #[serde(default = "default_cursor_byte")]
         cursor_byte: i32,
         /// Whether this widget has visual focus.
@@ -2923,7 +3119,7 @@ pub enum WidgetSpec {
         ///
         /// Plugins push candidates in response to the text
         /// widget's `change` event via
-        /// `WidgetMutation::SetCompletions`. An empty `items`
+        /// `editor.widgetMutate(panel, { kind: "setCompletions", ... })`. An empty `items`
         /// closes the popup.
         #[serde(
             default,
@@ -2940,6 +3136,18 @@ pub enum WidgetSpec {
         /// more to scroll. `0` (default) falls back to `5`.
         #[serde(default)]
         completions_visible_rows: u32,
+        /// A multi-line field that **grows with its text**: the smallest
+        /// number of editing rows it shows (`rows` when `0`). Only read when
+        /// `max_rows` is set.
+        #[serde(default)]
+        min_rows: u32,
+        /// A multi-line field that **grows with its text**: when `> 0`, the
+        /// editing region is as tall as its value wraps to — at the width
+        /// layout actually gives it — between `min_rows` and this, and
+        /// scrolls (keeping its caret in view) past it. `0` (default): the
+        /// region is `rows` tall, as before.
+        #[serde(default)]
+        max_rows: u32,
         /// Paint the caret as a REVERSED block cell inside the row
         /// (in addition to publishing the hardware-cursor position).
         /// Modal form surfaces (e.g. Settings) use this — a hardware
@@ -2982,6 +3190,19 @@ pub enum WidgetSpec {
         /// changes via a spec update.
         #[serde(default)]
         markdown: bool,
+        /// A single-line field that offers a list of values to pick from as
+        /// well as free text — a combo box (the ARIA combobox pattern). Drawn
+        /// with a `▼` in the last cell inside its `]` (`▲` while its
+        /// completion list is open), so the field says it has a list before
+        /// it is focused. The list itself is still the plugin's
+        /// `completions`: with the list closed, ↓ / Alt+↓ or a press on the
+        /// arrow fires `completion_request`, which the plugin answers with
+        /// `setCompletions`; a press on the arrow with the list open closes
+        /// it (`completion_dismiss`). Opening on focus is left out on
+        /// purpose — a list that opens as a form is walked covers the fields
+        /// under it. Defaults to `false`.
+        #[serde(default)]
+        combo: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
@@ -3067,9 +3288,9 @@ pub enum WidgetSpec {
         /// Numeric editor-window id, matching `WindowId(N).0`.
         /// `0` (or any unknown id) renders empty placeholder
         /// rows without dispatching the per-window render.
-        /// `u32` rather than `u64` to keep the TS binding a
-        /// plain `number`; window ids never exceed 4B in
-        /// practice.
+        // `u32` rather than `u64` to keep the TS binding a
+        // plain `number`; window ids never exceed 4B in
+        // practice.
         window_id: u32,
         /// Number of visible rows the embed should occupy.
         rows: u32,
@@ -3110,7 +3331,7 @@ pub enum WidgetSpec {
         /// plugin's: see `fresh_ui::desc::Wrap`.
         #[serde(default)]
         wrap: bool,
-        /// How the row marks itself when it does not fit. See [`Elide`].
+        /// How the row marks itself when it does not fit. See `Elide`.
         /// Ignored when `wrap` is set.
         #[serde(default)]
         elide: Elide,
@@ -3188,7 +3409,7 @@ pub enum WidgetSpec {
         /// Anchor `[row, col]` in the panel's inner coordinates the
         /// popup drops from (the host resolves the final screen rect
         /// — opening below the anchor, flipping above near the frame
-        /// edge, clamped on screen). `None` anchors at the popup's
+        /// edge, clamped on screen). Omitted, it anchors at the popup's
         /// own position in the tree.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         anchor: Option<[u32; 2]>,
@@ -3245,6 +3466,39 @@ impl WidgetSpec {
         k.as_deref().filter(|k| !k.is_empty())
     }
 
+    /// Why this spec's item keys can't identify its items, if they
+    /// can't: every `List` and `Tree` in it must give each item exactly
+    /// one key, and no two items the same one. The plugin API rejects a
+    /// spec this answers for; the host keys rows, selection and
+    /// expansion by these strings and has no other identity to fall
+    /// back on.
+    pub fn item_keys_problem(&self) -> Option<String> {
+        let own = match self {
+            WidgetSpec::List {
+                items,
+                item_specs,
+                item_keys,
+                key,
+                ..
+            } => {
+                let n = if item_specs.is_empty() {
+                    items.len()
+                } else {
+                    item_specs.len()
+                };
+                item_keys_problem("List", key.as_deref(), n, item_keys)
+            }
+            WidgetSpec::Tree {
+                nodes,
+                item_keys,
+                key,
+                ..
+            } => item_keys_problem("Tree", key.as_deref(), nodes.len(), item_keys),
+            _ => None,
+        };
+        own.or_else(|| self.children().find_map(WidgetSpec::item_keys_problem))
+    }
+
     pub fn children(&self) -> Box<dyn Iterator<Item = &WidgetSpec> + '_> {
         match self {
             WidgetSpec::Row { children, .. } | WidgetSpec::Col { children, .. } => {
@@ -3276,11 +3530,11 @@ impl WidgetSpec {
     }
 }
 
+// Bundled into a single `WidgetCommand` PluginCommand so the plugin's
+// TypeScript layer exposes one routing method rather than a fanout of
+// per-key IPC.
 /// Action a plugin can request the widget runtime to perform on a
-/// mounted panel. Bundled into a single `WidgetCommand` PluginCommand
-/// so the plugin's TypeScript layer exposes one routing method
-/// (`editor.widgetCommand(panel_id, action)`) rather than a fanout
-/// of per-key IPC.
+/// mounted panel, sent with `editor.widgetCommand(panelId, action)`.
 ///
 /// All actions target the panel's currently focused widget (the host
 /// tracks focus per panel). They are fired by the plugin's mode
@@ -3350,13 +3604,13 @@ pub enum WidgetAction {
     Key { key: String },
 }
 
-/// Targeted in-place mutation of a mounted widget panel — the
-/// IPC fast path. Plugins use these when the model change touches
-/// one widget; the host applies the mutation directly to the
-/// panel's spec / instance state and re-renders without
-/// re-transmitting the full spec.
+/// Targeted in-place mutation of a mounted widget panel, sent with
+/// `editor.widgetMutate(panelId, mutation)` — a faster way to apply a
+/// small change than re-sending the whole spec. Plugins use these when
+/// the model change touches one widget; the host applies the mutation
+/// directly to the panel's spec / instance state and re-renders.
 ///
-/// `UpdateWidgetPanel` remains the right tool for structural
+/// `editor.updateWidgetPanel` remains the right tool for structural
 /// changes (adding/removing widgets, restructuring layout). Both
 /// paths preserve instance state via widget keys.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -3410,7 +3664,6 @@ pub enum WidgetMutation {
     SetItems {
         widget_key: String,
         items: Vec<crate::text_property::TextPropertyEntry>,
-        #[serde(default)]
         item_keys: Vec<String>,
     },
     /// Replace a `Tree`'s expanded-keys instance state. Plugins use
@@ -3441,7 +3694,6 @@ pub enum WidgetMutation {
     AppendTreeNodes {
         widget_key: String,
         new_nodes: Vec<crate::api::TreeNode>,
-        #[serde(default)]
         new_item_keys: Vec<String>,
     },
     /// Replace a `Raw` widget's entries in place. The streaming search
@@ -3461,6 +3713,51 @@ pub enum WidgetMutation {
     /// after mount, or to snap focus back to a "home" widget after a
     /// navigation event.
     SetFocusKey { widget_key: String },
+    /// Show a move in a `Tree` before it happens — while a row is dragged
+    /// over a folder, say: an empty row opens directly under `after_key` (the
+    /// folder the row would land in, opened if it is folded; `None` for the
+    /// top of the tree), and `label` is typed into it a character at a time in
+    /// the diff colour for an addition while the same characters ghost out of
+    /// `source_key`'s row in the diff colour for a removal.
+    ///
+    /// The preview stays until `EndTreeMovePreview`. A second one on the same
+    /// tree replaces it (a drag that moved on to another folder). Nothing in
+    /// the plugin's spec changes: the rows are the host's, for the length of
+    /// the preview. With the editor's animations off nothing is shown.
+    PreviewTreeMove {
+        widget_key: String,
+        source_key: String,
+        #[serde(default)]
+        after_key: Option<String>,
+        label: String,
+    },
+    /// End the tree's move preview. `commit: false` drops it now (the drag
+    /// left the folder, or ended without a drop). `commit: true` lets it play
+    /// out — at once if the name is already across — and then fires
+    /// `movepreviewend` (`{ key: source_key }`) on the tree, which is when
+    /// the plugin makes the move; with animations off that is straight away.
+    EndTreeMovePreview { widget_key: String, commit: bool },
+}
+
+impl WidgetMutation {
+    /// [`WidgetSpec::item_keys_problem`] for a mutation that carries
+    /// items: its keys must match its items one to one. (Whether an
+    /// appended key is new to the tree only the host can tell.)
+    pub fn item_keys_problem(&self) -> Option<String> {
+        match self {
+            WidgetMutation::SetItems {
+                widget_key,
+                items,
+                item_keys,
+            } => item_keys_problem("List", Some(widget_key), items.len(), item_keys),
+            WidgetMutation::AppendTreeNodes {
+                widget_key,
+                new_nodes,
+                new_item_keys,
+            } => item_keys_problem("Tree", Some(widget_key), new_nodes.len(), new_item_keys),
+            _ => None,
+        }
+    }
 }
 
 /// Cursor-dependent activation rule for a conceal range or soft break.
@@ -3486,6 +3783,18 @@ pub struct MarkerActivation {
     pub scope_start: usize,
     /// Scope end byte, exclusive (absolute, at emission time).
     pub scope_end: usize,
+}
+
+/// The search a project replace's matches came from, so the host can
+/// expand capture-group references in the replacement for each match.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ReplaceRegex {
+    /// The regex pattern, as the search was given it.
+    pub pattern: String,
+    /// Whether the search was case-sensitive.
+    pub case_sensitive: bool,
+    /// Whether the search matched whole words only.
+    pub whole_words: bool,
 }
 
 /// Plugin command - allows plugins to send commands to the editor
@@ -3562,6 +3871,17 @@ pub enum PluginCommand {
     /// Write a single setting to the runtime overlay for this session.
     /// `path` is dot-separated (e.g. "editor.tab_size"). Last write wins.
     SetSetting {
+        plugin_name: String,
+        path: String,
+        #[ts(type = "unknown")]
+        value: JsonValue,
+    },
+
+    /// Write a single setting to the user's config file, the way the
+    /// Settings UI does — the same shape as [`Self::SetSetting`], but it
+    /// outlives the session. The host validates the path before writing;
+    /// see `Editor::handle_save_setting`.
+    SaveSetting {
         plugin_name: String,
         path: String,
         #[ts(type = "unknown")]
@@ -3819,6 +4139,8 @@ pub enum PluginCommand {
     HttpFetch {
         url: String,
         target_path: PathBuf,
+        /// Extra request headers. May carry credentials: never logged.
+        headers: Vec<(String, String)>,
         callback_id: JsCallbackId,
     },
 
@@ -4530,6 +4852,13 @@ pub enum PluginCommand {
     /// footer. Has no visible effect on non-overlay prompts.
     SetPromptFooter { footer: Vec<StyledText> },
 
+    /// Centre the floating-overlay prompt's card on the whole frame (90% of
+    /// it, over the dock and sidebar, as the Settings dialog is) instead of
+    /// on the chrome area beside the dock — the prompt's counterpart of
+    /// `FloatingPanelControl`'s `fullscreen`.
+    /// Has no visible effect on non-overlay prompts.
+    SetPromptFullscreen { fullscreen: bool },
+
     /// Plugin-supplied toolbar for the floating-overlay prompt's header
     /// band, as a `WidgetSpec` (a `Row`/`Col` of `Toggle`s/`Button`s). Unlike
     /// `SetPromptTitle` (styled text), these are real widgets: they render
@@ -4758,6 +5087,16 @@ pub enum PluginCommand {
         inherit_normal_bindings: bool,
         /// Name of the plugin that defined this mode (for attribution)
         plugin_name: Option<String>,
+        /// Keys (as in `bindings`) the plugin declared **dialog-wide
+        /// shortcuts**: on a widget panel they run ahead of the focused
+        /// control. Every other binding gets only the keys the focused
+        /// control does not use.
+        #[serde(default)]
+        shortcuts: Vec<String>,
+        /// Bindings (by key, as in `bindings`) scoped to named controls: each
+        /// applies only while one of its widgets holds the panel's focus.
+        #[serde(default)]
+        scoped: Vec<(String, Vec<String>)>,
     },
 
     /// Switch the current split to display a buffer
@@ -5196,7 +5535,7 @@ pub enum PluginCommand {
     /// file-backed buffer for another when the user navigates to a
     /// new commit, without rebuilding the group layout. Both
     /// `group.panel_buffers[panel_name]` and the corresponding
-    /// `SplitViewState.active_buffer` are updated; layout is marked
+    /// panel split's buffer tab are updated; layout is marked
     /// dirty for the next render.
     ///
     /// Resolves with `true` on success, `false` if the group or panel
@@ -5231,9 +5570,19 @@ pub enum PluginCommand {
         line: usize,
     },
 
-    /// Set the global editor mode (for modal editing like vi mode)
-    /// When set, the mode's keybindings take precedence over normal editing
+    /// Set the active window's editor mode: a plugin mode scoped to that
+    /// one window. When set, the mode's keybindings take precedence over the
+    /// editor-wide input mode and normal editing, in that window only.
     SetEditorMode {
+        /// Mode name (e.g., "markdown-source") or None to clear
+        mode: Option<String>,
+    },
+
+    /// Set the editor-wide input mode: a modal-editing personality such as
+    /// vi, which applies in every window and which nothing window-scoped
+    /// can clear. Resolved after a panel's, the buffer's and the window's
+    /// own mode, and before the base keymap.
+    SetInputMode {
         /// Mode name (e.g., "vi-normal", "vi-insert") or None to clear
         mode: Option<String>,
     },
@@ -5633,6 +5982,72 @@ pub enum PluginCommand {
     /// automatically when their buffer closes.
     ReleaseDiffBaseline { baseline_id: u64 },
 
+    /// Open a machine from a `setAuthority` payload, without attaching it to
+    /// a window. Resolves with `{id, platform, home, label}`. The handle stays
+    /// open until `closeMachine` or the plugin is unloaded.
+    OpenMachine {
+        #[ts(type = "unknown")]
+        payload: JsonValue,
+        callback_id: JsCallbackId,
+    },
+
+    /// Close a machine opened by `openMachine`. Idempotent. `callback_id` is
+    /// `None` when the runtime closes handles an unloaded plugin left behind.
+    CloseMachine {
+        machine: u64,
+        callback_id: Option<JsCallbackId>,
+    },
+
+    /// Read environment variables from the machine; only set names come back.
+    /// A remote machine is asked with `printenv` and is never answered from
+    /// this computer's environment. No `printenv` reports nothing.
+    MachineEnv {
+        machine: Option<u64>,
+        names: Vec<String>,
+        callback_id: JsCallbackId,
+    },
+
+    /// Walk a subtree in one call, off the editor thread. A remote machine
+    /// walks server-side.
+    WalkTree {
+        /// Which open machine to act on. `None` means the active window's.
+        machine: Option<u64>,
+        /// Directory to walk. A missing path is an empty walk, not an error.
+        root: String,
+        /// Directory basenames skipped at every depth.
+        skip_dirs: Vec<String>,
+        /// Report dot-prefixed entries. Off by default.
+        include_hidden: bool,
+        include_dirs: bool,
+        /// Maximum depth below `root`; depth 1 is a direct child.
+        max_depth: usize,
+        /// Stop after this many entries, reporting the walk as truncated.
+        max_entries: usize,
+        callback_id: JsCallbackId,
+    },
+
+    /// Read the first bytes of many files in one call. A failure is reported
+    /// per path, so one unreadable file does not lose the rest.
+    ReadFilePrefixes {
+        /// Which open machine to act on. `None` means the active window's.
+        machine: Option<u64>,
+        /// `(path, max_bytes)` pairs.
+        requests: Vec<(String, usize)>,
+        callback_id: JsCallbackId,
+    },
+
+    /// Run a command on the machine. Unlike `spawnHostProcess`, a remote
+    /// machine runs it there. A non-zero exit resolves with the code instead
+    /// of rejecting. Rejects on a machine opened read-only.
+    RunOnTarget {
+        /// Which open machine to act on. `None` means the active window's.
+        machine: Option<u64>,
+        program: String,
+        args: Vec<String>,
+        cwd: Option<String>,
+        callback_id: JsCallbackId,
+    },
+
     /// Project-wide grep search (async)
     /// Searches all project files via FileSystem trait, respecting .gitignore.
     /// For open buffers with dirty edits, searches the buffer's piece tree.
@@ -5699,6 +6114,11 @@ pub enum PluginCommand {
         matches: Vec<(usize, usize)>,
         /// Replacement text
         replacement: String,
+        /// The regex the matches were found with. When set, `replacement`
+        /// is a template: `$1`, `${name}` and `\n` are expanded per match,
+        /// as the in-buffer replace does. `None` writes `replacement` as is.
+        #[serde(default)]
+        regex: Option<ReplaceRegex>,
         /// Callback ID for async response
         callback_id: JsCallbackId,
     },
@@ -5713,11 +6133,9 @@ pub enum PluginCommand {
     /// `crates/fresh-editor/src/services/authority/mod.rs` for the
     /// canonical schema.
     ///
-    /// Fire-and-forget: the transition piggy-backs on the existing
-    /// editor restart flow, so the plugin that sent this command will
-    /// be re-loaded as part of the restart. Any follow-up work the
-    /// plugin wants to do after the switch belongs in its post-restart
-    /// init code, not in a callback here.
+    /// Fire-and-forget: returns before the backend is live. The sending
+    /// plugin is not reloaded, so follow-up work belongs in an
+    /// `authority_changed` handler.
     SetAuthority {
         #[ts(type = "unknown")]
         payload: JsonValue,
@@ -5938,8 +6356,9 @@ pub enum PluginCommand {
         /// resolve against first — the panel's own keymap, ahead of the
         /// widget that holds focus. A dock declares its chords here rather
         /// than through the window's editor mode, which is the buffer's
-        /// and would shadow or be shadowed by it. `None` keeps the
-        /// window's editor mode as the panel's keymap, as before.
+        /// and would shadow or be shadowed by it. `None`: the panel has no
+        /// keymap — the keys its focused control passes go to the panel's
+        /// own defaults (Tab, Esc), never to the window's editor mode.
         #[serde(default)]
         mode: Option<String>,
     },
@@ -5970,6 +6389,12 @@ pub enum PluginCommand {
         /// section takes the keys, as a dock mount does.
         #[serde(default)]
         start_blurred: bool,
+        /// When the section is on screen. Nothing set: scoped to the window
+        /// the mount came from — the narrow default; editor-wide has to be
+        /// asked for. A buffer scope names the buffer; the host finds its
+        /// window.
+        #[serde(default)]
+        scope: SectionScopeSpec,
     },
 
     /// Replace the spec of the currently-mounted floating widget
@@ -6148,8 +6573,37 @@ pub struct ActionPopupAction {
     pub label: String,
 }
 
-/// Plugin-contributed row in the LSP-Servers popup.
-/// See `PluginCommand::SetLspMenuContributions`.
+/// Why `keys` can't key the `n` items of the `kind` widget `key`, if
+/// they can't: there must be one key per item and no two alike.
+pub fn item_keys_problem(
+    kind: &str,
+    key: Option<&str>,
+    n: usize,
+    keys: &[String],
+) -> Option<String> {
+    let name = key.map_or_else(|| format!("unkeyed {kind}"), |k| format!("{kind} {k:?}"));
+    if keys.len() != n {
+        return Some(format!(
+            "{name} has {n} items but {} itemKeys: give each item one key",
+            keys.len()
+        ));
+    }
+    first_duplicate_id(keys.iter().map(String::as_str))
+        .map(|dup| format!("{name} has two items keyed {dup:?}: item keys must be unique"))
+}
+
+/// The first id a list repeats, if any.
+///
+/// A plugin list's ids are its rows' keys — suggestions, action-popup
+/// actions, LSP-menu rows — so a list that repeats one cannot be drawn
+/// without two rows claiming one identity, and is refused where it arrives.
+pub fn first_duplicate_id<'a>(ids: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
+    let mut seen = std::collections::HashSet::new();
+    ids.into_iter().find(|id| !seen.insert(*id))
+}
+
+/// Plugin-contributed row in the LSP-Servers popup, passed to
+/// `editor.setLspMenuContributions`.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export, rename = "TsLspMenuItem")]
@@ -6161,8 +6615,8 @@ pub struct LspMenuItem {
     pub label: String,
 }
 
-/// Options for `addMenuItem` — one plugin-contributed row in an existing
-/// menu bar menu. See `PluginCommand::AddMenuItem`.
+/// Options for `editor.addMenuItem` — one plugin-contributed row in an
+/// existing menu bar menu.
 ///
 /// Every string here is matched or displayed by the host, so the plugin
 /// never reaches into menu internals: it names the *target* menu and,
@@ -6265,9 +6719,11 @@ pub struct TsHighlightSpan {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct SpawnResult {
-    /// Complete stdout as string
+    /// Complete stdout as string, exactly as the process wrote it: newlines,
+    /// including the trailing one, are kept
     pub stdout: String,
-    /// Complete stderr as string
+    /// Complete stderr as string. When the process could not be started,
+    /// it holds the error message instead (and `exit_code` is -1)
     pub stderr: String,
     /// Process exit code (0 usually means success, -1 if killed)
     pub exit_code: i32,
@@ -6277,7 +6733,8 @@ pub struct SpawnResult {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct BackgroundProcessResult {
-    /// Unique process ID for later reference
+    /// Unique process ID for later reference, e.g. with `killProcess` or
+    /// `isProcessRunning`
     #[ts(type = "number")]
     pub process_id: u64,
     /// Process exit code (0 usually means success, -1 if killed)
@@ -6393,14 +6850,17 @@ pub struct ReplaceResult {
     pub buffer_id: usize,
 }
 
-/// Entry for virtual buffer content with optional text properties (JS API version)
+// JS API version of `text_property::TextPropertyEntry`.
+/// Entry for virtual buffer content with optional text properties
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(export, rename = "TextPropertyEntry", rename_all = "camelCase")]
 pub struct JsTextPropertyEntry {
-    /// Text content for this entry
+    /// Text content for this entry. Entries are concatenated verbatim, so
+    /// end the text with a newline to put the entry on a line of its own.
     pub text: String,
-    /// Optional properties attached to this text (e.g., file path, line number)
+    /// Optional properties attached to this text (e.g., file path, line
+    /// number): arbitrary metadata, read back with `getTextPropertiesAtCursor`
     #[serde(default)]
     #[ts(optional, type = "Record<string, unknown>")]
     pub properties: Option<HashMap<String, JsonValue>>,
@@ -6412,28 +6872,33 @@ pub struct JsTextPropertyEntry {
     #[serde(default)]
     #[ts(optional)]
     pub inline_overlays: Option<Vec<crate::text_property::InlineOverlay>>,
-    /// Pad this entry's text with spaces to this many columns when drawing.
+    /// Pad this entry's text with spaces to this many columns (Unicode
+    /// codepoints) when drawing. No-op when the text already has at least
+    /// this many codepoints. Applied before overlays are resolved.
     ///
     /// **Render-only**: the padding is applied at draw time, so
     /// `getBufferText()` returns the unpadded text you supplied. Column
     /// alignment cannot be checked by reading the buffer back — if you need
     /// that, embed real spaces with `padEnd` instead.
-    ///
-    /// See `TextPropertyEntry::pad_to_chars`.
     #[serde(default)]
     #[ts(optional)]
     pub pad_to_chars: Option<u32>,
-    /// Truncate this entry's text to at most this many columns when drawing,
-    /// with an ellipsis when the budget allows one.
+    /// Truncate this entry's text to at most this many columns (Unicode
+    /// codepoints) when drawing. When the budget is greater than 3 the
+    /// truncated tail is replaced with `...`; when it is 3 or less the text
+    /// is cut at exactly the budget. Applied before `padToChars` and before
+    /// overlays are resolved.
     ///
     /// **Render-only**, like `padToChars`: `getBufferText()` returns the full
     /// untruncated text.
-    ///
-    /// See `TextPropertyEntry::truncate_to_chars`.
     #[serde(default)]
     #[ts(optional)]
     pub truncate_to_chars: Option<u32>,
-    /// See `TextPropertyEntry::segments`.
+    /// Build the entry from styled pieces. When non-empty, the host joins
+    /// the segments' text into `text` (replacing any `text` you supplied)
+    /// and adds an inline overlay over each styled segment, plus each
+    /// segment's own `overlays` shifted to its position. Resolved before
+    /// `truncateToChars` and `padToChars`.
     #[serde(default)]
     #[ts(optional)]
     pub segments: Option<Vec<crate::text_property::StyledSegment>>,
@@ -6443,11 +6908,13 @@ pub struct JsTextPropertyEntry {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct DirEntry {
-    /// File/directory name
+    /// File/directory name only, not the full path: join it with the
+    /// directory that was read to get the entry's path
     pub name: String,
     /// True if this is a file
     pub is_file: bool,
-    /// True if this is a directory
+    /// True if this is a directory. A symlink reports the type of its
+    /// target, so a link to a directory is a directory here
     pub is_dir: bool,
 }
 
@@ -6493,9 +6960,11 @@ pub struct JsDiagnostic {
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct CreateVirtualBufferOptions {
-    /// Buffer name (displayed in tabs/title)
+    /// Buffer name (displayed in tabs/title). By convention it is wrapped
+    /// in asterisks, e.g. `"*Diagnostics*"`
     pub name: String,
-    /// Mode for keybindings (e.g., "git-log", "search-results")
+    /// Mode for keybindings (e.g., "git-log", "search-results"); define
+    /// it with `defineMode` first
     #[serde(default)]
     #[ts(optional)]
     pub mode: Option<String>,
@@ -6511,7 +6980,9 @@ pub struct CreateVirtualBufferOptions {
     #[serde(default, rename = "showCursors")]
     #[ts(optional, rename = "showCursors")]
     pub show_cursors: Option<bool>,
-    /// Disable text editing (default: false)
+    /// Disable text editing (default: false): typing, deletion, cut,
+    /// paste, undo and redo are refused, while navigation, selection and
+    /// copy still work
     #[serde(default, rename = "editingDisabled")]
     #[ts(optional, rename = "editingDisabled")]
     pub editing_disabled: Option<bool>,
@@ -6596,9 +7067,11 @@ pub struct CreateVirtualBufferOptions {
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct CreateVirtualBufferInSplitOptions {
-    /// Buffer name (displayed in tabs/title)
+    /// Buffer name (displayed in tabs/title). By convention it is wrapped
+    /// in asterisks, e.g. `"*Diagnostics*"`
     pub name: String,
-    /// Mode for keybindings (e.g., "git-log", "search-results")
+    /// Mode for keybindings (e.g., "git-log", "search-results"); define
+    /// it with `defineMode` first
     #[serde(default)]
     #[ts(optional)]
     pub mode: Option<String>,
@@ -6606,7 +7079,8 @@ pub struct CreateVirtualBufferInSplitOptions {
     #[serde(default, rename = "readOnly")]
     #[ts(optional, rename = "readOnly")]
     pub read_only: Option<bool>,
-    /// Split ratio 0.0-1.0 (default: 0.5)
+    /// Split ratio 0.0-1.0 (default: 0.5): the share of the first pane,
+    /// which is the existing content unless `before` is set
     #[serde(default)]
     #[ts(optional)]
     pub ratio: Option<f32>,
@@ -6615,6 +7089,7 @@ pub struct CreateVirtualBufferInSplitOptions {
     /// The name describes the **divider**, not the arrangement:
     /// `"vertical"` puts the panes side by side (a vertical divider between
     /// them), `"horizontal"` stacks them. Same convention as `splitWindow`.
+    /// Default: `"horizontal"`.
     #[serde(default)]
     #[ts(optional)]
     pub direction: Option<String>,
@@ -6630,11 +7105,14 @@ pub struct CreateVirtualBufferInSplitOptions {
     #[serde(default, rename = "showCursors")]
     #[ts(optional, rename = "showCursors")]
     pub show_cursors: Option<bool>,
-    /// Disable text editing (default: false)
+    /// Disable text editing (default: false): typing, deletion, cut,
+    /// paste, undo and redo are refused, while navigation, selection and
+    /// copy still work
     #[serde(default, rename = "editingDisabled")]
     #[ts(optional, rename = "editingDisabled")]
     pub editing_disabled: Option<bool>,
-    /// Enable line wrapping
+    /// Enable line wrapping (default: follow the editor's line-wrap
+    /// setting)
     #[serde(default, rename = "lineWrap")]
     #[ts(optional, rename = "lineWrap")]
     pub line_wrap: Option<bool>,
@@ -6678,9 +7156,9 @@ pub struct CreateVirtualBufferInSplitOptions {
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct CreateVirtualBufferInExistingSplitOptions {
-    /// Buffer name (displayed in tabs/title)
+    /// Buffer name (displayed in tabs/title), e.g. `"*Commit Details*"`
     pub name: String,
-    /// Target split ID (required)
+    /// ID of the existing split to show the buffer in (required)
     #[serde(rename = "splitId")]
     #[ts(rename = "splitId")]
     pub split_id: usize,
@@ -6775,9 +7253,9 @@ pub struct CreateTerminalOptions {
     #[ts(optional, rename = "windowId")]
     pub window_id: Option<WindowId>,
     /// Argv to spawn directly inside the PTY instead of the host's
-    /// configured shell. `None` (default) keeps the historical
+    /// configured shell. Omit it (the default) to keep the historical
     /// behaviour: spawn the user's shell and let the caller type into
-    /// it via `sendTerminalInput`. `Some([cmd, ...args])` runs that
+    /// it via `sendTerminalInput`. Set to `[cmd, ...args]`, it runs that
     /// exact command as the PTY child — no shell middleman, so the
     /// process exits cleanly when the agent does and the
     /// terminal-buffer's `terminal_exit` plugin hook reflects the
@@ -6791,24 +7269,24 @@ pub struct CreateTerminalOptions {
     /// (when `command` is set) or `"Terminal N"` (the historical
     /// auto-numbered title). If another terminal in the same window
     /// already uses the requested title, the host appends `" (k)"`
-    /// to disambiguate. Empty string is treated the same as `None`.
+    /// to disambiguate. An empty string is treated the same as omitting it.
     #[serde(default)]
     #[ts(optional)]
     pub title: Option<String>,
     /// Extra environment variables to set in the spawned terminal's
     /// child process, on top of the inherited/activated env. Mirrors
-    /// `CreateWindowWithTerminalOptions::env`. `None` (the default)
+    /// `CreateWindowWithTerminalOptions.env`. Omitted (the default), it
     /// adds nothing, so existing callers behave exactly as before.
     #[serde(default)]
     #[ts(optional)]
     pub env: Option<std::collections::HashMap<String, String>>,
     /// Argv to run when this terminal is *restored* or *restarted*,
     /// instead of re-running `command`. The exact counterpart of
-    /// `CreateWindowWithTerminalOptions::resume`, so an agent launched
+    /// `CreateWindowWithTerminalOptions.resume`, so an agent launched
     /// into an existing window rejoins its conversation on restart the
     /// same way one born in its own window does — a session started with
     /// `claude --session-id <id>` sets `resume` to
-    /// `["claude", "--resume", "<id>"]`. `None` keeps `command` as the
+    /// `["claude", "--resume", "<id>"]`. Omit it to keep `command` as the
     /// restore argv. The id is a plain argv element — never interpolated
     /// into a shell string.
     ///
@@ -6859,8 +7337,8 @@ pub struct CreateWindowWithTerminalOptions {
     #[serde(default)]
     #[ts(optional)]
     pub cwd: Option<String>,
-    /// Argv to spawn directly inside the PTY. `None` keeps the
-    /// shell-and-type behaviour; `Some([cmd, ...args])` runs the
+    /// Argv to spawn directly inside the PTY. Omit it to keep the
+    /// shell-and-type behaviour; set to `[cmd, ...args]`, it runs the
     /// command as the PTY child (used by Orchestrator so the
     /// agent process is the PTY's direct child).
     #[serde(default)]
@@ -6877,7 +7355,7 @@ pub struct CreateWindowWithTerminalOptions {
     /// `claude --session-id <id>` sets `resume` to
     /// `["claude", "--resume", "<id>"]` (or `["claude", "--continue"]`),
     /// so a restored session rejoins its conversation rather than starting
-    /// a fresh agent. `None` keeps `command` as the restore command. The id
+    /// a fresh agent. Omit it to keep `command` as the restore command. The id
     /// is a plain argv element — never interpolated into a shell string.
     #[serde(default)]
     #[ts(optional)]
@@ -6886,7 +7364,7 @@ pub struct CreateWindowWithTerminalOptions {
     /// terminal's child process, on top of the inherited/activated
     /// env. Applied after the editor's control vars (`TERM`,
     /// `FRESH_SESSION`), so a plugin's entry wins over those only
-    /// when it names the same key. `None` (the default) adds
+    /// when it names the same key. Omitted (the default), it adds
     /// nothing — old callers behave exactly as before.
     #[serde(default)]
     #[ts(optional)]
@@ -6957,6 +7435,15 @@ pub struct PreparingWindowResult {
     /// The new workspace's durable identity (`ws-…`), stable across restarts.
     #[serde(default)]
     pub stable_id: String,
+    /// The placeholder's seed buffer. Mount a widget panel here
+    /// (`mountWidgetPanel`) to describe the page yourself: the plugin
+    /// building the workspace knows what it is waiting on, what failed and
+    /// what the user can do about it, so the page is its to write. The
+    /// editor's own page — name, state, one line of explanation — is only
+    /// the fallback for a window nothing has described.
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub buffer_id: u64,
 }
 
 /// Result of `createWindowWithTerminal` — the ids of the new
@@ -7548,6 +8035,11 @@ impl PluginApi {
     /// Set the suggestions for the current prompt
     /// This updates the prompt's autocomplete/selection list
     pub fn set_prompt_suggestions(&self, suggestions: Vec<Suggestion>) -> Result<(), String> {
+        if let Some(id) = Suggestion::duplicate_id(&suggestions) {
+            return Err(format!(
+                "setPromptSuggestions: duplicate suggestion id {id:?}"
+            ));
+        }
         self.send_command(PluginCommand::SetPromptSuggestions {
             suggestions,
             selected_index: None,
@@ -7573,6 +8065,12 @@ impl PluginApi {
         self.send_command(PluginCommand::SetPromptFooter { footer })
     }
 
+    /// Centre the floating-overlay prompt's card on the whole frame
+    /// (`true`) or on the chrome area beside the dock (`false`).
+    pub fn set_prompt_fullscreen(&self, fullscreen: bool) -> Result<(), String> {
+        self.send_command(PluginCommand::SetPromptFullscreen { fullscreen })
+    }
+
     /// Set the floating-overlay prompt's toolbar as a `WidgetSpec` (real,
     /// clickable `Toggle`/`Button` widgets). `None` clears it. `plugin` is
     /// the plugin the toolbar's `widget_event`s go back to.
@@ -7581,6 +8079,11 @@ impl PluginApi {
         plugin: String,
         spec: Option<WidgetSpec>,
     ) -> Result<(), String> {
+        // Refused here as the JavaScript API refuses it: rows are keyed by
+        // `itemKeys`, which must match the items one to one.
+        if let Some(problem) = spec.as_ref().and_then(WidgetSpec::item_keys_problem) {
+            return Err(problem);
+        }
         self.send_command(PluginCommand::SetPromptToolbar { plugin, spec })
     }
 
@@ -7714,6 +8217,8 @@ impl PluginApi {
             allow_text_input,
             inherit_normal_bindings: false,
             plugin_name: None,
+            shortcuts: Vec::new(),
+            scoped: Vec::new(),
         })
     }
 
@@ -7940,6 +8445,51 @@ mod tests {
     use super::*;
     use std::path::Path;
 
+    /// Every List and Tree must key each item once, with no two alike —
+    /// wherever it sits in the spec — and a spec that doesn't is named
+    /// for what is wrong. A spec without `itemKeys` doesn't parse at all.
+    #[test]
+    fn item_keys_must_match_items_one_to_one() {
+        let tree = |keys: serde_json::Value| {
+            serde_json::from_value::<WidgetSpec>(serde_json::json!({
+                "kind": "col",
+                "children": [{
+                    "kind": "tree",
+                    "key": "t",
+                    "nodes": [{"text": {"text": "a"}}, {"text": {"text": "b"}}],
+                    "itemKeys": keys,
+                }],
+            }))
+        };
+        assert_eq!(
+            tree(serde_json::json!(["a", "b"]))
+                .unwrap()
+                .item_keys_problem(),
+            None
+        );
+
+        let short = tree(serde_json::json!(["a"])).unwrap().item_keys_problem();
+        assert!(short.unwrap().contains("2 items but 1 itemKeys"));
+
+        let dup = tree(serde_json::json!(["a", "a"]))
+            .unwrap()
+            .item_keys_problem();
+        assert!(dup.unwrap().contains("two items keyed \"a\""));
+
+        let missing = serde_json::from_value::<WidgetSpec>(serde_json::json!({
+            "kind": "list",
+            "items": [{"text": "a"}],
+        }));
+        assert!(missing.is_err(), "itemKeys is required");
+
+        let append = WidgetMutation::AppendTreeNodes {
+            widget_key: "t".into(),
+            new_nodes: vec![],
+            new_item_keys: vec!["x".into()],
+        };
+        assert!(append.item_keys_problem().is_some());
+    }
+
     #[test]
     fn test_plugin_api_creation() {
         let hooks = Arc::new(RwLock::new(HookRegistry::new()));
@@ -8103,6 +8653,7 @@ mod tests {
             let mut snapshot = state_snapshot.write().unwrap();
             let buffer_info = BufferInfo {
                 id: BufferId(1),
+                window_id: 1,
                 path: Some(std::path::PathBuf::from("/test/file.txt")),
                 name: "file.txt".to_string(),
                 modified: true,
@@ -8153,6 +8704,7 @@ mod tests {
                 BufferId(1),
                 BufferInfo {
                     id: BufferId(1),
+                    window_id: 1,
                     path: Some(std::path::PathBuf::from("/file1.txt")),
                     name: "file1.txt".to_string(),
                     modified: false,
@@ -8173,6 +8725,7 @@ mod tests {
                 BufferId(2),
                 BufferInfo {
                     id: BufferId(2),
+                    window_id: 1,
                     path: Some(std::path::PathBuf::from("/file2.txt")),
                     name: "file2.txt".to_string(),
                     modified: true,
@@ -8193,6 +8746,7 @@ mod tests {
                 BufferId(3),
                 BufferInfo {
                     id: BufferId(3),
+                    window_id: 1,
                     path: None,
                     // A virtual buffer: no path, but it still has the name it
                     // was created with — which is the whole point of the field.
@@ -8712,8 +9266,8 @@ mod tests {
         // set_prompt_suggestions
         assert_dispatches!(
             |a: &PluginApi| a.set_prompt_suggestions(vec![
-                Suggestion::new("one".into()),
-                Suggestion::new("two".into()),
+                Suggestion::new("1".into(), "one".into()),
+                Suggestion::new("2".into(), "two".into()),
             ]),
             PluginCommand::SetPromptSuggestions { suggestions, .. }
                 if suggestions.len() == 2
@@ -8818,7 +9372,7 @@ mod tests {
                 false,
             ),
             PluginCommand::DefineMode {
-                name, bindings, read_only, allow_text_input, inherit_normal_bindings, plugin_name
+                name, bindings, read_only, allow_text_input, inherit_normal_bindings, plugin_name, ..
             }
                 if name == "m"
                     && bindings.len() == 1

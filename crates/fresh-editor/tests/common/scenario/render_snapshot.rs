@@ -474,7 +474,7 @@ impl RenderSnapshotExpect {
         }
         if let Some((byte, delta)) = self.viewport_top_within_delta_of {
             let top = actual.viewport.top_byte;
-            let gap = if top > byte { top - byte } else { byte - top };
+            let gap = top.abs_diff(byte);
             if gap > delta {
                 return Some((
                     "viewport_top_within_delta_of",

@@ -12,8 +12,11 @@
     <key>CFBundleDisplayName</key>
     <string>Fresh</string>
 
+    <!-- The GUI launcher script written by create-app-bundle.sh, not the
+         `fresh` binary itself. Its name must differ from `fresh` by more
+         than case: APFS/HFS+ are case-insensitive by default. -->
     <key>CFBundleExecutable</key>
-    <string>fresh</string>
+    <string>fresh-gui-launcher</string>
 
     <!-- Version info — substituted by create-app-bundle.sh from the workspace Cargo.toml -->
     <key>CFBundleShortVersionString</key>

@@ -35,6 +35,28 @@ pub enum DeepMatch {
     },
 }
 
+impl SearchResult {
+    /// What this result is: the setting it found, and where in it the match
+    /// was. **A setting's path alone is not unique among results** — one
+    /// setting can match directly and again through each map key, map value
+    /// and list item it holds — so the match's own place is part of it: a
+    /// map entry by its key (unique in the map), a list item by its place in
+    /// the list (which is what a list item's identity is).
+    pub fn id(&self) -> String {
+        let path = &self.item.path;
+        match &self.deep_match {
+            None => path.clone(),
+            Some(DeepMatch::MapKey { key, .. }) => format!("{path}#key:{key}"),
+            Some(DeepMatch::MapValue {
+                key, field_path, ..
+            }) => format!("{path}#value:{key}{field_path}"),
+            Some(DeepMatch::TextListItem { item_index, .. }) => {
+                format!("{path}#item:{item_index}")
+            }
+        }
+    }
+}
+
 /// A search result with match information
 #[derive(Debug, Clone)]
 pub struct SearchResult {
@@ -88,7 +110,7 @@ pub fn search_settings(pages: &[SettingsPage], query: &str) -> Vec<SearchResult>
                     page_index,
                     item_index,
                     item: item.clone(),
-                    breadcrumb: page.name.clone(),
+                    breadcrumb: page.display_name.clone(),
                     score: total_score,
                     name_matches,
                     description_matches: desc_matches,
@@ -102,7 +124,7 @@ pub fn search_settings(pages: &[SettingsPage], query: &str) -> Vec<SearchResult>
                 page_index,
                 item_index,
                 item,
-                &page.name,
+                &page.display_name,
                 &query_lower,
             );
         }
@@ -348,20 +370,6 @@ pub fn matches_query(item: &SettingItem, query: &str) -> bool {
         || item.path.to_lowercase().contains(&query_lower)
 }
 
-/// Get indices of categories that have matching items
-pub fn matching_categories(pages: &[SettingsPage], query: &str) -> Vec<usize> {
-    if query.is_empty() {
-        return Vec::new();
-    }
-
-    pages
-        .iter()
-        .enumerate()
-        .filter(|(_, page)| page.items.iter().any(|item| matches_query(item, query)))
-        .map(|(idx, _)| idx)
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -385,6 +393,7 @@ mod tests {
             nullable: false,
             is_null: false,
             section: None,
+            section_label: None,
             is_section_start: false,
             style: ItemBoxStyle::default(),
             dual_list_sibling: None,
@@ -394,12 +403,14 @@ mod tests {
     fn make_page(name: &str, items: Vec<SettingItem>) -> SettingsPage {
         SettingsPage {
             name: name.to_string(),
+            display_name: name.to_string(),
             path: format!("/{}", name.to_lowercase()),
             description: None,
             nullable: false,
             items,
             subpages: Vec::new(),
             sections: Vec::new(),
+            parent: None,
         }
     }
 
@@ -491,23 +502,6 @@ mod tests {
     }
 
     #[test]
-    fn test_matching_categories() {
-        let pages = vec![
-            make_page(
-                "Editor",
-                vec![make_item("Line Numbers", None, "/line_numbers")],
-            ),
-            make_page("Theme", vec![make_item("Theme Name", None, "/theme")]),
-        ];
-
-        let matches = matching_categories(&pages, "line");
-        assert_eq!(matches, vec![0]);
-
-        let matches = matching_categories(&pages, "theme");
-        assert_eq!(matches, vec![1]);
-    }
-
-    #[test]
     fn test_search_ranking() {
         let pages = vec![make_page(
             "Editor",
@@ -552,6 +546,7 @@ mod tests {
             nullable: false,
             is_null: false,
             section: None,
+            section_label: None,
             is_section_start: false,
             style: ItemBoxStyle::default(),
             dual_list_sibling: None,
@@ -576,6 +571,7 @@ mod tests {
             nullable: false,
             is_null: false,
             section: None,
+            section_label: None,
             is_section_start: false,
             style: ItemBoxStyle::default(),
             dual_list_sibling: None,

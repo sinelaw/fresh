@@ -6,7 +6,9 @@
 mod common;
 
 use common::{distinct_words, locale_guard, Rng};
-use fresh_i18n::{available_locales, register_locales, set_locale, t, translate, translate_in};
+use fresh_i18n::{
+    available_locales, register_locales, set_locale, t, translate, translate_in, unregister_locales,
+};
 use serde_json::{json, Map, Value};
 
 /// Build a nested JSON object from `paths`, each of which is a segment list.
@@ -186,6 +188,21 @@ fn re_registering_a_locale_replaces_its_catalog() {
     register_locales(&[("x-replace", &json!({"a": "second"}).to_string())]);
     assert_eq!(t!("a"), "second");
     assert_eq!(t!("b"), "b", "the replaced catalog no longer has b");
+}
+
+#[test]
+fn an_unregistered_locale_is_gone() {
+    let _guard = locale_guard();
+    register_locales(&[("x-gone", &json!({"a": "here"}).to_string())]);
+    assert_eq!(translate_in("x-gone", "a"), Some("here"));
+
+    unregister_locales(&["x-gone", "x-never-registered"]);
+    assert!(!available_locales().contains(&"x-gone"));
+    assert_eq!(translate_in("x-gone", "a"), None);
+
+    // Registering it again starts from the new catalog.
+    register_locales(&[("x-gone", &json!({"a": "back"}).to_string())]);
+    assert_eq!(translate_in("x-gone", "a"), Some("back"));
 }
 
 #[test]

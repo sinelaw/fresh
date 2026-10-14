@@ -602,7 +602,7 @@ fn a_stale_boundary_is_re_measured_even_when_the_root_is_too() {
         // something in between, the root's own re-measure would reach the
         // boundary by accident and the bug would not show.
         let base = col().children([col().flex(1).children([
-            row().h(Sizing::Cells(1)).children([text(msg.to_string())]),
+            row().h(Sizing::Cells(1)).children([text(msg)]),
             text("body").flex(1),
         ])]);
         if overlay {
@@ -1464,4 +1464,217 @@ fn a_stack_honours_a_height_floor_too() {
         Size::new(100, 20),
     );
     assert_eq!(ui.rect(ui.at(&[0]).unwrap()).h, 6);
+}
+
+// ---------------------------------------------------------------------------
+// Pinned rows: a window whose top is spoken for
+// ---------------------------------------------------------------------------
+
+/// An index-scrolled window over `count` one-cell items in an eight-row box,
+/// with the owner naming `pinned` and holding the offset at `at`. The reader
+/// records what it was told and draws the pins above the run, the way a list
+/// does.
+fn pinned_window(
+    count: u32,
+    pinned: &[u32],
+    at: u32,
+    seen: Rc<RefCell<Option<(Rect, u16)>>>,
+) -> Node<()> {
+    let pins: Vec<u32> = pinned.to_vec();
+    let reader = layout_reader(move |info| {
+        let win = info.scroll_window.unwrap_or_default();
+        *seen.borrow_mut() = Some((win, info.pinned));
+        let indices = pins[..(info.pinned as usize).min(pins.len())]
+            .iter()
+            .copied()
+            .chain(win.y.max(0) as u32..(win.y.max(0) as u32 + win.h as u32).min(count));
+        col().children(indices.map(|i| text(format!("row {i}"))))
+    });
+    viewport(reader)
+        .items(count)
+        .pinned(pinned)
+        .scroll(at)
+        .scrollbar()
+        .w(Sizing::Cells(20))
+        .h(Sizing::Cells(8))
+}
+
+fn bar_of(ui: &Ui<()>) -> (u32, u32, u32, u16) {
+    ui.spec()
+        .items
+        .iter()
+        .find_map(|i| match i.draw {
+            Draw::Scrollbar {
+                offset,
+                content,
+                window,
+                ..
+            } => Some((offset, content, u32::from(window), i.rect.h)),
+            _ => None,
+        })
+        .expect("a bar")
+}
+
+fn lines(ui: &Ui<()>) -> Vec<String> {
+    ui.spec()
+        .items
+        .iter()
+        .filter_map(|i| match &i.draw {
+            Draw::Lines(l) => Some(l.iter().map(|s| s.to_string()).collect::<Vec<_>>().join("")),
+            _ => None,
+        })
+        .collect()
+}
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+/// **The window the reader is handed is the run under the pins**, and the
+/// ceiling is the smallest offset whose run reaches the end — past
+/// `count - rows` by exactly the rows the pins took. A bar drawn against the
+/// naive ceiling parked its thumb at the end of the track while the tree
+/// still had rows below; this is the case that motivated pinning being the
+/// window's business rather than a parallel column beside it.
+#[test]
+fn a_pinned_window_publishes_the_run_and_a_ceiling_that_accounts_for_the_pins() {
+    let seen = Rc::new(RefCell::new(None));
+    let mut ui = ui();
+    // 40 items, 8 rows, two pinned: the run is 6 tall and the ceiling is 34.
+    ui.frame(pinned_window(40, &[0, 1], 10, seen.clone()), FRAME);
+    assert_eq!(
+        *seen.borrow(),
+        Some((Rect::new(0, 10, 19, 6), 2)),
+        "the run starts at the offset, six tall under the two pins, in the \
+         width the gutter leaves"
+    );
+    assert_eq!(
+        lines(&ui),
+        ["row 0", "row 1", "row 10", "row 11", "row 12", "row 13", "row 14", "row 15"]
+    );
+
+    // At the naive ceiling the tree still has rows below: the thumb is short
+    // of the end. At the pinned ceiling it is flush.
+    ui.frame(pinned_window(40, &[0, 1], 32, seen.clone()), FRAME);
+    let (offset, content, window, track) = bar_of(&ui);
+    assert_eq!((offset, content, window), (32, 40, 6));
+    let (top, len) = Draw::scrollbar_thumb(offset, content, window, track);
+    assert!(
+        top + len < track,
+        "not at the end at 32: {top}+{len} of {track}"
+    );
+    assert_eq!(lines(&ui).last().map(String::as_str), Some("row 37"));
+
+    ui.frame(pinned_window(40, &[0, 1], 34, seen.clone()), FRAME);
+    let (offset, content, window, track) = bar_of(&ui);
+    let (top, len) = Draw::scrollbar_thumb(offset, content, window, track);
+    assert_eq!(top + len, track, "flush at 34");
+    assert_eq!(lines(&ui).last().map(String::as_str), Some("row 39"));
+}
+
+/// Pins never take the whole window: one row of the run always shows, so the
+/// offset still names something, and the reader is told how many were kept.
+#[test]
+fn pins_never_take_the_whole_window() {
+    let seen = Rc::new(RefCell::new(None));
+    let mut ui = ui();
+    ui.frame(
+        pinned_window(40, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9], 20, seen.clone()),
+        FRAME,
+    );
+    let (win, pins) = seen.borrow().expect("read");
+    assert_eq!(
+        (win.y, win.h, pins),
+        (20, 1, 7),
+        "seven pins, one row of run"
+    );
+    assert_eq!(lines(&ui).len(), 8);
+    assert_eq!(lines(&ui)[7], "row 20");
+}
+
+/// A framework-owned window with pins clamps the wheel at the pinned ceiling,
+/// which is the same number the bar is drawn against.
+#[test]
+fn an_owned_pinned_window_scrolls_to_the_pinned_ceiling() {
+    let seen = Rc::new(RefCell::new(None));
+    let mut ui = ui();
+    let reader = {
+        let seen = seen.clone();
+        move || {
+            let n = pinned_window(40, &[0, 1], 0, seen.clone());
+            // The same window, with the offset left to the framework.
+            n.scroll_at(0, 0)
+        }
+    };
+    ui.frame(reader(), FRAME);
+    let vp = ui.root().unwrap();
+    ui.dispatch(fresh_ui::Input::Wheel {
+        pos: fresh_ui::Point::new(2, 2),
+        delta: 1_000,
+        axis: fresh_ui::Axis::Vertical,
+        mods: fresh_ui::Mods::NONE,
+    });
+    ui.tick();
+    assert_eq!(ui.scroll(vp).0.y, 34, "count - (rows - pinned)");
+    assert_eq!(lines(&ui).last().map(String::as_str), Some("row 39"));
+}
+
+// -- columns -----------------------------------------------------------------
+
+/// **Too wide, the widest column gives first**, a cell at a time, and none
+/// goes below the floor — so a long path is cut before a short name is.
+#[test]
+fn columns_fit_by_taking_from_the_widest() {
+    let c = fresh_ui::Columns::new(vec![10, 40, 8], 6);
+    assert_eq!(c.fit(58), vec![10, 40, 8], "room enough: natural widths");
+    assert_eq!(c.fit(46), vec![10, 28, 8], "the widest gives");
+    assert_eq!(
+        c.fit(20),
+        vec![6, 7, 7],
+        "until it fits, ties from the left"
+    );
+    assert_eq!(c.fit(10), vec![6, 6, 6], "and never below the floor");
+    assert_eq!(
+        fresh_ui::Columns::new(vec![4, 30], 6).fit(12),
+        vec![4, 8],
+        "a column narrower than the floor is left as it is"
+    );
+}
+
+/// **Rows that share columns line their cells up**, whatever each cell's own
+/// text is, and a cell too wide for its column is cut the way its text says.
+#[test]
+fn rows_sharing_columns_line_their_cells_up() {
+    use fresh_ui::{Columns, Elide};
+    use std::rc::Rc;
+    let cols = Rc::new(Columns::new(vec![6, 12], 3));
+    let r = |a: (&'static str, &'static str), b: (&'static str, &'static str)| {
+        row()
+            .h(Sizing::Cells(1))
+            .gap(2)
+            .columns(cols.clone())
+            .children([text(a.1).key(a.0), text(b.1).elide(Elide::Head).key(b.0)])
+    };
+    let mut ui = ui();
+    ui.frame(
+        col().w(Sizing::Cells(16)).children([
+            r(("xa", "ab"), ("xb", "/p")),
+            r(("ya", "abcdef"), ("yb", "/src/project")),
+        ]),
+        FRAME,
+    );
+    let rect = |k: &'static str| ui.rect_of(ui.find_by_key(&Key::from(k)).unwrap());
+    // 16 cells less one gap of 2 is 14 for 6 + 12: the path column gives 4.
+    assert_eq!((rect("xa").x, rect("xa").w), (0, 6));
+    assert_eq!((rect("xb").x, rect("xb").w), (8, 8));
+    assert_eq!(
+        (rect("ya").x, rect("ya").w),
+        (0, 6),
+        "the same column on every row"
+    );
+    assert_eq!((rect("yb").x, rect("yb").w), (8, 8));
+    let painted = format!("{:?}", ui.spec().items);
+    assert!(
+        painted.contains("…project"),
+        "a path keeps its tail: {painted}"
+    );
 }

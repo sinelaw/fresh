@@ -153,9 +153,9 @@ fn migrated_hanging_wrap_indent_no_indent() {
 /// Anti-test: drop the leading-4-space indent on the source text.
 /// Without the source indent the continuation row must NOT inherit
 /// >= 4 leading spaces — proves the positive
-/// `migrated_hanging_wrap_indent_basic` claim is gated on the
-/// source line actually starting with whitespace, not on the
-/// continuation row trivially having spaces from some other source.
+/// > `migrated_hanging_wrap_indent_basic` claim is gated on the
+/// > source line actually starting with whitespace, not on the
+/// > continuation row trivially having spaces from some other source.
 #[test]
 fn anti_hanging_wrap_indent_without_leading_spaces_has_no_hanging_indent() {
     let scenario = LayoutScenario {

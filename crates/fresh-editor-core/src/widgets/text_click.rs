@@ -147,6 +147,7 @@ mod tests {
             owner_key: None,
             row_target: false,
             context_click: false,
+            drag_source: false,
         }
     }
 

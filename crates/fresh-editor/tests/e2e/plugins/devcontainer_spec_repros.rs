@@ -167,10 +167,6 @@ fn run_attach_and_postcreate(
     let max_iters = 200;
     for _ in 0..max_iters {
         harness.tick_and_render().unwrap();
-        if let Some(auth) = harness.editor_mut().take_pending_authority() {
-            harness.editor_mut().set_boot_authority(auth);
-            break;
-        }
         if harness
             .editor()
             .authority()

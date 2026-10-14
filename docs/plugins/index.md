@@ -16,7 +16,10 @@ Bundled plugins:
 
 ## Load Plugin from Buffer
 
-Run and hot-reload plugins directly from an open `.ts` buffer using "Load Plugin from Buffer" from the command palette. The buffer gets LSP support for the Fresh plugin API, making this useful for rapid plugin development.
+Run "Load Plugin from Buffer" from the command palette to load or reload the plugin in the current buffer:
+
+- **Saved file:** loads it from disk, including its imports. If the plugin is already running, it reloads it.
+- **Unsaved buffer:** loads the buffer text. Imports are not supported.
 
 ## Plugin API: `registerHandler()`
 
@@ -89,14 +92,15 @@ Run `pkg: Sync Registry` to fetch the latest package lists.
 Use the CLI to scaffold new packages:
 
 ```bash
-fresh --init           # Interactive mode
-fresh --init plugin    # Create a plugin
-fresh --init theme     # Create a theme
-fresh --init language  # Create a language pack
+fresh --cmd init           # Interactive mode
+fresh --cmd init plugin    # Create a plugin
+fresh --cmd init theme     # Create a theme
+fresh --cmd init language  # Create a language pack
 ```
 
 For detailed guides, see:
 - [Plugin Development](./development/) - Getting started with plugin development
+- [Project Setup](./development/setup.md) - TypeScript types, autocomplete and live reload for a plugin project
 - [Language Packs](./development/language-packs.md) - Creating syntax highlighting and LSP support
 - [Common Patterns](./development/patterns.md) - Reusable plugin patterns and recipes
 - [Utilities Library](./development/utilities.md) - Built-in utility functions for plugins

@@ -31,8 +31,7 @@
 //! The last one is the ledger's finding A: it looks like it needs an anchor
 //! that is a node on one axis and a point on the other, and it does not. The
 //! status bar is migrated and its elements are keyed, so the popup hangs off
-//! *the segment that opened it* — which is what the feature means. Its `x` and
-//! `status_row` parameters exist only because a popup could not name a node.
+//! *the segment that opened it* — which is what the feature means.
 
 use std::rc::Rc;
 
@@ -137,8 +136,7 @@ pub fn placed(position: &PopupPosition, at: CaretAnchor) -> Node<UiMsg> {
             .align_to_anchor(Align::End)
             .fit(Fit::CLAMP),
         // The segment that opened it. See the module docs and the ledger's
-        // finding A; the two numbers in this variant are a rectangle the caller
-        // already had and threw away.
+        // finding A.
         //
         // **Confined to the area left of the editor's scrollbar.** Clamping to
         // the frame puts this popup's right border on the scrollbar's column —
@@ -146,11 +144,8 @@ pub fn placed(position: &PopupPosition, at: CaretAnchor) -> Node<UiMsg> {
         // saying why. Naming the region says the same thing without the
         // arithmetic, and it is the only strategy that reserves anything, so it
         // is the only one that names it.
-        PopupPosition::AboveStatusBarAt { .. } => l
-            .anchor(Anchor::Node(super::status_bar::item_key(
-                super::status_bar::Side::Right,
-                0,
-            )))
+        PopupPosition::AboveStatusBarAt(id) => l
+            .anchor(Anchor::Node(super::status_bar::clickable_key(*id)))
             .place(Place::Above)
             .within(clear_of_scrollbar_key())
             .fit(Fit::FLIP.or(Fit::CLAMP)),
@@ -255,6 +250,9 @@ pub struct Body {
     pub dismissible: bool,
     /// The hint appended to the selected row of a list.
     pub selected_hint: Option<String>,
+    /// The popup's page handle: a list records the window its layout gave
+    /// it here.
+    pub pager: Rc<fresh_ui::behavior::Pager>,
 }
 
 /// The region a popup may occupy when it must leave the editor's vertical
@@ -272,6 +270,17 @@ pub fn clear_of_scrollbar_key() -> Key {
 /// The key a placed popup carries, by its index in paint order.
 pub fn popup_key(i: usize) -> Key {
     Key::Pair("popup".into(), i as u64)
+}
+
+/// The key a placed popup's *content slot* carries — inside the frame, past
+/// the description, which is the rectangle the rows are laid out in.
+///
+/// The editor used to derive this rectangle from the popup's outer rect by
+/// hand, in two copy-pasted blocks: add one for a border, add the
+/// description's height, take two off the width. It is a node, so it is a
+/// read. See [`inner_rects_of`].
+pub fn popup_content_key(i: usize) -> Key {
+    Key::Pair("popup_content".into(), i as u64)
 }
 
 /// The key of a popup's keyboard seam — the focusable that holds focus
@@ -310,7 +319,7 @@ pub fn placed_layers(ps: &[Placed]) -> Vec<Node<UiMsg>> {
                     .dismiss(fresh_ui::Dismiss::OUTSIDE_POINTER.passing_through())
                     .on_dismiss(|_| UiMsg::Ui(UiFact::PopupDismissTransient));
             }
-            let content = body(&p.body)
+            let content = body(&p.body, i)
                 .w(Sizing::Cells(p.size.0))
                 .h(Sizing::Cells(p.size.1));
             match &p.keys {
@@ -473,17 +482,22 @@ fn keyboard(l: Node<UiMsg>, content: Node<UiMsg>, k: &Keys) -> Node<UiMsg> {
 /// `Paragraph` put `[×]` over it three cells from the right; both are one row
 /// stacked over the frame, and the row says where each sits instead of two
 /// widgets each computing an `x`.
-pub fn body(b: &Body) -> Node<UiMsg> {
+pub fn body(b: &Body, i: usize) -> Node<UiMsg> {
     // **The content fills the popup, and says so.** It is a flex child under
     // the description, and flex divides what is *left* — so a column that
     // asked only for its natural height gave it nothing to divide (rule L15)
     // and the popup came out empty inside its own frame.
+    //
+    // It carries [`popup_content_key`], because where it lands is the answer
+    // the web's projection wants and layout is what settles it.
     let inner = col().h(Sizing::Flex(1)).children([
         match &b.description {
             Some(d) => description(d),
             None => col().h(Sizing::Cells(0)),
         },
-        content(&b.content, b.selected_hint.as_deref()).flex(1),
+        content(&b.content, b.selected_hint.as_deref(), &b.pager)
+            .flex(1)
+            .key(popup_content_key(i)),
     ]);
     // Absorbing *inside* the frame, not around the whole thing: the stacked
     // paths are tried in order and the first that claims ends it, so an absorb
@@ -600,6 +614,49 @@ pub fn rects_of(ui: &fresh_ui::Ui<UiMsg>, n: usize) -> Vec<ratatui::layout::Rect
         .collect()
 }
 
+/// Where the tree put each popup's *content slot*, in declaration order.
+///
+/// The partner of [`rects_of`] for the rectangle inside the frame and below
+/// the description — what the rows are laid out in, and what the web's
+/// projection reports as the popup's content rect. Same convention: a popup
+/// the tree did not place reports an empty rectangle rather than being absent.
+pub fn inner_rects_of(ui: &fresh_ui::Ui<UiMsg>, n: usize) -> Vec<ratatui::layout::Rect> {
+    (0..n)
+        .map(|i| {
+            let r = ui
+                .find_by_key(&popup_content_key(i))
+                .map(|id| ui.rect_of(id))
+                .unwrap_or_default();
+            ratatui::layout::Rect {
+                x: r.x.max(0) as u16,
+                y: r.y.max(0) as u16,
+                width: r.w,
+                height: r.h,
+            }
+        })
+        .collect()
+}
+
+/// How far each popup's content has scrolled, in declaration order.
+///
+/// **A text popup's window is the tree's, not the popup's.** `Text` and
+/// `Markdown` are drawn through a `viewport().scrollbar()` and
+/// [`popup_content_key`] names *that* node, so the framework owns the offset
+/// and moves it — `Popup::scroll_offset` is never written for those two and
+/// reads 0 for the popup's whole life. A `List` is the other way round: its
+/// content slot is a plain column, the popup owns the window, and the
+/// selection moves it. So this answers `None` there, and the caller keeps
+/// reading the popup's own field.
+pub fn scroll_offsets_of(ui: &fresh_ui::Ui<UiMsg>, n: usize) -> Vec<Option<usize>> {
+    (0..n)
+        .map(|i| {
+            ui.find_by_key(&popup_content_key(i))
+                .and_then(|id| ui.window(id))
+                .map(|w| w.y.max(0) as usize)
+        })
+        .collect()
+}
+
 /// A popup's frame: its ring and its ground.
 pub fn frame(bordered: bool, body: Node<UiMsg>) -> Node<UiMsg> {
     let n = col()
@@ -624,7 +681,7 @@ fn description(text: &str) -> Node<UiMsg> {
         // The `- 2` the painter wrapped to was padding it then had to leave
         // room for by hand; `pad` states it and the wrap follows the width it
         // is given.
-        fresh_ui::text(text.to_string())
+        fresh_ui::text(text)
             .wrap_hanging()
             .theme(pair("ui.help_separator_fg", "ui.popup_bg")),
         row().h(Sizing::Cells(1)),
@@ -651,14 +708,14 @@ fn list_row(item: &PopupListItem, row_theme: &str, hint: Option<&str>) -> Node<U
         .unwrap_or_else(|| row_theme.to_string());
     let mut cells: Vec<Node<UiMsg>> = Vec::new();
     if let Some(icon) = &item.icon {
-        cells.push(fresh_ui::text(format!("{icon} ")).theme(row_theme.to_string()));
+        cells.push(fresh_ui::text(format!("{icon} ")).theme(row_theme));
     }
     // Leading whitespace is kept out of the underline: an indented row is a
     // nested one, and underlining its indent makes the link look ragged.
     let trimmed = item.text.trim_start();
     let indent = item.text.len() - trimmed.len();
     if indent > 0 {
-        cells.push(fresh_ui::text(&item.text[..indent]).theme(row_theme.to_string()));
+        cells.push(fresh_ui::text(&item.text[..indent]).theme(row_theme));
     }
     // A row with a `data` payload acts on click, so it reads as a link; a
     // disabled one recedes and takes the muted foreground with it.
@@ -698,7 +755,11 @@ fn list_row(item: &PopupListItem, row_theme: &str, hint: Option<&str>) -> Node<U
 /// scrollbar was needed by re-wrapping the content at a width that assumed one.
 /// A viewport owns the window, and emits the bar exactly when the content
 /// overflows.
-pub fn content(c: &PopupContent, selected_hint: Option<&str>) -> Node<UiMsg> {
+pub fn content(
+    c: &PopupContent,
+    selected_hint: Option<&str>,
+    pager: &Rc<fresh_ui::behavior::Pager>,
+) -> Node<UiMsg> {
     match c {
         // A row per line, not one text node carrying newlines: a viewport
         // measures its child against the window, so a single node reports the
@@ -725,6 +786,10 @@ pub fn content(c: &PopupContent, selected_hint: Option<&str>) -> Node<UiMsg> {
         .scrollbar(),
         PopupContent::List { items, selected } => {
             let rows: Rc<Vec<PopupListItem>> = Rc::new(items.clone());
+            debug_assert!(
+                fresh_core::api::first_duplicate_id(rows.iter().map(|r| r.id.as_str())).is_none(),
+                "popup list ids must be unique: rows are keyed by them"
+            );
             let for_row = rows.clone();
             let sel = *selected;
             let hint = selected_hint.map(str::to_string);
@@ -741,12 +806,18 @@ pub fn content(c: &PopupContent, selected_hint: Option<&str>) -> Node<UiMsg> {
             // selection is never muted.
             let list = fresh_ui::widgets::List::windowed_stateful(
                 rows.len(),
-                |i| Key::Pair("popup_item".into(), i as u64),
+                // By what the item is (`PopupListItem::id`), never by where
+                // it is: a completion list re-filters under every keystroke,
+                // and its rows must move rather than be rewritten.
+                {
+                    let rows = rows.clone();
+                    move |i| Key::Str(format!("popup_item:{}", rows[i].id).into())
+                },
                 move |i, st| match for_row.get(i) {
                     Some(it) => list_row(
                         it,
                         &row_theme(i == sel, st == RowState::Hover),
-                        (i == sel).then(|| hint.as_deref()).flatten(),
+                        (i == sel).then_some(hint.as_deref()).flatten(),
                     ),
                     None => row().h(Sizing::Cells(1)),
                 },
@@ -760,7 +831,8 @@ pub fn content(c: &PopupContent, selected_hint: Option<&str>) -> Node<UiMsg> {
             // somewhere for Tab to land, and Tab accepts a completion.
             .focusable(false)
             .row_theme(move |i, st| row_theme(i == sel, st == RowState::Hover))
-            .on_select(|i| UiMsg::Ui(UiFact::PopupSelect(i)));
+            .on_select(|i| UiMsg::Ui(UiFact::PopupSelect(i)))
+            .pager(pager.clone());
             col().child(fresh_ui::ComponentExt::node(list))
         }
     }
@@ -936,7 +1008,8 @@ mod tests {
     #[test]
     fn the_cursor_relative_placements() {
         // caret, size, expected origin.
-        let at_cursor: &[((u16, u16), (u16, u16), (u16, u16))] = &[
+        type Case = ((u16, u16), (u16, u16), (u16, u16));
+        let at_cursor: &[Case] = &[
             ((0, 0), (20, 5), (0, 0)),
             ((1, 1), (20, 5), (1, 1)),
             // Wider than the frame: pinned to the left edge, not hanging off
@@ -959,7 +1032,7 @@ mod tests {
             );
         }
 
-        let below: &[((u16, u16), (u16, u16), (u16, u16))] = &[
+        let below: &[Case] = &[
             // The row *after* the caret's, which is what makes the anchor a
             // cell rather than a point.
             ((0, 0), (20, 5), (0, 1)),
@@ -1049,6 +1122,7 @@ mod tests {
     #[test]
     fn a_disabled_row_is_muted_and_a_clickable_one_is_underlined() {
         let item = |text: &str, data: Option<&str>, disabled: bool| PopupListItem {
+            id: text.into(),
             text: text.into(),
             detail: None,
             icon: None,
@@ -1064,7 +1138,9 @@ mod tests {
             selected: 0,
         };
         let mut ui: Ui<UiMsg> = Ui::new();
-        let spec = ui.frame(content(&c, None), Size::new(40, 6)).clone();
+        let spec = ui
+            .frame(content(&c, None, &Default::default()), Size::new(40, 6))
+            .clone();
         let theme_of = |needle: &str| {
             spec.items
                 .iter()
@@ -1101,6 +1177,7 @@ mod tests {
     #[test]
     fn a_hovered_row_carries_the_hover_ink_through_its_cells() {
         let item = |text: &str| PopupListItem {
+            id: text.into(),
             text: text.into(),
             detail: None,
             icon: None,
@@ -1115,16 +1192,18 @@ mod tests {
         };
         let mut ui: Ui<UiMsg> = Ui::new();
         let size = Size::new(40, 6);
-        ui.frame(content(&c, None), size);
+        ui.frame(content(&c, None, &Default::default()), size);
         let at = ui.rect_of(
-            ui.find_by_key(&Key::Pair("popup_item".into(), 1))
+            ui.find_by_key(&Key::Str("popup_item:second".into()))
                 .expect("row 1"),
         );
         ui.dispatch(fresh_ui::Input::Move {
             pos: fresh_ui::Point::new(at.x, at.y),
             mods: fresh_ui::Mods::NONE,
         });
-        let spec = ui.frame(content(&c, None), size).clone();
+        let spec = ui
+            .frame(content(&c, None, &Default::default()), size)
+            .clone();
         let theme_of = |needle: &str| {
             spec.items
                 .iter()
@@ -1150,6 +1229,7 @@ mod tests {
         let c = PopupContent::List {
             items: (0..5)
                 .map(|i| PopupListItem {
+                    id: format!("item{i}"),
                     text: format!("item {i}"),
                     detail: None,
                     icon: None,
@@ -1160,9 +1240,9 @@ mod tests {
             selected: 0,
         };
         let mut ui: Ui<UiMsg> = Ui::new();
-        ui.frame(content(&c, None), Size::new(40, 6));
+        ui.frame(content(&c, None, &Default::default()), Size::new(40, 6));
         let r = ui.rect_of(
-            ui.find_by_key(&Key::Pair("popup_item".into(), 2))
+            ui.find_by_key(&Key::Str("popup_item:item2".into()))
                 .expect("row 2"),
         );
         let at = fresh_ui::Point::new(r.x + 1, r.y);
@@ -1198,7 +1278,9 @@ mod tests {
         let bar = |n: usize| {
             let c = PopupContent::Text((0..n).map(|i| format!("line {i}")).collect());
             let mut ui: Ui<UiMsg> = Ui::new();
-            let spec = ui.frame(content(&c, None), Size::new(30, 5)).clone();
+            let spec = ui
+                .frame(content(&c, None, &Default::default()), Size::new(30, 5))
+                .clone();
             spec.items
                 .iter()
                 .any(|i| matches!(i.draw, fresh_ui::Draw::Scrollbar { .. }))
@@ -1341,7 +1423,7 @@ mod tests {
         bound: Vec<(KeyPress, crate::input::keybindings::Action)>,
     ) -> Ui<UiMsg> {
         let items: Vec<PopupListItem> = (0..4)
-            .map(|i| PopupListItem::new(format!("item {i}")))
+            .map(|i| PopupListItem::new(format!("item{i}"), format!("item {i}")))
             .collect();
         let mut ui: Ui<UiMsg> = Ui::new();
         ui.frame(
@@ -1357,6 +1439,7 @@ mod tests {
                         bordered: true,
                         dismissible: true,
                         selected_hint: None,
+                        pager: Default::default(),
                     },
                     transient: false,
                     keys: Some(Keys { kind, bound }),
@@ -1366,6 +1449,54 @@ mod tests {
             Size::new(FRAME.0, FRAME.1),
         );
         ui
+    }
+
+    /// **A list popup pages by the rows it was drawn with.** It asks for
+    /// fifteen rows, but a terminal eight tall draws it in eight, six inside
+    /// the ring. A page was `max_height` less the ring, thirteen rows, so
+    /// PageDown skipped seven the user never saw.
+    #[test]
+    fn a_list_popup_pages_by_the_rows_it_was_drawn_with() {
+        let theme = crate::view::theme::Theme::from_json(r#"{"name":"test"}"#).expect("defaults");
+        let mut popup = crate::view::popup::Popup::text(Vec::new(), &theme);
+        popup.content = PopupContent::List {
+            items: (0..30)
+                .map(|i| PopupListItem::new(format!("item{i}"), format!("item {i}")))
+                .collect(),
+            selected: 0,
+        };
+        let area = ratatui::layout::Rect::new(0, 0, 40, 8);
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(
+            frame_tree(Frame {
+                popups: vec![Placed {
+                    position: PopupPosition::Centered,
+                    at: CaretAnchor::Caret,
+                    size: popup.asked_size(area),
+                    body: Body {
+                        title: None,
+                        description: None,
+                        content: popup.content.clone(),
+                        bordered: true,
+                        dismissible: true,
+                        selected_hint: None,
+                        pager: popup.pager.clone(),
+                    },
+                    transient: false,
+                    keys: None,
+                }],
+                ..Frame::default()
+            }),
+            Size::new(area.width, area.height),
+        );
+        popup.page_down();
+        assert_eq!(
+            popup.selected_index(),
+            Some(6),
+            "a page is the six rows drawn"
+        );
+        popup.page_up();
+        assert_eq!(popup.selected_index(), Some(0));
     }
 
     fn press(ui: &mut Ui<UiMsg>, code: KeyCode, mods: Mods) -> fresh_ui::Dispatch<UiMsg> {

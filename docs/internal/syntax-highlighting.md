@@ -39,12 +39,16 @@ rule; the older highlighter-preference API has been removed. **[impl]**
 - **Bundled tree-sitter set** (the `bundled-languages` feature backing the
   editor's `tree-sitter` feature): **JavaScript, TypeScript, JSON (also serving
   JSONC), Templ, and Go** (Go only because Templ's grammar extends it). Reasons:
-  - **TypeScript**: syntect ships no TS grammar → tree-sitter only.
-  - **JavaScript**: syntect's JS grammar leaks template-literal state past the
-    closing backtick and paints the rest of the file as a string; JS is routed
-    through tree-sitter by *skipping* the syntect "JavaScript" entry when
-    building the catalog. (syntect's JS grammar is still reachable by name for
-    markdown-popup code highlighting.)
+  - **JavaScript / TypeScript**: kept for AST indentation only. Highlighting
+    uses `grammars/typescript.sublime-syntax`, written for syntect's cost
+    model (few rules per context, ambiguity settled by pushed contexts rather
+    than long lookaheads). build.rs derives `typescriptreact` (a dialect of the
+    TypeScript catalog entry, picked for `.tsx`) and `javascript` from it by
+    swapping `<T>` casts for JSX; `javascript` shadows syntect's bundled JS
+    grammar, which leaked template-literal state past the closing backtick.
+    It parses about 4x faster than the VS Code (TypeScript-TmLanguage) grammar
+    and agrees with that grammar's highlight categories on 99% of the bytes
+    of the bundled plugins' TypeScript.
   - **JSONC**: no JSONC tree-sitter crate exists; the JSON grammar recovers past
     comments/trailing commas well enough.
   - **Templ**: Go + components/HTML/CSS.
@@ -63,8 +67,7 @@ The oxc-based parser crate (`oxc_parser`, `oxc_allocator`, `oxc_span`,
 is the plugin toolchain: TypeScript→JS transpile, `.d.ts` emission, plugin
 dependency extraction + topological load ordering, and ES-module bundling so
 plugin source (incl. config-as-code `init.ts`) can run in the QuickJS plugin
-runtime. JS/TS *buffers* are highlighted by the tree-sitter grammars in the
-languages crate. The only editor-side caller is a CLI plugin-check helper; the
+runtime. JS/TS *buffers* are highlighted by the TextMate grammars above. The only editor-side caller is a CLI plugin-check helper; the
 real consumer is the plugin runtime. The oxc deps in the editor crate are pulled
 by the `plugins` feature to syntax-check `init.ts`, not for highlighting.
 **[impl]** **[flag]**: the oxc deps may *look* highlighting-related but are not.
@@ -92,6 +95,42 @@ startup. A fast path uses the dump directly when there are no user / language-
 pack / bundle / plugin grammars; otherwise those layers are added on and the set
 is rebuilt. Grammar provenance is tracked (user, language pack, bundle, plugin).
 **[impl]**
+
+Most embedded grammars fill a gap syntect has no grammar for. **Rust is the
+exception: it replaces one.** syntect bundles a years-old Rust grammar that read
+an unspaced `<` before a string literal as the start of a generic argument list
+and then *consumed* the string's opening quote recovering from it, inverting
+quote parity for the rest of the buffer (#3325). Fresh vendors current
+sublimehq/Packages instead, at a pinned commit, in
+`src/grammars/rust.sublime-syntax` (MIT — the package ships its own
+`Rust/LICENSE.txt`, vendored alongside as `rust.sublime-syntax.LICENSE.txt`,
+which MIT requires us to keep). Measured against upstream's own syntax test
+suite (`Rust/tests`, 12117 assertions), syntect's bundled grammar fails 4904 of
+them; the vendored one fails 5. **[impl]**
+
+Because both grammars live in the set, the catalog keeps only the **last**
+syntax of any given name, matching syntect's own lookups, which scan in reverse
+and so already resolve a name or extension to the last definition. That is what
+makes an embedded grammar shadow a syntect default rather than double up in the
+language picker.
+
+Two syntect-versus-Sublime differences are worth knowing before refreshing this
+grammar, because neither shows up as a load error — syntect accepts unknown keys
+silently and compiles regexes lazily:
+
+- **Empty leading alternatives.** `prelude_types` and `std_traits` upstream open
+  their alternation with a bare `|`, so the interpolated `\b(?x:|Box|…)\b` has an
+  empty first branch. Sublime tolerates it; under the Oniguruma build syntect
+  drives it matches zero-width at any word boundary, so the rule consumes
+  nothing and the next one claims the identifier — putting every prelude type on
+  `storage.type` (which Fresh maps to Keyword) instead of `support.type` (Type).
+  Our only local change deletes those two `|`, marked `# FRESH:` in the file.
+- **`embed` plus `pop` on one rule.** syntect's parser checks `pop` first and
+  drops the embed, so a cargo-script TOML frontmatter block highlights as Rust
+  rather than TOML. This is the remaining 5 test failures, and degrades quietly.
+
+When refreshing, re-run upstream's `Rust/tests` through a syntect-backed runner
+(syntect ships `examples/syntest.rs`) rather than trusting a clean load.
 
 ### `DetectedLanguage` — the per-buffer source of truth
 

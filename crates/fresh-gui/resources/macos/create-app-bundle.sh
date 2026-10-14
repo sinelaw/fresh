@@ -36,13 +36,25 @@ mkdir -p "$RESOURCES_OUT"
 cp "$BINARY" "${MACOS_DIR}/fresh"
 chmod +x "${MACOS_DIR}/fresh"
 
-# Create wrapper script that launches with --gui flag
-cat > "${MACOS_DIR}/Fresh" << 'WRAPPER'
+# Create wrapper script that launches with --gui flag. Info.plist names it
+# as CFBundleExecutable. Its name must not be `Fresh` or any other case
+# variant of `fresh`: macOS filesystems are case-insensitive by default, so
+# writing it would overwrite the binary copied above (issue #3322).
+LAUNCHER="fresh-gui-launcher"
+cat > "${MACOS_DIR}/${LAUNCHER}" << 'WRAPPER'
 #!/bin/bash
 DIR="$(cd "$(dirname "$0")" && pwd)"
 exec "$DIR/fresh" --gui "$@"
 WRAPPER
-chmod +x "${MACOS_DIR}/Fresh"
+chmod +x "${MACOS_DIR}/${LAUNCHER}"
+
+# The launcher must not have replaced the binary. If a future rename brings
+# back a case collision, fail the bundle build here rather than ship a
+# launcher that execs itself.
+if [ "$(head -c 2 "${MACOS_DIR}/fresh")" = '#!' ]; then
+    echo "Error: ${MACOS_DIR}/fresh was overwritten by the launcher script" >&2
+    exit 1
+fi
 
 # Resolve the workspace version (env var wins so CI can override).
 # Falls back to parsing the [workspace.package] block in the root Cargo.toml.
@@ -66,9 +78,8 @@ if [ -z "$VERSION" ]; then
 fi
 echo "Bundling version: $VERSION"
 
-# Copy Info.plist with version + executable-name substitutions in one pass
+# Copy Info.plist with the version substituted
 sed -e "s|__VERSION__|${VERSION}|g" \
-    -e 's|<string>fresh</string>|<string>Fresh</string>|' \
     "${RESOURCES_DIR}/Info.plist" > "${CONTENTS_DIR}/Info.plist"
 
 # Copy icon — prefer the pre-built ICNS from docs/icons/macos, fall back

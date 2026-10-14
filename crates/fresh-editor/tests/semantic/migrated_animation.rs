@@ -84,6 +84,7 @@
 //! the `plugins` feature is enabled, matching the e2e routing.
 
 use crate::common::harness::EditorTestHarness;
+#[cfg(feature = "plugins")]
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;

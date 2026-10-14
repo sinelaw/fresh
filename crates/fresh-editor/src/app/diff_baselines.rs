@@ -86,6 +86,11 @@ impl BaselineContent {
 /// One registered baseline.
 pub struct BaselineEntry {
     pub buffer_id: BufferId,
+    /// The window that holds `buffer_id`, recorded when the baseline is
+    /// registered. A buffer belongs to one window, so every load — the first
+    /// and each refresh — decodes with that window's buffer and reads through
+    /// that window's authority, whichever window is active when it runs.
+    pub window_id: fresh_core::WindowId,
     pub spec: BaselineSpec,
     /// Bumped every time content is (re)loaded.
     pub generation: u64,

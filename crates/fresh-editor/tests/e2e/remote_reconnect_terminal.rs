@@ -77,7 +77,7 @@ fn reconnect_respawns_a_dead_embedded_terminal_in_place() {
     );
 
     // Reconnect's in-place respawn.
-    window.respawn_terminals_through_authority();
+    window.respawn_terminals_through_authority(false);
 
     // The buffer is bound to a *new, live* terminal.
     let new_id = window
@@ -138,7 +138,7 @@ fn respawn_leaves_a_live_terminal_untouched() {
         "terminal is live before respawn"
     );
 
-    window.respawn_terminals_through_authority();
+    window.respawn_terminals_through_authority(false);
 
     assert_eq!(
         window.get_terminal_id(buffer_id),

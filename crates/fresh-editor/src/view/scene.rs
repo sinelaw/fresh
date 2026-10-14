@@ -298,13 +298,19 @@ pub struct TabBarView {
 
 // ─────────────────────────── status bar ───────────────────────────
 
+/// One status-bar element as the web renders it.
 #[derive(Debug, Clone, Serialize)]
 pub struct StatusSegment {
+    /// Semantic kind: "lsp" | "warning" | "language" | "encoding" |
+    /// "lineEnding" | "remote" | "trust" | "message" | "terminalRestart" |
+    /// "plugin" | "text".
     pub name: &'static str,
+    /// Plugin token key for `name == "plugin"`.
     pub key: Option<String>,
     pub text: String,
     pub x: u16,
     pub w: u16,
+    /// "left" or "right": the side the element was tiled on.
     pub side: &'static str,
 }
 
@@ -449,19 +455,14 @@ impl Editor {
         // Each keyed element (indicators + text) is a segment, and `side` is
         // the description's own left/right tiling carried on the segment, not
         // a midpoint guess from `x`. No cell scraping either way.
-        let segments: Vec<StatusSegment> = self
-            .shell_status_segments()
-            .into_iter()
-            .filter(|s| !s.text.trim().is_empty())
-            .map(|s| StatusSegment {
-                name: s.name,
-                key: s.key,
-                text: s.text.trim().to_string(),
-                x: s.x,
-                w: s.w,
-                side: s.side,
-            })
-            .collect();
+        let segments = match (self.shell_ui.as_ref(), self.shell_frame_status_bar.as_ref()) {
+            (Some(ui), Some(bar)) => {
+                let f = self.active_chrome().last_frame;
+                let size = ratatui::layout::Rect::new(0, 0, f.width, f.height);
+                crate::view::shell::status_bar::segments(ui, bar, size)
+            }
+            _ => Vec::new(),
+        };
 
         Some(StatusView {
             rect: RectView {
@@ -478,9 +479,34 @@ impl Editor {
     /// pipeline's suggestion-popup geometry. `None` unless a picker list (or a
     /// floating overlay) is showing. Single derivation shared by both frontends.
     pub fn palette_view(&self) -> Option<PaletteView> {
-        let chrome = self.active_chrome();
-        let sugg_outer = chrome.suggestions_outer_area;
-        let sugg_area = chrome.suggestions_area;
+        // The popup's own two rectangles, read off the tree that placed them
+        // — like the card's bands below, and unlike the pair of `ChromeLayout`
+        // fields this replaces, which were a copy of exactly this read.
+        let to_rect = |r: fresh_ui::Rect| ratatui::layout::Rect {
+            x: r.x.max(0) as u16,
+            y: r.y.max(0) as u16,
+            width: r.w,
+            height: r.h,
+        };
+        let (sugg_outer, sugg_list) = self
+            .shell_ui
+            .as_ref()
+            .map(|ui| {
+                let spec = ui.spec();
+                (
+                    crate::view::shell::prompt::suggestions_rect(spec).map(to_rect),
+                    crate::view::shell::prompt::suggestions_list_rect(spec).map(to_rect),
+                )
+            })
+            .unwrap_or((None, None));
+        // The list's window, read off the tree that holds it.
+        let sugg_window = self.shell_ui.as_ref().and_then(|ui| {
+            let spec = ui.spec();
+            let list = crate::view::shell::prompt::suggestions_list_rect(spec)?;
+            let (first, visible) = crate::view::shell::prompt::suggestions_window(spec)
+                .unwrap_or((0, list.h as usize));
+            Some((first, visible.max(list.h as usize)))
+        });
         let p = self.active_window().prompt.as_ref()?;
         // The overlay card's bands, read off the tree that placed them.
         let card_band = |r: crate::view::shell::overlay_prompt::CardRegion| {
@@ -506,11 +532,8 @@ impl Editor {
         // it the web shows no prompt at all while the editor waits for input.
         // Such prompts have no native suggestion list; the frontend renders
         // just the input bar (null `list_rect`/`outer_rect` below).
-        let (scroll_start, visible, total) = sugg_area.map(|(_, s, v, t)| (s, v, t)).unwrap_or((
-            p.scroll_offset,
-            p.suggestions.len(),
-            p.suggestions.len(),
-        ));
+        let total = p.suggestions.len();
+        let (scroll_start, visible) = sugg_window.unwrap_or((0, p.suggestions.len()));
         // Search-option toggles: the row's own content — the same values the
         // TUI describes its toggles with — plus the cell spans the shell's
         // layout assigned them, READ BACK off the laid-out tree rather than
@@ -547,15 +570,12 @@ impl Editor {
             overlay: p.overlay,
             title: p.title.iter().map(|t| t.text.as_str()).collect(),
             status: p.status.clone(),
-            selected: p.selected_suggestion,
+            selected: p.selected_suggestion(),
             scroll_start,
             visible_count: visible,
             total,
             outer_rect: sugg_outer.map(RectView::from),
-            list_rect: sugg_area
-                .map(|(r, _, _, _)| r)
-                .or(prompt_results)
-                .map(RectView::from),
+            list_rect: sugg_list.or(prompt_results).map(RectView::from),
             // The preview pane's content: the band names the pane inside its
             // rule, so this is the rectangle as the tree placed it. Only
             // meaningful for overlay prompts.
@@ -578,7 +598,7 @@ impl Editor {
                 .toolbar
                 .as_ref()
                 .and_then(|k| self.widget_registry.get(k))
-                .map(|panel| panel.spec.clone()),
+                .map(|panel| fresh_core::api::WidgetSpec::clone(&panel.spec)),
             toolbar_focus: p
                 .toolbar
                 .as_ref()
@@ -600,6 +620,59 @@ pub struct PopupItemView {
     pub disabled: bool,
 }
 
+/// One run of like-styled text inside a popup line. Markdown popups (LSP
+/// hover, the theme inspector) carry syntax-highlighted code blocks and
+/// emphasis, and the terminal draws every one of those runs — so the
+/// projection keeps them instead of flattening the line to a `String`, and
+/// both renderers ink the same thing. The field names are the cell runs'
+/// (`t`/`fg`/`bg`/`b`/`i`/`u`/`r`, see `webui::cells_json`), so a frontend
+/// paints a popup run exactly the way it paints a buffer run.
+#[derive(Debug, Clone, Serialize)]
+pub struct PopupSpanView {
+    #[serde(rename = "t")]
+    pub text: String,
+    #[serde(rename = "fg", skip_serializing_if = "Option::is_none")]
+    pub fg: Option<String>,
+    #[serde(rename = "bg", skip_serializing_if = "Option::is_none")]
+    pub bg: Option<String>,
+    #[serde(rename = "b", skip_serializing_if = "std::ops::Not::not")]
+    pub bold: bool,
+    #[serde(rename = "i", skip_serializing_if = "std::ops::Not::not")]
+    pub italic: bool,
+    #[serde(rename = "u", skip_serializing_if = "std::ops::Not::not")]
+    pub underline: bool,
+    #[serde(rename = "r", skip_serializing_if = "std::ops::Not::not")]
+    pub reverse: bool,
+}
+
+impl PopupSpanView {
+    /// A run carrying no styling of its own — what a plain-text popup line is.
+    fn plain(text: String) -> Self {
+        Self {
+            text,
+            fg: None,
+            bg: None,
+            bold: false,
+            italic: false,
+            underline: false,
+            reverse: false,
+        }
+    }
+
+    fn styled(text: String, style: ratatui::style::Style) -> Self {
+        let m = style.add_modifier;
+        Self {
+            text,
+            fg: style.fg.and_then(css_color),
+            bg: style.bg.and_then(css_color),
+            bold: m.contains(ratatui::style::Modifier::BOLD),
+            italic: m.contains(ratatui::style::Modifier::ITALIC),
+            underline: m.contains(ratatui::style::Modifier::UNDERLINED),
+            reverse: m.contains(ratatui::style::Modifier::REVERSED),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum PopupContentView {
@@ -608,7 +681,9 @@ pub enum PopupContentView {
         selected: usize,
     },
     Lines {
-        lines: Vec<String>,
+        /// One entry per line, each a list of styled runs. A plain-text popup
+        /// line is a single unstyled run.
+        lines: Vec<Vec<PopupSpanView>>,
     },
 }
 
@@ -656,12 +731,20 @@ fn project_popup(
             selected: *selected,
         },
         PopupContent::Text(lines) => PopupContentView::Lines {
-            lines: lines.clone(),
+            lines: lines
+                .iter()
+                .map(|l| vec![PopupSpanView::plain(l.clone())])
+                .collect(),
         },
         PopupContent::Markdown(styled) => PopupContentView::Lines {
             lines: styled
                 .iter()
-                .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
+                .map(|l| {
+                    l.spans
+                        .iter()
+                        .map(|s| PopupSpanView::styled(s.text.clone(), s.style))
+                        .collect()
+                })
                 .collect(),
         },
     };
@@ -679,21 +762,57 @@ fn project_popup(
 impl Editor {
     /// All visible popups across the per-buffer and global stacks, projected
     /// semantically. Single derivation shared by the web frontend (native HTML)
-    /// and available to the TUI compositor; geometry comes from the pipeline's
-    /// popup-area caches so clicks/scroll route through the existing hit-tester.
+    /// and available to the TUI compositor.
+    ///
+    /// **Geometry is the tree's, by key.** This read two caches that `render`
+    /// filled — `ChromeLayout::popup_areas` and `global_popup_areas`, the last
+    /// two members of the paint-recorded roster — each of which took the outer
+    /// rect off this very tree and then re-derived the content rect from it by
+    /// hand, in two copy-pasted blocks of border arithmetic. Both are keyed
+    /// nodes (`popup::rects_of`, `popup::inner_rects_of`), the popups' order in
+    /// the description is `Editor::popup_counts`' — the buffer's stack, then
+    /// the top of the global one.
+    ///
+    /// **The scroll offset is the tree's too, where the tree owns it.** It was
+    /// read off the popup for every kind, which is right only for a `List`:
+    /// there the content slot is a plain column and the selection moves
+    /// `Popup::scroll_offset`. `Text` and `Markdown` are drawn through a
+    /// viewport that owns its own window, so that field is never written for
+    /// them and reads 0 for the popup's whole life — publishing it told the
+    /// frontend a hover was at the top no matter where the reader had
+    /// scrolled, and clipped off everything past the first screenful. The
+    /// window the viewport actually has is `popup::scroll_offsets_of`, read
+    /// by key the way `file_explorer::window_rows` reads the explorer's.
     pub fn popups_view(&self) -> Vec<ScenePopup> {
-        let chrome = self.active_chrome();
+        let (buffer_n, total) = self.popup_counts();
+        let outers = self.popup_rects();
+        let inners = self.popup_content_rects();
+        let scrolls = self.popup_scroll_offsets();
+        let at = |i: usize| -> (ratatui::layout::Rect, ratatui::layout::Rect) {
+            (
+                outers.get(i).copied().unwrap_or_default(),
+                inners.get(i).copied().unwrap_or_default(),
+            )
+        };
+        // The viewport's window when the tree owns it, the popup's field when
+        // it does not (a list, whose selection moves it).
+        let scroll_at = |i: usize, p: &crate::view::popup::Popup| -> usize {
+            scrolls.get(i).copied().flatten().unwrap_or(p.scroll_offset)
+        };
         let mut out = Vec::new();
-        let locals = self.active_state().popups.all();
-        for (idx, outer, inner, scroll, _n, _sb, _t) in &chrome.popup_areas {
-            if let Some(p) = locals.get(*idx) {
-                out.push(project_popup(p, *outer, *inner, *scroll));
+        for (idx, p) in self.active_state().popups.all().iter().enumerate() {
+            if idx >= buffer_n {
+                break;
             }
+            let (outer, inner) = at(idx);
+            out.push(project_popup(p, outer, inner, scroll_at(idx, p)));
         }
-        let globals = self.global_popups.all();
-        for (idx, outer, inner, scroll, _n) in &chrome.global_popup_areas {
-            if let Some(p) = globals.get(*idx) {
-                out.push(project_popup(p, *outer, *inner, *scroll));
+        // The description carries at most the top of the global stack, after
+        // the buffer's — so it is the last entry, and only when there is one.
+        if total > buffer_n {
+            if let Some(p) = self.global_popups.top() {
+                let (outer, inner) = at(buffer_n);
+                out.push(project_popup(p, outer, inner, scroll_at(buffer_n, p)));
             }
         }
         out
@@ -715,6 +834,14 @@ pub struct FileRow {
 #[serde(rename_all = "camelCase")]
 pub struct FileExplorerView {
     pub rect: RectView,
+    /// Where the tree put the width grip — the one column a drag resizes the
+    /// panel by. **Projected rather than derived**: it is the column's *inner*
+    /// edge, which is the right wall only while the explorer is on the left
+    /// (`sidebar::grip_strip` puts it on the left wall otherwise), and it
+    /// spans neither the header row nor the bottom border. A frontend that
+    /// recomputed that from `rect` had the arithmetic wrong on both counts.
+    /// `None` when the tree has not placed it.
+    pub grip_rect: Option<RectView>,
     pub title: String,
     pub scroll_offset: usize,
     pub viewport_height: usize,
@@ -725,12 +852,13 @@ pub struct FileExplorerView {
 }
 
 impl Editor {
-    /// Semantic file-explorer sidebar: the flattened visible tree rows (the same
-    /// `get_display_nodes()` the TUI renderer uses) plus selection/scroll and the
+    /// Semantic file-explorer sidebar: the flattened visible tree rows (the
+    /// same projection the TUI's list windows) plus selection/scroll and the
     /// sidebar rect. Rendered natively by the web frontend; row clicks route
     /// back through `handle_mouse` at the sidebar's content cells, where the
-    /// shell's own row nodes answer them — `viewport_rows[n]` and the tree's
-    /// n-th row key are the same number by construction.
+    /// shell's own row nodes answer them. `viewport_rows` is read off the
+    /// layout — the rows keyed by path that the list placed, pins first —
+    /// and mapped back to row indices through the projection.
     pub fn file_explorer_view(&self) -> Option<FileExplorerView> {
         // **Derived, not recorded.** The sidebar's rectangle is
         // `HostRegion::Explorer`'s, which is a keyed node — so this asks the
@@ -746,29 +874,49 @@ impl Editor {
             crate::view::shell::frame::HostRegion::Explorer,
         ))?;
         let tree = view.tree();
-        let rows = view
-            .get_display_nodes()
-            .into_iter()
-            .filter_map(|(id, indent)| {
-                tree.get_node(id).map(|n| FileRow {
-                    name: n.entry.name.clone(),
-                    depth: indent,
-                    is_dir: n.is_dir(),
-                    expanded: n.is_expanded(),
-                })
+        let projection = view.projection();
+        let rows = projection
+            .rows
+            .iter()
+            .map(|r| FileRow {
+                name: r.entry.name.clone(),
+                depth: r.indent,
+                is_dir: r.is_dir(),
+                expanded: r.is_expanded(),
             })
             .collect();
         let title = tree
             .get_node(tree.root_id())
             .map(|n| n.entry.name.clone())
             .unwrap_or_default();
+        // The window is the list's: which rows are on screen, pins and
+        // all, and how tall the body is, are read off the layout that placed
+        // them.
+        let (scroll_offset, viewport_height, viewport_rows) = self
+            .shell_ui
+            .as_ref()
+            .and_then(|ui| {
+                crate::view::shell::file_explorer::window_rows(ui, self.active_window().id.0)
+            })
+            .map(|(first, height, paths)| {
+                let rows = paths
+                    .iter()
+                    .filter_map(|p| tree.get_node_by_path(p))
+                    .filter_map(|n| projection.index_of(n.id))
+                    .collect::<Vec<_>>();
+                (first, height, rows)
+            })
+            .unwrap_or_default();
         Some(FileExplorerView {
             rect: RectView::from(rect),
+            grip_rect: self
+                .panel_rect(&crate::view::shell::sidebar::grip_key())
+                .map(RectView::from),
             title,
-            scroll_offset: view.get_scroll_offset(),
-            viewport_height: view.viewport_height,
+            scroll_offset,
+            viewport_height,
             selected: view.get_selected_index(),
-            viewport_rows: view.viewport_display_indices(),
+            viewport_rows,
             rows,
         })
     }
@@ -980,11 +1128,9 @@ impl Editor {
         // The window the tree is showing: the rows the TUI has on screen, at
         // the grid rows it put them on.
         let rows = match &b.listing {
-            fb::Listing::Entries(entries) => entries
-                .iter()
-                .enumerate()
-                .skip(window.first)
+            fb::Listing::Entries(entries) => (window.first..)
                 .take(window.visible)
+                .filter_map(|index| entries.at(index).map(|e| (index, e)))
                 .map(|(index, e)| FileBrowserRowView {
                     index,
                     row: list_rect.y + (index - window.first) as u16,
@@ -1013,7 +1159,7 @@ impl Editor {
             scroll_offset: window.first,
             visible_rows: window.visible,
             total: state.entries.len(),
-            selected: state.selected_index,
+            selected: state.selected_index(),
             active_section: if files_active { "files" } else { "navigation" },
             loading: state.loading,
             error: state.error.clone(),
@@ -1459,6 +1605,23 @@ impl Editor {
                     None,
                     false,
                 ),
+                // "There is more this way", as a kind the DOM can draw as it
+                // likes — a chevron, a fade at the edge. The glyph the
+                // terminal uses is not carried: unlike a rule, there is no
+                // single character this *is*.
+                Draw::Overflow { axis, end, .. } => {
+                    horizontal = matches!(axis, fresh_ui::Axis::Horizontal);
+                    (
+                        match end {
+                            fresh_ui::End::Before => "overflow-before",
+                            fresh_ui::End::After => "overflow-after",
+                        },
+                        None,
+                        None,
+                        None,
+                        false,
+                    )
+                }
                 Draw::Scrim(Scrim::Opaque) => ("scrim", None, None, None, false),
                 Draw::Scrim(Scrim::Dim) => ("scrim", None, None, None, true),
                 Draw::Lines(ls) => (
@@ -1793,13 +1956,19 @@ impl Editor {
             BindingSource, ContextFilter, DisplayRow, SearchMode, SourceFilter,
         };
         let kb = self.keybinding_editor.as_ref()?;
+        // The table's window, read off the tree that holds it.
+        let window = self
+            .shell_ui
+            .as_ref()
+            .and_then(|ui| crate::view::shell::keybinding::table_window(ui.spec()))
+            .unwrap_or((0, 0));
 
         let rows = kb
             .display_rows
             .iter()
             .enumerate()
             .map(|(i, dr)| {
-                let selected = i == kb.selected;
+                let selected = i == kb.selected();
                 match dr {
                     DisplayRow::SectionHeader {
                         plugin_name,
@@ -1892,9 +2061,9 @@ impl Editor {
             count: format!("{} / {}", kb.filtered_indices.len(), kb.bindings.len()),
             has_changes: kb.has_changes,
             rows,
-            selected: kb.selected,
-            scroll_offset: kb.scroll.offset,
-            viewport: kb.scroll.viewport,
+            selected: kb.selected(),
+            scroll_offset: window.0 as u16,
+            viewport: window.1 as u16,
             showing_help: kb.showing_help,
             edit_dialog,
             confirm,
@@ -2011,6 +2180,9 @@ pub struct SettingsCategoryView {
     pub expandable: bool,
     pub expanded: bool,
     pub sections: Vec<String>,
+    /// Listed under another category's row (a plugin's page under
+    /// "Plugins"), so drawn indented and without a chevron.
+    pub nested: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2183,7 +2355,7 @@ fn setting_control_view(
                     .collect(),
                 column: display_field
                     .as_deref()
-                    .map(crate::view::settings::widget_map::column_title),
+                    .map(|f| crate::view::settings::widget_map::column_title(path, f)),
                 no_add: *no_add,
                 focused: cursor.filter(|r| *r < entries.len()),
                 add_focused: cursor.is_some() && cursor == c.add_row(),
@@ -2236,7 +2408,7 @@ fn setting_item_view(
         path: item.path.clone(),
         name: item.name.clone(),
         description: item.description.clone(),
-        section: item.section.clone(),
+        section: item.section_label.clone(),
         section_start: item.is_section_start,
         modified: item.modified,
         read_only: item.read_only,
@@ -2259,17 +2431,34 @@ impl Editor {
             return None;
         }
 
+        // The rows the TUI's tree shows, in its order: nested pages appear
+        // only under an expanded parent, and a category lists its sections
+        // only when it has more than one.
         let categories = st
-            .pages
-            .iter()
-            .enumerate()
-            .map(|(i, p)| SettingsCategoryView {
-                index: i,
-                name: p.name.clone(),
-                selected: i == st.selected_category,
-                expandable: !p.subpages.is_empty() || p.sections.len() > 1,
-                expanded: st.expanded_categories.contains(&i),
-                sections: p.sections.iter().map(|s| s.name.clone()).collect(),
+            .visible_tree()
+            .into_iter()
+            .filter_map(|row| match row {
+                crate::view::settings::state::TreeRow::Category {
+                    idx,
+                    expandable,
+                    expanded,
+                    nested,
+                } => {
+                    let p = &st.pages[idx];
+                    Some(SettingsCategoryView {
+                        index: idx,
+                        name: p.display_name.clone(),
+                        selected: idx == st.selected_category,
+                        expandable,
+                        expanded,
+                        sections: match p.sections.len() > 1 {
+                            true => p.sections.iter().map(|s| s.display_name.clone()).collect(),
+                            false => Vec::new(),
+                        },
+                        nested,
+                    })
+                }
+                crate::view::settings::state::TreeRow::Section { .. } => None,
             })
             .collect();
 
@@ -2333,5 +2522,57 @@ impl Editor {
             showing_confirm: st.showing_confirm_dialog,
             showing_reset: st.showing_reset_dialog,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PopupSpanView;
+    use ratatui::style::{Color, Modifier, Style};
+
+    #[test]
+    fn a_popup_span_keeps_the_colour_and_emphasis_the_editor_gave_it() {
+        // Regression: the projection used to flatten a markdown popup's styled
+        // spans into one `String` per line, so an LSP hover reached the web UI
+        // with its syntax highlighting, bold and italics thrown away while the
+        // terminal drew all three.
+        let style = Style::default()
+            .fg(Color::Rgb(255, 255, 0))
+            .bg(Color::Rgb(40, 40, 40))
+            .add_modifier(Modifier::BOLD | Modifier::ITALIC);
+        let span = PopupSpanView::styled("greet".to_string(), style);
+        assert_eq!(span.fg.as_deref(), Some("#ffff00"));
+        assert_eq!(span.bg.as_deref(), Some("#282828"));
+        assert!(span.bold);
+        assert!(span.italic);
+        assert!(!span.underline);
+        assert!(!span.reverse);
+
+        // A plain-text popup line says nothing about colour, so the frontend
+        // inherits the popup's own.
+        let plain = PopupSpanView::plain("hello".to_string());
+        assert!(plain.fg.is_none() && plain.bg.is_none());
+        assert!(!plain.bold && !plain.italic && !plain.underline && !plain.reverse);
+    }
+
+    #[test]
+    fn a_popup_span_is_on_the_wire_in_the_cell_runs_shape() {
+        // The frontend paints a popup run with the code that paints a buffer
+        // run, so the field names have to stay identical — and a flag that is
+        // off must not be sent at all.
+        let span = PopupSpanView::styled(
+            "fn".to_string(),
+            Style::default()
+                .fg(Color::Rgb(0, 255, 255))
+                .add_modifier(Modifier::UNDERLINED | Modifier::REVERSED),
+        );
+        let json = serde_json::to_value(&span).expect("span serializes");
+        assert_eq!(json["t"], "fn");
+        assert_eq!(json["fg"], "#00ffff");
+        assert_eq!(json["u"], true);
+        assert_eq!(json["r"], true);
+        assert!(json.get("bg").is_none(), "unset colour is omitted");
+        assert!(json.get("b").is_none(), "an off flag is omitted");
+        assert!(json.get("i").is_none(), "an off flag is omitted");
     }
 }

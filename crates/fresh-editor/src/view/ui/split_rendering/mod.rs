@@ -25,6 +25,7 @@ mod orchestration;
 // three for a caller that hands it a whole rectangle; the shell folds a
 // display list and calls them one `Host` at a time instead, so that a pane's
 // rectangle is the one layout gave it.
+pub(crate) use orchestration::reconcile::pane_text_width;
 pub(crate) use orchestration::render_buffer::wrap_index_geometry_for;
 pub(crate) use orchestration::{
     content_pass, paint_leaf, prepare_content, reconcile_panes, ContentPass, FrameFacts,
@@ -92,6 +93,7 @@ impl<'a> EditorRenderConfig<'a> {
         editor: &'a crate::config::EditorConfig,
         background_fade: f32,
         software_cursor_only: bool,
+        linux_console: bool,
     ) -> Self {
         Self {
             large_file_threshold_bytes: editor.large_file_threshold_bytes,
@@ -106,13 +108,28 @@ impl<'a> EditorRenderConfig<'a> {
             show_tilde: editor.show_tilde,
             highlight_current_column: editor.highlight_current_column,
             indentation_guide: editor.indentation_guide,
-            indentation_guide_glyph: &editor.indentation_guide_glyph,
+            indentation_guide_glyph: console_safe_guide_glyph(
+                &editor.indentation_guide_glyph,
+                linux_console,
+            ),
             rainbow_indentation: editor.rainbow_indentation,
             bracket_highlight: BracketHighlightSettings::from_config(editor),
             hide_current_line_on_selection: editor.hide_current_line_on_selection,
             background_fade,
             software_cursor_only,
         }
+    }
+}
+
+/// The indentation guide glyph to draw. The default, `▏`, is a block element
+/// the Linux console's fonts do not have — the console shows it as `#` — so
+/// there the default is drawn as `│`, which every console font has. A glyph
+/// the user chose is drawn as chosen.
+fn console_safe_guide_glyph(glyph: &str, linux_console: bool) -> &str {
+    if linux_console && glyph == crate::config::default_indentation_guide_glyph() {
+        "│"
+    } else {
+        glyph
     }
 }
 
@@ -254,7 +271,8 @@ impl SplitRenderer {
             false,
             None,
         );
-        orchestration::reconcile::settle_pane(state, viewport, left_column, false);
+        // No horizontal bar here, so no clamp and no width to clamp to.
+        orchestration::reconcile::settle_pane(state, viewport, left_column, false, 0);
         rows
     }
 

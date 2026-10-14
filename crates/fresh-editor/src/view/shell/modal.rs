@@ -32,6 +32,10 @@ use super::msg::{UiFact, UiMsg};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KeySlot {
     Settings,
+    /// The confirmation modal (`super::confirm`). Its arrows, Tab, Enter,
+    /// Esc and single-letter accelerators are a vocabulary of its own, the
+    /// way the trust prompt's are.
+    Confirm,
     KeybindingEditor,
     Calibration,
     WorkspaceTrust,
@@ -66,6 +70,7 @@ pub fn keys_key(slot: KeySlot) -> Key {
     Key::Str(
         match slot {
             KeySlot::Settings => "keys:settings",
+            KeySlot::Confirm => "keys:confirm",
             KeySlot::KeybindingEditor => "keys:keybinding_editor",
             KeySlot::Calibration => "keys:calibration",
             KeySlot::WorkspaceTrust => "keys:workspace_trust",

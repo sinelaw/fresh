@@ -21,7 +21,8 @@
 //! declaration order, which is placement rather than precedence. The status bar
 //! had already written that rule out by hand as `left_budget`. Two surfaces
 //! needing it is what made it a library concept instead of a second budget
-//! function here.
+//! function here — and the status bar uses it too now, so `left_budget` is
+//! gone and there is one statement of the rule for both.
 
 use std::rc::Rc;
 
@@ -81,6 +82,9 @@ pub struct DescriptionSpan {
 /// layout, and which of them survives a narrow row is `priority`'s answer.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SuggestionRow {
+    /// The suggestion's id: what the row is, unique in the list. The row and
+    /// its name column are keyed by it.
+    pub id: String,
     pub name: String,
     pub keybinding: Option<String>,
     pub description: Option<String>,
@@ -100,10 +104,11 @@ pub struct SuggestionRow {
 /// the same painter with a `with_border` flag between them and two copies of
 /// the placement arithmetic — one in `render`, one in `chrome::Prompt::collect`
 /// — that had to agree for a click to land.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub enum Place {
     /// Above the prompt row, in its own bordered popup, flipping below when
     /// there is no room above.
+    #[default]
     AbovePrompt,
     /// Filling the overlay card's results band, with no frame of its own.
     ///
@@ -115,12 +120,6 @@ pub enum Place {
     InCard,
 }
 
-impl Default for Place {
-    fn default() -> Self {
-        Place::AbovePrompt
-    }
-}
-
 impl Place {
     /// A frame of its own, or somebody else's.
     fn bordered(&self) -> bool {
@@ -128,20 +127,168 @@ impl Place {
     }
 }
 
-/// The list itself.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Suggestions {
-    pub rows: Vec<SuggestionRow>,
-    /// Which rows the list is showing, as `(first, count)`.
+/// The list's rows: a handle on the model's suggestions, not a copy of them.
+///
+/// **The model holds the ranked suggestions; the description holds a count
+/// and a converter.** Mapping every suggestion into a [`SuggestionRow`] on
+/// every frame made a thousand-command palette cost a thousand conversions
+/// per frame to show ten of them. Here row `i` is converted when the list's
+/// layout reader asks for it — which it does for the rows in its window and
+/// no others — out of storage the model already keeps.
+#[derive(Clone)]
+pub struct Rows {
+    len: usize,
+    id: Rc<dyn Fn(usize) -> String>,
+    row: Rc<dyn Fn(usize) -> SuggestionRow>,
+    disabled: Rc<dyn Fn(usize) -> bool>,
+    names_are_paths: bool,
+    /// The storage the converters read, for identity: two frames over the
+    /// same allocation describe the same rows. The model replaces its
+    /// suggestions rather than editing them, so identity is "unchanged".
+    source: Rc<dyn std::any::Any>,
+}
+
+impl Rows {
+    /// Rows read out of `source`: `row` converts one, `disabled` answers the
+    /// one fact the list's own theme needs without a conversion.
+    /// `names_are_paths` is [`names_are_paths`] over the whole list, which the
+    /// owner works out once per list rather than once per frame.
     ///
-    /// Only the column widths use it, and only because they are measured from
-    /// the rows on screen — `ColumnLayout::compute` took
-    /// `visible_suggestions`, so one very long name at the far end of a
-    /// thousand-row list does not squeeze every description above it. The
-    /// window itself belongs to the viewport; this is last frame's, read back
-    /// through `suggestions_window`, which is exact except on the frame a
-    /// scroll lands.
-    pub window: Option<(usize, usize)>,
+    /// `id` answers the row's identity without converting it: the list keys
+    /// every row it builds by it.
+    pub fn new<T: 'static>(
+        source: Rc<T>,
+        len: usize,
+        names_are_paths: bool,
+        id: impl Fn(&T, usize) -> String + 'static,
+        row: impl Fn(&T, usize) -> SuggestionRow + 'static,
+        disabled: impl Fn(&T, usize) -> bool + 'static,
+    ) -> Rows {
+        Rows {
+            len,
+            id: {
+                let source = source.clone();
+                Rc::new(move |i| id(&source, i))
+            },
+            row: {
+                let source = source.clone();
+                Rc::new(move |i| row(&source, i))
+            },
+            disabled: {
+                let source = source.clone();
+                Rc::new(move |i| disabled(&source, i))
+            },
+            names_are_paths,
+            source,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Row `i`, converted now.
+    fn at(&self, i: usize) -> Option<SuggestionRow> {
+        (i < self.len).then(|| {
+            stats::note_row();
+            (self.row)(i)
+        })
+    }
+
+    fn disabled(&self, i: usize) -> bool {
+        i < self.len && (self.disabled)(i)
+    }
+
+    /// Row `i`'s key: its suggestion's id.
+    fn key(&self, i: usize) -> Key {
+        row_key(&(self.id)(i))
+    }
+}
+
+/// Rows already converted, for a caller that has them as values.
+impl From<Vec<SuggestionRow>> for Rows {
+    fn from(rows: Vec<SuggestionRow>) -> Rows {
+        let paths = names_are_paths(
+            rows.iter().any(|r| r.keybinding.is_some()),
+            rows.iter().any(|r| r.source.is_some()),
+        );
+        let len = rows.len();
+        Rows::new(
+            Rc::new(rows),
+            len,
+            paths,
+            |v, i| v[i].id.clone(),
+            |v, i| v[i].clone(),
+            |v, i| v[i].disabled,
+        )
+    }
+}
+
+impl Default for Rows {
+    fn default() -> Self {
+        Vec::new().into()
+    }
+}
+
+impl PartialEq for Rows {
+    fn eq(&self, other: &Self) -> bool {
+        self.len == other.len
+            && self.names_are_paths == other.names_are_paths
+            && std::ptr::addr_eq(Rc::as_ptr(&self.source), Rc::as_ptr(&other.source))
+    }
+}
+
+impl Eq for Rows {}
+
+impl std::fmt::Debug for Rows {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Rows").field("len", &self.len).finish()
+    }
+}
+
+/// Which end of a name survives a narrow row, as a fact about the whole list.
+///
+/// `ColumnLayout::names_are_paths` decided this from the shape of the list
+/// rather than from a flag: a list with neither keybindings nor sources is a
+/// file finder, and a path keeps its filename. A command palette keeps its
+/// head — "Toggle Compose/Preview (All Files)" contains a slash and is still
+/// a command name, which is the bug that rule was written for.
+pub fn names_are_paths(any_keybinding: bool, any_source: bool) -> bool {
+    !any_keybinding && !any_source
+}
+
+/// Conversions of a suggestion into a row, counted for the test that pins
+/// them to the window. Thread-local and debug-only, like `geometry::stats`.
+pub mod stats {
+    #[cfg(debug_assertions)]
+    use std::cell::Cell;
+
+    #[cfg(debug_assertions)]
+    thread_local! {
+        static ROWS: Cell<u32> = const { Cell::new(0) };
+    }
+
+    #[inline]
+    pub(super) fn note_row() {
+        #[cfg(debug_assertions)]
+        ROWS.with(|c| c.set(c.get().saturating_add(1)));
+    }
+
+    /// Rows converted since the last call, which resets the count.
+    #[cfg(debug_assertions)]
+    pub fn take() -> u32 {
+        ROWS.with(|c| c.replace(0))
+    }
+}
+
+/// The list itself.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Suggestions {
+    pub rows: Rows,
     /// Which row is selected, if any. Controlled: the editor holds it.
     pub selected: Option<usize>,
     pub place: Place,
@@ -153,34 +300,34 @@ pub struct Suggestions {
     /// row minus the popup minus that same one". Two subtractions that had to
     /// agree. Stacked in the layer, the agreement is the stacking.
     pub hints: Option<String>,
+    /// The prompt's page handle: the list records the window its layout
+    /// gave it here, and the prompt's PageUp/PageDown ask it for the row a
+    /// page away.
+    pub pager: Rc<fresh_ui::behavior::Pager>,
 }
 
 impl Suggestions {
-    /// Which end of a name survives a narrow row.
-    ///
-    /// `ColumnLayout::names_are_paths` decided this from the shape of the list
-    /// rather than from a flag: a list with neither keybindings nor sources is
-    /// a file finder, and a path keeps its filename. A command palette keeps
-    /// its head — "Toggle Compose/Preview (All Files)" contains a slash and is
-    /// still a command name, which is the bug that rule was written for.
+    /// Which end of a name survives a narrow row. See [`names_are_paths`].
     fn name_elide(&self) -> Elide {
-        let has = |f: fn(&SuggestionRow) -> bool| self.rows.iter().any(f);
-        if has(|r| r.keybinding.is_some()) || has(|r| r.source.is_some()) {
-            Elide::Tail
-        } else {
-            Elide::Head
+        match self.rows.names_are_paths {
+            true => Elide::Head,
+            false => Elide::Tail,
         }
     }
 }
 
-pub fn row_key(index: usize) -> Key {
-    Key::Pair("suggestion".into(), index as u64)
+/// A suggestion row's key: its id, namespaced so it cannot meet another
+/// list's. **By identity, never by position**: a row inserted above another
+/// moves it, and its element — hover, a press in flight — moves with it.
+pub fn row_key(id: &str) -> Key {
+    Key::Str(format!("suggestion:{id}").into())
 }
 
-/// The name column of a row. Keyed so the width rule can be read back off the
-/// tree — the same way the status bar's segments and the explorer's slots are.
-pub fn name_key(index: usize) -> Key {
-    Key::Pair("suggestion_name".into(), index as u64)
+/// The name column of a row, by the row's id. Keyed so the width rule can be
+/// read back off the tree — the same way the status bar's segments and the
+/// explorer's slots are.
+pub fn name_key(id: &str) -> Key {
+    Key::Str(format!("suggestion_name:{id}").into())
 }
 
 /// The painter's own ladder, in the painter's own keys.
@@ -298,7 +445,7 @@ fn every_theme_name() -> Vec<String> {
 /// losing the row.
 fn span_run(sp: &DescriptionSpan, row: &str) -> Run {
     let Some(mut ink) = Ink::parse(row) else {
-        return Run::themed(sp.text.clone(), row.to_string());
+        return Run::themed(sp.text.clone(), row);
     };
     if let Some(fg) = &sp.fg {
         ink = ink.with_fg(Paint::key(fg.clone()));
@@ -341,12 +488,11 @@ impl Columns {
     /// cells on every row, and every description would elide to nothing. The
     /// visual snapshot is what showed that; it is a column of `…` where the
     /// help text used to be.
-    fn of(rows: &[SuggestionRow], window: Option<(usize, usize)>) -> Columns {
+    ///
+    /// Called at the cut (`List::windowed_cut`), with the rows the window
+    /// is about to show — so the widths are this frame's, not the last one's.
+    fn of(rows: &[SuggestionRow]) -> Columns {
         use crate::primitives::display_width::str_width;
-        let (first, count) = window.unwrap_or((0, MAX_VISIBLE_SUGGESTIONS));
-        let rows: &[SuggestionRow] = rows
-            .get(first..(first + count).min(rows.len()))
-            .unwrap_or(rows);
         let longest = rows
             .iter()
             .map(|r| str_width(&r.name) as u16)
@@ -361,29 +507,23 @@ impl Columns {
             // Fixed, and present whenever *any* row has one: a row without a
             // keybinding still leaves the space, or the descriptions stop
             // lining up.
-            keybinding: rows
-                .iter()
-                .any(|r| r.keybinding.is_some())
-                .then_some(KEYBINDING_W)
-                .unwrap_or(0),
-            source: rows
-                .iter()
-                .any(|r| r.source.is_some())
-                .then_some(SOURCE_W)
-                .unwrap_or(0),
+            keybinding: if rows.iter().any(|r| r.keybinding.is_some()) {
+                KEYBINDING_W
+            } else {
+                0
+            },
+            source: if rows.iter().any(|r| r.source.is_some()) {
+                SOURCE_W
+            } else {
+                0
+            },
         }
     }
 }
 
 /// One row's four columns, in paint order, each carrying the priority that says
 /// when it yields.
-fn node_row(
-    index: usize,
-    r: &SuggestionRow,
-    st: RowState,
-    name_elide: Elide,
-    cols: Columns,
-) -> Node<UiMsg> {
+fn node_row(r: &SuggestionRow, st: RowState, name_elide: Elide, cols: Columns) -> Node<UiMsg> {
     let t = theme(r.disabled, st);
     // `ColumnLayout::left_margin`, as a cell rather than as two leading spaces
     // in a span. It carries the row's own fill because the row container
@@ -393,7 +533,7 @@ fn node_row(
     cells.push(
         text(r.name.clone())
             .theme(t.clone())
-            .key(name_key(index))
+            .key(name_key(&r.id))
             .elide(name_elide)
             .w(Sizing::Cells(cols.name))
             .priority(yields_last::NAME),
@@ -498,13 +638,9 @@ fn absorb(n: Node<UiMsg>) -> Node<UiMsg> {
 /// library asks for the rows it can show and the editor resolves each index
 /// against its own storage, so no window is stored on either side.
 pub fn suggestions(s: &Suggestions) -> Node<UiMsg> {
-    let rows: Vec<SuggestionRow> = s.rows.clone();
     let selected = s.selected;
-    let rows_for_row = Rc::new(rows);
-    let rows_for_key = rows_for_row.clone();
-    let rows_for_theme = rows_for_row.clone();
+    let rows_for_theme = s.rows.clone();
     let name_elide = s.name_elide();
-    let cols = Columns::of(&s.rows, s.window);
 
     // `List` reports the state it holds; the names are this module's. Both the
     // row builder and `row_theme` need the state, and only the latter is given
@@ -519,27 +655,47 @@ pub fn suggestions(s: &Suggestions) -> Node<UiMsg> {
         }
     };
 
-    let mut list = fresh_ui::widgets::List::windowed(
-        rows_for_key.len(),
-        move |i| row_key(i),
-        move |i| match rows_for_row.get(i) {
-            Some(r) => node_row(
-                i,
-                r,
-                if selected == Some(i) {
-                    RowState::Selected
-                } else {
-                    RowState::Normal
-                },
-                name_elide,
-                cols,
-            ),
-            None => row().h(Sizing::Cells(1)),
+    // **The rows on screen are converted once, at the cut, and measured
+    // there.** The window is known in the list's layout reader and nowhere
+    // earlier, so that is where the rows it will show are converted and the
+    // columns sized over them; a row in the overscan either side is
+    // converted on its own and laid on the same columns.
+    struct Window {
+        first: usize,
+        rows: Vec<SuggestionRow>,
+        cols: Columns,
+    }
+    let for_cut = s.rows.clone();
+    let for_row = s.rows.clone();
+    let for_key = s.rows.clone();
+    let mut list = fresh_ui::widgets::List::windowed_cut(
+        s.rows.len(),
+        move |i| for_key.key(i),
+        move |on_screen: std::ops::Range<usize>| {
+            let first = on_screen.start;
+            let rows: Vec<SuggestionRow> = on_screen.filter_map(|i| for_cut.at(i)).collect();
+            let cols = Columns::of(&rows);
+            Window { first, rows, cols }
+        },
+        move |i, _, w: &Window| {
+            let st = if selected == Some(i) {
+                RowState::Selected
+            } else {
+                RowState::Normal
+            };
+            let converted = match i.checked_sub(w.first).and_then(|j| w.rows.get(j)) {
+                Some(r) => Some(std::borrow::Cow::Borrowed(r)),
+                None => for_row.at(i).map(std::borrow::Cow::Owned),
+            };
+            match converted {
+                Some(r) => node_row(&r, st, name_elide, w.cols),
+                None => row().h(Sizing::Cells(1)),
+            }
         },
     )
     .row_theme(move |i, st| {
         let st = hover_state(i, st);
-        theme(rows_for_theme.get(i).is_some_and(|r| r.disabled), st)
+        theme(rows_for_theme.disabled(i), st)
     })
     // **The bar rides the popup's right border, and the column is always
     // reserved for it.** Both halves of that are what the painter did:
@@ -573,7 +729,8 @@ pub fn suggestions(s: &Suggestions) -> Node<UiMsg> {
     // list that declines focus still answers clicks and the wheel.
     .focusable(false)
     .on_select(|i| UiMsg::Ui(UiFact::SuggestionSelect(i)))
-    .on_activate(|i| UiMsg::Ui(UiFact::SuggestionConfirm(i)));
+    .on_activate(|i| UiMsg::Ui(UiFact::SuggestionConfirm(i)))
+    .pager(s.pager.clone());
     if let Some(i) = selected {
         list = list.selected(i);
     }
@@ -699,7 +856,7 @@ fn hints_row(text_of: &str) -> Node<UiMsg> {
     );
     row().h(Sizing::Cells(1)).theme(t.clone()).children([
         row().w(Sizing::Cells(LEFT_MARGIN)),
-        text(text_of.to_string()).theme(t).elide(Elide::Tail),
+        text(text_of).theme(t).elide(Elide::Tail),
     ])
 }
 
@@ -745,6 +902,7 @@ pub fn suggestions_list_rect(spec: &fresh_ui::LayoutSpec) -> Option<fresh_ui::Re
 /// when `total > visible` — and cached it in `ChromeLayout` for the drag
 /// handlers. The viewport emits the bar as an item when it needs one, so its
 /// presence and its rectangle are the same answer.
+#[cfg(test)]
 pub fn suggestions_scrollbar_rect(spec: &fresh_ui::LayoutSpec) -> Option<fresh_ui::Rect> {
     let key = LIST_KEY.with(|k| k.clone());
     let range = spec.index.iter().find(|(k, _)| *k == key)?.1.clone();
@@ -869,6 +1027,7 @@ mod tests {
     fn rows(n: usize) -> Vec<SuggestionRow> {
         (0..n)
             .map(|i| SuggestionRow {
+                id: format!("command-{i}"),
                 name: format!("command-{i}"),
                 ..SuggestionRow::default()
             })
@@ -920,16 +1079,16 @@ mod tests {
     fn a_click_on_a_row_reports_that_row() {
         let mut ui = laid_out(
             Suggestions {
-                rows: rows(5),
+                rows: rows(5).into(),
                 selected: Some(0),
                 place: Place::AbovePrompt,
                 hints: None,
-                window: None,
+                pager: Default::default(),
             },
             40,
             8,
         );
-        let r = ui.rect_of(ui.find_by_key(&row_key(2)).expect("row 2"));
+        let r = ui.rect_of(ui.find_by_key(&row_key("command-2")).expect("row 2"));
         let at = Point::new(r.x + 1, r.y);
         let mut msgs = ui
             .dispatch(Input::press(at, MouseButton::Left, Mods::NONE))
@@ -954,16 +1113,16 @@ mod tests {
     fn a_double_click_confirms_and_a_single_one_only_selects() {
         let mut ui = laid_out(
             Suggestions {
-                rows: rows(5),
+                rows: rows(5).into(),
                 selected: Some(0),
                 place: Place::AbovePrompt,
                 hints: None,
-                window: None,
+                pager: Default::default(),
             },
             40,
             8,
         );
-        let r = ui.rect_of(ui.find_by_key(&row_key(2)).expect("row 2"));
+        let r = ui.rect_of(ui.find_by_key(&row_key("command-2")).expect("row 2"));
         let at = Point::new(r.x + 1, r.y);
         let mut click = |n: u8| {
             let mut out = ui
@@ -1002,11 +1161,11 @@ mod tests {
         let mut ui: Ui<UiMsg> = Ui::new();
         let tree = || {
             suggestions(&Suggestions {
-                rows: rows(100),
+                rows: rows(100).into(),
                 selected: Some(0),
                 place: Place::AbovePrompt,
                 hints: None,
-                window: None,
+                pager: Default::default(),
             })
         };
         ui.frame(tree(), Size::new(40, 8));
@@ -1030,6 +1189,85 @@ mod tests {
         );
     }
 
+    /// **A suggestion inserted above another moves it, element and hover.**
+    ///
+    /// The rows were keyed by index, so a suggestion arriving at the top of
+    /// a streaming list rewrote every row below it in place — each element
+    /// took over its neighbour's content, and the hover stayed on a position
+    /// while the row the pointer was on slid away from it. Keyed by id, the
+    /// rows below an insertion are the same elements, and the one under the
+    /// pointer still reads as hovered.
+    #[test]
+    fn an_inserted_suggestion_moves_the_rows_below_it() {
+        let list = |rows: Vec<SuggestionRow>| {
+            suggestions(&Suggestions {
+                rows: rows.into(),
+                selected: None,
+                place: Place::AbovePrompt,
+                hints: None,
+                pager: Default::default(),
+            })
+        };
+        let before = rows(5);
+        let mut after = before.clone();
+        after.insert(
+            1,
+            SuggestionRow {
+                id: "new".into(),
+                name: "a new command".into(),
+                ..SuggestionRow::default()
+            },
+        );
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(list(before.clone()), Size::new(40, 10));
+        let ids: Vec<_> = before
+            .iter()
+            .map(|r| ui.find_by_key(&row_key(&r.id)).expect("a row"))
+            .collect();
+        let at = ui.rect_of(ids[3]);
+        ui.dispatch(Input::Move {
+            pos: Point::new(at.x + 1, at.y),
+            mods: Mods::NONE,
+        });
+        ui.frame(list(before.clone()), Size::new(40, 10));
+        // The rows the hover band is painted on, by the row's own key.
+        let hovered = |ui: &Ui<UiMsg>| {
+            let banded: Vec<i32> = ui
+                .spec()
+                .items
+                .iter()
+                .filter(|i| i.theme.as_str().contains("ui.menu_hover_bg"))
+                .map(|i| i.rect.y)
+                .collect();
+            (0..6)
+                .filter_map(|i| {
+                    let id = match i {
+                        5 => "new".to_string(),
+                        _ => format!("command-{i}"),
+                    };
+                    let e = ui.find_by_key(&row_key(&id))?;
+                    banded.contains(&ui.rect_of(e).y).then_some(id)
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(hovered(&ui), vec!["command-3".to_string()]);
+
+        ui.frame(list(after), Size::new(40, 10));
+        for (r, id) in before.iter().zip(&ids) {
+            assert_eq!(
+                ui.find_by_key(&row_key(&r.id)),
+                Some(*id),
+                "{} is the same element after the insertion",
+                r.id
+            );
+        }
+        assert_eq!(
+            hovered(&ui),
+            vec!["command-3".to_string()],
+            "the hover went down with its row"
+        );
+    }
+
     /// **Ledger rule 1: at most `MAX_VISIBLE_SUGGESTIONS` rows exist.** The
     /// painter kept a `scroll_offset` window by hand; `windowed` is the
     /// concept, and a list far longer than the viewport must not build a node
@@ -1038,17 +1276,17 @@ mod tests {
     fn a_long_list_builds_only_the_rows_it_can_show() {
         let ui = laid_out(
             Suggestions {
-                rows: rows(1000),
+                rows: rows(1000).into(),
                 selected: Some(0),
                 place: Place::AbovePrompt,
                 hints: None,
-                window: None,
+                pager: Default::default(),
             },
             40,
             MAX_VISIBLE_SUGGESTIONS as u16,
         );
         let built = (0..1000)
-            .filter(|i| ui.find_by_key(&row_key(*i)).is_some())
+            .filter(|i| ui.find_by_key(&row_key(&format!("command-{i}"))).is_some())
             .count();
         assert!(
             built <= MAX_VISIBLE_SUGGESTIONS + 2,
@@ -1069,11 +1307,11 @@ mod tests {
     fn the_popup_frames_the_list_and_insets_it() {
         let mut ui: Ui<UiMsg> = Ui::new();
         let s = Suggestions {
-            rows: rows(3),
+            rows: rows(3).into(),
             selected: Some(0),
             place: Place::AbovePrompt,
             hints: None,
-            window: None,
+            pager: Default::default(),
         };
         let spec = ui.frame(popup(&s), Size::new(40, 6)).clone();
         assert!(
@@ -1085,7 +1323,7 @@ mod tests {
         );
         // Inside the ring and past the gutter: one cell of border plus the
         // painter's two-cell `left_margin`.
-        let name = ui.rect_of(ui.find_by_key(&name_key(0)).expect("a name"));
+        let name = ui.rect_of(ui.find_by_key(&name_key("command-0")).expect("a name"));
         assert_eq!(
             name.x,
             1 + LEFT_MARGIN as i32,
@@ -1109,11 +1347,11 @@ mod tests {
                 frame_tree(Frame {
                     prompt_line: true,
                     suggestions: Some(Suggestions {
-                        rows: rows(3),
+                        rows: rows(3).into(),
                         selected: Some(0),
                         place: Place::AbovePrompt,
                         hints: None,
-                        window: None,
+                        pager: Default::default(),
                     }),
                     ..Frame::default()
                 }),
@@ -1140,15 +1378,15 @@ mod tests {
     fn a_path_gives_up_its_head_and_a_command_its_tail() {
         let painted = |r: SuggestionRow| {
             let s = Suggestions {
-                rows: vec![r],
+                rows: vec![r].into(),
                 selected: Some(0),
                 place: Place::AbovePrompt,
                 hints: None,
-                window: None,
+                pager: Default::default(),
             };
             let ui = laid_out(s, 16, 4);
             let spec = ui.spec();
-            let id = ui.find_by_key(&name_key(0)).expect("the name column");
+            let id = ui.find_by_key(&name_key("")).expect("the name column");
             let rect = ui.rect_of(id);
             spec.items
                 .iter()
@@ -1206,11 +1444,12 @@ mod tests {
                     },
                 ]),
                 ..SuggestionRow::default()
-            }],
+            }]
+            .into(),
             selected: Some(0),
             place: Place::AbovePrompt,
             hints: None,
-            window: None,
+            pager: Default::default(),
         };
         // Wide enough that the description is not elided: the name column has
         // a thirty-cell floor, and this test is about the span's ink.
@@ -1275,11 +1514,11 @@ mod tests {
                         ..Card::default()
                     }),
                     suggestions: Some(Suggestions {
-                        rows: rows(3),
+                        rows: rows(3).into(),
                         selected: Some(0),
                         place: Place::InCard,
                         hints: None,
-                        window: None,
+                        pager: Default::default(),
                     }),
                     ..Frame::default()
                 }),
@@ -1324,11 +1563,11 @@ mod tests {
                     // width had to be kept in step with.
                     dock: Some(12),
                     suggestions: Some(Suggestions {
-                        rows: rows(3),
+                        rows: rows(3).into(),
                         selected: Some(0),
                         place: Place::AbovePrompt,
                         hints: None,
-                        window: None,
+                        pager: Default::default(),
                     }),
                     ..Frame::default()
                 }),
@@ -1350,11 +1589,11 @@ mod tests {
             let mut ui: Ui<UiMsg> = Ui::new();
             ui.frame(
                 col().child(suggestions_layer(&Suggestions {
-                    rows: rows(n),
+                    rows: rows(n).into(),
                     selected: Some(0),
                     place: Place::AbovePrompt,
                     hints: None,
-                    window: None,
+                    pager: Default::default(),
                 })),
                 Size::new(60, 40),
             );
@@ -1392,11 +1631,11 @@ mod tests {
         let mut ui: Ui<UiMsg> = Ui::new();
         ui.frame(
             col().child(suggestions_layer(&Suggestions {
-                rows: rows(3),
+                rows: rows(3).into(),
                 selected: Some(0),
                 place: Place::AbovePrompt,
                 hints: None,
-                window: None,
+                pager: Default::default(),
             })),
             Size::new(60, 20),
         );
@@ -1431,11 +1670,11 @@ mod tests {
             let mut ui: Ui<UiMsg> = Ui::new();
             ui.frame(
                 suggestions(&Suggestions {
-                    rows: rows(n),
+                    rows: rows(n).into(),
                     selected: Some(0),
                     place: Place::AbovePrompt,
                     hints: None,
-                    window: None,
+                    pager: Default::default(),
                 }),
                 Size::new(40, 6),
             );
@@ -1468,11 +1707,11 @@ mod tests {
             frame_tree(Frame {
                 prompt_line: true,
                 suggestions: Some(Suggestions {
-                    rows: rows(5),
+                    rows: rows(5).into(),
                     selected: Some(0),
                     place: Place::AbovePrompt,
                     hints: None,
-                    window: None,
+                    pager: Default::default(),
                 }),
                 ..Frame::default()
             }),
@@ -1499,8 +1738,8 @@ mod tests {
     /// **Ledger finding A: the column yield order.** The name is sized before
     /// the description, so a row too narrow for both keeps the whole command
     /// name and truncates the description — never the other way round. This is
-    /// what `left_budget` says for the status bar and what `Node::priority`
-    /// replaced for both.
+    /// what the status bar's `yields_last` says for its two sides, and what
+    /// `Node::priority` replaced the hand-written budget with for both.
     #[test]
     fn the_description_yields_before_the_name() {
         let one = |w: u16| {
@@ -1509,14 +1748,15 @@ mod tests {
                     name: "a-long-command-name".into(),
                     description: Some("a-long-description".into()),
                     ..SuggestionRow::default()
-                }],
+                }]
+                .into(),
                 selected: Some(0),
                 place: Place::AbovePrompt,
                 hints: None,
-                window: None,
+                pager: Default::default(),
             };
             let ui = laid_out(s, w, 4);
-            ui.rect_of(ui.find_by_key(&name_key(0)).expect("the name column"))
+            ui.rect_of(ui.find_by_key(&name_key("")).expect("the name column"))
                 .w
         };
         // The name column is `max(longest name, 30)` — `ColumnLayout`'s

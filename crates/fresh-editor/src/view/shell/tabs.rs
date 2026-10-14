@@ -29,20 +29,13 @@
 
 use std::rc::Rc;
 
-use fresh_ui::{
-    gesture, layout_reader, row, text, Event, GestureKind, Key, LayoutInfo, MouseButton, Node,
-    Sizing,
-};
+use fresh_ui::{gesture, row, text, Event, GestureKind, Key, MouseButton, Node, Sizing};
 
 use crate::app::shell_host::shell_theme::{attrs, pair};
 use crate::app::types::HoverTarget;
 use crate::model::event::LeafId;
-use crate::primitives::display_width::str_width;
 use crate::view::split::TabTarget;
-use crate::view::ui::tabs::{
-    elided_tab_name, tabs_render_width, NEW_TAB_BUTTON_WIDTH, TAB_NAME_MAX_COLS,
-};
-use unicode_segmentation::UnicodeSegmentation;
+use crate::view::ui::tabs::{elided_tab_name, NEW_TAB_BUTTON_WIDTH, TAB_NAME_MAX_COLS};
 
 use super::msg::{UiFact, UiMsg};
 use super::splits::{close_key, maximize_key, PaneControls};
@@ -61,7 +54,10 @@ pub struct Tab {
 }
 
 /// A pane's strip: its tabs and what the pane says about them.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+///
+/// Not `PartialEq`, for the reason `Splits` is not: it carries the handle its
+/// window is addressed by, and an `Anchor` is an identity rather than a value.
+#[derive(Clone, Default)]
 pub struct Strip {
     pub tabs: Vec<Tab>,
     /// The tab the pane is showing. `None` only for a pane the editor
@@ -73,13 +69,46 @@ pub struct Strip {
     /// `(target, on its close button)`, from `HoverTarget::TabName` and
     /// `TabCloseButton` — which the tab's own nodes report.
     pub hover: Option<(TabTarget, bool)>,
-    /// `SplitViewState::tab_scroll_offset`: how far the tabs are scrolled, in
-    /// columns of the logical strip. The editor owns it, as it owns every
-    /// pane's scroll (§8): `ensure_active_tab_visible` moves it when the
-    /// active tab changes and the arrows and the wheel step it.
-    pub offset: usize,
+    /// The pointer is on this pane's `+`.
+    pub hover_plus: bool,
+    /// The handle the strip's window is addressed by, so the host can ask it
+    /// to show a tab (`Anchor::reveal_key`).
+    ///
+    /// **This is all that is left of the scroll offset.** The editor used to
+    /// hold one in columns and move it with `ensure_active_tab_visible`, which
+    /// measured every tab a second time to find out where the active one was.
+    /// Where the tabs are is the window's own answer; which one to show is the
+    /// pane's, and that is what this carries. `None` for a strip described
+    /// without one, which simply never reveals.
+    pub reveal: Option<Rc<fresh_ui::behavior::Anchor>>,
     /// The word a preview tab carries after its name, localized.
     pub preview_label: String,
+}
+
+impl Strip {
+    /// The cap to build this strip's labels with, in a window `room` cells
+    /// wide: `TAB_NAME_MAX_COLS` when the names do not fit, and no cap at all
+    /// when they do.
+    fn name_cap(&self, room: u16) -> usize {
+        match natural_width(&self.tabs, &self.preview_label) > usize::from(room) {
+            true => TAB_NAME_MAX_COLS,
+            false => usize::MAX,
+        }
+    }
+}
+
+impl std::fmt::Debug for Strip {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Strip")
+            .field("tabs", &self.tabs)
+            .field("active", &self.active)
+            .field("active_pane", &self.active_pane)
+            .field("hover", &self.hover)
+            .field("hover_plus", &self.hover_plus)
+            .field("reveal", &self.reveal.is_some())
+            .field("preview_label", &self.preview_label)
+            .finish()
+    }
 }
 
 /// The right-hand cluster's state: which buttons it has and how they read.
@@ -105,6 +134,17 @@ pub fn tab_key(pane: LeafId, t: TabTarget) -> Key {
     Key::Pair(format!("tab:{}", pane.0 .0).into(), ordinal(t))
 }
 
+/// The whole tab — its name and its `×` — as one keyed span.
+///
+/// **What "show me this tab" means.** [`tab_key`] names the label alone, which
+/// is the rectangle the drag's drop zone and the web read; revealing *that*
+/// leaves the close button's last cell past the window's edge, so the window
+/// correctly reports there is more and caps the end when you are looking at
+/// the last tab. A tab is one thing, and this is the thing.
+pub fn tab_span_key(pane: LeafId, t: TabTarget) -> Key {
+    Key::Pair(format!("tab_span:{}", pane.0 .0).into(), ordinal(t))
+}
+
 pub fn close_tab_key(pane: LeafId, t: TabTarget) -> Key {
     Key::Pair(format!("tab_close:{}", pane.0 .0).into(), ordinal(t))
 }
@@ -113,27 +153,22 @@ pub fn new_tab_key(pane: LeafId) -> Key {
     Key::Pair("tab_new".into(), pane.0 .0 as u64)
 }
 
-pub fn scroll_left_key(pane: LeafId) -> Key {
-    Key::Pair("tab_scroll_left".into(), pane.0 .0 as u64)
-}
-
-pub fn scroll_right_key(pane: LeafId) -> Key {
-    Key::Pair("tab_scroll_right".into(), pane.0 .0 as u64)
-}
-
-/// Present in the tree exactly when the tabs overflow the strip's right edge
-/// — what `TabLayout::right_overflow` recorded, as a node the applier can
-/// look for.
-pub fn overflow_key(pane: LeafId) -> Key {
-    Key::Pair("tab_overflow".into(), pane.0 .0 as u64)
+/// The window the tabs scroll inside — the strip less its control cluster.
+///
+/// Named so a reader can ask what is *on screen*: the tabs are ordinary nodes
+/// in a window that does not virtualise, so every tab has a rectangle whether
+/// or not it is showing, and only this box says which of them you can see.
+pub fn tab_window_key(pane: LeafId) -> Key {
+    Key::Pair("tab_window".into(), pane.0 .0 as u64)
 }
 
 /// The text a tab shows: the painter's `" {name}{*}{ preview}{ [BIN]} "`.
 ///
-/// **Shared with the model's width arithmetic.** `calculate_tab_widths`, which
-/// `ensure_active_tab_visible` reads to bring the active tab into view,
-/// measures the same string, so the offset the editor picks and the window
-/// the strip shows agree by construction.
+/// `cap` is `usize::MAX` for a name shown whole. The doc here used to say this
+/// was "shared with the model's width arithmetic", naming `calculate_tab_widths`
+/// and `ensure_active_tab_visible` — both deleted with the strip's hand layout.
+/// What shares it now is [`natural_width`], which asks what these labels would
+/// measure uncapped so the strip can decide whether to cap them at all.
 pub fn label(t: &Tab, cap: usize, preview_label: &str) -> String {
     let name = elided_tab_name(&t.name, cap);
     let modified = if t.modified { "*" } else { "" };
@@ -146,34 +181,15 @@ pub fn label(t: &Tab, cap: usize, preview_label: &str) -> String {
     format!(" {name}{modified}{preview}{binary} ")
 }
 
+/// Columns a press on the strip's `<` or `>` moves the window by.
+///
+/// The painter's step, kept: a cap is a nudge along the strip, where the
+/// library's default for a window — a whole screenful, as pressing a
+/// scrollbar's track gives — would skip past every tab you were looking for.
+pub const TAB_SCROLL_STEP_COLUMNS: u16 = 10;
+
 const CLOSE: &str = "× ";
 const PLUS: &str = " + ";
-
-/// Full names when every tab fits at full width, otherwise each name is
-/// capped — the painter's `tab_name_cap`, against the width the strip has.
-fn name_cap(s: &Strip, width: usize) -> usize {
-    let full: usize = s
-        .tabs
-        .iter()
-        .map(|t| str_width(&label(t, usize::MAX, &s.preview_label)) + str_width(CLOSE))
-        .sum();
-    let with_seps = full + s.tabs.len().saturating_sub(1);
-    if with_seps <= tabs_render_width(with_seps, width) {
-        usize::MAX
-    } else {
-        TAB_NAME_MAX_COLS
-    }
-}
-
-/// One piece of the logical strip, before scrolling: what it is, and what it
-/// reads.
-#[derive(Clone, Debug)]
-enum Piece {
-    Name(usize),
-    Close(usize),
-    Sep,
-    Plus,
-}
 
 /// The strip's ground.
 fn ground() -> String {
@@ -312,9 +328,18 @@ fn close_node(pane: LeafId, t: TabTarget, s: String, ink: String) -> Node<UiMsg>
         .on_leave(hover(None))
 }
 
-fn plus_node(pane: LeafId, s: String) -> Node<UiMsg> {
-    gesture(text(s).theme(pair("ui.tab_inactive_fg", "ui.tab_inactive_bg")))
+/// The `+` after the last tab. It lights on hover, as the `×` beside a tab
+/// name does and as the strip's own `<`/`>` caps do — the three are the same
+/// kind of thing and read the same way.
+fn plus_node(pane: LeafId, hovered: bool, s: String) -> Node<UiMsg> {
+    let fg = match hovered {
+        true => "ui.tab_close_hover_fg",
+        false => "ui.tab_inactive_fg",
+    };
+    gesture(text(s).theme(pair(fg, "ui.tab_inactive_bg")))
         .key(new_tab_key(pane))
+        .on_enter(hover(Some(HoverTarget::NewTabButton(pane))))
+        .on_leave(hover(None))
         .on(
             GestureKind::Press,
             Rc::new(move |e: &Event| {
@@ -331,13 +356,6 @@ fn plus_node(pane: LeafId, s: String) -> Node<UiMsg> {
         )
 }
 
-fn arrow(pane: LeafId, glyph: &'static str, delta: i32, key: Key) -> Node<UiMsg> {
-    gesture(text(glyph).theme(ground())).key(key).on(
-        GestureKind::Press,
-        press(UiFact::PaneTabsScroll { pane, delta }),
-    )
-}
-
 /// A cell of the right-hand cluster: `□`/`⧉` or `×`, answering its own press
 /// and reporting its own hover.
 fn control(glyph: &'static str, hovered: bool, target: HoverTarget, fact: UiFact) -> Node<UiMsg> {
@@ -351,16 +369,17 @@ fn control(glyph: &'static str, hovered: bool, target: HoverTarget, fact: UiFact
         .on_leave(hover(None))
 }
 
-/// The cluster: `[gap] > □ × [trail]`, over the columns reserved for it. The
-/// `>` shows only when the tabs overflow; its column is held either way so
-/// the cluster does not shift as they scroll.
-fn cluster(pane: LeafId, c: Cluster, overflow: bool) -> Node<UiMsg> {
+/// The cluster: `[gap] [gap] □ × [trail]`, over the columns reserved for it.
+///
+/// It used to carry the `>` itself, drawn when the tabs overflowed and
+/// stepping the editor's own offset. The strip is a window now and the window
+/// caps its own ends (`Draw::Overflow`), which lands the `>` in the cell
+/// immediately left of this — where the cluster drew it — without anyone
+/// deciding whether the tabs overflow. The column stays reserved so the
+/// buttons sit where they always have.
+fn cluster(pane: LeafId, c: Cluster) -> Node<UiMsg> {
     let one = Sizing::Cells(1);
-    let mut cells: Vec<Node<UiMsg>> = vec![row().w(one)];
-    cells.push(match overflow {
-        true => arrow(pane, ">", 1, scroll_right_key(pane)).w(one),
-        false => row().w(one),
-    });
+    let mut cells: Vec<Node<UiMsg>> = vec![row().w(one), row().w(one)];
     if c.controls.maximize {
         let glyph = if c.maximized { "⧉" } else { "□" };
         cells.push(
@@ -393,135 +412,126 @@ fn cluster(pane: LeafId, c: Cluster, overflow: bool) -> Node<UiMsg> {
         .children(cells)
 }
 
-/// The strip, laid out against the width the tree gives it.
+/// What the strip's content would measure with every name shown whole.
 ///
-/// The row's shape is the painter's: `<` when scrolled, the visible window
-/// over the tabs (a tab cut by the window's edge shows the cells that fit,
-/// as `build_visible_line` cut its span), the `+` inline after the last tab
-/// or pinned to the right edge when they overflow, `>` when they overflow and
-/// no cluster carries it, then the cluster.
-pub fn strip(pane: LeafId, s: &Strip, c: Cluster) -> Node<UiMsg> {
-    let s = Rc::new(s.clone());
-    layout_reader(move |info: LayoutInfo| lay_out(pane, &s, c, info.constraints.max_w as usize))
-        .h(Sizing::Cells(1))
-}
-
-/// `txt` from `skip` columns in, at most `room` columns wide, cut on
-/// grapheme boundaries by display width — never by `char`: a wide
-/// character taken as one char is two columns, and a piece cut that way
-/// was wider than the room the strip had for it, pushing the arrow and the
-/// pinned `+` out of the row.
-fn columns(txt: &str, skip: usize, room: usize) -> String {
-    let mut out = String::new();
-    let (mut seen, mut taken) = (0usize, 0usize);
-    for g in txt.graphemes(true) {
-        let w = str_width(g);
-        if seen < skip {
-            seen += w;
-            continue;
-        }
-        if taken + w > room {
-            break;
-        }
-        out.push_str(g);
-        taken += w;
+/// **The one measurement left, and it is not a fitting decision.** The cap on
+/// a tab name exists so one long filename cannot push every other tab off the
+/// strip (issue #2650), which is a question about whether the names fit — so
+/// something has to compare them against the room. What was deleted was the
+/// strip *laying itself out* from that comparison: slicing labels by column,
+/// placing the `+`, deciding which arrows to draw. This decides one boolean,
+/// and it is deliberately a function of the names alone — the strip compares
+/// it against the window's **outer** width, which is what the strip row gives
+/// the window after the cluster and does not depend on the names. So the
+/// predicate cannot feed itself: capping never changes the answer, which is
+/// what keeps a frame from capping, fitting, un-capping and overflowing again.
+///
+/// Counts what [`strip`] builds: each label plus its `×`, a cell between
+/// tabs, and a cell plus the `+` after the last one.
+pub fn natural_width(tabs: &[Tab], preview_label: &str) -> usize {
+    use crate::primitives::display_width::str_width;
+    if tabs.is_empty() {
+        return str_width(PLUS);
     }
-    out
+    let names: usize = tabs
+        .iter()
+        .map(|t| str_width(&label(t, usize::MAX, preview_label)) + str_width(CLOSE))
+        .sum();
+    names + (tabs.len() - 1) + 1 + str_width(PLUS)
 }
 
-fn lay_out(pane: LeafId, s: &Strip, c: Cluster, total_w: usize) -> Node<UiMsg> {
-    let external = c.controls.reserve() > 0;
-    let width = total_w.saturating_sub(c.controls.reserve() as usize);
-    let cap = name_cap(s, width);
+/// The strip: the tabs in a window that scrolls across, then the cluster.
+///
+/// **Nothing here measures anything.** It used to be a `layout_reader` that
+/// took the strip's width, decided a name cap from it, built the whole logical
+/// strip as `(Piece, String)` pairs, summed their widths, worked out whether
+/// the `<` and `>` arrows appeared, sliced every piece by column against a
+/// scroll offset the editor held, and emitted fixed `Sizing::Cells` nodes —
+/// a finished picture, handed to a tree that had nothing left to lay out. The
+/// offset could not come from layout because layout never decided the widths,
+/// so a second full measurement ran in `view::ui::tabs` to produce it
+/// (`calculate_tab_widths` and friends), and the two were held in step by
+/// comments reading "or widths drift".
+///
+/// The tabs are ordinary nodes at their natural widths inside a horizontal
+/// viewport. Layout settles the widths, the window is the viewport's, the
+/// `<` and `>` are the window's own overflow caps, and the editor's one
+/// remaining say is *which tab to show* — `Anchor::reveal_key` on the active
+/// tab, which is a fact about the pane and not about columns.
+pub fn strip(pane: LeafId, s: &Strip, c: Cluster) -> Node<UiMsg> {
+    // **Whether the names are capped is decided where the room is known.**
+    // The window is the flexible child of the strip row, beside a cluster of
+    // fixed width, so what layout offers it here is its outer width in the
+    // frame it applies to — a tab that opens or a split that resizes is
+    // capped or not in the frame that shows it.
+    let s = Rc::new(s.clone());
+    let window = fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
+        tab_window(pane, &s, s.name_cap(info.constraints.max_w))
+    })
+    .flex(1)
+    .h(Sizing::Cells(1));
 
-    // The logical strip, before scrolling.
-    let mut pieces: Vec<(Piece, String)> = Vec::new();
+    row()
+        .theme(ground())
+        .h(Sizing::Cells(1))
+        .children([window, cluster(pane, c)])
+}
+
+/// The tabs in the window that scrolls across them, with their names capped
+/// at `cap` columns.
+fn tab_window(pane: LeafId, s: &Strip, cap: usize) -> Node<UiMsg> {
+    let mut cells: Vec<Node<UiMsg>> = Vec::new();
     for (i, t) in s.tabs.iter().enumerate() {
         if i > 0 {
-            pieces.push((Piece::Sep, " ".into()));
+            cells.push(text(" ").theme(ground()));
         }
-        pieces.push((Piece::Name(i), label(t, cap, &s.preview_label)));
-        pieces.push((Piece::Close(i), CLOSE.into()));
-    }
-    let tabs_total: usize = pieces.iter().map(|(_, t)| str_width(t)).sum();
-    let max_width = tabs_render_width(tabs_total, width);
-    let pin_plus = max_width < width;
-    if !pin_plus {
-        if !s.tabs.is_empty() {
-            pieces.push((Piece::Sep, " ".into()));
-        }
-        pieces.push((Piece::Plus, PLUS.into()));
+        let (name_ink, close_ink) = tab_ink(s, i);
+        // The name and its `×` in one keyed span, so `reveal_key` brings the
+        // whole tab into the window rather than stopping with its label flush
+        // against the edge. The two keep their own keys inside it.
+        cells.push(row().key(tab_span_key(pane, t.target)).children([
+            name_node(pane, t.target, label(t, cap, &s.preview_label), name_ink),
+            close_node(pane, t.target, CLOSE.to_string(), close_ink),
+        ]));
     }
 
-    // The window over it.
-    let total: usize = pieces.iter().map(|(_, t)| str_width(t)).sum();
-    let offset = s.offset.min(total);
-    let show_left = offset > 0;
-    let overflow = total.saturating_sub(offset) > max_width;
-    let draw_right = overflow && !external;
-    let available = max_width
-        .saturating_sub(show_left as usize)
-        .saturating_sub(draw_right as usize);
+    // **The `+` is the last thing on the strip, after the last tab.** It rides
+    // in the window with them, so it sits beside the tab it follows rather
+    // than against an edge it has nothing to do with. The painter pinned it to
+    // the right whenever the tabs overflowed — a placement that depended on
+    // the overflow, which is the window's own answer and not something a
+    // description can know.
+    if !s.tabs.is_empty() {
+        cells.push(text(" ").theme(ground()));
+    }
+    cells.push(
+        plus_node(pane, s.hover_plus, PLUS.to_string())
+            .w(Sizing::Cells(NEW_TAB_BUTTON_WIDTH as u16)),
+    );
 
-    let mut cells: Vec<Node<UiMsg>> = Vec::new();
-    if show_left {
-        cells.push(arrow(pane, "<", -1, scroll_left_key(pane)));
+    let mut window = fresh_ui::viewport(row().children(cells))
+        .key(tab_window_key(pane))
+        .scroll_axis(fresh_ui::Axis::Horizontal)
+        .scrollbar()
+        // A cap on a tab strip is a nudge, not a page: a screenful skips past
+        // every tab you were looking for. The painter's `<`/`>` stepped by
+        // this many columns and so does this.
+        .scroll_step(TAB_SCROLL_STEP_COLUMNS)
+        // **A cap is the `+` pointing sideways.** Same ground, same two
+        // foregrounds, same padded width — `<`, `>` and `+` are one kind of
+        // button on this strip, so nothing about meeting one should tell you
+        // which it was. That the release drew a one-cell arrow on the
+        // separator's ground is not a reason to keep two answers.
+        .scroll_cap_width(NEW_TAB_BUTTON_WIDTH as u16)
+        .scrollbar_theme(pair("ui.tab_inactive_fg", "ui.tab_inactive_bg"))
+        .scrollbar_hover_theme(pair("ui.tab_close_hover_fg", "ui.tab_inactive_bg"))
+        // The whole of the room the strip row gave it.
+        .w(Sizing::Pct(100))
+        .h(Sizing::Cells(1));
+    if let Some(a) = &s.reveal {
+        window = window.anchor_to(a.clone());
     }
-    let mut skip = offset;
-    let mut rendered = 0usize;
-    for (piece, txt) in pieces {
-        let w = str_width(&txt);
-        if skip >= w {
-            skip -= w;
-            continue;
-        }
-        let room = available.saturating_sub(rendered);
-        if room == 0 {
-            break;
-        }
-        let shown = columns(&txt, skip, room);
-        let shown_w = str_width(&shown);
-        skip = 0;
-        let node = match piece {
-            Piece::Name(i) => {
-                let (ink, _) = tab_ink(s, i);
-                name_node(pane, s.tabs[i].target, shown, ink)
-            }
-            Piece::Close(i) => {
-                let (_, ink) = tab_ink(s, i);
-                close_node(pane, s.tabs[i].target, shown, ink)
-            }
-            Piece::Sep => text(shown).theme(ground()),
-            Piece::Plus => plus_node(pane, shown),
-        };
-        cells.push(node.w(Sizing::Cells(shown_w as u16)));
-        rendered += shown_w;
-        if rendered >= available {
-            break;
-        }
-    }
-    if draw_right {
-        cells.push(arrow(pane, ">", 1, scroll_right_key(pane)));
-    }
-    // The rest of the row is the strip's ground; the pinned `+` sits on its
-    // last three columns.
-    cells.push(row().flex(1));
-    if pin_plus {
-        cells.push(plus_node(pane, PLUS.into()).w(Sizing::Cells(NEW_TAB_BUTTON_WIDTH as u16)));
-    }
-    if overflow {
-        cells.push(row().w(Sizing::Cells(0)).key(overflow_key(pane)));
-    }
-    let tabs = row()
-        .w(Sizing::Cells(width as u16))
-        .theme(ground())
-        .children(cells);
-    match external {
-        true => row()
-            .theme(ground())
-            .children([tabs, cluster(pane, c, overflow)]),
-        false => tabs,
-    }
+    window
 }
 
 /// A tab's rectangles, read back off the tree.
@@ -539,20 +549,46 @@ pub struct TabRect {
 ///
 /// What `TabLayout::tabs` recorded, for the two readers that want geometry
 /// rather than a press: the drag's drop zone and the web's tab bar.
+///
+/// **Clipped to the window, because the tree does not do it for us.** The tabs
+/// are ordinary nodes in a `ScrollMode::Cells` viewport, which shows part of
+/// its content rather than building only the part it shows — so a tab scrolled
+/// off the end still has a full-width rectangle, one that `rect_of` keeps
+/// (it drops only *empty* ones) and `screen_rect` folds back onto the frame
+/// when its `x` has gone negative. Left unclipped, the first tab of a
+/// scrolled strip reports a phantom box at the strip's left edge and the
+/// drag's drop zone resolves a drop there to the wrong tab. The press path
+/// never had this problem: a hit test asks the tree, which clips.
 pub fn rects(
     ui: &fresh_ui::Ui<UiMsg>,
     size: ratatui::layout::Rect,
     pane: LeafId,
     targets: &[TabTarget],
 ) -> Vec<TabRect> {
+    let window = ui
+        .find_by_key(&tab_window_key(pane))
+        .map(|e| ui.rect_of(e))
+        .unwrap_or(fresh_ui::Rect::ZERO);
+    // Non-empty after clipping, in screen coordinates, or nothing.
+    let showing = |r: fresh_ui::Rect| {
+        let r = r.intersect(window);
+        (r.w > 0 && r.h > 0).then(|| super::screen_rect(r, size))
+    };
     targets
         .iter()
         .filter_map(|&t| {
             let key = tab_key(pane, t);
-            let name = super::rect_of(ui, &key, size)?;
-            let close = super::rect_of(ui, &close_tab_key(pane, t), size).unwrap_or(
-                ratatui::layout::Rect::new(name.x + name.width, name.y, 0, 1),
-            );
+            let name = showing(ui.find_by_key(&key).map(|e| ui.rect_of(e))?)?;
+            let close = ui
+                .find_by_key(&close_tab_key(pane, t))
+                .map(|e| ui.rect_of(e))
+                .and_then(showing)
+                .unwrap_or(ratatui::layout::Rect::new(
+                    name.x + name.width,
+                    name.y,
+                    0,
+                    1,
+                ));
             let label = ui
                 .spec()
                 .index
@@ -581,6 +617,7 @@ pub fn rects(
 mod tests {
     use super::*;
     use crate::model::event::{BufferId, SplitId};
+    use crate::primitives::display_width::str_width;
     use crate::view::shell::frame::{frame_tree, Frame};
     use crate::view::shell::splits::{tabs_key, Splits};
     use crate::view::split::SplitNode;
@@ -588,17 +625,6 @@ mod tests {
 
     fn pane() -> LeafId {
         LeafId(SplitId(0))
-    }
-
-    /// A wide-character name is cut by columns, so the piece is never wider
-    /// than its room and a window into it starts where the offset says.
-    #[test]
-    fn a_piece_is_cut_by_columns_not_chars() {
-        assert_eq!(columns("日本語ファイル.txt", 0, 3), "日");
-        assert_eq!(str_width(&columns("日本語ファイル.txt", 0, 5)), 4);
-        assert_eq!(columns("日本語ファイル.txt", 2, 4), "本語");
-        assert_eq!(columns("abc.txt", 1, 3), "bc.");
-        assert_eq!(columns("abc", 5, 3), "");
     }
 
     fn buf(i: usize) -> TabTarget {
@@ -617,19 +643,49 @@ mod tests {
             .collect()
     }
 
-    fn strip_of(n: usize, offset: usize) -> Strip {
+    /// Every test below lays this out in a bar these tabs overflow, which is
+    /// the state the strip is interesting in — so the names are capped, as the
+    /// editor would have decided from the frame before.
+    fn strip_of(n: usize) -> Strip {
         Strip {
             tabs: tabs(n),
             active: Some(buf(0)),
             active_pane: true,
             hover: None,
-            offset,
+            hover_plus: false,
+            reveal: None,
             preview_label: "(preview)".into(),
         }
     }
 
+    /// The same strip, addressable: the handle the host asks to show a tab.
+    fn strip_with(n: usize, a: &Rc<fresh_ui::behavior::Anchor>) -> Strip {
+        Strip {
+            reveal: Some(a.clone()),
+            ..strip_of(n)
+        }
+    }
+
+    /// Where the strip's window sits, and which ends it caps.
+    fn window_caps(ui: &Ui<UiMsg>) -> Vec<fresh_ui::End> {
+        ui.spec()
+            .items
+            .iter()
+            .filter_map(|i| match i.draw {
+                fresh_ui::Draw::Overflow { end, .. } => Some(end),
+                _ => None,
+            })
+            .collect()
+    }
+
     fn laid_out(s: Strip, controls: PaneControls, w: u16) -> Ui<UiMsg> {
         let mut ui: Ui<UiMsg> = Ui::new();
+        lay_out(&mut ui, s, controls, w);
+        ui
+    }
+
+    /// One more frame of `ui`, with this strip, `w` cells wide.
+    fn lay_out(ui: &mut Ui<UiMsg>, s: Strip, controls: PaneControls, w: u16) {
         let mut chrome = std::collections::HashMap::new();
         chrome.insert(
             pane(),
@@ -666,7 +722,6 @@ mod tests {
             }),
             Size::new(w, 10),
         );
-        ui
     }
 
     fn facts(d: fresh_ui::Dispatch<UiMsg>) -> Vec<UiFact> {
@@ -696,7 +751,7 @@ mod tests {
     /// separator, the `+` after the last.
     #[test]
     fn the_tabs_are_laid_out_as_the_painter_laid_them() {
-        let ui = laid_out(strip_of(2, 0), PaneControls::default(), 80);
+        let ui = laid_out(strip_of(2), PaneControls::default(), 80);
         let strip = rect(&ui, tabs_key(pane()));
         let n0 = rect(&ui, tab_key(pane(), buf(0)));
         let c0 = rect(&ui, close_tab_key(pane(), buf(0)));
@@ -717,12 +772,13 @@ mod tests {
             "the modified marker rides in the name"
         );
         let c1 = rect(&ui, close_tab_key(pane(), buf(1)));
-        assert_eq!(plus.x, c1.x + c1.w as i32 + 1);
-        assert_eq!(plus.w, 3);
-        assert!(
-            ui.find_by_key(&overflow_key(pane())).is_none(),
-            "two tabs fit"
+        assert_eq!(
+            plus.x,
+            c1.x + c1.w as i32 + 1,
+            "the + follows the last tab, a separator cell after its ×"
         );
+        assert_eq!(plus.w, 3);
+        assert!(window_caps(&ui).is_empty(), "two tabs fit, so nothing caps");
     }
 
     /// A press on a name names the tab and takes the pointer; a press on its
@@ -730,7 +786,7 @@ mod tests {
     /// open a menu for.
     #[test]
     fn the_tabs_answer_their_own_presses() {
-        let mut ui = laid_out(strip_of(2, 0), PaneControls::default(), 80);
+        let mut ui = laid_out(strip_of(2), PaneControls::default(), 80);
         let n1 = rect(&ui, tab_key(pane(), buf(1)));
         let at = Point::new(n1.x + 2, n1.y);
         let got = facts(ui.dispatch(Input::press(at, MouseButton::Left, Mods::NONE)));
@@ -799,25 +855,29 @@ mod tests {
         );
     }
 
-    /// **The window over an overflowing strip is the painter's.** Scrolled
-    /// past the first tab, a `<` leads the row, the tab under the edge shows
-    /// only the cells that fit, the `+` is pinned to the right edge and the
-    /// overflow marker is in the tree; the arrows step the offset.
+    /// **An overflowing strip is a window, and the window says so.**
+    ///
+    /// This used to assert the painter's picture: a `<` node leading the row,
+    /// the tab under the edge cut to the cells that fit, a `+` the strip
+    /// pinned itself, an `overflow_key` marker the applier looked for, and
+    /// arrows that stepped an offset the editor held. All of it was the strip
+    /// measuring itself. What is left to check is that the window overflows,
+    /// caps the end that has more, and moves when asked to show a tab.
     #[test]
-    fn an_overflowing_strip_scrolls_with_arrows_and_pins_the_plus() {
-        let ui = laid_out(strip_of(8, 0), PaneControls::default(), 40);
-        assert!(
-            ui.find_by_key(&overflow_key(pane())).is_some(),
-            "eight tabs overflow forty cells"
+    fn an_overflowing_strip_caps_its_ends_and_reveals_on_request() {
+        let a = fresh_ui::behavior::Anchor::new();
+        let ui = laid_out(strip_with(8, &a), PaneControls::default(), 40);
+        assert_eq!(
+            window_caps(&ui),
+            vec![fresh_ui::End::After],
+            "eight tabs overflow forty cells, and only the far end has more"
         );
+        // The `+` rides in the window after the last tab, so on an
+        // overflowing strip it is off to the right with them.
         assert!(
-            ui.find_by_key(&scroll_left_key(pane())).is_none(),
-            "nothing to the left yet"
+            ui.find_by_key(&new_tab_key(pane())).is_some(),
+            "the + is in the tree, at the end of the content"
         );
-        let plus = rect(&ui, new_tab_key(pane()));
-        assert_eq!(plus.x + plus.w as i32, 40, "pinned to the right edge");
-        let right = rect(&ui, scroll_right_key(pane()));
-        assert!(right.x < plus.x, "the > sits before the pinned +");
         let r = rects(&ui, size(40), pane(), &(0..8).map(buf).collect::<Vec<_>>());
         assert!(
             r.len() < 8,
@@ -826,40 +886,54 @@ mod tests {
         );
         assert_eq!(r[0].label, "file_0.rs");
 
-        let mut ui = laid_out(strip_of(8, 5), PaneControls::default(), 40);
-        let left = rect(&ui, scroll_left_key(pane()));
-        assert_eq!(left.x, 0, "a < leads the scrolled row");
-        let n0 = rect(&ui, tab_key(pane(), buf(0)));
-        assert_eq!(n0.x, 1);
-        assert_eq!(
-            n0.w as usize,
-            str_width(" file_0.rs ") - 5,
-            "the first tab shows the cells past the offset"
+        // Asking for the last tab moves the window to it — no width passed in,
+        // and no offset held anywhere in the editor.
+        a.reveal_key(tab_key(pane(), buf(7)));
+        let ui = laid_out(strip_with(8, &a), PaneControls::default(), 40);
+        let r = rects(&ui, size(40), pane(), &(0..8).map(buf).collect::<Vec<_>>());
+        assert!(
+            r.iter().any(|t| t.target == buf(7)),
+            "the last tab is on screen: {r:?}"
         );
-        let got = facts(ui.dispatch(Input::press(
-            Point::new(0, left.y),
-            MouseButton::Left,
-            Mods::NONE,
-        )));
+        // **And no further than asked.** `tab_key` names the label alone, and
+        // the `×`, the separator and the `+` come after it — so the shortest
+        // move that shows the label leaves those behind the far edge, and the
+        // window says so with both caps. This used to assert one cap, and
+        // passed only because `keyed_band` measured the band a cap's width
+        // further along than it was and overshot the end.
         assert_eq!(
-            got,
-            vec![UiFact::PaneTabsScroll {
-                pane: pane(),
-                delta: -1
-            }]
+            window_caps(&ui),
+            vec![fresh_ui::End::Before, fresh_ui::End::After],
+            "the label is in, and what follows it is not"
+        );
+
+        // Reaching the end is asking for the end. `Window::reveal_active_tab`
+        // names the `+` when the active tab is the last one, for exactly this
+        // reason: the button follows the tab, so revealing it brings the tab.
+        a.reveal_key(new_tab_key(pane()));
+        let ui = laid_out(strip_with(8, &a), PaneControls::default(), 40);
+        assert_eq!(
+            window_caps(&ui),
+            vec![fresh_ui::End::Before],
+            "and now it is the near end that has more behind it"
+        );
+        let r = rects(&ui, size(40), pane(), &(0..8).map(buf).collect::<Vec<_>>());
+        assert!(
+            r.iter().any(|t| t.target == buf(7)),
+            "with the last tab still on screen: {r:?}"
         );
     }
 
-    /// With a control cluster the strip yields its right columns to it, the
-    /// `>` moves into the cluster's slot, and the two buttons answer for
-    /// themselves.
+    /// With a control cluster the strip yields its right columns to it and
+    /// the two buttons answer for themselves. The `>` the cluster used to
+    /// carry is the window's own cap now, in the cell immediately before it.
     #[test]
     fn the_cluster_takes_the_right_columns_and_the_overflow_arrow() {
         let controls = PaneControls {
             maximize: true,
             close: true,
         };
-        let mut ui = laid_out(strip_of(8, 0), controls, 40);
+        let mut ui = laid_out(strip_of(8), controls, 40);
         let strip = rect(&ui, tabs_key(pane()));
         let close = rect(&ui, close_key(pane()));
         let max = rect(&ui, maximize_key(pane()));
@@ -869,12 +943,32 @@ mod tests {
             "× before the trailing blank"
         );
         assert_eq!(max.x, close.x - 1);
-        let right = rect(&ui, scroll_right_key(pane()));
-        assert_eq!(right.x, max.x - 1, "> in the cluster's reserved slot");
-        let plus = rect(&ui, new_tab_key(pane()));
+        // **The `+` is at the end of the content, which on an overflowing
+        // strip is off to the right.** It used to be pinned inside the window
+        // ahead of the cluster, and this asserted that placement — a placement
+        // that depended on the overflow, which is the window's answer and not
+        // something a description can know. What belongs to the cluster is the
+        // column before it: the window's trailing cap.
         assert!(
-            plus.x + (plus.w as i32) < right.x,
-            "the + pins inside the tabs' width"
+            ui.find_by_key(&new_tab_key(pane())).is_some(),
+            "the + is in the tree, at the end of the content"
+        );
+        let cap = ui
+            .spec()
+            .items
+            .iter()
+            .find(|i| matches!(i.draw, fresh_ui::Draw::Overflow { .. }))
+            .map(|i| i.rect)
+            .expect("eight tabs overflow forty cells, so the far end is capped");
+        let window = rect(&ui, tab_window_key(pane()));
+        assert_eq!(
+            cap.right(),
+            window.right(),
+            "the `>` is flush with the window's trailing edge"
+        );
+        assert!(
+            window.right() <= max.x,
+            "and the window ends before the cluster's buttons: {window:?} vs {max:?}"
         );
         let got = facts(ui.dispatch(Input::press(
             Point::new(close.x, close.y),
@@ -890,10 +984,19 @@ mod tests {
         assert_eq!(got, vec![UiFact::PaneMaximize(pane())]);
     }
 
-    /// Names are capped at twenty-five columns only when the full labels do
-    /// not fit — the painter's `tab_name_cap`.
+    /// **A name is capped when the names do not fit, and whole when they do.**
+    ///
+    /// Capping at every width elided a 26-column name on a 160-column screen
+    /// showing one tab; the rule is to cap only on overflow, which is what
+    /// four tests elsewhere were written against.
+    ///
+    /// **And it is decided in the frame it applies to.** The decision was the
+    /// host's, from the window's width read back off the frame before, so the
+    /// frame that narrowed the strip still showed whole names and the frame
+    /// that widened it still capped them. The strip decides it at layout,
+    /// where its width is known.
     #[test]
-    fn names_are_elided_only_when_the_full_labels_overflow() {
+    fn a_name_is_capped_only_when_the_names_do_not_fit() {
         let long = |n: usize| Tab {
             target: buf(n),
             name: format!("{}_{n}.rs", "a".repeat(40)),
@@ -901,26 +1004,48 @@ mod tests {
             preview: false,
             binary: false,
         };
-        let mut s = strip_of(0, 0);
+        let mut s = strip_of(0);
         s.tabs = vec![long(0)];
-        let ui = laid_out(s.clone(), PaneControls::default(), 120);
-        let n0 = rect(&ui, tab_key(pane(), buf(0)));
-        assert_eq!(n0.w as usize, 40 + 5 + 2, "one long name fits in full");
-        s.tabs = vec![long(0), long(1), long(2)];
-        let ui = laid_out(s, PaneControls::default(), 120);
-        let n0 = rect(&ui, tab_key(pane(), buf(0)));
-        assert_eq!(
-            n0.w as usize,
-            TAB_NAME_MAX_COLS + 2,
-            "three do not, and each is capped"
-        );
+        let whole = str_width(&label(&long(0), usize::MAX, "(preview)"));
+        let capped = TAB_NAME_MAX_COLS + 2;
+
+        let mut ui: Ui<UiMsg> = Ui::new();
+        lay_out(&mut ui, s.clone(), PaneControls::default(), 120);
+        let w = |ui: &Ui<UiMsg>| rect(ui, tab_key(pane(), buf(0))).w as usize;
+        assert_eq!(w(&ui), whole, "room for the name, so the name");
+
+        lay_out(&mut ui, s.clone(), PaneControls::default(), 40);
+        assert_eq!(w(&ui), capped, "capped in the frame that narrowed it");
+
+        lay_out(&mut ui, s.clone(), PaneControls::default(), 120);
+        assert_eq!(w(&ui), whole, "whole in the frame that widened it");
+
+        // Tabs that no longer fit are capped in the frame they open in.
+        s.tabs.extend([long(1), long(2)]);
+        lay_out(&mut ui, s, PaneControls::default(), 120);
+        assert_eq!(w(&ui), capped, "capped in the frame the tab opened in");
+    }
+
+    /// And the strip's arithmetic: what it would measure with every name
+    /// whole, which is the only thing the cap is decided from.
+    #[test]
+    fn natural_width_counts_what_the_strip_builds() {
+        let s = strip_of(3);
+        let ui = laid_out(s.clone(), PaneControls::default(), 400);
+        let content: usize = (0..3)
+            .map(|i| rect(&ui, tab_span_key(pane(), buf(i))).w as usize)
+            .sum::<usize>()
+            + 2 // the cell between each pair of tabs
+            + 1 // and the one before the `+`
+            + str_width(PLUS);
+        assert_eq!(natural_width(&s.tabs, &s.preview_label), content);
     }
 
     #[test]
     fn every_theme_name_is_a_real_key() {
         use crate::view::theme::Theme;
         let theme = Theme::from_json(r#"{"name":"test"}"#).expect("defaults");
-        let mut s = strip_of(3, 0);
+        let mut s = strip_of(3);
         s.tabs[2].preview = true;
         let mut names = vec![ground(), pair("ui.tab_inactive_fg", "ui.tab_inactive_bg")];
         for hover in [None, Some((buf(1), false)), Some((buf(1), true))] {

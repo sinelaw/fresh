@@ -287,10 +287,6 @@ fn wait_for_attach_popup(harness: &mut EditorTestHarness) {
 fn wait_for_container_authority(harness: &mut EditorTestHarness) -> String {
     loop {
         harness.tick_and_render().unwrap();
-        if let Some(auth) = harness.editor_mut().take_pending_authority() {
-            harness.editor_mut().set_boot_authority(auth);
-            return harness.editor().authority().display_label.clone();
-        }
         if harness
             .editor()
             .authority()

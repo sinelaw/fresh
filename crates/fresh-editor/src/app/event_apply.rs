@@ -12,9 +12,8 @@
 //!   to plugins after an event applies.
 //!
 //! The "scroll/viewport event" handlers (handle_scroll_event,
-//! handle_set_viewport_event, handle_recenter_event) and the small
-//! `invalidate_layouts_for_buffer` helper now live on `impl Window`
-//! since they're entirely per-window concerns.
+//! handle_recenter_event) live on
+//! `impl Window` since they're entirely per-window concerns.
 
 use lsp_types::TextDocumentContentChangeEvent;
 
@@ -73,7 +72,26 @@ impl Editor {
             .filter_map(|&(start, end)| {
                 if end <= position {
                     Some((start, end))
-                } else if start >= edit_end {
+                } else if start >= edit_end && start > position {
+                    // **Entirely after the edit**, so only its coordinates
+                    // moved. `start > position` is the half an insertion needs:
+                    // it removes nothing, so `edit_end == position`, and
+                    // `start >= edit_end` alone also caught the line the text
+                    // was inserted at the *start* of — whose content plainly
+                    // changed. That line kept a seen entry, shifted along, and
+                    // the set was left holding a range no line has.
+                    //
+                    // Which bites when the edit is taken back. An undo or a
+                    // backspace runs the shift in reverse, the stale entry
+                    // lands exactly on the restored line's range, and the line
+                    // reads as already offered — so `lines_changed` never
+                    // fires for it and a per-line decoration plugin never
+                    // rebuilds it. In compose a heading kept its text and lost
+                    // its bold until an unrelated edit offered the line again.
+                    //
+                    // A deletion is unaffected: `removed > 0` makes `edit_end`
+                    // strictly greater than `position`, so the added test can
+                    // only be true where the first one already was.
                     Some(((start + inserted) - removed, (end + inserted) - removed))
                 } else {
                     None // overlaps the edit, so its content changed
@@ -94,11 +112,6 @@ impl Editor {
         match event {
             Event::Scroll { line_offset } => {
                 self.active_window_mut().handle_scroll_event(*line_offset);
-                return;
-            }
-            Event::SetViewport { top_line } => {
-                self.active_window_mut()
-                    .handle_set_viewport_event(*top_line);
                 return;
             }
             Event::Recenter => {
@@ -162,13 +175,10 @@ impl Editor {
             let split_id = self.effective_active_split();
             let active_buf = self.active_buffer();
             debug_assert!(
-                self.windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(_, vs)| vs)
-                    .expect("active window must have a populated split layout")
+                self.active_window()
+                    .split_view_states()
                     .get(&split_id)
-                    .is_some_and(|vs| vs.keyed_states.contains_key(&active_buf)),
+                    .is_some_and(|vs| vs.has_buffer_state(active_buf)),
                 "pane-buffer invariant violated: split {:?} resolves to buffer {:?} \
                  but that split's keyed_states has no entry for it. Some write path \
                  bypassed Editor::set_pane_buffer; see active_focus.rs / issue #1620.",
@@ -179,13 +189,12 @@ impl Editor {
                 .apply_event_to_keyed_buffer(active_buf, split_id, event);
         }
 
-        // 1c. Invalidate layouts for all views of this buffer after content changes
+        // 1c. Refresh the per-buffer derived state after content changes
         // Note: recovery_pending is set automatically by the buffer on edits
         match event {
             Event::Insert { .. } | Event::Delete { .. } | Event::BulkEdit { .. } => {
                 let buf = self.active_buffer();
                 let win = self.active_window_mut();
-                win.invalidate_layouts_for_buffer(buf);
                 win.prune_orphaned_folds(buf);
                 win.schedule_semantic_tokens_full_refresh(buf);
                 win.schedule_folding_ranges_refresh(buf);
@@ -197,7 +206,6 @@ impl Editor {
                 if has_edits {
                     let buf = self.active_buffer();
                     let win = self.active_window_mut();
-                    win.invalidate_layouts_for_buffer(buf);
                     win.prune_orphaned_folds(buf);
                     win.schedule_semantic_tokens_full_refresh(buf);
                     win.schedule_folding_ranges_refresh(buf);
@@ -262,6 +270,15 @@ impl Editor {
                         }
                     }
                 }
+                // Typing over a selection, multi-cursor edits, and their undo
+                // arrive as one `BulkEdit`. Re-evaluate the span its edits
+                // cover in the edited buffer.
+                Event::BulkEdit { edits, .. } => {
+                    if let Some((start, len)) = bulk_edit_span(edits) {
+                        self.active_window_mut()
+                            .reevaluate_search_overlays_around(start, len, search_fg, search_bg);
+                    }
+                }
                 _ => {}
             }
         }
@@ -282,6 +299,17 @@ impl Editor {
 
         // 4. Trigger plugin hooks for this event (with pre-calculated line info)
         self.trigger_plugin_hooks_for_event(event, line_info);
+        // A bulk edit (and the undo/redo of one) fires no per-edit hook
+        // above, so say that the content changed for every kind of edit.
+        if event.modifies_buffer() {
+            self.plugin_manager.read().unwrap().run_hook(
+                "buffer_modified",
+                crate::services::plugins::hooks::HookArgs::BufferModified {
+                    buffer_id: self.active_buffer(),
+                    window_id: self.active_window.0,
+                },
+            );
+        }
 
         // 5. Notify LSP of the change using pre-calculated positions
         // For BulkEdit events (undo/redo of code actions, renames, etc.),
@@ -394,15 +422,11 @@ impl Editor {
 
         // Capture old cursor states from SplitViewState (sole source of truth)
         let old_cursors: Vec<(CursorId, usize, Option<usize>)> = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
+            .active_window()
+            .split_view_states()
             .get(&split_id)
             .unwrap()
-            .keyed_states
-            .get(&active_buf)
+            .buffer_state(active_buf)
             .unwrap()
             .cursors
             .iter()
@@ -620,13 +644,13 @@ impl Editor {
         }
 
         // Update cursors in SplitViewState (sole source of truth)
-        let primary_position = {
+        {
             let cursors = &mut self
+                .active_window_mut()
                 .split_view_states_mut()
                 .get_mut(&split_id)
                 .unwrap()
-                .keyed_states
-                .get_mut(&active_buf)
+                .buffer_state_mut(active_buf)
                 .unwrap()
                 .cursors;
             for (cursor_id, position, anchor) in &new_cursors {
@@ -640,8 +664,7 @@ impl Editor {
                     cursor.sticky_column = *sticky;
                 }
             }
-            cursors.primary().position
-        };
+        }
 
         let state = self
             .windows
@@ -650,10 +673,6 @@ impl Editor {
             .expect("active window present")
             .get_mut(&active_buf)
             .unwrap();
-
-        // The cursors were written directly rather than through `MoveCursor`,
-        // so the primary's cached line number did not follow (#3167).
-        state.sync_primary_cursor_line_number(primary_position);
 
         // Notify the highlighter of each edit so the cache can take the
         // partial-update path on the next render. Throwing the whole cache
@@ -671,6 +690,8 @@ impl Editor {
             self.shift_plugin_markers_for_edit(active_buf, pos, del_len, ins_len);
         }
 
+        let edited_span = bulk_edit_span(&edit_lengths);
+
         // Create BulkEdit event with both buffer snapshots
         let bulk_edit = Event::BulkEdit {
             old_snapshot: Some(old_snapshot),
@@ -682,12 +703,23 @@ impl Editor {
             displaced_markers,
         };
 
-        // Post-processing (layout invalidation, split cursor sync, etc.)
-        let buf = self.active_buffer();
+        // Post-processing (split cursor sync, etc.)
         let win = self.active_window_mut();
-        win.invalidate_layouts_for_buffer(buf);
         win.adjust_other_split_cursors_for_event(&bulk_edit);
-        // Note: Do NOT clear search overlays - markers track through edits for F3/Shift+F3
+        // Note: Do NOT clear search overlays - markers track through edits for F3/Shift+F3.
+        // Re-evaluate them over the edited span instead, as the Insert/Delete
+        // path does: typing over a selected match must not leave a match
+        // highlight (or the current-match mark) on the typed text.
+        if let Some((start, len)) = edited_span {
+            if self.active_window().interactive_replace_state.is_none() {
+                let (search_fg, search_bg) = {
+                    let theme = self.theme.read().unwrap();
+                    (theme.search_match_fg, theme.search_match_bg)
+                };
+                self.active_window_mut()
+                    .reevaluate_search_overlays_around(start, len, search_fg, search_bg);
+            }
+        }
 
         // Notify LSP of the change using full document replacement.
         // Bulk edits combine multiple Delete+Insert operations into a single tree pass,
@@ -743,6 +775,7 @@ impl Editor {
                     "after_insert",
                     crate::services::plugins::hooks::HookArgs::AfterInsert {
                         buffer_id,
+                        window_id: self.active_window.0,
                         position: *position,
                         text: text.clone(),
                         // Byte range of the affected area
@@ -774,6 +807,7 @@ impl Editor {
                     "after_delete",
                     crate::services::plugins::hooks::HookArgs::AfterDelete {
                         buffer_id,
+                        window_id: self.active_window.0,
                         start: range.start,
                         end: range.end,
                         deleted_text: deleted_text.clone(),
@@ -818,6 +852,7 @@ impl Editor {
                     "cursor_moved",
                     crate::services::plugins::hooks::HookArgs::CursorMoved {
                         buffer_id,
+                        window_id: self.active_window.0,
                         cursor_id: *cursor_id,
                         old_position: *old_position,
                         new_position: *new_position,
@@ -873,5 +908,42 @@ impl Editor {
         if edit_changed_line_count {
             self.handle_refresh_lines(buffer_id);
         }
+    }
+}
+
+/// The span a `BulkEdit`'s edits cover in the edited buffer, as
+/// `(start, len)`, or `None` when it has none.
+///
+/// The edits are `(position, delete_len, insert_len)` with positions in the
+/// buffer before the edit; each lands shifted by the net length change of the
+/// edits before it.
+fn bulk_edit_span(edits: &[(usize, usize, usize)]) -> Option<(usize, usize)> {
+    let mut sorted = edits.to_vec();
+    sorted.sort_unstable_by_key(|&(position, _, _)| position);
+    let mut shift: isize = 0;
+    let mut span: Option<(usize, usize)> = None;
+    for (position, delete_len, insert_len) in sorted {
+        let start = position.saturating_add_signed(shift);
+        let end = start + insert_len;
+        span = Some(match span {
+            Some((lo, hi)) => (lo.min(start), hi.max(end)),
+            None => (start, end),
+        });
+        shift += insert_len as isize - delete_len as isize;
+    }
+    span.map(|(lo, hi)| (lo, hi - lo))
+}
+
+#[cfg(test)]
+mod bulk_edit_span_tests {
+    use super::bulk_edit_span;
+
+    #[test]
+    fn places_each_edit_after_the_ones_before_it() {
+        // Replace 3 bytes at 0 with 1, and 3 bytes at 10 with 2: in the
+        // edited buffer the second edit sits at 10 - 2 = 8 and ends at 10.
+        assert_eq!(bulk_edit_span(&[(10, 3, 2), (0, 3, 1)]), Some((0, 10)));
+        assert_eq!(bulk_edit_span(&[(4, 0, 5)]), Some((4, 5)));
+        assert_eq!(bulk_edit_span(&[]), None);
     }
 }

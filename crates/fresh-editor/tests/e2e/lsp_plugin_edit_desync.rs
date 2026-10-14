@@ -110,7 +110,7 @@ fn enable_vi_mode(harness: &mut EditorTestHarness) -> anyhow::Result<()> {
     harness.wait_for_screen_contains("Toggle Vi mode")?;
     harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
     harness.render()?;
-    harness.wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))?;
+    harness.wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))?;
     Ok(())
 }
 
@@ -134,14 +134,14 @@ fn vi_dd_keeps_the_server_in_sync_with_the_buffer() -> anyhow::Result<()> {
     harness.render()?;
     harness.send_key(KeyCode::Char('j'), KeyModifiers::NONE)?;
     harness.render()?;
-    harness.wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))?;
+    harness.wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))?;
 
     harness.send_key(KeyCode::Char('d'), KeyModifiers::NONE)?;
     harness.render()?;
-    harness.wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))?;
+    harness.wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))?;
     harness.send_key(KeyCode::Char('d'), KeyModifiers::NONE)?;
     harness.render()?;
-    harness.wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))?;
+    harness.wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))?;
 
     // Pins the failure below to what the server was told, not to what `dd` did.
     harness.wait_until(|h| h.get_buffer_content().as_deref() == Some(AFTER_DD_TEXT))?;
@@ -182,10 +182,10 @@ fn saving_after_vi_dd_does_not_leave_the_server_diverged() -> anyhow::Result<()>
     harness.render()?;
     harness.send_key(KeyCode::Char('d'), KeyModifiers::NONE)?;
     harness.render()?;
-    harness.wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))?;
+    harness.wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))?;
     harness.send_key(KeyCode::Char('d'), KeyModifiers::NONE)?;
     harness.render()?;
-    harness.wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))?;
+    harness.wait_until(|h| h.editor().input_mode() == Some("vi-normal".to_string()))?;
 
     harness.send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)?;
     harness.render()?;
@@ -233,7 +233,7 @@ fn save_all_sends_each_buffer_its_own_text() -> anyhow::Result<()> {
     harness.render()?;
     harness.type_text("// edit\n")?;
 
-    let (_saved, failed) = harness.editor_mut().save_all()?;
+    let failed = harness.editor_mut().save_all()?.failed.len();
     assert_eq!(failed, 0, "no buffer should fail to save");
 
     let alpha_on_disk = fs::read_to_string(&alpha)?;

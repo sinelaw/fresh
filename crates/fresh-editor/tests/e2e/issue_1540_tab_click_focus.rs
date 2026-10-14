@@ -11,6 +11,7 @@
 //!   2. click one or more files in the file navigator
 //!   3. click on one of the file tabs
 //!   4. try to type / press Ctrl+F
+//!
 //! Without the fix, typing is absorbed by the file-explorer search
 //! buffer and Ctrl+F does nothing useful.
 //!

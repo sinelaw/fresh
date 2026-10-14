@@ -82,6 +82,11 @@ fn relay_loop_inner(
     let mut control_buf = Vec::new();
     let mut control_byte = [0u8; 1];
     let mut last_size = crate::get_terminal_size().ok();
+    // Report this console's size before anything else: that is what tells the
+    // server a terminal is now in use here, and fits the session to it.
+    if let Some(size) = &last_size {
+        conn.send_resize(size.cols, size.rows)?;
+    }
 
     loop {
         // Check for data from server (non-blocking)

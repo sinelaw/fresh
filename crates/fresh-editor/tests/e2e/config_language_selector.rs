@@ -37,9 +37,10 @@ fn make_fish_config() -> Config {
             ..Default::default()
         },
     );
-    let mut config = Config::default();
-    config.languages = languages;
-    config
+    Config {
+        languages,
+        ..Default::default()
+    }
 }
 
 /// Opening a .fish file with a "fish" language config should show "Fish" in

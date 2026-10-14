@@ -6,7 +6,7 @@ use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use portable_pty::{native_pty_system, PtySize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Rows are cropped to this before searching, so the panes beside the
 /// explorer cannot match.
@@ -59,8 +59,8 @@ fn setup_project() -> (tempfile::TempDir, PathBuf) {
 
 /// Leaves the terminal focused, with no file open so the explorer's selection
 /// starts on the root row and `nested` sits directly below it.
-fn harness_with_explorer_and_terminal(root: &PathBuf) -> EditorTestHarness {
-    let mut harness = EditorTestHarness::with_working_dir(140, 36, root.clone()).unwrap();
+fn harness_with_explorer_and_terminal(root: &Path) -> EditorTestHarness {
+    let mut harness = EditorTestHarness::with_working_dir(140, 36, root.to_path_buf()).unwrap();
     harness.render().unwrap();
 
     harness

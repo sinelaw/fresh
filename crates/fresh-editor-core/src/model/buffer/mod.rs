@@ -1,9 +1,9 @@
 /// Text buffer that uses PieceTree with integrated line tracking
 /// Architecture where the tree is the single source of truth for text and line information
 use crate::model::encoding;
-use crate::model::filesystem::{FileSearchOptions, FileSystem};
+use crate::model::filesystem::{ContentDigest, FileSearchOptions, FileSystem};
 use crate::model::piece_tree::{
-    BufferData, BufferLocation, Cursor, PieceInfo, PieceRangeIter, PieceTree, PieceView, Position,
+    BufferData, BufferLocation, Cursor, PieceRangeIter, PieceTree, PieceView, Position,
     StringBuffer, TreeStats,
 };
 use crate::model::piece_tree_diff::PieceTreeDiff;
@@ -99,12 +99,26 @@ pub struct BufferConfig {
     /// Estimated average line length in bytes. Used for approximate line number
     /// display in large files and for goto-line byte offset estimation.
     pub estimated_line_length: usize,
+    /// The resolved `editor.large_file_threshold_bytes`, when the buffer was
+    /// built by a constructor given it. A save bigger than this records no
+    /// [`TextBuffer::saved_content`]: the changed-on-disk check doesn't
+    /// compare files that big, so hashing them would be wasted. `None`
+    /// records it at any size.
+    ///
+    /// Taken when the buffer is built: a later change of the setting reaches
+    /// the check (which reads it live) but not this buffer. Raised, saves
+    /// between the old and the new threshold go unfingerprinted, and a
+    /// drifted mtime on such a file counts as a change, as it did before
+    /// #3380; lowered, a few saves are hashed for nothing. Reopening the
+    /// file picks up the new value.
+    pub large_file_threshold: Option<usize>,
 }
 
 impl Default for BufferConfig {
     fn default() -> Self {
         Self {
             estimated_line_length: 80,
+            large_file_threshold: None,
         }
     }
 }
@@ -242,8 +256,9 @@ fn normalize_for_line_ending(content: Vec<u8>, line_ending: LineEnding) -> (Vec<
 
 impl TextBuffer {
     /// Create a new text buffer with the given filesystem implementation.
-    /// Note: large_file_threshold is ignored in the new implementation
-    pub fn new(_large_file_threshold: usize, fs: Arc<dyn FileSystem + Send + Sync>) -> Self {
+    /// `large_file_threshold` only caps what a save fingerprints
+    /// ([`BufferConfig::large_file_threshold`]).
+    pub fn new(large_file_threshold: usize, fs: Arc<dyn FileSystem + Send + Sync>) -> Self {
         let piece_tree = PieceTree::empty();
         let saved_root = piece_tree.root();
         let line_ending = LineEnding::default();
@@ -256,7 +271,10 @@ impl TextBuffer {
             file_kind: BufferFileKind::new(false, false),
             format: BufferFormat::new(line_ending, encoding),
             version: 0,
-            config: BufferConfig::default(),
+            config: BufferConfig {
+                large_file_threshold: Some(large_file_threshold),
+                ..BufferConfig::default()
+            },
         }
     }
 
@@ -270,6 +288,12 @@ impl TextBuffer {
         let mut buffer = Self::new(large_file_threshold, fs);
         buffer.persistence.set_file_path(path);
         buffer
+    }
+
+    /// Set [`BufferConfig::large_file_threshold`], for a buffer built by a
+    /// constructor that isn't given it (`from_bytes`) that may be saved.
+    pub fn set_large_file_threshold(&mut self, large_file_threshold: usize) {
+        self.config.large_file_threshold = Some(large_file_threshold);
     }
 
     /// Associate this buffer with `path` (title, dedup, save target). Used when
@@ -287,11 +311,6 @@ impl TextBuffer {
     /// Get a reference to the filesystem implementation used by this buffer.
     pub fn filesystem(&self) -> &Arc<dyn FileSystem + Send + Sync> {
         self.persistence.fs()
-    }
-
-    /// Set the filesystem implementation for this buffer.
-    pub fn set_filesystem(&mut self, fs: Arc<dyn FileSystem + Send + Sync>) {
-        self.persistence.set_fs(fs);
     }
 
     #[inline]
@@ -437,10 +456,12 @@ impl TextBuffer {
     /// Create a text buffer from a string with the given filesystem.
     pub fn from_str(
         s: &str,
-        _large_file_threshold: usize,
+        large_file_threshold: usize,
         fs: Arc<dyn FileSystem + Send + Sync>,
     ) -> Self {
-        Self::from_bytes(s.as_bytes().to_vec(), fs)
+        let mut buffer = Self::from_bytes(s.as_bytes().to_vec(), fs);
+        buffer.config.large_file_threshold = Some(large_file_threshold);
+        buffer
     }
 
     /// Create an empty text buffer with the given filesystem.
@@ -524,11 +545,13 @@ impl TextBuffer {
         // Choose loading strategy based on file size. `large_file_threshold`
         // is the resolved `editor.large_file_threshold_bytes` setting, passed
         // in by the caller — the single source of truth, no local default.
-        if file_size >= large_file_threshold {
-            Self::load_large_file_internal(path, file_size, fs, false, force_text, normalize_cr)
+        let mut buffer = if file_size >= large_file_threshold {
+            Self::load_large_file_internal(path, file_size, fs, false, force_text, normalize_cr)?
         } else {
-            Self::load_small_file(path, fs, force_text, normalize_cr)
-        }
+            Self::load_small_file(path, fs, force_text, normalize_cr)?
+        };
+        buffer.config.large_file_threshold = Some(large_file_threshold);
+        Ok(buffer)
     }
 
     /// Load a text buffer from a file with a specific encoding (no auto-detection).
@@ -591,12 +614,15 @@ impl TextBuffer {
     /// non-resynchronizable encodings requiring full file loading.
     pub fn load_large_file_confirmed(
         path: impl AsRef<Path>,
+        large_file_threshold: usize,
         fs: Arc<dyn FileSystem + Send + Sync>,
     ) -> anyhow::Result<Self> {
         let path = path.as_ref();
         let metadata = fs.metadata(path)?;
         let file_size = metadata.size as usize;
-        Self::load_large_file_internal(path, file_size, fs, true, false, true)
+        let mut buffer = Self::load_large_file_internal(path, file_size, fs, true, false, true)?;
+        buffer.config.large_file_threshold = Some(large_file_threshold);
+        Ok(buffer)
     }
 
     /// Internal implementation for loading large files.
@@ -722,10 +748,10 @@ impl TextBuffer {
         })
     }
 
-    /// Save the buffer to its associated file
-    pub fn save(&mut self) -> anyhow::Result<()> {
+    /// Save the buffer to its associated file (see [`Self::save_to_file`]).
+    pub fn save(&mut self, recovery_dir: &Path) -> anyhow::Result<()> {
         if let Some(path) = self.persistence.file_path_owned() {
-            self.save_to_file(path)
+            self.save_to_file(path, recovery_dir)
         } else {
             anyhow::bail!(io::Error::new(
                 io::ErrorKind::NotFound,
@@ -757,79 +783,146 @@ impl TextBuffer {
     /// For remote filesystems, the recipe is sent to the agent which reconstructs
     /// the file server-side, avoiding transfer of unchanged content.
     ///
-    /// For local filesystems with ownership concerns (file owned by another user),
-    /// uses in-place writing to preserve ownership. Otherwise uses atomic writes.
+    /// A local file is replaced atomically where that keeps it the same file,
+    /// and written in place otherwise (see [`save::save_local`]), after
+    /// staging a copy of the new content in `recovery_dir` — the editor's
+    /// recovery directory (`DirectoryContext::recovery_dir`). Refused while
+    /// the file the unloaded parts of a large file are read back from may be
+    /// torn by an in-place write that failed part-way
+    /// ([`save::refuse_read_from_torn_file`]).
     ///
     /// If the line ending format has been changed (via set_line_ending), all content
     /// will be converted to the new format during save.
-    pub fn save_to_file<P: AsRef<Path>>(&mut self, path: P) -> anyhow::Result<()> {
+    pub fn save_to_file<P: AsRef<Path>>(
+        &mut self,
+        path: P,
+        recovery_dir: &Path,
+    ) -> anyhow::Result<()> {
         let dest_path = path.as_ref();
-        let total = self.total_bytes();
+        let fs = Arc::clone(self.persistence.fs());
+        let local = fs.remote_connection_info().is_none();
 
-        // Handle empty files
-        if total == 0 {
-            self.persistence.fs().write_file(dest_path, &[])?;
-            self.finalize_save(dest_path)?;
-            return Ok(());
+        // The unloaded parts are read back from the file they were loaded
+        // from, which must not be torn (issue #3382). The recovery metadata
+        // is kept on this host, so only says anything about a local file.
+        let read_from = self.file_read_by_save();
+        if let Some(src_path) = read_from.as_deref().filter(|_| local) {
+            save::refuse_read_from_torn_file(
+                &*fs,
+                recovery_dir,
+                src_path,
+                self.persistence.is_source_torn(),
+            )?;
         }
 
-        // Build the write recipe (unified for all filesystem types)
-        let recipe = save::build_write_recipe(
-            &self.piece_tree,
-            &self.buffers,
-            &self.format,
-            &self.file_kind,
-            &self.persistence,
-        )?;
-        let ops = recipe.to_write_ops();
-
-        // Check if we need in-place writing to preserve file ownership (local only)
-        // Remote filesystems handle this differently
-        let fs = self.persistence.fs();
-        let is_local = fs.remote_connection_info().is_none();
-        let use_inplace = is_local && save::should_use_inplace_write(fs, dest_path);
-
-        if use_inplace {
-            // In-place write: write directly to preserve ownership
-            save::save_with_inplace_write(fs, dest_path, &recipe)?;
-        } else if !recipe.has_copy_ops() && !is_local {
-            // Remote with no Copy ops: use write_file directly (more efficient)
-            let data = recipe.flatten_inserts();
-            fs.write_file(dest_path, &data)?;
-        } else if is_local {
-            // Local: use write_file or write_patched with sudo fallback
-            let write_result = if !recipe.has_copy_ops() {
-                let data = recipe.flatten_inserts();
-                fs.write_file(dest_path, &data)
-            } else {
-                let src_for_patch = recipe.src_path.as_deref().unwrap_or(dest_path);
-                fs.write_patched(src_for_patch, dest_path, &ops)
-            };
-
-            if let Err(e) = write_result {
-                if e.kind() == io::ErrorKind::PermissionDenied {
-                    // Create temp file and return sudo error
-                    let original_metadata = fs.metadata_if_exists(dest_path);
-                    let (temp_path, mut temp_file) = save::create_temp_file(fs, dest_path)?;
-                    save::write_recipe_to_file(fs, &mut temp_file, &recipe)?;
-                    temp_file.sync_all()?;
-                    drop(temp_file);
-                    return Err(save::make_sudo_error(
-                        temp_path,
-                        dest_path,
-                        original_metadata,
-                    ));
-                }
-                return Err(e.into());
-            }
+        // An emptied buffer is written as zero bytes: no BOM, nothing to copy.
+        let recipe = if self.total_bytes() == 0 {
+            save::WriteRecipe::empty()
         } else {
-            // Remote with Copy ops: use write_patched
+            save::build_write_recipe(
+                &self.piece_tree,
+                &self.buffers,
+                &self.format,
+                &self.file_kind,
+                &self.persistence,
+            )?
+        };
+
+        // What is about to be written, when every byte of it is in hand:
+        // cheaper than reading the file back to learn it (issue #3380). Not
+        // above the large-file threshold, where nothing compares it.
+        let written = if recipe.has_copy_ops() {
+            None
+        } else {
+            let chunks = || {
+                recipe.actions.iter().filter_map(|action| match action {
+                    save::RecipeAction::Insert { index } => {
+                        Some(recipe.insert_data[*index].as_slice())
+                    }
+                    save::RecipeAction::Copy { .. } => None,
+                })
+            };
+            let size: usize = chunks().map(<[u8]>::len).sum();
+            self.config
+                .large_file_threshold
+                .is_none_or(|threshold| size <= threshold)
+                .then(|| ContentDigest::of_chunks(chunks()))
+        };
+
+        if local {
+            if let Err(e) = save::save_local(&fs, dest_path, &recipe, recovery_dir) {
+                if e.is::<save::TornWrite>() {
+                    // The file's mtime moved by our own write: remember it,
+                    // so the change isn't taken for someone else's
+                    let mtime = fs.metadata(dest_path).ok().and_then(|m| m.modified);
+                    self.persistence
+                        .set_torn_write(mtime.map(|mtime| (dest_path.to_path_buf(), mtime)));
+                    // Tore the very file the unloaded parts are read from
+                    if read_from.as_deref() == Some(dest_path) {
+                        self.persistence.set_source_torn(true);
+                    }
+                }
+                return Err(e);
+            }
+        } else if recipe.has_copy_ops() {
+            // Remote with Copy ops: the agent rebuilds the file server-side
             let src_for_patch = recipe.src_path.as_deref().unwrap_or(dest_path);
-            fs.write_patched(src_for_patch, dest_path, &ops)?;
+            fs.write_patched(src_for_patch, dest_path, &recipe.to_write_ops())?;
+        } else {
+            fs.write_file(dest_path, &recipe.flatten_inserts())?;
         }
 
         self.finalize_save(dest_path)?;
+        self.persistence.set_saved_content(written);
         Ok(())
+    }
+
+    /// The file a save reads this buffer's unloaded parts back from, if it
+    /// has any left (a large file's): the one they were loaded from, or,
+    /// after a save, the one it wrote.
+    fn file_read_by_save(&self) -> Option<PathBuf> {
+        self.piece_tree
+            .iter_pieces_in_range(0, self.piece_tree.total_bytes())
+            .find_map(
+                |piece| match &self.buffers.get(piece.location.buffer_id())?.data {
+                    BufferData::Unloaded { file_path, .. } => Some(file_path.clone()),
+                    BufferData::Loaded { .. } => None,
+                },
+            )
+    }
+
+    /// The size and SHA-256 of what the last save of this buffer wrote, or
+    /// `None` when it wrote nothing yet, or streamed part of the file from
+    /// the old one, or wrote more than [`BufferConfig::large_file_threshold`],
+    /// or an external writer (sudo) did the writing.
+    pub fn saved_content(&self) -> Option<ContentDigest> {
+        self.persistence.saved_content()
+    }
+
+    /// The file this buffer's last save tore, writing it in place and
+    /// failing part-way ([`save::TornWrite`]), and the mtime that left on
+    /// it; `None` once a save succeeds. While the file still has that mtime,
+    /// what changed it was this buffer's own write, not another writer.
+    pub fn torn_write(&self) -> Option<(&Path, std::time::SystemTime)> {
+        self.persistence.torn_write()
+    }
+
+    /// Record that a write of `path` by this buffer's save, done outside it
+    /// (the sudo prompt's), failed after changing the file, leaving `mtime`
+    /// on it: see [`Self::torn_write`]. When `path` is the file this
+    /// buffer's unloaded parts are read from, a save that would read them
+    /// is refused from now on, as after a [`save::TornWrite`] of it.
+    pub fn record_torn_write(&mut self, path: PathBuf, mtime: std::time::SystemTime) {
+        if self.file_read_by_save().as_deref() == Some(path.as_path()) {
+            self.persistence.set_source_torn(true);
+        }
+        self.persistence.set_torn_write(Some((path, mtime)));
+    }
+
+    /// Forget [`Self::saved_content`], once the file is known to hold
+    /// something else, so nothing hashes the file again to compare.
+    pub fn forget_saved_content(&mut self) {
+        self.persistence.set_saved_content(None);
     }
 
     /// Finalize save state after successful write.
@@ -842,6 +935,9 @@ impl TextBuffer {
         );
         self.persistence.set_saved_file_size(Some(new_size));
         self.persistence.set_file_path(dest_path.to_path_buf());
+        // Consolidated below onto the file just written
+        self.persistence.set_source_torn(false);
+        self.persistence.set_torn_write(None);
 
         // Consolidate the piece tree to synchronize with disk (for large files)
         // or to simplify structure (for small files).
@@ -857,8 +953,12 @@ impl TextBuffer {
     /// This updates the saved snapshot and file size to match the new state on disk.
     pub fn finalize_external_save(&mut self, dest_path: PathBuf) -> anyhow::Result<()> {
         let new_size = self.persistence.fs().metadata(&dest_path)?.size as usize;
+        self.persistence.set_saved_content(None);
         self.persistence.set_saved_file_size(Some(new_size));
         self.persistence.set_file_path(dest_path.clone());
+        // Consolidated below onto the file just written
+        self.persistence.set_source_torn(false);
+        self.persistence.set_torn_write(None);
 
         // Consolidate the piece tree to synchronize with disk or simplify structure.
         self.consolidate_after_save(&dest_path, new_size);
@@ -2203,11 +2303,6 @@ impl TextBuffer {
         }
     }
 
-    /// Get a reference to the string buffers (for parallel scanning).
-    pub fn buffer_slice(&self) -> &[StringBuffer] {
-        &self.buffers
-    }
-
     /// Apply the results of an incremental line scan.
     pub fn apply_scan_updates(&mut self, updates: &[(usize, usize)]) {
         self.piece_tree.update_leaf_line_feeds(updates);
@@ -2593,11 +2688,6 @@ impl TextBuffer {
         Some(start)
     }
 
-    /// Get piece information at a byte offset
-    pub fn piece_info_at_offset(&self, offset: usize) -> Option<PieceInfo> {
-        self.piece_tree.find_by_offset(offset)
-    }
-
     /// Get tree statistics for debugging
     pub fn stats(&self) -> TreeStats {
         self.piece_tree.stats()
@@ -2858,77 +2948,6 @@ impl TextBuffer {
         true
     }
 
-    /// Find and replace the next occurrence of a pattern
-    pub fn replace_next(
-        &mut self,
-        pattern: &str,
-        replacement: &str,
-        start_pos: usize,
-        range: Option<Range<usize>>,
-    ) -> Option<usize> {
-        if let Some(pos) = self.find_next_in_range(pattern, start_pos, range.clone()) {
-            self.replace_range(pos..pos + pattern.len(), replacement);
-            Some(pos)
-        } else {
-            None
-        }
-    }
-
-    /// Replace all occurrences of a pattern with replacement text
-    pub fn replace_all(&mut self, pattern: &str, replacement: &str) -> usize {
-        if pattern.is_empty() {
-            return 0;
-        }
-
-        let mut count = 0;
-        let mut pos = 0;
-
-        // Keep searching and replacing
-        // Note: we search forward from last replacement to handle growth/shrinkage
-        // Find next occurrence (no wrap-around for replace_all)
-        while let Some(found_pos) = self.find_next_in_range(pattern, pos, Some(0..self.len())) {
-            self.replace_range(found_pos..found_pos + pattern.len(), replacement);
-            count += 1;
-
-            // Move past the replacement
-            pos = found_pos + replacement.len();
-
-            // If we're at or past the end, stop
-            if pos >= self.len() {
-                break;
-            }
-        }
-
-        count
-    }
-
-    /// Replace all occurrences of a regex pattern with replacement text
-    pub fn replace_all_regex(&mut self, regex: &Regex, replacement: &str) -> Result<usize> {
-        let mut count = 0;
-        let mut pos = 0;
-
-        while let Some(found_pos) = self.find_next_regex_in_range(regex, pos, Some(0..self.len())) {
-            // Get the match to find its length
-            let text = self
-                .get_text_range_mut(found_pos, self.len() - found_pos)
-                .context("Failed to read text for regex match")?;
-
-            if let Some(mat) = regex.find(&text) {
-                self.replace_range(found_pos..found_pos + mat.len(), replacement);
-                count += 1;
-                pos = found_pos + replacement.len();
-
-                if pos >= self.len() {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-
-        Ok(count)
-    }
-
     // LSP Support (UTF-16 conversions)
 
     /// Convert byte position to (line, column) in bytes
@@ -3103,6 +3122,35 @@ impl TextBuffer {
         self.prev_char_boundary(pos)
     }
 
+    /// `pos`, or the first character boundary after it.
+    ///
+    /// For offsets that come from arithmetic rather than from the text — a
+    /// bounded search that gave up, a reach backwards, a byte the user typed
+    /// into "Go to Byte Offset" — and that are about to be read from, drawn at
+    /// or edited at. Anchoring any of those inside a character puts replacement
+    /// glyphs on screen and lets an insertion split the character in two.
+    ///
+    /// Loads the bytes it needs, unlike [`Self::snap_to_char_boundary`], which
+    /// gives up on data that is not resident — exactly the state of a large
+    /// file far from where it was last read. UTF-8 continuation bytes are
+    /// `0b10xxxxxx` and a character is at most four bytes, so at most three are
+    /// stepped over. A read that fails leaves `pos` alone: this is a repair,
+    /// not a place to invent an answer.
+    pub fn char_boundary_at_or_after(&mut self, pos: usize) -> usize {
+        let len = self.len();
+        if pos == 0 || pos >= len {
+            return pos.min(len);
+        }
+        let Ok(bytes) = self.get_text_range_mut(pos, 4.min(len - pos)) else {
+            return pos;
+        };
+        let step = bytes
+            .iter()
+            .position(|&b| !Self::is_utf8_continuation_byte(b))
+            .unwrap_or(bytes.len());
+        pos + step
+    }
+
     /// Find the previous grapheme cluster boundary (for proper cursor movement with combining characters)
     ///
     /// This handles complex scripts like Thai where multiple Unicode code points
@@ -3222,78 +3270,6 @@ impl TextBuffer {
 
             return pos + new_rel_pos;
         }
-    }
-
-    /// Find the previous word boundary
-    pub fn prev_word_boundary(&self, pos: usize) -> usize {
-        if pos == 0 {
-            return 0;
-        }
-
-        // Get some text before pos
-        let start = pos.saturating_sub(256);
-        let Some(bytes) = self.get_text_range(start, pos - start) else {
-            // Data unloaded, return pos as fallback
-            return pos;
-        };
-        let text = String::from_utf8_lossy(&bytes);
-
-        let mut found_word_char = false;
-        let chars: Vec<char> = text.chars().collect();
-
-        for i in (0..chars.len()).rev() {
-            let ch = chars[i];
-            let is_word_char = ch.is_alphanumeric() || ch == '_';
-
-            if found_word_char && !is_word_char {
-                // We've transitioned from word to non-word
-                // Calculate the byte position
-                let byte_offset: usize = chars[0..=i].iter().map(|c| c.len_utf8()).sum();
-                return start + byte_offset;
-            }
-
-            if is_word_char {
-                found_word_char = true;
-            }
-        }
-
-        0
-    }
-
-    /// Find the next word boundary
-    pub fn next_word_boundary(&self, pos: usize) -> usize {
-        let len = self.len();
-        if pos >= len {
-            return len;
-        }
-
-        // Get some text after pos
-        let end = (pos + 256).min(len);
-        let Some(bytes) = self.get_text_range(pos, end - pos) else {
-            // Data unloaded, return pos as fallback
-            return pos;
-        };
-        let text = String::from_utf8_lossy(&bytes);
-
-        let mut found_word_char = false;
-        let mut byte_offset = 0;
-
-        for ch in text.chars() {
-            let is_word_char = ch.is_alphanumeric() || ch == '_';
-
-            if found_word_char && !is_word_char {
-                // We've transitioned from word to non-word
-                return pos + byte_offset;
-            }
-
-            if is_word_char {
-                found_word_char = true;
-            }
-
-            byte_offset += ch.len_utf8();
-        }
-
-        len
     }
 
     /// Fill in the piece tree's line-feed count for `view`, if it is unknown
@@ -3664,13 +3640,6 @@ impl TextBuffer {
     /// - **Small files**: `line_starts = Some(vec)` → returns exact line number from metadata
     /// - **Large files**: `line_starts = None` → returns estimated line number (byte_offset / estimated_line_length)
     ///
-    /// ## Legacy Line Cache Methods:
-    /// These methods are now no-ops and can be removed in a future cleanup:
-    /// - `invalidate_line_cache_from()` - No-op (piece tree updates automatically)
-    /// - `handle_line_cache_insertion()` - No-op (piece tree updates automatically)
-    /// - `handle_line_cache_deletion()` - No-op (piece tree updates automatically)
-    /// - `clear_line_cache()` - No-op (can't clear piece tree metadata)
-    ///
     /// ## Bug Fix (2025-11):
     /// Previously this method always returned `0`, causing line numbers in the margin
     /// to always show 1, 2, 3... regardless of scroll position. Now it correctly returns
@@ -3679,31 +3648,6 @@ impl TextBuffer {
         // No-op for cache population: LineIndex maintains all line starts automatically
         // But we need to return the actual line number at start_byte for rendering
         self.get_line_number(start_byte)
-    }
-
-    /// Get cached byte offset for line (compatibility method)
-    pub fn get_cached_byte_offset_for_line(&self, line_number: usize) -> Option<usize> {
-        self.line_start_offset(line_number)
-    }
-
-    /// Invalidate line cache from offset (no-op in new implementation)
-    pub fn invalidate_line_cache_from(&mut self, _byte_offset: usize) {
-        // No-op: LineIndex updates automatically
-    }
-
-    /// Handle line cache insertion (no-op in new implementation)
-    pub fn handle_line_cache_insertion(&mut self, _byte_offset: usize, _bytes_inserted: usize) {
-        // No-op: LineIndex updates automatically during insert
-    }
-
-    /// Handle line cache deletion (no-op in new implementation)
-    pub fn handle_line_cache_deletion(&mut self, _byte_offset: usize, _bytes_deleted: usize) {
-        // No-op: LineIndex updates automatically during delete
-    }
-
-    /// Clear line cache (no-op in new implementation)
-    pub fn clear_line_cache(&mut self) {
-        // No-op: LineIndex can't be cleared
     }
 
     // Test helper methods
@@ -3724,12 +3668,6 @@ impl TextBuffer {
             s.as_bytes().to_vec(),
             std::sync::Arc::new(crate::model::filesystem::StdFileSystem),
         )
-    }
-
-    /// Create a new empty buffer for testing
-    #[cfg(test)]
-    pub fn new_test() -> Self {
-        Self::empty(std::sync::Arc::new(crate::model::filesystem::StdFileSystem))
     }
 }
 

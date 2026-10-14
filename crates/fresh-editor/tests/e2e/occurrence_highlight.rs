@@ -326,3 +326,52 @@ fn test_single_line_block_selection_highlights_its_matches() {
         "the match stops at \"bet\""
     );
 }
+
+/// A debounced highlight has to ask for the frame it needs.
+///
+/// `ReferenceHighlightOverlay::update` runs *inside* a render and does
+/// nothing until its 150 ms delay has elapsed, so the highlight lands only on
+/// a frame something else causes. An editor sitting still after a cursor move
+/// causes none: the update stayed armed, the word under the cursor kept the
+/// previous word's highlight, and the next keystroke — the first thing to
+/// force a frame — made it jump. That is the flicker people see while typing,
+/// and in a daemon, whose loop renders only on events, it is every time.
+///
+/// The invariant is that the arming itself is visible to the event loop:
+/// `next_periodic_redraw_deadline` is where the LSP spinner, the animations
+/// and the paste fallback declare the same thing, and it is what the TUI, the
+/// web loop and now the daemon wait on. Before the fix this returned `None`
+/// with an update armed, and nothing woke to apply it.
+#[test]
+fn test_an_armed_occurrence_highlight_asks_for_its_frame() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness
+        .load_buffer_from_text("alpha beta gamma\nbeta alpha delta\n")
+        .unwrap();
+    harness.render().unwrap();
+
+    // Land the cursor on "beta" and render once, which is what arms the
+    // debounce. Deliberately not `wait_until`: waiting drives renders of its
+    // own, which is exactly the accident this test says the editor must not
+    // depend on.
+    for _ in 0..6 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    let deadline = harness.editor().next_periodic_redraw_deadline();
+    let deadline = deadline.expect(
+        "an armed occurrence highlight must publish a redraw deadline, or nothing \
+         wakes the loop to apply it",
+    );
+    assert!(
+        deadline
+            <= std::time::Instant::now()
+                + std::time::Duration::from_millis(
+                    fresh::view::reference_highlight_overlay::DEFAULT_DEBOUNCE_MS,
+                ),
+        "the deadline must be the debounce's own, not something further out"
+    );
+}

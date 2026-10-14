@@ -81,18 +81,21 @@ fn setup_french_completion_popup(prefix: &str) -> anyhow::Result<(EditorTestHarn
                 content: PopupContentData::List {
                     items: vec![
                         PopupListItemData {
+                            id: "t83_25".into(),
                             text: "test_function".to_string(),
                             detail: Some("fn test_function()".to_string()),
                             icon: Some("λ".to_string()),
                             data: Some("test_function".to_string()),
                         },
                         PopupListItemData {
+                            id: "t89_25".into(),
                             text: "test_variable".to_string(),
                             detail: Some("let test_variable".to_string()),
                             icon: Some("v".to_string()),
                             data: Some("test_variable".to_string()),
                         },
                         PopupListItemData {
+                            id: "t95_25".into(),
                             text: "test_struct".to_string(),
                             detail: Some("struct TestStruct".to_string()),
                             icon: Some("S".to_string()),

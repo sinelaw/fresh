@@ -42,6 +42,7 @@ fn make_server_config(
         dir_context,
         plugins_enabled: false,
         init_enabled: false,
+        orchestrator_mode: false,
         startup_authority: None,
         workspace_trust: std::sync::Arc::new(
             fresh::services::workspace_trust::WorkspaceTrust::permissive(),

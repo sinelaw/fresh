@@ -18,7 +18,7 @@
 //! ### Mutation Operations
 //! - `insert_bytes(offset, text: Vec<u8>)` - Insert bytes at position
 //! - `delete_bytes(offset, bytes: usize)` - Delete bytes starting at position
-//! - `save_to_file(path)` - Persist buffer to disk
+//! - `save_to_file(path, recovery_dir)` - Persist buffer to disk
 //! - `load_from_file(path)` - Load buffer from disk
 //!
 //! ### Query Operations
@@ -86,12 +86,30 @@ impl FileSystem for ConfigurableFileSystem {
         self.inner.read_range(path, offset, len)
     }
 
+    fn content_digest(&self, path: &Path) -> io::Result<fresh::model::filesystem::ContentDigest> {
+        self.inner.content_digest(path)
+    }
+
     fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()> {
         self.inner.write_file(path, data)
     }
 
+    fn replace_file_preserving_identity(
+        &self,
+        path: &Path,
+        data: &[u8],
+    ) -> Result<(), fresh::model::filesystem::ReplaceError> {
+        self.inner.replace_file_preserving_identity(path, data)
+    }
+
     fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
         self.inner.create_file(path)
+    }
+    fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.inner.create_new_file(path)
+    }
+    fn create_new_private_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+        self.inner.create_new_private_file(path)
     }
 
     fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
@@ -181,14 +199,14 @@ impl FileSystem for ConfigurableFileSystem {
         self.inner.sudo_write(path, data, mode, uid, gid)
     }
 
-    fn walk_files(
+    fn walk(
         &self,
         root: &Path,
-        skip_dirs: &[&str],
-        cancel: &std::sync::atomic::AtomicBool,
-        on_file: &mut dyn FnMut(&Path, &str) -> bool,
-    ) -> io::Result<()> {
-        self.inner.walk_files(root, skip_dirs, cancel, on_file)
+            opts: &fresh_editor_core::model::filesystem::WalkOptions<'_>,
+            cancel: &std::sync::atomic::AtomicBool,
+            on_entry: &mut dyn FnMut(fresh_editor_core::model::filesystem::WalkEntry<'_>) -> bool,
+    ) -> std::io::Result<()> {
+        self.inner.walk(root, opts, cancel, on_entry)
     }
 
     fn write_patched(
@@ -388,8 +406,12 @@ impl TextBufferSUT {
         self.buffer.replace_content(content);
     }
 
-    fn save_to_file(&mut self, path: &std::path::Path) -> anyhow::Result<()> {
-        self.buffer.save_to_file(path)
+    fn save_to_file(
+        &mut self,
+        path: &std::path::Path,
+        recovery_dir: &std::path::Path,
+    ) -> anyhow::Result<()> {
+        self.buffer.save_to_file(path, recovery_dir)
     }
 
     fn content_string(&self) -> String {
@@ -480,6 +502,8 @@ struct TestContext {
     model: ShadowModel,
     sut: TextBufferSUT,
     fs: Arc<ConfigurableFileSystem>,
+    /// Where saves of a file we don't own stage (in `_temp_dir`).
+    recovery_dir: PathBuf,
     _temp_dir: TempDir,
     save_path: PathBuf,
     step: usize,
@@ -516,6 +540,7 @@ impl TestContext {
     ) -> Self {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let save_path = temp_dir.path().join("buffer.txt");
+        let recovery_dir = temp_dir.path().join("recovery");
         let fs = Arc::new(ConfigurableFileSystem::new(simulate_owner));
 
         let (model, sut) = if content.is_empty() {
@@ -531,6 +556,7 @@ impl TestContext {
             model,
             sut,
             fs,
+            recovery_dir,
             _temp_dir: temp_dir,
             save_path,
             step: 0,
@@ -581,7 +607,7 @@ impl TestContext {
                     // Create file as owner first
                     self.fs.set_owner(true);
                     self.sut
-                        .save_to_file(&self.save_path)
+                        .save_to_file(&self.save_path, &self.recovery_dir)
                         .map_err(|e| format!("Initial save failed: {}", e))?;
                     self.file_exists = true;
 
@@ -606,7 +632,7 @@ impl TestContext {
                         was_owner, self.file_exists, is_large
                     ));
                     self.sut
-                        .save_to_file(&self.save_path)
+                        .save_to_file(&self.save_path, &self.recovery_dir)
                         .map_err(|e| format!("Save failed: {}", e))?;
                     self.file_exists = true;
 
@@ -767,8 +793,8 @@ fn text_strategy() -> impl Strategy<Value = Vec<u8>> {
     ]
 }
 
-/// Generate a single operation
-fn op_strategy() -> impl Strategy<Value = Op> {
+/// Generate a single operation that stays in memory (never touches the disk)
+fn edit_op_strategy() -> impl Strategy<Value = Op> {
     prop_oneof![
         // Insert (most common)
         5 => (0usize..2000, text_strategy())
@@ -778,18 +804,20 @@ fn op_strategy() -> impl Strategy<Value = Op> {
             .prop_map(|(offset, len)| Op::Delete { offset, len }),
         // Replace content (occasional)
         1 => text_strategy().prop_map(|text| Op::ReplaceContent { text }),
-        // Save and reload (occasional)
-        2 => Just(Op::SaveAndReload),
-        // Toggle file ownership (tests both atomic and in-place write paths)
-        1 => prop::bool::ANY.prop_map(|owned| Op::SetFileOwnership { owned }),
         // Scan line index (exercises incremental line scan flow)
         1 => Just(Op::ScanLineIndex),
     ]
 }
 
-/// Generate a sequence of operations
-fn ops_strategy(max_ops: usize) -> impl Strategy<Value = Vec<Op>> {
-    prop::collection::vec(op_strategy(), 1..max_ops)
+/// Generate a single operation, including saves to disk
+fn op_strategy() -> impl Strategy<Value = Op> {
+    prop_oneof![
+        10 => edit_op_strategy(),
+        // Save and reload (occasional)
+        2 => Just(Op::SaveAndReload),
+        // Toggle file ownership (tests both atomic and in-place write paths)
+        1 => prop::bool::ANY.prop_map(|owned| Op::SetFileOwnership { owned }),
+    ]
 }
 
 /// Generate initial content
@@ -807,9 +835,37 @@ fn initial_content_strategy() -> impl Strategy<Value = Vec<u8>> {
 }
 
 // ============================================================================
-// 6. THE SINGLE COMPREHENSIVE PROPERTY TEST
+// 6. THE COMPREHENSIVE PROPERTY TESTS
 // ============================================================================
 
+/// Run `ops` against a fresh context holding `initial`, checking the model
+/// and the SUT agree after every one.
+fn run_shadow_model(initial: Vec<u8>, ops: &[Op]) -> Result<(), TestCaseError> {
+    let mut ctx = if initial.is_empty() {
+        TestContext::new()
+    } else {
+        TestContext::with_initial_content(initial)
+    };
+
+    // Verify initial state
+    ctx.verify()
+        .map_err(|e| TestCaseError::fail(format!("Initial: {}", e)))?;
+
+    // Apply all operations
+    for op in ops {
+        if let Err(msg) = ctx.apply(op) {
+            return Err(TestCaseError::fail(format!(
+                "{}\n\nOperation: {:?}\n\nHistory:\n{}",
+                msg,
+                op,
+                ctx.history()
+            )));
+        }
+    }
+    Ok(())
+}
+
+// The in-memory API is cheap to exercise, so it gets many cases.
 proptest! {
     #![proptest_config(ProptestConfig {
         cases: 500,
@@ -818,12 +874,12 @@ proptest! {
         ..ProptestConfig::default()
     })]
 
-    /// Comprehensive shadow model test for the entire TextBuffer API
+    /// Shadow model test for the in-memory TextBuffer API
     ///
-    /// This single property test covers:
+    /// Covers:
     /// - Insert operations at any valid position
     /// - Delete operations of any valid range
-    /// - Save/Load persistence roundtrips
+    /// - Whole-content replacement and line index scans
     /// - Empty, small, and large initial content
     /// - Newlines and line counting
     /// - Boundary conditions (start, end, middle)
@@ -836,28 +892,36 @@ proptest! {
     #[test]
     fn prop_textbuffer_shadow_model(
         initial in initial_content_strategy(),
-        ops in ops_strategy(100)
+        ops in prop::collection::vec(edit_op_strategy(), 1..100)
     ) {
-        let mut ctx = if initial.is_empty() {
-            TestContext::new()
-        } else {
-            TestContext::with_initial_content(initial)
-        };
+        run_shadow_model(initial, &ops)?;
+    }
+}
 
-        // Verify initial state
-        ctx.verify().map_err(|e| TestCaseError::fail(format!("Initial: {}", e)))?;
+// Every save syncs one to three files to disk (the file itself, and for an
+// in-place write also its staged copy and recovery metadata) and creates,
+// renames and removes several more; a case averages about eight saves.
+// That is cheap on Linux but not on Windows, where 500 such cases took
+// longer than nextest's 180s limit. Fewer cases keep it well inside that;
+// the edits between saves are covered at volume above.
+proptest! {
+    #![proptest_config(ProptestConfig {
+        cases: 64,
+        max_shrink_iters: 5000,
+        verbose: 1,
+        ..ProptestConfig::default()
+    })]
 
-        // Apply all operations
-        for op in &ops {
-            if let Err(msg) = ctx.apply(op) {
-                return Err(TestCaseError::fail(format!(
-                    "{}\n\nOperation: {:?}\n\nHistory:\n{}",
-                    msg,
-                    op,
-                    ctx.history()
-                )));
-            }
-        }
+    /// Shadow model test for the TextBuffer API with persistence: the edits
+    /// above interleaved with save/load roundtrips, as owner (atomic write)
+    /// and non-owner (in-place write), checking after every save that the
+    /// file on disk holds what the model does.
+    #[test]
+    fn prop_textbuffer_shadow_model_with_persistence(
+        initial in initial_content_strategy(),
+        ops in prop::collection::vec(op_strategy(), 1..100)
+    ) {
+        run_shadow_model(initial, &ops)?;
     }
 }
 
@@ -1082,7 +1146,8 @@ fn test_large_file_mode_with_edits() {
     assert_eq!(content, b"STARTAAABBBCCC");
 
     // Save the file
-    sut.save_to_file(&file_path).expect("Save should succeed");
+    sut.save_to_file(&file_path, &temp_dir.path().join("recovery"))
+        .expect("Save should succeed");
 
     // Verify saved content
     let saved = std::fs::read(&file_path).unwrap();
@@ -1129,7 +1194,7 @@ fn test_large_file_inplace_write() {
 
     // Save - this uses in-place write because we don't "own" the file
     // The bug would cause this to corrupt the file by truncating before reading Copy chunks
-    sut.save_to_file(&file_path)
+    sut.save_to_file(&file_path, &temp_dir.path().join("recovery"))
         .expect("Save should succeed without corruption");
 
     // Verify the saved content is correct

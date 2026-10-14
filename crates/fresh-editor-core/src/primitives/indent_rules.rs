@@ -57,7 +57,7 @@ use std::sync::{Arc, RwLock};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Family {
     /// C, C++, C#, Java, Rust, Go, JS, TS, PHP, Swift, Kotlin, Dart, CSS,
-    /// SCSS, JSON, … — block structure is `{ } [ ] ( )`.
+    /// SCSS, JSON, Odin, … — block structure is `{ } [ ] ( )`.
     CurlyBrace,
     /// Python — `:` opens a block; flow-exit statements dedent the next line.
     Python,
@@ -76,6 +76,19 @@ pub enum Family {
     SmaliLike,
 }
 
+/// A language whose indentation is derived structurally rather than from a
+/// single reference line.
+///
+/// The regex fields still apply — they are what decides *which* keystroke
+/// completes an electric dedent, and they remain the fallback for anything the
+/// structural pass does not place — but the indent itself comes from the
+/// construct stack. See [`crate::primitives::indent_pascal`] for why Pascal
+/// needs one and a C-family language does not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Structural {
+    Pascal,
+}
+
 /// String form of a rule set (what a family or user config provides).
 /// Every field is optional; `None` means "never matches".
 #[derive(Debug, Clone, Default)]
@@ -92,6 +105,13 @@ pub struct IndentRulesDef {
     /// leave this false: their structure makes the indent unambiguous, so
     /// re-deriving is correct.
     pub indentation_significant: bool,
+    /// Set when this family's indent is computed from a construct stack
+    /// instead of from the previous line.
+    ///
+    /// A `[languages.<id>.indent]` block inherits it along with the patterns
+    /// it leaves unset — see [`set_user_rule`], which explains why the two
+    /// cannot be inherited separately.
+    pub structural: Option<Structural>,
 }
 
 /// Compiled, cached form of [`IndentRulesDef`].
@@ -102,18 +122,21 @@ pub struct IndentRules {
     dedent_next_line: Option<Regex>,
     self_close: Option<Regex>,
     indentation_significant: bool,
+    structural: Option<Structural>,
 }
 
 impl IndentRules {
     fn compile(def: &IndentRulesDef) -> Self {
-        Self::compile_parts(
+        let mut rules = Self::compile_parts(
             def.increase,
             def.decrease,
             def.indent_next_line,
             def.dedent_next_line,
             def.self_close,
             def.indentation_significant,
-        )
+        );
+        rules.structural = def.structural;
+        rules
     }
 
     /// Compile from individual pattern strings of any lifetime. A pattern that
@@ -131,6 +154,9 @@ impl IndentRules {
         let c = |p: Option<&str>| p.and_then(|s| Regex::new(s).ok());
         Self {
             indentation_significant,
+            // Only a built-in family declares a strategy. `compile` copies the
+            // family's over; `set_user_rule` inherits it. See `Structural`.
+            structural: None,
             increase: c(increase),
             decrease: c(decrease),
             indent_next_line: c(indent_next_line),
@@ -150,6 +176,15 @@ impl IndentRules {
         tab_size: usize,
         is_code: F,
     ) -> usize {
+        // A structural language derives its indent from the stack of open
+        // constructs, not from one reference line. Everything below this point
+        // is the one-reference-line rule, which Pascal's nesting does not fit.
+        if let Some(Structural::Pascal) = self.structural {
+            return crate::primitives::indent_pascal::indent_for_new_line(
+                buffer, position, tab_size, is_code,
+            );
+        }
+
         let unit = tab_size.max(1);
 
         let cur = line_bounds(buffer, position);
@@ -292,6 +327,12 @@ impl IndentRules {
     /// `decrease` trigger (issue #2582): one unit shallower than the previous
     /// non-blank line.
     ///
+    /// `line` is the trigger line as typed so far, masked — the same string
+    /// [`decrease_consumes_line`](Self::decrease_consumes_line) was asked
+    /// about. A structural language needs it because the keyword being
+    /// completed is not in the buffer yet, and *which* keyword it is decides
+    /// what the line closes.
+    ///
     /// Returns `None` when that previous line opens a block (or is a
     /// braceless head): the trigger would be the block's *first* body line —
     /// e.g. Python `case` typed right under `match x:` — and dedenting it
@@ -300,9 +341,34 @@ impl IndentRules {
         &self,
         buffer: &Buffer,
         line_start: usize,
+        line: &str,
         tab_size: usize,
         is_code: F,
     ) -> Option<usize> {
+        // Structural: the keyword names the construct it closes, and the
+        // construct's own column is where it goes — which is not, in general,
+        // one unit left of the line above. `end` after two satisfied `then`
+        // bodies belongs on its `begin`, three levels out.
+        //
+        // A word the structural pass does not place — a keyword a user added
+        // to `decrease` themselves — falls through to the rule below rather
+        // than losing its dedent.
+        if let Some(Structural::Pascal) = self.structural {
+            let word = line
+                .trim_start()
+                .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .next()
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if let Some(kw) = crate::primitives::indent_pascal::LeadingKeyword::from_word(&word) {
+                return Some(
+                    crate::primitives::indent_pascal::indent_for_leading_keyword(
+                        buffer, line_start, kw, tab_size, is_code,
+                    ),
+                );
+            }
+        }
+
         let reference = prev_nonblank_line(buffer, line_start)?;
         let ref_code = code_view(buffer, reference.start, reference.end, &is_code);
         if self.increases(&ref_code) || matches(&self.indent_next_line, &ref_code) {
@@ -367,9 +433,15 @@ pub fn rules_for_syntax_name(name: &str) -> Option<Arc<IndentRules>> {
 /// adding a language is usually one arm here.
 fn family_for_id(id: &str) -> Option<Family> {
     let f = match id {
+        // Odin is brace-structured throughout: procedure bodies, struct /
+        // union / enum / bit_field bodies and ordinary blocks all open with
+        // `{` and close with `}`, and its control flow (`if x > 3 {`) takes
+        // no braceless form — so the curly family describes it exactly.
         "rust" | "c" | "cpp" | "c++" | "csharp" | "c_sharp" | "java" | "go" | "javascript"
         | "typescript" | "typescriptreact" | "javascriptreact" | "php" | "swift" | "kotlin"
-        | "dart" | "scala" | "json" | "jsonc" | "css" | "scss" | "less" => Family::CurlyBrace,
+        | "dart" | "scala" | "json" | "jsonc" | "css" | "scss" | "less" | "odin" => {
+            Family::CurlyBrace
+        }
         "python" => Family::Python,
         "ruby" => Family::RubyLike,
         "lua" => Family::LuaLike,
@@ -449,7 +521,7 @@ pub fn set_user_rule(
     // Inherit each unset pattern (and the indentation-significant flag) from the
     // built-in family, if any.
     let base = family_for_id(id).map(def_for_family);
-    let rules = IndentRules::compile_parts(
+    let mut rules = IndentRules::compile_parts(
         increase.or(base.and_then(|d| d.increase)),
         decrease.or(base.and_then(|d| d.decrease)),
         indent_next_line.or(base.and_then(|d| d.indent_next_line)),
@@ -457,6 +529,13 @@ pub fn set_user_rule(
         self_close.or(base.and_then(|d| d.self_close)),
         base.map(|d| d.indentation_significant).unwrap_or(false),
     );
+    // …including the tier. Tuning a family's patterns is not a request for a
+    // different way of computing the indent, and inheriting one without the
+    // other is unsound: `PASCAL_LIKE.decrease` lists keywords — `begin`,
+    // `else` — that are triggers *because* the structural pass places them.
+    // Fed to the one-reference-line rule instead, they would dedent a nested
+    // `begin` out of the block it opens.
+    rules.structural = base.and_then(|d| d.structural);
     USER_RULES
         .write()
         .unwrap()
@@ -473,6 +552,7 @@ const CURLY_BRACE: IndentRulesDef = IndentRulesDef {
     indent_next_line: Some(r"^\s*((if|for|while)\b.*\)|else)\s*$"),
     dedent_next_line: None,
     self_close: None,
+    structural: None,
     indentation_significant: false,
 };
 
@@ -506,6 +586,7 @@ const SMALI_LIKE: IndentRulesDef = IndentRulesDef {
             (?:method|annotation|subannotation|packed-switch|sparse-switch|array-data|param|parameter)\b
         ",
     ),
+    structural: None,
     indentation_significant: false,
 };
 
@@ -521,6 +602,7 @@ const PYTHON: IndentRulesDef = IndentRulesDef {
     indent_next_line: None,
     dedent_next_line: Some(r"^\s*(return|pass|raise|break|continue)\b"),
     self_close: None,
+    structural: None,
     indentation_significant: true,
 };
 
@@ -535,6 +617,7 @@ const RUBY_LIKE: IndentRulesDef = IndentRulesDef {
     dedent_next_line: None,
     // Suppress increase for one-liners like `def f; end` / `if x then y end`.
     self_close: Some(r"\bend\b"),
+    structural: None,
     indentation_significant: false,
 };
 
@@ -546,6 +629,7 @@ const LUA_LIKE: IndentRulesDef = IndentRulesDef {
     indent_next_line: None,
     dedent_next_line: None,
     self_close: Some(r"\bend\b"),
+    structural: None,
     indentation_significant: false,
 };
 
@@ -559,6 +643,7 @@ const BASH_LIKE: IndentRulesDef = IndentRulesDef {
     indent_next_line: None,
     dedent_next_line: None,
     self_close: None,
+    structural: None,
     indentation_significant: false,
 };
 
@@ -568,16 +653,25 @@ const FISH_LIKE: IndentRulesDef = IndentRulesDef {
     indent_next_line: None,
     dedent_next_line: None,
     self_close: Some(r"\bend\b"),
+    structural: None,
     indentation_significant: false,
 };
 
+// Pascal's *indent* comes from `Structural::Pascal` — see
+// `crate::primitives::indent_pascal`. The patterns below still earn their
+// keep: `decrease` is what decides which keystroke completes an electric
+// dedent, and it now lists every keyword that lands on its construct's own
+// column rather than where the line above sits. `begin` and `else` are in
+// that set because both can follow a one-statement body (`if a then` /
+// `begin`, `if a then X` / `else`) and both belong back at the `if`.
 const PASCAL_LIKE: IndentRulesDef = IndentRulesDef {
     increase: Some(r"(^\s*(begin|case|record|try|repeat|asm)\b)|(\b(begin|of)\s*$)"),
-    decrease: Some(r"^\s*(end|until|except|finally)\b"),
+    decrease: Some(r"^\s*(end|until|except|finally|else|begin)\b"),
     indent_next_line: None,
     dedent_next_line: None,
     self_close: Some(r"\bend\b"),
     indentation_significant: false,
+    structural: Some(Structural::Pascal),
 };
 
 // ---------------------------------------------------------------------------
@@ -940,6 +1034,59 @@ mod tests {
         );
     }
 
+    // ---- Odin (CurlyBrace) ------------------------------------------------
+
+    /// Every block Odin has opens with `{` on the head line: a procedure
+    /// body, the type bodies (`struct`, `union`, `enum`, `bit_field`), and an
+    /// ordinary block, control flow included — Odin's `if`/`for`/`switch`
+    /// take no parentheses and have no braceless form.
+    #[test]
+    fn odin_indents_after_a_block_opener() {
+        for head in [
+            "greet :: proc(name: string) -> string {\n",
+            "main :: proc() {\n",
+            "Point :: struct {\n",
+            "Value :: union {\n",
+            "Colour :: enum {\n",
+            "Flags :: bit_field u8 {\n",
+            "if count > 3 {\n",
+            "for item in items {\n",
+            "switch kind {\n",
+        ] {
+            assert_eq!(indent("odin", head, 4), 4, "after {head:?}");
+        }
+    }
+
+    /// An opener that is already indented carries its own column. Odin indents
+    /// with tabs, and a tab is worth `tab_size` here — so a block opened on a
+    /// tab-indented line has its body two units in, not one.
+    #[test]
+    fn odin_indents_relative_to_the_openers_own_column() {
+        assert_eq!(indent("odin", "\t{\n", 4), 8);
+        assert_eq!(indent("odin", "    if x > 3 {\n", 4), 8);
+    }
+
+    /// The closing brace comes back out to the construct that opened it.
+    #[test]
+    fn odin_dedents_a_closing_brace() {
+        assert_eq!(indent("odin", "main :: proc() {\n    x := 1\n}\n", 4), 0);
+    }
+
+    /// A brace inside a string or a comment is not a block opener. Odin's
+    /// line comment is `//`, and the masking that makes this work is the
+    /// caller's — here it is stated directly.
+    #[test]
+    fn odin_ignores_a_brace_in_a_comment_or_string() {
+        let line = "x := 1 // opens nothing {\n";
+        let comment = line.find("//").unwrap();
+        assert_eq!(indent_masked("odin", line, 4, &[(comment, line.len())]), 0);
+
+        let line = "s := \"{\"\n";
+        let quote = line.find('"').unwrap();
+        let end = line.rfind('"').unwrap() + 1;
+        assert_eq!(indent_masked("odin", line, 4, &[(quote, end)]), 0);
+    }
+
     // ---- PascalLike -------------------------------------------------------
 
     #[test]
@@ -1017,6 +1164,7 @@ mod tests {
         let target = rules_for_id("python").unwrap().on_type_dedent_target(
             &buf(content),
             line_start,
+            "    else:",
             4,
             |_| true,
         );
@@ -1032,6 +1180,7 @@ mod tests {
         let target = rules_for_id("python").unwrap().on_type_dedent_target(
             &buf(content),
             line_start,
+            "    case _:",
             4,
             |_| true,
         );
@@ -1055,7 +1204,7 @@ mod tests {
         let content = "OPEN\n    x\n    CLOS";
         let line_start = content.rfind('\n').unwrap() + 1;
         assert_eq!(
-            r.on_type_dedent_target(&buf(content), line_start, 4, |_| true),
+            r.on_type_dedent_target(&buf(content), line_start, "    CLOSE", 4, |_| true),
             Some(0)
         );
     }

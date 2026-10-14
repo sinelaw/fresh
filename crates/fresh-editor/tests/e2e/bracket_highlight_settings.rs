@@ -162,3 +162,116 @@ fn highlight_matching_brackets_config_false_disables_all_bracket_colors() {
         bracket_colors(&harness)
     );
 }
+
+/// With rainbow on, the cursor's pair must still stand out. It used to be
+/// re-painted in its own depth color — exactly what the rainbow pass had
+/// already given it — so landing on a bracket changed nothing (issue #3084).
+#[test]
+fn matching_brackets_stand_out_when_rainbow_is_on() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    // Two identical lines: the second line's brackets sit at the same
+    // depths as the first's and are not part of the cursor's pair.
+    harness.type_text("({[]})\n({[]})").unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let (col, row) = harness
+        .find_text_on_screen(BRACKETS)
+        .expect("bracket line should be on screen");
+    // Foreground and text attributes; the rows' backgrounds differ anyway
+    // (current-line highlight).
+    let look = |x: u16, y: u16| {
+        let style = harness.get_cell_style(x, y).unwrap_or_default();
+        (style.fg, style.add_modifier)
+    };
+
+    // The `)` matching the cursor's `(` vs the same-depth `)` on line 2.
+    let matched = look(col + 5, row);
+    let unmatched = look(col + 5, row + 1);
+    assert_ne!(
+        matched, unmatched,
+        "the matched bracket must look different from an unmatched one at the same depth"
+    );
+    assert_eq!(
+        matched.0, unmatched.0,
+        "the pair keeps its rainbow depth color"
+    );
+    // The brackets the cursor isn't on are unaffected.
+    assert_eq!(look(col + 1, row), look(col + 1, row + 1));
+}
+
+/// A theme that extends a built-in one and names only the match emphasis.
+const ITALIC_MATCH_THEME_JSON: &str = r#"{
+    "name": "italic-match",
+    "extends": "dark",
+    "editor": {
+        "bracket_rainbow_match_modifier": ["italic"]
+    },
+    "ui": {},
+    "search": {},
+    "diagnostic": {},
+    "syntax": {}
+}"#;
+
+/// The rainbow pair's emphasis is the theme's (`editor.bracket_rainbow_match_
+/// modifier`), not a fixed bold + underline.
+#[test]
+fn the_theme_decides_how_the_rainbow_pair_stands_out() {
+    use fresh::config_io::DirectoryContext;
+    use ratatui::style::Modifier;
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+    let themes_dir = temp_dir.path().join("config").join("themes");
+    std::fs::create_dir_all(&themes_dir).unwrap();
+    std::fs::write(
+        themes_dir.join("italic-match.json"),
+        ITALIC_MATCH_THEME_JSON,
+    )
+    .unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    std::fs::create_dir_all(project_root.join("plugins")).unwrap();
+
+    let config = Config {
+        theme: "italic-match".to_string().into(),
+        ..Default::default()
+    };
+    let mut harness = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_config(config)
+            .with_working_dir(project_root)
+            .with_shared_dir_context(dir_context)
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
+    harness.type_text("({[]})\n({[]})").unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let (col, row) = harness
+        .find_text_on_screen(BRACKETS)
+        .expect("bracket line should be on screen");
+    let modifier = |x: u16, y: u16| {
+        harness
+            .get_cell_style(x, y)
+            .unwrap_or_default()
+            .add_modifier
+    };
+    // The `)` matching the cursor's `(`, and the same-depth `)` on line 2.
+    let matched = modifier(col + 5, row);
+    let unmatched = modifier(col + 5, row + 1);
+    assert!(
+        matched.contains(Modifier::ITALIC) && !unmatched.contains(Modifier::ITALIC),
+        "the matched bracket carries the theme's attributes: {matched:?} vs {unmatched:?}"
+    );
+    assert!(
+        !matched.intersects(Modifier::BOLD | Modifier::UNDERLINED),
+        "the default emphasis is replaced, not added to: {matched:?}"
+    );
+}

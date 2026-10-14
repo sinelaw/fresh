@@ -162,8 +162,7 @@ impl BlogShowcase {
             frames: self.frames.clone(),
         };
         let metadata_path = self.blog_dir.join("showcase.json");
-        let json = serde_json::to_string_pretty(&metadata)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let json = serde_json::to_string_pretty(&metadata).map_err(io::Error::other)?;
         fs::write(&metadata_path, json)?;
 
         // Write blog post markdown stub (only if it doesn't exist yet)

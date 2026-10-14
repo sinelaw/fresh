@@ -244,6 +244,7 @@ impl SshServer {
             window: true,
             label: Some(label.to_string()),
             command: None,
+            adopt_window: None,
         })
     }
 }

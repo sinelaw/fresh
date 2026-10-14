@@ -37,10 +37,11 @@
 //! events the kind reports are written to the model.
 
 use super::items::{
-    json_is_unset, json_is_valid, map_display_value, object_array_row, SettingControl, SettingItem,
+    json_is_unset, json_is_valid, map_display_value, object_array_row, SettingControl,
 };
 use fresh_core::api::{ButtonKind, DualListOption, OverlayColorSpec, OverlayOptions, WidgetSpec};
-use fresh_core::text_property::{InlineOverlay, OffsetUnit, StyledSegment, TextPropertyEntry};
+use fresh_core::text_property::{StyledSegment, TextPropertyEntry};
+use fresh_i18n::t;
 
 /// Accent color for the "key" column (key combo / map key). Matches the
 /// widget framework's help-key accent and the historical `MapColors::key`.
@@ -100,6 +101,8 @@ pub fn setting_control_to_widget_aligned(
     label_width: Option<u16>,
     cursor: Option<usize>,
 ) -> WidgetSpec {
+    // A control can be mapped before `i18n::init`, e.g. from a test.
+    crate::i18n::embedded::ensure_registered();
     let key = Some(field_key.to_string());
     let lw = label_width.unwrap_or(0) as u32;
     match control {
@@ -117,6 +120,7 @@ pub fn setting_control_to_widget_aligned(
             indeterminate: *inherited,
             label_first: true,
             label_width: lw,
+            mnemonic: None,
             key,
         },
         // The value as the JSON carries it; the kind formats a percent as
@@ -185,6 +189,8 @@ pub fn setting_control_to_widget_aligned(
             full_width: true,
             completions: Vec::new(),
             completions_visible_rows: 0,
+            min_rows: 0,
+            max_rows: 0,
             block_caret: true,
             sel_start: -1,
             sel_end: -1,
@@ -194,6 +200,7 @@ pub fn setting_control_to_widget_aligned(
             label_width: lw,
             read_only: false,
             markdown: false,
+            combo: false,
             key,
         },
         // The included set is the model's; which column the keyboard
@@ -279,17 +286,20 @@ pub fn setting_control_to_widget_aligned(
                         seg(&preview, Some(VALUE_PREVIEW_FG)),
                     ];
                     if cursor == Some(idx) {
-                        segs.push(seg("  [Enter to edit]", Some(DIM_HINT)));
+                        let hint = format!("  {}", t!("settings.enter_to_edit"));
+                        segs.push(seg(&hint, Some(DIM_HINT)));
                     }
                     segments_row(segs)
                 })
                 .collect();
             if !no_add {
-                rows.push(add_row(cursor == Some(entries.len()), "  [Enter to add]"));
+                let hint = format!("  {}", t!("settings.enter_to_add"));
+                rows.push(add_row(cursor == Some(entries.len()), &hint));
             }
             let mut children = vec![raw_row(format!("{label}:"))];
-            if let Some(title) = display_field.as_deref().map(column_title) {
-                children.push(header_row(&pad("Name", key_width), &title));
+            if let Some(title) = display_field.as_deref().map(|f| column_title(field_key, f)) {
+                let name = t!("settings.map_name_column");
+                children.push(header_row(&pad(&name, key_width), &title));
             }
             // An EMPTY List still pads one blank row (its virtual viewport
             // is min 1 tall); an auto-managed map with nothing in it has no
@@ -368,24 +378,28 @@ pub fn setting_control_to_widget_aligned(
                     cursor_byte: -1,
                     focused: false,
                     label: String::new(),
-                    placeholder: Some("(not set — press Enter to add)".to_string()),
+                    placeholder: Some(t!("settings.json_not_set").to_string()),
                     field_width: 0,
                     max_visible_chars: 0,
                     full_width: true,
                     completions: Vec::new(),
                     completions_visible_rows: 0,
+                    min_rows: 0,
+                    max_rows: 0,
                     block_caret: true,
                     sel_start: -1,
                     sel_end: -1,
                     label_width: 0,
                     read_only: false,
                     markdown: false,
+                    combo: false,
                     key,
                 },
             ];
             if !json_is_valid(text) {
+                let warning = format!("  {}", t!("settings.invalid_json"));
                 children.push(raw_entry_row(segments_row(vec![seg(
-                    "  ⚠ Invalid JSON",
+                    &warning,
                     Some("diagnostic.warning_fg"),
                 )])));
             }
@@ -440,21 +454,26 @@ fn text_list_row(field_key: &str, row: Option<usize>, value: &str) -> WidgetSpec
             focused: false,
             label: match row {
                 Some(_) => String::new(),
-                None => "[+] Add new".to_string(),
+                None => t!("settings.add_new").to_string(),
             },
-            placeholder: row.is_none().then(|| "type new item".to_string()),
+            placeholder: row
+                .is_none()
+                .then(|| t!("settings.type_new_item").to_string()),
             rows: 1,
             field_width: TEXTLIST_CELL_WIDTH,
             max_visible_chars: 0,
             full_width: false,
             completions: Vec::new(),
             completions_visible_rows: 0,
+            min_rows: 0,
+            max_rows: 0,
             block_caret: true,
             sel_start: -1,
             sel_end: -1,
             label_width: 0,
             read_only: false,
             markdown: false,
+            combo: false,
             key: Some(SettingControl::text_list_row_key(field_key, row)),
         },
     ];
@@ -487,7 +506,8 @@ fn text_list_row(field_key: &str, row: Option<usize>, value: &str) -> WidgetSpec
 /// The `  [+] Add new` row of a map's or an object array's list, with a dim
 /// hint when the cursor is on it.
 fn add_row(on_cursor: bool, hint: &str) -> TextPropertyEntry {
-    let mut segs = vec![seg("  ", None), seg("[+] Add new", Some(ADD_FG))];
+    let add = t!("settings.add_new");
+    let mut segs = vec![seg("  ", None), seg(&add, Some(ADD_FG))];
     if on_cursor && !hint.is_empty() {
         segs.push(seg(hint, Some(DIM_HINT)));
     }
@@ -516,14 +536,16 @@ fn rows_list(
             true => SettingControl::text_list_row_key(field_key, None),
             false => SettingControl::text_list_row_key(field_key, Some(i)),
         })
-        .collect();
+        .collect::<Vec<_>>()
+        .into();
     WidgetSpec::List {
-        items: rows,
-        item_specs: Vec::new(),
+        items: rows.into(),
+        item_specs: Vec::new().into(),
         item_keys,
         selected_index: cursor.map(|c| c as i32).unwrap_or(-1),
         visible_rows: Some(visible),
         focusable: true,
+        type_ahead: false,
         key: Some(field_key.to_string()),
     }
 }
@@ -578,9 +600,9 @@ fn segments_row(segments: Vec<StyledSegment>) -> TextPropertyEntry {
     }
 }
 
-/// Left-pad `s` to `width` display columns (char-approximate).
+/// Left-pad `s` to `width` display columns.
 fn pad(s: &str, width: usize) -> String {
-    let n = s.chars().count();
+    let n = crate::primitives::display_width::str_width(s);
     if n >= width {
         s.to_string()
     } else {
@@ -602,9 +624,19 @@ fn header_row(left: &str, right: &str) -> WidgetSpec {
     }
 }
 
-/// Human column title from a `display_field` pointer (`/grammar` →
-/// `Grammar`).
-pub(crate) fn column_title(display_field: &str) -> String {
+/// Column title for a map's `display_field` pointer: the entry field's
+/// translated name (`/languages` + `/grammar` →
+/// `settings.field.languages.*.grammar`, or `.*.*.` when each entry is a
+/// list), else the pointer humanized (`/grammar` → `Grammar`).
+pub(crate) fn column_title(map_path: &str, display_field: &str) -> String {
+    let base = format!("settings.field{}", map_path.replace('/', "."));
+    let field = display_field.replace('/', ".");
+    for key in [format!("{base}.*{field}"), format!("{base}.*.*{field}")] {
+        let name = t!(&key);
+        if *name != *key {
+            return name.to_string();
+        }
+    }
     let last = display_field.rsplit('/').next().unwrap_or(display_field);
     let mut chars = last.chars();
     match chars.next() {
@@ -618,11 +650,12 @@ pub(crate) fn column_title(display_field: &str) -> String {
 /// divider between sections) at each `is_section_start` boundary. This
 /// is the tree Settings hands to `widgets::render_spec` once it renders
 /// through the widget framework.
-pub fn settings_items_to_widget(items: &[SettingItem]) -> WidgetSpec {
+#[cfg(test)]
+pub fn settings_items_to_widget(items: &[super::items::SettingItem]) -> WidgetSpec {
     let mut children: Vec<WidgetSpec> = Vec::with_capacity(items.len());
     for item in items {
         if item.is_section_start {
-            if let Some(section) = item.section.as_deref() {
+            if let Some(section) = item.section_label.as_deref() {
                 if !children.is_empty() {
                     children.push(WidgetSpec::Divider {
                         ch: "─".to_string(),
@@ -642,7 +675,9 @@ pub fn settings_items_to_widget(items: &[SettingItem]) -> WidgetSpec {
 }
 
 /// A styled section-header row (`Raw`, accent fg + bold).
+#[cfg(test)]
 fn section_header(section: &str) -> WidgetSpec {
+    use fresh_core::text_property::{InlineOverlay, OffsetUnit};
     let mut entry = TextPropertyEntry::text(section);
     entry.inline_overlays.push(InlineOverlay {
         start: 0,
@@ -663,6 +698,7 @@ fn section_header(section: &str) -> WidgetSpec {
 
 #[cfg(test)]
 mod tests {
+    use super::super::items::SettingItem;
     use super::*;
 
     #[test]
@@ -883,6 +919,7 @@ mod tests {
             nullable: false,
             is_null: false,
             section: section.map(|s| s.to_string()),
+            section_label: section.map(|s| s.to_string()),
             is_section_start: section.is_some(),
             style: Default::default(),
             dual_list_sibling: None,
@@ -1046,7 +1083,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(items.len(), 2);
-                assert_eq!(item_keys, vec!["/languages::row::0", "/languages::add"]);
+                assert_eq!(*item_keys, vec!["/languages::row::0", "/languages::add"]);
                 assert_eq!(selected_index, -1);
                 assert_eq!(key.as_deref(), Some("/languages"));
             }

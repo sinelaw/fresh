@@ -17,8 +17,11 @@
 //!
 //! All assertions are on rendered output only.
 
+#[cfg(feature = "plugins")]
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
+#[cfg(feature = "plugins")]
 use crate::common::tracing::init_tracing_from_env;
+#[cfg(feature = "plugins")]
 use crossterm::event::{KeyCode, KeyModifiers};
 
 /// Open a markdown document with the real `markdown_compose` plugin loaded and

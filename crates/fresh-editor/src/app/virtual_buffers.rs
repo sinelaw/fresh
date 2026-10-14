@@ -125,13 +125,7 @@ impl Editor {
             .insert(buffer_id, metadata);
 
         // Add buffer to the active split's tabs
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        let active_split = self.active_window().split_manager().active_split();
         let line_wrap = self.active_window().resolve_line_wrap_for_buffer(buffer_id);
         let wrap_column = self
             .active_window()
@@ -139,7 +133,7 @@ impl Editor {
         if let Some(view_state) = self
             .windows
             .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
+            .and_then(|w| w.buffers.split_view_states_mut())
             .expect("active window must have a populated split layout")
             .get_mut(&active_split)
         {
@@ -385,21 +379,14 @@ impl crate::app::window::Window {
         let metadata = crate::app::types::BufferMetadata::virtual_buffer(name, mode, read_only);
         self.buffer_metadata.insert(buffer_id, metadata);
 
-        let (mgr, _) = self
-            .buffers
-            .splits()
-            .expect("active window must have a populated split layout");
+        let (mgr, _) = self.splits();
         let active_split = mgr.active_split();
         let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
         let wrap_column = self.resolve_wrap_column_for_buffer(buffer_id);
         let cfg = self.config().editor.clone();
         let terminal_width = self.terminal_width;
         let terminal_height = self.terminal_height;
-        if let Some(view_state) = self
-            .split_view_states_mut()
-            .expect("active window must have a populated split layout")
-            .get_mut(&active_split)
-        {
+        if let Some(view_state) = self.split_view_states_mut().get_mut(&active_split) {
             view_state.add_buffer(buffer_id);
             let buf_state = view_state.ensure_buffer_state(buffer_id);
             buf_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
@@ -414,17 +401,18 @@ impl crate::app::window::Window {
         } else {
             let mut view_state =
                 SplitViewState::with_buffer(terminal_width, terminal_height, buffer_id);
-            view_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
-                line_numbers: cfg.line_numbers,
-                highlight_current_line: cfg.highlight_current_line,
-                line_wrap,
-                wrap_indent: cfg.wrap_indent,
-                wrap_column,
-                rulers: cfg.rulers,
-                scroll_offset: cfg.scroll_offset,
-            });
+            view_state.buffer_tab_state_mut().apply_config_defaults(
+                crate::view::split::ViewConfigDefaults {
+                    line_numbers: cfg.line_numbers,
+                    highlight_current_line: cfg.highlight_current_line,
+                    line_wrap,
+                    wrap_indent: cfg.wrap_indent,
+                    wrap_column,
+                    rulers: cfg.rulers,
+                    scroll_offset: cfg.scroll_offset,
+                },
+            );
             self.split_view_states_mut()
-                .expect("active window must have a populated split layout")
                 .insert(active_split, view_state);
         }
 
@@ -532,7 +520,7 @@ impl crate::app::window::Window {
                 let new_len = state.buffer.len();
                 let buffer = &state.buffer;
                 for view_state in vs_map.values_mut() {
-                    let Some(buf_state) = view_state.keyed_states.get_mut(&buffer_id) else {
+                    let Some(buf_state) = view_state.buffer_state_mut(buffer_id) else {
                         continue;
                     };
                     buf_state.cursors.map(|cursor| {

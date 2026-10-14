@@ -1072,7 +1072,7 @@ fn setup_crlf_merge_conflict(project_root: &std::path::Path) -> std::path::PathB
         .args(["checkout", "master"])
         .current_dir(project_root)
         .output();
-    if !master.map_or(false, |o| o.status.success()) {
+    if !master.is_ok_and(|o| o.status.success()) {
         git(project_root, &["checkout", "main"]);
     }
 

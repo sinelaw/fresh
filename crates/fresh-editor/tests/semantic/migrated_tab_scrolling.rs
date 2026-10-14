@@ -120,27 +120,26 @@ const TAB_NAME_MAX_COLS: usize = 25;
 /// file and the "active tab is visible" claim holds — we just assert on the
 /// label the editor actually draws instead of the full, now-elided filename.
 ///
-/// Since the follow-up to #2650 the cap is *conditional*: a name is elided only
-/// when this split's tabs overflow the bar. With `num_open` tabs of this same
-/// (uniform) filename in a `NARROW_WIDTH` bar, opening the very first file still
-/// fits, so it renders in full; from the second tab on they overflow and are
-/// capped. This mirrors that decision so the assertions track what's painted.
+/// The cap is *conditional*: a name is elided only when this split's tabs,
+/// with their names whole, are wider than the strip. With `num_open` tabs of
+/// this same (uniform) filename in a `NARROW_WIDTH` bar, opening the very
+/// first file still fits, so it renders in full; from the second tab on they
+/// overflow and are capped.
+///
+/// **What the strip measures against has changed, not whether it measures.**
+/// The bar used to reserve three columns for a pinned `+`; the `+` rides in
+/// the window with the tabs now, and the window reserves a cap's width at each
+/// end when the content overflows. The comparison is `tabs::natural_width`
+/// against the window's outer width — which is the whole bar here, this being
+/// the unsplit editor — so the reservation no longer comes into it.
 fn expected_tab_label(file_path: &std::path::Path, num_open: usize) -> String {
     let name = file_path.file_name().unwrap().to_str().unwrap();
     let len = name.chars().count();
-    // Full-name tab width: " {name} " (len + 2) + "× " (2).
-    let full_tab = len + 4;
-    let full_total = full_tab * num_open + num_open.saturating_sub(1);
-    // Mirror `tabs_render_width`: reserve the pinned "+" (3 cols) on overflow.
-    // This is the unsplit editor, so the bar is the full NARROW_WIDTH.
-    let bar = NARROW_WIDTH as usize;
-    let inline_total = full_total + usize::from(full_total > 0) + 3;
-    let render_w = if inline_total > bar && bar > 3 {
-        bar - 3
-    } else {
-        bar
-    };
-    let fits = full_total <= render_w;
+    // What `tabs::natural_width` counts: " {name} " + "× " per tab, a cell
+    // between each pair, and a cell plus " + " after the last.
+    let per_tab = len + 2 + 2;
+    let total = per_tab * num_open + num_open.saturating_sub(1) + 1 + 3;
+    let fits = total <= NARROW_WIDTH as usize;
     if fits || len <= TAB_NAME_MAX_COLS {
         name.to_string()
     } else {

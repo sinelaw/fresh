@@ -115,6 +115,10 @@
      menus barely show content behind them); the large surfaces (palette,
      Settings, dialogs) use a more translucent vibrancy. Both get the macOS
      shadow + a hairline edge. */
+  /* An editor-ink popup body sits on the editor's ground at the SAME 84% the
+     card is mixed to, so the vibrancy runs through the whole popover rather
+     than stopping at the title band. */
+  body.macfam{--ed-popup-ground:color-mix(in srgb,var(--ed-popup-bg,var(--bg2)) 84%,transparent)}
   body.macfam .dropdown,body.macfam .popup,body.macfam .ctxmenu{
     background:color-mix(in srgb,var(--bg2) 84%,transparent);color:var(--fg);
     -webkit-backdrop-filter:blur(50px) saturate(1.9);backdrop-filter:blur(50px) saturate(1.9);
@@ -139,8 +143,10 @@
   body.macfam .menu.open,
   body.macfam .set-dd-row.sel{
     background:var(--ui-accent);color:#fff;box-shadow:none}
+  /* Full white, not 82%: the dimmed shade measured 2.93:1 on the selection
+     blue, under the 3:1 floor for text this size. The border keeps its tint. */
   body.macfam .palette .prow.sel .pdesc,body.macfam .palette .prow.sel .pkey{
-    color:rgba(255,255,255,.82);border-color:rgba(255,255,255,.4)}
+    color:#fff;border-color:rgba(255,255,255,.4)}
   /* Inset rounded menu / context highlight. The rows need a stacking context so
      the negatively-z'd ::before pill stays above the panel but below the text
      (.mitem is already absolute+z-indexed; give the others one). */

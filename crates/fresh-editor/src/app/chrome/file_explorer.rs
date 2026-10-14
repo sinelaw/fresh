@@ -2,9 +2,10 @@
 //! tree's messages land in.
 
 use crate::app::types::HoverTarget;
+use crate::view::theme::ThemeStyle;
 use anyhow::Result as AnyhowResult;
 
-use super::{ChromeComponent, Editor};
+use super::Editor;
 
 /// Per-file ceiling on the blob `git diff` will expand, as a top-level `git`
 /// override.
@@ -19,50 +20,72 @@ use super::{ChromeComponent, Editor};
 /// The two runtimes cannot share a constant; keep them in sync.
 const BIG_FILE_ARGS: [&str; 2] = ["-c", "core.bigFileThreshold=1m"];
 
-pub(crate) struct FileExplorer;
+/// What a right-press on the explorer named: a row, or the panel's empty space.
+enum ExplorerContextTarget {
+    Row {
+        /// By index in the tree's display order, not on screen.
+        index: usize,
+        /// The folded directory of a compact row's label the press landed
+        /// on, `None` for the row's own name.
+        segment: Option<std::path::PathBuf>,
+    },
+    Body,
+}
 
-impl ChromeComponent for FileExplorer {
-    fn on_hover_change(
-        &self,
-        ed: &mut Editor,
+/// Behavior owned by this surface (moved from mouse_input.rs —
+/// the handlers its arms dispatch to).
+impl Editor {
+    /// The explorer's hover REACTION: a git-status indicator shows its
+    /// tooltip while the pointer is on it. Returns true when that changed
+    /// something beyond the target diff itself.
+    ///
+    /// Leaving an indicator dismisses its tooltip; entering one shows it.
+    /// Independent of any other surface's reaction — the central ladder this
+    /// replaced could skip the dismiss when a menu reaction returned early.
+    pub(crate) fn explorer_hover_reaction(
+        &mut self,
         old: Option<&HoverTarget>,
         new: Option<&HoverTarget>,
         col: u16,
         row: u16,
     ) -> bool {
-        if old == new {
-            return false;
-        }
-        // Leaving a status indicator dismisses its tooltip; entering
-        // one shows it. Independent of any other surface's reaction —
-        // the old central ladder could skip the dismiss when a menu
-        // reaction returned early.
         if matches!(old, Some(HoverTarget::FileExplorerStatusIndicator(_))) {
-            ed.dismiss_file_explorer_status_tooltip();
+            self.dismiss_file_explorer_status_tooltip();
         }
         if let Some(HoverTarget::FileExplorerStatusIndicator(path)) = new {
-            ed.show_file_explorer_status_tooltip(path.clone(), col, row);
+            self.show_file_explorer_status_tooltip(path.clone(), col, row);
             return true;
         }
         false
     }
-}
-
-/// Behavior owned by this component (moved from mouse_input.rs —
-/// the handlers its arms dispatch to).
-impl Editor {
-    /// A left press on a tree row, by viewport index.
+    /// A left press on a tree row, by its index in the tree's display order.
     ///
     /// This is `handle_file_explorer_click` minus its geometry: the row is
     /// named rather than derived from `row - (area.y + 1)`, and the title-bar
     /// and close-button branches are gone because the title line is its own
-    /// node in the tree.
+    /// node in the tree. The name is the row's own index, not its screen
+    /// row, so a pinned ancestor drawn at the top of the window names itself
+    /// with nothing in between to disagree.
     ///
     /// It also absorbs the old `Double` arm. `clicks` is which press of a run
     /// this is, carried on the event from the editor's own multi-click
     /// detector — so one fact covers both routes, and they cannot disagree
     /// about which row they mean.
-    pub(crate) fn explorer_row_pressed(&mut self, index: usize, clicks: u8) {
+    ///
+    /// Reports whether a directory is waiting to be opened or closed by the
+    /// release. Expanding one re-lays out every row below it, so doing it
+    /// under a pointer that is still down would slide a different row beneath
+    /// the drag the press just lifted — press `chain/one`, drag one row down,
+    /// and the entry lands wherever the rows happened to shift to. So the
+    /// press selects and the release toggles, which is what a *click* on a
+    /// directory has always meant anyway.
+    #[must_use]
+    pub(crate) fn explorer_row_pressed(
+        &mut self,
+        index: usize,
+        segment: Option<std::path::PathBuf>,
+        clicks: u8,
+    ) -> bool {
         // Focus first. `open_file_preview` below routes through
         // `set_active_buffer`, which detects "leaving a terminal buffer while
         // terminal_mode is on" and resets `key_context = Normal`
@@ -76,8 +99,8 @@ impl Editor {
         // Everything the branches below need, read out under one borrow of
         // the tree so the editor is free again by the time a file is opened.
         let picked = self.file_explorer_mut().and_then(|explorer| {
-            let (node_id, _indent) = explorer.get_display_node_at_viewport_row(index)?;
-            explorer.set_selected(Some(node_id));
+            let node_id = explorer.press_target(index, segment.as_deref())?;
+            explorer.set_selected_exact(Some(node_id));
             let node = explorer.tree().get_node(node_id)?;
             Some((
                 node.is_dir(),
@@ -87,18 +110,20 @@ impl Editor {
             ))
         });
         let Some((is_dir, is_file, path, name)) = picked else {
-            return;
+            return false;
         };
         if double {
             // Open AND focus the editor — the old double-click arm.
             if let Err(e) = self.file_explorer_open_file() {
                 tracing::warn!("file explorer open failed: {e}");
             }
-            return;
+            return false;
         }
         if is_dir {
-            self.file_explorer_toggle_expand();
-        } else if is_file {
+            // The release does this. See the note on this function.
+            return true;
+        }
+        if is_file {
             // Single click opens in *preview* mode and keeps focus on the
             // panel, so a string of exploratory clicks doesn't accumulate
             // tabs; the double above promotes it to a permanent one.
@@ -123,19 +148,45 @@ impl Editor {
             self.active_window_mut().key_context =
                 crate::input::keybindings::KeyContext::FileExplorer;
         }
+        false
     }
 
-    /// A right press on a tree row: select it, then open its context menu just
-    /// below the pointer.
-    pub(crate) fn explorer_row_context(&mut self, index: usize, x: u16, y: u16) {
+    /// A right press on a tree row: select what the press named, then open its
+    /// context menu just below the pointer.
+    pub(crate) fn explorer_row_context(
+        &mut self,
+        index: usize,
+        segment: Option<std::path::PathBuf>,
+        x: u16,
+        y: u16,
+    ) {
+        self.explorer_context_for(ExplorerContextTarget::Row { index, segment }, x, y);
+    }
+
+    /// The menu, for whatever the press named.
+    ///
+    /// The selection always moves first, because every item in this menu acts
+    /// on the selection: a menu opened without moving it is about some other
+    /// entry. The multi-selection is left alone, as a press on a row leaves it
+    /// alone — it is the reader's set, not this menu's.
+    fn explorer_context_for(&mut self, target: ExplorerContextTarget, x: u16, y: u16) {
         let (is_multi, is_root_selected) = if let Some(explorer) = self.file_explorer_mut().as_mut()
         {
-            let mut clicked_is_root = false;
-            if let Some((node_id, _)) = explorer.get_display_node_at_viewport_row(index) {
-                explorer.set_selected(Some(node_id));
-                clicked_is_root = node_id == explorer.tree().root_id();
-            }
-            (explorer.has_multi_selection(), clicked_is_root)
+            let root_id = explorer.tree().root_id();
+            let named = match target {
+                ExplorerContextTarget::Body => None,
+                ExplorerContextTarget::Row { index, segment } => {
+                    explorer.press_target(index, segment.as_deref())
+                }
+            };
+            // Nothing named: the blank area, or a row index the tree no longer
+            // has — the press carries the index of the frame it was drawn in,
+            // and a reload can shorten the tree in between. Both are the root's.
+            let picked = named.unwrap_or(root_id);
+            // `set_selected_exact`, not `set_selected`: the latter promotes a
+            // segment to its chain anchor, which is the bug.
+            explorer.set_selected_exact(Some(picked));
+            (explorer.has_multi_selection(), picked == root_id)
         } else {
             (false, false)
         };
@@ -146,22 +197,18 @@ impl Editor {
         );
     }
 
-    /// A right-press on the panel that no row claimed.
+    /// A right-press on the panel that no row claimed — the empty space under
+    /// the last entry.
     ///
-    /// Resolves the viewport row from the panel's own rectangle and hands off
-    /// to [`Self::explorer_row_context`], which already tolerates an index
-    /// past the last entry — `get_display_node_at_viewport_row` returns
-    /// `None`, no selection moves, and the menu opens in its root form. That
-    /// is the component's behaviour: `relative_row = ev.row - (area.y + 1)`,
-    /// with the title row declining rather than opening anything.
+    /// It selects the project root and opens the root's menu, which is what the
+    /// root row gives and what VS Code does. The title row opens nothing.
     pub(crate) fn explorer_body_context(&mut self, x: u16, y: u16) {
         let area = self.shell_region_now(crate::view::shell::frame::HostRegion::Explorer);
         // The title row is not a right-click target.
         if area.height == 0 || y <= area.y {
             return;
         }
-        let index = y.saturating_sub(area.y + 1) as usize;
-        self.explorer_row_context(index, x, y);
+        self.explorer_context_for(ExplorerContextTarget::Body, x, y);
     }
 
     /// Show a tooltip for a file explorer status indicator
@@ -261,8 +308,10 @@ impl Editor {
         popup.position = PopupPosition::Fixed { x: col, y: row + 1 };
         popup.width = 50;
         popup.max_height = 15;
-        popup.border_style = Style::default().fg(self.theme.read().unwrap().popup_border_fg);
-        popup.background_style = Style::default().bg(self.theme.read().unwrap().popup_bg);
+        popup.border_style =
+            Style::default().theme_fg(&self.theme.read().unwrap(), "ui.popup_border_fg");
+        popup.background_style =
+            Style::default().theme_bg(&self.theme.read().unwrap(), "ui.popup_bg");
 
         // Show the popup
         let __buffer_id = self.active_buffer();
@@ -440,38 +489,38 @@ impl Editor {
 
     /// Handle file explorer border drag for resizing
     pub(crate) fn handle_file_explorer_border_drag(&mut self, col: u16) -> AnyhowResult<()> {
-        let Some((start_col, _start_row)) =
-            self.active_window_mut().mouse_state.drag_start_position
-        else {
-            return Ok(());
-        };
-        let Some(start_width) = self
-            .active_window_mut()
-            .mouse_state
-            .drag_start_explorer_width
+        let Some(crate::app::types::PointerDrag::ExplorerBorder {
+            press_x: start_col,
+            start_width,
+        }) = self.active_window().mouse_state.drag
         else {
             return Ok(());
         };
 
-        let delta = col as i32 - start_col as i32;
-        let total_width = self.terminal_width as i32;
+        // Dragging toward the editor widens the column: rightward when it
+        // sits on the left, leftward when it sits on the right.
+        let delta = match self.active_window().file_explorer_side {
+            crate::config::FileExplorerSide::Left => col as i32 - start_col as i32,
+            crate::config::FileExplorerSide::Right => start_col as i32 - col as i32,
+        };
+        // **Measured against the width the explorer is sized from.** A
+        // percent is a percent of the chrome left after the dock
+        // (`to_cols(terminal_width - dock_cols)`, as the renderer and
+        // `editor_content_area` apply it), so converting the pointer's cells
+        // with the full terminal width moved the divider short of the
+        // pointer — by more the wider the dock. And it went through percent
+        // deltas truncated toward zero, then truncated again by `to_cols`.
+        // Working in cells and converting once, at the end, is exact
+        // wherever a percent can be.
+        let chrome = self.terminal_width.saturating_sub(self.dock_cols());
 
         // Drag preserves the variant the user chose. A user editing
         // columns doesn't want their mode silently flipped to percent
         // just because they grabbed the divider.
-        if total_width > 0 {
-            use crate::config::ExplorerWidth;
-            let new_width = match start_width {
-                ExplorerWidth::Percent(start_pct) => {
-                    let percent_delta = (delta * 100) / total_width;
-                    let new_pct = (start_pct as i32 + percent_delta).clamp(0, 100) as u8;
-                    ExplorerWidth::Percent(new_pct)
-                }
-                ExplorerWidth::Columns(start_cols) => {
-                    let new_cols = (start_cols as i32 + delta).clamp(0, total_width) as u16;
-                    ExplorerWidth::Columns(new_cols)
-                }
-            };
+        if chrome > 0 {
+            let start_cols = start_width.to_cols(chrome) as i32;
+            let target = (start_cols + delta).clamp(0, chrome as i32) as u16;
+            let new_width = start_width.with_cols(target, chrome);
             // **Only a width that actually moved reflows**, the way the dock's
             // grip has always guarded its own drag. A grip's `Move` fires for
             // every motion report the pointer produces while it holds the

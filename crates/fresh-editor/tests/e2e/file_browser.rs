@@ -1325,3 +1325,62 @@ fn test_file_open_shortcuts_load_async_issue_903() {
         screen
     );
 }
+
+/// **PageDown moves by the rows the list shows.** It moved a fixed ten
+/// rows, whatever the dialog's height gave the list; the list records the
+/// window its layout placed, and a page is that.
+#[test]
+fn test_file_browser_page_down_moves_by_the_window() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_root = temp_dir.path().to_path_buf();
+    for i in 0..60 {
+        fs::write(project_root.join(format!("file_{i:02}.txt")), "x").unwrap();
+    }
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        100,
+        45,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("file_00.txt"))
+        .expect("Files should be listed");
+    let selected = |h: &EditorTestHarness| {
+        h.editor()
+            .active_window()
+            .file_open_state
+            .as_ref()
+            .and_then(|s| s.selected_index())
+    };
+    // Down past the first window, so every row on screen is a file.
+    for _ in 0..25 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+    let from = selected(&harness).expect("a selection");
+    let screen = harness.screen_to_string();
+    let rows = screen
+        .lines()
+        .filter(|l| l.contains("file_") && l.contains(".txt") && l.contains('│'))
+        .count();
+    assert!(rows > 10, "the list shows more than ten rows:\n{screen}");
+
+    harness
+        .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    assert_eq!(
+        selected(&harness),
+        Some(from + rows),
+        "a page is the {rows} rows on screen:\n{screen}"
+    );
+    harness
+        .send_key(KeyCode::PageUp, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    assert_eq!(selected(&harness), Some(from));
+}

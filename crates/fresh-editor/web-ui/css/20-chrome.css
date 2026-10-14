@@ -19,19 +19,21 @@
   .mitem,.msep,.mlabel{position:absolute;z-index:81}
   .mitem{display:flex;align-items:center;gap:16px;padding:0 10px;white-space:nowrap;cursor:default;color:var(--fg)}
   .mitem.hi{background:var(--menuhi);color:#fff}
-  .mitem.disabled{color:#6a6a6a}
+  /* Dim, but derived from the theme rather than a fixed grey: the same
+     "disabled" reads on a light skin and a dark one. */
+  .mitem.disabled{color:color-mix(in srgb,var(--fg) 45%,var(--bg2))}
   /* The label takes the row and the accel sits in a fixed right-hand column.
      `min-width:0` + ellipsis lets a long label truncate cleanly (…) instead of
      shoving the accel past the panel's right edge (the proportional chrome font
      can exceed the pipeline's monospace cell box), so the shortcuts stay
      column-aligned. `.lab` is a block (not flex) so text-overflow works. */
   .mitem .lab{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .mitem .accel{flex:0 0 auto;color:var(--muted)}
-  .mitem.hi .accel{color:#dfe8ff}
-  .mitem .arrow{color:var(--muted)}
+  .mitem .accel{flex:0 0 auto;color:var(--muted-menu,var(--muted))}
+  .mitem.hi .accel{color:var(--on-sel-dim)}
+  .mitem .arrow{color:var(--muted-menu,var(--muted))}
   .mitem .check{width:11px;display:inline-block;text-align:center;margin-right:3px}
   .msep{height:1px;background:#4a4a4a;margin:4px 8px}
-  .mlabel{padding:0 14px;color:var(--muted);font-style:italic}
+  .mlabel{padding:0 14px;color:var(--muted-menu,var(--muted));font-style:italic}
 
   /* ---- tabs (native) ---- */
   .tabbar{display:flex;align-items:stretch;background:var(--bg2);border-bottom:1px solid var(--border);overflow:hidden}

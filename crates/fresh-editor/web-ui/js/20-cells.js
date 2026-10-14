@@ -52,6 +52,27 @@ function fileIcon(name, opts){
 // tree guides and rules. Rendered as crisp full-height vector lines instead of
 // the font glyph — stacked glyphs leave gaps at our cell height, so the gutter
 // looked dashed; a rule per cell is contiguous row-to-row, i.e. one clean line.
+// The bridge sends one string per run whose CELLS are already column-aligned
+// (a wide glyph is followed by the blank cell it occupies). What JS must not
+// do is count UTF-16 units: a ZWJ family, a flag, a skin tone and a combining
+// cluster are each ONE cell made of several units, so `.length` pinned their
+// pieces to separate columns and the browser could no longer shape them —
+// the emoji rendered as a fragment followed by a gap.
+//
+// `Intl.Segmenter` gives the real cluster boundaries. ASCII-only runs (the
+// overwhelming majority, every frame) take a fast path that skips it.
+const GRAPHEMES = typeof Intl !== "undefined" && Intl.Segmenter
+  ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+  : null;
+const ASCII = /^[\x20-\x7E]*$/;
+function cellUnits(t){
+  if(ASCII.test(t)) return null;                       // fast path: 1 unit = 1 cell
+  if(GRAPHEMES) return [...GRAPHEMES.segment(t)].map(g => g.segment);
+  return [...t];                                       // last resort: code points
+}
+// How many cells a run occupies.
+function cellLen(t){ const g=cellUnits(t); return g ? g.length : t.length; }
+
 const VRULE = "│┃";
 // Draw a block of cells (rows of styled runs) as SVG <text>/<tspan>.
 function cellsSvg(cells, wCells){
@@ -62,8 +83,8 @@ function cellsSvg(cells, wCells){
     let col=0;
     for(const r of cells[row]){
       const ebg=r.r?(r.fg||"#d4d4d4"):r.bg;
-      if(ebg){ s+=`<rect x="${(px(col,CW)).toFixed(1)}" y="${(row*CH).toFixed(1)}" width="${(px(r.t.length,CW)).toFixed(1)}" height="${CH}" fill="${ebg}"/>`; }
-      col+=r.t.length;
+      if(ebg){ s+=`<rect x="${(px(col,CW)).toFixed(1)}" y="${(row*CH).toFixed(1)}" width="${(px(cellLen(r.t),CW)).toFixed(1)}" height="${CH}" fill="${ebg}"/>`; }
+      col+=cellLen(r.t);
     }
     s+=`<text y="${y.toFixed(1)}" xml:space="preserve">`;
     col=0;
@@ -76,13 +97,15 @@ function cellsSvg(cells, wCells){
       // full-height line per cell, and blank the glyph in the text so only the
       // rule shows (no dashed glyph behind it).
       let shown=r.t;
-      if([...r.t].some(ch=>VRULE.includes(ch))){
-        for(let i=0;i<r.t.length;i++){ if(VRULE.includes(r.t[i])){
+      const vunits=cellUnits(r.t);              // null when one unit is one cell
+      if((vunits||r.t).length && (vunits||[...r.t]).some(ch=>VRULE.includes(ch))){
+        const list=vunits||[...r.t];
+        for(let i=0;i<list.length;i++){ if(VRULE.includes(list[i])){
           const cx=px(col+i,CW)+CW/2;
-          const hv=(r.t[i]==="┃"?1.8:1.1)*zoom;
+          const hv=(list[i]==="┃"?1.8:1.1)*zoom;
           rules+=`<rect x="${(cx-hv/2).toFixed(2)}" y="${(row*CH).toFixed(1)}" width="${hv}" height="${CH}" fill="${fill}"/>`;
         }}
-        shown=[...r.t].map(ch=>VRULE.includes(ch)?" ":ch).join("");
+        shown=list.map(ch=>VRULE.includes(ch)?" ":ch).join("");
       }
       // Pin EVERY glyph to its exact cell column via a per-character x list.
       // The font's glyph advance isn't exactly CW, so relying on natural advance
@@ -91,16 +114,88 @@ function cellsSvg(cells, wCells){
       // glyphs drift when run boundaries change — e.g. toggling occurrence /
       // current-line highlights re-split runs and visibly nudged the text. A
       // hard x per cell makes column position independent of run grouping.
-      let xs="";
-      for(let i=0;i<shown.length;i++){ xs+=(i?" ":"")+px(col+i,CW).toFixed(1); }
-      s+=`<tspan x="${xs}" fill="${fill}"${weight}${style}${deco}>${esc(shown)}</tspan>`;
-      col+=r.t.length;
+      //
+      // One x per CELL, never per UTF-16 unit — and an x on a character starts
+      // a new SVG text chunk, across which the browser will not shape. So a
+      // cluster made of several units (a ZWJ sequence, a flag, a skin tone, a
+      // base + combining mark) gets ONE x on its own tspan and no x inside it;
+      // single-unit cells stay batched into one tspan with an x list.
+      const attrs=`fill="${fill}"${weight}${style}${deco}`;
+      const units=cellUnits(shown);            // null when one unit is one cell
+      if(!units){
+        let xs="";
+        for(let i=0;i<shown.length;i++){ xs+=(i?" ":"")+px(col+i,CW).toFixed(1); }
+        s+=`<tspan x="${xs}" ${attrs}>${esc(shown)}</tspan>`;
+        col+=shown.length;
+      }else{
+        for(let i=0;i<units.length;){
+          if(units[i].length===1){             // a plain BMP character
+            let j=i,txt="",xs="";
+            while(j<units.length && units[j].length===1){
+              txt+=units[j]; xs+=(j>i?" ":"")+px(col+j,CW).toFixed(1); j++;
+            }
+            s+=`<tspan x="${xs}" ${attrs}>${esc(txt)}</tspan>`;
+            i=j;
+          }else{
+            s+=`<tspan x="${px(col+i,CW).toFixed(1)}" ${attrs}>${esc(units[i])}</tspan>`;
+            i++;
+          }
+        }
+        col+=units.length;
+      }
     }
     s+=`</text>`;
   }
   s+=rules;
   s+=`</svg>`;
   return s;
+}
+
+// Parse `#rrggbb` into [r,g,b], or null for anything else (a theme may leave a
+// colour at terminal "reset").
+function hexRgb(h){ const m=/^#?([0-9a-fA-F]{6})$/.exec((h||"").trim()); if(!m) return null;
+  const n=parseInt(m[1],16); return [(n>>16)&255,(n>>8)&255,n&255]; }
+function relLum(c){ const f=v=>{v/=255; return v<=.03928?v/12.92:Math.pow((v+.055)/1.055,2.4);};
+  return .2126*f(c[0])+.7152*f(c[1])+.0722*f(c[2]); }
+function contrast(a,b){ const l1=relLum(a),l2=relLum(b); const hi=Math.max(l1,l2),lo=Math.min(l1,l2);
+  return (hi+.05)/(lo+.05); }
+// Blend two `#rrggbb` colours, `k` of the way from `a` to `b`. Null when
+// either is unparseable (a theme may leave a colour at terminal reset), so
+// the caller can fall back to the stylesheet default.
+function mix(a,b,k){
+  const ca=hexRgb(a), cb=hexRgb(b);
+  if(!ca||!cb) return null;
+  return "#"+ca.map((v,i)=>Math.round(v*(1-k)+cb[i]*k).toString(16).padStart(2,"0")).join("");
+}
+
+// Text for a control painted IN a theme colour (a row filled with the
+// menu-highlight, a button filled with the accent). The theme names the fill
+// and never the ink on it, and themes are user data, so the ink is chosen
+// here. Chosen by CONTRAST rather than a luminance cutoff: a mid-light blue
+// (tokyo-night's #7aa2f7) sits below any cutoff that keeps white on the dark
+// accents, and white on it measures 2.5:1 — comparing both candidates picks
+// the readable one at every luminance.
+function onColor(hex){ const c=hexRgb(hex); if(!c) return null;
+  const dark="#10131a", light="#ffffff";
+  return contrast(c,hexRgb(dark))>=contrast(c,hexRgb(light))?dark:light; }
+
+// Blend `muted` toward `fg` in tenths until it clears the 3:1 floor against
+// every surface it is drawn on. Returns the original string when it already
+// does (or when anything is unparseable, so a terminal-reset colour keeps the
+// stylesheet default).
+function legibleMuted(muted,fg,surfaces){
+  const m=hexRgb(muted), f=hexRgb(fg);
+  const grounds=(surfaces||[]).map(hexRgb).filter(Boolean);
+  if(!m||!f||!grounds.length) return muted;
+  const ok=c=>grounds.every(g=>contrast(c,g)>=3);
+  if(ok(m)) return muted;
+  for(let t=1;t<=10;t++){
+    const c=m.map((v,i)=>Math.round(v+(f[i]-v)*t/10));
+    if(ok(c)) return "#"+c.map(v=>v.toString(16).padStart(2,"0")).join("");
+  }
+  // Nothing short of the foreground clears every ground; say so rather than
+  // returning a blend that still fails on one of them.
+  return fg;
 }
 
 // Seed the chrome CSS variables from the editor's active theme so the native
@@ -112,17 +207,40 @@ function applyTheme(t){
   const r=document.documentElement.style;
   const set=(k,v)=>{ if(v) r.setProperty(k,v); else r.removeProperty(k); };
   set("--bg",t.bg); set("--fg",t.fg); set("--accent",t.accent);
-  set("--muted",t.muted); set("--bg2",t.popupBg); set("--bg3",t.menuBg);
+  // `--muted` is chrome SECONDARY TEXT (tab names, status segments, setting
+  // descriptions), seeded from the theme's gutter grey. A gutter grey is
+  // chosen to recede behind code, not to be read as a label: tokyo-night's
+  // #565f89 lands at 2.5:1 on the panel surface, which took every muted string
+  // in the chrome under the 3:1 floor. Lift it toward the foreground until it
+  // clears that floor on both surfaces it is drawn on; a theme already above
+  // the floor is left exactly as it is.
+  // Every ground muted text is drawn on: panel surfaces (`--bg2`), the buffer
+  // (`--bg`) and the menu/dropdown surface (`--bg3`) — a menu accelerator is
+  // muted text on the last one, and leaving it out let the floor report
+  // success at 2.18:1 (dark) and 1.90:1 (nostalgia).
+  set("--muted",legibleMuted(t.muted,t.fg,[t.popupBg,t.bg]));
+  // The menu surface can be a different world from the editor: nostalgia
+  // paints menus light-grey with black text over a blue buffer with yellow
+  // text, so no single muted value serves both grounds — blending the editor
+  // one toward the editor foreground reached 2.18:1 on the menu. Muted text
+  // drawn on a menu derives from the MENU's own foreground instead.
+  set("--muted-menu",legibleMuted(t.muted,t.menuFg,[t.menuBg]));
+  set("--bg2",t.popupBg); set("--bg3",t.menuBg);
   set("--menuhi",t.menuHi); set("--border",t.border);
+  // The EDITOR's own popup ground, kept separate from `--bg2`/`--fg` because a
+  // web theme re-skins those: a popup body that carries editor ink (an LSP
+  // hover's highlighted code, the theme inspector) has to stand on the ground
+  // that ink was chosen against, or a light chrome skin puts dark-theme text
+  // on a light card. No web theme overrides these two, by design.
+  set("--ed-popup-bg",t.popupBg); set("--ed-popup-fg",t.popupFg);
   set("--status-bg",t.statusBg); set("--status-fg",t.statusFg);
-  // Pick black/white text for fills painted in the accent / menu-highlight color
-  // by luminance, so a control filled with a light accent (e.g. high-contrast's
-  // white cursor) still shows its label instead of white-on-white.
-  const onColor=hex=>{ const m=/^#?([0-9a-fA-F]{6})$/.exec((hex||"").trim()); if(!m) return null;
-    const n=parseInt(m[1],16), lin=c=>{c/=255; return c<=.03928?c/12.92:Math.pow((c+.055)/1.055,2.4);};
-    const L=.2126*lin((n>>16)&255)+.7152*lin((n>>8)&255)+.0722*lin(n&255);
-    return L>.45?"#10131a":"#ffffff"; };
   set("--on-accent", onColor(t.accent));
+  // Same question for a row filled SOLID with the menu-highlight: a theme
+  // whose highlight is light (gruvbox's amber) left hardcoded white text at
+  // 1.7:1. Rows that merely *tint* their surface keep `--on-sel` below.
+  // The theme's own ink for its highlight fill wins; `onColor` is the
+  // fallback for a theme that leaves it at terminal reset.
+  set("--on-menuhi", t.menuHighlightFg || onColor(t.menuHi));
   // Selected rows are a translucent --ui-accent tint over the panel surface
   // (not a solid menuHi fill), so the readable text colour on them is simply
   // the theme foreground.
@@ -131,12 +249,6 @@ function applyTheme(t){
   // the design's near-black navy shell; light themes only a gently shaded
   // frame (same hue pull, ratio picked by bg luminance). Null bg (terminal
   // reset) falls back to the :root color-mix default.
-  const mix=(a,b,k)=>{ const pa=/^#?([0-9a-fA-F]{6})$/.exec((a||"").trim()),
-      pb=/^#?([0-9a-fA-F]{6})$/.exec((b||"").trim());
-    if(!pa||!pb) return null;
-    const na=parseInt(pa[1],16), nb=parseInt(pb[1],16);
-    const ch=s=>Math.round(((na>>s)&255)*(1-k)+((nb>>s)&255)*k);
-    return "#"+[16,8,0].map(s=>ch(s).toString(16).padStart(2,"0")).join(""); };
   const darkBg = onColor(t.bg)==="#ffffff";
   set("--shell", mix(t.bg, "#060b13", darkBg?0.45:0.08));
 }

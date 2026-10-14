@@ -14,6 +14,7 @@
 //!      - `style(snapshot, theme, roles) -> StyledFrame`
 //!        ‹this is the new one this scenario needs›,
 //!      - `emit(frame, caps) -> AnsiStream` (today's body).
+//!
 //!    Production stays the composition; tests call `style()`
 //!    independently. Estimated cost: 2-3 days in `src/view/`.
 //!
@@ -62,6 +63,7 @@ pub struct StyleScenario {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[derive(Default)]
 pub enum Inspect {
     Cell {
         row: u16,
@@ -79,13 +81,8 @@ pub enum Inspect {
         rows: u16,
         cols: u16,
     },
+    #[default]
     FullFrame,
-}
-
-impl Default for Inspect {
-    fn default() -> Self {
-        Inspect::FullFrame
-    }
 }
 
 pub fn check_style_scenario(_s: StyleScenario) -> Result<(), ScenarioFailure> {

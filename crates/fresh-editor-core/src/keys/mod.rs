@@ -353,11 +353,19 @@ impl Key {
             code
         } else if rest.chars().count() == 1 {
             let c = rest.chars().next()?;
-            if c.is_uppercase() {
+            // Multi-char lowerings (ß, İ) fall back to the char itself.
+            let lowered = c.to_lowercase().next().unwrap_or(c);
+            // Only a character that *has* a distinct lowercase can have been
+            // shifted, and `is_uppercase()` is not that test: U+1D608
+            // MATHEMATICAL SANS-SERIF CAPITAL A and U+1F130 SQUARED LATIN
+            // CAPITAL LETTER A are uppercase by property but lower to
+            // themselves. Inferring Shift from the property alone invents a
+            // modifier the printer never wrote — and the printer lowercases
+            // precisely so that it never has to (see `write_into`).
+            if c.is_uppercase() && lowered != c {
                 mods |= KeyModifiers::SHIFT;
             }
-            // Multi-char lowerings (ß, İ) fall back to the char itself.
-            KeyCode::Char(c.to_lowercase().next().unwrap_or(c))
+            KeyCode::Char(lowered)
         } else if let Some(n) = lower.strip_prefix('f') {
             KeyCode::F(n.parse::<u8>().ok()?)
         } else {
@@ -617,6 +625,43 @@ mod tests {
             Key::parse("F1", None),
             Some(Key::new(KeyCode::F(1), KeyModifiers::NONE))
         );
+    }
+
+    /// The counterpart of the test above, and the reason it cannot just ask
+    /// `is_uppercase()`: these characters are uppercase by Unicode property
+    /// but have no distinct lowercase, so nothing shifted them. Printing
+    /// lowercases a character to keep Shift out of the spelling, which for
+    /// these is a no-op — so a parser keying off the property alone reads
+    /// back a modifier that was never written, and the round-trip breaks.
+    /// Found by `a_sequence_round_trips_as_its_presses` at a high case count.
+    #[test]
+    fn a_caseless_uppercase_character_does_not_carry_shift() {
+        for c in [
+            '\u{1D608}', // MATHEMATICAL SANS-SERIF CAPITAL A
+            '\u{1F130}', // SQUARED LATIN CAPITAL LETTER A
+        ] {
+            assert!(c.is_uppercase(), "{c:?} is meant to be uppercase");
+            assert!(
+                c.to_lowercase().eq(std::iter::once(c)),
+                "{c:?} is meant to lower to itself"
+            );
+
+            let plain = Key::new(KeyCode::Char(c), KeyModifiers::NONE);
+            assert_eq!(Key::parse(&c.to_string(), None), Some(plain), "{c:?}");
+
+            // And with a modifier, which is how the property test found it:
+            // the Shift came out of nowhere on the way back.
+            let ctrl = Key::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+            assert_eq!(Key::parse(&ctrl.to_string(), None), Some(ctrl), "{c:?}");
+            assert_eq!(
+                KeySeq::parse(
+                    &KeySeq::new(vec![ctrl]).expect("non-empty").to_string(),
+                    None
+                ),
+                KeySeq::new(vec![ctrl]),
+                "{c:?}"
+            );
+        }
     }
 
     #[test]

@@ -29,7 +29,24 @@ impl Editor {
     }
 
     /// Start the recovery session (call on editor startup after recovery check)
+    ///
+    /// Also clears out what interrupted in-place saves left in the top-level
+    /// recovery directory and no longer need, whether or not recovery is on:
+    /// saves stage there regardless (see
+    /// [`crate::model::buffer::save::clean_up_inplace_write_recoveries`]).
+    /// That directory is on this host, so it is swept through the local
+    /// filesystem even when editing a remote one. What they kept that the
+    /// user still has to decide about is then offered
+    /// ([`Editor::offer_interrupted_save`]).
     pub fn start_recovery_session(&mut self) -> AnyhowResult<()> {
+        let removed = crate::model::buffer::save::clean_up_inplace_write_recoveries(
+            &*self.local_filesystem,
+            &self.dir_context.recovery_dir(),
+        );
+        if removed > 0 {
+            tracing::info!("Removed {removed} leftover in-place save file(s)");
+        }
+        self.offer_interrupted_save();
         Ok(self.recovery_service.lock().unwrap().start_session()?)
     }
 
@@ -193,6 +210,35 @@ impl Editor {
             .map(|(id, _)| *id)
     }
 
+    /// An unnamed entry stamped for a workspace that no window holds.
+    ///
+    /// A workspace file that cannot be parsed is dropped from the candidate
+    /// set, so its window comes up with a fresh `stable_id` — and the entry
+    /// it stamped is left naming an identity nobody has. Ownership can never
+    /// be re-established, and an unnamed entry has no path to place it by
+    /// either, so nothing would ever claim it.
+    ///
+    /// Only in standalone mode, where the whole store belongs to one launch
+    /// directory (#1550): there the work can only have been done in this
+    /// directory, so this window taking it keeps it where it was made. A
+    /// session store holds many workspaces, and an entry nobody claims there
+    /// may just belong to one that is not open yet — claiming it would
+    /// shuffle unsaved work between projects, which is what #3189 fixed.
+    fn unnamed_entry_stranded_here(
+        &self,
+        entry: &crate::services::recovery::RecoveryEntry,
+        window: WindowId,
+    ) -> bool {
+        if entry.metadata.workspace_id.is_none() || entry.metadata.original_path.is_some() {
+            return false;
+        }
+        let Some(root) = self.windows.get(&window).map(|w| w.root.clone()) else {
+            return false;
+        };
+        let service = self.recovery_service.lock().unwrap();
+        service.is_standalone() && service.covers_root(&root)
+    }
+
     /// Restore this workspace's own leftover recovery entries into it, on
     /// activation, so unsaved work returns to the workspace it was done in
     /// rather than whichever one is in front (issue #3189).
@@ -224,13 +270,25 @@ impl Editor {
             .iter()
             .filter_map(|(_, state)| state.buffer.file_path().map(|p| p.to_path_buf()))
             .collect();
+        // Entries this workspace already has a buffer for. An unnamed buffer
+        // has no path, so the path filter below cannot match it, and adoption
+        // runs on every activation — so each switch back adopted the same
+        // entry into a new tab and saved another copy of the record for it
+        // (issue #3476).
+        let already_adopted: std::collections::HashSet<String> = self
+            .active_window()
+            .buffer_metadata
+            .values()
+            .filter_map(|meta| meta.recovery_id.clone())
+            .collect();
 
         let mine: Vec<_> = entries
-            .into_iter()
+            .iter()
             .filter(|entry| match self.recovery_entry_owner(entry) {
                 Some(owner) => owner == active,
-                None => claim_unowned,
+                None => claim_unowned || self.unnamed_entry_stranded_here(entry, active),
             })
+            .filter(|entry| !already_adopted.contains(&entry.id))
             .filter(|entry| {
                 entry
                     .metadata
@@ -238,6 +296,7 @@ impl Editor {
                     .as_ref()
                     .is_none_or(|p| !already_open.contains(p))
             })
+            .cloned()
             .collect();
 
         let mut adopted = 0;
@@ -309,7 +368,7 @@ impl Editor {
                         continue;
                     }
                 },
-                None => self.new_buffer(),
+                None => self.buffer_for_recovered_unnamed(),
             };
             {
                 let state = self.active_state_mut();
@@ -340,6 +399,20 @@ impl Editor {
         Ok(adopted)
     }
 
+    /// The buffer an unnamed buffer's recovered content goes into: the
+    /// launch's own empty scratch buffer while it is the active one and
+    /// untouched, the way opening a file takes it over, else a new one.
+    /// A new one beside it left an extra empty "[No Name]" tab after every
+    /// restore (issue #3401).
+    fn buffer_for_recovered_unnamed(&mut self) -> BufferId {
+        let active = self.active_buffer();
+        if self.active_window().is_pristine_scratch(active) {
+            active
+        } else {
+            self.new_buffer()
+        }
+    }
+
     /// Check if there are files to recover from a crash
     pub fn has_recovery_files(&self) -> AnyhowResult<bool> {
         Ok(self
@@ -347,13 +420,6 @@ impl Editor {
             .lock()
             .unwrap()
             .should_offer_recovery()?)
-    }
-
-    /// Get list of recoverable files
-    pub fn list_recoverable_files(
-        &self,
-    ) -> AnyhowResult<Vec<crate::services::recovery::RecoveryEntry>> {
-        Ok(self.recovery_service.lock().unwrap().list_recoverable()?)
     }
 
     /// Recover buffers left by a crash into the workspace they came from.
@@ -394,6 +460,45 @@ impl Editor {
         let mut restored = 0;
         for entry in entries {
             let loaded = self.recovery_service.lock().unwrap().load_recovery(&entry);
+            // A short read means different things depending on whether the
+            // buffer has a file behind it. With no file this is the only
+            // copy, so it is restored — loudly. With a file, the file on
+            // disk is the better copy, and replacing its contents with a
+            // prefix would stage that truncation for the next save.
+            let loaded = match loaded {
+                Ok(RecoveryResult::RecoveredPartial {
+                    original_path,
+                    content,
+                    expected,
+                    found,
+                }) => match original_path {
+                    None => {
+                        tracing::warn!(
+                            "Hot-exit restore: unnamed buffer {} holds {found} of \
+                             {expected} bytes; restoring what is there",
+                            entry.id
+                        );
+                        self.set_status_message(format!(
+                            "Recovered an unsaved buffer incompletely: {found} of \
+                             {expected} bytes. The end is missing — check before saving."
+                        ));
+                        Ok(RecoveryResult::Recovered {
+                            original_path: None,
+                            content,
+                        })
+                    }
+                    Some(path) => {
+                        tracing::warn!(
+                            "Hot-exit restore skipped {}: it holds {found} of {expected} \
+                             bytes, so {} on disk is the better copy",
+                            entry.id,
+                            path.display()
+                        );
+                        continue;
+                    }
+                },
+                other => other,
+            };
             match loaded {
                 Ok(RecoveryResult::Recovered {
                     original_path,
@@ -440,7 +545,7 @@ impl Editor {
                         // Unnamed buffer with content — create a fresh
                         // buffer, drop the recovery ID into metadata so
                         // future hot-exit saves hit the same file.
-                        let buffer_id = self.new_buffer();
+                        let buffer_id = self.buffer_for_recovered_unnamed();
                         {
                             let state = self.active_state_mut();
                             state.buffer.insert(0, &text);
@@ -509,6 +614,9 @@ impl Editor {
                 Ok(RecoveryResult::NotFound { id }) => {
                     tracing::warn!("Hot-exit restore: recovery file {} missing", id);
                 }
+                // Turned into one of the arms above, or skipped, before this
+                // match; spelled out so the compiler can see it is covered.
+                Ok(RecoveryResult::RecoveredPartial { .. }) => {}
                 Err(e) => {
                     tracing::warn!("Hot-exit restore: failed to load {}: {}", entry.id, e);
                 }
@@ -802,4 +910,326 @@ impl Editor {
         state.buffer.set_recovery_pending(false);
         Ok(true)
     }
+
+    /// Offer the user a copy an interrupted in-place save kept (issue
+    /// #3383), the oldest first: the save may have left its file torn, and
+    /// the copy may be the only intact version of what was being saved.
+    /// Asked with a dialog — restore the file from the copy, show the
+    /// difference (closing the dialog so the diff can be read), discard the
+    /// copy, or decide later. A copy still waiting is asked about again by
+    /// the "Review Interrupted Saves" command, and at the next session start.
+    /// Called when a session starts, and again after each decision
+    /// until none is left. Leaves a prompt that is already up alone.
+    ///
+    /// Like the cleanup, this reads the top-level recovery directory through
+    /// the local filesystem: in-place saves only happen to local files.
+    pub(crate) fn offer_interrupted_save(&mut self) {
+        if self.active_window().prompt.is_none() {
+            self.prompt_next_interrupted_save();
+        }
+    }
+
+    /// The "Review Interrupted Saves" command: ask again about a copy an
+    /// interrupted save kept that is still waiting for a decision (after
+    /// "Later", or after reading its diff), or say that none is.
+    pub(crate) fn review_interrupted_saves(&mut self) {
+        if !self.prompt_next_interrupted_save() {
+            self.set_status_message(fresh_i18n::t!("interrupted_save.none_waiting").into_owned());
+        }
+    }
+
+    /// Open the dialog for the oldest kept copy, if there is one.
+    fn prompt_next_interrupted_save(&mut self) -> bool {
+        let recovery_dir = self.dir_context.recovery_dir();
+        if let Some(recovery) = crate::model::buffer::save::kept_inplace_write_recoveries(
+            &*self.local_filesystem,
+            &recovery_dir,
+        )
+        .into_iter()
+        .next()
+        {
+            self.prompt_interrupted_save(recovery.dest_path, recovery.temp_path);
+            return true;
+        }
+        false
+    }
+
+    fn prompt_interrupted_save(&mut self, dest_path: PathBuf, copy_path: PathBuf) {
+        use crate::view::confirm::{Choice, Confirm, Tone};
+        use fresh_i18n::t;
+
+        let name = display_name(&dest_path);
+        let body = t!("interrupted_save.body", name = &name).into_owned();
+        let mut choices = vec![Choice::new(
+            t!("dialog.btn.restore").into_owned(),
+            "restore",
+            Tone::Destructive,
+        )];
+        let can_diff = self.can_diff_interrupted_save(&dest_path, &copy_path);
+        if can_diff {
+            choices.push(Choice::new(
+                t!("dialog.btn.show_diff").into_owned(),
+                "diff",
+                Tone::Safe,
+            ));
+        }
+        choices.push(Choice::new(
+            t!("dialog.btn.discard").into_owned(),
+            "discard",
+            Tone::Destructive,
+        ));
+        choices.push(Choice::new(
+            t!("dialog.btn.later").into_owned(),
+            "",
+            Tone::Safe,
+        ));
+        // Open on a choice that changes nothing.
+        let initial = if can_diff { 1 } else { choices.len() - 1 };
+        let confirm = Confirm::new(
+            t!("dialog.title.interrupted_save").into_owned(),
+            body.clone(),
+            choices,
+        )
+        .detail(dest_path.display().to_string())
+        .selecting(initial);
+        self.start_confirm_prompt(
+            body,
+            crate::view::prompt::PromptType::ConfirmInterruptedSave { dest_path },
+            confirm,
+        );
+    }
+
+    /// Whether the difference between a file and the copy an interrupted
+    /// save kept for it is small enough to show: both are read whole.
+    fn can_diff_interrupted_save(
+        &self,
+        dest_path: &std::path::Path,
+        copy_path: &std::path::Path,
+    ) -> bool {
+        let limit = self.config.editor.large_file_threshold_bytes;
+        [dest_path, copy_path].iter().all(|path| {
+            self.local_filesystem
+                .metadata(path)
+                .is_ok_and(|meta| meta.size <= limit)
+        })
+    }
+
+    /// The user's answer to [`Editor::offer_interrupted_save`] for
+    /// `dest_path`. A decision removes the copy and its metadata (or, if
+    /// restoring fails, keeps them and says why) and moves on to the next
+    /// copy; "diff" and "later" leave them for the "Review Interrupted Saves"
+    /// command or the next session.
+    pub(crate) fn handle_interrupted_save_choice(&mut self, dest_path: PathBuf, input: &str) {
+        use fresh_i18n::t;
+
+        let recovery_dir = self.dir_context.recovery_dir();
+        let fs = std::sync::Arc::clone(&self.local_filesystem);
+        let name = display_name(&dest_path);
+        match input {
+            "restore" => {
+                match crate::model::buffer::save::restore_inplace_write_recovery(
+                    &*fs,
+                    &recovery_dir,
+                    &dest_path,
+                ) {
+                    Ok(()) => {
+                        self.reload_buffers_of_restored_file(&dest_path);
+                        self.set_status_message(
+                            t!("interrupted_save.restored", name = &name).into_owned(),
+                        );
+                        self.offer_interrupted_save();
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to restore {}: {}", dest_path.display(), e);
+                        self.set_status_message(
+                            t!(
+                                "interrupted_save.restore_failed",
+                                name = &name,
+                                error = e.to_string()
+                            )
+                            .into_owned(),
+                        );
+                    }
+                }
+            }
+            "diff" => {
+                let Some(recovery) =
+                    crate::model::buffer::save::kept_inplace_write_recoveries(&*fs, &recovery_dir)
+                        .into_iter()
+                        .find(|recovery| recovery.dest_path == dest_path)
+                else {
+                    return;
+                };
+                // The dialog closes so the diff can be read and scrolled;
+                // the copy stays until the user decides.
+                self.show_interrupted_save_diff(&dest_path, &recovery.temp_path);
+                self.set_status_message(t!("interrupted_save.diff_shown").into_owned());
+            }
+            "discard" => {
+                crate::model::buffer::save::resolve_inplace_write_recovery(
+                    &*fs,
+                    &recovery_dir,
+                    &dest_path,
+                );
+                self.set_status_message(
+                    t!("interrupted_save.discarded", name = &name).into_owned(),
+                );
+                self.offer_interrupted_save();
+            }
+            _ => {
+                let copy =
+                    crate::services::recovery::InplaceWriteRecovery::scan(&*fs, &recovery_dir)
+                        .into_iter()
+                        .find(|(_, recovery)| recovery.dest_path == dest_path)
+                        .map(|(_, recovery)| recovery.temp_path.display().to_string())
+                        .unwrap_or_default();
+                self.set_status_message(
+                    t!("interrupted_save.later", name = &name, path = &copy).into_owned(),
+                );
+            }
+        }
+    }
+
+    /// `path` was just overwritten from the copy an interrupted save kept,
+    /// behind the back of the buffers that have it open (a session restore
+    /// opens them before the dialog is answered); a large one reads the
+    /// parts it never loaded from the file, at offsets that no longer hold
+    /// them. Reload every one that has no unsaved changes, in every window.
+    /// One that has keeps them: the file's mtime no longer matches the one
+    /// recorded for it, so it counts as changed on disk, and saving it asks
+    /// first.
+    fn reload_buffers_of_restored_file(&mut self, path: &std::path::Path) {
+        // The kept copy's metadata may name the file by another spelling
+        // than the buffer does (a symlinked directory, e.g. macOS's
+        // /var -> /private/var), so match on the resolved path.
+        let local_fs = std::sync::Arc::clone(&self.local_filesystem);
+        let resolve =
+            |p: &std::path::Path| local_fs.canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let target = resolve(path);
+        let active_window = self.active_window;
+        for window_id in self.window_ids_sorted() {
+            self.with_window_retargeted(window_id, |editor| {
+                // Restored through the local filesystem: a remote buffer
+                // with the same path is another file
+                let unmodified: Vec<(BufferId, std::path::PathBuf)> = editor
+                    .buffers()
+                    .iter()
+                    .filter(|(_, state)| {
+                        state.buffer.filesystem().remote_connection_info().is_none()
+                            && !state.buffer.is_modified()
+                    })
+                    .filter_map(|(id, state)| {
+                        let own = state.buffer.file_path()?;
+                        (resolve(own) == target).then(|| (*id, own.to_path_buf()))
+                    })
+                    .collect();
+                for (buffer_id, own_path) in unmodified {
+                    // The active buffer's reload keeps its view where it is
+                    let reloaded =
+                        if window_id == active_window && buffer_id == editor.active_buffer() {
+                            editor.revert_file().map(|_| ())
+                        } else {
+                            editor.revert_buffer_by_id(buffer_id, &own_path)
+                        };
+                    if let Err(e) = reloaded {
+                        tracing::warn!("Failed to reload restored {}: {e}", path.display());
+                    }
+                }
+            });
+        }
+    }
+
+    /// Show, side by side, `dest_path` as it is on disk and the copy an
+    /// interrupted save kept for it, in a tab of their own.
+    fn show_interrupted_save_diff(
+        &mut self,
+        dest_path: &std::path::Path,
+        copy_path: &std::path::Path,
+    ) {
+        use crate::model::composite_buffer::{
+            CompositeLayout, DiffHunk, LineAlignment, PaneStyle, SourcePane,
+        };
+        use crate::primitives::text_property::TextPropertyEntry;
+        use fresh_i18n::t;
+
+        let read = |path: &std::path::Path| {
+            self.local_filesystem
+                .read_file(path)
+                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+        };
+        let (on_disk, kept) = match (read(dest_path), read(copy_path)) {
+            (Ok(on_disk), Ok(kept)) => (on_disk, kept),
+            (Err(e), _) | (_, Err(e)) => {
+                tracing::warn!(
+                    "Can't show the interrupted save of {}: {}",
+                    dest_path.display(),
+                    e
+                );
+                return;
+            }
+        };
+        const MODE: &str = "interrupted-save-diff";
+        let on_disk_label = t!("interrupted_save.on_disk").into_owned();
+        let kept_label = t!("interrupted_save.kept_copy").into_owned();
+        let mut pane = |label: &str, content: &str| {
+            // Shown only through the composite, not as tabs of their own.
+            let window = self.active_window_mut();
+            let id =
+                window.create_virtual_buffer_detached(label.to_string(), MODE.to_string(), true);
+            if let Some(meta) = window.buffer_metadata.get_mut(&id) {
+                meta.hidden_from_tabs = true;
+            }
+            if let Err(e) =
+                self.set_virtual_buffer_content(id, vec![TextPropertyEntry::text(content)])
+            {
+                tracing::warn!("Failed to fill the interrupted-save diff: {e}");
+            }
+            id
+        };
+        let old_id = pane(&on_disk_label, &on_disk);
+        let new_id = pane(&kept_label, &kept);
+        let sources = vec![
+            SourcePane::new(old_id, on_disk_label, false).with_style(PaneStyle::old_diff()),
+            SourcePane::new(new_id, kept_label, false).with_style(PaneStyle::new_diff()),
+        ];
+        let layout = CompositeLayout::SideBySide {
+            ratios: vec![0.5, 0.5],
+            show_separator: true,
+        };
+        let name = t!("interrupted_save.diff_tab", name = display_name(dest_path)).into_owned();
+        let composite_id = self.create_composite_buffer(name, MODE.to_string(), layout, sources);
+
+        let hunks: Vec<DiffHunk> = fresh_core::diff::compute_line_diff(&on_disk, &kept)
+            .into_iter()
+            .map(|h| {
+                DiffHunk::new(
+                    h.old_start as usize,
+                    h.old_count as usize,
+                    h.new_start as usize,
+                    h.new_count as usize,
+                )
+            })
+            .collect();
+        let has_hunks = !hunks.is_empty();
+        let alignment = LineAlignment::from_hunks(
+            &hunks,
+            on_disk.split_inclusive('\n').count(),
+            kept.split_inclusive('\n').count(),
+        );
+        let window = self.active_window_mut();
+        window.set_composite_alignment(composite_id, alignment);
+        if has_hunks {
+            if let Some(composite) = window.get_composite_mut(composite_id) {
+                composite.initial_focus_hunk = Some(0);
+            }
+        }
+        self.switch_buffer(composite_id);
+    }
+}
+
+/// A file's name, for messages about it.
+fn display_name(path: &std::path::Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
 }

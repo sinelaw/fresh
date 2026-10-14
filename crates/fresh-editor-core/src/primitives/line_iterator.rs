@@ -62,6 +62,36 @@ pub const LINE_START_SEARCH_BYTES: usize = 64 * 1024;
 /// gets there in ~18 queries rather than 16, which is the same order.
 const LINE_START_SEARCH_STEPS: [usize; 3] = [128, 1024, 4096];
 
+/// Length of `bytes` without a trailing character that runs past its end.
+///
+/// A read that stops at a byte budget can stop inside a character. Dropping
+/// the partial character ends the piece on a boundary, so whatever resumes
+/// after it starts on one too. Invalid data has no characters to protect and
+/// is left as it is, and a piece that would be left empty is too — a reader
+/// that makes no progress is worse than one that splits a character.
+fn whole_chars_prefix_len(bytes: &[u8]) -> usize {
+    let len = bytes.len();
+    // A character is at most four bytes, so its lead byte is among the last four.
+    for back in 1..=len.min(4) {
+        let b = bytes[len - back];
+        if (b & 0xC0) == 0x80 {
+            continue;
+        }
+        let char_len = match b {
+            0xC0..=0xDF => 2,
+            0xE0..=0xEF => 3,
+            0xF0..=0xF7 => 4,
+            _ => 1,
+        };
+        return if char_len > back && back < len {
+            len - back
+        } else {
+            len
+        };
+    }
+    len
+}
+
 pub struct LineIterator<'a> {
     buffer: &'a mut TextBuffer,
     /// Current byte position in the document (points to start of current line)
@@ -129,26 +159,7 @@ impl<'a> LineIterator<'a> {
             search_end = scan_start;
         }
 
-        Self::char_boundary_at_or_after(buffer, floor)
-    }
-
-    /// `pos`, or the next character boundary after it.
-    ///
-    /// UTF-8 continuation bytes are `0b10xxxxxx` and a character is at most
-    /// four bytes, so at most three need stepping over. A read that fails
-    /// leaves `pos` alone: this is a repair, not a place to invent an answer.
-    fn char_boundary_at_or_after(buffer: &mut TextBuffer, pos: usize) -> usize {
-        if pos == 0 || pos >= buffer.len() {
-            return pos;
-        }
-        let Ok(bytes) = buffer.get_text_range_mut(pos, 4.min(buffer.len() - pos)) else {
-            return pos;
-        };
-        let step = bytes
-            .iter()
-            .position(|&b| (b & 0xC0) != 0x80)
-            .unwrap_or(bytes.len());
-        pos + step
+        buffer.char_boundary_at_or_after(floor)
     }
 
     pub(crate) fn new(
@@ -270,10 +281,23 @@ impl<'a> LineIterator<'a> {
     /// Get the next line (moving forward)
     /// Uses lazy loading to handle unloaded buffers transparently
     pub fn next_line(&mut self) -> Option<(usize, String)> {
+        self.next_line_raw()
+            .map(|(line_start, bytes)| (line_start, String::from_utf8_lossy(&bytes).into_owned()))
+    }
+
+    /// [`next_line`](Self::next_line) before decoding: the line's bytes exactly
+    /// as the buffer holds them.
+    ///
+    /// For a caller that maps what it shows back to source offsets. Lossy
+    /// decoding replaces each invalid byte with U+FFFD, which is three bytes,
+    /// so offsets counted along the decoded string drift two bytes per invalid
+    /// byte from the document they describe — and a click or a caret placed by
+    /// them lands inside a character (issue #3285).
+    pub fn next_line_raw(&mut self) -> Option<(usize, Vec<u8>)> {
         if self.pending_trailing_empty_line {
             self.pending_trailing_empty_line = false;
             let line_start = self.buffer_len;
-            return Some((line_start, String::new()));
+            return Some((line_start, Vec::new()));
         }
 
         if self.current_pos >= self.buffer_len {
@@ -365,20 +389,26 @@ impl<'a> LineIterator<'a> {
             // Clamp line_len to the per-line read cap (safety limit for huge single-line files)
             line_len = line_len.min(self.max_line_bytes).min(extended_chunk.len());
 
+            // A piece that ends before the line does was cut by the read cap,
+            // at whatever byte the cap fell on. End it on a character instead,
+            // so the next piece starts on one too.
+            if !found_newline && self.current_pos + line_len < self.buffer_len {
+                line_len = whole_chars_prefix_len(&extended_chunk[..line_len]);
+            }
+
             // Use the extended chunk
-            let line_bytes = &extended_chunk[..line_len];
+            extended_chunk.truncate(line_len);
             self.current_pos += line_len;
-            self.schedule_trailing_empty_line(line_bytes);
-            let line_string = String::from_utf8_lossy(line_bytes).into_owned();
-            return Some((line_start, line_string));
+            self.schedule_trailing_empty_line(&extended_chunk);
+            return Some((line_start, extended_chunk));
         }
 
         // Normal case: found newline or reached EOF within initial chunk
-        let line_bytes = &chunk[..line_len];
+        let mut line_bytes = chunk;
+        line_bytes.truncate(line_len);
         self.current_pos += line_len;
-        self.schedule_trailing_empty_line(line_bytes);
-        let line_string = String::from_utf8_lossy(line_bytes).into_owned();
-        Some((line_start, line_string))
+        self.schedule_trailing_empty_line(&line_bytes);
+        Some((line_start, line_bytes))
     }
 
     /// Get the next *logical* line — never split at a chunk boundary.
@@ -420,12 +450,17 @@ impl<'a> LineIterator<'a> {
         let saved_max = self.max_line_bytes;
         self.max_line_bytes = saved_max.min(max_bytes.max(1));
 
+        // A capped piece ends up to three bytes short of the cap rather than
+        // inside a character, so a piece that close to the budget spent it.
+        // Measured in bytes read, not in the decoded string, which is longer
+        // wherever the line holds invalid UTF-8.
+        let spent = max_bytes.saturating_sub(3);
         let joined = self.next_line().map(|(line_start, mut content)| {
             // A piece that stopped short of a terminator while bytes remain was
             // cut by the read budget — keep pulling until the line really ends.
             while !content.ends_with('\n')
                 && self.current_pos < self.buffer_len
-                && content.len() < max_bytes
+                && self.current_pos - line_start < spent
             {
                 match self.next_line() {
                     Some((_, more)) => content.push_str(&more),
@@ -1141,5 +1176,54 @@ mod tests {
             pos_1000 < pos_2000 && pos_2000 < pos_10000,
             "Markers should be in sequential order"
         );
+    }
+
+    /// A piece cut by the read cap ends on a character, so the piece after it
+    /// starts on one. Cutting at the raw byte left the tail of a character at
+    /// the start of the next piece, which decoded to replacement glyphs and
+    /// shifted every offset read along it (issue #3285).
+    #[test]
+    fn a_capped_piece_ends_on_a_character() {
+        // Three-byte characters, a cap that is not a multiple of three.
+        let text = "信".repeat(6) + "\n";
+        let mut buffer = TextBuffer::from_bytes(text.clone().into_bytes(), test_fs());
+        let mut iter = LineIterator::new(&mut buffer, 0, 1).with_max_line_bytes(7);
+
+        let mut starts = Vec::new();
+        let mut joined = String::new();
+        while let Some((start, piece)) = iter.next_line() {
+            starts.push(start);
+            joined.push_str(&piece);
+        }
+        // The last start is the empty line after the trailing newline.
+        assert_eq!(starts.pop(), Some(text.len()));
+        assert!(
+            starts.iter().all(|s| s % 3 == 0),
+            "every piece starts on a character: {starts:?}"
+        );
+        assert_eq!(joined, text, "the pieces rejoin into the line");
+    }
+
+    #[test]
+    fn whole_chars_prefix_drops_only_a_partial_last_character() {
+        let bytes = "a信".as_bytes(); // 61 E4 BF A1
+        assert_eq!(whole_chars_prefix_len(bytes), 4, "complete");
+        assert_eq!(
+            whole_chars_prefix_len(&bytes[..3]),
+            1,
+            "cut after two bytes"
+        );
+        assert_eq!(whole_chars_prefix_len(&bytes[..2]), 1, "cut after one byte");
+        assert_eq!(
+            whole_chars_prefix_len(&bytes[1..3]),
+            2,
+            "nothing to keep: no change"
+        );
+        assert_eq!(
+            whole_chars_prefix_len(&[0x80, 0x80]),
+            2,
+            "invalid data: no change"
+        );
+        assert_eq!(whole_chars_prefix_len(b""), 0);
     }
 }

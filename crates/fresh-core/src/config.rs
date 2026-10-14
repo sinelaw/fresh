@@ -16,26 +16,21 @@ fn settings_is_empty(v: &serde_json::Value) -> bool {
     }
 }
 
-/// Configuration for a single plugin
+/// Settings for one plugin.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(extend("x-display-field" = "/enabled"))]
 pub struct PluginConfig {
-    /// Whether this plugin is enabled (default: true)
-    /// When disabled, the plugin will not be loaded or executed.
+    /// Load and run this plugin (default: true).
     #[serde(default = "default_true")]
     pub enabled: bool,
 
-    /// Path to the plugin file (populated automatically when scanning)
-    /// This is filled in by the plugin system and should not be set manually.
+    /// Plugin file path. Filled in automatically; don't set it by hand.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("readOnly" = true))]
     pub path: Option<PathBuf>,
 
-    /// Plugin-specific settings. The shape is defined by each plugin's
-    /// `<plugin_name>.schema.json` sidecar file; the host stores the value as
-    /// untyped JSON so a malformed plugin schema can't poison the rest of the
-    /// config. Plugins read this via `editor.getPluginConfig()` and the
-    /// Settings UI renders it as a sub-category under "Plugin Settings".
+    /// The plugin's own settings, as defined by its `<plugin_name>.schema.json`.
+    /// Shown in Settings as the plugin's page under "Plugins".
     #[serde(default, skip_serializing_if = "settings_is_empty")]
     #[schemars(extend("readOnly" = true))]
     pub settings: serde_json::Value,

@@ -65,6 +65,7 @@
     "popup_border_fg": "Gray",
     "popup_bg": "Default",
     "popup_selection_bg": "Blue",
+    "list_drop_target_bg": "Green",
     "popup_selection_fg": "White",
     "popup_text_fg": "Default",
     "text_input_selection_bg": "Blue",
@@ -113,6 +114,8 @@
   "search": {
     "match_bg": "Yellow",
     "match_fg": "Black",
+    "current_match_bg": "Cyan",
+    "current_match_fg": {"color": "Black", "modifier": ["bold"]},
     "label_bg": "Magenta",
     "label_fg": "White"
   },

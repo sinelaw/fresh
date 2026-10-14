@@ -34,21 +34,21 @@ The four routing fields are the entire contract. The only code that names a back
 
 `Authority` deliberately does not implement `Clone`. It is *moved* between slots, never copied. A session's backend/trust/env therefore cannot leak into another window — the isolation is a compile-time fact, not a runtime check. The per-window field already exists: `WindowResources` holds an `authority`, exposed via `Window::authority()`.
 
-### 1.4 Transitions are atomic and destructive (production path)
+### 1.4 Transitions land in a window
 
-Installing a new authority does **not** swap fields in place. `Editor::install_authority(new)` stashes the replacement in `pending_authority` and calls `request_restart`; the standalone entry point or `EditorServer::rebuild_editor` (daemon) drops the entire `Editor`, rebuilds it, and reinstalls the new authority via `set_boot_authority` before plugins load. Every cached `Arc<dyn FileSystem>`, LSP handle, terminal PTY, and in-flight task dies with the old editor.
+`Editor::install_authority(new)` attaches the new backend to the window showing the project it is for: `attach_connection_at(connection, root)` re-points the window already at `root` — it keeps its buffers, splits and layout, and its terminals are respawned through the machine it is now on — or opens a new window there if none exists. `install_authority_with_keepalive` is the same thing for a backend that owns a live carrier, re-rooted at the remote workspace because the local path does not exist over there. `clear_authority` puts the active window back on a local backend in place. Every other window keeps the machine it was on.
 
-Rationale: an in-place swap would require enumerating every cache that closed over the old filesystem/spawner (open buffers, `FsManager`, Quick Open's `FileProvider`, `LspManager`, `TerminalManager`, the watcher, recovery, background tokio tasks). A miss manifests as "files save to the wrong place" — a trust-destroying bug class. The restart path already drops and rebuilds everything correctly, at a cost paid once per attach/detach (never per keystroke). The escape hatch to a no-restart swap lives at `install_authority`.
+**This used to be a restart.** Installing an authority stashed it in `pending_authority`, set `should_quit`, and let the standalone loop or `EditorServer::rebuild_editor` drop the whole `Editor` and build a new one around the replacement. The rationale was cache invalidation: an in-place swap meant enumerating everything that had closed over the old filesystem or spawner, and a miss reads as "files save to the wrong place". Dropping the editor got that right by construction, at a cost paid once per attach.
 
-`change_working_dir` uses the same machinery to switch project roots — authority swap and project-root change are the same main-loop primitive (drop + rebuild) with different "what changed" semantics.
+What made it unnecessary was windows owning their backends. A window holds an `Arc<Connection>` and re-points its own LSP, filesystem manager and terminals when that connection changes (`set_session_connection` → `reattach_window`); a window that was never attached keeps everything it had, because nothing about it changed. `change_working_dir` had already stopped restarting for the same reason — it re-homes onto the window at the new root, or opens one — so by the time the connection work landed, the restart existed solely for authority transitions. `pending_authority`, `request_restart`, `take_restart_dir` and `rebuild_editor` are gone, and `should_quit` means what it says.
 
-**Daemon (session mode):** `fresh --session` / `fresh server` runs a long-lived `EditorServer`. It must not exit on a transition or clients disconnect, so `rebuild_editor` mirrors the standalone restart: save workspace, drop the editor, swap `current_authority` and/or `working_dir`, rebuild, restore buffers, repaint clients. `EditorServerConfig` has a `startup_authority` slot and an opaque session-keepalive slot (SSH backs this with the runtime + `SshConnection` + reconnect task; dropping any one tears the remote session down).
+**The contract that changed.** `setAuthority` used to promise the calling plugin a reload: "the plugin that sent this command will be re-loaded as part of the restart; follow-up work belongs in its post-restart init code." Nothing is torn down now, so nothing reloads. Follow-up work belongs in an `authority_changed` handler. In-tree: devcontainer re-registers its state-gated commands there already and now settles its attach breadcrumb there too (`settleAttachAttempt`); env-manager re-runs auto-activation from `authority_changed` as well as `active_window_changed`; the orchestrator was already on the born-attached window path and never depended on the reload.
 
-### 1.5 Per-session activation primitive (partly landed)
+**Daemon (session mode):** `fresh --session` / `fresh server` runs a long-lived `EditorServer`, which no longer has a rebuild path to mirror. `EditorServerConfig` keeps its `startup_authority` slot and an opaque session-keepalive slot for the backend the daemon boots into.
 
-A *no-restart, single-window* swap primitive has landed: `Editor::set_session_authority(window_id, authority)` swaps one window's authority and re-points that window's LSP, mirroring into the editor-wide cache only when it is the active window. Covered by e2e tests.
+### 1.5 Per-window authority
 
-**Still gated (so production attach still uses the destructive restart):** live multi-session (the active session is pinned to the first window), per-window keepalives so a background window keeps its live backend, and cache-invalidation of buffers/terminals opened under the old authority. The forward-looking target ("one authority per `Session`, exactly one *active*; background sessions hold dormant authorities") is **direction, not fully shipped.**
+`Editor::set_session_connection(window_id, connection)` is the primitive: it re-points one window's LSP backend and hands it the connection it reads through, mirroring into the editor-wide cache only when it is the active window. `set_session_authority` is the thin wrapper for a backend with nothing to keep alive. Every open connection lives in `Editor::connections`, a `ConnectionRegistry` that owns them; windows and plugin machine handles hold references into it, and a connection closes when the last reference goes (`prune`, called on window close and machine-handle close).
 
 ### 1.6 `SessionScope` — minting trust+env together
 
@@ -133,7 +133,7 @@ Env injection on backends that pass an argv array (SSH/docker/kube) uses `env K=
 
 ### 3.6 Keepalive, heartbeat, and reconnection (all shipped)
 
-A remote authority needs three live resources kept alive across the attach-time editor rebuild, owned in a keepalive bundle (`SshKeepalive`, `KubeKeepalive`): the carrier connection, the reconnect task, and a **dedicated tokio runtime**. The runtime is load-bearing — the agent channel's read/write tasks must *not* ride the editor's per-instance runtime, which is dropped during the attach restart; if they did, every file op would fail with "Channel closed" the instant the attach completed. `connect_ssh_authority` / `connect_kube_authority` bootstrap on a short-lived helper thread (because `block_on` can't run inside the caller's async context), hand back the live runtime, and park it in the keepalive. Both race the connect against an optional cancel signal so a hung handshake leaves no orphan child.
+A remote authority needs three live resources kept alive for as long as the connection, owned in a keepalive bundle (`SshKeepalive`, `KubeKeepalive`): the carrier connection, the reconnect task, and a **dedicated tokio runtime**. The runtime is load-bearing — the agent channel's read/write tasks must *not* ride the editor's per-instance runtime, which dies with the editor; if they did, every file op would fail with "Channel closed" the moment it did. `connect_ssh_authority` / `connect_kube_authority` bootstrap on a short-lived helper thread (because `block_on` can't run inside the caller's async context), hand back the live runtime, and park it in the keepalive. Both race the connect against an optional cancel signal so a hung handshake leaves no orphan child.
 
 **Heartbeat:** a periodic `info` ping keeps an idle agent stream warm against ELB/NAT idle timeouts (on the order of minutes) that would otherwise silently drop the connection — the client never sees a FIN, so the *next* request just hangs. Holds only a `Weak` ref, so it self-terminates when the channel is dropped. `info` is handled by every agent version → no protocol bump. Shipped for both carriers.
 
@@ -147,7 +147,7 @@ A remote authority needs three live resources kept alive across the attach-time 
 
 ### 4.1 Plugin payloads
 
-Three small plugin ops: `editor.setAuthority(payload)`, `editor.clearAuthority()`, `editor.spawnHostProcess(...)` (runs on the host regardless of the active authority — needed by a plugin to run `devcontainer up` *before* the authority it wants exists). `setAuthority` is fire-and-forget: the editor restarts before any follow-up code on its return could run.
+Three small plugin ops: `editor.setAuthority(payload)`, `editor.clearAuthority()`, `editor.spawnHostProcess(...)` (runs on the host regardless of the active authority — needed by a plugin to run `devcontainer up` *before* the authority it wants exists). `setAuthority` is fire-and-forget: it queues a command and returns before the authority lands, so an attach's outcome arrives on `authority_changed`, not on its return.
 
 `AuthorityPayload` is a tagged, additive shape: `filesystem` (currently only `Local` — containers bind-mount, so paths coincide), `spawner` (`Local` or `DockerExec { container_id, user?, workspace?, env }`), `terminal_wrapper` (`HostShell` or `Explicit`), `display_label`, and optional `path_translation`. `Authority::from_plugin_payload` is the *only* place "kind + params" becomes concrete `Arc<dyn …>`. serde's tagged-enum representation means old payloads keep parsing as new kinds are added.
 
@@ -159,7 +159,7 @@ Env is deliberately **not** expressed in `SpawnerSpec` — it is a live provider
 
 ### 4.3 `SessionAuthoritySpec` — the persisted, rebuildable descriptor
 
-`SessionAuthoritySpec` is the declarative, source-of-truth counterpart to the live (non-serializable) `Authority`, persisted in the per-dir workspace file so a backend survives an editor restart instead of degrading to local. Variants: `Local`, `Plugin(AuthorityPayload)` (devcontainer — only the owning plugin can re-run `devcontainer up`), `RemoteAgent(RemoteAgentSpec)` (SSH/Kubernetes — reconnectable from core). `Authority::session_spec()` derives the spec from the live authority's `command_wrap`, so a plain `fresh ssh://…` launch carries a real `RemoteAgent` spec (making persistence, the dormancy model, and manual reconnect all work) rather than the historical inert `Local` default. `RemoteTransportSpec` is `Ssh{user?,host,port?,identity_file?,remote_path?,extra_args}` or `KubectlExec{context?,namespace,pod,container?,workspace?}`; `RemoteAgentSpec` also carries `base_env`, plus `window`/`label`/`command` for born-attached Orchestrator windows.
+`SessionAuthoritySpec` is the declarative, source-of-truth counterpart to the live (non-serializable) `Authority`, persisted in the per-dir workspace file so a backend survives an editor relaunch instead of degrading to local. Variants: `Local`, `Plugin(AuthorityPayload)` (devcontainer — only the owning plugin can re-run `devcontainer up`), `RemoteAgent(RemoteAgentSpec)` (SSH/Kubernetes — reconnectable from core). `Authority::session_spec()` derives the spec from the live authority's `command_wrap`, so a plain `fresh ssh://…` launch carries a real `RemoteAgent` spec (making persistence, the dormancy model, and manual reconnect all work) rather than the historical inert `Local` default. `RemoteTransportSpec` is `Ssh{user?,host,port?,identity_file?,remote_path?,extra_args}` or `KubectlExec{context?,namespace,pod,container?,workspace?}`; `RemoteAgentSpec` also carries `base_env`, plus `window`/`label`/`command` for born-attached Orchestrator windows.
 
 The forward-looking Live/Dormant restore model (a dormant session runs a local placeholder authority "presented as its real backend, disconnected", reconnecting only on activation) is **partly landed** (terminal_command, per-session trust, per-session env shipped; reconnect-on-activate and warm-background-survives-restart still gated on live multi-session).
 
@@ -217,7 +217,7 @@ For the integrated terminal (a synchronous, non-tokio portable-pty path) there i
 
 ### 7.1 Devcontainer (shipped as a plugin)
 
-The devcontainer plugin owns the backend lifecycle; core owns the slot. Flow: boot local → plugin finds `.devcontainer/devcontainer.json` → one-shot "Attach?" (decision stored in plugin global state keyed by `getCwd()`, no re-prompt) → `spawnHostProcess("devcontainer", ["up", "--workspace-folder", cwd])` → parse the JSON result → build a `docker-exec` `AuthorityPayload` (filesystem `local`, since the workspace is bind-mounted so host/container paths coincide) → `setAuthority` → core restarts into the container authority. Detach is `clearAuthority`; rebuild is `up --remove-existing-container`. The `userEnvProbe` capture rides in `SpawnerSpec::DockerExec.env`.
+The devcontainer plugin owns the backend lifecycle; core owns the slot. Flow: boot local → plugin finds `.devcontainer/devcontainer.json` → one-shot "Attach?" (decision stored in plugin global state keyed by `getCwd()`, no re-prompt) → `spawnHostProcess("devcontainer", ["up", "--workspace-folder", cwd])` → parse the JSON result → build a `docker-exec` `AuthorityPayload` (filesystem `local`, since the workspace is bind-mounted so host/container paths coincide) → `setAuthority` → core attaches the container authority to this project's window. Detach is `clearAuthority`; rebuild is `up --remove-existing-container`. The `userEnvProbe` capture rides in `SpawnerSpec::DockerExec.env`.
 
 The shipped-code gap analysis confirms the architectural divergences are **intentional**: not a remote extension host (the UI stays on the host; only spawned processes cross into the container, one-shot `docker exec`), and **paths are not translated for the filesystem** (bind-mount means they coincide; `remoteWorkspaceFolder` is passed as `-w`). Missing/planned (UX around the build lifecycle): image-pull/build/start state machine, live `devcontainer up` log streaming, cancel-in-flight, port-forwarding detection, auto-install of `customizations.*.extensions`; one flagged spec violation — `initializeCommand` is never invoked.
 
@@ -240,7 +240,7 @@ The shipped-code gap analysis confirms the architectural divergences are **inten
 | Capability | Status |
 | --- | --- |
 | `Authority` single slot, opaque-to-core, non-`Clone`, per-`Window` field | Implemented |
-| Destructive restart transition (standalone + daemon) | Implemented |
+| Transition attaches in a window (standalone + daemon) | Implemented |
 | `CommandWrap` / `terminal_command` (local/docker/ssh/kube) | Implemented |
 | SSH authority: agent, `RemoteFileSystem`, spawners, terminal | Implemented |
 | kubectl-exec authority (transport, connection, spawner, keepalive) | Implemented |
@@ -253,7 +253,7 @@ The shipped-code gap analysis confirms the architectural divergences are **inten
 | Per-session trust + env (`SessionScope`, `for_session`) | Implemented |
 | Open-time trust prompt (marker-gated, single prompt) | Implemented |
 | Live env provider + delta capture (local/SSH) | Implemented |
-| `set_session_authority` no-restart single-window swap | Partial (gated on live multi-session) |
+| `set_session_connection` single-window swap | Implemented — the production attach path |
 | Live multi-session / warm background sessions / per-window keepalive | Planned |
 | Reconnect after pod reschedule (pod-name re-resolution) | Planned |
 | K8s EBS-live + S3-sync storage | Planned (design only) |

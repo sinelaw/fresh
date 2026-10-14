@@ -16,6 +16,7 @@
 //! different inputs and tripped different guards.
 
 use crate::view::overlay::Overlay;
+use crate::view::theme::ThemeStyle;
 use crate::view::theme::{Theme, TokenColorExt};
 use crate::view::ui::view_pipeline::{LineStart, ViewLine};
 use ratatui::style::{Color, Style};
@@ -114,6 +115,9 @@ pub(super) fn resolve_tail_fill(input: TailFillInput<'_>) -> Option<TailFillResu
 pub(super) fn overlay_bg_style(overlay: &Overlay, theme: &Theme) -> Option<Style> {
     use crate::view::overlay::OverlayFace;
 
+    // The key that names the band's background, whose text attributes the
+    // fill carries too (as the cells under the overlay do).
+    let mut bg_key = overlay.theme_key;
     let bg = match &overlay.face {
         OverlayFace::Background { color } => Some(*color),
         OverlayFace::Style { style } => style.bg,
@@ -121,13 +125,21 @@ pub(super) fn overlay_bg_style(overlay: &Overlay, theme: &Theme) -> Option<Style
             fallback_style,
             bg_theme,
             ..
-        } => bg_theme
-            .as_ref()
-            .and_then(|key| theme.resolve_theme_key(key))
-            .or(fallback_style.bg),
+        } => {
+            bg_key = bg_theme
+                .as_deref()
+                .and_then(crate::view::theme::Theme::static_theme_key);
+            bg_theme
+                .as_ref()
+                .and_then(|key| theme.resolve_theme_key(key))
+                .or(fallback_style.bg)
+        }
         _ => None,
     }?;
-    Some(fill_style(bg, theme))
+    let attrs = bg_key
+        .map(|key| theme.resolve_modifier_key(key))
+        .unwrap_or_default();
+    Some(fill_style(bg, theme).add_modifier(attrs))
 }
 
 /// The style a row's trailing fill paints with. Both halves are stated, like
@@ -136,7 +148,7 @@ pub(super) fn overlay_bg_style(overlay: &Overlay, theme: &Theme) -> Option<Style
 /// old `fg = bg` inverted to itself — an invisible cursor at the end of every
 /// banded line.
 fn fill_style(bg: Color, theme: &Theme) -> Style {
-    Style::default().fg(theme.editor_fg).bg(bg)
+    Style::default().theme_fg(theme, "editor.fg").bg(bg)
 }
 
 fn virtual_line_fallback_style(view_line: &ViewLine, theme: &Theme) -> Option<Style> {

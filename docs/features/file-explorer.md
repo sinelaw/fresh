@@ -4,6 +4,8 @@ Fresh includes a built-in file explorer.
 
 *   **Toggle Sidebar:** Use `Ctrl+B` to show/hide the file explorer sidebar. When a nested file is active, toggling on expands the tree and reveals the file.
 *   **Focus:** Use `Ctrl+E` to switch focus between the file explorer and editor.
+*   **Sidebar sections:** Plugins can add sections under the file tree — the Markdown **Contents** outline, for example. `Alt+Shift+N` cycles the keyboard through the sidebar (file explorer, then each section, then back to the editor) and `Alt+Shift+P` runs the cycle the other way; both work from inside the tree, a section, the dock or a terminal (in a terminal these two chords go to the editor, not to the program running in it). A hidden sidebar is shown first. A section belongs to the window — or the file — it was made for, so another workspace's outline never appears in yours.
+*   **Reveal:** Showing or focusing the explorer selects the current file in the tree. When it cannot — an unnamed buffer, or a file outside the project — the status bar says so.
 *   **Navigation:** Use the arrow keys to move up and down the file tree.
 *   **Sticky parents:** When you scroll through a nested folder, its expanded ancestor folders remain visible at the top of the sidebar.
 
@@ -18,10 +20,25 @@ Preview tabs are enabled by default. Turn them off in the Settings UI if you pre
 
 ## Cut / Copy / Paste and Multi-Selection
 
-- **`Ctrl+C` / `Ctrl+X` / `Ctrl+V`** — copy, cut, or paste the selection. Same-directory copy auto-appends ` copy` / ` copy 2` etc. Same-directory cut is a no-op. Paste into a different directory with a name conflict prompts per-file: (o)verwrite, (O) all, (s)kip, (S) all, (c)ancel.
+- **`Ctrl+C` / `Ctrl+X` / `Ctrl+V`** — copy, cut, or paste the selection. Same-directory copy auto-appends ` copy` / ` copy 2` etc. Same-directory cut is a no-op. Paste into a different directory with a name conflict asks per file, in a confirmation dialog offering Overwrite, Overwrite All, Skip, Skip All and Cancel (each button's own underlined letter works as an accelerator).
 - **Cut-pending** items are visually dimmed. Cancel a pending cut with Escape or by pasting back into the same directory.
 - **`Shift+Up` / `Shift+Down`** extend a multi-select range from the current anchor; all clipboard operations (and delete) act on the whole selection.
 - **Buffers follow files** — renaming or moving a file (via cut+paste) relocates any open buffers pointing at it; deleting a file closes its buffer. Renaming a directory relocates buffers for every file inside it.
+
+## Following the Active File
+
+`file_explorer.follow_active_buffer` (off by default) keeps the tree pointed at
+whatever file you are editing: switch tabs, or jump to a definition in another
+file, and the sidebar expands to that file and moves its selection onto it.
+
+It stays out of your way while you are using the tree yourself — with the
+keyboard inside the sidebar, the selection is yours and nothing moves it. It
+also does nothing while the sidebar is hidden, or for a file outside the
+project root.
+
+Toggling the sidebar on, or focusing it with `Ctrl+E`, reveals the active file
+either way; that is the explicit "show me where I am", and this setting does
+not govern it.
 
 ## Width
 

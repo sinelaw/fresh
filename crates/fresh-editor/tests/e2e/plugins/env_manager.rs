@@ -27,7 +27,7 @@ use tempfile::TempDir;
 
 /// Copy env-manager + its lib into the project's `plugins/` directory so the
 /// plugin loads when the harness boots the editor against `working_dir`.
-fn setup_env_manager(working_dir: &PathBuf) {
+fn setup_env_manager(working_dir: &Path) {
     let plugins_dir = working_dir.join("plugins");
     fs::create_dir_all(&plugins_dir).expect("create plugins dir");
     copy_plugin(&plugins_dir, "env-manager");
@@ -247,7 +247,7 @@ fn test_orchestrator_session_prompts_then_activates_venv() {
             // A harmless long-running child so the PTY doesn't exit immediately.
             Some(vec!["sh".into(), "-c".into(), "sleep 60".into()]),
             None,
-            born,
+            std::sync::Arc::new(fresh::services::authority::Connection::plain(born)),
             None,
             None,
             false,

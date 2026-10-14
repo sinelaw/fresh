@@ -44,18 +44,23 @@ pub struct SoftBreakPrefix {
 
 impl SoftBreakPrefix {
     /// Resolve the on-screen `Style` against a live theme. Theme keys win
-    /// over the fallback's colours; modifiers from the fallback survive.
+    /// over the fallback's colours and bring their text attributes; modifiers
+    /// from the fallback survive.
     /// Same contract as [`crate::view::virtual_text::VirtualText::resolved_style`].
     pub fn resolved_style(&self, theme: &Theme) -> Style {
         let mut style = self.style;
         if let Some(key) = &self.fg_theme_key {
             if let Some(color) = theme.resolve_theme_key(key) {
-                style = style.fg(color);
+                style = style
+                    .fg(color)
+                    .add_modifier(theme.resolve_modifier_key(key));
             }
         }
         if let Some(key) = &self.bg_theme_key {
             if let Some(color) = theme.resolve_theme_key(key) {
-                style = style.bg(color);
+                style = style
+                    .bg(color)
+                    .add_modifier(theme.resolve_modifier_key(key));
             }
         }
         style
@@ -212,7 +217,8 @@ impl SoftBreakManager {
             namespace,
             marker_id,
             indent,
-            activation: activation.map(|rule| ScopedActivation::from_absolute(&rule, position)),
+            activation: activation
+                .map(|rule| ScopedActivation::from_absolute(&rule, position, marker_list)),
             prefix,
         });
         self.version = self.version.wrapping_add(1);
@@ -276,6 +282,9 @@ impl SoftBreakManager {
         let had_any = !self.breaks.is_empty();
         for bp in &self.breaks {
             marker_list.delete(bp.marker_id);
+            if let Some(a) = &bp.activation {
+                a.release(marker_list);
+            }
         }
         self.breaks.clear();
         self.marker_to_idx.clear();
@@ -290,6 +299,9 @@ impl SoftBreakManager {
         let removed = self.breaks.swap_remove(idx);
         self.marker_to_idx.remove(&removed.marker_id);
         marker_list.delete(removed.marker_id);
+        if let Some(a) = &removed.activation {
+            a.release(marker_list);
+        }
         if let Some(moved) = self.breaks.get(idx) {
             self.marker_to_idx.insert(moved.marker_id, idx);
         }
@@ -315,7 +327,7 @@ impl SoftBreakManager {
             .filter_map(|b| {
                 let pos = b.position(marker_list);
                 if let Some(a) = &b.activation {
-                    if !a.is_active(pos, cursors) {
+                    if !a.is_active(marker_list, cursors) {
                         return None;
                     }
                 }
@@ -356,7 +368,7 @@ impl SoftBreakManager {
             .filter_map(|b| {
                 let pos = b.position(marker_list);
                 if let Some(a) = &b.activation {
-                    if !a.is_active(pos, cursors) {
+                    if !a.is_active(marker_list, cursors) {
                         return None;
                     }
                 }
@@ -397,7 +409,7 @@ impl SoftBreakManager {
                 if pos < start || pos >= end {
                     return None;
                 }
-                (a.is_active(pos, cursors) != a.is_active(pos, &[])).then_some(pos)
+                (a.is_active(marker_list, cursors) != a.is_active(marker_list, &[])).then_some(pos)
             })
             .min()
     }

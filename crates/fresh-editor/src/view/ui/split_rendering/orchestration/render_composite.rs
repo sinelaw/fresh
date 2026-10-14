@@ -3,15 +3,16 @@
 //! Reuses the view pipeline (`build_view_data`) per pane and draws each
 //! aligned row with syntax highlighting, selection, and inline diff
 //! highlights.
-use super::super::spans::{compute_inline_diff, span_color_at};
+use super::super::spans::{compute_inline_diff, span_at};
 use super::super::view_data::build_view_data;
 use crate::model::composite_buffer::{AlignedRow, CompositeBuffer};
 use crate::model::event::BufferId;
 use crate::primitives::display_width::char_width;
 use crate::state::{EditorState, ViewMode};
-use crate::view::composite_view::CompositeViewState;
+use crate::view::composite_view::{CompositeViewState, PaneLayout, PANE_GUTTER_WIDTH};
 use crate::view::folding::FoldManager;
 use crate::view::theme::Theme;
+use crate::view::theme::ThemeStyle;
 use crate::view::ui::view_pipeline::{should_show_line_number, ViewLine};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
@@ -30,7 +31,7 @@ pub(crate) fn render_composite_buffer(
     buffers: &mut HashMap<BufferId, EditorState>,
     theme: &Theme,
     is_active: bool,
-    view_state: &mut CompositeViewState,
+    view_state: &CompositeViewState,
     use_terminal_bg: bool,
     show_tilde: bool,
 ) {
@@ -45,9 +46,7 @@ pub(crate) fn render_composite_buffer(
     if composite.sources.is_empty() {
         return;
     }
-    let layout = compute_pane_layout(composite, area.width);
-    // Store computed pane widths in view state for cursor movement calculations.
-    view_state.pane_widths = layout.widths.clone();
+    let layout = PaneLayout::new(composite, area.width);
     render_pane_headers(
         buf,
         area,
@@ -105,51 +104,6 @@ pub(crate) fn render_composite_buffer(
         );
     }
 }
-/// Pane geometry for a composite buffer: the content width of each pane plus
-/// the width and visibility of the vertical separators drawn between them.
-struct PaneLayout {
-    widths: Vec<u16>,
-    separator_width: u16,
-    show_separator: bool,
-}
-impl PaneLayout {
-    fn pane_count(&self) -> usize {
-        self.widths.len()
-    }
-}
-/// Compute the [`PaneLayout`] from the composite's layout spec and the
-/// available width. Only called once at least one source pane exists.
-fn compute_pane_layout(composite: &CompositeBuffer, area_width: u16) -> PaneLayout {
-    use crate::model::composite_buffer::CompositeLayout;
-    let pane_count = composite.sources.len();
-    let show_separator = match &composite.layout {
-        CompositeLayout::SideBySide { show_separator, .. } => *show_separator,
-        _ => false,
-    };
-    let separator_width = if show_separator { 1 } else { 0 };
-    let total_separators = (pane_count.saturating_sub(1)) as u16 * separator_width;
-    let available_width = area_width.saturating_sub(total_separators);
-    let widths: Vec<u16> = match &composite.layout {
-        CompositeLayout::SideBySide { ratios, .. } => {
-            let default_ratio = 1.0 / pane_count as f32;
-            ratios
-                .iter()
-                .chain(std::iter::repeat(&default_ratio))
-                .take(pane_count)
-                .map(|r| (available_width as f32 * r).round() as u16)
-                .collect()
-        }
-        _ => {
-            let pane_width = available_width / pane_count as u16;
-            vec![pane_width; pane_count]
-        }
-    };
-    PaneLayout {
-        widths,
-        separator_width,
-        show_separator,
-    }
-}
 /// Render the one-row header bar for each pane (the source label), with the
 /// focused pane drawn in the active-tab style.
 fn render_pane_headers(
@@ -166,12 +120,12 @@ fn render_pane_headers(
         let header_area = Rect::new(x_offset, area.y, width, header_height);
         let header_style = if idx == focused_pane {
             Style::default()
-                .fg(theme.tab_active_fg)
-                .bg(theme.tab_active_bg)
+                .theme_fg(theme, "ui.tab_active_fg")
+                .theme_bg(theme, "ui.tab_active_bg")
         } else {
             Style::default()
-                .fg(theme.tab_inactive_fg)
-                .bg(theme.tab_inactive_bg)
+                .theme_fg(theme, "ui.tab_inactive_fg")
+                .theme_bg(theme, "ui.tab_inactive_bg")
         };
         let header_text = format!(" {} ", source.label);
         let header = Paragraph::new(header_text).style(header_style);
@@ -240,9 +194,8 @@ fn build_pane_render_data(
         let mut viewport = crate::view::viewport::Viewport::new(pane_width, content_height);
         viewport.set_top_byte(top_byte);
         viewport.line_wrap_enabled = false;
-        let pane_width = layout.widths.get(pane_idx).copied().unwrap_or(80) as usize;
-        let gutter_width = 4; // Line number width
-        let content_width = pane_width.saturating_sub(gutter_width);
+        let gutter_width = usize::from(PANE_GUTTER_WIDTH);
+        let content_width = layout.text_width(pane_idx);
         let lines_needed = last_line - first_line + 10;
         let empty_folds = FoldManager::new();
         // A composite side is formatted here, not by `compute_buffer_layout`;
@@ -302,8 +255,9 @@ fn render_past_end_row(
         };
         let eof = Paragraph::new(text).style(
             Style::default()
-                .fg(theme.line_number_fg)
-                .bg(theme.post_eof_bg(effective_editor_bg)),
+                .theme_fg(theme, "editor.line_number_fg")
+                .bg(theme.post_eof_bg(effective_editor_bg))
+                .add_modifier(theme.resolve_modifier_key("editor.after_eof_bg")),
         );
         eof.render(eof_area, buf);
         x += width + layout.separator_width;
@@ -366,12 +320,13 @@ fn render_aligned_row(
     let selection_cols = view_state.selection_column_range(display_row);
     // Row background based on diff type (selection is character-level).
     let row_bg = match aligned_row.row_type {
-        RowType::Addition => Some(theme.diff_add_bg),
-        RowType::Deletion => Some(theme.diff_remove_bg),
-        RowType::Modification => Some(theme.diff_modify_bg),
-        RowType::HunkHeader => Some(theme.current_line_bg),
+        RowType::Addition => Some("editor.diff_add_bg"),
+        RowType::Deletion => Some("editor.diff_remove_bg"),
+        RowType::Modification => Some("editor.diff_modify_bg"),
+        RowType::HunkHeader => Some("editor.current_line_bg"),
         RowType::Context => None,
-    };
+    }
+    .map(|key| Style::default().theme_bg(theme, key));
     let inline_diffs = compute_modification_inline_diffs(aligned_row, composite, buffers);
     let mut x_offset = area_x;
     for (pane_idx, &width) in layout.widths.iter().enumerate() {
@@ -392,12 +347,12 @@ fn render_aligned_row(
             theme,
         );
         x_offset += width;
-        if layout.show_separator && pane_idx < layout.pane_count() - 1 {
+        if layout.separator_width > 0 && pane_idx < layout.pane_count() - 1 {
             let sep_area = Rect::new(x_offset, row_y, layout.separator_width, 1);
             let sep = Paragraph::new("│").style(
                 Style::default()
-                    .fg(theme.split_separator_fg)
-                    .bg(theme.editor_bg),
+                    .theme_fg(theme, "ui.split_separator_fg")
+                    .theme_bg(theme, "editor.bg"),
             );
             sep.render(sep_area, buf);
             x_offset += layout.separator_width;
@@ -418,7 +373,7 @@ fn render_row_pane(
     inline_diffs: &[Vec<Range<usize>>],
     selection_cols: Option<(usize, usize)>,
     is_cursor_row: bool,
-    row_bg: Option<Color>,
+    row_bg: Option<Style>,
     effective_editor_bg: Color,
     theme: &Theme,
 ) {
@@ -428,8 +383,7 @@ fn render_row_pane(
         .map(|v| v.left_column)
         .unwrap_or(0);
     let is_focused_pane = pane_idx == view_state.focused_pane;
-    let gutter_width = 4usize;
-    let max_content_width = width.saturating_sub(gutter_width as u16) as usize;
+    let max_content_width = width.saturating_sub(PANE_GUTTER_WIDTH) as usize;
     let Some(source_line_ref) = aligned_row.get_pane_line(pane_idx) else {
         // No content for this pane (padding/gap line).
         let pane_has_selection = is_focused_pane
@@ -437,24 +391,28 @@ fn render_row_pane(
                 .map(|(start, end)| start == 0 && end == usize::MAX)
                 .unwrap_or(false);
         let bg = if pane_has_selection {
-            theme.selection_bg
+            Style::default().theme_bg(theme, "editor.selection_bg")
         } else if is_cursor_row && is_focused_pane {
-            theme.current_line_bg
+            Style::default().theme_bg(theme, "editor.current_line_bg")
         } else {
-            row_bg.unwrap_or(effective_editor_bg)
+            row_bg.unwrap_or_else(|| editor_ground(theme, effective_editor_bg))
         };
         if is_cursor_row && is_focused_pane && view_state.cursor_column == 0 {
-            let style = Style::default().fg(theme.line_number_fg).bg(bg);
-            let cursor_style = Style::default().fg(theme.editor_bg).bg(theme.editor_fg);
+            let style = Style::default()
+                .theme_fg(theme, "editor.line_number_fg")
+                .patch(bg);
+            let cursor_style = Style::default()
+                .theme_fg(theme, "editor.bg")
+                .theme_bg(theme, "editor.fg");
             let padding = " ".repeat(max_content_width.saturating_sub(1));
             let line = Line::from(vec![
-                Span::styled("    ", style),
+                Span::styled(" ".repeat(usize::from(PANE_GUTTER_WIDTH)), style),
                 Span::styled(" ", cursor_style),
-                Span::styled(padding, Style::default().bg(bg)),
+                Span::styled(padding, bg),
             ]);
             Paragraph::new(line).render(pane_area, buf);
         } else {
-            let gap_style = Style::default().bg(bg);
+            let gap_style = bg;
             let empty_content = " ".repeat(width as usize);
             Paragraph::new(empty_content)
                 .style(gap_style)
@@ -473,30 +431,38 @@ fn render_row_pane(
         .unwrap_or(&[]);
     // Cursor-row highlight applies only on the focused pane.
     let bg = if is_cursor_row && is_focused_pane {
-        theme.current_line_bg
+        Style::default().theme_bg(theme, "editor.current_line_bg")
     } else {
-        row_bg.unwrap_or(effective_editor_bg)
+        row_bg.unwrap_or_else(|| editor_ground(theme, effective_editor_bg))
     };
     let pane_selection_cols = if is_focused_pane {
         selection_cols
     } else {
         None
     };
-    let line_num = format!("{:>3} ", source_line_ref.line + 1);
-    let line_num_style = Style::default().fg(theme.line_number_fg).bg(bg);
+    // The number right-aligned in the gutter, and a space before the text.
+    let line_num = format!(
+        "{:>digits$} ",
+        source_line_ref.line + 1,
+        digits = usize::from(PANE_GUTTER_WIDTH) - 1
+    );
+    let line_num_style = Style::default()
+        .theme_fg(theme, "editor.line_number_fg")
+        .patch(bg);
     let inline_ranges = inline_diffs.get(pane_idx).cloned().unwrap_or_default();
     let highlight_bg = match aligned_row.row_type {
-        RowType::Deletion => Some(theme.diff_remove_highlight_bg),
-        RowType::Addition => Some(theme.diff_add_highlight_bg),
+        RowType::Deletion => Some("editor.diff_remove_highlight_bg"),
+        RowType::Addition => Some("editor.diff_add_highlight_bg"),
         RowType::Modification => {
             if pane_idx == 0 {
-                Some(theme.diff_remove_highlight_bg)
+                Some("editor.diff_remove_highlight_bg")
             } else {
-                Some(theme.diff_add_highlight_bg)
+                Some("editor.diff_add_highlight_bg")
             }
         }
         _ => None,
-    };
+    }
+    .map(|key| Style::default().theme_bg(theme, key));
     let mut spans = vec![Span::styled(line_num, line_num_style)];
     if let Some(view_line) = view_line_opt {
         render_view_line_content(
@@ -521,12 +487,20 @@ fn render_row_pane(
             source_line_ref.line,
             pane_data.is_some()
         );
-        let base_style = Style::default().fg(theme.editor_fg).bg(bg);
+        let base_style = Style::default().theme_fg(theme, "editor.fg").patch(bg);
         let padding = " ".repeat(max_content_width);
         spans.push(Span::styled(padding, base_style));
     }
     Paragraph::new(Line::from(spans)).render(pane_area, buf);
 }
+/// The pane's own ground: `effective_editor_bg` (the theme's `editor.bg`, or
+/// the terminal's under `use_terminal_bg`) with `editor.bg`'s text attributes.
+fn editor_ground(theme: &Theme, effective_editor_bg: Color) -> Style {
+    Style::default()
+        .bg(effective_editor_bg)
+        .add_modifier(theme.resolve_modifier_key("editor.bg"))
+}
+
 /// Render ViewLine content with syntax highlighting to spans.
 #[allow(clippy::too_many_arguments)]
 fn render_view_line_content(
@@ -535,12 +509,12 @@ fn render_view_line_content(
     highlight_spans: &[crate::primitives::highlighter::HighlightSpan],
     left_column: usize,
     max_width: usize,
-    bg: Color,
+    bg: Style,
     theme: &Theme,
     show_cursor: bool,
     cursor_column: usize,
     inline_ranges: &[Range<usize>],
-    highlight_bg: Option<Color>,
+    highlight_bg: Option<Style>,
     selection_cols: Option<(usize, usize)>,
 ) {
     let text = &view_line.text;
@@ -551,6 +525,12 @@ fn render_view_line_content(
     let mut current_span_text = String::new();
     let mut current_style: Option<Style> = None;
     let mut hl_cursor = 0usize;
+    // Resolved once, not per character.
+    let selection = Style::default().theme_bg(theme, "editor.selection_bg");
+    let plain = Style::default().theme_fg(theme, "editor.fg");
+    let cursor_cell = Style::default()
+        .theme_fg(theme, "editor.bg")
+        .theme_bg(theme, "editor.fg");
     for (char_idx, ch) in chars.iter().enumerate() {
         let cw = char_width(*ch);
         // Skip characters before left_column
@@ -562,26 +542,32 @@ fn render_view_line_content(
             break;
         }
         let byte_pos = char_source_bytes.get(char_idx).and_then(|b| *b);
-        let highlight_color =
-            byte_pos.and_then(|bp| span_color_at(highlight_spans, &mut hl_cursor, bp));
+        let highlight = byte_pos.and_then(|bp| span_at(highlight_spans, &mut hl_cursor, bp));
         let in_inline_range = inline_ranges.iter().any(|r| r.contains(&char_idx));
         let in_selection = selection_cols
             .map(|(start, end)| col >= start && col < end)
             .unwrap_or(false);
         let char_bg = if in_selection {
-            theme.selection_bg
+            selection
         } else if in_inline_range {
             highlight_bg.unwrap_or(bg)
         } else {
             bg
         };
-        let char_style = if let Some(color) = highlight_color {
-            Style::default().fg(color).bg(char_bg)
+        let char_style = if let Some(span) = highlight {
+            let attrs = span
+                .category
+                .map(|c| theme.resolve_modifier_key(c.theme_key()))
+                .unwrap_or_default();
+            Style::default()
+                .fg(span.color)
+                .add_modifier(attrs)
+                .patch(char_bg)
         } else {
-            Style::default().fg(theme.editor_fg).bg(char_bg)
+            plain.patch(char_bg)
         };
         let final_style = if show_cursor && col == cursor_column {
-            Style::default().fg(theme.editor_bg).bg(theme.editor_fg)
+            cursor_cell
         } else {
             char_style
         };
@@ -605,8 +591,10 @@ fn render_view_line_content(
         let cursor_visual = cursor_column.saturating_sub(left_column);
         if show_cursor && cursor_visual >= rendered && cursor_visual < max_width {
             let cursor_offset = cursor_visual - rendered;
-            let cursor_style = Style::default().fg(theme.editor_bg).bg(theme.editor_fg);
-            let normal_style = Style::default().bg(bg);
+            let cursor_style = Style::default()
+                .theme_fg(theme, "editor.bg")
+                .theme_bg(theme, "editor.fg");
+            let normal_style = bg;
             if cursor_offset > 0 {
                 spans.push(Span::styled(" ".repeat(cursor_offset), normal_style));
             }
@@ -616,10 +604,7 @@ fn render_view_line_content(
                 spans.push(Span::styled(" ".repeat(remaining), normal_style));
             }
         } else {
-            spans.push(Span::styled(
-                " ".repeat(padding_len),
-                Style::default().bg(bg),
-            ));
+            spans.push(Span::styled(" ".repeat(padding_len), bg));
         }
     }
 }

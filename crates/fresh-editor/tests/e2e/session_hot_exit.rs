@@ -211,14 +211,15 @@ fn test_session_workspace_preserved_across_restart() {
     }
 }
 
-/// Regression: session restore must refresh `primary_cursor_line_number`.
+/// Regression: after a session restore, the cursor's line must be the
+/// restored one.
 ///
 /// The restore path writes `view_state.cursors.primary().position` directly
-/// (no `Event::MoveCursor`), so the per-buffer `primary_cursor_line_number`
-/// cache stays at `EditorState::new`'s default `Absolute(0)`. Status bar
-/// and plugin-side `getCursorLine` both read that cache — without this fix,
-/// a Git Blame invoked right after restore reads 0 and lands on Ln 1 even
-/// though the cursor's byte position is on line 100.
+/// (no `Event::MoveCursor`). The status bar and plugin-side `getCursorLine`
+/// used to read a per-buffer cache of the line that only a `MoveCursor`
+/// refreshed, so a Git Blame invoked right after restore read 0 and landed
+/// on Ln 1 even though the cursor's byte position was on line 100. The line
+/// is derived from the cursor now (#3397).
 #[test]
 fn test_session_restore_refreshes_cursor_line_cache() {
     let temp_dir = TempDir::new().unwrap();

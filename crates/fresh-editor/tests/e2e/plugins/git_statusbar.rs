@@ -78,11 +78,25 @@ fn test_status_bar_shows_custom_branch_token() {
         .send_key(KeyCode::Right, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
-    // Navigate down to Status Bar section (12 total from Editor expanded)
-    for _ in 0..12 {
+    // Down the tree to its Status Bar section: by name, since the number of
+    // sections above it is the schema's to change.
+    let on_status_bar = |h: &EditorTestHarness| {
+        h.screen_to_string()
+            .lines()
+            .any(|l| l.contains("│>") && l.contains("Status Bar"))
+    };
+    for _ in 0..40 {
+        if on_status_bar(&harness) {
+            break;
+        }
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
     }
-    harness.render().unwrap();
+    assert!(
+        on_status_bar(&harness),
+        "Status Bar never became selected:\n{}",
+        harness.screen_to_string()
+    );
     // Right to expand Status Bar
     harness
         .send_key(KeyCode::Right, KeyModifiers::NONE)

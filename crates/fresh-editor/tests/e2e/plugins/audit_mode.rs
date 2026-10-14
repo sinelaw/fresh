@@ -3070,12 +3070,17 @@ fn start_server(config: Config) {
     fs::write(&main_rs_path, modified_content).expect("Failed to modify file");
 
     // Start in the dark theme so we have well-known expected colors.
-    let mut config = Config::default();
-    config.theme = "dark".into();
-    // The theme switch below kicks off a color-transition crossfade; the
-    // assertions check settled colors, so disable animations (the harness
-    // only does this automatically when no custom config is passed).
-    config.editor.animations = false;
+    let config = Config {
+        theme: "dark".into(),
+        // The theme switch below kicks off a color-transition crossfade; the
+        // assertions check settled colors, so disable animations (the harness
+        // only does this automatically when no custom config is passed).
+        editor: fresh::config::EditorConfig {
+            animations: false,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
 
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(140, 40, config, repo.path.clone()).unwrap();
@@ -3332,7 +3337,7 @@ fn setup_many_hunks_repo() -> (GitTestRepo, std::path::PathBuf) {
     // rows per hunk, ~30 hunks total).
     let mut modified = String::new();
     for i in 1..=300 {
-        if matches!(i % 10, 0 | 1 | 2) && i >= 10 {
+        if matches!(i % 10, 0..=2) && i >= 10 {
             modified.push_str(&format!("MODIFIED line {}\n", i));
         } else {
             modified.push_str(&format!("Line {}\n", i));

@@ -43,6 +43,16 @@ impl std::fmt::Debug for RenderId {
 pub struct Geom {
     pub rect: Rect,
     pub clip: Rect,
+    /// Where the pointer is, for a node that draws an affordance of its own
+    /// and has to say whether it is under it.
+    ///
+    /// **Hover on a library-drawn thing is the library's**, for the same
+    /// reason the press is: the affordance exists because the framework knows
+    /// something the description cannot — a `Draw::Overflow` cap is drawn
+    /// because the window knows there is more that way — so who else would
+    /// know when the pointer is on it. `None` when the pointer is not in the
+    /// window, or has left it.
+    pub pointer: Option<Point>,
 }
 
 /// What a render object does with a point inside its own rectangle.
@@ -93,11 +103,15 @@ pub trait LayoutCx {
     fn place(&mut self, child: RenderId, at: Point);
     /// Fill in the window of the nearest enclosing `Viewport`, if any.
     fn enclosing_window(&self, info: LayoutInfo) -> LayoutInfo;
-    /// This node's scroll offset. Framework-owned: neither the application nor
-    /// the component declares it.
+    /// This node's scroll offset, as the framework holds it: where the wheel,
+    /// the bar and the anchor commands last put it — or, for a window whose
+    /// owner holds the offset ([`Scroll::At`](crate::desc::Scroll::At)),
+    /// where the description last said it is.
     fn scroll(&self) -> Point;
-    /// Move the offset. The one caller is a scrolling node applying the initial
-    /// value its description carried, once, at its first layout.
+    /// Move the offset. Called by a scrolling node applying the value its
+    /// description carries: once, at its first layout, for a framework-owned
+    /// offset; at every layout for one the owner holds; and to clamp a
+    /// framework-owned offset into its ceiling before the window is published.
     fn set_offset(&mut self, at: Point);
     /// Declare the window this node shows onto its content. The framework
     /// clamps the offset against it, chains the wheel off it, and a
@@ -152,6 +166,21 @@ pub struct ScrollInfo {
     /// The band, for a window whose offset counts items. `None` for one whose
     /// offset counts cells, where an item is not a thing.
     pub band: Option<Band>,
+    /// How many of the node's declared pinned items sit above `window` — the
+    /// ones it honoured, which is at most one fewer than fit. Zero for a
+    /// window that pins nothing. See [`Node::pinned`](crate::Node::pinned).
+    pub pinned: u16,
+    /// Which axis this window's offset counts along. Published with the
+    /// window because everything that *moves* the window has to agree with it
+    /// — an `Anchor` command says "put this inside", and which way that is is
+    /// the window's answer, not the caller's.
+    pub axis: crate::event::Axis,
+    /// How far a cap press moves it; `0` is one windowful.
+    pub step: u16,
+    /// How wide one overflow cap is, in cells. See [`Node::scroll_cap_width`].
+    ///
+    /// [`Node::scroll_cap_width`]: crate::Node::scroll_cap_width
+    pub cap: u16,
 }
 
 /// What a constraint-dependent builder is told.
@@ -163,6 +192,10 @@ pub struct LayoutInfo {
     pub scroll_window: Option<Rect>,
     /// That same viewport's band, when its offset counts items. See [`Band`].
     pub band: Option<Band>,
+    /// How many pinned items that viewport holds above `scroll_window`: the
+    /// builder draws that many of the indices it declared, in order, and then
+    /// the run the window names. See [`Node::pinned`](crate::Node::pinned).
+    pub pinned: u16,
 }
 
 /// How a node that sits outside its parent's flow places itself, and what it
@@ -405,7 +438,17 @@ pub(crate) struct RenderData {
     /// Published alongside `window`, and read by the same walk: a builder that
     /// asks which items it holds asks in the same breath how tall one is.
     pub band: Option<Band>,
+    /// Published with `window` too: the pinned items held above it.
+    pub pinned: u16,
     pub scroll_max: Point,
+    /// Which axis the offset counts along. See [`ScrollInfo::axis`].
+    pub scroll_axis: crate::event::Axis,
+    /// How far a cap press moves the window; `0` is one windowful. See
+    /// [`Node::scroll_step`](crate::Node::scroll_step).
+    pub scroll_step: u16,
+    /// How wide one overflow cap is. See
+    /// [`Node::scroll_cap_width`](crate::Node::scroll_cap_width).
+    pub scroll_cap: u16,
     pub translate: bool,
 
     /// How many times this node has been measured, and how many of those were a
@@ -538,3 +581,37 @@ impl HostLeaf for PlainHost {}
 
 /// So a description can carry either form.
 pub type HostObject = Rc<dyn Fn() -> Box<dyn HostLeaf>>;
+
+/// Where a horizontal window's two overflow caps are, and which of them has
+/// content behind it.
+///
+/// **One rule, asked twice.** The primitive lights the cap under the pointer
+/// and the hit walk steps the window when that cap is pressed — a button that
+/// lights where it cannot be pressed is not a button, so both ask here rather
+/// than each rebuilding the arithmetic from the window's offset.
+///
+/// `rect` is the window's box, `offset` its current scroll along the axis and
+/// `ceiling` the furthest it can go; `cap` is the width the measure reserved
+/// at each end (see [`Node::scroll_cap_width`](crate::Node::scroll_cap_width)).
+/// The rectangles are returned whether or not there is more that way, because
+/// the cells are reserved either way — `more` is what says a glyph goes in one.
+pub(crate) fn overflow_caps(
+    rect: Rect,
+    offset: i64,
+    ceiling: i64,
+    cap: u16,
+) -> [(crate::End, bool, Rect); 2] {
+    let cap = cap.max(1);
+    [
+        (
+            crate::End::Before,
+            offset > 0,
+            Rect::new(rect.x, rect.y, cap, rect.h),
+        ),
+        (
+            crate::End::After,
+            offset < ceiling,
+            Rect::new(rect.right() - cap as i32, rect.y, cap, rect.h),
+        ),
+    ]
+}

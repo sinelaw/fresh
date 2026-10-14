@@ -93,7 +93,7 @@ fn test_cursor_does_not_bleed_through_dropdown_menu() {
                 menu_right = Some(right as u16);
             }
         }
-        if chars.iter().any(|&c| c == '└') {
+        if chars.contains(&'└') {
             menu_bottom = Some(row);
         }
     }

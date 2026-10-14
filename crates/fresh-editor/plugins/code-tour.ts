@@ -7,7 +7,6 @@ import {
   flexSpacer,
   hintBar,
   type HintEntry,
-  key as widgetKey,
   labeledSection,
   list,
   raw,
@@ -17,7 +16,6 @@ import {
   styledRow,
   text,
   type TextPropertyEntry,
-  type WidgetAction,
   WidgetPanel,
   type WidgetSpec,
 } from "./lib/widgets.ts";
@@ -1144,11 +1142,6 @@ function targetTour(): TourInstance | null {
   return tourForActiveBuffer() ?? (lastTourId ? tours.get(lastTourId) ?? null : null);
 }
 
-function dispatch(action: WidgetAction): void {
-  const t = targetTour();
-  if (t) t.panel.command(action);
-}
-
 // ============================================================================
 // Handlers — panel mode
 // ============================================================================
@@ -1174,25 +1167,6 @@ registerHandler("tour_panel_prev", () => {
   const t = targetTour();
   if (t) goToStep(t, t.step - 1).catch((e) => editor.error(`code-tour: ${e}`));
 });
-
-registerHandler("tour_panel_enter", () => dispatch(widgetKey("Enter")));
-registerHandler("tour_panel_tab", () => dispatch(widgetKey("Tab")));
-registerHandler("tour_panel_shift_tab", () => dispatch(widgetKey("S-Tab")));
-registerHandler("tour_panel_up", () => dispatch(widgetKey("Up")));
-registerHandler("tour_panel_down", () => dispatch(widgetKey("Down")));
-registerHandler("tour_panel_page_up", () => dispatch(widgetKey("PageUp")));
-registerHandler("tour_panel_page_down", () => dispatch(widgetKey("PageDown")));
-// Selection + clipboard over the prose document (markdown text widget).
-registerHandler("tour_panel_shift_up", () => dispatch(widgetKey("S-Up")));
-registerHandler("tour_panel_shift_down", () => dispatch(widgetKey("S-Down")));
-registerHandler("tour_panel_left", () => dispatch(widgetKey("Left")));
-registerHandler("tour_panel_right", () => dispatch(widgetKey("Right")));
-registerHandler("tour_panel_shift_left", () => dispatch(widgetKey("S-Left")));
-registerHandler("tour_panel_shift_right", () => dispatch(widgetKey("S-Right")));
-registerHandler("tour_panel_home", () => dispatch(widgetKey("Home")));
-registerHandler("tour_panel_end", () => dispatch(widgetKey("End")));
-registerHandler("tour_panel_copy", () => dispatch(widgetKey("C-c")));
-registerHandler("tour_panel_select_all", () => dispatch(widgetKey("C-a")));
 
 registerHandler("tour_panel_jump", () => {
   const t = targetTour();
@@ -1476,28 +1450,16 @@ async function restoreTours(stored: PersistedTour[]): Promise<void> {
 // Mode + registration
 // ============================================================================
 
-const modeBindings: [string, string][] = [
+// The focused control answers a key first — the step list and the prose
+// take the arrows, paging, Home/End, Enter and the clipboard chords, Tab
+// walks the controls — so the mode binds only the tour's own commands.
+// Space and Backspace step the tour from anywhere in the panel: they are
+// declared dialog-wide shortcuts, ahead of whichever control has focus.
+const modeBindings: string[][] = [
   ["n", "tour_panel_next"],
-  ["Right", "tour_panel_right"],
-  ["Space", "tour_panel_next"],
+  ["Space", "tour_panel_next", "shortcut"],
   ["p", "tour_panel_prev"],
-  ["Left", "tour_panel_left"],
-  ["Backspace", "tour_panel_prev"],
-  ["Return", "tour_panel_enter"],
-  ["Tab", "tour_panel_tab"],
-  ["S-Tab", "tour_panel_shift_tab"],
-  ["Up", "tour_panel_up"],
-  ["Down", "tour_panel_down"],
-  ["S-Up", "tour_panel_shift_up"],
-  ["S-Down", "tour_panel_shift_down"],
-  ["S-Left", "tour_panel_shift_left"],
-  ["S-Right", "tour_panel_shift_right"],
-  ["Home", "tour_panel_home"],
-  ["End", "tour_panel_end"],
-  ["C-c", "tour_panel_copy"],
-  ["C-a", "tour_panel_select_all"],
-  ["PageUp", "tour_panel_page_up"],
-  ["PageDown", "tour_panel_page_down"],
+  ["Backspace", "tour_panel_prev", "shortcut"],
   ["g", "tour_panel_steps"],
   ["r", "tour_panel_rehighlight"],
   ["q", "tour_panel_close"],

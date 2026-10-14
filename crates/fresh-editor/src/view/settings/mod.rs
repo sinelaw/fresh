@@ -12,6 +12,7 @@
 //! - `hit.rs` - The vocabulary a press resolves to, shared by both frontends
 //! - `live.rs` - A scalar control edited by its widget kind, against a surface's store
 //! - `entry_dialog.rs` - Dialog for editing complex map entries
+//! - `surface.rs` - What the page and the entry dialog share: list rows, typing into a live field
 
 // Schema is WASM-compatible (pure data types)
 pub mod schema;
@@ -35,6 +36,8 @@ pub mod render;
 pub mod search;
 #[cfg(feature = "runtime")]
 pub mod state;
+#[cfg(feature = "runtime")]
+pub mod surface;
 // Settings control → WidgetSpec mapping (Settings↔widget unification).
 #[cfg(feature = "runtime")]
 pub mod widget_map;

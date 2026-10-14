@@ -59,10 +59,10 @@
 //! `render::{text_area_geom, text_area_row}`, which the collector calls too —
 //! one copy of each rule rather than two that can drift.
 //!
-//! **A plain text area does not wrap**, which is what let the multi-line field
-//! cross: `render_text_area` splits the value on `\n` and pads or
-//! tail-truncates each line to the field width, so a row is a function of one
-//! line and the field's window can format the rows it draws and no others.
+//! **A plain text area wraps up front**, which is what let the multi-line field
+//! cross: `render::text_area_geom` splits the value on `\n` and soft-wraps each
+//! line to the field width into rows, so a row is a function of one byte range
+//! and the field's window can format the rows it draws and no others.
 //! The wrapping engine is the *markdown* path only (`wrap_styled_lines` over a
 //! parsed document, with a shadow editor over the result), and that is the one
 //! multi-line shape still going through the collector.
@@ -246,6 +246,195 @@ pub struct Ctx<'a> {
     pub h_pan: &'a std::collections::HashMap<String, i32>,
     /// See `panel::Interior::reveal`.
     pub reveal: std::rc::Rc<fresh_ui::behavior::anchor::Anchor>,
+    /// The panel's memoised tree projections. See [`Projections`].
+    pub projections: &'a Projections,
+}
+
+/// **A plugin `Tree`'s visible projection, derived by its owner and kept
+/// until its inputs change.**
+///
+/// Which nodes are on screen is `collect_visible_tree_indices` over the whole
+/// node array and the resolved expansion — O(nodes) — and it was walked on
+/// every frame whether or not anything had moved. The inputs are the tree's
+/// two collections, which are shared storage (`api::Collection`) that a
+/// mutation replaces, and its expanded set: so the projection is cached per
+/// tree key against the collections' identity and the set's contents, and a
+/// frame whose tree did not change gets back the same `Rc` it got last time.
+/// That identity is what lets the tree's subtree memo (`memo_rows`) skip the
+/// whole rebuild too.
+///
+/// One per mounted panel, held by the editor across frames the way
+/// `Interior::reveal` is. A surface with no panel behind it gets
+/// [`no_projections`], which keeps nothing.
+#[derive(Default)]
+pub struct Projections {
+    keep: bool,
+    trees: std::cell::RefCell<std::collections::HashMap<String, Projection>>,
+}
+
+impl std::fmt::Debug for Projections {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Projections")
+            .field("keep", &self.keep)
+            .field("trees", &self.trees.borrow().len())
+            .finish()
+    }
+}
+
+struct Projection {
+    nodes: fresh_core::api::Collection<fresh_core::api::TreeNode>,
+    keys: fresh_core::api::Collection<String>,
+    expanded: std::rc::Rc<std::collections::HashSet<String>>,
+    visible: std::rc::Rc<Vec<usize>>,
+}
+
+impl Projections {
+    /// A cache that keeps what it computes, for one panel.
+    pub fn kept() -> Self {
+        Projections {
+            keep: true,
+            trees: Default::default(),
+        }
+    }
+
+    /// Drop the projections of trees `spec` no longer has. A tree leaves a
+    /// panel only by a new spec, so this runs there; without it a panel
+    /// that renames or removes a tree keeps the old one's arrays alive for
+    /// as long as it is mounted.
+    pub fn retain_trees_of(&self, spec: &WidgetSpec) {
+        fn keys(spec: &WidgetSpec, out: &mut std::collections::HashSet<String>) {
+            if let WidgetSpec::Tree { key: Some(k), .. } = spec {
+                out.insert(k.clone());
+            }
+            for c in spec.children() {
+                keys(c, out);
+            }
+        }
+        let mut live = std::collections::HashSet::new();
+        keys(spec, &mut live);
+        self.trees.borrow_mut().retain(|k, _| live.contains(k));
+    }
+
+    /// The visible node indices of the tree keyed `tree_key`, and the
+    /// expanded set they were projected through: the cached pair when its
+    /// collections and expansion are the ones they were computed from, a
+    /// fresh walk otherwise. Both come back as the *same* `Rc`s while nothing
+    /// changed, which is what a memo downstream compares.
+    fn visible(
+        &self,
+        tree_key: &str,
+        nodes: &fresh_core::api::Collection<fresh_core::api::TreeNode>,
+        keys: &fresh_core::api::Collection<String>,
+        expanded: std::collections::HashSet<String>,
+    ) -> (
+        std::rc::Rc<Vec<usize>>,
+        std::rc::Rc<std::collections::HashSet<String>>,
+    ) {
+        let keep = self.keep && !tree_key.is_empty();
+        if keep {
+            if let Some(p) = self.trees.borrow().get(tree_key) {
+                if std::sync::Arc::ptr_eq(&p.nodes, nodes)
+                    && std::sync::Arc::ptr_eq(&p.keys, keys)
+                    && *p.expanded == expanded
+                {
+                    return (p.visible.clone(), p.expanded.clone());
+                }
+            }
+        }
+        collection_stats::note_projection();
+        let visible = std::rc::Rc::new(crate::widgets::collect_visible_tree_indices(
+            nodes, keys, &expanded,
+        ));
+        let expanded = std::rc::Rc::new(expanded);
+        if keep {
+            self.trees.borrow_mut().insert(
+                tree_key.to_string(),
+                Projection {
+                    nodes: nodes.clone(),
+                    keys: keys.clone(),
+                    expanded: expanded.clone(),
+                    visible: visible.clone(),
+                },
+            );
+        }
+        (visible, expanded)
+    }
+}
+
+/// The projection cache for a surface with no panel behind it: it computes
+/// and keeps nothing, so nothing outlives the frame that asked.
+pub fn no_projections() -> &'static Projections {
+    thread_local! {
+        static NONE: &'static Projections = Box::leak(Box::default());
+    }
+    NONE.with(|p| *p)
+}
+
+/// A shared handle compared by identity, for a memo's props.
+///
+/// Two frames that describe the same collection hold the same allocation —
+/// a mutation is what makes a new one — so identity *is* "unchanged", and it
+/// costs a pointer compare where equality would walk every item.
+struct Same<T>(T);
+
+impl<T> PartialEq for Same<std::sync::Arc<T>> {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl<T> PartialEq for Same<std::rc::Rc<T>> {
+    fn eq(&self, other: &Self) -> bool {
+        std::rc::Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+/// What a plugin collection costs per frame, counted for the tests that pin
+/// it: tree projections walked, and rows built by the `List` and `Tree`
+/// arms' row builders.
+///
+/// Thread-local and debug-only, like `geometry::stats`: the editor renders
+/// on one thread, tests run one editor per thread, and the release build
+/// pays nothing.
+pub mod collection_stats {
+    #[cfg(debug_assertions)]
+    use std::cell::Cell;
+
+    #[cfg(debug_assertions)]
+    thread_local! {
+        static PROJECTIONS: Cell<u32> = const { Cell::new(0) };
+        static ROWS: Cell<u32> = const { Cell::new(0) };
+    }
+
+    /// The counts since the last [`take`].
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct Counts {
+        /// `collect_visible_tree_indices` walks.
+        pub projections: u32,
+        /// Calls into a plugin `List`'s or `Tree`'s row builder.
+        pub rows: u32,
+    }
+
+    #[inline]
+    pub(super) fn note_projection() {
+        #[cfg(debug_assertions)]
+        PROJECTIONS.with(|c| c.set(c.get().saturating_add(1)));
+    }
+
+    #[inline]
+    pub(super) fn note_row() {
+        #[cfg(debug_assertions)]
+        ROWS.with(|c| c.set(c.get().saturating_add(1)));
+    }
+
+    /// The counts since the last call, which resets them.
+    #[cfg(debug_assertions)]
+    pub fn take() -> Counts {
+        Counts {
+            projections: PROJECTIONS.with(|c| c.replace(0)),
+            rows: ROWS.with(|c| c.replace(0)),
+        }
+    }
 }
 
 /// The empty instance-state map, for a spec with no host state behind it.
@@ -289,6 +478,7 @@ impl Ctx<'static> {
             surface: panel_surface(),
             markdown: None,
             h_pan: no_pan(),
+            projections: no_projections(),
         }
     }
 }
@@ -360,6 +550,247 @@ fn spec_state_key(spec: &WidgetSpec) -> Option<fresh_ui::Key> {
     }
 }
 
+/// **A tree drawn as a table** (`Tree::columns`, `TreeNode::cells`).
+///
+/// A cell row is three pieces side by side: its prefix (indent, disclosure
+/// glyph, checkbox — `lead` cells, the same on every cell row), its cells laid
+/// on `layout`, and a button column as wide as the widest row's button
+/// (`action`). The cells are text nodes, each cut at its column's end
+/// (`fresh_ui::Elide`), and `layout` is fresh-ui's `Columns`: every row and
+/// the header fit the same natural widths to the same room, so the columns
+/// line up down the whole table without anything measuring a width. The list
+/// keeps its scrollbar's column whatever the bar is doing, which is what lets
+/// the header — above the list — give its titles the same room.
+#[derive(Clone)]
+struct TreeTable {
+    columns: std::rc::Rc<Vec<fresh_core::api::TableColumn>>,
+    layout: std::rc::Rc<fresh_ui::Columns>,
+    /// Indent, disclosure and checkbox cells before a cell row's first cell.
+    lead: u16,
+    /// Cells after the cells: the widest row button, its gap included.
+    action: u16,
+}
+
+impl TreeTable {
+    fn of(
+        columns: &[fresh_core::api::TableColumn],
+        nodes: &[fresh_core::api::TreeNode],
+        indent: u32,
+        checkable: bool,
+    ) -> Option<TreeTable> {
+        use crate::widgets::kinds::table;
+        if columns.is_empty() {
+            return None;
+        }
+        let rows = nodes.iter().filter(|n| !n.cells.is_empty());
+        let natural = table::natural_widths(columns, rows.clone().map(|n| n.cells.as_slice()));
+        // Cell rows share a depth in every table there is; the first one's
+        // stands for all, so the columns line up down the whole table.
+        let first = rows.clone().next();
+        let depth = first.map(|n| n.depth).unwrap_or(0);
+        let checkbox = match checkable && first.is_some_and(|n| n.checked.is_some()) {
+            true => 4,
+            false => 0,
+        };
+        let action = rows
+            .map(crate::widgets::render::tree_row_action_cols)
+            .max()
+            .unwrap_or(0);
+        Some(TreeTable {
+            columns: std::rc::Rc::new(columns.to_vec()),
+            layout: std::rc::Rc::new(fresh_ui::Columns::new(natural, table::MIN_COL)),
+            lead: (depth * indent + 2 + checkbox).min(u16::MAX as u32) as u16,
+            action: action.min(u16::MAX as usize) as u16,
+        })
+    }
+
+    /// The row of `cells` on the table's columns.
+    fn cells(&self, cells: &[fresh_core::api::TableCell], surface: &Ink) -> Node<UiMsg> {
+        row()
+            .h(Sizing::Cells(1))
+            .gap(crate::widgets::kinds::table::GAP)
+            .columns(self.layout.clone())
+            .children(self.columns.iter().enumerate().map(|(i, c)| {
+                let cell = cells.get(i);
+                table_cell(
+                    cell.map(|c| c.text.as_str()).unwrap_or(""),
+                    cell.and_then(|c| c.style.as_ref()),
+                    c.elide,
+                    surface,
+                )
+            }))
+    }
+
+    /// The header: each title over its column, the prefix, button and
+    /// scrollbar columns left blank so the titles get the room the cells do.
+    fn header(&self, surface: &Ink) -> Node<UiMsg> {
+        let ink = fresh_core::api::OverlayOptions {
+            fg: Some(fresh_core::api::OverlayColorSpec::theme_key(
+                "ui.menu_disabled_fg",
+            )),
+            bold: true,
+            ..Default::default()
+        };
+        let titles =
+            row()
+                .h(Sizing::Cells(1))
+                .gap(crate::widgets::kinds::table::GAP)
+                .columns(self.layout.clone())
+                .children(self.columns.iter().map(|c| {
+                    table_cell(&c.title, Some(&ink), fresh_core::api::Elide::Tail, surface)
+                }))
+                .w(Sizing::Flex(1));
+        row().h(Sizing::Cells(1)).children([
+            row().w(Sizing::Cells(self.lead)),
+            titles,
+            row().w(Sizing::Cells(self.action + PANEL_BAR_COLS)),
+        ])
+    }
+}
+
+/// One cell of a table: its text in its style, cut at the end its column
+/// names when the column is narrower than it.
+fn table_cell(
+    text: &str,
+    style: Option<&fresh_core::api::OverlayOptions>,
+    keep: fresh_core::api::Elide,
+    surface: &Ink,
+) -> Node<UiMsg> {
+    let mut e = TextPropertyEntry::text(text);
+    if let Some(style) = style {
+        e.inline_overlays
+            .push(fresh_core::text_property::InlineOverlay {
+                start: 0,
+                end: text.len(),
+                style: style.clone(),
+                properties: Default::default(),
+                unit: fresh_core::text_property::OffsetUnit::Byte,
+            });
+    }
+    let keep = match keep {
+        fresh_core::api::Elide::None => fresh_ui::Elide::None,
+        fresh_core::api::Elide::Tail => fresh_ui::Elide::Tail,
+        fresh_core::api::Elide::Head => fresh_ui::Elide::Head,
+    };
+    text_runs(entry_runs(&e, &[], surface).into_iter().map(|(_, r)| r))
+        .elide(keep)
+        .h(Sizing::Cells(1))
+}
+
+/// The bytes `range` of `entry`, with the overlays that fall in it rebased
+/// onto the slice (clipped to it).
+fn slice_entry(entry: &TextPropertyEntry, range: std::ops::Range<usize>) -> TextPropertyEntry {
+    let mut e = TextPropertyEntry::text(&entry.text[range.clone()]);
+    e.inline_overlays = entry
+        .inline_overlays
+        .iter()
+        .filter(|o| o.start < range.end && o.end > range.start)
+        .map(|o| {
+            let mut o = o.clone();
+            o.start = o.start.max(range.start) - range.start;
+            o.end = o.end.min(range.end) - range.start;
+            o
+        })
+        .collect();
+    e
+}
+
+/// One cell row of a [`TreeTable`]: the row's prefix (the tree row rendered
+/// without a body — indent, disclosure glyph, checkbox, with their hits), its
+/// cells on the table's columns, and its button in a column as wide as the
+/// widest row's. The row-wide `select` is the cells' and the padding's; the
+/// narrower targets keep the bytes they name, as on any tree row.
+fn table_row(
+    t: &TreeTable,
+    r: &crate::widgets::render::RenderedTreeRow,
+    hits: &[((usize, usize), crate::widgets::WidgetEvent)],
+    cells: &[fresh_core::api::TableCell],
+    slot: Slot,
+    surface: &Ink,
+) -> Node<UiMsg> {
+    let end = r.entry.text.len();
+    let split = r.body_start.min(end);
+    let select = hits
+        .iter()
+        .rev()
+        .find(|(_, h)| h.row_target)
+        .map(|(_, h)| h.clone());
+    // The narrow hits that fall in `lo..hi`, rebased to a piece that starts at
+    // `lo` and is shifted right by `shift`.
+    let within = |lo: usize, hi: usize, shift: usize| {
+        hits.iter()
+            .filter(|(_, h)| !h.row_target)
+            .filter_map(|((a, b), h)| {
+                let (a, b) = ((*a).max(lo), (*b).min(hi));
+                (a < b).then(|| ((a - lo + shift, b - lo + shift), h.clone()))
+            })
+            .collect::<Vec<_>>()
+    };
+    let with_select = |mut hs: Vec<_>, len: usize| {
+        if let Some(h) = &select {
+            hs.push(((0, len), h.clone()));
+        }
+        hs
+    };
+    let head = slice_entry(&r.entry, 0..split);
+    let head_hits = with_select(within(0, split, 0), split);
+    let head = row_pieces(
+        &head,
+        slot,
+        surface,
+        &head_hits,
+        None,
+        Fill::ToRowEnd,
+        false,
+    )
+    .w(Sizing::Cells(t.lead));
+    let body = t.cells(cells, surface);
+    let body = match &select {
+        Some(h) => hit_node(body, slot, h.clone(), 0),
+        None => body,
+    }
+    .w(Sizing::Flex(1));
+    let mut kids = vec![head, body];
+    if t.action > 0 {
+        let own = slice_entry(&r.entry, split..end);
+        let pad = t
+            .action
+            .saturating_sub(crate::primitives::display_width::str_width(&own.text) as u16)
+            as usize;
+        let mut tail = TextPropertyEntry::text(format!("{}{}", " ".repeat(pad), own.text));
+        tail.inline_overlays = own
+            .inline_overlays
+            .iter()
+            .map(|o| {
+                let mut o = o.clone();
+                o.start += pad;
+                o.end += pad;
+                o
+            })
+            .collect();
+        let tail_hits = with_select(within(split, end, pad), tail.text.len());
+        kids.push(
+            row_pieces(
+                &tail,
+                slot,
+                surface,
+                &tail_hits,
+                None,
+                Fill::ToRowEnd,
+                false,
+            )
+            .w(Sizing::Cells(t.action)),
+        );
+    }
+    row().h(Sizing::Cells(1)).children(kids)
+}
+
+/// Whether `spec`, in a row, takes the width the row's other children leave:
+/// a single-line field that asked to fill its container (`full_width`).
+fn fills_row(spec: &WidgetSpec) -> bool {
+    matches!(spec, WidgetSpec::Text { rows, full_width: true, .. } if *rows <= 1)
+}
+
 /// Apply [`state_key`]'s answer, if there is one.
 fn keyed(node: Node<UiMsg>, key: Option<fresh_ui::Key>) -> Node<UiMsg> {
     match key {
@@ -385,6 +816,30 @@ fn keyed(node: Node<UiMsg>, key: Option<fresh_ui::Key>) -> Node<UiMsg> {
 /// e2e tests waiting for it. So a tree is as tall as its content, capped.
 fn tree_rows(content: u32, visible: u32) -> u16 {
     content.min(visible).min(u16::MAX as u32) as u16
+}
+
+/// The column a panel's scrollbar floats in.
+///
+/// A revealed bar takes no gutter: it is painted over its window's last
+/// column, deliberately, so a bar that comes and goes does not reflow the row
+/// under the pointer. That is right wherever the row's last cell is padding —
+/// which is every row a plugin builds to the panel's width, and why the rows
+/// are built to that width at all. Reserving the column instead takes one
+/// from every row, and a row that no longer fits the panel it was built for
+/// is a worse thing than a bar over a blank cell.
+///
+/// It is wrong for one cell only: the action button the *host* draws at a
+/// row's edge, which is chrome and cannot be padding. So a row carrying one
+/// is built a column short — and nothing else changes.
+const PANEL_BAR_COLS: u16 = 1;
+
+/// The width to build one tree row at: the panel's, less the column a
+/// floating bar would cut its button in half in.
+fn tree_row_width(panel: u16, node: &fresh_core::api::TreeNode) -> u16 {
+    match node.action.is_some() {
+        true => panel.saturating_sub(PANEL_BAR_COLS),
+        false => panel,
+    }
 }
 
 /// The description for a covered spec.
@@ -514,10 +969,10 @@ fn leading_row_style(children: &[WidgetSpec]) -> Option<&fresh_core::api::Overla
     }
 }
 
-/// The selection a controlled `Tree` actually has.
+/// The selection and expansion a controlled `Tree` actually has.
 ///
-/// **The spec's `selected_index` is a seed, not the live value**, and the
-/// described arms were reading it as though it were live.
+/// **The spec's `selected_index` and `expanded_keys` are seeds, not the live
+/// values**, and the described arms were reading them as though they were.
 /// `WidgetInstanceState::Tree` says so in as many words — it becomes
 /// authoritative once a handler decides one, "so the host can mutate it via
 /// `WidgetCommand::SelectMove` without racing the plugin's spec round-trip" —
@@ -529,31 +984,678 @@ fn leading_row_style(children: &[WidgetSpec]) -> Option<&fresh_core::api::Overla
 /// spec, so `Ctrl+Alt+→` moved the match and the highlight stayed on the row
 /// it started on.
 ///
-/// This is `kinds::tree::resolve`'s selection half, restated only because a
-/// description holds the spec's fields rather than the spec node. A `List`'s
-/// arms call `kinds::list::resolve` directly, because that one also clamps —
-/// there is nothing left in this codebase that sanitises a stored list index,
-/// so every reader has to.
+/// Expansion split the same way: a disclosure click, →/← and
+/// `SetExpandedKeys` write only the instance state, so a tree drawn from the
+/// spec's `expanded_keys` kept its old shape while its keys walked the new
+/// one — the Markdown table of contents, which answers `expand` with
+/// `SetExpandedKeys` alone, did not fold until something re-sent its spec.
 ///
-/// A `Tree`'s `expanded_keys` is still read from the spec here, and agrees
-/// today because the plugins that drive it re-send the spec; the mutation
-/// route this closes had no such second writer.
-fn live_selection(cx: &Ctx<'_>, key: &Option<String>, seed: i32) -> i32 {
-    use crate::widgets::WidgetInstanceState as St;
-    let Some(k) = key.as_deref().filter(|k| !k.is_empty()) else {
-        return seed;
-    };
-    match cx.states.get(k) {
-        Some(St::Tree { selected_index, .. }) => *selected_index,
-        _ => seed,
-    }
+/// This is `kinds::tree::resolve_seeded`, the one resolver every handler
+/// reads through, called with the spec's fields because a description holds
+/// those rather than the spec node. A `List`'s arms call
+/// `kinds::list::resolve` directly, because that one also clamps — there is
+/// nothing left in this codebase that sanitises a stored list index, so
+/// every reader has to.
+fn live_tree(
+    cx: &Ctx<'_>,
+    key: &Option<String>,
+    selected_seed: i32,
+    expanded_seed: &[String],
+) -> crate::widgets::kinds::tree::Resolved {
+    crate::widgets::kinds::tree::resolve_seeded(
+        selected_seed,
+        expanded_seed,
+        key.as_deref().unwrap_or_default(),
+        cx.states,
+    )
 }
 
-/// The selection a controlled `List` actually has — [`live_selection`]'s
+/// The selection a controlled `List` actually has — [`live_tree`]'s
 /// sibling, through the kind's own resolver so the clamp is the same one
 /// the painter and every handler apply.
 fn live_list_selection(cx: &Ctx<'_>, key: &Option<String>, seed: i32, total: usize) -> i32 {
     crate::widgets::kinds::list::resolve(total as u32, seed, key.as_deref(), cx.states).selected
+}
+
+/// What a plain plugin `List` reads to describe itself — every input of
+/// [`list_rows`], so the memo around it is sound.
+#[derive(PartialEq)]
+struct ListRows {
+    items: Same<fresh_core::api::Collection<TextPropertyEntry>>,
+    keys: Same<fresh_core::api::Collection<String>>,
+    sel: i32,
+    key: Option<String>,
+    slot: Slot,
+    surface: Ink,
+    reveal: Option<bool>,
+}
+
+/// A plain plugin `List`, from its props alone.
+fn list_rows(p: &ListRows) -> Node<UiMsg> {
+    use std::rc::Rc;
+    let n = p.items.0.len();
+    // Handles on the panel's storage: the row builder reads item `i` out of
+    // the owner's collection when layout asks for it.
+    let rows = p.items.0.clone();
+    let keys = p.keys.0.clone();
+    let list_key = p.key.clone().unwrap_or_default();
+    let slot = p.slot;
+    let sel = p.sel;
+    let hit_keys = keys.clone();
+    let list = fresh_ui::List::windowed_stateful(
+        n,
+        {
+            let keys = keys.clone();
+            move |i| fresh_ui::Key::Str(keys[i].clone().into())
+        },
+        {
+            let rows = rows.clone();
+            let surface = p.surface.clone();
+            move |i, st| {
+                collection_stats::note_row();
+                entry_row(&rows[i], &row_surface(st, &surface))
+            }
+        },
+    )
+    // The panel's focus is the host's — the runtime resolves a focus
+    // key across every widget — so the list declines the ring and
+    // keeps its mouse, which is what that flag means since #3108.
+    .focusable(false)
+    .scrollbar_when(p.reveal)
+    .scrollbar_theme(bar_ink())
+    .row_theme({
+        let plain = p.surface.clone();
+        move |_, st| row_surface(st, &plain).to_string()
+    })
+    .on_activate_handler(Rc::new(move |i, e: &fresh_ui::Event| {
+        Some(UiMsg::Ui(super::msg::UiFact::WidgetHit {
+            slot,
+            event: crate::widgets::WidgetEvent {
+                row_target: true,
+                // **What the runtime's own row says** (`kinds/list.rs`
+                // sets it too). It cost nothing while the probe
+                // supplied the hit for a right press; now that the
+                // tree is the only answer and the probe stands down
+                // for a described panel, a row that does not declare
+                // the capability raises no context menu at all.
+                context_click: true,
+                drag_source: false,
+                widget_key: hit_keys[i].clone(),
+                widget_kind: "list",
+                payload: serde_json::json!({
+                    "index": i,
+                    "key": hit_keys[i].clone(),
+                }),
+                event_type: "select",
+                // A row's hit names the List that owns it: focus moves
+                // there, and the arrows after a row click keep driving
+                // the list's selection.
+                owner_key: Some(list_key.clone()),
+            },
+            byte: None,
+            clicks: e.clicks,
+        }))
+    }));
+    // **`-1` is a controlled empty selection, not "no opinion".** A
+    // `WidgetSpec::List` says which row is selected and says `-1` when
+    // none is — the settings `[+] Add new` sentinel is a one-row list
+    // that is only selected when the arrows are on it. Leaving the
+    // element to its own selection highlighted row zero, so the
+    // sentinel looked focused whether it was or not, and on a selected
+    // card the real row highlight was the same colour as the band it
+    // sat in.
+    let list = list.selection(match sel >= 0 {
+        true => Some(sel as usize),
+        false => None,
+    });
+    fresh_ui::ComponentExt::node(list)
+}
+
+/// What a plain plugin `Tree` reads to describe itself — every input of
+/// [`tree_rows_plain`], so the memo around it is sound. The projection and
+/// the expanded set are the owner's cached `Rc`s ([`Projections`]), so an
+/// unchanged tree compares equal by identity.
+#[derive(PartialEq)]
+struct TreeRows {
+    nodes: Same<fresh_core::api::Collection<fresh_core::api::TreeNode>>,
+    keys: Same<fresh_core::api::Collection<String>>,
+    visible: Same<std::rc::Rc<Vec<usize>>>,
+    expanded: Same<std::rc::Rc<std::collections::HashSet<String>>>,
+    sel_abs: i32,
+    key: Option<String>,
+    h_pan: i32,
+    slot: Slot,
+    checkable: bool,
+    indent: u32,
+    surface: Ink,
+    width: u16,
+    columns: Vec<fresh_core::api::TableColumn>,
+    reveal: Option<bool>,
+    visible_rows: Option<u32>,
+}
+
+/// The key a memoised rows subtree reconciles under among its siblings.
+///
+/// Distinct from the widget's own key, which stays on the node the element
+/// state hangs off (the list inside): the memo is a wrapper around that node,
+/// and a wrapper with no key of its own would pass the widget's key down onto
+/// the first box beneath it, which is not always the list.
+fn rows_key(key: &Option<String>) -> Option<fresh_ui::Key> {
+    key.as_deref()
+        .filter(|k| !k.is_empty())
+        .map(|k| fresh_ui::Key::Str(format!("rows:{k}").into()))
+}
+
+/// A plain plugin `Tree`, from its props alone.
+fn tree_rows_plain(p: &TreeRows) -> Node<UiMsg> {
+    use std::rc::Rc;
+    let key = &p.key;
+    let (sel_abs, width) = (p.sel_abs, p.width);
+    let visible = p.visible.0.clone();
+    let expanded = p.expanded.0.clone();
+    let nodes = p.nodes.0.clone();
+    let keys = p.keys.0.clone();
+    let columns = &p.columns;
+    let tree_key = key.clone().unwrap_or_default();
+    let h_pan = p.h_pan;
+    let (slot, checkable, indent) = (p.slot, p.checkable, p.indent);
+    let surface = p.surface.clone();
+    let n = visible.len();
+    let droppable = takes_drops(&nodes);
+
+    // **A table** (`columns`): the rows that carry cells lay them on
+    // the table's columns, and a header row of titles stands over
+    // them. See [`TreeTable`].
+    let table = TreeTable::of(columns, &nodes, indent, checkable);
+    // One row, at the width it is laid out at: the node, its index,
+    // whether the projection has it open, its state, and the width.
+    type BuildRow = Rc<
+        dyn Fn(
+            &fresh_core::api::TreeNode,
+            usize,
+            bool,
+            fresh_ui::widgets::RowState,
+            u16,
+        ) -> Node<UiMsg>,
+    >;
+    let build_row: BuildRow = {
+        let keys = keys.clone();
+        let tree_key = tree_key.clone();
+        let table = table.clone();
+        Rc::new(
+            move |node: &fresh_core::api::TreeNode,
+                  abs: usize,
+                  open: bool,
+                  st: fresh_ui::widgets::RowState,
+                  width: u16|
+                  -> Node<UiMsg> {
+                let surface = row_surface(st, &surface);
+                let mut node = node.clone();
+                node.text.normalize_widths();
+                let item_key = keys[abs].clone();
+                let table = table.as_ref().filter(|_| !node.cells.is_empty());
+                let r = match table {
+                    // A cell row's body is its cells, which are nodes
+                    // of their own: the row is rendered without one,
+                    // for its prefix and its button.
+                    Some(_) => {
+                        let mut head = node.clone();
+                        head.text = TextPropertyEntry::text("");
+                        crate::widgets::render_tree_row(
+                            &head, open, checkable, 1, false, 0, indent, 0,
+                        )
+                    }
+                    None => crate::widgets::render_tree_row(
+                        &node,
+                        open,
+                        checkable,
+                        1,
+                        false,
+                        tree_row_width(width, &node) as u32,
+                        indent,
+                        h_pan,
+                    ),
+                };
+                let end = r.entry.text.len();
+                let hit = |kind: &'static str,
+                           a: usize,
+                           b: usize,
+                           payload: serde_json::Value,
+                           row_target: bool| {
+                    (
+                        (a, b),
+                        crate::widgets::WidgetEvent {
+                            row_target,
+                            context_click: row_target,
+                            drag_source: false,
+                            widget_key: tree_key.clone(),
+                            widget_kind: "tree",
+                            payload,
+                            event_type: kind,
+                            owner_key: None,
+                        },
+                    )
+                };
+                // Order is the collector's: the narrow targets are named
+                // before the row-wide one, so a byte inside the glyph or
+                // the box belongs to it rather than to `select`.
+                let mut hits = Vec::new();
+                if let Some((a, b)) = r.disclosure_range {
+                    hits.push(hit(
+                        "expand",
+                        a,
+                        b,
+                        serde_json::json!({
+                            "index": abs, "key": item_key, "expanded": !open,
+                        }),
+                        false,
+                    ));
+                }
+                if let Some((a, b)) = r.checkbox_range {
+                    hits.push(hit(
+                        "toggle",
+                        a,
+                        b,
+                        serde_json::json!({
+                            "index": abs,
+                            "key": item_key,
+                            "checked": !node.checked.unwrap_or(false),
+                        }),
+                        false,
+                    ));
+                }
+                if let Some((a, b)) = r.action_range {
+                    hits.push(hit(
+                        "action",
+                        a,
+                        b,
+                        serde_json::json!({ "index": abs, "key": item_key }),
+                        false,
+                    ));
+                }
+                let mut select = hit(
+                    "select",
+                    0,
+                    end,
+                    serde_json::json!({ "index": abs, "key": item_key }),
+                    true,
+                );
+                select.1.drag_source = node.draggable;
+                let row_event = select.1.clone();
+                hits.push(select);
+                let piece = match table {
+                    Some(t) => table_row(t, &r, &hits, &node.cells, slot, &surface),
+                    None => entry_row_hits(&r.entry, slot, &surface, &hits),
+                };
+                // **In the sidebar, the selected row wears the explorer's
+                // `▌`** (design §5.1): a section's tree sits in the same
+                // column as the file tree, and the two read as one family
+                // when selection looks the same in both. The mark replaces
+                // the row's first cell exactly as the explorer's caret
+                // does, over the band the row already has, and only in
+                // this slot — the dock's and a pane's trees keep the band
+                // alone. The overlay carries no gesture, so a press on
+                // that cell continues to the row's own `select` beneath.
+                let selected = matches!(
+                    st,
+                    fresh_ui::widgets::RowState::Selected
+                        | fresh_ui::widgets::RowState::SelectedBlur
+                );
+                let piece = if selected && matches!(slot, Slot::Sidebar(_)) {
+                    let ink = surface.with_fg(Paint::key("editor.cursor")).to_string();
+                    fresh_ui::stack().h(Sizing::Cells(1)).children([
+                        piece,
+                        row()
+                            .h(Sizing::Cells(1))
+                            .children([fresh_ui::text("▌").theme(ink).w(Sizing::Cells(1))]),
+                    ])
+                } else {
+                    piece
+                };
+                match droppable {
+                    true => drop_row(piece, slot, row_event),
+                    false => piece,
+                }
+            },
+        )
+    };
+    // **The projection is the tree's one statement of each row**: which
+    // node, its depth, whether it has children and whether the resolved
+    // expansion has it open. The window asks it for the rows on screen.
+    let row_at = {
+        let (nodes, visible) = (nodes.clone(), visible.clone());
+        let build_row = build_row.clone();
+        move |i: usize, row: fresh_ui::widgets::TreeRow, st: fresh_ui::widgets::RowState| {
+            let abs = visible[i];
+            collection_stats::note_row();
+            build_row(&nodes[abs], abs, row.open, st, width)
+        }
+    };
+    let list = fresh_ui::Tree::windowed(
+        n,
+        {
+            let (keys, visible) = (keys.clone(), visible.clone());
+            move |i| fresh_ui::Key::Str(keys[visible[i]].clone().into())
+        },
+        {
+            let (nodes, keys, visible) = (nodes.clone(), keys.clone(), visible.clone());
+            move |i| {
+                let abs = visible[i];
+                let node = &nodes[abs];
+                fresh_ui::widgets::TreeRow {
+                    depth: node.depth as usize,
+                    has_children: node.has_children,
+                    open: node.has_children && expanded.contains(&keys[abs]),
+                }
+            }
+        },
+        row_at,
+    )
+    .list()
+    .focusable(false)
+    .scrollbar_when(p.reveal)
+    .scrollbar_theme(bar_ink())
+    .row_theme({
+        let plain = p.surface.clone();
+        move |_, st| row_surface(st, &plain).to_string()
+    });
+    // The spec's selection is an index into the *whole* array; the
+    // list's is into the visible window, which is the same array with
+    // the collapsed subtrees taken out.
+    // A selection the window does not contain is *no* selection here,
+    // not the element's own — see the `List` arm above.
+    let list = list.selection(visible.iter().position(|&a| a as i32 == sel_abs));
+    // A table keeps its scrollbar's column whether the bar is there or
+    // not: its rows' room must not change when the list grows past its
+    // window, and the header above the list reserves the same column.
+    let list = match table {
+        Some(_) => list.scrollbar_gutter(),
+        None => list,
+    };
+    let node = keyed(fresh_ui::ComponentExt::node(list), state_key(key));
+    let node = pan_to_widget(node, slot, &tree_key);
+    let node = match p.visible_rows {
+        Some(r) => node.h(Sizing::Cells(tree_rows(n as u32, r))),
+        // Height only. `flex(1)` set both axes, and a flexible width
+        // on a column's cross axis is measured at the whole extent —
+        // frame-wide under an `Auto` box. The width stays `Auto`;
+        // the column stretches it.
+        None => node.h(Sizing::Flex(1)),
+    };
+    // The table's header row: each title over its column, fitted the
+    // way the rows fit their cells.
+    match table {
+        None => node,
+        Some(t) => col().children([t.header(&p.surface), node]),
+    }
+}
+
+/// What a `card_borders` plugin `Tree` reads — every input of
+/// [`tree_rows_cards`]. The hovered row is here because this arm lights a
+/// whole card itself, rather than leaving hover to the list's element state.
+#[derive(PartialEq)]
+struct CardTreeRows {
+    nodes: Same<fresh_core::api::Collection<fresh_core::api::TreeNode>>,
+    keys: Same<fresh_core::api::Collection<String>>,
+    visible: Same<std::rc::Rc<Vec<usize>>>,
+    expanded: Same<std::rc::Rc<std::collections::HashSet<String>>>,
+    sel_abs: i32,
+    key: Option<String>,
+    h_pan: i32,
+    slot: Slot,
+    checkable: bool,
+    indent_cols: u32,
+    item_height: u32,
+    surface: Ink,
+    width: u16,
+    hovered_item_key: String,
+    reveal: Option<bool>,
+    visible_rows: Option<u32>,
+}
+
+/// A `card_borders` plugin `Tree`, from its props alone.
+///
+/// **Windowed in cells, over the projection.** A card is several rows and a
+/// folder header one, and both are known from the node alone
+/// ([`crate::widgets::tree_row_rows`]), so the tree places every row without
+/// rendering any and builds only the blocks that overlap the window. It was
+/// every visible node's block, rendered whenever the tree rebuilt.
+fn tree_rows_cards(p: &CardTreeRows) -> Node<UiMsg> {
+    use std::rc::Rc;
+    let key = &p.key;
+    let (sel_abs, width) = (p.sel_abs, p.width);
+    let (checkable, indent_cols, item_height) = (p.checkable, p.indent_cols, p.item_height);
+    let (nodes, item_keys) = (p.nodes.0.clone(), p.keys.0.clone());
+    let (visible, expanded) = (p.visible.0.clone(), p.expanded.0.clone());
+    let tree_key = key.clone().unwrap_or_default();
+    let (h_pan, slot) = (p.h_pan, p.slot);
+    let n = visible.len();
+    let droppable = takes_drops(&nodes);
+    let rows_of = {
+        let (nodes, visible) = (nodes.clone(), visible.clone());
+        move |i: usize| {
+            crate::widgets::tree_row_rows(&nodes[visible[i]], checkable, item_height, true)
+        }
+    };
+    // Where each block starts, for the one thing that needs to know: the
+    // dock's active card scooping the divider across exactly its own rows.
+    let starts: Rc<std::cell::OnceCell<Vec<u32>>> = Rc::default();
+    let start_of = {
+        let (rows_of, starts) = (rows_of.clone(), starts.clone());
+        move |i: usize| {
+            starts.get_or_init(|| {
+                let mut at = 0u32;
+                std::iter::once(0)
+                    .chain((0..n).map(|j| {
+                        at += rows_of(j);
+                        at
+                    }))
+                    .collect()
+            })[i]
+        }
+    };
+    let block = {
+        let (nodes, item_keys, visible) = (nodes.clone(), item_keys.clone(), visible.clone());
+        let start_of = start_of.clone();
+        let surface = p.surface.clone();
+        let hovered_item_key = Rc::new(p.hovered_item_key.clone());
+        let tree_key = tree_key.clone();
+        move |i: usize, row: fresh_ui::widgets::TreeRow, _: fresh_ui::widgets::RowState| {
+            let abs = visible[i];
+            let hovered_item_key = &hovered_item_key;
+            collection_stats::note_row();
+            let mut n = nodes[abs].clone();
+            let open = row.open;
+            n.text.normalize_widths();
+            for line in n.extra_lines.iter_mut() {
+                line.normalize_widths();
+            }
+            let item_key = item_keys[abs].clone();
+            let r = crate::widgets::render_tree_row(
+                &n,
+                open,
+                checkable,
+                item_height,
+                true,
+                tree_row_width(width, &n) as u32,
+                indent_cols,
+                h_pan,
+            );
+            let is_selected = abs as i32 == sel_abs;
+            // A card marks selection in its glyphs; a folder header takes
+            // the band. Hover lights every row of the block, because the
+            // block selects as one unit and so must light as one — and
+            // selection outranks it.
+            let as_card = crate::widgets::render::tree_node_is_card(&n, checkable);
+            // **In the dock, the selected card is the seamless tab.**
+            // There the card sits against a wall — `dock::grip_ink`'s
+            // divider, in the column's last cell — and the active session
+            // is the one mirrored in the editor beside it, so its card
+            // opens onto the editor instead of being boxed off from it
+            // (F.8). That is the whole marker, and it is made of glyphs:
+            // nothing here depends on a colour. Everywhere else there is
+            // no wall to open onto, so the heavy frame stays what
+            // selection looks like.
+            let tab = is_selected && as_card && matches!(slot, Slot::Dock);
+            let hovered =
+                !is_selected && !hovered_item_key.is_empty() && **hovered_item_key == item_key;
+            let dress = |e: &mut TextPropertyEntry| {
+                if is_selected {
+                    match (as_card, tab) {
+                        (true, true) => open_card_edge(e),
+                        (true, false) => crate::widgets::render::mark_list_card_selected(e),
+                        (false, _) => {
+                            let mut st = e.style.clone().unwrap_or_default();
+                            st.bg = Some(OverlayColorSpec::theme_key("ui.popup_selection_bg"));
+                            st.extend_to_line_end = true;
+                            e.style = Some(st);
+                        }
+                    }
+                } else if hovered {
+                    crate::widgets::render::apply_hover_band(e);
+                }
+            };
+            // The row's three targets differ only in what they fire and
+            // where they are; `row_target` is the difference between the
+            // body (a press anywhere on the row is its) and the two glyphs
+            // (a press inside their own bytes only). Where each one is is
+            // the range beside it in `hits`, not anything this states.
+            let select = |row_target: bool| crate::widgets::WidgetEvent {
+                row_target,
+                context_click: row_target,
+                drag_source: row_target && n.draggable,
+                widget_key: tree_key.clone(),
+                widget_kind: "tree",
+                payload: serde_json::json!({ "index": abs, "key": item_key }),
+                event_type: "select",
+                owner_key: None,
+            };
+            let mut rows: Vec<Node<UiMsg>> = Vec::new();
+            let mut primary = r.entry.clone();
+            dress(&mut primary);
+            let end = primary.text.len();
+            let mut hits: Vec<((usize, usize), crate::widgets::WidgetEvent)> = Vec::new();
+            if let Some((a, b)) = r.disclosure_range {
+                let mut h = select(false);
+                h.event_type = "expand";
+                h.payload = serde_json::json!({ "index": abs, "key": item_key, "expanded": !open });
+                hits.push(((a, b), h));
+            }
+            if let Some((a, b)) = r.checkbox_range {
+                let mut h = select(false);
+                h.event_type = "toggle";
+                h.payload = serde_json::json!({
+                    "index": abs,
+                    "key": item_key,
+                    "checked": !n.checked.unwrap_or(false),
+                });
+                hits.push(((a, b), h));
+            }
+            if let Some((a, b)) = r.action_range {
+                let mut h = select(false);
+                h.event_type = "action";
+                hits.push(((a, b), h));
+            }
+            // The body starts after whatever prefix the glyphs took —
+            // the collector's own rule, so a press on the glyph is the
+            // glyph's and the rest of the row is the card's.
+            let body = match (r.checkbox_range, r.disclosure_range) {
+                (Some((_, e)), _) => e + 1,
+                (None, Some((_, e))) => e,
+                (None, None) => 0,
+            };
+            if body < end {
+                hits.push(((body, end), select(true)));
+            }
+            rows.push(entry_row_hits(&primary, slot, &surface, &hits));
+            for extra in r.extra_entries.iter() {
+                let mut e = extra.clone();
+                dress(&mut e);
+                let b = e.text.len();
+                rows.push(match b > 0 {
+                    true => entry_row_hit(&e, (0, b), slot, &surface, select(true)),
+                    false => entry_row(&e, &surface),
+                });
+            }
+            let h = rows.len() as u32;
+            debug_assert_eq!(
+                h,
+                crate::widgets::tree_row_rows(&nodes[abs], checkable, item_height, true)
+            );
+            let edge = tab.then(|| {
+                tab_scoop(
+                    fresh_ui::Key::Str(item_key.clone().into()),
+                    start_of(i),
+                    h,
+                    &surface,
+                )
+            });
+            let block = col().children(rows);
+            let block = match edge {
+                Some(e) => block.child(e),
+                None => block,
+            };
+            match droppable {
+                true => drop_row(block, slot, select(true)),
+                false => block,
+            }
+        }
+    };
+    let selected = visible.iter().position(|&a| a as i32 == sel_abs);
+    let list = fresh_ui::Tree::windowed(
+        n,
+        {
+            let (item_keys, visible) = (item_keys.clone(), visible.clone());
+            move |i| fresh_ui::Key::Str(item_keys[visible[i]].clone().into())
+        },
+        {
+            let (nodes, item_keys, visible) = (nodes.clone(), item_keys.clone(), visible.clone());
+            move |i| {
+                let node = &nodes[visible[i]];
+                fresh_ui::widgets::TreeRow {
+                    depth: node.depth as usize,
+                    has_children: node.has_children,
+                    open: node.has_children && expanded.contains(&item_keys[visible[i]]),
+                }
+            }
+        },
+        block,
+    )
+    .list()
+    .row_heights({
+        let rows_of = rows_of.clone();
+        move |i| rows_of(i).min(u16::MAX as u32) as u16
+    })
+    // A card marks selection and hover in its own glyphs and bands, so the
+    // row under it keeps the panel's surface whatever its state.
+    .row_theme({
+        let plain = p.surface.clone();
+        move |_, _| plain.to_string()
+    })
+    .focusable(false)
+    .selection(selected)
+    .scrollbar_when(p.reveal)
+    .scrollbar_theme(bar_ink());
+    let node = keyed(fresh_ui::ComponentExt::node(list), state_key(key));
+    // **As wide as the panel, not as wide as its rows.** The rows
+    // arrive pre-rendered at the runtime's wrap width, so a window
+    // sized to its content stops where the text does — and the two
+    // things that belong at the panel's edge, the row band and the
+    // overlay scrollbar, stop with it.
+    // `Auto`, not `Pct(100)`: a percentage of an `Auto` column's
+    // incoming extent is the frame. The column's `Stretch` widens an
+    // `Auto` child to the width it settled on, which in the dock is
+    // the dock and in a box that hugs is the widest row.
+    let node = node.w(Sizing::Auto);
+    let node = pan_to_widget(node, p.slot, &tree_key);
+    match p.visible_rows {
+        Some(r) => node.h(Sizing::Cells(tree_rows(start_of(n), r))),
+        // Height only. `flex(1)` set both axes, and a flexible width
+        // on a column's cross axis is measured at the whole extent —
+        // frame-wide under an `Auto` box. The width stays `Auto`;
+        // the column stretches it.
+        None => node.h(Sizing::Flex(1)),
+    }
 }
 
 fn row_surface(st: fresh_ui::widgets::RowState, plain: &Ink) -> Ink {
@@ -813,6 +1915,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 surface: band.clone().unwrap_or_else(|| cx.surface.clone()),
                 states: cx.states,
                 h_pan: cx.h_pan,
+                projections: cx.projections,
                 focus_key: cx.focus_key.clone(),
                 hovered_key: cx.hovered_key.clone(),
                 hovered_item_key: cx.hovered_item_key.clone(),
@@ -829,6 +1932,9 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                         let n = node_in(c, w, &inner, site.across());
                         match crate::widgets::kinds::containers::predicts_block(c) {
                             true => n.w(Sizing::Cells(w)),
+                            // A field that fills its row takes what the
+                            // row's other children leave (R5).
+                            false if fills_row(c) => n.w(Sizing::Flex(1)),
                             false => n,
                         }
                     })
@@ -987,6 +2093,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 crate::widgets::WidgetEvent {
                     row_target: false,
                     context_click: false,
+                    drag_source: false,
                     widget_key: key.unwrap_or("").to_string(),
                     widget_kind: "number",
                     payload: serde_json::json!({}),
@@ -1107,6 +2214,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             indeterminate,
             label_first,
             label_width,
+            mnemonic,
             key,
         } => {
             let key = key.as_deref();
@@ -1134,6 +2242,10 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                         *label_width,
                         width as u32,
                     );
+                    let mut e = e;
+                    if let Some(m) = mnemonic {
+                        crate::widgets::apply_mnemonic(&mut e, label, m, is_focused);
+                    }
                     let end = e.text.len();
                     (e, (0, end))
                 }
@@ -1152,6 +2264,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 crate::widgets::WidgetEvent {
                     row_target: false,
                     context_click: false,
+                    drag_source: false,
                     widget_key: key.unwrap_or("").to_string(),
                     widget_kind: "toggle",
                     payload: serde_json::json!({ "checked": !checked }),
@@ -1204,6 +2317,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                         crate::widgets::WidgetEvent {
                             row_target: false,
                             context_click: false,
+                            drag_source: false,
                             widget_key: widget_key.clone(),
                             widget_kind: "radio",
                             payload: serde_json::json!({ "index": index }),
@@ -1282,6 +2396,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     crate::widgets::WidgetEvent {
                         row_target: false,
                         context_click: false,
+                        drag_source: false,
                         widget_key: key.unwrap_or("").to_string(),
                         widget_kind: "button",
                         payload: serde_json::json!({}),
@@ -1400,81 +2515,20 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             key,
             ..
         } if item_specs.is_empty() => {
-            use std::rc::Rc;
-            let n = items.len();
-            let rows = Rc::new(items.clone());
-            let keys = Rc::new(item_keys.clone());
-            let list_key = key.clone().unwrap_or_default();
-            let slot = cx.slot;
-            let sel = live_list_selection(cx, key, *selected_index, n);
-            let hit_keys = keys.clone();
-            let list = fresh_ui::List::windowed_stateful(
-                n,
-                {
-                    let keys = keys.clone();
-                    move |i| {
-                        fresh_ui::Key::Str(
-                            keys.get(i).cloned().unwrap_or_else(|| i.to_string()).into(),
-                        )
-                    }
-                },
-                {
-                    let rows = rows.clone();
-                    let surface = cx.surface.clone();
-                    move |i, st| entry_row(&rows[i], &row_surface(st, &surface))
-                },
-            )
-            // The panel's focus is the host's — the runtime resolves a focus
-            // key across every widget — so the list declines the ring and
-            // keeps its mouse, which is what that flag means since #3108.
-            .focusable(false)
-            .scrollbar_when(cx.scrollbar_reveal)
-            .scrollbar_theme(bar_ink())
-            .row_theme({
-                let plain = cx.surface.clone();
-                move |_, st| row_surface(st, &plain).to_string()
-            })
-            .on_activate_handler(Rc::new(move |i, e: &fresh_ui::Event| {
-                Some(UiMsg::Ui(super::msg::UiFact::WidgetHit {
-                    slot,
-                    event: crate::widgets::WidgetEvent {
-                        row_target: true,
-                        // **What the runtime's own row says** (`kinds/list.rs`
-                        // sets it too). It cost nothing while the probe
-                        // supplied the hit for a right press; now that the
-                        // tree is the only answer and the probe stands down
-                        // for a described panel, a row that does not declare
-                        // the capability raises no context menu at all.
-                        context_click: true,
-                        widget_key: hit_keys.get(i).cloned().unwrap_or_default(),
-                        widget_kind: "list",
-                        payload: serde_json::json!({
-                            "index": i,
-                            "key": hit_keys.get(i).cloned().unwrap_or_default(),
-                        }),
-                        event_type: "select",
-                        // A row's hit names the List that owns it: focus moves
-                        // there, and the arrows after a row click keep driving
-                        // the list's selection.
-                        owner_key: Some(list_key.clone()),
-                    },
-                    byte: None,
-                    clicks: e.clicks,
-                }))
-            }));
-            // **`-1` is a controlled empty selection, not "no opinion".** A
-            // `WidgetSpec::List` says which row is selected and says `-1` when
-            // none is — the settings `[+] Add new` sentinel is a one-row list
-            // that is only selected when the arrows are on it. Leaving the
-            // element to its own selection highlighted row zero, so the
-            // sentinel looked focused whether it was or not, and on a selected
-            // card the real row highlight was the same colour as the band it
-            // sat in.
-            let list = list.selection(match sel >= 0 {
-                true => Some(sel as usize),
-                false => None,
-            });
-            let node = keyed(fresh_ui::ComponentExt::node(list), state_key(key));
+            // **Built under a memo on what it reads**, so a frame in which
+            // none of it changed reconciles by identity and describes no row:
+            // the collections are compared as handles (`Same`), and a
+            // mutation is what makes new ones.
+            let props = ListRows {
+                items: Same(items.clone()),
+                keys: Same(item_keys.clone()),
+                sel: live_list_selection(cx, key, *selected_index, items.len()),
+                key: key.clone(),
+                slot: cx.slot,
+                surface: cx.surface.clone(),
+                reveal: cx.scrollbar_reveal,
+            };
+            let node = keyed(fresh_ui::memo(props, list_rows), state_key(key));
             match visible_rows {
                 Some(r) => node.h(Sizing::Cells(*r as u16)),
                 // Height only. `flex(1)` set both axes, and a flexible width
@@ -1593,7 +2647,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     .collect(),
             );
             let n = cards.len();
-            let keys = Rc::new(item_keys.clone());
+            let keys = item_keys.clone();
             let list_key = key.clone().unwrap_or_default();
             let slot = cx.slot;
             let hit_keys = keys.clone();
@@ -1601,11 +2655,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 n,
                 {
                     let keys = keys.clone();
-                    move |i| {
-                        fresh_ui::Key::Str(
-                            keys.get(i).cloned().unwrap_or_else(|| i.to_string()).into(),
-                        )
-                    }
+                    move |i| fresh_ui::Key::Str(keys[i].clone().into())
                 },
                 move |i| cards[i].clone(),
             )
@@ -1629,12 +2679,13 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 }
             })
             .on_activate_handler(Rc::new(move |i, e: &fresh_ui::Event| {
-                let item_key = hit_keys.get(i).cloned().unwrap_or_default();
+                let item_key = hit_keys[i].clone();
                 Some(UiMsg::Ui(super::msg::UiFact::WidgetHit {
                     slot,
                     event: crate::widgets::WidgetEvent {
                         row_target: true,
                         context_click: true,
+                        drag_source: false,
                         widget_key: item_key.clone(),
                         widget_kind: "list",
                         payload: serde_json::json!({
@@ -1668,18 +2719,21 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 None => node.h(Sizing::Flex(1)),
             }
         }
-        // **A tree is a flat list whose expansion belongs to the plugin.**
+        // **A tree is a flat list whose expansion belongs to the host's
+        // instance state.**
         //
         // `WidgetSpec::Tree` is not the library's `Tree`: it arrives already
-        // flattened, each node carrying a `depth` and a `has_children` flag,
-        // and `expanded_keys` comes down in the spec and goes back through
-        // `WidgetMutation`. The library's `Tree` builds its own nesting and
-        // owns `expanded` in element state, so it would fight the plugin for
-        // the one fact the plugin is authoritative for. What this is, is a
-        // controlled list of pre-rendered rows — `widgets::List`, again.
+        // flattened, each node carrying a `depth` and a `has_children` flag;
+        // its `expanded_keys` is a seed, and the live set is the widget's
+        // instance state, which the kind's handlers and `SetExpandedKeys`
+        // write. The library's `Tree` builds its own nesting and owns
+        // `expanded` in element state, so it would be a second owner of that
+        // one fact. What this is, is a controlled list of pre-rendered rows —
+        // `widgets::List`, again.
         //
-        // Which nodes are *visible* is the plugin's `expanded_keys` applied to
-        // the flat array, and `collect_visible_tree_indices` is that rule.
+        // Which nodes are *visible* is the resolved set ([`live_tree`])
+        // applied to the flat array, and `collect_visible_tree_indices` is
+        // that rule.
         // Reused rather than restated: an ancestor-open walk written twice is
         // two answers to "what is on screen".
         //
@@ -1713,172 +2767,38 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             indent_cols,
             item_height,
             card_borders,
+            toggle_on_click: _,
+            columns: _,
         } if *card_borders => {
-            let sel_abs = live_selection(cx, key, *selected_index);
-            let expanded: std::collections::HashSet<String> =
-                expanded_keys.iter().cloned().collect();
-            let visible = crate::widgets::collect_visible_tree_indices(nodes, item_keys, &expanded);
+            let crate::widgets::kinds::tree::Resolved {
+                selected: sel_abs,
+                expanded,
+            } = live_tree(cx, key, *selected_index, expanded_keys);
             let tree_key = key.clone().unwrap_or_default();
-            let h_pan = cx.h_pan.get(&tree_key).copied().unwrap_or(0);
-            let mut blocks: Vec<Chunk> = Vec::with_capacity(visible.len());
-            let mut at: u32 = 0;
-            let mut selected: Option<usize> = None;
-            for (i, &abs) in visible.iter().enumerate() {
-                let mut n = nodes[abs].clone();
-                n.text.normalize_widths();
-                for line in n.extra_lines.iter_mut() {
-                    line.normalize_widths();
-                }
-                let item_key = item_keys.get(abs).cloned().unwrap_or_default();
-                let open = n.has_children && !item_key.is_empty() && expanded.contains(&item_key);
-                let r = crate::widgets::render_tree_row(
-                    &n,
-                    open,
-                    *checkable,
-                    *item_height,
-                    true,
-                    width as u32,
-                    *indent_cols,
-                    h_pan,
-                );
-                let is_selected = abs as i32 == sel_abs;
-                if is_selected {
-                    selected = Some(i);
-                }
-                // A card marks selection in its glyphs; a folder header takes
-                // the band. Hover lights every row of the block, because the
-                // block selects as one unit and so must light as one — and
-                // selection outranks it.
-                let as_card = crate::widgets::render::tree_node_is_card(&n, *checkable);
-                // **In the dock, the selected card is the seamless tab.**
-                // There the card sits against a wall — `dock::grip_ink`'s
-                // divider, in the column's last cell — and the active session
-                // is the one mirrored in the editor beside it, so its card
-                // opens onto the editor instead of being boxed off from it
-                // (F.8). That is the whole marker, and it is made of glyphs:
-                // nothing here depends on a colour. Everywhere else there is
-                // no wall to open onto, so the heavy frame stays what
-                // selection looks like.
-                let tab = is_selected && as_card && matches!(cx.slot, Slot::Dock);
-                let hovered = !is_selected
-                    && !cx.hovered_item_key.is_empty()
-                    && cx.hovered_item_key == item_key;
-                let dress = |e: &mut TextPropertyEntry| {
-                    if is_selected {
-                        match (as_card, tab) {
-                            (true, true) => open_card_edge(e),
-                            (true, false) => crate::widgets::render::mark_list_card_selected(e),
-                            (false, _) => {
-                                let mut st = e.style.clone().unwrap_or_default();
-                                st.bg = Some(OverlayColorSpec::theme_key("ui.popup_selection_bg"));
-                                st.extend_to_line_end = true;
-                                e.style = Some(st);
-                            }
-                        }
-                    } else if hovered {
-                        crate::widgets::render::apply_hover_band(e);
-                    }
-                };
-                // The row's three targets differ only in what they fire and
-                // where they are; `row_target` is the difference between the
-                // body (a press anywhere on the row is its) and the two glyphs
-                // (a press inside their own bytes only). Where each one is is
-                // the range beside it in `hits`, not anything this states.
-                let select = |row_target: bool| crate::widgets::WidgetEvent {
-                    row_target,
-                    context_click: row_target,
-                    widget_key: tree_key.clone(),
-                    widget_kind: "tree",
-                    payload: serde_json::json!({ "index": abs, "key": item_key }),
-                    event_type: "select",
-                    owner_key: None,
-                };
-                let mut rows: Vec<Node<UiMsg>> = Vec::new();
-                let mut primary = r.entry.clone();
-                dress(&mut primary);
-                let end = primary.text.len();
-                let mut hits: Vec<((usize, usize), crate::widgets::WidgetEvent)> = Vec::new();
-                if let Some((a, b)) = r.disclosure_range {
-                    let mut h = select(false);
-                    h.event_type = "expand";
-                    h.payload =
-                        serde_json::json!({ "index": abs, "key": item_key, "expanded": !open });
-                    hits.push(((a, b), h));
-                }
-                if let Some((a, b)) = r.checkbox_range {
-                    let mut h = select(false);
-                    h.event_type = "toggle";
-                    h.payload = serde_json::json!({
-                        "index": abs,
-                        "key": item_key,
-                        "checked": !n.checked.unwrap_or(false),
-                    });
-                    hits.push(((a, b), h));
-                }
-                // The body starts after whatever prefix the glyphs took —
-                // the collector's own rule, so a press on the glyph is the
-                // glyph's and the rest of the row is the card's.
-                let body = match (r.checkbox_range, r.disclosure_range) {
-                    (Some((_, e)), _) => e + 1,
-                    (None, Some((_, e))) => e,
-                    (None, None) => 0,
-                };
-                if body < end {
-                    hits.push(((body, end), select(true)));
-                }
-                rows.push(entry_row_hits(&primary, cx.slot, &cx.surface, &hits));
-                for extra in r.extra_entries.iter() {
-                    let mut e = extra.clone();
-                    dress(&mut e);
-                    let b = e.text.len();
-                    rows.push(match b > 0 {
-                        true => entry_row_hit(&e, (0, b), cx.slot, &cx.surface, select(true)),
-                        false => entry_row(&e, &cx.surface),
-                    });
-                }
-                let h = rows.len() as u32;
-                let block = fresh_ui::Key::Str(
-                    match item_key.is_empty() {
-                        true => i.to_string(),
-                        false => item_key.clone(),
-                    }
-                    .into(),
-                );
-                blocks.push(Chunk {
-                    edge: tab.then(|| tab_scoop(block.clone(), at, h, &cx.surface)),
-                    key: block,
-                    start: at,
-                    rows,
-                });
-                at += h;
-            }
-            let node = keyed(
-                fresh_ui::ComponentExt::node(Scrolled {
-                    blocks: std::rc::Rc::new(blocks),
-                    selected,
-                    reveal: cx.scrollbar_reveal,
-                }),
-                state_key(key),
-            );
-            // **As wide as the panel, not as wide as its rows.** The rows
-            // arrive pre-rendered at the runtime's wrap width, so a window
-            // sized to its content stops where the text does — and the two
-            // things that belong at the panel's edge, the row band and the
-            // overlay scrollbar, stop with it.
-            // `Auto`, not `Pct(100)`: a percentage of an `Auto` column's
-            // incoming extent is the frame. The column's `Stretch` widens an
-            // `Auto` child to the width it settled on, which in the dock is
-            // the dock and in a box that hugs is the widest row.
-            let node = node.w(Sizing::Auto);
-            let node = pan_to_widget(node, cx.slot, &tree_key);
-            match visible_rows {
-                Some(r) => node.h(Sizing::Cells(tree_rows(at, *r))),
-                // Height only. `flex(1)` set both axes, and a flexible width
-                // on a column's cross axis is measured at the whole extent —
-                // frame-wide under an `Auto` box. The width stays `Auto`;
-                // the column stretches it.
-                None => node.h(Sizing::Flex(1)),
-            }
+            // The same two memos as the plain arm below: the owner's
+            // projection, and the subtree on everything it reads.
+            let (visible, expanded) = cx
+                .projections
+                .visible(&tree_key, nodes, item_keys, expanded);
+            let props = CardTreeRows {
+                nodes: Same(nodes.clone()),
+                keys: Same(item_keys.clone()),
+                visible: Same(visible),
+                expanded: Same(expanded),
+                sel_abs,
+                key: key.clone(),
+                h_pan: cx.h_pan.get(&tree_key).copied().unwrap_or(0),
+                slot: cx.slot,
+                checkable: *checkable,
+                indent_cols: *indent_cols,
+                item_height: *item_height,
+                surface: cx.surface.clone(),
+                width,
+                hovered_item_key: cx.hovered_item_key.clone(),
+                reveal: cx.scrollbar_reveal,
+                visible_rows: *visible_rows,
+            };
+            keyed(fresh_ui::memo(props, tree_rows_cards), rows_key(key))
         }
         WidgetSpec::Tree {
             nodes,
@@ -1891,164 +2811,39 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             indent_cols,
             item_height,
             card_borders,
+            toggle_on_click: _,
+            columns,
         } if !*card_borders => {
-            use std::rc::Rc;
-            let expanded: std::collections::HashSet<String> =
-                expanded_keys.iter().cloned().collect();
-            let visible = Rc::new(crate::widgets::collect_visible_tree_indices(
-                nodes, item_keys, &expanded,
-            ));
-            let nodes = Rc::new(nodes.clone());
-            let keys = Rc::new(item_keys.clone());
+            let crate::widgets::kinds::tree::Resolved {
+                selected: sel_abs,
+                expanded,
+            } = live_tree(cx, key, *selected_index, expanded_keys);
             let tree_key = key.clone().unwrap_or_default();
-            let h_pan = cx.h_pan.get(&tree_key).copied().unwrap_or(0);
-            let (slot, checkable, indent) = (cx.slot, *checkable, *indent_cols);
-            let surface = cx.surface.clone();
-            let sel_abs = live_selection(cx, key, *selected_index);
-            let n = visible.len();
-
-            let row_at = {
-                let (nodes, keys, visible) = (nodes.clone(), keys.clone(), visible.clone());
-                let tree_key = tree_key.clone();
-                move |i: usize, st: fresh_ui::widgets::RowState| -> Node<UiMsg> {
-                    let surface = row_surface(st, &surface);
-                    let abs = visible[i];
-                    let mut node = nodes[abs].clone();
-                    node.text.normalize_widths();
-                    let item_key = keys.get(abs).cloned().unwrap_or_default();
-                    let open =
-                        node.has_children && !item_key.is_empty() && expanded.contains(&item_key);
-                    let r = crate::widgets::render_tree_row(
-                        &node,
-                        open,
-                        checkable,
-                        1,
-                        false,
-                        width as u32,
-                        indent,
-                        h_pan,
-                    );
-                    let end = r.entry.text.len();
-                    let hit = |kind: &'static str,
-                               a: usize,
-                               b: usize,
-                               payload: serde_json::Value,
-                               row_target: bool| {
-                        (
-                            (a, b),
-                            crate::widgets::WidgetEvent {
-                                row_target,
-                                context_click: row_target,
-                                widget_key: tree_key.clone(),
-                                widget_kind: "tree",
-                                payload,
-                                event_type: kind,
-                                owner_key: None,
-                            },
-                        )
-                    };
-                    // Order is the collector's: the narrow targets are named
-                    // before the row-wide one, so a byte inside the glyph or
-                    // the box belongs to it rather than to `select`.
-                    let mut hits = Vec::new();
-                    if let Some((a, b)) = r.disclosure_range {
-                        hits.push(hit(
-                            "expand",
-                            a,
-                            b,
-                            serde_json::json!({
-                                "index": abs, "key": item_key, "expanded": !open,
-                            }),
-                            false,
-                        ));
-                    }
-                    if let Some((a, b)) = r.checkbox_range {
-                        hits.push(hit(
-                            "toggle",
-                            a,
-                            b,
-                            serde_json::json!({
-                                "index": abs,
-                                "key": item_key,
-                                "checked": !node.checked.unwrap_or(false),
-                            }),
-                            false,
-                        ));
-                    }
-                    hits.push(hit(
-                        "select",
-                        0,
-                        end,
-                        serde_json::json!({ "index": abs, "key": item_key }),
-                        true,
-                    ));
-                    let piece = entry_row_hits(&r.entry, slot, &surface, &hits);
-                    // **In the sidebar, the selected row wears the explorer's
-                    // `▌`** (design §5.1): a section's tree sits in the same
-                    // column as the file tree, and the two read as one family
-                    // when selection looks the same in both. The mark replaces
-                    // the row's first cell exactly as the explorer's caret
-                    // does, over the band the row already has, and only in
-                    // this slot — the dock's and a pane's trees keep the band
-                    // alone. The overlay carries no gesture, so a press on
-                    // that cell continues to the row's own `select` beneath.
-                    let selected = matches!(
-                        st,
-                        fresh_ui::widgets::RowState::Selected
-                            | fresh_ui::widgets::RowState::SelectedBlur
-                    );
-                    if selected && matches!(slot, Slot::Sidebar(_)) {
-                        let ink = surface.with_fg(Paint::key("editor.cursor")).to_string();
-                        fresh_ui::stack().h(Sizing::Cells(1)).children([
-                            piece,
-                            row()
-                                .h(Sizing::Cells(1))
-                                .children([fresh_ui::text("▌").theme(ink).w(Sizing::Cells(1))]),
-                        ])
-                    } else {
-                        piece
-                    }
-                }
+            // The projection is the owner's, kept until the collections or
+            // the expansion change; and the subtree is built under a memo on
+            // everything it reads, so a frame in which none of that moved
+            // walks no node and describes no row.
+            let (visible, expanded) = cx
+                .projections
+                .visible(&tree_key, nodes, item_keys, expanded);
+            let props = TreeRows {
+                nodes: Same(nodes.clone()),
+                keys: Same(item_keys.clone()),
+                visible: Same(visible),
+                expanded: Same(expanded),
+                sel_abs,
+                key: key.clone(),
+                h_pan: cx.h_pan.get(&tree_key).copied().unwrap_or(0),
+                slot: cx.slot,
+                checkable: *checkable,
+                indent: *indent_cols,
+                surface: cx.surface.clone(),
+                width,
+                columns: columns.clone(),
+                reveal: cx.scrollbar_reveal,
+                visible_rows: *visible_rows,
             };
-
-            let list = fresh_ui::List::windowed_stateful(
-                n,
-                {
-                    let (keys, visible) = (keys.clone(), visible.clone());
-                    move |i| {
-                        fresh_ui::Key::Str(
-                            keys.get(visible[i])
-                                .cloned()
-                                .unwrap_or_else(|| i.to_string())
-                                .into(),
-                        )
-                    }
-                },
-                row_at,
-            )
-            .focusable(false)
-            .scrollbar_when(cx.scrollbar_reveal)
-            .scrollbar_theme(bar_ink())
-            .row_theme({
-                let plain = cx.surface.clone();
-                move |_, st| row_surface(st, &plain).to_string()
-            });
-            // The spec's selection is an index into the *whole* array; the
-            // list's is into the visible window, which is the same array with
-            // the collapsed subtrees taken out.
-            // A selection the window does not contain is *no* selection here,
-            // not the element's own — see the `List` arm above.
-            let list = list.selection(visible.iter().position(|&a| a as i32 == sel_abs));
-            let node = keyed(fresh_ui::ComponentExt::node(list), state_key(key));
-            let node = pan_to_widget(node, slot, &tree_key);
-            match visible_rows {
-                Some(r) => node.h(Sizing::Cells(tree_rows(n as u32, *r))),
-                // Height only. `flex(1)` set both axes, and a flexible width
-                // on a column's cross axis is measured at the whole extent —
-                // frame-wide under an `Auto` box. The width stays `Auto`;
-                // the column stretches it.
-                None => node.h(Sizing::Flex(1)),
-            }
+            keyed(fresh_ui::memo(props, tree_rows_plain), rows_key(key))
         }
         // **A multi-line field's rows are built one at a time, from lines.**
         //
@@ -2059,10 +2854,10 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
         // per line, with the library's own bar, and the caret is what it
         // reveals.
         //
-        // **What made that cheap is that a text area does not wrap.**
-        // `render_text_area` splits the value on `\n` and pads or truncates
-        // each line to the field width, so the row for line `i` is a function
-        // of that line and of five facts resolved once for the whole value —
+        // **What made that cheap is that a text area wraps once, up front.**
+        // `render::text_area_geom` splits the value on `\n` and soft-wraps
+        // each line to the field width, so the row `i` is a function of its
+        // byte range and of five facts resolved once for the whole value —
         // width, focus, the selection in line coordinates, the caret's line,
         // and the placeholder. Those are `render::text_area_geom`, and
         // `render::text_area_row` is the row; the collector is built from the
@@ -2077,6 +2872,8 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
         // it away would be a different field.
         WidgetSpec::Text {
             rows,
+            min_rows,
+            max_rows,
             label,
             value,
             key,
@@ -2111,100 +2908,146 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 true => st.editor.flat_cursor_byte() as i32,
                 false => -1,
             };
-            let geom = std::rc::Rc::new(fmt::text_area_geom(
-                &doc,
-                caret_byte,
-                tx::selection_of(&st.editor, is_focused, (*sel_start, *sel_end)),
-                is_focused,
-                placeholder.as_deref(),
-                // A multi-line field takes the plugin's `field_width`
-                // verbatim — the rows fill the panel width themselves — and
-                // its label is its own row, so neither the form-column rule
-                // nor the gutter reserve applies. Called rather than restated
-                // for the same reason as everything else here.
-                tx::effective_text_field_width(
-                    *full_width,
-                    true,
-                    label,
+            let selection = tx::selection_of(&st.editor, is_focused, (*sel_start, *sel_end));
+            // **Wrapped at the width layout gives the box, every layout.** The
+            // rows are a fold of the value at a width, and the only width that
+            // is real is the one this node is laid out at — not the one the
+            // description arithmetic handed down, which a row sharing its
+            // width with a button, or a scrollbar gutter, makes a guess. So
+            // the block is built in a layout reader from its constraints; the
+            // description's `width` is only the fallback for an unbounded
+            // measure.
+            let (placeholder, label) = (placeholder.clone(), label.clone());
+            let (fw, fullw, gutter) = (*field_width, *full_width, cx.marker_gutter);
+            let (rows, min_rows, max_rows) = (*rows, *min_rows, *max_rows);
+            let widget_key = k.unwrap_or("").to_string();
+            let (slot, surface) = (cx.slot, cx.surface.clone());
+            let places = places_cursor(cx);
+            let block_caret = *block_caret;
+            let bar = cx.scrollbar_reveal;
+            let state_key = spec_state_key(spec);
+            let fallback_width = width;
+            // A box of a fixed row count knows its height before layout: say
+            // so, or the reader stretches to whatever it is offered (a tight
+            // constraint, a root). One that grows with its text is `Auto` —
+            // its content's height at the width it is laid out at.
+            let fixed_height =
+                (max_rows == 0).then(|| rows.max(1) as u16 + u16::from(!label.is_empty()));
+            let reader = fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
+                let max_w = info.constraints.max_w;
+                let width = match max_w > 0 && max_w < u16::MAX {
+                    true => max_w,
+                    false => fallback_width,
+                };
+                let geom = std::rc::Rc::new(fmt::text_area_geom(
+                    &doc,
+                    caret_byte,
+                    selection,
+                    is_focused,
+                    placeholder.as_deref(),
+                    // A multi-line field takes the plugin's `field_width`
+                    // verbatim — the rows fill the panel width themselves —
+                    // and its label is its own row, so neither the
+                    // form-column rule nor the gutter reserve applies.
+                    tx::effective_text_field_width(fullw, true, &label, width as u32, fw, gutter),
                     width as u32,
-                    *field_width,
-                    cx.marker_gutter,
-                ),
-                width as u32,
-            ));
-            // **The window is padded out, because the editing region is a
-            // block.** A field asked for six rows and given a two-line
-            // document draws four blank rows under them — `text_area_row`
-            // answers for a line past the end with a padded blank, which is
-            // what keeps the focused input-bg rectangle rectangular rather
-            // than the shape of the text in it.
-            let n = geom.rows().max(*rows as usize);
-            let head = usize::from(!label.is_empty());
-            // "Selected" here means "the line the caret is on", which is what
-            // the list reveals when it moves. That is the whole of the
-            // auto-clamp the collector did by hand with a stored offset.
-            let sel = is_focused.then(|| geom.cursor_line());
-            let list = fresh_ui::List::windowed(n, |i| fresh_ui::Key::Str(i.to_string().into()), {
-                let (doc, geom) = (doc.clone(), geom.clone());
-                let widget_key = k.unwrap_or("").to_string();
-                let (slot, surface) = (cx.slot, cx.surface.clone());
-                let places = places_cursor(cx);
-                let block_caret = *block_caret;
-                move |i| {
-                    let (mut e, caret) = fmt::text_area_row(&doc, &geom, i);
-                    // A modal surface paints the caret as a reversed cell in
-                    // the row itself — there is no hardware cursor over a
-                    // modal — and the tree's own marker still goes where
-                    // `row_pieces` puts it, which is what a non-modal
-                    // surface's cursor follows.
-                    if block_caret {
-                        if let Some(b) = caret {
-                            tx::push_block_caret_overlay(&mut e, b);
+                ));
+                // **How tall the editing region is.** `rows`, as the plugin
+                // said — or, for a box that grows with its text, as many rows
+                // as the value wraps to at this width, between `min_rows` and
+                // `max_rows`, past which it scrolls.
+                let height = tx::text_area_height(rows, min_rows, max_rows, geom.rows() as u32);
+                // **The window is padded out, because the editing region is a
+                // block.** A field asked for six rows and given a two-line
+                // document draws four blank rows under them — `text_area_row`
+                // answers for a line past the end with a padded blank, which
+                // is what keeps the focused input-bg rectangle rectangular
+                // rather than the shape of the text in it.
+                let n = geom.rows().max(height as usize);
+                // "Selected" here means "the row the caret is on". The list
+                // keeps it in view on *every* layout, not just the one after it
+                // moved (`List::follow_selection`) — at this width and this
+                // height, whichever frame they arrive on — and a wheel over the
+                // box wins until the caret next moves: the token is the caret's
+                // byte and the document's length, so typing, a paste or a caret
+                // key re-arms it.
+                let sel = is_focused.then(|| geom.cursor_line());
+                let token = ((caret_byte.max(0) as u64) << 32) ^ doc.len() as u64;
+                let list =
+                    fresh_ui::List::windowed(n, |i| fresh_ui::Key::Str(i.to_string().into()), {
+                        let (doc, geom) = (doc.clone(), geom.clone());
+                        let widget_key = widget_key.clone();
+                        let surface = surface.clone();
+                        move |i| {
+                            let (mut e, caret) = fmt::text_area_row(&doc, &geom, i);
+                            // A modal surface paints the caret as a reversed
+                            // cell in the row itself — there is no hardware
+                            // cursor over a modal — and the tree's own marker
+                            // still goes where `row_pieces` puts it, which is
+                            // what a non-modal surface's cursor follows.
+                            if block_caret {
+                                if let Some(b) = caret {
+                                    tx::push_block_caret_overlay(&mut e, b);
+                                }
+                            }
+                            // Clicking any row of the editing region focuses
+                            // the field — one hit per row, stated where the
+                            // row is.
+                            let mine: Vec<((usize, usize), crate::widgets::WidgetEvent)> =
+                                match widget_key.is_empty() {
+                                    true => Vec::new(),
+                                    false => vec![(
+                                        (0, e.text.len()),
+                                        crate::widgets::WidgetEvent {
+                                            row_target: false,
+                                            context_click: false,
+                                            drag_source: false,
+                                            widget_key: widget_key.clone(),
+                                            widget_kind: "text",
+                                            payload: serde_json::json!({}),
+                                            event_type: "focus",
+                                            owner_key: None,
+                                        },
+                                    )],
+                                };
+                            match mine.is_empty() && caret.is_none() {
+                                true => entry_row(&e, &surface),
+                                false => row_pieces(
+                                    &e,
+                                    slot,
+                                    &surface,
+                                    &mine,
+                                    caret,
+                                    Fill::ToRowEnd,
+                                    places,
+                                ),
+                            }
                         }
-                    }
-                    // Clicking any row of the editing region focuses the
-                    // field — the collector's one hit per row, stated where
-                    // the row is.
-                    let mine: Vec<((usize, usize), crate::widgets::WidgetEvent)> =
-                        match widget_key.is_empty() {
-                            true => Vec::new(),
-                            false => vec![(
-                                (0, e.text.len()),
-                                crate::widgets::WidgetEvent {
-                                    row_target: false,
-                                    context_click: false,
-                                    widget_key: widget_key.clone(),
-                                    widget_kind: "text",
-                                    payload: serde_json::json!({}),
-                                    event_type: "focus",
-                                    owner_key: None,
-                                },
-                            )],
-                        };
-                    match mine.is_empty() && caret.is_none() {
-                        true => entry_row(&e, &surface),
-                        false => {
-                            row_pieces(&e, slot, &surface, &mine, caret, Fill::ToRowEnd, places)
-                        }
+                    })
+                    .focusable(false)
+                    .scrollbar_when(bar)
+                    .scrollbar_theme(bar_ink())
+                    // The rows carry their own colours — a focused field paints
+                    // its own background band per row — so the list's row states
+                    // must not paint over them.
+                    .row_theme({
+                        let plain = surface.to_string();
+                        move |_, _| plain.clone()
+                    })
+                    .selection(sel)
+                    .follow_selection(token);
+                let body = keyed(fresh_ui::ComponentExt::node(list), state_key.clone())
+                    .h(Sizing::Cells(height as u16));
+                match label.is_empty() {
+                    true => body,
+                    false => {
+                        col().children([entry_row(&fmt::text_area_label(&label), &surface), body])
                     }
                 }
-            })
-            .focusable(false)
-            .scrollbar_when(cx.scrollbar_reveal)
-            .scrollbar_theme(bar_ink())
-            // The rows carry their own colours — a focused field paints its
-            // own background band per row — so the list's row states must not
-            // paint over them.
-            .row_theme({
-                let plain = cx.surface.to_string();
-                move |_, _| plain.clone()
             });
-            let list = list.selection(sel);
-            let body = keyed(fresh_ui::ComponentExt::node(list), spec_state_key(spec))
-                .h(Sizing::Cells(*rows as u16));
-            match head {
-                0 => body,
-                _ => col().children([entry_row(&fmt::text_area_label(label), &cx.surface), body]),
+            match fixed_height {
+                Some(h) => reader.h(Sizing::Cells(h)),
+                None => reader,
             }
         }
         // **A markdown document is a wrapped run in a viewport.** The whole
@@ -2250,24 +3093,30 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             if let (Some(k), Some(ed)) = (wk, editor) {
                 if cx.is_focused(Some(k)) {
                     let caret = ed.flat_cursor_byte().min(text_len);
-                    let (range, ink) = match ed.selection_flat_range() {
-                        Some((a, b)) if a != b => (
-                            a.min(b).min(text_len)..a.max(b).min(text_len),
-                            "ui.popup_selection_fg/ui.popup_selection_bg".to_string(),
-                        ),
-                        _ => {
-                            let next = doc.text[caret..]
-                                .chars()
-                                .next()
-                                .map(|c| caret + c.len_utf8())
-                                .unwrap_or(caret);
-                            (
-                                caret..next.min(text_len),
-                                cx.surface.clone().plus(Attrs::REVERSED).to_string(),
-                            )
+                    match ed.selection_flat_range() {
+                        Some((a, b)) if a != b => {
+                            run = run.selection_bytes(
+                                a.min(b).min(text_len)..a.max(b).min(text_len),
+                                "ui.popup_selection_fg/ui.popup_selection_bg",
+                            );
                         }
-                    };
-                    run = run.selection_bytes(range, ink);
+                        // **A caret, not a one-byte selection.** It was the
+                        // latter: the range from the caret to the next
+                        // character, washed reversed. A selection is the cells
+                        // its bytes are *drawn* in, and the byte at the end of
+                        // a rendered line is the `\n` the wrap dropped — drawn
+                        // nowhere — so the caret painted nothing at all and
+                        // vanished the moment a click or a drag put it there.
+                        // `block_caret_byte` is placed through the run's own
+                        // `cell_of`, which answers the trailing edge of a row
+                        // like every other position.
+                        _ => {
+                            run = run.block_caret_byte(
+                                caret,
+                                cx.surface.clone().plus(Attrs::REVERSED).to_string(),
+                            );
+                        }
+                    }
                 }
             }
             let body = match wk {
@@ -2412,6 +3261,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 crate::widgets::WidgetEvent {
                     row_target: false,
                     context_click: false,
+                    drag_source: false,
                     widget_key: widget_key.clone(),
                     widget_kind: "dropdown",
                     payload: serde_json::json!({}),
@@ -2422,10 +3272,13 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             if !st.open {
                 return trigger;
             }
+            // The list shows its *highlight*, which is not the value until
+            // it is committed; the shared pop-up list's window follows it on
+            // every layout (`popup_list::window`, inside `popup_of`).
             let popup = dd::popup_of(
                 options,
-                st.selected,
-                rendered.scroll_offset as u32,
+                st.highlight,
+                *scroll_offset,
                 &cx.hovered_popup_row,
                 &widget_key,
                 crate::widgets::kinds::dropdown::anchor_col(
@@ -2489,6 +3342,8 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             full_width,
             completions: _,
             completions_visible_rows,
+            min_rows: _,
+            max_rows: _,
             block_caret,
             sel_start,
             sel_end,
@@ -2498,6 +3353,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             // above owns that — so a one-row field renders as input chrome
             // whatever it says.
             markdown: _,
+            combo,
             key,
         } if *rows <= 1 => {
             use crate::widgets::kinds::text as tx;
@@ -2528,7 +3384,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             let label_s = label.clone();
             let placeholder_s = placeholder.clone();
             let key_s = key.map(|k| k.to_string());
-            let (fw, mvc, fullw, bc, sel, lw, la, gutter, w32) = (
+            let (fw, mvc, fullw, bc, sel, lw, la, gutter) = (
                 *field_width,
                 *max_visible_chars,
                 *full_width,
@@ -2537,9 +3393,8 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 *label_width,
                 cx.label_align,
                 cx.marker_gutter,
-                width as u32,
             );
-            let build_line = move |window: u32| {
+            let build_line = move |window: u32, w32: u32| {
                 tx::single_line(
                     &ed,
                     window,
@@ -2559,26 +3414,69 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 )
             };
             // Measured once, before the builder moves into the window: the
-            // value's column does not depend on the window.
-            let value_col = build_line(st.scroll).value_col;
+            // value's column does not depend on the window, and nor does where
+            // the field's `[…]` ends — the `]` is the row's last one.
+            let (value_col, field_end) = {
+                let probe = build_line(st.scroll, width as u32);
+                let text = &probe.entry.text;
+                let end = text
+                    .rfind(']')
+                    .map(|b| crate::primitives::display_width::str_width(&text[..b]) as u32 + 1);
+                (probe.value_col, end)
+            };
             // One press or none — an unkeyed field has none, because an event
             // with no widget to name could not say what it focused — spanning
             // the whole row, and the caret's marker rides in the same split:
             // the `block_caret` overlay is already on the entry, and this is
             // the *cell* the host drops a hardware cursor into.
-            let field = {
+            // **Where the list stands decides how it is framed.** Inside a
+            // `LabeledSection` (`site.escape` columns of chrome) it joins the
+            // section's frame: as wide as the section, its candidates lined up
+            // under the value. Anywhere else there is no frame to join, so it
+            // is a box of its own, drawn the way a dropdown's option list is:
+            // bordered, directly under the field and exactly as wide as its
+            // `[…]`, its candidates starting in the value's column — rather
+            // than a section-wide strip that ran past the dialog's edge.
+            let list_open = !st.completions.is_empty();
+            let field_start = value_col.saturating_sub(1);
+            let boxed = match (site.escape, field_end) {
+                (0, Some(end)) if end > field_start + 2 => Some(end - field_start),
+                _ => None,
+            };
+            // A combo field's arrow turns over while its list is up.
+            let combo = *combo;
+            let make_field = {
                 let (slot, surface) = (cx.slot, cx.surface.clone());
                 let places = places_cursor(cx);
-                windowed(
-                    state_key(&key.map(|k| k.to_string())),
-                    st.scroll,
-                    move |window| {
-                        let line = build_line(window);
+                let (state, seed) = (state_key(&key.map(|k| k.to_string())), st.scroll);
+                move |w32: u32| {
+                    let build_line = build_line.clone();
+                    let surface = surface.clone();
+                    windowed(state.clone(), seed, move |window| {
+                        let mut line = build_line(window, w32);
+                        let arrow = match combo {
+                            true => tx::mark_combo(&mut line, list_open),
+                            false => None,
+                        };
                         let next = line.scroll;
-                        let hits: Vec<((usize, usize), crate::widgets::WidgetEvent)> = line
-                            .event
+                        // A combo box's arrow is a press of its own — it toggles
+                        // the list rather than placing the caret — listed first
+                        // so it wins the cell over the row's `focus`.
+                        let toggle = arrow.zip(line.event.clone()).map(|(at, e)| {
+                            let toggle = crate::widgets::WidgetEvent {
+                                event_type: "combo_toggle",
+                                payload: serde_json::json!({}),
+                                ..e
+                            };
+                            (at, toggle)
+                        });
+                        let hits: Vec<((usize, usize), crate::widgets::WidgetEvent)> = toggle
                             .into_iter()
-                            .map(|event| ((0, line.entry.text.len()), event))
+                            .chain(
+                                line.event
+                                    .into_iter()
+                                    .map(|event| ((0, line.entry.text.len()), event)),
+                            )
                             .collect();
                         let node = match hits.is_empty() && line.caret.is_none() {
                             true => entry_row(&line.entry, &surface),
@@ -2593,20 +3491,46 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                             ),
                         };
                         (node, next)
-                    },
-                )
+                    })
+                }
             };
-            // The candidates line up under the value: its column is the
-            // row's to say, and where the float starts is the site's.
-            let lead = tx::completion_lead(value_col, site.escape as u32);
+            // **A field that fills its row is sized by layout** (R5): its
+            // value cell is as wide as what the row leaves it — beside a
+            // `Browse…` button, say — read from the width this node is laid
+            // out at, not guessed from the terminal's by the plugin. The row
+            // gives such a field the flexible share (`fills_row`).
+            let field = match fullw {
+                true => {
+                    let fallback = width as u32;
+                    fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
+                        let max_w = info.constraints.max_w;
+                        let w = match max_w > 0 && max_w < u16::MAX {
+                            true => max_w as u32,
+                            false => fallback,
+                        };
+                        make_field(w)
+                    })
+                }
+                false => make_field(width as u32),
+            };
+            let (frame, popup_cols, lead, float_x) = match boxed {
+                Some(cols) => (tx::CompletionFrame::Box, cols, 0, field_start as i16),
+                None => (
+                    tx::CompletionFrame::Section,
+                    width as u32,
+                    tx::completion_lead(value_col, site.escape as u32),
+                    -(site.escape as i16),
+                ),
+            };
             let Some(popup) = tx::completion_popup(
                 &st.completions,
                 *completions_visible_rows,
-                width as u32,
+                popup_cols,
                 st.completion_index,
                 st.completion_navigated,
                 st.completion_scroll,
                 lead,
+                frame,
             ) else {
                 return field;
             };
@@ -2628,25 +3552,62 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             // one frame — and its side walls and its scrollbar column live in
             // the row text itself (`render_completion_item_overlay`), not in a
             // `Draw::Border`. Wrapping it in a bordered box would draw a
-            // second frame around a frame. Nor does it take
-            // `Dismiss::OUTSIDE_POINTER`: a completion list is closed by
-            // Escape (`Text::on_key`) or by the plugin sending an empty list,
-            // never by a press landing elsewhere.
+            // second frame around a frame. Its placement and dismissal are
+            // the shared pop-up's, though — see the layer below.
             //
             // The rows are `panel_width + 4` wide because they re-add the
             // section chrome they paint over, so the float starts `escape`
             // columns left of the child — see [`Site::escape`].
             let ground = Ink::new(Paint::key(BASE_FG), Paint::key("ui.popup_bg")).to_string();
+            // Which rows are candidates: a section-joined list leads with its
+            // separator row; a box's rows are all candidates. A candidate row
+            // of a keyed field answers a press by accepting it
+            // (`completion_pick`), naming its absolute index.
+            let first_item = match frame {
+                tx::CompletionFrame::Section => 1,
+                tx::CompletionFrame::Box => 0,
+            };
+            let pick = |i: usize| -> Option<crate::widgets::WidgetEvent> {
+                let k = key.filter(|k| !k.is_empty())?;
+                let at = i.checked_sub(first_item)?;
+                (at < popup.visible as usize).then(|| crate::widgets::WidgetEvent {
+                    row_target: true,
+                    context_click: false,
+                    drag_source: false,
+                    widget_key: k.to_string(),
+                    widget_kind: "text",
+                    payload: serde_json::json!({ "index": popup.scroll as usize + at }),
+                    event_type: "completion_pick",
+                    owner_key: None,
+                })
+            };
+            let ground_ink = Ink::new(Paint::key(BASE_FG), Paint::key("ui.popup_bg"));
             let box_rows: Vec<Node<UiMsg>> = popup
                 .rows
                 .iter()
-                .map(|e| {
-                    row()
-                        .h(Sizing::Cells(1))
-                        .theme(ground.clone())
-                        .child(entry_row(e, &cx.surface))
+                .enumerate()
+                .map(|(i, e)| {
+                    let body = match pick(i) {
+                        Some(hit) => {
+                            entry_row_hit_boxed(e, (0, e.text.len()), cx.slot, &ground_ink, hit)
+                        }
+                        None => entry_row(e, &cx.surface),
+                    };
+                    row().h(Sizing::Cells(1)).theme(ground.clone()).child(body)
                 })
                 .collect();
+            // Section-joined rows carry their own walls; a box's walls are its
+            // node's border, in the same ink a dropdown's list takes.
+            let list_node = match frame {
+                tx::CompletionFrame::Section => col().children(box_rows),
+                tx::CompletionFrame::Box => col()
+                    .theme(
+                        Ink::new(Paint::key("ui.popup_border_fg"), Paint::key("ui.popup_bg"))
+                            .to_string(),
+                    )
+                    .border()
+                    .children(box_rows),
+            };
             // **Both halves take the wheel, because the runtime's rule was
             // "the popup's own box, or the field's".** `Text::on_wheel` reads
             // the notch as a statement about the candidate list wherever on
@@ -2655,17 +3616,36 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             // Wrapped separately rather than around the `stack`: the box is a
             // layer's child and is hit on a path of its own.
             let wheel_key = key.unwrap_or_default();
+            let slot = cx.slot;
             fresh_ui::stack().children([
                 wheel_to_widget(field, cx.slot, wheel_key),
+                // **The shared pop-up's placement and dismissal** — the same
+                // as a dropdown's list (`popup_layer`): directly under the
+                // field, where the section's bottom border is, or above it
+                // when the frame has no room below; and a press outside the
+                // list closes it (`UiFact::WidgetPopupDismiss`), as Escape
+                // does from the keyboard.
+                //
+                // **Except a press on the field itself.** Anchored on the
+                // field's own focus wrapper (the row it lays out in), the
+                // layer counts its field as its trigger rather than as
+                // outside: a press there is the field's — the caret moves, or
+                // the combo arrow toggles the list — and does not also close
+                // the list first, which left the arrow reopening a list the
+                // same press had just closed. An unkeyed field has no wrapper
+                // to name and keeps the parent.
                 fresh_ui::layer()
-                    .anchor(fresh_ui::Anchor::Parent)
-                    .place(fresh_ui::Place::Over)
-                    // Row 1 of the sub-render: directly under the input, where
-                    // the section's bottom border is.
-                    .offset(-(site.escape as i16), 1)
-                    .fit(fresh_ui::Fit::CLAMP)
+                    .anchor(match key.filter(|k| !k.is_empty()) {
+                        Some(k) => fresh_ui::Anchor::Node(widget_focus_key(k)),
+                        None => fresh_ui::Anchor::Parent,
+                    })
+                    .place(fresh_ui::Place::Below)
+                    .offset(float_x, 0)
+                    .fit(fresh_ui::Fit::FLIP.or(fresh_ui::Fit::CLAMP))
+                    .dismiss(fresh_ui::Dismiss::OUTSIDE_POINTER)
+                    .on_dismiss(move |_| UiMsg::Ui(super::msg::UiFact::WidgetPopupDismiss { slot }))
                     .child(float_route(
-                        wheel_to_widget(col().children(box_rows), cx.slot, wheel_key),
+                        wheel_to_widget(list_node, cx.slot, wheel_key),
                         cx.slot,
                     )),
             ])
@@ -2749,6 +3729,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                                 crate::widgets::WidgetEvent {
                                     row_target: false,
                                     context_click: false,
+                                    drag_source: false,
                                     widget_key: widget_key.clone(),
                                     widget_kind: "dual_list",
                                     payload: serde_json::json!({
@@ -2924,49 +3905,6 @@ fn tab_scoop(block: fresh_ui::Key, start: u32, rows: u32, surface: &Ink) -> Node
     .h(Sizing::Cells(0))
 }
 
-/// One addressable run of rows inside a [`Scrolled`]: a card tree's node, or
-/// a single line of a text area. `start` is where it begins in the content.
-struct Chunk {
-    key: fresh_ui::Key,
-    /// First row of this block within the whole tree's rows.
-    start: u32,
-    rows: Vec<Node<UiMsg>>,
-    /// What this block does to the column's right edge, if anything: the
-    /// dock's active card scoops the divider away across its own rows (see
-    /// [`tab_scoop`]). Out of flow, so it is not one of `rows` — the row
-    /// count is what `start` and the reveal are counted in.
-    edge: Option<Node<UiMsg>>,
-}
-
-#[derive(Default)]
-struct ScrolledState {
-    anchor: Option<std::rc::Rc<fresh_ui::behavior::Anchor>>,
-    revealed: fresh_ui::behavior::Cache<usize, ()>,
-}
-
-/// Rows in a window that owns its own scroll, revealing one of them.
-///
-/// **A component, for one reason: the reveal.** The runtime scrolled to keep
-/// the selection visible unless the user had scrolled by wheel, and it did
-/// that by writing an offset into the side table it also read. Here the
-/// offset is the viewport's, which is the whole point — so the only thing
-/// left to say is "put this row in the window", which is `Anchor::reveal`,
-/// and an anchor is registered at mount. The memo is what keeps the reveal a
-/// statement about the *selection moving* rather than about every build:
-/// asking on every one would fight the wheel, which is a statement about the
-/// window.
-///
-/// The scroll survives a rebuild because the element does, which is what
-/// retains it — no `scroll_offset` is carried anywhere.
-struct Scrolled {
-    blocks: std::rc::Rc<Vec<Chunk>>,
-    /// Which block is selected, if any.
-    selected: Option<usize>,
-    /// See [`Ctx::scrollbar_reveal`]. Carried rather than read from a context
-    /// because a component builds outside the one that described it.
-    reveal: Option<bool>,
-}
-
 /// **A fold the element owns**, for a builder that computes one while it
 /// renders.
 ///
@@ -3027,48 +3965,6 @@ fn windowed(
         build: std::rc::Rc::new(build),
     });
     keyed(n, key)
-}
-
-impl fresh_ui::Component<UiMsg> for Scrolled {
-    type State = ScrolledState;
-
-    fn init(&self, cx: &mut fresh_ui::InitCx<'_, UiMsg>) -> ScrolledState {
-        ScrolledState {
-            anchor: Some(cx.register(fresh_ui::behavior::Anchor::default())),
-            ..ScrolledState::default()
-        }
-    }
-
-    fn build(&self, s: &ScrolledState, _cx: &mut fresh_ui::BuildCx<'_, UiMsg>) -> Node<UiMsg> {
-        if let (Some(a), Some(i)) = (s.anchor.clone(), self.selected) {
-            if let Some(b) = self.blocks.get(i) {
-                let (start, rows) = (b.start, b.rows.len() as u32);
-                s.revealed.get_or(i, move || {
-                    // The last row first, then the first: the shortest move
-                    // that shows the end, then the one that shows the start,
-                    // so a block taller than the window anchors to its top —
-                    // which is the rule the runtime spelled with a `min`.
-                    a.reveal(start + rows.saturating_sub(1));
-                    a.reveal(start);
-                });
-            }
-        }
-        let mut content = col();
-        for b in self.blocks.iter() {
-            let block = col().key(b.key.clone()).children(b.rows.iter().cloned());
-            content = content.child(match b.edge.clone() {
-                Some(e) => block.child(e),
-                None => block,
-            });
-        }
-        let body = fresh_ui::viewport(content)
-            .scrollbar_when(self.reveal)
-            .scrollbar_theme(bar_ink());
-        match s.anchor.clone() {
-            Some(a) => body.anchor_to(a),
-            None => body,
-        }
-    }
 }
 
 /// Send a float's wheel and hover where the rows behind it would have sent
@@ -3288,6 +4184,7 @@ fn popup_layer(p: &crate::widgets::PanelPopup, cx: &Ctx<'_>) -> Node<UiMsg> {
                 crate::widgets::WidgetEvent {
                     row_target: true,
                     context_click: false,
+                    drag_source: false,
                     widget_key: p.widget_key.clone(),
                     widget_kind: "dropdown",
                     payload: serde_json::json!({ "index": idx }),
@@ -3345,6 +4242,56 @@ fn popup_layer(p: &crate::widgets::PanelPopup, cx: &Ctx<'_>) -> Node<UiMsg> {
         .dismiss(fresh_ui::Dismiss::OUTSIDE_POINTER.or(fresh_ui::Dismiss::ESCAPE))
         .on_dismiss(move |_| UiMsg::Ui(super::msg::UiFact::WidgetPopupDismiss { slot }))
         .child(box_node)
+}
+
+/// Whether a tree's rows take drops: it has a row that can be dragged
+/// (`TreeNode::draggable`), and so somewhere to drag it to.
+fn takes_drops(nodes: &[fresh_core::api::TreeNode]) -> bool {
+    nodes.iter().any(|n| n.draggable)
+}
+
+/// **A tree row that takes drops**: the row whole, under a drag lifted from a
+/// draggable row of its tree. It is a drop target by listening for
+/// `GestureKind::Drop` — the library finds it under the pointer while the
+/// drag holds the capture — and `row` is the row's own `select`, which is how
+/// the applier knows where the drag is and where it landed.
+///
+/// A compact row is tinted by its list, which takes the drag's hover as
+/// hover (`fresh_ui::GestureKind::DragEnter`). A card draws its hover band
+/// from the panel's hover memo instead, so coming onto the row writes that
+/// memo too, the way the pointer's own hover does.
+fn drop_row(n: Node<UiMsg>, slot: Slot, row: crate::widgets::WidgetEvent) -> Node<UiMsg> {
+    use fresh_ui::GestureKind;
+    use std::rc::Rc;
+    let (over, left, dropped) = (row.clone(), row.clone(), row);
+    fresh_ui::gesture(n)
+        .on(
+            GestureKind::DragEnter,
+            Rc::new(move |_: &fresh_ui::Event| {
+                Some(UiMsg::Ui(super::msg::UiFact::WidgetDragOver {
+                    slot,
+                    event: over.clone(),
+                }))
+            }),
+        )
+        .on(
+            GestureKind::DragLeave,
+            Rc::new(move |_: &fresh_ui::Event| {
+                Some(UiMsg::Ui(super::msg::UiFact::WidgetDragLeave {
+                    slot,
+                    event: left.clone(),
+                }))
+            }),
+        )
+        .on(
+            GestureKind::Drop,
+            Rc::new(move |_: &fresh_ui::Event| {
+                Some(UiMsg::Ui(super::msg::UiFact::WidgetDrop {
+                    slot,
+                    event: dropped.clone(),
+                }))
+            }),
+        )
 }
 
 /// Wrap a widget's node so a press on it delivers what that press means.
@@ -3416,20 +4363,45 @@ fn hit_node(
         std::rc::Rc::new(move |e: &fresh_ui::Event| match e.button {
             fresh_ui::MouseButton::Left => {
                 e.stop();
+                // A row that can raise a menu says where the press landed,
+                // as its right press does: a plugin that answers a click
+                // with a menu anchors it at the pointer, not at a guess.
+                let mut event = hit.clone();
+                if hit.context_click {
+                    if let Some(obj) = event.payload.as_object_mut() {
+                        obj.insert("col".to_string(), serde_json::json!(e.pos.x.max(0)));
+                        obj.insert("row".to_string(), serde_json::json!(e.pos.y.max(0)));
+                    }
+                }
+                // The library's answer, not a column of our own: only the
+                // shaping that drew the row knows where each character
+                // landed in it. See `UiFact::WidgetHit::byte`.
+                //
+                // `text_byte` is measured from the start of the piece the
+                // pointer is on, and the widget's breadcrumbs are measured
+                // from the start of its row, so the piece says where it
+                // began. For a hit drawn as one piece the two agree and
+                // this adds nothing; for a field whose caret split its row
+                // they do not.
+                let byte = e.text_byte.map(|b| piece_at + b);
+                // **A row that can be picked up acts on its release.** The
+                // press lifts it — the library holds the pointer for the drag
+                // and finds the row it is released on — and hands the press
+                // over whole, to be delivered as the click it was if the
+                // release comes back to this row.
+                if hit.drag_source {
+                    e.start_drag();
+                    return Some(UiMsg::Ui(super::msg::UiFact::WidgetDragStart {
+                        slot,
+                        event,
+                        byte,
+                        clicks: e.clicks,
+                    }));
+                }
                 Some(UiMsg::Ui(super::msg::UiFact::WidgetHit {
                     slot,
-                    event: hit.clone(),
-                    // The library's answer, not a column of our own: only the
-                    // shaping that drew the row knows where each character
-                    // landed in it. See `UiFact::WidgetHit::byte`.
-                    //
-                    // `text_byte` is measured from the start of the piece the
-                    // pointer is on, and the widget's breadcrumbs are measured
-                    // from the start of its row, so the piece says where it
-                    // began. For a hit drawn as one piece the two agree and
-                    // this adds nothing; for a field whose caret split its row
-                    // they do not.
-                    byte: e.text_byte.map(|b| piece_at + b),
+                    event,
+                    byte,
                     clicks: e.clicks,
                 }))
             }
@@ -3467,15 +4439,18 @@ fn hit_node(
 ///
 /// Only a background can extend: a fill paints spaces, and a foreground on a
 /// space is nothing. So this reports the ink of the last overlay that asks and
-/// carries one, and the row wears it — under its own runs, which paint over it
-/// exactly where they have glyphs.
+/// carries one — else the entry's own style, when that asks for the whole row
+/// (the dock's drop-target folder) — and the row wears it, under its own runs,
+/// which paint over it exactly where they have glyphs.
 fn extended_ground(entry: &TextPropertyEntry, base: &Ink) -> Option<Ink> {
+    let asks = |s: &&OverlayOptions| s.extend_to_line_end && s.bg.is_some();
     entry
         .inline_overlays
         .iter()
-        .filter(|o| o.style.extend_to_line_end && o.style.bg.is_some())
-        .next_back()
-        .map(|o| ink_of(&o.style, base))
+        .map(|o| &o.style)
+        .rfind(asks)
+        .or(entry.style.as_ref().filter(asks))
+        .map(|s| ink_of(s, base))
 }
 
 /// A button, built from its **naked label** and the classes that say what it
@@ -3583,8 +4558,7 @@ fn button_node(
     match [declared_hover, resting]
         .into_iter()
         .flatten()
-        .filter(|o| o.extend_to_line_end && o.bg.is_some())
-        .next_back()
+        .rfind(|o| o.extend_to_line_end && o.bg.is_some())
         .filter(|_| !disabled)
     {
         // `Auto` wide, not `Flex`: on a column's cross axis a flexible child
@@ -3724,6 +4698,22 @@ pub fn entry_row_hits(
     hits: &[((usize, usize), crate::widgets::WidgetEvent)],
 ) -> Node<UiMsg> {
     row_pieces(entry, slot, surface, hits, None, Fill::ToRowEnd, false)
+}
+
+/// Whether the widget `focus_key` names draws a caret that takes the hardware
+/// cursor while its surface holds the keyboard ([`places_cursor`]): a text
+/// field, or a text area that is not a markdown document — a document's caret
+/// is a block wash, not the terminal's cursor.
+///
+/// Asked by a surface that has a caret of its own to draw, so that it can
+/// leave the cursor to the focused control rather than race it for the cell
+/// (`splits::page_layers`, the page reader's caret).
+pub fn focus_places_cursor(spec: &WidgetSpec, focus_key: &str) -> bool {
+    !focus_key.is_empty()
+        && matches!(
+            crate::widgets::find_widget_by_key(spec, focus_key),
+            Some(WidgetSpec::Text { rows, markdown, .. }) if !(*rows > 1 && *markdown)
+        )
 }
 
 /// Whether a surface's caret marker places the hardware cursor: the surface
@@ -3907,7 +4897,13 @@ fn row_pieces(
             ));
         }
     }
-    row().h(Sizing::Cells(1)).children(kids)
+    // A row that asks for its ground to reach the end of the line wears it
+    // whole, as [`entry_row_elided`] does for a row with no hits.
+    let r = row().h(Sizing::Cells(1)).children(kids);
+    match extended_ground(entry, surface) {
+        Some(ink) => r.theme(ink.to_string()),
+        None => r,
+    }
 }
 
 /// The styled pieces of an entry, each with the byte range it covers.
@@ -4041,7 +5037,6 @@ fn ink_of(o: &OverlayOptions, under: &Ink) -> Ink {
 pub(crate) mod tests {
     use super::super::msg::UiFact;
     use super::*;
-    use fresh_core::api::HintEntry;
     use fresh_ui::{Size, Ui};
 
     const WIDTH: u16 = 40;
@@ -4060,6 +5055,7 @@ pub(crate) mod tests {
             slot: Slot::Floating,
             states: no_state(),
             h_pan: no_pan(),
+            projections: no_projections(),
             focus_key: String::new(),
             keyboard: true,
 
@@ -4085,13 +5081,6 @@ pub(crate) mod tests {
         tree_text(spec, &cx())
     }
 
-    fn hint(keys: &str, label: &str) -> HintEntry {
-        HintEntry {
-            keys: keys.into(),
-            label: label.into(),
-        }
-    }
-
     fn raw(text: &str) -> TextPropertyEntry {
         TextPropertyEntry::text(text)
     }
@@ -4099,31 +5088,6 @@ pub(crate) mod tests {
     fn col_of(children: Vec<WidgetSpec>) -> WidgetSpec {
         WidgetSpec::Col {
             children,
-            key: None,
-        }
-    }
-
-    /// A multi-line `Text` at a row budget, with no key and no state — the
-    /// spec is the whole of it, on both paths.
-    fn area(value: &str, rows: u32, label: &str) -> WidgetSpec {
-        WidgetSpec::Text {
-            value: value.into(),
-            cursor_byte: -1,
-            focused: false,
-            label: label.into(),
-            placeholder: None,
-            rows,
-            field_width: 0,
-            max_visible_chars: 0,
-            full_width: false,
-            completions: Vec::new(),
-            completions_visible_rows: 0,
-            block_caret: false,
-            sel_start: -1,
-            sel_end: -1,
-            label_width: 0,
-            read_only: false,
-            markdown: false,
             key: None,
         }
     }
@@ -4411,6 +5375,7 @@ pub(crate) mod tests {
             crate::widgets::WidgetEvent {
                 row_target: false,
                 context_click: false,
+                drag_source: false,
                 widget_key: key.into(),
                 widget_kind: kind,
                 payload,
@@ -4483,6 +5448,7 @@ pub(crate) mod tests {
             indeterminate: false,
             label_first,
             label_width: 0,
+            mnemonic: None,
             key: Some("t".into()),
         }
     }
@@ -4734,13 +5700,14 @@ pub(crate) mod tests {
     #[test]
     fn every_variant_is_covered() {
         let plain_list = WidgetSpec::List {
-            items: vec![raw("one")],
-            item_specs: Vec::new(),
-            item_keys: vec!["a".into()],
+            items: vec![raw("one")].into(),
+            item_specs: Vec::new().into(),
+            item_keys: vec!["a".into()].into(),
             selected_index: 0,
             visible_rows: Some(1),
             key: Some("l".into()),
             focusable: true,
+            type_ahead: false,
         };
         let multiline = |rows: u32| WidgetSpec::Text {
             value: "a\nb\nc".into(),
@@ -4754,12 +5721,15 @@ pub(crate) mod tests {
             full_width: false,
             completions: Vec::new(),
             completions_visible_rows: 0,
+            min_rows: 0,
+            max_rows: 0,
             block_caret: false,
             sel_start: -1,
             sel_end: -1,
             label_width: 0,
             read_only: false,
             markdown: false,
+            combo: false,
             key: Some("t2".into()),
         };
         for (what, spec) in [
@@ -4806,13 +5776,17 @@ pub(crate) mod tests {
 
     fn a_list(n: usize, selected: i32, visible: u32) -> WidgetSpec {
         WidgetSpec::List {
-            items: (0..n).map(|i| raw(&format!("row{i}"))).collect(),
-            item_specs: Vec::new(),
-            item_keys: (0..n).map(|i| format!("k{i}")).collect(),
+            items: (0..n)
+                .map(|i| raw(&format!("row{i}")))
+                .collect::<Vec<_>>()
+                .into(),
+            item_specs: Vec::new().into(),
+            item_keys: (0..n).map(|i| format!("k{i}")).collect::<Vec<_>>().into(),
             selected_index: selected,
             visible_rows: Some(visible),
             key: Some("l".into()),
             focusable: true,
+            type_ahead: false,
         }
     }
 
@@ -5062,9 +6036,13 @@ pub(crate) mod tests {
             text: raw(text),
             depth,
             has_children,
+            flush: false,
+            draggable: false,
             checked: None,
             extra_lines: Vec::new(),
             window_anchor: None,
+            cells: Vec::new(),
+            action: None,
         }
     }
 
@@ -5074,8 +6052,9 @@ pub(crate) mod tests {
                 tree_node("root", 0, true),
                 tree_node("child", 1, false),
                 tree_node("sibling", 0, false),
-            ],
-            item_keys: vec!["r".into(), "c".into(), "s".into()],
+            ]
+            .into(),
+            item_keys: vec!["r".into(), "c".into(), "s".into()].into(),
             selected_index: selected,
             visible_rows: Some(5),
             key: Some("tr".into()),
@@ -5083,14 +6062,17 @@ pub(crate) mod tests {
             checkable: false,
             item_height: 1,
             card_borders: false,
+            toggle_on_click: false,
+            columns: Vec::new(),
             indent_cols: 2,
         }
     }
 
-    /// **Expansion stays the plugin's.** A collapsed root hides its child; an
-    /// expanded one shows it. Nothing in the tree owns that — `expanded_keys`
-    /// arrives in the spec, and `collect_visible_tree_indices` is the same
-    /// rule the runtime applies, reused rather than restated.
+    /// **The seed is drawn until the host has a set of its own.** A collapsed
+    /// root hides its child; an expanded one shows it. With no instance state
+    /// the spec's `expanded_keys` is the answer, and
+    /// `collect_visible_tree_indices` is the same rule the runtime applies,
+    /// reused rather than restated.
     #[test]
     fn a_trees_visible_rows_are_the_plugins_expansion() {
         let collapsed = tree_text(&a_tree(&[], -1), &cx());
@@ -5105,6 +6087,80 @@ pub(crate) mod tests {
             open.iter().any(|r| r.contains("child")),
             "an expanded one shows it, got {open:?}"
         );
+    }
+
+    /// **Once the host holds a tree's expansion, the spec's is only a seed.**
+    ///
+    /// A disclosure click, →/← and `SetExpandedKeys` all write
+    /// `WidgetInstanceState::Tree` and none re-sends the spec, so a tree
+    /// drawn from the spec's `expanded_keys` shows the old shape while the
+    /// keys already walk the new one. Both ways, and for both arms — the
+    /// plain rows and the `card_borders` viewport.
+    #[test]
+    fn a_trees_drawn_expansion_is_the_hosts_once_it_has_one() {
+        fn with_expanded(keys: &[&str]) -> Ctx<'static> {
+            let mut states = std::collections::HashMap::new();
+            states.insert(
+                "tr".to_string(),
+                crate::widgets::WidgetInstanceState::Tree {
+                    selected_index: -1,
+                    expanded_keys: keys.iter().map(|k| k.to_string()).collect(),
+                },
+            );
+            Ctx {
+                states: Box::leak(Box::new(states)),
+                ..cx()
+            }
+        }
+        fn carded(spec: WidgetSpec) -> WidgetSpec {
+            match spec {
+                WidgetSpec::Tree {
+                    nodes,
+                    item_keys,
+                    selected_index,
+                    key,
+                    expanded_keys,
+                    checkable,
+                    indent_cols,
+                    toggle_on_click,
+                    columns,
+                    ..
+                } => WidgetSpec::Tree {
+                    nodes,
+                    item_keys,
+                    selected_index,
+                    visible_rows: Some(12),
+                    key,
+                    expanded_keys,
+                    checkable,
+                    indent_cols,
+                    item_height: 1,
+                    card_borders: true,
+                    toggle_on_click,
+                    columns,
+                },
+                other => other,
+            }
+        }
+        for (arm, spec_of) in [
+            ("plain", (|s| s) as fn(WidgetSpec) -> WidgetSpec),
+            ("card_borders", carded),
+        ] {
+            let opened = tree_text(&spec_of(a_tree(&[], -1)), &with_expanded(&["r"]));
+            assert!(
+                opened.iter().any(|r| r.contains("child")),
+                "{arm}: the host opened the root, the spec's seed did not: {opened:?}"
+            );
+            let shut = tree_text(&spec_of(a_tree(&["r"], -1)), &with_expanded(&[]));
+            assert!(
+                !shut.iter().any(|r| r.contains("child")),
+                "{arm}: the host shut the root the spec seeded open: {shut:?}"
+            );
+            assert!(
+                shut.iter().any(|r| r.contains("sibling")),
+                "{arm}: {shut:?}"
+            );
+        }
     }
 
     /// **In the sidebar, the selected row wears the explorer's `▌`** (design
@@ -5289,6 +6345,7 @@ pub(crate) mod tests {
         let hit = |kind: &'static str| crate::widgets::WidgetEvent {
             row_target: false,
             context_click: false,
+            drag_source: false,
             widget_key: "t".into(),
             widget_kind: "tree",
             payload: serde_json::json!({}),
@@ -5661,32 +6718,6 @@ pub(crate) mod tests {
         )
     }
 
-    /// Every line the layers paint, grouped by row the way [`rows_of`] groups
-    /// the in-flow half.
-    fn layer_rows(ui: &Ui<UiMsg>) -> Vec<String> {
-        let mut pieces: Vec<(i32, i32, String)> = Vec::new();
-        for item in ui.spec().layers() {
-            if let fresh_ui::Draw::Lines(lines) = &item.draw {
-                for (i, l) in lines.iter().enumerate() {
-                    pieces.push((item.rect.y + i as i32, item.rect.x, l.to_string()));
-                }
-            }
-        }
-        pieces.sort_by_key(|(y, x, _)| (*y, *x));
-        let mut out: Vec<String> = Vec::new();
-        let mut at: Option<i32> = None;
-        for (y, _, s) in pieces {
-            match at {
-                Some(prev) if prev == y => out.last_mut().unwrap().push_str(&s),
-                _ => {
-                    out.push(s);
-                    at = Some(y);
-                }
-            }
-        }
-        out
-    }
-
     fn facts(got: fresh_ui::Dispatch<UiMsg>) -> Vec<UiFact> {
         got.msgs
             .into_iter()
@@ -5889,13 +6920,17 @@ pub(crate) mod tests {
 
     fn card_list(n: usize, selected: i32, visible: u32) -> WidgetSpec {
         WidgetSpec::List {
-            items: Vec::new(),
-            item_specs: (0..n).map(|i| card(&format!("card{i}"))).collect(),
-            item_keys: (0..n).map(|i| format!("c{i}")).collect(),
+            items: Vec::new().into(),
+            item_specs: (0..n)
+                .map(|i| card(&format!("card{i}")))
+                .collect::<Vec<_>>()
+                .into(),
+            item_keys: (0..n).map(|i| format!("c{i}")).collect::<Vec<_>>().into(),
             selected_index: selected,
             visible_rows: Some(visible),
             key: Some("cards".into()),
             focusable: true,
+            type_ahead: false,
         }
     }
 
@@ -5950,13 +6985,14 @@ pub(crate) mod tests {
     #[test]
     fn an_uneven_card_lists_band_is_the_tallest_and_a_short_card_keeps_its_own_box() {
         let spec = WidgetSpec::List {
-            items: Vec::new(),
-            item_specs: vec![card_of(1), card_of(3), card_of(1)],
-            item_keys: vec!["c0".into(), "c1".into(), "c2".into()],
+            items: Vec::new().into(),
+            item_specs: vec![card_of(1), card_of(3), card_of(1)].into(),
+            item_keys: vec!["c0".into(), "c1".into(), "c2".into()].into(),
             selected_index: -1,
             visible_rows: Some(18),
             key: Some("cards".into()),
             focusable: true,
+            type_ahead: false,
         };
         let mut ui: Ui<UiMsg> = Ui::new();
         ui.frame(node(&spec, WIDTH, &cx()), Size::new(WIDTH, 24));
@@ -6212,12 +7248,17 @@ pub(crate) mod tests {
                     text: raw(&format!("session {i}")),
                     depth: 0,
                     has_children: false,
+                    flush: false,
+                    draggable: false,
                     checked: None,
                     extra_lines: vec![raw(&format!("branch-{i}")), raw("2 files")],
                     window_anchor: None,
+                    cells: Vec::new(),
+                    action: None,
                 })
-                .collect(),
-            item_keys: (0..n).map(|i| format!("s{i}")).collect(),
+                .collect::<Vec<_>>()
+                .into(),
+            item_keys: (0..n).map(|i| format!("s{i}")).collect::<Vec<_>>().into(),
             selected_index: selected,
             visible_rows: Some(visible),
             key: Some("sessions".into()),
@@ -6226,6 +7267,8 @@ pub(crate) mod tests {
             indent_cols: 2,
             item_height: 3,
             card_borders: true,
+            toggle_on_click: false,
+            columns: Vec::new(),
         }
     }
 
@@ -6460,12 +7503,15 @@ pub(crate) mod tests {
             full_width: false,
             completions: Vec::new(),
             completions_visible_rows: 0,
+            min_rows: 0,
+            max_rows: 0,
             block_caret: false,
             sel_start: -1,
             sel_end: -1,
             label_width: 0,
             read_only: false,
             markdown: false,
+            combo: false,
             key: Some("field".into()),
         }
     }
@@ -6726,7 +7772,6 @@ pub(crate) mod tests {
                 completion_selected_index: selected,
                 completion_scroll_offset: scroll,
                 completion_navigated: navigated,
-                user_scrolled: false,
             },
         );
         m
@@ -6880,12 +7925,15 @@ pub(crate) mod tests {
             full_width: false,
             completions: Vec::new(),
             completions_visible_rows: 0,
+            min_rows: 0,
+            max_rows: 0,
             block_caret: false,
             sel_start: -1,
             sel_end: -1,
             label_width: 0,
             read_only: false,
             markdown: false,
+            combo: false,
             key: Some("doc".into()),
         }
     }
@@ -6913,12 +7961,15 @@ pub(crate) mod tests {
             full_width: false,
             completions: Vec::new(),
             completions_visible_rows: 0,
+            min_rows: 0,
+            max_rows: 0,
             block_caret: false,
             sel_start: -1,
             sel_end: -1,
             label_width: 0,
             read_only: false,
             markdown: false,
+            combo: false,
             key: Some("f".into()),
         };
         let mut ui: Ui<UiMsg> = Ui::new();

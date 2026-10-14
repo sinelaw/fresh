@@ -57,6 +57,21 @@ impl Editor {
             let Some(buffer) = self.widget_registry.get(&key).and_then(|p| p.buffer_id) else {
                 continue;
             };
+            // Only a plugin-composed buffer is the panel's to report from. A
+            // panel may also be drawn over a buffer that is not — the
+            // Orchestrator describes a building workspace's page by mounting
+            // one on the placeholder window's hidden seed buffer — and there
+            // the tree is the whole of what the pane shows: the buffer's text
+            // is nobody's to rewrite, and a caret seated from the panel's rows
+            // would point into text that is not there (#3406).
+            let composed = self
+                .active_window()
+                .buffer_metadata
+                .get(&buffer)
+                .is_some_and(|meta| meta.is_virtual());
+            if !composed {
+                continue;
+            }
             // The panel's own subtree, resolved the way every other by-key
             // read into a panel is — a buffer group's inner panes share the
             // outer leaf, so the leaf alone does not name the panel.
@@ -100,7 +115,8 @@ impl Editor {
         // there, so its view has nothing to scroll sideways to; the caret
         // below can sit at the end of a full row, and cursor-following would
         // otherwise drag the whole panel left by a column.
-        self.pin_widget_panel_horizontal_scroll(buffer);
+        self.active_window_mut()
+            .pin_widget_panel_horizontal_scroll(buffer);
         // **A page's cursor is the reader's**, seated by `move_page_reader`
         // from the reading position the caret marker is drawn *from*; seating
         // it here again would only round-trip that position through the row
@@ -138,13 +154,11 @@ impl Editor {
         let Some(byte) = byte else {
             return;
         };
-        for vs in window
-            .split_view_states_mut()
-            .expect("active window must have a populated split layout")
-            .values_mut()
-        {
-            if vs.buffer_state(buffer).is_some() {
-                vs.cursors.primary_mut().position = byte;
+        // `buffer`'s own caret in every pane keeping one — not the caret of
+        // whatever buffer the pane has as its tab.
+        for vs in window.split_view_states_mut().values_mut() {
+            if let Some(view) = vs.buffer_state_mut(buffer) {
+                view.cursors.primary_mut().position = byte;
             }
         }
     }

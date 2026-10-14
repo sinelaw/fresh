@@ -29,7 +29,8 @@ use unicode_segmentation::UnicodeSegmentation;
 struct CursorLineInfo {
     content: String,
     length: usize,
-    pane_width: usize,
+    /// How many columns of text the focused pane shows beside its gutter.
+    text_width: usize,
 }
 
 /// Direction for cursor movement
@@ -253,34 +254,69 @@ impl crate::app::window::Window {
             .map(|(_, vs)| vs)
             .expect("window must have a populated split layout")
             .get(&split_id)
-            .map(|vs| vs.viewport.height.saturating_sub(COMPOSITE_HEADER_HEIGHT) as usize)
+            .map(|vs| {
+                vs.buffer_tab_state()
+                    .viewport
+                    .height
+                    .saturating_sub(COMPOSITE_HEADER_HEIGHT) as usize
+            })
             .unwrap_or(DEFAULT_VIEWPORT_HEIGHT)
     }
 
+    /// The 0-indexed source line a composite (diff) view's cursor is on in
+    /// its focused pane, or `None` when `buffer_id` has no composite view in
+    /// `split_id`. A row with no line in the focused pane (padding opposite
+    /// an insertion) reports its alignment row.
+    pub(crate) fn composite_cursor_line(
+        &self,
+        split_id: LeafId,
+        buffer_id: BufferId,
+    ) -> Option<usize> {
+        let vs = self.composite_view_states.get(&(split_id, buffer_id))?;
+        let composite = self.composite_buffers.get(&buffer_id)?;
+        Some(
+            composite
+                .alignment
+                .get_row(vs.cursor_row)
+                .and_then(|row| row.get_pane_line(vs.focused_pane))
+                .map_or(vs.cursor_row, |line_ref| line_ref.line),
+        )
+    }
+
+    /// The 0-indexed line of the primary cursor of `buffer_id` in `split_id`:
+    /// the one statement of what the status bar's `Ln`, Goto Line's relative
+    /// targets and a plugin's `getCursorLine()` report.
+    ///
+    /// Derived from the cursor on every call. It used to be a per-buffer
+    /// cache that every cursor placement had to refresh; the ones that did
+    /// not — a restore, a jump, a file shown in a second window — left the
+    /// status bar on the wrong line (#2301, #3167, #3397). A cache per
+    /// buffer could not be right anyway once two windows show the same file
+    /// with their cursors in different places.
+    pub(crate) fn primary_cursor_line(&self, split_id: LeafId, buffer_id: BufferId) -> usize {
+        if let Some(line) = self.composite_cursor_line(split_id, buffer_id) {
+            return line;
+        }
+        let Some(state) = self.buffers.get(&buffer_id) else {
+            return 0;
+        };
+        let position = self
+            .split_view_states()
+            .get(&split_id)
+            .map_or(0, |vs| vs.buffer_tab_state().cursors.primary().position);
+        state.line_of_position(position)
+    }
+
     /// Mirror the composite view's cursor row/column back onto the
-    /// underlying buffer's `EditorState` and the active split's view
-    /// state. Called from hunk-navigation handlers so the status-bar
-    /// `Ln/Col` reflects the new alignment row instead of stale
-    /// pre-jump data.
+    /// active split's view state. Called from hunk-navigation handlers so
+    /// the status-bar `Col` reflects the new alignment row instead of stale
+    /// pre-jump data; its `Ln` is derived from the composite view state
+    /// itself (see [`Self::composite_cursor_line`]).
     fn sync_editor_cursor_from_composite(&mut self, split_id: LeafId, buffer_id: BufferId) {
-        let (cursor_row, cursor_column, focused_pane) = self
+        let cursor_column = self
             .composite_view_states
             .get(&(split_id, buffer_id))
-            .map(|vs| (vs.cursor_row, vs.cursor_column, vs.focused_pane))
-            .unwrap_or((0, 0, 0));
-
-        let display_line = self
-            .composite_buffers
-            .get(&buffer_id)
-            .and_then(|composite| composite.alignment.get_row(cursor_row))
-            .and_then(|row| row.get_pane_line(focused_pane))
-            .map(|line_ref| line_ref.line)
-            .unwrap_or(cursor_row);
-
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
-            state.primary_cursor_line_number =
-                crate::model::buffer::LineNumber::Absolute(display_line);
-        }
+            .map_or(0, |vs| vs.cursor_column);
 
         // Write the cursor column into the same leaf the composite is keyed
         // under (`split_id`), not a recomputed `active_split()` — for the
@@ -288,7 +324,11 @@ impl crate::app::window::Window {
         // land on the wrong leaf's view state.
         if let Some((_, vs_map)) = self.buffers.splits_mut() {
             if let Some(view_state) = vs_map.get_mut(&split_id) {
-                view_state.cursors.primary_mut().position = cursor_column;
+                view_state
+                    .buffer_tab_state_mut()
+                    .cursors
+                    .primary_mut()
+                    .position = cursor_column;
             }
         }
     }
@@ -430,17 +470,6 @@ impl crate::app::window::Window {
         self.sync_editor_cursor_from_composite(split_id, buffer_id);
         true
     }
-
-    /// Scroll a composite-buffer view to absolute row `row`, clamped.
-    pub fn composite_scroll_to(&mut self, split_id: LeafId, buffer_id: BufferId, row: usize) {
-        if let (Some(composite), Some(view_state)) = (
-            self.composite_buffers.get(&buffer_id),
-            self.composite_view_states.get_mut(&(split_id, buffer_id)),
-        ) {
-            let max_row = composite.row_count().saturating_sub(1);
-            view_state.set_scroll_row(row, max_row);
-        }
-    }
 }
 
 /// Fields of a `PluginCommand::CreateCompositeBuffer`, grouped so
@@ -475,13 +504,7 @@ impl Editor {
         // Which leaves, not where. This used to ask the split manager for
         // rectangles in a box it made up — the whole terminal, which is not
         // the box the grid is laid out in — and then dropped them.
-        let visible = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .visible_leaves();
+        let visible = self.active_window().split_manager().visible_leaves();
 
         for (split_id, buffer_id) in &visible {
             // Only process composite buffers
@@ -507,34 +530,6 @@ impl Editor {
     // methods below stay on `impl Editor` because they read editor-global
     // state (`terminal_width`/`height`, plugin manager, status messages)
     // alongside their window-scoped work.
-
-    /// Get or create composite view state for a split
-    pub fn get_composite_view_state(
-        &mut self,
-        split_id: LeafId,
-        buffer_id: BufferId,
-    ) -> Option<&mut CompositeViewState> {
-        if !self
-            .active_window()
-            .composite_buffers
-            .contains_key(&buffer_id)
-        {
-            return None;
-        }
-
-        let pane_count = self
-            .active_window()
-            .composite_buffers
-            .get(&buffer_id)?
-            .pane_count();
-
-        Some(
-            self.active_window_mut()
-                .composite_view_states
-                .entry((split_id, buffer_id))
-                .or_insert_with(|| CompositeViewState::new(buffer_id, pane_count)),
-        )
-    }
 
     /// Create a new composite buffer
     ///
@@ -651,22 +646,27 @@ impl Editor {
                 })
                 .unwrap_or_default();
             let length = content.graphemes(true).count();
-            let pane_width = view_state
-                .pane_widths
-                .get(view_state.focused_pane)
-                .copied()
-                .unwrap_or(40) as usize;
+            // The panes are laid out across the pane's content, which is the
+            // tree's rectangle; before the first layout there is no width to
+            // scroll within, and nothing scrolls.
+            let text_width = self
+                .pane_content_rect(split_id)
+                .map(|rect| {
+                    crate::view::composite_view::PaneLayout::new(composite, rect.width)
+                        .text_width(view_state.focused_pane)
+                })
+                .unwrap_or(0);
 
             CursorLineInfo {
                 content,
                 length,
-                pane_width,
+                text_width,
             }
         } else {
             CursorLineInfo {
                 content: String::new(),
                 length: 0,
-                pane_width: 40,
+                text_width: 0,
             }
         }
     }
@@ -714,7 +714,7 @@ impl Editor {
                 }
                 CursorMovement::Right => {
                     if view_state.cursor_column < line_info.length {
-                        view_state.move_cursor_right(line_info.length, line_info.pane_width);
+                        view_state.move_cursor_right(line_info.length, line_info.text_width);
                     } else if view_state.cursor_row < max_row {
                         if let Some(composite) = composite {
                             wrap_cursor_to_next_content_row(
@@ -730,7 +730,7 @@ impl Editor {
                     view_state.move_cursor_to_line_start();
                 }
                 CursorMovement::LineEnd => {
-                    view_state.move_cursor_to_line_end(line_info.length, line_info.pane_width);
+                    view_state.move_cursor_to_line_end(line_info.length, line_info.text_width);
                 }
                 CursorMovement::WordLeft => {
                     let new_col =
@@ -738,17 +738,7 @@ impl Editor {
                     if new_col < view_state.cursor_column {
                         view_state.cursor_column = new_col;
                         view_state.sticky_column = new_col;
-                        // Scroll all panes left if the cursor moved off-screen.
-                        let current_left = view_state
-                            .pane_viewports
-                            .get(view_state.focused_pane)
-                            .map(|v| v.left_column)
-                            .unwrap_or(0);
-                        if view_state.cursor_column < current_left {
-                            for viewport in &mut view_state.pane_viewports {
-                                viewport.left_column = view_state.cursor_column;
-                            }
-                        }
+                        view_state.reveal_cursor_column(line_info.text_width);
                     } else if view_state.cursor_row > 0 {
                         if let Some(composite) = composite {
                             wrapped_to_new_line =
@@ -765,7 +755,7 @@ impl Editor {
                     if new_col > view_state.cursor_column {
                         view_state.cursor_column = new_col;
                         view_state.sticky_column = new_col;
-                        scroll_panes_right_to_cursor(view_state, line_info.pane_width);
+                        view_state.reveal_cursor_column(line_info.text_width);
                     } else if view_state.cursor_row < max_row {
                         if let Some(composite) = composite {
                             wrap_cursor_to_next_content_row(
@@ -786,7 +776,7 @@ impl Editor {
                     if new_col > view_state.cursor_column {
                         view_state.cursor_column = new_col;
                         view_state.sticky_column = new_col;
-                        scroll_panes_right_to_cursor(view_state, line_info.pane_width);
+                        view_state.reveal_cursor_column(line_info.text_width);
                     } else if view_state.cursor_row < max_row {
                         if let Some(composite) = composite {
                             wrap_cursor_to_next_content_row(
@@ -820,16 +810,7 @@ impl Editor {
                     );
                     view_state.cursor_column = new_line_info.length;
                     view_state.sticky_column = new_line_info.length;
-                    // Scroll ALL panes horizontally to show cursor at end of line
-                    let visible_width = new_line_info.pane_width.saturating_sub(4);
-                    if visible_width > 0 && view_state.cursor_column >= visible_width {
-                        let new_left = view_state
-                            .cursor_column
-                            .saturating_sub(visible_width.saturating_sub(1));
-                        for viewport in &mut view_state.pane_viewports {
-                            viewport.left_column = new_left;
-                        }
-                    }
+                    view_state.reveal_cursor_column(new_line_info.text_width);
                 } else {
                     view_state.clamp_cursor_to_line(new_line_info.length);
                 }
@@ -1326,56 +1307,32 @@ impl Editor {
         buffer_id: BufferId,
         content_rect: ratatui::layout::Rect,
     ) -> AnyhowResult<()> {
-        // Calculate which pane was clicked based on x coordinate
-        let pane_idx = if let Some(view_state) = self
+        // Which pane, and where in it: the painter's layout, built from the
+        // same two inputs it was built from, rather than read back from it.
+        let layout = self
             .active_window()
-            .composite_view_states
-            .get(&(split_id, buffer_id))
-        {
-            let mut x = content_rect.x;
-            let mut found_pane = 0;
-            for (i, &width) in view_state.pane_widths.iter().enumerate() {
-                if col >= x && col < x + width {
-                    found_pane = i;
-                    break;
-                }
-                x += width + 1; // +1 for separator
-            }
-            found_pane
-        } else {
-            0
-        };
+            .composite_buffers
+            .get(&buffer_id)
+            .map(|c| crate::view::composite_view::PaneLayout::new(c, content_rect.width));
+        let x = col.saturating_sub(content_rect.x);
+        let pane_idx = layout.as_ref().map_or(0, |l| l.pane_at(x));
+        let pane_start_x = content_rect.x + layout.as_ref().map_or(0, |l| l.pane_x(pane_idx));
 
         // Calculate the clicked row (relative to scroll position)
         // Subtract 1 for the header row ("OLD (HEAD)" / "NEW (Working)")
         let content_row = row.saturating_sub(content_rect.y).saturating_sub(1) as usize;
 
         // Calculate column within the pane (accounting for gutter and horizontal scroll)
-        let (pane_start_x, left_column) = if let Some(view_state) = self
+        let left_column = self
             .active_window()
             .composite_view_states
             .get(&(split_id, buffer_id))
-        {
-            let mut x = content_rect.x;
-            for (i, &width) in view_state.pane_widths.iter().enumerate() {
-                if i == pane_idx {
-                    break;
-                }
-                x += width + 1;
-            }
-            let left_col = view_state
-                .pane_viewports
-                .get(pane_idx)
-                .map(|vp| vp.left_column)
-                .unwrap_or(0);
-            (x, left_col)
-        } else {
-            (content_rect.x, 0)
-        };
-        let gutter_width = 4; // Line number width
+            .and_then(|vs| vs.pane_viewports.get(pane_idx))
+            .map_or(0, |vp| vp.left_column);
         let visual_col = col
             .saturating_sub(pane_start_x)
-            .saturating_sub(gutter_width) as usize;
+            .saturating_sub(crate::view::composite_view::PANE_GUTTER_WIDTH)
+            as usize;
         // Convert visual column to actual column by adding horizontal scroll offset
         let click_col = left_column + visual_col;
 
@@ -1444,9 +1401,8 @@ impl Editor {
             view_state.clear_selection();
         }
 
-        // Store state for potential text selection drag
-        self.active_window_mut().mouse_state.dragging_text_selection = false; // Disable regular text selection for composite
-        self.active_window_mut().mouse_state.drag_selection_split = Some(split_id);
+        // A composite view has no buffer selection for a drag to extend.
+        self.active_window_mut().mouse_state.drag = None;
 
         // Sync cursor position to EditorState for status bar display
         self.active_window_mut()
@@ -1525,22 +1481,4 @@ fn wrap_cursor_to_next_content_row(
         viewport.left_column = 0;
     }
     true
-}
-
-/// Scroll all panes horizontally so a rightward cursor stays visible.
-fn scroll_panes_right_to_cursor(view_state: &mut CompositeViewState, pane_width: usize) {
-    let visible_width = pane_width.saturating_sub(4);
-    let current_left = view_state
-        .pane_viewports
-        .get(view_state.focused_pane)
-        .map(|v| v.left_column)
-        .unwrap_or(0);
-    if visible_width > 0 && view_state.cursor_column >= current_left + visible_width {
-        let new_left = view_state
-            .cursor_column
-            .saturating_sub(visible_width.saturating_sub(1));
-        for viewport in &mut view_state.pane_viewports {
-            viewport.left_column = new_left;
-        }
-    }
 }

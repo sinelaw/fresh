@@ -36,6 +36,8 @@ pub mod line_wrap_cache;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod margin;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
+pub mod move_preview;
+#[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod overlay;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod row_walk;
@@ -80,9 +82,13 @@ pub mod keybinding_editor;
 #[cfg(feature = "runtime")]
 pub use fresh_editor_core::markdown;
 #[cfg(feature = "runtime")]
+#[cfg(feature = "runtime")]
+#[cfg(feature = "runtime")]
+pub mod confirm;
+#[cfg(feature = "runtime")]
+pub mod keyed_selection;
+#[cfg(feature = "runtime")]
 pub mod popup;
-#[cfg(feature = "runtime")]
-#[cfg(feature = "runtime")]
 #[cfg(feature = "runtime")]
 pub mod prompt;
 #[cfg(feature = "runtime")]

@@ -76,14 +76,105 @@ impl crate::app::window::Window {
         }
     }
 
+    /// The display settings a freshly seeded view of `buffer_id` should start
+    /// from: the global `editor.*` defaults, with this buffer's language-level
+    /// wrap overrides folded in.
+    ///
+    /// Every path that creates a `BufferViewState` has to stamp these onto it
+    /// (see `BufferViewState::apply_config_defaults`), because the struct's own
+    /// defaults are hard-coded rather than read from the config — and a path
+    /// that forgets re-introduces #3426. Most call sites still spell the struct
+    /// out field by field; prefer this where the window is to hand, so a key
+    /// added to `ViewConfigDefaults` reaches the seeding paths at once.
+    pub(crate) fn view_config_defaults_for_buffer(
+        &self,
+        buffer_id: BufferId,
+    ) -> crate::view::split::ViewConfigDefaults {
+        crate::view::split::ViewConfigDefaults {
+            line_wrap: self.resolve_line_wrap_for_buffer(buffer_id),
+            wrap_column: self.resolve_wrap_column_for_buffer(buffer_id),
+            ..crate::view::split::ViewConfigDefaults::from_editor_config(&self.config().editor)
+        }
+    }
+
+    /// Stamp the config defaults onto `buffer_id`'s view state in `leaf`,
+    /// creating that state if the pane has none for it yet.
+    ///
+    /// Safe to call on a pane that already shows the buffer: the three pinnable
+    /// flags (line numbers, line wrap, current-line highlight) keep an override
+    /// the user set, and the rest — rulers, wrap indent, wrap column, scroll
+    /// offset — are re-stamped from the config, which nothing else sets per
+    /// pane.
+    pub(crate) fn seed_view_config_defaults(&mut self, leaf: LeafId, buffer_id: BufferId) {
+        let defaults = self.view_config_defaults_for_buffer(buffer_id);
+        if let Some(view_state) = self.split_view_states_mut().get_mut(&leaf) {
+            view_state
+                .ensure_buffer_state(buffer_id)
+                .apply_config_defaults(defaults);
+        }
+    }
+
+    /// Re-resolve the editor-wide display defaults on every buffer view state
+    /// in this window, not just the tab each pane shows.
+    ///
+    /// `show_line_numbers`, `line_wrap_enabled` and `highlight_current_line`
+    /// are per-(split, buffer) caches of a resolved `editor.*` setting, so
+    /// changing one of those settings has to refresh all of them (#3449).
+    /// Per-buffer pins and plugin overrides survive, because
+    /// `apply_config_defaults` honours them. Single-view counterpart:
+    /// [`Self::seed_view_config_defaults`].
+    ///
+    /// The skipped views set these flags directly and record no override, so
+    /// resolving would hand them display they are built never to have: virtual
+    /// buffers (terminals, plugin pages, dock panels, grep lists), grid-wrapped
+    /// viewports, grouped panels, and anything outside `ViewMode::Source`. A
+    /// scratch buffer is `BufferKind::File`, so it still follows the setting.
+    /// `grid_wrap` is tested rather than `is_terminal_buffer`, which goes false
+    /// when a terminal's process exits while its scroll-back tab stays open.
+    ///
+    /// Call this once the new config has reached `Window::config()` — that is
+    /// the copy the resolution reads.
+    pub(crate) fn resync_global_display_defaults(&mut self) {
+        // Collected first: the stamping pass below needs the window mutably.
+        let mut targets: Vec<(LeafId, BufferId)> = Vec::new();
+        let Some(view_states) = self.buffers.split_view_states() else {
+            return;
+        };
+        for (leaf_id, view_state) in view_states {
+            if view_state.suppress_chrome {
+                continue;
+            }
+            for (buffer_id, buf_state) in view_state.buffer_states() {
+                if buf_state.view_mode != crate::state::ViewMode::Source
+                    || buf_state.viewport.grid_wrap
+                    || self
+                        .buffer_metadata
+                        .get(buffer_id)
+                        .is_some_and(crate::app::types::BufferMetadata::is_virtual)
+                {
+                    continue;
+                }
+                targets.push((*leaf_id, *buffer_id));
+            }
+        }
+
+        for (leaf_id, buffer_id) in targets {
+            let defaults = self.view_config_defaults_for_buffer(buffer_id);
+            if let Some(buf_state) = self
+                .split_view_states_mut()
+                .get_mut(&leaf_id)
+                .and_then(|vs| vs.buffer_state_mut(buffer_id))
+            {
+                buf_state.apply_config_defaults(defaults);
+            }
+        }
+    }
+
     /// Get the preferred split for opening a file.
     /// If the active split has no label, use it (normal case).
     /// Otherwise find an unlabeled leaf so files don't open in labeled splits (e.g., sidebars).
     pub(crate) fn preferred_split_for_file(&self) -> LeafId {
-        let (mgr, _) = self
-            .buffers
-            .splits()
-            .expect("active window must have a populated split layout");
+        let (mgr, _) = self.splits();
         let active = mgr.active_split();
         if mgr.get_label(active.into()).is_none() {
             return active;
@@ -282,7 +373,7 @@ impl Editor {
             editor
                 .windows
                 .get_mut(&editor.active_window)
-                .and_then(|w| w.split_manager_mut())
+                .and_then(|w| w.buffers.split_manager_mut())
                 .is_some_and(|mgr| mgr.set_active_split(split))
         };
 
@@ -413,12 +504,6 @@ impl Editor {
     // `promote_current_preview`, `promote_preview_if_not_in_split`,
     // `is_buffer_preview`, `current_preview` moved to `impl Window`.
 
-    /// Number of open buffers (including hidden/virtual buffers).
-    /// Intended for tests that verify preview tabs don't accumulate.
-    pub fn open_buffer_count(&self) -> usize {
-        self.active_window().buffers.len()
-    }
-
     /// Whether the active buffer has a full line index available.
     ///
     /// Always true for normal files; false for large files opened in
@@ -467,15 +552,10 @@ impl Editor {
             // Column is also 1-indexed, convert to 0-indexed
             let target_col = column.map(|c| c.saturating_sub(1)).unwrap_or(0);
 
-            // Track the known exact line number for scanned large files,
-            // since offset_to_position may not be able to reverse-resolve it accurately.
-            let mut known_line: Option<usize> = None;
-
             let position = if has_line_scan && has_line_index {
                 // Scanned large file: use tree metadata to find exact line offset
                 let max_line = state.buffer.line_count().unwrap_or(1).saturating_sub(1);
                 let actual_line = target_line.min(max_line);
-                known_line = Some(actual_line);
                 // Need mutable access to potentially read chunk data from disk
                 if let Some(state) = self
                     .windows
@@ -523,15 +603,6 @@ impl Editor {
             // plugin that follows the cursor (the Markdown contents section
             // among them) kept showing where it had been.
             self.apply_event_to_active_buffer(&event);
-
-            // For scanned large files, override the line number with the known exact value
-            // since offset_to_position may fall back to proportional estimation.
-            if let Some(line) = known_line {
-                if let Some(state) = self.active_window_mut().buffers.get_mut(&buffer_id) {
-                    state.primary_cursor_line_number =
-                        crate::model::buffer::LineNumber::Absolute(line);
-                }
-            }
 
             // Center the target line in the viewport. The default
             // `ensure_visible` behavior only scrolls just enough to reveal
@@ -602,13 +673,7 @@ impl Editor {
                 new_sticky_column: Some(end_col_0),
             };
 
-            let split_id = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .active_split();
+            let split_id = self.effective_active_split();
             self.active_window_mut()
                 .apply_event_to_buffer(buffer_id, split_id, &event);
         }
@@ -626,13 +691,15 @@ impl Editor {
 
         if let Some(state) = self
             .windows
-            .get(&self.active_window)
-            .map(|w| &w.buffers)
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get(&buffer_id)
+            .get_mut(&buffer_id)
         {
-            let buffer_len = state.buffer.len();
-            let position = offset.min(buffer_len);
+            // The offset is whatever was typed, and on multi-byte text most
+            // bytes are inside a character: the caret goes to the next whole
+            // one, or what is typed there splits the character (issue #3285).
+            let position = state.buffer.char_boundary_at_or_after(offset);
 
             let event = Event::MoveCursor {
                 cursor_id,
@@ -707,15 +774,9 @@ impl Editor {
         self.set_active_buffer(buffer_id);
 
         // Initialize per-buffer view state with config defaults.
-        // Must happen AFTER set_active_buffer, because switch_buffer creates
+        // Must happen AFTER set_active_buffer, because set_buffer_tab creates
         // the new BufferViewState with defaults (show_line_numbers=true).
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        let active_split = self.active_window().split_manager().active_split();
         let line_wrap = self.active_window().resolve_line_wrap_for_buffer(buffer_id);
         let wrap_column = self
             .active_window()
@@ -723,19 +784,21 @@ impl Editor {
         if let Some(view_state) = self
             .windows
             .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
+            .and_then(|w| w.buffers.split_view_states_mut())
             .expect("active window must have a populated split layout")
             .get_mut(&active_split)
         {
-            view_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
-                line_numbers: self.config.editor.line_numbers,
-                highlight_current_line: self.config.editor.highlight_current_line,
-                line_wrap,
-                wrap_indent: self.config.editor.wrap_indent,
-                wrap_column,
-                rulers: self.config.editor.rulers.clone(),
-                scroll_offset: self.config.editor.scroll_offset,
-            });
+            view_state.buffer_tab_state_mut().apply_config_defaults(
+                crate::view::split::ViewConfigDefaults {
+                    line_numbers: self.config.editor.line_numbers,
+                    highlight_current_line: self.config.editor.highlight_current_line,
+                    line_wrap,
+                    wrap_indent: self.config.editor.wrap_indent,
+                    wrap_column,
+                    rulers: self.config.editor.rulers.clone(),
+                    scroll_offset: self.config.editor.scroll_offset,
+                },
+            );
         }
 
         self.active_window_mut().status_message = Some(t!("buffer.new").to_string());
@@ -750,14 +813,6 @@ impl Editor {
             .mouse_state
             .lsp_hover_state
             .map(|(pos, _, x, y, _)| (pos, x, y))
-    }
-
-    /// Check if a transient popup (hover/signature help) is currently visible
-    pub fn has_transient_popup(&self) -> bool {
-        self.active_state()
-            .popups
-            .top()
-            .is_some_and(|p| p.transient)
     }
 
     /// Force check the mouse hover timer (for testing)

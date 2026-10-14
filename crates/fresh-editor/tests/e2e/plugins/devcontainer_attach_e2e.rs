@@ -120,16 +120,6 @@ fn wait_for_container_authority(harness: &mut EditorTestHarness) -> String {
     let max_iters = 200; // ~10s at 50ms per tick
     for _ in 0..max_iters {
         harness.tick_and_render().unwrap();
-        // The plugin stages the new authority via
-        // `editor.setAuthority(payload)`, which `install_authority`
-        // turns into a `pending_authority` slot plus a restart
-        // request. Production's `main.rs` consumes both: it drops the
-        // old editor and builds a fresh one with `set_boot_authority`.
-        // The harness has no such loop, so we do the swap inline.
-        if let Some(auth) = harness.editor_mut().take_pending_authority() {
-            harness.editor_mut().set_boot_authority(auth);
-            return harness.editor().authority().display_label.clone();
-        }
         if harness
             .editor()
             .authority()

@@ -77,10 +77,6 @@ impl Decl {
         self
     }
 
-    pub fn is_empty(&self) -> bool {
-        *self == Decl::default()
-    }
-
     /// This declaration over a concrete ink — the surface the control sits on.
     ///
     /// Unstated halves leave the surface's own, which is how a button with no
@@ -332,44 +328,12 @@ pub fn button_classes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fresh_core::api::{OverlayColorSpec, OverlayOptions};
-
-    /// The three fields the ladder and the table both have opinions about,
-    /// reduced to something comparable across the two spellings.
-    #[derive(Debug, PartialEq, Eq)]
-    struct Look {
-        fg: Option<String>,
-        bg: Option<String>,
-        bold: bool,
-    }
 
     fn key_of(paint: &Paint) -> String {
         paint
             .name()
             .expect("every colour the button table names is a theme key")
             .to_string()
-    }
-
-    fn from_decl(decl: &Decl) -> Look {
-        Look {
-            fg: decl.fg.as_ref().map(key_of),
-            bg: decl.bg.as_ref().map(key_of),
-            bold: decl.attrs.is_some_and(|a| a.contains(Attrs::BOLD)),
-        }
-    }
-
-    fn from_overlay(options: Option<&OverlayOptions>) -> Look {
-        let key = |c: &OverlayColorSpec| match c {
-            OverlayColorSpec::ThemeKey(k) => k.clone(),
-            OverlayColorSpec::Rgb(r, g, b) => {
-                panic!("the ladder named a literal #{r:02x}{g:02x}{b:02x}")
-            }
-        };
-        Look {
-            fg: options.and_then(|o| o.fg.as_ref()).map(key),
-            bg: options.and_then(|o| o.bg.as_ref()).map(key),
-            bold: options.is_some_and(|o| o.bold),
-        }
     }
 
     /// A state class does not disturb the frame: `button` states the geometry

@@ -109,7 +109,8 @@ pub fn predicts_block(spec: &WidgetSpec) -> bool {
 /// index with `children`. Block children (those that render multi-line,
 /// e.g. a `LabeledSection`) share `panel_width`: a child with an
 /// explicit `width_pct` takes its declared share first, and the
-/// remainder splits equally among the blocks without one. Non-block
+/// remainder, less any fixed spacers beside them, splits equally among
+/// the blocks without one. Non-block
 /// children get the full `panel_width` (a soft cap — they collapse to a
 /// single line, so width doesn't truncate them).
 pub fn allocate_row_child_widths(children: &[WidgetSpec], panel_width: u32) -> Vec<u32> {
@@ -133,7 +134,21 @@ pub fn allocate_row_child_widths(children: &[WidgetSpec], panel_width: u32) -> V
             explicit_count += 1;
         }
     }
-    let remaining = panel_width.saturating_sub(explicit_total);
+    // Fixed spacers beside the blocks take their columns first: a
+    // `row(spacer(3), section)` indent would otherwise hand the section the
+    // whole width and push its right edge three columns past the row's.
+    let fixed_inline: u32 = children
+        .iter()
+        .filter_map(|c| match c {
+            WidgetSpec::Spacer {
+                cols, flex: false, ..
+            } => Some(*cols),
+            _ => None,
+        })
+        .sum();
+    let remaining = panel_width
+        .saturating_sub(explicit_total)
+        .saturating_sub(fixed_inline);
     let implicit_count = (block_count as u32).saturating_sub(explicit_count).max(1);
     let each_implicit = (remaining / implicit_count).max(1);
     for &idx in &block_indices {

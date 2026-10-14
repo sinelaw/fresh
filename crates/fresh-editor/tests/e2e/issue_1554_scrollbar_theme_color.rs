@@ -50,8 +50,8 @@ fn test_vertical_scrollbar_uses_theme_track_and_thumb_colors() {
         "Rightmost column should contain scrollbar cells"
     );
 
-    let saw_track = bgs.iter().any(|c| *c == expected_track);
-    let saw_thumb = bgs.iter().any(|c| *c == expected_thumb);
+    let saw_track = bgs.contains(&expected_track);
+    let saw_thumb = bgs.contains(&expected_thumb);
 
     assert!(
         saw_track,
@@ -96,7 +96,7 @@ fn test_horizontal_scrollbar_uses_theme_track_color() {
         .collect();
 
     assert!(
-        bgs.iter().any(|c| *c == expected_track),
+        bgs.contains(&expected_track),
         "Horizontal scrollbar track should use theme.scrollbar_track_fg ({expected_track:?}); saw bgs {bgs:?}"
     );
 }

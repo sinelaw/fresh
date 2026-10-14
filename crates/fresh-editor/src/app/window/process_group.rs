@@ -166,13 +166,6 @@ impl ProcessGroups {
         out
     }
 
-    /// Replace the signaller (e.g. when the window's authority
-    /// changes mid-life). Existing entries stay tracked; future
-    /// `signal_all` calls go through the new signaller.
-    pub fn set_signaller(&mut self, signaller: Arc<dyn Signaller>) {
-        self.signaller = signaller;
-    }
-
     pub fn entries(&self) -> &[ProcessGroupEntry] {
         &self.entries
     }

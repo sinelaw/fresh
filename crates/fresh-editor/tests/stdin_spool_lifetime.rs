@@ -67,6 +67,12 @@ fn isolated_fresh(home: &Path) -> Command {
 /// from stdin` (`stdin.read_complete`, with `LANG` pinned to English above).
 const DRAINED: &str = "bytes from stdin";
 
+/// Wide enough that the status bar has room for the drained message beside
+/// the workspace dock, which is there from the first frame now; at 100
+/// columns the message was truncated away and the wait never matched.
+const COLS: u16 = 140;
+const ROWS: u16 = 30;
+
 /// Launch `fresh -` with something on stdin, wait until the spool is fully
 /// drained, and assert it is already nameless while the editor runs.
 ///
@@ -88,8 +94,8 @@ fn running_editor_with_piped_stdin(home: &Path) -> PtyChild {
     let mut editor = spawn_on_pty(
         cmd,
         ChildStdin::Piped(b"hello-from-stdin\n".to_vec()),
-        100,
-        30,
+        COLS,
+        ROWS,
     )
     .expect("spawn fresh on a pty");
 
@@ -236,8 +242,8 @@ fn sighup_ignored_by_the_parent_stays_ignored() {
     let mut editor = spawn_on_pty(
         cmd,
         ChildStdin::Piped(b"hello-from-stdin\n".to_vec()),
-        100,
-        30,
+        COLS,
+        ROWS,
     )
     .expect("spawn fresh on a pty");
     editor

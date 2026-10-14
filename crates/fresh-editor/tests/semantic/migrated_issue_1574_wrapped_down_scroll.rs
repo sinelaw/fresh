@@ -143,7 +143,7 @@ fn migrated_issue_1574_down_arrow_scrolling_invariants_rendered() {
     // layout cache — without that, MoveDown falls back to the
     // byte-based logical-line variant that advances only one
     // visual row at a time.
-    let actions: Vec<Action> = std::iter::repeat(Action::MoveDown).take(150).collect();
+    let actions: Vec<Action> = std::iter::repeat_n(Action::MoveDown, 150).collect();
     let step_assertions = snapshot_every_step(actions.len(), 0);
     for &height in &heights {
         for &width in &widths {
@@ -175,7 +175,7 @@ fn migrated_issue_1574_up_arrow_scrolling_invariants_rendered() {
     let widths: [u16; 3] = [60, 80, 100];
     let heights: [u16; 2] = [20, 28];
     let mut actions = vec![Action::MoveDocumentEnd];
-    actions.extend(std::iter::repeat(Action::MoveUp).take(150));
+    actions.extend(std::iter::repeat_n(Action::MoveUp, 150));
     // Render between each MoveUp so the wrap-aware MoveUp fallback
     // sees a fresh layout cache. Skip step 0 (MoveDocumentEnd
     // doesn't need wrap-aware support to land at EOF).

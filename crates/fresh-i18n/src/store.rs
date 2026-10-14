@@ -46,6 +46,17 @@ pub fn register_locales(locales: &[(&str, &str)]) {
     sources.sort_by(|a, b| a.0.cmp(b.0));
 }
 
+/// Remove the catalogs registered under `codes`, so those locales are no
+/// longer listed or looked up. A code that was never registered is ignored.
+pub fn unregister_locales(codes: &[&str]) {
+    let mut sources = SOURCES.write().unwrap();
+    sources.retain(|(c, _)| !codes.contains(c));
+    let mut translations = TRANSLATIONS.write().unwrap();
+    for code in codes {
+        translations.remove(*code);
+    }
+}
+
 /// All registered locale codes, sorted.
 pub fn available_locales() -> Vec<&'static str> {
     SOURCES.read().unwrap().iter().map(|(c, _)| *c).collect()

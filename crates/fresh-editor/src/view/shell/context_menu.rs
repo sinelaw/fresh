@@ -165,7 +165,7 @@ pub fn context_menu(menu: &Menu) -> Node<UiMsg> {
             // that dismisses a layer is answered by that layer.
             .autofocus()
             .on_key(move |e: &fresh_ui::Event| {
-                let Some(k) = e.key else { return None };
+                let k = e.key?;
                 if k.mods != fresh_ui::Mods::NONE {
                     return None;
                 }

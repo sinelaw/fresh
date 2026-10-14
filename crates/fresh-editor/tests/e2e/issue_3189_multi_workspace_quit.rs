@@ -91,11 +91,11 @@ fn quit_from_clean_workspace_prompts_for_dirty_background_workspace() {
         !harness.should_quit(),
         "quitting must not exit while another workspace holds unsaved changes"
     );
-    // Same prompt the single-workspace case shows, with the cross-workspace
+    // Same question the single-workspace case asks, with the cross-workspace
     // total in it.
     harness.assert_screen_contains("1 buffer has unsaved changes");
-    harness.assert_screen_contains("(s)ave and quit");
-    harness.assert_screen_contains("(q)uit (recoverable)");
+    harness.assert_screen_contains("Save and Quit");
+    harness.assert_screen_contains("Quit (recoverable)");
 }
 
 /// The count is a total across workspaces, not the active window's.
@@ -174,9 +174,6 @@ fn save_and_quit_writes_background_workspace_buffers_to_disk() {
     harness
         .send_key(KeyCode::Char('s'), KeyModifiers::NONE)
         .unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
     harness.render().unwrap();
 
     assert!(
@@ -211,9 +208,6 @@ fn discard_and_quit_drops_background_workspace_recovery() {
     harness.render().unwrap();
     harness
         .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
 
@@ -497,4 +491,112 @@ fn quitting_without_visiting_a_workspace_keeps_its_recovery_data() {
         before,
         "an unvisited workspace's unsaved work must survive the exit"
     );
+}
+
+fn unnamed_tabs(harness: &EditorTestHarness) -> usize {
+    harness
+        .screen_row_text(layout::TAB_BAR_ROW as u16)
+        .matches("[No Name]")
+        .count()
+}
+
+/// Switching back to a workspace must not open its unsaved scratch buffer a
+/// second time.
+#[test]
+fn reactivating_a_workspace_does_not_duplicate_its_unnamed_buffers() {
+    let mut config = Config::default();
+    config.editor.hot_exit = true;
+    config.editor.auto_recovery_save_interval_secs = 0;
+    let mut harness = EditorTestHarness::with_temp_project_and_config(120, 24, config).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+
+    harness.new_buffer().unwrap();
+    harness.type_text("scratch").unwrap();
+    harness
+        .editor_mut()
+        .auto_recovery_save_dirty_buffers()
+        .unwrap();
+    harness.render().unwrap();
+    let home = harness.editor().active_window_id();
+    let tabs_before = unnamed_tabs(&harness);
+
+    let other_root = project_dir.parent().unwrap().join("workspace_b");
+    std::fs::create_dir_all(&other_root).unwrap();
+    let other = harness
+        .editor_mut()
+        .create_window_at(other_root, "workspace_b".to_string());
+
+    for _ in 0..3 {
+        harness.editor_mut().set_active_window(other);
+        harness.render().unwrap();
+        harness.editor_mut().set_active_window(home);
+        harness.render().unwrap();
+    }
+
+    assert_eq!(
+        unnamed_tabs(&harness),
+        tabs_before,
+        "Tabs: {}",
+        harness.screen_row_text(layout::TAB_BAR_ROW as u16)
+    );
+}
+
+/// A restored unsaved scratch buffer stays a single tab over restarts, each
+/// with a switch away and back.
+#[test]
+fn unnamed_buffer_is_restored_once_across_restarts() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    let other_root = temp_dir.path().join("workspace_b");
+    std::fs::create_dir(&project_dir).unwrap();
+    std::fs::create_dir(&other_root).unwrap();
+    let dir_context = fresh::config_io::DirectoryContext::for_testing(temp_dir.path());
+
+    let harness_for = || {
+        let mut config = Config::default();
+        config.editor.hot_exit = true;
+        let mut harness = EditorTestHarness::create(
+            120,
+            24,
+            crate::common::harness::HarnessOptions::new()
+                .with_config(config)
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+        harness.editor_mut().set_session_mode(true);
+        harness
+    };
+
+    {
+        let mut harness = harness_for();
+        harness.new_buffer().unwrap();
+        harness.type_text("scratch").unwrap();
+        harness.render().unwrap();
+        harness.shutdown(true).unwrap();
+    }
+
+    for start in 1..=3 {
+        let mut harness = harness_for();
+        assert!(harness.startup(true, &[]).unwrap());
+        harness.render().unwrap();
+
+        let home = harness.editor().active_window_id();
+        let other = harness
+            .editor_mut()
+            .create_window_at(other_root.clone(), "workspace_b".to_string());
+        harness.editor_mut().set_active_window(other);
+        harness.render().unwrap();
+        harness.editor_mut().set_active_window(home);
+        harness.render().unwrap();
+
+        assert_eq!(
+            unnamed_tabs(&harness),
+            1,
+            "start {start}. Tabs: {}",
+            harness.screen_row_text(layout::TAB_BAR_ROW as u16)
+        );
+        harness.shutdown(true).unwrap();
+    }
 }

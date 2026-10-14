@@ -149,8 +149,10 @@ fn test_lsp_enabled_false_blocks_all_autostart() -> anyhow::Result<()> {
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(&test_file, "fn main() {}\n")?;
 
-    let mut config = fresh::config::Config::default();
-    config.lsp_enabled = false;
+    let mut config = fresh::config::Config {
+        lsp_enabled: false,
+        ..Default::default()
+    };
 
     config.lsp.insert(
         "rust".to_string(),
@@ -233,8 +235,10 @@ fn test_lsp_enabled_false_still_allows_manual_start() -> anyhow::Result<()> {
     let test_file = temp_dir.path().join("test.rs");
     std::fs::write(&test_file, "fn main() {}\n")?;
 
-    let mut config = fresh::config::Config::default();
-    config.lsp_enabled = false;
+    let mut config = fresh::config::Config {
+        lsp_enabled: false,
+        ..Default::default()
+    };
 
     config.lsp.insert(
         "rust".to_string(),

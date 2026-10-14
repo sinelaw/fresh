@@ -131,11 +131,6 @@ impl Editor {
         }
     }
 
-    /// Check if keybinding editor is active
-    pub fn is_keybinding_editor_active(&self) -> bool {
-        self.keybinding_editor.is_some()
-    }
-
     /// Select a display row by index (and toggle it if it's a section header) —
     /// the same effect as a TUI click on that table row. Used by the web
     /// `/kbedit` route so a native row click selects through the real editor.
@@ -143,7 +138,7 @@ impl Editor {
     pub(crate) fn kbedit_select_display_row(&mut self, idx: usize) {
         if let Some(ed) = self.keybinding_editor.as_mut() {
             if idx < ed.display_rows.len() {
-                ed.selected = idx;
+                ed.select(idx);
                 if ed.selected_is_section_header() {
                     ed.toggle_section_at_selected();
                 }
