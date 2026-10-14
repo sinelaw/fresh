@@ -1098,6 +1098,17 @@ pub struct Editor {
     /// and which only governs the *next* bare launch.
     orchestrator_mode: bool,
 
+    /// This editor was launched to open the files on its command line rather
+    /// than a session. Read through [`Editor::file_launch`]. Like
+    /// `orchestrator_mode`, a property of the invocation fixed at
+    /// construction.
+    file_launch: bool,
+
+    /// Every persisted workspace has been read into `windows`. False until
+    /// something uses the registry; see
+    /// [`Editor::ensure_all_workspaces_loaded`].
+    all_workspaces_loaded: bool,
+
     // bookmarks moved onto `Window` (Step 0f).
     /// Macro record/playback subsystem (owns `macros`, `recording`,
     /// `last_register`, and the `playing` guard flag).

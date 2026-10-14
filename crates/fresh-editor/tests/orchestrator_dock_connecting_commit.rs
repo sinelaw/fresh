@@ -60,6 +60,9 @@ fn dive_commits_switch_while_connect_is_still_pending() {
     h.wait_for_screen_contains("local_marker.txt").unwrap();
     let local_id = h.editor().active_window_id();
 
+    // The dock lists the workspaces before anything can be dived into, which
+    // reads the rest of the registry (boot read only this directory's).
+    h.editor_mut().ensure_all_workspaces_loaded();
     let dormant = h.editor().dormant_remote_sessions_for_test();
     let ssh_id = dormant
         .iter()

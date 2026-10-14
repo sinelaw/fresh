@@ -146,6 +146,9 @@ impl crate::app::Editor {
     /// `WindowEmbed`) draws blank.
     pub fn create_window_at(&mut self, root: PathBuf, label: String) -> WindowId {
         self.mark_plugin_snapshot_dirty();
+        // The dedup below has to see a persisted workspace for `root` even
+        // when the registry has not been read yet.
+        self.ensure_all_workspaces_loaded();
         // One session per directory: reuse an existing window at this
         // root instead of spawning a colliding duplicate.
         if let Some(existing) = self.find_window_by_root(&root) {
@@ -271,6 +274,9 @@ impl crate::app::Editor {
         label: String,
         connection: std::sync::Arc<crate::services::authority::Connection>,
     ) -> WindowId {
+        // Window ids are allocated past every workspace, and a new window's
+        // root may already have one on disk: read the registry first.
+        self.ensure_all_workspaces_loaded();
         let connection = self.adopt_connection(connection);
         let id = WindowId(self.next_window_id);
         self.next_window_id += 1;
@@ -890,6 +896,9 @@ impl crate::app::Editor {
     /// `prev_window` so both directions stay in sync if the
     /// underlying ordering changes (e.g. user-controlled reorder).
     fn cycle_active_window(&mut self, delta: isize) {
+        // Cycling walks the saved workspaces too, so it is a use of the
+        // registry: read the rest of it first.
+        self.ensure_all_workspaces_loaded();
         // A plugin (the orchestrator dock) may constrain cycling to a
         // specific ordered subset — the windows currently visible in its
         // session list — so Next/Prev Window walks exactly that list rather

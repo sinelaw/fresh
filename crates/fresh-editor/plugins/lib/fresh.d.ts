@@ -4247,8 +4247,9 @@ interface EditorConfig {
 		*/
 		restore_previous_session?: boolean;
 		/**
-		* When started with files (e.g. `fresh main.rs`), open only those files
-		* instead of the last session. Unsaved changes are still restored. Default: true
+		* When started with files (e.g. `fresh main.rs`, or as git's editor), open only
+		* those files: the session is neither restored nor saved, no dock opens, and only
+		* those files' unsaved changes come back. Off makes it a full session. Default: true
 		*
 		* Default: `true`
 		*/
@@ -5666,6 +5667,15 @@ interface EditorAPI {
 	*/
 	orchestratorMode(): boolean;
 	/**
+	* Whether the editor was launched to open the files on its command line
+	* (`fresh FILE…`, as `$EDITOR` or git's `core.editor` run it, or
+	* `fresh --simple`) rather than a session (a bare `fresh`, `fresh DIR`, a
+	* daemon). Such a launch is
+	* about those files: plugins leave out what belongs to a session, such
+	* as startup pages.
+	*/
+	fileLaunch(): boolean;
+	/**
 	* Whether the left dock slot is open: a panel is in it, or the host is
 	* holding the column for one its manifest declared. The plugin that
 	* fills the dock mounts it at
@@ -7053,6 +7063,16 @@ interface EditorAPI {
 	* at cycle time.
 	*/
 	setWindowCycleOrder(ids: number[]): boolean;
+	/**
+	* Load every saved workspace into `listWindows()`, once.
+	* 
+	* A launch starts with only the workspaces of its own directory (all of
+	* them in Orchestrator mode); the rest of the registry is read on first
+	* use rather than at startup. Call this before listing workspaces to a
+	* user. Resolves once `listWindows()` includes them all; resolves at
+	* once when they already are.
+	*/
+	loadWorkspaces(): Promise<void>;
 	/**
 	* Close session `id`. Refuses to close the active session or
 	* the base session (id 1). Logs and no-ops on failure.

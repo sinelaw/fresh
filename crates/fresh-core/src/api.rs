@@ -1663,6 +1663,10 @@ pub struct EditorStateSnapshot {
     /// `orchestrator_mode` preference, which stays on for `fresh FILE`.
     #[serde(default)]
     pub orchestrator_mode: bool,
+    /// Launched to open the files on its command line (`fresh FILE…`,
+    /// `fresh --simple`) rather than a session. Read via `editor.fileLaunch()`.
+    #[serde(default)]
+    pub file_launch: bool,
     /// The left dock slot is open: a panel is in it, or the host is holding
     /// the column for one its manifest declared. The plugin mounts at
     /// `ready` iff this is set. Read via `editor.dockOpen()`.
@@ -1864,6 +1868,7 @@ impl EditorStateSnapshot {
             workspace_trust_level: String::new(),
             env_active: false,
             orchestrator_mode: false,
+            file_launch: false,
             dock_open: false,
             dock_cols: 0,
             detected_env: String::new(),
@@ -4031,6 +4036,12 @@ pub enum PluginCommand {
     /// close the currently active session — the caller must switch
     /// first. Fires `session_closed` on success.
     CloseWindow { id: WindowId },
+
+    /// Read every persisted workspace into the window list, if it has not
+    /// been yet. A launch starts with only its own directory's workspaces;
+    /// the rest of the registry is read when something lists them. The
+    /// callback resolves once the list (`listWindows`) includes them all.
+    LoadWorkspaces { callback_id: JsCallbackId },
 
     /// Forget a directory's persisted workspace registry entry (the
     /// `workspaces/<encoded-root>.json` file(s) the boot-time session

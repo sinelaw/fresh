@@ -2722,6 +2722,20 @@ function backendFacet(info: WindowInfo): AgentSession["remote"] | undefined {
 // `window_closed` hook.
 const closingWindowIds = new Set<number>();
 
+// The editor reads only the launch directory's workspaces at startup; the
+// rest of the registry is read once something lists them to the user. The
+// dock and the picker are that something: the first time either lists
+// workspaces, ask for the rest and redraw when they are in.
+let allWorkspacesRequested = false;
+function requestAllWorkspaces(): void {
+  if (allWorkspacesRequested) return;
+  allWorkspacesRequested = true;
+  void editor.loadWorkspaces().then(() => {
+    reconcileSessions();
+    refreshOpenDialog();
+  });
+}
+
 function reconcileSessions(): void {
   const editorSessions = editor.listWindows();
   const seen = new Set<number>();
@@ -3663,6 +3677,7 @@ function projectLabel(key: string): string {
 // sorted by project (current project first) so rows are grouped
 // rather than interleaved.
 function filterSessions(needle: string): number[] {
+  requestAllWorkspaces();
   reconcileSessions();
   const scope = openDialog?.scope ?? "current";
   const showWorktrees = openDialog?.showWorktrees ?? false;
