@@ -508,6 +508,13 @@ impl Editor {
             Some((first, visible.max(list.h as usize)))
         });
         let p = self.active_window().prompt.as_ref()?;
+        // A confirmation is not a prompt row: the TUI draws it only as the
+        // modal card (`Prompt::is_confirm_dialog`), and the web gets that card
+        // through `tree_view`'s `"confirm"` surface. Projecting it here too
+        // showed its question as palette text with none of its buttons.
+        if p.is_confirm_dialog() {
+            return None;
+        }
         // The overlay card's bands, read off the tree that placed them.
         let card_band = |r: crate::view::shell::overlay_prompt::CardRegion| {
             self.shell_ui.as_ref().and_then(|ui| {
@@ -1294,7 +1301,7 @@ impl Editor {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TreeSurfaceView {
-    /// `"dock"`, `"floating"` or `"sidebar"`.
+    /// `"dock"`, `"floating"`, `"sidebar"` or `"confirm"`.
     pub kind: &'static str,
     pub x: i32,
     pub y: i32,
@@ -1538,6 +1545,25 @@ impl Editor {
                 "floating",
                 crate::view::shell::panel::key(),
                 anchored,
+                None,
+                true,
+            );
+        }
+        // The confirmation modal (`shell::confirm`). Rooted at its modal key
+        // seam with the items taken from the parent — the layer — for the same
+        // reason as a floating panel: the dimming scrim is the layer's own
+        // item. Clicks need nothing extra: a press on a button's cells is
+        // routed over the tree exactly as a terminal click is.
+        if self
+            .active_window()
+            .prompt
+            .as_ref()
+            .is_some_and(|p| p.is_confirm_dialog())
+        {
+            push(
+                "confirm",
+                crate::view::shell::modal::keys_key(crate::view::shell::modal::KeySlot::Confirm),
+                false,
                 None,
                 true,
             );
