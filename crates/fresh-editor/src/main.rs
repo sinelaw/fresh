@@ -118,6 +118,12 @@ struct Cli {
     #[arg(long)]
     wait: bool,
 
+    /// Open just what is named (or an empty buffer), here in this terminal: no
+    /// session restored or saved, no dock, no daemon — what `fresh FILE` does,
+    /// without needing a file
+    #[arg(long, conflicts_with = "restore")]
+    simple: bool,
+
     /// Force restore of previous workspace, overriding
     /// `editor.restore_previous_session = false` in the config.  Cannot be
     /// combined with `--no-restore`.
@@ -208,6 +214,8 @@ struct Args {
     log_file: Option<PathBuf>,
     event_log: Option<PathBuf>,
     no_session: bool,
+    /// `--simple`: a file launch (see `is_file_launch`) whatever is named.
+    simple: bool,
     /// Force workspace restore even if `editor.restore_previous_session`
     /// is disabled in the config.
     force_restore: bool,
@@ -566,6 +574,7 @@ impl From<Cli> for Args {
             log_file: cli.log_file,
             event_log: cli.event_log,
             no_session: cli.no_restore,
+            simple: cli.simple,
             force_restore: cli.restore,
             no_upgrade_check: cli.no_upgrade_check,
             dump_config,
@@ -980,7 +989,7 @@ fn handle_first_run_setup(
     } else {
         if cli_overrides_restore {
             tracing::info!(
-                "Skipping workspace restore: file arguments passed on the command line (editor.skip_session_restore_when_files_passed)"
+                "Skipping workspace restore: file launch (--simple, or files passed with editor.skip_session_restore_when_files_passed)"
             );
         } else if !workspace_enabled {
             tracing::info!("Skipping workspace restore: --no-restore was specified");
@@ -5455,11 +5464,15 @@ fn wants_orchestrator_launch() -> bool {
 }
 
 /// Whether this launch opens the files on its command line rather than a
-/// session (see `Editor::file_launch`): at least one file (not a directory)
-/// was named, `editor.skip_session_restore_when_files_passed` is on (the
-/// default), and `--restore` did not ask for the session anyway. Decided by
-/// the invocation and that setting alone — never by which files they are.
+/// session (see `Editor::file_launch`): `--simple` asked for it, or at least
+/// one file (not a directory) was named, `editor.skip_session_restore_when_files_passed`
+/// is on (the default), and `--restore` did not ask for the session anyway.
+/// Decided by the invocation and that setting alone — never by which files
+/// they are.
 fn is_file_launch(args: &Args, cfg: &config::Config, files: &[FileLocation]) -> bool {
+    if args.simple {
+        return true;
+    }
     files.iter().any(|loc| !loc.path.is_dir())
         && cfg.editor.skip_session_restore_when_files_passed
         && !args.force_restore
@@ -6158,6 +6171,7 @@ fn build_localized_cli_command() -> clap::Command {
         .mut_arg("no_restore", |a| a.help(t("cli.arg.no_restore")))
         .mut_arg("restore", |a| a.help(t("cli.arg.restore")))
         .mut_arg("wait", |a| a.help(t("cli.arg.wait")))
+        .mut_arg("simple", |a| a.help(t("cli.arg.simple")))
         .mut_arg("no_upgrade_check", |a| {
             a.help(t("cli.arg.no_upgrade_check"))
         })

@@ -1777,8 +1777,8 @@ impl Editor {
 
     /// Whether this editor was launched to open the files on its command
     /// line — `fresh FILE…` with `editor.skip_session_restore_when_files_passed`
-    /// on (the default) and no `--restore` — rather than a session (a bare
-    /// `fresh`, `fresh DIR`, a daemon). Decided by the invocation alone,
+    /// on (the default) and no `--restore`, or `fresh --simple` with or without
+    /// files — rather than a session (a bare `fresh`, `fresh DIR`, a daemon). Decided by the invocation alone,
     /// like [`Editor::orchestrator_mode`].
     ///
     /// Such a launch is about those files: it neither reads nor writes the

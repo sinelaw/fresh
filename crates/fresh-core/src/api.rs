@@ -1663,8 +1663,8 @@ pub struct EditorStateSnapshot {
     /// `orchestrator_mode` preference, which stays on for `fresh FILE`.
     #[serde(default)]
     pub orchestrator_mode: bool,
-    /// Launched to open the files on its command line (`fresh FILE…`)
-    /// rather than a session. Read via `editor.fileLaunch()`.
+    /// Launched to open the files on its command line (`fresh FILE…`,
+    /// `fresh --simple`) rather than a session. Read via `editor.fileLaunch()`.
     #[serde(default)]
     pub file_launch: bool,
     /// The left dock slot is open: a panel is in it, or the host is holding

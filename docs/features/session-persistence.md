@@ -81,6 +81,7 @@ The `daemon` subcommand is an alias for the older `session` subcommand; both for
 | Command | Mode | Description |
 |---------|------|-------------|
 | `fresh myfile.txt` | Direct | Just that file: no background process, no workspace restored or saved, no dock. See [Opening Files](#opening-files). |
+| `fresh --simple` | Direct | The same, with or without files: an empty buffer in this terminal. |
 | `fresh` | Daemon | Orchestrator mode: the shared `orchestrator` daemon, your last workspace, the dock. Direct when `orchestrator_mode` is off. |
 | `fresh -a` | Daemon | Background daemon for this directory. Supports detach/reattach. |
 | `fresh --web [ADDR]` | Daemon | Foreground daemon that also serves the browser UI. |
@@ -106,6 +107,8 @@ with `--session-name NAME`.
 - runs in this terminal and returns when you quit — no daemon.
 
 Search history, crash recovery, remembered cursor positions and the Workspace Trust question work as in any launch.
+
+`fresh --simple` is the same launch without needing a file: with no arguments it opens an empty buffer in this terminal, with no session restored or saved, no dock and no daemon. The dock and the rest of the Orchestrator stay available — open the dock from the command palette and your workspaces load then.
 
 A bare `fresh`, `fresh DIR` and `fresh -a` are sessions: they restore and save the workspace. To make `fresh FILE` a session too, pass `--restore`, or turn off `editor.skip_session_restore_when_files_passed` to do it for every launch.
 

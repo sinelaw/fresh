@@ -8,7 +8,7 @@
 
 ### Improvements
 
-* **`fresh FILE` opens just that file** - as `$EDITOR` or git's `core.editor`, Fresh no longer brings the session along: no restored or saved workspace, no dock, no Welcome tab, and no other file's unsaved changes (the named file's own still come back). `git config --global core.editor fresh` is all git needs, and `fresh --wait` is accepted. A bare `fresh`, `fresh DIR` and `fresh -a` are unchanged; `--restore`, or turning off `editor.skip_session_restore_when_files_passed`, makes a file launch a full session (#3555, reported by @zipproth)
+* **`fresh FILE` opens just that file** - as `$EDITOR` or git's `core.editor`, Fresh no longer brings the session along: no restored or saved workspace, no dock, no Welcome tab, and no other file's unsaved changes (the named file's own still come back). `git config --global core.editor fresh` is all git needs, and `fresh --wait` is accepted. `fresh --simple` does the same without needing a file. A bare `fresh`, `fresh DIR` and `fresh -a` are unchanged; `--restore`, or turning off `editor.skip_session_restore_when_files_passed`, makes a file launch a full session (#3555, reported by @zipproth)
 * **Faster startup with many workspaces** - saved workspaces are read when the dock, the workspace picker or the Welcome page first lists them, not at startup (#3555)
 
 ### Bug Fixes

@@ -234,8 +234,9 @@ orchestratorMode(): boolean;
 ### `fileLaunch`
 
 Whether the editor was launched to open the files on its command line
-(`fresh FILE…`, as `$EDITOR` or git's `core.editor` run it) rather than
-a session (a bare `fresh`, `fresh DIR`, a daemon). Such a launch is
+(`fresh FILE…`, as `$EDITOR` or git's `core.editor` run it, or
+`fresh --simple`) rather than a session (a bare `fresh`, `fresh DIR`, a
+daemon). Such a launch is
 about those files: plugins leave out what belongs to a session, such
 as startup pages.
 
