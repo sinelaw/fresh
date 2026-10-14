@@ -208,6 +208,11 @@ jobs:
           # No signing certificate in CI: macOS is ad-hoc signed (see
           # electron-builder.yml), Windows is unsigned.
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          # electron-builder skips ALL signing on pull-request builds (it keys
+          # on GITHUB_BASE_REF), and an unsigned app does not run on Apple
+          # Silicon, so the smoke test could not run. Its warning is about
+          # exposing signing secrets to forks; ad-hoc signing uses none.
+          CSC_FOR_PULL_REQUEST: 'true'
         run: npx electron-builder --publish never "-c.extraMetadata.version=$VERSION"
 
       # ── Smoke test the artifact that will ship ───────────────────────────
