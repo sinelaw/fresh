@@ -1616,6 +1616,53 @@ impl Window {
         self.set_status_message(fresh_i18n::t!(key).to_string());
     }
 
+    /// Return all other splits that are scroll-synced with `split_id`,
+    /// either via an explicit `ScrollSyncGroup` or via `same_buffer_scroll_sync`.
+    pub(crate) fn synced_splits_for(&self, split_id: LeafId) -> Vec<LeafId> {
+        let mut synced = Vec::new();
+
+        let is_alive = |leaf: LeafId| {
+            self.buffers
+                .splits()
+                .map(|(_, vs)| vs.contains_key(&leaf))
+                .unwrap_or(false)
+        };
+
+        // 1. Explicit scroll sync groups
+        if let Some(group) = self
+            .scroll_sync_manager
+            .find_group_for_split(split_id.into())
+        {
+            let other = if group.is_left_split(split_id.into()) {
+                group.right_split
+            } else {
+                group.left_split
+            };
+            let other_leaf = LeafId(other);
+            if is_alive(other_leaf) {
+                synced.push(other_leaf);
+            }
+        }
+
+        // 2. Same-buffer scroll sync
+        if self.same_buffer_scroll_sync {
+            if let Some((mgr, vs_map)) = self.buffers.splits() {
+                if let Some(buf_id) = mgr.buffer_for_split(split_id) {
+                    for &s in vs_map.keys() {
+                        if s != split_id
+                            && mgr.buffer_for_split(s) == Some(buf_id)
+                            && !synced.contains(&s)
+                        {
+                            synced.push(s);
+                        }
+                    }
+                }
+            }
+        }
+
+        synced
+    }
+
     /// Toggle the active buffer's `debug_highlight_mode` (shows byte
     /// positions and highlight-span info on screen). No-op if there is
     /// no active buffer.

@@ -194,6 +194,11 @@ impl ScrollSyncManager {
         }
     }
 
+    /// Remove any scroll sync groups containing the given split
+    pub fn remove_groups_for_split(&mut self, split_id: SplitId) {
+        self.groups.retain(|g| !g.contains_split(split_id));
+    }
+
     /// Get a mutable reference to a group by ID
     pub fn get_group_mut(&mut self, id: ScrollSyncGroupId) -> Option<&mut ScrollSyncGroup> {
         self.groups.iter_mut().find(|g| g.id == id)

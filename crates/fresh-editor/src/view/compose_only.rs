@@ -33,6 +33,12 @@ pub const MD_TABLE_BORDER_NS: &str = "md-tb";
 /// Virtual-line namespace: the blank spacer rows between list items.
 pub const MD_LIST_SPACING_NS: &str = "md-ls";
 
+/// Virtual-line namespace: Mermaid diagram visual overflow rows.
+pub const MD_MERMAID_VIRTUAL_LINE_NS: &str = "md-mermaid";
+
+/// Virtual-line namespace: Math formula border and virtual rows.
+pub const MD_MATH_VIRTUAL_LINE_NS: &str = "md-math";
+
 /// Inline virtual-text id prefix: a fenced code block's `│` side rails.
 ///
 /// A prefix rather than a namespace because only virtual *lines* carry a
@@ -58,11 +64,12 @@ pub fn md_emphasis_namespace() -> fresh_core::overlay::OverlayNamespace {
 pub fn is_compose_only_virtual_text(vtext: &VirtualText) -> bool {
     // Compared as strings rather than by building a `VirtualTextNamespace`:
     // this runs for every virtual text in the viewport on every frame.
-    if vtext
-        .namespace
-        .as_ref()
-        .is_some_and(|ns| ns.as_str() == MD_TABLE_BORDER_NS || ns.as_str() == MD_LIST_SPACING_NS)
-    {
+    if vtext.namespace.as_ref().is_some_and(|ns| {
+        ns.as_str() == MD_TABLE_BORDER_NS
+            || ns.as_str() == MD_LIST_SPACING_NS
+            || ns.as_str() == MD_MERMAID_VIRTUAL_LINE_NS
+            || ns.as_str() == MD_MATH_VIRTUAL_LINE_NS
+    }) {
         return true;
     }
     vtext
