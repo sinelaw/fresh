@@ -72,9 +72,11 @@ fresh-core = { version = "0.5.3", path = "crates/fresh-core" }
 # and with them the whole bundled tree-sitter grammar set.
 fresh-editor-core = { version = "0.5.3", path = "crates/fresh-editor-core", default-features = false }
 fresh-gui = { version = "0.5.3", path = "crates/fresh-gui" }
-fresh-parser-js = { version = "0.5.3", path = "crates/fresh-parser-js" }
+# `default-features = false` on these two so a member can build them without
+# oxc (their `oxc` feature); members that want it enable it explicitly.
+fresh-parser-js = { version = "0.5.3", path = "crates/fresh-parser-js", default-features = false }
 fresh-languages = { version = "0.5.3", path = "crates/fresh-languages" }
-fresh-plugin-runtime = { version = "0.5.3", path = "crates/fresh-plugin-runtime" }
+fresh-plugin-runtime = { version = "0.5.3", path = "crates/fresh-plugin-runtime", default-features = false }
 fresh-plugin-api-macros = { version = "0.5.3", path = "crates/fresh-plugin-api-macros" }
 fresh-winterm = { version = "0.5.3", path = "crates/fresh-winterm" }
 fresh-input-parser = { version = "0.5.3", path = "crates/fresh-input-parser" }
@@ -84,7 +86,6 @@ fresh-i18n = { version = "0.5.3", path = "crates/fresh-i18n" }
 fresh-js = { version = "0.5.3", path = "crates/fresh-js" }
 fresh-quickjs-sys = { version = "0.5.3", path = "crates/fresh-quickjs-sys" }
 fresh-js-macros = { version = "0.5.3", path = "crates/fresh-js-macros" }
-# `default-features = false` on these two so a member can build them without
 
 # External crates
 serde = { version = "1.0", features = ["derive", "rc"] }
