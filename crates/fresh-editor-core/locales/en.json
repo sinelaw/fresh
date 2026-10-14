@@ -14,6 +14,7 @@
   "cli.arg.event_log": "Enable event logging to the specified file",
   "cli.arg.no_restore": "Don't restore the previous workspace (hot-exit content — unsaved modified files and unnamed buffers — is still restored so in-progress work is not lost)",
   "cli.arg.restore": "Force restore of the previous workspace, overriding `editor.restore_previous_session = false` in the config. Cannot be combined with --no-restore.",
+  "cli.arg.wait": "Accepted for $EDITOR and git's core.editor; Fresh already returns only once you quit",
   "cli.arg.no_upgrade_check": "Disable upgrade checking and anonymous telemetry",
   "cli.arg.locale": "Override the locale (e.g. 'en', 'ja', 'zh-CN')",
   "cli.arg.gui": "Launch in GUI mode (native window with GPU rendering)",

@@ -20,6 +20,7 @@
   "cli.arg.event_log": "指定したファイルへのイベントログを有効にします",
   "cli.arg.no_restore": "前回のワークスペースを復元しません（ホットイグジット内容 — 保存されていない変更ファイルや無名バッファ — は引き続き復元され、進行中の作業は失われません）",
   "cli.arg.restore": "設定の `editor.restore_previous_session = false` を上書きして、前回のワークスペースの復元を強制します。--no-restore とは併用できません。",
+  "cli.arg.wait": "$EDITOR や git の core.editor 用に受け付けます。Fresh は終了するまで戻らないので、待つ必要はありません",
   "cli.arg.no_upgrade_check": "アップデート確認と匿名のテレメトリを無効化します",
   "cli.arg.locale": "ロケールを上書きします（例: 'en'、'ja'、'zh-CN'）",
   "cli.arg.gui": "GUI モードで起動します（GPU レンダリングのネイティブウィンドウ）",

@@ -932,7 +932,7 @@
           "x-section": "Startup"
         },
         "skip_session_restore_when_files_passed": {
-          "description": "When started with files (e.g. `fresh main.rs`), open only those files\ninstead of the last session. Unsaved changes are still restored. Default: true",
+          "description": "When started with files (e.g. `fresh main.rs`, or as git's editor), open only\nthose files: the session is neither restored nor saved, no dock opens, and only\nthose files' unsaved changes come back. Off makes it a full session. Default: true",
           "type": "boolean",
           "default": true,
           "x-section": "Startup"

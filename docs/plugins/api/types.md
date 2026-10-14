@@ -1776,8 +1776,9 @@ interface EditorConfig {
     */
     restore_previous_session?: boolean;
     /**
-    * When started with files (e.g. `fresh main.rs`), open only those files
-    * instead of the last session. Unsaved changes are still restored. Default: true
+    * When started with files (e.g. `fresh main.rs`, or as git's editor), open only
+    * those files: the session is neither restored nor saved, no dock opens, and only
+    * those files' unsaved changes come back. Off makes it a full session. Default: true
     *
     * Default: `true`
     */

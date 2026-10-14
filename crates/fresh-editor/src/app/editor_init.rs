@@ -453,6 +453,13 @@ pub(super) struct EditorParts {
     /// This editor is the one a bare `fresh` launched into. See
     /// [`Editor::orchestrator_mode`] for what it changes.
     pub(super) orchestrator_mode: bool,
+
+    /// See [`Editor::file_launch`].
+    pub(super) file_launch: bool,
+
+    /// Whether every persisted workspace is already in `windows` (see
+    /// [`Editor::ensure_all_workspaces_loaded`]).
+    pub(super) all_workspaces_loaded: bool,
 }
 
 /// Load the per-window prompt-history rings (search / replace / goto-line)
@@ -490,7 +497,7 @@ fn load_prompt_histories(
 ///
 /// Each shell's `splits` stays `None`; the first dive into it re-warms exactly
 /// like a freshly created window.
-fn build_persisted_window_shells(
+pub(super) fn build_persisted_window_shells(
     persisted_env: Option<&crate::app::orchestrator_persistence::PersistedWindows>,
     active_came_from_pick: bool,
     active_window_id: fresh_core::WindowId,
@@ -714,6 +721,8 @@ impl Editor {
             plugin_schemas: std::sync::Arc::new(std::sync::RwLock::new(parts.plugin_schemas)),
             event_broadcaster: parts.event_broadcaster,
             orchestrator_mode: parts.orchestrator_mode,
+            file_launch: parts.file_launch,
+            all_workspaces_loaded: parts.all_workspaces_loaded,
             #[cfg(feature = "plugins")]
             line_targets: std::collections::HashMap::new(),
             #[cfg(feature = "plugins")]
@@ -863,6 +872,7 @@ impl Editor {
             connection,
             false,
             false,
+            false,
         )
     }
 
@@ -880,6 +890,10 @@ impl Editor {
     /// field is the user's *preference*, while this is a property of the
     /// invocation — the preference can be on while the launch named a file,
     /// which is an ordinary launch.
+    ///
+    /// `file_launch` is the same kind of invocation property: the launch opens
+    /// the files on its command line rather than a session (see
+    /// [`Editor::file_launch`]).
     #[allow(clippy::too_many_arguments)]
     pub fn with_working_dir_opts(
         config: Config,
@@ -892,6 +906,7 @@ impl Editor {
         connection: std::sync::Arc<crate::services::authority::Connection>,
         defer_plugin_load: bool,
         orchestrator_mode: bool,
+        file_launch: bool,
     ) -> AnyhowResult<Self> {
         tracing::info!("Building default grammar registry...");
         let start = std::time::Instant::now();
@@ -925,6 +940,7 @@ impl Editor {
             grammar_registry,
             defer_plugin_load,
             orchestrator_mode,
+            file_launch,
         )
     }
 
@@ -984,6 +1000,7 @@ impl Editor {
             grammar_registry,
             false,
             orchestrator_mode,
+            false,
         )?;
         // Tests typically have no async_bridge, so the deferred grammar build
         // would just drain pending_grammars and early-return. Skip it entirely.
@@ -1031,6 +1048,7 @@ impl Editor {
         grammar_registry: Arc<crate::primitives::grammar::GrammarRegistry>,
         defer_plugin_load: bool,
         orchestrator_mode: bool,
+        file_launch: bool,
     ) -> AnyhowResult<Self> {
         let mut t = InitTimer::start("Editor::with_options");
         // The editor is constructed with the *real* authority it will run
@@ -1179,10 +1197,25 @@ impl Editor {
             data_dir = %dir_context.data_dir.display(),
             "editor_init: reading persisted windows env"
         );
-        let persisted_env = crate::app::orchestrator_persistence::read_persisted_windows_env(
+        // The workspace registry is read only as far as this launch uses it.
+        // Orchestrator mode lists every workspace from the start; any other
+        // launch reads just its own directory's — the files named for it, so
+        // the cost does not grow with the registry. A file launch restores
+        // none of it, but its window still takes that workspace's identity,
+        // so the dock never lists the directory twice. The rest is read the
+        // first time something uses it (`Editor::ensure_all_workspaces_loaded`)
+        // — with hundreds of workspace files, reading them all was most of a
+        // plain `fresh FILE`'s startup.
+        use crate::app::orchestrator_persistence::WorkspaceScope;
+        let persisted_env = crate::app::orchestrator_persistence::read_persisted_windows(
             orchestrator_filesystem.as_ref(),
             &dir_context.data_dir,
             &working_dir,
+            if orchestrator_mode {
+                WorkspaceScope::All
+            } else {
+                WorkspaceScope::LaunchDir
+            },
         );
         tracing::debug!("editor_init: reading persisted plugin state");
         let plugin_global_state = crate::app::orchestrator_persistence::read_persisted_plugin_state(
@@ -1651,6 +1684,8 @@ impl Editor {
             plugin_schemas,
             event_broadcaster: event_broadcaster.clone(),
             orchestrator_mode,
+            file_launch,
+            all_workspaces_loaded: orchestrator_mode,
         };
 
         let mut editor = Editor::from_parts(parts);
@@ -1738,6 +1773,21 @@ impl Editor {
     /// nothing at all — is what you land on.
     pub fn orchestrator_mode(&self) -> bool {
         self.orchestrator_mode
+    }
+
+    /// Whether this editor was launched to open the files on its command
+    /// line — `fresh FILE…` with `editor.skip_session_restore_when_files_passed`
+    /// on (the default) and no `--restore` — rather than a session (a bare
+    /// `fresh`, `fresh DIR`, a daemon). Decided by the invocation alone,
+    /// like [`Editor::orchestrator_mode`].
+    ///
+    /// Such a launch is about those files: it neither reads nor writes the
+    /// workspace or prompt history, brings back no other buffer's hot-exit
+    /// content (the named files' own still comes back), and does not open
+    /// the dock on its own. Hot exit, crash recovery and per-file cursor
+    /// positions work as in any launch.
+    pub fn file_launch(&self) -> bool {
+        self.file_launch
     }
 
     /// Whether the editor should put *something* in front of the user when a

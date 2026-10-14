@@ -231,6 +231,18 @@ override their own settings.
 orchestratorMode(): boolean;
 ```
 
+### `fileLaunch`
+
+Whether the editor was launched to open the files on its command line
+(`fresh FILE…`, as `$EDITOR` or git's `core.editor` run it) rather than
+a session (a bare `fresh`, `fresh DIR`, a daemon). Such a launch is
+about those files: plugins leave out what belongs to a session, such
+as startup pages.
+
+```typescript
+fileLaunch(): boolean;
+```
+
 ### `dockOpen`
 
 Whether the left dock slot is open: a panel is in it, or the host is
@@ -369,6 +381,20 @@ at cycle time.
 
 ```typescript
 setWindowCycleOrder(ids: number[]): boolean;
+```
+
+### `loadWorkspaces`
+
+Load every saved workspace into `listWindows()`, once.
+
+A launch starts with only the workspaces of its own directory (all of
+them in Orchestrator mode); the rest of the registry is read on first
+use rather than at startup. Call this before listing workspaces to a
+user. Resolves once `listWindows()` includes them all; resolves at
+once when they already are.
+
+```typescript
+loadWorkspaces(): Promise<void>;
 ```
 
 ### `closeWindow`

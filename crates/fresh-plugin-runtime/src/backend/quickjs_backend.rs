@@ -2813,6 +2813,18 @@ impl JsEditorApi {
             .unwrap_or(false)
     }
 
+    /// Whether the editor was launched to open the files on its command line
+    /// (`fresh FILE…`, as `$EDITOR` or git's `core.editor` run it) rather than
+    /// a session (a bare `fresh`, `fresh DIR`, a daemon). Such a launch is
+    /// about those files: plugins leave out what belongs to a session, such
+    /// as startup pages.
+    pub fn file_launch(&self) -> bool {
+        self.state_snapshot
+            .read()
+            .map(|s| s.file_launch)
+            .unwrap_or(false)
+    }
+
     /// Whether the left dock slot is open: a panel is in it, or the host is
     /// holding the column for one its manifest declared. The plugin that
     /// fills the dock mounts it at
@@ -6309,6 +6321,23 @@ impl JsEditorApi {
                     .collect(),
             })
             .is_ok()
+    }
+
+    /// Load every saved workspace into `listWindows()`, once.
+    ///
+    /// A launch starts with only the workspaces of its own directory (all of
+    /// them in Orchestrator mode); the rest of the registry is read on first
+    /// use rather than at startup. Call this before listing workspaces to a
+    /// user. Resolves once `listWindows()` includes them all; resolves at
+    /// once when they already are.
+    #[plugin_api(async_promise, js_name = "loadWorkspaces", ts_return = "void")]
+    #[qjs(rename = "_loadWorkspacesStart")]
+    pub fn load_workspaces_start(&self, _ctx: fresh_js::Ctx<'_>) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::LoadWorkspaces {
+            callback_id: JsCallbackId::new(id),
+        });
+        id
     }
 
     /// Close session `id`. Refuses to close the active session or

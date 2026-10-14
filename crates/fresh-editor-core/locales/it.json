@@ -20,6 +20,7 @@
   "cli.arg.event_log": "Abilita la registrazione degli eventi sul file indicato",
   "cli.arg.no_restore": "Non ripristinare lo spazio di lavoro precedente (i contenuti hot-exit — file modificati non salvati e buffer senza nome — vengono comunque ripristinati per non perdere il lavoro in corso)",
   "cli.arg.restore": "Forza il ripristino dello spazio di lavoro precedente, sovrascrivendo `editor.restore_previous_session = false` nella configurazione. Non può essere combinato con --no-restore.",
+  "cli.arg.wait": "Accettato per $EDITOR e core.editor di git; Fresh restituisce già il controllo solo quando esci",
   "cli.arg.no_upgrade_check": "Disabilita il controllo aggiornamenti e la telemetria anonima",
   "cli.arg.locale": "Imposta una lingua specifica (es. 'en', 'ja', 'zh-CN')",
   "cli.arg.gui": "Avvia in modalità GUI (finestra nativa con rendering GPU)",

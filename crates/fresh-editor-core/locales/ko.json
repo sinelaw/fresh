@@ -20,6 +20,7 @@
   "cli.arg.event_log": "지정한 파일에 이벤트 로깅을 활성화합니다",
   "cli.arg.no_restore": "이전 워크스페이스를 복원하지 않습니다 (저장되지 않은 수정 파일과 이름 없는 버퍼 같은 핫-엑시트 내용은 진행 중인 작업을 잃지 않도록 그대로 복원됩니다)",
   "cli.arg.restore": "설정의 `editor.restore_previous_session = false` 를 무시하고 이전 워크스페이스 복원을 강제합니다. --no-restore 와 함께 쓸 수 없습니다.",
+  "cli.arg.wait": "$EDITOR 와 git 의 core.editor 용으로 받아들입니다. Fresh 는 종료할 때까지 돌아오지 않으므로 기다릴 것이 없습니다",
   "cli.arg.no_upgrade_check": "업그레이드 확인과 익명 텔레메트리를 비활성화합니다",
   "cli.arg.locale": "로케일을 덮어씁니다 (예: 'en', 'ja', 'zh-CN')",
   "cli.arg.gui": "GUI 모드로 시작합니다 (GPU 렌더링을 사용하는 네이티브 창)",

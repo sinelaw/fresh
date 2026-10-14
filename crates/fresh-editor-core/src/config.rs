@@ -1548,8 +1548,9 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Startup"))]
     pub restore_previous_session: bool,
 
-    /// When started with files (e.g. `fresh main.rs`), open only those files
-    /// instead of the last session. Unsaved changes are still restored. Default: true
+    /// When started with files (e.g. `fresh main.rs`, or as git's editor), open only
+    /// those files: the session is neither restored nor saved, no dock opens, and only
+    /// those files' unsaved changes come back. Off makes it a full session. Default: true
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Startup"))]
     pub skip_session_restore_when_files_passed: bool,

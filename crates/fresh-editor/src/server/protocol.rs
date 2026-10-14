@@ -207,6 +207,12 @@ pub enum ServerControl {
     Error { message: String },
     /// Signal that a --wait operation has completed
     WaitComplete,
+    /// Answer to an `OpenFiles { wait: true }` that reached a daemon nobody is
+    /// looking at: no terminal attached and no browser connected. The file is
+    /// open, but no one can see it to finish with it, so the waiting client
+    /// must not just block (git would hang on an invisible editor). It
+    /// attaches its own terminal, or fails when it has none.
+    NoViewer,
     /// Set the system clipboard on the client side
     /// The client should use the specified methods to copy the text
     SetClipboard {

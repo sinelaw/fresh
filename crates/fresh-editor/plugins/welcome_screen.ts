@@ -1152,7 +1152,7 @@ function level1(): WidgetSpec[] {
     card("editorvar", "Use Fresh from the shell", "$EDITOR and file:line", () => [
       blank(),
       plain("  # Commit messages and rebases", C.muted),
-      plain("  git config --global core.editor \"fresh --wait\"", C.value),
+      plain("  git config --global core.editor fresh", C.value),
       blank(),
       plain("  # Open at a line and column", C.muted),
       plain("  fresh src/main.rs:42:10", C.value),
@@ -2199,7 +2199,8 @@ function showOnStartup(): boolean {
  *  behind whatever is already open and nothing else about the workspace
  *  is consulted — not how many buffers there are, not what the host's
  *  untitled seed means, not any other setting. One concern: open at
- *  startup, or don't. */
+ *  startup, or don't — and a file launch (`editor.fileLaunch()`) is not a
+ *  startup in that sense: it was asked for those files and only those. */
 async function openWelcome(force: boolean): Promise<void> {
   if (bufferId !== null) {
     editor.showBuffer(bufferId);
@@ -2207,6 +2208,9 @@ async function openWelcome(force: boolean): Promise<void> {
   }
   if (opening) return;
   if (!force && !showOnStartup()) return;
+  // `fresh FILE` (`$EDITOR`, git's `core.editor`) opens those files and
+  // nothing else; the page is still a palette command away.
+  if (!force && editor.fileLaunch()) return;
   opening = true;
   readActiveTheme();
   try {
@@ -2388,7 +2392,21 @@ registerHandler("welcomeOnBufferActivated", (e: { buffer_id: number }) => {
   // is the recovery.
   mountContents(false);
   editor.setTimeout(0, "welcomeCatchUpOnShow");
+  void loadWorkspacesForPage();
 });
+
+// The page lists your workspaces, but it opens as a background tab on every
+// launch — reading the whole workspace registry for a page nobody is looking
+// at would cost every launch. So the list starts as what the editor already
+// has, and the rest is asked for the first time the page is actually shown.
+let workspacesRequested = false;
+async function loadWorkspacesForPage(): Promise<void> {
+  if (workspacesRequested) return;
+  workspacesRequested = true;
+  await editor.loadWorkspaces();
+  probeWorkspaces();
+  render();
+}
 registerHandler("welcomeCatchUpOnShow", async () => {
   if (bufferId === null || editor.getActiveBufferId() !== bufferId) return;
   paneWidth = 0;
