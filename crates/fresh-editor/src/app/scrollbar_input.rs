@@ -112,23 +112,42 @@ impl crate::app::window::Window {
             return Ok(());
         }
 
-        if let Some(view_state) = self.split_view_states_mut().get_mut(&target_split) {
+        let synced = self.synced_splits_for(target_split);
+        let new_left = if let Some(view_state) = self.split_view_states_mut().get_mut(&target_split)
+        {
             // Line wrap makes horizontal scroll a no-op.
             if view_state.buffer_tab_state_mut().viewport.line_wrap_enabled {
-                return Ok(());
-            }
-
-            let columns_to_scroll = delta.unsigned_abs() as usize;
-            let viewport = &mut view_state.buffer_tab_state_mut().viewport;
-            if delta < 0 {
-                viewport.left_column = viewport.left_column.saturating_sub(columns_to_scroll);
+                None
             } else {
-                // No max_line_length_seen clamp: that value is stale between
-                // renders (often 0 before any h-scroll), pinning this at 0
-                // even when long lines exist. Overshoot clips at render.
-                viewport.left_column = viewport.left_column.saturating_add(columns_to_scroll);
+                let columns_to_scroll = delta.unsigned_abs() as usize;
+                let viewport = &mut view_state.buffer_tab_state_mut().viewport;
+                if delta < 0 {
+                    viewport.left_column = viewport.left_column.saturating_sub(columns_to_scroll);
+                } else {
+                    // No max_line_length_seen clamp: that value is stale between
+                    // renders (often 0 before any h-scroll), pinning this at 0
+                    // even when long lines exist. Overshoot clips at render.
+                    viewport.left_column = viewport.left_column.saturating_add(columns_to_scroll);
+                }
+                viewport.set_skip_ensure_visible();
+                Some(viewport.left_column)
             }
-            viewport.set_skip_ensure_visible();
+        } else {
+            None
+        };
+
+        if let Some(new_left) = new_left {
+            for other_split in synced {
+                if let Some(other_vs) = self.split_view_states_mut().get_mut(&other_split) {
+                    if !other_vs.buffer_tab_state().viewport.line_wrap_enabled {
+                        other_vs.buffer_tab_state_mut().viewport.left_column = new_left;
+                        other_vs
+                            .buffer_tab_state_mut()
+                            .viewport
+                            .set_skip_ensure_visible();
+                    }
+                }
+            }
         }
 
         Ok(())

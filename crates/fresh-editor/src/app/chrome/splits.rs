@@ -412,15 +412,37 @@ impl Editor {
             } else {
                 0.0
             };
-            if let Some(vs) = self
+            let synced = self.active_window().synced_splits_for(split_id);
+            let target_col = if let Some(vs) = self
                 .active_window_mut()
                 .split_view_states_mut()
                 .get_mut(&split_id)
             {
                 let max_scroll = max_content_width.saturating_sub(visible_width);
                 let target_col = (ratio * max_scroll as f64).round() as usize;
-                vs.buffer_tab_state_mut().viewport.left_column = target_col.min(max_scroll);
+                let final_col = target_col.min(max_scroll);
+                vs.buffer_tab_state_mut().viewport.left_column = final_col;
                 vs.buffer_tab_state_mut().viewport.set_skip_ensure_visible();
+                Some(final_col)
+            } else {
+                None
+            };
+            if let Some(target_col) = target_col {
+                for other_split in synced {
+                    if let Some(other_vs) = self
+                        .active_window_mut()
+                        .split_view_states_mut()
+                        .get_mut(&other_split)
+                    {
+                        if !other_vs.buffer_tab_state().viewport.line_wrap_enabled {
+                            other_vs.buffer_tab_state_mut().viewport.left_column = target_col;
+                            other_vs
+                                .buffer_tab_state_mut()
+                                .viewport
+                                .set_skip_ensure_visible();
+                        }
+                    }
+                }
             }
         }
         Some(Ok(()))
@@ -1117,7 +1139,8 @@ impl Editor {
                         return Ok(());
                     }
 
-                    if let Some(crate::app::types::HorizontalGrab {
+                    let synced = self.active_window().synced_splits_for(dragging_split_id);
+                    let target_left = if let Some(crate::app::types::HorizontalGrab {
                         col: drag_start_hcol,
                         left_column: drag_start_left_column,
                     }) = grab
@@ -1139,13 +1162,18 @@ impl Editor {
                                     (col_offset as f64 * scroll_per_pixel).round() as i64;
                                 let new_left =
                                     (drag_start_left_column as i64 + scroll_offset).max(0) as usize;
-                                view_state.buffer_tab_state_mut().viewport.left_column =
-                                    new_left.min(max_scroll);
+                                let final_left = new_left.min(max_scroll);
+                                view_state.buffer_tab_state_mut().viewport.left_column = final_left;
                                 view_state
                                     .buffer_tab_state_mut()
                                     .viewport
                                     .set_skip_ensure_visible();
+                                Some(final_left)
+                            } else {
+                                None
                             }
+                        } else {
+                            None
                         }
                     } else {
                         // Jump drag (started from track) - jump to absolute position
@@ -1159,12 +1187,34 @@ impl Editor {
                         {
                             let max_scroll = max_content_width.saturating_sub(visible_width);
                             let target_col = (ratio * max_scroll as f64).round() as usize;
-                            view_state.buffer_tab_state_mut().viewport.left_column =
-                                target_col.min(max_scroll);
+                            let final_col = target_col.min(max_scroll);
+                            view_state.buffer_tab_state_mut().viewport.left_column = final_col;
                             view_state
                                 .buffer_tab_state_mut()
                                 .viewport
                                 .set_skip_ensure_visible();
+                            Some(final_col)
+                        } else {
+                            None
+                        }
+                    };
+
+                    if let Some(target_left) = target_left {
+                        for other_split in synced {
+                            if let Some(other_vs) = self
+                                .active_window_mut()
+                                .split_view_states_mut()
+                                .get_mut(&other_split)
+                            {
+                                if !other_vs.buffer_tab_state().viewport.line_wrap_enabled {
+                                    other_vs.buffer_tab_state_mut().viewport.left_column =
+                                        target_left;
+                                    other_vs
+                                        .buffer_tab_state_mut()
+                                        .viewport
+                                        .set_skip_ensure_visible();
+                                }
+                            }
                         }
                     }
 

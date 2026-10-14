@@ -243,6 +243,8 @@ pub mod markdown_compose_diagnostics;
 #[cfg(feature = "plugins")]
 pub mod markdown_compose_first_scroll_relayout;
 #[cfg(feature = "plugins")]
+pub mod markdown_compose_mermaid_latex;
+#[cfg(feature = "plugins")]
 pub mod markdown_compose_page_width;
 #[cfg(feature = "plugins")]
 pub mod markdown_compose_reflow;
