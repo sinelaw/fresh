@@ -151,13 +151,22 @@ impl Scenario {
 
     /// Construct the editor exactly as a `fresh <project>` launch would
     /// (read persistence, discover sessions, pick the foreground window,
-    /// build the windows map).
+    /// build the windows map), then list the workspaces the way the
+    /// Orchestrator dock does — which reads the rest of the registry.
     fn bring_up(&self) -> fresh::app::Editor {
         self.bring_up_in(&self.project_canon)
     }
 
     /// Like [`Self::bring_up`] but launches with an explicit cwd.
     fn bring_up_in(&self, cwd: &Path) -> fresh::app::Editor {
+        let mut editor = self.boot_in(cwd);
+        editor.ensure_all_workspaces_loaded();
+        editor
+    }
+
+    /// The editor as construction leaves it, before anything has listed the
+    /// workspaces.
+    fn boot_in(&self, cwd: &Path) -> fresh::app::Editor {
         let dir_context = DirectoryContext::for_testing(self.data_root.path());
         let filesystem: Arc<dyn fresh::model::filesystem::FileSystem + Send + Sync> =
             Arc::new(StdFileSystem);
@@ -456,4 +465,40 @@ fn discovery_surfaces_co_tenant_workspaces_sharing_a_root() {
             .collect(),
         "co-tenant windows must keep their own stable ids"
     );
+}
+
+/// Boot reads only the launch directory's workspaces; the rest of the
+/// registry stays on disk until something lists it, and is then added
+/// without disturbing the windows already built.
+#[test]
+fn boot_reads_only_the_launch_dirs_workspaces_until_they_are_listed() {
+    let s = Scenario::new();
+    s.place_workspace(&s.project_canon, "project");
+    s.place_workspace(&s.other_canon, "other");
+
+    let mut editor = s.boot_in(&s.project_canon);
+    assert_eq!(
+        window_roots(&editor),
+        vec![s.project_canon.clone()],
+        "boot builds only the launch directory's window"
+    );
+
+    let active = editor.active_window_id();
+    editor.ensure_all_workspaces_loaded();
+    let mut expected = vec![s.project_canon.clone(), s.other_canon.clone()];
+    expected.sort();
+    assert_eq!(
+        window_roots(&editor),
+        expected,
+        "listing the workspaces reads the rest of the registry"
+    );
+    assert_eq!(
+        editor.active_window_id(),
+        active,
+        "loading the registry does not switch windows"
+    );
+
+    // Idempotent: a second listing adds nothing.
+    editor.ensure_all_workspaces_loaded();
+    assert_eq!(window_roots(&editor), expected);
 }

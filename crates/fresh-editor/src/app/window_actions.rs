@@ -896,6 +896,9 @@ impl crate::app::Editor {
     /// `prev_window` so both directions stay in sync if the
     /// underlying ordering changes (e.g. user-controlled reorder).
     fn cycle_active_window(&mut self, delta: isize) {
+        // Cycling walks the saved workspaces too, so it is a use of the
+        // registry: read the rest of it first.
+        self.ensure_all_workspaces_loaded();
         // A plugin (the orchestrator dock) may constrain cycling to a
         // specific ordered subset — the windows currently visible in its
         // session list — so Next/Prev Window walks exactly that list rather

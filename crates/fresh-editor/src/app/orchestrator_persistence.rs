@@ -1041,7 +1041,7 @@ impl Editor {
     /// under a fresh window id: ids carry no meaning across launches (boot
     /// assigns them by sorted root), so continuing from `next_window_id`
     /// never collides with a window the plugins already know.
-    pub(crate) fn ensure_all_workspaces_loaded(&mut self) {
+    pub fn ensure_all_workspaces_loaded(&mut self) {
         if self.all_workspaces_loaded {
             return;
         }
