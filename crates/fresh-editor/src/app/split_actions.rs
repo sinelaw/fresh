@@ -208,6 +208,11 @@ impl Editor {
                     .split_view_states_mut()
                     .remove(&closing_split);
 
+                // Clean up any scroll sync groups containing the closed split
+                self.active_window_mut()
+                    .scroll_sync_manager
+                    .remove_groups_for_split(closing_split.into());
+
                 // Drop the closed split from every terminal's scrollback set so
                 // no terminal keeps a stale (split, scrollback) edge.
                 self.active_window_mut()
