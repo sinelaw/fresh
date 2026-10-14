@@ -1562,7 +1562,7 @@ dependencies = [
 
 [[package]]
 name = "fresh-js"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "fresh-js-macros",
  "fresh-quickjs-sys",
@@ -1574,7 +1574,7 @@ dependencies = [
 
 [[package]]
 name = "fresh-js-macros"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1646,7 +1646,7 @@ dependencies = [
 
 [[package]]
 name = "fresh-quickjs-sys"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "bindgen",
  "cc",

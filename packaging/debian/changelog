@@ -1,4 +1,4 @@
-fresh-editor (0.5.2-1) UNRELEASED; urgency=medium
+fresh-editor (0.5.3-1) UNRELEASED; urgency=medium
 
   * Initial release, built from Debian's packaged crates with Debian's
     QuickJS and esbuild. (ITP bug to be filed.)
