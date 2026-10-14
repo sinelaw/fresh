@@ -1608,6 +1608,7 @@ dependencies = [
  "oxc_span",
  "oxc_transformer",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

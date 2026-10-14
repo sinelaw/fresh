@@ -27,7 +27,6 @@ use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 
 /// Flags every invocation shares: quiet except errors, plain text, no
@@ -283,12 +282,18 @@ fn cache_read(path: &Path) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
 
-/// Write atomically (temp file + rename) so concurrent Fresh instances never
-/// read a partial entry.
+/// Write atomically (a uniquely named temp file beside it, then a rename) so
+/// concurrent Fresh instances, and threads of one, never read or produce a
+/// partial entry.
 fn cache_write(path: &Path, contents: &str) {
-    let tmp = path.with_extension(format!("tmp{}", std::process::id()));
-    if std::fs::write(&tmp, contents).is_ok() && std::fs::rename(&tmp, path).is_err() {
-        let _ = std::fs::remove_file(&tmp);
+    use std::io::Write;
+    let Some(dir) = path.parent() else { return };
+    let Ok(mut tmp) = tempfile::NamedTempFile::new_in(dir) else {
+        return;
+    };
+    if tmp.write_all(contents.as_bytes()).is_ok() {
+        // On failure the temp file is removed when `tmp` drops.
+        let _ = tmp.persist(path);
     }
 }
 
@@ -382,15 +387,17 @@ pub fn bundle_module(entry_path: &Path) -> Result<String> {
     }
 
     // esbuild refuses `--metafile` without an output path, so the bundle goes
-    // to a temporary file rather than stdout.
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let stem = std::env::temp_dir().join(format!(
-        "fresh-esbuild-{}-{}",
-        std::process::id(),
-        SEQ.fetch_add(1, Ordering::Relaxed)
-    ));
-    let outfile = stem.with_extension("js");
-    let metafile = stem.with_extension("json");
+    // to a file rather than stdout. The files live in a directory of our own:
+    // created with a random name and only its owner's permissions, so another
+    // user cannot plant a file or symlink at a predictable path in the shared
+    // temp directory, which would let them overwrite a file of ours or put
+    // their own code in the bundle we then run as the plugin.
+    let out_dir = tempfile::Builder::new()
+        .prefix("fresh-esbuild-")
+        .tempdir()
+        .context("creating a temporary directory for esbuild's output")?;
+    let outfile = out_dir.path().join("bundle.js");
+    let metafile = out_dir.path().join("meta.json");
     let mut args = vec![
         entry_str.clone(),
         "--packages=external".to_string(),
@@ -408,8 +415,7 @@ pub fn bundle_module(entry_path: &Path) -> Result<String> {
     let inputs = std::fs::read_to_string(&metafile)
         .ok()
         .and_then(|m| metafile_inputs(&m));
-    let _ = std::fs::remove_file(&outfile);
-    let _ = std::fs::remove_file(&metafile);
+    drop(out_dir);
     let js = strip_esm_module_syntax(&result?);
 
     if let (Some(index), Some(inputs)) = (index, inputs) {
@@ -549,8 +555,32 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_cache_writes_leave_one_whole_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("entry.js");
+        let contents: Vec<String> = (0..8).map(|i| format!("{i}").repeat(64 * 1024)).collect();
+        std::thread::scope(|s| {
+            for c in &contents {
+                let path = &path;
+                s.spawn(move || cache_write(path, c));
+            }
+        });
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            contents.contains(&written),
+            "a cache entry mixed two writes"
+        );
+        let names: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["entry.js"], "temporary files were left behind");
+    }
+
+    #[test]
     fn bundle_inlines_relative_imports_and_drops_external_ones() {
-        let dir = std::env::temp_dir().join(format!("fresh-esbuild-test-{}", std::process::id()));
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
         std::fs::create_dir_all(dir.join("lib")).unwrap();
         std::fs::write(
             dir.join("lib/util.ts"),
@@ -563,7 +593,6 @@ mod tests {
         )
         .unwrap();
         let js = bundle_module(&dir.join("main.ts")).unwrap();
-        let _ = std::fs::remove_dir_all(&dir);
         assert!(js.contains("function twice(n)"), "{js}");
         assert!(js.contains("function handler()"), "{js}");
         assert!(!js.contains("fresh:plugin"), "{js}");

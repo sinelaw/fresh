@@ -28,6 +28,8 @@ oxc = [
 anyhow.workspace = true
 # Reads esbuild's metafile (the esbuild backend's bundle cache).
 serde_json.workspace = true
+# Private directories and files for esbuild's output and cache writes.
+tempfile = "3.25"
 oxc_allocator = { workspace = true, optional = true }
 oxc_ast = { workspace = true, optional = true }
 oxc_parser = { workspace = true, optional = true }
