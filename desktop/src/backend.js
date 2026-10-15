@@ -433,8 +433,18 @@ class Backend {
   /** Open more files in this window's session (a second launch, a Finder drop). */
   openFiles(files) {
     if (!this.running || files.length === 0) return;
-    // `fresh --cmd session open-file .` hands the list to the session serving
-    // the current directory — the one this window's editor runs.
+    // Straight to this window's editor, over the bridge it serves the page
+    // on. Not through the session socket (`fresh --cmd session open-file`):
+    // that client first probes whether the daemon is alive, and an editor
+    // still busy starting can lose the probe — the client then starts a
+    // second, headless daemon and hands *it* the files.
+    request(`${this.url}open`, { method: 'POST', body: JSON.stringify({ files }) })
+      .then((status) => { if (status === 404) this.openFilesBySession(files); })
+      .catch(() => this.openFilesBySession(files));
+  }
+
+  /** The session-socket hand-off, for an editor without the bridge's `open`. */
+  openFilesBySession(files) {
     const child = spawn(this.binary, ['--cmd', 'session', 'open-file', '.', ...files], {
       cwd: this.workingDir,
       env: this.env,

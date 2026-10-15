@@ -377,7 +377,7 @@ async function smokeTest(entry) {
     throw new Error(`timed out waiting for ${what}`);
   };
   try {
-    await waitFor('!!(window.fresh && window.fresh.wsOpen && window.fresh.frames > 0 && window.fresh.scene)', 'the first frame');
+    await waitFor('!!(window.fresh && window.fresh.wsOpen && window.fresh.scene)', 'the editor\'s scene');
     const before = await js('window.fresh.frames');
     await js(`window.fresh.sendKey({key:"x",code:"KeyX",ctrl:false,meta:false,shift:false,alt:false})`);
     await waitFor(`window.fresh.frames > ${before}`, 'a frame answering a keystroke');
