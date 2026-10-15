@@ -263,6 +263,16 @@ Smart editing for Markdown files (provided by the built-in `markdown_source` plu
 
 "Markdown: Toggle Compose" from the command palette enables a distraction-free mode that conceals markup (`**`, `*`, `[]()`), applies soft line breaks at a configurable width, and renders tables. Use "Markdown: Set Compose Width" to adjust the width. Open the same file in a vertical split to see source and composed views side by side.
 
+Three commands switch the pane in focus between views of a Markdown file:
+
+| Command | View |
+|---------|------|
+| Markdown: Source Mode | The raw Markdown |
+| Markdown: Rendered Mode | The composed document |
+| Markdown: Duo Mode | The source and the composed document side by side, in a tab of their own; the two scroll together |
+
+"Markdown: Cycle View Mode" steps through Source, Rendered and Duo, and "Markdown: Toggle Duo Mode" switches Duo on and off. Duo's tab sits next to the file's own tab, and you can edit the file in its source side. Leaving Duo, or closing its tab, closes only that tab: the file stays open as it was, and other panes you have open on it are left alone.
+
 Compose mode reads the document the way markdown defines it, so a paragraph, list item or quote written across several source lines is re-flowed into one block at the page width — a hard-wrapped file reads as prose rather than as its source layout. The things markdown treats as their own block still are: a blank line, a heading, a thematic break, a table row, a fenced code block, a new list marker, and a hard break (two trailing spaces or a trailing backslash).
 
 ### Contents Panel
