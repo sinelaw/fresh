@@ -304,15 +304,32 @@ impl Editor {
     /// docs). Dropped when the panel is not mounted or the press names
     /// nothing in its spec.
     pub(crate) fn press_native_widget(&mut self, slot: Slot, press: NativeWidgetPress) {
-        let panel_slot = match slot {
-            Slot::Dock => crate::app::PanelSlot::Dock,
-            Slot::Floating => crate::app::PanelSlot::Floating,
-            Slot::Sidebar(i) => crate::app::PanelSlot::Sidebar(i),
+        let panel_key = match slot {
+            Slot::Dock => self.panel(crate::app::PanelSlot::Dock),
+            Slot::Floating => self.panel(crate::app::PanelSlot::Floating),
+            Slot::Sidebar(i) => self.panel(crate::app::PanelSlot::Sidebar(i)),
+            Slot::Pane(pane) => {
+                // A pane names its panel through the buffer it shows.
+                let Some(key) = self.pane_panel_key(pane) else {
+                    return;
+                };
+                return self.press_native_panel(slot, key, press);
+            }
             _ => return,
-        };
-        let Some(panel_key) = self.panel(panel_slot).map(|p| p.panel_key.clone()) else {
+        }
+        .map(|p| p.panel_key.clone());
+        let Some(panel_key) = panel_key else {
             return;
         };
+        self.press_native_panel(slot, panel_key, press);
+    }
+
+    fn press_native_panel(
+        &mut self,
+        slot: Slot,
+        panel_key: crate::widgets::PanelKey,
+        press: NativeWidgetPress,
+    ) {
         // A press outside an anchored pop-up, which the page's scrim caught:
         // spent on dismissing it, as the tree's layer spends it
         // (`shell::panel`, `Dismiss::OUTSIDE_POINTER`).

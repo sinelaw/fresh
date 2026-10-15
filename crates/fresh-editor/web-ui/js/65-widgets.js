@@ -7,16 +7,42 @@
 // via the same event the TUI fires; `surface` selects the routing path.
 // Concatenate a TextPropertyEntry's display text (segments preferred).
 function entryText(e){ return (e.segments&&e.segments.length)?e.segments.map(s=>s.text||"").join(""):(e.text||""); }
+// A style's look, as the host resolved its colours (`fgCss`/`bgCss`, from the
+// theme keys a plugin names) — applied inline to the span it covers.
+function applyStyle(el, st){
+  if(!st) return;
+  if(st.fgCss) el.style.color=st.fgCss;
+  if(st.bgCss){ el.style.background=st.bgCss; el.classList.add("w-chip"); }
+  if(st.bold) el.style.fontWeight="600";
+  if(st.italic) el.style.fontStyle="italic";
+  if(st.underline) el.style.textDecoration="underline";
+}
+// A TextPropertyEntry as styled spans: its segments, each in its own colour,
+// inside the entry's own style.
+function fillEntry(el, e){
+  if(!e) return el;
+  applyStyle(el, e.style);
+  if(e.segments&&e.segments.length){
+    for(const sg of e.segments){ const sp=document.createElement("span"); sp.textContent=sg.text||""; applyStyle(sp, sg.style); el.appendChild(sp); }
+  } else el.append(e.text||"");
+  return el;
+}
 
 // A fixed-width form-label cell ("Agent:") so a column of controls aligns.
 // The width (in ch) is the spec's `labelWidth` — the display-column budget the
 // TUI pads the label to — carried through instead of discarded, so the web can
 // build the same aligned grid. The stylesheet owns the actual look/alignment
 // per theme; trailing pad spaces are trimmed since the width is what aligns.
+// A control's label with the one colon a form label takes — a plugin label
+// that already ends in its own colon keeps it, rather than reading "Search::".
+function labelColon(text){
+  const t=(text||"").replace(/\s+$/,"");
+  return /[:：]$/.test(t)?t+" ":t+": ";
+}
 function formLabel(text, labelWidth){
   const l=document.createElement("span");
   l.className="w-flabel";
-  l.textContent=(text||"").replace(/\s+$/,"")+":";
+  l.textContent=labelColon(text);
   if(labelWidth>0) l.style.setProperty("--flw", labelWidth);
   return l;
 }
@@ -32,6 +58,7 @@ function formLabel(text, labelWidth){
 function panelBase(ctx){
   const b={surface:"panel",slot:ctx.slot};
   if(ctx.section!=null) b.section=ctx.section;
+  if(ctx.pane!=null) b.pane=ctx.pane;
   return b;
 }
 function routeWidget(ctx, node, listIndex, ev){
@@ -220,7 +247,7 @@ function widgetEl(spec, ctx){
     // characters long enough to reach any edge. Natively, the caption and a
     // drawn rule that ends where the panel does.
     const heading=!ctx.grid&&!(spec.segments&&spec.segments.length)
-      &&/^\s*([^─━═]*?)\s*[─━═]{3,}\s*$/.exec(spec.text||"");
+      &&/^\s*[─━═]*\s*([^─━═]*?)\s*[─━═]{3,}\s*$/.exec(spec.text||"");
     if(heading){
       const el=div("w-heading");
       const t=document.createElement("span"); t.textContent=heading[1]; el.appendChild(t);
@@ -229,7 +256,8 @@ function widgetEl(spec, ctx){
     }
     const el=div("w-label-row");
     const segs=spec.segments&&spec.segments.length?spec.segments:[{text:spec.text||""}];
-    for(const sg of segs){ const sp=document.createElement("span"); sp.textContent=sg.text||""; el.appendChild(sp); }
+    applyStyle(el, spec.style);
+    for(const sg of segs){ const sp=document.createElement("span"); sp.textContent=sg.text||""; applyStyle(sp, sg.style); el.appendChild(sp); }
     if(spec.labelWidth>0) el.style.paddingLeft=spec.labelWidth+"ch";
     if(spec.wrap) el.classList.add("wrap");
     return el;
@@ -304,7 +332,7 @@ function widgetEl(spec, ctx){
     // boxed into the input and the field aligns with the other controls. A
     // plain labelled field (no width) keeps the legacy inline label.
     const formField=spec.label&&spec.labelWidth>0;
-    if(spec.label&&!formField){ const l=document.createElement("span"); l.className="w-text-label"; l.textContent=spec.label+": "; el.appendChild(l); }
+    if(spec.label&&!formField){ const l=document.createElement("span"); l.className="w-text-label"; l.textContent=labelColon(spec.label); el.appendChild(l); }
     const multi=(spec.rows||1)>1;
     const input=document.createElement(multi?"textarea":"input");
     input.className="w-text-input";
@@ -376,7 +404,7 @@ function widgetEl(spec, ctx){
     const inst=(ctx.instances&&spec.key)?ctx.instances[spec.key]:null;
     const val=(inst&&inst.numberValue!=null)?inst.numberValue:(spec.value||0);
     const el=div("w-number"+(focused?" focus":""));
-    if(spec.label){ const l=document.createElement("span"); l.className="w-text-label"; l.textContent=spec.label+": "; el.appendChild(l); }
+    if(spec.label){ const l=document.createElement("span"); l.className="w-text-label"; l.textContent=labelColon(spec.label); el.appendChild(l); }
     const disp=spec.editText!=null?spec.editText
       :spec.percent?Math.round(val*100)+"%"
       :spec.integer?String(Math.trunc(val))
@@ -401,7 +429,7 @@ function widgetEl(spec, ctx){
     const el=div("w-dropdown"+(focused?" focus":"")+(spec.label&&spec.labelWidth>0?" wform":""));
     if(spec.label){
       if(spec.labelWidth>0) el.appendChild(formLabel(spec.label, spec.labelWidth));
-      else { const l=document.createElement("span"); l.className="w-text-label"; l.textContent=spec.label+": "; el.appendChild(l); }
+      else { const l=document.createElement("span"); l.className="w-text-label"; l.textContent=labelColon(spec.label); el.appendChild(l); }
     }
     const pill=document.createElement("span"); pill.className="w-dd-pill";
     // Small up/down chevrons — a MATCHED-SIZE pair (▴ U+25B4 / ▾ U+25BE). The
@@ -479,7 +507,7 @@ function widgetEl(spec, ctx){
     } else {
       (spec.items||[]).forEach((it,i)=>{
         const row=div("w-list-row"+(i===sel?" sel":""));
-        row.textContent=entryText(it);
+        fillEntry(row, it);
         row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,spec,i,e); };
         el.appendChild(row);
       });
@@ -528,7 +556,7 @@ function widgetEl(spec, ctx){
         cb.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(e.button===2) treeCtx(e); else routeTree(ctx,spec,"toggle",{index:i,key,checked:!n.checked}); };
         row.appendChild(cb);
       }
-      const t=document.createElement("span"); t.className="w-tree-text"; t.textContent=entryText(n.text||{});
+      const t=document.createElement("span"); t.className="w-tree-text"; fillEntry(t, n.text||{});
       row.appendChild(t);
       // The row's action button (TreeNode.action), the web twin of the TUI's
       // `[ label ]` at the row's tail: its own target, so a press on it is the
@@ -562,7 +590,7 @@ function widgetEl(spec, ctx){
       for(const ex of (n.extraLines||[])){
         const xr=div("w-tree-xrow"+(i===sel?" sel":""));
         xr.style.paddingLeft=isCard?"2ch":((d*2)+2)+"ch";
-        xr.textContent=entryText(ex);
+        fillEntry(xr, ex);
         xr.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(e.button===2) treeCtx(e); else routeTree(ctx,spec,"select",{index:i,key}); };
         holder.appendChild(xr);
       }
@@ -601,7 +629,9 @@ function widgetEl(spec, ctx){
     // Blank rows a terminal layout stacks to push what follows to the bottom
     // of the panel: a flexible gap here, which does the same at any height.
     if(!ctx.grid&&!text.trim()) return div("w-fill");
-    const el=div("w-raw"); el.textContent=text; return el;
+    const el=div("w-raw");
+    spec.entries.forEach((e,i)=>{ if(i) el.append("\n"); fillEntry(el.appendChild(document.createElement("span")), e); });
+    return el;
   }
   if(kind==="windowEmbed"){
     // Embedding another editor window's live cells inside a native panel

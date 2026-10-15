@@ -1453,6 +1453,15 @@ if (cancel) {
   await page.waitForFunction(() => !window.fresh.scene.regions.native.confirm, null, { timeout: 8000 }).catch(() => {});
   check('its Cancel answers the editor\'s question', await page.evaluate(() => !window.fresh.scene.regions.native.confirm && !document.querySelector('.native-confirm')));
 }
+// A panel mounted into a pane (Search & Replace): drawn natively over its
+// pane, and — for the themes that fold the display list — a surface of it,
+// so the pane is never left blank.
+await page.request.post(URL + '/action', { data: { action: 'start_search_replace' } });
+await page.waitForSelector('.native-panel.np-pane .w-text-input', { timeout: 8000 }).catch(() => {});
+check('a pane-mounted panel is drawn natively, its fields real inputs', !!(await page.$('.native-panel.np-pane .w-text-input')));
+check('and is a surface of the display list too', await page.evaluate(() =>
+  (window.fresh.scene.regions.tree.surfaces || []).some(s => s.kind === 'pane')));
+await page.screenshot({ path: `${SHOTS}/42-native-pane-panel.png` });
 check('no JS page errors (native panels)', nerrs.length === 0, nerrs.join(' | '));
 
 console.log('\n[touch pan/scroll on mobile (hasTouch context)]');

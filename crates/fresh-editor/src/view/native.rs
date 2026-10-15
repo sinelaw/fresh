@@ -49,11 +49,15 @@ pub struct NativeView {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NativePanelView {
-    /// `dock`, `floating` or `sidebar`.
+    /// `dock`, `floating`, `sidebar` or `pane` (a panel mounted into a
+    /// split pane: Search & Replace, a review diff, the welcome page).
     pub kind: &'static str,
     /// The sidebar section index, for `sidebar`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub section: Option<usize>,
+    /// The pane's leaf id, for `pane`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pane: Option<u64>,
     /// The interior's rectangle, in cells.
     pub rect: Value,
     pub spec: Value,
@@ -131,7 +135,7 @@ impl Editor {
                 slots.push((PanelSlot::Sidebar(i), Slot::Sidebar(i), "sidebar", Some(i)));
             }
         }
-        slots
+        let mut out: Vec<NativePanelView> = slots
             .into_iter()
             .filter_map(|(panel_slot, slot, kind, section)| {
                 let rect = self.node_rect(&crate::view::shell::panel::interior_key(slot))?;
@@ -152,8 +156,9 @@ impl Editor {
                 Some(NativePanelView {
                     kind,
                     section,
+                    pane: None,
                     rect: json!({ "x": rect.x, "y": rect.y, "w": rect.width, "h": rect.height }),
-                    spec: serde_json::to_value(&*interior.spec).unwrap_or(Value::Null),
+                    spec: self.styled_spec(&interior.spec),
                     instances,
                     focus_key: interior.focus_key.clone(),
                     keyboard: interior.keyboard,
@@ -170,7 +175,37 @@ impl Editor {
                         .map(|_| key_json(&crate::view::shell::panel::close_key())),
                 })
             })
-            .collect()
+            .collect();
+        // Panels mounted into panes, in the panes' order of id so the
+        // projection is stable frame to frame.
+        let mut panes: Vec<_> = self.pane_interiors().into_iter().collect();
+        panes.sort_by_key(|(leaf, _)| leaf.0 .0);
+        for (leaf, interior) in panes {
+            let Some(rect) =
+                self.node_rect(&crate::view::shell::panel::interior_key(Slot::Pane(leaf)))
+            else {
+                continue;
+            };
+            out.push(NativePanelView {
+                kind: "pane",
+                section: None,
+                pane: Some(leaf.0 .0 as u64),
+                rect: json!({ "x": rect.x, "y": rect.y, "w": rect.width, "h": rect.height }),
+                spec: self.styled_spec(&interior.spec),
+                instances: interior
+                    .states
+                    .iter()
+                    .filter_map(|(k, st)| Some((k.clone(), instance_json(st)?)))
+                    .collect(),
+                focus_key: interior.focus_key.clone(),
+                keyboard: interior.keyboard,
+                anchored: false,
+                frame: None,
+                title: None,
+                close_key: None,
+            });
+        }
+        out
     }
 
     fn confirm_card_view(&self) -> Option<ConfirmCardView> {
@@ -213,6 +248,52 @@ impl Editor {
             buttons,
             key: key_json(&confirm::key()),
         })
+    }
+}
+
+impl Editor {
+    /// A spec as JSON, with every style's colours also resolved to CSS
+    /// (`fgCss`/`bgCss` beside `fg`/`bg`). A plugin colours text by theme
+    /// key — `ui.help_key_fg` for a key hint, a syntax colour for a logo —
+    /// and only the host knows what those keys are in the theme in use.
+    fn styled_spec(&self, spec: &fresh_core::api::WidgetSpec) -> Value {
+        let mut v = serde_json::to_value(spec).unwrap_or(Value::Null);
+        let theme = self.theme();
+        resolve_styles(&mut v, &theme);
+        v
+    }
+}
+
+/// Walk `v`, adding `fgCss`/`bgCss` to every style object whose `fg`/`bg` is
+/// a theme key or an `[r, g, b]` triple.
+fn resolve_styles(v: &mut Value, theme: &crate::view::theme::Theme) {
+    match v {
+        Value::Object(o) => {
+            for name in ["style", "hoverStyle"] {
+                if let Some(Value::Object(st)) = o.get_mut(name) {
+                    for (from, to) in [("fg", "fgCss"), ("bg", "bgCss")] {
+                        let css = match st.get(from) {
+                            Some(Value::String(key)) => theme
+                                .resolve_theme_key(key)
+                                .and_then(crate::view::scene::css_color),
+                            Some(Value::Array(rgb)) if rgb.len() == 3 => {
+                                let c = |i: usize| rgb[i].as_u64().unwrap_or(0).min(255);
+                                Some(format!("#{:02x}{:02x}{:02x}", c(0), c(1), c(2)))
+                            }
+                            _ => None,
+                        };
+                        if let Some(css) = css {
+                            st.insert(to.to_string(), Value::String(css));
+                        }
+                    }
+                }
+            }
+            for (_, child) in o.iter_mut() {
+                resolve_styles(child, theme);
+            }
+        }
+        Value::Array(a) => a.iter_mut().for_each(|c| resolve_styles(c, theme)),
+        _ => {}
     }
 }
 

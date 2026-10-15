@@ -1448,7 +1448,7 @@ pub struct TreeView {
     pub cursor: Option<[i32; 2]>,
 }
 
-fn css_color(c: ratatui::style::Color) -> Option<String> {
+pub(crate) fn css_color(c: ratatui::style::Color) -> Option<String> {
     use ratatui::style::Color;
     // The xterm 256-colour cube and ramp, so an indexed colour a theme names
     // reads the same in a browser as in a terminal.
@@ -1603,6 +1603,20 @@ impl Editor {
                 );
             }
         }
+        // Panels mounted into panes (Search & Replace, the welcome page, a
+        // review diff): their pane's cells are left to the tree, so without a
+        // surface here the web showed those panes empty.
+        let mut pane_leaves: Vec<_> = self.pane_interiors().into_keys().collect();
+        pane_leaves.sort_by_key(|leaf| leaf.0 .0);
+        for leaf in &pane_leaves {
+            push(
+                "pane",
+                crate::view::shell::panel::interior_key(Slot::Pane(*leaf)),
+                false,
+                None,
+                false,
+            );
+        }
         if roots.is_empty() {
             return TreeView::default();
         }
@@ -1612,6 +1626,7 @@ impl Editor {
         let interiors: Vec<_> = [Slot::Dock, Slot::Floating]
             .into_iter()
             .chain((0..self.sidebar_sections.len()).map(Slot::Sidebar))
+            .chain(pane_leaves.iter().copied().map(Slot::Pane))
             .filter_map(|slot| ui.find_by_key(&crate::view::shell::panel::interior_key(slot)))
             .collect();
         let mut items = Vec::new();

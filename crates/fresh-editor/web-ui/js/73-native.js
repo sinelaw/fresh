@@ -111,7 +111,7 @@ function nativePanelEl(p){
   // A press on the interior's own ground (between controls) is the panel's:
   // the cell mapping still forwards it, so it lands where the terminal's
   // would — focusing the panel — without reaching through to what is under.
-  const ctx={kind:"panel", slot:p.kind, section:p.section, focusKey:p.focusKey,
+  const ctx={kind:"panel", slot:p.kind, section:p.section, pane:p.pane, focusKey:p.focusKey,
     instances:p.instances||{}, native:true};
   body.appendChild(widgetEl(p.spec, ctx));
   // Keep the selected row of a list or tree in view as the keyboard moves it:

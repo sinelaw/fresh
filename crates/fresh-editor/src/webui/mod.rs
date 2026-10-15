@@ -1167,6 +1167,12 @@ fn apply_widget(editor: &mut Editor, v: &Value) {
                     Some(i) => Slot::Sidebar(i as usize),
                     None => return,
                 },
+                Some("pane") => match v.get("pane").and_then(|i| i.as_u64()) {
+                    Some(i) => {
+                        Slot::Pane(crate::model::event::LeafId(fresh_core::SplitId(i as usize)))
+                    }
+                    None => return,
+                },
                 _ => return,
             };
             let str_of = |k: &str| v.get(k).and_then(|s| s.as_str()).unwrap_or("").to_string();

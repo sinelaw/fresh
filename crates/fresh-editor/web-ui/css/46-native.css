@@ -149,3 +149,8 @@ body.macfam .native-panel.np-dock{background:var(--mac-sidebar)}
 .native-panel .w-row > .w-section{flex:1 1 auto;min-width:0}
 .native-panel .w-section:not(:has(> .w-section-label)){border:0;padding:0}
 .native-panel .w-section > .w-text{display:flex}
+/* A panel mounted into a pane: over the pane's cells, in the pane's ground. */
+.native-panel.np-pane{z-index:87;background:var(--bg);padding:.5em .8em}
+/* A run the plugin gave a ground of its own (a chip). */
+.native-panel .w-chip{border-radius:3px;padding:0 .2em}
+.native-panel .w-row.grid .w-chip,.native-panel .w-raw .w-chip{padding:0;border-radius:0}
