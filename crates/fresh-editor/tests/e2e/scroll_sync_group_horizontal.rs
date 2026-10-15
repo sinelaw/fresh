@@ -484,33 +484,30 @@ fn pairing_again_after_a_tab_drag_closes_a_pane_syncs_the_new_pair() {
         harness
             .mouse_drag(tab_col + 2, 1, left_col + 10, row + 8)
             .unwrap();
-        paint_owed_frames(&mut harness);
+        // The drop is handled with the events; draw it so the next tab is
+        // found where it now is.
+        harness.render().unwrap();
     }
-    assert!(
-        // A split's panes each carry a close-split button; one pane, none.
-        !harness.screen_row_text(1).contains('□'),
-        "setup: the drags should leave a single pane. Screen:\n{}",
-        harness.screen_to_string()
-    );
+    // A split's panes each carry a close-split button; one pane, none.
+    harness
+        .wait_until(|h| !h.screen_row_text(1).contains('□'))
+        .unwrap();
 
     // Pair the remaining pane (showing long.txt, the last tab dragged) again
-    // under group 42.
+    // under group 42, jump to the end, and wait for the new right pane to
+    // follow. Waiting for that, rather than counting frames, keeps the test
+    // apart from how many frames the jump and the sync take: after these tab
+    // drags the event loop owes a frame on every tick even with no group at
+    // all (a separate, pre-existing bug), so `paint_owed_frames` cannot be
+    // used here. Without the fix the right pane never follows, and the wait
+    // fails.
     run_command(&mut harness, "hsync: Pair", "hsync-paired-1");
-    // A plain frame, not `paint_owed_frames`: after these tab drags the event
-    // loop owes a frame on every tick even with no group at all (a separate,
-    // pre-existing bug). The jump's frame scrolls the left pane; the next
-    // one syncs the right pane to it.
     harness
         .send_key(KeyCode::End, KeyModifiers::CONTROL)
         .unwrap();
-    harness.render().unwrap();
-
-    assert_eq!(
-        marker_count(&harness, "line 0200"),
-        2,
-        "the new right pane should follow the left one to the end. Screen:\n{}",
-        harness.screen_to_string()
-    );
+    harness
+        .wait_until(|h| marker_count(h, "line 0200") == 2)
+        .unwrap();
 }
 
 /// A group whose pane closed is gone at the next frame, not only when a new
