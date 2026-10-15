@@ -7,6 +7,8 @@
 //
 // Syntax highlighting is handled by the TextMate grammar (built-in to the editor)
 // This plugin only adds the compose mode layout features.
+import { renderLatexMath } from "./lib/latex.ts";
+import { renderMermaidDiagram } from "./lib/mermaid.ts";
 import { wrapToWidth } from "./lib/text.ts";
 
 const editor = getEditor();
@@ -278,7 +280,7 @@ const fenceEditArmed = new Set<number>();
 
 /** Whether an edit's text could create or destroy a fence delimiter. */
 function touchesFenceChars(text: string): boolean {
-  return /[`~]/.test(text);
+  return /[`~$]/.test(text);
 }
 
 /** Total rendered width of a code block's frame, borders and side rails alike.
@@ -311,8 +313,40 @@ function buildCodeFrameLine(measure: number, left: string, right: string): strin
   return left + "─".repeat(inner) + right;
 }
 
+/** A horizontal frame line with a centered or left-aligned text label */
+function buildCodeFrameLineWithLabel(measure: number, left: string, right: string, label: string): string {
+  const lbl = ` ${label.trim()} `;
+  const lblW = displayWidth(lbl);
+  const totalW = codeFrameWidth(measure) - displayWidth(left) - displayWidth(right);
+  if (totalW < lblW + 2) {
+    return buildCodeFrameLine(measure, left, right);
+  }
+  const prefix = "──";
+  const suffix = "─".repeat(Math.max(1, totalW - displayWidth(prefix) - lblW));
+  return left + prefix + lbl + suffix + right;
+}
+
+function getFenceLanguage(lineContent: string): string {
+  const match = lineContent.trim().match(/^(`{3,}|~{3,})\s*([a-zA-Z0-9_\-]+)?/);
+  return match && match[2] ? match[2].toLowerCase() : "";
+}
+
 // fg matches the table frame's so the two kinds of block read as one system.
 const codeFrameStyle = { fg: "editor.fg", composeOnly: true };
+
+const MATH_VIRTUAL_LINE_NS = "md-math";
+const MERMAID_VIRTUAL_LINE_NS = "md-mermaid";
+const specialBlockRangesByBuffer = new Map<number, Array<{ start: number; end: number }>>();
+
+/** Formats a single rendered diagram row with side rails matching code frame width */
+function buildDiagramRow(content: string, blockMeasure: number, blockIndent: number): string {
+  const innerW = codeInnerWidth(blockMeasure);
+  const clamped = displayWidth(content) > innerW ? content.slice(0, innerW) : content;
+  const contentW = displayWidth(clamped);
+  const padRight = Math.max(0, innerW - contentW);
+  return " ".repeat(blockIndent) + RAIL_GLYPH + " " + clamped + " ".repeat(padRight) + " " + RAIL_GLYPH;
+}
+
 
 // =============================================================================
 // Code block side rails
@@ -978,6 +1012,7 @@ function parseMarkdownBlocks(text: string): ParsedBlock[] {
   const lines = text.split('\n');
   let byteOffset = 0;
   let inCodeBlock = false;
+  let inMathBlock = false;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -1010,6 +1045,44 @@ function parseMarkdownBlocks(text: string): ParsedBlock[] {
         startByte: lineStart,
         endByte: lineEnd,
         leadingIndent: 0,
+        marker: '',
+        markerStartByte: lineStart,
+        contentStartByte: lineStart,
+        content: line,
+        hangingIndent: 0,
+        forceHardBreak: true,
+      });
+      byteOffset = lineEnd + 1;
+      continue;
+    }
+
+    // Math block ($$)
+    if (trimmed.startsWith('$$')) {
+      if (trimmed === '$$' || !trimmed.slice(2).includes('$$')) {
+        inMathBlock = !inMathBlock;
+      }
+      blocks.push({
+        type: 'code-content',
+        startByte: lineStart,
+        endByte: lineEnd,
+        leadingIndent: line.length - line.trimStart().length,
+        marker: '',
+        markerStartByte: lineStart,
+        contentStartByte: lineStart,
+        content: line,
+        hangingIndent: 0,
+        forceHardBreak: true,
+      });
+      byteOffset = lineEnd + 1;
+      continue;
+    }
+
+    if (inMathBlock) {
+      blocks.push({
+        type: 'code-content',
+        startByte: lineStart,
+        endByte: lineEnd,
+        leadingIndent: line.length - line.trimStart().length,
         marker: '',
         markerStartByte: lineStart,
         contentStartByte: lineStart,
@@ -1333,6 +1406,9 @@ function clearComposeDecorations(bufferId: number): void {
   // Same for the inter-list-item spacer rows, so they can't linger as
   // orphaned virtual lines after compose is toggled off.
   editor.clearVirtualTextNamespace(bufferId, LIST_SPACING_NS);
+  editor.clearVirtualTextNamespace(bufferId, MERMAID_VIRTUAL_LINE_NS);
+  editor.clearVirtualTextNamespace(bufferId, MATH_VIRTUAL_LINE_NS);
+  specialBlockRangesByBuffer.delete(bufferId);
   // And the code blocks' side rails, which are inline virtual text rather
   // than virtual lines and so are not covered by the namespace clears.
   editor.removeVirtualTextsByPrefix(bufferId, CODE_RAIL_ID_PREFIX);
@@ -1604,7 +1680,7 @@ function charToByte(lineContent: string, charOffset: number, lineByteStart: numb
 // ---------------------------------------------------------------------------
 
 interface InlineSpan {
-  type: 'code' | 'bold-italic' | 'bold' | 'italic' | 'strikethrough' | 'link' | 'entity';
+  type: 'code' | 'bold-italic' | 'bold' | 'italic' | 'strikethrough' | 'link' | 'entity' | 'math';
   matchStart: number;    // char offset of full match start
   matchEnd: number;      // char offset of full match end
   contentStart: number;  // char offset of visible content start
@@ -1643,6 +1719,36 @@ function findInlineSpans(text: string): InlineSpan[] {
     return false;
   }
 
+  // 1.5 Inline math ($...$)
+  const mathSpanCharRanges: [number, number][] = [];
+  const mathRe = /(?<![\\$])\$(?!\$)([^$\n]+?)(?<![\\$])\$(?!\$)/g;
+  while ((m = mathRe.exec(text)) !== null) {
+    if (inCodeSpan(m.index)) continue;
+    const inner = m[1];
+    // Guard against currency like "$10 and $20"
+    const isMath = (!inner.startsWith(' ') && !inner.endsWith(' ')) || /[=+\-*\/\\^_{}()<>]/.test(inner);
+    if (!isMath) continue;
+    const ms = m.index;
+    const me = ms + m[0].length;
+    mathSpanCharRanges.push([ms, me]);
+    const rendered = renderLatexMath(inner);
+    spans.push({
+      type: 'math',
+      matchStart: ms, matchEnd: me,
+      contentStart: ms + 1, contentEnd: me - 1,
+      concealRanges: [
+        { start: ms, end: me, replacement: rendered },
+      ],
+    });
+  }
+
+  function inMathSpan(charPos: number): boolean {
+    for (const [s, e] of mathSpanCharRanges) {
+      if (charPos >= s && charPos < e) return true;
+    }
+    return false;
+  }
+
   // 2. Emphasis
   const emphasisPatterns: [RegExp, InlineSpan['type'], number][] = [
     [/\*{3}([^*]+)\*{3}/g, 'bold-italic', 3],
@@ -1653,7 +1759,7 @@ function findInlineSpans(text: string): InlineSpan[] {
   for (const [pattern, type, markerLen] of emphasisPatterns) {
     const re = new RegExp(pattern.source, pattern.flags);
     while ((m = re.exec(text)) !== null) {
-      if (inCodeSpan(m.index)) continue;
+      if (inCodeSpan(m.index) || inMathSpan(m.index)) continue;
       const ms = m.index;
       const me = ms + m[0].length;
       spans.push({
@@ -1672,7 +1778,7 @@ function findInlineSpans(text: string): InlineSpan[] {
   // 3. Links
   const linkRe = /(?<!!)\[([^\]]+)\]\(([^)]+)\)/g;
   while ((m = linkRe.exec(text)) !== null) {
-    if (inCodeSpan(m.index)) continue;
+    if (inCodeSpan(m.index) || inMathSpan(m.index)) continue;
     const ms = m.index;
     const me = ms + m[0].length;
     const textEnd = ms + 1 + m[1].length;
@@ -2005,6 +2111,7 @@ function processLineConceals(
    * stand down. Overlapping conceals over the same bytes would otherwise both
    * fire and the run would render twice. */
   joined = false,
+  specialBlockLineStarts?: Set<number>,
 ): void {
   // Clear existing conceals and overlays for this line first.
   // This ensures clear+add commands are sent together from the plugin thread
@@ -2014,6 +2121,12 @@ function processLineConceals(
   // Only clear our own emphasis overlays — clearing ALL overlays in the range
   // would also wipe editor-owned overlays like LSP diagnostics (issue #2146).
   editor.clearOverlaysInRangeForNamespace(bufferId, "md-emphasis", byteStart, byteEnd);
+
+  // If this line is part of a special block (Mermaid, Math fence, or multiline $$),
+  // return early so the dedicated block pass can apply unified block-scoped conceals.
+  if (specialBlockLineStarts && specialBlockLineStarts.has(byteStart)) {
+    return;
+  }
 
   // Activation scopes:
   //   - lineScopeInclEnd: "cursor anywhere on the line", including the
@@ -2036,16 +2149,24 @@ function processLineConceals(
   if (region === "body") return;
   if (region === "open" || region === "close") {
     const frameEnd = lineContentEndByte(lineContent, byteStart);
-    // A block indented into a list item keeps its indent as real text and puts
-    // the corner after it, so the box sits inside the item the way every other
-    // renderer draws it. Concealing from the line's start instead pulled the
-    // border back to the page's left edge, under text it belongs beside.
     const blockIndent = leadingIndent(lineContent);
     const frameStart = charToByte(lineContent, blockIndent, byteStart);
     const blockMeasure = Math.max(4, measure - blockIndent);
-    const frame = region === "open"
-      ? buildCodeFrameLine(blockMeasure, "┌", "┐")
-      : buildCodeFrameLine(blockMeasure, "└", "┘");
+    let frame: string;
+    if (region === "open") {
+      const lang = getFenceLanguage(lineContent);
+      if (lang === "mermaid") {
+        frame = buildCodeFrameLineWithLabel(blockMeasure, "┌", "┐", "Mermaid");
+      } else if (lang === "math") {
+        frame = buildCodeFrameLineWithLabel(blockMeasure, "┌", "┐", "Math");
+      } else if (lang === "latex" || lang === "katex") {
+        frame = buildCodeFrameLineWithLabel(blockMeasure, "┌", "┐", "LaTeX");
+      } else {
+        frame = buildCodeFrameLine(blockMeasure, "┌", "┐");
+      }
+    } else {
+      frame = buildCodeFrameLine(blockMeasure, "└", "┘");
+    }
     addComposeConceal(
       bufferId, "md-syntax", frameStart, frameEnd, frame,
       "unless-cursor-in", byteStart, lineScopeInclEnd,
@@ -2057,6 +2178,42 @@ function processLineConceals(
   // rather than guess a corner. Same conservative choice the table frame
   // makes for a row whose neighbour is off-screen.
   if (looksLikeFence(lineContent)) return;
+
+  // --- Display math: `$$formula$$` on a single line ---
+  const singleLineMath = trimmed.match(/^\$\$(.+)\$\$$/);
+  if (singleLineMath) {
+    const content = singleLineMath[1].trim();
+    const rendered = renderLatexMath(content);
+    const blockIndent = leadingIndent(lineContent);
+    const blockMeasure = Math.max(4, measure - blockIndent);
+    const frameStart = byteStart;
+    const frameEnd = lineContentEndByte(lineContent, byteStart);
+    const rowReplacement = buildDiagramRow(rendered, blockMeasure, blockIndent);
+
+    const cursorPos = editor.getCursorPosition();
+    const cursorOnLine = cursorPos >= byteStart && cursorPos <= lineScopeInclEnd;
+
+    if (!cursorOnLine) {
+      editor.addVirtualLine(
+        bufferId, byteStart,
+        " ".repeat(blockIndent) + buildCodeFrameLineWithLabel(blockMeasure, "┌", "┐", "Math"),
+        codeFrameStyle, true, MATH_VIRTUAL_LINE_NS, 0,
+      );
+    }
+    addComposeConceal(
+      bufferId, "md-syntax", frameStart, frameEnd, rowReplacement,
+      "unless-cursor-in", byteStart, lineScopeInclEnd,
+    );
+    addComposeOverlay(bufferId, "md-emphasis", frameStart, frameEnd, { fg: "syntax.constant", italic: true });
+    if (!cursorOnLine) {
+      editor.addVirtualLine(
+        bufferId, byteStart,
+        " ".repeat(blockIndent) + buildCodeFrameLine(blockMeasure, "└", "┘"),
+        codeFrameStyle, false, MATH_VIRTUAL_LINE_NS, 0,
+      );
+    }
+    return;
+  }
 
   // --- Thematic breaks: `---` / `***` / `___` → one full-measure rule ---
   // Rendered as a single conceal replacement rather than per-character
@@ -2505,6 +2662,9 @@ function processLineConceals(
       case 'code':
         addComposeOverlay(bufferId, "md-emphasis", byteCS, byteCE, { fg: "syntax.constant" });
         break;
+      case 'math':
+        addComposeOverlay(bufferId, "md-emphasis", byteMS, byteME, { fg: "syntax.constant", italic: true });
+        break;
       case 'bold':
         addComposeOverlay(bufferId, "md-emphasis", byteCS, byteCE, { bold: true });
         break;
@@ -2682,13 +2842,14 @@ function verbatimStates(lines: LineInfoLike[]): Array<boolean | null> {
   // what is being read as "no fence is in play here", and it is the same
   // reading the pre-scan makes of the whole document.
   const noFenceInSight = !lines.some(
-    (line) => isCodeRegion(line.region) || looksLikeFence(lineText(line)),
+    (line) => isCodeRegion(line.region) || looksLikeFence(lineText(line)) || lineText(line).trim().startsWith("$$"),
   );
   let inFence: boolean | null = noFenceInSight ? false : null;
   let fenceChar = "";
   let inHtml = false;
   let inIndentedCode = false;
   let inFrontMatter = false;
+  let inMath = false;
   // The next non-blank line opens a block, so it is the one that may open an
   // indented code block. True for the batch's own first line: the walk that
   // built it backed up to the run's start.
@@ -2702,6 +2863,7 @@ function verbatimStates(lines: LineInfoLike[]): Array<boolean | null> {
       inHtml = false;
       inIndentedCode = false;
       inFrontMatter = false;
+      inMath = false;
       atRunStart = true;
     }
     prevLineNumber = line.line_number;
@@ -2747,6 +2909,24 @@ function verbatimStates(lines: LineInfoLike[]): Array<boolean | null> {
       } else {
         out.push(null);
       }
+      continue;
+    }
+
+    const trimmed = text.trim();
+    if (trimmed.match(/^\$\$.+\$\$$/)) {
+      out.push(true);
+      continue;
+    }
+    if (inMath) {
+      out.push(true);
+      if (trimmed === "$$" || trimmed.endsWith("$$")) {
+        inMath = false;
+      }
+      continue;
+    }
+    if (trimmed === "$$" || trimmed.startsWith("$$")) {
+      inMath = true;
+      out.push(true);
       continue;
     }
 
@@ -2941,12 +3121,17 @@ function processFlowBlock(
   block: FlowBlock,
   width: number,
   blockIndents: Map<number, number>,
+  specialBodyLineStarts?: Set<number>,
 ): void {
   const head = block.lines[0];
   // Clear existing soft breaks for every line in the block, so a block that
   // has shrunk (an edit split it) leaves none behind.
   for (const line of block.lines) {
     editor.clearSoftBreaksInRange(bufferId, line.byte_start, line.byte_end);
+  }
+
+  if (specialBodyLineStarts && specialBodyLineStarts.has(head.byte_start)) {
+    return;
   }
 
   const lineContent = head.content;
@@ -3378,6 +3563,111 @@ editor.on("lines_changed", (data) => {
     }
   }
 
+  interface SpecialBlock {
+    kind: "mermaid" | "math";
+    lang?: string;
+    openLine: LineInfoLike;
+    closeLine: LineInfoLike;
+    bodyLines: LineInfoLike[];
+    blockIndent: number;
+  }
+
+  const specialBlocks: SpecialBlock[] = [];
+  const specialBodyLineStarts = new Set<number>();
+  const specialBlockLineStarts = new Set<number>();
+  {
+    let currentSpecial: {
+      kind: "mermaid" | "math";
+      lang?: string;
+      openLine: LineInfoLike;
+      bodyLines: LineInfoLike[];
+      blockIndent: number;
+      isFenced: boolean;
+    } | null = null;
+
+    for (let i = 0; i < data.lines.length; i++) {
+      const line = data.lines[i];
+      const trimmed = line.content.trim();
+
+      if (currentSpecial === null) {
+        if (line.region === "open" || looksLikeFence(line.content)) {
+          const lang = getFenceLanguage(line.content);
+          if (lang === "mermaid") {
+            currentSpecial = {
+              kind: "mermaid",
+              lang,
+              openLine: line,
+              bodyLines: [],
+              blockIndent: leadingIndent(line.content),
+              isFenced: true,
+            };
+            continue;
+          } else if (lang === "math" || lang === "latex" || lang === "katex") {
+            currentSpecial = {
+              kind: "math",
+              lang,
+              openLine: line,
+              bodyLines: [],
+              blockIndent: leadingIndent(line.content),
+              isFenced: true,
+            };
+            continue;
+          }
+        }
+        if (trimmed === "$$" || (trimmed.startsWith("$$") && !trimmed.slice(2).includes("$$"))) {
+          currentSpecial = {
+            kind: "math",
+            lang: "math",
+            openLine: line,
+            bodyLines: [],
+            blockIndent: leadingIndent(line.content),
+            isFenced: false,
+          };
+          continue;
+        }
+      } else {
+        if (currentSpecial.isFenced) {
+          if (line.region === "close" || (line.region !== "body" && looksLikeFence(line.content))) {
+            specialBlocks.push({
+              kind: currentSpecial.kind,
+              lang: currentSpecial.lang,
+              openLine: currentSpecial.openLine,
+              closeLine: line,
+              bodyLines: currentSpecial.bodyLines,
+              blockIndent: currentSpecial.blockIndent,
+            });
+            currentSpecial = null;
+          } else {
+            currentSpecial.bodyLines.push(line);
+          }
+        } else {
+          if (trimmed === "$$" || trimmed.endsWith("$$")) {
+            specialBlocks.push({
+              kind: "math",
+              lang: "math",
+              openLine: currentSpecial.openLine,
+              closeLine: line,
+              bodyLines: currentSpecial.bodyLines,
+              blockIndent: currentSpecial.blockIndent,
+            });
+            currentSpecial = null;
+          } else {
+            currentSpecial.bodyLines.push(line);
+          }
+        }
+      }
+    }
+
+    for (const sb of specialBlocks) {
+      specialBlockLineStarts.add(sb.openLine.byte_start);
+      specialBlockLineStarts.add(sb.closeLine.byte_start);
+      for (const bl of sb.bodyLines) {
+        specialBodyLineStarts.add(bl.byte_start);
+        specialBlockLineStarts.add(bl.byte_start);
+      }
+    }
+  }
+
   for (const line of data.lines) {
     // Clear this row's border range first (covers a row that stopped being a
     // table row, e.g. its pipes were deleted, and stale frames left a few bytes
@@ -3387,7 +3677,7 @@ editor.on("lines_changed", (data) => {
     // stops being code loses them. Re-added below only for `body` lines — the
     // delimiter rows draw their own corners as part of the border conceal.
     clearCodeRails(data.buffer_id, line.byte_start, line.byte_end);
-    if (line.region === "body") {
+    if (line.region === "body" && !specialBodyLineStarts.has(line.byte_start)) {
       emitCodeRails(
         data.buffer_id, line.content, line.byte_start, measure,
         blockIndents.get(line.byte_start) ?? 0,
@@ -3399,8 +3689,20 @@ editor.on("lines_changed", (data) => {
       data.buffer_id, LIST_SPACING_NS,
       line.byte_start, Math.max(line.byte_end, line.byte_start + 1),
     );
+    editor.clearVirtualLinesInRange(
+      data.buffer_id, MATH_VIRTUAL_LINE_NS,
+      line.byte_start, Math.max(line.byte_end, line.byte_start + 1),
+    );
+    editor.clearVirtualLinesInRange(
+      data.buffer_id, MERMAID_VIRTUAL_LINE_NS,
+      line.byte_start, Math.max(line.byte_end, line.byte_start + 1),
+    );
 
-    processLineConceals(data.buffer_id, line.content, line.byte_start, line.byte_end, measure, line.region, line.line_number, joined.has(line.byte_start));
+    processLineConceals(
+      data.buffer_id, line.content, line.byte_start, line.byte_end, measure,
+      line.region, line.line_number, joined.has(line.byte_start),
+      specialBlockLineStarts,
+    );
 
     // Blank row after each list item, so items read as discrete entries.
     //
@@ -3475,8 +3777,124 @@ editor.on("lines_changed", (data) => {
   // conceals by range — so emitting joins inside that loop would have the next
   // line's clear delete the join just added.
   for (const block of blocks) {
-    processFlowBlock(data.buffer_id, block, measure, blockIndents);
+    processFlowBlock(data.buffer_id, block, measure, blockIndents, specialBodyLineStarts);
   }
+
+  // Special blocks: Mermaid diagrams and LaTeX Math blocks
+  const cursorPos = editor.getCursorPosition();
+  const rangesForBuf: Array<{ start: number; end: number }> = [];
+
+  for (const line of data.lines) {
+    const trimmed = line.content.trim();
+    if (trimmed.match(/^\$\$(.+)\$\$$/)) {
+      rangesForBuf.push({ start: line.byte_start, end: line.byte_end + 1 });
+    }
+  }
+
+  for (const sb of specialBlocks) {
+    const scopeStart = sb.openLine.byte_start;
+    const scopeEnd = sb.closeLine.byte_end + 1;
+    rangesForBuf.push({ start: scopeStart, end: scopeEnd });
+
+    const blockIndent = sb.blockIndent;
+    const blockMeasure = Math.max(4, measure - blockIndent);
+    const cursorInBlock = cursorPos >= scopeStart && cursorPos <= scopeEnd;
+
+    if (sb.kind === "mermaid") {
+      const source = sb.bodyLines.map((l) => l.content.replace(/\r?\n$/, "")).join("\n");
+      const rendered = renderMermaidDiagram(source, blockMeasure, displayWidth);
+
+      // Open fence
+      const openStart = charToByte(sb.openLine.content, blockIndent, sb.openLine.byte_start);
+      const openEnd = lineContentEndByte(sb.openLine.content, sb.openLine.byte_start);
+      const openFrame = buildCodeFrameLineWithLabel(blockMeasure, "┌", "┐", rendered.title);
+      addComposeConceal(
+        data.buffer_id, "md-syntax", openStart, openEnd, openFrame,
+        "unless-cursor-in", scopeStart, scopeEnd,
+      );
+      addComposeOverlay(data.buffer_id, "md-emphasis", openStart, openEnd, codeFrameStyle);
+
+      // Close fence
+      const closeStart = charToByte(sb.closeLine.content, blockIndent, sb.closeLine.byte_start);
+      const closeEnd = lineContentEndByte(sb.closeLine.content, sb.closeLine.byte_start);
+      const closeFrame = buildCodeFrameLine(blockMeasure, "└", "┘");
+      addComposeConceal(
+        data.buffer_id, "md-syntax", closeStart, closeEnd, closeFrame,
+        "unless-cursor-in", scopeStart, scopeEnd,
+      );
+      addComposeOverlay(data.buffer_id, "md-emphasis", closeStart, closeEnd, codeFrameStyle);
+
+      // Body lines
+      const B = sb.bodyLines.length;
+      const M = rendered.lines.length;
+      for (let i = 0; i < B; i++) {
+        const bodyLine = sb.bodyLines[i];
+        const lineStart = bodyLine.byte_start;
+        const lineEnd = lineContentEndByte(bodyLine.content, bodyLine.byte_start);
+        if (i < M) {
+          const row = buildDiagramRow(rendered.lines[i], blockMeasure, blockIndent);
+          addComposeConceal(
+            data.buffer_id, "md-syntax", lineStart, lineEnd, row,
+            "unless-cursor-in", scopeStart, scopeEnd,
+          );
+          addComposeOverlay(data.buffer_id, "md-emphasis", lineStart, lineEnd, codeFrameStyle);
+        } else {
+          addComposeConceal(
+            data.buffer_id, "md-syntax", lineStart, lineEnd, "",
+            "unless-cursor-in", scopeStart, scopeEnd,
+          );
+        }
+      }
+
+      // Overflow visual rows as virtual lines (suppressed when cursor is in block)
+      if (!cursorInBlock && M > B) {
+        for (let i = B; i < M; i++) {
+          const row = buildDiagramRow(rendered.lines[i], blockMeasure, blockIndent);
+          editor.addVirtualLine(
+            data.buffer_id, sb.closeLine.byte_start, row,
+            codeFrameStyle, true, MERMAID_VIRTUAL_LINE_NS, i - B,
+          );
+        }
+      }
+    } else if (sb.kind === "math") {
+      const label = (sb.lang === "latex" || sb.lang === "katex") ? "LaTeX" : "Math";
+
+      // Open fence
+      const openStart = charToByte(sb.openLine.content, blockIndent, sb.openLine.byte_start);
+      const openEnd = lineContentEndByte(sb.openLine.content, sb.openLine.byte_start);
+      const openFrame = buildCodeFrameLineWithLabel(blockMeasure, "┌", "┐", label);
+      addComposeConceal(
+        data.buffer_id, "md-syntax", openStart, openEnd, openFrame,
+        "unless-cursor-in", scopeStart, scopeEnd,
+      );
+      addComposeOverlay(data.buffer_id, "md-emphasis", openStart, openEnd, codeFrameStyle);
+
+      // Close fence
+      const closeStart = charToByte(sb.closeLine.content, blockIndent, sb.closeLine.byte_start);
+      const closeEnd = lineContentEndByte(sb.closeLine.content, sb.closeLine.byte_start);
+      const closeFrame = buildCodeFrameLine(blockMeasure, "└", "┘");
+      addComposeConceal(
+        data.buffer_id, "md-syntax", closeStart, closeEnd, closeFrame,
+        "unless-cursor-in", scopeStart, scopeEnd,
+      );
+      addComposeOverlay(data.buffer_id, "md-emphasis", closeStart, closeEnd, codeFrameStyle);
+
+      // Body lines
+      for (const bodyLine of sb.bodyLines) {
+        const lineStart = bodyLine.byte_start;
+        const lineEnd = lineContentEndByte(bodyLine.content, bodyLine.byte_start);
+        const rendered = renderLatexMath(bodyLine.content.trim());
+        const row = buildDiagramRow(rendered, blockMeasure, blockIndent);
+        addComposeConceal(
+          data.buffer_id, "md-syntax", lineStart, lineEnd, row,
+          "unless-cursor-in", scopeStart, scopeEnd,
+        );
+        addComposeOverlay(data.buffer_id, "md-emphasis", lineStart, lineEnd, { fg: "syntax.constant", italic: true });
+      }
+    }
+  }
+
+  specialBlockRangesByBuffer.set(data.buffer_id, rangesForBuf);
 
   // Publish this batch's heading marks. Range-scoped to the batch's byte span
   // so headings outside it — the rest of the document, marked by the pre-scan
@@ -3565,13 +3983,22 @@ editor.on("after_delete", (data) => {
     void prescanHeadingMarkers(data.buffer_id);
   } else fenceEditArmed.add(data.buffer_id);
 });
-// cursor_moved: no handler. Cursor-dependent reveal/conceal and table-row
-// un/re-wrap are baked into the markers as activation scopes (emitted in the
-// lines_changed pass above) and evaluated by the renderer per frame — cursor
-// movement changes what's *active* without touching any marker, so it never
-// re-fires lines_changed, never bumps the conceal/soft-break versions, and
-// never invalidates the line-wrap cache or visual-row index.
+
+// Cursor movement: refresh lines only when crossing into or out of a special block
+// (Mermaid diagram with virtual lines or display math with virtual border lines).
+editor.on("cursor_moved", (data) => {
+  if (!isComposingInAnySplit(data.buffer_id)) return;
+  const ranges = specialBlockRangesByBuffer.get(data.buffer_id);
+  if (!ranges || ranges.length === 0) return;
+  const oldIdx = ranges.findIndex((r) => data.old_position >= r.start && data.old_position <= r.end);
+  const newIdx = ranges.findIndex((r) => data.new_position >= r.start && data.new_position <= r.end);
+  if (oldIdx !== newIdx) {
+    editor.refreshLines(data.buffer_id);
+  }
+});
+
 editor.on("buffer_closed", (data) => {
+  specialBlockRangesByBuffer.delete(data.buffer_id);
   // View state is cleaned up automatically when the buffer is removed from keyed_states
 });
 editor.on("viewport_changed", (data) => {
