@@ -7,6 +7,8 @@
 //
 // Syntax highlighting is handled by the TextMate grammar (built-in to the editor)
 // This plugin only adds the compose mode layout features.
+import { wrapToWidth } from "./lib/text.ts";
+
 const editor = getEditor();
 
 // Everything this plugin draws is the composed rendering of one pane, but
@@ -467,8 +469,10 @@ function emitCodeRails(
   // the rail is anchored past it and the layout measures only what follows.
   const body = text.slice(blockIndent);
   const codeIndent = body.length - body.trimStart().length;
-  const railIndent = Math.min(codeIndent, Math.max(0, inner - 1));
-  const { rows } = codeRowLayout(body, blockMeasure, railIndent);
+  // The indent the rail supplies on the rows a line wraps onto (see below),
+  // which the layout leaves room for.
+  const continuationIndent = Math.min(codeIndent, Math.max(0, inner - 1));
+  const { rows } = codeRowLayout(body, blockMeasure, continuationIndent);
   // A code line's indent WITHIN the block is real text too, so the first row
   // draws it and the rows it wraps onto do not — they would restart flush
   // against the rail, left of the code they continue. The rail supplies it for
@@ -481,7 +485,7 @@ function emitCodeRails(
     const row = rows[r];
     if (row.end <= row.start) continue;
     const rowText = body.slice(row.start, row.end);
-    const railIndent = r === 0 ? 0 : Math.min(codeIndent, Math.max(0, inner - 1));
+    const railIndent = r === 0 ? 0 : continuationIndent;
     // Only the first row has the block's indent as real text ahead of it.
     const railLead = r === 0 ? "" : " ".repeat(blockIndent);
 
@@ -1397,45 +1401,71 @@ function markdownToggleComposeAll(): void {
 registerHandler("markdownToggleComposeAll", markdownToggleComposeAll);
 
 // =============================================================================
-// View modes: Source, Rendered, and Duo (source beside its rendered preview)
+// View modes: Source, Rendered, and Source/Compose dual mode (the source
+// beside its composed view)
 // =============================================================================
 //
-// Source and Rendered act on the pane in focus, as Toggle Compose does. Duo
+// Source and Rendered act on the pane in focus, as Toggle Compose does. Dual mode
 // opens a tab in that pane holding the file twice, side by side: a source
 // panel and a rendered one, scrolling together. The tab is a buffer group
-// whose panels show the file itself, so both edit it. Leaving Duo closes the
+// whose panels show the file itself, so both edit it. Leaving dual mode closes the
 // tab; the file stays open in the pane, as it was.
 
-/** The Duo group of each buffer in Duo. */
-const duoGroups = new Map<number, number>();
-let nextDuoSyncId = 1;
+/** A dual-mode tab: its buffer group, the file it shows, and the pane it opened
+ * in. Group ids are per window, so the window is part of its name. */
+interface DualView {
+  groupId: number;
+  windowId: number;
+  bufferId: number;
+  hostSplit: number;
+}
+const duals: DualView[] = [];
 
-/** Duo's tab closed: the user closed it or the file, or a mode command left
- * Duo. With no pane composing the file any more, compose's decorations go. */
+/** The dual view of `bufferId` in the pane in focus, if there is one. One whose
+ * pane is gone (closed, its tabs taken by a neighbour) matches any pane. */
+function dualHere(bufferId: number): DualView | undefined {
+  const info = editor.getBufferInfo(bufferId);
+  const active = editor.getActiveSplitId();
+  // Panes on screen, and the panes holding the file behind a tab (a pane
+  // showing a dual-mode tab is listed only there).
+  const panes = [
+    ...(editor.listSplits() || []).map((s: SplitSnapshot) => s.splitId),
+    ...(info?.splits ?? []),
+  ];
+  return duals.find((d) =>
+    d.bufferId === bufferId && d.windowId === info?.window_id
+    && (d.hostSplit === active || !panes.includes(d.hostSplit)));
+}
+
+function forgetDual(dual: DualView): void {
+  duals.splice(duals.indexOf(dual), 1);
+}
+
+/** A dual-mode tab closed: the user closed it or the file, or a mode command
+ * left dual mode. With no pane composing the file any more, compose's decorations go. */
 editor.on("buffer_group_closed", async (data) => {
-  for (const [bufferId, groupId] of duoGroups) {
-    if (groupId !== data.group_id) continue;
-    duoGroups.delete(bufferId);
-    await editor.flush();
-    if (editor.getBufferInfo(bufferId) && !isComposingInAnySplit(bufferId)) {
-      clearComposeDecorations(bufferId);
-    }
+  const dual = duals.find((d) => d.groupId === data.group_id && d.windowId === data.window_id);
+  if (!dual) return;
+  forgetDual(dual);
+  await editor.flush();
+  if (editor.getBufferInfo(dual.bufferId) && !isComposingInAnySplit(dual.bufferId)) {
+    clearComposeDecorations(dual.bufferId);
   }
 });
 
-/** Close this buffer's Duo tab, if it has one, and wait for the pane it was
- * in to show the file again. */
-async function leaveDuo(bufferId: number): Promise<void> {
-  const groupId = duoGroups.get(bufferId);
-  if (groupId === undefined) return;
-  duoGroups.delete(bufferId);
-  editor.closeBufferGroup(groupId);
+/** Close the dual-mode tab of `bufferId` in the pane in focus, if it has one, and
+ * wait for the pane to show the file again. */
+async function leaveDual(bufferId: number): Promise<void> {
+  const dual = dualHere(bufferId);
+  if (!dual) return;
+  forgetDual(dual);
+  editor.closeBufferGroup(dual.groupId);
   await editor.flush();
   if (!isComposingInAnySplit(bufferId)) clearComposeDecorations(bufferId);
 }
 
-function currentViewMode(bufferId: number): "source" | "rendered" | "duo" {
-  if (duoGroups.has(bufferId)) return "duo";
+function currentViewMode(bufferId: number): "source" | "rendered" | "dual" {
+  if (dualHere(bufferId)) return "dual";
   return isComposing(bufferId) ? "rendered" : "source";
 }
 
@@ -1454,7 +1484,7 @@ function activeMarkdownBuffer(): number | null {
 async function markdownModeSource(): Promise<void> {
   const bufferId = activeMarkdownBuffer();
   if (bufferId === null) return;
-  await leaveDuo(bufferId);
+  await leaveDual(bufferId);
   disableMarkdownCompose(bufferId);
   editor.setStatus(editor.t("status.mode_source"));
 }
@@ -1463,27 +1493,34 @@ registerHandler("markdownModeSource", markdownModeSource);
 async function markdownModeRendered(): Promise<void> {
   const bufferId = activeMarkdownBuffer();
   if (bufferId === null) return;
-  await leaveDuo(bufferId);
+  await leaveDual(bufferId);
   enableMarkdownCompose(bufferId);
   editor.setStatus(editor.t("status.mode_rendered"));
 }
 registerHandler("markdownModeRendered", markdownModeRendered);
 
-async function markdownModeDuo(): Promise<void> {
+async function markdownModeDual(): Promise<void> {
   const bufferId = activeMarkdownBuffer();
   if (bufferId === null) return;
-  if (!duoGroups.has(bufferId)) {
-    // Duo's tab opens in the pane in focus, which leaves compose first if
+  if (!dualHere(bufferId)) {
+    // The dual-mode tab opens in the pane in focus, which leaves compose first if
     // it was composing.
     disableMarkdownCompose(bufferId);
     const name = editor.getBufferInfo(bufferId)?.name ?? "";
+    // The tab opens in this pane.
+    const hostSplit = editor.getActiveSplitId();
     const panel = (id: string) => ({ type: "scrollable", id, bufferId });
     const group = await editor.createBufferGroup(
-      editor.t("duo.tab_name", { name }),
+      editor.t("dual.tab_name", { name }),
       "",
       JSON.stringify({ type: "split", direction: "h", ratio: 0.5, first: panel("source"), second: panel("preview") }),
     );
-    duoGroups.set(bufferId, group.groupId);
+    duals.push({
+      groupId: group.groupId,
+      windowId: editor.getBufferInfo(bufferId)?.window_id ?? 0,
+      bufferId,
+      hostSplit,
+    });
     // Compose the preview panel. The settings that name no pane apply to
     // the one in focus, so it takes the focus while they are made.
     editor.focusBufferGroupPanel(group.groupId, "preview");
@@ -1492,32 +1529,36 @@ async function markdownModeDuo(): Promise<void> {
     // compose's opinion would hide them in the source panel too. Withdraw
     // it: the source panel is where the user edits.
     editor.setIndentationGuide(bufferId, null);
-    editor.createScrollSyncGroup(nextDuoSyncId++, group.panelSplits.source, group.panelSplits.preview);
+    // The preview panel's split id names the sync group: unique while the
+    // panel lives, which is as long as the group does, so a reloaded plugin
+    // never reuses an id an earlier dual view still holds.
+    const { source, preview } = group.panelSplits;
+    editor.createScrollSyncGroup(preview, source, preview);
     editor.focusBufferGroupPanel(group.groupId, "source");
   }
-  editor.setStatus(editor.t("status.mode_duo"));
+  editor.setStatus(editor.t("status.mode_dual"));
 }
-registerHandler("markdownModeDuo", markdownModeDuo);
+registerHandler("markdownModeDual", markdownModeDual);
 
-// Source → Rendered → Duo → Source.
+// Source → Rendered → Source/Compose dual → Source.
 async function markdownCycleMode(): Promise<void> {
   const bufferId = activeMarkdownBuffer();
   if (bufferId === null) return;
   const mode = currentViewMode(bufferId);
   if (mode === "source") await markdownModeRendered();
-  else if (mode === "rendered") await markdownModeDuo();
+  else if (mode === "rendered") await markdownModeDual();
   else await markdownModeSource();
 }
 registerHandler("markdownCycleMode", markdownCycleMode);
 
-// Duo on, or back to a single source pane.
-async function markdownToggleDuo(): Promise<void> {
+// Dual mode on, or back to a single source pane.
+async function markdownToggleDual(): Promise<void> {
   const bufferId = activeMarkdownBuffer();
   if (bufferId === null) return;
-  if (currentViewMode(bufferId) === "duo") await markdownModeSource();
-  else await markdownModeDuo();
+  if (currentViewMode(bufferId) === "dual") await markdownModeSource();
+  else await markdownModeDual();
 }
-registerHandler("markdownToggleDuo", markdownToggleDuo);
+registerHandler("markdownToggleDual", markdownToggleDual);
 
 /**
  * Extract text content from incoming tokens
@@ -1756,42 +1797,10 @@ function distributeColumnWidths(maxW: number[], available: number): number[] {
 }
 
 /**
- * Wrap text into lines of at most `width` characters, breaking at word boundaries.
+ * Wrap text into lines of at most `width` columns, breaking at word boundaries.
  */
 function wrapText(text: string, width: number): string[] {
-  if (width <= 0) return [text];
-  if (displayWidth(text) <= width) return [text];
-  const lines: string[] = [];
-  let lineStart = 0;
-  let lastSpace = -1;
-  let col = 0;
-  let i = 0;
-  while (i < text.length) {
-    const cp = text.codePointAt(i)!;
-    const charLen = cp > 0xffff ? 2 : 1;
-    const ch = text.slice(i, i + charLen);
-    const w = displayWidth(ch);
-    if (col + w > width && i > lineStart) {
-      if (lastSpace > lineStart) {
-        lines.push(text.slice(lineStart, lastSpace));
-        lineStart = lastSpace + 1;
-      } else {
-        lines.push(text.slice(lineStart, i));
-        lineStart = i;
-      }
-      lastSpace = -1;
-      col = displayWidth(text.slice(lineStart, i + charLen));
-      i += charLen;
-      continue;
-    }
-    if (ch === " ") lastSpace = i;
-    col += w;
-    i += charLen;
-  }
-  if (lineStart < text.length) {
-    lines.push(text.slice(lineStart));
-  }
-  return lines.length > 0 ? lines : [text];
+  return wrapToWidth(text, width, displayWidth);
 }
 
 // =============================================================================
@@ -3608,9 +3617,9 @@ editor.on("prompt_confirmed", (args) => {
 });
 editor.on("buffer_activated", (data) => {
   const bufferId = data.buffer_id;
-  // Duo set its panels up itself; what this reads is the pane holding Duo's
-  // tab, not the panel in focus.
-  if (duoGroups.has(bufferId)) return;
+  // Dual mode set its panels up itself; what this reads is the pane holding
+  // the dual-mode tab, not the panel in focus.
+  if (dualHere(bufferId)) return;
 
   const info = editor.getBufferInfo(bufferId);
   if (!info || !isMarkdownFile(info.path)) return;
@@ -3683,9 +3692,9 @@ editor.registerCommand(
 );
 
 editor.registerCommand(
-  "%cmd.mode_duo",
-  "%cmd.mode_duo_desc",
-  "markdownModeDuo",
+  "%cmd.mode_dual",
+  "%cmd.mode_dual_desc",
+  "markdownModeDual",
   null
 );
 
@@ -3697,9 +3706,9 @@ editor.registerCommand(
 );
 
 editor.registerCommand(
-  "%cmd.toggle_duo",
-  "%cmd.toggle_duo_desc",
-  "markdownToggleDuo",
+  "%cmd.toggle_dual",
+  "%cmd.toggle_dual_desc",
+  "markdownToggleDual",
   null
 );
 

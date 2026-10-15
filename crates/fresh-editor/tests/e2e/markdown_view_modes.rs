@@ -1,5 +1,6 @@
-//! E2E tests for markdown_compose's view modes: Source, Rendered, and Duo
-//! (the source beside its rendered preview, scrolling together).
+//! E2E tests for markdown_compose's view modes: Source, Rendered, and the
+//! Source/Compose dual mode (the source beside its composed view, scrolling
+//! together).
 //!
 //! Every assertion reads the screen (CONTRIBUTING.md Testing §2). The fixture
 //! has markers that tell the two views apart:
@@ -64,9 +65,9 @@ fn run(h: &mut EditorTestHarness, command: &str) {
 
 const SOURCE: &str = "Markdown: Source Mode";
 const RENDERED: &str = "Markdown: Rendered Mode";
-const DUO: &str = "Markdown: Duo Mode";
+const DUAL: &str = "Markdown: Source/Compose Dual Mode";
 const CYCLE: &str = "Markdown: Cycle View Mode";
-const TOGGLE_DUO: &str = "Markdown: Toggle Duo Mode";
+const TOGGLE_DUAL: &str = "Markdown: Toggle Source/Compose Dual Mode";
 
 fn count(h: &EditorTestHarness, text: &str) -> usize {
     h.screen_to_string().matches(text).count()
@@ -108,9 +109,9 @@ fn rendered(h: &EditorTestHarness) -> bool {
     count(h, "PARA") == 1 && !screen.contains("**boldword**") && screen.contains('┌')
 }
 
-/// Duo: raw source with its line numbers on the left, the rendered preview
+/// Dual mode: raw source with its line numbers on the left, the rendered preview
 /// with no gutter on the right.
-fn duo(h: &EditorTestHarness) -> bool {
+fn dual(h: &EditorTestHarness) -> bool {
     if count(h, "PARA") != 2 {
         return false;
     }
@@ -130,9 +131,9 @@ fn duo(h: &EditorTestHarness) -> bool {
         && gutter(&right).is_some_and(|g| g.is_empty())
 }
 
-/// Cycle goes Source → Rendered → Duo → Source, in the one pane it started in.
+/// Cycle goes Source → Rendered → dual mode → Source, in the one pane it started in.
 #[test]
-fn cycle_goes_through_rendered_and_duo_back_to_source() {
+fn cycle_goes_through_rendered_and_dual_back_to_source() {
     let (mut h, _tmp) = setup();
     h.wait_until(|h| source_panes(h, 1)).unwrap();
 
@@ -140,39 +141,39 @@ fn cycle_goes_through_rendered_and_duo_back_to_source() {
     h.wait_until(rendered).unwrap();
 
     run(&mut h, CYCLE);
-    h.wait_until(duo).unwrap();
+    h.wait_until(dual).unwrap();
 
     run(&mut h, CYCLE);
     h.wait_until(|h| source_panes(h, 1)).unwrap();
 }
 
-/// Toggle Duo opens the preview beside the source, in a tab of its own
+/// Toggle Dual Mode opens the preview beside the source, in a tab of its own
 /// next to the file's, and closes it again.
 #[test]
-fn toggle_duo_opens_and_closes_the_preview() {
+fn toggle_dual_opens_and_closes_the_preview() {
     let (mut h, _tmp) = setup();
 
-    run(&mut h, TOGGLE_DUO);
+    run(&mut h, TOGGLE_DUAL);
     h.wait_until(|h| {
         let tabs = h.screen_row_text(1);
-        duo(h) && tabs.contains("doc.md (Duo)") && tabs.matches("doc.md").count() == 2
+        dual(h) && tabs.contains("doc.md (Source/Compose)") && tabs.matches("doc.md").count() == 2
     })
     .unwrap();
 
-    run(&mut h, TOGGLE_DUO);
+    run(&mut h, TOGGLE_DUAL);
     h.wait_until(|h| source_panes(h, 1)).unwrap();
 }
 
-/// Duo adds one pane, and leaving it closes only that one: panes the user
+/// Dual mode adds one pane, and leaving it closes only that one: panes the user
 /// opened on the file stay open.
 #[test]
-fn duo_leaves_the_users_own_panes_open() {
+fn dual_leaves_the_users_own_panes_open() {
     let (mut h, _tmp) = setup();
     run(&mut h, "Split Vertical");
     h.wait_until(|h| source_panes(h, 2)).unwrap();
 
-    // Duo beside the user's two panes: three panes, one of them rendered.
-    run(&mut h, DUO);
+    // Dual mode beside the user's two panes: three panes, one of them rendered.
+    run(&mut h, DUAL);
     h.wait_until(|h| count(h, "PARA") == 3 && h.screen_to_string().contains('┌'))
         .unwrap();
 
@@ -180,16 +181,16 @@ fn duo_leaves_the_users_own_panes_open() {
     h.wait_until(|h| source_panes(h, 2)).unwrap();
 }
 
-/// Duo leaves the source pane's line wrap as the user set it, during Duo and
+/// Dual mode leaves the source pane's line wrap as the user set it, during dual mode and
 /// after it.
 #[test]
-fn duo_keeps_the_source_panes_line_wrap() {
+fn dual_keeps_the_source_panes_line_wrap() {
     let (mut h, _tmp) = setup();
     h.wait_until(|h| source_panes(h, 1) && h.screen_to_string().contains("LONGEND"))
         .unwrap();
 
-    run(&mut h, DUO);
-    h.wait_until(|h| duo(h) && halves(h).0.contains("LONGEND"))
+    run(&mut h, DUAL);
+    h.wait_until(|h| dual(h) && halves(h).0.contains("LONGEND"))
         .unwrap();
 
     run(&mut h, SOURCE);
@@ -197,11 +198,11 @@ fn duo_keeps_the_source_panes_line_wrap() {
         .unwrap();
 }
 
-/// The source pane in Duo, and the pane left after it, draw text from the
-/// left edge, not centred on a page, even when Duo started from Rendered,
+/// The source pane in dual mode, and the pane left after it, draw text from the
+/// left edge, not centred on a page, even when dual mode started from Rendered,
 /// which had centred that pane.
 #[test]
-fn source_pane_is_full_width_in_and_after_duo() {
+fn source_pane_is_full_width_in_and_after_dual_mode() {
     let (mut h, _tmp) = setup();
     h.wait_until(|h| source_panes(h, 1)).unwrap();
     let edge = left_column_of(&h, "LONGSTART").expect("LONGSTART on screen");
@@ -209,8 +210,8 @@ fn source_pane_is_full_width_in_and_after_duo() {
     run(&mut h, RENDERED);
     h.wait_until(rendered).unwrap();
 
-    run(&mut h, DUO);
-    h.wait_until(|h| duo(h) && left_column_of(h, "LONGSTART") == Some(edge))
+    run(&mut h, DUAL);
+    h.wait_until(|h| dual(h) && left_column_of(h, "LONGSTART") == Some(edge))
         .unwrap();
 
     run(&mut h, SOURCE);
@@ -218,14 +219,14 @@ fn source_pane_is_full_width_in_and_after_duo() {
         .unwrap();
 }
 
-/// Scrolling the source pane in Duo scrolls the preview with it: the line at
+/// Scrolling the source pane in dual mode scrolls the preview with it: the line at
 /// the top of the source pane is on screen in the preview too, rendered (no
 /// `**` left in it).
 #[test]
-fn duo_preview_scrolls_with_the_source() {
+fn dual_preview_scrolls_with_the_source() {
     let (mut h, _tmp) = setup();
-    run(&mut h, DUO);
-    h.wait_until(duo).unwrap();
+    run(&mut h, DUAL);
+    h.wait_until(dual).unwrap();
 
     for _ in 0..4 {
         h.send_key(KeyCode::PageDown, KeyModifiers::NONE).unwrap();
@@ -243,27 +244,27 @@ fn duo_preview_scrolls_with_the_source() {
     .unwrap();
 }
 
-/// Closing Duo's tab by hand ends Duo: the file is back in its pane, and the
-/// next Toggle Duo opens Duo again rather than trying to leave it.
+/// Closing the dual view's tab by hand ends dual mode: the file is back in its pane, and the
+/// next Toggle Dual Mode opens dual mode again rather than trying to leave it.
 #[test]
-fn closing_duos_tab_ends_duo() {
+fn closing_the_dual_tab_ends_dual_mode() {
     let (mut h, _tmp) = setup();
-    run(&mut h, DUO);
-    h.wait_until(duo).unwrap();
+    run(&mut h, DUAL);
+    h.wait_until(dual).unwrap();
 
     run(&mut h, "Close Tab");
     h.wait_until(|h| source_panes(h, 1)).unwrap();
 
-    run(&mut h, TOGGLE_DUO);
-    h.wait_until(duo).unwrap();
+    run(&mut h, TOGGLE_DUAL);
+    h.wait_until(dual).unwrap();
 }
 
-/// Duo's source panel edits the file, and the preview shows the edit.
+/// the dual view's source panel edits the file, and the preview shows the edit.
 #[test]
-fn typing_in_duos_source_panel_updates_the_preview() {
+fn typing_in_the_dual_source_panel_updates_the_preview() {
     let (mut h, _tmp) = setup();
-    run(&mut h, DUO);
-    h.wait_until(duo).unwrap();
+    run(&mut h, DUAL);
+    h.wait_until(dual).unwrap();
 
     h.type_text("EDITED ").unwrap();
     h.wait_until(|h| {
@@ -271,4 +272,55 @@ fn typing_in_duos_source_panel_updates_the_preview() {
         left.contains("EDITED # View Modes") && right.contains("EDITED")
     })
     .unwrap();
+}
+
+/// A mode command acts on the pane in focus, even when another pane has the
+/// same file in dual mode: Rendered in one pane leaves the other's dual mode open.
+#[test]
+fn mode_commands_leave_another_panes_dual_mode_alone() {
+    let (mut h, _tmp) = setup();
+    run(&mut h, "Split Vertical");
+    h.wait_until(|h| source_panes(h, 2)).unwrap();
+
+    // Dual mode in the new (right) pane, then back to the left one.
+    run(&mut h, DUAL);
+    h.wait_until(|h| {
+        count(h, "PARA") == 3 && h.screen_row_text(1).contains("doc.md (Source/Compose)")
+    })
+    .unwrap();
+    run(&mut h, "Previous Split");
+
+    run(&mut h, RENDERED);
+    h.wait_until(|h| {
+        let (left, _) = halves(h);
+        count(h, "PARA") == 3
+            && !left.contains("**boldword**")
+            && h.screen_row_text(1).contains("doc.md (Source/Compose)")
+    })
+    .unwrap();
+}
+
+/// Composing the dual view's source panel by hand lays that panel out as a
+/// page: its own width, centred. The page width used to land on the pane
+/// holding the dual view instead, leaving the panel edge to edge.
+#[test]
+fn compose_in_a_dual_panel_lays_out_that_panel() {
+    let (mut h, _tmp) = setup();
+    h.wait_until(|h| source_panes(h, 1)).unwrap();
+    let edge = left_column_of(&h, "LONGSTART").expect("LONGSTART on screen");
+
+    run(&mut h, DUAL);
+    h.wait_until(dual).unwrap();
+    run(&mut h, "Markdown: Toggle Compose");
+    // The left panel is about 100 columns and the page 80: centred, the text
+    // starts well in from the panel's edge.
+    h.wait_until(|h| {
+        !halves(h).0.contains("**boldword**")
+            && left_column_of(h, "LONGSTART").is_some_and(|c| c >= 5)
+    })
+    .unwrap();
+
+    run(&mut h, SOURCE);
+    h.wait_until(|h| source_panes(h, 1) && left_column_of(h, "LONGSTART") == Some(edge))
+        .unwrap();
 }

@@ -269,9 +269,9 @@ Three commands switch the pane in focus between views of a Markdown file:
 |---------|------|
 | Markdown: Source Mode | The raw Markdown |
 | Markdown: Rendered Mode | The composed document |
-| Markdown: Duo Mode | The source and the composed document side by side, in a tab of their own; the two scroll together |
+| Markdown: Source/Compose Dual Mode | The source and the composed document side by side, in a tab of their own; the two scroll together |
 
-"Markdown: Cycle View Mode" steps through Source, Rendered and Duo, and "Markdown: Toggle Duo Mode" switches Duo on and off. Duo's tab sits next to the file's own tab, and you can edit the file in its source side. Leaving Duo, or closing its tab, closes only that tab: the file stays open as it was, and other panes you have open on it are left alone.
+"Markdown: Cycle View Mode" steps through Source, Rendered and dual mode, and "Markdown: Toggle Source/Compose Dual Mode" switches dual mode on and off. The dual-mode tab sits next to the file's own tab, and you can edit the file in its source side. Leaving dual mode, or closing its tab, closes only that tab: the file stays open as it was, and other panes you have open on it are left alone.
 
 Compose mode reads the document the way markdown defines it, so a paragraph, list item or quote written across several source lines is re-flowed into one block at the page width — a hard-wrapped file reads as prose rather than as its source layout. The things markdown treats as their own block still are: a blank line, a heading, a thematic break, a table row, a fenced code block, a new list marker, and a hard break (two trailing spaces or a trailing backslash).
 
