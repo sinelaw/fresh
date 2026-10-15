@@ -286,7 +286,15 @@ refused; allow it under **System Settings → Privacy & Security → Open Anyway
 (or run `xattr -dr com.apple.quarantine "/Applications/Fresh Desktop.app"`).
 On Windows, choose **More info → Run anyway** in the SmartScreen prompt.
 Update by installing a newer release.
-See [desktop/README.md](desktop/README.md) for details and building it yourself.
+To build it from source instead (needs Rust and Node.js), run this from a
+checkout. It builds this platform's package (an AppImage on Linux, a `.dmg` on
+macOS, an installer on Windows) into `desktop/dist/`:
+
+```bash
+node desktop/scripts/package.js
+```
+
+See [desktop/README.md](desktop/README.md) for details.
 
 ### Pre-built binaries
 
