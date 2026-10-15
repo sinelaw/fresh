@@ -27,7 +27,9 @@
 //     empty #device, so a theme's title bars / readouts / knobs live with the
 //     theme instead of in the page.
 const WEB_THEMES = ["cosmos", "macos", "macos-dark", "compact", "winamp"];
+/** const WEB_THEME_LABELS: Dict<String> */
 const WEB_THEME_LABELS = { cosmos: "Cosmos", macos: "macOS Light", "macos-dark": "macOS Dark", compact: "Compact", winamp: "Winamp Classic" };
+/** const WEB_THEME_DESC: Dict<String> */
 const WEB_THEME_DESC = {
   cosmos: "Wallpaper, glass & hardware bezel",
   macos: "Native macOS — light & vibrant",
@@ -49,6 +51,7 @@ function shellTheme() { return SHELL_THEMES.includes(webTheme); }
 const THEME_KEYS = ["--bg", "--fg", "--accent", "--muted", "--muted-menu", "--bg2", "--bg3",
   "--menuhi", "--border", "--status-bg", "--status-fg", "--on-accent", "--on-sel", "--shell"];
 // Density multiplier per theme (layered under user zoom in measureMetrics).
+/** const WEB_THEME_SCALE: Dict<Number> */
 const WEB_THEME_SCALE = { cosmos: 1, macos: 1, "macos-dark": 1, compact: 0.92, winamp: 1 };
 
 // Per-theme chrome palettes. Cosmos = {} (identity — inherit the TUI theme).
@@ -58,6 +61,7 @@ const WEB_THEME_SCALE = { cosmos: 1, macos: 1, "macos-dark": 1, compact: 0.92, w
 // theme omits that is NOT a THEME_KEYS member is reset to its stylesheet
 // default when that theme is active, so nothing leaks between themes. The
 // --mac-* keys are consumed only by css/92-theme-macos.css.
+/** const WEB_THEME_VARS: Dict<Dict<String>> */
 const WEB_THEME_VARS = {
   cosmos: {},
   // macOS Light — systemGray6 window (#ececec), labelColor text (black 85%),
@@ -159,29 +163,35 @@ const WEB_THEME_VARS = {
 // #device and each theme declares what lives in it, so no theme's chrome is
 // baked into the page.
 //
-// A node is [ "tag.class.class", ...children ], where a child is another node
-// or a string (text). "×N" after the selector repeats the node (bar arrays).
+// A node is `furn("tag.class.class", children)`, or `furnText(selector, text)`
+// for one holding text. "×N" after the selector repeats the node (bar arrays).
 // Everything is decoration: the host is pointer-transparent, aria-hidden, and
 // nothing here may affect the cell grid's geometry.
+/** type Furniture = {sel: String, text: String, kids: Furniture[]} */
+/** function furn(String, Furniture[]) => Furniture */
+function furn(sel, kids) { return { sel, text: "", kids }; }
+/** function furnText(String, String) => Furniture */
+function furnText(sel, text) { return { sel, text, kids: [] }; }
+/** const WEB_THEME_FURNITURE: Dict<Furniture[]> */
 const WEB_THEME_FURNITURE = {
   cosmos: [
-    ["div.dv-screen"],
-    ["div.dv-top", ["span.dv-label", "SPEC: COSMOS-991"], ["span.dv-grow"],
-      ["span.dv-leds", ["i.g"], ["i.y"], ["i.a"]]],
-    ["div.dv-side.dv-l", ["i"], ["span", "SPEC: COSMOS-991"]],
-    ["div.dv-side.dv-r", ["i"], ["span", "PROJECT: INFERNU.NIU"]],
-    ["div.dv-bottom", ["span.dv-label", "SPEC: COSMOS-991"], ["span.dv-grow"],
-      ["span.dv-label", "PROJECT: INFERNU CORE"]],
-    ["i.dv-screw.tl"], ["i.dv-screw.tr"], ["i.dv-screw.bl"], ["i.dv-screw.br"],
+    furn("div.dv-screen", []),
+    furn("div.dv-top", [furnText("span.dv-label", "SPEC: COSMOS-991"), furn("span.dv-grow", []),
+      furn("span.dv-leds", [furn("i.g", []), furn("i.y", []), furn("i.a", [])])]),
+    furn("div.dv-side.dv-l", [furn("i", []), furnText("span", "SPEC: COSMOS-991")]),
+    furn("div.dv-side.dv-r", [furn("i", []), furnText("span", "PROJECT: INFERNU.NIU")]),
+    furn("div.dv-bottom", [furnText("span.dv-label", "SPEC: COSMOS-991"), furn("span.dv-grow", []),
+      furnText("span.dv-label", "PROJECT: INFERNU CORE")]),
+    furn("i.dv-screw.tl", []), furn("i.dv-screw.tr", []), furn("i.dv-screw.bl", []), furn("i.dv-screw.br", []),
   ],
   // Winamp Classic — the editor is the "CODE STUDIO" skin window: window
   // DECORATION only (rail title bar, caption, window buttons, side rails). No
   // fake instrumentation — no analyser, no transport, no meters.
   winamp: [
-    ["div.dv-screen"],
-    ["div.wa-title", ["i.wa-rail"], ["span.wa-title-text", "CODE STUDIO"], ["i.wa-rail"],
-      ["span.wa-wbtns", ["i.wa-min"], ["i.wa-shade"], ["i.wa-close"]]],
-    ["div.wa-edge.wa-l"], ["div.wa-edge.wa-r"], ["div.wa-foot", ["i.wa-rail"]],
+    furn("div.dv-screen", []),
+    furn("div.wa-title", [furn("i.wa-rail", []), furnText("span.wa-title-text", "CODE STUDIO"), furn("i.wa-rail", []),
+      furn("span.wa-wbtns", [furn("i.wa-min", []), furn("i.wa-shade", []), furn("i.wa-close", [])])]),
+    furn("div.wa-edge.wa-l", []), furn("div.wa-edge.wa-r", []), furn("div.wa-foot", [furn("i.wa-rail", [])]),
   ],
 };
 // Build a theme's furniture into #device. Called from applyWebTheme when the
@@ -192,8 +202,9 @@ function renderFurniture() {
   if (host.dataset.theme === webTheme) return;
   host.dataset.theme = webTheme;
   host.textContent = "";
+  /** const build: (Furniture, El) => Undefined */
   const build = (node, parent) => {
-    let [sel, ...kids] = node;
+    let sel = node.sel;
     let times = 1;
     const rep = sel.indexOf("×");
     if (rep >= 0) { times = parseInt(sel.slice(rep + 1), 10) || 1; sel = sel.slice(0, rep); }
@@ -201,11 +212,12 @@ function renderFurniture() {
     for (let i = 0; i < times; i++) {
       const el = document.createElement(parts[0] || "div");
       if (parts.length > 1) el.className = parts.slice(1).join(" ");
-      for (const k of kids) typeof k === "string" ? (el.textContent = k) : build(k, el);
+      if (node.text) el.textContent = node.text;
+      for (const k of node.kids) build(k, el);
       parent.appendChild(el);
     }
   };
-  for (const node of (WEB_THEME_FURNITURE[webTheme] || [])) build(node, host);
+  for (const node of (WEB_THEME_FURNITURE[webTheme] ?? [])) build(node, host);
 }
 
 // Compact's chrome, derived from the editor's own background.
@@ -222,13 +234,15 @@ function renderFurniture() {
 //
 // Reads `--bg` as applyTheme() just set it (web themes never override it).
 // Null when it cannot be parsed, which leaves the static fallback above.
+/** function deriveCompact() => Dict<String> | Null */
 function deriveCompact() {
   const bg = document.documentElement.style.getPropertyValue("--bg").trim();
   if (!hexRgb(bg)) return null;
   // Dark exactly when white text reads better on it — the rule onColor()
   // applies everywhere else.
   const dark = onColor(bg) === "#ffffff";
-  const step = k => mix(bg, dark ? "#ffffff" : "#000000", k);
+  // `bg` parses (checked above), so every blend of it does: `?? bg` is never taken.
+  const step = k => mix(bg, dark ? "#ffffff" : "#000000", k) ?? bg;
   if (dark) {
     const card = step(.075);
     return {
@@ -239,13 +253,13 @@ function deriveCompact() {
       "--status-fg": "#9aa0aa",
       "--accent": "#4d8ff5", "--ui-accent": "#4d8ff5",
       "--on-ui-accent": "#ffffff", "--on-accent": "#ffffff", "--on-sel": "#eef0f3",
-      "--menuhi": mix(card, "#4d8ff5", .38), "--ok": "#3fb950", "--danger": "#f47067",
+      "--menuhi": mix(card, "#4d8ff5", .38) ?? card, "--ok": "#3fb950", "--danger": "#f47067",
       "--hairline": "rgba(255,255,255,.075)", "--hairline-strong": "rgba(255,255,255,.13)",
       "--hover": "rgba(255,255,255,.06)",
       "--shadow": "0 12px 32px rgba(0,0,0,.45), 0 2px 6px rgba(0,0,0,.3)",
     };
   }
-  const card = mix(bg, "#ffffff", .7);
+  const card = mix(bg, "#ffffff", .7) ?? bg;
   return {
     "--shell": step(.04), "--status-bg": step(.04),
     "--bg2": card, "--bg3": card, "--surface": card, "--surface-2": step(.06),
@@ -254,7 +268,7 @@ function deriveCompact() {
     "--status-fg": "#4b525c",
     "--accent": "#1a6fd9", "--ui-accent": "#1a6fd9",
     "--on-ui-accent": "#ffffff", "--on-accent": "#ffffff", "--on-sel": "#1f2328",
-    "--menuhi": mix(card, "#1a6fd9", .22), "--ok": "#1a7f37", "--danger": "#cf222e",
+    "--menuhi": mix(card, "#1a6fd9", .22) ?? card, "--ok": "#1a7f37", "--danger": "#cf222e",
     "--hairline": "rgba(0,0,0,.085)", "--hairline-strong": "rgba(0,0,0,.15)",
     "--hover": "rgba(0,0,0,.05)",
     "--shadow": "0 12px 32px rgba(0,0,0,.14), 0 2px 6px rgba(0,0,0,.08)",
@@ -262,17 +276,18 @@ function deriveCompact() {
 }
 // Web themes whose palette is computed from the editor theme at apply time,
 // layered over their static WEB_THEME_VARS entry.
+/** const WEB_THEME_DERIVE: Dict<() => Dict<String> | Null> */
 const WEB_THEME_DERIVE = { compact: deriveCompact };
 
 // Union of every override key, for stale-clearing on theme switch.
-const WEB_THEME_ALL_KEYS = (() => {
-  const s = new Set();
-  for (const t of WEB_THEMES) for (const k of Object.keys(WEB_THEME_VARS[t])) s.add(k);
-  return [...s];
-})();
+const WEB_THEME_ALL_KEYS = [];
+for (const t of WEB_THEMES) {
+  const vs = WEB_THEME_VARS[t];
+  if (vs) for (const k of Object.keys(vs)) if (!WEB_THEME_ALL_KEYS.includes(k)) WEB_THEME_ALL_KEYS.push(k);
+}
 
 let webTheme = "cosmos";
-try { const t = localStorage.getItem("fresh.webtheme"); if (WEB_THEMES.includes(t)) webTheme = t; } catch (_) {}
+try { const t = localStorage.getItem("fresh.webtheme"); if (t !== null && WEB_THEMES.includes(t)) webTheme = t; } catch (_) {}
 
 // Apply the active web theme. Called from render() right after applyTheme():
 //   1. swap the body theme-<name> class (drives all structural CSS + the bezel);
@@ -292,9 +307,15 @@ function applyWebTheme() {
   renderFurniture();
   const r = document.documentElement.style;
   const derive = WEB_THEME_DERIVE[webTheme];
-  const vars = { ...(WEB_THEME_VARS[webTheme] || {}), ...((derive && derive()) || {}) };
+  /** const vars: Dict<String> */
+  const vars = {};
+  const own = WEB_THEME_VARS[webTheme];
+  if (own) for (const [ok, ov] of Object.entries(own)) vars[ok] = ov;
+  const derived = derive ? derive() : null;
+  if (derived) for (const [dk, dv] of Object.entries(derived)) vars[dk] = dv;
   for (const k of WEB_THEME_ALL_KEYS) {
-    if (k in vars) r.setProperty(k, vars[k]);
+    const v = vars[k];
+    if (v !== undefined) r.setProperty(k, v);
     else if (!THEME_KEYS.includes(k)) r.removeProperty(k);   // back to the :root default
     // keys applyTheme owns are left as it just set them (Cosmos wants the TUI value)
   }
@@ -310,13 +331,13 @@ function applyWebTheme() {
   // set and which beats any black-or-white pick).
   const eff = getComputedStyle(document.documentElement);
   for (const [fill, ink] of [["--menuhi", "--on-menuhi"], ["--accent", "--on-accent"]]) {
-    if (!(fill in vars) || ink in vars) continue;
+    if (vars[fill] === undefined || vars[ink] !== undefined) continue;
     const c = onColor(eff.getPropertyValue(fill).trim());
     if (c) r.setProperty(ink, c); else r.removeProperty(ink);
   }
   // Density: re-measure only when the multiplier actually changed (this runs on
   // every full render). The caller (render/hello) re-fits the grid afterwards.
-  const scale = WEB_THEME_SCALE[webTheme] || 1;
+  const scale = WEB_THEME_SCALE[webTheme] ?? 1;
   if (scale !== webThemeScale) { webThemeScale = scale; measureMetrics(); }
 }
 
@@ -327,7 +348,7 @@ function setWebTheme(name) {
   if (!WEB_THEMES.includes(name) || name === webTheme) { renderThemeSwitch(); return; }
   webTheme = name;
   try { localStorage.setItem("fresh.webtheme", name); } catch (_) {}
-  webThemeScale = WEB_THEME_SCALE[webTheme] || 1;
+  webThemeScale = WEB_THEME_SCALE[webTheme] ?? 1;
   measureMetrics();
   if (scene) render();       // re-place at the new metrics + re-seed theme tokens
   resize();                  // editor re-fits cols/rows to the new geometry
@@ -347,11 +368,10 @@ function syncMacTitle() {
   const name = el.querySelector(".mt-name");
   if (!name || !MACOS_THEMES.includes(webTheme)) return;
   let label = "Fresh";
-  try {
-    const tabs = (scene && scene.regions && scene.regions.panes[0] && scene.regions.panes[0].tabs) || [];
-    const at = tabs.find(t => t.active) || tabs[0];
-    if (at && at.label) label = at.label.split("/").pop() + "  —  Fresh";
-  } catch (_) {}
+  const sc = scene;
+  const tabs = sc && sc.regions.panes.length ? sc.regions.panes[0].tabs : [];
+  const at = tabs.find(t => t.active) ?? (tabs.length ? tabs[0] : null);
+  if (at && at.label) label = `${at.label.split("/").pop()}  —  Fresh`;
   if (name.textContent !== label) name.textContent = label;
 }
 
@@ -363,12 +383,12 @@ let themeMenuOpen = false;
 function initThemeSwitch() {
   const root = document.getElementById("themeswitch");
   if (!root) return;
-  const btn = document.getElementById("themebtn");
+  const btn = byId("themebtn");
   btn.onclick = e => { e.stopPropagation(); themeMenuOpen = !themeMenuOpen; renderThemeSwitch(); };
   // Outside-click / Escape close the menu.
-  document.addEventListener("mousedown", e => {
+  listen(document, "mousedown", e => {
     if (themeMenuOpen && !root.contains(e.target)) { themeMenuOpen = false; renderThemeSwitch(); }
-  }, true);
+  }, {capture: true});
   renderThemeSwitch();
 }
 function renderThemeSwitch() {

@@ -25,70 +25,72 @@ let natsel=false, natselLeftDown=false;
 // workflow clashes with Alt-drag.
 let natselEnabled = true;
 try{ if(localStorage.getItem("fresh.altselect")==="0") natselEnabled=false; }catch(_){}
-let natselHintT = null;
+let natselHintT = 0;
 function setNatselEnabled(on){
   natselEnabled=on;
   try{ localStorage.setItem("fresh.altselect", on?"1":"0"); }catch(_){}
   if(!on) setNatsel(false);
   // transient feedback in the natsel pill
-  const el=document.getElementById("natsel");
-  el.querySelector(".rc-label").textContent="Alt text selection: "+(on?"on":"off");
+  const el=byId("natsel"), label=el.querySelector(".rc-label");
+  if(label) label.textContent="Alt text selection: "+(on?"on":"off");
   el.classList.add("show");
   clearTimeout(natselHintT);
   natselHintT=setTimeout(()=>{
     el.classList.toggle("show",natsel);
-    el.querySelector(".rc-label").textContent="Select text — drag, then Ctrl+C";
+    if(label) label.textContent="Select text — drag, then Ctrl+C";
   },1600);
 }
 function setNatsel(on){
   if(natsel===on) return;
   natsel=on;
   document.body.classList.toggle("natsel",on);
-  document.getElementById("natsel").classList.toggle("show",on);
+  byId("natsel").classList.toggle("show",on);
 }
-document.addEventListener("keydown",e=>{ if(e.key==="Alt"&&!e.repeat&&natselEnabled) setNatsel(true); },true);
-document.addEventListener("keyup",e=>{ if(e.key!=="Alt") return;
+listen(document,"keydown",e=>{ if(e.key==="Alt"&&!e.repeat&&natselEnabled) setNatsel(true); },{capture:true});
+listen(document,"keyup",e=>{ if(e.key!=="Alt") return;
   e.preventDefault();                    // keep the browser's own Alt menu-focus away
   if(!natselLeftDown) setNatsel(false);  // mid-drag: hold the mode until mouseup
-},true);
+},{capture:true});
 window.addEventListener("blur",()=>{ natselLeftDown=false; setNatsel(false); });
 // Capture-phase guards: while active, stopPropagation keeps every forwarding
 // handler blind to the mouse and the missing preventDefault lets the browser
 // select. A selection left behind after Alt is released is cleared by the
 // next ordinary mousedown, so stale highlights never sit under
 // editor-forwarded clicks.
-document.addEventListener("mousedown",e=>{
+listen(document,"mousedown",e=>{
   if(e.altKey&&natselEnabled) setNatsel(true);   // window focused with Alt already held
   if(!natsel){
-    const g=window.getSelection&&window.getSelection();
+    const g=window.getSelection();
     if(g&&!g.isCollapsed) g.removeAllRanges();
     return;
   }
   if(e.button===0) natselLeftDown=true;
   e.stopPropagation();
-},true);
-document.addEventListener("mousemove",e=>{ if(natsel) e.stopPropagation(); },true);
-document.addEventListener("mouseup",e=>{ if(!natsel) return; e.stopPropagation();
+},{capture:true});
+listen(document,"mousemove",e=>{ if(natsel) e.stopPropagation(); },{capture:true});
+listen(document,"mouseup",e=>{ if(!natsel) return; e.stopPropagation();
   if(e.button===0){ natselLeftDown=false; if(!e.altKey) setNatsel(false); }
-},true);
-document.addEventListener("click",e=>{ if(natsel) e.stopPropagation(); },true);
-document.addEventListener("dblclick",e=>{ if(natsel) e.stopPropagation(); },true);
+},{capture:true});
+listen(document,"click",e=>{ if(natsel) e.stopPropagation(); },{capture:true});
+listen(document,"dblclick",e=>{ if(natsel) e.stopPropagation(); },{capture:true});
 // Text of the current native selection. Selections inside an SVG cell grid
 // are rebuilt per row — each grid row is its own <text> element, so plain
 // Selection.toString() would run rows together — with the grid's cell padding
 // trimmed from row ends. Non-SVG (chrome) selections pass through as-is.
+/** function natselText() => String */
 function natselText(){
-  const sel=window.getSelection&&window.getSelection();
+  const sel=window.getSelection();
   if(!sel||sel.isCollapsed||!sel.rangeCount) return "";
   const rg=sel.getRangeAt(0);
   const anc=rg.commonAncestorContainer;
   const el=anc.nodeType===1?anc:anc.parentElement;
-  const svg=el&&el.closest&&el.closest("svg.cells");
+  const svg=el?el.closest("svg.cells"):null;
   if(!svg) return sel.toString();
+  /** const partOf: (El) => String */
   const partOf=tn=>{
     if(!rg.intersectsNode(tn)) return "";
     const a=tn===rg.startContainer?rg.startOffset:0;
-    const b=tn===rg.endContainer?rg.endOffset:tn.length;
+    const b=tn===rg.endContainer?rg.endOffset:tn.data.length;
     return tn.data.slice(a,b);
   };
   const lines=[];
@@ -103,13 +105,19 @@ function natselText(){
 // Copy event (browser Edit menu, right-click → Copy while Alt is held):
 // same row-aware extraction, delivered through the event's clipboardData.
 document.addEventListener("copy",e=>{
-  const t=natselText();
-  if(t&&e.clipboardData){ e.preventDefault(); e.clipboardData.setData("text/plain",t); }
+  const t=natselText(), cd=e.clipboardData;
+  if(t&&cd){ e.preventDefault(); cd.setData("text/plain",t); }
 });
 
 // Mouse + wheel: forward to the REAL Editor::handle_mouse at cell coordinates.
-const cellAt = e => ({ col: Math.max(0, Math.floor((e.clientX-APPX)/CW)), row: Math.max(0, Math.floor((e.clientY-APPY)/CH)) });
+/** type Cell = {col: Number, row: Number} */
+/** const cellAtXY: (Number, Number) => Cell */
+const cellAtXY = (x, y) => ({ col: Math.max(0, Math.floor((x-APPX)/CW)), row: Math.max(0, Math.floor((y-APPY)/CH)) });
+/** const cellAt: (UiEvent) => Cell */
+const cellAt = e => cellAtXY(e.clientX, e.clientY);
+/** const btn: (UiEvent) => String */
 const btn = e => (e.button===2?"right":e.button===1?"middle":"left");
+/** function sendMouse<T>(T) => Undefined */
 function sendMouse(o){ wsSend({type:"mouse",...o}); }
 // A chrome control's click, *completed*.
 //
@@ -123,26 +131,35 @@ function sendMouse(o){ wsSend({type:"mouse",...o}); }
 // `Click` to `Press` one at a time. Completing the gesture at the source fixes
 // the class instead of the instances, and costs nothing for a handler that
 // acts on the press: it has already run by the time the release arrives.
+/** function sendClick<T>(T) => Undefined */
 function sendClick(o){
   sendMouse({...o, kind:"down"});
-  sendMouse({kind:"up", button:o.button||"left", col:o.col, row:o.row});
+  sendMouse({kind:"up", button:o.button??"left", col:o.col, row:o.row});
 }
+/** function sendWidget<T>(T) => Undefined */
 function sendWidget(o){ wsSend({type:"widget",...o}); }
+/** function sendSettings<T>(T) => Undefined */
 function sendSettings(o){ wsSend({type:"settings",...o}); }
+/** function sendKbedit<T>(T) => Undefined */
 function sendKbedit(o){ wsSend({type:"kbedit",...o}); }
 // click handler that forwards a SettingsHit (kind + indices) to the editor
 // `double` carries the browser's click count so entry rows (map/list) can
 // open their edit dialog on double-click, exactly like the TUI's
 // double-click path (single click only focuses the row).
+/** function setHit(String, Number | Undefined, Number | Undefined) => (UiEvent) => Undefined */
 function setHit(kind,a,b){ return e=>{ e.preventDefault(); e.stopPropagation(); sendSettings({kind,a,b,double:e.detail>=2}); }; }
 // Forward a hover as a `moved` event at a chrome element's *editor cell* (not the
 // pixel under the pointer — native chrome is laid out by CSS, so pixels don't map
 // to the editor's cell columns). Called from `onmousemove` (which, unlike
 // `mouseenter`, never fires on a DOM rebuild under a stationary cursor), and
 // de-duped so keyboard navigation isn't fought and we don't spam the editor.
+/** let lastHoverKey: String | Null */
 let lastHoverKey=null;
+/** function hoverMove(Number, Number, String) => Undefined */
 function hoverMove(col,row,key){ if(key===lastHoverKey) return; lastHoverKey=key; sendMouse({kind:"moved",col,row}); }
-let dragging=false, lastCell=null;
+let dragging=false;
+/** let lastCell: Cell | Null */
+let lastCell=null;
 // Chrome (menu bar, dropdown, tabs, status bar) owns its own mouse events and
 // forwards them to the editor at the exact cell rects the pipeline reported.
 // The document-level handlers are the fallback for buffer interiors, scrollbars
@@ -160,6 +177,7 @@ let dragging=false, lastCell=null;
 // forwarded to the editor as an ordinary cell click, selecting the row the
 // modal was supposed to be covering. The palette's own `.modal-scrim` was
 // already listed for exactly this.
+/** const onChrome: (UiEvent) => El | Null */
 const onChrome = e => e.target.closest("#mobile,.menubar,.dropdown,.mitem,.msep,.mlabel,.tabbar,.statusbar,.palette,.popup,.fileexplorer,.trustdialog,.modal-scrim,.tree-scrim,.widget-surface,.ctxmenu,.auxmodal,.kbedit,.settings-modal,.native-panel,.native-panel-scrim,.native-scrim");
 // `count` carries the browser's click count (event.detail); the bridge primes
 // the editor's own double/triple-click detection with it (see apply_mouse).
@@ -170,11 +188,13 @@ document.addEventListener("mousedown",e=>{ if(onChrome(e)) return; if(mSheetOpen
 // own lastMoveCell; chrome keeps its element-scoped hoverMove path instead
 // (onChrome bails here). The server pushes only on scene change, so idle
 // motion over an unchanged buffer produces no frames.
+/** let lastMoveCell: {col: Number, row: Number, ctrl: Boolean} | Null */
 let lastMoveCell=null;
 document.addEventListener("mousemove",e=>{
   const c=cellAt(e);
   if(dragging){
-    if(lastCell&&c.col===lastCell.col&&c.row===lastCell.row) return;
+    const lc=lastCell;
+    if(lc&&c.col===lc.col&&c.row===lc.row) return;
     lastCell=c;
     sendMouse({kind:"drag",button:"left",col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey});
     return;
@@ -184,7 +204,8 @@ document.addEventListener("mousemove",e=>{
   // file path in the embedded terminal underlines it, and the server only
   // computes that highlight when CONTROL is held. Ctrl is part of the de-dupe
   // key so pressing/releasing it re-sends even within the same cell.
-  if(lastMoveCell&&c.col===lastMoveCell.col&&c.row===lastMoveCell.row&&lastMoveCell.ctrl===e.ctrlKey) return;
+  const lm=lastMoveCell;
+  if(lm&&c.col===lm.col&&c.row===lm.row&&lm.ctrl===e.ctrlKey) return;
   lastMoveCell={col:c.col,row:c.row,ctrl:e.ctrlKey};
   sendMouse({kind:"moved",col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey});
 });
@@ -198,12 +219,13 @@ document.addEventListener("click",e=>{ if(!onChrome(e)) focusSink(); });
 // DOM, so they scroll natively — forwarding their wheel to the editor would only
 // trigger a re-render that resets scrollTop. Let the browser handle those; route
 // everything else to the editor at the pointer cell.
+/** const onScrollable: (UiEvent) => El | Null */
 const onScrollable = e => e.target.closest(".set-items,.set-cats,.w-list,.widget-surface,.native-panel");
 // Ctrl+wheel = app zoom (frontend-owned, like Ctrl+=/-/0 above). Must be a
 // non-passive listener so the browser's own page zoom can be preventDefault-ed.
-document.addEventListener("wheel",e=>{ if(!e.ctrlKey) return; e.preventDefault();
+listen(document,"wheel",e=>{ if(!e.ctrlKey) return; e.preventDefault();
   setZoom(zoom*(e.deltaY<0?1.1:1/1.1)); },{passive:false});
-document.addEventListener("wheel",e=>{ if(e.ctrlKey||onScrollable(e)) return; const c=cellAt(e); const n=Math.min(8,Math.max(1,Math.round(Math.abs(e.deltaY)/40))); sendMouse({kind:e.deltaY>0?"scrolldown":"scrollup",col:c.col,row:c.row,n}); },{passive:true});
+listen(document,"wheel",e=>{ if(e.ctrlKey||onScrollable(e)) return; const c=cellAt(e); const n=Math.min(8,Math.max(1,Math.round(Math.abs(e.deltaY)/40))); sendMouse({kind:e.deltaY>0?"scrolldown":"scrollup",col:c.col,row:c.row,n}); },{passive:true});
 
 // ---- touch pan/scroll (docs §4, mobile Phase A) ---------------------------
 // A one-finger pan over the buffer translates into the editor's existing
@@ -215,39 +237,44 @@ document.addEventListener("wheel",e=>{ if(e.ctrlKey||onScrollable(e)) return; co
 // (tap-to-position-cursor, click count included). preventDefault fires only
 // while actually panning, so natively-scrolled chrome panels (onChrome) keep
 // their own touch scrolling and the page never rubber-bands under a pan.
+/** type TouchPan = {id: Number, x0: Number, y0: Number, lx: Number, ly: Number, cell: Cell, axis: String, acc: Number} */
+/** let tpan: TouchPan | Null */
 let tpan=null;
-document.addEventListener("touchstart",e=>{
+listen(document,"touchstart",e=>{
   if(onChrome(e) || e.touches.length!==1){ tpan=null; return; }
   const t=e.touches[0];
   tpan={ id:t.identifier, x0:t.clientX, y0:t.clientY, lx:t.clientX, ly:t.clientY,
-         cell:cellAt({clientX:t.clientX,clientY:t.clientY}), axis:null, acc:0 };
+         cell:cellAtXY(t.clientX,t.clientY), axis:"", acc:0 };
 },{passive:true});
-document.addEventListener("touchmove",e=>{
-  if(!tpan) return;
-  const t=[...e.changedTouches].find(t=>t.identifier===tpan.id); if(!t) return;
-  if(!tpan.axis){                       // pan engages past an 8px slop…
-    const dx=t.clientX-tpan.x0, dy=t.clientY-tpan.y0;
+listen(document,"touchmove",e=>{
+  const tp=tpan;
+  if(!tp) return;
+  /** const changed: Touch[] */
+  const changed=Array.from(e.changedTouches);
+  const t=changed.find(t=>t.identifier===tp.id); if(!t) return;
+  if(!tp.axis){                         // pan engages past an 8px slop…
+    const dx=t.clientX-tp.x0, dy=t.clientY-tp.y0;
     if(Math.hypot(dx,dy)<8) return;
-    tpan.axis=Math.abs(dx)>Math.abs(dy)?"x":"y";   // …locked to the dominant axis
+    tp.axis=Math.abs(dx)>Math.abs(dy)?"x":"y";   // …locked to the dominant axis
   }
   e.preventDefault();                   // we own this gesture: no page rubber-band
-  const d = tpan.axis==="y" ? t.clientY-tpan.ly : t.clientX-tpan.lx;
-  tpan.lx=t.clientX; tpan.ly=t.clientY; tpan.acc+=d;
-  const unit = tpan.axis==="y" ? CH : CW;
-  const cells=Math.trunc(tpan.acc/unit);
+  const d = tp.axis==="y" ? t.clientY-tp.ly : t.clientX-tp.lx;
+  tp.lx=t.clientX; tp.ly=t.clientY; tp.acc+=d;
+  const unit = tp.axis==="y" ? CH : CW;
+  const cells=Math.trunc(tp.acc/unit);
   if(!cells) return;
-  tpan.acc-=cells*unit;
+  tp.acc-=cells*unit;
   // finger up / left (negative delta) pulls later content into view
-  const kind = tpan.axis==="y" ? (cells<0?"scrolldown":"scrollup")
-                               : (cells<0?"scrollright":"scrollleft");
-  sendMouse({kind, col:tpan.cell.col, row:tpan.cell.row, n:Math.min(8,Math.abs(cells))});
+  const kind = tp.axis==="y" ? (cells<0?"scrolldown":"scrollup")
+                             : (cells<0?"scrollright":"scrollleft");
+  sendMouse({kind, col:tp.cell.col, row:tp.cell.row, n:Math.min(8,Math.abs(cells))});
 },{passive:false});
-document.addEventListener("touchend",()=>{ tpan=null; },{passive:true});
-document.addEventListener("touchcancel",()=>{ tpan=null; },{passive:true});
+listen(document,"touchend",()=>{ tpan=null; },{passive:true});
+listen(document,"touchcancel",()=>{ tpan=null; },{passive:true});
 
-let rt; window.addEventListener("resize",()=>{ layoutShell(); clearTimeout(rt); rt=setTimeout(resize,150); });
+let rt=0; window.addEventListener("resize",()=>{ layoutShell(); clearTimeout(rt); rt=setTimeout(resize,150); });
 // Re-fit the grid when crossing the mobile/desktop breakpoint (e.g. rotation).
-mqMobile.addEventListener("change", resize);
+mqMobile.addEventListener("change", () => resize());
 
 // Test/debug surface. `refresh` is a full-scene resync over HTTP /state (the
 // WS hello/frames normally carry everything); `frames`/`seq`/`wsOpen`/
@@ -256,7 +283,7 @@ mqMobile.addEventListener("change", resize);
 // patching); `metrics` exposes the measured grid unit + zoom factor plus the
 // live #app page origin (ax/ay) so drivers can map grid→page pixels under the
 // COSMOS shell inset.
-window.fresh = { get scene(){return scene;}, refresh, sendKey, resize, setZoom,
+exposeTestHook({ get scene(){return scene;}, refresh, sendKey, resize, setZoom,
   setPaletteCentered, setNatselEnabled, setWebTheme, cycleWebTheme,
   get webTheme(){return webTheme;}, get webThemes(){return WEB_THEMES.slice();},
   get frames(){return frameCount;}, get seq(){return lastSeq;},
@@ -264,7 +291,7 @@ window.fresh = { get scene(){return scene;}, refresh, sendKey, resize, setZoom,
   get renderedRegions(){return renderedRegions;},
   get paletteCentered(){return paletteCentered;},
   get natselEnabled(){return natselEnabled;},
-  get metrics(){ syncAppOrigin(); return {cw:CW, ch:CH, font:FONT, zoom, ax:APPX, ay:APPY}; } };
+  get metrics(){ syncAppOrigin(); return {cw:CW, ch:CH, font:FONT, zoom, ax:APPX, ay:APPY}; } });
 // Set the mobile class BEFORE the first resize()/layoutShell(): both read
 // #app's box, which the class switches between inset (COSMOS shell) and
 // full-bleed.

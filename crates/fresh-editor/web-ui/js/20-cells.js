@@ -7,6 +7,7 @@
 // stroke:currentColor, so they inherit the element's theme text color (muted
 // for inactive rows, --fg/--accent when active, --on-sel when selected). The
 // wrapper carries class "ficon"; CSS sizes it (~14px) and aligns it to text.
+/** const ICON_PATHS: Dict<String> */
 const ICON_PATHS = {
   // document with a folded corner + a couple of text lines
   doc:      '<path d="M13 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9z"/><path d="M13 3v6h6"/>',
@@ -26,6 +27,7 @@ const ICON_PATHS = {
   folderOpen:'<path d="M3 7a2 2 0 0 1 2-2h3.6a1 1 0 0 1 .7.3L11 7h6a2 2 0 0 1 2 2v1H3z"/><path d="M3 10h17.2a1 1 0 0 1 .97 1.24l-1.5 6A1 1 0 0 1 18.7 18H5a2 2 0 0 1-2-2z"/>',
 };
 // extension → glyph key. Every requested extension is covered; unknown → doc.
+/** const EXT_ICON: Dict<String> */
 const EXT_ICON = {
   rs:'code', ts:'code', tsx:'code', js:'code', jsx:'code', py:'code', go:'code', html:'code',
   json:'braces', toml:'braces',
@@ -34,18 +36,19 @@ const EXT_ICON = {
   lock:'lock',
   md:'docLines', txt:'docLines',
 };
+/** function iconSvg(String) => String */
 function iconSvg(key){
   return '<svg class="ficon" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
     + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-    + (ICON_PATHS[key]||ICON_PATHS.doc) + '</svg>';
+    + (ICON_PATHS[key]??ICON_PATHS.doc??"") + '</svg>';
 }
 // Public helper: pick an icon for a name. dir → folder (open when expanded).
+/** function fileIcon(String, {dir: Boolean, expanded: Boolean}) => String */
 function fileIcon(name, opts){
-  opts=opts||{};
   if(opts.dir) return iconSvg(opts.expanded?"folderOpen":"folder");
   const m=/\.([A-Za-z0-9]+)$/.exec(String(name||""));
   const ext=m?m[1].toLowerCase():"";
-  return iconSvg(EXT_ICON[ext]||"doc");
+  return iconSvg(EXT_ICON[ext]??"doc");
 }
 
 // Vertical box-drawing glyphs the editor uses for the line-number gutter,
@@ -61,20 +64,24 @@ function fileIcon(name, opts){
 //
 // `Intl.Segmenter` gives the real cluster boundaries. ASCII-only runs (the
 // overwhelming majority, every frame) take a fast path that skips it.
+/** const GRAPHEMES: Segmenter | Null */
 const GRAPHEMES = typeof Intl !== "undefined" && Intl.Segmenter
   ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
   : null;
 const ASCII = /^[\x20-\x7E]*$/;
+/** function cellUnits(String) => String[] | Null */
 function cellUnits(t){
   if(ASCII.test(t)) return null;                       // fast path: 1 unit = 1 cell
-  if(GRAPHEMES) return [...GRAPHEMES.segment(t)].map(g => g.segment);
-  return [...t];                                       // last resort: code points
+  if(GRAPHEMES) return Array.from(GRAPHEMES.segment(t), g => g.segment);
+  return Array.from(t);                                // last resort: code points
 }
 // How many cells a run occupies.
+/** function cellLen(String) => Number */
 function cellLen(t){ const g=cellUnits(t); return g ? g.length : t.length; }
 
 const VRULE = "│┃";
 // Draw a block of cells (rows of styled runs) as SVG <text>/<tspan>.
+/** function cellsSvg(CellRow[], Number) => String */
 function cellsSvg(cells, wCells){
   let s=`<svg class="cells" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${px(wCells,CW)} ${px(cells.length,CH)}" preserveAspectRatio="xMinYMin slice" font-size="${FONT}">`;
   let rules="";   // vector vertical rules, drawn above the text layer
@@ -83,10 +90,10 @@ function cellsSvg(cells, wCells){
     let col=0;
     for(const r of cells[row]){
       const ebg=r.r?(r.fg||"#d4d4d4"):r.bg;
-      if(ebg){ s+=`<rect x="${(px(col,CW)).toFixed(1)}" y="${(row*CH).toFixed(1)}" width="${(px(cellLen(r.t),CW)).toFixed(1)}" height="${CH}" fill="${ebg}"/>`; }
+      if(ebg){ s+=`<rect x="${toFixed(px(col,CW),1)}" y="${toFixed(row*CH,1)}" width="${toFixed(px(cellLen(r.t),CW),1)}" height="${CH}" fill="${ebg}"/>`; }
       col+=cellLen(r.t);
     }
-    s+=`<text y="${y.toFixed(1)}" xml:space="preserve">`;
+    s+=`<text y="${toFixed(y,1)}" xml:space="preserve">`;
     col=0;
     for(const r of cells[row]){
       const fill=r.r?(r.bg||"#1e1e1e"):(r.fg||"#d4d4d4");
@@ -98,12 +105,13 @@ function cellsSvg(cells, wCells){
       // rule shows (no dashed glyph behind it).
       let shown=r.t;
       const vunits=cellUnits(r.t);              // null when one unit is one cell
-      if((vunits||r.t).length && (vunits||[...r.t]).some(ch=>VRULE.includes(ch))){
-        const list=vunits||[...r.t];
+      const vlist=vunits||Array.from(r.t);
+      if(vlist.length && vlist.some(ch=>VRULE.includes(ch))){
+        const list=vlist;
         for(let i=0;i<list.length;i++){ if(VRULE.includes(list[i])){
           const cx=px(col+i,CW)+CW/2;
           const hv=(list[i]==="┃"?1.8:1.1)*zoom;
-          rules+=`<rect x="${(cx-hv/2).toFixed(2)}" y="${(row*CH).toFixed(1)}" width="${hv}" height="${CH}" fill="${fill}"/>`;
+          rules+=`<rect x="${toFixed(cx-hv/2,2)}" y="${toFixed(row*CH,1)}" width="${hv}" height="${CH}" fill="${fill}"/>`;
         }}
         shown=list.map(ch=>VRULE.includes(ch)?" ":ch).join("");
       }
@@ -124,7 +132,7 @@ function cellsSvg(cells, wCells){
       const units=cellUnits(shown);            // null when one unit is one cell
       if(!units){
         let xs="";
-        for(let i=0;i<shown.length;i++){ xs+=(i?" ":"")+px(col+i,CW).toFixed(1); }
+        for(let i=0;i<shown.length;i++){ xs+=(i?" ":"")+toFixed(px(col+i,CW),1); }
         s+=`<tspan x="${xs}" ${attrs}>${esc(shown)}</tspan>`;
         col+=shown.length;
       }else{
@@ -132,12 +140,12 @@ function cellsSvg(cells, wCells){
           if(units[i].length===1){             // a plain BMP character
             let j=i,txt="",xs="";
             while(j<units.length && units[j].length===1){
-              txt+=units[j]; xs+=(j>i?" ":"")+px(col+j,CW).toFixed(1); j++;
+              txt+=units[j]; xs+=(j>i?" ":"")+toFixed(px(col+j,CW),1); j++;
             }
             s+=`<tspan x="${xs}" ${attrs}>${esc(txt)}</tspan>`;
             i=j;
           }else{
-            s+=`<tspan x="${px(col+i,CW).toFixed(1)}" ${attrs}>${esc(units[i])}</tspan>`;
+            s+=`<tspan x="${toFixed(px(col+i,CW),1)}" ${attrs}>${esc(units[i])}</tspan>`;
             i++;
           }
         }
@@ -153,6 +161,7 @@ function cellsSvg(cells, wCells){
 
 // Parse `#rrggbb` into [r,g,b], or null for anything else (a theme may leave a
 // colour at terminal "reset").
+/** function hexRgb(String | Null) => Number[] | Null */
 function hexRgb(h){ const m=/^#?([0-9a-fA-F]{6})$/.exec((h||"").trim()); if(!m) return null;
   const n=parseInt(m[1],16); return [(n>>16)&255,(n>>8)&255,n&255]; }
 function relLum(c){ const f=v=>{v/=255; return v<=.03928?v/12.92:Math.pow((v+.055)/1.055,2.4);};
@@ -162,10 +171,13 @@ function contrast(a,b){ const l1=relLum(a),l2=relLum(b); const hi=Math.max(l1,l2
 // Blend two `#rrggbb` colours, `k` of the way from `a` to `b`. Null when
 // either is unparseable (a theme may leave a colour at terminal reset), so
 // the caller can fall back to the stylesheet default.
+// A byte as two lowercase hex digits.
+function hex2(v){ const d="0123456789abcdef"; return d[(v>>4)&15]+d[v&15]; }
+/** function mix(String | Null, String, Number) => String | Null */
 function mix(a,b,k){
   const ca=hexRgb(a), cb=hexRgb(b);
   if(!ca||!cb) return null;
-  return "#"+ca.map((v,i)=>Math.round(v*(1-k)+cb[i]*k).toString(16).padStart(2,"0")).join("");
+  return "#"+ca.map((v,i)=>hex2(Math.round(v*(1-k)+cb[i]*k))).join("");
 }
 
 // Text for a control painted IN a theme colour (a row filled with the
@@ -175,23 +187,26 @@ function mix(a,b,k){
 // (tokyo-night's #7aa2f7) sits below any cutoff that keeps white on the dark
 // accents, and white on it measures 2.5:1 — comparing both candidates picks
 // the readable one at every luminance.
+/** function onColor(String | Null) => String | Null */
 function onColor(hex){ const c=hexRgb(hex); if(!c) return null;
   const dark="#10131a", light="#ffffff";
-  return contrast(c,hexRgb(dark))>=contrast(c,hexRgb(light))?dark:light; }
+  return contrast(c,[16,19,26])>=contrast(c,[255,255,255])?dark:light; }
 
 // Blend `muted` toward `fg` in tenths until it clears the 3:1 floor against
 // every surface it is drawn on. Returns the original string when it already
 // does (or when anything is unparseable, so a terminal-reset colour keeps the
 // stylesheet default).
+/** function legibleMuted(String | Null, String | Null, (String | Null)[]) => String | Null */
 function legibleMuted(muted,fg,surfaces){
   const m=hexRgb(muted), f=hexRgb(fg);
-  const grounds=(surfaces||[]).map(hexRgb).filter(Boolean);
+  const grounds=[];
+  for(const sf of surfaces){ const g=hexRgb(sf); if(g) grounds.push(g); }
   if(!m||!f||!grounds.length) return muted;
   const ok=c=>grounds.every(g=>contrast(c,g)>=3);
   if(ok(m)) return muted;
   for(let t=1;t<=10;t++){
     const c=m.map((v,i)=>Math.round(v+(f[i]-v)*t/10));
-    if(ok(c)) return "#"+c.map(v=>v.toString(16).padStart(2,"0")).join("");
+    if(ok(c)) return "#"+c.map(hex2).join("");
   }
   // Nothing short of the foreground clears every ground; say so rather than
   // returning a blend that still fails on one of them.
@@ -202,9 +217,11 @@ function legibleMuted(muted,fg,surfaces){
 // HTML matches the terminal palette (instead of a fixed dark scheme). Each var
 // falls back to its :root default when the theme leaves a color at terminal
 // "reset" (null).
+/** function applyTheme(SceneTheme) => Undefined */
 function applyTheme(t){
   if(!t) return;
   const r=document.documentElement.style;
+  /** const set: (String, String | Null) => Undefined */
   const set=(k,v)=>{ if(v) r.setProperty(k,v); else r.removeProperty(k); };
   set("--bg",t.bg); set("--fg",t.fg); set("--accent",t.accent);
   // `--muted` is chrome SECONDARY TEXT (tab names, status segments, setting
