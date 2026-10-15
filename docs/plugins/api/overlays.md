@@ -32,6 +32,8 @@ Theme key examples: "ui.status_bar_fg", "editor.selection_bg", "syntax.keyword"
 
 Options: fg, bg (RGB array or theme key string), bold, italic, underline,
 strikethrough, extendToLineEnd (all booleans, default false).
+`composeOnly: true` draws the overlay only in a pane showing the buffer
+in compose view, and hides it in every other pane.
 
 Overlays persist until removed. Use a namespace (e.g. "spell", "todo") to
 remove a group at once with `clearNamespace`. Several overlays can cover the
@@ -170,6 +172,9 @@ the frames between an edit and the `lines_changed` that reports it;
 a width you compute here cannot, since your view of the buffer
 always trails the one being drawn.
 
+`options.composeOnly: true` draws the text only in a pane showing the
+buffer in compose view, and hides it in every other pane.
+
 ```typescript
 addVirtualTextStyled(bufferId: number, virtualTextId: string, position: number, text: string, options: Record<string, unknown>, before: boolean): boolean;
 ```
@@ -239,6 +244,8 @@ The `options` object accepts:
     of on the following source line.
   * `gutterColor` — color for `gutterGlyph`, same shape as
     `fg`/`bg`. Falls back to the theme's line-number fg.
+  * `composeOnly` — `true` draws the line only in a pane showing the
+    buffer in compose view, and hides it in every other pane.
 
 ```typescript
 addVirtualLine(bufferId: number, position: number, text: string, options: Record<string, unknown>, above: boolean, namespace: string, priority: number): boolean;
@@ -273,8 +280,13 @@ cursor-revealable decoration once — instead of rebuilding markers
 on every cursor move — is what keeps cursor movement free of
 marker churn (and of the cache invalidation it causes).
 
+`composeOnly` set to `true` applies the conceal only in a pane showing
+the buffer in compose view; every other pane shows the text as is.
+Pass `null` for `activation` and the scope to leave the conceal
+always active.
+
 ```typescript
-addConceal(bufferId: number, namespace: string, start: number, end: number, replacement: string | null, activation?: string, scopeStart?: number, scopeEnd?: number): boolean;
+addConceal(bufferId: number, namespace: string, start: number, end: number, replacement: string | null, activation?: string | null, scopeStart?: number | null, scopeEnd?: number | null, composeOnly?: boolean): boolean;
 ```
 
 ### `clearConcealNamespace`

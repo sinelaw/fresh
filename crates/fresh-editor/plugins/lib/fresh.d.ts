@@ -6451,6 +6451,8 @@ interface EditorAPI {
 	* 
 	* Options: fg, bg (RGB array or theme key string), bold, italic, underline,
 	* strikethrough, extendToLineEnd (all booleans, default false).
+	* `composeOnly: true` draws the overlay only in a pane showing the buffer
+	* in compose view, and hides it in every other pane.
 	* 
 	* Overlays persist until removed. Use a namespace (e.g. "spell", "todo") to
 	* remove a group at once with `clearNamespace`. Several overlays can cover the
@@ -6525,8 +6527,13 @@ interface EditorAPI {
 	* cursor-revealable decoration once — instead of rebuilding markers
 	* on every cursor move — is what keeps cursor movement free of
 	* marker churn (and of the cache invalidation it causes).
+	* 
+	* `composeOnly` set to `true` applies the conceal only in a pane showing
+	* the buffer in compose view; every other pane shows the text as is.
+	* Pass `null` for `activation` and the scope to leave the conceal
+	* always active.
 	*/
-	addConceal(bufferId: number, namespace: string, start: number, end: number, replacement: string | null, activation?: string, scopeStart?: number, scopeEnd?: number): boolean;
+	addConceal(bufferId: number, namespace: string, start: number, end: number, replacement: string | null, activation?: string | null, scopeStart?: number | null, scopeEnd?: number | null, composeOnly?: boolean): boolean;
 	/**
 	* Clear all conceal ranges in a namespace
 	*/
@@ -6687,6 +6694,9 @@ interface EditorAPI {
 	* the frames between an edit and the `lines_changed` that reports it;
 	* a width you compute here cannot, since your view of the buffer
 	* always trails the one being drawn.
+	* 
+	* `options.composeOnly: true` draws the text only in a pane showing the
+	* buffer in compose view, and hides it in every other pane.
 	*/
 	addVirtualTextStyled(bufferId: number, virtualTextId: string, position: number, text: string, options: Record<string, unknown>, before: boolean): boolean;
 	/**
@@ -6731,6 +6741,8 @@ interface EditorAPI {
 	*     of on the following source line.
 	*   * `gutterColor` — color for `gutterGlyph`, same shape as
 	*     `fg`/`bg`. Falls back to the theme's line-number fg.
+	*   * `composeOnly` — `true` draws the line only in a pane showing the
+	*     buffer in compose view, and hides it in every other pane.
 	* 
 	* @param position - Byte position to anchor the virtual line to
 	* @param above - Whether to insert above (true) or below (false) the line
@@ -7474,8 +7486,13 @@ interface EditorAPI {
 	* Create a scroll sync group for anchor-based synchronized scrolling
 	* 
 	* Used for side-by-side diff views where two panes need to scroll
-	* together. The plugin provides the group ID, which must be unique per
-	* plugin. Groups are removed automatically when the plugin unloads.
+	* together. Lines follow the anchors; the horizontal scroll is shared
+	* as-is between two panes that both scroll sideways (a pane in compose
+	* view, or with line wrap on, keeps its own).
+	* 
+	* The plugin provides the group ID, which must be unique per plugin. A
+	* group is removed automatically when the plugin unloads, or when
+	* either of its panes closes; its ID can then be used again.
 	* 
 	* @param groupId - Plugin-assigned group ID
 	* @param leftSplit - The left (primary) split; scroll is tracked in its lines

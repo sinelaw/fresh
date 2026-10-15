@@ -194,6 +194,13 @@ impl ScrollSyncManager {
         }
     }
 
+    /// Drop every group with a split `is_live` rejects: a group whose pane
+    /// closed syncs nothing, and its id would refuse a new group.
+    pub fn retain_live_groups(&mut self, is_live: impl Fn(SplitId) -> bool) {
+        self.groups
+            .retain(|g| is_live(g.left_split) && is_live(g.right_split));
+    }
+
     /// Get a mutable reference to a group by ID
     pub fn get_group_mut(&mut self, id: ScrollSyncGroupId) -> Option<&mut ScrollSyncGroup> {
         self.groups.iter_mut().find(|g| g.id == id)

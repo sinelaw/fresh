@@ -13,7 +13,8 @@ impl crate::app::window::Window {
     ///
     /// For each registered group containing the active split, derive the
     /// active split's top line from its viewport and project it onto the
-    /// paired split via the group's mapping. Then, when same-buffer
+    /// paired split via the group's mapping. (Horizontal scroll is copied
+    /// after layout instead, see `sync_left_column_from`.) Then, when same-buffer
     /// scroll sync is enabled, also mirror the active split's `top_byte`
     /// onto every other split that shows the same buffer (and isn't in
     /// an explicit sync group). The bottom-edge case sets
@@ -168,6 +169,104 @@ impl crate::app::window::Window {
         }
     }
 
+    /// Carry `source`'s horizontal scroll to its partner in every
+    /// scroll-sync group it is in. Returns whether a partner moved.
+    ///
+    /// Vertical sync maps lines through the group's anchors; horizontal sync
+    /// is a plain column copy, and only between panes that pan horizontally
+    /// at all (`shares_horizontal_scroll`). A wrapped or compose pane neither drives
+    /// its partner back to column 0 nor gets shifted off screen by it.
+    /// Same-buffer scroll sync stays vertical only.
+    ///
+    /// Called after a frame's layout for the focused pane (whose column is
+    /// only final then: the cursor's visual column needs the laid-out rows),
+    /// and on a wheel pan for the pane under the pointer.
+    pub(super) fn sync_left_column_from(&mut self, source: LeafId) -> bool {
+        let source_id: SplitId = source.into();
+        let Some(left_column) = self
+            .buffers
+            .split_view_states()
+            .and_then(|vs_map| vs_map.get(&source))
+            .map(|vs| vs.buffer_tab_state())
+            .filter(|state| state.shares_horizontal_scroll())
+            .map(|state| state.viewport.left_column)
+        else {
+            return false;
+        };
+        let partners: Vec<LeafId> = self
+            .scroll_sync_manager
+            .groups()
+            .iter()
+            .filter(|group| group.contains_split(source_id))
+            .map(|group| {
+                LeafId(if group.is_left_split(source_id) {
+                    group.right_split
+                } else {
+                    group.left_split
+                })
+            })
+            .collect();
+        let Some(vs_map) = self.buffers.split_view_states_mut() else {
+            return false;
+        };
+        let mut moved = false;
+        for partner in partners {
+            let Some(state) = vs_map.get_mut(&partner).map(|vs| vs.buffer_tab_state_mut()) else {
+                continue;
+            };
+            if state.shares_horizontal_scroll() && state.viewport.left_column != left_column {
+                state.viewport.left_column = left_column;
+                state.viewport.set_skip_ensure_visible();
+                moved = true;
+            }
+        }
+        moved
+    }
+
+    /// After a frame's layout, carry the focused pane's column to its
+    /// partners. Returns whether one more frame is owed.
+    ///
+    /// The focused pane's column is only final after layout: the cursor's
+    /// column is a visual one (tabs, wide characters, inlay hints), which
+    /// only the laid-out rows know. Its partners were laid out from their old
+    /// column, so a move owes a frame.
+    ///
+    /// Only a column not synced yet is copied. A partner that cannot scroll
+    /// as far (a file of shorter lines) settles short of it; copying the same
+    /// column again would push it back out, its settle would pull it in, and
+    /// each frame would owe the next.
+    pub(crate) fn sync_left_column_after_layout(&mut self) -> bool {
+        let focused = self.effective_active_split();
+        let Some(column) = self
+            .buffers
+            .split_view_states()
+            .and_then(|vs_map| vs_map.get(&focused))
+            .map(|vs| vs.buffer_tab_state().viewport.left_column)
+        else {
+            return false;
+        };
+        if self.last_horizontal_sync == Some((focused, column)) {
+            return false;
+        }
+        self.last_horizontal_sync = Some((focused, column));
+        self.sync_left_column_from(focused)
+    }
+
+    /// Drop every scroll-sync group with a pane that has closed.
+    ///
+    /// A group dies with either of its panes. Panes close on several paths
+    /// (close split, tab drag, buffer-group close), all of which drop the
+    /// pane's view state, so the check is on that rather than at each path.
+    /// It runs at the start of every frame's sync, and before a group is
+    /// created: a plugin closing a pane and pairing again under the same id
+    /// does both in one batch of commands, with no frame between.
+    pub(crate) fn prune_scroll_sync_groups(&mut self) {
+        if let Some(vs_map) = self.buffers.split_view_states() {
+            self.scroll_sync_manager
+                .retain_live_groups(|split| vs_map.contains_key(&LeafId(split)));
+        }
+    }
+
     /// Pre-sync ensure-visible hook for scroll-sync groups in this window.
     ///
     /// When the active split is in a sync group we update its viewport
@@ -176,7 +275,12 @@ impl crate::app::window::Window {
     /// the group is then marked to skip `ensure_visible` during render
     /// so the sync isn't undone. Same-buffer sync mirrors the same
     /// "skip" mark across the other splits showing the same buffer.
+    ///
+    /// First it drops groups whose pane has closed
+    /// (`prune_scroll_sync_groups`), so nothing below reads one.
     pub(super) fn pre_sync_ensure_visible(&mut self, active_split: LeafId) {
+        self.prune_scroll_sync_groups();
+
         let group_info = self
             .scroll_sync_manager
             .find_group_for_split(active_split.into())

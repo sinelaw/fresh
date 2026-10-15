@@ -15,7 +15,6 @@ use super::transforms::{
 };
 use super::MAX_SAFE_LINE_WIDTH;
 use crate::state::{EditorState, ViewMode};
-use crate::view::compose_only::md_syntax_namespace;
 use crate::view::folding::FoldManager;
 use crate::view::theme::Theme;
 use crate::view::ui::view_pipeline::{LineStart, ViewLine, ViewLineIterator};
@@ -361,11 +360,11 @@ pub(super) fn build_view_data(
     // concealed byte ranges. A blanket `is_compose` gate used to live here but
     // was removed because other plugins (flash) legitimately conceal in source
     // mode. Conceals are buffer-global, though, so markdown_compose's compose
-    // cell conceals (`md-syntax`) would otherwise render in a Source-mode split
-    // whenever a *sibling* split composes the same buffer (the plugin emits
-    // them whenever `isComposingInAnySplit`). So suppress only that compose-only
-    // namespace in Source mode — mirroring the `md-emphasis` overlay gate in
-    // `overlays.rs` — while every other namespace (flash, etc.) still renders.
+    // conceals would otherwise render in a Source-mode split whenever a
+    // *sibling* split composes the same buffer (the plugin emits them whenever
+    // `isComposingInAnySplit`). So a Source-mode split skips the conceals added
+    // as `composeOnly` — as `overlays.rs` does for overlays — while every
+    // other conceal (flash, etc.) still renders.
     if !state.conceals.is_empty() {
         let viewport_end = tokens
             .iter()
@@ -373,12 +372,11 @@ pub(super) fn build_view_data(
             .next_back()
             .unwrap_or(viewport.top_byte())
             + 1;
-        let exclude_ns = (!is_compose).then(md_syntax_namespace);
-        let conceal_ranges = state.conceals.query_viewport_excluding(
+        let conceal_ranges = state.conceals.query_viewport_in(
             viewport.top_byte(),
             viewport_end,
             &state.marker_list,
-            exclude_ns.as_ref(),
+            is_compose,
             cursor_positions,
         );
         if !conceal_ranges.is_empty() {

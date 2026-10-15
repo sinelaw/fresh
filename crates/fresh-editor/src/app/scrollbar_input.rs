@@ -114,7 +114,7 @@ impl crate::app::window::Window {
 
         if let Some(view_state) = self.split_view_states_mut().get_mut(&target_split) {
             // Line wrap makes horizontal scroll a no-op.
-            if view_state.buffer_tab_state_mut().viewport.line_wrap_enabled {
+            if view_state.buffer_tab_state().viewport.line_wrap_enabled {
                 return Ok(());
             }
 
@@ -130,6 +130,11 @@ impl crate::app::window::Window {
             }
             viewport.set_skip_ensure_visible();
         }
+        // The wheel may be over a pane other than the focused one, and the
+        // frame's sync runs from the focused one, so a synced partner has to
+        // follow now or that sync would pan this pane straight back. Whether
+        // one moved doesn't matter: the frame this event triggers paints it.
+        let _ = self.sync_left_column_from(target_split);
 
         Ok(())
     }

@@ -49,6 +49,10 @@ pub struct ConcealRange {
     /// the start marker. `None` = always active. Filtered at query time so
     /// cursor movement never mutates the marker set (see view/activation.rs).
     pub activation: Option<ScopedActivation>,
+
+    /// Apply only in a pane showing the buffer in compose view. Every other
+    /// pane shows the concealed text as it is.
+    pub compose_only: bool,
 }
 
 impl ConcealRange {
@@ -103,12 +107,13 @@ impl ConcealManager {
         range: Range<usize>,
         replacement: Option<String>,
     ) {
-        self.add_with_activation(marker_list, namespace, range, replacement, None);
+        self.add_with_activation(marker_list, namespace, range, replacement, None, false);
     }
 
     /// Add a conceal range with an optional cursor-dependent activation
     /// rule (wire format, absolute scope bytes — converted to the
-    /// marker-relative form here).
+    /// marker-relative form here), applied in compose view only when
+    /// `compose_only`.
     pub fn add_with_activation(
         &mut self,
         marker_list: &mut MarkerList,
@@ -116,6 +121,7 @@ impl ConcealManager {
         range: Range<usize>,
         replacement: Option<String>,
         activation: Option<MarkerActivation>,
+        compose_only: bool,
     ) {
         let start_marker = marker_list.create(range.start);
         let end_marker = marker_list.create(range.end);
@@ -130,6 +136,7 @@ impl ConcealManager {
             replacement,
             activation: activation
                 .map(|rule| ScopedActivation::from_absolute(&rule, range.start, marker_list)),
+            compose_only,
         });
         self.version = self.version.wrapping_add(1);
     }
@@ -291,7 +298,7 @@ impl ConcealManager {
         marker_list: &MarkerList,
         cursors: &[usize],
     ) -> Vec<(Range<usize>, Option<&str>)> {
-        self.query_viewport_excluding(start, end, marker_list, None, cursors)
+        self.query_viewport_in(start, end, marker_list, true, cursors)
     }
 
     /// Earliest conceal in `start..end` whose cursor-dependent activation
@@ -322,27 +329,27 @@ impl ConcealManager {
             .min()
     }
 
-    /// Like [`query_viewport`](Self::query_viewport), but skips ranges whose
-    /// namespace equals `exclude_ns`.
+    /// Like [`query_viewport`](Self::query_viewport), for a pane that is or
+    /// is not in compose view: `composing == false` skips the
+    /// [`compose_only`](ConcealRange::compose_only) ranges.
     ///
     /// Conceals live on the *buffer*, so they are visible to every split that
-    /// shows it. A compose-only conceal namespace (markdown_compose's
-    /// `md-syntax`) must therefore be suppressed when rendering a Source-mode
-    /// split even though a sibling split composes the same buffer — the split's
-    /// view mode is the only place that scoping can happen. Pass `None` to
-    /// include everything (the Compose-mode path and all other callers).
-    pub fn query_viewport_excluding(
+    /// shows it. A compose-only conceal must therefore be suppressed when
+    /// rendering a Source-mode split even though a sibling split composes the
+    /// same buffer — the split's view mode is the only place that scoping can
+    /// happen.
+    pub fn query_viewport_in(
         &self,
         start: usize,
         end: usize,
         marker_list: &MarkerList,
-        exclude_ns: Option<&OverlayNamespace>,
+        composing: bool,
         cursors: &[usize],
     ) -> Vec<(Range<usize>, Option<&str>)> {
         let mut results: Vec<(Range<usize>, Option<&str>)> = self
             .ranges
             .iter()
-            .filter(|r| exclude_ns != Some(&r.namespace))
+            .filter(|r| composing || !r.compose_only)
             .filter_map(|r| {
                 let range = r.range(marker_list);
                 if let Some(a) = &r.activation {
@@ -394,7 +401,7 @@ impl ConcealManager {
     }
 
     /// Number of stored conceal ranges. Every viewport query walks all of
-    /// them (see [`query_viewport_excluding`](Self::query_viewport_excluding)),
+    /// them (see [`query_viewport_in`](Self::query_viewport_in)),
     /// so this is the size of a per-frame scan.
     pub fn len(&self) -> usize {
         self.ranges.len()
@@ -482,6 +489,7 @@ mod tests {
                 scope_start: 0,
                 scope_end: 4,
             }),
+            false,
         );
         let concealed = |marker_list: &MarkerList, cursors: &[usize]| {
             !manager

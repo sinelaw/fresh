@@ -4672,6 +4672,8 @@ impl JsEditorApi {
     ///
     /// Options: fg, bg (RGB array or theme key string), bold, italic, underline,
     /// strikethrough, extendToLineEnd (all booleans, default false).
+    /// `composeOnly: true` draws the overlay only in a pane showing the buffer
+    /// in compose view, and hides it in every other pane.
     ///
     /// Overlays persist until removed. Use a namespace (e.g. "spell", "todo") to
     /// remove a group at once with `clearNamespace`. Several overlays can cover the
@@ -4729,6 +4731,7 @@ impl JsEditorApi {
         let reversed: bool = options.get("reversed").unwrap_or(false);
         let fg_on_collision_only: bool = options.get("fgOnCollisionOnly").unwrap_or(false);
         let url: Option<String> = options.get("url").ok();
+        let compose_only: bool = options.get("composeOnly").unwrap_or(false);
 
         let options = OverlayOptions {
             fg,
@@ -4756,6 +4759,7 @@ impl JsEditorApi {
             namespace: Some(OverlayNamespace::from_string(namespace)),
             range: (start as usize)..(end as usize),
             options,
+            compose_only,
         });
 
         Ok(true)
@@ -4898,6 +4902,11 @@ impl JsEditorApi {
     /// cursor-revealable decoration once — instead of rebuilding markers
     /// on every cursor move — is what keeps cursor movement free of
     /// marker churn (and of the cache invalidation it causes).
+    ///
+    /// `composeOnly` set to `true` applies the conceal only in a pane showing
+    /// the buffer in compose view; every other pane shows the text as is.
+    /// Pass `null` for `activation` and the scope to leave the conceal
+    /// always active.
     #[allow(clippy::too_many_arguments)]
     pub fn add_conceal(
         &self,
@@ -4906,9 +4915,10 @@ impl JsEditorApi {
         start: u32,
         end: u32,
         replacement: Option<String>,
-        activation: fresh_js::function::Opt<String>,
-        scope_start: fresh_js::function::Opt<u32>,
-        scope_end: fresh_js::function::Opt<u32>,
+        activation: fresh_js::function::Opt<Option<String>>,
+        scope_start: fresh_js::function::Opt<Option<u32>>,
+        scope_end: fresh_js::function::Opt<Option<u32>>,
+        compose_only: fresh_js::function::Opt<bool>,
     ) -> bool {
         // Track namespace for cleanup on unload
         self.plugin_tracked_state
@@ -4926,7 +4936,12 @@ impl JsEditorApi {
                 end: end as usize,
                 replacement,
                 epoch: self.hook_epoch_for(buffer_id),
-                activation: Self::parse_activation(activation.0, scope_start.0, scope_end.0),
+                activation: Self::parse_activation(
+                    activation.0.flatten(),
+                    scope_start.0.flatten(),
+                    scope_end.0.flatten(),
+                ),
+                compose_only: compose_only.0.unwrap_or(false),
             })
             .is_ok()
     }
@@ -5399,6 +5414,9 @@ impl JsEditorApi {
     /// the frames between an edit and the `lines_changed` that reports it;
     /// a width you compute here cannot, since your view of the buffer
     /// always trails the one being drawn.
+    ///
+    /// `options.composeOnly: true` draws the text only in a pane showing the
+    /// buffer in compose view, and hides it in every other pane.
     #[allow(clippy::too_many_arguments)]
     pub fn add_virtual_text_styled<'js>(
         &self,
@@ -5433,6 +5451,7 @@ impl JsEditorApi {
         let bold: bool = options.get("bold").unwrap_or(false);
         let italic: bool = options.get("italic").unwrap_or(false);
         let pad_to_column: Option<u32> = options.get("padToColumn").ok();
+        let compose_only: bool = options.get("composeOnly").unwrap_or(false);
 
         // Track virtual text ID for cleanup on unload.
         self.plugin_tracked_state
@@ -5456,6 +5475,7 @@ impl JsEditorApi {
                 before,
                 epoch: self.hook_epoch_for(buffer_id),
                 pad_to_column,
+                compose_only,
             });
         Ok(true)
     }
@@ -5548,6 +5568,8 @@ impl JsEditorApi {
     ///     of on the following source line.
     ///   * `gutterColor` — color for `gutterGlyph`, same shape as
     ///     `fg`/`bg`. Falls back to the theme's line-number fg.
+    ///   * `composeOnly` — `true` draws the line only in a pane showing the
+    ///     buffer in compose view, and hides it in every other pane.
     ///
     /// @param position - Byte position to anchor the virtual line to
     /// @param above - Whether to insert above (true) or below (false) the line
@@ -5591,6 +5613,7 @@ impl JsEditorApi {
             .ok()
             .filter(|s| !s.is_empty());
         let gutter_color = parse_color_spec("gutterColor", &options);
+        let compose_only: bool = options.get("composeOnly").unwrap_or(false);
         // The buffer version `position` was computed against: the epoch of the
         // hook this handler is running in, auto-stamped by the runtime. Lets the
         // editor remap a stale anchor forward before placing the line.
@@ -5634,6 +5657,7 @@ impl JsEditorApi {
                 gutter_color,
                 text_overlays,
                 epoch,
+                compose_only,
             })
             .is_ok())
     }
@@ -7348,8 +7372,13 @@ impl JsEditorApi {
     /// Create a scroll sync group for anchor-based synchronized scrolling
     ///
     /// Used for side-by-side diff views where two panes need to scroll
-    /// together. The plugin provides the group ID, which must be unique per
-    /// plugin. Groups are removed automatically when the plugin unloads.
+    /// together. Lines follow the anchors; the horizontal scroll is shared
+    /// as-is between two panes that both scroll sideways (a pane in compose
+    /// view, or with line wrap on, keeps its own).
+    ///
+    /// The plugin provides the group ID, which must be unique per plugin. A
+    /// group is removed automatically when the plugin unloads, or when
+    /// either of its panes closes; its ID can then be used again.
     ///
     /// @param groupId - Plugin-assigned group ID
     /// @param leftSplit - The left (primary) split; scroll is tracked in its lines
@@ -12996,6 +13025,7 @@ mod tests {
                 namespace,
                 range,
                 options,
+                ..
             } => {
                 use fresh_core::api::OverlayColorSpec;
                 assert_eq!(buffer_id.0, 1);
@@ -13044,6 +13074,7 @@ mod tests {
                 namespace,
                 range,
                 options,
+                ..
             } => {
                 use fresh_core::api::OverlayColorSpec;
                 assert_eq!(buffer_id.0, 1);
