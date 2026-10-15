@@ -56,6 +56,8 @@ mod macros;
 mod menu_actions;
 mod menu_context;
 mod mouse_input;
+#[cfg(feature = "web")]
+pub(crate) mod native_panels;
 mod navigation;
 mod on_save_actions;
 mod orchestrator_persistence;

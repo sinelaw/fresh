@@ -160,7 +160,7 @@ let dragging=false, lastCell=null;
 // forwarded to the editor as an ordinary cell click, selecting the row the
 // modal was supposed to be covering. The palette's own `.modal-scrim` was
 // already listed for exactly this.
-const onChrome = e => e.target.closest("#mobile,.menubar,.dropdown,.mitem,.msep,.mlabel,.tabbar,.statusbar,.palette,.popup,.fileexplorer,.trustdialog,.modal-scrim,.tree-scrim,.widget-surface,.ctxmenu,.auxmodal,.kbedit,.settings-modal");
+const onChrome = e => e.target.closest("#mobile,.menubar,.dropdown,.mitem,.msep,.mlabel,.tabbar,.statusbar,.palette,.popup,.fileexplorer,.trustdialog,.modal-scrim,.tree-scrim,.widget-surface,.ctxmenu,.auxmodal,.kbedit,.settings-modal,.native-panel,.native-panel-scrim,.native-scrim");
 // `count` carries the browser's click count (event.detail); the bridge primes
 // the editor's own double/triple-click detection with it (see apply_mouse).
 document.addEventListener("mousedown",e=>{ if(onChrome(e)) return; if(mSheetOpen){ mSheetOpen=false; render(); } const c=cellAt(e); dragging=true; lastCell=c; sendMouse({kind:"down",button:btn(e),col:c.col,row:c.row,count:e.detail,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
@@ -198,7 +198,7 @@ document.addEventListener("click",e=>{ if(!onChrome(e)) focusSink(); });
 // DOM, so they scroll natively — forwarding their wheel to the editor would only
 // trigger a re-render that resets scrollTop. Let the browser handle those; route
 // everything else to the editor at the pointer cell.
-const onScrollable = e => e.target.closest(".set-items,.set-cats,.w-list,.widget-surface");
+const onScrollable = e => e.target.closest(".set-items,.set-cats,.w-list,.widget-surface,.native-panel");
 // Ctrl+wheel = app zoom (frontend-owned, like Ctrl+=/-/0 above). Must be a
 // non-passive listener so the browser's own page zoom can be preventDefault-ed.
 document.addEventListener("wheel",e=>{ if(!e.ctrlKey) return; e.preventDefault();

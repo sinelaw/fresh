@@ -264,6 +264,10 @@ pub fn apply_step(editor: &mut Editor, step: &Value) {
         apply_key(editor, step);
     } else if step.get("kind").is_some() {
         apply_mouse(editor, step);
+    } else if step.get("node").is_some() {
+        // A key-addressed press, as a natively laid-out control sends it.
+        let msg = json!({ "key": step["node"], "action": step.get("action") });
+        apply_node(editor, &msg);
     } else if let Some(name) = step.get("action").and_then(|a| a.as_str()) {
         // Optional `args` object for parameterised actions
         // (e.g. {"action": "menu_open", "args": {"name": "File"}}).
@@ -954,7 +958,7 @@ fn handle_http(
         (
             "POST",
             p @ ("/key" | "/paste" | "/mouse" | "/action" | "/widget" | "/settings" | "/kbedit"
-            | "/resize" | "/quit"),
+            | "/resize" | "/quit" | "/node"),
         ) => {
             apply_message(editor, &p[1..], &body_json(), cols, rows);
             let s = tick_scene(editor, *cols, *rows, clip).to_string();
@@ -1027,6 +1031,7 @@ fn apply_message(
         "kbedit" => apply_kbedit(editor, v),
         "resize" => apply_resize(editor, v, cols, rows),
         "quit" => apply_quit(editor),
+        "node" => apply_node(editor, v),
         _ => return false,
     }
     true
@@ -1044,6 +1049,68 @@ fn apply_action(editor: &mut Editor, v: &Value) {
             if let Err(e) = editor.handle_action(act) {
                 eprintln!("[webui] action error: {e}");
             }
+        }
+    }
+}
+
+/// The wire form of a tree key: a string is `Key::Str`, `{"ns", "i"}` a
+/// `Key::Pair`, a number a `Key::Int` — what [`key_json`] writes.
+fn parse_key(v: &Value) -> Option<fresh_ui::Key> {
+    match v {
+        Value::String(s) => Some(fresh_ui::Key::from(s.as_str())),
+        Value::Number(n) => n.as_u64().map(fresh_ui::Key::Int),
+        Value::Object(o) => Some(fresh_ui::Key::Pair(
+            o.get("ns")?.as_str()?.into(),
+            o.get("i")?.as_u64()?,
+        )),
+        _ => None,
+    }
+}
+
+/// Whether the tree key in wire form `key` names a node the shell's layout
+/// gave area — what a `node` message needs to land. For the parity tests:
+/// every key a native projection hands the web must pass.
+pub fn node_has_area(editor: &Editor, key: &Value) -> bool {
+    parse_key(key).is_some_and(|k| editor.node_rect(&k).is_some())
+}
+
+/// Key-addressed input: `{"key", "action"}` for a control the page laid out
+/// itself (a natively rendered panel or card) and so cannot address by cell.
+/// The press lands on the cells where the shell's layout put the keyed node,
+/// so the tree routes it exactly as a terminal click there — the node's own
+/// handlers stay the only answer to what a press means, and the web cannot
+/// reach anything a terminal user could not click.
+///
+/// `action`: `press` (default), `context` (right button), `double`, or
+/// `hover`. A node with no laid-out area (scrolled out of a virtualized list,
+/// say) is skipped.
+fn apply_node(editor: &mut Editor, v: &Value) {
+    let Some(key) = v.get("key").and_then(parse_key) else {
+        return;
+    };
+    let Some(r) = editor.node_rect(&key) else {
+        return;
+    };
+    // The middle of the node: clear of a button's bracket or border cells,
+    // which belong to the same node but read as its edge.
+    let (col, row) = (r.x + r.width / 2, r.y + r.height / 2);
+    let action = v.get("action").and_then(|a| a.as_str()).unwrap_or("press");
+    let at = |kind: &str, button: &str, count: u64| json!({"kind": kind, "col": col, "row": row, "button": button, "count": count});
+    match action {
+        "hover" => apply_mouse(editor, &at("moved", "left", 1)),
+        "context" => {
+            apply_mouse(editor, &at("down", "right", 1));
+            apply_mouse(editor, &at("up", "right", 1));
+        }
+        "double" => {
+            for count in [1, 2] {
+                apply_mouse(editor, &at("down", "left", count));
+                apply_mouse(editor, &at("up", "left", count));
+            }
+        }
+        _ => {
+            apply_mouse(editor, &at("down", "left", 1));
+            apply_mouse(editor, &at("up", "left", 1));
         }
     }
 }
@@ -1078,19 +1145,46 @@ fn apply_paste(editor: &mut Editor, v: &Value) {
 /// in-spec and fires the plugin's `widget_event` — the exact path a TUI
 /// toolbar click takes.
 ///
-/// **The `"panel"` surface is gone with the web's plugin panels.** It resolved
-/// a click against the recorded hit list the scene shipped — by identity, with
-/// the index as a tiebreaker — and placed a caret from a byte the browser had
-/// measured. Both read `WidgetPanelState::hits`, which existed for a described
-/// panel only to be sent here. A request naming it now falls through the
-/// wildcard and does nothing, which is what it should do while there is no
-/// panel on the page to have clicked. See
-/// `docs/internal/retained-mode-ui.md` "The web".
+/// The `"panel"` surface is a natively laid-out plugin panel
+/// (`regions.native.panels`): `{slot, widgetKey, eventType, payload,
+/// textCursor?, clicks?, col?, row?}`, the pressed control's identity. It is
+/// resolved against the mounted spec into the event the tree builds for the
+/// same control (`app::native_panels`) — the page names a control, it never
+/// supplies what the press means.
 fn apply_widget(editor: &mut Editor, v: &Value) {
-    if let Some("toolbar") = v.get("surface").and_then(|s| s.as_str()) {
-        if let Some(key) = v.get("key").and_then(|k| k.as_str()) {
-            editor.toggle_overlay_toolbar_widget(key);
+    match v.get("surface").and_then(|s| s.as_str()) {
+        Some("toolbar") => {
+            if let Some(key) = v.get("key").and_then(|k| k.as_str()) {
+                editor.toggle_overlay_toolbar_widget(key);
+            }
         }
+        Some("panel") => {
+            use crate::view::shell::widgets::Slot;
+            let slot = match v.get("slot").and_then(|s| s.as_str()) {
+                Some("dock") => Slot::Dock,
+                Some("floating") => Slot::Floating,
+                Some("sidebar") => match v.get("section").and_then(|i| i.as_u64()) {
+                    Some(i) => Slot::Sidebar(i as usize),
+                    None => return,
+                },
+                _ => return,
+            };
+            let str_of = |k: &str| v.get(k).and_then(|s| s.as_str()).unwrap_or("").to_string();
+            let num_of = |k: &str| v.get(k).and_then(|n| n.as_u64());
+            let press = crate::app::native_panels::NativeWidgetPress {
+                widget_key: str_of("widgetKey"),
+                event_type: str_of("eventType"),
+                payload: v.get("payload").cloned().unwrap_or_else(|| json!({})),
+                text_cursor: num_of("textCursor").map(|b| b as usize),
+                clicks: num_of("clicks").unwrap_or(1).min(3) as u8,
+                at: (
+                    num_of("col").unwrap_or(0) as u16,
+                    num_of("row").unwrap_or(0) as u16,
+                ),
+            };
+            editor.press_native_widget(slot, press);
+        }
+        _ => {}
     }
 }
 
@@ -2086,6 +2180,9 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
         // The plugin panels, as the display list the tree produced for them
         // (`Editor::tree_view`); the web folds it into DOM.
         "tree": serde_json::to_value(editor.tree_view()).unwrap_or_else(|_| json!({})),
+        // The same surfaces as content, for a page that lays them out itself
+        // (`view::native`); pressed back through `node` messages by key.
+        "native": serde_json::to_value(editor.native_view()).unwrap_or_else(|_| json!({})),
         "palette": palette,
         "trustDialog": trust_dialog,
         "contextMenu": context_menu,

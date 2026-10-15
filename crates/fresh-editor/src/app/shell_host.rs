@@ -1972,6 +1972,17 @@ impl Editor {
         applied
     }
 
+    /// Apply a fact that did not come from routing an input over the tree:
+    /// a press on a control the web laid out itself (`app::native_panels`),
+    /// resolved to the fact the tree would have produced for it. Applied as
+    /// that fact is, and the description marked stale after it the same way.
+    #[cfg(feature = "web")]
+    pub(crate) fn apply_native_fact(&mut self, fact: crate::view::shell::msg::UiFact) {
+        let mut applied = Applied::default();
+        self.apply_ui_fact(fact, EventFacts::default(), &mut applied);
+        self.shell_description_stale = true;
+    }
+
     /// Whether a wheel notch over a pane's content was taken by a live
     /// terminal there rather than scrolling the pane.
     ///

@@ -344,3 +344,80 @@ fn confirm_dialog_reaches_the_web_with_its_buttons() {
         "nothing was saved"
     );
 }
+
+/// The confirmation card's native projection (`regions.native.confirm`):
+/// the dialog's content with each button's tree key, every key resolving to
+/// a laid-out node, and a key-addressed press on Cancel answering exactly as
+/// a click on its cells does.
+#[test]
+fn confirm_card_is_projected_and_pressed_by_key() {
+    use fresh::webui::node_has_area;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let file = dir.path().join("note.txt");
+    std::fs::write(&file, "unchanged\n").expect("write temp file");
+    let mut ed =
+        build_editor(COLS, ROWS, std::slice::from_ref(&file), false).expect("build editor");
+    settle(&mut ed);
+    apply_step(&mut ed, &json!({"type": "x"}));
+    apply_step(&mut ed, &json!({"action": "close"}));
+
+    let scene = scene_value(&mut ed, COLS, ROWS);
+    let card = &scene["regions"]["native"]["confirm"];
+    assert!(
+        card.is_object(),
+        "the card is projected: {}",
+        scene["regions"]["native"]
+    );
+    assert!(
+        !card["title"].as_str().unwrap_or("").is_empty(),
+        "a title: {card}"
+    );
+    assert!(
+        !card["body"].as_str().unwrap_or("").is_empty(),
+        "a question: {card}"
+    );
+    assert!(
+        node_has_area(&ed, &card["key"]),
+        "the card's key resolves: {card}"
+    );
+    let buttons = card["buttons"].as_array().expect("buttons");
+    assert!(buttons.len() >= 2, "more than one answer: {card}");
+    assert_eq!(
+        buttons
+            .iter()
+            .filter(|b| b["selected"] == json!(true))
+            .count(),
+        1,
+        "exactly one button holds the keyboard: {card}"
+    );
+    let label = |b: &Value| -> String {
+        b["label"]
+            .as_array()
+            .map(|p| p.iter().filter_map(|s| s.as_str()).collect())
+            .unwrap_or_default()
+    };
+    for b in buttons {
+        assert!(
+            node_has_area(&ed, &b["key"]),
+            "button {:?}'s key {} must name a laid-out node",
+            label(b),
+            b["key"]
+        );
+    }
+
+    let cancel = buttons
+        .iter()
+        .find(|b| label(b) == "Cancel")
+        .expect("a Cancel button");
+    apply_step(&mut ed, &json!({"node": cancel["key"]}));
+    let scene = scene_value(&mut ed, COLS, ROWS);
+    assert!(
+        scene["regions"]["native"]["confirm"].is_null(),
+        "pressing Cancel by key dismisses the card"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "unchanged\n",
+        "and saves nothing"
+    );
+}

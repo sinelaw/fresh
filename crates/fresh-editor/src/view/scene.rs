@@ -1203,6 +1203,25 @@ pub struct TrustDialogView {
 }
 
 impl Editor {
+    /// Where the shell's layout put the element keyed `key`, in screen cells,
+    /// or `None` when it has no area (not built, collapsed, or scrolled out of
+    /// a virtualized list).
+    ///
+    /// The web's key-addressed input (`node` messages in `webui`) resolves
+    /// through this: a natively laid-out control names the tree node it
+    /// mirrors, and the press lands on that node's cells, so the tree stays
+    /// the only router and the node's own handlers decide what a press means.
+    pub fn node_rect(&self, key: &fresh_ui::Key) -> Option<ratatui::layout::Rect> {
+        let frame = self.active_chrome().last_frame;
+        let size = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: frame.width,
+            height: frame.height,
+        };
+        crate::view::shell::rect_of(self.shell_ui.as_ref()?, key, size)
+    }
+
     /// Semantic workspace-trust dialog (the blocking "trust this folder?" modal).
     /// `None` unless it's showing.
     ///
@@ -1335,6 +1354,11 @@ pub struct TreeSurfaceView {
 pub struct TreeItemView {
     /// The index into `surfaces` of the subtree this item belongs to.
     pub surface: usize,
+    /// Inside a plugin panel's interior — its spec's content, as opposed to
+    /// the panel's own frame (title, close box, border). A page that lays
+    /// the interior out itself from `regions.native` hides these.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub interior: bool,
     /// Painted by a layer the subtree raised — a pop-over, a scrim — rather
     /// than by the subtree's own flow. Layers paint after everything in flow.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -1584,6 +1608,12 @@ impl Editor {
         }
         let palette = self.shell_palette();
         let spec = ui.spec();
+        // The panels' interiors: what `view::native` projects as content.
+        let interiors: Vec<_> = [Slot::Dock, Slot::Floating]
+            .into_iter()
+            .chain((0..self.sidebar_sections.len()).map(Slot::Sidebar))
+            .filter_map(|slot| ui.find_by_key(&crate::view::shell::panel::interior_key(slot)))
+            .collect();
         let mut items = Vec::new();
         for (index, item) in spec.items.iter().enumerate() {
             let Some(surface) = roots.iter().position(|r| ui.contains(*r, item.id)) else {
@@ -1693,6 +1723,7 @@ impl Editor {
             };
             items.push(TreeItemView {
                 surface,
+                interior: interiors.iter().any(|r| ui.contains(*r, item.id)),
                 layer: index >= spec.layers_from,
                 key: item.key.as_ref().map(|k| k.to_string()),
                 kind,

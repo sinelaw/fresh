@@ -65,6 +65,10 @@ function measureMetrics(){
   // letter-spacing so one chrome glyph advances one cell, matching the grid.
   const advNat = adv>0 ? adv : CW/CELL_AIR;
   document.documentElement.style.setProperty("--cell-tracking", (Math.round((CW-advNat)*1000)/1000)+"px");
+  // The cell box, for CSS that lays text out on the grid (a native panel's
+  // grid rows, 46-native.css).
+  document.documentElement.style.setProperty("--cell-w", CW+"px");
+  document.documentElement.style.setProperty("--cell-h", CH+"px");
 }
 measureMetrics();
 

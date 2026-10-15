@@ -284,6 +284,9 @@ function applyWebTheme() {
   for (const n of WEB_THEMES) b.classList.toggle("theme-" + n, n === webTheme);
   // Family marker so the two macOS variants share one structural stylesheet.
   b.classList.toggle("macfam", MACOS_THEMES.includes(webTheme));
+  // Lay the shell's surfaces out natively (js/73-native.js), or draw the
+  // display list's cells faithfully.
+  b.classList.toggle("native-panels", nativePanelsOn());
   renderFurniture();
   const r = document.documentElement.style;
   const derive = WEB_THEME_DERIVE[webTheme];

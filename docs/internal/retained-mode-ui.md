@@ -931,6 +931,15 @@ remaining region views are a redundant projection layer — they read rectangles
 off the tree rather than re-deriving them, so they are not a second geometry
 system — and each retires as its surface's rows reach the display list.
 
+**And a second reading of the same surfaces ships beside it.** Themes that lay
+the shell out natively (`docs/internal/web-ui.md` §1.1) read the confirmation
+card and the plugin panels as content — their models and specs, `view::native`
+— instead of as the display list's cells, and hide those cells. That is not a
+second router: a native control presses its tree node by key
+(`Editor::node_rect`), or names its widget so `app::native_panels` rebuilds the
+tree's own `WidgetEvent` for it. The display list stays the only geometry and
+the tree the only answer to what a press means; what differs is who draws.
+
 ### The shell's stylesheet
 
 *(Folded in from the retired `shell-stylesheet-design.md`.)*

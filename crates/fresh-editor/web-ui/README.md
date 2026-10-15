@@ -109,6 +109,7 @@ Pick a numeric prefix that places a new file where its concern belongs; gaps
 | `35-editor.css` | file explorer, pane surfaces, separators, scrollbars, caret |
 | `40-widgets.css` | trust dialog, plugin widgets, Settings, keybinding editor, aux modals |
 | `45-tree.css` | the display-list layer: surface grounds, items, grid text, rules, the `--fold-*` / `--ink-*` paint chain |
+| `46-native.css` | natively laid-out surfaces (`regions.native`): the confirmation card, plugin panels and floating cards, grid rows |
 | `50-popups.css` | completion/hover/action popups, cell SVG, `#err` |
 | `60-polish.css` | visual polish pass: radii, hairlines, hovers, selection pills |
 | `70-mobile.css` | mobile / portrait touch shell |
@@ -130,6 +131,7 @@ Pick a numeric prefix that places a new file where its concern belongs; gaps
 | `65-widgets.js` | plugin widget tree + Settings / keybinding editor / aux modals |
 | `70-panels.js` | trust dialog, file explorer, border drag handles |
 | `72-tree.js` | the plugin panels (dock, floating panels, sidebar sections), folded from the display list |
+| `73-native.js` | natively laid-out surfaces: the confirmation card and plugin panels from `regions.native`, pressed back by key or widget identity |
 | `75-app.js` | mobile shell + transport (WS frames, resize, clipboard) |
 | `80-input.js` | keyboard/mouse/touch input, native selection, boot |
 
@@ -159,6 +161,15 @@ editor. Four ship:
   background (a shade lighter on a dark theme, darker on a light one, neutral
   inks, one accent), so the frame matches whatever theme the buffer uses.
   Fresh Desktop opens on this theme.
+
+Compact and the two macOS themes also lay the shell's **surfaces** out
+natively: the confirmation card is a real dialog, and a plugin panel (the
+dock, a floating panel, a sidebar section) is its widget spec drawn with
+flexbox and native controls rather than the display list's character cells
+(`js/73-native.js`, `regions.native`; see `docs/internal/web-ui.md` §1.1).
+Presses still go to the tree: by node key, or as the widget's identity the
+bridge resolves against the mounted spec. `fresh.nativePanels` in
+localStorage (`on`/`off`) overrides the theme's choice.
 
 `js/15-theme.js` is the whole mechanism. `applyWebTheme()` (called from
 `render()` right after `applyTheme()`) does two things: it sets the

@@ -55,6 +55,9 @@ function treeItemEl(it,kindOf){
   // dock's body is the well"); a pop-over over that body has to be opaque or
   // it is unreadable, so it must be able to opt out of them by selector.
   if(it.layer) el.dataset.layer="";
+  // Inside a plugin panel's interior: hidden while the page lays panels out
+  // natively (46-native.css), since `regions.native` draws that content.
+  if(it.interior) el.dataset.interior="";
   // What the item IS, as opposed to how the fold painted it. Read it with
   // `k-<kind>`: a classed node emits a `fill` over its own rect and its label
   // arrives as a separate `lines` item wearing the same class, so
