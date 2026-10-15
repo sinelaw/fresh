@@ -85,6 +85,14 @@ function nativePanelEl(p){
   const framed=p.kind==="floating"&&p.frame;
   const el=div("native-panel np-"+p.kind+(p.keyboard?" kb":"")+(framed?" card":"")+(p.anchored?" anchored":""));
   place(el, framed?p.frame:p.rect);
+  // An anchored pop-up hugs its content, as the terminal's does — natively
+  // laid out, that content is not the cells the terminal measured, so the
+  // card takes its height (and any extra width) from what it holds.
+  if(framed&&p.anchored){
+    el.style.height="auto";
+    el.style.minWidth=el.style.width; el.style.width="max-content";
+    el.style.maxHeight="calc(100% - "+el.style.top+" - 4px)";
+  }
   el.dataset.slot=p.kind;
   let body=el;
   if(framed){
@@ -104,7 +112,7 @@ function nativePanelEl(p){
   // the cell mapping still forwards it, so it lands where the terminal's
   // would — focusing the panel — without reaching through to what is under.
   const ctx={kind:"panel", slot:p.kind, section:p.section, focusKey:p.focusKey,
-    instances:p.instances||{}};
+    instances:p.instances||{}, native:true};
   body.appendChild(widgetEl(p.spec, ctx));
   // Keep the selected row of a list or tree in view as the keyboard moves it:
   // the page scrolls its own lists.

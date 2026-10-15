@@ -122,3 +122,30 @@ body.macfam .native-panel.np-dock{background:var(--mac-sidebar)}
 .native-panel.card .np-body{flex:1 1 auto;min-height:0;overflow:auto;padding:.3em 1em .8em}
 .native-panel.card .np-body > .w-col{min-height:100%;box-sizing:border-box}
 .native-panel.card.anchored .np-body{padding:.35em .45em}
+.native-panel .w-row.end{justify-content:flex-end}
+.native-panel .w-text{box-sizing:border-box;max-width:100%}
+.native-panel .w-text.fill{align-self:stretch;flex:1 1 auto}
+.native-panel .w-text .w-text-input{flex:1 1 auto;min-width:0;width:100%;box-sizing:border-box}
+.native-panel .w-field-row:has(> .w-text.fill){align-self:stretch}
+/* A table the terminal drew line by line (see widgetEl): one CSS grid. */
+.native-panel .w-table{display:grid;column-gap:.25em;row-gap:0;align-items:center;gap:0 .25em}
+.native-panel .w-table-row{display:contents}
+.native-panel .w-table .w-vrule{align-self:stretch;width:1px;margin:0 .6em;background:var(--hairline,var(--border))}
+.native-panel .w-table .w-th{font-size:.78em;font-weight:600;letter-spacing:.05em;color:var(--muted);padding:.6em .5em .2em}
+.native-panel .w-table .w-td{min-height:.6em}
+.native-panel .w-table .w-button{justify-self:stretch;text-align:left;padding:.22em .55em}
+.native-panel .w-table .w-dropdown{padding:.1em .5em}
+.w-mark-radio,.w-mark-check{display:inline-block;width:.8em;height:.8em;margin-right:.5em;vertical-align:-.08em;
+  border:1.5px solid var(--muted);box-sizing:border-box}
+.w-mark-radio{border-radius:50%}
+.w-mark-check{border-radius:3px}
+.w-mark-radio.on{border-color:var(--ui-accent,var(--accent));
+  background:radial-gradient(circle,var(--ui-accent,var(--accent)) 0 36%,transparent 40%)}
+.w-mark-check.on{border-color:var(--ui-accent,var(--accent));background:var(--ui-accent,var(--accent));position:relative}
+.w-mark-check.on::after{content:"";position:absolute;left:.22em;top:.04em;width:.2em;height:.42em;
+  border:solid var(--on-ui-accent,#fff);border-width:0 .12em .12em 0;transform:rotate(45deg)}
+/* A section in a row takes the rest of it, as the terminal's does; an
+   unlabelled one around a single field is just that field. */
+.native-panel .w-row > .w-section{flex:1 1 auto;min-width:0}
+.native-panel .w-section:not(:has(> .w-section-label)){border:0;padding:0}
+.native-panel .w-section > .w-text{display:flex}

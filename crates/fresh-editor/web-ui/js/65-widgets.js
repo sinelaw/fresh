@@ -190,10 +190,29 @@ function widgetEl(spec, ctx){
     // labels padded with spaces to a column) only lines up in the buffer's
     // font, so it is drawn in it: a GRID row, whose controls still answer as
     // controls. Every other row is laid out by the browser.
-    const grid=ctx.grid||(kind==="row"&&(spec.children||[]).some(c=>c&&c.kind==="raw"));
-    const el=div("w-"+kind+(spec.wrap?" wrap":"")+(grid&&!ctx.grid?" grid":""));
+    const kids=spec.children||[];
+    const isGridRow=c=>c&&c.kind==="row"&&(c.children||[]).some(x=>x&&x.kind==="raw");
+    // A column of grid rows that all have the same number of cells is a
+    // TABLE the terminal drew line by line (a menu's two columns of entries
+    // with a rule between them, Tab walking it in reading order). Natively
+    // it is one CSS grid: the columns line up in any font, the cells are
+    // laid out as text and controls, and a `│` cell becomes a hairline.
+    if(ctx.native&&!ctx.grid&&kind==="col"&&kids.length>1&&kids.every(isGridRow)
+       &&kids.every(c=>c.children.length===kids[0].children.length)){
+      const el=div("w-col w-table");
+      el.style.gridTemplateColumns="repeat("+kids[0].children.length+",auto)";
+      const tctx={...ctx,table:true};
+      for(const r of kids){
+        const re=div("w-row w-table-row");
+        for(const c of r.children) re.appendChild(widgetEl(c, tctx));
+        el.appendChild(re);
+      }
+      return el;
+    }
+    const grid=!ctx.table&&(ctx.grid||(kind==="row"&&kids.some(c=>c&&c.kind==="raw")));
+    const el=div("w-"+kind+(spec.wrap?" wrap":"")+(grid&&!ctx.grid?" grid":"")+(spec.justifyEnd?" end":""));
     const cctx=grid?{...ctx,grid:true}:ctx;
-    for(const c of (spec.children||[])) el.appendChild(widgetEl(c, cctx));
+    for(const c of kids) el.appendChild(widgetEl(c, cctx));
     return el;
   }
   if(kind==="label"){
@@ -238,7 +257,16 @@ function widgetEl(spec, ctx){
     // A terminal label carries its own padding (a bare title bar's trailing
     // spaces fill the row to the close box); a laid-out button has a box. In
     // a grid row the padding IS the layout, so it stays.
-    el.textContent=ctx.grid?(spec.label||""):(spec.label||"").trim();
+    const label=ctx.grid?(spec.label||""):(spec.label||"").trim();
+    // A menu entry that says what it sets: `(•)`/`( )` a choice, `[✓]`/`[ ]`
+    // a switch — drawn as the marks they stand for.
+    const mark=!ctx.grid&&ctx.native&&/^(\(•\)|\( \)|\[✓\]|\[ \])\s+(.*)$/.exec(label);
+    if(mark){
+      const radio=mark[1][0]==="(", on=mark[1][1]!==" ";
+      const m=document.createElement("span");
+      m.className=(radio?"w-mark-radio":"w-mark-check")+(on?" on":"");
+      el.appendChild(m); el.append(mark[2]);
+    } else el.textContent=label;
     if(ctx.grid) el.classList.add("gridcell");
     if(spec.key && !spec.disabled) el.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,spec); };
     return el;
@@ -266,7 +294,11 @@ function widgetEl(spec, ctx){
     // browser-computed click-to-caret positions for free.
     const inst=(ctx.instances&&spec.key)?ctx.instances[spec.key]:null;
     const val=(inst&&inst.textValue!=null)?inst.textValue:(spec.value||"");
-    const el=div("w-text"+(focused?" focus":""));
+    // Width as the terminal sizes it: a multi-line field (or one asked to)
+    // fills its row; a `fieldWidth` is a width in characters.
+    const fill=spec.fullWidth||((spec.rows||1)>1&&!spec.fieldWidth);
+    const el=div("w-text"+(focused?" focus":"")+(fill?" fill":""));
+    if(!fill&&spec.fieldWidth>0) el.style.width="calc("+spec.fieldWidth+"ch + 1.2em)";
     // A form-style field (`label` + `labelWidth`) keeps its label OUTSIDE the
     // bordered field, in the shared label column, so the label doesn't get
     // boxed into the input and the field aligns with the other controls. A
@@ -560,6 +592,12 @@ function widgetEl(spec, ctx){
   }
   if(kind==="raw"&&spec.entries){
     const text=spec.entries.map(entryText).join("\n");
+    if(ctx.table){
+      // A table cell: a rule, a caption, or air.
+      const t=text.trim();
+      if(/^[│┃|]$/.test(t)) return div("w-vrule");
+      const c=div(t&&t===t.toUpperCase()&&/[A-Z]/.test(t)?"w-th":"w-td"); c.textContent=t; return c;
+    }
     // Blank rows a terminal layout stacks to push what follows to the bottom
     // of the panel: a flexible gap here, which does the same at any height.
     if(!ctx.grid&&!text.trim()) return div("w-fill");
