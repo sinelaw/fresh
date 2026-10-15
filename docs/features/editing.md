@@ -273,6 +273,13 @@ Three commands switch the pane in focus between views of a Markdown file:
 
 "Markdown: Cycle View Mode" steps through Source, Rendered and dual mode, and "Markdown: Toggle Source/Compose Dual Mode" switches dual mode on and off. The dual-mode tab sits next to the file's own tab, and you can edit the file in its source side. Leaving dual mode, or closing its tab, closes only that tab: the file stays open as it was, and other panes you have open on it are left alone.
 
+Compose mode also draws math and diagrams:
+
+- LaTeX math, inline (`$x^2$`) or in display blocks (`$$ … $$`, or a ` ```math ` / ` ```latex ` fence), is drawn with Unicode symbols: Greek letters, operators, superscripts and subscripts, fractions and roots.
+- A ` ```mermaid ` fence is drawn as a diagram: flowcharts, sequence diagrams, pie charts, and state and class diagrams. Other diagram types are shown as written.
+
+Put the cursor in a math block or a diagram to edit its source; it is drawn again when the cursor leaves.
+
 Compose mode reads the document the way markdown defines it, so a paragraph, list item or quote written across several source lines is re-flowed into one block at the page width — a hard-wrapped file reads as prose rather than as its source layout. The things markdown treats as their own block still are: a blank line, a heading, a thematic break, a table row, a fenced code block, a new list marker, and a hard break (two trailing spaces or a trailing backslash).
 
 ### Contents Panel
