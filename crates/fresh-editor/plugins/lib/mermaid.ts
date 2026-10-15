@@ -10,6 +10,11 @@
 /** Columns `text` takes on screen. */
 export type Width = (text: string) => number;
 
+/** `s` padded with spaces to `cols` columns, measured by `width`. */
+function padTo(s: string, cols: number, width: Width): string {
+  return s + " ".repeat(Math.max(0, cols - width(s)));
+}
+
 
 export interface MermaidRenderResult {
   title: string;
@@ -89,6 +94,54 @@ function renderNodeBox(node: FlowNode, width: Width): string[] {
     "│" + spaces + lbl + spaces + "│",
     "└" + "─".repeat(innerW) + "┘",
   ];
+}
+
+/** How a top-down level's boxes are laid out: indented, and apart. */
+const BOX_ROW_INDENT = "  ";
+const BOX_GAP = "    ";
+
+/** The columns each of a level's boxes spans, as laid out with
+ * `BOX_ROW_INDENT` and `BOX_GAP`. */
+function boxSpans(boxes: string[][], width: Width): Array<{ start: number; end: number }> {
+  const spans: Array<{ start: number; end: number }> = [];
+  let x = BOX_ROW_INDENT.length;
+  for (const box of boxes) {
+    const w = width(box[0]);
+    spans.push({ start: x, end: x + w });
+    x += w + BOX_GAP.length;
+  }
+  return spans;
+}
+
+const centerOf = (span: { start: number; end: number }): number =>
+  span.start + Math.floor((span.end - span.start) / 2);
+
+/** The rows joining boxes centred at the `from` columns to boxes centred at
+ * the `to` columns below: a stem down from each source, a bus across when
+ * the columns differ, and an arrow down into each target. `label` follows
+ * the stems. */
+function connectorRows(from: number[], to: number[], label: string): string[] {
+  const all = [...from, ...to];
+  const lo = Math.min(...all);
+  const hi = Math.max(...all);
+  const marks = (cols: number[], ch: string): string => {
+    const row = Array<string>(hi + 1).fill(" ");
+    for (const c of cols) row[c] = ch;
+    return row.join("").trimEnd();
+  };
+  if (lo === hi) return [marks(from, "│") + label, marks(to, "▼")];
+  const bus = Array<string>(hi + 1).fill(" ");
+  for (let c = lo; c <= hi; c++) {
+    const up = from.includes(c);
+    const down = to.includes(c);
+    const left = c === lo;
+    const right = c === hi;
+    if (up && down) bus[c] = left ? "├" : right ? "┤" : "┼";
+    else if (up) bus[c] = left ? "└" : right ? "┘" : "┴";
+    else if (down) bus[c] = left ? "┌" : right ? "┐" : "┬";
+    else bus[c] = "─";
+  }
+  return [marks(from, "│") + label, bus.join(""), marks(to, "▼")];
 }
 
 function renderMermaidFlowchart(rawLines: string[], maxWidth: number, width: Width): MermaidRenderResult {
@@ -177,9 +230,9 @@ function renderMermaidFlowchart(rawLines: string[], maxWidth: number, width: Wid
       const box = renderNodeBox(item.node, width);
       const boxW = Math.max(width(box[0]), width(box[1]), width(box[2] || ""));
 
-      row0.push(box[0].padEnd(boxW));
-      row1.push(box[1].padEnd(boxW));
-      row2.push((box[2] || "").padEnd(boxW));
+      row0.push(padTo(box[0], boxW, width));
+      row1.push(padTo(box[1], boxW, width));
+      row2.push(padTo((box[2] || ""), boxW, width));
 
       if (i < orderedNodes.length - 1) {
         const arrowText = item.edgeLabel ? ` ── ${item.edgeLabel} ──> ` : " ──────> ";
@@ -253,11 +306,11 @@ function renderMermaidFlowchart(rawLines: string[], maxWidth: number, width: Wid
       const maxBoxH = Math.max(...boxes.map(b => b.length));
 
       for (let r = 0; r < maxBoxH; r++) {
-        let rowStr = "  ";
+        let rowStr = BOX_ROW_INDENT;
         for (let b = 0; b < boxes.length; b++) {
           const box = boxes[b];
           const line = box[r] || " ".repeat(width(box[0]));
-          rowStr += line + (b < boxes.length - 1 ? "    " : "");
+          rowStr += line + (b < boxes.length - 1 ? BOX_GAP : "");
         }
         outLines.push(rowStr);
       }
@@ -267,16 +320,19 @@ function renderMermaidFlowchart(rawLines: string[], maxWidth: number, width: Wid
         const crossEdges = edges.filter(e => nodeIds.includes(e.from) && nextNodeIds.includes(e.to));
         const label = crossEdges.find(e => e.label)?.label;
         const lblStr = label ? ` [${label}]` : "";
-        if (nodeIds.length === 1 && nextNodeIds.length === 1) {
-          const box0W = width(boxes[0][0]);
-          const center = 2 + Math.floor(box0W / 2);
-          outLines.push(" ".repeat(center) + "│" + lblStr);
-          outLines.push(" ".repeat(center) + "▼");
-        } else {
-          outLines.push("    │" + lblStr);
-          outLines.push("    ├───┐");
-          outLines.push("    ▼   ▼");
-        }
+        const fromSpans = boxSpans(boxes, width);
+        const toSpans = boxSpans(nextNodeIds.map(id => renderNodeBox(nodes.get(id)!, width)), width);
+        const from = nodeIds.flatMap((id, k) =>
+          crossEdges.some(e => e.from === id) ? [centerOf(fromSpans[k])] : []);
+        const targets = nextNodeIds.flatMap((id, k) =>
+          crossEdges.some(e => e.to === id) ? [toSpans[k]] : []);
+        // One box into one box that lies under its stem: straight down,
+        // rather than a jog of a column or two between their centres.
+        const to = from.length === 1 && targets.length === 1
+          && targets[0].start < from[0] && from[0] < targets[0].end - 1
+          ? from
+          : targets.map(centerOf);
+        if (from.length > 0 && to.length > 0) outLines.push(...connectorRows(from, to, lblStr));
       }
     }
 
@@ -360,22 +416,24 @@ function renderMermaidSequence(rawLines: string[], maxWidth: number, width: Widt
     const id = participants[i];
     const name = aliasMap.get(id) || id;
     const boxW = Math.max(6, width(name) + 2);
+    // The lifeline leaves the box at its centre, the column it is drawn in.
+    const c = Math.floor(boxW / 2);
     const box = [
       "┌" + "─".repeat(boxW) + "┐",
-      "│ " + name + " │",
-      "└──┬" + "─".repeat(Math.max(0, boxW - 3)) + "┘",
+      "│ " + padTo(name, boxW - 2, width) + " │",
+      "└" + "─".repeat(c - 1) + "┬" + "─".repeat(boxW - c) + "┘",
     ];
     const targetPos = Math.max(0, colCenters[i] - Math.floor(boxW / 2));
-    topRow0 = topRow0.padEnd(targetPos) + box[0];
-    topRow1 = topRow1.padEnd(targetPos) + box[1];
-    topRow2 = topRow2.padEnd(targetPos) + box[2];
+    topRow0 = padTo(topRow0, targetPos, width) + box[0];
+    topRow1 = padTo(topRow1, targetPos, width) + box[1];
+    topRow2 = padTo(topRow2, targetPos, width) + box[2];
   }
   outLines.push(topRow0, topRow1, topRow2);
 
   function makeLifelineRow(): string {
     let row = "";
     for (let i = 0; i < participants.length; i++) {
-      row = row.padEnd(colCenters[i]) + "│";
+      row = padTo(row, colCenters[i], width) + "│";
     }
     return row;
   }
@@ -389,7 +447,7 @@ function renderMermaidSequence(rawLines: string[], maxWidth: number, width: Widt
       const noteW = Math.max(width(item.text) + 4, maxCol - minCol + 6);
       const startPos = Math.max(0, minCol - 2);
       outLines.push(" ".repeat(startPos) + "╭" + "─".repeat(noteW - 2) + "╮");
-      outLines.push(" ".repeat(startPos) + "│ " + item.text.padEnd(noteW - 4) + " │");
+      outLines.push(" ".repeat(startPos) + "│ " + padTo(item.text, noteW - 4, width) + " │");
       outLines.push(" ".repeat(startPos) + "╰" + "─".repeat(noteW - 2) + "╯");
       continue;
     }
@@ -401,8 +459,8 @@ function renderMermaidSequence(rawLines: string[], maxWidth: number, width: Widt
 
     if (c1 < c2) {
       let row = "";
-      for (let i = 0; i < fromIdx; i++) row = row.padEnd(colCenters[i]) + "│";
-      row = row.padEnd(c1) + "│";
+      for (let i = 0; i < fromIdx; i++) row = padTo(row, colCenters[i], width) + "│";
+      row = padTo(row, c1, width) + "│";
       const span = c2 - c1 - 1;
       const isDashed = item.arrow.startsWith("--");
       const label = ` ${item.text} `;
@@ -411,13 +469,13 @@ function renderMermaidSequence(rawLines: string[], maxWidth: number, width: Widt
       while (shaft.length < Math.max(0, span - width(label) - 1)) shaft += dash;
       const half = Math.floor(shaft.length / 2);
       const arrowStr = shaft.slice(0, half) + label + shaft.slice(half) + ">";
-      row += arrowStr.padEnd(span) + "│";
-      for (let i = toIdx + 1; i < participants.length; i++) row = row.padEnd(colCenters[i]) + "│";
+      row += padTo(arrowStr, span, width) + "│";
+      for (let i = toIdx + 1; i < participants.length; i++) row = padTo(row, colCenters[i], width) + "│";
       outLines.push(row);
     } else if (c1 > c2) {
       let row = "";
-      for (let i = 0; i < toIdx; i++) row = row.padEnd(colCenters[i]) + "│";
-      row = row.padEnd(c2) + "│<";
+      for (let i = 0; i < toIdx; i++) row = padTo(row, colCenters[i], width) + "│";
+      row = padTo(row, c2, width) + "│<";
       const span = c1 - c2 - 1;
       const isDashed = item.arrow.startsWith("--");
       const label = ` ${item.text} `;
@@ -426,18 +484,18 @@ function renderMermaidSequence(rawLines: string[], maxWidth: number, width: Widt
       while (shaft.length < Math.max(0, span - width(label) - 2)) shaft += dash;
       const half = Math.floor(shaft.length / 2);
       const arrowStr = shaft.slice(0, half) + label + shaft.slice(half);
-      row += arrowStr.padEnd(span - 1) + "│";
-      for (let i = fromIdx + 1; i < participants.length; i++) row = row.padEnd(colCenters[i]) + "│";
+      row += padTo(arrowStr, span - 1, width) + "│";
+      for (let i = fromIdx + 1; i < participants.length; i++) row = padTo(row, colCenters[i], width) + "│";
       outLines.push(row);
     } else {
       // Self message
       let row = "";
-      for (let i = 0; i < fromIdx; i++) row = row.padEnd(colCenters[i]) + "│";
-      row = row.padEnd(c1) + `│──┐ ${item.text}`;
+      for (let i = 0; i < fromIdx; i++) row = padTo(row, colCenters[i], width) + "│";
+      row = padTo(row, c1, width) + `│──┐ ${item.text}`;
       outLines.push(row);
       let retRow = "";
-      for (let i = 0; i < fromIdx; i++) retRow = retRow.padEnd(colCenters[i]) + "│";
-      retRow = retRow.padEnd(c1) + "│<─┘";
+      for (let i = 0; i < fromIdx; i++) retRow = padTo(retRow, colCenters[i], width) + "│";
+      retRow = padTo(retRow, c1, width) + "│<─┘";
       outLines.push(retRow);
     }
   }
@@ -447,19 +505,23 @@ function renderMermaidSequence(rawLines: string[], maxWidth: number, width: Widt
   // Bottom footer boxes
   let botRow0 = "";
   let botRow1 = "";
+  let botRow2 = "";
   for (let i = 0; i < participants.length; i++) {
     const id = participants[i];
     const name = aliasMap.get(id) || id;
     const boxW = Math.max(6, width(name) + 2);
+    const c = Math.floor(boxW / 2);
     const box = [
-      "│ " + name + " │",
+      "┌" + "─".repeat(c - 1) + "┴" + "─".repeat(boxW - c) + "┐",
+      "│ " + padTo(name, boxW - 2, width) + " │",
       "└" + "─".repeat(boxW) + "┘",
     ];
-    const targetPos = Math.max(0, colCenters[i] - Math.floor(boxW / 2));
-    botRow0 = botRow0.padEnd(targetPos) + box[0];
-    botRow1 = botRow1.padEnd(targetPos) + box[1];
+    const targetPos = Math.max(0, colCenters[i] - c);
+    botRow0 = padTo(botRow0, targetPos, width) + box[0];
+    botRow1 = padTo(botRow1, targetPos, width) + box[1];
+    botRow2 = padTo(botRow2, targetPos, width) + box[2];
   }
-  outLines.push(botRow0, botRow1);
+  outLines.push(botRow0, botRow1, botRow2);
 
   return { title: "Mermaid Sequence", lines: outLines };
 }
@@ -565,9 +627,17 @@ function renderMermaidClass(rawLines: string[], maxWidth: number, width: Width):
   const classes = new Map<string, { name: string; members: string[] }>();
   const relations: Array<{ from: string; rel: string; to: string; label?: string }> = [];
 
+  // The class whose `{ ... }` body is open, if any: its lines are members.
+  let openClass: { name: string; members: string[] } | null = null;
   for (let i = 1; i < rawLines.length; i++) {
     const line = rawLines[i].trim();
     if (!line || line.startsWith("%%")) continue;
+
+    if (openClass) {
+      if (line === "}") openClass = null;
+      else openClass.members.push(line);
+      continue;
+    }
 
     const relMatch = line.match(/^([A-Za-z0-9_\-]+)\s*(<\|--|--\|>|\*--|--\*|o--|--o|-->|<--)\s*([A-Za-z0-9_\-]+)(?:\s*:\s*(.+))?/);
     if (relMatch) {
@@ -585,9 +655,10 @@ function renderMermaidClass(rawLines: string[], maxWidth: number, width: Width):
       continue;
     }
 
-    const classMatch = line.match(/^class\s+([A-Za-z0-9_\-]+)/);
+    const classMatch = line.match(/^class\s+([A-Za-z0-9_\-]+)\s*(\{)?/);
     if (classMatch) {
       if (!classes.has(classMatch[1])) classes.set(classMatch[1], { name: classMatch[1], members: [] });
+      if (classMatch[2]) openClass = classes.get(classMatch[1])!;
     }
   }
 
@@ -598,11 +669,11 @@ function renderMermaidClass(rawLines: string[], maxWidth: number, width: Width):
     const boxInner = Math.max(10, Math.max(nameW, memberW) + 2);
 
     outLines.push("┌" + "─".repeat(boxInner) + "┐");
-    outLines.push("│ " + cls.name.padEnd(boxInner - 2) + " │");
+    outLines.push("│ " + padTo(cls.name, boxInner - 2, width) + " │");
     if (cls.members.length > 0) {
       outLines.push("├" + "─".repeat(boxInner) + "┤");
       for (const m of cls.members) {
-        outLines.push("│ " + m.padEnd(boxInner - 2) + " │");
+        outLines.push("│ " + padTo(m, boxInner - 2, width) + " │");
       }
     }
     outLines.push("└" + "─".repeat(boxInner) + "┘");
