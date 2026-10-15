@@ -82,6 +82,10 @@ impl Editor {
         // pending entry that points at a half-torn-down buffer.
         self.cancel_pending_pastes_for_buffer(id);
 
+        // A group showing this buffer in a panel it borrowed closes first, so
+        // no panel is left on a buffer that is gone.
+        self.close_groups_borrowing(id);
+
         // Clear preview tracking if we're closing the current preview buffer.
         // This keeps `preview` from pointing at a freed buffer id.
         if let Some((_, preview_id)) = self.active_window().preview {

@@ -21,11 +21,14 @@ impl crate::app::window::Window {
     /// `sync_scroll_to_end` so the render pass does the
     /// soft-break-aware fix-up using view lines.
     pub(super) fn sync_scroll_groups(&mut self) {
-        let (mgr, vs_map) = self
+        // The pane the user is in: a shown group's focused panel, not the
+        // pane showing the group. Panels are not in the split tree, so a
+        // pane's buffer is read off its view state (`shown_buffer`).
+        let active_split = self.effective_active_split();
+        let vs_map = self
             .buffers
-            .splits()
+            .split_view_states()
             .expect("window must have a populated split layout");
-        let active_split = mgr.active_split();
         let group_count = self.scroll_sync_manager.groups().len();
 
         if group_count > 0 {
@@ -56,8 +59,9 @@ impl crate::app::window::Window {
                     return None;
                 }
 
-                let active_top_byte = vs_map.get(&active_split)?.buffer_tab_state().viewport.top_byte();
-                let active_buffer_id = mgr.buffer_for_split(active_split)?;
+                let active_vs = vs_map.get(&active_split)?;
+                let active_top_byte = active_vs.buffer_tab_state().viewport.top_byte();
+                let active_buffer_id = active_vs.shown_buffer()?;
                 let buffer_state = self.buffers.get(&active_buffer_id)?;
                 let buffer_len = buffer_state.buffer.len();
                 let active_line = buffer_state.buffer.get_line_number(active_top_byte);
@@ -91,10 +95,9 @@ impl crate::app::window::Window {
             let other_leaf = LeafId(other_split);
             let buffer_id = self
                 .buffers
-                .splits()
-                .expect("window must have a populated split layout")
-                .0
-                .buffer_for_split(other_leaf);
+                .split_view_states()
+                .and_then(|vs_map| vs_map.get(&other_leaf))
+                .and_then(|vs| vs.shown_buffer());
             if let Some(buffer_id) = buffer_id {
                 self.scroll_split_viewport_to(buffer_id, other_leaf, target_line, false);
             }
@@ -287,12 +290,12 @@ impl crate::app::window::Window {
             .map(|g| (g.left_split, g.right_split));
 
         if let Some((left_split, right_split)) = group_info {
+            // Off the view state: a group's panel is not in the split tree.
             let buffer_id = self
                 .buffers
-                .splits()
-                .expect("window must have a populated split layout")
-                .0
-                .buffer_for_split(active_split);
+                .split_view_states()
+                .and_then(|vs_map| vs_map.get(&active_split))
+                .and_then(|vs| vs.shown_buffer());
             if let Some(buffer_id) = buffer_id {
                 self.ensure_cursor_visible_for_split(buffer_id, active_split);
             }

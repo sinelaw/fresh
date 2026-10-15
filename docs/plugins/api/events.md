@@ -166,6 +166,18 @@ buffer_closed: {
 };
 ```
 
+#### `buffer_group_closed`
+
+A buffer group closed: its plugin closed it, the user closed its tab,
+or a buffer one of its panels named by `bufferId` was closed.
+
+```typescript
+buffer_group_closed: {
+  group_id: number;
+  window_id: number;
+};
+```
+
 ### File I/O
 
 #### `before_file_open`
