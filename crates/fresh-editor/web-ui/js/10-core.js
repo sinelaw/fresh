@@ -168,6 +168,20 @@ function setPaletteCentered(on){
 
 const esc = s => String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const px = (cells, sz) => (cells*sz);
+// A box placed at a cell rectangle that the page lays out itself, whose
+// content natively takes less height than the cells the terminal measured:
+// let it hug that content, kept centred on the rectangle it was given. Runs
+// after layout; `max` keeps the cell height as the cap (the content scrolls
+// past it).
+function hugHeight(el){
+  requestAnimationFrame(()=>{
+    const h0=parseFloat(el.style.height), top0=parseFloat(el.style.top);
+    if(!(h0>0)) return;
+    el.style.height="auto"; el.style.maxHeight=h0+"px";
+    const h=el.offsetHeight;
+    if(h<h0-1) el.style.top=(top0+(h0-h)/2)+"px";
+  });
+}
 function place(el, r){ el.style.left=px(r.x,CW)+"px"; el.style.top=px(r.y,CH)+"px"; el.style.width=px(r.w,CW)+"px"; el.style.height=px(r.h,CH)+"px"; }
 function div(cls){ const d=document.createElement("div"); d.className=cls; return d; }
 // cell coordinate to forward to the editor for a click on a chrome rect

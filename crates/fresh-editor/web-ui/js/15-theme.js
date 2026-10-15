@@ -287,6 +287,8 @@ function applyWebTheme() {
   // Lay the shell's surfaces out natively (js/73-native.js), or draw the
   // display list's cells faithfully.
   b.classList.toggle("native-panels", nativePanelsOn());
+  // Menu titles flowed with even spacing rather than at their cell slots.
+  b.classList.toggle("menu-flow", webTheme === "compact");
   renderFurniture();
   const r = document.documentElement.style;
   const derive = WEB_THEME_DERIVE[webTheme];

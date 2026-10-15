@@ -27,6 +27,15 @@ function nativePanelsOn(){
   return NATIVE_PANEL_THEMES.includes(webTheme);
 }
 
+// Whether a cell lies under a natively laid-out panel. Such a panel puts its
+// fields elsewhere than the cells the terminal's cursor marks, and its own
+// focused input carries the caret — so no cell caret is drawn there.
+function underNative(n, x, y){
+  if(!n||!document.body.classList.contains("native-panels")) return false;
+  const inRect=r=>r && x>=r.x && x<r.x+r.w && y>=r.y && y<r.y+r.h;
+  return (n.panels||[]).some(p=>inRect(p.rect)||inRect(p.frame));
+}
+
 function sendNode(key, action){ wsSend({type:"node", key, action:action||"press"}); }
 
 // Accelerators are underlined only while Alt is held, as native dialogs do;
@@ -54,10 +63,11 @@ function confirmCardEls(c){
   // layer swallows it the same way).
   scrim.addEventListener("mousedown", e=>{ e.preventDefault(); e.stopPropagation(); });
   const card=div("native-card native-confirm");
-  card.setAttribute("role","alertdialog");
+  aria(card, "alertdialog", {modal:true, label:c.title, description:null});
+  if(c.body) card.setAttribute("aria-describedby","nc-body");
   card.addEventListener("mousedown", e=>{ e.stopPropagation(); });
   const title=div("nc-title"); title.textContent=c.title; card.appendChild(title);
-  if(c.body){ const p=div("nc-body"); p.textContent=c.body; card.appendChild(p); }
+  if(c.body){ const p=div("nc-body"); p.id="nc-body"; p.textContent=c.body; card.appendChild(p); }
   if(c.detail){ const d=div("nc-detail"); d.textContent=c.detail; card.appendChild(d); }
   const row=div("nc-buttons");
   for(const b of c.buttons){
@@ -67,6 +77,7 @@ function confirmCardEls(c){
     el.append(pre);
     if(acc){ const u=document.createElement("span"); u.className="accel"; u.textContent=acc; el.append(u); }
     if(post) el.append(post);
+    aria(el, "button", {label:(pre+(acc||"")+(post||"")).trim(), keyshortcuts:acc?acc.toUpperCase():null});
     row.appendChild(el);
   }
   card.appendChild(row);
@@ -88,12 +99,17 @@ function nativePanelEl(p){
   // An anchored pop-up hugs its content, as the terminal's does — natively
   // laid out, that content is not the cells the terminal measured, so the
   // card takes its height (and any extra width) from what it holds.
+  // A centred card hugs its content too, still centred on its frame.
+  if(framed&&!p.anchored) hugHeight(el);
   if(framed&&p.anchored){
     el.style.height="auto";
     el.style.minWidth=el.style.width; el.style.width="max-content";
     el.style.maxHeight="calc(100% - "+el.style.top+" - 4px)";
   }
   el.dataset.slot=p.kind;
+  // A floating panel is a dialog (modal while centred); a docked one a region.
+  if(p.kind==="floating") aria(el, "dialog", {modal:!p.anchored, label:p.title||null});
+  else aria(el, "region", {label:p.title||p.kind});
   let body=el;
   if(framed){
     if(p.title||p.closeKey){
@@ -117,11 +133,33 @@ function nativePanelEl(p){
   // Keep the selected row of a list or tree in view as the keyboard moves it:
   // the page scrolls its own lists.
   requestAnimationFrame(()=>{
+    alignFieldLabels(el);
     for(const s of el.querySelectorAll(".w-list-row.sel,.w-list-card.sel,.w-tree-row.sel")){
       s.scrollIntoView({block:"nearest"});
     }
   });
   return el;
+}
+
+// Fields stacked under one another line up, as a form's do. The terminal
+// pads each inline label (`Search:`, `Files:`) to the cells it needs, so in
+// the chrome font their fields start wherever their labels happen to end.
+// Labels that start at the same x — a column of them — take the widest one's
+// width, so the fields beside them start together.
+function alignFieldLabels(root){
+  const cols=new Map();
+  for(const l of root.querySelectorAll(".w-text>.w-text-label,.w-number>.w-text-label,.w-dropdown>.w-text-label")){
+    const r=l.getBoundingClientRect();
+    if(!r.width) continue;
+    const x=Math.round(r.left);
+    if(!cols.has(x)) cols.set(x, []);
+    cols.get(x).push([l, r.width]);
+  }
+  for(const labels of cols.values()){
+    if(labels.length<2) continue;
+    const w=Math.max(...labels.map(([,w])=>w));
+    for(const [l] of labels) l.style.minWidth=w+"px";
+  }
 }
 
 function nativeEls(n){

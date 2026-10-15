@@ -171,6 +171,14 @@ Presses still go to the tree: by node key, or as the widget's identity the
 bridge resolves against the mounted spec. `fresh.nativePanels` in
 localStorage (`on`/`off`) overrides the theme's choice.
 
+Every control the page draws says what it is to assistive tech: a role
+(`button`, `switch`, `radio`, `combobox`/`listbox`, `textbox`, `tree`,
+`menubar`/`menu`/`menuitem`, `dialog`/`alertdialog`), a name (its label, or a
+field's label or placeholder) and its state (`aria-checked`,
+`aria-selected`, `aria-expanded`, `aria-disabled`) — the `aria()` helper in
+`js/65-widgets.js`. Nothing takes the keyboard focus: the editor owns every
+key, as it does for the rest of the page.
+
 `js/15-theme.js` is the whole mechanism. `applyWebTheme()` (called from
 `render()` right after `applyTheme()`) does two things: it sets the
 `theme-<name>` class on `<body>` (plus `macfam` for the two macOS variants) —
@@ -313,8 +321,12 @@ clipboard, Ctrl+Space resumes, a bare click only focuses), and Alt-hold
 native browser selection over the SVG grid. It also drives the **web-theme
 switch** (Cosmos ↔ macOS Light ↔ macOS Dark ↔ Compact): the body class, the bezel/title-bar swap,
 the buffer staying monospace under a proportional chrome font, the denser
-Compact grid, `localStorage` persistence, and the switcher menu.
-**171 assertions** across the chrome surfaces, plus screenshots.
+Compact grid, `localStorage` persistence, and the switcher menu. The
+natively laid-out surfaces are found the way assistive tech finds them — by
+role and name (`getByRole('dialog', { name: 'New Workspace' })`,
+`getByRole('switch', { name: /^Case/ })`) — so a control that only looks
+right fails.
+**204 assertions** across the chrome surfaces, plus screenshots.
 
 One command runs the whole thing — build the bridge, install the Playwright
 deps (`test/package.json`) on first use, start the server, run the suite,

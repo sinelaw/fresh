@@ -8,22 +8,24 @@
 function trustDialogEls(t){
   const out=[];
   const scrim=div("modal-scrim"); scrim.onmousedown=e=>e.stopPropagation(); out.push(scrim);
-  const el=div("trustdialog"); place(el,t.dialog);
+  const el=aria(div("trustdialog"), "alertdialog", {modal:true, label:t.title}); place(el,t.dialog); hugHeight(el);
   const title=div("td-title"); title.textContent="⚠  "+t.title; el.appendChild(title);
+  const group=aria(div("td-group"), "radiogroup", {label:t.title});
   if(t.path){ const p=div("td-path"); p.textContent=t.path; el.appendChild(p); }
   if(t.triggers){ const g=div("td-triggers"); g.textContent="Detected: "+t.triggers; el.appendChild(g); }
   for(const o of t.options){
-    const row=div("td-opt"+(o.selected?" sel":""));
+    const row=aria(div("td-opt"+(o.selected?" sel":"")), "radio", {checked:!!o.selected, label:o.label});
     const rad=document.createElement("span"); rad.className="td-radio"; rad.textContent=o.selected?"◉":"○"; row.appendChild(rad);
     const tx=document.createElement("div"); tx.className="td-otext";
     tx.innerHTML='<div class="td-olabel">'+esc(o.label)+'</div><div class="td-odesc">'+esc(o.description)+'</div>';
     row.appendChild(tx);
     const c=rectCell(o.rect);
     row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendClick({button:"left",col:c.col,row:c.row}); };
-    el.appendChild(row);
+    group.appendChild(row);
   }
+  el.appendChild(group);
   const btns=div("td-buttons");
-  const mk=(label,rect,primary)=>{ const b=div("td-btn"+(primary?" primary":"")); b.textContent=label; const c=rectCell(rect);
+  const mk=(label,rect,primary)=>{ const b=aria(div("td-btn"+(primary?" primary":"")),"button"); b.textContent=label; const c=rectCell(rect);
     b.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendClick({button:"left",col:c.col,row:c.row}); }; return b; };
   btns.appendChild(mk(t.okLabel, t.ok, true));
   btns.appendChild(mk(t.quitLabel, t.quit, false));
