@@ -223,3 +223,42 @@
   body.theme-compact:not(.mobile) .tree-item[data-surface-kind="confirm"][data-bg="ui.popup_selection_bg"]{
     --ink-bg:var(--hover);--ink-fg:var(--fg)}
   body.theme-compact:not(.mobile) .tree-item.k-scrim.dim[data-surface-kind="confirm"]{background:rgba(0,0,0,.38)}
+
+  /* ---- polish: spacing, alignment, quieter structure ---------------------- */
+
+  /* Menu titles flow side by side with even padding (`body.menu-flow`,
+     js/40-menu.js) instead of standing in their uneven cell slots. */
+  body.theme-compact.menu-flow .menubar{display:flex;align-items:stretch;gap:2px;box-sizing:border-box}
+  body.theme-compact.menu-flow .menu{position:relative;top:auto;margin:2px 0;height:auto;
+    padding:0 .7em;display:flex;align-items:center}
+
+  /* Settings: one quiet frame instead of a box around each column. The
+     category list is a sidebar divided by a hairline; which column has the
+     keyboard shows in its selected row, not in a ring around the column. */
+  body.theme-compact .settings-modal .set-cats{border:0;border-right:1px solid var(--hairline);
+    box-shadow:none;padding:8px 6px}
+  body.theme-compact .settings-modal .set-cats.focus,
+  body.theme-compact .settings-modal .set-items.focus{box-shadow:none}
+  body.theme-compact .settings-modal .set-cats:not(.focus) .set-cat.sel{
+    background:var(--hover);color:var(--fg)}
+  body.theme-compact .settings-modal .set-cat{padding:4px 10px;margin:0 0 1px}
+  body.theme-compact .settings-modal .set-cat-sec{padding:3px 10px 3px 22px;font-size:.94em}
+  body.theme-compact .settings-modal .set-cat-chev{display:inline-block;width:1em;margin-right:.3em;
+    font-size:.7em;opacity:.6;transform:translateY(-.1em)}
+  body.theme-compact .settings-modal .set-items{padding:8px 14px}
+  body.theme-compact .settings-modal .set-section{padding:16px 10px 6px;font-size:.74em;
+    font-weight:600;letter-spacing:.07em;color:var(--muted)}
+  body.theme-compact .settings-modal .set-section:first-child{padding-top:4px}
+  body.theme-compact .settings-modal .set-item{padding:8px 10px;margin:0 0 2px}
+  body.theme-compact .settings-modal .set-name{font-weight:500}
+  body.theme-compact .settings-modal .set-desc{margin-top:3px;line-height:1.45;color:var(--muted)}
+  body.theme-compact .settings-modal .set-footer{padding:10px 14px;border-top:1px solid var(--hairline)}
+
+  /* The workspace-trust dialog: a calm card, its options as rows. */
+  body.theme-compact .trustdialog{padding:18px 20px 16px;border-radius:var(--r-lg)}
+  body.theme-compact .trustdialog .td-title{font-size:1.02em;margin-bottom:4px}
+  body.theme-compact .trustdialog .td-path{color:var(--muted);margin-bottom:10px;font-family:var(--mono-family);font-size:.9em}
+  body.theme-compact .trustdialog .td-opt{padding:8px 10px;border-radius:var(--r-md);gap:10px;margin-bottom:2px}
+  body.theme-compact .trustdialog .td-opt .td-otext .td-odesc{margin-top:2px;line-height:1.45}
+  body.theme-compact .trustdialog .td-buttons{margin-top:14px;gap:8px}
+  body.theme-compact .trustdialog .td-btn{padding:5px 16px;border-color:var(--hairline-strong)}

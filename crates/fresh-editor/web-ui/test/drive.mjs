@@ -1333,7 +1333,9 @@ await page.keyboard.press('Escape'); await page.waitForTimeout(120);
 // Skin is read from localStorage at boot; single-client bridge → /reset first,
 // then set the skin and reload so the vibrancy modal is in play.
 await page.request.post(URL + '/reset', { data: {} });
-await page.evaluate(() => { try { localStorage.setItem('fresh.webtheme', 'macos'); } catch (_) {} });
+// Cell-drawn: these checks press the display list's cells where the tree
+// placed them (the native layout is checked by role further down).
+await page.evaluate(() => { try { localStorage.setItem('fresh.webtheme', 'macos'); localStorage.setItem('fresh.nativePanels', 'off'); } catch (_) {} });
 await page.reload({ waitUntil: 'networkidle' });
 await page.waitForFunction(() => window.fresh && window.fresh.wsOpen && window.fresh.scene && window.fresh.scene.regions.panes.length > 0, null, { timeout: 20000 });
 await page.waitForTimeout(400);
@@ -1412,7 +1414,7 @@ await page.keyboard.press('Escape'); await page.waitForTimeout(120);
 // identity, so these checks drive the real editor through them.
 console.log('\n[native panels (Compact): laid out by the page, pressed by identity]');
 await page.request.post(URL + '/reset', { data: {} });
-await page.evaluate(() => { try { localStorage.setItem('fresh.webtheme', 'compact'); } catch (_) {} });
+await page.evaluate(() => { try { localStorage.setItem('fresh.webtheme', 'compact'); localStorage.removeItem('fresh.nativePanels'); } catch (_) {} });
 await page.reload({ waitUntil: 'networkidle' });
 await page.waitForFunction(() => window.fresh && window.fresh.wsOpen && window.fresh.scene && window.fresh.scene.regions.panes.length > 0, null, { timeout: 20000 });
 const nerrs = []; page.on('pageerror', e => nerrs.push(String(e)));
@@ -1427,40 +1429,75 @@ check('the dock\'s cell items are hidden under it', await page.evaluate(() => {
   const items = [...document.querySelectorAll('.tree-item[data-surface-kind="dock"]')];
   return items.length > 0 && items.every(e => getComputedStyle(e).visibility === 'hidden');
 }));
-const newBtn = await page.$('.np-dock .w-button.primary');
-if (newBtn) {
+// Found by role and name, as assistive tech finds them: what a native
+// surface draws must say what it is, not only look like it.
+const newBtn = page.locator('.np-dock').getByRole('button', { name: /New$/ }).first();
+check('the dock is a labelled region with real buttons', (await page.getByRole('region').count()) >= 1 && (await newBtn.count()) === 1);
+if (await newBtn.count()) {
   await newBtn.click();
-  await page.waitForSelector('.native-panel.np-floating.card', { timeout: 8000 }).catch(() => {});
+  await page.getByRole('dialog', { name: 'New Workspace' }).waitFor({ timeout: 8000 }).catch(() => {});
 }
-const card = await page.$('.native-panel.np-floating.card');
-check('a dock button opens a floating panel, drawn as a native card', !!card);
-if (card) {
+const card = page.getByRole('dialog', { name: 'New Workspace' });
+check('a dock button opens a floating panel, a dialog named by its title', (await card.count()) === 1
+  && (await card.evaluate(e => e.classList.contains('card') && e.getAttribute('aria-modal') === 'true').catch(() => false)));
+if (await card.count()) {
   await page.screenshot({ path: `${SHOTS}/40-native-floating.png` });
-  check('the card wears the panel\'s title', ((await page.textContent('.np-floating .np-title')) || '').trim().length > 0);
-  await page.click('.np-floating .np-close');
+  check('its choices are a radio group with one checked',
+    (await card.getByRole('radio', { checked: true }).count()) === 1 && (await card.getByRole('radio').count()) >= 2);
+  check('its agent picker is a combobox', (await card.getByRole('combobox').count()) >= 1);
+  check('its prompt is a labelled text box', (await card.getByRole('textbox', { name: /Describe the task/ }).count()) === 1);
+  await card.getByRole('button', { name: 'Close' }).click();
   await page.waitForSelector('.native-panel.np-floating', { state: 'detached', timeout: 8000 }).catch(() => {});
-  check('its close box closes it', !(await page.$('.native-panel.np-floating')));
+  check('its close button closes it', (await page.getByRole('dialog').count()) === 0);
 }
 await page.evaluate(() => window.fresh.sendKey({ key: 'Q', code: 'KeyQ', ctrl: false, meta: false, shift: true, alt: false }));
 await page.waitForTimeout(300);
 await page.request.post(URL + '/action', { data: { action: 'close' } });
-await page.waitForSelector('.native-confirm', { timeout: 8000 }).catch(() => {});
-check('an unsaved-changes question is a native dialog', !!(await page.$('.native-confirm .nc-btn')));
-const cancel = await page.$('.native-confirm .nc-btn:has-text("Cancel")');
-if (cancel) {
+const confirm = page.getByRole('alertdialog');
+await confirm.waitFor({ timeout: 8000 }).catch(() => {});
+check('an unsaved-changes question is a native alert dialog, named by its question',
+  (await confirm.count()) === 1 && ((await confirm.getAttribute('aria-label')) || '').length > 0);
+const cancel = confirm.getByRole('button', { name: 'Cancel' });
+if (await cancel.count()) {
   await page.screenshot({ path: `${SHOTS}/41-native-confirm.png` });
   await cancel.click();
   await page.waitForFunction(() => !window.fresh.scene.regions.native.confirm, null, { timeout: 8000 }).catch(() => {});
   check('its Cancel answers the editor\'s question', await page.evaluate(() => !window.fresh.scene.regions.native.confirm && !document.querySelector('.native-confirm')));
 }
+// The menu bar, by role: a menubar of titles, each opening a menu.
+const fileTitle = page.getByRole('menubar').getByRole('menuitem', { name: 'File', exact: true });
+check('the menu bar is a menubar of titles', (await fileTitle.count()) === 1
+  && (await fileTitle.getAttribute('aria-expanded')) === 'false');
+await fileTitle.click();
+await page.getByRole('menu').first().waitFor({ timeout: 5000 }).catch(() => {});
+check('a title opens a menu of items, and says so',
+  (await fileTitle.getAttribute('aria-expanded')) === 'true'
+  && (await page.getByRole('menuitem', { name: 'New File' }).count()) === 1);
+await page.keyboard.press('Escape'); await page.waitForTimeout(150);
 // A panel mounted into a pane (Search & Replace): drawn natively over its
 // pane, and — for the themes that fold the display list — a surface of it,
 // so the pane is never left blank.
 await page.request.post(URL + '/action', { data: { action: 'start_search_replace' } });
-await page.waitForSelector('.native-panel.np-pane .w-text-input', { timeout: 8000 }).catch(() => {});
-check('a pane-mounted panel is drawn natively, its fields real inputs', !!(await page.$('.native-panel.np-pane .w-text-input')));
+const searchBox = page.getByRole('textbox', { name: 'Search' });
+await searchBox.waitFor({ timeout: 8000 }).catch(() => {});
+check('a pane-mounted panel is drawn natively, its fields labelled text boxes',
+  (await searchBox.count()) === 1 && (await page.getByRole('textbox', { name: 'Replace' }).count()) === 1);
 check('and is a surface of the display list too', await page.evaluate(() =>
   (window.fresh.scene.regions.tree.surfaces || []).some(s => s.kind === 'pane')));
+check('the search and files fields line up', await page.evaluate(() => {
+  const x = n => [...document.querySelectorAll('.np-pane .w-text-input')].find(i => i.getAttribute('aria-label') === n)?.getBoundingClientRect().left;
+  const a = x('Search'), b = x('Files');
+  return a != null && b != null && Math.abs(a - b) < 1;
+}));
+const caseSwitch = page.getByRole('switch', { name: /^Case/ });
+const before = await caseSwitch.getAttribute('aria-checked').catch(() => null);
+if (before != null) {
+  await caseSwitch.click();
+  await page.waitForFunction(b => document.querySelector('.np-pane [role=switch][aria-label^="Case"]')?.getAttribute('aria-checked') !== b,
+    before, { timeout: 5000 }).catch(() => {});
+}
+check('a switch says whether it is on, and pressing it turns it', before != null
+  && (await caseSwitch.getAttribute('aria-checked')) === String(before !== 'true'));
 await page.screenshot({ path: `${SHOTS}/42-native-pane-panel.png` });
 check('no JS page errors (native panels)', nerrs.length === 0, nerrs.join(' | '));
 

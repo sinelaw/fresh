@@ -84,8 +84,9 @@ function renderAllPanes(){
 function renderCaret(c,reg){
   let want=null;
   if(reg.cursor){
-    const inPane=reg.panes.some(p=>p && reg.cursor.x>=p.content.x && reg.cursor.x<p.content.x+p.content.w && reg.cursor.y>=p.content.y && reg.cursor.y<p.content.y+p.content.h);
-    if(inPane) want={left:px(reg.cursor.x,CW)+"px", top:px(reg.cursor.y,CH)+"px",
+    const x=reg.cursor.x, y=reg.cursor.y;
+    const inPane=reg.panes.some(p=>p && x>=p.content.x && x<p.content.x+p.content.w && y>=p.content.y && y<p.content.y+p.content.h);
+    if(inPane&&!underNative(reg.native,x,y)) want={left:px(reg.cursor.x,CW)+"px", top:px(reg.cursor.y,CH)+"px",
                      height:CH+"px", width:Math.max(1,Math.round(2*zoom))+"px"};
   }
   const old=c.firstChild;
@@ -112,7 +113,7 @@ const REGION_FILL={
     for(const d of menuDropdownEls(reg)) c.appendChild(d);
     // Fit each open dropdown to its widest row's real (proportional) content
     // once laid out, so accelerators stay column-aligned in any chrome font.
-    if(reg.menuOpen!=null) requestAnimationFrame(()=>fitMenuWidths(c)); },
+    if(reg.menuOpen!=null) requestAnimationFrame(()=>{ fitMenuWidths(c); alignMenuDropdown(c); }); },
   statusbar(c,reg){ if(reg.statusbar) c.appendChild(statusBarEl(reg.statusbar)); },
   // native popups (completion / hover / action / list / text) — semantic, not cells
   popups(c,reg){ for(const p of (reg.popups||[])) c.appendChild(popupEl(p)); },
@@ -123,7 +124,7 @@ const REGION_FILL={
   palette(c,reg){ if(reg.palette) for(const el of paletteEls(reg.palette)) c.appendChild(el); },
   // The plugin panels, folded from the display list the tree produced for
   // them (`regions.tree`, see 72-tree.js).
-  tree(c,reg){ if(reg.tree) for(const el of treeEls(reg.tree)) c.appendChild(el); },
+  tree(c,reg){ if(reg.tree) for(const el of treeEls(reg.tree, reg.native)) c.appendChild(el); },
   // The same surfaces laid out natively, by the themes that do
   // (`regions.native`, see 73-native.js).
   native(c,reg){ if(document.body.classList.contains("native-panels")) for(const el of nativeEls(reg.native)) c.appendChild(el); },

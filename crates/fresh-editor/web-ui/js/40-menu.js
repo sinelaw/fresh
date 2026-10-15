@@ -4,18 +4,25 @@
 // ---- native menu bar ----------------------------------------------------
 function menuBarEl(reg){
   const rect=reg.menubar;            // menubar region IS the rect {x,y,w,h}
-  const bar=div("region menubar"); place(bar,{x:rect.x,y:rect.y,w:rect.w,h:1});
+  const bar=aria(div("region menubar"), "menubar"); place(bar,{x:rect.x,y:rect.y,w:rect.w,h:1});
   const barRow=rect.y;
   reg.menus.forEach((m,i)=>{
     // Visibility is decided once in the core (MenuEntry.visible, from the shared
     // is_menu_visible); skip hidden menus instead of re-deriving here.
     if(m.visible===false) return;
-    const el=div("menu"+(reg.menuOpen===i?" open":""));
+    const el=aria(div("menu"+(reg.menuOpen===i?" open":"")), "menuitem",
+      {haspopup:"menu", expanded:reg.menuOpen===i});
     el.textContent=m.label;
     // Position each title at its EDITOR cell x (not CSS flow), so the title sits
     // exactly where the editor hit-tests it and the dropdown — positioned at the
     // same cell coords — opens directly beneath it.
-    if(m.x!=null){ el.style.position="absolute";
+    // Flowed (`body.menu-flow`): the titles sit side by side with even
+    // padding, as a desktop menu bar's do, instead of at their cell slots —
+    // which a proportional chrome font leaves unevenly spaced. Clicks still
+    // go to each title's own cell (below); the open dropdown is moved under
+    // its title afterwards (`alignMenuDropdown`).
+    if(m.x!=null) el.dataset.cellLeft=px(m.x-rect.x,CW);
+    if(m.x!=null&&!document.body.classList.contains("menu-flow")){ el.style.position="absolute";
       el.style.left=px(m.x-rect.x,CW)+"px";
       if(m.w) el.style.width=px(m.w,CW)+"px";
       el.style.padding="0"; el.style.justifyContent="center"; }
@@ -28,6 +35,12 @@ function menuBarEl(reg){
     el.onmousemove=()=>{ if(reg.menuOpen!=null) hoverMove(col,barRow,"menu:"+i); };
     bar.appendChild(el);
   });
+  // Flowed, the titles start where the first one's cell slot does — the bar
+  // spans the frame, and what is left of that slot is another surface's (the
+  // dock's).
+  const first=bar.querySelector(".menu");
+  if(first&&document.body.classList.contains("menu-flow")&&first.dataset.cellLeft!=null)
+    bar.style.paddingLeft=first.dataset.cellLeft+"px";
   return bar;
 }
 
@@ -115,7 +128,7 @@ function menuCompression(reg){
 // the click cell stay exactly as the editor reported them).
 function itemRow(item, rect, hi, comp, depth){
   if(!item) return null;
-  if(item.kind==="sep"){ const s=div("msep"); place(s,rect);
+  if(item.kind==="sep"){ const s=aria(div("msep"),"separator"); place(s,rect);
     const slot = comp ? comp.SEP_PX : CH;
     const top  = comp ? comp.top(depth,rect.y) : px(rect.y,CH);
     s.style.height="1px"; s.style.top=(top+(slot-1)/2)+"px"; return s; }
@@ -123,7 +136,10 @@ function itemRow(item, rect, hi, comp, depth){
     if(comp){ l.style.top=comp.top(depth,rect.y)+"px"; l.style.height=comp.height(depth,rect)+"px"; }
     l.style.lineHeight=CH+"px"; l.textContent=item.label; return l; }
   const cell=rectCell(rect);
-  const row=div("mitem"+(hi?" hi":"")+(item.enabled===false?" disabled":""));
+  const row=aria(div("mitem"+(hi?" hi":"")+(item.enabled===false?" disabled":"")),
+    item.checked!=null?"menuitemcheckbox":"menuitem",
+    {disabled:item.enabled===false, checked:item.checked!=null?item.checked===true:null,
+     haspopup:item.kind==="submenu"?"menu":null, label:item.label});
   place(row,rect);
   if(comp){ row.style.top=comp.top(depth,rect.y)+"px"; row.style.height=comp.height(depth,rect)+"px"; }
   row.style.lineHeight=CH+"px";
@@ -151,6 +167,19 @@ function itemRow(item, rect, hi, comp, depth){
 // `dropdownPanels` established survives; a submenu that flipped LEFT of its
 // parent grows leftwards instead, for the same reason. Only pixels move: the
 // click cell each row forwards is the editor's logical cell, not a position.
+// With a flowed menu bar the open title is not at its cell slot; move the
+// dropdown (every level: panels, rows, separators) by the same distance so it
+// opens under the title. Hit-testing is by each row's stored cell, so moving
+// the boxes changes nothing about what a click selects.
+function alignMenuDropdown(host){
+  const title=host.querySelector(".menubar .menu.open");
+  if(!title||title.dataset.cellLeft==null) return;
+  const dx=title.offsetLeft-parseFloat(title.dataset.cellLeft);
+  if(Math.abs(dx)<0.5) return;
+  for(const el of host.querySelectorAll(".dropdown,.mitem,.msep,.mlabel"))
+    el.style.left=(parseFloat(el.style.left)+dx)+"px";
+}
+
 function fitMenuWidths(host){
   const panels=[...host.querySelectorAll(".dropdown")];   // DOM order = depth order
   const rowsOf=(panel)=>{
@@ -271,7 +300,7 @@ function dropdownPanels(reg, comp, shiftsOut){
       if(shiftsOut) shiftsOut[b.depth]=shift;
     }
     prevRight=b.rect.x + b.rect.w;
-    const p=div("dropdown"+(b.depth>=1?" submenu":"")); place(p,b.rect);
+    const p=aria(div("dropdown"+(b.depth>=1?" submenu":"")), "menu"); place(p,b.rect);
     if(comp){ p.style.top=comp.panelTop(b.depth,b.rect.y)+"px"; p.style.height=comp.panelH(b.depth,b.rect)+"px"; }
     panels.push(p);
   }

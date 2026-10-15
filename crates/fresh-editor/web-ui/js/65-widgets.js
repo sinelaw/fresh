@@ -39,6 +39,19 @@ function labelColon(text){
   const t=(text||"").replace(/\s+$/,"");
   return /[:：]$/.test(t)?t+" ":t+": ";
 }
+// Accessibility: each control says what it is (role), what it is called
+// (name) and where it stands (state), so assistive tech — and tests, by role
+// and name — find it as the control it draws. Nothing takes the keyboard
+// (the editor owns every key), so there is no tabindex here.
+function aria(el, role, attrs){
+  if(role) el.setAttribute("role", role);
+  for(const k in (attrs||{})){
+    const v=attrs[k];
+    if(v==null||v===false&&k!=="checked"&&k!=="selected"&&k!=="expanded") continue;
+    el.setAttribute("aria-"+k, String(v));
+  }
+  return el;
+}
 function formLabel(text, labelWidth){
   const l=document.createElement("span");
   l.className="w-flabel";
@@ -218,7 +231,10 @@ function widgetEl(spec, ctx){
     // font, so it is drawn in it: a GRID row, whose controls still answer as
     // controls. Every other row is laid out by the browser.
     const kids=spec.children||[];
-    const isGridRow=c=>c&&c.kind==="row"&&(c.children||[]).some(x=>x&&x.kind==="raw");
+    // A `raw` cell with text in it is cell-drawn content; one of only spaces
+    // is a gap, and does not make its row a grid.
+    const inked=x=>x&&x.kind==="raw"&&(x.entries||[]).some(e=>entryText(e).trim()!=="");
+    const isGridRow=c=>c&&c.kind==="row"&&(c.children||[]).some(inked);
     // A column of grid rows that all have the same number of cells is a
     // TABLE the terminal drew line by line (a menu's two columns of entries
     // with a rule between them, Tab walking it in reading order). Natively
@@ -236,9 +252,9 @@ function widgetEl(spec, ctx){
       }
       return el;
     }
-    const grid=!ctx.table&&(ctx.grid||(kind==="row"&&kids.some(c=>c&&c.kind==="raw")));
+    const grid=!ctx.table&&(ctx.grid||(kind==="row"&&kids.some(inked)));
     const el=div("w-"+kind+(spec.wrap?" wrap":"")+(grid&&!ctx.grid?" grid":"")+(spec.justifyEnd?" end":""));
-    const cctx=grid?{...ctx,grid:true}:ctx;
+    const cctx={...ctx,grid:grid||ctx.grid,inRow:kind==="row"};
     for(const c of kids) el.appendChild(widgetEl(c, cctx));
     return el;
   }
@@ -276,6 +292,7 @@ function widgetEl(spec, ctx){
       el.appendChild(box);
       const lb=document.createElement("span"); lb.className="w-label"; lb.textContent=spec.label||""; el.appendChild(lb);
     }
+    aria(el, "switch", {checked:!!spec.checked, label:(spec.label||"").replace(/\s*:\s*$/,"").trim()||null});
     if(spec.key) el.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,spec); };
     return el;
   }
@@ -296,6 +313,8 @@ function widgetEl(spec, ctx){
       el.appendChild(m); el.append(mark[2]);
     } else el.textContent=label;
     if(ctx.grid) el.classList.add("gridcell");
+    if(mark) aria(el, mark[1][0]==="("?"menuitemradio":"menuitemcheckbox", {checked:mark[1][1]!==" ", label:mark[2].trim()});
+    else aria(el, "button", {disabled:!!spec.disabled, label:label.trim()!==label?label.trim():null});
     if(spec.key && !spec.disabled) el.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,spec); };
     return el;
   }
@@ -309,6 +328,7 @@ function widgetEl(spec, ctx){
   }
   if(kind==="labeledSection"){
     const el=div("w-section"); if(spec.label){ const l=div("w-section-label"); l.textContent=spec.label; el.appendChild(l); }
+    aria(el, "group", {label:spec.label||null});
     if(spec.child) el.appendChild(widgetEl(spec.child, ctx)); return el;
   }
   if(kind==="text"){
@@ -339,6 +359,8 @@ function widgetEl(spec, ctx){
     if(multi) input.rows=spec.rows;
     input.value=val;
     input.placeholder=spec.placeholder||"";
+    aria(input, null, {label:(spec.label?labelColon(spec.label).replace(/\s*:\s*$/,""):spec.placeholder)||null,
+      multiline:multi||null});
     input.setAttribute("autocapitalize","off"); input.setAttribute("autocomplete","off");
     input.setAttribute("autocorrect","off"); input.setAttribute("spellcheck","false");
     // Block every local edit outside the key-forwarding path (autofill,
@@ -388,11 +410,11 @@ function widgetEl(spec, ctx){
   if(kind==="radio"){
     const inst=(ctx.instances&&spec.key)?ctx.instances[spec.key]:null;
     const sel=(inst&&inst.selectedIndex!=null)?inst.selectedIndex:(spec.selectedIndex||0);
-    const el=div("w-radio"+(focused?" focus":""));
+    const el=aria(div("w-radio"+(focused?" focus":"")), "radiogroup", {label:spec.label||null});
     if(spec.label) el.appendChild(formLabel(spec.label, spec.labelWidth));
     else if(spec.labelWidth>0) el.style.paddingLeft=spec.labelWidth+"ch";
     (spec.options||[]).forEach((o,i)=>{
-      const opt=div("w-radio-opt"+(i===sel?" on":""));
+      const opt=aria(div("w-radio-opt"+(i===sel?" on":"")), "radio", {checked:i===sel, label:o});
       opt.appendChild(div("w-radio-dot"));
       const t=document.createElement("span"); t.textContent=o; opt.appendChild(t);
       opt.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(spec.key) routeControl(ctx,spec.key,"radio_select",{index:i}); };
@@ -417,6 +439,7 @@ function widgetEl(spec, ctx){
       return b; };
     el.appendChild(mk("−","ArrowLeft"));
     const v=document.createElement("span"); v.className="w-num-val"; v.textContent=disp;
+    aria(v, "spinbutton", {valuenow:val, valuetext:disp, label:spec.label||null});
     v.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(spec.key) routeControl(ctx,spec.key,"number_value",{}); };
     el.appendChild(v);
     el.appendChild(mk("+","ArrowRight"));
@@ -432,6 +455,7 @@ function widgetEl(spec, ctx){
       else { const l=document.createElement("span"); l.className="w-text-label"; l.textContent=labelColon(spec.label); el.appendChild(l); }
     }
     const pill=document.createElement("span"); pill.className="w-dd-pill";
+    aria(pill, "combobox", {haspopup:"listbox", expanded:open, label:spec.label||null});
     // Small up/down chevrons — a MATCHED-SIZE pair (▴ U+25B4 / ▾ U+25BE). The
     // full-size ▲ (U+25B2) is ~2× the width of the small ▾ in a proportional
     // font (e.g. the macOS skin's -apple-system), so pairing it with ▾ made the
@@ -440,9 +464,9 @@ function widgetEl(spec, ctx){
     pill.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(spec.key) routeControl(ctx,spec.key,"dropdown_toggle",{}); };
     el.appendChild(pill);
     if(open){
-      const dd=div("w-dd w-dd-floating");
+      const dd=aria(div("w-dd w-dd-floating"), "listbox", {label:spec.label||null});
       (spec.options||[]).forEach((o,i)=>{
-        const r=div("w-dd-row"+(i===selIdx?" sel":"")); r.textContent=o;
+        const r=aria(div("w-dd-row"+(i===selIdx?" sel":"")), "option", {selected:i===selIdx}); r.textContent=o;
         r.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(spec.key) routeControl(ctx,spec.key,"dropdown_select",{index:i}); };
         dd.appendChild(r);
       });
@@ -490,7 +514,7 @@ function widgetEl(spec, ctx){
     return el;
   }
   if(kind==="list"){
-    const el=div("w-list");
+    const el=aria(div("w-list"), "listbox");
     const inst=(ctx.instances&&spec.key)?ctx.instances[spec.key]:null;
     const sel=inst?inst.selectedIndex:(spec.selectedIndex!=null?spec.selectedIndex:-1);
     const specs=spec.itemSpecs||[];
@@ -499,14 +523,14 @@ function widgetEl(spec, ctx){
       // "card"); the whole card is one select hit. Overrides `items`.
       el.classList.add("w-list-cards");
       specs.forEach((s,i)=>{
-        const card=div("w-list-card"+(i===sel?" sel":""));
+        const card=aria(div("w-list-card"+(i===sel?" sel":"")), "option", {selected:i===sel});
         card.appendChild(widgetEl(s, ctx));
         card.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,spec,i,e); };
         el.appendChild(card);
       });
     } else {
       (spec.items||[]).forEach((it,i)=>{
-        const row=div("w-list-row"+(i===sel?" sel":""));
+        const row=aria(div("w-list-row"+(i===sel?" sel":"")), "option", {selected:i===sel});
         fillEntry(row, it);
         row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,spec,i,e); };
         el.appendChild(row);
@@ -521,7 +545,7 @@ function widgetEl(spec, ctx){
     // visible iff every ancestor is expanded, and rows fire the identical
     // select / expand hits. Rendered natively (all visible rows, no TUI
     // scroll window) — off-window clicks are synthesized bridge-side.
-    const el=div("w-tree"+(focused?" focus":""));
+    const el=aria(div("w-tree"+(focused?" focus":"")), "tree");
     const inst=(ctx.instances&&spec.key)?ctx.instances[spec.key]:null;
     const sel=inst&&inst.selectedIndex!=null?inst.selectedIndex:(spec.selectedIndex!=null?spec.selectedIndex:-1);
     // Host parity (first_visible_tree_index): once an INSTANCE exists its
@@ -540,7 +564,9 @@ function widgetEl(spec, ctx){
       const isOpen=n.hasChildren?(!!key&&expanded.has(key)):true;
       open.push(isOpen);
       if(!vis) return;
-      const row=div("w-tree-row"+(i===sel?" sel":""));
+      const row=aria(div("w-tree-row"+(i===sel?" sel":"")), "treeitem",
+        {selected:i===sel, level:d+1, expanded:n.hasChildren?isOpen:null,
+         checked:spec.checkable&&n.checked!=null?!!n.checked:null});
       row.style.paddingLeft=(d*2)+"ch";
       // Right-click anywhere on the row (disclosure/checkbox included, like
       // the TUI's cell hit-test) fires `context` instead of the cell's own
@@ -628,7 +654,12 @@ function widgetEl(spec, ctx){
     }
     // Blank rows a terminal layout stacks to push what follows to the bottom
     // of the panel: a flexible gap here, which does the same at any height.
-    if(!ctx.grid&&!text.trim()) return div("w-fill");
+    if(!ctx.grid&&!text.trim()){
+      // In a row, spaces are a gap as wide as they are; in a column, blank
+      // rows push what follows down.
+      if(ctx.inRow){ const g=div("w-gap"); g.style.width=Math.max(...spec.entries.map(e=>entryText(e).length),1)*0.6+"ch"; return g; }
+      return div("w-fill");
+    }
     const el=div("w-raw");
     spec.entries.forEach((e,i)=>{ if(i) el.append("\n"); fillEntry(el.appendChild(document.createElement("span")), e); });
     return el;
@@ -661,7 +692,7 @@ const SET_LIST_KINDS = new Set(["textList","map","objectArray","dualList"]);
 // `live` enables click routing (false inside the entry dialog, which is keyboard).
 function settingControlEl(c, idx, live){
   const k=c.kind, el=document.createElement("span"); el.className="set-ctl set-"+k;
-  if(k==="toggle"){ const sw=document.createElement("span"); sw.className="set-switch"+(c.checked?" on":""); el.appendChild(sw); if(live) sw.onmousedown=setHit("controlToggle",idx); }
+  if(k==="toggle"){ const sw=document.createElement("span"); sw.className="set-switch"+(c.checked?" on":""); aria(sw,"switch",{checked:!!c.checked}); el.appendChild(sw); if(live) sw.onmousedown=setHit("controlToggle",idx); }
   else if(k==="number"){
     const mk=(t,cls,hit)=>{const b=document.createElement("span");b.className=cls;b.textContent=t;if(live&&hit)b.onmousedown=setHit(hit,idx);return b;};
     // The value as the JSON carries it, shown the way the TUI's cell shows it:
@@ -749,14 +780,16 @@ function settingItemRows(items, container, live, entry){
   for(const it of items){
     if(it.sectionStart && it.section){ const h=div("set-section"); h.textContent=it.section; container.appendChild(h); }
     const isList=SET_LIST_KINDS.has(it.control.kind);
-    const row=div("set-item"+(it.selected?" sel":"")+(it.readOnly?" ro":"")+(isList?" set-item-block":""));
+    const row=aria(div("set-item"+(it.selected?" sel":"")+(it.readOnly?" ro":"")+(isList?" set-item-block":"")),
+      "group", {label:it.name, current:it.selected?"true":null, readonly:it.readOnly||null});
     const head=div("set-item-head");
     const nm=div("set-name"); nm.textContent=it.name+(it.modified?" •":""); head.appendChild(nm);
     const selectHit = entry
       ? (it.readOnly ? null : e=>{ e.preventDefault(); e.stopPropagation(); sendSettings({kind:"entryItem", a:it.index}); })
       : (live ? setHit("item",it.index) : null);  // click the row label = select item
     if(selectHit){ nm.onmousedown=selectHit; }
-    if(!isList){ const ctl=div("set-ctl-wrap"); ctl.appendChild(settingControlEl(it.control,it.index,live&&!entry)); head.appendChild(ctl); if(entry&&selectHit) ctl.onmousedown=selectHit; }
+    if(!isList){ const ctl=div("set-ctl-wrap"); ctl.appendChild(settingControlEl(it.control,it.index,live&&!entry));
+      for(const named of ctl.querySelectorAll("[role]")) named.setAttribute("aria-label", it.name); head.appendChild(ctl); if(entry&&selectHit) ctl.onmousedown=selectHit; }
     row.appendChild(head);
     if(it.description){ const d=div("set-desc"); d.textContent=it.description; row.appendChild(d); }
     if(isList) row.appendChild(settingListEl(it.control,it.index,live&&!entry));
@@ -765,17 +798,18 @@ function settingItemRows(items, container, live, entry){
 }
 function settingsEls(s){
   const out=[]; const scrim=div("modal-scrim"); scrim.onmousedown=e=>e.stopPropagation(); out.push(scrim);
-  const el=div("region settings-modal");
+  const el=aria(div("region settings-modal"), "dialog", {modal:true, label:s.title});
   const title=div("set-title"); title.textContent=s.title+"  —  layer: "+s.targetLayer; el.appendChild(title);
   const body=div("set-body");
   // left: category tree
-  const cats=div("set-cats"+(s.focus==="categories"?" focus":""));
-  for(const c of s.categories){ const r=div("set-cat"+(c.selected?" sel":""));
+  const cats=aria(div("set-cats"+(s.focus==="categories"?" focus":"")), "tree", {label:"Categories"});
+  for(const c of s.categories){ const r=aria(div("set-cat"+(c.selected?" sel":"")), "treeitem",
+      {selected:!!c.selected, level:c.nested?2:1, expanded:c.expandable?!!c.expanded:null, label:c.name});
     if(c.nested) r.appendChild(document.createTextNode("    "));
     else if(c.expandable){ const chev=document.createElement("span"); chev.className="set-cat-chev"; chev.textContent=c.expanded?"▼ ":"▶ "; chev.onmousedown=setHit("categoryDisclosure",c.index); r.appendChild(chev); } else r.appendChild(document.createTextNode("  "));
     const nm=document.createElement("span"); nm.textContent=c.name; r.appendChild(nm);
     r.onmousedown=setHit("category",c.index); cats.appendChild(r);
-    if(c.expanded){ c.sections.forEach((sec,si)=>{ const sr=div("set-cat-sec"); sr.textContent="   "+sec; sr.onmousedown=setHit("categorySection",c.index,si); cats.appendChild(sr); }); } }
+    if(c.expanded){ c.sections.forEach((sec,si)=>{ const sr=aria(div("set-cat-sec"),"treeitem",{selected:false,level:2,label:sec}); sr.textContent="   "+sec; sr.onmousedown=setHit("categorySection",c.index,si); cats.appendChild(sr); }); } }
   body.appendChild(cats);
   // right: items, or search results
   const right=div("set-items"+(s.focus==="settings"?" focus":""));
@@ -788,11 +822,11 @@ function settingsEls(s){
   const ft=div("set-footer"); const fkinds=["layer","reset","save","cancel"];
   s.footerButtons.forEach((b,i)=>{
     const sel=i===s.footerSelected&&s.focus==="footer";
-    const bb=div("btn"+(b==="Save"?" primary":"")+(sel?" sel":"")); bb.textContent=b; bb.onmousedown=setHit(fkinds[i]||"cancel"); ft.appendChild(bb);
+    const bb=aria(div("btn"+(b==="Save"?" primary":"")+(sel?" sel":"")),"button"); bb.textContent=b; bb.onmousedown=setHit(fkinds[i]||"cancel"); ft.appendChild(bb);
   }); el.appendChild(ft);
   // entry dialog (Map/ObjectArray add/edit): rows are clickable (select+edit),
   // controls keyboard-driven, buttons routed by name to the entry dispatch.
-  if(s.entryDialog){ const d=s.entryDialog; const dlg=div("set-overlay set-entry");
+  if(s.entryDialog){ const d=s.entryDialog; const dlg=aria(div("set-overlay set-entry"),"dialog",{modal:true,label:d.title});
     const dt=div("set-entry-title"); dt.textContent=d.title; dlg.appendChild(dt);
     const di=div("set-entry-items"); settingItemRows(d.items.map((it,i)=>({...it,selected:i===d.selectedItem&&!d.focusOnButtons})), di, true, true); dlg.appendChild(di);
     const db=div("set-dlg-btns");
@@ -800,7 +834,7 @@ function settingsEls(s){
     // visual order here puts Delete in the middle but each routes by name.
     const tuiIdx={Save:0,Cancel:1,Delete:2};
     const btns=d.noDelete?["Save","Cancel"]:["Save","Delete","Cancel"];
-    btns.forEach(b=>{const f=d.focusOnButtons&&tuiIdx[b]===d.focusedButton; const bb=div("btn"+(b==="Save"?" primary":b==="Delete"?" danger":"")+(f?" sel":"")); bb.textContent=b;
+    btns.forEach(b=>{const f=d.focusOnButtons&&tuiIdx[b]===d.focusedButton; const bb=aria(div("btn"+(b==="Save"?" primary":b==="Delete"?" danger":"")+(f?" sel":"")),"button"); bb.textContent=b;
       bb.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendSettings({kind:"entryButton", button:b.toLowerCase()}); }; db.appendChild(bb);}); dlg.appendChild(db);
     el.appendChild(dlg); }
   if(s.showingHelp){ const h=div("set-overlay"); h.innerHTML="<b>Settings help</b><br>↑↓ navigate · Tab switch panel · Space/Enter activate · Ctrl+S save · Esc close"; el.appendChild(h); }

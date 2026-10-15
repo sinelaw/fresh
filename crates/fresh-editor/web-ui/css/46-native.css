@@ -57,7 +57,7 @@ body.alt-held .native-confirm .accel{text-decoration:underline;text-underline-of
    list is the page's to scroll, and the keyboard's selection is kept in view. */
 .native-panel{position:absolute;z-index:88;overflow:auto;overscroll-behavior:contain;
   font-family:var(--font-family);color:var(--fg);background:var(--bg);
-  padding:.35em .5em;box-sizing:border-box;user-select:none;scrollbar-width:thin}
+  padding:.5em .75em;box-sizing:border-box;user-select:none;scrollbar-width:thin}
 .native-panel.np-floating{background:var(--surface-2,var(--bg2))}
 .native-panel .w-col{display:flex;flex-direction:column;gap:.3em;min-width:0}
 .native-panel .w-row{display:flex;flex-direction:row;align-items:center;gap:.4em;min-width:0}
@@ -150,7 +150,25 @@ body.macfam .native-panel.np-dock{background:var(--mac-sidebar)}
 .native-panel .w-section:not(:has(> .w-section-label)){border:0;padding:0}
 .native-panel .w-section > .w-text{display:flex}
 /* A panel mounted into a pane: over the pane's cells, in the pane's ground. */
-.native-panel.np-pane{z-index:87;background:var(--bg);padding:.5em .8em}
+.native-panel.np-pane{z-index:87;background:var(--bg);padding:.75em 1em}
 /* A run the plugin gave a ground of its own (a chip). */
 .native-panel .w-chip{border-radius:3px;padding:0 .2em}
 .native-panel .w-row.grid .w-chip,.native-panel .w-raw .w-chip{padding:0;border-radius:0}
+/* A field's label is a label, beside the field — not text inside its box.
+   The box is the input itself, in the chrome font. */
+.native-panel .w-text{border:0;background:none;padding:0;gap:.55em;align-items:center}
+.native-panel .w-text .w-text-label{flex:0 0 auto;color:var(--muted);white-space:nowrap}
+.native-panel .w-text .w-text-input{font:inherit;color:var(--fg);background:var(--bg);
+  border:1px solid var(--hairline-strong,var(--border));border-radius:var(--r-sm,4px);padding:.28em .5em;outline:none}
+.native-panel .w-text.focus .w-text-input{border-color:var(--ui-accent,var(--accent));
+  box-shadow:0 0 0 2px color-mix(in srgb,var(--ui-accent,var(--accent)) 25%,transparent)}
+.native-panel .w-text.focus{outline:none;box-shadow:none}
+.native-panel .w-row{gap:.6em}
+/* A row of controls too wide for its panel in the chrome font wraps, as a
+   desktop toolbar does, rather than running out of the panel. Cell grids keep
+   their one line. */
+.native-panel .w-row:not(.grid):not(.w-table-row){flex-wrap:wrap;row-gap:.4em}
+/* A run of blank cells between controls is a gap, not a fixed width: it gives
+   way first when the chrome font makes a row wider than its cells were. */
+.native-panel .w-gap{flex:0 1 auto;min-width:.6em}
+.native-panel .w-toggle .w-label,.native-panel .w-button{white-space:nowrap}

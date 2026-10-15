@@ -181,7 +181,7 @@ function treeItemEl(it,kindOf){
 // One layer over the whole grid: the surfaces' outlines (markers for tests and
 // for the layout animations — they take no input), then every item in paint
 // order, then the caret the display list placed inside a surface.
-function treeEls(t){
+function treeEls(t, native){
   const out=[];
   if(!t||!t.surfaces||!t.surfaces.length) return out;
   const layer=div("tree");
@@ -214,7 +214,7 @@ function treeEls(t){
   });
   const kindOf=i=>(t.surfaces[i]||{}).kind;
   for(const it of (t.items||[])) layer.appendChild(treeItemEl(it,kindOf(it.surface)));
-  if(t.cursor){
+  if(t.cursor&&!underNative(native,t.cursor[0],t.cursor[1])){
     const c=div("tree-caret");
     c.style.left=px(t.cursor[0],CW)+"px"; c.style.top=px(t.cursor[1],CH)+"px";
     c.style.width=CW+"px"; c.style.height=CH+"px";
