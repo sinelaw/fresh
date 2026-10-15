@@ -63,6 +63,10 @@ editor.on("buffer_group_closed", (data) => {
 "#;
 
 fn setup() -> (EditorTestHarness, tempfile::TempDir) {
+    setup_with(Config::default())
+}
+
+fn setup_with(config: Config) -> (EditorTestHarness, tempfile::TempDir) {
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path().join("work");
     let plugins_dir = root.join("plugins");
@@ -71,14 +75,14 @@ fn setup() -> (EditorTestHarness, tempfile::TempDir) {
     copy_plugin_lib(&plugins_dir);
 
     let file = root.join("a.txt");
-    let mut text = String::from("alpha\n");
+    let mut text = String::from("alpha zebrafish\n");
     for i in 1..=200 {
         text.push_str(&format!("row {i:03}\n"));
     }
     fs::write(&file, text).unwrap();
 
     let mut harness =
-        EditorTestHarness::with_config_and_working_dir(120, 30, Config::default(), root).unwrap();
+        EditorTestHarness::with_config_and_working_dir(120, 30, config, root).unwrap();
     harness.open_file(&file).unwrap();
     harness.wait_for_screen_contains("row 001").unwrap();
     (harness, temp)
@@ -182,6 +186,33 @@ fn the_pane_and_its_panels_keep_the_place_in_the_file() {
     run(&mut h, "fpanel: Close");
     h.wait_until(|h| count(h, "row 001") == 1 && !h.screen_row_text(1).contains("PAIR"))
         .unwrap();
+}
+
+/// A popup anchored to the caret opens under the caret of the panel with the
+/// keyboard. Here it is the completion list, which typing a word's start in
+/// a panel brings up: its frame on the row below the caret's, and the
+/// suggestion on the row after.
+#[test]
+fn a_popup_at_the_caret_opens_under_the_panels_caret() {
+    let mut config = Config::default();
+    config.editor.completion_popup_auto_show = true;
+    let (mut h, _tmp) = setup_with(config);
+    open_pair(&mut h);
+
+    // A new first line, and the start of a word the file has.
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    h.type_text("zeb").unwrap();
+    h.wait_until(|h| {
+        // The caret's row is the first to show what was typed: the popup
+        // is under it.
+        let Some(caret_row) = (0..30).find(|&r| h.screen_row_text(r).contains("zeb")) else {
+            return false;
+        };
+        h.screen_row_text(caret_row + 1).contains("[×]")
+            && h.screen_row_text(caret_row + 2).contains("zebrafish")
+    })
+    .unwrap();
 }
 
 /// Two panels in a scroll-sync group scroll together: the focused one jumps
