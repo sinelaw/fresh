@@ -19,7 +19,9 @@
 // list's faithful cell rendering: Cosmos and Winamp are designed around it.
 // `fresh.nativePanels` in localStorage ("on"/"off") overrides either way.
 const NATIVE_PANEL_THEMES = ["compact", "macos", "macos-dark"];
+/** function nativePanelsOn() => Boolean */
 function nativePanelsOn(){
+  /** let pref: String | Null */
   let pref=null;
   try { pref=localStorage.getItem("fresh.nativePanels"); } catch(_) {}
   if(pref==="on") return true;
@@ -30,33 +32,37 @@ function nativePanelsOn(){
 // Whether a cell lies under a natively laid-out panel. Such a panel puts its
 // fields elsewhere than the cells the terminal's cursor marks, and its own
 // focused input carries the caret — so no cell caret is drawn there.
+/** function underNative(NativeView, Number, Number) => Boolean */
 function underNative(n, x, y){
-  if(!n||!document.body.classList.contains("native-panels")) return false;
-  const inRect=r=>r && x>=r.x && x<r.x+r.w && y>=r.y && y<r.y+r.h;
-  return (n.panels||[]).some(p=>inRect(p.rect)||inRect(p.frame));
+  if(!document.body.classList.contains("native-panels")) return false;
+  const inRect=r=>x>=r.x && x<r.x+r.w && y>=r.y && y<r.y+r.h;
+  return n.panels.some(p=>{ const f=p.frame; return inRect(p.rect)||(f!==undefined&&inRect(f)); });
 }
 
+/** function sendNode(TreeKey, String | Undefined) => Undefined */
 function sendNode(key, action){ wsSend({type:"node", key, action:action||"press"}); }
 
 // Accelerators are underlined only while Alt is held, as native dialogs do;
 // the letters still answer without it (the editor's confirm keys).
-for(const t of ["keydown","keyup"]) document.addEventListener(t, e=>{
+for(const t of ["keydown","keyup"]) listen(document, t, e=>{
   if(e.key==="Alt") document.body.classList.toggle("alt-held", t==="keydown");
-}, true);
+}, {capture:true});
 window.addEventListener("blur", ()=>document.body.classList.remove("alt-held"));
 
 // A control that never takes the keyboard: the editor owns every key, and a
 // focused <button> would answer Enter/Space itself as well. Pressing happens
 // on release over the control, as with any native button.
+/** function nativeButton(String, TreeKey) => El */
 function nativeButton(cls, key){
   const b=document.createElement("button");
   b.type="button"; b.className=cls; b.tabIndex=-1;
   b.addEventListener("mousedown", e=>{ e.preventDefault(); e.stopPropagation(); });
-  b.addEventListener("click", e=>{ e.preventDefault(); e.stopPropagation(); sendNode(key); });
+  b.addEventListener("click", e=>{ e.preventDefault(); e.stopPropagation(); sendNode(key, undefined); });
   return b;
 }
 
 // ---- the confirmation card ----------------------------------------------
+/** function confirmCardEls(ConfirmCard) => El[] */
 function confirmCardEls(c){
   const scrim=div("native-scrim");
   // The card is modal: a press outside it answers nothing (the terminal's
@@ -75,7 +81,7 @@ function confirmCardEls(c){
       +(b.escape?" escape":""), b.key);
     const [pre, acc, post]=b.label;
     el.append(pre);
-    if(acc){ const u=document.createElement("span"); u.className="accel"; u.textContent=acc; el.append(u); }
+    if(acc){ const u=document.createElement("span"); u.className="accel"; u.textContent=acc; el.appendChild(u); }
     if(post) el.append(post);
     aria(el, "button", {label:(pre+(acc||"")+(post||"")).trim(), keyshortcuts:acc?acc.toUpperCase():null});
     row.appendChild(el);
@@ -90,12 +96,13 @@ function confirmCardEls(c){
 // its interior is laid out here from the spec, in the interior's own
 // rectangle, by the widget renderer the toolbar uses (`widgetEl`,
 // 65-widgets.js). Presses go back as the control's identity (`routeWidget`).
+/** function nativePanelEl(NativePanel) => El */
 function nativePanelEl(p){
   // A floating panel is a card over its whole frame — its title and close box
   // drawn here too — with the interior laid out in what is left of it.
-  const framed=p.kind==="floating"&&p.frame;
+  const frame=p.kind==="floating"?p.frame:undefined, framed=frame!==undefined;
   const el=div("native-panel np-"+p.kind+(p.keyboard?" kb":"")+(framed?" card":"")+(p.anchored?" anchored":""));
-  place(el, framed?p.frame:p.rect);
+  place(el, frame??p.rect);
   // An anchored pop-up hugs its content, as the terminal's does — natively
   // laid out, that content is not the cells the terminal measured, so the
   // card takes its height (and any extra width) from what it holds.
@@ -117,11 +124,12 @@ function nativePanelEl(p){
   else aria(el, "region", {label:p.title||p.kind});
   let body=el;
   if(framed){
-    if(p.title||p.closeKey){
+    const closeKey=p.closeKey;
+    if(p.title||closeKey){
       const head=div("np-head");
       const t=div("np-title"); t.textContent=p.title||""; head.appendChild(t);
-      if(p.closeKey){
-        const x=nativeButton("np-close", p.closeKey);
+      if(closeKey){
+        const x=nativeButton("np-close", closeKey);
         x.setAttribute("aria-label","Close"); x.textContent="×";
         head.appendChild(x);
       }
@@ -132,8 +140,9 @@ function nativePanelEl(p){
   // A press on the interior's own ground (between controls) is the panel's:
   // the cell mapping still forwards it, so it lands where the terminal's
   // would — focusing the panel — without reaching through to what is under.
+  /** const ctx: WidgetCtx */
   const ctx={kind:"panel", slot:p.kind, section:p.section, pane:p.pane, focusKey:p.focusKey,
-    instances:p.instances||{}, native:true};
+    instances:p.instances, native:true};
   body.appendChild(widgetEl(p.spec, ctx));
   // Keep the selected row of a list or tree in view as the keyboard moves it:
   // the page scrolls its own lists.
@@ -152,19 +161,28 @@ function nativePanelEl(p){
 // rows are placed by the widgets on them: each mark is the content row a
 // widget starts on, and the view's top is put where the terminal window's
 // is, exactly at a widget and in proportion between two.
+/** function syncPage(El, PageView) => Undefined */
 function syncPage(el, page){
   const base=el.getBoundingClientRect().top-el.scrollTop;
-  const pts=[[0,0]];
-  for(const [row,key] of (page.marks||[])){
-    const w=el.querySelector('[data-wkey="'+CSS.escape(key)+'"]');
-    if(!w) continue;
-    const top=w.getBoundingClientRect().top-base;
-    if(row>pts[pts.length-1][0]&&top>=pts[pts.length-1][1]) pts.push([row,top]);
+  /** const byKey: Dict<El> */
+  const byKey={};
+  for(const w of el.querySelectorAll("[data-wkey]")){
+    const k=w.dataset.wkey;
+    if(k!==undefined&&byKey[k]===undefined) byKey[k]=w;
   }
-  pts.push([Math.max(page.content,pts[pts.length-1][0]+1), el.scrollHeight]);
-  const r=page.offset||0;
-  let i=0; while(i<pts.length-2&&pts[i+1][0]<=r) i++;
-  const [r0,t0]=pts[i], [r1,t1]=pts[i+1];
+  /** const pts: [Number, Number][] */
+  const pts=[[0,0]];
+  for(const [row,key] of page.marks){
+    const w=byKey[key];
+    if(w===undefined) continue;
+    const top=w.getBoundingClientRect().top-base, last=pts[pts.length-1]??[0,0];
+    if(row>last[0]&&top>=last[1]) pts.push([row,top]);
+  }
+  const tail=pts[pts.length-1]??[0,0];
+  pts.push([Math.max(page.content,tail[0]+1), el.scrollHeight]);
+  const r=page.offset;
+  let i=0; while(i<pts.length-2&&(pts[i+1]??[0,0])[0]<=r) i++;
+  const [r0,t0]=pts[i]??[0,0], [r1,t1]=pts[i+1]??[0,0];
   const at=t0+(t1-t0)*Math.min(1,Math.max(0,(r-r0)/Math.max(1,r1-r0)));
   // At the end of the content, the end of the page (heights differ, so the
   // last row of the window lands on the last of the page).
@@ -176,22 +194,26 @@ function syncPage(el, page){
 // the chrome font their fields start wherever their labels happen to end.
 // Labels that start at the same x — a column of them — take the widest one's
 // width, so the fields beside them start together.
+/** function alignFieldLabels(El) => Undefined */
 function alignFieldLabels(root){
-  const cols=new Map();
+  /** const cols: Dict<{l: El, w: Number}[]> */
+  const cols={};
   for(const l of root.querySelectorAll(".w-text>.w-text-label,.w-number>.w-text-label,.w-dropdown>.w-text-label")){
     const r=l.getBoundingClientRect();
     if(!r.width) continue;
-    const x=Math.round(r.left);
-    if(!cols.has(x)) cols.set(x, []);
-    cols.get(x).push([l, r.width]);
+    const x=String(Math.round(r.left));
+    const col=cols[x]??[];
+    cols[x]=col;
+    col.push({l, w:r.width});
   }
-  for(const labels of cols.values()){
+  for(const labels of Object.values(cols)){
     if(labels.length<2) continue;
-    const w=Math.max(...labels.map(([,w])=>w));
-    for(const [l] of labels) l.style.minWidth=w+"px";
+    const w=labels.reduce((m,lw)=>Math.max(m,lw.w),-Infinity);
+    for(const lw of labels) lw.l.style.minWidth=`${w}px`;
   }
 }
 
+/** function nativeEls(NativeView) => El[] */
 function nativeEls(n){
   const out=[];
   if(!n) return out;
@@ -209,6 +231,7 @@ function nativeEls(n){
     }
     out.push(nativePanelEl(p));
   }
-  if(n.confirm) out.push(...confirmCardEls(n.confirm));
+  const cf=n.confirm;
+  if(cf) out.push(...confirmCardEls(cf));
   return out;
 }

@@ -134,6 +134,40 @@ Pick a numeric prefix that places a new file where its concern belongs; gaps
 | `73-native.js` | natively laid-out surfaces: the confirmation card and plugin panels from `regions.native`, pressed back by key or widget identity |
 | `75-app.js` | mobile shell + transport (WS frames, resize, clipboard) |
 | `80-input.js` | keyboard/mouse/touch input, native selection, boot |
+| `00-ffi.js` | the few untyped escape hatches the type check can't see into (see below) |
+
+### Type checking (inty)
+
+The JS is plain JavaScript that [inty](https://github.com/sinelaw/inty) type
+checks with full inference — no build step, no annotations required, though
+the code carries some (`/** function f(Pane, Rect) => El */`,
+`/** let scene: Scene | Null */`) where they document a shape or pin down a
+type shared across files.
+
+```
+web-ui/typecheck.sh        # needs `inty` on PATH (or INTY=/path/to/inty)
+```
+
+It checks `js/*.js` the way the page runs them — concatenated into one
+program — against three declaration files:
+
+- `types/dom.d.js` — the browser API the UI uses, typed precisely (one
+  recursive element type `El`, one event type `UiEvent`, `style` with its
+  CSS properties). It shadows inty's generic stdlib DOM.
+- `types/scene.d.js` — the server protocol: the scene (`Scene`, `Regions`,
+  `Pane`, `Palette`, `WidgetSpec`, …) and the WebSocket messages, transcribed
+  from the serde types in `src/view/scene.rs` / `src/view/native.rs` /
+  `src/webui/mod.rs`. Keep it in step with them.
+- `types/ffi.d.js` — the types of `js/00-ffi.js`, the one file the check
+  leaves out: `listen` (a listener with options), `jsonAs` (a frame value
+  given its field's type), `exposeTestHook`, `toFixed`.
+
+inty is strict where JavaScript isn't, which shapes the code: no
+`number + string` (use a template literal), narrowing only of bindings that
+are never reassigned (copy `scene` or a field into a `const` before a null
+check), closed records (a map is a `Dict<V>`), and `let`/`const` are
+function-scoped for the checker (two block-local `const x` of different
+types in one function need different names).
 
 ## Web themes (chrome look) vs the TUI colour theme
 
