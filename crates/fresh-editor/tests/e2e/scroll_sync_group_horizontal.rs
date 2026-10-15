@@ -68,6 +68,13 @@ registerHandler("hsync_compose_right", async () => {
 });
 editor.registerCommand("hsync: Compose Right", "Compose the right pane", "hsync_compose_right", null);
 
+registerHandler("hsync_close_right", async () => {
+    editor.closeSplit(right);
+    await editor.flush();
+    editor.setStatus("hsync-closed");
+});
+editor.registerCommand("hsync: Close Right", "Close the right pane", "hsync_close_right", null);
+
 // Close the right pane and pair the left one with a new pane under the same
 // id, with no frame in between: the close and the create reach the editor in
 // one batch.
@@ -100,7 +107,8 @@ fn harness_with_pair() -> (EditorTestHarness, tempfile::TempDir) {
     harness_paired_by("hsync: Pair", "hsync-paired-1", 2)
 }
 
-/// Pair `long.txt` with `short.txt`, whose lines are all narrower than a pane.
+/// Pair `long.txt` with `short.txt`, whose lines are all narrower than a pane
+/// (200 of them, so it scrolls vertically).
 fn harness_with_short_partner() -> (EditorTestHarness, tempfile::TempDir) {
     harness_paired_by("hsync: Pair Short", "hsync-paired-short", 1)
 }
@@ -119,7 +127,8 @@ fn harness_paired_by(
 
     let file = working_dir.join("long.txt");
     fs::write(&file, fixture_text()).unwrap();
-    fs::write(working_dir.join("short.txt"), "short one\nshort two\n").unwrap();
+    let short: String = (1..=200).map(|i| format!("short {i:04}\n")).collect();
+    fs::write(working_dir.join("short.txt"), short).unwrap();
 
     let mut config = Config::default();
     config.editor.line_wrap = false;
@@ -295,7 +304,7 @@ fn a_partner_that_cannot_scroll_as_far_does_not_repaint_forever() {
     paint_owed_frames(&mut harness);
 
     harness.assert_screen_contains("FINISH");
-    harness.assert_screen_contains("short one");
+    harness.assert_screen_contains("short 0001");
 }
 
 /// A compose-view partner wraps its own lines: it has no horizontal scroll,
@@ -319,16 +328,22 @@ fn horizontal_pan_leaves_a_compose_partner_in_place() {
     );
 }
 
-/// Shift+wheel over the compose pane pans only that pane, as it would
-/// unpaired: a compose pane's column is not shared, so the source pane stays
-/// at column 0.
+/// Shift+wheel over the compose pane pans that pane, as it would unpaired,
+/// and only that pane: a compose pane's column is not shared, so the source
+/// pane stays at column 0.
 #[test]
-fn wheel_pan_over_a_compose_pane_leaves_the_source_pane() {
+fn wheel_pan_over_a_compose_pane_pans_only_that_pane() {
     let (mut harness, _tmp) = harness_with_compose_partner();
     let ((left_col, row), (right_col, _)) = start_cells(&harness);
 
     pan_right(&mut harness, right_col + 2, row, 10);
 
+    assert_eq!(
+        marker_count(&harness, "START"),
+        1,
+        "the compose pane should have panned past column 0. Screen:\n{}",
+        harness.screen_to_string()
+    );
     assert_eq!(
         harness.find_text_on_screen("START"),
         Some((left_col, row)),
@@ -449,6 +464,84 @@ fn dragging_the_horizontal_thumb_pans_both_panes() {
         marker_count(&harness, "START"),
         0,
         "both panes should have panned past column 0. Screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// Dragging a pane's only tab into the other pane closes the pane — another
+/// of the ways a pane closes, besides closing the split. The group dies with
+/// it there too, so pairing again under the same id works.
+#[test]
+fn pairing_again_after_a_tab_drag_closes_a_pane_syncs_the_new_pair() {
+    let (mut harness, _tmp) = harness_with_short_partner();
+    let (left_col, row) = harness.find_text_on_screen("START").unwrap();
+    // The right pane holds two tabs (the file it was split from, and
+    // short.txt). Drag both into the left pane; the second drag empties it.
+    for name in ["short.txt", "long.txt"] {
+        let tab_row = harness.screen_row_text(1);
+        let byte = tab_row.rfind(name).expect("the right pane's tab");
+        let tab_col = tab_row[..byte].chars().count() as u16;
+        harness
+            .mouse_drag(tab_col + 2, 1, left_col + 10, row + 8)
+            .unwrap();
+        paint_owed_frames(&mut harness);
+    }
+    assert!(
+        // A split's panes each carry a close-split button; one pane, none.
+        !harness.screen_row_text(1).contains('□'),
+        "setup: the drags should leave a single pane. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Pair the remaining pane (showing long.txt, the last tab dragged) again
+    // under group 42.
+    run_command(&mut harness, "hsync: Pair", "hsync-paired-1");
+    // A plain frame, not `paint_owed_frames`: after these tab drags the event
+    // loop owes a frame on every tick even with no group at all (a separate,
+    // pre-existing bug). The jump's frame scrolls the left pane; the next
+    // one syncs the right pane to it.
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(
+        marker_count(&harness, "line 0200"),
+        2,
+        "the new right pane should follow the left one to the end. Screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// A group whose pane closed is gone at the next frame, not only when a new
+/// group is created. A leftover group still counted its surviving pane as
+/// synced, which keeps that pane out of same-buffer scroll sync: a new,
+/// ungrouped split of the same file then scrolled alone.
+#[test]
+fn a_pane_whose_partner_closed_rejoins_same_buffer_scroll_sync() {
+    let (mut harness, _tmp) = harness_with_pair();
+    run_command(&mut harness, "hsync: Close Right", "hsync-closed");
+    paint_owed_frames(&mut harness);
+    run_command(&mut harness, "Toggle Scroll Sync", "Scroll sync enabled");
+    // A new split of the same file, in no group; it takes focus.
+    run_command(&mut harness, "split vert", "");
+    paint_owed_frames(&mut harness);
+    assert_eq!(
+        marker_count(&harness, "START"),
+        2,
+        "setup: two panes at the top of long.txt. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    paint_owed_frames(&mut harness);
+
+    assert_eq!(
+        marker_count(&harness, "line 0200"),
+        2,
+        "the original pane should follow the new split to the end. Screen:\n{}",
         harness.screen_to_string()
     );
 }
