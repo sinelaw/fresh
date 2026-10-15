@@ -170,12 +170,12 @@ fn filter_checkbox_settings_seed_the_dock() {
     .unwrap();
 }
 
-/// `autoOpenDock: true` brings the dock up on the `ready` hook, and
+/// `autoOpenDock: "always"` brings the dock up on the `ready` hook, and
 /// leaves the keyboard with the editor — it's a switcher, not something
 /// to type into.
 #[test]
 fn auto_open_setting_shows_dock_unfocused_at_startup() {
-    let (_tmp, root, config) = setup(serde_json::json!({ "autoOpenDock": true }));
+    let (_tmp, root, config) = setup(serde_json::json!({ "autoOpenDock": "always" }));
     let mut h = launch(config, root);
     h.render().unwrap();
     h.editor_mut().fire_ready_hook();
@@ -187,20 +187,16 @@ fn auto_open_setting_shows_dock_unfocused_at_startup() {
     );
 }
 
-/// Auto-open is the default: the ready hook alone brings the dock up,
-/// unfocused — a switcher nobody knows to open is not one.
+/// A new user — no `autoOpenDock`, nothing remembered — starts without the
+/// dock, in an ordinary launch and a bare `fresh` alike.
 #[test]
-fn auto_open_defaults_on() {
-    let (_tmp, root, config) = setup(serde_json::json!({}));
-    let mut h = launch(config, root);
-    h.render().unwrap();
-    h.editor_mut().fire_ready_hook();
-    h.wait_until(|h| h.screen_to_string().contains("+ New"))
-        .unwrap();
-    assert!(
-        !h.editor().is_dock_focused(),
-        "the auto-opened dock must not steal keyboard focus"
-    );
+fn auto_open_defaults_off() {
+    dock_stays_closed(serde_json::json!({}), false);
+}
+
+#[test]
+fn auto_open_defaults_off_in_orchestrator_mode() {
+    dock_stays_closed(serde_json::json!({}), true);
 }
 
 /// `autoOpenDock: false` keeps the dock closed until it is toggled.
@@ -249,8 +245,17 @@ fn auto_open_can_be_switched_off() {
 /// Driven with both spellings — the `never` mode, and the legacy `false` an
 /// upgrading user still has on disk.
 fn dock_stays_closed_in_orchestrator_mode(setting: serde_json::Value) {
-    let (_tmp, root, config) = setup(serde_json::json!({ "autoOpenDock": setting }));
-    let mut h = launch_orchestrator_mode(config, root);
+    dock_stays_closed(serde_json::json!({ "autoOpenDock": setting }), true);
+}
+
+/// Launch with `settings`, fire `ready`, and check no dock mounted.
+fn dock_stays_closed(settings: serde_json::Value, orchestrator_mode: bool) {
+    let (_tmp, root, config) = setup(settings);
+    let mut h = if orchestrator_mode {
+        launch_orchestrator_mode(config, root)
+    } else {
+        launch(config, root)
+    };
     h.render().unwrap();
     h.editor_mut().fire_ready_hook();
     // Round-trip the hook through the plugin thread with a command that does

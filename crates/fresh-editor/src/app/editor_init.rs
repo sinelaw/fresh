@@ -1691,7 +1691,7 @@ impl Editor {
         let mut editor = Editor::from_parts(parts);
 
         t.phase("editor_struct_assembly");
-        editor.apply_startup_dock_chrome(&plugin_manifests, orchestrator_mode);
+        editor.apply_startup_dock_chrome(&plugin_manifests);
         // Apply clipboard configuration
         editor.clipboard.apply_config(&editor.config.clipboard);
 

@@ -38,13 +38,13 @@ closes (attaching to a discovered worktree, a new or recovered workspace via
 
 `auto` therefore means "no instruction yet" (a fresh install, or a Settings
 reset). Under it the host behaves as before: what `chrome.json` remembered,
-else on a first launch the launch mode, then the manifest's `open`.
+else on a first launch the manifest's `open` (`false` for the orchestrator).
 
 ## Matrix
 
 | # | Setting at start | Dock at start | Last explicit instruction this session | Setting after | Next start |
 |---|---|---|---|---|---|
-| 1 | `auto` | Remembered; first run: open in Orchestrator mode | None | `auto` | As left at quit (`chrome.json`) |
+| 1 | `auto` | Remembered; first run: closed | None | `auto` | As left at quit (`chrome.json`) |
 | 2 | `auto` | (as above) | Show | `always` | Open |
 | 3 | `auto` | (as above) | Hide | `never` | Closed |
 | 4 | `always` | Open | None (only plugin closes, or Detach) | `always` | Open |

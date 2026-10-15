@@ -7,7 +7,7 @@
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
-use fresh::config::Config;
+use fresh::config::{Config, PluginConfig};
 use std::fs;
 use std::path::PathBuf;
 
@@ -63,12 +63,26 @@ fn chrome_left_edge(h: &EditorTestHarness) -> usize {
         .unwrap()
 }
 
+/// A config whose `autoOpenDock` asks for the dock at every start.
+fn dock_always_config() -> Config {
+    let mut config = Config::default();
+    config.plugins.insert(
+        "orchestrator".into(),
+        PluginConfig {
+            enabled: true,
+            path: None,
+            settings: serde_json::json!({ "autoOpenDock": "always" }),
+        },
+    );
+    config
+}
+
 /// The column is carved on the first frame, before `ready` has fired, and
 /// the chrome is in the same place once the dock has filled it in.
 fn the_dock_lands_in_the_column_startup_carved_for_it(orchestrator_mode: bool) {
     let (_tmp, root) = setup_project();
     let mut options = HarnessOptions::new()
-        .with_config(Config::default())
+        .with_config(dock_always_config())
         .with_working_dir(root)
         .without_empty_plugins_dir()
         .with_startup_chrome();
@@ -104,21 +118,48 @@ fn the_dock_lands_in_the_column_startup_carved_for_it(orchestrator_mode: bool) {
     );
 }
 
-/// A bare `fresh` (Orchestrator mode): the dock always opens.
+/// A bare `fresh` (Orchestrator mode).
 #[test]
 fn orchestrator_mode_lands_the_dock_in_the_column_carved_for_it() {
     the_dock_lands_in_the_column_startup_carved_for_it(true);
 }
 
-/// An ordinary `fresh .`: the manifest's `open` (via `autoOpenDock`) opens it.
+/// An ordinary `fresh .`.
 #[test]
 fn an_ordinary_launch_lands_the_dock_in_the_column_carved_for_it() {
     the_dock_lands_in_the_column_startup_carved_for_it(false);
 }
 
-/// Closed with Toggle Dock, quit, relaunched: no column and `ready` mounts
-/// nothing. Opened again, quit, relaunched: the column is back on the first
-/// frame. Each open or close is recorded as `autoOpenDock` (`never` /
+/// A new user — nothing in the config, nothing remembered — starts without
+/// the dock: no column on the first frame, and `ready` mounts nothing.
+fn a_first_launch_starts_without_the_dock(orchestrator_mode: bool) {
+    let (_tmp, root) = setup_project();
+    let user = UserConfig::new(serde_json::json!({}));
+    let mut h = user.launch(&root, orchestrator_mode);
+    h.render().unwrap();
+    assert!(
+        chrome_left_edge(&h) < DOCK_COLS,
+        "a first launch must not hold a dock column:\n{}",
+        h.screen_to_string()
+    );
+    assert_no_dock_after_ready(&mut h);
+}
+
+/// A bare `fresh` (Orchestrator mode).
+#[test]
+fn orchestrator_mode_starts_without_the_dock_on_a_first_launch() {
+    a_first_launch_starts_without_the_dock(true);
+}
+
+/// An ordinary `fresh .`.
+#[test]
+fn an_ordinary_launch_starts_without_the_dock_on_a_first_launch() {
+    a_first_launch_starts_without_the_dock(false);
+}
+
+/// Closed on a first launch. Opened with Toggle Dock, quit, relaunched: the
+/// column is back on the first frame. Closed again, quit, relaunched: no
+/// column and `ready` mounts nothing. Each open or close is recorded as `autoOpenDock` (`never` /
 /// `always`), and every launch reads the config back from disk, so the walk
 /// covers the setting the next real start obeys.
 ///
@@ -129,12 +170,29 @@ fn the_dock_is_remembered_across_launches(orchestrator_mode: bool) {
     // No `autoOpenDock`: `auto`, the state before any instruction.
     let user = UserConfig::new(serde_json::json!({}));
 
-    // First launch: open by default. Close it.
+    // First launch: closed by default. Open it.
     let mut h = user.launch(&root, orchestrator_mode);
     h.render().unwrap();
+    assert_no_dock_after_ready(&mut h);
+    toggle_dock(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains("+ New"))
+        .unwrap();
+    user.wait_for(&mut h, "always");
+    h.shutdown(false).unwrap();
+    drop(h);
+
+    // Second launch: open is remembered — the column is on the first frame.
+    let mut h = user.launch(&root, orchestrator_mode);
+    h.render().unwrap();
+    assert!(
+        wall_column(&h).iter().all(|c| *c == '\u{2502}'),
+        "a dock the user left open comes back on the first frame:\n{}",
+        h.screen_to_string()
+    );
     h.editor_mut().fire_ready_hook();
     h.wait_until(|h| h.screen_to_string().contains("+ New"))
         .unwrap();
+    // Close it for the next launch.
     toggle_dock(&mut h);
     h.wait_until(|h| !h.screen_to_string().contains("+ New"))
         .unwrap();
@@ -146,7 +204,7 @@ fn the_dock_is_remembered_across_launches(orchestrator_mode: bool) {
     h.shutdown(false).unwrap();
     drop(h);
 
-    // Second launch: closed is remembered — no column, and nothing mounts.
+    // Third launch: closed is remembered — no column, and nothing mounts.
     let mut h = user.launch(&root, orchestrator_mode);
     h.render().unwrap();
     assert!(
@@ -155,22 +213,6 @@ fn the_dock_is_remembered_across_launches(orchestrator_mode: bool) {
         h.screen_to_string()
     );
     assert_no_dock_after_ready(&mut h);
-    // Open it again for the next launch.
-    toggle_dock(&mut h);
-    h.wait_until(|h| h.screen_to_string().contains("+ New"))
-        .unwrap();
-    user.wait_for(&mut h, "always");
-    h.shutdown(false).unwrap();
-    drop(h);
-
-    // Third launch: open is remembered — the column is on the first frame.
-    let mut h = user.launch(&root, orchestrator_mode);
-    h.render().unwrap();
-    assert!(
-        wall_column(&h).iter().all(|c| *c == '\u{2502}'),
-        "a dock the user left open comes back on the first frame:\n{}",
-        h.screen_to_string()
-    );
 }
 
 /// An ordinary `fresh .`.

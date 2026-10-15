@@ -6527,7 +6527,7 @@ mod dock_reservation_tests {
             ("`always`", Some(DECLARES_DOCK), mode("always"), false, Some(rule)),
             ("`always` beats a manifest that says closed", Some(DECLARES_CLOSED_DOCK), mode("always"), false, Some(rule)),
             ("`auto` takes the manifest's `open`", Some(DECLARES_CLOSED_DOCK), mode("auto"), false, None),
-            ("...and a bare `fresh` under `auto` opens it", Some(DECLARES_CLOSED_DOCK), mode("auto"), true, Some(rule)),
+            ("...for a bare `fresh` too", Some(DECLARES_CLOSED_DOCK), mode("auto"), true, None),
             ("legacy `false` reads as `never`", Some(DECLARES_DOCK), legacy(false), true, None),
             ("legacy `true` reads as `auto`", Some(DECLARES_CLOSED_DOCK), legacy(true), false, None),
             ("an unrecognised value falls back to `auto`", Some(DECLARES_CLOSED_DOCK), mode("ALWAYS"), false, None),

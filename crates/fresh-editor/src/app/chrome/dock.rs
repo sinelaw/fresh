@@ -112,9 +112,9 @@ impl Editor {
     /// The width rule and a remembered width are adopted even when the slot
     /// stays closed, so a dock toggled open later comes up the right size.
     ///
-    /// Orchestrator mode is the default *under* the policy, not an override
-    /// over it: overriding left `autoOpenDock: false` with no effect in the
-    /// launch mode that is the default since 0.5.2 (#3442).
+    /// The launch mode plays no part: a bare `fresh` (Orchestrator mode)
+    /// starts with the dock closed like any other launch until the user opens
+    /// it, and from then on it comes back the way they left it.
     ///
     /// A file launch (`Editor::file_launch`) is not a session, so under
     /// `auto` the dock stays closed and nothing remembered about it applies;
@@ -122,7 +122,6 @@ impl Editor {
     pub(crate) fn apply_startup_dock_chrome(
         &mut self,
         manifests: &HashMap<String, PluginManifest>,
-        orchestrator_mode: bool,
     ) {
         let remembered =
             read_dock_chrome_state(&*self.local_filesystem, &self.dir_context.data_dir);
@@ -159,7 +158,7 @@ impl Editor {
             DockOpenPolicy::Never => false,
             DockOpenPolicy::Always => true,
             DockOpenPolicy::Auto if self.file_launch => false,
-            DockOpenPolicy::Auto => remembered.open.unwrap_or(orchestrator_mode || decl.open),
+            DockOpenPolicy::Auto => remembered.open.unwrap_or(decl.open),
         };
         tracing::debug!(
             plugin = %name,

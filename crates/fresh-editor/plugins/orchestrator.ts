@@ -1005,13 +1005,13 @@ let lastDockProjectFilter: string | null = null;
 // (the "view" button, the two Filters checkboxes) still win for the rest
 // of the session — they set the `*Override` / `last*` values above —
 // they just no longer decide where the dock starts.
-// Defaults to opening: a switcher nobody knows to open is not one. It opens
-// unfocused, so the keyboard stays with the editor.
+// Closed on a first run; once the user opens it, it comes back at every start
+// (unfocused, so the keyboard stays with the editor) until they close it.
 editor.defineConfigEnum("autoOpenDock", {
   values: ["auto", "always", "never"] as const,
   default: "auto",
   description:
-    "Whether the workspace dock opens when Fresh starts. Opening or closing the dock yourself (View ▸ Orchestrator Dock, Orchestrator: Toggle Dock, the dock's ×) sets this to 'always' or 'never', so Fresh starts the way you last asked; choosing 'always' or 'never' here also opens or closes the dock now. 'auto' (the default, until you first open or close the dock) brings it back the way it was at quit, and on a first run opens it for a bare `fresh` (Orchestrator mode). Replaces the old true/false, which are still read as 'auto' and 'never'.",
+    "Whether the workspace dock opens when Fresh starts. Opening or closing the dock yourself (View ▸ Orchestrator Dock, Orchestrator: Toggle Dock, the dock's ×) sets this to 'always' or 'never', so Fresh starts the way you last asked; choosing 'always' or 'never' here also opens or closes the dock now. 'auto' (the default, until you first open or close the dock) brings it back the way it was at quit, and on a first run leaves it closed. Replaces the old true/false, which are still read as 'auto' and 'never'.",
 });
 editor.defineConfigEnum("defaultView", {
   values: ["compact", "card"] as const,
@@ -18794,8 +18794,8 @@ editor.on("ready", () => {
   void loadDetectionRules();
   recoverPendingWorkspaces();
   // Blurred, so the keyboard stays with the editor. Whether it opens is the
-  // host's call (`orchestrator.manifest.json`, what the user left, and the
-  // launch mode); the column is already carved, and the mount fills it.
+  // host's call (`orchestrator.manifest.json` and what the user left); the
+  // column is already carved, and the mount fills it.
   if (editor.dockOpen()) {
     showDockUnfocused();
   }

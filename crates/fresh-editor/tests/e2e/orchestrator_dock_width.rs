@@ -7,7 +7,7 @@
 //! A width is a share of the frame now, dragged or not.
 
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
-use fresh::config::Config;
+use fresh::config::{Config, PluginConfig};
 use std::fs;
 use std::path::PathBuf;
 
@@ -51,10 +51,20 @@ impl Project {
         self.dir_context.data_dir.join("chrome.json")
     }
 
-    /// A bare `fresh` (Orchestrator mode), `cols` wide, dock mounted.
+    /// A bare `fresh` (Orchestrator mode), `cols` wide, dock mounted. The
+    /// dock starts closed for a new user, so the config asks for it.
     fn launch(&self, cols: u16) -> EditorTestHarness {
+        let mut config = Config::default();
+        config.plugins.insert(
+            "orchestrator".into(),
+            PluginConfig {
+                enabled: true,
+                path: None,
+                settings: serde_json::json!({ "autoOpenDock": "always" }),
+            },
+        );
         let options = HarnessOptions::new()
-            .with_config(Config::default())
+            .with_config(config)
             .with_working_dir(self.root.clone())
             .with_shared_dir_context(self.dir_context.clone())
             .without_empty_plugins_dir()

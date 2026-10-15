@@ -82,7 +82,7 @@ The `daemon` subcommand is an alias for the older `session` subcommand; both for
 |---------|------|-------------|
 | `fresh myfile.txt` | Direct | Just that file: no background process, no workspace restored or saved, no dock. See [Opening Files](#opening-files). |
 | `fresh --simple` | Direct | The same, with or without files: an empty buffer in this terminal. |
-| `fresh` | Daemon | Orchestrator mode: the shared `orchestrator` daemon, your last workspace, the dock. Direct when `orchestrator_mode` is off. |
+| `fresh` | Daemon | Orchestrator mode: the shared `orchestrator` daemon, your last workspace, and the dock once you have opened it. Direct when `orchestrator_mode` is off. |
 | `fresh -a` | Daemon | Background daemon for this directory. Supports detach/reattach. |
 | `fresh --web [ADDR]` | Daemon | Foreground daemon that also serves the browser UI. |
 

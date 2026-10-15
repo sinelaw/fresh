@@ -328,7 +328,7 @@ Today a manifest declares one thing, chrome:
 
 ```json
 { "chrome": { "dock": {
-    "open": true,
+    "open": false,
     "open_setting": "autoOpenDock",
     "width": { "fraction": 0.28, "min": 24, "max": 40 } } } }
 ```
@@ -339,9 +339,10 @@ host decides at construction whether the slot is open and how wide
 `plugins.<name>.settings` holding one of three modes, and each means what it
 says: `never` keeps the slot closed and `always` opens it, both outright;
 `auto` (the default) brings it back as the user left it
-(`<data>/chrome.json`), and on a first launch lets a bare `fresh` in
-Orchestrator mode open it, else `open` decides. So the launch mode is the
-default *under* the setting, not an override over it (#3442). The host reads
+(`<data>/chrome.json`), and on a first launch `open` decides (default
+`true`; the orchestrator declares `false`). The launch mode plays no part:
+it used to override the setting (#3442), then to open the dock on a first
+launch. The host reads
 the setting (and rewrites a legacy boolean, below) but never writes it on the
 user's behalf; keeping it in step with the user is the plugin's job — the
 orchestrator writes `always` / `never` when the user opens or closes the dock,
