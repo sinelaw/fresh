@@ -12,6 +12,7 @@
   "main": "src/main.js",
   "scripts": {
     "stage": "node scripts/stage.js",
+    "package": "node scripts/package.js",
     "start": "electron .",
     "dist": "electron-builder --publish never",
     "test:e2e": "node test/e2e.mjs"
