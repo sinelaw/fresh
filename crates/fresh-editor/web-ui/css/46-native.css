@@ -172,3 +172,26 @@ body.macfam .native-panel.np-dock{background:var(--mac-sidebar)}
    way first when the chrome font makes a row wider than its cells were. */
 .native-panel .w-gap{flex:0 1 auto;min-width:.6em}
 .native-panel .w-toggle .w-label,.native-panel .w-button{white-space:nowrap}
+/* A page's text set as text (js/65-widgets.js `paragraphs`): bare lines sit
+   flush left like the terminal's, a wrapped run is one paragraph, the empty
+   line between paragraphs is a paragraph's worth of air. */
+.native-panel .w-button.bare.full{text-align:left;justify-content:flex-start}
+.native-panel .w-button.bare.para{white-space:normal;line-height:1.45}
+.native-panel .w-para-gap{height:.6em}
+.native-panel .w-blank{flex:none}
+/* A sized section keeps its width; sections side by side stand as tall as
+   the tallest, tops aligned, as boxes in a row do. Their row is spaced by the
+   page's own spacers alone: it was laid out to fill the column exactly. */
+.native-panel .w-row > .w-section.sized{flex:0 1 auto;min-width:0;box-sizing:border-box}
+.native-panel .w-row:has(> .w-section.sized){align-items:stretch;gap:0;flex-wrap:nowrap}
+.native-panel .w-button.bare.full{padding-top:.1em;padding-bottom:.1em}
+.native-panel .w-code{margin:0;font-family:var(--mono-family);font-size:inherit;line-height:1.4;
+  white-space:pre;overflow:auto;padding:.5em .75em;border-radius:var(--r-sm,4px);
+  background:color-mix(in srgb,var(--fg) 4%,var(--bg))}
+.native-panel .w-md{white-space:pre-wrap;line-height:1.45}
+/* A page is scrolled by the editor (`syncPage`): no scrollbar of its own. Its
+   bar is the display list's, at the pane's edge beside the page's column,
+   dragged as in the terminal. */
+.native-panel.paged{overflow:hidden}
+body.native-panels .tree-item.k-scrollbar[data-surface-kind="pane"]{visibility:visible}
+

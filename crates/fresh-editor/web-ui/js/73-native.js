@@ -107,6 +107,8 @@ function nativePanelEl(p){
     el.style.maxHeight="calc(100% - "+el.style.top+" - 4px)";
   }
   el.dataset.slot=p.kind;
+  // A page scrolls where the editor scrolls it, not by itself.
+  if(p.page) el.classList.add("paged");
   // A floating panel is a dialog (modal while centred); a docked one a region.
   if(p.kind==="floating") aria(el, "dialog", {modal:!p.anchored, label:p.title||null});
   else aria(el, "region", {label:p.title||p.kind});
@@ -134,11 +136,36 @@ function nativePanelEl(p){
   // the page scrolls its own lists.
   requestAnimationFrame(()=>{
     alignFieldLabels(el);
+    if(p.page) syncPage(el, p.page);
     for(const s of el.querySelectorAll(".w-list-row.sel,.w-list-card.sel,.w-tree-row.sel")){
       s.scrollIntoView({block:"nearest"});
     }
   });
   return el;
+}
+
+// A page is scrolled by the editor — the wheel, its keys, a card's "jump ↓"
+// all move the page's window there — and laid out here in other heights, so
+// rows are placed by the widgets on them: each mark is the content row a
+// widget starts on, and the view's top is put where the terminal window's
+// is, exactly at a widget and in proportion between two.
+function syncPage(el, page){
+  const base=el.getBoundingClientRect().top-el.scrollTop;
+  const pts=[[0,0]];
+  for(const [row,key] of (page.marks||[])){
+    const w=el.querySelector('[data-wkey="'+CSS.escape(key)+'"]');
+    if(!w) continue;
+    const top=w.getBoundingClientRect().top-base;
+    if(row>pts[pts.length-1][0]&&top>=pts[pts.length-1][1]) pts.push([row,top]);
+  }
+  pts.push([Math.max(page.content,pts[pts.length-1][0]+1), el.scrollHeight]);
+  const r=page.offset||0;
+  let i=0; while(i<pts.length-2&&pts[i+1][0]<=r) i++;
+  const [r0,t0]=pts[i], [r1,t1]=pts[i+1];
+  const at=t0+(t1-t0)*Math.min(1,Math.max(0,(r-r0)/Math.max(1,r1-r0)));
+  // At the end of the content, the end of the page (heights differ, so the
+  // last row of the window lands on the last of the page).
+  el.scrollTop=r+page.window>=page.content?el.scrollHeight:at;
 }
 
 // Fields stacked under one another line up, as a form's do. The terminal

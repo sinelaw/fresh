@@ -198,7 +198,10 @@ document.addEventListener("click",e=>{ if(!onChrome(e)) focusSink(); });
 // DOM, so they scroll natively — forwarding their wheel to the editor would only
 // trigger a re-render that resets scrollTop. Let the browser handle those; route
 // everything else to the editor at the pointer cell.
-const onScrollable = e => e.target.closest(".set-items,.set-cats,.w-list,.widget-surface,.native-panel");
+// A native page (`.native-panel.paged`) is the exception: the editor scrolls
+// it, so its wheel goes there like a buffer's.
+const onScrollable = e => { const s=e.target.closest(".set-items,.set-cats,.w-list,.widget-surface,.native-panel");
+  return s&&!s.matches(".native-panel.paged")?s:null; };
 // Ctrl+wheel = app zoom (frontend-owned, like Ctrl+=/-/0 above). Must be a
 // non-passive listener so the browser's own page zoom can be preventDefault-ed.
 document.addEventListener("wheel",e=>{ if(!e.ctrlKey) return; e.preventDefault();

@@ -221,7 +221,38 @@ function syncWidgetInputFocus(){
   }
 }
 
+// Lines a terminal layout wrapped to its measure, one row per line, read as
+// one paragraph natively: a run of rows that each hold just a bare full-width
+// button with the same press target and style (a card's description) becomes
+// one button whose text the browser wraps to the card. Rows of other targets,
+// and the empty lines between paragraphs, are left as they are.
+function paragraphs(kids){
+  const line=c=>{
+    const b=c&&c.kind==="row"&&(c.children||[]).length===1?c.children[0]:null;
+    return b&&b.kind==="button"&&b.bare&&b.fullWidth&&(b.label||"").trim()?b:null;
+  };
+  const out=[];
+  for(let i=0;i<kids.length;i++){
+    const first=line(kids[i]);
+    if(!first){ out.push(kids[i]); continue; }
+    const same=b=>b&&b.key===first.key&&b.focusable===first.focusable
+      &&JSON.stringify(b.style||null)===JSON.stringify(first.style||null);
+    let j=i+1, text=first.label.trim();
+    while(j<kids.length&&same(line(kids[j]))){ text+=" "+line(kids[j]).label.trim(); j++; }
+    out.push(j>i+1?{...first,label:text,paragraph:true}:kids[i]);
+    i=j-1;
+  }
+  return out;
+}
+
+// Every native control carries its widget key (`data-wkey`): a page finds
+// its widgets by it to scroll as the editor does (`syncPage`, 73-native.js).
 function widgetEl(spec, ctx){
+  const el=widgetElOf(spec, ctx);
+  if(spec&&spec.key&&el&&el.nodeType===1&&!el.dataset.wkey) el.dataset.wkey=spec.key;
+  return el;
+}
+function widgetElOf(spec, ctx){
   if(!spec) return document.createTextNode("");
   const kind=spec.kind, fk=ctx.focusKey;
   const focused = spec.key && spec.key===fk;
@@ -255,7 +286,7 @@ function widgetEl(spec, ctx){
     const grid=!ctx.table&&(ctx.grid||(kind==="row"&&kids.some(inked)));
     const el=div("w-"+kind+(spec.wrap?" wrap":"")+(grid&&!ctx.grid?" grid":"")+(spec.justifyEnd?" end":""));
     const cctx={...ctx,grid:grid||ctx.grid,inRow:kind==="row"};
-    for(const c of kids) el.appendChild(widgetEl(c, cctx));
+    for(const c of (ctx.native&&!grid&&kind==="col"?paragraphs(kids):kids)) el.appendChild(widgetEl(c, cctx));
     return el;
   }
   if(kind==="label"){
@@ -303,6 +334,15 @@ function widgetEl(spec, ctx){
     // spaces fill the row to the close box); a laid-out button has a box. In
     // a grid row the padding IS the layout, so it stays.
     const label=ctx.grid?(spec.label||""):(spec.label||"").trim();
+    if(ctx.native&&!ctx.grid&&spec.bare){
+      // A bare full-width line of text is a line of the page: an empty one is
+      // the gap between paragraphs, a run of them one paragraph (`paragraphs`),
+      // and the spaces leading one are its indent, not centring.
+      if(!label&&spec.fullWidth) return div("w-para-gap");
+      if(spec.paragraph) el.classList.add("para");
+      const indent=(spec.label||"").length-(spec.label||"").trimStart().length;
+      if(indent&&spec.fullWidth) el.style.paddingLeft="calc("+indent*CW+"px + .35em)";
+    }
     // A menu entry that says what it sets: `(•)`/`( )` a choice, `[✓]`/`[ ]`
     // a switch — drawn as the marks they stand for.
     const mark=!ctx.grid&&ctx.native&&/^(\(•\)|\( \)|\[✓\]|\[ \])\s+(.*)$/.exec(label);
@@ -328,6 +368,10 @@ function widgetEl(spec, ctx){
   }
   if(kind==="labeledSection"){
     const el=div("w-section"); if(spec.label){ const l=div("w-section-label"); l.textContent=spec.label; el.appendChild(l); }
+    // A section the page sized in cells (a card of a row of cards, a framed
+    // box on the page's axis) keeps that width, so cards set side by side
+    // come out alike and a box sits where the terminal puts it.
+    if(ctx.native&&spec.widthCols>0){ el.classList.add("sized"); el.style.width=spec.widthCols*CW+"px"; }
     aria(el, "group", {label:spec.label||null});
     if(spec.child) el.appendChild(widgetEl(spec.child, ctx)); return el;
   }
@@ -342,6 +386,16 @@ function widgetEl(spec, ctx){
     // browser-computed click-to-caret positions for free.
     const inst=(ctx.instances&&spec.key)?ctx.instances[spec.key]:null;
     const val=(inst&&inst.textValue!=null)?inst.textValue:(spec.value||"");
+    // Read-only markdown is something to read, not a field: a document that
+    // is one fenced block (a page's code sample) is that code, in the buffer's
+    // font; any other is its text, wrapped.
+    if(ctx.native&&spec.readOnly&&spec.markdown){
+      const fence=/^\s*```[^\n]*\n([\s\S]*?)\n?\s*(```\s*)?$/.exec(val);
+      const el=document.createElement(fence?"pre":"div");
+      el.className=fence?"w-code":"w-md";
+      el.textContent=fence?fence[1].replace(/[ \t]+$/gm,""):val;
+      return el;
+    }
     // Width as the terminal sizes it: a multi-line field (or one asked to)
     // fills its row; a `fieldWidth` is a width in characters.
     const fill=spec.fullWidth||((spec.rows||1)>1&&!spec.fieldWidth);
@@ -658,6 +712,10 @@ function widgetEl(spec, ctx){
       // In a row, spaces are a gap as wide as they are; in a column, blank
       // rows push what follows down.
       if(ctx.inRow){ const g=div("w-gap"); g.style.width=Math.max(...spec.entries.map(e=>entryText(e).length),1)*0.6+"ch"; return g; }
+      // A page (a panel mounted into a pane, scrolled as a whole) has no
+      // bottom to push toward: its blank rows are the air between its blocks,
+      // one row each, as the terminal sets them.
+      if(ctx.slot==="pane"){ const b=div("w-blank"); b.style.height=CH*spec.entries.length+"px"; return b; }
       return div("w-fill");
     }
     const el=div("w-raw");

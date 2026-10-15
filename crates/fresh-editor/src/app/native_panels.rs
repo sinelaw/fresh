@@ -77,8 +77,17 @@ fn find<'a>(spec: &'a WidgetSpec, pred: &dyn Fn(&WidgetSpec) -> bool) -> Option<
     spec.children().find_map(|c| find(c, pred))
 }
 
+/// The control keyed `key`. **A container's key scopes, a control's acts:** a
+/// box can carry the key of the button inside it (the welcome page's door
+/// cards key the card and each of its rows alike, so a press anywhere on the
+/// card is that door's), and a press names the control, never the box. So a
+/// keyed node with no children is preferred, and a keyed container answers
+/// only when nothing inside it carries the key.
 fn keyed<'a>(spec: &'a WidgetSpec, key: &str) -> Option<&'a WidgetSpec> {
-    find(spec, &|s| s.key() == Some(key))
+    find(spec, &|s| {
+        s.key() == Some(key) && s.children().next().is_none()
+    })
+    .or_else(|| find(spec, &|s| s.key() == Some(key)))
 }
 
 fn index_of(payload: &Value) -> Option<usize> {
@@ -419,6 +428,27 @@ mod tests {
         assert!(resolve(&panel(), &states, &press("nope", "activate", json!({}))).is_none());
         // A key that names a toggle is not a button.
         assert!(resolve(&panel(), &states, &press("all", "activate", json!({}))).is_none());
+    }
+
+    #[test]
+    fn a_press_names_the_control_not_the_box_that_shares_its_key() {
+        // The welcome page's door card: the section and every row in it carry
+        // the door's key.
+        let card = spec(json!({
+            "kind": "labeledSection", "key": "jump:1", "label": "[1] JUST EDIT TEXT",
+            "child": { "kind": "col", "children": [
+                { "kind": "row", "children": [
+                    { "kind": "button", "key": "jump:1", "label": "Open a file & go", "bare": true }
+                ]}
+            ]}
+        }));
+        let e = resolve(
+            &card,
+            &HashMap::new(),
+            &press("jump:1", "activate", json!({})),
+        )
+        .unwrap();
+        assert_eq!((e.widget_kind, e.widget_key.as_str()), ("button", "jump:1"));
     }
 
     #[test]

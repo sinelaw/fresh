@@ -1499,6 +1499,37 @@ if (before != null) {
 check('a switch says whether it is on, and pressing it turns it', before != null
   && (await caseSwitch.getAttribute('aria-checked')) === String(before !== 'true'));
 await page.screenshot({ path: `${SHOTS}/42-native-pane-panel.png` });
+// A page (the Welcome screen): laid out in the page's own column, as the
+// terminal sets it, and scrolled by the editor — the web follows the
+// editor's window, so a card's jump, the wheel and the page keys are one
+// scroll position.
+await page.request.post(URL + '/action', { data: { action: 'welcome_open' } });
+const welcome = page.locator('.native-panel.np-pane.paged').first();
+await welcome.waitFor({ timeout: 8000 }).catch(() => {});
+check('the Welcome screen is a native page the editor scrolls', (await welcome.count()) === 1);
+const doors = await page.evaluate(() => [...document.querySelectorAll('.native-panel.paged .w-section.sized')]
+  .slice(0, 3).map(e => e.getBoundingClientRect()).map(r => ({ top: Math.round(r.top), h: Math.round(r.height) })));
+check('its door cards stand side by side, alike', doors.length === 3
+  && doors.every(d => d.top === doors[0].top && d.h === doors[0].h), JSON.stringify(doors));
+const pageOffset = () => page.evaluate(() =>
+  (window.fresh.scene.regions.native.panels.find(x => x.page) || {}).page?.offset ?? -1);
+await welcome.getByRole('button', { name: /jump/ }).first().click().catch(() => {});
+await page.waitForFunction(() => ((window.fresh.scene.regions.native.panels.find(x => x.page) || {}).page?.offset || 0) > 0,
+  null, { timeout: 5000 }).catch(() => {});
+const jumped = await pageOffset();
+check('a card\'s jump scrolls the page in the editor, and the view follows',
+  jumped > 0 && await page.evaluate(() => document.querySelector('.native-panel.paged').scrollTop > 0), 'offset=' + jumped);
+const wbox = await welcome.boundingBox();
+if (wbox) {
+  await page.mouse.move(wbox.x + wbox.width / 2, wbox.y + wbox.height / 2);
+  await page.mouse.wheel(0, 400);
+  await page.waitForFunction(o => ((window.fresh.scene.regions.native.panels.find(x => x.page) || {}).page?.offset || 0) > o,
+    jumped, { timeout: 5000 }).catch(() => {});
+}
+check('the wheel over the page scrolls it in the editor', (await pageOffset()) > jumped);
+check('no cell caret is drawn over the page', await page.evaluate(() =>
+  [...document.querySelectorAll('.caret,.tree-caret')].every(c => getComputedStyle(c).visibility === 'hidden')));
+await page.screenshot({ path: `${SHOTS}/43-native-welcome.png` });
 check('no JS page errors (native panels)', nerrs.length === 0, nerrs.join(' | '));
 
 console.log('\n[touch pan/scroll on mobile (hasTouch context)]');
