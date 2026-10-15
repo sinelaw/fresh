@@ -865,6 +865,9 @@ impl EditorServer {
             // loads on the same FIFO thread, so they still run after them.
             true,
             self.config.orchestrator_mode,
+            // A daemon is a session, never a file launch: files reach it as
+            // `OpenFiles` into whatever workspace it has.
+            false,
         )
         .map_err(|e| io::Error::other(format!("Failed to create editor: {}", e)))?;
 
@@ -1319,9 +1322,28 @@ impl EditorServer {
 
                         // Track the waiting client
                         if let Some(wait_id) = wait_id {
+                            // A viewer is an attached terminal (a client that
+                            // is not itself waiting on a file) or a browser.
+                            let viewed = self.web_busy()
+                                || self
+                                    .clients
+                                    .iter()
+                                    .enumerate()
+                                    .any(|(i, c)| i != idx && c.wait_id.is_none());
                             if let Some(client) = self.clients.get_mut(idx) {
                                 self.waiting_clients.insert(wait_id, client.id);
                                 client.wait_id = Some(wait_id);
+                                if !viewed {
+                                    tracing::info!(
+                                        "OpenFiles --wait on a daemon with no viewer; telling the client"
+                                    );
+                                    let msg = serde_json::to_string(&ServerControl::NoViewer)
+                                        .unwrap_or_default();
+                                    // Best-effort: a client that is already gone
+                                    // has nothing left to tell.
+                                    #[allow(clippy::let_underscore_must_use)]
+                                    let _ = client.conn.write_control(&msg);
+                                }
                             }
                         }
 

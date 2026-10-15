@@ -7,6 +7,15 @@
 * **Fresh Desktop** - Fresh as a standalone desktop application, in its own window with the editor bundled inside: no browser, no terminal, nothing else to install. Each release attaches `fresh-desktop-<version>-windows-x64-setup.exe`, `fresh-desktop-<version>-macos-universal.dmg` (Intel and Apple Silicon) and `fresh-desktop-<version>-linux-x86_64.AppImage`. It is the web UI served by the same editor (`fresh --web`), so sessions, workspaces and hot exit work as in the terminal. The builds are not yet signed with a developer certificate
 * **A package for Debian testing and unstable** - each release also attaches `fresh-editor_<version>-1_<arch>.debian-testing.deb` (amd64 and arm64), built the way Debian's own archive would build it: from Debian's packaged Rust crates, with Debian's QuickJS running plugins and Debian's `esbuild` compiling their TypeScript. It installs only on Debian testing or unstable. Its bundled plugins are compiled when it is built, so it runs them without a TypeScript compiler; install the `esbuild` package (suggested, not pulled in) for your own `init.ts` and plugins, including those the package manager installs. It leaves out the update checker, telemetry and tree-sitter. Its source package is attached as `fresh-editor_<version>-1.debian-testing-source.tar.gz`. The usual `.deb`, for any Debian or Ubuntu, is unchanged
 
+### Improvements
+
+* **`fresh FILE` opens just that file** - as `$EDITOR` or git's `core.editor`, Fresh no longer brings the session along: no restored or saved workspace, no dock, no Welcome tab, and no other file's unsaved changes (the named file's own still come back). `git config --global core.editor fresh` is all git needs, and `fresh --wait` is accepted. `fresh --simple` does the same without needing a file. A bare `fresh`, `fresh DIR` and `fresh -a` are unchanged; `--restore`, or turning off `editor.skip_session_restore_when_files_passed`, makes a file launch a full session (#3555, reported by @zipproth)
+* **Faster startup with many workspaces** - saved workspaces are read when the dock, the workspace picker or the Welcome page first lists them, not at startup (#3555)
+
+### Bug Fixes
+
+* **git no longer hangs on a detached daemon** - `fresh --cmd daemon open-file … --wait` aimed at a daemon with nothing attached attaches your terminal (or fails without one) instead of waiting on an editor nobody can see (#3555)
+
 ## 0.5.3
 
 For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).

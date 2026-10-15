@@ -20,6 +20,8 @@
   "cli.arg.event_log": "将事件记录到指定文件",
   "cli.arg.no_restore": "不恢复之前的工作区（仍会恢复热退出内容 — 未保存的已修改文件与未命名缓冲区 — 以免丢失正在进行的工作）",
   "cli.arg.restore": "强制恢复之前的工作区，覆盖配置中的 `editor.restore_previous_session = false`。不能与 --no-restore 同时使用。",
+  "cli.arg.wait": "为兼容 $EDITOR 和 git 的 core.editor 而接受；Fresh 本来就要等你退出后才返回",
+  "cli.arg.simple": "在此终端中只打开指定的内容（或一个空缓冲区）：不恢复或保存会话，没有停靠栏，没有守护进程（相当于不带文件的 `fresh FILE`）",
   "cli.arg.no_upgrade_check": "禁用升级检查与匿名遥测",
   "cli.arg.locale": "覆盖语言（例如 'en'、'ja'、'zh-CN'）",
   "cli.arg.gui": "以 GUI 模式启动（使用 GPU 渲染的原生窗口）",

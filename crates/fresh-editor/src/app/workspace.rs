@@ -529,6 +529,13 @@ impl Editor {
             );
             return Ok(());
         }
+        // A file launch never restored the workspace, so what it holds is
+        // the named files, not the project's session: saving it would
+        // replace the project's tabs and layout with, say, COMMIT_EDITMSG.
+        if self.file_launch {
+            tracing::debug!("Skipping workspace save for window {id}: file launch");
+            return Ok(());
+        }
 
         let mut workspace = win.capture_workspace();
         // The sidebar's sections are editor state (see `app::sidebar`), so
@@ -806,7 +813,12 @@ impl Editor {
         }
         self.save_histories();
         self.save_orchestrator_state();
-        self.save_dock_chrome();
+        // The dock's open/closed state is a session preference like the
+        // workspace itself: a launch that does not persist the workspace
+        // (`--no-restore`, `fresh FILE`) must not record it for the next one.
+        if self.workspace_persistence_enabled && !self.file_launch {
+            self.save_dock_chrome();
+        }
 
         first_err.map_or(Ok(()), Err)
     }

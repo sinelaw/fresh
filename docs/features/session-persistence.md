@@ -80,7 +80,8 @@ The `daemon` subcommand is an alias for the older `session` subcommand; both for
 
 | Command | Mode | Description |
 |---------|------|-------------|
-| `fresh myfile.txt` | Direct | No background process. Closing quits everything. |
+| `fresh myfile.txt` | Direct | Just that file: no background process, no workspace restored or saved, no dock. See [Opening Files](#opening-files). |
+| `fresh --simple` | Direct | The same, with or without files: an empty buffer in this terminal. |
 | `fresh` | Daemon | Orchestrator mode: the shared `orchestrator` daemon, your last workspace, the dock. Direct when `orchestrator_mode` is off. |
 | `fresh -a` | Daemon | Background daemon for this directory. Supports detach/reattach. |
 | `fresh --web [ADDR]` | Daemon | Foreground daemon that also serves the browser UI. |
@@ -95,6 +96,21 @@ leaves the session running for the other. The rendered grid fits the smallest
 connected viewport, so a larger window letterboxes. If a daemon is already running
 in the directory, `--web` says so rather than shadowing it — name a separate one
 with `--session-name NAME`.
+
+## Opening Files
+
+`fresh FILE…` is about those files, not a session. It:
+
+- opens only the files you named — the project's workspace (tabs, splits, layout) is neither restored nor saved, so quitting leaves it as your last full session left it;
+- brings back those files' own unsaved changes (hot exit), but no other file's — those stay stashed for the next `fresh` in the project;
+- does not open the dock on its own (unless the dock is set to open always), and does not read the list of saved workspaces until you open the dock;
+- runs in this terminal and returns when you quit — no daemon.
+
+Search history, crash recovery, remembered cursor positions and the Workspace Trust question work as in any launch.
+
+`fresh --simple` is the same launch without needing a file: with no arguments it opens an empty buffer in this terminal, with no session restored or saved, no dock and no daemon. The dock and the rest of the Orchestrator stay available — open the dock from the command palette and your workspaces load then.
+
+A bare `fresh`, `fresh DIR` and `fresh -a` are sessions: they restore and save the workspace. To make `fresh FILE` a session too, pass `--restore`, or turn off `editor.skip_session_restore_when_files_passed` to do it for every launch.
 
 ## How It Works
 
@@ -169,13 +185,13 @@ If no daemon is running, one is started automatically and the client attaches in
 
 #### Use as Git's Editor
 
-Set Fresh as git's editor so `git commit`, `git rebase -i`, etc. open in your running daemon and block until you close the buffer:
-
 ```bash
-git config --global core.editor 'fresh --cmd daemon open-file . --wait'
+git config --global core.editor fresh
 ```
 
-Git appends the filename, so the final command becomes e.g. `fresh --cmd daemon open-file . --wait .git/COMMIT_EDITMSG`. The `--wait` flag can appear anywhere after the daemon name — files after it are collected normally.
+`git commit`, `git rebase -i` and friends then [open just that file](#opening-files) in the terminal git started, and git continues when you quit. `fresh --wait` is accepted and does nothing, for tools that add it.
+
+Routing git through a daemon (`fresh --cmd daemon open-file . --wait`) still works, but the file then opens in that daemon's workspace, next to whatever else it has open. If nothing is attached to the daemon, your terminal attaches to it rather than leaving git waiting on an editor nobody can see.
 
 #### Annotated Code Walkthroughs
 

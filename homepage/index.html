@@ -1048,9 +1048,9 @@
             <div class="note reveal" id="daemon">
                 <span class="eyebrow">Daemon</span>
                 <h3 style="margin-top:18px">Detach, <em>come back.</em><a class="anchor-link" href="#daemon" aria-label="Permalink to Detachable daemon">#</a></h3>
-                <p>Start a named daemon and reattach across terminal disconnects. <code>--wait</code> makes Fresh your <code>$EDITOR</code>; Hot Exit keeps every buffer across restarts and crashes.</p>
+                <p>Start a named daemon and reattach across terminal disconnects. Plain <code>fresh FILE</code> makes Fresh your <code>$EDITOR</code>: just that file, no workspace or dock; Hot Exit keeps every buffer across restarts and crashes.</p>
                 <div class="snippet"><span class="c"># Use Fresh as your git editor</span>
-<span class="k">git</span> config --global core.editor "fresh --wait"
+<span class="k">git</span> config --global core.editor fresh
 
 <span class="c"># Attach a persistent daemon</span>
 <span class="k">fresh</span> -a myproject</div>
@@ -1207,7 +1207,7 @@
             <li>Format-on-save</li>
             <li>SSH remote editing</li>
             <li>Detachable daemon (<code>fresh -a</code>)</li>
-            <li><code>--wait</code> for <code>git core.editor</code> / <code>$EDITOR</code></li>
+            <li><code>fresh FILE</code> as <code>git core.editor</code> / <code>$EDITOR</code></li>
             <li>Hot Exit with crash recovery</li>
             <li>Integrated terminal (mouse forwarding, scrollback)</li>
             <li>Vim mode</li>

@@ -208,7 +208,7 @@ screen:
  │               │ Make it your $EDITOR                                        quality-of-life from day one │           │
  │               ├──────────────────────────────────────────────────────────────────────────────────────────┤           │
  │               │  # Use Fresh for commit messages and rebases                                             │           │   <- fenced code, highlighted by the real grammar engine
- │               │  git config --global core.editor "fresh --wait"                                          │           │
+ │               │  git config --global core.editor fresh                                                   │           │
  │               │                                                                                          │           │
  │               │  # Keep a project session alive across terminal disconnects                              │           │
  │               │  fresh -a myproject                                                                      │           │

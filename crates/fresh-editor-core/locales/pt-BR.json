@@ -20,6 +20,8 @@
   "cli.arg.event_log": "Habilitar o registro de eventos no arquivo informado",
   "cli.arg.no_restore": "Não restaurar o espaço de trabalho anterior (o conteúdo de hot-exit — arquivos modificados não salvos e buffers sem nome — ainda é restaurado para não perder o trabalho em andamento)",
   "cli.arg.restore": "Forçar a restauração do espaço de trabalho anterior, sobrescrevendo `editor.restore_previous_session = false` na configuração. Não pode ser combinado com --no-restore.",
+  "cli.arg.wait": "Aceito por compatibilidade com $EDITOR e o core.editor do git; o Fresh já só retorna quando você sai",
+  "cli.arg.simple": "Abre só o que foi indicado, ou um buffer vazio, neste terminal: sem restaurar nem salvar a sessão, sem painel, sem daemon (o que `fresh FILE` faz, sem precisar de arquivo)",
   "cli.arg.no_upgrade_check": "Desativar a verificação de atualizações e a telemetria anônima",
   "cli.arg.locale": "Sobrescrever o idioma (por ex. 'en', 'ja', 'zh-CN')",
   "cli.arg.gui": "Iniciar em modo GUI (janela nativa com renderização por GPU)",

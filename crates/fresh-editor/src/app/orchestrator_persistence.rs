@@ -38,7 +38,7 @@
 //!
 //! ## Startup
 //!
-//! [`read_persisted_windows_env`] + [`read_persisted_plugin_state`]
+//! [`read_persisted_windows`] + [`read_persisted_plugin_state`]
 //! run from `editor_init` before the editor struct exists. The
 //! foreground window is the one whose `root` matches the launch cwd
 //! ([`pick_active_window_for_cwd`]) — authoritatively, regardless of
@@ -141,6 +141,17 @@ fn default_version() -> u32 {
 
 const CURRENT_VERSION: u32 = 2;
 
+/// Which persisted workspaces a read takes in.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum WorkspaceScope {
+    /// Every workspace in the registry — what the Orchestrator lists.
+    All,
+    /// Only the workspaces rooted at the launch directory: what an ordinary
+    /// launch restores. Only files whose name says they belong to that root
+    /// are opened, so its cost does not grow with the registry.
+    LaunchDir,
+}
+
 /// Read the global `windows.json` and return the parsed
 /// envelope. Returns `None` when the file doesn't exist or
 /// fails to parse — those are not error cases at the editor
@@ -148,19 +159,18 @@ const CURRENT_VERSION: u32 = 2;
 /// state").
 ///
 /// Migrates v1 (per-cwd) files into the global store on first
-/// load and renames each to `.migrated.bak`. The `working_dir`
-/// argument is no longer used for the file location (it's
-/// global now); it's kept in the signature so the factory can
-/// later pass it to the orchestrator plugin as the
-/// "default project filter" hint without a second IO pass.
+/// load and renames each to `.migrated.bak`. `working_dir` is the
+/// directory [`WorkspaceScope::LaunchDir`] limits the read to; it
+/// plays no part in where the files live (that is global).
 ///
 /// Pure file IO + JSON parse. Used by the editor factory to
 /// decide how to build the initial windows map before any
 /// `Editor` instance exists.
-pub(crate) fn read_persisted_windows_env(
+pub(crate) fn read_persisted_windows(
     filesystem: &(dyn crate::model::filesystem::FileSystem + Send + Sync),
     data_dir: &Path,
-    _working_dir: &Path,
+    working_dir: &Path,
+    scope: WorkspaceScope,
 ) -> Option<PersistedWindows> {
     // Legacy v1 (per-cwd) → windows.json, if any survive. windows.json
     // is itself legacy now; the next step folds it into the per-dir
@@ -179,7 +189,11 @@ pub(crate) fn read_persisted_windows_env(
     // co-tenant workspaces (a tab extracted into its own window over the same
     // project), so discovery yields one window per `stable_id`, not one per
     // directory. GC dead entries and build a window per survivor.
-    let windows = discover_sessions(filesystem, data_dir);
+    let only_root = match scope {
+        WorkspaceScope::All => None,
+        WorkspaceScope::LaunchDir => Some(working_dir),
+    };
+    let windows = discover_sessions(filesystem, data_dir, only_root);
     if windows.is_empty() {
         return None;
     }
@@ -222,9 +236,16 @@ fn basename_label(root: &Path) -> String {
 /// garbage-collect entries whose directory no longer exists, and return
 /// one `PersistedWindow` per survivor. Ids are assigned by sorted
 /// canonical root so they stay stable across runs for a stable dir set.
+///
+/// `only_root` limits the scan to the workspaces of one directory: files are
+/// picked by name (`<encoded-root>.json` / `<encoded-root>.<id>.json`, as
+/// `workspace::candidate_files_for_root` does) before any is read, and a
+/// name that merely shares the prefix is dropped once its `working_dir` is
+/// known.
 fn discover_sessions(
     filesystem: &(dyn crate::model::filesystem::FileSystem + Send + Sync),
     data_dir: &Path,
+    only_root: Option<&Path>,
 ) -> Vec<PersistedWindow> {
     type SessionState = HashMap<String, HashMap<String, serde_json::Value>>;
     let dir = workspaces_dir(data_dir);
@@ -246,6 +267,11 @@ fn discover_sessions(
         saved_at: u64,
         last_focused_at: Option<u64>,
     }
+    let only_root = only_root.map(|root| {
+        let key = canonical_key(root);
+        let encoded = crate::workspace::encode_path_for_filename(&key);
+        (key, format!("{encoded}.json"), format!("{encoded}."))
+    });
     let mut found: Vec<Candidate> = Vec::new();
     for entry in entries {
         let p = &entry.path;
@@ -254,7 +280,11 @@ fn discover_sessions(
         if !entry.name.ends_with(".json") {
             continue;
         }
-        tracing::debug!(path = %p.display(), "discover_sessions: read_file");
+        if let Some((_, legacy_name, id_prefix)) = &only_root {
+            if entry.name != *legacy_name && !entry.name.starts_with(id_prefix.as_str()) {
+                continue;
+            }
+        }
         let Ok(bytes) = filesystem.read_file(p) else {
             continue;
         };
@@ -265,6 +295,11 @@ fn discover_sessions(
             continue;
         };
         let root = PathBuf::from(root);
+        if let Some((key, _, _)) = &only_root {
+            if canonical_key(&root) != *key {
+                continue;
+            }
+        }
         // The session's backend spec (how to reconnect on restore). Absent /
         // unparseable → `Local`, so a malformed entry degrades safely. Read
         // *before* the GC check: a remote session's `root` lives on the
@@ -799,7 +834,7 @@ fn migrate_legacy_windows(
 /// Read every `state/<plugin>.json` into a flat
 /// `plugin → key → value` map. Skips files with unsafe names,
 /// non-JSON extensions, parse errors, and empty maps. Same
-/// motivations as [`read_persisted_windows_env`] — used by the
+/// motivations as [`read_persisted_windows`] — used by the
 /// editor factory pre-construction.
 ///
 /// Reads from the global `<data>/orchestrator/state/` directory.
@@ -994,6 +1029,102 @@ fn migrate_legacy_plugin_state(
 }
 
 impl Editor {
+    /// Bring every persisted workspace into the editor, once. A launch starts
+    /// with only its own directory's workspaces (Orchestrator mode, whose
+    /// whole point is the full list, starts with all of them); the rest of
+    /// the registry is read the first time something uses it — the
+    /// Orchestrator listing workspaces (`editor.loadWorkspaces()`), or a
+    /// window being created, which must see an existing workspace for its
+    /// root rather than mint a duplicate.
+    ///
+    /// Each newly found workspace becomes an inert shell, exactly as at boot,
+    /// under a fresh window id: ids carry no meaning across launches (boot
+    /// assigns them by sorted root), so continuing from `next_window_id`
+    /// never collides with a window the plugins already know.
+    pub fn ensure_all_workspaces_loaded(&mut self) {
+        if self.all_workspaces_loaded {
+            return;
+        }
+        self.all_workspaces_loaded = true;
+        let start = std::time::Instant::now();
+        let local = crate::model::filesystem::StdFileSystem;
+        let Some(mut env) = read_persisted_windows(
+            &local,
+            &self.dir_context.data_dir,
+            &self.working_dir().to_path_buf(),
+            WorkspaceScope::All,
+        ) else {
+            return;
+        };
+        // Already here: the launch directory's workspaces, and any window
+        // created since. Matched by durable identity; an id-less legacy file
+        // is the one a window at its root adopted.
+        let live_ids: std::collections::HashSet<String> = self
+            .windows
+            .values()
+            .map(|w| w.stable_id.clone())
+            .chain(
+                self.dormant_remote
+                    .values()
+                    .filter_map(|d| d.stable_id.clone()),
+            )
+            .collect();
+        let live_roots: std::collections::HashSet<PathBuf> = self
+            .windows
+            .values()
+            .map(|w| canonical_key(&w.root))
+            .collect();
+        env.windows.retain(|ps| match &ps.stable_id {
+            Some(id) => !live_ids.contains(id),
+            None => !live_roots.contains(&canonical_key(&ps.root)),
+        });
+        let mut next = self.next_window_id;
+        for ps in &mut env.windows {
+            ps.id = next;
+            next += 1;
+        }
+        env.next_id = next;
+        let added = env.windows.len();
+
+        let mut shell_resources = self.window_resources();
+        shell_resources.fs_manager = std::sync::Arc::new(crate::services::fs::FsManager::new(
+            std::sync::Arc::new(crate::model::filesystem::StdFileSystem),
+        ));
+        let (shells, dormant) = super::editor_init::build_persisted_window_shells(
+            Some(&env),
+            false,
+            self.active_window,
+            self.terminal_width,
+            self.terminal_height,
+            &self.dir_context,
+            &shell_resources,
+        );
+        self.next_window_id = self.next_window_id.max(next);
+        for (id, shell) in shells {
+            self.windows.insert(id, shell);
+            // Renderable before the first dive, as boot's shells are.
+            if let Some((buf, state, metadata, event_log, mgr, vs)) =
+                self.build_fresh_layout_if_needed(id)
+            {
+                if let Some(s) = self.windows.get_mut(&id) {
+                    s.buffers.set_splits((mgr, vs));
+                    s.buffers.insert(buf, state);
+                    s.buffer_metadata.insert(buf, metadata);
+                    s.event_logs.insert(buf, event_log);
+                }
+            }
+            self.materialize_pending.insert(id);
+        }
+        self.dormant_remote.extend(dormant);
+        self.adopt_existing_window_connections();
+        self.mark_plugin_snapshot_dirty();
+        tracing::info!(
+            added,
+            elapsed = ?start.elapsed(),
+            "loaded the rest of the workspace registry"
+        );
+    }
+
     /// Persist `sessions` + `plugin_global_state` to disk. Best-
     /// effort: filesystem errors are logged at WARN and swallowed
     /// so a transient permission glitch doesn't block quit.
@@ -1332,7 +1463,7 @@ mod tests {
         .unwrap();
 
         let fs = StdFileSystem;
-        let sessions = discover_sessions(&fs, data_dir);
+        let sessions = discover_sessions(&fs, data_dir, None);
 
         assert_eq!(sessions.len(), 1, "only the existing dir yields a session");
         assert_eq!(sessions[0].root, live_root);
@@ -1396,7 +1527,7 @@ mod tests {
         .unwrap();
 
         let fs = StdFileSystem;
-        let sessions = discover_sessions(&fs, data_dir);
+        let sessions = discover_sessions(&fs, data_dir, None);
 
         let remote = sessions
             .iter()
@@ -1469,7 +1600,7 @@ mod tests {
         .unwrap();
 
         let fs = StdFileSystem;
-        let sessions = discover_sessions(&fs, data_dir);
+        let sessions = discover_sessions(&fs, data_dir, None);
 
         let ssh = sessions
             .iter()

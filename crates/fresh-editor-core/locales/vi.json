@@ -20,6 +20,8 @@
   "cli.arg.event_log": "Bật ghi sự kiện vào tệp đã chỉ định",
   "cli.arg.no_restore": "Không khôi phục không gian làm việc trước đó (nội dung hot-exit — các tệp đã sửa nhưng chưa lưu và bộ đệm không tên — vẫn được khôi phục để không mất công việc đang thực hiện)",
   "cli.arg.restore": "Buộc khôi phục không gian làm việc trước đó, ghi đè `editor.restore_previous_session = false` trong cấu hình. Không thể dùng cùng --no-restore.",
+  "cli.arg.wait": "Được chấp nhận cho $EDITOR và core.editor của git; Fresh vốn chỉ trả lại khi bạn thoát",
+  "cli.arg.simple": "Chỉ mở những gì được chỉ định, hoặc một bộ đệm trống, trong terminal này: không khôi phục hay lưu phiên, không thanh dock, không tiến trình nền (như `fresh FILE`, không cần tệp)",
   "cli.arg.no_upgrade_check": "Tắt kiểm tra cập nhật và đo lường ẩn danh",
   "cli.arg.locale": "Ghi đè ngôn ngữ (ví dụ 'en', 'ja', 'zh-CN')",
   "cli.arg.gui": "Khởi chạy ở chế độ GUI (cửa sổ gốc với kết xuất bằng GPU)",

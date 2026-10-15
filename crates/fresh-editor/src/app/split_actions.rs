@@ -802,7 +802,7 @@ impl Editor {
                 underline: true,
                 ..Default::default()
             };
-            self.handle_add_overlay(buffer_id, namespace.clone(), range, options);
+            self.handle_add_overlay(buffer_id, namespace.clone(), range, options, false);
         }
     }
 

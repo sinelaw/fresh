@@ -217,6 +217,13 @@ pub struct Overlay {
     /// keep its own color there so it still stands out from the other
     /// matches.
     pub above_selection: bool,
+
+    /// Draw only in a pane showing the buffer in compose view.
+    ///
+    /// Decorations live on the buffer, but compose view is a property of a
+    /// pane, so a plugin composing one pane would otherwise paint its
+    /// styling into a sibling pane showing the same buffer as source.
+    pub compose_only: bool,
 }
 
 impl Overlay {
@@ -246,6 +253,7 @@ impl Overlay {
             url: None,
             theme_key: None,
             above_selection: false,
+            compose_only: false,
         }
     }
 
@@ -295,6 +303,7 @@ impl Overlay {
                     url: None,
                     theme_key: None,
                     above_selection: false,
+                    compose_only: false,
                 },
             )
             .collect()
@@ -330,6 +339,7 @@ impl Overlay {
             url: None,
             theme_key: None,
             above_selection: false,
+            compose_only: false,
         }
     }
 

@@ -328,7 +328,8 @@ fn restored_remote_terminal_reconnects_over_ssh_after_restart() -> anyhow::Resul
 
     // Both remote sessions come back *dormant* (no live window yet): the fix's
     // whole point is that a remote session is never rebuilt as a placeholder
-    // window at boot.
+    // window at boot. They are listed once the dock reads the registry.
+    h.editor_mut().ensure_all_workspaces_loaded();
     let dormant = h.editor().dormant_remote_sessions_for_test();
     assert!(
         dormant.iter().any(|(_, l)| l == "ssh-remote-A")

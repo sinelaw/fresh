@@ -11,7 +11,6 @@
 use super::style::{create_wrapped_virtual_lines, token_style_from_ratatui};
 use crate::primitives::display_width::str_width;
 use crate::state::EditorState;
-use crate::view::compose_only::is_compose_only_virtual_text;
 use crate::view::soft_break::SoftBreakRender;
 use crate::view::theme::Theme;
 use crate::view::ui::view_pipeline::{LineStart, ViewLine};
@@ -520,16 +519,15 @@ pub(super) fn inject_virtual_lines(
             .virtual_texts
             .query_lines_in_range(&state.marker_list, viewport_start, viewport_end);
 
-    // markdown_compose's frame lines — the table border (`md-tb`) and the
-    // spacer rows between list items (`md-ls`) — belong only to a Compose-mode
-    // split. Virtual lines live on the buffer, so in a Source-mode split
-    // sharing a buffer with a composing sibling they would otherwise draw a
-    // frame around the raw source. Drop the compose-only ones here — mirroring
-    // the `md-syntax` conceal gate in `view_data.rs` and the `md-emphasis`
-    // overlay gate in `overlays.rs`. Every other virtual-line namespace (git
-    // blame, diff, …) renders in both modes.
+    // Lines a plugin added as `composeOnly` (markdown_compose's table borders
+    // and list spacing) belong only to a Compose-mode split. Virtual lines live
+    // on the buffer, so in a Source-mode split sharing a buffer with a
+    // composing sibling they would otherwise draw a frame around the raw
+    // source. Drop them here — as `view_data.rs` does for conceals and
+    // `overlays.rs` for overlays. Every other virtual line (git blame, diff,
+    // …) renders in both modes.
     if !is_compose {
-        virtual_lines.retain(|(_, vt)| !is_compose_only_virtual_text(vt));
+        virtual_lines.retain(|(_, vt)| !vt.compose_only);
     }
 
     if virtual_lines.is_empty() {
@@ -747,7 +745,7 @@ pub fn resolve_inline_hints(
         .virtual_texts
         .query_inline_in_range(&state.marker_list, start, end)
         .into_iter()
-        .filter(|(_, vtext)| include_compose_only || !is_compose_only_virtual_text(vtext))
+        .filter(|(_, vtext)| include_compose_only || !vtext.compose_only)
         .map(|(anchor, vtext)| InlineHint {
             anchor,
             text: vtext.text.clone(),

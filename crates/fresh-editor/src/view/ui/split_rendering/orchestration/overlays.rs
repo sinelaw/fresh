@@ -253,7 +253,6 @@ pub(crate) fn decoration_context(
     // Semantic tokens are stored as overlays so their ranges track edits.
     // Convert them into highlight spans for the render pipeline.
     let is_compose = matches!(view_mode, ViewMode::PageView);
-    let md_emphasis_ns = crate::view::compose_only::md_emphasis_namespace();
     let mut semantic_token_spans = Vec::new();
     let mut viewport_overlays = Vec::new();
     for (overlay, range) in
@@ -273,9 +272,9 @@ pub(crate) fn decoration_context(
             continue;
         }
 
-        // Skip markdown compose overlays in Source mode — they should only
+        // Skip compose-only overlays in Source mode — they should only
         // render in the Compose-mode split.
-        if !is_compose && overlay.namespace.as_ref() == Some(&md_emphasis_ns) {
+        if !is_compose && overlay.compose_only {
             continue;
         }
 
