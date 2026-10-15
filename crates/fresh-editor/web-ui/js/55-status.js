@@ -2,6 +2,7 @@
 // (web-ui/js — concatenated in filename order into the page's single
 // <script> by crates/fresh-editor/build.rs; all files share one scope.)
 // ---- native status bar --------------------------------------------------
+/** function statusBarEl(StatusBar) => El */
 function statusBarEl(sb){
   const bar=div("region statusbar"); place(bar,sb.rect);
   const segEl=seg=>{
@@ -10,7 +11,7 @@ function statusBarEl(sb){
     s.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendClick({button:"left",col:c.col,row:c.row}); };
     return s;
   };
-  const segs=sb.segments.filter(s=>s.text);
+  const segs=sb.segments.filter(s=>s.text!=="");
   for(const seg of segs.filter(s=>s.side!=="right")) bar.appendChild(segEl(seg));
   const spacer=document.createElement("span"); spacer.style.flex="1"; bar.appendChild(spacer);
   for(const seg of segs.filter(s=>s.side==="right")) bar.appendChild(segEl(seg));

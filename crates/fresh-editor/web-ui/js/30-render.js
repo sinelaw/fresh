@@ -4,6 +4,7 @@
 // The region whose fill is currently running, so a dropdown pop-over portaled
 // to the body-level host during that fill can be tagged with (and later reaped
 // by) its owning region. See renderRegion + the popoverHost callers.
+/** let popoverRegionOwner: String | Null */
 let popoverRegionOwner=null;
 // ---- per-region DOM patching (docs §3.4, the frontend half) ----------------
 // Frames arrive as per-region diffs (see applyFrame), so the DOM is patched
@@ -20,29 +21,49 @@ let popoverRegionOwner=null;
 const REGION_ORDER = ["fileExplorer","panes","separators","menu","statusbar",
   "popups","palette","tree","native","contextMenu","auxModal","keybindingEditor",
   "settings","trustDialog","caret"];
+/** let containers: Dict<El> | Null */
 let containers=null;
 let renderedRegions=[];   // region names rebuilt by the last render (test surface)
+/** function contentsDiv(String) => El */
 function contentsDiv(name){ const d=document.createElement("div"); d.style.display="contents"; d.dataset.region=name; return d; }
 function ensureContainers(){
-  const app=document.getElementById("app");
-  if(containers && containers.caret.isConnected) return;
+  const app=byId("app");
+  const old=containers, oldCaret=old?old.caret:undefined;
+  if(oldCaret && oldCaret.isConnected) return;
   app.textContent="";
-  containers={};
-  for(const n of REGION_ORDER){ const c=contentsDiv(n); app.appendChild(c); containers[n]=c; }
+  /** const cs: Dict<El> */
+  const cs={};
+  for(const n of REGION_ORDER){ const c=contentsDiv(n); app.appendChild(c); cs[n]=c; }
+  containers=cs;
+}
+// The container of one region family (ensureContainers made them all).
+function regionHost(name){
+  const cs=containers, c=cs?cs[name]:undefined;
+  if(!c) throw new Error(`no region container ${name}`);
+  return c;
+}
+// The scene, for code that only runs once the first one has arrived.
+function liveScene(){
+  const sc=scene;
+  if(!sc) throw new Error("no scene yet");
+  return sc;
 }
 
 // One pane: native tab bar + buffer interior (real cells) + scrollbar (UI).
 // The line-number gutter is rendered as its own element, separate from the
 // buffer-text flow, so a future native text selection covers only the code
 // (not the gutter/line-number column). Both are still real pipeline cells.
+/** function fillPane(El, Pane) => Undefined */
 function fillPane(c,p){
-  if(p.tabBar) c.appendChild(tabBarEl(p));
+  const tb=p.tabBar;
+  if(tb) c.appendChild(tabBarEl(p,tb));
   const gw=p.gutterWidth||0;
-  if(gw>0 && p.gutter){
+  const gutter=p.gutter;
+  if(gutter!==null && gw>0){
     // Gutter (line numbers + separator) and buffer text are emitted as
     // separate cell blocks by the bridge — render them as separate elements.
     const g=div("region pane-gutter"); place(g,{x:p.content.x,y:p.content.y,w:gw,h:p.content.h});
-    g.innerHTML=cellsSvg(p.gutter, gw); c.appendChild(g);
+    g.innerHTML=cellsSvg(gutter, gw); c.appendChild(g);
     const b=div("region pane-content"); place(b,{x:p.content.x+gw,y:p.content.y,w:p.content.w-gw,h:p.content.h});
     b.innerHTML=cellsSvg(p.cells, p.content.w-gw); c.appendChild(b);
   } else {
@@ -51,89 +72,90 @@ function fillPane(c,p){
   if(p.vscroll && p.vscroll.w>0){
     const sb=div("region scrollbar"); place(sb,p.vscroll); c.appendChild(sb);
     const th=document.createElement("div"); th.className="thumb";
-    th.style.top=px(p.thumbStart,CH)+"px"; th.style.height=Math.max(CH, px(Math.max(1,p.thumbEnd-p.thumbStart),CH))+"px";
+    th.style.top=`${px(p.thumbStart,CH)}px`; th.style.height=`${Math.max(CH, px(Math.max(1,p.thumbEnd-p.thumbStart),CH))}px`;
     sb.appendChild(th);
     // Plugin scrollbar markers, painted over the thumb as a half-width bar so
     // both the mark and the scroll position stay readable (matching the TUI's
     // half-block glyph).
-    for(const m of (p.vscrollMarkers||[])){
+    for(const m of p.vscrollMarkers){
       const mk=document.createElement("div"); mk.className="scrollbar-marker";
-      mk.style.top=px(m.row,CH)+"px"; mk.style.height=CH+"px"; mk.style.background=m.color;
+      mk.style.top=`${px(m.row,CH)}px`; mk.style.height=`${CH}px`; mk.style.background=m.color;
       sb.appendChild(mk);
     }
   }
 }
 function renderPane(i){
-  const host=containers.panes;
-  if(!host.children[i]){ renderAllPanes(); return; }   // structure drifted → rebuild all
+  const host=regionHost("panes"), panes=liveScene().regions.panes;
+  if(i>=host.children.length){ renderAllPanes(); return; }   // structure drifted → rebuild all
   const c=host.children[i]; c.textContent="";
-  const p=scene.regions.panes[i]; if(p) fillPane(c,p);
+  if(i<panes.length) fillPane(c,panes[i]);
 }
 function renderAllPanes(){
-  const host=containers.panes, n=scene.regions.panes.length;
-  while(host.children.length>n) host.lastChild.remove();
+  const host=regionHost("panes"), panes=liveScene().regions.panes, n=panes.length;
+  while(host.children.length>n){ const last=host.lastChild; if(!last) break; last.remove(); }
   while(host.children.length<n) host.appendChild(contentsDiv("pane"));
-  for(let i=0;i<n;i++){ const c=host.children[i]; c.textContent="";
-    const p=scene.regions.panes[i]; if(p) fillPane(c,p); }
+  for(let i=0;i<n;i++){ const c=host.children[i]; c.textContent=""; fillPane(c,panes[i]); }
 }
 
 // Live caret from the pipeline's real cursor cell (if inside a pane). Patched
 // in place: when the caret cell didn't move, the existing element is KEPT so
 // its blink animation phase doesn't restart on unrelated frames (the old full
 // innerHTML rebuild restarted the blink on every frame).
+/** function renderCaret(El, Regions) => Undefined */
 function renderCaret(c,reg){
-  let want=null;
-  if(reg.cursor){
-    const x=reg.cursor.x, y=reg.cursor.y;
-    const inPane=reg.panes.some(p=>p && x>=p.content.x && x<p.content.x+p.content.w && y>=p.content.y && y<p.content.y+p.content.h);
-    if(inPane&&!underNative(reg.native,x,y)) want={left:px(reg.cursor.x,CW)+"px", top:px(reg.cursor.y,CH)+"px",
-                     height:CH+"px", width:Math.max(1,Math.round(2*zoom))+"px"};
-  }
+  const cur=reg.cursor;
+  const inPane=!!cur && reg.panes.some(p=>cur.x>=p.content.x && cur.x<p.content.x+p.content.w && cur.y>=p.content.y && cur.y<p.content.y+p.content.h)
+    && !underNative(reg.native,cur.x,cur.y);
   const old=c.firstChild;
-  if(!want){ if(old) c.textContent=""; return; }
+  if(!cur||!inPane){ if(old) c.textContent=""; return; }
+  const want={left:`${px(cur.x,CW)}px`, top:`${px(cur.y,CH)}px`,
+              height:`${CH}px`, width:`${Math.max(1,Math.round(2*zoom))}px`};
   if(old && old.style.left===want.left && old.style.top===want.top && old.style.height===want.height) return;
   c.textContent="";
-  const el=div("caret"); Object.assign(el.style,want); c.appendChild(el);
+  const el=div("caret");
+  el.style.left=want.left; el.style.top=want.top; el.style.height=want.height; el.style.width=want.width;
+  c.appendChild(el);
 }
 
 // Region fillers: same element builders the old monolithic render() used,
 // now targeted at one container each.
+/** const REGION_FILL: Dict<(El, Regions) => Undefined> */
 const REGION_FILL={
   // file explorer (UI pane; content = its real rows)
-  fileExplorer(c,reg){ if(reg.fileExplorer) c.appendChild(fileExplorerEl(reg.fileExplorer)); },
-  panes(){ renderAllPanes(); },
+  fileExplorer:(c,reg)=>{ const fe=reg.fileExplorer; if(fe) c.appendChild(fileExplorerEl(fe)); },
+  panes:(c,reg)=>{ renderAllPanes(); },
   // split borders
-  separators(c,reg){ for(const s of reg.separators){
+  separators:(c,reg)=>{ for(const s of reg.separators){
     const d=div("region separator");
     if(s.vertical) place(d,{x:s.x,y:s.y,w:1,h:s.len}); else place(d,{x:s.x,y:s.y,w:s.len,h:1});
     c.appendChild(d); } },
   // native menu bar + dropdown (one family: menuOpen/menuHighlight/submenuPath/
   // dropdown/menus all redraw together)
-  menu(c,reg){ if(reg.menubar) c.appendChild(menuBarEl(reg));
+  menu:(c,reg)=>{ if(reg.menubar) c.appendChild(menuBarEl(reg));
     for(const d of menuDropdownEls(reg)) c.appendChild(d);
     // Fit each open dropdown to its widest row's real (proportional) content
     // once laid out, so accelerators stay column-aligned in any chrome font.
     if(reg.menuOpen!=null) requestAnimationFrame(()=>{ fitMenuWidths(c); alignMenuDropdown(c); }); },
-  statusbar(c,reg){ if(reg.statusbar) c.appendChild(statusBarEl(reg.statusbar)); },
+  statusbar:(c,reg)=>{ const sb=reg.statusbar; if(sb) c.appendChild(statusBarEl(sb)); },
   // native popups (completion / hover / action / list / text) — semantic, not cells
-  popups(c,reg){ for(const p of (reg.popups||[])) c.appendChild(popupEl(p)); },
+  popups:(c,reg)=>{ for(const p of reg.popups) c.appendChild(popupEl(p)); },
   // native command palette / picker (semantic; routes back to the real editor).
   // paletteEls emits the card (with the live-grep / quick-open preview pane
   // rendered inside it, matching the TUI's single box) plus a `.modal-scrim`
   // behind it in centered-modal placement.
-  palette(c,reg){ if(reg.palette) for(const el of paletteEls(reg.palette)) c.appendChild(el); },
+  palette:(c,reg)=>{ const pal=reg.palette; if(pal) for(const el of paletteEls(pal)) c.appendChild(el); },
   // The plugin panels, folded from the display list the tree produced for
   // them (`regions.tree`, see 72-tree.js).
-  tree(c,reg){ if(reg.tree) for(const el of treeEls(reg.tree, reg.native)) c.appendChild(el); },
+  tree:(c,reg)=>{ for(const el of treeEls(reg.tree, reg.native)) c.appendChild(el); },
   // The same surfaces laid out natively, by the themes that do
   // (`regions.native`, see 73-native.js).
-  native(c,reg){ if(document.body.classList.contains("native-panels")) for(const el of nativeEls(reg.native)) c.appendChild(el); },
-  contextMenu(c,reg){ if(reg.contextMenu) c.appendChild(contextMenuEl(reg.contextMenu)); },
-  auxModal(c,reg){ if(reg.auxModal) for(const el of auxModalEls(reg.auxModal)) c.appendChild(el); },
-  keybindingEditor(c,reg){ if(reg.keybindingEditor) for(const el of keybindingEditorEls(reg.keybindingEditor)) c.appendChild(el); },
-  settings(c,reg){ if(reg.settings) for(const el of settingsEls(reg.settings)) c.appendChild(el); },
-  trustDialog(c,reg){ if(reg.trustDialog) for(const el of trustDialogEls(reg.trustDialog)) c.appendChild(el); },
-  caret(c,reg){ renderCaret(c,reg); },
+  native:(c,reg)=>{ if(document.body.classList.contains("native-panels")) for(const el of nativeEls(reg.native)) c.appendChild(el); },
+  contextMenu:(c,reg)=>{ const cm=reg.contextMenu; if(cm) c.appendChild(contextMenuEl(cm)); },
+  auxModal:(c,reg)=>{ const am=reg.auxModal; if(am) for(const el of auxModalEls(am)) c.appendChild(el); },
+  keybindingEditor:(c,reg)=>{ const kb=reg.keybindingEditor; if(kb) for(const el of keybindingEditorEls(kb)) c.appendChild(el); },
+  settings:(c,reg)=>{ const st=reg.settings; if(st) for(const el of settingsEls(st)) c.appendChild(el); },
+  trustDialog:(c,reg)=>{ const td=reg.trustDialog; if(td) for(const el of trustDialogEls(td)) c.appendChild(el); },
+  caret:(c,reg)=>{ renderCaret(c,reg); },
 };
 // COSMOS shell motion (desktop): entrance classes are added only when a
 // surface APPEARS — not on the per-keystroke rebuilds of an already-open
@@ -145,6 +167,8 @@ const REGION_FILL={
 // slide its background out from under text that vanished in place. The dock's
 // opening and closing still moves the screen: the FLIP below slides every
 // region the new dock width displaced.
+/** type RegionFx = {sel: String, present: (Regions) => Boolean, out: String, dur: Number} */
+/** const FX: Dict<RegionFx> */
 const FX={
   palette:      {sel:".palette",                present:r=>!!r.palette,        out:"fx-out-pal",  dur:180},
   fileExplorer: {sel:".fileexplorer",           present:r=>!!r.fileExplorer,   out:"fx-out-wipe", dur:280},
@@ -154,13 +178,16 @@ const FX={
 // animating element — without this the enter animation dies after one frame
 // and the surface looks like it popped in. The replacement re-joins the
 // animation mid-flight via a negative animation-delay.
+/** const fxEnterAt: Dict<Number> */
 const fxEnterAt={};
 // Workspace switch (the dock's live-switch): everything in the screen changes
 // at once, so layout motion is a lie — an explorer that exists in one
 // workspace and not the other would appear to slide open/closed. Instead:
 // suppress all slides/wipes for a beat and cut with a quick burst of CRT
 // static over the screen area.
-let curWindowId=null, fxSuppressUntil=0;
+/** let curWindowId: Number | Null */
+let curWindowId=null;
+let fxSuppressUntil=0;
 const fxReducedMotion=matchMedia("(prefers-reduced-motion: reduce)");
 // Quick fade cut over the screen area on a workspace switch — a subtle
 // screen-toned veil that fades right out. (The server can settle the new
@@ -168,23 +195,25 @@ const fxReducedMotion=matchMedia("(prefers-reduced-motion: reduce)");
 // is a server issue to fix at the source, not something to hide behind a
 // longer animation.)
 function fxCut(){
-  if(isMobile()||fxReducedMotion.matches||!scene) return;
+  const sc=scene;
+  if(isMobile()||fxReducedMotion.matches||!sc) return;
   syncAppOrigin();
   const dw=dockWidthPx();
   const el=div("fx-cut");
-  el.style.left=(APPX+dw)+"px"; el.style.top=APPY+"px";
-  el.style.width=Math.max(0,px(scene.w||0,CW)-dw)+"px";
-  el.style.height=px(scene.h||0,CH)+"px";
+  el.style.left=`${APPX+dw}px`; el.style.top=`${APPY}px`;
+  el.style.width=`${Math.max(0,px(sc.w,CW)-dw)}px`;
+  el.style.height=`${px(sc.h,CH)}px`;
   document.body.appendChild(el);
   el.addEventListener("animationend",()=>el.remove());
   setTimeout(()=>{ if(el.isConnected) el.remove(); },400);   // reduced-motion / safety
 }
+/** function fxExit(El, String) => Undefined */
 function fxExit(el, cls){
   const r=el.getBoundingClientRect();
   const c=el.cloneNode(true);
-  c.classList.remove("fx-in"); c.classList.add("fx-clone", cls);
-  c.style.left=r.left+"px"; c.style.top=r.top+"px";
-  c.style.width=r.width+"px"; c.style.height=r.height+"px";
+  c.classList.remove("fx-in"); c.classList.add("fx-clone"); c.classList.add(cls);
+  c.style.left=`${r.left}px`; c.style.top=`${r.top}px`;
+  c.style.width=`${r.width}px`; c.style.height=`${r.height}px`;
   // The clone is pinned at its measured viewport rect, so any transform the
   // class carries (the centered palette's translate(-50%,-50%)) must be
   // neutralised or the clone jumps by half its own size. The exit keyframes
@@ -199,19 +228,22 @@ function fxExit(el, cls){
 // rect in ONE frame — so the elements are started at a transform that puts
 // them back at their OLD position and released to slide into place, matching
 // the bezel's own CSS transition (same duration + curve).
+/** function fxTopEls(El, El[]) => El[] */
 function fxTopEls(c, out){
   for(const ch of c.children){
-    if(ch.style && ch.style.display==="contents") fxTopEls(ch, out);
+    if(ch.style.display==="contents") fxTopEls(ch, out);
     else out.push(ch);
   }
   return out;
 }
+/** function fxSlideEls(El[], Number) => Undefined */
 function fxSlideEls(els, dx){
   if(!dx||!els.length) return;
-  const screenR=px((scene&&scene.w)||0,CW);   // grid right edge, #app coords
+  const sc=scene;
+  const screenR=px(sc?sc.w:0,CW);   // grid right edge, #app coords
   const clipped=[];
   for(const el of els){
-    el.style.transition="none"; el.style.transform="translateX("+dx+"px)";
+    el.style.transition="none"; el.style.transform=`translateX(${dx}px)`;
     // A rightward start position pokes past the grid's right edge — over the
     // bezel's right rail. Clip the overhang in element space; the inset
     // transitions back to 0 on the same curve as the transform, so the
@@ -221,7 +253,7 @@ function fxSlideEls(els, dx){
     // its moving interior.)
     const l=parseFloat(el.style.left)||0, w=parseFloat(el.style.width)||el.offsetWidth;
     const r0=l+w+dx-screenR;
-    if(r0>0){ el.style.clipPath="inset(0 "+r0.toFixed(1)+"px 0 0)"; clipped.push(el); }
+    if(r0>0){ el.style.clipPath=`inset(0 ${toFixed(r0,1)}px 0 0)`; clipped.push(el); }
   }
   void els[0].offsetWidth;   // commit the start positions before releasing
   for(const el of els){
@@ -234,30 +266,36 @@ function fxSlideEls(els, dx){
 // Cell widths from the last frame; null until the first scene lands. Only a
 // PRESENCE change animates — width drags re-layout per pointer frame and
 // would fight a 280ms transition.
-let fxDockCells=null, fxFeCells=null;
+/** let fxDockCells: Number | Null */
+let fxDockCells=null;
+/** let fxFeCells: Number | Null */
+let fxFeCells=null;
 function fxLayoutSlides(){
-  if(!scene||!scene.regions||!containers) return;
-  const dockC=treeDockCells(scene.regions);
-  const feC=scene.regions.fileExplorer?scene.regions.fileExplorer.rect.w:0;
-  const first=fxDockCells===null;
-  const dockDelta=(!first&&(fxDockCells===0)!==(dockC===0))?px(dockC-fxDockCells,CW):0;
-  const feDelta  =(!first&&(fxFeCells===0)!==(feC===0))  ?px(feC-fxFeCells,CW):0;
+  const sc=scene;
+  if(!sc||!containers) return;
+  const dockC=treeDockCells(sc.regions);
+  const fe=sc.regions.fileExplorer;
+  const feC=fe?fe.rect.w:0;
+  const prevDock=fxDockCells, prevFe=fxFeCells;
+  const dockDelta=(prevDock!==null&&(prevDock===0)!==(dockC===0))?px(dockC-prevDock,CW):0;
+  const feDelta  =(prevFe!==null&&(prevFe===0)!==(feC===0))  ?px(feC-prevFe,CW):0;
   fxDockCells=dockC; fxFeCells=feC;
   if(isMobile()||(!dockDelta&&!feDelta)||performance.now()<fxSuppressUntil) return;
   const screenEls=[], paneEls=[];
-  if(dockDelta) for(const n of ["fileExplorer","menu","statusbar"]) fxTopEls(containers[n],screenEls);
-  for(const n of ["panes","separators","caret"]) fxTopEls(containers[n],paneEls);
+  if(dockDelta) for(const n of ["fileExplorer","menu","statusbar"]) fxTopEls(regionHost(n),screenEls);
+  for(const n of ["panes","separators","caret"]) fxTopEls(regionHost(n),paneEls);
   fxSlideEls(screenEls,-dockDelta);
   fxSlideEls(paneEls,-(dockDelta+feDelta));
 }
+/** function renderRegion(String) => Undefined */
 function renderRegion(name){
-  const c=containers[name];
+  const c=regionHost(name), regions=liveScene().regions;
   // Snapshot scroll positions inside this region before its rebuild, keyed by
   // document-order ordinal (stable across a same-structure re-render).
   const saved=[]; c.querySelectorAll(SCROLL_KEEP).forEach((e,i)=>{ saved[i]=e.scrollTop; });
-  const fx=!isMobile()&&performance.now()>=fxSuppressUntil&&FX[name];
+  const fx=(!isMobile()&&performance.now()>=fxSuppressUntil)?FX[name]:undefined;
   const hadEl=fx?c.querySelector(fx.sel):null;
-  const willHave=fx?fx.present(scene.regions):false;
+  const willHave=fx?fx.present(regions):false;
   if(fx&&hadEl&&!willHave){
     fxExit(hadEl, fx.out);
     if(name==="palette"){ const s=c.querySelector(".modal-scrim"); if(s) fxExit(s,"fx-out"); }
@@ -271,7 +309,8 @@ function renderRegion(name){
   const _ph=document.getElementById("fresh-popover-host");
   if(_ph) _ph.querySelectorAll('[data-popover-region="'+name+'"]').forEach(e=>e.remove());
   popoverRegionOwner=name;
-  REGION_FILL[name](c, scene.regions);
+  const fill=REGION_FILL[name];
+  if(fill) fill(c, regions);
   popoverRegionOwner=null;
   if(fx&&willHave){
     const el=c.querySelector(fx.sel);
@@ -280,8 +319,8 @@ function renderRegion(name){
       el.classList.add("fx-in");
       if(name==="palette"){ const s=c.querySelector(".modal-scrim"); if(s) s.classList.add("fx-in"); }
     } else if(el&&hadEl){
-      const elapsed=performance.now()-(fxEnterAt[name]||0);
-      if(elapsed<fx.dur){ el.classList.add("fx-in"); el.style.animationDelay=(-elapsed)+"ms"; }
+      const elapsed=performance.now()-(fxEnterAt[name]??0);
+      if(elapsed<fx.dur){ el.classList.add("fx-in"); el.style.animationDelay=`${-elapsed}ms`; }
     }
   }
   c.querySelectorAll(SCROLL_KEEP).forEach((e,i)=>{ if(saved[i]) e.scrollTop=saved[i]; });
@@ -300,6 +339,7 @@ function renderRegion(name){
 // scrolled panel just enough to bring its selected row back into view. Runs
 // after the scroll restore, and only when the row is actually outside the
 // panel, so a user's own wheel position is otherwise left alone.
+/** function settingsEnsureSelectionVisible(El) => Undefined */
 function settingsEnsureSelectionVisible(c){
   for(const sel of c.querySelectorAll(".set-cat.sel,.set-item.sel,.set-sresult.sel,.set-list-row.sel,.set-list-add.sel")){
     const list=sel.closest(".set-cats,.set-items,.set-overlay");
@@ -313,16 +353,17 @@ function settingsEnsureSelectionVisible(c){
 // refresh() resync, and w/h/theme changes (rare). Everything frame-driven goes
 // through applyFrame's per-region patch path instead.
 function render(){
-  const app=document.getElementById("app");
-  if(!scene){ containers=null; app.textContent="connecting to editor…"; layoutShell(); return; }
+  const app=byId("app");
+  const sc=scene;
+  if(!sc){ containers=null; app.textContent="connecting to editor…"; layoutShell(); return; }
   // Dock live-switch to another workspace: a quick fade cut, plus a
   // suppression window during which the per-region slide/wipe animations
   // stay off — generous (800ms) because the server settles the new
   // workspace's layout in a follow-up frame, which must not slide either.
-  const switched=curWindowId!==null&&scene.windowId!==undefined&&scene.windowId!==curWindowId;
-  if(scene.windowId!==undefined) curWindowId=scene.windowId;
+  const switched=curWindowId!==null&&sc.windowId!==curWindowId;
+  curWindowId=sc.windowId;
   if(switched){ fxSuppressUntil=performance.now()+800; fxCut(); }
-  applyTheme(scene.theme);
+  applyTheme(sc.theme);
   applyWebTheme();   // layer the frontend web-theme chrome tokens over the TUI theme
   ensureContainers();
   // Each region reaps + re-mounts its own portaled dropdown pop-overs as it
@@ -331,7 +372,7 @@ function render(){
   renderedRegions=REGION_ORDER.slice();
   // Native touch shell on narrow/portrait viewports (desktop is untouched).
   document.body.classList.toggle("mobile", isMobile());
-  renderMobileChrome(scene.regions);
+  renderMobileChrome(sc.regions);
   syncMacTitle();
   fxLayoutSlides();
   layoutShell();

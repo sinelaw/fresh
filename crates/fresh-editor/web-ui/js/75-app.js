@@ -9,6 +9,7 @@
 const M_BASE = 124;                     // px: symbol row + nav + status
 const M_MODS_H = 44;                    // px: the optional modifier-key row
 const mqMobile = window.matchMedia("(max-width: 640px)");
+/** function isMobile() => Boolean */
 function isMobile(){ return mqMobile.matches; }
 let mSheetOpen = false;                 // overflow (kebab) sheet visibility
 let mShowMods = true;                    // show the Termux-style modifier row
@@ -30,9 +31,13 @@ function mBottom(){ return M_BASE + (isMobile() && mShowMods ? M_MODS_H : 0); }
 // header ⌨ button toggles focus; on desktop it is kept focused permanently
 // (no other chrome is focusable). It stays visually hidden but NOT
 // display:none — that would break IME composition.
-let mKbInput=null, mKbWanted=false, kdHandledAt=0;
+/** let mKbInput: El | Null */
+let mKbInput=null;
+let mKbWanted=false, kdHandledAt=0;
+/** function ensureKbInput() => El */
 function ensureKbInput(){
-  if(mKbInput) return mKbInput;
+  const have=mKbInput;
+  if(have) return have;
   const i=document.createElement("input");
   i.id="m-kbinput"; i.type="text";
   i.setAttribute("autocapitalize","off"); i.setAttribute("autocomplete","off");
@@ -48,11 +53,11 @@ function ensureKbInput(){
   i.addEventListener("beforeinput",ev=>{
     if(ev.isComposing) return;             // IME owns the input until compositionend
     if(Date.now()-kdHandledAt < 120) return;
-    const t=ev.inputType||""; let handled=true;
-    if(t==="insertText" && ev.data){ for(const ch of ev.data) mobileSendKey({key:ch}); }
-    else if(t==="insertLineBreak" || t==="insertParagraph") mobileSendKey({key:"Enter"});
-    else if(t==="deleteContentBackward") mobileSendKey({key:"Backspace"});
-    else if(t==="deleteContentForward") mobileSendKey({key:"Delete"});
+    const t=ev.inputType||"", data=ev.data; let handled=true;
+    if(t==="insertText" && data){ for(const ch of Array.from(data)) mobileSendKey(ch,NO_MODS); }
+    else if(t==="insertLineBreak" || t==="insertParagraph") mobileSendKey("Enter",NO_MODS);
+    else if(t==="deleteContentBackward") mobileSendKey("Backspace",NO_MODS);
+    else if(t==="deleteContentForward") mobileSendKey("Delete",NO_MODS);
     else handled=false;
     if(handled) ev.preventDefault();
     i.value="";
@@ -63,7 +68,8 @@ function ensureKbInput(){
   // commit, forward the composed text to the editor and clear the sink.
   i.addEventListener("compositionend",ev=>{
     i.value="";
-    if(ev.data) for(const ch of ev.data) mobileSendKey({key:ch});
+    const composed=ev.data;
+    if(composed) for(const ch of Array.from(composed)) mobileSendKey(ch,NO_MODS);
   });
   // Never keep typed text — but don't clear mid-composition, which would
   // cancel the IME's preedit state.
@@ -74,12 +80,15 @@ function ensureKbInput(){
 // focus (there is none today — chrome is divs). focus({preventScroll}) so it
 // can never scroll the page. Mobile keeps its explicit ⌨ toggle instead —
 // auto-focusing there would summon the soft keyboard uninvited.
+/** function focusSink() => Undefined */
 function focusSink(){ if(!isMobile()) ensureKbInput().focus({preventScroll:true}); }
-window.addEventListener("focus",focusSink);
-mqMobile.addEventListener("change",focusSink);
+window.addEventListener("focus",()=>focusSink());
+mqMobile.addEventListener("change",()=>focusSink());
+/** function kbVisible() => Boolean */
 function kbVisible(){ return mKbWanted; }
 // Toggle driven by an explicit intent flag (not activeElement) so a tap that
 // transiently blurs the input can't flip the toggle into re-showing it.
+/** function toggleKeyboard() => Undefined */
 function toggleKeyboard(){
   const i=ensureKbInput();
   mKbWanted=!mKbWanted;
@@ -88,10 +97,14 @@ function toggleKeyboard(){
 }
 
 // Send a key with the armed sticky modifiers folded in, then disarm them.
-function mobileSendKey(d){
-  const k={ key:d.key,
-    ctrl:!!d.ctrl||mMods.ctrl, alt:!!d.alt||mMods.alt,
-    shift:!!d.shift||mMods.shift, meta:!!d.meta };
+/** type KeyMods = {ctrl: Boolean, alt: Boolean, shift: Boolean, meta: Boolean} */
+/** const NO_MODS: KeyMods */
+const NO_MODS={ ctrl:false, alt:false, shift:false, meta:false };
+/** function mobileSendKey(String, KeyMods) => Undefined */
+function mobileSendKey(key, d){
+  const k={ key,
+    ctrl:d.ctrl||mMods.ctrl, alt:d.alt||mMods.alt,
+    shift:d.shift||mMods.shift, meta:d.meta };
   const wasArmed = mMods.ctrl||mMods.alt||mMods.shift;
   mMods={ ctrl:false, alt:false, shift:false };
   sendKey(k);
@@ -101,12 +114,18 @@ function mobileSendKey(d){
 // Coding-symbol accessory keys (sent as real key events) + Tab; Save = Ctrl+S.
 const M_SYMS = ["Tab","{","}","[","]","(",")","<",">",";",":","=","!","&","|","/","\"","'"];
 // Termux-style modifier / navigation row. Ctrl/Alt/Shift are sticky toggles
-// (key:null); the rest are sent immediately (with any armed modifiers).
+// (a `mod`, no key); the rest are sent immediately (with any armed modifiers).
 const M_MODSKEYS = [
-  {lb:"Esc", key:"Escape"}, {lb:"Ctrl", mod:"ctrl"}, {lb:"Alt", mod:"alt"}, {lb:"Shift", mod:"shift"},
-  {lb:"←", key:"ArrowLeft"}, {lb:"↑", key:"ArrowUp"}, {lb:"↓", key:"ArrowDown"}, {lb:"→", key:"ArrowRight"},
-  {lb:"Home", key:"Home"}, {lb:"End", key:"End"},
+  {lb:"Esc", key:"Escape", mod:""}, {lb:"Ctrl", key:"", mod:"ctrl"}, {lb:"Alt", key:"", mod:"alt"}, {lb:"Shift", key:"", mod:"shift"},
+  {lb:"←", key:"ArrowLeft", mod:""}, {lb:"↑", key:"ArrowUp", mod:""}, {lb:"↓", key:"ArrowDown", mod:""}, {lb:"→", key:"ArrowRight", mod:""},
+  {lb:"Home", key:"Home", mod:""}, {lb:"End", key:"End", mod:""},
 ];
+function modArmed(mod){ return mod==="ctrl"?mMods.ctrl:mod==="alt"?mMods.alt:mMods.shift; }
+function toggleMod(mod){
+  if(mod==="ctrl") mMods.ctrl=!mMods.ctrl;
+  else if(mod==="alt") mMods.alt=!mMods.alt;
+  else mMods.shift=!mMods.shift;
+}
 // Bottom-nav destinations → real editor actions.
 const M_NAV = [
   {ic:"🗀", lb:"Files",   act:"toggle_file_explorer"},
@@ -124,25 +143,31 @@ const M_MENU = [
   {ic:"⚙", lb:"Settings",       act:"open_settings"},
 ];
 
+// A header button running `fn`.
+/** function mobileIcon(String, () => Undefined) => El */
+function mobileIcon(glyph, fn){
+  const b=div("m-icon"); b.textContent=glyph;
+  b.onclick=e=>{ e.stopPropagation(); fn(); };
+  return b;
+}
+/** function renderMobileChrome(Regions) => Undefined */
 function renderMobileChrome(reg){
-  const host=document.getElementById("mobile");
+  const host=byId("mobile");
   if(!isMobile()){ if(host.childElementCount) host.innerHTML=""; return; }
-  document.documentElement.style.setProperty("--m-bottom", mBottom()+"px");
+  document.documentElement.style.setProperty("--m-bottom", `${mBottom()}px`);
   host.innerHTML="";
 
   // header: ⚡ Fresh · filename · 🔍 ▶ ⋮
   const hd=div("m-header");
   const logo=div("m-logo"); logo.innerHTML='<span class="m-spark">⚡</span>Fresh'; hd.appendChild(logo);
-  const tabs=(reg.panes[0]&&reg.panes[0].tabs)||[]; const at=tabs.find(t=>t.active)||tabs[0];
-  const file=div("m-file"); file.textContent=at?at.label.split("/").pop():"untitled"; hd.appendChild(file);
-  const icon=(glyph,fn)=>{ const b=div("m-icon"); b.textContent=glyph;
-    b.onclick=e=>{ e.stopPropagation(); fn(); }; return b; };
-  hd.appendChild(icon("🔍",()=>{ mSheetOpen=false; sendAction("search"); }));
-  hd.appendChild(icon("▶",()=>{ mSheetOpen=false; sendAction("command_palette"); }));
-  const kb=icon("⌨",()=>{ mSheetOpen=false; toggleKeyboard(); });
+  const tabs=reg.panes.length?reg.panes[0].tabs:[]; const at=tabs.find(t=>t.active)??(tabs.length?tabs[0]:null);
+  const file=div("m-file"); file.textContent=at?(at.label.split("/").pop()??""):"untitled"; hd.appendChild(file);
+  hd.appendChild(mobileIcon("🔍",()=>{ mSheetOpen=false; sendAction("search"); }));
+  hd.appendChild(mobileIcon("▶",()=>{ mSheetOpen=false; sendAction("command_palette"); }));
+  const kb=mobileIcon("⌨",()=>{ mSheetOpen=false; toggleKeyboard(); });
   if(kbVisible()) kb.classList.add("on");
   hd.appendChild(kb);
-  hd.appendChild(icon("⋮",()=>{ mSheetOpen=!mSheetOpen; render(); }));
+  hd.appendChild(mobileIcon("⋮",()=>{ mSheetOpen=!mSheetOpen; render(); }));
   host.appendChild(hd);
 
   if(mSheetOpen){
@@ -167,20 +192,20 @@ function renderMobileChrome(reg){
   if(mShowMods){
     const mods=div("m-mods");
     for(const m of M_MODSKEYS){
-      const armed = m.mod && mMods[m.mod];
+      const armed = m.mod!=="" && modArmed(m.mod);
       const k=div("m-mod"+(m.mod?" m-modkey":"")+(armed?" on":"")); k.textContent=m.lb;
       k.onclick=e=>{ e.stopPropagation();
-        if(m.mod){ mMods[m.mod]=!mMods[m.mod]; render(); }   // sticky toggle
-        else mobileSendKey({key:m.key}); };                  // immediate (with armed mods)
+        if(m.mod){ toggleMod(m.mod); render(); }             // sticky toggle
+        else mobileSendKey(m.key,NO_MODS); };                // immediate (with armed mods)
       mods.appendChild(k);
     }
     bot.appendChild(mods);
   }
   const syms=div("m-syms");
   for(const s of M_SYMS){ const k=div("m-sym"); k.textContent=s==="Tab"?"⇥":s;
-    k.onclick=e=>{ e.stopPropagation(); mobileSendKey({key:s}); }; syms.appendChild(k); }
+    k.onclick=e=>{ e.stopPropagation(); mobileSendKey(s,NO_MODS); }; syms.appendChild(k); }
   const save=div("m-sym m-save"); save.textContent="Save";
-  save.onclick=e=>{ e.stopPropagation(); mobileSendKey({key:"s",ctrl:true}); }; syms.appendChild(save);
+  save.onclick=e=>{ e.stopPropagation(); mobileSendKey("s",{...NO_MODS,ctrl:true}); }; syms.appendChild(save);
   bot.appendChild(syms);
 
   const nav=div("m-nav");
@@ -190,7 +215,8 @@ function renderMobileChrome(reg){
   bot.appendChild(nav);
 
   const st=div("m-status");
-  const segs=(reg.statusbar&&reg.statusbar.segments||[]).filter(s=>s.text);
+  const sb=reg.statusbar;
+  const segs=(sb?sb.segments:[]).filter(s=>s.text!=="");
   for(const s of segs){ const seg=div("m-seg"+(s.name==="trust"?" trust":"")); seg.textContent=s.text; st.appendChild(seg); }
   bot.appendChild(st);
   host.appendChild(bot);
@@ -214,21 +240,27 @@ function renderMobileChrome(reg){
 // transient-activation window, which is what navigator.clipboard.writeText
 // requires. Absence or rejection (no permission) is silent: the
 // editor-internal clipboard still works. The text is never logged.
+/** let clipSeq: Number | Null */
 let clipSeq=null;
+/** function syncClipboard(Clipboard) => Undefined */
 function syncClipboard(c){
-  if(!c) return;
   if(clipSeq===null){ clipSeq=c.seq; return; }   // boot: don't replay an old copy
   if(c.seq===clipSeq) return;
   clipSeq=c.seq;
-  if(c.text && navigator.clipboard && navigator.clipboard.writeText)
-    navigator.clipboard.writeText(c.text).catch(()=>{});
+  const cb=navigator.clipboard;
+  if(c.text && cb) cb.writeText(c.text).catch(()=>{});
 }
-let ws=null, frameCount=0, lastSeq=0, lastFrameKeys=[], wsBackoff=500;
-function wsIsOpen(){ return !!ws && ws.readyState===1; }
+/** let ws: Socket | Null */
+let ws=null;
+/** let lastFrameKeys: String[] */
+let lastFrameKeys=[];
+let frameCount=0, lastSeq=0, wsBackoff=500;
+function wsIsOpen(){ const w=ws; return w!==null && w.readyState===1; }
 // Send one input message. When the socket is down the input is DROPPED — never
 // queued: replaying stale input into a resynced editor is worse than losing a
 // keystroke — and the reconnect banner shows.
-function wsSend(o){ if(wsIsOpen()){ ws.send(JSON.stringify(o)); } else showErr("reconnecting…"); }
+/** function wsSend<T>(T) => Undefined */
+function wsSend(o){ const w=ws; if(w!==null && w.readyState===1){ w.send(JSON.stringify(o)); } else showErr("reconnecting…"); }
 // Which region container a "regions.<key>" path dirties. Keys sharing one
 // native surface (the menu bar + its dropdown) collapse into one region; null
 // means no DOM depends on it (the poll pacing hint); an UNKNOWN key falls back
@@ -242,6 +274,7 @@ function wsSend(o){ if(wsIsOpen()){ ws.send(JSON.stringify(o)); } else showErr("
 // path, `regions.tree` — cleared and re-filled all fourteen containers,
 // re-emitting the buffer's cell SVG among them: 755 of 770 nodes replaced, and
 // ~22ms of synchronous work, to recolour one row.
+/** const PATH_REGION: Dict<String | Null> */
 const PATH_REGION={ fileExplorer:"fileExplorer", separators:"separators",
   menubar:"menu", menus:"menu", menuOpen:"menu", menuHighlight:"menu",
   submenuPath:"menu", dropdown:"menu",
@@ -255,30 +288,62 @@ const PATH_REGION={ fileExplorer:"fileExplorer", separators:"separators",
 // level deeper; "regions.panes.len" truncates/extends the array. Then rebuild
 // ONLY the region containers whose paths changed (w/h/theme → full rebuild;
 // they re-place every rect / re-seed the CSS vars, and they're rare).
+// A path names its value's type only as a string, so each value is given the
+// type of the field it replaces (`jsonAs`, unchecked, like `JSON.parse`).
+/** function setRegion(Regions, String, FrameValue) => Undefined */
+function setRegion(r, key, v){
+  switch(key){
+    case "menubar": r.menubar=jsonAs(v); break;
+    case "menus": r.menus=jsonAs(v); break;
+    case "menuOpen": r.menuOpen=jsonAs(v); break;
+    case "menuHighlight": r.menuHighlight=jsonAs(v); break;
+    case "submenuPath": r.submenuPath=jsonAs(v); break;
+    case "dropdown": r.dropdown=jsonAs(v); break;
+    case "statusbar": r.statusbar=jsonAs(v); break;
+    case "fileExplorer": r.fileExplorer=jsonAs(v); break;
+    case "panes": r.panes=jsonAs(v); break;
+    case "separators": r.separators=jsonAs(v); break;
+    case "popups": r.popups=jsonAs(v); break;
+    case "tree": r.tree=jsonAs(v); break;
+    case "native": r.native=jsonAs(v); break;
+    case "palette": r.palette=jsonAs(v); break;
+    case "trustDialog": r.trustDialog=jsonAs(v); break;
+    case "contextMenu": r.contextMenu=jsonAs(v); break;
+    case "auxModal": r.auxModal=jsonAs(v); break;
+    case "keybindingEditor": r.keybindingEditor=jsonAs(v); break;
+    case "settings": r.settings=jsonAs(v); break;
+    case "cursor": r.cursor=jsonAs(v); break;
+    case "poll": r.poll=jsonAs(v); break;
+  }
+}
+/** function applyFrame(Dict<FrameValue>) => Undefined */
 function applyFrame(changed){
-  let clipChanged=false, full=false; const dirty=new Set();
-  for(const k of Object.keys(changed)){
-    const v=changed[k];
-    if(k==="w"){ scene.w=v; full=true; }
-    else if(k==="h"){ scene.h=v; full=true; }
-    else if(k==="theme"){ scene.theme=v; full=true; }   // applyTheme runs in render()
-    else if(k==="windowId"){ scene.windowId=v; full=true; }   // workspace switch → hard cut (see render)
-    else if(k==="clipboard"){ scene.clipboard=v; clipChanged=true; }
-    else if(k==="regions.panes.len"){ scene.regions.panes.length=v; dirty.add("panes"); dirty.add("caret"); }
-    else if(k.startsWith("regions.panes.")){ scene.regions.panes[+k.slice(14)]=v;
-      dirty.add("panes."+k.slice(14));
-      dirty.add("caret"); }   // caret geometry gates on pane rects (renderCaret)
-    else if(k.startsWith("regions.")){ const key=k.slice(8); scene.regions[key]=v;
-      const r=PATH_REGION[key]; if(r) dirty.add(r); else if(r===undefined) full=true; }
+  const sc=liveScene();   // frames only follow a hello
+  let clipChanged=false, full=false;
+  /** const dirty: String[] */
+  const dirty=[];
+  const mark=name=>{ if(!dirty.includes(name)) dirty.push(name); };
+  for(const [k, v] of Object.entries(changed)){
+    if(k==="w"){ sc.w=jsonAs(v); full=true; }
+    else if(k==="h"){ sc.h=jsonAs(v); full=true; }
+    else if(k==="theme"){ sc.theme=jsonAs(v); full=true; }   // applyTheme runs in render()
+    else if(k==="windowId"){ sc.windowId=jsonAs(v); full=true; }   // workspace switch → hard cut (see render)
+    else if(k==="clipboard"){ sc.clipboard=jsonAs(v); clipChanged=true; }
+    else if(k==="regions.panes.len"){ sc.regions.panes.length=jsonAs(v); mark("panes"); mark("caret"); }
+    else if(k.startsWith("regions.panes.")){ sc.regions.panes[Number(k.slice(14))]=jsonAs(v);
+      mark("panes."+k.slice(14));
+      mark("caret"); }   // caret geometry gates on pane rects (renderCaret)
+    else if(k.startsWith("regions.")){ const key=k.slice(8); setRegion(sc.regions, key, v);
+      const r=PATH_REGION[key]; if(r) mark(r); else if(r===undefined) full=true; }
     else full=true;
   }
-  if(clipChanged) syncClipboard(scene.clipboard);
+  if(clipChanged) syncClipboard(sc.clipboard);
   if(full || !containers){ render(); return; }
-  if(dirty.has("panes")) for(const d of [...dirty]) if(d.startsWith("panes.")) dirty.delete(d);
+  const todo=dirty.includes("panes")?dirty.filter(d=>!d.startsWith("panes.")):dirty;
   renderedRegions=[];
-  for(const name of dirty){
+  for(const name of todo){
     if(name==="panes") renderAllPanes();
-    else if(name.startsWith("panes.")) renderPane(+name.slice(6));
+    else if(name.startsWith("panes.")) renderPane(Number(name.slice(6)));
     else renderRegion(name);
     renderedRegions.push(name);
   }
@@ -286,27 +351,33 @@ function applyFrame(changed){
   // so any frame refreshes it (exactly what the old full rebuild always did;
   // on desktop renderMobileChrome returns immediately).
   document.body.classList.toggle("mobile", isMobile());
-  renderMobileChrome(scene.regions);
+  renderMobileChrome(sc.regions);
   syncMacTitle();
   fxLayoutSlides();
   layoutShell();   // dock width / grid size may have moved the bezel
 }
+// A message from the server, or null for one that isn't JSON.
+/** function parseServerMessage(String) => ServerMessage | Null */
+function parseServerMessage(text){ try{ return JSON.parse(text); }catch(_){ return null; } }
 function connect(){
-  ws=new WebSocket((location.protocol==="https:"?"wss":"ws")+"://"+location.host+"/ws");
-  ws.onmessage=ev=>{
-    let m; try{ m=JSON.parse(ev.data); }catch(_){ return; }
+  const sock=new WebSocket((location.protocol==="https:"?"wss":"ws")+"://"+location.host+"/ws");
+  ws=sock;
+  sock.onmessage=ev=>{
+    const m=parseServerMessage(ev.data);
+    if(!m) return;
     if(m.type==="hello"){
       // Full resync: fresh connect, reconnect, or a restarted server all land
       // here. Adopt the clipboard seq WITHOUT writing — replaying a copy from
       // before the reconnect would be stale.
       wsBackoff=500; hideErr(); hideReconnect();
-      scene=m.scene; lastSeq=m.seq;
-      if(scene.clipboard) clipSeq=scene.clipboard.seq;
+      const sc=m.scene;
+      scene=sc; lastSeq=m.seq;
+      if(sc.clipboard) clipSeq=sc.clipboard.seq;
       render();
       resize();     // fit the grid to this window; the server pushes the resized frame
-    } else if(m.type==="frame"){
-      frameCount++; lastSeq=m.seq; lastFrameKeys=Object.keys(m.changed||{});
-      applyFrame(m.changed||{});
+    } else {   // "frame"
+      frameCount++; lastSeq=m.seq; lastFrameKeys=Object.keys(m.changed);
+      applyFrame(m.changed);
     }
   };
   // Close/error → non-modal banner + retry with backoff (500 ms doubling to
@@ -314,15 +385,17 @@ function connect(){
   // a server restart lands here too); input meanwhile is dropped. Every client
   // mirrors the same editor, so a reconnect just rejoins the shared session —
   // there is no single slot to be locked out of.
-  ws.onclose=()=>{ showReconnect(); const d=wsBackoff; wsBackoff=Math.min(5000,wsBackoff*2); setTimeout(connect,d); };
+  sock.onclose=()=>{ showReconnect(); const d=wsBackoff; wsBackoff=Math.min(5000,wsBackoff*2); setTimeout(connect,d); };
 }
 // Full-scene resync over the HTTP /state route (which stays curl-able for the
 // parity harness). Rarely needed — hello/frames carry all state — but kept
 // working for tests and manual recovery.
-async function refresh(){ try{ const s=await (await fetch("/state")).json(); scene=s; render(); }catch(e){ showErr("load failed: "+e); } }
+async function refresh(){ try{ /** const s: Scene */ const s=await (await fetch("/state")).json(); scene=s; render(); }catch(e){ showErr("load failed: "+String(e)); } }
+/** function sendKey<T>(T) => Undefined */
 function sendKey(d){ wsSend({type:"key",...d}); }
 function sendPaste(text){ wsSend({type:"paste",text}); }
-function resize(){ const a=document.getElementById("app");
+/** function resize() => Undefined */
+function resize(){ const a=byId("app");
   // Fit the grid to #app's box (the window minus the COSMOS shell's wallpaper
   // margin + bezel insets; full-bleed again on mobile).
   const cols=Math.max(20,Math.floor(a.clientWidth/CW));
@@ -331,15 +404,16 @@ function resize(){ const a=document.getElementById("app");
   const availH=a.clientHeight - (isMobile()?mBottom():0);
   const rows=Math.max(8,Math.floor(availH/CH));
   wsSend({type:"resize",cols,rows}); }
+/** function sendAction(String) => Undefined */
 function sendAction(name){ mSheetOpen=false; wsSend({type:"action",action:name}); }
-function showErr(m){ const e=document.getElementById("err"); e.textContent=m; e.style.display="block"; }
-function hideErr(){ const e=document.getElementById("err"); e.style.display="none"; }
+function showErr(m){ const e=byId("err"); e.textContent=m; e.style.display="block"; }
+function hideErr(){ const e=byId("err"); e.style.display="none"; }
 // The WS reconnect state is a client concern (the scene projection can't know
 // the socket dropped), so it lives in its own fixed-corner pill instead of the
 // #err banner (which stays reserved for genuine errors). Shown while the socket
 // is down, cleared on the reconnect `hello`.
-function showReconnect(){ document.getElementById("reconnect").classList.add("show"); }
-function hideReconnect(){ document.getElementById("reconnect").classList.remove("show"); }
+function showReconnect(){ byId("reconnect").classList.add("show"); }
+function hideReconnect(){ byId("reconnect").classList.remove("show"); }
 
 const NAMED=new Set(["Enter","Backspace","Delete","Tab","Escape","ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Home","End","PageUp","PageDown"]);
 document.addEventListener("keydown",e=>{
@@ -406,7 +480,8 @@ document.addEventListener("keydown",e=>{
     if(single&&(e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="c"){
       const t=natselText();
       if(t){ e.preventDefault();
-        if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(t).catch(()=>{});
+        const cb=navigator.clipboard;
+        if(cb) cb.writeText(t).catch(()=>{});
         return; }
     }
     e.preventDefault();
@@ -417,7 +492,7 @@ document.addEventListener("keydown",e=>{
     // On mobile, fold in any armed sticky modifiers so e.g. tap-Ctrl then a
     // native-keyboard letter sends Ctrl+<letter>. Record the time so the
     // beforeinput fallback (Android) knows this key was already handled.
-    if(isMobile()){ kdHandledAt=Date.now(); mobileSendKey(d); } else sendKey(d);
+    if(isMobile()){ kdHandledAt=Date.now(); mobileSendKey(d.key,{ctrl:d.ctrl,alt:d.alt,shift:d.shift,meta:d.meta}); } else sendKey(d);
   }
 });
 // Inbound OS clipboard: the DOM paste event (Ctrl+V / Shift+Insert / browser
@@ -426,6 +501,7 @@ document.addEventListener("keydown",e=>{
 // path — never per-char /key loops.
 document.addEventListener("paste",e=>{
   e.preventDefault();
-  const text=e.clipboardData&&e.clipboardData.getData("text/plain");
+  const cd=e.clipboardData;
+  const text=cd?cd.getData("text/plain"):"";
   if(text) sendPaste(text);
 });

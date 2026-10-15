@@ -6,9 +6,11 @@
 // native controls, …). Toggle/Button clicks route back to the owning plugin
 // via the same event the TUI fires; `surface` selects the routing path.
 // Concatenate a TextPropertyEntry's display text (segments preferred).
-function entryText(e){ return (e.segments&&e.segments.length)?e.segments.map(s=>s.text||"").join(""):(e.text||""); }
+/** function entryText(TextPropertyEntry) => String */
+function entryText(e){ const sg=e.segments; return (sg!=null&&sg.length>0)?sg.map(s=>s.text||"").join(""):(e.text||""); }
 // A style's look, as the host resolved its colours (`fgCss`/`bgCss`, from the
 // theme keys a plugin names) — applied inline to the span it covers.
+/** function applyStyle(El, OverlayOptions | Undefined) => Undefined */
 function applyStyle(el, st){
   if(!st) return;
   if(st.fgCss) el.style.color=st.fgCss;
@@ -19,11 +21,13 @@ function applyStyle(el, st){
 }
 // A TextPropertyEntry as styled spans: its segments, each in its own colour,
 // inside the entry's own style.
+/** function fillEntry(El, TextPropertyEntry) => El */
 function fillEntry(el, e){
   if(!e) return el;
   applyStyle(el, e.style);
-  if(e.segments&&e.segments.length){
-    for(const sg of e.segments){ const sp=document.createElement("span"); sp.textContent=sg.text||""; applyStyle(sp, sg.style); el.appendChild(sp); }
+  const segs=e.segments;
+  if(segs!=null&&segs.length>0){
+    for(const sg of segs){ const sp=document.createElement("span"); sp.textContent=sg.text||""; applyStyle(sp, sg.style); el.appendChild(sp); }
   } else el.append(e.text||"");
   return el;
 }
@@ -35,6 +39,7 @@ function fillEntry(el, e){
 // per theme; trailing pad spaces are trimmed since the width is what aligns.
 // A control's label with the one colon a form label takes — a plugin label
 // that already ends in its own colon keeps it, rather than reading "Search::".
+/** function labelColon(String) => String */
 function labelColon(text){
   const t=(text||"").replace(/\s+$/,"");
   return /[:：]$/.test(t)?t+" ":t+": ";
@@ -43,20 +48,22 @@ function labelColon(text){
 // (name) and where it stands (state), so assistive tech — and tests, by role
 // and name — find it as the control it draws. Nothing takes the keyboard
 // (the editor owns every key), so there is no tabindex here.
+/** type AriaValue = String | Number | Boolean | Null */
+/** function aria(El, String, Dict<AriaValue>) => El */
 function aria(el, role, attrs){
   if(role) el.setAttribute("role", role);
-  for(const k in (attrs||{})){
-    const v=attrs[k];
+  for(const [k, v] of Object.entries(attrs)){
     if(v==null||v===false&&k!=="checked"&&k!=="selected"&&k!=="expanded") continue;
     el.setAttribute("aria-"+k, String(v));
   }
   return el;
 }
+/** function formLabel(String, Number) => El */
 function formLabel(text, labelWidth){
   const l=document.createElement("span");
   l.className="w-flabel";
   l.textContent=labelColon(text);
-  if(labelWidth>0) l.style.setProperty("--flw", labelWidth);
+  if(labelWidth>0) l.style.setProperty("--flw", String(labelWidth));
   return l;
 }
 
@@ -68,42 +75,60 @@ function formLabel(text, labelWidth){
 // mounted spec (app/native_panels.rs). So nothing here decides what a press
 // means, and a list row the terminal scrolled out of its window resolves
 // like any other.
+// The context widgetEl's callers pass (50-palette.js's toolbar, 73-native.js's
+// panels), and the full one the renderer threads through the tree (`grid`:
+// inside a grid row; `table`: inside a table; `instances` null = none).
+/** type WidgetCtx =
+    { kind: "toolbar", focusKey: String | Undefined }
+    | { kind: "panel", slot: String, section: Number | Undefined, pane: Number | Undefined,
+        focusKey: String, instances: Dict<WidgetInstance>, native: Boolean } */
+/** type WCtx = {
+    kind: "toolbar" | "panel", slot: String | Undefined, section: Number | Undefined,
+    pane: Number | Undefined, focusKey: String | Undefined,
+    instances: Dict<WidgetInstance> | Null, native: Boolean, grid: Boolean, table: Boolean,
+    inRow: Boolean } */
+// An undefined section/pane is left out of the JSON, as before.
+/** function panelBase(WCtx) => {surface: String, slot: String | Undefined, section: Number | Undefined, pane: Number | Undefined} */
 function panelBase(ctx){
-  const b={surface:"panel",slot:ctx.slot};
-  if(ctx.section!=null) b.section=ctx.section;
-  if(ctx.pane!=null) b.pane=ctx.pane;
-  return b;
+  return {surface:"panel",slot:ctx.slot,section:ctx.section,pane:ctx.pane};
 }
-function routeWidget(ctx, node, listIndex, ev){
-  if(ctx.kind==="toolbar"){ if(node.key) sendWidget({surface:"toolbar",key:node.key}); return; }
+// A press on a toggle/button/text widget (`kind`) keyed `key`.
+/** function routeWidget(WCtx, String | Undefined, String) => Undefined */
+function routeWidget(ctx, key, kind){
+  if(ctx.kind==="toolbar"){ if(key) sendWidget({surface:"toolbar",key}); return; }
   const base=panelBase(ctx);
-  if(listIndex!=null){
-    const itemKey=(node.itemKeys&&node.itemKeys[listIndex]!=null)?node.itemKeys[listIndex]:"";
-    const payload={index:listIndex,key:itemKey,list_key:node.key||null};
-    // Right-click raises the plugin's context menu, anchored at the cell.
-    if(ev&&ev.button===2){
-      const c=cellAt(ev);
-      sendWidget({...base,widgetKey:itemKey,eventType:"context",payload,col:c.col,row:c.row});
-      return;
-    }
-    sendWidget({...base,widgetKey:itemKey,eventType:"select",payload,clicks:(ev&&ev.detail)||1});
+  if(key){
+    const et=kind==="button"?"activate":kind==="toggle"?"toggle":kind==="text"?"focus":null;
+    if(et) sendWidget({...base,widgetKey:key,eventType:et,payload:{}});
+  }
+}
+// A press on row `listIndex` of the list keyed `key`.
+/** function routeListItem(WCtx, String | Undefined, String[], Number, UiEvent) => Undefined */
+function routeListItem(ctx, key, itemKeys, listIndex, ev){
+  if(ctx.kind==="toolbar"){ if(key) sendWidget({surface:"toolbar",key}); return; }
+  const base=panelBase(ctx);
+  const itemKey=itemKeys[listIndex]??"";
+  const payload={index:listIndex,key:itemKey,list_key:key||null};
+  // Right-click raises the plugin's context menu, anchored at the cell.
+  if(ev.button===2){
+    const c=cellAt(ev);
+    sendWidget({...base,widgetKey:itemKey,eventType:"context",payload,col:c.col,row:c.row});
     return;
   }
-  if(node.key){
-    const et=node.kind==="button"?"activate":node.kind==="toggle"?"toggle":node.kind==="text"?"focus":null;
-    if(et) sendWidget({...base,widgetKey:node.key,eventType:et,payload:{}});
-  }
+  sendWidget({...base,widgetKey:itemKey,eventType:"select",payload,clicks:ev.detail||1});
 }
 
 // A control press by key + the specific event (a dropdown answers both
 // `dropdown_toggle` and `dropdown_select`).
+/** function routeControl<T>(WCtx, String, String, T) => Undefined */
 function routeControl(ctx,key,eventType,payload){
   if(ctx.kind!=="panel") return;
-  sendWidget({...panelBase(ctx),widgetKey:key,eventType,payload:payload||{}});
+  sendWidget({...panelBase(ctx),widgetKey:key,eventType,payload});
 }
 
 // UTF-8 byte offset ⇄ UTF-16 code-unit index conversions for text widgets:
 // the host TextEdit speaks bytes, input.selectionStart speaks UTF-16.
+/** function byteToUtf16(String, Number) => Number */
 function byteToUtf16(s,byte){
   let b=0;
   for(let i=0;i<s.length;i++){
@@ -114,6 +139,7 @@ function byteToUtf16(s,byte){
   }
   return s.length;
 }
+/** function utf16ToByte(String, Number) => Number */
 function utf16ToByte(s,idx){
   let b=0;
   for(let i=0;i<Math.min(idx,s.length);i++){
@@ -131,17 +157,20 @@ function utf16ToByte(s,idx){
 // the list has the viewport as its containing block and nothing clips it — the
 // approach every portal-based design system (Radix, MUI, …) uses. The host is
 // 0×0 (its children are all fixed-positioned), so it never intercepts clicks.
+/** function popoverHost() => El */
 function popoverHost(){
-  let h=document.getElementById("fresh-popover-host");
-  if(!h){ h=document.createElement("div"); h.id="fresh-popover-host"; document.body.appendChild(h); }
-  return h;
+  const h=document.getElementById("fresh-popover-host");
+  if(h) return h;
+  const n=document.createElement("div"); n.id="fresh-popover-host"; document.body.appendChild(n);
+  return n;
 }
 // Mount a dropdown option list into the body-level host, tagged with the region
 // currently rendering (renderRegion sets `popoverRegionOwner`). That region
 // reaps its own tagged pop-overs on its next fill, so the list disappears the
 // moment the dropdown closes and can never leak/accumulate across frames.
+/** function mountPopover(El) => Undefined */
 function mountPopover(el){
-  el.dataset.popoverRegion=(typeof popoverRegionOwner!=="undefined"&&popoverRegionOwner)||"";
+  el.dataset.popoverRegion=popoverRegionOwner??"";
   popoverHost().appendChild(el);
 }
 
@@ -164,26 +193,28 @@ function mountPopover(el){
 // Callers portal the list to the body-level host (see mountPopover), so the
 // fixed containing block is the viewport; the ancestor walk below is a
 // defensive fallback for any future in-tree caller.
+/** function positionFloatingPopover(El, El, {align: String}) => Undefined */
 function positionFloatingPopover(anchor, popup, opts){
   if(!anchor||!anchor.isConnected||!popup) return;
-  opts=opts||{};
   // Fixed-positioning containing block: the viewport, unless an ancestor
   // establishes one (transform / filter / backdrop-filter / perspective /
   // will-change). Portaled popovers live under <body> so this is normally the
   // viewport; the walk stays for robustness (and for any non-portaled caller).
   let cb={left:0,top:0,right:window.innerWidth,bottom:window.innerHeight};
-  for(let el=popup.parentElement; el; el=el.parentElement){
-    const cs=getComputedStyle(el);
-    if(cs.transform!=="none"||cs.perspective!=="none"
-       ||(cs.filter&&cs.filter!=="none")
-       ||(cs.backdropFilter&&cs.backdropFilter!=="none")
-       ||(cs.webkitBackdropFilter&&cs.webkitBackdropFilter!=="none")
-       ||/transform|filter|perspective/.test(cs.willChange||"")){
-      cb=el.getBoundingClientRect(); break;
+  for(let up=popup.parentElement; up; ){
+    const el=up; if(!el) break;   // (`up` is reassigned, so it isn't narrowed)
+    const cs=getComputedStyle(el), v=p=>cs.getPropertyValue(p);
+    const set=p=>{ const x=v(p); return x!==""&&x!=="none"; };
+    if(v("transform")!=="none"||v("perspective")!=="none"
+       ||set("filter")||set("backdrop-filter")||set("-webkit-backdrop-filter")
+       ||/transform|filter|perspective/.test(v("will-change"))){
+      const r=el.getBoundingClientRect();
+      cb={left:r.left,top:r.top,right:r.right,bottom:r.bottom}; break;
     }
+    up=el.parentElement;
   }
   const a=anchor.getBoundingClientRect();
-  popup.style.minWidth=a.width+"px";       // >= trigger, grow-to-content past it
+  popup.style.minWidth=`${a.width}px`;       // >= trigger, grow-to-content past it
   const w=popup.offsetWidth, h=popup.offsetHeight, M=4;
   // Horizontal alignment to the trigger. `align:"end"` aligns the right edges
   // (list grows leftward) — the right thing for a control flush against a
@@ -198,8 +229,8 @@ function positionFloatingPopover(anchor, popup, opts){
   let top=a.bottom+2;
   if(top+h > cb.bottom-M && a.top-h-2 >= cb.top+M) top=a.top-h-2;
   top=Math.max(cb.top+M, Math.min(top, cb.bottom-h-M));
-  popup.style.left=(left-cb.left)+"px";
-  popup.style.top=(top-cb.top)+"px";
+  popup.style.left=`${left-cb.left}px`;
+  popup.style.top=`${top-cb.top}px`;
 }
 
 // After a widgets-region rebuild: hand real DOM focus to the host-focused
@@ -207,78 +238,105 @@ function positionFloatingPopover(anchor, popup, opts){
 // pin its caret to the host TextEdit's cursor, and fall back to the hidden
 // sink when no widget input holds focus anymore. Skipped mid-IME-composition
 // so a caret write can't cancel the preedit.
+/** function syncWidgetInputFocus() => Undefined */
 function syncWidgetInputFocus(){
   const t=document.querySelector(".w-text-input[data-wfocus='1']");
   if(t){
     if(document.activeElement!==t) t.focus({preventScroll:true});
-    if(!t.dataset.composing&&t.dataset.caret!==""&&t.dataset.caret!=null){
-      const i=+t.dataset.caret;
+    const caret=t.dataset.caret;
+    if(!t.dataset.composing&&caret!==""&&caret!=null){
+      const i=Number(caret);
       try{ t.setSelectionRange(i,i); }catch(_){}
     }
-  } else if(document.activeElement&&document.activeElement.classList
-      &&document.activeElement.classList.contains("w-text-input")){
-    focusSink();
+  } else {
+    const ae=document.activeElement;
+    if(ae&&ae.classList.contains("w-text-input")) focusSink();
   }
 }
 
+/** function widgetEl(WidgetSpec, WidgetCtx) => El */
 function widgetEl(spec, ctx){
+  return widgetNode(spec, ctx.kind==="panel"
+    ? {kind:"panel", slot:ctx.slot, section:ctx.section, pane:ctx.pane, focusKey:ctx.focusKey,
+       instances:ctx.instances, native:ctx.native, grid:false, table:false, inRow:false}
+    : {kind:"toolbar", slot:undefined, section:undefined, pane:undefined, focusKey:ctx.focusKey,
+       instances:null, native:false, grid:false, table:false, inRow:false});
+}
+// The host instance state of the widget keyed `key`, if any.
+/** function instOf(WCtx, String | Undefined) => WidgetInstance | Null */
+function instOf(ctx, key){
+  const m=ctx.instances;
+  return (m!==null&&key!==undefined&&key!=="")?(m[key]??null):null;
+}
+// A widget's key (a label has none).
+/** function specKey(WidgetSpec) => String | Undefined */
+function specKey(s){ return s.kind==="label"?undefined:s.key; }
+// A grid row's cells (none for anything else).
+/** function rowCells(WidgetSpec) => WidgetSpec[] */
+function rowCells(s){ return s.kind==="row"?s.children:[]; }
+/** function widgetNode(WidgetSpec, WCtx) => El */
+function widgetNode(spec, ctx){
   if(!spec) return document.createTextNode("");
-  const kind=spec.kind, fk=ctx.focusKey;
-  const focused = spec.key && spec.key===fk;
-  if(kind==="row"||kind==="col"){
+  const kind=spec.kind, fk=ctx.focusKey, wkey=specKey(spec);
+  const focused = !!wkey && wkey===fk;
+  const kids=spec.kind==="row"?spec.children:spec.kind==="col"?spec.children:null;
+  if(kids){
     // A row that lays text out in cells (`raw` cells between its controls,
     // labels padded with spaces to a column) only lines up in the buffer's
     // font, so it is drawn in it: a GRID row, whose controls still answer as
     // controls. Every other row is laid out by the browser.
-    const kids=spec.children||[];
     // A `raw` cell with text in it is cell-drawn content; one of only spaces
     // is a gap, and does not make its row a grid.
-    const inked=x=>x&&x.kind==="raw"&&(x.entries||[]).some(e=>entryText(e).trim()!=="");
-    const isGridRow=c=>c&&c.kind==="row"&&(c.children||[]).some(inked);
+    /** const inked: (WidgetSpec) => Boolean */
+    const inked=x=>x.kind==="raw"?x.entries.some(e=>entryText(e).trim()!==""):false;
+    const isGridRow=c=>rowCells(c).some(inked);
     // A column of grid rows that all have the same number of cells is a
     // TABLE the terminal drew line by line (a menu's two columns of entries
     // with a rule between them, Tab walking it in reading order). Natively
     // it is one CSS grid: the columns line up in any font, the cells are
     // laid out as text and controls, and a `│` cell becomes a hairline.
     if(ctx.native&&!ctx.grid&&kind==="col"&&kids.length>1&&kids.every(isGridRow)
-       &&kids.every(c=>c.children.length===kids[0].children.length)){
+       &&kids.every(c=>rowCells(c).length===rowCells(kids[0]).length)){
       const el=div("w-col w-table");
-      el.style.gridTemplateColumns="repeat("+kids[0].children.length+",auto)";
+      el.style.gridTemplateColumns=`repeat(${rowCells(kids[0]).length},auto)`;
       const tctx={...ctx,table:true};
       for(const r of kids){
         const re=div("w-row w-table-row");
-        for(const c of r.children) re.appendChild(widgetEl(c, tctx));
+        for(const c of rowCells(r)) re.appendChild(widgetNode(c, tctx));
         el.appendChild(re);
       }
       return el;
     }
     const grid=!ctx.table&&(ctx.grid||(kind==="row"&&kids.some(inked)));
-    const el=div("w-"+kind+(spec.wrap?" wrap":"")+(grid&&!ctx.grid?" grid":"")+(spec.justifyEnd?" end":""));
+    const wrap=spec.kind==="row"&&spec.wrap, end=spec.kind==="row"&&spec.justifyEnd;
+    const el=div("w-"+kind+(wrap?" wrap":"")+(grid&&!ctx.grid?" grid":"")+(end?" end":""));
     const cctx={...ctx,grid:grid||ctx.grid,inRow:kind==="row"};
-    for(const c of kids) el.appendChild(widgetEl(c, cctx));
+    for(const c of kids) el.appendChild(widgetNode(c, cctx));
     return el;
   }
-  if(kind==="label"){
+  if(spec.kind==="label"){
     // A terminal section heading: a caption followed by a rule of box-drawing
     // characters long enough to reach any edge. Natively, the caption and a
     // drawn rule that ends where the panel does.
-    const heading=!ctx.grid&&!(spec.segments&&spec.segments.length)
-      &&/^\s*[─━═]*\s*([^─━═]*?)\s*[─━═]{3,}\s*$/.exec(spec.text||"");
+    const segs=spec.segments, hasSegs=segs!=null&&segs.length>0;
+    const heading=(!ctx.grid&&!hasSegs)
+      ?/^\s*[─━═]*\s*([^─━═]*?)\s*[─━═]{3,}\s*$/.exec(spec.text||""):null;
     if(heading){
       const el=div("w-heading");
-      const t=document.createElement("span"); t.textContent=heading[1]; el.appendChild(t);
+      const t=document.createElement("span"); t.textContent=heading[1]??""; el.appendChild(t);
       el.appendChild(div("w-heading-rule"));
       return el;
     }
     const el=div("w-label-row");
-    const segs=spec.segments&&spec.segments.length?spec.segments:[{text:spec.text||""}];
     applyStyle(el, spec.style);
-    for(const sg of segs){ const sp=document.createElement("span"); sp.textContent=sg.text||""; applyStyle(sp, sg.style); el.appendChild(sp); }
-    if(spec.labelWidth>0) el.style.paddingLeft=spec.labelWidth+"ch";
+    const seg=(text,st)=>{ const sp=document.createElement("span"); sp.textContent=text; applyStyle(sp, st); el.appendChild(sp); };
+    if(hasSegs) for(const sg of segs) seg(sg.text||"", sg.style);
+    else seg(spec.text||"", undefined);
+    if(spec.labelWidth>0) el.style.paddingLeft=`${spec.labelWidth}ch`;
     if(spec.wrap) el.classList.add("wrap");
     return el;
   }
-  if(kind==="toggle"){
+  if(spec.kind==="toggle"){
     const el=div("w-toggle"+(spec.checked?" on":"")+(focused?" focus":"")+(spec.labelFirst?" labelfirst":""));
     // A sliding switch (CSS-drawn), matching the Settings UI toggles —
     // not a unicode ☑/☐ glyph. `labelFirst` renders the form layout
@@ -293,10 +351,10 @@ function widgetEl(spec, ctx){
       const lb=document.createElement("span"); lb.className="w-label"; lb.textContent=spec.label||""; el.appendChild(lb);
     }
     aria(el, "switch", {checked:!!spec.checked, label:(spec.label||"").replace(/\s*:\s*$/,"").trim()||null});
-    if(spec.key) el.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,spec); };
+    if(wkey) el.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,wkey,kind); };
     return el;
   }
-  if(kind==="button"){
+  if(spec.kind==="button"){
     const el=div("w-button "+(spec.intent||"normal")+(spec.disabled?" disabled":"")+(focused?" focus":"")
       +(spec.bare?" bare":"")+(spec.fullWidth?" full":""));
     // A terminal label carries its own padding (a bare title bar's trailing
@@ -305,33 +363,33 @@ function widgetEl(spec, ctx){
     const label=ctx.grid?(spec.label||""):(spec.label||"").trim();
     // A menu entry that says what it sets: `(•)`/`( )` a choice, `[✓]`/`[ ]`
     // a switch — drawn as the marks they stand for.
-    const mark=!ctx.grid&&ctx.native&&/^(\(•\)|\( \)|\[✓\]|\[ \])\s+(.*)$/.exec(label);
+    const mark=(!ctx.grid&&ctx.native)?/^(\(•\)|\( \)|\[✓\]|\[ \])\s+(.*)$/.exec(label):null;
     if(mark){
-      const radio=mark[1][0]==="(", on=mark[1][1]!==" ";
+      const mtxt=mark[1]??"", radio=mtxt[0]==="(", on=mtxt[1]!==" ";
       const m=document.createElement("span");
       m.className=(radio?"w-mark-radio":"w-mark-check")+(on?" on":"");
-      el.appendChild(m); el.append(mark[2]);
+      el.appendChild(m); el.append(mark[2]??"");
     } else el.textContent=label;
     if(ctx.grid) el.classList.add("gridcell");
-    if(mark) aria(el, mark[1][0]==="("?"menuitemradio":"menuitemcheckbox", {checked:mark[1][1]!==" ", label:mark[2].trim()});
+    if(mark) aria(el, (mark[1]??"")[0]==="("?"menuitemradio":"menuitemcheckbox", {checked:(mark[1]??"")[1]!==" ", label:(mark[2]??"").trim()});
     else aria(el, "button", {disabled:!!spec.disabled, label:label.trim()!==label?label.trim():null});
-    if(spec.key && !spec.disabled) el.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,spec); };
+    if(wkey && !spec.disabled) el.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,wkey,kind); };
     return el;
   }
-  if(kind==="spacer"){ const el=div("w-spacer"); if(spec.flex) el.style.flex="1"; else el.style.width=((spec.cols||1)*CW)+"px"; return el; }
+  if(spec.kind==="spacer"){ const el=div("w-spacer"); if(spec.flex) el.style.flex="1"; else el.style.width=`${(spec.cols||1)*CW}px`; return el; }
   if(kind==="divider"){ return div("w-divider"); }
-  if(kind==="hintBar"){
+  if(spec.kind==="hintBar"){
     const el=div("w-hintbar");
     for(const h of (spec.entries||[])){ const e2=document.createElement("span"); e2.className="w-hint";
       e2.innerHTML='<b>'+esc(h.keys||"")+'</b> '+esc(h.label||""); el.appendChild(e2); }
     return el;
   }
-  if(kind==="labeledSection"){
+  if(spec.kind==="labeledSection"){
     const el=div("w-section"); if(spec.label){ const l=div("w-section-label"); l.textContent=spec.label; el.appendChild(l); }
     aria(el, "group", {label:spec.label||null});
-    if(spec.child) el.appendChild(widgetEl(spec.child, ctx)); return el;
+    if(spec.child) el.appendChild(widgetNode(spec.child, ctx)); return el;
   }
-  if(kind==="text"){
+  if(spec.kind==="text"){
     // A REAL <input>/<textarea>, but the editor stays the single source of
     // truth: the host TextEdit's live value + caret arrive via instance
     // state (instances[key].textValue / cursorByte) and are written into
@@ -340,26 +398,26 @@ function widgetEl(spec, ctx){
     // them, and the pushed frame echoes the authoritative result back.
     // The native element buys the real caret, focus ring, IME target and
     // browser-computed click-to-caret positions for free.
-    const inst=(ctx.instances&&spec.key)?ctx.instances[spec.key]:null;
+    const inst=instOf(ctx, wkey);
     const val=(inst&&inst.textValue!=null)?inst.textValue:(spec.value||"");
     // Width as the terminal sizes it: a multi-line field (or one asked to)
     // fills its row; a `fieldWidth` is a width in characters.
     const fill=spec.fullWidth||((spec.rows||1)>1&&!spec.fieldWidth);
     const el=div("w-text"+(focused?" focus":"")+(fill?" fill":""));
-    if(!fill&&spec.fieldWidth>0) el.style.width="calc("+spec.fieldWidth+"ch + 1.2em)";
+    if(!fill&&spec.fieldWidth>0) el.style.width=`calc(${spec.fieldWidth}ch + 1.2em)`;
     // A form-style field (`label` + `labelWidth`) keeps its label OUTSIDE the
     // bordered field, in the shared label column, so the label doesn't get
     // boxed into the input and the field aligns with the other controls. A
     // plain labelled field (no width) keeps the legacy inline label.
-    const formField=spec.label&&spec.labelWidth>0;
+    const formField=!!spec.label&&spec.labelWidth>0;
     if(spec.label&&!formField){ const l=document.createElement("span"); l.className="w-text-label"; l.textContent=labelColon(spec.label); el.appendChild(l); }
     const multi=(spec.rows||1)>1;
     const input=document.createElement(multi?"textarea":"input");
     input.className="w-text-input";
-    if(multi) input.rows=spec.rows;
+    if(multi) input.setAttribute("rows", String(spec.rows));
     input.value=val;
     input.placeholder=spec.placeholder||"";
-    aria(input, null, {label:(spec.label?labelColon(spec.label).replace(/\s*:\s*$/,""):spec.placeholder)||null,
+    aria(input, "", {label:(spec.label?labelColon(spec.label).replace(/\s*:\s*$/,""):spec.placeholder)||null,
       multiline:multi||null});
     input.setAttribute("autocapitalize","off"); input.setAttribute("autocomplete","off");
     input.setAttribute("autocorrect","off"); input.setAttribute("spellcheck","false");
@@ -370,17 +428,17 @@ function widgetEl(spec, ctx){
     // exactly like the hidden sink does, then discarded locally.
     input.addEventListener("beforeinput",ev=>{ if(!ev.isComposing) ev.preventDefault(); });
     input.addEventListener("compositionstart",()=>{ input.dataset.composing="1"; });
-    input.addEventListener("compositionend",ev=>{ delete input.dataset.composing; if(ev.data) sendPaste(ev.data); input.value=val; });
+    input.addEventListener("compositionend",ev=>{ input.removeAttribute("data-composing"); const d=ev.data; if(d) sendPaste(d); input.value=val; });
     input.addEventListener("input",ev=>{ if(!ev.isComposing) input.value=val; });
     // Mousedown focuses the widget host-side (the same `focus` event a TUI
     // click fires). No preventDefault — the browser places its caret
     // natively, and mouseup reports that position so the host TextEdit
     // follows. (A drag-selection is left as a browser-local convenience
     // for copy; the host tracks selection only via its own keybindings.)
-    input.addEventListener("mousedown",e=>{ e.stopPropagation(); if(spec.key) routeWidget(ctx,spec); });
+    input.addEventListener("mousedown",e=>{ e.stopPropagation(); if(wkey) routeWidget(ctx,wkey,kind); });
     input.addEventListener("mouseup",e=>{ e.stopPropagation();
-      if(spec.key && input.selectionStart===input.selectionEnd)
-        sendWidget({...panelBase(ctx),widgetKey:spec.key,eventType:"focus",
+      if(wkey && input.selectionStart===input.selectionEnd)
+        sendWidget({...panelBase(ctx),widgetKey:wkey,eventType:"focus",
           textCursor:utf16ToByte(input.value,input.selectionStart)});
     });
     if(focused){
@@ -391,10 +449,12 @@ function widgetEl(spec, ctx){
     // Completion popup (e.g. path complete): candidates are host instance
     // state; the highlighted row appears only once ↑/↓ entered the popup,
     // mirroring the TUI.
-    if(focused&&inst&&inst.completions&&inst.completions.length){
+    const comps=inst?inst.completions:undefined;
+    if(focused&&inst&&comps!=null&&comps.length>0){
       const dd=div("w-complete");
-      inst.completions.forEach((cand,i)=>{
-        const r=div("w-complete-row"+((inst.completionNavigated&&i===(inst.completionSelected||0))?" sel":""));
+      const nav=!!inst.completionNavigated, csel=inst.completionSelected||0;
+      comps.forEach((cand,i)=>{
+        const r=div("w-complete-row"+((nav&&i===csel)?" sel":""));
         r.textContent=cand; dd.appendChild(r);
       });
       el.appendChild(dd);
@@ -407,49 +467,48 @@ function widgetEl(spec, ctx){
     }
     return el;
   }
-  if(kind==="radio"){
-    const inst=(ctx.instances&&spec.key)?ctx.instances[spec.key]:null;
+  if(spec.kind==="radio"){
+    const inst=instOf(ctx, wkey);
     const sel=(inst&&inst.selectedIndex!=null)?inst.selectedIndex:(spec.selectedIndex||0);
     const el=aria(div("w-radio"+(focused?" focus":"")), "radiogroup", {label:spec.label||null});
     if(spec.label) el.appendChild(formLabel(spec.label, spec.labelWidth));
-    else if(spec.labelWidth>0) el.style.paddingLeft=spec.labelWidth+"ch";
+    else if(spec.labelWidth>0) el.style.paddingLeft=`${spec.labelWidth}ch`;
     (spec.options||[]).forEach((o,i)=>{
       const opt=aria(div("w-radio-opt"+(i===sel?" on":"")), "radio", {checked:i===sel, label:o});
       opt.appendChild(div("w-radio-dot"));
       const t=document.createElement("span"); t.textContent=o; opt.appendChild(t);
-      opt.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(spec.key) routeControl(ctx,spec.key,"radio_select",{index:i}); };
+      opt.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(wkey) routeControl(ctx,wkey,"radio_select",{index:i}); };
       el.appendChild(opt);
     });
     return el;
   }
-  if(kind==="number"){
-    const inst=(ctx.instances&&spec.key)?ctx.instances[spec.key]:null;
-    const val=(inst&&inst.numberValue!=null)?inst.numberValue:(spec.value||0);
+  if(spec.kind==="number"){
+    const inst=instOf(ctx, wkey);
+    const num=(inst&&inst.numberValue!=null)?inst.numberValue:(spec.value||0);
     const el=div("w-number"+(focused?" focus":""));
     if(spec.label){ const l=document.createElement("span"); l.className="w-text-label"; l.textContent=labelColon(spec.label); el.appendChild(l); }
-    const disp=spec.editText!=null?spec.editText
-      :spec.percent?Math.round(val*100)+"%"
-      :spec.integer?String(Math.trunc(val))
-      :String(+(+val).toFixed(3));
+    const disp=spec.percent?`${Math.round(num*100)}%`
+      :spec.integer?String(Math.trunc(num))
+      :String(Number(toFixed(num, 3)));
     // −/+ steppers focus the widget then step it via the host's own
     // Left/Right handling — the value math (min/max/step) stays host-side.
     const mk=(t,key)=>{ const b=document.createElement("span"); b.className="w-num-step"; b.textContent=t;
-      b.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(!spec.key) return;
-        routeControl(ctx,spec.key,"number_value",{}); sendKey({key}); };
+      b.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(!wkey) return;
+        routeControl(ctx,wkey,"number_value",{}); sendKey({key}); };
       return b; };
     el.appendChild(mk("−","ArrowLeft"));
     const v=document.createElement("span"); v.className="w-num-val"; v.textContent=disp;
-    aria(v, "spinbutton", {valuenow:val, valuetext:disp, label:spec.label||null});
-    v.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(spec.key) routeControl(ctx,spec.key,"number_value",{}); };
+    aria(v, "spinbutton", {valuenow:num, valuetext:disp, label:spec.label||null});
+    v.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(wkey) routeControl(ctx,wkey,"number_value",{}); };
     el.appendChild(v);
     el.appendChild(mk("+","ArrowRight"));
     return el;
   }
-  if(kind==="dropdown"){
-    const inst=(ctx.instances&&spec.key)?ctx.instances[spec.key]:null;
+  if(spec.kind==="dropdown"){
+    const inst=instOf(ctx, wkey);
     const selIdx=(inst&&inst.selectedIndex!=null)?inst.selectedIndex:(spec.selectedIndex||0);
     const open=inst?!!inst.dropdownOpen:!!spec.open;
-    const el=div("w-dropdown"+(focused?" focus":"")+(spec.label&&spec.labelWidth>0?" wform":""));
+    const el=div("w-dropdown"+(focused?" focus":"")+(!!spec.label&&spec.labelWidth>0?" wform":""));
     if(spec.label){
       if(spec.labelWidth>0) el.appendChild(formLabel(spec.label, spec.labelWidth));
       else { const l=document.createElement("span"); l.className="w-text-label"; l.textContent=labelColon(spec.label); el.appendChild(l); }
@@ -461,13 +520,13 @@ function widgetEl(spec, ctx){
     // font (e.g. the macOS skin's -apple-system), so pairing it with ▾ made the
     // pill jump ~6px wider on open; the small ▴ keeps the width stable.
     pill.textContent=((spec.options||[])[selIdx]??"—")+(open?" ▴":" ▾");
-    pill.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(spec.key) routeControl(ctx,spec.key,"dropdown_toggle",{}); };
+    pill.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(wkey) routeControl(ctx,wkey,"dropdown_toggle",{}); };
     el.appendChild(pill);
     if(open){
       const dd=aria(div("w-dd w-dd-floating"), "listbox", {label:spec.label||null});
       (spec.options||[]).forEach((o,i)=>{
         const r=aria(div("w-dd-row"+(i===selIdx?" sel":"")), "option", {selected:i===selIdx}); r.textContent=o;
-        r.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(spec.key) routeControl(ctx,spec.key,"dropdown_select",{index:i}); };
+        r.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(wkey) routeControl(ctx,wkey,"dropdown_select",{index:i}); };
         dd.appendChild(r);
       });
       // Portal the option list to the body-level host so it extends PAST the
@@ -475,47 +534,47 @@ function widgetEl(spec, ctx){
       // with the TUI popover). Shared positioner anchors it under the pill,
       // grows it to fit the widest item, and flips/shifts to stay on screen.
       mountPopover(dd);
-      requestAnimationFrame(()=>positionFloatingPopover(pill, dd));
+      requestAnimationFrame(()=>positionFloatingPopover(pill, dd, {align:"start"}));
     }
     return el;
   }
-  if(kind==="dualList"){
+  if(spec.kind==="dualList"){
     // Two-column ordered-subset picker. Rows are derived exactly like the
     // host: Available = options minus included minus excluded (in option
     // order); Included = the host-owned ordered instance list. Clicks fire
     // the same `dual_focus` hits a TUI cell click resolves; moves/reorders
     // stay keyboard-driven through the host (Space / PageUp / PageDown).
-    const inst=(ctx.instances&&spec.key)?ctx.instances[spec.key]:null;
+    const inst=instOf(ctx, wkey);
     // `included` is skip-serialized when empty, so detect "host state
     // exists" via activeIncluded (always present for a DualList instance).
     const included=(inst&&inst.activeIncluded!=null)?(inst.included||[]):(spec.included||[]);
     const activeIncluded=inst?!!inst.activeIncluded:false;
-    const cursors={available:inst&&inst.availableCursor||0, included:inst&&inst.includedCursor||0};
-    const optLabel=v=>{ const o=(spec.options||[]).find(o=>(o.value??o)===v); return o?(o.label??o.value??o):v; };
+    // (DualList options are always {value, label} objects.)
+    const optLabel=v=>{ const o=(spec.options||[]).find(o=>o.value===v); return o?o.label:v; };
     const excluded=new Set([...(spec.excluded||[]),...included]);
-    const avail=(spec.options||[]).map(o=>o.value??o).filter(v=>!excluded.has(v));
+    const avail=(spec.options||[]).map(o=>o.value).filter(v=>!excluded.has(v));
     const el=div("w-dual"+(focused?" focus":""));
     if(spec.label){ const l=div("w-section-label"); l.textContent=spec.label; el.appendChild(l); }
     const cols=div("w-dual-cols");
-    const mkCol=(title,values,column,active)=>{
+    const mkCol=(title,values,column,active,cursor)=>{
       const c=div("w-dual-col"+(active?" active":""));
       const t=div("w-dual-title"); t.textContent=title; c.appendChild(t);
       values.forEach((v,i)=>{
-        const r=div("w-dual-row"+(active&&i===cursors[column]?" sel":"")); r.textContent=optLabel(v);
+        const r=div("w-dual-row"+(active&&i===cursor?" sel":"")); r.textContent=optLabel(v);
         r.onmousedown=e=>{ e.preventDefault(); e.stopPropagation();
-          if(spec.key) routeControl(ctx,spec.key,"dual_focus",{column,index:i}); };
+          if(wkey) routeControl(ctx,wkey,"dual_focus",{column,index:i}); };
         c.appendChild(r);
       });
       return c;
     };
-    cols.appendChild(mkCol("Available",avail,"available",!activeIncluded));
-    cols.appendChild(mkCol("Included",included,"included",activeIncluded));
+    cols.appendChild(mkCol("Available",avail,"available",!activeIncluded,inst?(inst.availableCursor||0):0));
+    cols.appendChild(mkCol("Included",included,"included",activeIncluded,inst?(inst.includedCursor||0):0));
     el.appendChild(cols);
     return el;
   }
-  if(kind==="list"){
-    const el=aria(div("w-list"), "listbox");
-    const inst=(ctx.instances&&spec.key)?ctx.instances[spec.key]:null;
+  if(spec.kind==="list"){
+    const el=aria(div("w-list"), "listbox", {});
+    const inst=instOf(ctx, wkey);
     const sel=inst?inst.selectedIndex:(spec.selectedIndex!=null?spec.selectedIndex:-1);
     const specs=spec.itemSpecs||[];
     if(specs.length){
@@ -524,29 +583,29 @@ function widgetEl(spec, ctx){
       el.classList.add("w-list-cards");
       specs.forEach((s,i)=>{
         const card=aria(div("w-list-card"+(i===sel?" sel":"")), "option", {selected:i===sel});
-        card.appendChild(widgetEl(s, ctx));
-        card.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,spec,i,e); };
+        card.appendChild(widgetNode(s, ctx));
+        card.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeListItem(ctx,wkey,spec.itemKeys,i,e); };
         el.appendChild(card);
       });
     } else {
       (spec.items||[]).forEach((it,i)=>{
         const row=aria(div("w-list-row"+(i===sel?" sel":"")), "option", {selected:i===sel});
         fillEntry(row, it);
-        row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,spec,i,e); };
+        row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeListItem(ctx,wkey,spec.itemKeys,i,e); };
         el.appendChild(row);
       });
       if(!(spec.items||[]).length){ const empty=div("w-list-empty"); empty.textContent="(empty)"; el.appendChild(empty); }
     }
     return el;
   }
-  if(kind==="tree"){
+  if(spec.kind==="tree"){
     // Same semantics as the TUI's render_widget_tree: the host-owned
     // instance state (selection, expanded set) is authoritative, a node is
     // visible iff every ancestor is expanded, and rows fire the identical
     // select / expand hits. Rendered natively (all visible rows, no TUI
     // scroll window) — off-window clicks are synthesized bridge-side.
-    const el=aria(div("w-tree"+(focused?" focus":"")), "tree");
-    const inst=(ctx.instances&&spec.key)?ctx.instances[spec.key]:null;
+    const el=aria(div("w-tree"+(focused?" focus":"")), "tree", {});
+    const inst=instOf(ctx, wkey);
     const sel=inst&&inst.selectedIndex!=null?inst.selectedIndex:(spec.selectedIndex!=null?spec.selectedIndex:-1);
     // Host parity (first_visible_tree_index): once an INSTANCE exists its
     // expansion set is authoritative even when EMPTY; the spec's seed applies
@@ -556,33 +615,38 @@ function widgetEl(spec, ctx){
     // visual no-op.
     const expanded=new Set(inst?(inst.expandedKeys||[]):(spec.expandedKeys||[]));
     const keys=spec.itemKeys||[];
-    const open=[];
+    // Each depth's open flag down to the current node (a skipped depth counts
+    // as open).
+    /** const openAt: Boolean[] */
+    const openAt=[];
     (spec.nodes||[]).forEach((n,i)=>{
-      const d=n.depth||0; open.length=d;
-      const vis=open.every(Boolean);
+      const d=n.depth||0;
+      while(openAt.length>d) openAt.pop();
+      while(openAt.length<d) openAt.push(true);
+      const vis=openAt.every(b=>b);
       const key=keys[i]||"";
       const isOpen=n.hasChildren?(!!key&&expanded.has(key)):true;
-      open.push(isOpen);
+      openAt.push(isOpen);
       if(!vis) return;
       const row=aria(div("w-tree-row"+(i===sel?" sel":"")), "treeitem",
         {selected:i===sel, level:d+1, expanded:n.hasChildren?isOpen:null,
          checked:spec.checkable&&n.checked!=null?!!n.checked:null});
-      row.style.paddingLeft=(d*2)+"ch";
+      row.style.paddingLeft=`${d*2}ch`;
       // Right-click anywhere on the row (disclosure/checkbox included, like
       // the TUI's cell hit-test) fires `context` instead of the cell's own
       // event — the plugin raises a context menu anchored at the click cell.
-      const treeCtx=e=>{ const c=cellAt(e); routeTree(ctx,spec,"context",{index:i,key,col:c.col,row:c.row}); };
+      const treeCtx=e=>{ routeTree(ctx,wkey,"context",{index:i,key},cellAt(e)); };
       if(n.hasChildren){
         const g=document.createElement("span"); g.className="w-tree-disc"; g.textContent=isOpen?"▼ ":"▶ ";
-        g.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(e.button===2) treeCtx(e); else routeTree(ctx,spec,"expand",{index:i,key,expanded:!isOpen}); };
+        g.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(e.button===2) treeCtx(e); else routeTree(ctx,wkey,"expand",{index:i,key,expanded:!isOpen},null); };
         row.appendChild(g);
       }
       if(spec.checkable&&n.checked!=null){
         const cb=document.createElement("span"); cb.className="w-tree-check"; cb.textContent=n.checked?"☑ ":"☐ ";
-        cb.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(e.button===2) treeCtx(e); else routeTree(ctx,spec,"toggle",{index:i,key,checked:!n.checked}); };
+        cb.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(e.button===2) treeCtx(e); else routeTree(ctx,wkey,"toggle",{index:i,key,checked:!n.checked},null); };
         row.appendChild(cb);
       }
-      const t=document.createElement("span"); t.className="w-tree-text"; fillEntry(t, n.text||{});
+      const t=document.createElement("span"); t.className="w-tree-text"; fillEntry(t, n.text);
       row.appendChild(t);
       // The row's action button (TreeNode.action), the web twin of the TUI's
       // `[ label ]` at the row's tail: its own target, so a press on it is the
@@ -590,7 +654,7 @@ function widgetEl(spec, ctx){
       if(n.action){
         const a=document.createElement("span"); a.className="w-tree-action"; a.textContent="[ "+n.action+" ]";
         a.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(e.button===2) treeCtx(e);
-          else { routeTree(ctx,spec,"select",{index:i,key}); routeTree(ctx,spec,"action",{index:i,key}); } };
+          else { routeTree(ctx,wkey,"select",{index:i,key},null); routeTree(ctx,wkey,"action",{index:i,key},null); } };
         row.appendChild(a);
       }
       // A click anywhere on a FOLDER row both selects it and toggles its
@@ -598,15 +662,15 @@ function widgetEl(spec, ctx){
       // "click a folder to fold it" is what every tree UI trains people to
       // expect. Leaf rows keep plain select.
       row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(e.button===2) treeCtx(e);
-        else { routeTree(ctx,spec,"select",{index:i,key});
-               if(n.hasChildren) routeTree(ctx,spec,"expand",{index:i,key,expanded:!isOpen}); } };
+        else { routeTree(ctx,wkey,"select",{index:i,key},null);
+               if(n.hasChildren) routeTree(ctx,wkey,"expand",{index:i,key,expanded:!isOpen},null); } };
       // Bordered card node (Tree.cardBorders + extraLines): wrap the
       // primary row and its continuation rows in a rounded box, the web
       // twin of the TUI's `╭─…─╮` card chrome. Non-card nodes (folder
       // headers) stay plain rows.
       const isCard=!!spec.cardBorders&&!n.hasChildren&&(n.extraLines||[]).length>0;
       const holder=isCard?div("w-tree-card"+(i===sel?" sel":"")):el;
-      if(isCard){ holder.style.marginLeft=(d*2)+"ch"; row.style.paddingLeft="0"; }
+      if(isCard){ holder.style.marginLeft=`${d*2}ch`; row.style.paddingLeft="0"; }
       holder.appendChild(row);
       // Fixed-height card rows (Tree.itemHeight > 1): the node's
       // extraLines render as continuation rows below the primary line,
@@ -615,74 +679,75 @@ function widgetEl(spec, ctx){
       // TUI, which emits a select hit for every continuation row.
       for(const ex of (n.extraLines||[])){
         const xr=div("w-tree-xrow"+(i===sel?" sel":""));
-        xr.style.paddingLeft=isCard?"2ch":((d*2)+2)+"ch";
+        xr.style.paddingLeft=isCard?"2ch":`${d*2+2}ch`;
         fillEntry(xr, ex);
-        xr.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(e.button===2) treeCtx(e); else routeTree(ctx,spec,"select",{index:i,key}); };
+        xr.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(e.button===2) treeCtx(e); else routeTree(ctx,wkey,"select",{index:i,key},null); };
         holder.appendChild(xr);
       }
       if(isCard) el.appendChild(holder);
     });
     return el;
   }
-  if(kind==="overlay"){
+  if(spec.kind==="overlay"){
     // The TUI floats the child over the following rows; here it renders as
     // a raised dropdown card in flow, right under the row that opened it.
     const el=div("w-overlay");
-    if(spec.child) el.appendChild(widgetEl(spec.child, ctx));
+    if(spec.child) el.appendChild(widgetNode(spec.child, ctx));
     return el;
   }
-  if(kind==="popup"){
+  if(spec.kind==="popup"){
     // A popup layer — renders like overlay here (raised card in flow);
     // the TUI floats it over the panel rows.
     const el=div("w-overlay");
-    if(spec.child) el.appendChild(widgetEl(spec.child, ctx));
+    if(spec.child) el.appendChild(widgetNode(spec.child, ctx));
     return el;
   }
-  if(kind==="component"){
+  if(spec.kind==="component"){
     // A focus/event scope — purely behavioural in the TUI; renders its
     // child transparently here.
-    if(spec.child) return widgetEl(spec.child, ctx);
+    if(spec.child) return widgetNode(spec.child, ctx);
     return div("w-component-empty");
   }
-  if(kind==="raw"&&spec.entries){
-    const text=spec.entries.map(entryText).join("\n");
+  if(spec.kind==="raw"&&spec.entries){
+    const text=spec.entries.map(e=>entryText(e)).join("\n");
     if(ctx.table){
       // A table cell: a rule, a caption, or air.
-      const t=text.trim();
-      if(/^[│┃|]$/.test(t)) return div("w-vrule");
-      const c=div(t&&t===t.toUpperCase()&&/[A-Z]/.test(t)?"w-th":"w-td"); c.textContent=t; return c;
+      const tt=text.trim();
+      if(/^[│┃|]$/.test(tt)) return div("w-vrule");
+      const cell=div(tt!==""&&tt===tt.toUpperCase()&&/[A-Z]/.test(tt)?"w-th":"w-td"); cell.textContent=tt; return cell;
     }
     // Blank rows a terminal layout stacks to push what follows to the bottom
     // of the panel: a flexible gap here, which does the same at any height.
     if(!ctx.grid&&!text.trim()){
       // In a row, spaces are a gap as wide as they are; in a column, blank
       // rows push what follows down.
-      if(ctx.inRow){ const g=div("w-gap"); g.style.width=Math.max(...spec.entries.map(e=>entryText(e).length),1)*0.6+"ch"; return g; }
+      if(ctx.inRow){ const g=div("w-gap"); g.style.width=`${spec.entries.reduce((m,e)=>Math.max(m,entryText(e).length),1)*0.6}ch`; return g; }
       return div("w-fill");
     }
     const el=div("w-raw");
     spec.entries.forEach((e,i)=>{ if(i) el.append("\n"); fillEntry(el.appendChild(document.createElement("span")), e); });
     return el;
   }
-  if(kind==="windowEmbed"){
+  if(spec.kind==="windowEmbed"){
     // Embedding another editor window's live cells inside a native panel
     // needs its own scene region (the webui cell buffer carries pane
     // interiors only) — honest placeholder until that lands.
     const el=div("w-embed-ph");
     el.textContent="⧉ live preview is not available in the web UI yet";
-    if(spec.rows) el.style.minHeight=(spec.rows*CH)+"px";
+    if(spec.rows) el.style.minHeight=`${spec.rows*CH}px`;
     return el;
   }
   const fb=div("w-unsupported"); fb.textContent="["+kind+"]"; return fb;
 }
 
 // A tree row press by identity: the tree's key, the event, the row.
-function routeTree(ctx, node, eventType, payload){
+// `cell`: the cell a right-click landed on (a `context` press), else null.
+/** function routeTree<T>(WCtx, String | Undefined, String, T, {col: Number, row: Number} | Null) => Undefined */
+function routeTree(ctx, treeKey, eventType, payload, cell){
   if(ctx.kind!=="panel") return;
-  const {col,row,...rest}=payload;
-  const msg={...panelBase(ctx),widgetKey:node.key||"",eventType,payload:rest};
-  if(col!=null){ msg.col=col; msg.row=row; }
-  sendWidget(msg);
+  const msg={...panelBase(ctx),widgetKey:treeKey||"",eventType,payload};
+  if(cell) sendWidget({...msg,col:cell.col,row:cell.row});
+  else sendWidget(msg);
 }
 
 // Native Settings — a control's value rendered semantically (read from the
@@ -690,18 +755,20 @@ function routeTree(ctx, node, eventType, payload){
 const SET_LIST_KINDS = new Set(["textList","map","objectArray","dualList"]);
 // Inline control (toggle/number/dropdown/text/json/complex). `idx` = item index;
 // `live` enables click routing (false inside the entry dialog, which is keyboard).
+/** function settingControlEl(SettingControl, Number, Boolean) => El */
 function settingControlEl(c, idx, live){
   const k=c.kind, el=document.createElement("span"); el.className="set-ctl set-"+k;
-  if(k==="toggle"){ const sw=document.createElement("span"); sw.className="set-switch"+(c.checked?" on":""); aria(sw,"switch",{checked:!!c.checked}); el.appendChild(sw); if(live) sw.onmousedown=setHit("controlToggle",idx); }
-  else if(k==="number"){
-    const mk=(t,cls,hit)=>{const b=document.createElement("span");b.className=cls;b.textContent=t;if(live&&hit)b.onmousedown=setHit(hit,idx);return b;};
+  if(c.kind==="toggle"){ const sw=document.createElement("span"); sw.className="set-switch"+(c.checked?" on":""); aria(sw,"switch",{checked:!!c.checked}); el.appendChild(sw); if(live) sw.onmousedown=setHit("controlToggle",idx,undefined); }
+  else if(c.kind==="number"){
+    const mk=(t,cls,hit)=>{const b=document.createElement("span");b.className=cls;b.textContent=t;if(live&&hit!=="")b.onmousedown=setHit(hit,idx,undefined);return b;};
     // The value as the JSON carries it, shown the way the TUI's cell shows it:
     // a percent ×100, an integer whole.
-    const disp=c.percent?Math.round(c.value*100)+"%":c.integer?String(Math.round(c.value)):String(+(+c.value).toFixed(3));
+    const disp=c.percent?`${Math.round(c.value*100)}%`:c.integer?String(Math.round(c.value)):String(Number(toFixed(c.value, 3)));
     el.appendChild(mk("−","set-step","controlDecrement")); const v=document.createElement("span"); v.className="set-num-v"; v.textContent=disp; el.appendChild(v); el.appendChild(mk("+","set-step","controlIncrement"));
   }
-  else if(k==="dropdown"){ const p=document.createElement("span"); p.className="set-pill"; p.textContent=(c.options[c.selected]||"—")+" ▾"; if(live) p.onmousedown=setHit("controlDropdown",idx); el.appendChild(p);
-    if(c.open){ const d=div("set-dd"); c.options.forEach((o,i)=>{const r=div("set-dd-row"+(i===c.selected?" sel":""));r.textContent=o;if(live)r.onmousedown=setHit("controlDropdownOption",idx,i);d.appendChild(r);});
+  else if(c.kind==="dropdown"){ const p=document.createElement("span"); p.className="set-pill"; p.textContent=(c.options[c.selected]||"—")+" ▾"; if(live) p.onmousedown=setHit("controlDropdown",idx,undefined); el.appendChild(p);
+    const sel=c.selected;
+    if(c.open){ const d=div("set-dd"); c.options.forEach((o,i)=>{const r=div("set-dd-row"+(i===sel?" sel":""));r.textContent=o;if(live)r.onmousedown=setHit("controlDropdownOption",idx,i);d.appendChild(r);});
       // Portal to the body-level host (same as the plugin Dropdown): the
       // Settings dialog is a transformed, overflow-clipping box with a
       // scrolling list, so an in-place list is cut off at the dialog edge (a
@@ -710,39 +777,48 @@ function settingControlEl(c, idx, live){
       // stay in view (right-aligning under the flush-right control).
       mountPopover(d);
       requestAnimationFrame(()=>positionFloatingPopover(p, d, {align:"end"})); } }
-  else if(k==="text"){ const f=document.createElement("span"); f.className="set-field"; f.textContent=(c.value||c.placeholder||"")+(c.editing?"▌":""); if(live) f.onmousedown=setHit("controlText",idx); el.appendChild(f); }
-  else if(k==="json"){ const f=document.createElement("span"); f.className="set-field mono"; f.textContent=(c.value||"").slice(0,80)||"{}"; if(live) f.onmousedown=setHit("controlText",idx); el.appendChild(f); }
-  else if(k==="complex"){ el.textContent="‹"+c.typeName+"›"; el.classList.add("set-dim"); }
+  else if(c.kind==="text"){ const f=document.createElement("span"); f.className="set-field"; f.textContent=(c.value||c.placeholder||"")+(c.editing?"▌":""); if(live) f.onmousedown=setHit("controlText",idx,undefined); el.appendChild(f); }
+  else if(c.kind==="json"){ const f=document.createElement("span"); f.className="set-field mono"; f.textContent=(c.value||"").slice(0,80)||"{}"; if(live) f.onmousedown=setHit("controlText",idx,undefined); el.appendChild(f); }
+  // The field is `type_name`: the enum's rename_all renames variants, not fields.
+  else if(c.kind==="complex"){ el.textContent=`‹${c.type_name}›`; el.classList.add("set-dim"); }
   return el;
 }
 // Full-width list block for composite controls (rows + an Add affordance).
+/** function settingListEl(SettingControl, Number, Boolean) => El */
 function settingListEl(c, idx, live){
   const k=c.kind;
   // DualList has its own two-column layout (Available | Included) plus the
   // add/remove/move buttons; render it natively and route each click to the
   // matching SettingsHit (same dispatch the TUI uses).
-  if(k==="dualList") return dualListEl(c, idx, live);
-  const el=div("set-list"); let rows=[];
-  // rowHit: (rowIndex) -> SettingsHit for clicking that row; addHit for "＋ Add".
-  let rowHit=null, addHit=null;
-  if(k==="textList"){ rows=c.items.map((t,i)=>({label:t, focused:i===c.focused})); rowHit=i=>["controlTextListRow",idx,i]; addHit=["controlTextListRow",idx,c.items.length]; }
-  else if(k==="map"){ rows=c.entries.map((e,i)=>({label:e.key, sub:e.display, focused:i===c.focused})); rowHit=i=>["controlMapRow",idx,i]; if(!c.noAdd) addHit=["controlMapAddNew",idx]; }
-  else if(k==="objectArray"){ rows=c.entries.map((t,i)=>({label:t, focused:i===c.focused})); rowHit=i=>["controlMapRow",idx,i]; }   // select item; Enter edits
+  if(c.kind==="dualList") return dualListEl(c, idx, live);
+  const el=div("set-list");
+  /** let rows: {label: String, sub: String, focused: Boolean}[] */
+  let rows=[];
+  // rowHit: the SettingsHit kind for clicking a row (b = the row); addHit/addB
+  // the hit for "＋ Add" ("" = none).
+  let rowHit="", addHit="";
+  /** let addB: Number | Undefined */
+  let addB=undefined;
+  if(c.kind==="textList"){ const f=c.focused; rows=c.items.map((t,i)=>({label:t, sub:"", focused:i===f})); rowHit="controlTextListRow"; addHit="controlTextListRow"; addB=c.items.length; }
+  else if(c.kind==="map"){ const f=c.focused; rows=c.entries.map((e,i)=>({label:e.key, sub:e.display, focused:i===f})); rowHit="controlMapRow"; if(!c.noAdd) addHit="controlMapAddNew"; }
+  else if(c.kind==="objectArray"){ const f=c.focused; rows=c.entries.map((t,i)=>({label:t, sub:"", focused:i===f})); rowHit="controlMapRow"; }   // select item; Enter edits
   // Column header (`Name │ <column>`), mirroring the TUI's dimmed header row.
-  if(k==="map"&&c.column&&rows.length){ const h=div("set-list-row set-list-head");
+  const column=c.kind==="map"?c.column:null;
+  if(column!=null&&column!==""&&rows.length>0){ const h=div("set-list-row set-list-head");
     const l=document.createElement("span"); l.className="set-list-label"; l.textContent="Name"; h.appendChild(l);
-    const s=document.createElement("span"); s.className="set-list-sub"; s.textContent=c.column; h.appendChild(s);
+    const s=document.createElement("span"); s.className="set-list-sub"; s.textContent=column; h.appendChild(s);
     el.appendChild(h); }
   if(!rows.length){ const e=div("set-list-empty"); e.textContent="No entries"; el.appendChild(e); }
   rows.forEach((r,i)=>{ const row=div("set-list-row"+(r.focused?" sel":""));
-    if(r.badge){ const b=document.createElement("span"); b.className="set-list-badge"; b.textContent=r.badge; row.appendChild(b); }
     const l=document.createElement("span"); l.className="set-list-label"; l.textContent=r.label; row.appendChild(l);
     if(r.sub){ const s=document.createElement("span"); s.className="set-list-sub"; s.textContent=r.sub; row.appendChild(s); }
     if(r.focused&&(k==="map"||k==="objectArray")){ const h=document.createElement("span"); h.className="set-list-hint"; h.textContent="[Enter to edit]"; row.appendChild(h); }
-    if(live&&rowHit){ const h=rowHit(i); row.onmousedown=setHit(h[0],h[1],h[2]); }
+    if(live&&rowHit!=="") row.onmousedown=setHit(rowHit,idx,i);
     el.appendChild(row); });
   // Auto-managed maps (noAdd, e.g. Languages/LSP) hide the add row like the TUI.
-  if(!(k==="map"&&c.noAdd)){ const add=div("set-list-add"+(c.addFocused?" sel":"")); add.textContent="＋ Add…"; if(live&&addHit) add.onmousedown=setHit(addHit[0],addHit[1],addHit[2]); el.appendChild(add); }
+  // (A text list has no add-row focus.)
+  const addSel=c.kind==="map"?c.addFocused:c.kind==="objectArray"?c.addFocused:false;
+  if(!(c.kind==="map"&&c.noAdd)){ const add=div("set-list-add"+(addSel?" sel":"")); add.textContent="＋ Add…"; if(live&&addHit!=="") add.onmousedown=setHit(addHit,idx,addB); el.appendChild(add); }
   return el;
 }
 // Two-column dual list (Available ⇄ Included) with native add/remove/move
@@ -763,7 +839,7 @@ function dualListEl(c, idx, live){
   el.appendChild(col("Available", c.available, "available", c.availableCursor, "controlDualListAvailable"));
   // middle: add/remove + reorder buttons
   const mid=div("set-dual-mid");
-  const mkb=(t,hit,title)=>{ const b=div("set-dual-btn"); b.textContent=t; b.title=title; if(live) b.onmousedown=setHit(hit,idx); return b; };
+  const mkb=(t,hit,title)=>{ const b=div("set-dual-btn"); b.textContent=t; b.title=title; if(live) b.onmousedown=setHit(hit,idx,undefined); return b; };
   mid.appendChild(mkb("→","controlDualListAdd","Add to included"));
   mid.appendChild(mkb("←","controlDualListRemove","Remove from included"));
   mid.appendChild(mkb("↑","controlDualListMoveUp","Move up"));
@@ -776,9 +852,11 @@ function dualListEl(c, idx, live){
 // "select the item then keyboard-edit it". A row click routes to the entry
 // dialog's own dispatch (kind "entryItem") and inner controls are display-only
 // (live=false), matching the TUI's entry-dialog click behavior.
+/** function settingItemRows(SettingItem[], El, Boolean, Boolean) => Undefined */
 function settingItemRows(items, container, live, entry){
   for(const it of items){
-    if(it.sectionStart && it.section){ const h=div("set-section"); h.textContent=it.section; container.appendChild(h); }
+    const sec=it.section;
+    if(it.sectionStart && sec!=null && sec!==""){ const h=div("set-section"); h.textContent=sec; container.appendChild(h); }
     const isList=SET_LIST_KINDS.has(it.control.kind);
     const row=aria(div("set-item"+(it.selected?" sel":"")+(it.readOnly?" ro":"")+(isList?" set-item-block":"")),
       "group", {label:it.name, current:it.selected?"true":null, readonly:it.readOnly||null});
@@ -786,16 +864,18 @@ function settingItemRows(items, container, live, entry){
     const nm=div("set-name"); nm.textContent=it.name+(it.modified?" •":""); head.appendChild(nm);
     const selectHit = entry
       ? (it.readOnly ? null : e=>{ e.preventDefault(); e.stopPropagation(); sendSettings({kind:"entryItem", a:it.index}); })
-      : (live ? setHit("item",it.index) : null);  // click the row label = select item
+      : (live ? setHit("item",it.index,undefined) : null);  // click the row label = select item
     if(selectHit){ nm.onmousedown=selectHit; }
     if(!isList){ const ctl=div("set-ctl-wrap"); ctl.appendChild(settingControlEl(it.control,it.index,live&&!entry));
       for(const named of ctl.querySelectorAll("[role]")) named.setAttribute("aria-label", it.name); head.appendChild(ctl); if(entry&&selectHit) ctl.onmousedown=selectHit; }
     row.appendChild(head);
-    if(it.description){ const d=div("set-desc"); d.textContent=it.description; row.appendChild(d); }
+    const desc=it.description;
+    if(desc){ const d=div("set-desc"); d.textContent=desc; row.appendChild(d); }
     if(isList) row.appendChild(settingListEl(it.control,it.index,live&&!entry));
     container.appendChild(row);
   }
 }
+/** function settingsEls(Settings) => El[] */
 function settingsEls(s){
   const out=[]; const scrim=div("modal-scrim"); scrim.onmousedown=e=>e.stopPropagation(); out.push(scrim);
   const el=aria(div("region settings-modal"), "dialog", {modal:true, label:s.title});
@@ -806,35 +886,37 @@ function settingsEls(s){
   for(const c of s.categories){ const r=aria(div("set-cat"+(c.selected?" sel":"")), "treeitem",
       {selected:!!c.selected, level:c.nested?2:1, expanded:c.expandable?!!c.expanded:null, label:c.name});
     if(c.nested) r.appendChild(document.createTextNode("    "));
-    else if(c.expandable){ const chev=document.createElement("span"); chev.className="set-cat-chev"; chev.textContent=c.expanded?"▼ ":"▶ "; chev.onmousedown=setHit("categoryDisclosure",c.index); r.appendChild(chev); } else r.appendChild(document.createTextNode("  "));
+    else if(c.expandable){ const chev=document.createElement("span"); chev.className="set-cat-chev"; chev.textContent=c.expanded?"▼ ":"▶ "; chev.onmousedown=setHit("categoryDisclosure",c.index,undefined); r.appendChild(chev); } else r.appendChild(document.createTextNode("  "));
     const nm=document.createElement("span"); nm.textContent=c.name; r.appendChild(nm);
-    r.onmousedown=setHit("category",c.index); cats.appendChild(r);
+    r.onmousedown=setHit("category",c.index,undefined); cats.appendChild(r);
     if(c.expanded){ c.sections.forEach((sec,si)=>{ const sr=aria(div("set-cat-sec"),"treeitem",{selected:false,level:2,label:sec}); sr.textContent="   "+sec; sr.onmousedown=setHit("categorySection",c.index,si); cats.appendChild(sr); }); } }
   body.appendChild(cats);
   // right: items, or search results
   const right=div("set-items"+(s.focus==="settings"?" focus":""));
   if(s.searchActive){ const sb=div("set-search"); sb.textContent="Search: "+s.searchQuery+"▌"; right.appendChild(sb);
-    s.searchResults.forEach((r,i)=>{const rr=div("set-sresult"+(i===s.searchSelected?" sel":""));rr.textContent=r.name+"   — "+r.category;rr.onmousedown=setHit("searchResult",i);right.appendChild(rr);}); }
-  else { settingItemRows(s.items, right, true); }
+    s.searchResults.forEach((r,i)=>{const rr=div("set-sresult"+(i===s.searchSelected?" sel":""));rr.textContent=r.name+"   — "+r.category;rr.onmousedown=setHit("searchResult",i,undefined);right.appendChild(rr);}); }
+  else { settingItemRows(s.items, right, true, false); }
   body.appendChild(right);
   el.appendChild(body);
   // footer
   const ft=div("set-footer"); const fkinds=["layer","reset","save","cancel"];
   s.footerButtons.forEach((b,i)=>{
     const sel=i===s.footerSelected&&s.focus==="footer";
-    const bb=aria(div("btn"+(b==="Save"?" primary":"")+(sel?" sel":"")),"button"); bb.textContent=b; bb.onmousedown=setHit(fkinds[i]||"cancel"); ft.appendChild(bb);
+    const bb=aria(div("btn"+(b==="Save"?" primary":"")+(sel?" sel":"")),"button",{}); bb.textContent=b; bb.onmousedown=setHit(fkinds[i]||"cancel",undefined,undefined); ft.appendChild(bb);
   }); el.appendChild(ft);
   // entry dialog (Map/ObjectArray add/edit): rows are clickable (select+edit),
   // controls keyboard-driven, buttons routed by name to the entry dispatch.
-  if(s.entryDialog){ const d=s.entryDialog; const dlg=aria(div("set-overlay set-entry"),"dialog",{modal:true,label:d.title});
+  const d=s.entryDialog;
+  if(d){ const dlg=aria(div("set-overlay set-entry"),"dialog",{modal:true,label:d.title});
     const dt=div("set-entry-title"); dt.textContent=d.title; dlg.appendChild(dt);
     const di=div("set-entry-items"); settingItemRows(d.items.map((it,i)=>({...it,selected:i===d.selectedItem&&!d.focusOnButtons})), di, true, true); dlg.appendChild(di);
     const db=div("set-dlg-btns");
     // Button focus index follows the TUI order [Save, Cancel, Delete]; the
     // visual order here puts Delete in the middle but each routes by name.
+    /** const tuiIdx: Dict<Number> */
     const tuiIdx={Save:0,Cancel:1,Delete:2};
     const btns=d.noDelete?["Save","Cancel"]:["Save","Delete","Cancel"];
-    btns.forEach(b=>{const f=d.focusOnButtons&&tuiIdx[b]===d.focusedButton; const bb=aria(div("btn"+(b==="Save"?" primary":b==="Delete"?" danger":"")+(f?" sel":"")),"button"); bb.textContent=b;
+    btns.forEach(b=>{const f=d.focusOnButtons&&tuiIdx[b]===d.focusedButton; const bb=aria(div("btn"+(b==="Save"?" primary":b==="Delete"?" danger":"")+(f?" sel":"")),"button",{}); bb.textContent=b;
       bb.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendSettings({kind:"entryButton", button:b.toLowerCase()}); }; db.appendChild(bb);}); dlg.appendChild(db);
     el.appendChild(dlg); }
   if(s.showingHelp){ const h=div("set-overlay"); h.innerHTML="<b>Settings help</b><br>↑↓ navigate · Tab switch panel · Space/Enter activate · Ctrl+S save · Esc close"; el.appendChild(h); }
@@ -846,6 +928,7 @@ function settingsEls(s){
 // help, add/edit dialog, confirm). Keyboard-driven: keystrokes are forwarded
 // globally to handle_key, which the editor's own dispatch handles. The scrim
 // swallows stray clicks so nothing mis-routes.
+/** function keybindingEditorEls(KeybindingEditor) => El[] */
 function keybindingEditorEls(kb){
   const out=[];
   const scrim=div("modal-scrim"); scrim.onmousedown=e=>e.stopPropagation(); out.push(scrim);
@@ -854,7 +937,7 @@ function keybindingEditorEls(kb){
 
   // header: config path + search + filters
   const hdr=div("kb-header");
-  const cfg=div("kb-cfg"); cfg.textContent="Config: "+kb.configPath+(kb.keymaps&&kb.keymaps.length?("   Maps: "+kb.keymaps.join(", ")):""); hdr.appendChild(cfg);
+  const cfg=div("kb-cfg"); cfg.textContent="Config: "+kb.configPath+(kb.keymaps.length>0?("   Maps: "+kb.keymaps.join(", ")):""); hdr.appendChild(cfg);
   if(kb.search.active){
     const sb=div("kb-search"+(kb.search.focused?" focus":""));
     const lbl=document.createElement("b"); lbl.textContent=kb.search.mode==="recordKey"?"REC KEY ":"SEARCH "; sb.appendChild(lbl);
@@ -875,7 +958,7 @@ function keybindingEditorEls(kb){
   const start=kb.scrollOffset||0, n=kb.viewport||kb.rows.length;
   const kbHit=i=>e=>{ e.preventDefault(); e.stopPropagation(); sendKbedit({a:i}); };
   for(let j=0;j<n;j++){ const idx=start+j, r=kb.rows[idx]; if(!r) break;
-    if(r.type==="section"){ const row=div("kb-row kb-section"+(r.selected?" sel":"")); row.textContent=(r.collapsed?"▶ ":"▼ ")+r.name+" ("+r.count+")"; row.onmousedown=kbHit(idx); tbl.appendChild(row); continue; }
+    if(r.type==="section"){ const row=div("kb-row kb-section"+(r.selected?" sel":"")); row.textContent=`${r.collapsed?"▶ ":"▼ "}${r.name} (${r.count})`; row.onmousedown=kbHit(idx); tbl.appendChild(row); continue; }
     const row=div("kb-row"+(r.selected?" sel":""));
     const cols=[["key",r.key],["action",r.action],["description",r.description],["context",r.context],["source",r.source]];
     for(const [cls,txt] of cols){ const s=document.createElement("span"); s.className="kb-col kb-"+cls; s.textContent=txt||""; row.appendChild(s); }
@@ -897,19 +980,21 @@ function keybindingEditorEls(kb){
   }
 
   // edit / add dialog
-  if(kb.editDialog){
-    const d=kb.editDialog; const dlg=div("kb-overlay kb-dialog");
+  const d=kb.editDialog;
+  if(d){
+    const dlg=div("kb-overlay kb-dialog");
     const dt=div("kb-dlg-title"); dt.textContent=d.title; dlg.appendChild(dt);
     const fld=(label,val,focused,extra)=>{ const f=div("kb-field"+(focused?" focus":"")); const l=document.createElement("span"); l.className="kb-field-l"; l.textContent=label; f.appendChild(l);
       const v=document.createElement("span"); v.className="kb-field-v"; v.textContent=val; f.appendChild(v); if(extra){ const e2=document.createElement("span"); e2.className="kb-field-x"; e2.textContent=extra; f.appendChild(e2);} return f; };
     dlg.appendChild(fld("Key:", d.keyDisplay||(d.keyCapturing?"Press a key…":"(none)"), d.focusArea===0, d.keyCapturing?"(capturing)":""));
     const af=fld("Action:", d.actionText+(d.focusArea===1?"▌":""), d.focusArea===1, "");
-    if(d.actionError){ const e2=document.createElement("span"); e2.className="kb-err"; e2.textContent="✗ "+d.actionError; af.appendChild(e2); }
+    const aerr=d.actionError;
+    if(aerr){ const e2=document.createElement("span"); e2.className="kb-err"; e2.textContent="✗ "+aerr; af.appendChild(e2); }
     dlg.appendChild(af);
-    if(d.autocomplete && d.autocomplete.length){ const ac=div("kb-autocomplete");
+    if(d.autocomplete.length>0){ const ac=div("kb-autocomplete");
       d.autocomplete.forEach((s,i)=>{ const r=div("kb-ac-row"+(i===d.autocompleteSelected?" sel":"")); r.textContent=s; ac.appendChild(r); }); dlg.appendChild(ac); }
     dlg.appendChild(fld("Context:", "["+d.context+"]", d.focusArea===2, d.focusArea===2?"(← → cycle)":""));
-    if(d.conflicts && d.conflicts.length){ const cf2=div("kb-conflicts"); cf2.innerHTML="<b>Conflicts:</b>"; for(const c of d.conflicts){ const r=document.createElement("div"); r.textContent="  "+c; cf2.appendChild(r);} dlg.appendChild(cf2); }
+    if(d.conflicts.length>0){ const cf2=div("kb-conflicts"); cf2.innerHTML="<b>Conflicts:</b>"; for(const c of d.conflicts){ const cr=document.createElement("div"); cr.textContent="  "+c; cf2.appendChild(cr);} dlg.appendChild(cf2); }
     const btns=div("kb-dlg-btns");
     const sb=div("kb-btn"+(d.saveFocused?" focus":"")); sb.textContent="[ Save ]"; btns.appendChild(sb);
     const cb=div("kb-btn"+(d.cancelFocused?" focus":"")); cb.textContent="[ Cancel ]"; btns.appendChild(cb);
@@ -918,10 +1003,11 @@ function keybindingEditorEls(kb){
   }
 
   // confirm dialog
-  if(kb.confirm){ const c=div("kb-overlay kb-confirm");
-    const m=div("kb-confirm-msg"); m.textContent="Save changes before closing?"; c.appendChild(m);
-    const b=div("kb-dlg-btns"); kb.confirm.buttons.forEach((label,i)=>{ const bb=div("kb-btn"+(i===kb.confirm.selected?" focus":"")); bb.textContent="[ "+label+" ]"; b.appendChild(bb); }); c.appendChild(b);
-    el.appendChild(c);
+  const kc=kb.confirm;
+  if(kc){ const cbox=div("kb-overlay kb-confirm");
+    const m=div("kb-confirm-msg"); m.textContent="Save changes before closing?"; cbox.appendChild(m);
+    const b=div("kb-dlg-btns"); kc.buttons.forEach((label,i)=>{ const bb=div("kb-btn"+(i===kc.selected?" focus":"")); bb.textContent="[ "+label+" ]"; b.appendChild(bb); }); cbox.appendChild(b);
+    el.appendChild(cbox);
   }
 
   out.push(el);
@@ -931,17 +1017,20 @@ function keybindingEditorEls(kb){
 // Native auxiliary modals (keybinding editor / event-debug / theme-info). A
 // titled list of lines; anchored (theme-info) or centered. Interaction (nav /
 // Esc / rebind) already flows through handle_key, so this is render-only.
+/** function auxModalEls(AuxModal) => El[] */
 function auxModalEls(m){
   const out=[];
-  const anchored = m.rect && (m.rect.x || m.rect.y);
+  const rect=m.rect;
+  const anchored = rect!==null && (rect.x!==0 || rect.y!==0);
   if(!anchored){ const scrim=div("modal-scrim"); scrim.onmousedown=e=>e.stopPropagation(); out.push(scrim); }
   const el=div("region auxmodal "+(anchored?"anchored":"centered")+" am-"+m.kind);
-  if(anchored){ el.style.left=px(m.rect.x,CW)+"px"; el.style.top=px(m.rect.y,CH)+"px"; }
+  if(rect!==null&&anchored){ el.style.left=`${px(rect.x,CW)}px`; el.style.top=`${px(rect.y,CH)}px`; }
   const title=div("am-title"); title.textContent=m.title; el.appendChild(title);
   const body=div("am-body");
   for(const ln of m.lines){ const r=div("am-line"+(ln.selected?" sel":"")); r.textContent=ln.text||" "; body.appendChild(r); }
   el.appendChild(body);
-  if(m.footer){ const f=div("am-footer"); f.textContent=m.footer; el.appendChild(f); }
+  const footer=m.footer;
+  if(footer){ const f=div("am-footer"); f.textContent=footer; el.appendChild(f); }
   out.push(el);
   return out;
 }
@@ -949,9 +1038,10 @@ function auxModalEls(m){
 // Native right-click / new-tab context menu. Rendered at the menu's cell
 // position; clicking item i forwards a click at (x+1, y+1+i) — the cell the
 // editor's hit-test resolves to that item (`item_idx = row - y - 1`).
+/** function contextMenuEl(ContextMenu) => El */
 function contextMenuEl(cm){
   const el=div("region ctxmenu");
-  el.style.left=px(cm.x,CW)+"px"; el.style.top=px(cm.y,CH)+"px";
+  el.style.left=`${px(cm.x,CW)}px`; el.style.top=`${px(cm.y,CH)}px`;
   cm.items.forEach((label,i)=>{
     const row=div("ctxitem"+(i===cm.highlighted?" sel":""));
     row.textContent=label;

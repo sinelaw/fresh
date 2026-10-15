@@ -36,15 +36,17 @@
 // spelling. The stylesheet reads `var(--ink-bg, var(--fold-bg, ...))`
 // (45-tree.css): a theme states `--ink-bg`, which nothing sets inline, and the
 // fold's answer stands wherever it does not.
+/** function itemPaint(El, TreeItem) => Undefined */
 function itemPaint(el,it){
   if(it.bg) el.style.setProperty("--fold-bg",it.bg);
   if(it.fg) el.style.setProperty("--fold-fg",it.fg);
   if(it.fgKey) el.dataset.fg=it.fgKey;
   if(it.bgKey) el.dataset.bg=it.bgKey;
 }
+/** function treeItemEl(TreeItem, String | Undefined) => El */
 function treeItemEl(it,kindOf){
   const el=div("tree-item k-"+it.kind);
-  el.dataset.surface=it.surface;
+  el.dataset.surface=String(it.surface);
   // Which surface it belongs to, by name. An item is a SIBLING of its
   // surface marker on the layer (they are both placed at absolute cell
   // rects), so no descendant selector can say "an item of the dock" — and a
@@ -66,8 +68,8 @@ function treeItemEl(it,kindOf){
   // would draw the control twice.
   if(it.classes) el.dataset.class=it.classes;
   if(it.key) el.dataset.key=it.key;
-  el.style.left=px(it.x,CW)+"px"; el.style.top=px(it.y,CH)+"px";
-  el.style.width=px(it.w,CW)+"px"; el.style.height=px(it.h,CH)+"px";
+  el.style.left=`${px(it.x,CW)}px`; el.style.top=`${px(it.y,CH)}px`;
+  el.style.width=`${px(it.w,CW)}px`; el.style.height=`${px(it.h,CH)}px`;
   itemPaint(el,it);
   switch(it.kind){
     case "fill":
@@ -94,12 +96,12 @@ function treeItemEl(it,kindOf){
         if(hrule){
           const hv=(g==="━"?1.8:1.1)*zoom;
           const rule=div("tree-rule");
-          rule.style.left="0"; rule.style.top=(top+CH/2-hv/2)+"px";
-          rule.style.width=px(it.w,CW)+"px"; rule.style.height=hv+"px";
+          rule.style.left="0"; rule.style.top=`${top+CH/2-hv/2}px`;
+          rule.style.width=`${px(it.w,CW)}px`; rule.style.height=`${hv}px`;
           el.appendChild(rule);
         }else{
           const row=div("tree-row");
-          row.style.top=top+"px";
+          row.style.top=`${top}px`;
           row.textContent=g.repeat(Math.max(0,Math.floor(it.w)));
           el.appendChild(row);
         }
@@ -130,20 +132,20 @@ function treeItemEl(it,kindOf){
         // rule takes the run's colour from the item (`currentColor`) and the
         // glyph is blanked so nothing shows behind it.
         let shown=line;
-        if([...line].some(ch=>VRULE.includes(ch))){
+        if(Array.from(line).some(ch=>VRULE.includes(ch))){
           for(let c=0;c<line.length;c++){
             if(!VRULE.includes(line[c])) continue;
             const hv=(line[c]==="┃"?1.8:1.1)*zoom;
             const rule=div("tree-rule");
-            rule.style.left=(dx+px(c,CW)+CW/2-hv/2)+"px"; rule.style.top=top+"px";
-            rule.style.width=hv+"px"; rule.style.height=CH+"px";
+            rule.style.left=`${dx+px(c,CW)+CW/2-hv/2}px`; rule.style.top=`${top}px`;
+            rule.style.width=`${hv}px`; rule.style.height=`${CH}px`;
             el.appendChild(rule);
           }
-          shown=[...line].map(ch=>VRULE.includes(ch)?" ":ch).join("");
+          shown=Array.from(line).map(ch=>VRULE.includes(ch)?" ":ch).join("");
         }
         const row=div("tree-line"); row.textContent=shown;
-        row.style.left=dx+"px"; row.style.top=top+"px";
-        row.style.lineHeight=CH+"px"; row.style.height=CH+"px";
+        row.style.left=`${dx}px`; row.style.top=`${top}px`;
+        row.style.lineHeight=`${CH}px`; row.style.height=`${CH}px`;
         el.appendChild(row);
       });
       break;
@@ -152,18 +154,18 @@ function treeItemEl(it,kindOf){
       const th=div("tree-thumb");
       const [top,len]=it.thumb||[0,0];
       if(it.horizontal){
-        th.style.left=px(top,CW)+"px"; th.style.width=px(len,CW)+"px";
-        th.style.top="0px"; th.style.height=CH+"px";
+        th.style.left=`${px(top,CW)}px`; th.style.width=`${px(len,CW)}px`;
+        th.style.top="0px"; th.style.height=`${CH}px`;
       } else {
-        th.style.top=px(top,CH)+"px"; th.style.height=px(len,CH)+"px";
+        th.style.top=`${px(top,CH)}px`; th.style.height=`${px(len,CH)}px`;
       }
       el.appendChild(th);
       // Marks on the track: a half-width bar in the mark's colour over the
       // thumb or track (the TUI's half-block glyph), or the whole cell.
       for(const m of (it.marks||[])){
         const mk=div(m.full?"tree-mark-full":"tree-mark");
-        if(it.horizontal){ mk.style.left=px(m.at,CW)+"px"; mk.style.width=CW+"px"; mk.style.top="0px"; mk.style.height=CH+"px"; }
-        else { mk.style.top=px(m.at,CH)+"px"; mk.style.height=CH+"px"; }
+        if(it.horizontal){ mk.style.left=`${px(m.at,CW)}px`; mk.style.width=`${CW}px`; mk.style.top="0px"; mk.style.height=`${CH}px`; }
+        else { mk.style.top=`${px(m.at,CH)}px`; mk.style.height=`${CH}px`; }
         mk.style.background=m.color;
         el.appendChild(mk);
       }
@@ -181,11 +183,13 @@ function treeItemEl(it,kindOf){
 // One layer over the whole grid: the surfaces' outlines (markers for tests and
 // for the layout animations — they take no input), then every item in paint
 // order, then the caret the display list placed inside a surface.
+/** function treeEls(TreeView, NativeView) => El[] */
 function treeEls(t, native){
   const out=[];
   if(!t||!t.surfaces||!t.surfaces.length) return out;
+  const sc=liveScene();
   const layer=div("tree");
-  layer.style.width=px(scene.w||0,CW)+"px"; layer.style.height=px(scene.h||0,CH)+"px";
+  layer.style.width=`${px(sc.w||0,CW)}px`; layer.style.height=`${px(sc.h||0,CH)}px`;
   t.surfaces.forEach((s,i)=>{
     // A centered floating panel is modal: the tree blocks the pointer behind
     // it, and the terminal dims what it covers. The dim is drawn here from
@@ -193,12 +197,13 @@ function treeEls(t, native){
     // the fold runs in two bands (retained-mode-ui.md, "Back to a frame").
     if(s.kind==="floating"&&!s.anchored){
       const scrim=div("tree-scrim");
-      scrim.style.width=px(scene.w||0,CW)+"px"; scrim.style.height=px(scene.h||0,CH)+"px";
+      scrim.style.width=`${px(sc.w||0,CW)}px`; scrim.style.height=`${px(sc.h||0,CH)}px`;
       layer.appendChild(scrim);
     }
     const sd=div("tree-surface "+s.kind+(s.anchored?" anchored":""));
-    sd.dataset.index=i;
-    if(s.section!==undefined) sd.dataset.section=s.section;
+    sd.dataset.index=String(i);
+    const sec=s.section;
+    if(sec!==undefined) sd.dataset.section=String(sec);
     place(sd,{x:s.x,y:s.y,w:s.w,h:s.h});
     layer.appendChild(sd);
     // A full-height left dock is resized by dragging its last column — the
@@ -212,12 +217,13 @@ function treeEls(t, native){
     // the grip draws where it reports.
     if(s.kind==="dock"&&s.x===0&&!isMobile()) layer.appendChild(borderDragHandle(s.x+s.w-1,s.y,s.h,ORIGIN_SCREEN));
   });
-  const kindOf=i=>(t.surfaces[i]||{}).kind;
+  const kindOf=i=>{ const s=t.surfaces[i]; return s?s.kind:undefined; };
   for(const it of (t.items||[])) layer.appendChild(treeItemEl(it,kindOf(it.surface)));
-  if(t.cursor&&!underNative(native,t.cursor[0],t.cursor[1])){
+  const cur=t.cursor;
+  if(cur&&!underNative(native,cur[0],cur[1])){
     const c=div("tree-caret");
-    c.style.left=px(t.cursor[0],CW)+"px"; c.style.top=px(t.cursor[1],CH)+"px";
-    c.style.width=CW+"px"; c.style.height=CH+"px";
+    c.style.left=`${px(cur[0],CW)}px`; c.style.top=`${px(cur[1],CH)}px`;
+    c.style.width=`${CW}px`; c.style.height=`${CH}px`;
     layer.appendChild(c);
   }
   out.push(layer);
@@ -225,9 +231,10 @@ function treeEls(t, native){
 }
 // The dock's width in cells when a full-height left dock is up, else 0 — read
 // off the display list's surfaces, the one place the dock's rectangle lives.
+/** function treeDockCells(Regions) => Number */
 function treeDockCells(regions){
   const t=regions&&regions.tree;
   if(!t||!t.surfaces) return 0;
-  for(const s of t.surfaces) if(s.kind==="dock"&&s.x===0&&s.w<(scene.w||0)) return s.w;
+  for(const s of t.surfaces) if(s.kind==="dock"&&s.x===0&&s.w<(liveScene().w||0)) return s.w;
   return 0;
 }

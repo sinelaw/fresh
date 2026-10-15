@@ -5,6 +5,7 @@
 // Blocking modal. Options / OK / Quit forward to handle_mouse at the pipeline's
 // recorded cell rects (the existing handle_workspace_trust_mouse resolves them);
 // keyboard already works through handle_key.
+/** function trustDialogEls(TrustDialog) => El[] */
 function trustDialogEls(t){
   const out=[];
   const scrim=div("modal-scrim"); scrim.onmousedown=e=>e.stopPropagation(); out.push(scrim);
@@ -25,7 +26,7 @@ function trustDialogEls(t){
   }
   el.appendChild(group);
   const btns=div("td-buttons");
-  const mk=(label,rect,primary)=>{ const b=aria(div("td-btn"+(primary?" primary":"")),"button"); b.textContent=label; const c=rectCell(rect);
+  const mk=(label,rect,primary)=>{ const b=aria(div("td-btn"+(primary?" primary":"")),"button",{}); b.textContent=label; const c=rectCell(rect);
     b.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendClick({button:"left",col:c.col,row:c.row}); }; return b; };
   btns.appendChild(mk(t.okLabel, t.ok, true));
   btns.appendChild(mk(t.quitLabel, t.quit, false));
@@ -38,6 +39,7 @@ function trustDialogEls(t){
 // The editor owns the tree (expand/collapse/selection/scroll); we render the
 // visible window natively and forward row clicks / wheel to handle_mouse at the
 // sidebar's content cells, which the existing file-explorer hit-test resolves.
+/** function fileExplorerEl(FileExplorer) => El */
 function fileExplorerEl(fe){
   const el=div("region fileexplorer"); place(el,fe.rect);
   // **On the editor's grid.** The editor chose the window for a title of one
@@ -45,7 +47,7 @@ function fileExplorerEl(fe){
   // assume); a theme's taller rows would push the last of them, often the
   // selection, below the panel's edge. So heights are cells here, and the
   // themes keep everything else.
-  const onGrid=e=>{ e.style.height=CH+"px"; e.style.lineHeight=CH+"px"; e.style.boxSizing="border-box";
+  const onGrid=e=>{ e.style.height=`${CH}px`; e.style.lineHeight=`${CH}px`; e.style.boxSizing="border-box";
                     e.style.marginTop=e.style.marginBottom="0"; e.style.paddingTop=e.style.paddingBottom="0"; };
   const title=div("fx-title"); title.textContent=fe.title||"Explorer"; onGrid(title); el.appendChild(title);
   const list=div("fx-list"); list.style.paddingTop=list.style.paddingBottom="0";
@@ -58,7 +60,7 @@ function fileExplorerEl(fe){
     const idx=viewportRows[j], r=fe.rows[idx]; if(!r) break;
     const row=div("fx-row"+(idx===fe.selected?" sel":""));
     onGrid(row);
-    row.style.paddingLeft=(6 + r.depth*10)+"px";
+    row.style.paddingLeft=`${6 + r.depth*10}px`;
     const chev=document.createElement("span"); chev.className="fx-chev";
     chev.textContent=r.isDir?(r.expanded?"▾":"▸"):"";
     row.appendChild(chev);
@@ -72,7 +74,7 @@ function fileExplorerEl(fe){
     list.appendChild(row);
   }
   el.appendChild(list);
-  el.addEventListener("wheel",e=>{ e.stopPropagation(); sendMouse({kind:e.deltaY>0?"scrolldown":"scrollup",col:fe.rect.x+1,row:fe.rect.y+1,n:Math.min(5,Math.max(1,Math.round(Math.abs(e.deltaY)/40)))}); },{passive:true});
+  listen(el,"wheel",e=>{ e.stopPropagation(); sendMouse({kind:e.deltaY>0?"scrolldown":"scrollup",col:fe.rect.x+1,row:fe.rect.y+1,n:Math.min(5,Math.max(1,Math.round(Math.abs(e.deltaY)/40)))}); },{passive:true});
   // Resize handle: the editor treats the explorer's width grip as a drag
   // border (handle_file_explorer_border_drag). The .fileexplorer div is in
   // onChrome, so the document drag won't fire here — wire it explicitly.
@@ -112,8 +114,8 @@ const ORIGIN_SCREEN = {x:0, y:0};
 // `.region{overflow:hidden}` then clipped the grip away entirely.
 function borderDragHandle(bx, by, h, origin){
   const grip=div("resize-grip");
-  grip.style.left=px(bx-origin.x,CW)+"px"; grip.style.top=px(by-origin.y,CH)+"px";
-  grip.style.width=px(1,CW)+"px"; grip.style.height=px(h,CH)+"px";
+  grip.style.left=`${px(bx-origin.x,CW)}px`; grip.style.top=`${px(by-origin.y,CH)}px`;
+  grip.style.width=`${px(1,CW)}px`; grip.style.height=`${px(h,CH)}px`;
   grip.onmousedown=e=>{
     e.preventDefault(); e.stopPropagation();
     sendMouse({kind:"down",button:"left",col:bx,row:by});
