@@ -24,13 +24,14 @@
     "cmd.mode_rendered_desc": "Превключване към рендериран Markdown преглед",
     "cmd.mode_duo": "Markdown: Дуо Режим",
     "cmd.mode_duo_desc": "Превключване към разделен екран с изходен код и рендериран преглед",
-    "cmd.cycle_mode": "Markdown: Превъртане на режими за преглед",
-    "cmd.cycle_mode_desc": "Превъртане последователно през режим Изходен код, Рендериран и Дуо",
+    "cmd.cycle_mode": "Markdown: Смяна на режимите за преглед",
+    "cmd.cycle_mode_desc": "Последователна смяна между режимите Изходен код, Рендериран и Дуо",
     "cmd.toggle_duo": "Markdown: Превключване на Дуо Режим",
     "cmd.toggle_duo_desc": "Превключване между единичен изглед и разделен Дуо изглед",
     "status.mode_source": "Markdown: Режим Изходен код",
     "status.mode_rendered": "Markdown: Режим Рендериране",
-    "status.mode_duo": "Markdown: Дуо Режим (Изходен код + Преглед)"
+    "status.mode_duo": "Markdown: Дуо Режим (Изходен код + Преглед)",
+    "duo.tab_name": "%{name} (Дуо)"
   },
   "cs": {
     "cmd.toggle_compose": "Markdown: Prepnout Compose/Preview",
@@ -63,7 +64,8 @@
     "cmd.toggle_duo_desc": "Prepnout mezi jednim editorem a zobrazenim Duo vedle sebe",
     "status.mode_source": "Markdown: Rezim Zdroj",
     "status.mode_rendered": "Markdown: Rezim Nahled",
-    "status.mode_duo": "Markdown: Rezim Duo (Zdroj + Nahled)"
+    "status.mode_duo": "Markdown: Rezim Duo (Zdroj + Nahled)",
+    "duo.tab_name": "%{name} (Duo)"
   },
   "de": {
     "cmd.toggle_compose": "Markdown: Compose/Preview umschalten",
@@ -96,7 +98,8 @@
     "cmd.toggle_duo_desc": "Zwischen Einzelansicht und Duo-Nebeneinander-Ansicht umschalten",
     "status.mode_source": "Markdown: Quellcode-Modus",
     "status.mode_rendered": "Markdown: Vorschau-Modus",
-    "status.mode_duo": "Markdown: Duo-Modus (Quelle + Vorschau)"
+    "status.mode_duo": "Markdown: Duo-Modus (Quelle + Vorschau)",
+    "duo.tab_name": "%{name} (Duo)"
   },
   "en": {
     "cmd.toggle_compose": "Markdown: Toggle Compose/Preview",
@@ -129,7 +132,8 @@
     "cmd.toggle_duo_desc": "Toggle between single editor view and side-by-side Duo view",
     "status.mode_source": "Markdown: Source Mode",
     "status.mode_rendered": "Markdown: Rendered Mode",
-    "status.mode_duo": "Markdown: Duo Mode (Source + Preview)"
+    "status.mode_duo": "Markdown: Duo Mode (Source + Preview)",
+    "duo.tab_name": "%{name} (Duo)"
   },
   "es": {
     "cmd.toggle_compose": "Markdown: Alternar Compose/Preview",
@@ -162,7 +166,8 @@
     "cmd.toggle_duo_desc": "Alternar entre vista de editor individual y vista Duo lado a lado",
     "status.mode_source": "Markdown: Modo Fuente",
     "status.mode_rendered": "Markdown: Modo Renderizado",
-    "status.mode_duo": "Markdown: Modo Duo (Fuente + Vista previa)"
+    "status.mode_duo": "Markdown: Modo Duo (Fuente + Vista previa)",
+    "duo.tab_name": "%{name} (Duo)"
   },
   "fr": {
     "cmd.toggle_compose": "Markdown: Basculer Compose/Preview",
@@ -189,13 +194,14 @@
     "cmd.mode_rendered_desc": "Passer en mode apercu Markdown rendu",
     "cmd.mode_duo": "Markdown : Mode Duo",
     "cmd.mode_duo_desc": "Passer en vue scindee cote a cote avec source et apercu rendu",
-    "cmd.cycle_mode": "Markdown : Faire defiler les modes d affichage",
+    "cmd.cycle_mode": "Markdown : Parcourir les modes d'affichage",
     "cmd.cycle_mode_desc": "Parcourir cycliquement les modes Source, Rendu et Duo",
     "cmd.toggle_duo": "Markdown : Basculer Mode Duo",
     "cmd.toggle_duo_desc": "Basculer entre la vue unique et la vue scindee Duo",
     "status.mode_source": "Markdown : Mode Source",
     "status.mode_rendered": "Markdown : Mode Rendu",
-    "status.mode_duo": "Markdown : Mode Duo (Source + Apercu)"
+    "status.mode_duo": "Markdown : Mode Duo (Source + Apercu)",
+    "duo.tab_name": "%{name} (Duo)"
   },
   "it": {
     "cmd.toggle_compose": "Markdown: Alterna Compose/Preview",
@@ -228,7 +234,8 @@
     "cmd.toggle_duo_desc": "Alterna tra la visualizzazione singola e la visualizzazione Duo affiancata",
     "status.mode_source": "Markdown: Modalita Sorgente",
     "status.mode_rendered": "Markdown: Modalita Rendering",
-    "status.mode_duo": "Markdown: Modalita Duo (Sorgente + Anteprima)"
+    "status.mode_duo": "Markdown: Modalita Duo (Sorgente + Anteprima)",
+    "duo.tab_name": "%{name} (Duo)"
   },
   "ja": {
     "cmd.toggle_compose": "Markdown: Compose/Preview 切り替え",
@@ -261,7 +268,8 @@
     "cmd.toggle_duo_desc": "単一エディタ表示と左右Duo表示を切り替え",
     "status.mode_source": "Markdown: ソースモード",
     "status.mode_rendered": "Markdown: レンダリングモード",
-    "status.mode_duo": "Markdown: Duoモード (ソース + プレビュー)"
+    "status.mode_duo": "Markdown: Duoモード (ソース + プレビュー)",
+    "duo.tab_name": "%{name} (Duo)"
   },
   "ko": {
     "cmd.toggle_compose": "Markdown: Compose/Preview 전환",
@@ -294,7 +302,8 @@
     "cmd.toggle_duo_desc": "단일 편집기 보기와 나란히 보기 듀오 모드 간 전환",
     "status.mode_source": "Markdown: 소스 모드",
     "status.mode_rendered": "Markdown: 렌더링 모드",
-    "status.mode_duo": "Markdown: 듀오 모드 (소스 + 미리보기)"
+    "status.mode_duo": "Markdown: 듀오 모드 (소스 + 미리보기)",
+    "duo.tab_name": "%{name} (듀오)"
   },
   "pt-BR": {
     "cmd.toggle_compose": "Markdown: Alternar Compose/Preview",
@@ -327,7 +336,8 @@
     "cmd.toggle_duo_desc": "Alternar entre visualizacao individual e visualizacao Duo lado a lado",
     "status.mode_source": "Markdown: Modo Fonte",
     "status.mode_rendered": "Markdown: Modo Renderizado",
-    "status.mode_duo": "Markdown: Modo Duo (Fonte + Visualizacao)"
+    "status.mode_duo": "Markdown: Modo Duo (Fonte + Visualizacao)",
+    "duo.tab_name": "%{name} (Duo)"
   },
   "ru": {
     "cmd.toggle_compose": "Markdown: Переключить Compose/Preview",
@@ -360,7 +370,8 @@
     "cmd.toggle_duo_desc": "Переключить между одиночным окном и разделенным дуо-окном",
     "status.mode_source": "Markdown: Режим исходного кода",
     "status.mode_rendered": "Markdown: Режим рендеринга",
-    "status.mode_duo": "Markdown: Дуо-режим (Исходник + Предпросмотр)"
+    "status.mode_duo": "Markdown: Дуо-режим (Исходник + Предпросмотр)",
+    "duo.tab_name": "%{name} (Дуо)"
   },
   "th": {
     "cmd.toggle_compose": "Markdown: สลับ Compose/Preview",
@@ -393,7 +404,8 @@
     "cmd.toggle_duo_desc": "สลับระหว่างมุมมองเดี่ยวและมุมมองดูโอแบบเคียงข้างกัน",
     "status.mode_source": "Markdown: โหมดซอร์สโค้ด",
     "status.mode_rendered": "Markdown: โหมดเรนเดอร์",
-    "status.mode_duo": "Markdown: โหมดดูโอ (ซอร์ส + ตัวอย่าง)"
+    "status.mode_duo": "Markdown: โหมดดูโอ (ซอร์ส + ตัวอย่าง)",
+    "duo.tab_name": "%{name} (ดูโอ)"
   },
   "uk": {
     "cmd.toggle_compose": "Markdown: Перемкнути Compose/Preview",
@@ -426,7 +438,8 @@
     "cmd.toggle_duo_desc": "Перемкнути між одиночним вікном та розділеним дуо-вікном",
     "status.mode_source": "Markdown: Режим вихідного коду",
     "status.mode_rendered": "Markdown: Режим рендерингу",
-    "status.mode_duo": "Markdown: Дуо-режим (Вихідний код + Перегляд)"
+    "status.mode_duo": "Markdown: Дуо-режим (Вихідний код + Перегляд)",
+    "duo.tab_name": "%{name} (Дуо)"
   },
   "vi": {
     "cmd.toggle_compose": "Markdown: Bật/tắt Compose/Preview",
@@ -459,7 +472,8 @@
     "cmd.toggle_duo_desc": "Chuyển đổi giữa chế độ xem đơn và chế độ xem song song",
     "status.mode_source": "Markdown: Chế độ Nguồn",
     "status.mode_rendered": "Markdown: Chế độ Hiển thị",
-    "status.mode_duo": "Markdown: Chế độ Song song (Nguồn + Xem trước)"
+    "status.mode_duo": "Markdown: Chế độ Song song (Nguồn + Xem trước)",
+    "duo.tab_name": "%{name} (Song song)"
   },
   "zh-CN": {
     "cmd.toggle_compose": "Markdown: 切换 Compose/Preview",
@@ -492,6 +506,7 @@
     "cmd.toggle_duo_desc": "在单栏编辑视图与左右双栏视图之间切换",
     "status.mode_source": "Markdown: 源码模式",
     "status.mode_rendered": "Markdown: 渲染模式",
-    "status.mode_duo": "Markdown: 双栏模式 (源码 + 预览)"
+    "status.mode_duo": "Markdown: 双栏模式 (源码 + 预览)",
+    "duo.tab_name": "%{name} (双栏)"
   }
 }
