@@ -1406,6 +1406,64 @@ if (lpBox) {
 }
 await page.keyboard.press('Escape'); await page.waitForTimeout(120);
 
+// Native panels (js/73-native.js): in the themes that lay the shell's
+// surfaces out themselves, a plugin panel is its spec drawn by the page and a
+// confirmation is a real dialog. Every press goes back as the control's
+// identity, so these checks drive the real editor through them.
+console.log('\n[native panels (Compact): laid out by the page, pressed by identity]');
+await page.request.post(URL + '/reset', { data: {} });
+await page.evaluate(() => { try { localStorage.setItem('fresh.webtheme', 'compact'); } catch (_) {} });
+await page.reload({ waitUntil: 'networkidle' });
+await page.waitForFunction(() => window.fresh && window.fresh.wsOpen && window.fresh.scene && window.fresh.scene.regions.panes.length > 0, null, { timeout: 20000 });
+const nerrs = []; page.on('pageerror', e => nerrs.push(String(e)));
+check('Compact lays the shell\'s surfaces out natively',
+  await page.evaluate(() => document.body.classList.contains('native-panels')));
+if (!(await page.evaluate(() => (window.fresh.scene.regions.native.panels || []).some(p => p.kind === 'dock')))) {
+  await page.request.post(URL + '/action', { data: { action: 'orchestrator_dock_toggle' } });
+}
+await page.waitForSelector('.native-panel.np-dock', { timeout: 8000 }).catch(() => {});
+check('the dock is a native panel', !!(await page.$('.native-panel.np-dock')));
+check('the dock\'s cell items are hidden under it', await page.evaluate(() => {
+  const items = [...document.querySelectorAll('.tree-item[data-surface-kind="dock"]')];
+  return items.length > 0 && items.every(e => getComputedStyle(e).visibility === 'hidden');
+}));
+const newBtn = await page.$('.np-dock .w-button.primary');
+if (newBtn) {
+  await newBtn.click();
+  await page.waitForSelector('.native-panel.np-floating.card', { timeout: 8000 }).catch(() => {});
+}
+const card = await page.$('.native-panel.np-floating.card');
+check('a dock button opens a floating panel, drawn as a native card', !!card);
+if (card) {
+  await page.screenshot({ path: `${SHOTS}/40-native-floating.png` });
+  check('the card wears the panel\'s title', ((await page.textContent('.np-floating .np-title')) || '').trim().length > 0);
+  await page.click('.np-floating .np-close');
+  await page.waitForSelector('.native-panel.np-floating', { state: 'detached', timeout: 8000 }).catch(() => {});
+  check('its close box closes it', !(await page.$('.native-panel.np-floating')));
+}
+await page.evaluate(() => window.fresh.sendKey({ key: 'Q', code: 'KeyQ', ctrl: false, meta: false, shift: true, alt: false }));
+await page.waitForTimeout(300);
+await page.request.post(URL + '/action', { data: { action: 'close' } });
+await page.waitForSelector('.native-confirm', { timeout: 8000 }).catch(() => {});
+check('an unsaved-changes question is a native dialog', !!(await page.$('.native-confirm .nc-btn')));
+const cancel = await page.$('.native-confirm .nc-btn:has-text("Cancel")');
+if (cancel) {
+  await page.screenshot({ path: `${SHOTS}/41-native-confirm.png` });
+  await cancel.click();
+  await page.waitForFunction(() => !window.fresh.scene.regions.native.confirm, null, { timeout: 8000 }).catch(() => {});
+  check('its Cancel answers the editor\'s question', await page.evaluate(() => !window.fresh.scene.regions.native.confirm && !document.querySelector('.native-confirm')));
+}
+// A panel mounted into a pane (Search & Replace): drawn natively over its
+// pane, and — for the themes that fold the display list — a surface of it,
+// so the pane is never left blank.
+await page.request.post(URL + '/action', { data: { action: 'start_search_replace' } });
+await page.waitForSelector('.native-panel.np-pane .w-text-input', { timeout: 8000 }).catch(() => {});
+check('a pane-mounted panel is drawn natively, its fields real inputs', !!(await page.$('.native-panel.np-pane .w-text-input')));
+check('and is a surface of the display list too', await page.evaluate(() =>
+  (window.fresh.scene.regions.tree.surfaces || []).some(s => s.kind === 'pane')));
+await page.screenshot({ path: `${SHOTS}/42-native-pane-panel.png` });
+check('no JS page errors (native panels)', nerrs.length === 0, nerrs.join(' | '));
+
 console.log('\n[touch pan/scroll on mobile (hasTouch context)]');
 // The bridge is single-client: close the desktop page (frees /ws) before
 // opening a touch context against the same server.

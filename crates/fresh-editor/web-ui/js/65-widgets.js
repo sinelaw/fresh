@@ -7,80 +7,86 @@
 // via the same event the TUI fires; `surface` selects the routing path.
 // Concatenate a TextPropertyEntry's display text (segments preferred).
 function entryText(e){ return (e.segments&&e.segments.length)?e.segments.map(s=>s.text||"").join(""):(e.text||""); }
+// A style's look, as the host resolved its colours (`fgCss`/`bgCss`, from the
+// theme keys a plugin names) — applied inline to the span it covers.
+function applyStyle(el, st){
+  if(!st) return;
+  if(st.fgCss) el.style.color=st.fgCss;
+  if(st.bgCss){ el.style.background=st.bgCss; el.classList.add("w-chip"); }
+  if(st.bold) el.style.fontWeight="600";
+  if(st.italic) el.style.fontStyle="italic";
+  if(st.underline) el.style.textDecoration="underline";
+}
+// A TextPropertyEntry as styled spans: its segments, each in its own colour,
+// inside the entry's own style.
+function fillEntry(el, e){
+  if(!e) return el;
+  applyStyle(el, e.style);
+  if(e.segments&&e.segments.length){
+    for(const sg of e.segments){ const sp=document.createElement("span"); sp.textContent=sg.text||""; applyStyle(sp, sg.style); el.appendChild(sp); }
+  } else el.append(e.text||"");
+  return el;
+}
 
 // A fixed-width form-label cell ("Agent:") so a column of controls aligns.
 // The width (in ch) is the spec's `labelWidth` — the display-column budget the
 // TUI pads the label to — carried through instead of discarded, so the web can
 // build the same aligned grid. The stylesheet owns the actual look/alignment
 // per theme; trailing pad spaces are trimmed since the width is what aligns.
+// A control's label with the one colon a form label takes — a plugin label
+// that already ends in its own colon keeps it, rather than reading "Search::".
+function labelColon(text){
+  const t=(text||"").replace(/\s+$/,"");
+  return /[:：]$/.test(t)?t+" ":t+": ";
+}
 function formLabel(text, labelWidth){
   const l=document.createElement("span");
   l.className="w-flabel";
-  l.textContent=(text||"").replace(/\s+$/,"")+":";
+  l.textContent=labelColon(text);
   if(labelWidth>0) l.style.setProperty("--flw", labelWidth);
   return l;
 }
 
-// Route a widget interaction. `ctx.kind` is "toolbar" (prompt toolbar, routed by
-// key) or "panel" (floating/dock, routed by the hit's IDENTITY — widgetKey +
-// eventType + payload — with the recorded hit's index as a legacy tiebreaker).
-// Raw indices alone are fragile: the editor regenerates the hits list on every
-// panel re-render (a click can race a frame), and list hits are WINDOWED to
-// the TUI's visible rows — this natively-scrolled frontend renders the whole
-// list, so a row below the TUI fold has no recorded hit at all. Identity
-// delivery survives both (the bridge resolves by equality, and synthesizes
-// off-window list selects from the panel's own spec).
+// Route a widget interaction. `ctx.kind` is "toolbar" (the prompt toolbar,
+// routed by key) or "panel" (a natively laid-out plugin panel, see
+// 73-native.js). A panel press is the control's IDENTITY — widget key, the
+// event its kind answers a press with, the row — and the bridge rebuilds the
+// event the terminal's tree would have built for the same control from the
+// mounted spec (app/native_panels.rs). So nothing here decides what a press
+// means, and a list row the terminal scrolled out of its window resolves
+// like any other.
+function panelBase(ctx){
+  const b={surface:"panel",slot:ctx.slot};
+  if(ctx.section!=null) b.section=ctx.section;
+  if(ctx.pane!=null) b.pane=ctx.pane;
+  return b;
+}
 function routeWidget(ctx, node, listIndex, ev){
   if(ctx.kind==="toolbar"){ if(node.key) sendWidget({surface:"toolbar",key:node.key}); return; }
-  const base={surface:"panel",plugin:ctx.plugin,panelId:ctx.panelId};
+  const base=panelBase(ctx);
   if(listIndex!=null){
-    // List row/card click: match the recorded hit by row index AND list key
-    // (a panel can hold several lists), fall back to the spec's own itemKeys
-    // for rows outside the TUI scroll window.
-    const hit=(ctx.hits||[]).find(h=>h.widgetKind==="list" && h.payload && h.payload.index===listIndex
-      && (!node.key || h.payload.list_key===node.key));
-    const itemKey=(node.itemKeys&&node.itemKeys[listIndex]!=null)?node.itemKeys[listIndex]:(hit?hit.payload.key:"");
-    // Right-click fires `context` (never recorded as a hit — the bridge
-    // synthesizes it, like the TUI's right-click path) with the click cell
-    // so the plugin can anchor its context-menu popup.
+    const itemKey=(node.itemKeys&&node.itemKeys[listIndex]!=null)?node.itemKeys[listIndex]:"";
+    const payload={index:listIndex,key:itemKey,list_key:node.key||null};
+    // Right-click raises the plugin's context menu, anchored at the cell.
     if(ev&&ev.button===2){
       const c=cellAt(ev);
-      sendWidget({...base,widgetKey:itemKey||"",eventType:"context",
-        payload:{index:listIndex,key:itemKey||"",list_key:node.key||null,col:c.col,row:c.row}});
+      sendWidget({...base,widgetKey:itemKey,eventType:"context",payload,col:c.col,row:c.row});
       return;
     }
-    const msg={...base,widgetKey:itemKey||"",eventType:"select",
-      payload:{index:listIndex,key:itemKey||"",list_key:node.key||null}};
-    if(hit) msg.hitIndex=hit.index;
-    sendWidget(msg);
+    sendWidget({...base,widgetKey:itemKey,eventType:"select",payload,clicks:(ev&&ev.detail)||1});
     return;
   }
   if(node.key){
-    const hit=(ctx.hits||[]).find(h=>h.widgetKey===node.key);
-    if(hit){ sendWidget({...base,widgetKey:node.key,eventType:hit.eventType,payload:hit.payload,hitIndex:hit.index}); return; }
-    // No recorded hit: the TUI clipped this control below the panel's inner
-    // rect, but the DOM grew the panel to fit and rendered it anyway. Send
-    // the identity with the kind's own event — the bridge synthesizes the
-    // hit from the panel's spec (state like `checked`/`disabled` is read
-    // from the spec server-side, not trusted from here).
-    const ev=node.kind==="button"?"activate":node.kind==="toggle"?"toggle":node.kind==="text"?"focus":null;
-    if(ev) sendWidget({...base,widgetKey:node.key,eventType:ev,payload:{}});
+    const et=node.kind==="button"?"activate":node.kind==="toggle"?"toggle":node.kind==="text"?"focus":null;
+    if(et) sendWidget({...base,widgetKey:node.key,eventType:et,payload:{}});
   }
 }
 
-// Route a control interaction by key + SPECIFIC eventType. routeWidget's
-// keyed path picks the first hit with a matching key, which is ambiguous
-// for widgets that record several hit kinds under one key (a dropdown
-// records `dropdown_toggle` plus one `dropdown_select` per option row).
-// Falls back to sending the bare identity; the bridge synthesizes the hit
-// from the panel's spec (same as the clipped-control path).
+// A control press by key + the specific event (a dropdown answers both
+// `dropdown_toggle` and `dropdown_select`).
 function routeControl(ctx,key,eventType,payload){
-  const base={surface:"panel",plugin:ctx.plugin,panelId:ctx.panelId};
-  const hit=(ctx.hits||[]).find(h=>h.widgetKey===key&&h.eventType===eventType
-    &&(!(payload&&payload.index!=null)||(h.payload&&h.payload.index===payload.index)));
-  const msg={...base,widgetKey:key,eventType,payload:hit?hit.payload:(payload||{})};
-  if(hit) msg.hitIndex=hit.index;
-  sendWidget(msg);
+  if(ctx.kind!=="panel") return;
+  sendWidget({...panelBase(ctx),widgetKey:key,eventType,payload:payload||{}});
 }
 
 // UTF-8 byte offset ⇄ UTF-16 code-unit index conversions for text widgets:
@@ -207,8 +213,53 @@ function widgetEl(spec, ctx){
   const kind=spec.kind, fk=ctx.focusKey;
   const focused = spec.key && spec.key===fk;
   if(kind==="row"||kind==="col"){
-    const el=div("w-"+kind+(spec.wrap?" wrap":""));
-    for(const c of (spec.children||[])) el.appendChild(widgetEl(c, ctx));
+    // A row that lays text out in cells (`raw` cells between its controls,
+    // labels padded with spaces to a column) only lines up in the buffer's
+    // font, so it is drawn in it: a GRID row, whose controls still answer as
+    // controls. Every other row is laid out by the browser.
+    const kids=spec.children||[];
+    const isGridRow=c=>c&&c.kind==="row"&&(c.children||[]).some(x=>x&&x.kind==="raw");
+    // A column of grid rows that all have the same number of cells is a
+    // TABLE the terminal drew line by line (a menu's two columns of entries
+    // with a rule between them, Tab walking it in reading order). Natively
+    // it is one CSS grid: the columns line up in any font, the cells are
+    // laid out as text and controls, and a `│` cell becomes a hairline.
+    if(ctx.native&&!ctx.grid&&kind==="col"&&kids.length>1&&kids.every(isGridRow)
+       &&kids.every(c=>c.children.length===kids[0].children.length)){
+      const el=div("w-col w-table");
+      el.style.gridTemplateColumns="repeat("+kids[0].children.length+",auto)";
+      const tctx={...ctx,table:true};
+      for(const r of kids){
+        const re=div("w-row w-table-row");
+        for(const c of r.children) re.appendChild(widgetEl(c, tctx));
+        el.appendChild(re);
+      }
+      return el;
+    }
+    const grid=!ctx.table&&(ctx.grid||(kind==="row"&&kids.some(c=>c&&c.kind==="raw")));
+    const el=div("w-"+kind+(spec.wrap?" wrap":"")+(grid&&!ctx.grid?" grid":"")+(spec.justifyEnd?" end":""));
+    const cctx=grid?{...ctx,grid:true}:ctx;
+    for(const c of kids) el.appendChild(widgetEl(c, cctx));
+    return el;
+  }
+  if(kind==="label"){
+    // A terminal section heading: a caption followed by a rule of box-drawing
+    // characters long enough to reach any edge. Natively, the caption and a
+    // drawn rule that ends where the panel does.
+    const heading=!ctx.grid&&!(spec.segments&&spec.segments.length)
+      &&/^\s*[─━═]*\s*([^─━═]*?)\s*[─━═]{3,}\s*$/.exec(spec.text||"");
+    if(heading){
+      const el=div("w-heading");
+      const t=document.createElement("span"); t.textContent=heading[1]; el.appendChild(t);
+      el.appendChild(div("w-heading-rule"));
+      return el;
+    }
+    const el=div("w-label-row");
+    const segs=spec.segments&&spec.segments.length?spec.segments:[{text:spec.text||""}];
+    applyStyle(el, spec.style);
+    for(const sg of segs){ const sp=document.createElement("span"); sp.textContent=sg.text||""; applyStyle(sp, sg.style); el.appendChild(sp); }
+    if(spec.labelWidth>0) el.style.paddingLeft=spec.labelWidth+"ch";
+    if(spec.wrap) el.classList.add("wrap");
     return el;
   }
   if(kind==="toggle"){
@@ -229,8 +280,22 @@ function widgetEl(spec, ctx){
     return el;
   }
   if(kind==="button"){
-    const el=div("w-button "+(spec.intent||"normal")+(spec.disabled?" disabled":"")+(focused?" focus":""));
-    el.textContent=spec.label||"";
+    const el=div("w-button "+(spec.intent||"normal")+(spec.disabled?" disabled":"")+(focused?" focus":"")
+      +(spec.bare?" bare":"")+(spec.fullWidth?" full":""));
+    // A terminal label carries its own padding (a bare title bar's trailing
+    // spaces fill the row to the close box); a laid-out button has a box. In
+    // a grid row the padding IS the layout, so it stays.
+    const label=ctx.grid?(spec.label||""):(spec.label||"").trim();
+    // A menu entry that says what it sets: `(•)`/`( )` a choice, `[✓]`/`[ ]`
+    // a switch — drawn as the marks they stand for.
+    const mark=!ctx.grid&&ctx.native&&/^(\(•\)|\( \)|\[✓\]|\[ \])\s+(.*)$/.exec(label);
+    if(mark){
+      const radio=mark[1][0]==="(", on=mark[1][1]!==" ";
+      const m=document.createElement("span");
+      m.className=(radio?"w-mark-radio":"w-mark-check")+(on?" on":"");
+      el.appendChild(m); el.append(mark[2]);
+    } else el.textContent=label;
+    if(ctx.grid) el.classList.add("gridcell");
     if(spec.key && !spec.disabled) el.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,spec); };
     return el;
   }
@@ -257,13 +322,17 @@ function widgetEl(spec, ctx){
     // browser-computed click-to-caret positions for free.
     const inst=(ctx.instances&&spec.key)?ctx.instances[spec.key]:null;
     const val=(inst&&inst.textValue!=null)?inst.textValue:(spec.value||"");
-    const el=div("w-text"+(focused?" focus":""));
+    // Width as the terminal sizes it: a multi-line field (or one asked to)
+    // fills its row; a `fieldWidth` is a width in characters.
+    const fill=spec.fullWidth||((spec.rows||1)>1&&!spec.fieldWidth);
+    const el=div("w-text"+(focused?" focus":"")+(fill?" fill":""));
+    if(!fill&&spec.fieldWidth>0) el.style.width="calc("+spec.fieldWidth+"ch + 1.2em)";
     // A form-style field (`label` + `labelWidth`) keeps its label OUTSIDE the
     // bordered field, in the shared label column, so the label doesn't get
     // boxed into the input and the field aligns with the other controls. A
     // plain labelled field (no width) keeps the legacy inline label.
     const formField=spec.label&&spec.labelWidth>0;
-    if(spec.label&&!formField){ const l=document.createElement("span"); l.className="w-text-label"; l.textContent=spec.label+": "; el.appendChild(l); }
+    if(spec.label&&!formField){ const l=document.createElement("span"); l.className="w-text-label"; l.textContent=labelColon(spec.label); el.appendChild(l); }
     const multi=(spec.rows||1)>1;
     const input=document.createElement(multi?"textarea":"input");
     input.className="w-text-input";
@@ -289,7 +358,7 @@ function widgetEl(spec, ctx){
     input.addEventListener("mousedown",e=>{ e.stopPropagation(); if(spec.key) routeWidget(ctx,spec); });
     input.addEventListener("mouseup",e=>{ e.stopPropagation();
       if(spec.key && input.selectionStart===input.selectionEnd)
-        sendWidget({surface:"panel",plugin:ctx.plugin,panelId:ctx.panelId,widgetKey:spec.key,
+        sendWidget({...panelBase(ctx),widgetKey:spec.key,eventType:"focus",
           textCursor:utf16ToByte(input.value,input.selectionStart)});
     });
     if(focused){
@@ -316,11 +385,26 @@ function widgetEl(spec, ctx){
     }
     return el;
   }
+  if(kind==="radio"){
+    const inst=(ctx.instances&&spec.key)?ctx.instances[spec.key]:null;
+    const sel=(inst&&inst.selectedIndex!=null)?inst.selectedIndex:(spec.selectedIndex||0);
+    const el=div("w-radio"+(focused?" focus":""));
+    if(spec.label) el.appendChild(formLabel(spec.label, spec.labelWidth));
+    else if(spec.labelWidth>0) el.style.paddingLeft=spec.labelWidth+"ch";
+    (spec.options||[]).forEach((o,i)=>{
+      const opt=div("w-radio-opt"+(i===sel?" on":""));
+      opt.appendChild(div("w-radio-dot"));
+      const t=document.createElement("span"); t.textContent=o; opt.appendChild(t);
+      opt.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(spec.key) routeControl(ctx,spec.key,"radio_select",{index:i}); };
+      el.appendChild(opt);
+    });
+    return el;
+  }
   if(kind==="number"){
     const inst=(ctx.instances&&spec.key)?ctx.instances[spec.key]:null;
     const val=(inst&&inst.numberValue!=null)?inst.numberValue:(spec.value||0);
     const el=div("w-number"+(focused?" focus":""));
-    if(spec.label){ const l=document.createElement("span"); l.className="w-text-label"; l.textContent=spec.label+": "; el.appendChild(l); }
+    if(spec.label){ const l=document.createElement("span"); l.className="w-text-label"; l.textContent=labelColon(spec.label); el.appendChild(l); }
     const disp=spec.editText!=null?spec.editText
       :spec.percent?Math.round(val*100)+"%"
       :spec.integer?String(Math.trunc(val))
@@ -345,7 +429,7 @@ function widgetEl(spec, ctx){
     const el=div("w-dropdown"+(focused?" focus":"")+(spec.label&&spec.labelWidth>0?" wform":""));
     if(spec.label){
       if(spec.labelWidth>0) el.appendChild(formLabel(spec.label, spec.labelWidth));
-      else { const l=document.createElement("span"); l.className="w-text-label"; l.textContent=spec.label+": "; el.appendChild(l); }
+      else { const l=document.createElement("span"); l.className="w-text-label"; l.textContent=labelColon(spec.label); el.appendChild(l); }
     }
     const pill=document.createElement("span"); pill.className="w-dd-pill";
     // Small up/down chevrons — a MATCHED-SIZE pair (▴ U+25B4 / ▾ U+25BE). The
@@ -423,7 +507,7 @@ function widgetEl(spec, ctx){
     } else {
       (spec.items||[]).forEach((it,i)=>{
         const row=div("w-list-row"+(i===sel?" sel":""));
-        row.textContent=entryText(it);
+        fillEntry(row, it);
         row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,spec,i,e); };
         el.appendChild(row);
       });
@@ -472,7 +556,7 @@ function widgetEl(spec, ctx){
         cb.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(e.button===2) treeCtx(e); else routeTree(ctx,spec,"toggle",{index:i,key,checked:!n.checked}); };
         row.appendChild(cb);
       }
-      const t=document.createElement("span"); t.className="w-tree-text"; t.textContent=entryText(n.text||{});
+      const t=document.createElement("span"); t.className="w-tree-text"; fillEntry(t, n.text||{});
       row.appendChild(t);
       // The row's action button (TreeNode.action), the web twin of the TUI's
       // `[ label ]` at the row's tail: its own target, so a press on it is the
@@ -506,7 +590,7 @@ function widgetEl(spec, ctx){
       for(const ex of (n.extraLines||[])){
         const xr=div("w-tree-xrow"+(i===sel?" sel":""));
         xr.style.paddingLeft=isCard?"2ch":((d*2)+2)+"ch";
-        xr.textContent=entryText(ex);
+        fillEntry(xr, ex);
         xr.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(e.button===2) treeCtx(e); else routeTree(ctx,spec,"select",{index:i,key}); };
         holder.appendChild(xr);
       }
@@ -534,7 +618,21 @@ function widgetEl(spec, ctx){
     if(spec.child) return widgetEl(spec.child, ctx);
     return div("w-component-empty");
   }
-  if(kind==="raw"&&spec.entries){ const el=div("w-raw"); el.textContent=spec.entries.map(entryText).join("\n"); return el; }
+  if(kind==="raw"&&spec.entries){
+    const text=spec.entries.map(entryText).join("\n");
+    if(ctx.table){
+      // A table cell: a rule, a caption, or air.
+      const t=text.trim();
+      if(/^[│┃|]$/.test(t)) return div("w-vrule");
+      const c=div(t&&t===t.toUpperCase()&&/[A-Z]/.test(t)?"w-th":"w-td"); c.textContent=t; return c;
+    }
+    // Blank rows a terminal layout stacks to push what follows to the bottom
+    // of the panel: a flexible gap here, which does the same at any height.
+    if(!ctx.grid&&!text.trim()) return div("w-fill");
+    const el=div("w-raw");
+    spec.entries.forEach((e,i)=>{ if(i) el.append("\n"); fillEntry(el.appendChild(document.createElement("span")), e); });
+    return el;
+  }
   if(kind==="windowEmbed"){
     // Embedding another editor window's live cells inside a native panel
     // needs its own scene region (the webui cell buffer carries pane
@@ -547,17 +645,12 @@ function widgetEl(spec, ctx){
   const fb=div("w-unsupported"); fb.textContent="["+kind+"]"; return fb;
 }
 
-// Route a tree row interaction by identity (tree spec key + event + row
-// payload). When the TUI recorded a hit for this row, reuse its exact
-// payload + index so the bridge's strict identity tier matches; rows below
-// the TUI's scroll window carry just the synthesized payload and resolve
-// through the bridge's tree synthesis.
+// A tree row press by identity: the tree's key, the event, the row.
 function routeTree(ctx, node, eventType, payload){
-  const base={surface:"panel",plugin:ctx.plugin,panelId:ctx.panelId};
-  const hit=(ctx.hits||[]).find(h=>h.widgetKind==="tree"&&h.eventType===eventType
-    &&h.widgetKey===(node.key||"")&&h.payload&&h.payload.index===payload.index);
-  const msg={...base,widgetKey:node.key||"",eventType,payload:hit?hit.payload:payload};
-  if(hit) msg.hitIndex=hit.index;
+  if(ctx.kind!=="panel") return;
+  const {col,row,...rest}=payload;
+  const msg={...panelBase(ctx),widgetKey:node.key||"",eventType,payload:rest};
+  if(col!=null){ msg.col=col; msg.row=row; }
   sendWidget(msg);
 }
 

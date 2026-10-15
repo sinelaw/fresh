@@ -1203,6 +1203,25 @@ pub struct TrustDialogView {
 }
 
 impl Editor {
+    /// Where the shell's layout put the element keyed `key`, in screen cells,
+    /// or `None` when it has no area (not built, collapsed, or scrolled out of
+    /// a virtualized list).
+    ///
+    /// The web's key-addressed input (`node` messages in `webui`) resolves
+    /// through this: a natively laid-out control names the tree node it
+    /// mirrors, and the press lands on that node's cells, so the tree stays
+    /// the only router and the node's own handlers decide what a press means.
+    pub fn node_rect(&self, key: &fresh_ui::Key) -> Option<ratatui::layout::Rect> {
+        let frame = self.active_chrome().last_frame;
+        let size = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: frame.width,
+            height: frame.height,
+        };
+        crate::view::shell::rect_of(self.shell_ui.as_ref()?, key, size)
+    }
+
     /// Semantic workspace-trust dialog (the blocking "trust this folder?" modal).
     /// `None` unless it's showing.
     ///
@@ -1335,6 +1354,11 @@ pub struct TreeSurfaceView {
 pub struct TreeItemView {
     /// The index into `surfaces` of the subtree this item belongs to.
     pub surface: usize,
+    /// Inside a plugin panel's interior — its spec's content, as opposed to
+    /// the panel's own frame (title, close box, border). A page that lays
+    /// the interior out itself from `regions.native` hides these.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub interior: bool,
     /// Painted by a layer the subtree raised — a pop-over, a scrim — rather
     /// than by the subtree's own flow. Layers paint after everything in flow.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -1424,7 +1448,7 @@ pub struct TreeView {
     pub cursor: Option<[i32; 2]>,
 }
 
-fn css_color(c: ratatui::style::Color) -> Option<String> {
+pub(crate) fn css_color(c: ratatui::style::Color) -> Option<String> {
     use ratatui::style::Color;
     // The xterm 256-colour cube and ramp, so an indexed colour a theme names
     // reads the same in a browser as in a terminal.
@@ -1579,11 +1603,32 @@ impl Editor {
                 );
             }
         }
+        // Panels mounted into panes (Search & Replace, the welcome page, a
+        // review diff): their pane's cells are left to the tree, so without a
+        // surface here the web showed those panes empty.
+        let mut pane_leaves: Vec<_> = self.pane_interiors().into_keys().collect();
+        pane_leaves.sort_by_key(|leaf| leaf.0 .0);
+        for leaf in &pane_leaves {
+            push(
+                "pane",
+                crate::view::shell::panel::interior_key(Slot::Pane(*leaf)),
+                false,
+                None,
+                false,
+            );
+        }
         if roots.is_empty() {
             return TreeView::default();
         }
         let palette = self.shell_palette();
         let spec = ui.spec();
+        // The panels' interiors: what `view::native` projects as content.
+        let interiors: Vec<_> = [Slot::Dock, Slot::Floating]
+            .into_iter()
+            .chain((0..self.sidebar_sections.len()).map(Slot::Sidebar))
+            .chain(pane_leaves.iter().copied().map(Slot::Pane))
+            .filter_map(|slot| ui.find_by_key(&crate::view::shell::panel::interior_key(slot)))
+            .collect();
         let mut items = Vec::new();
         for (index, item) in spec.items.iter().enumerate() {
             let Some(surface) = roots.iter().position(|r| ui.contains(*r, item.id)) else {
@@ -1693,6 +1738,7 @@ impl Editor {
             };
             items.push(TreeItemView {
                 surface,
+                interior: interiors.iter().any(|r| ui.contains(*r, item.id)),
                 layer: index >= spec.layers_from,
                 key: item.key.as_ref().map(|k| k.to_string()),
                 kind,

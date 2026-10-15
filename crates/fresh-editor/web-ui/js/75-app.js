@@ -246,7 +246,7 @@ const PATH_REGION={ fileExplorer:"fileExplorer", separators:"separators",
   menubar:"menu", menus:"menu", menuOpen:"menu", menuHighlight:"menu",
   submenuPath:"menu", dropdown:"menu",
   statusbar:"statusbar", popups:"popups", palette:"palette", widgets:"widgets",
-  tree:"tree",
+  tree:"tree", native:"native",
   contextMenu:"contextMenu", auxModal:"auxModal",
   keybindingEditor:"keybindingEditor", settings:"settings",
   trustDialog:"trustDialog", cursor:"caret", poll:null };

@@ -85,6 +85,8 @@ pub use fresh_editor_core::markdown;
 pub mod confirm;
 #[cfg(feature = "runtime")]
 pub mod keyed_selection;
+#[cfg(feature = "web")]
+pub mod native;
 #[cfg(feature = "runtime")]
 pub mod popup;
 #[cfg(feature = "runtime")]

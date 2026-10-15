@@ -1,0 +1,156 @@
+/* Natively laid-out surfaces (`regions.native`, js/73-native.js): the shell's
+   surfaces as a desktop app draws them — the chrome font, real buttons, pixel
+   spacing — instead of the display list's character cells. Only while the
+   body carries `native-panels` (on for the themes in NATIVE_PANEL_THEMES).
+
+   The display-list items of a surface drawn here are hidden, not removed:
+   the tree still lays them out, because every press is routed to the node
+   where its layout put it. `visibility` keeps their boxes (and so nothing
+   reflows); `pointer-events` stops a stray press reaching them through the
+   native surface's gaps. */
+body.native-panels .tree-surface.confirm,
+body.native-panels .tree-item[data-surface-kind="confirm"],
+body.native-panels .tree-item[data-interior],
+body.native-panels .tree-item[data-surface-kind="dock"],
+body.native-panels .tree-item[data-surface-kind="floating"],
+body.native-panels .tree-surface.floating,
+body.native-panels .tree-scrim,
+body.native-panels .tree-item.k-scrim[data-surface-kind="floating"]{visibility:hidden;pointer-events:none}
+
+/* Over every native chrome element, as the terminal's dimming scrim is over
+   the whole frame. */
+.native-scrim{position:absolute;inset:0;z-index:110;display:flex;align-items:center;justify-content:center;
+  background:rgba(0,0,0,.42);font-family:var(--font-family);user-select:none}
+
+.native-card{background:var(--surface-2,var(--bg2));color:var(--fg);
+  border:1px solid var(--hairline-strong,var(--border));border-radius:var(--r-lg,8px);
+  box-shadow:var(--shadow,0 12px 32px rgba(0,0,0,.45))}
+
+/* ---- the confirmation card ------------------------------------------------ */
+.native-confirm{width:min(30em,calc(100% - 4em));max-height:calc(100% - 4em);overflow:auto;
+  padding:1.15em 1.25em 1em;display:flex;flex-direction:column;gap:.55em}
+.native-confirm .nc-title{font-weight:600;font-size:1.05em}
+.native-confirm .nc-body{line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere}
+/* The detail is where paths and file lists go: the buffer's font, quieter. */
+.native-confirm .nc-detail{color:var(--muted);font-family:var(--mono-family);font-size:.88em;
+  line-height:1.4;white-space:pre-wrap;overflow-wrap:anywhere;max-height:12em;overflow:auto}
+.native-confirm .nc-buttons{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:.5em;margin-top:.6em}
+.native-confirm .nc-btn{font:inherit;font-size:.95em;color:var(--fg);cursor:default;
+  background:var(--surface,var(--bg3));border:1px solid var(--hairline-strong,var(--border));
+  border-radius:var(--r-md,6px);padding:.32em 1em;min-width:5.5em;
+  transition:background-color .08s,border-color .08s}
+.native-confirm .nc-btn:hover{background:var(--hover,rgba(255,255,255,.06));border-color:var(--muted)}
+/* The button that holds the keyboard — what Enter takes — is the filled one. */
+.native-confirm .nc-btn.selected{background:var(--ui-accent,var(--accent));border-color:var(--ui-accent,var(--accent));
+  color:var(--on-ui-accent,var(--on-accent))}
+.native-confirm .nc-btn.selected:hover{filter:brightness(1.08)}
+.native-confirm .nc-btn.destructive{color:var(--danger,#f47067)}
+.native-confirm .nc-btn.destructive.selected{background:var(--danger,#f47067);border-color:var(--danger,#f47067);color:#fff}
+.native-confirm .accel{text-decoration:none}
+body.alt-held .native-confirm .accel{text-decoration:underline;text-underline-offset:.15em}
+
+/* ---- plugin panels ----------------------------------------------------------
+   The interior of a dock, floating panel or sidebar section, laid out from its
+   spec by `widgetEl` (65-widgets.js, styled by 40-widgets.css) inside the
+   interior's rectangle. Above the display-list layer, whose frame items (the
+   title bar, the border) stay visible around it. It scrolls on its own: a long
+   list is the page's to scroll, and the keyboard's selection is kept in view. */
+.native-panel{position:absolute;z-index:88;overflow:auto;overscroll-behavior:contain;
+  font-family:var(--font-family);color:var(--fg);background:var(--bg);
+  padding:.35em .5em;box-sizing:border-box;user-select:none;scrollbar-width:thin}
+.native-panel.np-floating{background:var(--surface-2,var(--bg2))}
+.native-panel .w-col{display:flex;flex-direction:column;gap:.3em;min-width:0}
+.native-panel .w-row{display:flex;flex-direction:row;align-items:center;gap:.4em;min-width:0}
+.native-panel .w-row.wrap{flex-wrap:wrap}
+.native-panel .w-raw{white-space:pre;font-family:var(--mono-family)}
+.native-panel .w-button{padding:.15em .75em;border-radius:var(--r-sm,4px);border-color:var(--hairline-strong,var(--border));white-space:nowrap}
+.native-panel .w-button:hover{background:var(--hover,rgba(255,255,255,.06))}
+.native-panel .w-button.primary{background:var(--ui-accent,var(--accent));border-color:var(--ui-accent,var(--accent));color:var(--on-ui-accent,#fff)}
+/* A bare button is text that answers a press: a title, a menu caption, a ×. */
+.native-panel .w-button.bare{border-color:transparent;background:none;padding:.15em .35em}
+.native-panel .w-button.bare:hover{background:var(--hover,rgba(255,255,255,.06))}
+.native-panel .w-button.full{align-self:stretch;text-align:center}
+.native-panel .w-list-row,.native-panel .w-tree-row{padding:.12em .45em;border-radius:var(--r-sm,4px);white-space:pre;overflow:hidden;text-overflow:ellipsis}
+.native-panel .w-list-row:hover,.native-panel .w-tree-row:hover{background:var(--hover,rgba(255,255,255,.06))}
+.native-panel .w-list-row.sel,.native-panel .w-tree-row.sel{background:var(--menuhi);color:var(--on-menuhi,var(--fg))}
+.native-panel .w-divider{border-top-color:var(--hairline,var(--border));margin:.3em 0}
+.native-panel > .w-col{min-height:100%;box-sizing:border-box}
+.native-panel .w-fill{flex:1 1 0;min-height:0}
+.native-panel .w-label-row{white-space:pre-wrap;overflow-wrap:anywhere}
+/* A grid row: cell-laid-out text with controls in it (see widgetEl). The
+   buffer's font and no gaps, so its columns line up as the terminal's do; its
+   controls keep their hover and press. */
+.native-panel .w-row.grid{font-family:var(--mono-family);gap:0;white-space:pre;
+  height:var(--cell-h);line-height:var(--cell-h);letter-spacing:var(--cell-tracking,0)}
+.native-panel .w-col:has(> .w-row.grid){gap:0}
+.native-panel .w-row.grid .w-button.gridcell{padding:0;border:0;border-radius:var(--r-sm,4px);white-space:pre}
+.native-panel .w-row.grid .w-raw{white-space:pre}
+.native-panel.np-floating{z-index:91}
+.native-panel-scrim{position:absolute;inset:0;z-index:89;background:rgba(0,0,0,.35)}
+.native-panel-scrim.clear{background:transparent}
+.native-panel .w-col > .w-spacer:not([style*="flex"]){height:.55em;width:auto!important}
+.native-panel .w-label-row{white-space:pre;overflow:hidden;text-overflow:ellipsis}
+.native-panel .w-label-row.wrap{white-space:pre-wrap}
+.native-panel .w-heading{display:flex;align-items:center;gap:.6em;margin-top:.35em;
+  font-size:.82em;font-weight:600;letter-spacing:.04em;color:var(--muted)}
+.native-panel .w-heading-rule{flex:1 1 auto;border-top:1px solid var(--hairline,var(--border))}
+.w-radio{display:flex;flex-wrap:wrap;align-items:center;gap:.25em 1.1em}
+.w-radio-opt{display:inline-flex;align-items:center;gap:.45em;cursor:default}
+.w-radio-dot{width:.85em;height:.85em;border-radius:50%;border:1.5px solid var(--muted);box-sizing:border-box;flex:0 0 auto}
+.w-radio-opt.on .w-radio-dot{border-color:var(--ui-accent,var(--accent));
+  background:radial-gradient(circle,var(--ui-accent,var(--accent)) 0 38%,transparent 42%)}
+.w-radio.focus{outline:1px solid var(--accent);outline-offset:2px;border-radius:var(--r-sm,4px)}
+/* The display list's ground for the dock would cover the native dock, which
+   now stands under that layer (so a floating panel's frame can stand over
+   both). The native dock takes the ground each theme gives the dock. */
+body.native-panels .tree-surface.dock{visibility:hidden}
+body.theme-compact .native-panel.np-dock{background:var(--shell)}
+body.macfam .native-panel.np-dock{background:var(--mac-sidebar)}
+/* The dock's wall, which its (hidden) display-list items drew; the resize
+   grip over it is still the tree's, and still drags. */
+.native-panel.np-dock{border-right:1px solid var(--hairline-strong,var(--border))}
+/* ---- a floating panel: the whole card ---------------------------------- */
+.native-panel.card{display:flex;flex-direction:column;padding:0;overflow:hidden;
+  background:var(--surface-2,var(--bg2));border:1px solid var(--hairline-strong,var(--border));
+  border-radius:var(--r-lg,8px);box-shadow:var(--shadow,0 12px 32px rgba(0,0,0,.45))}
+.native-panel.card.kb{border-color:color-mix(in srgb,var(--ui-accent,var(--accent)) 55%,var(--hairline-strong,var(--border)))}
+.native-panel.card .np-head{display:flex;align-items:center;gap:.5em;padding:.5em .6em .35em 1em;flex:0 0 auto}
+.native-panel.card .np-title{flex:1 1 auto;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.native-panel.card .np-close{font:inherit;font-size:1.15em;line-height:1;color:var(--muted);background:none;border:0;
+  border-radius:var(--r-sm,4px);padding:.1em .4em;cursor:default}
+.native-panel.card .np-close:hover{background:var(--hover,rgba(255,255,255,.06));color:var(--fg)}
+.native-panel.card .np-body{flex:1 1 auto;min-height:0;overflow:auto;padding:.3em 1em .8em}
+.native-panel.card .np-body > .w-col{min-height:100%;box-sizing:border-box}
+.native-panel.card.anchored .np-body{padding:.35em .45em}
+.native-panel .w-row.end{justify-content:flex-end}
+.native-panel .w-text{box-sizing:border-box;max-width:100%}
+.native-panel .w-text.fill{align-self:stretch;flex:1 1 auto}
+.native-panel .w-text .w-text-input{flex:1 1 auto;min-width:0;width:100%;box-sizing:border-box}
+.native-panel .w-field-row:has(> .w-text.fill){align-self:stretch}
+/* A table the terminal drew line by line (see widgetEl): one CSS grid. */
+.native-panel .w-table{display:grid;column-gap:.25em;row-gap:0;align-items:center;gap:0 .25em}
+.native-panel .w-table-row{display:contents}
+.native-panel .w-table .w-vrule{align-self:stretch;width:1px;margin:0 .6em;background:var(--hairline,var(--border))}
+.native-panel .w-table .w-th{font-size:.78em;font-weight:600;letter-spacing:.05em;color:var(--muted);padding:.6em .5em .2em}
+.native-panel .w-table .w-td{min-height:.6em}
+.native-panel .w-table .w-button{justify-self:stretch;text-align:left;padding:.22em .55em}
+.native-panel .w-table .w-dropdown{padding:.1em .5em}
+.w-mark-radio,.w-mark-check{display:inline-block;width:.8em;height:.8em;margin-right:.5em;vertical-align:-.08em;
+  border:1.5px solid var(--muted);box-sizing:border-box}
+.w-mark-radio{border-radius:50%}
+.w-mark-check{border-radius:3px}
+.w-mark-radio.on{border-color:var(--ui-accent,var(--accent));
+  background:radial-gradient(circle,var(--ui-accent,var(--accent)) 0 36%,transparent 40%)}
+.w-mark-check.on{border-color:var(--ui-accent,var(--accent));background:var(--ui-accent,var(--accent));position:relative}
+.w-mark-check.on::after{content:"";position:absolute;left:.22em;top:.04em;width:.2em;height:.42em;
+  border:solid var(--on-ui-accent,#fff);border-width:0 .12em .12em 0;transform:rotate(45deg)}
+/* A section in a row takes the rest of it, as the terminal's does; an
+   unlabelled one around a single field is just that field. */
+.native-panel .w-row > .w-section{flex:1 1 auto;min-width:0}
+.native-panel .w-section:not(:has(> .w-section-label)){border:0;padding:0}
+.native-panel .w-section > .w-text{display:flex}
+/* A panel mounted into a pane: over the pane's cells, in the pane's ground. */
+.native-panel.np-pane{z-index:87;background:var(--bg);padding:.5em .8em}
+/* A run the plugin gave a ground of its own (a chip). */
+.native-panel .w-chip{border-radius:3px;padding:0 .2em}
+.native-panel .w-row.grid .w-chip,.native-panel .w-raw .w-chip{padding:0;border-radius:0}

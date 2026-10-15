@@ -26,6 +26,32 @@ Strengths to preserve through any of the work below:
 - **DOM hygiene** — when nothing changed, no frame arrives at all (the server diffs before pushing, §3.1), so the DOM is never touched; scroll positions of natively-scrolled panels survive rebuilds; wheel events over natively-scrolled chrome are deliberately not forwarded.
 - The **gutter/text split** in the bridge output, which exists precisely so a future native selection/copy layer can cover code without line numbers.
 
+### 1.1 Native layout of the shell's surfaces — IMPLEMENTED (opt-in per web theme)
+
+The display list (`regions.tree`) ships what the shell's layout *drew*: items at character cells, labels padded and elided to the cell width. A page that folds it faithfully looks like a terminal because it is one, which is right for Cosmos and Winamp and wrong for an app that wants to look native (Fresh Desktop, the Compact and macOS themes). So the same surfaces are also projected one step earlier, as **content** (`regions.native`, `view::native`):
+
+- **The confirmation card** as its `Confirm` model: title, question, detail, buttons with tone, accelerator, selection, and each button's tree key.
+- **Plugin panels** (dock, floating panel, sidebar sections, and panels mounted into a pane — Search & Replace, the welcome page, a review diff) as their mounted `WidgetSpec` plus the host's instance state (text values and carets, selections, expanded rows, …), the interior's rect, and for a floating panel its frame rect, title and close key. Every style in the spec also carries its colours resolved to CSS (`fgCss`/`bgCss`): a plugin colours text by theme key, and only the host knows the theme in use.
+
+The page lays those out itself (`js/73-native.js`, the toolbar's `widgetEl` renderer, `css/46-native.css`) and hides the display-list items they replace — hides, never removes: the tree still lays them out.
+
+**The parity discipline holds, because input never stops being the tree's:**
+
+- **By key** (`node` messages): a control that mirrors a tree node (a confirm button, a panel's close box) names that node's key, and the bridge presses it where the shell's layout put it (`Editor::node_rect`). The node's own handler decides what the press means. `scene_parity` checks that every key a projection hands out resolves to a laid-out node.
+- **By identity** (`widget` messages, `surface: "panel"`): a panel control names its widget key, the event its kind answers a press with, and the row. `app::native_panels` rebuilds the very `WidgetEvent` the tree's description builds for that control — from the mounted spec and instance state, never from the page — and applies it as the same `UiFact`. A name that matches nothing in the spec is dropped. This also resolves rows the terminal has scrolled out of its window, which a natively scrolled list renders.
+
+Some specs are written as terminal layouts, and the renderer reads them for what they are rather than copying their cells:
+
+- A column of rows that each mix `raw` cells with controls, all with the same number of cells (the orchestrator's dock menu: two columns of entries, a `│` between them), is a **table** — one CSS grid, a `│` cell as a hairline, an upper-case caption as a heading.
+- A label that is a caption followed (or surrounded) by a run of `─` is a **section heading** with a drawn rule.
+- A menu entry prefixed `(•)`/`( )` or `[✓]`/`[ ]` draws a radio or check mark.
+- Blank `raw` rows stacked to push a hint bar down are a flexible gap.
+- Any other row containing `raw` cells is a **grid row**: the buffer's font at the cell pitch, so it still lines up, controls still live.
+
+Panels mounted into panes are also surfaces of the display list (`kind: "pane"`), so the themes that fold it draw them as cells; before, those panes were left empty in the web.
+
+`NATIVE_PANEL_THEMES` (Compact, macOS light and dark) turns it on; `fresh.nativePanels` in localStorage (`on`/`off`) overrides. Cosmos and Winamp keep the faithful fold.
+
 ## 2. The benchmark — what "VS Code-level polish" decomposes into
 
 "Polish" is not one feature. Measured against VS Code in a browser (vscode.dev / code-server), the bar decomposes into:

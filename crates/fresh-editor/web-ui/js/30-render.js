@@ -18,7 +18,7 @@ let popoverRegionOwner=null;
 // untouched — scroll positions, caret blink phase and IME focus survive by
 // construction instead of by snapshot/restore.
 const REGION_ORDER = ["fileExplorer","panes","separators","menu","statusbar",
-  "popups","palette","tree","contextMenu","auxModal","keybindingEditor",
+  "popups","palette","tree","native","contextMenu","auxModal","keybindingEditor",
   "settings","trustDialog","caret"];
 let containers=null;
 let renderedRegions=[];   // region names rebuilt by the last render (test surface)
@@ -124,6 +124,9 @@ const REGION_FILL={
   // The plugin panels, folded from the display list the tree produced for
   // them (`regions.tree`, see 72-tree.js).
   tree(c,reg){ if(reg.tree) for(const el of treeEls(reg.tree)) c.appendChild(el); },
+  // The same surfaces laid out natively, by the themes that do
+  // (`regions.native`, see 73-native.js).
+  native(c,reg){ if(document.body.classList.contains("native-panels")) for(const el of nativeEls(reg.native)) c.appendChild(el); },
   contextMenu(c,reg){ if(reg.contextMenu) c.appendChild(contextMenuEl(reg.contextMenu)); },
   auxModal(c,reg){ if(reg.auxModal) for(const el of auxModalEls(reg.auxModal)) c.appendChild(el); },
   keybindingEditor(c,reg){ if(reg.keybindingEditor) for(const el of keybindingEditorEls(reg.keybindingEditor)) c.appendChild(el); },
@@ -284,7 +287,7 @@ function renderRegion(name){
   if(name==="settings") settingsEnsureSelectionVisible(c);
   // A widgets rebuild replaces any focused text input — restore DOM focus
   // and caret to the host-focused field (or the hidden sink if none).
-  if(name==="widgets") syncWidgetInputFocus();
+  if(name==="widgets"||name==="native") syncWidgetInputFocus();
 }
 
 // The TUI windows the settings rows with the core's scroll offset, so its
