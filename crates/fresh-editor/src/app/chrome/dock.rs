@@ -115,6 +115,10 @@ impl Editor {
     /// Orchestrator mode is the default *under* the policy, not an override
     /// over it: overriding left `autoOpenDock: false` with no effect in the
     /// launch mode that is the default since 0.5.2 (#3442).
+    ///
+    /// A file launch (`Editor::file_launch`) is not a session, so under
+    /// `auto` the dock stays closed and nothing remembered about it applies;
+    /// `always` still opens it.
     pub(crate) fn apply_startup_dock_chrome(
         &mut self,
         manifests: &HashMap<String, PluginManifest>,
@@ -154,6 +158,7 @@ impl Editor {
         self.dock_reserved = match policy {
             DockOpenPolicy::Never => false,
             DockOpenPolicy::Always => true,
+            DockOpenPolicy::Auto if self.file_launch => false,
             DockOpenPolicy::Auto => remembered.open.unwrap_or(orchestrator_mode || decl.open),
         };
         tracing::debug!(

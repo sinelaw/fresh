@@ -21,6 +21,8 @@ pub mod cargo_config_editing;
 pub mod changed_on_disk_clock_skew;
 pub mod code_tour_dock;
 pub mod command_palette;
+#[cfg(feature = "plugins")]
+pub mod compose_only_decorations;
 pub mod conceal_spanning_line_break;
 pub mod config_language_selector;
 pub mod confirm_dialog;
@@ -319,6 +321,8 @@ pub mod save_as_language_detection;
 pub mod save_nonexistent_directory;
 pub mod scroll_clearing;
 pub mod scroll_offset_wrap_off;
+#[cfg(feature = "plugins")]
+pub mod scroll_sync_group_horizontal;
 #[cfg(feature = "plugins")]
 pub mod scrollbar_markers;
 pub mod scrolling;

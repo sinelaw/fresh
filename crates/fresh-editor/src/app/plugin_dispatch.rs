@@ -403,6 +403,7 @@ impl Editor {
             .to_string();
         snapshot.env_active = self.authority().env_provider.is_active();
         snapshot.orchestrator_mode = self.orchestrator_mode();
+        snapshot.file_launch = self.file_launch();
         // The dock slot as the host sees it: the plugin mounts at `ready`
         // iff `dock_open`, and lays its content out to `dock_cols`.
         snapshot.dock_open = self.dock.is_some() || self.dock_slot_reserved();
@@ -607,8 +608,9 @@ impl Editor {
                 namespace,
                 range,
                 options,
+                compose_only,
             } => {
-                self.handle_add_overlay(buffer_id, namespace, range, options);
+                self.handle_add_overlay(buffer_id, namespace, range, options, compose_only);
             }
             PluginCommand::RemoveOverlay { buffer_id, handle } => {
                 self.handle_remove_overlay(buffer_id, handle);
@@ -675,6 +677,7 @@ impl Editor {
                 before,
                 epoch,
                 pad_to_column,
+                compose_only,
             } => {
                 self.handle_add_virtual_text_styled(
                     buffer_id,
@@ -688,6 +691,7 @@ impl Editor {
                     before,
                     epoch,
                     pad_to_column,
+                    compose_only,
                 );
             }
             PluginCommand::RemoveVirtualText {
@@ -715,6 +719,7 @@ impl Editor {
                 gutter_color,
                 text_overlays,
                 epoch,
+                compose_only,
             } => {
                 self.handle_add_virtual_line(
                     buffer_id,
@@ -729,6 +734,7 @@ impl Editor {
                     gutter_color,
                     text_overlays,
                     epoch,
+                    compose_only,
                 );
             }
             PluginCommand::ClearVirtualTextNamespace {
@@ -765,6 +771,7 @@ impl Editor {
                 replacement,
                 epoch,
                 activation,
+                compose_only,
             } => {
                 self.handle_add_conceal(
                     buffer_id,
@@ -774,6 +781,7 @@ impl Editor {
                     replacement,
                     epoch,
                     activation,
+                    compose_only,
                 );
             }
             PluginCommand::ClearConcealNamespace {
@@ -1205,6 +1213,17 @@ impl Editor {
             // See docs/internal/orchestrator-sessions-design.md.
             PluginCommand::CreateWindow { root, label } => {
                 self.handle_create_window(root, label);
+            }
+            PluginCommand::LoadWorkspaces { callback_id } => {
+                self.ensure_all_workspaces_loaded();
+                // The plugin reads the list from the snapshot as soon as the
+                // promise settles, so it has to hold the new windows first.
+                #[cfg(feature = "plugins")]
+                self.update_plugin_state_snapshot();
+                self.plugin_manager
+                    .read()
+                    .unwrap()
+                    .resolve_callback(callback_id, "null".to_string());
             }
             PluginCommand::CreateWindowWithTerminal {
                 root,
@@ -6741,6 +6760,11 @@ impl Editor {
         left_split: SplitId,
         right_split: SplitId,
     ) {
+        // A group whose pane closed earlier in this batch still holds its id.
+        self.active_window_mut().prune_scroll_sync_groups();
+        // A new partner owes the frame that gives it the focused pane's column,
+        // even if that column is the one last synced.
+        self.active_window_mut().last_horizontal_sync = None;
         let success = self
             .active_window_mut()
             .scroll_sync_manager

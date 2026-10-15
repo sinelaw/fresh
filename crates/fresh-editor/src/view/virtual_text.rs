@@ -153,6 +153,16 @@ pub struct VirtualText {
     /// Offsets are byte offsets within `text`. Used e.g. by live-diff
     /// to bold + underline removed words on deletion virtual lines.
     pub text_overlays: Vec<fresh_core::api::VirtualLineTextOverlay>,
+    /// Draw only in a pane showing the buffer in compose view.
+    ///
+    /// Decorations live on the buffer, but compose view is a property of a
+    /// pane, so a plugin composing one pane (markdown_compose's table
+    /// borders, code-block rails) would otherwise draw that frame around
+    /// the raw source in a sibling pane. Every render pass filters on this
+    /// one flag, so the passes cannot disagree about which rows exist: a
+    /// line suppressed in the token stream but not in the wrap index makes
+    /// the index describe rows the renderer never draws.
+    pub compose_only: bool,
 }
 
 impl VirtualText {
@@ -279,6 +289,7 @@ impl VirtualTextManager {
                 gutter_glyph: None,
                 gutter_color: None,
                 text_overlays: Vec::new(),
+                compose_only: false,
             },
         );
         self.bump_version();
@@ -341,6 +352,7 @@ impl VirtualTextManager {
                 gutter_glyph: None,
                 gutter_color: None,
                 text_overlays: Vec::new(),
+                compose_only: false,
             },
         );
         self.bump_version();
@@ -384,6 +396,7 @@ impl VirtualTextManager {
                 gutter_glyph: None,
                 gutter_color: None,
                 text_overlays: Vec::new(),
+                compose_only: false,
             },
         );
         self.bump_version();
@@ -406,6 +419,7 @@ impl VirtualTextManager {
         priority: i32,
         string_id: String,
         pad_to_column: Option<u32>,
+        compose_only: bool,
     ) -> VirtualTextId {
         debug_assert!(
             vtext_position.is_inline(),
@@ -434,6 +448,7 @@ impl VirtualTextManager {
                 gutter_glyph: None,
                 gutter_color: None,
                 text_overlays: Vec::new(),
+                compose_only,
             },
         );
 
@@ -476,6 +491,7 @@ impl VirtualTextManager {
             None,
             None,
             Vec::new(),
+            false,
         )
     }
 
@@ -501,6 +517,7 @@ impl VirtualTextManager {
         gutter_glyph: Option<String>,
         gutter_color: Option<Color>,
         text_overlays: Vec<fresh_core::api::VirtualLineTextOverlay>,
+        compose_only: bool,
     ) -> VirtualTextId {
         debug_assert!(
             placement.is_line(),
@@ -529,6 +546,7 @@ impl VirtualTextManager {
                 gutter_glyph,
                 gutter_color,
                 text_overlays,
+                compose_only,
             },
         );
         self.bump_version();

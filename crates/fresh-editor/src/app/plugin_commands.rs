@@ -128,6 +128,7 @@ impl Editor {
         namespace: Option<OverlayNamespace>,
         range: std::ops::Range<usize>,
         options: OverlayOptions,
+        compose_only: bool,
     ) {
         if let Some(state) = self
             .windows
@@ -136,17 +137,20 @@ impl Editor {
             .buffer_state_mut(buffer_id)
         {
             let face = OverlayFace::from_options(options.clone());
-            let event = Event::AddOverlay {
+            // Added directly rather than through an `AddOverlay` event, which
+            // has no `compose_only`: that event's only effect is this add.
+            // Overlays are ephemeral, not added to the event log for undo/redo.
+            let mut overlay = state.build_overlay(
                 namespace,
                 range,
                 face,
-                priority: 10,
-                message: None,
-                extend_to_line_end: options.extend_to_line_end,
-                url: options.url.clone(),
-            };
-            state.apply(&mut Cursors::default(), &event);
-            // Note: Overlays are ephemeral, not added to event log for undo/redo
+                10,
+                None,
+                options.extend_to_line_end,
+                options.url.clone(),
+            );
+            overlay.compose_only = compose_only;
+            state.overlays.add(overlay);
 
             // Request a re-render so overlays added asynchronously (e.g. after
             // an external process returns) become visible without requiring
@@ -424,6 +428,7 @@ impl Editor {
         before: bool,
         epoch: Option<u64>,
         pad_to_column: Option<u32>,
+        compose_only: bool,
     ) {
         if let Some(state) = self
             .windows
@@ -496,6 +501,7 @@ impl Editor {
                 0, // priority
                 virtual_text_id,
                 pad_to_column,
+                compose_only,
             );
         }
     }
@@ -571,6 +577,7 @@ impl Editor {
         gutter_color_spec: Option<fresh_core::api::OverlayColorSpec>,
         text_overlays: Vec<fresh_core::api::VirtualLineTextOverlay>,
         epoch: Option<u64>,
+        compose_only: bool,
     ) {
         use crate::view::theme::named_color_from_str;
         use crate::view::virtual_text::{VirtualTextNamespace, VirtualTextPosition};
@@ -648,6 +655,7 @@ impl Editor {
                 gutter_glyph,
                 gutter_color_fallback,
                 text_overlays,
+                compose_only,
             );
         }
     }
@@ -746,6 +754,7 @@ impl Editor {
         replacement: Option<String>,
         epoch: Option<u64>,
         activation: Option<fresh_core::api::MarkerActivation>,
+        compose_only: bool,
     ) {
         if let Some(state) = self
             .windows
@@ -777,6 +786,7 @@ impl Editor {
                 start..end,
                 replacement,
                 activation,
+                compose_only,
             );
             #[cfg(feature = "plugins")]
             {

@@ -20,6 +20,8 @@
   "cli.arg.event_log": "Povolit záznam událostí do zadaného souboru",
   "cli.arg.no_restore": "Neobnovovat předchozí pracovní prostor (obsah z hot-exitu — neuložené upravené soubory a nepojmenované buffery — se přesto obnoví, aby nebyla ztracena rozdělaná práce)",
   "cli.arg.restore": "Vynutit obnovení předchozího pracovního prostoru a přepsat `editor.restore_previous_session = false` v konfiguraci. Nelze kombinovat s --no-restore.",
+  "cli.arg.wait": "Přijímá se kvůli $EDITOR a core.editor v gitu; Fresh se beztak vrací až po ukončení",
+  "cli.arg.simple": "Otevře jen to, co je zadáno, nebo prázdný buffer v tomto terminálu: bez obnovení či uložení relace, bez panelu, bez démona (jako `fresh FILE`, jen bez souboru)",
   "cli.arg.no_upgrade_check": "Zakázat kontrolu aktualizací a anonymní telemetrii",
   "cli.arg.locale": "Přepsat jazyk (např. 'en', 'ja', 'zh-CN')",
   "cli.arg.gui": "Spustit v režimu GUI (nativní okno s GPU vykreslováním)",

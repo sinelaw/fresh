@@ -1663,6 +1663,10 @@ pub struct EditorStateSnapshot {
     /// `orchestrator_mode` preference, which stays on for `fresh FILE`.
     #[serde(default)]
     pub orchestrator_mode: bool,
+    /// Launched to open the files on its command line (`fresh FILE…`,
+    /// `fresh --simple`) rather than a session. Read via `editor.fileLaunch()`.
+    #[serde(default)]
+    pub file_launch: bool,
     /// The left dock slot is open: a panel is in it, or the host is holding
     /// the column for one its manifest declared. The plugin mounts at
     /// `ready` iff this is set. Read via `editor.dockOpen()`.
@@ -1864,6 +1868,7 @@ impl EditorStateSnapshot {
             workspace_trust_level: String::new(),
             env_active: false,
             orchestrator_mode: false,
+            file_launch: false,
             dock_open: false,
             dock_cols: 0,
             detected_env: String::new(),
@@ -3824,6 +3829,11 @@ pub enum PluginCommand {
         range: Range<usize>,
         /// Overlay styling options (colors, modifiers, etc.)
         options: OverlayOptions,
+        /// Draw only in a pane showing the buffer in compose view; hidden
+        /// in every other pane. For decoration that is part of a composed
+        /// rendering (markdown compose's frames, rendered blocks).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        compose_only: bool,
     },
 
     /// Remove an overlay by its opaque handle
@@ -4031,6 +4041,12 @@ pub enum PluginCommand {
     /// close the currently active session — the caller must switch
     /// first. Fires `session_closed` on success.
     CloseWindow { id: WindowId },
+
+    /// Read every persisted workspace into the window list, if it has not
+    /// been yet. A launch starts with only its own directory's workspaces;
+    /// the rest of the registry is read when something lists them. The
+    /// callback resolves once the list (`listWindows`) includes them all.
+    LoadWorkspaces { callback_id: JsCallbackId },
 
     /// Forget a directory's persisted workspace registry entry (the
     /// `workspaces/<encoded-root>.json` file(s) the boot-time session
@@ -4337,6 +4353,11 @@ pub enum PluginCommand {
         /// one-space inlay padding.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pad_to_column: Option<u32>,
+        /// Draw only in a pane showing the buffer in compose view; hidden
+        /// in every other pane. For decoration that is part of a composed
+        /// rendering (markdown compose's frames, rendered blocks).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        compose_only: bool,
     },
 
     /// Remove a virtual text by ID
@@ -4394,6 +4415,11 @@ pub enum PluginCommand {
         /// anchors at `position` verbatim (legacy callers).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         epoch: Option<u64>,
+        /// Draw only in a pane showing the buffer in compose view; hidden
+        /// in every other pane. For decoration that is part of a composed
+        /// rendering (markdown compose's frames, rendered blocks).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        compose_only: bool,
     },
 
     /// Clear all virtual texts in a namespace
@@ -4465,6 +4491,11 @@ pub enum PluginCommand {
         /// Optional cursor-dependent activation rule. `None` = always active.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         activation: Option<MarkerActivation>,
+        /// Draw only in a pane showing the buffer in compose view; hidden
+        /// in every other pane. For decoration that is part of a composed
+        /// rendering (markdown compose's frames, rendered blocks).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        compose_only: bool,
     },
 
     /// Clear all conceal ranges in a namespace
@@ -7935,6 +7966,7 @@ impl PluginApi {
             namespace: namespace.map(OverlayNamespace::from_string),
             range,
             options,
+            compose_only: false,
         })
     }
 
@@ -8583,7 +8615,9 @@ mod tests {
                 namespace,
                 range,
                 options,
+                compose_only,
             } => {
+                assert!(!compose_only);
                 assert_eq!(buffer_id.0, 1);
                 assert_eq!(namespace.as_ref().map(|n| n.as_str()), Some("test-overlay"));
                 assert_eq!(range, 0..10);

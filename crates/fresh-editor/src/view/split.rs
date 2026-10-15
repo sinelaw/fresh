@@ -378,6 +378,21 @@ impl BufferViewState {
             self.compose_width = Some(width as u16);
         }
     }
+
+    /// Whether this view takes part in horizontal scroll sync: gives its
+    /// column to, and takes one from, the panes it is scroll-synced with.
+    ///
+    /// A wrapped view has no horizontal scroll, nor does one with horizontal
+    /// scroll switched off (a plugin widget panel). Page view turns builtin
+    /// wrap off, but only because the compose plugin wraps every line to the
+    /// page width itself: a column copied from a source pane would shift those
+    /// rows off screen, and its own column (normally 0) would drag the source
+    /// pane back.
+    pub fn shares_horizontal_scroll(&self) -> bool {
+        !self.viewport.line_wrap_enabled
+            && self.viewport.horizontal_scroll_enabled
+            && self.view_mode != ViewMode::PageView
+    }
 }
 
 impl Clone for BufferViewState {
@@ -1851,6 +1866,30 @@ impl SplitManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Only an unwrapped Source view with horizontal scroll on shares its
+    /// column: scroll sync copies a column to (and from) nothing else.
+    #[test]
+    fn only_an_unwrapped_scrollable_source_view_shares_horizontal_scroll() {
+        let unwrapped = || {
+            let mut state = BufferViewState::new(80, 24);
+            state.viewport.line_wrap_enabled = false;
+            state
+        };
+        assert!(unwrapped().shares_horizontal_scroll());
+
+        let mut wrapped = unwrapped();
+        wrapped.viewport.line_wrap_enabled = true;
+        assert!(!wrapped.shares_horizontal_scroll());
+
+        let mut panel = unwrapped();
+        panel.viewport.horizontal_scroll_enabled = false;
+        assert!(!panel.shares_horizontal_scroll());
+
+        let mut page = unwrapped();
+        page.activate_page_view(None);
+        assert!(!page.shares_horizontal_scroll());
+    }
 
     /// **A pane shows one tab, and the buffer behind a group is not on
     /// screen.** Showing a group leaves no shown buffer and no shown view

@@ -113,6 +113,17 @@ struct Cli {
     #[arg(long, alias = "no-session", conflicts_with = "restore")]
     no_restore: bool,
 
+    /// Accepted for `$EDITOR` / `git config core.editor "fresh --wait"`. Fresh
+    /// already returns only once you quit, so there is nothing to wait for
+    #[arg(long)]
+    wait: bool,
+
+    /// Open just what is named (or an empty buffer), here in this terminal: no
+    /// session restored or saved, no dock, no daemon — what `fresh FILE` does,
+    /// without needing a file
+    #[arg(long, conflicts_with = "restore")]
+    simple: bool,
+
     /// Force restore of previous workspace, overriding
     /// `editor.restore_previous_session = false` in the config.  Cannot be
     /// combined with `--no-restore`.
@@ -203,6 +214,8 @@ struct Args {
     log_file: Option<PathBuf>,
     event_log: Option<PathBuf>,
     no_session: bool,
+    /// `--simple`: a file launch (see `is_file_launch`) whatever is named.
+    simple: bool,
     /// Force workspace restore even if `editor.restore_previous_session`
     /// is disabled in the config.
     force_restore: bool,
@@ -561,6 +574,7 @@ impl From<Cli> for Args {
             log_file: cli.log_file,
             event_log: cli.event_log,
             no_session: cli.no_restore,
+            simple: cli.simple,
             force_restore: cli.restore,
             no_upgrade_check: cli.no_upgrade_check,
             dump_config,
@@ -936,17 +950,11 @@ fn handle_first_run_setup(
     // The warning-log channel and status-log path are wired up in main.
 
     // If the user passed any file argument on the command line and the
-    // `skip_session_restore_when_files_passed` option is on (default), treat
-    // the launch as a focused "open these files" invocation: skip the full
-    // session restore but still recover hot-exit content. `--restore` (force)
-    // is a deliberate user override that wins.
-    let cli_has_file_args = file_locations.iter().any(|loc| !loc.path.is_dir());
-    let cli_overrides_restore = cli_has_file_args
-        && editor
-            .config()
-            .editor
-            .skip_session_restore_when_files_passed
-        && !args.force_restore;
+    // `skip_session_restore_when_files_passed` option is on (default), the
+    // launch is a focused "open these files" invocation (`Editor::file_launch`):
+    // skip the session restore and recover only those files' hot-exit
+    // content. `--restore` (force) is a deliberate user override that wins.
+    let cli_overrides_restore = editor.file_launch();
 
     let restore_full_session = workspace_enabled
         && !cli_overrides_restore
@@ -979,12 +987,12 @@ fn handle_first_run_setup(
         // startup build exactly one window — deterministic and cheap
         // regardless of how many sessions exist.
     } else {
-        if !workspace_enabled {
-            tracing::info!("Skipping workspace restore: --no-restore was specified");
-        } else if cli_overrides_restore {
+        if cli_overrides_restore {
             tracing::info!(
-                "Skipping workspace restore: file arguments passed on the command line (editor.skip_session_restore_when_files_passed)"
+                "Skipping workspace restore: file launch (--simple, or files passed with editor.skip_session_restore_when_files_passed)"
             );
+        } else if !workspace_enabled {
+            tracing::info!("Skipping workspace restore: --no-restore was specified");
         } else {
             tracing::info!(
                 "Skipping workspace restore: editor.restore_previous_session is disabled"
@@ -993,7 +1001,17 @@ fn handle_first_run_setup(
         // Session restore opted out, but hot-exit content (unsaved
         // modified files + unnamed buffers with content) is still
         // restored so the user does not lose in-progress work.
-        match editor.try_restore_hot_exit_buffers() {
+        //
+        // Not on a file launch: `fresh FILE` (git's `core.editor`, say) is
+        // about that file, so it gets that file's own hot-exit content (see
+        // `schedule_hot_exit_recovery` below) and no other buffer's. The rest
+        // stays stashed for the next session launch to bring back.
+        let restored = if cli_overrides_restore {
+            Ok(0)
+        } else {
+            editor.try_restore_hot_exit_buffers()
+        };
+        match restored {
             Ok(n) if n > 0 => {
                 tracing::info!(
                     "Restored {} hot-exit buffer(s) despite skipping session restore",
@@ -3634,6 +3652,24 @@ fn run_open_files_command(
                         match msg {
                             ServerControl::WaitComplete => break,
                             ServerControl::Quit { .. } => break,
+                            // Nobody is attached to see the file (a detached
+                            // daemon): waiting would hang the caller on an
+                            // editor no one can reach. Attach this terminal,
+                            // as a freshly started daemon does above, or fail.
+                            ServerControl::NoViewer => {
+                                drop(conn);
+                                if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+                                    return run_attach(session_name, &[], locale, config, false);
+                                }
+                                anyhow::bail!(
+                                    "the daemon has no terminal attached, so nobody can see {}; \
+                                     attach one with: fresh -a{}",
+                                    file_requests
+                                        .last()
+                                        .map_or(String::new(), |f| f.path.clone()),
+                                    session_name.map_or(String::new(), |n| format!(" {}", n)),
+                                );
+                            }
                             _ => {} // Ignore other messages
                         }
                     }
@@ -4199,6 +4235,7 @@ fn orchestrator_api_prelude() -> &'static str {
     r#"
     const api = editor.getPluginApi("orchestrator");
     if (!api) throw new Error("the orchestrator plugin is not loaded in this editor");
+    await editor.loadWorkspaces();
     "#
 }
 
@@ -5426,6 +5463,21 @@ fn wants_orchestrator_launch() -> bool {
     config::Config::load_with_layers(&dir_context, &working_dir).orchestrator_mode
 }
 
+/// Whether this launch opens the files on its command line rather than a
+/// session (see `Editor::file_launch`): `--simple` asked for it, or at least
+/// one file (not a directory) was named, `editor.skip_session_restore_when_files_passed`
+/// is on (the default), and `--restore` did not ask for the session anyway.
+/// Decided by the invocation and that setting alone — never by which files
+/// they are.
+fn is_file_launch(args: &Args, cfg: &config::Config, files: &[FileLocation]) -> bool {
+    if args.simple {
+        return true;
+    }
+    files.iter().any(|loc| !loc.path.is_dir())
+        && cfg.editor.skip_session_restore_when_files_passed
+        && !args.force_restore
+}
+
 /// `locale` and `config` are the client's own `--locale` and `--config`,
 /// forwarded to a daemon we *start* here so those flags survive the hop
 /// into the process that actually renders the UI and reads the config.
@@ -6080,7 +6132,10 @@ fn build_localized_after_help() -> String {
     out.push_str("    fresh --cmd daemon open-file . 'b.rs:5-20@\"Step 2\"' --wait\n");
     out.push_str("    fresh --cmd daemon open-file . 'c.rs:30@\"Step 3\"'   --wait\n\n");
     out.push_str(&format!("  {}\n", t("cli.guided.git_editor")));
-    out.push_str("    git config core.editor 'fresh --cmd daemon open-file . --wait'\n\n");
+    // A file launch in this terminal, not a daemon: it blocks until quit
+    // (what git needs) and opens just the message — no workspace, dock or
+    // other tabs.
+    out.push_str("    git config --global core.editor fresh\n\n");
 
     out.push_str(&format!(
         "{}: https://getfresh.dev/docs",
@@ -6115,6 +6170,8 @@ fn build_localized_cli_command() -> clap::Command {
         .mut_arg("event_log", |a| a.help(t("cli.arg.event_log")))
         .mut_arg("no_restore", |a| a.help(t("cli.arg.no_restore")))
         .mut_arg("restore", |a| a.help(t("cli.arg.restore")))
+        .mut_arg("wait", |a| a.help(t("cli.arg.wait")))
+        .mut_arg("simple", |a| a.help(t("cli.arg.simple")))
         .mut_arg("no_upgrade_check", |a| {
             a.help(t("cli.arg.no_upgrade_check"))
         })
@@ -6305,7 +6362,14 @@ fn real_main() -> AnyhowResult<()> {
     // One editor, built once; nothing rebuilds it.
     // Returns (loop_result, last_update_result) tuple
     let (result, last_update_result) = {
-        let workspace_enabled = !args.no_session;
+        // `fresh FILE`: open those files, not the session — no workspace read
+        // or written, no other buffers' hot-exit content. Prompt history is
+        // not session state and is kept as in any launch.
+        let file_launch = is_file_launch(&args, &config, &file_locations);
+        if file_launch {
+            tracing::info!("File launch: opening the named files, not the session");
+        }
+        let workspace_enabled = !args.no_session && !file_launch;
 
         // Detect terminal color capability
         let color_capability = fresh::view::color_support::ColorCapability::detect();
@@ -6361,6 +6425,7 @@ fn real_main() -> AnyhowResult<()> {
             // hands off to the daemon long before this loop, so an editor
             // built here is by construction an ordinary in-terminal launch.
             false,
+            file_launch,
         )
         .context("Failed to create editor instance")?;
         tracing::info!("Editor instance created");
@@ -6368,7 +6433,11 @@ fn real_main() -> AnyhowResult<()> {
         // The quit-time save below already honors `workspace_enabled`; this
         // extends it to the mid-session checkpoints (window switches,
         // session-identity finalization) that wrote regardless (#2735).
-        editor.set_workspace_persistence(workspace_enabled);
+        //
+        // Only `--no-restore` turns persistence off: a file launch keeps its
+        // prompt history, and `Editor::file_launch` alone keeps it from
+        // writing the workspace.
+        editor.set_workspace_persistence(!args.no_session);
 
         // Orchestrator cross-restart persistence is now loaded by
         // `Editor::with_options` before construction — it reads
