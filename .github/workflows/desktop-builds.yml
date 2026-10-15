@@ -127,7 +127,7 @@ jobs:
           echo "FRESH_BIN=$PWD/artifacts/fresh-editor-x86_64-unknown-linux-gnu/fresh" >> "$GITHUB_ENV"
 
       # One fat binary for both architectures: the .app is universal, and
-      # electron-builder is told (x64ArchFiles) that this file already is.
+      # electron-builder passes a file that already is through as is.
       - name: Extract editor (macOS universal)
         if: matrix.platform == 'macos' && github.event_name != 'pull_request'
         run: |

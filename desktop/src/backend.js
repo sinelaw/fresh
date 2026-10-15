@@ -26,21 +26,72 @@ const STOP_TIMEOUT_MS = 8_000;
 // How much of the end of the editor's log an error dialog shows.
 const OUTPUT_TAIL_BYTES = 8 * 1024;
 
+// How many editor logs to keep in the logs directory.
+const KEPT_LOGS = 20;
+
 /**
- * The `fresh` binary to run. Packaged builds carry it in `resources/bin`
- * (see `extraResources` in electron-builder.yml); a development checkout falls
- * back to whatever cargo last built in the workspace.
+ * Where a development checkout's `fresh` may be: the staged copy in bin/,
+ * then cargo's release and debug builds — in CARGO_TARGET_DIR when that is
+ * set, as cargo itself does.
+ */
+function workspaceBinaries() {
+  const repo = path.resolve(__dirname, '..', '..');
+  const target = process.env.CARGO_TARGET_DIR
+    ? path.resolve(repo, process.env.CARGO_TARGET_DIR)
+    : path.join(repo, 'target');
+  return [
+    path.join(__dirname, '..', 'bin', EXE),
+    path.join(target, 'release', EXE),
+    path.join(target, 'debug', EXE),
+  ];
+}
+
+/**
+ * The `fresh` binary to run, or null when there is none. Packaged builds
+ * carry it in `resources/bin` (see `extraResources` in electron-builder.yml);
+ * a development checkout runs the newest of [`workspaceBinaries`] — never a
+ * `fresh` from PATH, which may be any older release.
  */
 function freshBinary(app) {
-  if (process.env.FRESH_DESKTOP_BINARY) return process.env.FRESH_DESKTOP_BINARY;
+  if (process.env.FRESH_DESKTOP_BINARY) return path.resolve(process.env.FRESH_DESKTOP_BINARY);
   if (app.isPackaged) return path.join(process.resourcesPath, 'bin', EXE);
-  const repo = path.resolve(__dirname, '..', '..');
-  const candidates = [
-    path.join(__dirname, '..', 'bin', EXE),
-    path.join(repo, 'target', 'release', EXE),
-    path.join(repo, 'target', 'debug', EXE),
-  ];
-  return candidates.find((c) => fs.existsSync(c)) || EXE;
+  let best = null;
+  for (const c of workspaceBinaries()) {
+    try {
+      const mtime = fs.statSync(c).mtimeMs;
+      if (!best || mtime > best.mtime) best = { path: c, mtime };
+    } catch { /* not built */ }
+  }
+  return best && best.path;
+}
+
+/** What to tell someone whose `fresh` cannot be found. */
+function missingBinaryHelp() {
+  return [
+    'no fresh binary was found. Looked in:',
+    ...workspaceBinaries().map((c) => `  ${c}`),
+    'Build one with `cargo build --release --features web` (from the repository root),',
+    'or point FRESH_DESKTOP_BINARY at one',
+  ].join('\n');
+}
+
+/** Make room for one more log: keep only the newest KEPT_LOGS - 1. */
+function pruneLogs(dir) {
+  let logs;
+  try {
+    logs = fs.readdirSync(dir)
+      .filter((f) => /^fresh-.*\.log$/.test(f))
+      .map((f) => {
+        const file = path.join(dir, f);
+        return { file, mtime: fs.statSync(file).mtimeMs };
+      });
+  } catch {
+    return;
+  }
+  logs.sort((a, b) => b.mtime - a.mtime);
+  for (const { file } of logs.slice(KEPT_LOGS - 1)) {
+    try { fs.rmSync(file); } catch { /* in use, or gone */ }
+  }
 }
 
 // The page's own preferences (web theme, zoom, palette placement) live in its
@@ -169,12 +220,7 @@ function withoutPackaging(env) {
 
 /** The environment the editor (and every terminal it opens) runs in. */
 async function editorEnv() {
-  const env = withoutPackaging({ ...process.env, ...(await loginShellEnv()) });
-  // The bundled binary is updated by installing a newer Fresh Desktop, never
-  // in place: point the editor's update notice at the releases page instead
-  // of `fresh --cmd update`.
-  if (!env.FRESH_INSTALL_CHANNEL) env.FRESH_INSTALL_CHANNEL = 'unknown';
-  return env;
+  return withoutPackaging({ ...process.env, ...(await loginShellEnv()) });
 }
 
 function request(url, { method = 'GET', body } = {}) {
@@ -185,6 +231,7 @@ function request(url, { method = 'GET', body } = {}) {
       headers: body ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } : {},
     }, (res) => {
       res.resume();
+      res.on('error', reject);
       res.on('end', () => resolve(res.statusCode));
     });
     req.on('timeout', () => req.destroy(new Error('timeout')));
@@ -252,6 +299,9 @@ class Backend {
     this.url = null;
     this.spawnError = null;
     this.exitInfo = null;
+    // Set once the window gave up on this editor: a start still under way
+    // stops at its next step instead of going on to serve nobody.
+    this.cancelled = false;
     // Resolves with { code, signal[, error] } once the editor process is gone.
     this.exited = new Promise((resolve) => {
       this.resolveExited = (info) => {
@@ -284,8 +334,11 @@ class Backend {
 
   /** Start the editor (or re-attach to its survivor) and resolve once its web UI answers. */
   async start() {
+    if (!this.binary) throw new Error(missingBinaryHelp());
     this.env = await editorEnv();
+    if (this.cancelled) throw new Error('cancelled');
     if (await this.adopt()) return;
+    if (this.cancelled) throw new Error('cancelled');
 
     const port = await freePort();
     this.exited.then(() => claimed.delete(port));
@@ -295,6 +348,7 @@ class Backend {
     // The editor writes straight into its log file rather than through a pipe
     // to us, so it keeps running (and logging) if this app dies under it.
     fs.mkdirSync(this.logDir, { recursive: true });
+    pruneLogs(this.logDir);
     this.logPath = path.join(this.logDir, `fresh-${Date.now()}-${process.pid}.log`);
     const logFd = fs.openSync(this.logPath, 'a');
     const args = [`--web=${addr}`, ...this.files];
@@ -304,6 +358,9 @@ class Backend {
         env: this.env,
         stdio: ['ignore', logFd, logFd],
         windowsHide: true,
+        // Its own process group, so kill() takes the language servers and
+        // tools it started along with it.
+        detached: process.platform !== 'win32',
       });
     } finally {
       fs.closeSync(logFd);
@@ -317,7 +374,11 @@ class Backend {
 
     const deadline = Date.now() + START_TIMEOUT_MS;
     for (;;) {
-      if (this.exitInfo) throw new Error('the editor exited during startup');
+      if (this.exitInfo) throw new Error(this.startupFailure());
+      if (this.cancelled) {
+        this.kill();
+        throw new Error('cancelled');
+      }
       try {
         if ((await request(this.url)) === 200) break;
       } catch { /* not listening yet */ }
@@ -328,6 +389,16 @@ class Backend {
       await Promise.race([new Promise((r) => setTimeout(r, 100)), this.exited]);
     }
     if (this.pid) this.sessions.update((all) => { all[this.recordKey] = { pid: this.pid, port }; });
+  }
+
+  /** Why the editor exited during startup, as best its output tells. */
+  startupFailure() {
+    const out = this.output();
+    if (/unexpected argument '--web'|compiled without the web UI|built without the `web` feature/i.test(out)) {
+      return `${this.binary} has no web UI: it is an older release, or was built without ` +
+        'the `web` feature (cargo build --release --features web)';
+    }
+    return 'the editor exited during startup';
   }
 
   /** Re-attach to an editor a previous run of the app left serving this directory. */
@@ -374,14 +445,32 @@ class Backend {
   }
 
   /**
-   * Quit the editor the way its own Quit does — auto-save, hot exit, workspace
-   * save — and kill it if it has not exited within STOP_TIMEOUT_MS.
+   * Ask the editor to quit, as closing its window should: whatever unsaved
+   * work hot exit cannot keep is asked about in the window, and the editor
+   * exits (resolving `exited`) once the user has answered — or stays, if they
+   * cancel. Rejects when the editor could not be asked.
+   */
+  async requestQuit() {
+    if (!this.running) return;
+    const status = await request(`${this.url}quit`, { method: 'POST', body: '{}' });
+    // An editor too old to know the route quits the unconditional way.
+    if (status === 404) await this.stop();
+    else if (status !== 200) throw new Error(`the editor answered ${status}`);
+  }
+
+  /**
+   * Quit the editor without asking anything — auto-save, hot exit, workspace
+   * save still run — and kill it if it has not exited within STOP_TIMEOUT_MS.
    */
   async stop() {
+    this.cancel();
     if (!this.running) return;
     try {
       await request(`${this.url}action`, { method: 'POST', body: JSON.stringify({ action: 'force_quit' }) });
-    } catch { /* already going away, or wedged — the timeout handles both */ }
+    } catch {
+      // Not listening (yet, or any more) or wedged: nothing will quit it.
+      this.kill();
+    }
     const timedOut = await Promise.race([
       this.exited.then(() => false),
       new Promise((r) => setTimeout(() => r(true), STOP_TIMEOUT_MS)),
@@ -390,13 +479,26 @@ class Backend {
     await this.exited;
   }
 
+  /** Give up on this editor: a start under way stops at its next step. */
+  cancel() {
+    this.cancelled = true;
+  }
+
+  /** Kill the editor and everything it started. */
   kill() {
     if (!this.running) return;
+    if (process.platform === 'win32') {
+      const tk = spawn('taskkill', ['/T', '/F', '/PID', String(this.pid)], { stdio: 'ignore', windowsHide: true });
+      tk.on('error', () => { try { process.kill(this.pid); } catch { /* already gone */ } });
+      return;
+    }
     try {
-      if (this.child) this.child.kill('SIGKILL');
-      else process.kill(this.pid, 'SIGKILL');
-    } catch { /* already gone */ }
+      process.kill(-this.pid, 'SIGKILL');
+    } catch {
+      // Not a group leader (an editor some other way started): just it.
+      try { process.kill(this.pid, 'SIGKILL'); } catch { /* already gone */ }
+    }
   }
 }
 
-module.exports = { Backend, freshBinary, homeDir: os.homedir };
+module.exports = { Backend, freshBinary, workspaceBinaries, homeDir: os.homedir };

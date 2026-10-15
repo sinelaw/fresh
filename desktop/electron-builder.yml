@@ -28,6 +28,11 @@ extraResources:
 
 publish: null
 
+toolsets:
+  # The static AppImage runtime: runs without libfuse2, which Ubuntu 22.04+
+  # and other current distributions no longer install by default.
+  appimage: "1.0.3"
+
 mac:
   category: public.app-category.developer-tools
   target:
@@ -39,9 +44,9 @@ mac:
   # frameworks under an ad-hoc signature.
   identity: "-"
   hardenedRuntime: false
-  # The staged `fresh` is already a universal (lipo'd) binary, so the x64 and
-  # arm64 builds carry the identical file and there is nothing to merge.
-  x64ArchFiles: Contents/Resources/bin/fresh
+  # The staged `fresh` must already be universal (lipo'd): @electron/universal
+  # passes a file that is universal in both builds through as is, and refuses
+  # an identical single-architecture one — so no x64ArchFiles exemption.
 
 dmg:
   writeUpdateInfo: false

@@ -224,9 +224,10 @@ function renderFurniture() {
 // Null when it cannot be parsed, which leaves the static fallback above.
 function deriveCompact() {
   const bg = document.documentElement.style.getPropertyValue("--bg").trim();
-  const c = hexRgb(bg);
-  if (!c) return null;
-  const dark = relLum(c) < 0.25;
+  if (!hexRgb(bg)) return null;
+  // Dark exactly when white text reads better on it — the rule onColor()
+  // applies everywhere else.
+  const dark = onColor(bg) === "#ffffff";
   const step = k => mix(bg, dark ? "#ffffff" : "#000000", k);
   if (dark) {
     const card = step(.075);
@@ -238,7 +239,7 @@ function deriveCompact() {
       "--status-fg": "#9aa0aa",
       "--accent": "#4d8ff5", "--ui-accent": "#4d8ff5",
       "--on-ui-accent": "#ffffff", "--on-accent": "#ffffff", "--on-sel": "#eef0f3",
-      "--menuhi": mix(card, "#4d8ff5", .38), "--danger": "#f47067",
+      "--menuhi": mix(card, "#4d8ff5", .38), "--ok": "#3fb950", "--danger": "#f47067",
       "--hairline": "rgba(255,255,255,.075)", "--hairline-strong": "rgba(255,255,255,.13)",
       "--hover": "rgba(255,255,255,.06)",
       "--shadow": "0 12px 32px rgba(0,0,0,.45), 0 2px 6px rgba(0,0,0,.3)",
@@ -253,7 +254,7 @@ function deriveCompact() {
     "--status-fg": "#4b525c",
     "--accent": "#1a6fd9", "--ui-accent": "#1a6fd9",
     "--on-ui-accent": "#ffffff", "--on-accent": "#ffffff", "--on-sel": "#1f2328",
-    "--menuhi": mix(card, "#1a6fd9", .22), "--danger": "#cf222e",
+    "--menuhi": mix(card, "#1a6fd9", .22), "--ok": "#1a7f37", "--danger": "#cf222e",
     "--hairline": "rgba(0,0,0,.085)", "--hairline-strong": "rgba(0,0,0,.15)",
     "--hover": "rgba(0,0,0,.05)",
     "--shadow": "0 12px 32px rgba(0,0,0,.14), 0 2px 6px rgba(0,0,0,.08)",

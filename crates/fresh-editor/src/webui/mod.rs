@@ -954,7 +954,7 @@ fn handle_http(
         (
             "POST",
             p @ ("/key" | "/paste" | "/mouse" | "/action" | "/widget" | "/settings" | "/kbedit"
-            | "/resize"),
+            | "/resize" | "/quit"),
         ) => {
             apply_message(editor, &p[1..], &body_json(), cols, rows);
             let s = tick_scene(editor, *cols, *rows, clip).to_string();
@@ -1026,6 +1026,7 @@ fn apply_message(
         "settings" => apply_settings(editor, v),
         "kbedit" => apply_kbedit(editor, v),
         "resize" => apply_resize(editor, v, cols, rows),
+        "quit" => apply_quit(editor),
         _ => return false,
     }
     true
@@ -1045,6 +1046,17 @@ fn apply_action(editor: &mut Editor, v: &Value) {
             }
         }
     }
+}
+
+/// A request from the page's host to close it — a desktop window's close
+/// button, say. Unlike the `quit` action, which in a session daemon asks
+/// whether to detach the client or stop the session, closing the window that
+/// IS the session's only front end means stopping it: what remains to ask
+/// about is the unsaved work hot exit cannot keep (and the clean-quit
+/// confirmation, for whoever opted into it).
+fn apply_quit(editor: &mut Editor) {
+    let confirm_clean = editor.config().editor.confirm_quit;
+    editor.quit_with_prompts(confirm_clean);
 }
 
 /// Inbound OS clipboard (docs/internal/web-ui.md §3.5/§4). The frontend's
@@ -2360,6 +2372,43 @@ mod tests {
     use super::{
         digit_row_char, host_only, origin_host_matches, try_parse_request, HTTP_REQUEST_CAP,
     };
+
+    /// Whether the scene shows a confirmation card.
+    fn confirm_open(editor: &mut crate::app::Editor) -> bool {
+        super::scene_value(editor, 120, 40)["regions"]["tree"]["surfaces"]
+            .as_array()
+            .is_some_and(|s| s.iter().any(|s| s["kind"] == "confirm"))
+    }
+
+    #[test]
+    fn quit_message_stops_a_clean_editor_and_asks_about_unsaved_work() {
+        // The desktop app's window close: a clean editor quits outright —
+        // no Detach/Quit question, since the window is the session's only
+        // front end — while a modified file is asked about first.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("note.txt");
+        std::fs::write(&file, "unchanged\n").expect("write temp file");
+        let (mut cols, mut rows) = (120, 40);
+        let quit = serde_json::json!({});
+
+        let mut clean = super::build_editor(cols, rows, std::slice::from_ref(&file), false)
+            .expect("build editor");
+        assert!(super::apply_message(
+            &mut clean, "quit", &quit, &mut cols, &mut rows
+        ));
+        assert!(clean.should_quit(), "a clean editor quits at once");
+
+        let mut dirty = super::build_editor(cols, rows, std::slice::from_ref(&file), false)
+            .expect("build editor");
+        super::apply_step(&mut dirty, &serde_json::json!({"type": "x"}));
+        super::apply_message(&mut dirty, "quit", &quit, &mut cols, &mut rows);
+        assert!(!dirty.should_quit(), "unsaved work must be asked about");
+        assert!(
+            confirm_open(&mut dirty),
+            "the unsaved-changes card is shown"
+        );
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "unchanged\n");
+    }
 
     #[test]
     fn digit_row_is_recovered_from_the_physical_key() {

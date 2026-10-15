@@ -10,6 +10,7 @@
 const { app, BrowserWindow, Menu, dialog, screen, session, shell } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
+const { fileURLToPath } = require('node:url');
 const { Backend, freshBinary, homeDir } = require('./backend');
 
 const SMOKE_TEST = process.env.FRESH_DESKTOP_SMOKE_TEST || '';
@@ -41,13 +42,16 @@ function userArgs(argv) {
 
 /**
  * Whether a launch's working directory says anything about what to open.
- * A shell's cwd does; the `/` Finder and launchd start apps in, or the install
- * directory a Start-menu shortcut uses, does not.
+ * A shell's cwd does; the `/` Finder and launchd start apps in, the install
+ * directory a Start-menu shortcut uses, or the home directory a desktop
+ * launcher starts in, does not. (From a shell in ~ the home directory is
+ * still where a launch without arguments lands, as the last resort.)
  */
 function meaningfulCwd(cwd) {
   if (!cwd) return false;
   const resolved = path.resolve(cwd);
   if (resolved === path.parse(resolved).root) return false;
+  if (key(resolved) === key(homeDir())) return false;
   const inside = (dir) => {
     const rel = path.relative(dir, resolved);
     return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
@@ -57,24 +61,31 @@ function meaningfulCwd(cwd) {
   return true;
 }
 
+/** A launch argument as a path: desktop launchers pass `file://` URIs. */
+function argPath(arg) {
+  if (!arg.startsWith('file:')) return arg;
+  try { return fileURLToPath(arg); } catch { return arg; }
+}
+
 /**
  * Turn launch paths into a project directory plus files to open in it:
- * a directory argument is the project; otherwise the launch's working
- * directory, else the first file's directory, else the home directory.
+ * a directory argument is the project (`explicit`); otherwise the launch's
+ * working directory, else the first file's directory, else the home directory.
  */
 function resolveLaunch(paths, cwd) {
-  const base = meaningfulCwd(cwd) ? cwd : homeDir();
+  const base = cwd || homeDir();
   let dir = null;
   const files = [];
   for (const p of paths) {
-    const abs = path.resolve(base, p);
+    const abs = path.resolve(base, argPath(p));
     let isDir = false;
     try { isDir = fs.statSync(abs).isDirectory(); } catch { /* a new file */ }
     if (isDir) dir = dir || abs;
     else files.push(abs);
   }
+  const explicit = dir !== null;
   if (!dir) dir = meaningfulCwd(cwd) ? path.resolve(cwd) : files.length ? path.dirname(files[0]) : homeDir();
-  return { workingDir: dir, files };
+  return { workingDir: dir, files, explicit };
 }
 
 function key(dir) {
@@ -83,8 +94,15 @@ function key(dir) {
 }
 
 /** Open a launch in the window already serving its directory, or a new one. */
-function open({ workingDir, files }) {
+function open(launch) {
+  const { workingDir, files, explicit } = launch;
   const existing = windows.get(key(workingDir));
+  if (existing && existing.closing && !existing.win.isVisible()) {
+    // Its editor is on the way out and still holds the directory's session:
+    // a new one would be refused. Open once it is gone.
+    existing.backend.exited.then(() => setImmediate(() => open(launch)));
+    return;
+  }
   if (existing) {
     if (existing.ready) existing.backend.openFiles(files);
     else existing.queued.push(...files);
@@ -93,8 +111,8 @@ function open({ workingDir, files }) {
   }
   // A bare file with no folder of its own (a Finder double-click, a second
   // launch) goes to the window whose project contains it, if there is one.
-  if (files.length > 0) {
-    const owner = [...windows.values()].find((w) => files.every((f) => {
+  if (files.length > 0 && !explicit) {
+    const owner = [...windows.values()].find((w) => !w.closing && files.every((f) => {
       const rel = path.relative(w.workingDir, f);
       return !rel.startsWith('..') && !path.isAbsolute(rel);
     }));
@@ -207,37 +225,59 @@ function createWindow(workingDir, files) {
     }
   });
 
-  // Closing the window quits its editor through the editor's own quit path
-  // (hot exit keeps unsaved buffers for next time), then closes for real.
-  win.on('close', (e) => {
-    saveWindowState(win);
-    if (!backend.running) return;
-    e.preventDefault();
-    if (entry.closing) return;
+  // Closing the window quits its editor, and the window closes when the
+  // editor has exited. Once the page is up that is the editor's own quit, in
+  // the window: unsaved work hot exit cannot keep is asked about there, and
+  // cancelling keeps both open (closing again asks again). An editor that
+  // cannot be asked, or one still starting, is stopped outright.
+  const stopAndClose = () => {
     entry.closing = true;
     win.hide();
     backend.stop().finally(() => { if (!win.isDestroyed()) win.destroy(); });
+  };
+  win.on('close', (e) => {
+    saveWindowState(win);
+    if (!entry.ready) {
+      backend.cancel();
+      if (!backend.running) return;
+      e.preventDefault();
+      if (!entry.closing) stopAndClose();
+      return;
+    }
+    if (!backend.running) return;
+    e.preventDefault();
+    if (entry.closing && !win.isVisible()) return;
+    entry.closing = true;
+    backend.requestQuit().catch(stopAndClose);
   });
   win.on('closed', () => windows.delete(key(workingDir)));
 
   win.loadFile(path.join(__dirname, 'loading.html'));
 
   backend.start().then(async () => {
-    if (win.isDestroyed()) return;
+    if (win.isDestroyed()) throw new Error('cancelled');
     entry.ready = true;
     await win.loadURL(backend.url);
     if (entry.queued.length) backend.openFiles(entry.queued.splice(0));
     if (SMOKE_TEST) smokeTest(entry);
   }).catch((err) => {
-    if (entry.closing || quitting) return;
+    const gaveUp = entry.closing || quitting || backend.cancelled;
+    // Never leave an editor behind serving no window.
+    backend.stop();
+    if (gaveUp) {
+      if (!win.isDestroyed()) win.destroy();
+      return;
+    }
+    entry.closing = true;
     reportFailure(`Fresh could not start in ${workingDir}: ${err.message}.`, backend);
     if (!win.isDestroyed()) win.destroy();
   });
 
-  // The editor quitting by itself (File ▸ Quit) or dying closes its window.
+  // The editor exiting — quit from its own menu, after the window asked it
+  // to, or dying — closes its window.
   backend.exited.then((info) => {
-    if (!entry.ready || entry.closing) return;
-    if (info.code !== 0 && !quitting) {
+    if (!entry.ready) return; // startup's own failure path above
+    if (!entry.closing && info.code !== 0 && !quitting) {
       reportFailure(`Fresh exited unexpectedly (${info.signal || `exit code ${info.code}`}).`, backend);
     }
     if (!win.isDestroyed()) win.destroy();
@@ -254,6 +294,7 @@ function windowTitle(workingDir) {
 function reportFailure(message, backend) {
   const output = backend.output();
   const detail = [
+    backend.binary && `Editor: ${backend.binary}`,
     output && `Output:\n${output.split('\n').slice(-25).join('\n')}`,
     backend.logPath && `Full log: ${backend.logPath}`,
   ].filter(Boolean).join('\n\n');
@@ -267,7 +308,7 @@ function reportFailure(message, backend) {
 
 async function openFolderDialog() {
   const res = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
-  if (!res.canceled && res.filePaths[0]) open({ workingDir: res.filePaths[0], files: [] });
+  if (!res.canceled && res.filePaths[0]) open({ workingDir: res.filePaths[0], files: [], explicit: true });
 }
 
 // ── Menus ───────────────────────────────────────────────────────────────────
@@ -320,7 +361,11 @@ function installMenu() {
 // installer before it is released.
 async function smokeTest(entry) {
   const { win, backend } = entry;
-  const fail = (msg) => { console.error(`smoke test: FAIL — ${msg}\n${backend.output()}`); app.exit(1); };
+  const fail = (msg) => {
+    console.error(`smoke test: FAIL — ${msg}\n${backend.output()}`);
+    backend.kill();
+    app.exit(1);
+  };
   const timer = setTimeout(() => fail('timed out'), 90_000);
   const js = (code) => win.webContents.executeJavaScript(code);
   const waitFor = async (code, what) => {
@@ -373,7 +418,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('activate', () => {
-  if (app.isReady() && windows.size === 0 && !quitting) open({ workingDir: homeDir(), files: [] });
+  if (app.isReady() && windows.size === 0 && !quitting) open({ workingDir: homeDir(), files: [], explicit: true });
 });
 
 app.whenReady().then(() => {

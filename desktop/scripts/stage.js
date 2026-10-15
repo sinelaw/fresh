@@ -7,17 +7,25 @@
 //
 //   node scripts/stage.js [path/to/fresh]
 //
-// Without an argument, the workspace's target/release build is used. The
-// binary must be built with the `web` feature — the release builds are.
+// Without an argument, the newest of the workspace's release and debug builds
+// is used (in CARGO_TARGET_DIR, when set). The binary must be built with the
+// `web` feature — the release builds are.
 
 const fs = require('node:fs');
 const path = require('node:path');
 
+const { workspaceBinaries } = require('../src/backend');
+
 const desktop = path.resolve(__dirname, '..');
 const repo = path.resolve(desktop, '..');
-const exe = process.platform === 'win32' ? 'fresh.exe' : 'fresh';
 
-const binary = path.resolve(process.argv[2] || path.join(repo, 'target', 'release', exe));
+function newestBuild() {
+  const built = workspaceBinaries().slice(1).filter((c) => fs.existsSync(c));
+  built.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+  return built[0] || workspaceBinaries()[1];
+}
+
+const binary = path.resolve(process.argv[2] || newestBuild());
 if (!fs.existsSync(binary)) {
   console.error(`no fresh binary at ${binary}`);
   console.error('build one with: cargo build --release --features web');
@@ -33,6 +41,21 @@ function copy(from, to) {
 fs.rmSync(path.join(desktop, 'bin'), { recursive: true, force: true });
 copy(binary, path.join(desktop, 'bin', path.basename(binary).endsWith('.exe') ? 'fresh.exe' : 'fresh'));
 if (!binary.endsWith('.exe')) fs.chmodSync(path.join(desktop, 'bin', 'fresh'), 0o755);
+
+// The bundled editor is updated by installing a newer Fresh Desktop, never in
+// place. Its install receipt (crates/fresh-update/src/receipt.rs, read from
+// next to the binary) says so: no `fresh --cmd update`, no self-replacement —
+// and, unlike an environment variable, it reaches no other `fresh` the
+// editor's terminals run.
+fs.writeFileSync(path.join(desktop, 'bin', 'install-receipt.toml'), [
+  '# Fresh Desktop bundles this editor; update by installing a newer Fresh Desktop.',
+  'schema = 1',
+  'channel = "unknown"',
+  'managed = true',
+  'self_update = false',
+  '',
+].join('\n'));
+console.log('staged bin/install-receipt.toml');
 
 const icons = path.join(repo, 'docs', 'icons');
 copy(path.join(icons, 'macos', 'AppIcon.icns'), path.join(desktop, 'build', 'icon.icns'));

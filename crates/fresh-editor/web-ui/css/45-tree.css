@@ -51,6 +51,8 @@
    layer, so while the card is up the layer is lifted over them; it drops back
    the moment the card goes. */
 .tree:has(> .tree-surface.confirm){z-index:110}
+/* The theme switcher floats above even that; it waits out the card too. */
+body:has(.tree-surface.confirm) #themeswitch{opacity:.45;pointer-events:none}
 .tree-item.k-selectable{pointer-events:none}
 /* A run of the display list's text, one row tall at its cell origin. It is
    GRID text, not chrome text: pinned to the buffer's monospace stack at the
