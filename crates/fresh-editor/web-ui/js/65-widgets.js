@@ -586,6 +586,9 @@ function widgetElOf(spec, ctx){
       (spec.items||[]).forEach((it,i)=>{
         const row=aria(div("w-list-row"+(i===sel?" sel":"")), "option", {selected:i===sel});
         fillEntry(row, it);
+        // A row whose text pads its columns with spaces (a name, then its
+        // kind tag at a fixed column) only lines up in the buffer's font.
+        if(ctx.native&&/\S {2,}\S/.test(row.textContent)) row.classList.add("cells");
         row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,spec,i,e); };
         el.appendChild(row);
       });

@@ -109,6 +109,9 @@ function nativePanelEl(p){
   el.dataset.slot=p.kind;
   // A page scrolls where the editor scrolls it, not by itself.
   if(p.page) el.classList.add("paged");
+  // A strip — a toolbar or key-hint row a buffer group mounts in a pane a
+  // cell or two tall — is laid out on that height, not padded past it.
+  if(p.kind==="pane"&&p.rect&&p.rect.h<=3){ el.classList.add("strip"); el.style.setProperty("--cell-h", CH+"px"); }
   // A floating panel is a dialog (modal while centred); a docked one a region.
   if(p.kind==="floating") aria(el, "dialog", {modal:!p.anchored, label:p.title||null});
   else aria(el, "region", {label:p.title||p.kind});

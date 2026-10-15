@@ -1530,6 +1530,21 @@ check('the wheel over the page scrolls it in the editor', (await pageOffset()) >
 check('no cell caret is drawn over the page', await page.evaluate(() =>
   [...document.querySelectorAll('.caret,.tree-caret')].every(c => getComputedStyle(c).visibility === 'hidden')));
 await page.screenshot({ path: `${SHOTS}/43-native-welcome.png` });
+// A strip: a toolbar a buffer group mounts in a pane one cell tall (the git
+// log's buttons). Laid out on that height, every control is whole in it.
+await page.request.post(URL + '/action', { data: { action: 'show_git_log' } });
+const strip = page.locator('.native-panel.np-pane.strip').first();
+await strip.waitFor({ timeout: 8000 }).catch(() => {});
+check('a one-row toolbar pane is a native strip', (await strip.count()) === 1);
+check('its buttons sit whole inside it', await page.evaluate(() => {
+  const s = document.querySelector('.native-panel.np-pane.strip');
+  if (!s) return false;
+  const r = s.getBoundingClientRect();
+  const bs = [...s.querySelectorAll('.w-button')];
+  return bs.length > 0 && bs.every(b => { const q = b.getBoundingClientRect(); return q.top >= r.top - 0.5 && q.bottom <= r.bottom + 0.5; })
+    && s.scrollHeight <= s.clientHeight + 1;
+}));
+await page.screenshot({ path: `${SHOTS}/44-native-strip.png` });
 check('no JS page errors (native panels)', nerrs.length === 0, nerrs.join(' | '));
 
 console.log('\n[touch pan/scroll on mobile (hasTouch context)]');

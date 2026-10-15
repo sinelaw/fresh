@@ -198,4 +198,12 @@ body.macfam .native-panel.np-dock{background:var(--mac-sidebar)}
    pane's: no inset of its own, or every full-width row runs over. */
 .native-panel.np-pane.paged{padding-left:0;padding-right:0}
 body.native-panels .tree-item.k-scrollbar[data-surface-kind="pane"]{visibility:visible}
+/* A strip pane (js/73-native.js): one row of the panel per cell row, no
+   inset, controls flattened to the row — a toolbar a cell tall stays one. */
+.native-panel.np-pane.strip{padding:0 .75em;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-start}
+.native-panel.strip .w-col{gap:0}
+.native-panel.strip .w-row,.native-panel.strip .w-hintbar{height:var(--cell-h);min-height:0;align-items:center;flex-wrap:nowrap;overflow:hidden}
+.native-panel.strip .w-button{padding-top:0;padding-bottom:0;line-height:calc(var(--cell-h) - 4px)}
+/* A list row set in columns of spaces (js/65-widgets.js) keeps them. */
+.native-panel .w-list-row.cells{font-family:var(--mono-family);white-space:pre}
 
