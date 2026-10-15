@@ -17,7 +17,7 @@ that page in an Electron window:
   is a shell's, not the home directory a launcher starts in), else the first
   file's directory, else your home directory. Launching again with another
   folder opens another window; launching with files of an open project sends
-  them to its window (`fresh --cmd session open-file`).
+  them to its window, over the bridge it serves the page on.
 - **Sessions are the terminal edition's.** The session is keyed by the
   directory like `fresh -a`, so workspaces, recovery and hot exit are shared
   with it. Closing the window quits the editor and closes once it has exited:

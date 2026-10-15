@@ -75,7 +75,10 @@ async function open(sb, args) {
   const app = await launch(sb, args);
   const page = await app.firstWindow();
   await page.waitForURL(/^http:\/\/127\.0\.0\.1:\d+\/$/, { timeout: 60_000 });
-  await page.waitForFunction(() => window.fresh && window.fresh.wsOpen && window.fresh.frames > 0, null, { timeout: 60_000 });
+  // Connected and holding the editor's scene. Not `frames > 0`: a page that
+  // re-attaches to an editor already at its size gets the scene in the
+  // hello and no frame after it, because nothing changed.
+  await page.waitForFunction(() => window.fresh && window.fresh.wsOpen && !!window.fresh.scene, null, { timeout: 60_000 });
   return { app, page };
 }
 
