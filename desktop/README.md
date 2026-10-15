@@ -56,8 +56,32 @@ its terminals see your system's environment, not the AppImage's.
 
 ## Building
 
-You need Node.js and a `fresh` built with the `web` feature (the release
-binaries are).
+You need Rust and Node.js. One command, from the repository root, builds
+this platform's package into `desktop/dist/`:
+
+```bash
+node desktop/scripts/package.js
+```
+
+| Platform | Package |
+|----------|---------|
+| Linux | `fresh-desktop-<version>-linux-<x86_64\|aarch64>.AppImage` |
+| macOS | `fresh-desktop-<version>-macos-<x86_64\|arm64>.dmg` |
+| Windows | `fresh-desktop-<version>-windows-<x64\|arm64>-setup.exe` |
+
+It builds the editor (`cargo build --release --features web`), installs the
+npm dependencies on first use, stages the editor and icons, and runs
+electron-builder for this OS and CPU. `--binary path/to/fresh` (or
+`FRESH_BIN`) packages an existing build instead of building one, and
+`--version` overrides the version stamped on it (default: the workspace's).
+`npm run package` in `desktop/` does the same. Nothing is signed with a
+developer certificate; macOS is ad-hoc signed, as the releases are. The
+release workflow builds a universal macOS dmg instead (see below).
+
+### Step by step
+
+The same steps by hand, for working on the app itself. You need a `fresh`
+built with the `web` feature (the release binaries are).
 
 ```bash
 cargo build --release --features web        # from the repository root
