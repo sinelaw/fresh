@@ -768,7 +768,7 @@ function orchestratorRow(): WidgetSpec[] {
     centred([
       {
         text: on
-          ? "`fresh` reopens your last workspace, with the dock, in a background daemon."
+          ? "`fresh` reopens your last workspace in a background daemon."
           : "`fresh` opens a plain editor here, in this terminal.",
         style: { fg: C.muted, italic: true },
       },
