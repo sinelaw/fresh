@@ -238,7 +238,7 @@ different view modes. Closing the buffer closes the group.
 
 The result names each panel's buffer (`panels`) and split
 (`panelSplits`, for `createScrollSyncGroup`, `setLineWrap` and
-`setLayoutHints`).
+`setLayoutHints`). Group ids are per window.
 
 ```typescript
 createBufferGroup(name: string, mode: string, layout: unknown): Promise<BufferGroupResult>;

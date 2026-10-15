@@ -213,6 +213,28 @@ type BackgroundProcessResult = {
 };
 ```
 
+### `BufferGroupResult`
+
+Result of creating a buffer group
+
+```typescript
+type BufferGroupResult = {
+  /**
+  * The group ID
+  */
+  groupId: number;
+  /**
+  * Panel buffer IDs, keyed by panel name
+  */
+  panels: Record<string, number>;
+  /**
+  * Panel split IDs, keyed by panel name: what `createScrollSyncGroup`,
+  * `setLineWrap` and `setLayoutHints` take to act on one panel.
+  */
+  panelSplits: Record<string, number>;
+};
+```
+
 ### `BufferId`
 
 Buffer identifier

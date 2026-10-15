@@ -107,6 +107,13 @@ fn tabs_show_group_and_file(h: &EditorTestHarness) -> bool {
     tabs.contains("PAIR") && tabs.contains("a.txt")
 }
 
+/// The screen column `text` starts at in the tab bar, if it is there.
+fn tab_col(h: &EditorTestHarness, text: &str) -> Option<u16> {
+    let tabs = h.screen_row_text(1);
+    let byte = tabs.find(text)?;
+    Some(tabs[..byte].chars().count() as u16)
+}
+
 /// Open the group and wait for both panels to show the file.
 fn open_pair(h: &mut EditorTestHarness) {
     run(h, "fpanel: Open");
@@ -211,6 +218,91 @@ fn a_popup_at_the_caret_opens_under_the_panels_caret() {
         };
         h.screen_row_text(caret_row + 1).contains("[×]")
             && h.screen_row_text(caret_row + 2).contains("zebrafish")
+    })
+    .unwrap();
+}
+
+/// Clicking the file's own tab while the group is shown shows the file: one
+/// pane of it, with the group's tab still there to come back to.
+#[test]
+fn the_files_own_tab_switches_away_from_the_group() {
+    let (mut h, _tmp) = setup();
+    open_pair(&mut h);
+
+    let col = tab_col(&h, "a.txt").unwrap();
+    h.mouse_click(col + 1, 1).unwrap();
+    // One pane, settled: the row has one gutter, not a panel's on each side
+    // (the tab switch slides, and a frame of the slide can show one row).
+    h.wait_until(|h| {
+        let one_pane = (0..30)
+            .map(|r| h.screen_row_text(r))
+            .find(|row| row.contains("row 001"))
+            .is_some_and(|row| row.matches('│').count() == 1);
+        count(h, "row 001") == 1 && one_pane && tabs_show_group_and_file(h)
+    })
+    .unwrap();
+}
+
+/// Closing the file's tab while a panel shows it closes the file, so a file
+/// with unsaved changes asks first, as closing its last tab always does. A
+/// panel showing it is not another tab of it.
+#[test]
+fn closing_the_files_tab_asks_about_unsaved_changes() {
+    let (mut h, _tmp) = setup();
+    open_pair(&mut h);
+    h.type_text("XYZ").unwrap();
+    h.wait_until(|h| count(h, "XYZalpha") == 2).unwrap();
+
+    let tabs = h.screen_row_text(1);
+    let name = tabs.find("a.txt").unwrap();
+    let close = name + tabs[name..].find('×').unwrap();
+    h.mouse_click(tabs[..close].chars().count() as u16, 1)
+        .unwrap();
+    h.wait_for_screen_contains("Unsaved Changes").unwrap();
+}
+
+/// Closing the group returns the pane to the file the group showed, even
+/// when another tab was opened in the pane while the group was up.
+#[test]
+fn closing_the_group_returns_to_its_file() {
+    let (mut h, tmp) = setup();
+    open_pair(&mut h);
+    let other = tmp.path().join("work").join("b.txt");
+    fs::write(&other, "bee bee bee\n").unwrap();
+    h.open_file(&other).unwrap();
+    h.wait_for_screen_contains("bee bee bee").unwrap();
+
+    // Back to the group's tab, which now has b.txt behind it.
+    let col = tab_col(&h, "PAIR").unwrap();
+    h.mouse_click(col + 1, 1).unwrap();
+    h.wait_until(|h| count(h, "row 001") == 2).unwrap();
+
+    run(&mut h, "fpanel: Close");
+    h.wait_until(|h| {
+        count(h, "row 001") == 1
+            && !h.screen_to_string().contains("bee bee bee")
+            && !h.screen_row_text(1).contains("PAIR")
+    })
+    .unwrap();
+}
+
+/// A file that moves to another workspace takes no group of the window it
+/// leaves with it: a group showing it there closes, rather than staying
+/// behind with empty panels.
+#[test]
+fn a_file_moved_to_another_workspace_closes_its_group() {
+    let (mut h, _tmp) = setup();
+    open_pair(&mut h);
+
+    run(&mut h, "Extract Tab to New Workspace");
+    h.wait_until(|h| count(h, "row 001") == 1 && !h.screen_row_text(1).contains("PAIR"))
+        .unwrap();
+
+    // The window it left: no group tab there either.
+    run(&mut h, "Previous Window");
+    h.wait_until(|h| {
+        let tabs = h.screen_row_text(1);
+        !tabs.contains("a.txt") && !tabs.contains("PAIR")
     })
     .unwrap();
 }

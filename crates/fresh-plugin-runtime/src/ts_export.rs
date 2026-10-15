@@ -435,6 +435,9 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "SearchHandle",
     // Replace result (referenced via ts_raw on replaceInFile)
     "ReplaceResult",
+    // What createBufferGroup resolves to (declared in the hand-written
+    // EditorAPI tail, which the reference scan does not read)
+    "BufferGroupResult",
 ];
 
 /// Collect TypeScript type declarations based on referenced types from proc macro
@@ -718,7 +721,8 @@ interface HookEventMap {
   buffer_closed: { buffer_id: number; window_id: number };
   /**
    * A buffer group closed: its plugin closed it, the user closed its tab,
-   * or a buffer one of its panels named by `bufferId` was closed.
+   * or a buffer one of its panels named by `bufferId` was closed. Group
+   * ids are per window, so match on `window_id` as well as `group_id`.
    */
   buffer_group_closed: { group_id: number; window_id: number };
 
@@ -1109,7 +1113,7 @@ interface EditorAPI {
    *
    * The result names each panel's buffer (`panels`) and split
    * (`panelSplits`, for `createScrollSyncGroup`, `setLineWrap` and
-   * `setLayoutHints`).
+   * `setLayoutHints`). Group ids are per window.
    */
   createBufferGroup(
     name: string,

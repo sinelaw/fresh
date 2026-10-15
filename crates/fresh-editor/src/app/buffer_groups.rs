@@ -506,9 +506,11 @@ impl super::Editor {
     pub(super) fn close_buffer_group(&mut self, group_id: usize) {
         let bg_id = BufferGroupId(group_id);
         if let Some(group) = self.active_window_mut().buffer_groups.remove(&bg_id) {
-            // Remove reverse mappings
+            // Remove reverse mappings — only the group's own buffers have one
             for buffer_id in group.panel_buffers.values() {
-                self.active_window_mut().buffer_to_group.remove(buffer_id);
+                if !group.borrowed_buffers.contains(buffer_id) {
+                    self.active_window_mut().buffer_to_group.remove(buffer_id);
+                }
             }
 
             // Find the group_leaf_id (it's the `representative_split` now).
@@ -1162,42 +1164,53 @@ impl super::Editor {
 }
 
 impl crate::app::window::Window {
+    /// Whether `leaf` is a group panel showing `buffer_id` as a buffer its
+    /// group borrowed. Such a panel is no tab of the buffer: closing the
+    /// buffer's last tab closes the buffer, and with it the group.
+    pub(crate) fn is_borrowing_panel(&self, leaf: LeafId, buffer_id: BufferId) -> bool {
+        self.buffer_groups.values().any(|g| {
+            g.borrowed_buffers.contains(&buffer_id) && g.panel_splits.values().any(|l| *l == leaf)
+        })
+    }
+
     /// A pane showing group `group_leaf` is about to show its buffer tab
-    /// again. When that is a buffer the group borrowed, the pane picks up
-    /// where the user was in it: the cursor and scroll of the group's focused
-    /// panel. Otherwise closing a source/preview pair would put the user back
-    /// where they were before opening it.
+    /// again. When the group's focused panel shows a buffer the group
+    /// borrowed, and the pane has a tab of that buffer, the pane goes back to
+    /// it, where the user was in it: the panel's cursor and scroll. Otherwise
+    /// closing a source/preview pair could land the pane on whatever tab was
+    /// behind the group, or put the user back where they were before opening
+    /// it.
     pub(crate) fn return_to_borrowed_buffer(
         &mut self,
         group_leaf: LeafId,
         borrowed: &std::collections::HashSet<BufferId>,
     ) {
-        let Some(vs_map) = self.buffers.split_view_states_mut() else {
+        let Some(vs_map) = self.buffers.split_view_states() else {
             return;
         };
-        let hosts: Vec<(LeafId, LeafId)> = vs_map
+        let returns: Vec<_> = vs_map
             .iter()
             .filter_map(|(host, vs)| match vs.shown_group() {
                 Some((group, panel)) if group == group_leaf => Some((*host, panel)),
                 _ => None,
             })
+            .filter_map(|(host, panel)| {
+                let panel_vs = vs_map.get(&panel)?;
+                let buffer = panel_vs.shown_buffer()?;
+                let bs = panel_vs.buffer_state(buffer)?;
+                let host_has_tab = vs_map.get(&host)?.has_buffer(buffer);
+                (borrowed.contains(&buffer) && host_has_tab)
+                    .then(|| (host, buffer, bs.cursors.clone(), bs.viewport.anchor))
+            })
             .collect();
-        for (host, panel) in hosts {
-            let Some(panel_state) = vs_map.get(&panel).and_then(|vs| {
-                let buffer = vs.shown_buffer()?;
-                let bs = vs.buffer_state(buffer)?;
-                Some((buffer, bs.cursors.clone(), bs.viewport.anchor))
-            }) else {
-                continue;
-            };
-            let (buffer, cursors, anchor) = panel_state;
-            let Some(host_vs) = vs_map.get_mut(&host) else {
-                continue;
-            };
-            if !borrowed.contains(&buffer) || host_vs.buffer_tab() != buffer {
-                continue;
-            }
-            if let Some(bs) = host_vs.buffer_state_mut(buffer) {
+        for (host, buffer, cursors, anchor) in returns {
+            self.set_pane_buffer(host, buffer);
+            if let Some(bs) = self
+                .buffers
+                .split_view_states_mut()
+                .and_then(|vs_map| vs_map.get_mut(&host))
+                .and_then(|vs| vs.buffer_state_mut(buffer))
+            {
                 bs.cursors = cursors;
                 bs.viewport.anchor = anchor;
             }

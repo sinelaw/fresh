@@ -590,7 +590,11 @@ impl Editor {
             .active_window()
             .split_view_states()
             .iter()
-            .filter(|(&sid, view_state)| sid != split_id && view_state.has_buffer(buffer_id))
+            .filter(|(&sid, view_state)| {
+                sid != split_id
+                    && view_state.has_buffer(buffer_id)
+                    && !self.active_window().is_borrowing_panel(sid, buffer_id)
+            })
             .count();
 
         // Get the split's open buffers
@@ -971,7 +975,11 @@ impl Editor {
             .active_window()
             .split_view_states()
             .iter()
-            .filter(|(&sid, view_state)| sid != split_id && view_state.has_buffer(buffer_id))
+            .filter(|(&sid, view_state)| {
+                sid != split_id
+                    && view_state.has_buffer(buffer_id)
+                    && !self.active_window().is_borrowing_panel(sid, buffer_id)
+            })
             .count();
 
         // Get the split's open buffers

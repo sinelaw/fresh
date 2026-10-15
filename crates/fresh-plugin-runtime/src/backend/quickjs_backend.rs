@@ -5166,6 +5166,9 @@ impl JsEditorApi {
 
     /// Set layout hints (compose width, column guides) for a buffer/split
     /// directly.
+    ///
+    /// @param splitId - The pane to set them in; omitted or `null`, the pane
+    /// the user is in (inside a buffer group, its focused panel).
     pub fn set_layout_hints<'js>(
         &self,
         buffer_id: u32,

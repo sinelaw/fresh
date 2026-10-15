@@ -169,7 +169,8 @@ buffer_closed: {
 #### `buffer_group_closed`
 
 A buffer group closed: its plugin closed it, the user closed its tab,
-or a buffer one of its panels named by `bufferId` was closed.
+or a buffer one of its panels named by `bufferId` was closed. Group
+ids are per window, so match on `window_id` as well as `group_id`.
 
 ```typescript
 buffer_group_closed: {
