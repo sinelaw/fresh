@@ -13,11 +13,13 @@
   "scripts": {
     "stage": "node scripts/stage.js",
     "start": "electron .",
-    "dist": "electron-builder --publish never"
+    "dist": "electron-builder --publish never",
+    "test:e2e": "node test/e2e.mjs"
   },
   "devDependencies": {
     "electron": "44.4.5",
-    "electron-builder": "26.15.3"
+    "electron-builder": "26.15.3",
+    "playwright-core": "1.61.1"
   },
   "repository": "https://github.com/sinelaw/fresh"
 }

@@ -47,6 +47,8 @@ on:
     paths:
       - 'desktop/**'
       - '.github/workflows/desktop-builds.yml'
+      # The bridge the app drives (its routes, `/quit` among them).
+      - 'crates/fresh-editor/src/webui/**'
 
 jobs:
   build-desktop:
@@ -201,6 +203,25 @@ jobs:
         shell: bash
         run: node scripts/stage.js "$FRESH_BIN"
 
+      # The app's window and editor lifecycle (desktop/test/e2e.mjs): second
+      # launches, closing with and without unsaved work, closing during
+      # startup, quitting from the editor, re-attaching after a crash. Run
+      # from source against the staged editor; the platform-independent logic
+      # it covers is the same on every OS, so Linux runs it.
+      - name: Install Xvfb (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+
+      - name: End-to-end tests (Linux)
+        if: matrix.platform == 'linux'
+        working-directory: desktop
+        timeout-minutes: 10
+        env:
+          FRESH_DESKTOP_BINARY: ${{ env.FRESH_BIN }}
+        run: xvfb-run -a -s "-screen 0 1600x1000x24" npm run test:e2e
+
       - name: Build installer
         working-directory: desktop
         shell: bash
@@ -234,8 +255,6 @@ jobs:
           # No FUSE on the runner; the AppImage runs from a temporary extraction.
           APPIMAGE_EXTRACT_AND_RUN: '1'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb
           appimage="$PWD/desktop/dist/fresh-desktop-${VERSION}-linux-x86_64.AppImage"
           chmod +x "$appimage"
           cd "$RUNNER_TEMP/smoke-project"

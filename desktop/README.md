@@ -76,6 +76,18 @@ is set) — never a `fresh` from `PATH`; `FRESH_DESKTOP_BINARY` overrides it.
 For a universal macOS build, `lipo` the `x86_64-apple-darwin` and
 `aarch64-apple-darwin` binaries into one and stage that.
 
+## Tests
+
+```bash
+xvfb-run -a npm run test:e2e        # or plain `npm run test:e2e` on a Linux desktop
+```
+
+drives the app from source with Playwright (`test/e2e.mjs`): a second launch
+handing its files over, links staying out of the app, closing with and
+without unsaved work, closing during startup, quitting from the editor, and
+re-attaching to an editor after the app crashed. Each case runs in its own
+project and `HOME`. CI runs it on Linux before packaging.
+
 ## Smoke test
 
 ```bash
