@@ -175,6 +175,15 @@ fn vi_with_orchestrator_dock() -> (EditorTestHarness, tempfile::TempDir) {
             settings: serde_json::json!({ "autoStart": true }),
         },
     );
+    // The dock starts closed for a new user; this one asked for it.
+    config.plugins.insert(
+        "orchestrator".to_string(),
+        PluginConfig {
+            enabled: true,
+            path: None,
+            settings: serde_json::json!({ "autoOpenDock": "always" }),
+        },
+    );
     let mut h = EditorTestHarness::create(
         120,
         32,
