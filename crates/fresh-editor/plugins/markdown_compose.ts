@@ -2200,11 +2200,11 @@ function processLineConceals(
         codeFrameStyle, true, MATH_VIRTUAL_LINE_NS, 0,
       );
     }
-    editor.addConceal(
+    addComposeConceal(
       bufferId, "md-syntax", frameStart, frameEnd, rowReplacement,
       "unless-cursor-in", byteStart, lineScopeInclEnd,
     );
-    editor.addOverlay(bufferId, "md-emphasis", frameStart, frameEnd, { fg: "syntax.constant", italic: true });
+    addComposeOverlay(bufferId, "md-emphasis", frameStart, frameEnd, { fg: "syntax.constant", italic: true });
     if (!cursorOnLine) {
       editor.addVirtualLine(
         bufferId, byteStart,
@@ -2663,7 +2663,7 @@ function processLineConceals(
         addComposeOverlay(bufferId, "md-emphasis", byteCS, byteCE, { fg: "syntax.constant" });
         break;
       case 'math':
-        editor.addOverlay(bufferId, "md-emphasis", byteMS, byteME, { fg: "syntax.constant", italic: true });
+        addComposeOverlay(bufferId, "md-emphasis", byteMS, byteME, { fg: "syntax.constant", italic: true });
         break;
       case 'bold':
         addComposeOverlay(bufferId, "md-emphasis", byteCS, byteCE, { bold: true });
@@ -3808,21 +3808,21 @@ editor.on("lines_changed", (data) => {
       const openStart = charToByte(sb.openLine.content, blockIndent, sb.openLine.byte_start);
       const openEnd = lineContentEndByte(sb.openLine.content, sb.openLine.byte_start);
       const openFrame = buildCodeFrameLineWithLabel(blockMeasure, "┌", "┐", rendered.title);
-      editor.addConceal(
+      addComposeConceal(
         data.buffer_id, "md-syntax", openStart, openEnd, openFrame,
         "unless-cursor-in", scopeStart, scopeEnd,
       );
-      editor.addOverlay(data.buffer_id, "md-emphasis", openStart, openEnd, codeFrameStyle);
+      addComposeOverlay(data.buffer_id, "md-emphasis", openStart, openEnd, codeFrameStyle);
 
       // Close fence
       const closeStart = charToByte(sb.closeLine.content, blockIndent, sb.closeLine.byte_start);
       const closeEnd = lineContentEndByte(sb.closeLine.content, sb.closeLine.byte_start);
       const closeFrame = buildCodeFrameLine(blockMeasure, "└", "┘");
-      editor.addConceal(
+      addComposeConceal(
         data.buffer_id, "md-syntax", closeStart, closeEnd, closeFrame,
         "unless-cursor-in", scopeStart, scopeEnd,
       );
-      editor.addOverlay(data.buffer_id, "md-emphasis", closeStart, closeEnd, codeFrameStyle);
+      addComposeOverlay(data.buffer_id, "md-emphasis", closeStart, closeEnd, codeFrameStyle);
 
       // Body lines
       const B = sb.bodyLines.length;
@@ -3833,13 +3833,13 @@ editor.on("lines_changed", (data) => {
         const lineEnd = lineContentEndByte(bodyLine.content, bodyLine.byte_start);
         if (i < M) {
           const row = buildDiagramRow(rendered.lines[i], blockMeasure, blockIndent);
-          editor.addConceal(
+          addComposeConceal(
             data.buffer_id, "md-syntax", lineStart, lineEnd, row,
             "unless-cursor-in", scopeStart, scopeEnd,
           );
-          editor.addOverlay(data.buffer_id, "md-emphasis", lineStart, lineEnd, codeFrameStyle);
+          addComposeOverlay(data.buffer_id, "md-emphasis", lineStart, lineEnd, codeFrameStyle);
         } else {
-          editor.addConceal(
+          addComposeConceal(
             data.buffer_id, "md-syntax", lineStart, lineEnd, "",
             "unless-cursor-in", scopeStart, scopeEnd,
           );
@@ -3863,21 +3863,21 @@ editor.on("lines_changed", (data) => {
       const openStart = charToByte(sb.openLine.content, blockIndent, sb.openLine.byte_start);
       const openEnd = lineContentEndByte(sb.openLine.content, sb.openLine.byte_start);
       const openFrame = buildCodeFrameLineWithLabel(blockMeasure, "┌", "┐", label);
-      editor.addConceal(
+      addComposeConceal(
         data.buffer_id, "md-syntax", openStart, openEnd, openFrame,
         "unless-cursor-in", scopeStart, scopeEnd,
       );
-      editor.addOverlay(data.buffer_id, "md-emphasis", openStart, openEnd, codeFrameStyle);
+      addComposeOverlay(data.buffer_id, "md-emphasis", openStart, openEnd, codeFrameStyle);
 
       // Close fence
       const closeStart = charToByte(sb.closeLine.content, blockIndent, sb.closeLine.byte_start);
       const closeEnd = lineContentEndByte(sb.closeLine.content, sb.closeLine.byte_start);
       const closeFrame = buildCodeFrameLine(blockMeasure, "└", "┘");
-      editor.addConceal(
+      addComposeConceal(
         data.buffer_id, "md-syntax", closeStart, closeEnd, closeFrame,
         "unless-cursor-in", scopeStart, scopeEnd,
       );
-      editor.addOverlay(data.buffer_id, "md-emphasis", closeStart, closeEnd, codeFrameStyle);
+      addComposeOverlay(data.buffer_id, "md-emphasis", closeStart, closeEnd, codeFrameStyle);
 
       // Body lines
       for (const bodyLine of sb.bodyLines) {
@@ -3885,11 +3885,11 @@ editor.on("lines_changed", (data) => {
         const lineEnd = lineContentEndByte(bodyLine.content, bodyLine.byte_start);
         const rendered = renderLatexMath(bodyLine.content.trim());
         const row = buildDiagramRow(rendered, blockMeasure, blockIndent);
-        editor.addConceal(
+        addComposeConceal(
           data.buffer_id, "md-syntax", lineStart, lineEnd, row,
           "unless-cursor-in", scopeStart, scopeEnd,
         );
-        editor.addOverlay(data.buffer_id, "md-emphasis", lineStart, lineEnd, { fg: "syntax.constant", italic: true });
+        addComposeOverlay(data.buffer_id, "md-emphasis", lineStart, lineEnd, { fg: "syntax.constant", italic: true });
       }
     }
   }
