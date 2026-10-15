@@ -1239,6 +1239,11 @@ impl crate::app::Editor {
         buffer_id: fresh_core::BufferId,
         target: WindowId,
     ) {
+        // A group in the window the buffer leaves, showing it in a panel it
+        // borrowed, closes first: its panels would otherwise show a buffer
+        // the window no longer has.
+        self.close_groups_borrowing(buffer_id);
+
         // Re-target buffer storage: move the state to the target window's
         // map. Step 0c: each window owns its EditorState outright.
         if let Some(state) = self.detach_buffer_from_all_windows(buffer_id) {

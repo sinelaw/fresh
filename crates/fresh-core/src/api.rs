@@ -214,6 +214,10 @@ pub struct BufferGroupResult {
     /// Panel buffer IDs, keyed by panel name
     #[ts(type = "Record<string, number>")]
     pub panels: HashMap<String, u64>,
+    /// Panel split IDs, keyed by panel name: what `createScrollSyncGroup`,
+    /// `setLineWrap` and `setLayoutHints` take to act on one panel.
+    #[ts(type = "Record<string, number>")]
+    pub panel_splits: HashMap<String, u64>,
 }
 
 /// Response from the editor for async plugin operations

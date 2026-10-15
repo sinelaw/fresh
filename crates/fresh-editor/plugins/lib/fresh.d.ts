@@ -2936,6 +2936,24 @@ type ReplaceResult = {
 	*/
 	bufferId: number;
 };
+/**
+* Result of creating a buffer group
+*/
+type BufferGroupResult = {
+	/**
+	* The group ID
+	*/
+	groupId: number;
+	/**
+	* Panel buffer IDs, keyed by panel name
+	*/
+	panels: Record<string, number>;
+	/**
+	* Panel split IDs, keyed by panel name: what `createScrollSyncGroup`,
+	* `setLineWrap` and `setLayoutHints` take to act on one panel.
+	*/
+	panelSplits: Record<string, number>;
+};
 type AuthorityPath = {
 	kind: "authority";
 	value: string;
@@ -6613,6 +6631,9 @@ interface EditorAPI {
 	/**
 	* Set layout hints (compose width, column guides) for a buffer/split
 	* directly.
+	* 
+	* @param splitId - The pane to set them in; omitted or `null`, the pane
+	* the user is in (inside a buffer group, its focused panel).
 	*/
 	setLayoutHints(bufferId: number, splitId: number | null, hints: LayoutHints): boolean;
 	/**
@@ -8531,6 +8552,15 @@ interface HookEventMap {
 		buffer_id: number;
 		window_id: number;
 	};
+	/**
+	* A buffer group closed: its plugin closed it, the user closed its tab,
+	* or a buffer one of its panels named by `bufferId` was closed. Group
+	* ids are per window, so match on `window_id` as well as `group_id`.
+	*/
+	buffer_group_closed: {
+		group_id: number;
+		window_id: number;
+	};
 	// ── file I/O ─────────────────────────────────────────────────────────────
 	before_file_open: {
 		path: string;
@@ -9002,6 +9032,21 @@ interface EditorAPI {
 	off<K extends keyof HookEventMap>(eventName: K, handlerName: string): void;
 	/**
 	* Create a buffer group: multiple panels appearing as one tab.
+	*
+	* `layout` is a JSON string. A leaf is `{type: "scrollable", id}` or
+	* `{type: "fixed", id, height}`; `{type: "split", direction: "h" | "v",
+	* ratio, first, second}` arranges two of them, `"h"` side by side.
+	*
+	* A leaf gets a new read-only panel buffer, which the group owns and
+	* closes with itself. A leaf with `bufferId` shows that existing buffer
+	* instead (a file the user has open, say), and it stays an ordinary
+	* buffer: editable, in its tabs, and left open when the group closes.
+	* Each panel has its own view of it, so two panels can show one file in
+	* different view modes. Closing the buffer closes the group.
+	*
+	* The result names each panel's buffer (`panels`) and split
+	* (`panelSplits`, for `createScrollSyncGroup`, `setLineWrap` and
+	* `setLayoutHints`). Group ids are per window.
 	*/
 	createBufferGroup(name: string, mode: string, layout: unknown): Promise<BufferGroupResult>;
 }

@@ -275,3 +275,40 @@ fn wrapped_table_row_keeps_every_visual_line() {
         "the wrapped row's last line never rendered.\nScreen:\n{screen}"
     );
 }
+
+/// A cell of double-width text (CJK) wraps at the column's width in screen
+/// cells, so its rows stay inside the frame. Measured in characters, a row of
+/// it was twice as wide as its column and pushed the right edge out.
+#[cfg(feature = "plugins")]
+#[test]
+fn wrapped_cell_of_wide_text_stays_inside_the_frame() {
+    let md = format!(
+        "# Doc\n\n| Term | Meaning |\n|------|---------|\n| kanji | {}ENDMARK |\n",
+        "漢字 ".repeat(25)
+    );
+    let (mut harness, _tmp) = compose_harness(&md, 60, 30);
+    let edges = |h: &EditorTestHarness, y: usize| -> (Option<u16>, Option<u16>) {
+        let cells: Vec<u16> = (0..h.buffer().area.width)
+            .filter(|&x| {
+                h.get_cell(x, y as u16)
+                    .is_some_and(|s| s.chars().any(|c| "┌┐└┘│├┤".contains(c)))
+            })
+            .collect();
+        (cells.first().copied(), cells.last().copied())
+    };
+    // The frame from its top edge to its bottom one, the cell wrapped onto
+    // several rows, every row's edges in the top edge's columns.
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            let top = screen.lines().position(|l| l.contains('┌'));
+            let bottom = screen.lines().position(|l| l.contains('└'));
+            let (Some(top), Some(bottom)) = (top, bottom) else {
+                return false;
+            };
+            screen.contains("ENDMARK")
+                && bottom > top + 4
+                && (top..=bottom).all(|y| edges(h, y) == edges(h, top))
+        })
+        .unwrap();
+}

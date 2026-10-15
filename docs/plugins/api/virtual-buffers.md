@@ -225,6 +225,21 @@ setBufferGroupPanelBuffer(groupId: number, panelName: string, bufferId: number):
 
 Create a buffer group: multiple panels appearing as one tab.
 
+`layout` is a JSON string. A leaf is `{type: "scrollable", id}` or
+`{type: "fixed", id, height}`; `{type: "split", direction: "h" | "v",
+ratio, first, second}` arranges two of them, `"h"` side by side.
+
+A leaf gets a new read-only panel buffer, which the group owns and
+closes with itself. A leaf with `bufferId` shows that existing buffer
+instead (a file the user has open, say), and it stays an ordinary
+buffer: editable, in its tabs, and left open when the group closes.
+Each panel has its own view of it, so two panels can show one file in
+different view modes. Closing the buffer closes the group.
+
+The result names each panel's buffer (`panels`) and split
+(`panelSplits`, for `createScrollSyncGroup`, `setLineWrap` and
+`setLayoutHints`). Group ids are per window.
+
 ```typescript
 createBufferGroup(name: string, mode: string, layout: unknown): Promise<BufferGroupResult>;
 ```

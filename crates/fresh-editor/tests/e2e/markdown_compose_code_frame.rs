@@ -891,3 +891,55 @@ fn the_caret_on_a_decoration_only_row_ignores_the_row_above() {
          above it, so the row is still inheriting that row's end-of-text column"
     );
 }
+
+/// Screen columns of the frame's left and right edge on row `y`, read cell by
+/// cell so double-width text before an edge cannot skew it.
+fn edge_cells(h: &EditorTestHarness, y: usize) -> (Option<u16>, Option<u16>) {
+    let cells: Vec<u16> = (0..h.buffer().area.width)
+        .filter(|&x| {
+            h.get_cell(x, y as u16)
+                .is_some_and(|s| s.chars().any(|c| "┌┐└┘│".contains(c)))
+        })
+        .collect();
+    (cells.first().copied(), cells.last().copied())
+}
+
+/// Every row of the one block on screen, borders included, has its edges in
+/// the top border's columns. False until the block is framed at both ends.
+fn rows_keep_the_frame_columns(h: &EditorTestHarness) -> bool {
+    let screen = h.screen_to_string();
+    let (Some(&top), Some(&bottom)) = (tops(&screen).first(), bottoms(&screen).first()) else {
+        return false;
+    };
+    let border = edge_cells(h, top);
+    (top..=bottom).all(|y| edge_cells(h, y) == border)
+}
+
+/// Code lines holding characters outside the Basic Multilingual Plane (most
+/// emoji) are framed like any other. The row layout walked the line one
+/// UTF-16 unit at a time, so it measured each half of such a character on its
+/// own.
+#[test]
+fn rows_with_emoji_keep_the_frame_columns() {
+    let md = "# Doc\n\n```\n🎯 goal: a line long enough to wrap onto a second row of the frame, \
+              alpha beta gamma delta epsilon zeta eta theta\n📝 notes\n```\n\nTail.\n";
+    let (mut harness, _tmp) = compose_harness(md);
+    park_cursor_at_top(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("theta") && rows_keep_the_frame_columns(h))
+        .unwrap();
+}
+
+/// An indented code line that wraps onto several rows stays inside the frame.
+/// Its continuation rows are drawn with the line's indent in front of them,
+/// so each one holds that much less code than the first.
+#[test]
+fn wrapped_rows_of_an_indented_line_keep_the_frame_columns() {
+    let long = format!("        - {}ENDMARK", "word ".repeat(35));
+    let md = format!("# Doc\n\n```\nlist:\n{long}\n```\n\nTail.\n");
+    let (mut harness, _tmp) = compose_harness(&md);
+    park_cursor_at_top(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("ENDMARK") && rows_keep_the_frame_columns(h))
+        .unwrap();
+}

@@ -532,9 +532,22 @@ impl Editor {
             let _s = tracing::info_span!("render_plugin_hooks").entered();
             let hooks_start = std::time::Instant::now();
             // Get visible buffers and their areas — the boxes the tree placed
-            // them in.
-            let visible_buffers =
-                pane_rects.visible(&self.active_window().split_manager().visible_leaves());
+            // them in. A pane showing a group draws the group's panels, not
+            // the buffer behind the group, so those are what is offered: a
+            // panel scrolled by its own viewport is otherwise never offered
+            // the lines it shows.
+            let visible_buffers = {
+                let window = self.active_window();
+                let groups = window.pane_groups();
+                let mut leaves = Vec::new();
+                for (leaf, buffer) in window.split_manager().visible_leaves() {
+                    match groups.get(&leaf) {
+                        Some(group) => leaves.extend(group.visible_leaves()),
+                        None => leaves.push((leaf, buffer)),
+                    }
+                }
+                pane_rects.visible(&leaves)
+            };
 
             let mut total_new_lines = 0usize;
             for (split_id, buffer_id, split_area) in visible_buffers {

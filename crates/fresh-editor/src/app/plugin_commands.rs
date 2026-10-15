@@ -1945,9 +1945,11 @@ impl Editor {
         split_id: Option<SplitId>,
         hints: LayoutHints,
     ) {
+        // With no split named, the pane the user is in — a shown group's
+        // focused panel, as for `setViewMode` — not the pane showing it.
         let target_split = split_id
             .map(LeafId)
-            .unwrap_or(self.active_window().split_manager().active_split());
+            .unwrap_or_else(|| self.effective_active_split());
         let term_w = self.terminal_width;
         let term_h = self.terminal_height;
         let active_id = self.active_window;

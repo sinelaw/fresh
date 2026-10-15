@@ -435,6 +435,9 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "SearchHandle",
     // Replace result (referenced via ts_raw on replaceInFile)
     "ReplaceResult",
+    // What createBufferGroup resolves to (declared in the hand-written
+    // EditorAPI tail, which the reference scan does not read)
+    "BufferGroupResult",
 ];
 
 /// Collect TypeScript type declarations based on referenced types from proc macro
@@ -716,6 +719,12 @@ interface HookEventMap {
   buffer_activated: { buffer_id: number; window_id: number };
   buffer_deactivated: { buffer_id: number; window_id: number };
   buffer_closed: { buffer_id: number; window_id: number };
+  /**
+   * A buffer group closed: its plugin closed it, the user closed its tab,
+   * or a buffer one of its panels named by `bufferId` was closed. Group
+   * ids are per window, so match on `window_id` as well as `group_id`.
+   */
+  buffer_group_closed: { group_id: number; window_id: number };
 
   // ── file I/O ─────────────────────────────────────────────────────────────
   before_file_open: { path: string };
@@ -1090,6 +1099,21 @@ interface EditorAPI {
   off<K extends keyof HookEventMap>(eventName: K, handlerName: string): void;
   /**
    * Create a buffer group: multiple panels appearing as one tab.
+   *
+   * `layout` is a JSON string. A leaf is `{type: "scrollable", id}` or
+   * `{type: "fixed", id, height}`; `{type: "split", direction: "h" | "v",
+   * ratio, first, second}` arranges two of them, `"h"` side by side.
+   *
+   * A leaf gets a new read-only panel buffer, which the group owns and
+   * closes with itself. A leaf with `bufferId` shows that existing buffer
+   * instead (a file the user has open, say), and it stays an ordinary
+   * buffer: editable, in its tabs, and left open when the group closes.
+   * Each panel has its own view of it, so two panels can show one file in
+   * different view modes. Closing the buffer closes the group.
+   *
+   * The result names each panel's buffer (`panels`) and split
+   * (`panelSplits`, for `createScrollSyncGroup`, `setLineWrap` and
+   * `setLayoutHints`). Group ids are per window.
    */
   createBufferGroup(
     name: string,

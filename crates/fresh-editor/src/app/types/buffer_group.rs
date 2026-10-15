@@ -66,6 +66,12 @@ pub struct BufferGroup {
     /// group as created — the full set of panels — and is the source
     /// the tree is rebuilt from.
     pub hidden_panels: std::collections::HashSet<String>,
+    /// Buffers a panel shows that the group does not own: ones the layout
+    /// named by `bufferId` (a file the user has open, say) rather than
+    /// asking the group to create. They stay ordinary buffers — editable,
+    /// in the tab bar, routed and keyed as usual — and closing the group
+    /// leaves them open.
+    pub borrowed_buffers: std::collections::HashSet<BufferId>,
     /// The "representative" split that owns the tab entry.
     /// This is typically the first scrollable panel.
     pub representative_split: Option<LeafId>,

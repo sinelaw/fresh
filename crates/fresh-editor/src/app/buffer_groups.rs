@@ -28,6 +28,10 @@ enum LayoutDesc {
         /// Whether this panel responds to scroll events. Defaults to true
         /// for scrollable panels.
         scrollable: Option<bool>,
+        /// An existing buffer for the panel to show, instead of a new
+        /// virtual one. See `BufferGroup::borrowed_buffers`.
+        #[serde(rename = "bufferId")]
+        buffer_id: Option<usize>,
     },
     #[serde(rename = "fixed")]
     Fixed {
@@ -38,6 +42,9 @@ enum LayoutDesc {
         /// size, so mouse-wheel scroll is a no-op and no scrollbar is drawn.
         /// Callers can override by passing `"scrollable": true`.
         scrollable: Option<bool>,
+        /// As for `Scrollable`.
+        #[serde(rename = "bufferId")]
+        buffer_id: Option<usize>,
     },
     #[serde(rename = "split")]
     Split {
@@ -76,7 +83,8 @@ impl super::Editor {
         // Build buffers for each leaf in the layout
         let mut panel_buffers: HashMap<String, BufferId> = HashMap::new();
         let mut panel_splits: HashMap<String, LeafId> = HashMap::new();
-        let layout = self.build_group_layout(&desc, &mode, &mut panel_buffers)?;
+        let mut borrowed = std::collections::HashSet::new();
+        let layout = self.build_group_layout(&desc, &mode, &mut panel_buffers, &mut borrowed)?;
 
         // Build the inner split tree for the group
         let inner_tree = self.build_split_tree(&layout, &mut panel_splits)?;
@@ -105,35 +113,45 @@ impl super::Editor {
             .grouped_subtrees
             .insert(group_leaf_id, grouped_node);
 
-        // Create SplitViewState for each inner panel leaf
-        let (tw, th) = (self.terminal_width, self.terminal_height);
+        // Create SplitViewState for each inner panel leaf. A panel on a
+        // borrowed buffer opens where the pane that will hold the group was
+        // in it, as `return_to_borrowed_buffer` hands it back on close.
+        let host_split = self.active_window().split_manager().active_split();
         for (panel_name, leaf_id) in &panel_splits {
             let buffer_id = *panel_buffers
                 .get(panel_name)
                 .ok_or(format!("Panel '{}' has no buffer", panel_name))?;
-            let mut vs = SplitViewState::with_buffer(tw, th, buffer_id);
-            // All panels inside a group suppress chrome — the parent split's
-            // tab bar is the only tab bar shown.
-            vs.suppress_chrome = true;
-            vs.hide_tilde = true;
-            if let Some(bs) = vs.buffer_state_mut(buffer_id) {
-                bs.show_line_numbers = false;
-                bs.highlight_current_line = false;
-                // Panel content is composed by the plugin at a width it
-                // already knows (it truncates or pre-wraps its own rows), so
-                // soft-wrapping it again just re-flows lines the plugin laid
-                // out — a diff row spilling onto three screen rows, say. Panels
-                // never wrap; the horizontal scrollbar handles overflow.
-                bs.viewport.line_wrap_enabled = false;
+            let is_borrowed = borrowed.contains(&buffer_id);
+            let mut vs = self.panel_view_state(buffer_id, is_borrowed);
+            let host_view = is_borrowed
+                .then(|| {
+                    let host = self.active_window().split_view_states().get(&host_split)?;
+                    let bs = host.buffer_state(buffer_id)?;
+                    Some((bs.cursors.clone(), bs.viewport.anchor))
+                })
+                .flatten();
+            if let (Some((cursors, anchor)), Some(bs)) = (host_view, vs.buffer_state_mut(buffer_id))
+            {
+                bs.cursors = cursors;
+                bs.viewport.anchor = anchor;
             }
             self.active_window_mut()
                 .split_view_states_mut()
                 .insert(*leaf_id, vs);
         }
 
-        // Mark all panel buffers as hidden from tabs so they don't appear
-        // in quick-switch or the buffer list.
-        for buffer_id in panel_buffers.values() {
+        // Everything below is for the buffers the group owns. A borrowed
+        // buffer stays an ordinary buffer: in its tabs, in quick-switch, and
+        // routed and keyed as usual.
+        let owned_buffers: Vec<BufferId> = panel_buffers
+            .values()
+            .copied()
+            .filter(|b| !borrowed.contains(b))
+            .collect();
+
+        // Mark the owned panel buffers as hidden from tabs so they don't
+        // appear in quick-switch or the buffer list.
+        for buffer_id in &owned_buffers {
             if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(buffer_id) {
                 meta.hidden_from_tabs = true;
             }
@@ -145,7 +163,7 @@ impl super::Editor {
         // carry a stale cursor entry for the panel buffer, which later
         // collides with the panel's own view state in any lookup that
         // scans split_view_states by buffer id.
-        let hidden_panel_ids: Vec<BufferId> = panel_buffers.values().copied().collect();
+        let hidden_panel_ids = &owned_buffers;
         let panel_leaf_ids: std::collections::HashSet<LeafId> =
             panel_splits.values().copied().collect();
         for (leaf_id, vs) in self.active_window_mut().split_view_states_mut().iter_mut() {
@@ -180,13 +198,15 @@ impl super::Editor {
             mode,
             layout,
             panel_buffers: panel_buffers.clone(),
-            panel_splits,
+            panel_splits: panel_splits.clone(),
             hidden_panels: std::collections::HashSet::new(),
+            borrowed_buffers: borrowed,
             representative_split: Some(group_leaf_id),
         };
 
-        // Register reverse mapping
-        for buffer_id in panel_buffers.values() {
+        // Register reverse mapping, which routes `showBuffer` to the group
+        // and gives the buffer the group's mode
+        for buffer_id in &owned_buffers {
             self.active_window_mut()
                 .buffer_to_group
                 .insert(*buffer_id, group_id);
@@ -202,9 +222,15 @@ impl super::Editor {
             .map(|(name, bid)| (name.clone(), bid.0 as u64))
             .collect();
 
+        let panel_splits = panel_splits
+            .iter()
+            .map(|(name, leaf)| (name.clone(), leaf.0 .0 as u64))
+            .collect();
+
         Ok(BufferGroupResult {
             group_id: group_id.0 as u64,
             panels,
+            panel_splits,
         })
     }
 
@@ -281,9 +307,40 @@ impl super::Editor {
         desc: &LayoutDesc,
         mode: &str,
         panel_buffers: &mut HashMap<String, BufferId>,
+        borrowed: &mut std::collections::HashSet<BufferId>,
     ) -> Result<GroupLayoutNode, String> {
         match desc {
-            LayoutDesc::Scrollable { id, scrollable } => {
+            LayoutDesc::Scrollable {
+                id,
+                buffer_id: Some(existing),
+                ..
+            } => {
+                let buffer_id = self.borrow_panel_buffer(id, *existing, panel_buffers, borrowed)?;
+                Ok(GroupLayoutNode::Scrollable {
+                    id: id.clone(),
+                    buffer_id: Some(buffer_id),
+                    split_id: None,
+                })
+            }
+            LayoutDesc::Fixed {
+                id,
+                height,
+                buffer_id: Some(existing),
+                ..
+            } => {
+                let buffer_id = self.borrow_panel_buffer(id, *existing, panel_buffers, borrowed)?;
+                Ok(GroupLayoutNode::Fixed {
+                    id: id.clone(),
+                    height: *height,
+                    buffer_id: Some(buffer_id),
+                    split_id: None,
+                })
+            }
+            LayoutDesc::Scrollable {
+                id,
+                scrollable,
+                buffer_id: None,
+            } => {
                 let scrollable = scrollable.unwrap_or(true);
                 let buffer_id = self.active_window_mut().create_virtual_buffer(
                     format!("*{}*", id),
@@ -313,6 +370,7 @@ impl super::Editor {
                 id,
                 height,
                 scrollable,
+                buffer_id: None,
             } => {
                 let scrollable = scrollable.unwrap_or(false);
                 let buffer_id = self.active_window_mut().create_virtual_buffer(
@@ -351,8 +409,8 @@ impl super::Editor {
                 } else {
                     SplitDirection::Horizontal
                 };
-                let first_node = self.build_group_layout(first, mode, panel_buffers)?;
-                let second_node = self.build_group_layout(second, mode, panel_buffers)?;
+                let first_node = self.build_group_layout(first, mode, panel_buffers, borrowed)?;
+                let second_node = self.build_group_layout(second, mode, panel_buffers, borrowed)?;
                 Ok(GroupLayoutNode::Split {
                     direction: dir,
                     ratio: *ratio,
@@ -361,6 +419,62 @@ impl super::Editor {
                 })
             }
         }
+    }
+
+    /// Record that panel `id` shows the existing buffer `existing`, which the
+    /// group borrows rather than owns: its flags are left as they are.
+    #[cfg(feature = "plugins")]
+    fn borrow_panel_buffer(
+        &self,
+        id: &str,
+        existing: usize,
+        panel_buffers: &mut HashMap<String, BufferId>,
+        borrowed: &mut std::collections::HashSet<BufferId>,
+    ) -> Result<BufferId, String> {
+        let buffer_id = BufferId(existing);
+        if self.active_window().buffers.get(&buffer_id).is_none() {
+            return Err(format!("Panel '{}': no buffer {}", id, existing));
+        }
+        panel_buffers.insert(id.to_string(), buffer_id);
+        borrowed.insert(buffer_id);
+        Ok(buffer_id)
+    }
+
+    /// The view state a panel starts with. Every panel leaves the tab bar to
+    /// the pane showing the group. A panel on a buffer the group owns also
+    /// drops the editor's chrome, as the plugin lays its content out itself;
+    /// one on a borrowed buffer is set up like any pane opening that buffer.
+    #[cfg(feature = "plugins")]
+    fn panel_view_state(&self, buffer_id: BufferId, borrowed: bool) -> SplitViewState {
+        let mut vs =
+            SplitViewState::with_buffer(self.terminal_width, self.terminal_height, buffer_id);
+        vs.suppress_chrome = true;
+        vs.hide_tilde = true;
+        if borrowed {
+            let window = self.active_window();
+            let cfg = &self.config.editor;
+            if let Some(bs) = vs.buffer_state_mut(buffer_id) {
+                bs.apply_config_defaults(crate::view::split::ViewConfigDefaults {
+                    line_numbers: cfg.line_numbers,
+                    highlight_current_line: cfg.highlight_current_line,
+                    line_wrap: window.resolve_line_wrap_for_buffer(buffer_id),
+                    wrap_indent: cfg.wrap_indent,
+                    wrap_column: window.resolve_wrap_column_for_buffer(buffer_id),
+                    rulers: cfg.rulers.clone(),
+                    scroll_offset: cfg.scroll_offset,
+                });
+            }
+        } else if let Some(bs) = vs.buffer_state_mut(buffer_id) {
+            bs.show_line_numbers = false;
+            bs.highlight_current_line = false;
+            // Panel content is composed by the plugin at a width it
+            // already knows (it truncates or pre-wraps its own rows), so
+            // soft-wrapping it again just re-flows lines the plugin laid
+            // out — a diff row spilling onto three screen rows, say. Panels
+            // never wrap; the horizontal scrollbar handles overflow.
+            bs.viewport.line_wrap_enabled = false;
+        }
+        vs
     }
 
     /// Set content on a panel within a buffer group.
@@ -392,13 +506,17 @@ impl super::Editor {
     pub(super) fn close_buffer_group(&mut self, group_id: usize) {
         let bg_id = BufferGroupId(group_id);
         if let Some(group) = self.active_window_mut().buffer_groups.remove(&bg_id) {
-            // Remove reverse mappings
+            // Remove reverse mappings — only the group's own buffers have one
             for buffer_id in group.panel_buffers.values() {
-                self.active_window_mut().buffer_to_group.remove(buffer_id);
+                if !group.borrowed_buffers.contains(buffer_id) {
+                    self.active_window_mut().buffer_to_group.remove(buffer_id);
+                }
             }
 
             // Find the group_leaf_id (it's the `representative_split` now).
             if let Some(group_leaf_id) = group.representative_split {
+                self.active_window_mut()
+                    .return_to_borrowed_buffer(group_leaf_id, &group.borrowed_buffers);
                 // Remove the Grouped subtree from the side map
                 self.active_window_mut()
                     .grouped_subtrees
@@ -425,12 +543,24 @@ impl super::Editor {
                     .remove(split_id);
             }
 
-            // Close all panel buffers
+            // Close the panel buffers the group owns. Borrowed ones stay
+            // open: they were the user's before the group showed them.
             for buffer_id in group.panel_buffers.values() {
+                if group.borrowed_buffers.contains(buffer_id) {
+                    continue;
+                }
                 if let Err(e) = self.close_buffer(*buffer_id) {
                     tracing::warn!("Failed to close panel buffer {:?}: {}", buffer_id, e);
                 }
             }
+
+            self.plugin_manager.read().unwrap().run_hook(
+                "buffer_group_closed",
+                fresh_core::hooks::HookArgs::BufferGroupClosed {
+                    group_id: group_id as u64,
+                    window_id: self.active_window.0,
+                },
+            );
 
             // Ensure the active split now has a valid active_target.
             // If it was the group's tab, switch to the first available buffer tab.
@@ -440,6 +570,24 @@ impl super::Editor {
                     let _ = first_buf; // active_buffer is per-leaf; already set
                 }
             }
+        }
+    }
+
+    /// Close every group with a panel on `buffer_id` that it borrowed. Such a
+    /// group goes with the buffer: it has nothing else to show there.
+    pub(super) fn close_groups_borrowing(&mut self, buffer_id: BufferId) {
+        let groups: Vec<usize> = self
+            .active_window()
+            .buffer_groups
+            .values()
+            .filter(|g| {
+                g.borrowed_buffers.contains(&buffer_id)
+                    && g.panel_buffers.values().any(|b| *b == buffer_id)
+            })
+            .map(|g| g.id.0)
+            .collect();
+        for group_id in groups {
+            self.close_buffer_group(group_id);
         }
     }
 
@@ -522,7 +670,6 @@ impl super::Editor {
 
         // Panels shown for the first time need the same view state that
         // `create_buffer_group` gives every panel at create time.
-        let (tw, th) = (self.terminal_width, self.terminal_height);
         for (name, leaf_id) in &panel_splits {
             let has_state = self
                 .windows
@@ -541,14 +688,12 @@ impl super::Editor {
             else {
                 continue;
             };
-            let mut vs = SplitViewState::with_buffer(tw, th, buffer_id);
-            vs.suppress_chrome = true;
-            vs.hide_tilde = true;
-            if let Some(bs) = vs.buffer_state_mut(buffer_id) {
-                bs.show_line_numbers = false;
-                bs.highlight_current_line = false;
-                bs.viewport.line_wrap_enabled = false;
-            }
+            let borrowed = self
+                .active_window()
+                .buffer_groups
+                .get(&bg_id)
+                .is_some_and(|g| g.borrowed_buffers.contains(&buffer_id));
+            let vs = self.panel_view_state(buffer_id, borrowed);
             self.active_window_mut()
                 .split_view_states_mut()
                 .insert(*leaf_id, vs);
@@ -1019,6 +1164,59 @@ impl super::Editor {
 }
 
 impl crate::app::window::Window {
+    /// Whether `leaf` is a group panel showing `buffer_id` as a buffer its
+    /// group borrowed. Such a panel is no tab of the buffer: closing the
+    /// buffer's last tab closes the buffer, and with it the group.
+    pub(crate) fn is_borrowing_panel(&self, leaf: LeafId, buffer_id: BufferId) -> bool {
+        self.buffer_groups.values().any(|g| {
+            g.borrowed_buffers.contains(&buffer_id) && g.panel_splits.values().any(|l| *l == leaf)
+        })
+    }
+
+    /// A pane showing group `group_leaf` is about to show its buffer tab
+    /// again. When the group's focused panel shows a buffer the group
+    /// borrowed, and the pane has a tab of that buffer, the pane goes back to
+    /// it, where the user was in it: the panel's cursor and scroll. Otherwise
+    /// closing a source/preview pair could land the pane on whatever tab was
+    /// behind the group, or put the user back where they were before opening
+    /// it.
+    pub(crate) fn return_to_borrowed_buffer(
+        &mut self,
+        group_leaf: LeafId,
+        borrowed: &std::collections::HashSet<BufferId>,
+    ) {
+        let Some(vs_map) = self.buffers.split_view_states() else {
+            return;
+        };
+        let returns: Vec<_> = vs_map
+            .iter()
+            .filter_map(|(host, vs)| match vs.shown_group() {
+                Some((group, panel)) if group == group_leaf => Some((*host, panel)),
+                _ => None,
+            })
+            .filter_map(|(host, panel)| {
+                let panel_vs = vs_map.get(&panel)?;
+                let buffer = panel_vs.shown_buffer()?;
+                let bs = panel_vs.buffer_state(buffer)?;
+                let host_has_tab = vs_map.get(&host)?.has_buffer(buffer);
+                (borrowed.contains(&buffer) && host_has_tab)
+                    .then(|| (host, buffer, bs.cursors.clone(), bs.viewport.anchor))
+            })
+            .collect();
+        for (host, buffer, cursors, anchor) in returns {
+            self.set_pane_buffer(host, buffer);
+            if let Some(bs) = self
+                .buffers
+                .split_view_states_mut()
+                .and_then(|vs_map| vs_map.get_mut(&host))
+                .and_then(|vs| vs.buffer_state_mut(buffer))
+            {
+                bs.cursors = cursors;
+                bs.viewport.anchor = anchor;
+            }
+        }
+    }
+
     /// Look up the ratio of a split container that lives inside one of the
     /// stashed Grouped subtrees (i.e. not in the main split tree). Returns
     /// `None` if no grouped subtree contains this container.

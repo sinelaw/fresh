@@ -67,6 +67,10 @@ pub enum HookArgs {
     /// A buffer was closed
     BufferClosed { buffer_id: BufferId, window_id: u64 },
 
+    /// A buffer group was closed, by its plugin, by the user closing its
+    /// tab, or because a buffer it showed was closed
+    BufferGroupClosed { group_id: u64, window_id: u64 },
+
     /// Before text is inserted
     BeforeInsert {
         buffer_id: BufferId,

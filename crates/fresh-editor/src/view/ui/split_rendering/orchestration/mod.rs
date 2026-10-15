@@ -418,7 +418,7 @@ fn text_pane_content(
     s: &mut Stores<'_>,
     content_rect: Rect,
 ) -> Option<PaneContent> {
-    let (_, split_id, buffer_id, _) = pane;
+    let (_, split_id, buffer_id, kind) = pane;
     let FrameFacts {
         style,
         buffer_metadata,
@@ -436,7 +436,18 @@ fn text_pane_content(
         hide_current_line_on_selection,
         ..
     } = style.cfg;
-    let is_active = split_id == pass.active_split_id;
+    // The pane the user is in. For a buffer-group panel that is the group's
+    // focused panel: `active_split_id` names the outer pane showing the
+    // group, which is never one of its panels. Without this a panel with the
+    // keyboard has no caret, and a popup anchored to the caret has nothing
+    // to hang off.
+    let is_active = split_id == pass.active_split_id
+        || (kind == RenderKind::InnerLeaf
+            && s.split_view_states
+                .as_deref()
+                .and_then(|svs| svs.get(&pass.active_split_id))
+                .and_then(|vs| vs.shown_group())
+                .is_some_and(|(_, panel)| panel == split_id));
     let buffers = &mut *s.buffers;
     let event_logs = &mut *s.event_logs;
     let split_view_states = s.split_view_states.as_deref_mut();

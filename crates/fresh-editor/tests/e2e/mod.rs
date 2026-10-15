@@ -11,6 +11,8 @@ pub mod binary_file;
 pub mod block_selection;
 pub mod blog_showcases;
 pub mod bracket_highlight_settings;
+#[cfg(feature = "plugins")]
+pub mod buffer_group_file_panels;
 pub mod buffer_groups;
 #[cfg(feature = "plugins")]
 pub mod buffer_lifecycle;
@@ -260,6 +262,8 @@ pub mod markdown_fenced_code_highlighting;
 pub mod markdown_toc;
 #[cfg(feature = "plugins")]
 pub mod markdown_toc_chrome_focus;
+#[cfg(feature = "plugins")]
+pub mod markdown_view_modes;
 pub mod memory_scroll_leak;
 pub mod menu_bar;
 pub mod menu_cursor_bleed;

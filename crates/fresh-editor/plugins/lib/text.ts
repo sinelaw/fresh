@@ -21,3 +21,47 @@ export function byteLength(s: string): number {
   }
   return b;
 }
+
+/**
+ * `text` broken into lines of at most `width` columns, as `measure` counts
+ * them, at spaces where it can: the space a line breaks at is dropped, and a
+ * word wider than a line is cut. Iterates by code point, so a character
+ * outside the Basic Multilingual Plane is never split.
+ */
+export function wrapToWidth(text: string, width: number, measure: (s: string) => number): string[] {
+  if (width <= 0 || measure(text) <= width) return [text];
+  const lines: string[] = [];
+  let lineStart = 0;
+  let lastSpace = -1;
+  let col = 0;
+  let i = 0;
+  while (i < text.length) {
+    const charLen = text.codePointAt(i)! > 0xffff ? 2 : 1;
+    const ch = text.slice(i, i + charLen);
+    const w = measure(ch);
+    if (col + w > width && i > lineStart) {
+      if (ch === " ") {
+        // The space that overflows ends the line, and goes with it.
+        lines.push(text.slice(lineStart, i));
+        lineStart = i + 1;
+        col = 0;
+      } else if (lastSpace > lineStart) {
+        lines.push(text.slice(lineStart, lastSpace));
+        lineStart = lastSpace + 1;
+        col = measure(text.slice(lineStart, i + charLen));
+      } else {
+        lines.push(text.slice(lineStart, i));
+        lineStart = i;
+        col = w;
+      }
+      lastSpace = -1;
+      i += charLen;
+      continue;
+    }
+    if (ch === " ") lastSpace = i;
+    col += w;
+    i += charLen;
+  }
+  if (lineStart < text.length) lines.push(text.slice(lineStart));
+  return lines.length > 0 ? lines : [text];
+}

@@ -109,7 +109,15 @@ impl Window {
     /// caller fires the editor-wide plugin snapshot + hook), `false`
     /// if the requested buffer was already active.
     pub(super) fn set_active_buffer(&mut self, buffer_id: BufferId) -> bool {
-        if self.active_buffer() == buffer_id {
+        // Nothing to do when the pane already shows the buffer. A pane
+        // showing a group does not, even when the group's focused panel is
+        // on it (a file a panel borrowed): switching to the buffer's own
+        // tab leaves the group.
+        let shown = {
+            let (mgr, vs) = self.splits();
+            vs.get(&mgr.active_split()).and_then(|v| v.shown_buffer())
+        };
+        if shown == Some(buffer_id) {
             return false;
         }
 

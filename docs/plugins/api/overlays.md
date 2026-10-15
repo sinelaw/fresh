@@ -359,6 +359,10 @@ directly.
 setLayoutHints(bufferId: number, splitId: number | null, hints: LayoutHints): boolean;
 ```
 
+| Parameter | Description |
+|-----------|-------------|
+| `splitId` | The pane to set them in; omitted or `null`, the pane the user is in (inside a buffer group, its focused panel). |
+
 ## Folds
 
 ### `addFold`
