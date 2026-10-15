@@ -278,7 +278,7 @@ const fenceEditArmed = new Set<number>();
 
 /** Whether an edit's text could create or destroy a fence delimiter. */
 function touchesFenceChars(text: string): boolean {
-  return /[`~]/.test(text);
+  return /[`~$]/.test(text);
 }
 
 /** Total rendered width of a code block's frame, borders and side rails alike.
@@ -311,8 +311,896 @@ function buildCodeFrameLine(measure: number, left: string, right: string): strin
   return left + "─".repeat(inner) + right;
 }
 
+/** A horizontal frame line with a centered or left-aligned text label */
+function buildCodeFrameLineWithLabel(measure: number, left: string, right: string, label: string): string {
+  const lbl = ` ${label.trim()} `;
+  const lblW = displayWidth(lbl);
+  const totalW = codeFrameWidth(measure) - displayWidth(left) - displayWidth(right);
+  if (totalW < lblW + 2) {
+    return buildCodeFrameLine(measure, left, right);
+  }
+  const prefix = "──";
+  const suffix = "─".repeat(Math.max(1, totalW - displayWidth(prefix) - lblW));
+  return left + prefix + lbl + suffix + right;
+}
+
+function getFenceLanguage(lineContent: string): string {
+  const match = lineContent.trim().match(/^(`{3,}|~{3,})\s*([a-zA-Z0-9_\-]+)?/);
+  return match && match[2] ? match[2].toLowerCase() : "";
+}
+
 // fg matches the table frame's so the two kinds of block read as one system.
 const codeFrameStyle = { fg: "editor.fg", composeOnly: true };
+
+const MATH_VIRTUAL_LINE_NS = "md-math";
+const MERMAID_VIRTUAL_LINE_NS = "md-mermaid";
+const specialBlockRangesByBuffer = new Map<number, Array<{ start: number; end: number }>>();
+
+// =============================================================================
+// LaTeX Math Engine: Converts LaTeX formulas to Unicode
+// =============================================================================
+
+const GREEK_MAP: Record<string, string> = {
+  alpha: "α", beta: "β", gamma: "γ", delta: "δ", epsilon: "ε", varepsilon: "ε",
+  zeta: "ζ", eta: "η", theta: "θ", vartheta: "ϑ", iota: "ι", kappa: "κ",
+  lambda: "λ", mu: "μ", nu: "ν", xi: "ξ", pi: "π", varpi: "ϖ",
+  rho: "ρ", varrho: "ϱ", sigma: "σ", varsigma: "ς", tau: "τ", upsilon: "υ",
+  phi: "φ", varphi: "ϕ", chi: "χ", psi: "ψ", omega: "ω",
+  Gamma: "Γ", Delta: "Δ", Theta: "Θ", Lambda: "Λ", Xi: "Ξ",
+  Pi: "Π", Sigma: "Σ", Upsilon: "Υ", Phi: "Φ", Psi: "Ψ", Omega: "Ω",
+};
+
+const SYMBOL_MAP: Record<string, string> = {
+  times: "×", cdot: "·", div: "÷", pm: "±", mp: "∓",
+  leq: "≤", le: "≤", geq: "≥", ge: "≥", neq: "≠", ne: "≠",
+  approx: "≈", equiv: "≡", sim: "∼", simeq: "≃", cong: "≅", propto: "∝",
+  ll: "≪", gg: "≫",
+  infty: "∞", partial: "∂", nabla: "∇", hbar: "ℏ", ell: "ℓ",
+  sum: "∑", prod: "∏", coprod: "∐", int: "∫", iint: "∬", iiint: "∭", oint: "∮",
+  in: "∈", notin: "∉", ni: "∋", subset: "⊂", supset: "⊃",
+  subseteq: "⊆", supseteq: "⊇", cup: "∪", cap: "∩", setminus: "∖", emptyset: "∅",
+  forall: "∀", exists: "∃", nexists: "∄",
+  land: "∧", lor: "∨", neg: "¬", wedge: "∧", vee: "∨",
+  to: "→", rightarrow: "→", gets: "←", leftarrow: "←", leftrightarrow: "↔",
+  Rightarrow: "⇒", Leftarrow: "⇐", Leftrightarrow: "⇔", implies: "⇒", iff: "⇔",
+  mapsto: "↦", uparrow: "↑", downarrow: "↓",
+  angle: "∠", perp: "⊥", circ: "∘", bullet: "•", star: "⋆", ast: "∗",
+  cdots: "⋯", ldots: "…", vdots: "⋮", ddots: "⋱",
+  prime: "′", dag: "†", ddag: "‡", aleph: "ℵ", Re: "ℜ", Im: "ℑ",
+  oplus: "⊕", otimes: "⊗", odot: "⊙",
+  parallel: "∥", Vert: "‖", vert: "|",
+  langle: "⟨", rangle: "⟩", lfloor: "⌊", rfloor: "⌋", lceil: "⌈", rceil: "⌉",
+  quad: "  ", qquad: "    ",
+};
+
+const SUPERSCRIPT_MAP: Record<string, string> = {
+  "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
+  "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹",
+  "+": "⁺", "-": "⁻", "=": "⁼", "(": "⁽", ")": "⁾",
+  "a": "ᵃ", "b": "ᵇ", "c": "ᶜ", "d": "ᵈ", "e": "ᵉ", "f": "ᶠ", "g": "ᵍ",
+  "h": "ʰ", "i": "ⁱ", "j": "ʲ", "k": "ᵏ", "l": "ˡ", "m": "ᵐ", "n": "ⁿ",
+  "o": "ᵒ", "p": "ᵖ", "r": "ʳ", "s": "ˢ", "t": "ᵗ", "u": "ᵘ", "v": "ᵛ",
+  "w": "ʷ", "x": "ˣ", "y": "ʸ", "z": "ᶻ",
+  "A": "ᴬ", "B": "ᴮ", "D": "ᴰ", "E": "ᴱ", "G": "ᴳ", "H": "ᴴ", "I": "ᴵ",
+  "J": "ᴶ", "K": "ᴷ", "L": "ᴸ", "M": "ᴹ", "N": "ᴺ", "O": "ᴼ", "P": "ᴾ",
+  "R": "ᴿ", "T": "ᵀ", "U": "ᵁ", "V": "ⱽ", "W": "ᵂ",
+  "α": "ᵅ", "β": "ᵝ", "γ": "ᵞ", "δ": "ᵟ", "ε": "ᵋ", "θ": "ᶿ",
+};
+
+const SUBSCRIPT_MAP: Record<string, string> = {
+  "0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄",
+  "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉",
+  "+": "₊", "-": "₋", "=": "₌", "(": "₍", ")": "₎",
+  "a": "ₐ", "e": "ₑ", "h": "ₕ", "i": "ᵢ", "j": "ⱼ", "k": "ₖ", "l": "ₗ",
+  "m": "ₘ", "n": "ₙ", "o": "ₒ", "p": "ₚ", "r": "ᵣ", "s": "ₛ", "t": "ₜ",
+  "u": "ᵤ", "v": "ᵥ", "x": "ₓ",
+};
+
+function toSuperscript(str: string): string {
+  let res = "";
+  for (const ch of str) res += SUPERSCRIPT_MAP[ch] ?? ch;
+  return res;
+}
+
+function toSubscript(str: string): string {
+  let res = "";
+  for (const ch of str) res += SUBSCRIPT_MAP[ch] ?? ch;
+  return res;
+}
+
+function extractBalancedBraced(str: string, startIndex: number): { content: string; start: number; end: number } | null {
+  const braceIdx = str.indexOf("{", startIndex);
+  if (braceIdx === -1) return null;
+  if (braceIdx > 0 && str[braceIdx - 1] === "\\") return null;
+  let depth = 0;
+  for (let i = braceIdx; i < str.length; i++) {
+    if (str[i] === "{" && (i === 0 || str[i - 1] !== "\\")) {
+      depth++;
+    } else if (str[i] === "}" && (i === 0 || str[i - 1] !== "\\")) {
+      depth--;
+      if (depth === 0) {
+        return { content: str.slice(braceIdx + 1, i), start: braceIdx, end: i + 1 };
+      }
+    }
+  }
+  return null;
+}
+
+/** Render a LaTeX math formula to clear, readable Unicode mathematical notation */
+function renderLatexMath(latex: string): string {
+  let s = latex.trim();
+
+  // 1. Fractions (\frac{a}{b}) with balanced braces
+  let changed = true;
+  let passes = 0;
+  while (changed && passes++ < 10) {
+    changed = false;
+    const idx = s.indexOf("\\frac");
+    if (idx === -1) break;
+    const num = extractBalancedBraced(s, idx + 5);
+    if (!num) break;
+    const den = extractBalancedBraced(s, num.end);
+    if (!den) break;
+    const rNum = renderLatexMath(num.content);
+    const rDen = renderLatexMath(den.content);
+    let repl: string;
+    if (rNum === "1" && rDen === "2") repl = "½";
+    else if (rNum === "1" && rDen === "4") repl = "¼";
+    else if (rNum === "3" && rDen === "4") repl = "¾";
+    else if (rNum === "1" && rDen === "3") repl = "⅓";
+    else if (rNum === "2" && rDen === "3") repl = "⅔";
+    else {
+      const wrapNum = /[+\-=\s/]/.test(rNum) ? `(${rNum})` : rNum;
+      const wrapDen = /[+\-=\s/]/.test(rDen) ? `(${rDen})` : rDen;
+      repl = `${wrapNum}/${wrapDen}`;
+    }
+    s = s.slice(0, idx) + repl + s.slice(den.end);
+    changed = true;
+  }
+
+  // 2. Square roots: \sqrt[n]{x} or \sqrt{x} with balanced braces
+  changed = true;
+  passes = 0;
+  while (changed && passes++ < 10) {
+    changed = false;
+    const idx = s.indexOf("\\sqrt");
+    if (idx === -1) break;
+    let after = idx + 5;
+    while (after < s.length && /\s/.test(s[after])) after++;
+    let degree = "";
+    if (s[after] === "[") {
+      const closeB = s.indexOf("]", after);
+      if (closeB !== -1) {
+        degree = s.slice(after + 1, closeB).trim();
+        after = closeB + 1;
+      }
+    }
+    const inner = extractBalancedBraced(s, after);
+    if (!inner) break;
+    const rInner = renderLatexMath(inner.content);
+    const degPrefix = degree ? toSuperscript(degree) : "";
+    const repl = `${degPrefix}√(${rInner})`;
+    s = s.slice(0, idx) + repl + s.slice(inner.end);
+    changed = true;
+  }
+
+  // 3. Formatting macros: \mathbf{...}, \text{...}, etc.
+  changed = true;
+  passes = 0;
+  const macroRe = /\\(mathbf|mathrm|mathit|mathsf|mathtt|text|textbf|textit|mathbb|mathcal|boldsymbol)\s*\{/;
+  while (changed && passes++ < 10) {
+    changed = false;
+    const m = s.match(macroRe);
+    if (!m || m.index === undefined) break;
+    const inner = extractBalancedBraced(s, m.index + m[0].length - 1);
+    if (!inner) break;
+    const rInner = renderLatexMath(inner.content);
+    s = s.slice(0, m.index) + rInner + s.slice(inner.end);
+    changed = true;
+  }
+  s = s.replace(/\\operatorname\*?\s*\{([^{}]+)\}/g, "$1");
+
+  // 4. Parens / spacing
+  s = s.replace(/\\(left|right)\b/g, "");
+  s = s.replace(/\\([,;:!])/g, " ");
+  s = s.replace(/\\quad\b/g, "  ");
+  s = s.replace(/\\qquad\b/g, "    ");
+  s = s.replace(/\\\{/g, "{");
+  s = s.replace(/\\\}/g, "}");
+
+  // 5. Functions
+  s = s.replace(/\\(sin|cos|tan|arcsin|arccos|arctan|sinh|cosh|tanh|log|ln|exp|lim|min|max|deg|det|dim|gcd|ker|inf|sup)\b/g, "$1");
+
+  // 6. Greek letters and symbols
+  s = s.replace(/\\([A-Za-z]+)(?![A-Za-z])/g, (match, word) => GREEK_MAP[word] || SYMBOL_MAP[word] || match);
+
+  // 7. Superscripts with balanced braces
+  changed = true;
+  passes = 0;
+  while (changed && passes++ < 10) {
+    changed = false;
+    const idx = s.indexOf("^{");
+    if (idx === -1) break;
+    const inner = extractBalancedBraced(s, idx + 1);
+    if (!inner) break;
+    const rInner = renderLatexMath(inner.content);
+    const repl = toSuperscript(rInner);
+    s = s.slice(0, idx) + repl + s.slice(inner.end);
+    changed = true;
+  }
+  s = s.replace(/\^([0-9a-zA-Z+\-=()])/g, (_m, ch) => SUPERSCRIPT_MAP[ch] ?? ("^" + ch));
+
+  // 8. Subscripts with balanced braces
+  changed = true;
+  passes = 0;
+  while (changed && passes++ < 10) {
+    changed = false;
+    const idx = s.indexOf("_{");
+    if (idx === -1) break;
+    const inner = extractBalancedBraced(s, idx + 1);
+    if (!inner) break;
+    const rInner = renderLatexMath(inner.content);
+    const repl = toSubscript(rInner);
+    s = s.slice(0, idx) + repl + s.slice(inner.end);
+    changed = true;
+  }
+  s = s.replace(/_([0-9a-zA-Z+\-=()])/g, (_m, ch) => SUBSCRIPT_MAP[ch] ?? ("_" + ch));
+
+  // 9. Clean up multiple spaces
+  s = s.replace(/ {2,}/g, " ");
+
+  return s.trim();
+}
+
+// =============================================================================
+// Mermaid Diagram Engine: Parses Mermaid and renders to ASCII/Unicode
+// =============================================================================
+
+interface MermaidRenderResult {
+  title: string;
+  lines: string[];
+}
+
+interface FlowNode {
+  id: string;
+  label: string;
+  shape: "box" | "round" | "stadium" | "cylinder" | "diamond" | "circle" | "hexagon" | "flag";
+}
+
+interface FlowEdge {
+  from: string;
+  to: string;
+  label?: string;
+}
+
+function parseNodeDef(raw: string): FlowNode {
+  const m = raw.match(/^([A-Za-z0-9_\-]+)\s*(?:\(\[([^\]]+)\]\)|\(\(([^)]+)\)\)|\[\(([^)]+)\)\]|\{\{([^}]+)\}\}|\[([^[\]]+)\]|\(([^(]+)\)|\{([^{}]+)\}|>([^\]]+)\])?$/);
+  if (!m) return { id: raw, label: raw, shape: "box" };
+  const id = m[1];
+  if (m[2] !== undefined) return { id, label: m[2].trim(), shape: "stadium" };
+  if (m[3] !== undefined) return { id, label: m[3].trim(), shape: "circle" };
+  if (m[4] !== undefined) return { id, label: m[4].trim(), shape: "cylinder" };
+  if (m[5] !== undefined) return { id, label: m[5].trim(), shape: "hexagon" };
+  if (m[6] !== undefined) return { id, label: m[6].trim(), shape: "box" };
+  if (m[7] !== undefined) return { id, label: m[7].trim(), shape: "round" };
+  if (m[8] !== undefined) return { id, label: m[8].trim(), shape: "diamond" };
+  if (m[9] !== undefined) return { id, label: m[9].trim(), shape: "flag" };
+  return { id, label: id, shape: "box" };
+}
+
+function renderNodeBox(node: FlowNode): string[] {
+  const lbl = node.label;
+  const w = displayWidth(lbl);
+  const pad = 1;
+  const innerW = w + pad * 2;
+  const spaces = " ".repeat(pad);
+  if (node.shape === "round") {
+    return [
+      "╭" + "─".repeat(innerW) + "╮",
+      "│" + spaces + lbl + spaces + "│",
+      "╰" + "─".repeat(innerW) + "╯",
+    ];
+  }
+  if (node.shape === "diamond") {
+    return [
+      "◇ " + "─".repeat(Math.max(1, innerW - 2)) + " ◇",
+      "│" + spaces + lbl + spaces + "│",
+      "◇ " + "─".repeat(Math.max(1, innerW - 2)) + " ◇",
+    ];
+  }
+  if (node.shape === "stadium") {
+    return [
+      "([" + "─".repeat(innerW) + "])",
+      "│" + spaces + lbl + spaces + "│",
+      "([" + "─".repeat(innerW) + "])",
+    ];
+  }
+  if (node.shape === "circle") {
+    return [
+      "((" + "─".repeat(innerW) + "))",
+      "│" + spaces + lbl + spaces + "│",
+      "((" + "─".repeat(innerW) + "))",
+    ];
+  }
+  if (node.shape === "cylinder") {
+    return [
+      "⌠" + "─".repeat(innerW) + "⌡",
+      "│" + spaces + lbl + spaces + "│",
+      "⌡" + "─".repeat(innerW) + "⌠",
+    ];
+  }
+  return [
+    "┌" + "─".repeat(innerW) + "┐",
+    "│" + spaces + lbl + spaces + "│",
+    "└" + "─".repeat(innerW) + "┘",
+  ];
+}
+
+function renderMermaidFlowchart(rawLines: string[], maxWidth: number): MermaidRenderResult {
+  const first = rawLines[0].toLowerCase();
+  const isLR = first.includes("lr") || first.includes("rl");
+  const nodes = new Map<string, FlowNode>();
+  const edges: FlowEdge[] = [];
+
+  // Connector regex: -->|label|, -- label -->, -->, ---, -.->, ==>
+  const connRe = /(-->|---|-.->|==>|--\s*([^-]+?)\s*-->|-->\|([^|]+)\|)/;
+
+  for (let i = 1; i < rawLines.length; i++) {
+    const line = rawLines[i].trim();
+    if (!line || line.startsWith("%%")) continue;
+
+    // Handle chained connections e.g. A --> B --> C
+    const parts: string[] = [];
+    const edgeLabels: Array<string | undefined> = [];
+
+    let rem = line;
+    while (true) {
+      const match = rem.match(connRe);
+      if (!match || match.index === undefined) {
+        parts.push(rem.trim());
+        break;
+      }
+      parts.push(rem.slice(0, match.index).trim());
+      const label = match[2] || match[3] || undefined;
+      edgeLabels.push(label ? label.trim() : undefined);
+      rem = rem.slice(match.index + match[0].length).trim();
+    }
+
+    if (parts.length >= 2) {
+      for (let p = 0; p < parts.length - 1; p++) {
+        const fromNode = parseNodeDef(parts[p]);
+        const toNode = parseNodeDef(parts[p + 1]);
+        if (!nodes.has(fromNode.id) || fromNode.label !== fromNode.id) nodes.set(fromNode.id, fromNode);
+        if (!nodes.has(toNode.id) || toNode.label !== toNode.id) nodes.set(toNode.id, toNode);
+        edges.push({ from: fromNode.id, to: toNode.id, label: edgeLabels[p] });
+      }
+    } else if (parts.length === 1 && parts[0]) {
+      const single = parseNodeDef(parts[0]);
+      if (!nodes.has(single.id)) nodes.set(single.id, single);
+    }
+  }
+
+  if (nodes.size === 0) {
+    return { title: "Mermaid Flowchart", lines: ["(empty flowchart)"] };
+  }
+
+  const outLines: string[] = [];
+
+  if (isLR) {
+    // Horizontal layout
+    const orderedNodes: Array<{ node: FlowNode; edgeLabel?: string }> = [];
+    const seenNodeIds = new Set<string>();
+
+    for (let eIdx = 0; eIdx < edges.length; eIdx++) {
+      const e = edges[eIdx];
+      const fn = nodes.get(e.from) || { id: e.from, label: e.from, shape: "box" };
+      const tn = nodes.get(e.to) || { id: e.to, label: e.to, shape: "box" };
+      if (!seenNodeIds.has(fn.id)) {
+        orderedNodes.push({ node: fn, edgeLabel: e.label });
+        seenNodeIds.add(fn.id);
+      } else if (orderedNodes.length > 0 && orderedNodes[orderedNodes.length - 1].node.id === fn.id) {
+        orderedNodes[orderedNodes.length - 1].edgeLabel = e.label;
+      }
+      if (!seenNodeIds.has(tn.id)) {
+        orderedNodes.push({ node: tn });
+        seenNodeIds.add(tn.id);
+      }
+    }
+
+    if (orderedNodes.length === 0) {
+      for (const node of nodes.values()) {
+        orderedNodes.push({ node });
+      }
+    }
+
+    const row0: string[] = [];
+    const row1: string[] = [];
+    const row2: string[] = [];
+
+    for (let i = 0; i < orderedNodes.length; i++) {
+      const item = orderedNodes[i];
+      const box = renderNodeBox(item.node);
+      const boxW = Math.max(displayWidth(box[0]), displayWidth(box[1]), displayWidth(box[2] || ""));
+
+      row0.push(box[0].padEnd(boxW));
+      row1.push(box[1].padEnd(boxW));
+      row2.push((box[2] || "").padEnd(boxW));
+
+      if (i < orderedNodes.length - 1) {
+        const arrowText = item.edgeLabel ? ` ── ${item.edgeLabel} ──> ` : " ──────> ";
+        const arrowW = displayWidth(arrowText);
+        row0.push(" ".repeat(arrowW));
+        row1.push(arrowText);
+        row2.push(" ".repeat(arrowW));
+      }
+    }
+    outLines.push(row0.join(""), row1.join(""), row2.join(""));
+  } else {
+    // Vertical Top-Down layout: assign levels to prevent node duplication
+    const inDegree = new Map<string, number>();
+    const outMap = new Map<string, FlowEdge[]>();
+    for (const [id] of nodes) {
+      inDegree.set(id, 0);
+      outMap.set(id, []);
+    }
+    for (const e of edges) {
+      inDegree.set(e.to, (inDegree.get(e.to) || 0) + 1);
+      outMap.get(e.from)?.push(e);
+    }
+
+    const levels: string[][] = [];
+    const levelOf = new Map<string, number>();
+    const visited = new Set<string>();
+
+    let currentLevel: string[] = [];
+    for (const [id] of nodes) {
+      if ((inDegree.get(id) || 0) === 0) {
+        currentLevel.push(id);
+        visited.add(id);
+        levelOf.set(id, 0);
+      }
+    }
+    if (currentLevel.length === 0 && nodes.size > 0) {
+      const first = nodes.keys().next().value!;
+      currentLevel.push(first);
+      visited.add(first);
+      levelOf.set(first, 0);
+    }
+
+    while (currentLevel.length > 0) {
+      levels.push(currentLevel);
+      const nextLevel: string[] = [];
+      for (const u of currentLevel) {
+        for (const e of outMap.get(u) || []) {
+          if (!visited.has(e.to)) {
+            visited.add(e.to);
+            levelOf.set(e.to, levels.length);
+            nextLevel.push(e.to);
+          }
+        }
+      }
+      if (nextLevel.length === 0 && visited.size < nodes.size) {
+        for (const [id] of nodes) {
+          if (!visited.has(id)) {
+            visited.add(id);
+            levelOf.set(id, levels.length);
+            nextLevel.push(id);
+            break;
+          }
+        }
+      }
+      currentLevel = nextLevel;
+    }
+
+    for (let lvl = 0; lvl < levels.length; lvl++) {
+      const nodeIds = levels[lvl];
+      const boxes = nodeIds.map(id => renderNodeBox(nodes.get(id)!));
+      const maxBoxH = Math.max(...boxes.map(b => b.length));
+
+      for (let r = 0; r < maxBoxH; r++) {
+        let rowStr = "  ";
+        for (let b = 0; b < boxes.length; b++) {
+          const box = boxes[b];
+          const line = box[r] || " ".repeat(displayWidth(box[0]));
+          rowStr += line + (b < boxes.length - 1 ? "    " : "");
+        }
+        outLines.push(rowStr);
+      }
+
+      if (lvl < levels.length - 1) {
+        const nextNodeIds = levels[lvl + 1];
+        const crossEdges = edges.filter(e => nodeIds.includes(e.from) && nextNodeIds.includes(e.to));
+        const label = crossEdges.find(e => e.label)?.label;
+        const lblStr = label ? ` [${label}]` : "";
+        if (nodeIds.length === 1 && nextNodeIds.length === 1) {
+          const box0W = displayWidth(boxes[0][0]);
+          const center = 2 + Math.floor(box0W / 2);
+          outLines.push(" ".repeat(center) + "│" + lblStr);
+          outLines.push(" ".repeat(center) + "▼");
+        } else {
+          outLines.push("    │" + lblStr);
+          outLines.push("    ├───┐");
+          outLines.push("    ▼   ▼");
+        }
+      }
+    }
+
+    // Back-edges (cycles or cross-level edges)
+    const crossOrBack = edges.filter(e => {
+      const lFrom = levelOf.get(e.from);
+      const lTo = levelOf.get(e.to);
+      return lFrom !== undefined && lTo !== undefined && lTo <= lFrom;
+    });
+    for (const e of crossOrBack) {
+      const lbl = e.label ? ` [${e.label}]` : "";
+      outLines.push(`  ↺ ${e.from} ──> ${e.to}${lbl}`);
+    }
+  }
+
+  return { title: isLR ? "Mermaid Flowchart (LR)" : "Mermaid Flowchart (TD)", lines: outLines };
+}
+
+function renderMermaidSequence(rawLines: string[], maxWidth: number): MermaidRenderResult {
+  const participants: string[] = [];
+  const partMap = new Map<string, number>();
+  const aliasMap = new Map<string, string>();
+  const messages: Array<
+    | { type: "msg"; from: string; arrow: string; to: string; text: string }
+    | { type: "note"; participants: string[]; text: string }
+  > = [];
+
+  function addPart(id: string, label?: string): void {
+    const cleanId = id.trim();
+    if (!cleanId) return;
+    if (!partMap.has(cleanId)) {
+      partMap.set(cleanId, participants.length);
+      participants.push(cleanId);
+    }
+    if (label) aliasMap.set(cleanId, label.trim());
+  }
+
+  for (const line of rawLines) {
+    const pMatch = line.match(/^(?:participant|actor)\s+([A-Za-z0-9_\-]+)(?:\s+as\s+(.+))?/i);
+    if (pMatch) {
+      addPart(pMatch[1].trim(), pMatch[2] ? pMatch[2].trim() : undefined);
+      continue;
+    }
+    const mMatch = line.match(/^([A-Za-z0-9_]+)\s*(-->>|->>|-->|->|-\)|--\))\s*([A-Za-z0-9_]+)\s*:\s*(.+)$/);
+    if (mMatch) {
+      addPart(mMatch[1]);
+      addPart(mMatch[3]);
+      messages.push({
+        type: "msg",
+        from: mMatch[1],
+        arrow: mMatch[2],
+        to: mMatch[3],
+        text: mMatch[4].trim(),
+      });
+      continue;
+    }
+    const noteMatch = line.match(/^note\s+(?:(over|right\s+of|left\s+of)\s+([A-Za-z0-9_\-,\s]+))\s*:\s*(.+)$/i);
+    if (noteMatch) {
+      const pNames = noteMatch[2].split(",").map(s => s.trim());
+      for (const p of pNames) addPart(p);
+      messages.push({
+        type: "note",
+        participants: pNames,
+        text: noteMatch[3].trim(),
+      });
+    }
+  }
+
+  if (participants.length === 0) return { title: "Mermaid Sequence", lines: ["(empty sequence diagram)"] };
+
+  const spacing = Math.max(16, Math.min(26, Math.floor((maxWidth - 8) / participants.length)));
+  const colCenters = participants.map((_, i) => 4 + i * spacing);
+
+  const outLines: string[] = [];
+
+  // Top header boxes
+  let topRow0 = "";
+  let topRow1 = "";
+  let topRow2 = "";
+  for (let i = 0; i < participants.length; i++) {
+    const id = participants[i];
+    const name = aliasMap.get(id) || id;
+    const boxW = Math.max(6, displayWidth(name) + 2);
+    const box = [
+      "┌" + "─".repeat(boxW) + "┐",
+      "│ " + name + " │",
+      "└──┬" + "─".repeat(Math.max(0, boxW - 3)) + "┘",
+    ];
+    const targetPos = Math.max(0, colCenters[i] - Math.floor(boxW / 2));
+    topRow0 = topRow0.padEnd(targetPos) + box[0];
+    topRow1 = topRow1.padEnd(targetPos) + box[1];
+    topRow2 = topRow2.padEnd(targetPos) + box[2];
+  }
+  outLines.push(topRow0, topRow1, topRow2);
+
+  function makeLifelineRow(): string {
+    let row = "";
+    for (let i = 0; i < participants.length; i++) {
+      row = row.padEnd(colCenters[i]) + "│";
+    }
+    return row;
+  }
+
+  for (const item of messages) {
+    outLines.push(makeLifelineRow());
+    if (item.type === "note") {
+      const indices = item.participants.map(p => partMap.get(p) ?? 0);
+      const minCol = Math.min(...indices.map(idx => colCenters[idx]));
+      const maxCol = Math.max(...indices.map(idx => colCenters[idx]));
+      const noteW = Math.max(displayWidth(item.text) + 4, maxCol - minCol + 6);
+      const startPos = Math.max(0, minCol - 2);
+      outLines.push(" ".repeat(startPos) + "╭" + "─".repeat(noteW - 2) + "╮");
+      outLines.push(" ".repeat(startPos) + "│ " + item.text.padEnd(noteW - 4) + " │");
+      outLines.push(" ".repeat(startPos) + "╰" + "─".repeat(noteW - 2) + "╯");
+      continue;
+    }
+
+    const fromIdx = partMap.get(item.from) ?? 0;
+    const toIdx = partMap.get(item.to) ?? 0;
+    const c1 = colCenters[fromIdx];
+    const c2 = colCenters[toIdx];
+
+    if (c1 < c2) {
+      let row = "";
+      for (let i = 0; i < fromIdx; i++) row = row.padEnd(colCenters[i]) + "│";
+      row = row.padEnd(c1) + "│";
+      const span = c2 - c1 - 1;
+      const isDashed = item.arrow.startsWith("--");
+      const label = ` ${item.text} `;
+      const dash = isDashed ? "- " : "─";
+      let shaft = "";
+      while (shaft.length < Math.max(0, span - displayWidth(label) - 1)) shaft += dash;
+      const half = Math.floor(shaft.length / 2);
+      const arrowStr = shaft.slice(0, half) + label + shaft.slice(half) + ">";
+      row += arrowStr.padEnd(span) + "│";
+      for (let i = toIdx + 1; i < participants.length; i++) row = row.padEnd(colCenters[i]) + "│";
+      outLines.push(row);
+    } else if (c1 > c2) {
+      let row = "";
+      for (let i = 0; i < toIdx; i++) row = row.padEnd(colCenters[i]) + "│";
+      row = row.padEnd(c2) + "│<";
+      const span = c1 - c2 - 1;
+      const isDashed = item.arrow.startsWith("--");
+      const label = ` ${item.text} `;
+      const dash = isDashed ? "- " : "─";
+      let shaft = "";
+      while (shaft.length < Math.max(0, span - displayWidth(label) - 2)) shaft += dash;
+      const half = Math.floor(shaft.length / 2);
+      const arrowStr = shaft.slice(0, half) + label + shaft.slice(half);
+      row += arrowStr.padEnd(span - 1) + "│";
+      for (let i = fromIdx + 1; i < participants.length; i++) row = row.padEnd(colCenters[i]) + "│";
+      outLines.push(row);
+    } else {
+      // Self message
+      let row = "";
+      for (let i = 0; i < fromIdx; i++) row = row.padEnd(colCenters[i]) + "│";
+      row = row.padEnd(c1) + `│──┐ ${item.text}`;
+      outLines.push(row);
+      let retRow = "";
+      for (let i = 0; i < fromIdx; i++) retRow = retRow.padEnd(colCenters[i]) + "│";
+      retRow = retRow.padEnd(c1) + "│<─┘";
+      outLines.push(retRow);
+    }
+  }
+
+  outLines.push(makeLifelineRow());
+
+  // Bottom footer boxes
+  let botRow0 = "";
+  let botRow1 = "";
+  for (let i = 0; i < participants.length; i++) {
+    const id = participants[i];
+    const name = aliasMap.get(id) || id;
+    const boxW = Math.max(6, displayWidth(name) + 2);
+    const box = [
+      "│ " + name + " │",
+      "└" + "─".repeat(boxW) + "┘",
+    ];
+    const targetPos = Math.max(0, colCenters[i] - Math.floor(boxW / 2));
+    botRow0 = botRow0.padEnd(targetPos) + box[0];
+    botRow1 = botRow1.padEnd(targetPos) + box[1];
+  }
+  outLines.push(botRow0, botRow1);
+
+  return { title: "Mermaid Sequence", lines: outLines };
+}
+
+function renderMermaidPie(rawLines: string[], maxWidth: number): MermaidRenderResult {
+  let title = "Pie Chart";
+  const items: Array<{ label: string; value: number }> = [];
+
+  for (const line of rawLines) {
+    const titleMatch = line.match(/^(?:pie\s+)?title\s+(.+)$/i);
+    if (titleMatch) {
+      title = titleMatch[1].trim().replace(/^["']|["']$/g, "");
+      continue;
+    }
+    const itemMatch = line.match(/^"?([^":]+)"?\s*:\s*([0-9.]+)/);
+    if (itemMatch && !line.toLowerCase().startsWith("pie")) {
+      items.push({ label: itemMatch[1].trim(), value: parseFloat(itemMatch[2]) });
+    }
+  }
+
+  const total = items.reduce((sum, it) => sum + it.value, 0);
+  const maxLabelLen = Math.max(4, ...items.map(it => displayWidth(it.label)));
+  const outLines: string[] = [];
+
+  outLines.push(`Pie: ${title}`);
+  outLines.push("─".repeat(Math.min(maxWidth - 4, Math.max(36, maxLabelLen + 30))));
+
+  for (const item of items) {
+    const pct = total > 0 ? (item.value / total) * 100 : 0;
+    const barLen = 16;
+    const filled = Math.round((pct / 100) * barLen);
+    const bar = "█".repeat(filled) + "░".repeat(barLen - filled);
+    const padLabel = item.label + " ".repeat(Math.max(0, maxLabelLen - displayWidth(item.label)));
+    const valStr = item.value.toString();
+    outLines.push(`  ${padLabel} │ ${valStr.padStart(5)} (${pct.toFixed(1).padStart(5)}%) [${bar}]`);
+  }
+
+  return { title: `Mermaid: ${title}`, lines: outLines };
+}
+
+function renderMermaidState(rawLines: string[], maxWidth: number): MermaidRenderResult {
+  const transitions: Array<{ from: string; to: string; event?: string }> = [];
+  const stateLabels = new Map<string, string>();
+
+  for (let i = 1; i < rawLines.length; i++) {
+    const line = rawLines[i].trim();
+    if (!line || line.startsWith("%%")) continue;
+
+    const descMatch = line.match(/^state\s+"([^"]+)"\s+as\s+([A-Za-z0-9_\-]+)/i);
+    if (descMatch) {
+      stateLabels.set(descMatch[2], descMatch[1]);
+      continue;
+    }
+
+    const m = line.match(/^(\[\*\]|[A-Za-z0-9_\-]+)\s*-->\s*(\[\*\]|[A-Za-z0-9_\-]+)(?:\s*:\s*(.+))?/);
+    if (m) {
+      transitions.push({
+        from: m[1],
+        to: m[2],
+        event: m[3] ? m[3].trim() : undefined,
+      });
+    }
+  }
+
+  const outLines: string[] = [];
+  const visited = new Set<string>();
+
+  for (let i = 0; i < transitions.length; i++) {
+    const tr = transitions[i];
+    if (!visited.has(tr.from)) {
+      if (tr.from === "[*]") {
+        outLines.push("   ● (Start)");
+      } else {
+        const lbl = stateLabels.get(tr.from) || tr.from;
+        outLines.push(...renderNodeBox({ id: tr.from, label: lbl, shape: "box" }));
+      }
+      visited.add(tr.from);
+    }
+
+    const eventText = tr.event ? ` [${tr.event}]` : "";
+    outLines.push("   │" + eventText);
+    outLines.push("   ▼");
+
+    if (i === transitions.length - 1 || !visited.has(tr.to)) {
+      if (tr.to === "[*]") {
+        outLines.push("   ◎ (End)");
+      } else {
+        const lbl = stateLabels.get(tr.to) || tr.to;
+        outLines.push(...renderNodeBox({ id: tr.to, label: lbl, shape: "box" }));
+      }
+      visited.add(tr.to);
+    }
+  }
+
+  if (transitions.length === 0) {
+    outLines.push("(empty state diagram)");
+  }
+
+  return { title: "Mermaid State Diagram", lines: outLines };
+}
+
+function renderMermaidClass(rawLines: string[], maxWidth: number): MermaidRenderResult {
+  const classes = new Map<string, { name: string; members: string[] }>();
+  const relations: Array<{ from: string; rel: string; to: string; label?: string }> = [];
+
+  for (let i = 1; i < rawLines.length; i++) {
+    const line = rawLines[i].trim();
+    if (!line || line.startsWith("%%")) continue;
+
+    const relMatch = line.match(/^([A-Za-z0-9_\-]+)\s*(<\|--|--\|>|\*--|--\*|o--|--o|-->|<--)\s*([A-Za-z0-9_\-]+)(?:\s*:\s*(.+))?/);
+    if (relMatch) {
+      relations.push({ from: relMatch[1], rel: relMatch[2], to: relMatch[3], label: relMatch[4]?.trim() });
+      if (!classes.has(relMatch[1])) classes.set(relMatch[1], { name: relMatch[1], members: [] });
+      if (!classes.has(relMatch[3])) classes.set(relMatch[3], { name: relMatch[3], members: [] });
+      continue;
+    }
+
+    const memberMatch = line.match(/^([A-Za-z0-9_\-]+)\s*:\s*(.+)$/);
+    if (memberMatch) {
+      const cls = classes.get(memberMatch[1]) ?? { name: memberMatch[1], members: [] };
+      cls.members.push(memberMatch[2].trim());
+      classes.set(memberMatch[1], cls);
+      continue;
+    }
+
+    const classMatch = line.match(/^class\s+([A-Za-z0-9_\-]+)/);
+    if (classMatch) {
+      if (!classes.has(classMatch[1])) classes.set(classMatch[1], { name: classMatch[1], members: [] });
+    }
+  }
+
+  const outLines: string[] = [];
+  for (const [_, cls] of classes) {
+    const nameW = displayWidth(cls.name);
+    const memberW = cls.members.length ? Math.max(...cls.members.map(m => displayWidth(m))) : 0;
+    const boxInner = Math.max(10, Math.max(nameW, memberW) + 2);
+
+    outLines.push("┌" + "─".repeat(boxInner) + "┐");
+    outLines.push("│ " + cls.name.padEnd(boxInner - 2) + " │");
+    if (cls.members.length > 0) {
+      outLines.push("├" + "─".repeat(boxInner) + "┤");
+      for (const m of cls.members) {
+        outLines.push("│ " + m.padEnd(boxInner - 2) + " │");
+      }
+    }
+    outLines.push("└" + "─".repeat(boxInner) + "┘");
+  }
+
+  for (const r of relations) {
+    const lbl = r.label ? ` : ${r.label}` : "";
+    outLines.push(`  ${r.from} ${r.rel} ${r.to}${lbl}`);
+  }
+
+  if (classes.size === 0) outLines.push("(empty class diagram)");
+
+  return { title: "Mermaid Class Diagram", lines: outLines };
+}
+
+function renderMermaidDiagram(source: string, maxWidth: number): MermaidRenderResult {
+  const rawLines = source.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0 && !l.startsWith("%%"));
+  if (rawLines.length === 0) {
+    return { title: "Mermaid", lines: ["(empty diagram)"] };
+  }
+
+  const firstLine = rawLines[0].toLowerCase();
+  if (firstLine.startsWith("graph") || firstLine.startsWith("flowchart")) {
+    return renderMermaidFlowchart(rawLines, maxWidth);
+  }
+  if (firstLine.startsWith("sequencediagram")) {
+    return renderMermaidSequence(rawLines, maxWidth);
+  }
+  if (firstLine.startsWith("pie")) {
+    return renderMermaidPie(rawLines, maxWidth);
+  }
+  if (firstLine.startsWith("statediagram")) {
+    return renderMermaidState(rawLines, maxWidth);
+  }
+  if (firstLine.startsWith("classdiagram")) {
+    return renderMermaidClass(rawLines, maxWidth);
+  }
+
+  return {
+    title: "Mermaid Diagram",
+    lines: rawLines.slice(0, 15).map(l => "  " + l),
+  };
+}
+
+/** Formats a single rendered diagram row with side rails matching code frame width */
+function buildDiagramRow(content: string, blockMeasure: number, blockIndent: number): string {
+  const innerW = codeInnerWidth(blockMeasure);
+  const clamped = displayWidth(content) > innerW ? content.slice(0, innerW) : content;
+  const contentW = displayWidth(clamped);
+  const padRight = Math.max(0, innerW - contentW);
+  return " ".repeat(blockIndent) + RAIL_GLYPH + " " + clamped + " ".repeat(padRight) + " " + RAIL_GLYPH;
+}
+
 
 // =============================================================================
 // Code block side rails
@@ -978,6 +1866,7 @@ function parseMarkdownBlocks(text: string): ParsedBlock[] {
   const lines = text.split('\n');
   let byteOffset = 0;
   let inCodeBlock = false;
+  let inMathBlock = false;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -1010,6 +1899,44 @@ function parseMarkdownBlocks(text: string): ParsedBlock[] {
         startByte: lineStart,
         endByte: lineEnd,
         leadingIndent: 0,
+        marker: '',
+        markerStartByte: lineStart,
+        contentStartByte: lineStart,
+        content: line,
+        hangingIndent: 0,
+        forceHardBreak: true,
+      });
+      byteOffset = lineEnd + 1;
+      continue;
+    }
+
+    // Math block ($$)
+    if (trimmed.startsWith('$$')) {
+      if (trimmed === '$$' || !trimmed.slice(2).includes('$$')) {
+        inMathBlock = !inMathBlock;
+      }
+      blocks.push({
+        type: 'code-content',
+        startByte: lineStart,
+        endByte: lineEnd,
+        leadingIndent: line.length - line.trimStart().length,
+        marker: '',
+        markerStartByte: lineStart,
+        contentStartByte: lineStart,
+        content: line,
+        hangingIndent: 0,
+        forceHardBreak: true,
+      });
+      byteOffset = lineEnd + 1;
+      continue;
+    }
+
+    if (inMathBlock) {
+      blocks.push({
+        type: 'code-content',
+        startByte: lineStart,
+        endByte: lineEnd,
+        leadingIndent: line.length - line.trimStart().length,
         marker: '',
         markerStartByte: lineStart,
         contentStartByte: lineStart,
@@ -1333,6 +2260,9 @@ function clearComposeDecorations(bufferId: number): void {
   // Same for the inter-list-item spacer rows, so they can't linger as
   // orphaned virtual lines after compose is toggled off.
   editor.clearVirtualTextNamespace(bufferId, LIST_SPACING_NS);
+  editor.clearVirtualTextNamespace(bufferId, MERMAID_VIRTUAL_LINE_NS);
+  editor.clearVirtualTextNamespace(bufferId, MATH_VIRTUAL_LINE_NS);
+  specialBlockRangesByBuffer.delete(bufferId);
   // And the code blocks' side rails, which are inline virtual text rather
   // than virtual lines and so are not covered by the namespace clears.
   editor.removeVirtualTextsByPrefix(bufferId, CODE_RAIL_ID_PREFIX);
@@ -1604,7 +2534,7 @@ function charToByte(lineContent: string, charOffset: number, lineByteStart: numb
 // ---------------------------------------------------------------------------
 
 interface InlineSpan {
-  type: 'code' | 'bold-italic' | 'bold' | 'italic' | 'strikethrough' | 'link' | 'entity';
+  type: 'code' | 'bold-italic' | 'bold' | 'italic' | 'strikethrough' | 'link' | 'entity' | 'math';
   matchStart: number;    // char offset of full match start
   matchEnd: number;      // char offset of full match end
   contentStart: number;  // char offset of visible content start
@@ -1643,6 +2573,36 @@ function findInlineSpans(text: string): InlineSpan[] {
     return false;
   }
 
+  // 1.5 Inline math ($...$)
+  const mathSpanCharRanges: [number, number][] = [];
+  const mathRe = /(?<![\\$])\$(?!\$)([^$\n]+?)(?<![\\$])\$(?!\$)/g;
+  while ((m = mathRe.exec(text)) !== null) {
+    if (inCodeSpan(m.index)) continue;
+    const inner = m[1];
+    // Guard against currency like "$10 and $20"
+    const isMath = (!inner.startsWith(' ') && !inner.endsWith(' ')) || /[=+\-*\/\\^_{}()<>]/.test(inner);
+    if (!isMath) continue;
+    const ms = m.index;
+    const me = ms + m[0].length;
+    mathSpanCharRanges.push([ms, me]);
+    const rendered = renderLatexMath(inner);
+    spans.push({
+      type: 'math',
+      matchStart: ms, matchEnd: me,
+      contentStart: ms + 1, contentEnd: me - 1,
+      concealRanges: [
+        { start: ms, end: me, replacement: rendered },
+      ],
+    });
+  }
+
+  function inMathSpan(charPos: number): boolean {
+    for (const [s, e] of mathSpanCharRanges) {
+      if (charPos >= s && charPos < e) return true;
+    }
+    return false;
+  }
+
   // 2. Emphasis
   const emphasisPatterns: [RegExp, InlineSpan['type'], number][] = [
     [/\*{3}([^*]+)\*{3}/g, 'bold-italic', 3],
@@ -1653,7 +2613,7 @@ function findInlineSpans(text: string): InlineSpan[] {
   for (const [pattern, type, markerLen] of emphasisPatterns) {
     const re = new RegExp(pattern.source, pattern.flags);
     while ((m = re.exec(text)) !== null) {
-      if (inCodeSpan(m.index)) continue;
+      if (inCodeSpan(m.index) || inMathSpan(m.index)) continue;
       const ms = m.index;
       const me = ms + m[0].length;
       spans.push({
@@ -1672,7 +2632,7 @@ function findInlineSpans(text: string): InlineSpan[] {
   // 3. Links
   const linkRe = /(?<!!)\[([^\]]+)\]\(([^)]+)\)/g;
   while ((m = linkRe.exec(text)) !== null) {
-    if (inCodeSpan(m.index)) continue;
+    if (inCodeSpan(m.index) || inMathSpan(m.index)) continue;
     const ms = m.index;
     const me = ms + m[0].length;
     const textEnd = ms + 1 + m[1].length;
@@ -2005,6 +2965,7 @@ function processLineConceals(
    * stand down. Overlapping conceals over the same bytes would otherwise both
    * fire and the run would render twice. */
   joined = false,
+  specialBlockLineStarts?: Set<number>,
 ): void {
   // Clear existing conceals and overlays for this line first.
   // This ensures clear+add commands are sent together from the plugin thread
@@ -2014,6 +2975,12 @@ function processLineConceals(
   // Only clear our own emphasis overlays — clearing ALL overlays in the range
   // would also wipe editor-owned overlays like LSP diagnostics (issue #2146).
   editor.clearOverlaysInRangeForNamespace(bufferId, "md-emphasis", byteStart, byteEnd);
+
+  // If this line is part of a special block (Mermaid, Math fence, or multiline $$),
+  // return early so the dedicated block pass can apply unified block-scoped conceals.
+  if (specialBlockLineStarts && specialBlockLineStarts.has(byteStart)) {
+    return;
+  }
 
   // Activation scopes:
   //   - lineScopeInclEnd: "cursor anywhere on the line", including the
@@ -2036,16 +3003,24 @@ function processLineConceals(
   if (region === "body") return;
   if (region === "open" || region === "close") {
     const frameEnd = lineContentEndByte(lineContent, byteStart);
-    // A block indented into a list item keeps its indent as real text and puts
-    // the corner after it, so the box sits inside the item the way every other
-    // renderer draws it. Concealing from the line's start instead pulled the
-    // border back to the page's left edge, under text it belongs beside.
     const blockIndent = leadingIndent(lineContent);
     const frameStart = charToByte(lineContent, blockIndent, byteStart);
     const blockMeasure = Math.max(4, measure - blockIndent);
-    const frame = region === "open"
-      ? buildCodeFrameLine(blockMeasure, "┌", "┐")
-      : buildCodeFrameLine(blockMeasure, "└", "┘");
+    let frame: string;
+    if (region === "open") {
+      const lang = getFenceLanguage(lineContent);
+      if (lang === "mermaid") {
+        frame = buildCodeFrameLineWithLabel(blockMeasure, "┌", "┐", "Mermaid");
+      } else if (lang === "math") {
+        frame = buildCodeFrameLineWithLabel(blockMeasure, "┌", "┐", "Math");
+      } else if (lang === "latex" || lang === "katex") {
+        frame = buildCodeFrameLineWithLabel(blockMeasure, "┌", "┐", "LaTeX");
+      } else {
+        frame = buildCodeFrameLine(blockMeasure, "┌", "┐");
+      }
+    } else {
+      frame = buildCodeFrameLine(blockMeasure, "└", "┘");
+    }
     addComposeConceal(
       bufferId, "md-syntax", frameStart, frameEnd, frame,
       "unless-cursor-in", byteStart, lineScopeInclEnd,
@@ -2057,6 +3032,42 @@ function processLineConceals(
   // rather than guess a corner. Same conservative choice the table frame
   // makes for a row whose neighbour is off-screen.
   if (looksLikeFence(lineContent)) return;
+
+  // --- Display math: `$$formula$$` on a single line ---
+  const singleLineMath = trimmed.match(/^\$\$(.+)\$\$$/);
+  if (singleLineMath) {
+    const content = singleLineMath[1].trim();
+    const rendered = renderLatexMath(content);
+    const blockIndent = leadingIndent(lineContent);
+    const blockMeasure = Math.max(4, measure - blockIndent);
+    const frameStart = byteStart;
+    const frameEnd = lineContentEndByte(lineContent, byteStart);
+    const rowReplacement = buildDiagramRow(rendered, blockMeasure, blockIndent);
+
+    const cursorPos = editor.getCursorPosition();
+    const cursorOnLine = cursorPos >= byteStart && cursorPos <= lineScopeInclEnd;
+
+    if (!cursorOnLine) {
+      editor.addVirtualLine(
+        bufferId, byteStart,
+        " ".repeat(blockIndent) + buildCodeFrameLineWithLabel(blockMeasure, "┌", "┐", "Math"),
+        codeFrameStyle, true, MATH_VIRTUAL_LINE_NS, 0,
+      );
+    }
+    editor.addConceal(
+      bufferId, "md-syntax", frameStart, frameEnd, rowReplacement,
+      "unless-cursor-in", byteStart, lineScopeInclEnd,
+    );
+    editor.addOverlay(bufferId, "md-emphasis", frameStart, frameEnd, { fg: "syntax.constant", italic: true });
+    if (!cursorOnLine) {
+      editor.addVirtualLine(
+        bufferId, byteStart,
+        " ".repeat(blockIndent) + buildCodeFrameLine(blockMeasure, "└", "┘"),
+        codeFrameStyle, false, MATH_VIRTUAL_LINE_NS, 0,
+      );
+    }
+    return;
+  }
 
   // --- Thematic breaks: `---` / `***` / `___` → one full-measure rule ---
   // Rendered as a single conceal replacement rather than per-character
@@ -2505,6 +3516,9 @@ function processLineConceals(
       case 'code':
         addComposeOverlay(bufferId, "md-emphasis", byteCS, byteCE, { fg: "syntax.constant" });
         break;
+      case 'math':
+        editor.addOverlay(bufferId, "md-emphasis", byteMS, byteME, { fg: "syntax.constant", italic: true });
+        break;
       case 'bold':
         addComposeOverlay(bufferId, "md-emphasis", byteCS, byteCE, { bold: true });
         break;
@@ -2682,13 +3696,14 @@ function verbatimStates(lines: LineInfoLike[]): Array<boolean | null> {
   // what is being read as "no fence is in play here", and it is the same
   // reading the pre-scan makes of the whole document.
   const noFenceInSight = !lines.some(
-    (line) => isCodeRegion(line.region) || looksLikeFence(lineText(line)),
+    (line) => isCodeRegion(line.region) || looksLikeFence(lineText(line)) || lineText(line).trim().startsWith("$$"),
   );
   let inFence: boolean | null = noFenceInSight ? false : null;
   let fenceChar = "";
   let inHtml = false;
   let inIndentedCode = false;
   let inFrontMatter = false;
+  let inMath = false;
   // The next non-blank line opens a block, so it is the one that may open an
   // indented code block. True for the batch's own first line: the walk that
   // built it backed up to the run's start.
@@ -2702,6 +3717,7 @@ function verbatimStates(lines: LineInfoLike[]): Array<boolean | null> {
       inHtml = false;
       inIndentedCode = false;
       inFrontMatter = false;
+      inMath = false;
       atRunStart = true;
     }
     prevLineNumber = line.line_number;
@@ -2747,6 +3763,24 @@ function verbatimStates(lines: LineInfoLike[]): Array<boolean | null> {
       } else {
         out.push(null);
       }
+      continue;
+    }
+
+    const trimmed = text.trim();
+    if (trimmed.match(/^\$\$.+\$\$$/)) {
+      out.push(true);
+      continue;
+    }
+    if (inMath) {
+      out.push(true);
+      if (trimmed === "$$" || trimmed.endsWith("$$")) {
+        inMath = false;
+      }
+      continue;
+    }
+    if (trimmed === "$$" || trimmed.startsWith("$$")) {
+      inMath = true;
+      out.push(true);
       continue;
     }
 
@@ -2941,12 +3975,17 @@ function processFlowBlock(
   block: FlowBlock,
   width: number,
   blockIndents: Map<number, number>,
+  specialBodyLineStarts?: Set<number>,
 ): void {
   const head = block.lines[0];
   // Clear existing soft breaks for every line in the block, so a block that
   // has shrunk (an edit split it) leaves none behind.
   for (const line of block.lines) {
     editor.clearSoftBreaksInRange(bufferId, line.byte_start, line.byte_end);
+  }
+
+  if (specialBodyLineStarts && specialBodyLineStarts.has(head.byte_start)) {
+    return;
   }
 
   const lineContent = head.content;
@@ -3378,6 +4417,111 @@ editor.on("lines_changed", (data) => {
     }
   }
 
+  interface SpecialBlock {
+    kind: "mermaid" | "math";
+    lang?: string;
+    openLine: LineInfoLike;
+    closeLine: LineInfoLike;
+    bodyLines: LineInfoLike[];
+    blockIndent: number;
+  }
+
+  const specialBlocks: SpecialBlock[] = [];
+  const specialBodyLineStarts = new Set<number>();
+  const specialBlockLineStarts = new Set<number>();
+  {
+    let currentSpecial: {
+      kind: "mermaid" | "math";
+      lang?: string;
+      openLine: LineInfoLike;
+      bodyLines: LineInfoLike[];
+      blockIndent: number;
+      isFenced: boolean;
+    } | null = null;
+
+    for (let i = 0; i < data.lines.length; i++) {
+      const line = data.lines[i];
+      const trimmed = line.content.trim();
+
+      if (currentSpecial === null) {
+        if (line.region === "open" || looksLikeFence(line.content)) {
+          const lang = getFenceLanguage(line.content);
+          if (lang === "mermaid") {
+            currentSpecial = {
+              kind: "mermaid",
+              lang,
+              openLine: line,
+              bodyLines: [],
+              blockIndent: leadingIndent(line.content),
+              isFenced: true,
+            };
+            continue;
+          } else if (lang === "math" || lang === "latex" || lang === "katex") {
+            currentSpecial = {
+              kind: "math",
+              lang,
+              openLine: line,
+              bodyLines: [],
+              blockIndent: leadingIndent(line.content),
+              isFenced: true,
+            };
+            continue;
+          }
+        }
+        if (trimmed === "$$" || (trimmed.startsWith("$$") && !trimmed.slice(2).includes("$$"))) {
+          currentSpecial = {
+            kind: "math",
+            lang: "math",
+            openLine: line,
+            bodyLines: [],
+            blockIndent: leadingIndent(line.content),
+            isFenced: false,
+          };
+          continue;
+        }
+      } else {
+        if (currentSpecial.isFenced) {
+          if (line.region === "close" || (line.region !== "body" && looksLikeFence(line.content))) {
+            specialBlocks.push({
+              kind: currentSpecial.kind,
+              lang: currentSpecial.lang,
+              openLine: currentSpecial.openLine,
+              closeLine: line,
+              bodyLines: currentSpecial.bodyLines,
+              blockIndent: currentSpecial.blockIndent,
+            });
+            currentSpecial = null;
+          } else {
+            currentSpecial.bodyLines.push(line);
+          }
+        } else {
+          if (trimmed === "$$" || trimmed.endsWith("$$")) {
+            specialBlocks.push({
+              kind: "math",
+              lang: "math",
+              openLine: currentSpecial.openLine,
+              closeLine: line,
+              bodyLines: currentSpecial.bodyLines,
+              blockIndent: currentSpecial.blockIndent,
+            });
+            currentSpecial = null;
+          } else {
+            currentSpecial.bodyLines.push(line);
+          }
+        }
+      }
+    }
+
+    for (const sb of specialBlocks) {
+      specialBlockLineStarts.add(sb.openLine.byte_start);
+      specialBlockLineStarts.add(sb.closeLine.byte_start);
+      for (const bl of sb.bodyLines) {
+        specialBodyLineStarts.add(bl.byte_start);
+        specialBlockLineStarts.add(bl.byte_start);
+      }
+    }
+  }
+
   for (const line of data.lines) {
     // Clear this row's border range first (covers a row that stopped being a
     // table row, e.g. its pipes were deleted, and stale frames left a few bytes
@@ -3387,7 +4531,7 @@ editor.on("lines_changed", (data) => {
     // stops being code loses them. Re-added below only for `body` lines — the
     // delimiter rows draw their own corners as part of the border conceal.
     clearCodeRails(data.buffer_id, line.byte_start, line.byte_end);
-    if (line.region === "body") {
+    if (line.region === "body" && !specialBodyLineStarts.has(line.byte_start)) {
       emitCodeRails(
         data.buffer_id, line.content, line.byte_start, measure,
         blockIndents.get(line.byte_start) ?? 0,
@@ -3399,8 +4543,20 @@ editor.on("lines_changed", (data) => {
       data.buffer_id, LIST_SPACING_NS,
       line.byte_start, Math.max(line.byte_end, line.byte_start + 1),
     );
+    editor.clearVirtualLinesInRange(
+      data.buffer_id, MATH_VIRTUAL_LINE_NS,
+      line.byte_start, Math.max(line.byte_end, line.byte_start + 1),
+    );
+    editor.clearVirtualLinesInRange(
+      data.buffer_id, MERMAID_VIRTUAL_LINE_NS,
+      line.byte_start, Math.max(line.byte_end, line.byte_start + 1),
+    );
 
-    processLineConceals(data.buffer_id, line.content, line.byte_start, line.byte_end, measure, line.region, line.line_number, joined.has(line.byte_start));
+    processLineConceals(
+      data.buffer_id, line.content, line.byte_start, line.byte_end, measure,
+      line.region, line.line_number, joined.has(line.byte_start),
+      specialBlockLineStarts,
+    );
 
     // Blank row after each list item, so items read as discrete entries.
     //
@@ -3475,8 +4631,124 @@ editor.on("lines_changed", (data) => {
   // conceals by range — so emitting joins inside that loop would have the next
   // line's clear delete the join just added.
   for (const block of blocks) {
-    processFlowBlock(data.buffer_id, block, measure, blockIndents);
+    processFlowBlock(data.buffer_id, block, measure, blockIndents, specialBodyLineStarts);
   }
+
+  // Special blocks: Mermaid diagrams and LaTeX Math blocks
+  const cursorPos = editor.getCursorPosition();
+  const rangesForBuf: Array<{ start: number; end: number }> = [];
+
+  for (const line of data.lines) {
+    const trimmed = line.content.trim();
+    if (trimmed.match(/^\$\$(.+)\$\$$/)) {
+      rangesForBuf.push({ start: line.byte_start, end: line.byte_end + 1 });
+    }
+  }
+
+  for (const sb of specialBlocks) {
+    const scopeStart = sb.openLine.byte_start;
+    const scopeEnd = sb.closeLine.byte_end + 1;
+    rangesForBuf.push({ start: scopeStart, end: scopeEnd });
+
+    const blockIndent = sb.blockIndent;
+    const blockMeasure = Math.max(4, measure - blockIndent);
+    const cursorInBlock = cursorPos >= scopeStart && cursorPos <= scopeEnd;
+
+    if (sb.kind === "mermaid") {
+      const source = sb.bodyLines.map((l) => l.content.replace(/\r?\n$/, "")).join("\n");
+      const rendered = renderMermaidDiagram(source, blockMeasure);
+
+      // Open fence
+      const openStart = charToByte(sb.openLine.content, blockIndent, sb.openLine.byte_start);
+      const openEnd = lineContentEndByte(sb.openLine.content, sb.openLine.byte_start);
+      const openFrame = buildCodeFrameLineWithLabel(blockMeasure, "┌", "┐", rendered.title);
+      editor.addConceal(
+        data.buffer_id, "md-syntax", openStart, openEnd, openFrame,
+        "unless-cursor-in", scopeStart, scopeEnd,
+      );
+      editor.addOverlay(data.buffer_id, "md-emphasis", openStart, openEnd, codeFrameStyle);
+
+      // Close fence
+      const closeStart = charToByte(sb.closeLine.content, blockIndent, sb.closeLine.byte_start);
+      const closeEnd = lineContentEndByte(sb.closeLine.content, sb.closeLine.byte_start);
+      const closeFrame = buildCodeFrameLine(blockMeasure, "└", "┘");
+      editor.addConceal(
+        data.buffer_id, "md-syntax", closeStart, closeEnd, closeFrame,
+        "unless-cursor-in", scopeStart, scopeEnd,
+      );
+      editor.addOverlay(data.buffer_id, "md-emphasis", closeStart, closeEnd, codeFrameStyle);
+
+      // Body lines
+      const B = sb.bodyLines.length;
+      const M = rendered.lines.length;
+      for (let i = 0; i < B; i++) {
+        const bodyLine = sb.bodyLines[i];
+        const lineStart = bodyLine.byte_start;
+        const lineEnd = lineContentEndByte(bodyLine.content, bodyLine.byte_start);
+        if (i < M) {
+          const row = buildDiagramRow(rendered.lines[i], blockMeasure, blockIndent);
+          editor.addConceal(
+            data.buffer_id, "md-syntax", lineStart, lineEnd, row,
+            "unless-cursor-in", scopeStart, scopeEnd,
+          );
+          editor.addOverlay(data.buffer_id, "md-emphasis", lineStart, lineEnd, codeFrameStyle);
+        } else {
+          editor.addConceal(
+            data.buffer_id, "md-syntax", lineStart, lineEnd, "",
+            "unless-cursor-in", scopeStart, scopeEnd,
+          );
+        }
+      }
+
+      // Overflow visual rows as virtual lines (suppressed when cursor is in block)
+      if (!cursorInBlock && M > B) {
+        for (let i = B; i < M; i++) {
+          const row = buildDiagramRow(rendered.lines[i], blockMeasure, blockIndent);
+          editor.addVirtualLine(
+            data.buffer_id, sb.closeLine.byte_start, row,
+            codeFrameStyle, true, MERMAID_VIRTUAL_LINE_NS, i - B,
+          );
+        }
+      }
+    } else if (sb.kind === "math") {
+      const label = (sb.lang === "latex" || sb.lang === "katex") ? "LaTeX" : "Math";
+
+      // Open fence
+      const openStart = charToByte(sb.openLine.content, blockIndent, sb.openLine.byte_start);
+      const openEnd = lineContentEndByte(sb.openLine.content, sb.openLine.byte_start);
+      const openFrame = buildCodeFrameLineWithLabel(blockMeasure, "┌", "┐", label);
+      editor.addConceal(
+        data.buffer_id, "md-syntax", openStart, openEnd, openFrame,
+        "unless-cursor-in", scopeStart, scopeEnd,
+      );
+      editor.addOverlay(data.buffer_id, "md-emphasis", openStart, openEnd, codeFrameStyle);
+
+      // Close fence
+      const closeStart = charToByte(sb.closeLine.content, blockIndent, sb.closeLine.byte_start);
+      const closeEnd = lineContentEndByte(sb.closeLine.content, sb.closeLine.byte_start);
+      const closeFrame = buildCodeFrameLine(blockMeasure, "└", "┘");
+      editor.addConceal(
+        data.buffer_id, "md-syntax", closeStart, closeEnd, closeFrame,
+        "unless-cursor-in", scopeStart, scopeEnd,
+      );
+      editor.addOverlay(data.buffer_id, "md-emphasis", closeStart, closeEnd, codeFrameStyle);
+
+      // Body lines
+      for (const bodyLine of sb.bodyLines) {
+        const lineStart = bodyLine.byte_start;
+        const lineEnd = lineContentEndByte(bodyLine.content, bodyLine.byte_start);
+        const rendered = renderLatexMath(bodyLine.content.trim());
+        const row = buildDiagramRow(rendered, blockMeasure, blockIndent);
+        editor.addConceal(
+          data.buffer_id, "md-syntax", lineStart, lineEnd, row,
+          "unless-cursor-in", scopeStart, scopeEnd,
+        );
+        editor.addOverlay(data.buffer_id, "md-emphasis", lineStart, lineEnd, { fg: "syntax.constant", italic: true });
+      }
+    }
+  }
+
+  specialBlockRangesByBuffer.set(data.buffer_id, rangesForBuf);
 
   // Publish this batch's heading marks. Range-scoped to the batch's byte span
   // so headings outside it — the rest of the document, marked by the pre-scan
@@ -3565,13 +4837,22 @@ editor.on("after_delete", (data) => {
     void prescanHeadingMarkers(data.buffer_id);
   } else fenceEditArmed.add(data.buffer_id);
 });
-// cursor_moved: no handler. Cursor-dependent reveal/conceal and table-row
-// un/re-wrap are baked into the markers as activation scopes (emitted in the
-// lines_changed pass above) and evaluated by the renderer per frame — cursor
-// movement changes what's *active* without touching any marker, so it never
-// re-fires lines_changed, never bumps the conceal/soft-break versions, and
-// never invalidates the line-wrap cache or visual-row index.
+
+// Cursor movement: refresh lines only when crossing into or out of a special block
+// (Mermaid diagram with virtual lines or display math with virtual border lines).
+editor.on("cursor_moved", (data) => {
+  if (!isComposingInAnySplit(data.buffer_id)) return;
+  const ranges = specialBlockRangesByBuffer.get(data.buffer_id);
+  if (!ranges || ranges.length === 0) return;
+  const oldIdx = ranges.findIndex((r) => data.old_position >= r.start && data.old_position <= r.end);
+  const newIdx = ranges.findIndex((r) => data.new_position >= r.start && data.new_position <= r.end);
+  if (oldIdx !== newIdx) {
+    editor.refreshLines(data.buffer_id);
+  }
+});
+
 editor.on("buffer_closed", (data) => {
+  specialBlockRangesByBuffer.delete(data.buffer_id);
   // View state is cleaned up automatically when the buffer is removed from keyed_states
 });
 editor.on("viewport_changed", (data) => {
