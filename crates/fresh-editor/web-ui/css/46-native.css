@@ -193,5 +193,9 @@ body.macfam .native-panel.np-dock{background:var(--mac-sidebar)}
    bar is the display list's, at the pane's edge beside the page's column,
    dragged as in the terminal. */
 .native-panel.paged{overflow:hidden}
+/* Its rows were laid out to fill its column exactly (the rules, a fold
+   heading's hint at the right edge), and the column's margins are the
+   pane's: no inset of its own, or every full-width row runs over. */
+.native-panel.np-pane.paged{padding-left:0;padding-right:0}
 body.native-panels .tree-item.k-scrollbar[data-surface-kind="pane"]{visibility:visible}
 
