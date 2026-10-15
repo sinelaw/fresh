@@ -385,17 +385,22 @@ function codeInnerWidth(measure: number): number {
  * Shared by the rail pass and the soft-break pass so the two cannot disagree
  * about where the rows are, exactly as `widthsForRow` is shared for tables. */
 interface CodeRow { start: number; end: number }
-function codeRowLayout(text: string, measure: number): { breaks: number[]; rows: CodeRow[] } {
+function codeRowLayout(text: string, measure: number, continuationIndent = 0): { breaks: number[]; rows: CodeRow[] } {
   const inner = codeInnerWidth(measure);
   const breaks: number[] = [];
   const rows: CodeRow[] = [];
   let rowStart = 0;
   let lastSpace = -1;
   let column = 0;
+  let rowInner = inner;
 
-  for (let i = 0; i < text.length; i++) {
-    const w = displayWidth(text[i]);
-    if (column + w > inner && i > rowStart) {
+  let i = 0;
+  while (i < text.length) {
+    const cp = text.codePointAt(i)!;
+    const charLen = cp > 0xffff ? 2 : 1;
+    const ch = text.slice(i, i + charLen);
+    const w = displayWidth(ch);
+    if (column + w > rowInner && i > rowStart) {
       if (lastSpace > rowStart) {
         // Word break: the space ends the row and is consumed by it.
         breaks.push(lastSpace);
@@ -409,12 +414,14 @@ function codeRowLayout(text: string, measure: number): { breaks: number[]; rows:
         rowStart = i;
       }
       lastSpace = -1;
-      column = 0;
-      for (let j = rowStart; j <= i; j++) column += displayWidth(text[j]);
+      rowInner = Math.max(1, inner - continuationIndent);
+      column = displayWidth(text.slice(rowStart, i + charLen));
+      i += charLen;
       continue;
     }
-    if (text[i] === " ") lastSpace = i;
+    if (ch === " ") lastSpace = i;
     column += w;
+    i += charLen;
   }
   rows.push({ start: rowStart, end: text.length });
   return { breaks, rows };
@@ -459,13 +466,14 @@ function emitCodeRails(
   // The block's indent is real text on this line, drawn before the rail — so
   // the rail is anchored past it and the layout measures only what follows.
   const body = text.slice(blockIndent);
-  const { rows } = codeRowLayout(body, blockMeasure);
+  const codeIndent = body.length - body.trimStart().length;
+  const railIndent = Math.min(codeIndent, Math.max(0, inner - 1));
+  const { rows } = codeRowLayout(body, blockMeasure, railIndent);
   // A code line's indent WITHIN the block is real text too, so the first row
   // draws it and the rows it wraps onto do not — they would restart flush
   // against the rail, left of the code they continue. The rail supplies it for
   // those rows, because the wrap's own hanging indent would push the RAIL right
   // instead of the code.
-  const codeIndent = body.length - body.trimStart().length;
   // The renderer pads the rail to this column from the row it is drawing. A
   // width computed here lags: this pass is always an edit or two behind.
   const railColumn = { ...codeFrameStyle, padToColumn: codeFrameWidth(measure) };
@@ -1268,7 +1276,12 @@ function enableMarkdownCompose(bufferId: number): void {
   // wrap forced on in the source pane every time focus landed on the composing
   // one — this hook runs on `buffer_activated`, so merely switching between
   // the two rewrote the source pane's setting.
-  editor.setLineWrap(bufferId, editor.getActiveSplitId(), true);
+  // In duo mode, line wrap is kept off so horizontal scrollbars function and sync between splits.
+  if (duoSyncGroups.has(bufferId)) {
+    editor.setLineWrap(bufferId, editor.getActiveSplitId(), false);
+  } else {
+    editor.setLineWrap(bufferId, editor.getActiveSplitId(), true);
+  }
 
   // Set layout hints for centered margins. With no explicit session choice
   // this resolves to the configured page width (default 80), so compose opens
@@ -1289,21 +1302,6 @@ function enableMarkdownCompose(bufferId: number): void {
 // Disable compose mode for a buffer
 function disableMarkdownCompose(bufferId: number): void {
   if (isComposing(bufferId)) {
-    // Clear all table border virtual lines (one shared namespace) so the frame
-    // can't linger as orphaned virtual lines after compose is toggled off, and
-    // drop the per-table width memos.
-    editor.clearVirtualTextNamespace(bufferId, TABLE_BORDER_NS);
-    // Same for the inter-list-item spacer rows, so they can't linger as
-    // orphaned virtual lines after compose is toggled off.
-    editor.clearVirtualTextNamespace(bufferId, LIST_SPACING_NS);
-    // And the code blocks' side rails, which are inline virtual text rather
-    // than virtual lines and so are not covered by the namespace clears.
-    editor.removeVirtualTextsByPrefix(bufferId, CODE_RAIL_ID_PREFIX);
-    const memos = (editor.queryMarkers(bufferId, 0, 0x7fffffff) as Array<{ id: string }>) || [];
-    for (const m of memos) {
-      if (m.id.startsWith(TABLE_WIDTH_NS_PREFIX)) editor.deleteMarker(bufferId, m.id);
-    }
-
     // Tell Rust side this buffer is back in source mode
     editor.setViewMode(bufferId, "source");
 
@@ -1318,6 +1316,21 @@ function disableMarkdownCompose(bufferId: number): void {
     // either turned off keeps them off on the way out.
     editor.setFoldIndicators(bufferId, null);
     editor.setIndentationGuide(bufferId, null);
+
+    // Clear all table border virtual lines (one shared namespace) so the frame
+    // can't linger as orphaned virtual lines after compose is toggled off, and
+    // drop the per-table width memos.
+    editor.clearVirtualTextNamespace(bufferId, TABLE_BORDER_NS);
+    // Same for the inter-list-item spacer rows, so they can't linger as
+    // orphaned virtual lines after compose is toggled off.
+    editor.clearVirtualTextNamespace(bufferId, LIST_SPACING_NS);
+    // And the code blocks' side rails, which are inline virtual text rather
+    // than virtual lines and so are not covered by the namespace clears.
+    editor.removeVirtualTextsByPrefix(bufferId, CODE_RAIL_ID_PREFIX);
+    const memos = (editor.queryMarkers(bufferId, 0, 0x7fffffff) as Array<{ id: string }>) || [];
+    for (const m of memos) {
+      if (m.id.startsWith(TABLE_WIDTH_NS_PREFIX)) editor.deleteMarker(bufferId, m.id);
+    }
 
     // Clear layout hints, emphasis overlays, conceals, and soft breaks
     editor.setLayoutHints(bufferId, null, {});
@@ -1379,6 +1392,240 @@ function markdownToggleComposeAll(): void {
   }
 }
 registerHandler("markdownToggleComposeAll", markdownToggleComposeAll);
+
+// =============================================================================
+// Joplin-Style 3-Mode Markdown Viewing: Source, Rendered, Duo (Split View)
+// =============================================================================
+
+let nextScrollSyncGroupId = 9000;
+const duoSyncGroups: Map<number, number> = new Map(); // bufferId -> scrollSyncGroupId
+
+// Helper to get all splits showing a buffer, sorted by X coordinate (left to right)
+function getSplitsForBuffer(bufferId: number): SplitSnapshot[] {
+  const allSplits = editor.listSplits() || [];
+  return allSplits
+    .filter((s: SplitSnapshot) => s.bufferId === bufferId)
+    .sort((a: SplitSnapshot, b: SplitSnapshot) => a.x - b.x);
+}
+
+// Determine current view mode:
+// "source": single pane in source mode
+// "rendered": single pane in compose/rendered mode
+// "duo": two or more panes where at least one is composing and at least one is source
+function getMarkdownViewMode(bufferId: number): "source" | "rendered" | "duo" {
+  const info = editor.getBufferInfo(bufferId);
+  if (!info) return "source";
+  const splits = getSplitsForBuffer(bufferId);
+  if (duoSyncGroups.has(bufferId)) {
+    if (splits.length >= 2) {
+      return "duo";
+    } else {
+      const groupId = duoSyncGroups.get(bufferId);
+      if (groupId !== undefined) {
+        editor.removeScrollSyncGroup(groupId);
+        duoSyncGroups.delete(bufferId);
+      }
+    }
+  }
+  if (splits.length >= 2 && info.is_composing_in_any_split) {
+    return "duo";
+  }
+  if (info.view_mode === "compose") {
+    return "rendered";
+  }
+  return "source";
+}
+
+// Mode 1: Source (Editor only, unrendered text)
+async function markdownModeSource(targetBufferId?: number): Promise<void> {
+  try {
+    const bufferId = targetBufferId ?? editor.getActiveBufferId();
+    const info = editor.getBufferInfo(bufferId);
+    if (!info) return;
+
+    if (!isMarkdownFile(info.path)) {
+      editor.setStatus(editor.t("status.not_markdown_file"));
+      return;
+    }
+
+    const splits = getSplitsForBuffer(bufferId);
+
+    // If in duo mode (or multi-split), remove scroll sync group and close extra splits
+    if (splits.length > 1) {
+      const groupId = duoSyncGroups.get(bufferId);
+      if (groupId !== undefined) {
+        editor.removeScrollSyncGroup(groupId);
+        duoSyncGroups.delete(bufferId);
+      }
+      const leftSplit = splits[0].splitId;
+      for (let i = 1; i < splits.length; i++) {
+        editor.closeSplit(splits[i].splitId);
+      }
+      editor.focusSplit(leftSplit);
+    }
+
+    // Ensure the remaining split is in source mode
+    disableMarkdownCompose(bufferId);
+    editor.setViewMode(bufferId, "source");
+    editor.setLineNumbersDefault(bufferId, null);
+    await editor.flush();
+    editor.refreshLines(bufferId);
+    editor.setStatus(editor.t("status.mode_source"));
+  } catch (err) {
+    editor.debug(`markdownModeSource error: ${err}`);
+  }
+}
+registerHandler("markdownModeSource", markdownModeSource);
+
+// Mode 2: Rendered (Viewer only, full-screen rendered preview)
+async function markdownModeRendered(targetBufferId?: number): Promise<void> {
+  try {
+    const bufferId = targetBufferId ?? editor.getActiveBufferId();
+    const info = editor.getBufferInfo(bufferId);
+    if (!info) return;
+
+    if (!isMarkdownFile(info.path)) {
+      editor.setStatus(editor.t("status.not_markdown_file"));
+      return;
+    }
+
+    const splits = getSplitsForBuffer(bufferId);
+
+    // If in duo mode (or multi-split), remove scroll sync group and close extra splits
+    if (splits.length > 1) {
+      const groupId = duoSyncGroups.get(bufferId);
+      if (groupId !== undefined) {
+        editor.removeScrollSyncGroup(groupId);
+        duoSyncGroups.delete(bufferId);
+      }
+      const leftSplit = splits[0].splitId;
+      for (let i = 1; i < splits.length; i++) {
+        editor.closeSplit(splits[i].splitId);
+      }
+      editor.focusSplit(leftSplit);
+    }
+
+    // Ensure the single split is in compose/rendered mode
+    enableMarkdownCompose(bufferId);
+    await editor.flush();
+    editor.refreshLines(bufferId);
+    editor.setStatus(editor.t("status.mode_rendered"));
+  } catch (err) {
+    editor.debug(`markdownModeRendered error: ${err}`);
+  }
+}
+registerHandler("markdownModeRendered", markdownModeRendered);
+
+// Mode 3: Duo (Split view: half unrendered source, half rendered preview)
+async function markdownModeDuo(targetBufferId?: number): Promise<void> {
+  try {
+    const bufferId = targetBufferId ?? editor.getActiveBufferId();
+    const info = editor.getBufferInfo(bufferId);
+    if (!info) return;
+
+    if (!isMarkdownFile(info.path)) {
+      editor.setStatus(editor.t("status.not_markdown_file"));
+      return;
+    }
+
+    let splits = getSplitsForBuffer(bufferId);
+
+    // If more than 2 splits, close extraneous ones
+    if (splits.length > 2) {
+      for (let i = 2; i < splits.length; i++) {
+        editor.closeSplit(splits[i].splitId);
+      }
+      await editor.flush();
+      splits = getSplitsForBuffer(bufferId);
+    }
+
+    let leftSplitId: number;
+    let rightSplitId: number;
+
+    if (splits.length >= 2) {
+      leftSplitId = splits[0].splitId;
+      rightSplitId = splits[1].splitId;
+    } else {
+      // Split window vertically to create the right (preview) pane
+      const created = await editor.splitWindow({
+        direction: "vertical",
+        place: "after",
+      });
+      leftSplitId = created.sourceSplitId;
+      rightSplitId = created.splitId;
+    }
+
+    // Set up scroll sync group before enabling compose mode
+    const oldGroupId = duoSyncGroups.get(bufferId);
+    if (oldGroupId !== undefined) {
+      editor.removeScrollSyncGroup(oldGroupId);
+    }
+    const groupId = ++nextScrollSyncGroupId;
+    duoSyncGroups.set(bufferId, groupId);
+    editor.createScrollSyncGroup(groupId, leftSplitId, rightSplitId);
+
+    // Configure right split as compose preview
+    editor.focusSplit(rightSplitId);
+    enableMarkdownCompose(bufferId);
+    editor.setLineNumbersDefault(bufferId, false);
+    editor.setLineWrap(bufferId, rightSplitId, false);
+
+    // Configure left split as source editor
+    editor.focusSplit(leftSplitId);
+    editor.setViewMode(bufferId, "source");
+    editor.setLineNumbersDefault(bufferId, null);
+    editor.setLineWrap(bufferId, leftSplitId, false);
+
+    await editor.flush();
+    editor.refreshLines(bufferId);
+    editor.setStatus(editor.t("status.mode_duo"));
+  } catch (err) {
+    editor.debug(`markdownModeDuo error: ${err}`);
+  }
+}
+registerHandler("markdownModeDuo", markdownModeDuo);
+
+// Cycle between the 3 modes: Source -> Rendered -> Duo -> Source ...
+async function markdownCycleMode(): Promise<void> {
+  const bufferId = editor.getActiveBufferId();
+  const info = editor.getBufferInfo(bufferId);
+  if (!info) return;
+
+  if (!isMarkdownFile(info.path)) {
+    editor.setStatus(editor.t("status.not_markdown_file"));
+    return;
+  }
+
+  const currentMode = getMarkdownViewMode(bufferId);
+  if (currentMode === "source") {
+    await markdownModeRendered(bufferId);
+  } else if (currentMode === "rendered") {
+    await markdownModeDuo(bufferId);
+  } else {
+    await markdownModeSource(bufferId);
+  }
+}
+registerHandler("markdownCycleMode", markdownCycleMode);
+
+// Toggle between Duo mode and single view (Source)
+async function markdownToggleDuo(): Promise<void> {
+  const bufferId = editor.getActiveBufferId();
+  const info = editor.getBufferInfo(bufferId);
+  if (!info) return;
+
+  if (!isMarkdownFile(info.path)) {
+    editor.setStatus(editor.t("status.not_markdown_file"));
+    return;
+  }
+
+  const currentMode = getMarkdownViewMode(bufferId);
+  if (currentMode === "duo") {
+    await markdownModeSource(bufferId);
+  } else {
+    await markdownModeDuo(bufferId);
+  }
+}
+registerHandler("markdownToggleDuo", markdownToggleDuo);
 
 /**
  * Extract text content from incoming tokens
@@ -1575,7 +1822,12 @@ function concealedText(text: string): string {
 
 // Terminal column width (wide glyphs = 2), matching the renderer's layout.
 function displayWidth(text: string): number {
-  return editor.stringWidth(text);
+  if (!text) return 0;
+  try {
+    return editor.stringWidth(text);
+  } catch {
+    return text.length;
+  }
 }
 
 const MIN_COL_W = 3;
@@ -1620,23 +1872,37 @@ function distributeColumnWidths(maxW: number[], available: number): number[] {
  * Wrap text into lines of at most `width` characters, breaking at word boundaries.
  */
 function wrapText(text: string, width: number): string[] {
-  if (width <= 0 || text.length <= width) return [text];
+  if (width <= 0) return [text];
+  if (displayWidth(text) <= width) return [text];
   const lines: string[] = [];
-  let pos = 0;
-  while (pos < text.length) {
-    if (pos + width >= text.length) {
-      lines.push(text.slice(pos));
-      break;
+  let lineStart = 0;
+  let lastSpace = -1;
+  let col = 0;
+  let i = 0;
+  while (i < text.length) {
+    const cp = text.codePointAt(i)!;
+    const charLen = cp > 0xffff ? 2 : 1;
+    const ch = text.slice(i, i + charLen);
+    const w = displayWidth(ch);
+    if (col + w > width && i > lineStart) {
+      if (lastSpace > lineStart) {
+        lines.push(text.slice(lineStart, lastSpace));
+        lineStart = lastSpace + 1;
+      } else {
+        lines.push(text.slice(lineStart, i));
+        lineStart = i;
+      }
+      lastSpace = -1;
+      col = displayWidth(text.slice(lineStart, i + charLen));
+      i += charLen;
+      continue;
     }
-    let breakAt = text.lastIndexOf(' ', pos + width);
-    if (breakAt <= pos) {
-      breakAt = pos + width;
-      lines.push(text.slice(pos, breakAt));
-      pos = breakAt;
-    } else {
-      lines.push(text.slice(pos, breakAt));
-      pos = breakAt + 1;
-    }
+    if (ch === " ") lastSpace = i;
+    col += w;
+    i += charLen;
+  }
+  if (lineStart < text.length) {
+    lines.push(text.slice(lineStart));
   }
   return lines.length > 0 ? lines : [text];
 }
@@ -2811,7 +3077,10 @@ function processFlowBlock(
     const blockIndent = blockIndents.get(head.byte_start) ?? 0;
     const body = text.slice(blockIndent);
     const blockWidth = Math.max(4, width - blockIndent);
-    for (const charPos of codeRowLayout(body, blockWidth).breaks.map(
+    const inner = codeInnerWidth(blockWidth);
+    const codeIndent = body.length - body.trimStart().length;
+    const railIndent = Math.min(codeIndent, Math.max(0, inner - 1));
+    for (const charPos of codeRowLayout(body, blockWidth, railIndent).breaks.map(
       (p) => p + blockIndent,
     )) {
       // Indent 0, not the rail's width: the continuation row's own left rail
@@ -3407,6 +3676,11 @@ editor.on("after_delete", (data) => {
 // re-fires lines_changed, never bumps the conceal/soft-break versions, and
 // never invalidates the line-wrap cache or visual-row index.
 editor.on("buffer_closed", (data) => {
+  const groupId = duoSyncGroups.get(data.buffer_id);
+  if (groupId !== undefined) {
+    editor.removeScrollSyncGroup(groupId);
+    duoSyncGroups.delete(data.buffer_id);
+  }
   // View state is cleaned up automatically when the buffer is removed from keyed_states
 });
 editor.on("viewport_changed", (data) => {
@@ -3506,6 +3780,41 @@ editor.registerCommand(
   "%cmd.set_compose_width",
   "%cmd.set_compose_width_desc",
   "markdownSetComposeWidth",
+  null
+);
+
+editor.registerCommand(
+  "%cmd.mode_source",
+  "%cmd.mode_source_desc",
+  "markdownModeSource",
+  null
+);
+
+editor.registerCommand(
+  "%cmd.mode_rendered",
+  "%cmd.mode_rendered_desc",
+  "markdownModeRendered",
+  null
+);
+
+editor.registerCommand(
+  "%cmd.mode_duo",
+  "%cmd.mode_duo_desc",
+  "markdownModeDuo",
+  null
+);
+
+editor.registerCommand(
+  "%cmd.cycle_mode",
+  "%cmd.cycle_mode_desc",
+  "markdownCycleMode",
+  null
+);
+
+editor.registerCommand(
+  "%cmd.toggle_duo",
+  "%cmd.toggle_duo_desc",
+  "markdownToggleDuo",
   null
 );
 

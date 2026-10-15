@@ -891,3 +891,196 @@ fn the_caret_on_a_decoration_only_row_ignores_the_row_above() {
          above it, so the row is still inheriting that row's end-of-text column"
     );
 }
+
+#[cfg(feature = "plugins")]
+#[test]
+fn test_code_block_with_emojis_frames_completely() {
+    let md = r#"# Doc
+
+```markdown
+Actúa como un especialista en infraestructura de redes y evaluador de CENEVAL EGEL Plus en Computación.
+
+Quiero estudiar exclusivamente este topic específico que viene garantizado en el examen: "Protocolo de Enrutamiento OSPF (Open Shortest Path First): métrica de costo, algoritmo de estado de enlace (Dijkstra/SPF) y jerarquía con Área 0 (Backbone)".
+
+Estructura tu respuesta en las siguientes secciones:
+1. 🎯 INTRODUCCIÓN AL TOPIC:
+- ¿Qué es OSPF y por qué se clasifica como protocolo IGP de Estado de Enlace?
+- ¿Cómo se calcula exactamente la métrica de Costo de una interfaz FastEthernet vs GigabitEthernet?
+- ¿Por qué es obligatorio el concepto jerárquico de "Área 0" (Backbone)?
+2. ⚠️ TRAMPAS Y CONFUSIONES CLÁSICAS DE CENEVAL:
+- Distractores típicos que confunden OSPF con BGP (EGP de vector de rutas) o RIP (conteo de saltos límite 15).
+- Errores de cálculo al comparar interfaces FastEthernet vs GigabitEthernet sin ajustar el ancho de banda de referencia.
+
+3. 📝 EVALUACIÓN ACTIVA (3 REACTIVOS TIPO CENEVAL EGEL PLUS):
+- Genera 3 preguntas de opción múltiple (A, B, C, D) con escenarios prácticos:
+  * Reactivo 1: Cálculo de costo de interfaz o selección de mejor ruta por costo total.
+  * Reactivo 2: Función técnica obligatoria del Área 0 en una topología multi-área.
+  * Reactivo 3: Diferencia operativa entre Router Interno, ABR (Area Border Router) y ASBR.
+- Oculta las respuestas al final para que yo las resuelva primero.
+```
+
+Tail.
+"#;
+    let (mut harness, _tmp) = compose_harness(md);
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains('┌'))
+        .expect("compose mode should frame the fenced block");
+    park_cursor_at_top(&mut harness);
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains('┌'),
+        "Top border must be rendered:\n{screen}"
+    );
+
+    // Verify side rails │ are present on emoji lines (lines that previously crashed QuickJS)
+    let mut checked_emojis = 0;
+    for line in screen.lines() {
+        if line.contains("🎯") || line.contains("⚠️") || line.contains("📝") {
+            assert!(
+                line.contains('│'),
+                "Emoji line must have side rails:\n{line}"
+            );
+            checked_emojis += 1;
+        }
+    }
+    assert!(
+        checked_emojis >= 2,
+        "Expected at least 2 emoji lines on first screen, found {checked_emojis}"
+    );
+
+    // Scroll down to the bottom of the document to verify closing border └
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_async_quiescence(6).unwrap();
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains('└'))
+        .expect("closing border should render at the bottom of the block");
+
+    let bottom_screen = harness.screen_to_string();
+    assert!(
+        bottom_screen.contains('└'),
+        "Bottom border must be rendered:\n{bottom_screen}"
+    );
+}
+
+#[cfg(feature = "plugins")]
+#[test]
+fn test_image2_code_block_exact_demo_md() {
+    let md = r#"### 🌐 PROMPT 2: Redes de Computadoras (Subárea 2.3)
+**Topic Específico:** Protocolo de Enrutamiento OSPF (Métrica de Costo, Jerarquía de Área 0 y Algoritmo Dijkstra)
+
+```markdown
+Actúa como un especialista en infraestructura de redes y evaluador de CENEVAL EGEL Plus en Computación.
+
+Quiero estudiar exclusivamente este topic específico que viene garantizado en el examen: "Protocolo de Enrutamiento OSPF (Open Shortest Path First): métrica de costo, algoritmo de estado de enlace (Dijkstra/SPF) y jerarquía con Área 0 (Backbone)".
+
+Estructura tu respuesta en las siguientes secciones:
+
+1. 🎯 INTRODUCCIÓN AL TOPIC:
+   - ¿Qué es OSPF y por qué se clasifica como protocolo IGP de Estado de Enlace (Link-State) a diferencia de RIP (Vector Distancia)?
+   - ¿Cómo se calcula exactamente la métrica de Costo de una interfaz en OSPF? Explica la fórmula oficial: Costo = Ancho de banda de referencia / Ancho de banda de interfaz (con valores típicos por defecto).
+   - ¿Por qué es obligatorio el concepto jerárquico de "Área 0" (Backbone Area) en topologías multi-área y qué rol cumplen los routers ABR y ASBR?
+
+2. ⚠️ TRAMPAS Y CONFUSIONES CLÁSICAS DE CENEVAL:
+   - Distractores típicos que confunden OSPF con BGP (EGP de vector de rutas) o RIP (conteo de saltos límite 15).
+   - Errores de cálculo al comparar interfaces FastEthernet vs GigabitEthernet sin ajustar el ancho de banda de referencia.
+
+3. 📝 EVALUACIÓN ACTIVA (3 REACTIVOS TIPO CENEVAL EGEL PLUS):
+   - Genera 3 preguntas de opción múltiple (A, B, C, D) con estricta simetría:
+     * Reactivo 1: Cálculo de costo de interfaz o selección de mejor ruta OSPF.
+     * Reactivo 2: Función técnica obligatoria del Área 0 en una red inter-área.
+     * Reactivo 3: Diferencia operativa entre Router Interno, ABR y ASBR.
+   - Oculta las respuestas al final para que yo las resuelva primero y luego califiques mi razonamiento.
+```
+
+---
+
+### ⚙️ PROMPT 3: Compiladores (Subárea 2.2)
+"#;
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    std::fs::create_dir(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    std::fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "markdown_compose");
+    copy_plugin_lib(&plugins_dir);
+    let md_path = project_root.join("code.md");
+    std::fs::write(&md_path, md).unwrap();
+
+    let mut harness = EditorTestHarness::create(
+        60,
+        35,
+        HarnessOptions::new()
+            .with_working_dir(project_root.clone())
+            .without_empty_plugins_dir()
+            .with_full_grammar_registry(),
+    )
+    .unwrap();
+    harness.open_file(&md_path).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("Toggle Compose").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_async_quiescence(6).unwrap();
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains('┌'))
+        .expect("compose mode should frame the fenced block");
+    park_cursor_at_top(&mut harness);
+
+    let screen = harness.screen_to_string();
+    eprintln!("IMAGE2 SCREEN (WIDTH 60):\n{screen}");
+
+    // Scroll down 15 lines
+    for _ in 0..15 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.wait_for_async_quiescence(6).unwrap();
+    let screen2 = harness.screen_to_string();
+    eprintln!("IMAGE2 SCREEN SCROLLED (WIDTH 60):\n{screen2}");
+
+    // Check that every body line within the box has BOTH rails
+    let block_lines: Vec<&str> = screen2.lines().filter(|l| l.contains("│")).collect();
+    for line in block_lines {
+        let rail_count = line.chars().filter(|c| *c == '│').count();
+        assert_eq!(
+            rail_count, 2,
+            "Line must have exactly 2 rails (left and right), but has {rail_count}:\n{line}"
+        );
+    }
+
+    // Scroll down to the end of the document to bring the closing bottom border into view
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_async_quiescence(6).unwrap();
+    let screen3 = harness.screen_to_string();
+    eprintln!("IMAGE2 SCREEN END (WIDTH 60):\n{screen3}");
+
+    assert!(
+        screen3.contains('└'),
+        "Code block must have closing bottom border └:\n{screen3}"
+    );
+    assert!(
+        screen3.contains('┘'),
+        "Code block must have closing bottom border ┘:\n{screen3}"
+    );
+
+    // All body lines within the box must have both rails
+    for line in screen3.lines().filter(|l| l.contains('│')) {
+        let rail_count = line.chars().filter(|c| *c == '│').count();
+        assert_eq!(
+            rail_count, 2,
+            "Line must have exactly 2 rails (left and right), but has {rail_count}:\n{line}"
+        );
+    }
+}
