@@ -8,7 +8,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Features
 
-* **Markdown view modes** - Source, Rendered, and a side-by-side Source/Compose dual view, with commands to pick, cycle and toggle; also fixes wide-character (emoji, CJK) layout in code frames and tables (#3562, by @PilotLeoYan)
+* **Markdown Source / Rendered / Source+Compose modes** - new commands switch a Markdown pane between the raw text and the composed view, and a dual mode shows both side by side in one scroll-synced tab (edit on the source side; closing the tab leaves your file and panes as they were). "Cycle View Mode" steps through all three (#3562, by @PilotLeoYan)
 * **Debian testing/unstable package** - each release also attaches a `.debian-testing.deb` built from Debian's own packaged crates (#3519)
 
 ### Improvements
@@ -19,13 +19,14 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Bug Fixes
 
+* **Markdown compose layout with emoji and CJK text** - code-block frames keep their edges and wrapped table cells no longer start with a stray space or break early (#3562)
 * **Clear error in mintty / Git Bash** - Fresh now explains it needs a real console instead of failing with `os error 6` (#3547, #3549, reported by @netoffice-zz)
 * **git no longer hangs on a detached daemon** - `--wait` against a daemon with nothing attached no longer waits on an invisible editor (#3555)
 * **Plugin bundling uses a private temp directory**, closing a local-user file-overwrite risk (#3557)
 
 ### Internals
 
-* Editor support for side-by-side file panels in plugins (#3560)
+* Plugin buffer groups can show a file the user has open as an editable panel, with a new `buffer_group_closed` hook (#3560, #3562)
 
 ## 0.5.3
 
