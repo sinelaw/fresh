@@ -967,12 +967,7 @@ impl crate::app::Editor {
             self.config.editor.large_file_threshold_bytes as usize,
             std::sync::Arc::clone(&self.authority().filesystem),
         );
-        state
-            .margins
-            .configure_for_line_numbers(self.config.editor.line_numbers);
-        state
-            .buffer
-            .set_default_line_ending(self.config.editor.default_line_ending.to_line_ending());
+        state.apply_unnamed_buffer_config(&self.config);
         let metadata = crate::app::types::BufferMetadata::new();
         let event_log = crate::model::event::EventLog::new();
         let manager = SplitManager::new(buf);

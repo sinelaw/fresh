@@ -1137,10 +1137,7 @@ impl Editor {
             Arc::clone(&filesystem),
         );
         // Configure initial buffer settings from config
-        state
-            .margins
-            .configure_for_line_numbers(config.editor.line_numbers);
-        state.apply_buffer_config(&config);
+        state.apply_unnamed_buffer_config(&config);
         // Note: line_wrap_enabled is now stored in SplitViewState.viewport
         tracing::info!("EditorState created for buffer {:?}", buffer_id);
         buffers.insert(buffer_id, state);
