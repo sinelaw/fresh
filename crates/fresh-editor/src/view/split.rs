@@ -378,6 +378,17 @@ impl BufferViewState {
             self.compose_width = Some(width as u16);
         }
     }
+
+    /// Whether this view has a horizontal scroll at all. A wrapped view
+    /// doesn't, nor does one with horizontal scroll switched off (a plugin
+    /// widget panel), and neither does page view: it turns builtin wrap off,
+    /// but only because the compose plugin wraps every line to the page width
+    /// itself, so a `left_column` past zero just shifts those rows off screen.
+    pub fn pans_horizontally(&self) -> bool {
+        !self.viewport.line_wrap_enabled
+            && self.viewport.horizontal_scroll_enabled
+            && self.view_mode != ViewMode::PageView
+    }
 }
 
 impl Clone for BufferViewState {
@@ -1851,6 +1862,30 @@ impl SplitManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Only an unwrapped Source view with horizontal scroll on pans: scroll
+    /// sync copies a column to (and from) nothing else.
+    #[test]
+    fn only_an_unwrapped_scrollable_source_view_pans_horizontally() {
+        let unwrapped = || {
+            let mut state = BufferViewState::new(80, 24);
+            state.viewport.line_wrap_enabled = false;
+            state
+        };
+        assert!(unwrapped().pans_horizontally());
+
+        let mut wrapped = unwrapped();
+        wrapped.viewport.line_wrap_enabled = true;
+        assert!(!wrapped.pans_horizontally());
+
+        let mut panel = unwrapped();
+        panel.viewport.horizontal_scroll_enabled = false;
+        assert!(!panel.pans_horizontally());
+
+        let mut page = unwrapped();
+        page.activate_page_view(None);
+        assert!(!page.pans_horizontally());
+    }
 
     /// **A pane shows one tab, and the buffer behind a group is not on
     /// screen.** Showing a group leaves no shown buffer and no shown view

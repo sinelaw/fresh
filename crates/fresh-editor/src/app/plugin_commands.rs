@@ -128,6 +128,7 @@ impl Editor {
         namespace: Option<OverlayNamespace>,
         range: std::ops::Range<usize>,
         options: OverlayOptions,
+        compose_only: bool,
     ) {
         if let Some(state) = self
             .windows
@@ -136,17 +137,23 @@ impl Editor {
             .buffer_state_mut(buffer_id)
         {
             let face = OverlayFace::from_options(options.clone());
-            let event = Event::AddOverlay {
+            // Added directly rather than through an `AddOverlay` event, which
+            // has no `compose_only`: that event's only effect is this add.
+            // Overlays are ephemeral, not added to the event log for undo/redo.
+            let handle = state.add_overlay(
                 namespace,
                 range,
                 face,
-                priority: 10,
-                message: None,
-                extend_to_line_end: options.extend_to_line_end,
-                url: options.url.clone(),
-            };
-            state.apply(&mut Cursors::default(), &event);
-            // Note: Overlays are ephemeral, not added to event log for undo/redo
+                10,
+                None,
+                options.extend_to_line_end,
+                options.url.clone(),
+            );
+            if compose_only {
+                if let Some(overlay) = state.overlays.get_mut(&handle) {
+                    overlay.compose_only = true;
+                }
+            }
 
             // Request a re-render so overlays added asynchronously (e.g. after
             // an external process returns) become visible without requiring
@@ -424,6 +431,7 @@ impl Editor {
         before: bool,
         epoch: Option<u64>,
         pad_to_column: Option<u32>,
+        compose_only: bool,
     ) {
         if let Some(state) = self
             .windows
@@ -485,7 +493,7 @@ impl Editor {
                 None => return,
             };
 
-            state.virtual_texts.add_with_id_and_theme_keys(
+            let id = state.virtual_texts.add_with_id_and_theme_keys(
                 &mut state.marker_list,
                 position,
                 text,
@@ -497,6 +505,9 @@ impl Editor {
                 virtual_text_id,
                 pad_to_column,
             );
+            if compose_only {
+                state.virtual_texts.set_compose_only(id);
+            }
         }
     }
 
@@ -571,6 +582,7 @@ impl Editor {
         gutter_color_spec: Option<fresh_core::api::OverlayColorSpec>,
         text_overlays: Vec<fresh_core::api::VirtualLineTextOverlay>,
         epoch: Option<u64>,
+        compose_only: bool,
     ) {
         use crate::view::theme::named_color_from_str;
         use crate::view::virtual_text::{VirtualTextNamespace, VirtualTextPosition};
@@ -635,7 +647,7 @@ impl Editor {
             };
             let ns = VirtualTextNamespace::from_string(namespace);
 
-            state.virtual_texts.add_line_with_theme_keys(
+            let id = state.virtual_texts.add_line_with_theme_keys(
                 &mut state.marker_list,
                 position,
                 text,
@@ -649,6 +661,9 @@ impl Editor {
                 gutter_color_fallback,
                 text_overlays,
             );
+            if compose_only {
+                state.virtual_texts.set_compose_only(id);
+            }
         }
     }
 
@@ -746,6 +761,7 @@ impl Editor {
         replacement: Option<String>,
         epoch: Option<u64>,
         activation: Option<fresh_core::api::MarkerActivation>,
+        compose_only: bool,
     ) {
         if let Some(state) = self
             .windows
@@ -777,6 +793,7 @@ impl Editor {
                 start..end,
                 replacement,
                 activation,
+                compose_only,
             );
             #[cfg(feature = "plugins")]
             {

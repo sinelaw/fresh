@@ -153,6 +153,16 @@ pub struct VirtualText {
     /// Offsets are byte offsets within `text`. Used e.g. by live-diff
     /// to bold + underline removed words on deletion virtual lines.
     pub text_overlays: Vec<fresh_core::api::VirtualLineTextOverlay>,
+    /// Draw only in a pane showing the buffer in compose view.
+    ///
+    /// Decorations live on the buffer, but compose view is a property of a
+    /// pane, so a plugin composing one pane (markdown_compose's table
+    /// borders, code-block rails) would otherwise draw that frame around
+    /// the raw source in a sibling pane. Every render pass filters on this
+    /// one flag, so the passes cannot disagree about which rows exist: a
+    /// line suppressed in the token stream but not in the wrap index makes
+    /// the index describe rows the renderer never draws.
+    pub compose_only: bool,
 }
 
 impl VirtualText {
@@ -279,6 +289,7 @@ impl VirtualTextManager {
                 gutter_glyph: None,
                 gutter_color: None,
                 text_overlays: Vec::new(),
+                compose_only: false,
             },
         );
         self.bump_version();
@@ -341,6 +352,7 @@ impl VirtualTextManager {
                 gutter_glyph: None,
                 gutter_color: None,
                 text_overlays: Vec::new(),
+                compose_only: false,
             },
         );
         self.bump_version();
@@ -384,6 +396,7 @@ impl VirtualTextManager {
                 gutter_glyph: None,
                 gutter_color: None,
                 text_overlays: Vec::new(),
+                compose_only: false,
             },
         );
         self.bump_version();
@@ -434,6 +447,7 @@ impl VirtualTextManager {
                 gutter_glyph: None,
                 gutter_color: None,
                 text_overlays: Vec::new(),
+                compose_only: false,
             },
         );
 
@@ -529,11 +543,21 @@ impl VirtualTextManager {
                 gutter_glyph,
                 gutter_color,
                 text_overlays,
+                compose_only: false,
             },
         );
         self.bump_version();
 
         id
+    }
+
+    /// Mark the entry `id` as drawn only in compose view (see
+    /// [`VirtualText::compose_only`]). Called right after the add.
+    pub fn set_compose_only(&mut self, id: VirtualTextId) {
+        if let Some(vt) = self.texts.get_mut(&id) {
+            vt.compose_only = true;
+            self.bump_version();
+        }
     }
 
     /// Remove a virtual text entry by its string identifier

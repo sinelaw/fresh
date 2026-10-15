@@ -586,6 +586,18 @@ fn settle_views(editor: &mut Editor, window: fresh_core::WindowId, prepared: &mu
     if let Some(win) = editor.windows.get(&window) {
         win.clear_carets_except(&settled);
     }
+    // **A scroll-synced partner takes the focused pane's column from this
+    // layout,** not from the pre-frame placement: the cursor's column is a
+    // visual one (tabs, wide characters, inlay hints), so only the laid-out
+    // rows know where the focused pane really stands. The partner was laid
+    // out from its old column, so a move owes one more frame.
+    let moved = editor.windows.get_mut(&window).is_some_and(|win| {
+        let focused = win.buffers.split_manager().map(|mgr| mgr.active_split());
+        focused.is_some_and(|leaf| win.sync_left_column_from(leaf))
+    });
+    if moved {
+        editor.frame_requested = true;
+    }
 }
 
 /// Lay out every text pane of the frame about to be painted — see

@@ -9,6 +9,29 @@
 // This plugin only adds the compose mode layout features.
 const editor = getEditor();
 
+// Everything this plugin draws is the composed rendering of one pane, but
+// decorations live on the buffer: a pane showing the same buffer as source
+// must not draw them. `composeOnly` is the editor's switch for that — every
+// conceal, overlay and virtual text below goes through these helpers or
+// carries it in its options.
+function addComposeConceal(
+  bufferId: number, namespace: string, start: number, end: number,
+  replacement: string | null,
+  activation?: string, scopeStart?: number, scopeEnd?: number,
+): void {
+  editor.addConceal(
+    bufferId, namespace, start, end, replacement,
+    activation ?? null, scopeStart ?? null, scopeEnd ?? null, true,
+  );
+}
+
+function addComposeOverlay(
+  bufferId: number, namespace: string, start: number, end: number,
+  options: Record<string, unknown>,
+): void {
+  editor.addOverlay(bufferId, namespace, start, end, { ...options, composeOnly: true });
+}
+
 
 interface MarkdownConfig {
   // Page width for compose mode, as a three-state value:
@@ -287,7 +310,7 @@ function buildCodeFrameLine(measure: number, left: string, right: string): strin
 }
 
 // fg matches the table frame's so the two kinds of block read as one system.
-const codeFrameStyle = { fg: "editor.fg" };
+const codeFrameStyle = { fg: "editor.fg", composeOnly: true };
 
 // =============================================================================
 // Code block side rails
@@ -847,7 +870,7 @@ function buildTableBorderLine(
 // pattern as addOverlay's fg/bg). fg → editor.fg matches the concealed
 // `│`/`─` glyphs inside rows so the frame has no seam; bg → editor.bg blends
 // with the page rather than carving an opaque slab.
-const tableBorderOptions = { fg: "editor.fg", bg: "editor.bg" };
+const tableBorderOptions = { fg: "editor.fg", bg: "editor.bg", composeOnly: true };
 
 /** Remove table border virtual lines for this row, clearing its *whole content
  * range* `[byteStart, byteEnd)` — exactly like the per-line conceal clear.
@@ -1718,7 +1741,7 @@ function listItemInfo(content: string, measure: number): ListLineInfo | null {
 // bytes ahead under the async `lines_changed` lag must still be caught by the
 // clear.
 const LIST_SPACING_NS = "md-ls";
-const listSpacingOptions = { bg: "editor.bg" };
+const listSpacingOptions = { bg: "editor.bg", composeOnly: true };
 const listBulletStyle = { fg: "syntax.keyword" };
 
 // Block-quote rendering. The bar is a left half-block: it fills the full cell
@@ -1861,11 +1884,11 @@ function processLineConceals(
     const frame = region === "open"
       ? buildCodeFrameLine(blockMeasure, "┌", "┐")
       : buildCodeFrameLine(blockMeasure, "└", "┘");
-    editor.addConceal(
+    addComposeConceal(
       bufferId, "md-syntax", frameStart, frameEnd, frame,
       "unless-cursor-in", byteStart, lineScopeInclEnd,
     );
-    editor.addOverlay(bufferId, "md-emphasis", frameStart, frameEnd, codeFrameStyle);
+    addComposeOverlay(bufferId, "md-emphasis", frameStart, frameEnd, codeFrameStyle);
     return;
   }
   // A fence-looking line the editor could not classify: leave it literal
@@ -1883,11 +1906,11 @@ function processLineConceals(
   if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
     const hrWidth = Math.max(1, measure - 2);
     const hrEnd = lineContentEndByte(lineContent, byteStart);
-    editor.addConceal(
+    addComposeConceal(
       bufferId, "md-syntax", byteStart, hrEnd, "─".repeat(hrWidth),
       "unless-cursor-in", byteStart, lineScopeInclEnd,
     );
-    editor.addOverlay(
+    addComposeOverlay(
       bufferId, "md-emphasis", byteStart, hrEnd, { fg: "ui.split_separator_fg" },
     );
     return;
@@ -1947,7 +1970,7 @@ function processLineConceals(
         for (let vl = 0; vl < visualLines.length; vl++) {
           const sByteS = charToByte(lineContent, segStarts[vl], byteStart);
           const sByteE = charToByte(lineContent, segEnds[vl], byteStart);
-          editor.addConceal(
+          addComposeConceal(
             bufferId, "md-syntax", sByteS, sByteE, visualLines[vl] || '',
             "unless-cursor-in", byteStart, lineScopeStrictEnd,
           );
@@ -1970,7 +1993,7 @@ function processLineConceals(
               padOn = " ".repeat(colWidths[cellIdx] - rawW);
             }
           }
-          editor.addConceal(
+          addComposeConceal(
             bufferId, "md-syntax", pipeByte, pipeByteEnd, padOn + "│",
             "if-cursor-in", byteStart, lineScopeStrictEnd,
           );
@@ -2083,7 +2106,7 @@ function processLineConceals(
               // Normalised: `␣` + content + pad, the two whitespace runs
               // concealed away so the content keeps its own decorations.
               if (norm.lead > 0) {
-                editor.addConceal(
+                addComposeConceal(
                   bufferId, "md-syntax",
                   charToByte(lineContent, norm.charStart, byteStart),
                   charToByte(lineContent, norm.charStart + norm.lead, byteStart),
@@ -2091,7 +2114,7 @@ function processLineConceals(
                 );
               }
               if (norm.trail > 0) {
-                editor.addConceal(
+                addComposeConceal(
                   bufferId, "md-syntax",
                   charToByte(lineContent, norm.charEnd - norm.trail, byteStart),
                   pipeByte, "", "unless-cursor-in", byteStart, lineScopeStrictEnd,
@@ -2107,7 +2130,7 @@ function processLineConceals(
               const content = concealedText(
                 lineContent.slice(norm.charStart, norm.charEnd),
               ).trim();
-              editor.addConceal(
+              addComposeConceal(
                 bufferId, "md-syntax", cellByteStart, pipeByte,
                 " " + content.slice(0, Math.max(0, allocatedWidth - 2)) + "-",
                 "unless-cursor-in", byteStart, lineScopeStrictEnd,
@@ -2124,7 +2147,7 @@ function processLineConceals(
               if (offWidth > allocatedWidth) {
                 const prevPipeCharPos = pipePositions[pipeIdx - 1];
                 const cellByteStart = charToByte(lineContent, prevPipeCharPos + 1, byteStart);
-                editor.addConceal(
+                addComposeConceal(
                   bufferId, "md-syntax", cellByteStart, pipeByte,
                   isSeparator
                     ? '─'.repeat(allocatedWidth)
@@ -2159,13 +2182,13 @@ function processLineConceals(
           }
           if (padOff === padOn && leadOff === "") {
             // Same rendering in both cursor states — one always-active conceal.
-            editor.addConceal(bufferId, "md-syntax", pipeByte, pipeByteEnd, padOff + glyph);
+            addComposeConceal(bufferId, "md-syntax", pipeByte, pipeByteEnd, padOff + glyph);
           } else {
-            editor.addConceal(
+            addComposeConceal(
               bufferId, "md-syntax", pipeByte, pipeByteEnd, padOff + glyph + leadOff,
               "unless-cursor-in", byteStart, lineScopeStrictEnd,
             );
-            editor.addConceal(
+            addComposeConceal(
               bufferId, "md-syntax", pipeByte, pipeByteEnd, padOn + glyph,
               "if-cursor-in", byteStart, lineScopeStrictEnd,
             );
@@ -2181,12 +2204,12 @@ function processLineConceals(
           const db = charToByte(lineContent, i, byteStart);
           const de = charToByte(lineContent, i + 1, byteStart);
           if (inTruncated) {
-            editor.addConceal(
+            addComposeConceal(
               bufferId, "md-syntax", db, de, "─",
               "if-cursor-in", byteStart, lineScopeStrictEnd,
             );
           } else {
-            editor.addConceal(bufferId, "md-syntax", db, de, "─");
+            addComposeConceal(bufferId, "md-syntax", db, de, "─");
           }
         }
       }
@@ -2204,7 +2227,7 @@ function processLineConceals(
   if (imageMatch) {
     const alt = imageMatch[1];
     const url = imageMatch[2];
-    editor.addConceal(
+    addComposeConceal(
       bufferId, "md-syntax", byteStart, byteEnd, `Image: ${alt} — ${url}`,
       "unless-cursor-in", byteStart, lineScopeInclEnd,
     );
@@ -2236,11 +2259,11 @@ function processLineConceals(
       if (lineContent[i] !== '>') continue;
       const markerByte = charToByte(lineContent, i, byteStart);
       const markerByteEnd = charToByte(lineContent, i + 1, byteStart);
-      editor.addConceal(
+      addComposeConceal(
         bufferId, "md-syntax", markerByte, markerByteEnd, QUOTE_BAR,
         "unless-cursor-in", byteStart, lineScopeInclEnd,
       );
-      editor.addOverlay(
+      addComposeOverlay(
         bufferId, "md-emphasis", markerByte, markerByteEnd, quoteBarStyle,
       );
     }
@@ -2248,7 +2271,7 @@ function processLineConceals(
     const quotedStart = charToByte(lineContent, runEnd, byteStart);
     const quotedEnd = lineContentEndByte(lineContent, byteStart);
     if (quotedEnd > quotedStart) {
-      editor.addOverlay(
+      addComposeOverlay(
         bufferId, "md-emphasis", quotedStart, quotedEnd, quoteTextStyle,
       );
     }
@@ -2265,11 +2288,11 @@ function processLineConceals(
     const [indent, markerLen, level] = heading;
     const markerByteStart = charToByte(lineContent, indent, byteStart);
     const markerByteEnd = charToByte(lineContent, indent + markerLen, byteStart);
-    editor.addConceal(
+    addComposeConceal(
       bufferId, "md-syntax", markerByteStart, markerByteEnd, null,
       "unless-cursor-in", byteStart, lineScopeInclEnd,
     );
-    editor.addOverlay(
+    addComposeOverlay(
       bufferId, "md-emphasis", markerByteEnd, byteEnd, headingTextStyle(level),
     );
   }
@@ -2283,7 +2306,7 @@ function processLineConceals(
       // with a longer run. processLineSoftBreaks charges the same widened
       // indent against the wrap budget, so the two passes agree.
       const indentEndByte = charToByte(lineContent, listInfo.sourceIndent, byteStart);
-      editor.addConceal(
+      addComposeConceal(
         bufferId, "md-syntax", byteStart, indentEndByte,
         " ".repeat(listInfo.renderedIndent),
         "unless-cursor-in", byteStart, lineScopeInclEnd,
@@ -2292,11 +2315,11 @@ function processLineConceals(
     if (listInfo.bullet !== null) {
       const bulletByte = charToByte(lineContent, listInfo.sourceIndent, byteStart);
       const bulletByteEnd = charToByte(lineContent, listInfo.sourceIndent + 1, byteStart);
-      editor.addConceal(
+      addComposeConceal(
         bufferId, "md-syntax", bulletByte, bulletByteEnd, LIST_BULLET,
         "unless-cursor-in", byteStart, lineScopeInclEnd,
       );
-      editor.addOverlay(
+      addComposeOverlay(
         bufferId, "md-emphasis", bulletByte, bulletByteEnd, listBulletStyle,
       );
     }
@@ -2318,22 +2341,22 @@ function processLineConceals(
     // Overlays (styling)
     switch (span.type) {
       case 'code':
-        editor.addOverlay(bufferId, "md-emphasis", byteCS, byteCE, { fg: "syntax.constant" });
+        addComposeOverlay(bufferId, "md-emphasis", byteCS, byteCE, { fg: "syntax.constant" });
         break;
       case 'bold':
-        editor.addOverlay(bufferId, "md-emphasis", byteCS, byteCE, { bold: true });
+        addComposeOverlay(bufferId, "md-emphasis", byteCS, byteCE, { bold: true });
         break;
       case 'italic':
-        editor.addOverlay(bufferId, "md-emphasis", byteCS, byteCE, { italic: true });
+        addComposeOverlay(bufferId, "md-emphasis", byteCS, byteCE, { italic: true });
         break;
       case 'bold-italic':
-        editor.addOverlay(bufferId, "md-emphasis", byteCS, byteCE, { bold: true, italic: true });
+        addComposeOverlay(bufferId, "md-emphasis", byteCS, byteCE, { bold: true, italic: true });
         break;
       case 'strikethrough':
-        editor.addOverlay(bufferId, "md-emphasis", byteCS, byteCE, { strikethrough: true });
+        addComposeOverlay(bufferId, "md-emphasis", byteCS, byteCE, { strikethrough: true });
         break;
       case 'link':
-        editor.addOverlay(bufferId, "md-emphasis", byteCS, byteCE, {
+        addComposeOverlay(bufferId, "md-emphasis", byteCS, byteCE, {
           fg: "syntax.link",
           underline: true,
           url: span.linkUrl,
@@ -2352,7 +2375,7 @@ function processLineConceals(
     for (const range of span.concealRanges) {
       const rStart = charToByte(lineContent, range.start, byteStart);
       const rEnd = charToByte(lineContent, range.end, byteStart);
-      editor.addConceal(
+      addComposeConceal(
         bufferId, "md-syntax", rStart, rEnd, range.replacement,
         "unless-cursor-in", scopeStart, scopeEnd,
       );
@@ -2946,7 +2969,7 @@ function processFlowBlock(
     const text = lineText(line);
     const joinEnd = line.byte_start
       + editor.utf8ByteLength(text.slice(0, block.contentStart[li]));
-    editor.addConceal(
+    addComposeConceal(
       bufferId, "md-syntax", joinStart, joinEnd, " ",
     );
   }

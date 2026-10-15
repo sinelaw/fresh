@@ -112,43 +112,30 @@ impl crate::app::window::Window {
             return Ok(());
         }
 
-        let synced = self.synced_splits_for(target_split);
-        let new_left = if let Some(view_state) = self.split_view_states_mut().get_mut(&target_split)
-        {
-            // Line wrap makes horizontal scroll a no-op.
-            if view_state.buffer_tab_state_mut().viewport.line_wrap_enabled {
-                None
-            } else {
-                let columns_to_scroll = delta.unsigned_abs() as usize;
-                let viewport = &mut view_state.buffer_tab_state_mut().viewport;
-                if delta < 0 {
-                    viewport.left_column = viewport.left_column.saturating_sub(columns_to_scroll);
-                } else {
-                    // No max_line_length_seen clamp: that value is stale between
-                    // renders (often 0 before any h-scroll), pinning this at 0
-                    // even when long lines exist. Overshoot clips at render.
-                    viewport.left_column = viewport.left_column.saturating_add(columns_to_scroll);
-                }
-                viewport.set_skip_ensure_visible();
-                Some(viewport.left_column)
+        if let Some(view_state) = self.split_view_states_mut().get_mut(&target_split) {
+            // Line wrap (builtin, or compose's own) makes horizontal scroll a
+            // no-op.
+            if !view_state.buffer_tab_state().pans_horizontally() {
+                return Ok(());
             }
-        } else {
-            None
-        };
 
-        if let Some(new_left) = new_left {
-            for other_split in synced {
-                if let Some(other_vs) = self.split_view_states_mut().get_mut(&other_split) {
-                    if !other_vs.buffer_tab_state().viewport.line_wrap_enabled {
-                        other_vs.buffer_tab_state_mut().viewport.left_column = new_left;
-                        other_vs
-                            .buffer_tab_state_mut()
-                            .viewport
-                            .set_skip_ensure_visible();
-                    }
-                }
+            let columns_to_scroll = delta.unsigned_abs() as usize;
+            let viewport = &mut view_state.buffer_tab_state_mut().viewport;
+            if delta < 0 {
+                viewport.left_column = viewport.left_column.saturating_sub(columns_to_scroll);
+            } else {
+                // No max_line_length_seen clamp: that value is stale between
+                // renders (often 0 before any h-scroll), pinning this at 0
+                // even when long lines exist. Overshoot clips at render.
+                viewport.left_column = viewport.left_column.saturating_add(columns_to_scroll);
             }
+            viewport.set_skip_ensure_visible();
         }
+        // The wheel may be over a pane other than the focused one, and the
+        // frame's sync runs from the focused one, so a synced partner has to
+        // follow now or that sync would pan this pane straight back. Whether
+        // one moved doesn't matter: the frame this event triggers paints it.
+        let _ = self.sync_left_column_from(target_split);
 
         Ok(())
     }

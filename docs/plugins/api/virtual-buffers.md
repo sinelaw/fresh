@@ -347,8 +347,13 @@ compositePrevHunk(bufferId: number): boolean;
 Create a scroll sync group for anchor-based synchronized scrolling
 
 Used for side-by-side diff views where two panes need to scroll
-together. The plugin provides the group ID, which must be unique per
-plugin. Groups are removed automatically when the plugin unloads.
+together. Lines follow the anchors; the horizontal scroll is shared
+as-is between two panes that both scroll sideways (a pane in compose
+view, or with line wrap on, keeps its own).
+
+The plugin provides the group ID, which must be unique per plugin. A
+group is removed automatically when the plugin unloads, or when
+either of its panes closes; its ID can then be used again.
 
 ```typescript
 createScrollSyncGroup(groupId: number, leftSplit: number, rightSplit: number): boolean;

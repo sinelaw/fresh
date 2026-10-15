@@ -194,9 +194,11 @@ impl ScrollSyncManager {
         }
     }
 
-    /// Remove any scroll sync groups containing the given split
-    pub fn remove_groups_for_split(&mut self, split_id: SplitId) {
-        self.groups.retain(|g| !g.contains_split(split_id));
+    /// Drop every group with a split `is_live` rejects: a group whose pane
+    /// closed syncs nothing, and its id would refuse a new group.
+    pub fn retain_live_groups(&mut self, is_live: impl Fn(SplitId) -> bool) {
+        self.groups
+            .retain(|g| is_live(g.left_split) && is_live(g.right_split));
     }
 
     /// Get a mutable reference to a group by ID

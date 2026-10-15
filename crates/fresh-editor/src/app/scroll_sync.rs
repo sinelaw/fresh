@@ -13,7 +13,8 @@ impl crate::app::window::Window {
     ///
     /// For each registered group containing the active split, derive the
     /// active split's top line from its viewport and project it onto the
-    /// paired split via the group's mapping. Then, when same-buffer
+    /// paired split via the group's mapping. (Horizontal scroll is copied
+    /// after layout instead, see `sync_left_column_from`.) Then, when same-buffer
     /// scroll sync is enabled, also mirror the active split's `top_byte`
     /// onto every other split that shows the same buffer (and isn't in
     /// an explicit sync group). The bottom-edge case sets
@@ -25,18 +26,12 @@ impl crate::app::window::Window {
             .splits()
             .expect("window must have a populated split layout");
         let active_split = mgr.active_split();
-        let scroll_source_split = match self.mouse_state.drag {
-            Some(crate::app::types::PointerDrag::VerticalScrollbar { pane, .. })
-            | Some(crate::app::types::PointerDrag::HorizontalScrollbar { pane, .. }) => pane,
-            _ => active_split,
-        };
         let group_count = self.scroll_sync_manager.groups().len();
 
         if group_count > 0 {
             tracing::debug!(
-                "sync_scroll_groups: active_split={:?}, scroll_source_split={:?}, {} groups",
+                "sync_scroll_groups: active_split={:?}, {} groups",
                 active_split,
-                scroll_source_split,
                 group_count
             );
         }
@@ -53,30 +48,30 @@ impl crate::app::window::Window {
                     group.right_split
                 );
 
-                if !group.contains_split(scroll_source_split.into()) {
+                if !group.contains_split(active_split.into()) {
                     tracing::debug!(
                         "sync_scroll_groups: active split {:?} not in group",
-                        scroll_source_split
+                        active_split
                     );
                     return None;
                 }
 
-                let active_top_byte = vs_map.get(&scroll_source_split)?.buffer_tab_state().viewport.top_byte();
-                let active_buffer_id = mgr.buffer_for_split(scroll_source_split)?;
+                let active_top_byte = vs_map.get(&active_split)?.buffer_tab_state().viewport.top_byte();
+                let active_buffer_id = mgr.buffer_for_split(active_split)?;
                 let buffer_state = self.buffers.get(&active_buffer_id)?;
                 let buffer_len = buffer_state.buffer.len();
                 let active_line = buffer_state.buffer.get_line_number(active_top_byte);
 
                 tracing::debug!(
-                    "sync_scroll_groups: scroll_source_split={:?}, buffer_id={:?}, top_byte={}, buffer_len={}, active_line={}",
-                    scroll_source_split,
+                    "sync_scroll_groups: active_split={:?}, buffer_id={:?}, top_byte={}, buffer_len={}, active_line={}",
+                    active_split,
                     active_buffer_id,
                     active_top_byte,
                     buffer_len,
                     active_line
                 );
 
-                let (other_split, other_line) = if group.is_left_split(scroll_source_split.into()) {
+                let (other_split, other_line) = if group.is_left_split(active_split.into()) {
                     (group.right_split, group.left_to_right_line(active_line))
                 } else {
                     (group.left_split, group.right_to_left_line(active_line))
@@ -92,10 +87,6 @@ impl crate::app::window::Window {
             })
             .collect();
 
-        let source_left_column = vs_map
-            .get(&scroll_source_split)
-            .map(|vs| vs.buffer_tab_state().viewport.left_column);
-
         for (other_split, target_line) in sync_info {
             let other_leaf = LeafId(other_split);
             let buffer_id = self
@@ -107,17 +98,6 @@ impl crate::app::window::Window {
             if let Some(buffer_id) = buffer_id {
                 self.scroll_split_viewport_to(buffer_id, other_leaf, target_line, false);
             }
-            if let Some(left_col) = source_left_column {
-                let (_, vs_map_mut) = self
-                    .buffers
-                    .splits_mut()
-                    .expect("window must have a populated split layout");
-                if let Some(view_state) = vs_map_mut.get_mut(&other_leaf) {
-                    if !view_state.buffer_tab_state().viewport.line_wrap_enabled {
-                        view_state.buffer_tab_state_mut().viewport.left_column = left_col;
-                    }
-                }
-            }
         }
 
         let active_buffer_id = if self.same_buffer_scroll_sync {
@@ -125,7 +105,7 @@ impl crate::app::window::Window {
                 .splits()
                 .expect("window must have a populated split layout")
                 .0
-                .buffer_for_split(scroll_source_split)
+                .buffer_for_split(active_split)
         } else {
             None
         };
@@ -135,10 +115,10 @@ impl crate::app::window::Window {
                 .splits()
                 .expect("window must have a populated split layout");
             let active_top_byte = vs_map
-                .get(&scroll_source_split)
+                .get(&active_split)
                 .map(|vs| vs.buffer_tab_state().viewport.top_byte());
             let active_viewport_height = vs_map
-                .get(&scroll_source_split)
+                .get(&active_split)
                 .map(|vs| vs.buffer_tab_state().viewport.visible_line_count())
                 .unwrap_or(0);
 
@@ -146,7 +126,7 @@ impl crate::app::window::Window {
                 let other_splits: Vec<_> = vs_map
                     .keys()
                     .filter(|&&s| {
-                        s != scroll_source_split
+                        s != active_split
                             && mgr.buffer_for_split(s) == Some(active_buf_id)
                             && !self.scroll_sync_manager.is_split_synced(s.into())
                     })
@@ -182,16 +162,79 @@ impl crate::app::window::Window {
                                 .buffer_tab_state_mut()
                                 .viewport
                                 .sync_scroll_to_end = at_bottom;
-                            if let Some(left_col) = source_left_column {
-                                if !view_state.buffer_tab_state().viewport.line_wrap_enabled {
-                                    view_state.buffer_tab_state_mut().viewport.left_column =
-                                        left_col;
-                                }
-                            }
                         }
                     }
                 }
             }
+        }
+    }
+
+    /// Carry `source`'s horizontal scroll to its partner in every
+    /// scroll-sync group it is in. Returns whether a partner moved.
+    ///
+    /// Vertical sync maps lines through the group's anchors; horizontal sync
+    /// is a plain column copy, and only between panes that pan horizontally
+    /// at all (`pans_horizontally`). A wrapped or compose pane neither drives
+    /// its partner back to column 0 nor gets shifted off screen by it.
+    /// Same-buffer scroll sync stays vertical only.
+    ///
+    /// Called after a frame's layout for the focused pane (whose column is
+    /// only final then: the cursor's visual column needs the laid-out rows),
+    /// and on a wheel pan for the pane under the pointer.
+    pub(crate) fn sync_left_column_from(&mut self, source: LeafId) -> bool {
+        let source_id: SplitId = source.into();
+        let Some(left_column) = self
+            .buffers
+            .split_view_states()
+            .and_then(|vs_map| vs_map.get(&source))
+            .map(|vs| vs.buffer_tab_state())
+            .filter(|state| state.pans_horizontally())
+            .map(|state| state.viewport.left_column)
+        else {
+            return false;
+        };
+        let partners: Vec<LeafId> = self
+            .scroll_sync_manager
+            .groups()
+            .iter()
+            .filter(|group| group.contains_split(source_id))
+            .map(|group| {
+                LeafId(if group.is_left_split(source_id) {
+                    group.right_split
+                } else {
+                    group.left_split
+                })
+            })
+            .collect();
+        let Some(vs_map) = self.buffers.split_view_states_mut() else {
+            return false;
+        };
+        let mut moved = false;
+        for partner in partners {
+            let Some(state) = vs_map.get_mut(&partner).map(|vs| vs.buffer_tab_state_mut()) else {
+                continue;
+            };
+            if state.pans_horizontally() && state.viewport.left_column != left_column {
+                state.viewport.left_column = left_column;
+                state.viewport.set_skip_ensure_visible();
+                moved = true;
+            }
+        }
+        moved
+    }
+
+    /// Drop every scroll-sync group with a pane that has closed.
+    ///
+    /// A group dies with either of its panes. Panes close on several paths
+    /// (close split, tab drag, buffer-group close), all of which drop the
+    /// pane's view state, so the check is on that rather than at each path.
+    /// It runs at the start of every frame's sync, and before a group is
+    /// created: a plugin closing a pane and pairing again under the same id
+    /// does both in one batch of commands, with no frame between.
+    pub(crate) fn prune_scroll_sync_groups(&mut self) {
+        if let Some(vs_map) = self.buffers.split_view_states() {
+            self.scroll_sync_manager
+                .retain_live_groups(|split| vs_map.contains_key(&LeafId(split)));
         }
     }
 
@@ -203,7 +246,12 @@ impl crate::app::window::Window {
     /// the group is then marked to skip `ensure_visible` during render
     /// so the sync isn't undone. Same-buffer sync mirrors the same
     /// "skip" mark across the other splits showing the same buffer.
+    ///
+    /// First it drops groups whose pane has closed
+    /// (`prune_scroll_sync_groups`), so nothing below reads one.
     pub(super) fn pre_sync_ensure_visible(&mut self, active_split: LeafId) {
+        self.prune_scroll_sync_groups();
+
         let group_info = self
             .scroll_sync_manager
             .find_group_for_split(active_split.into())
@@ -216,15 +264,8 @@ impl crate::app::window::Window {
                 .expect("window must have a populated split layout")
                 .0
                 .buffer_for_split(active_split);
-            let is_dragging_bar = matches!(
-                self.mouse_state.drag,
-                Some(crate::app::types::PointerDrag::VerticalScrollbar { .. })
-                    | Some(crate::app::types::PointerDrag::HorizontalScrollbar { .. })
-            );
-            if !is_dragging_bar {
-                if let Some(buffer_id) = buffer_id {
-                    self.ensure_cursor_visible_for_split(buffer_id, active_split);
-                }
+            if let Some(buffer_id) = buffer_id {
+                self.ensure_cursor_visible_for_split(buffer_id, active_split);
             }
 
             let active_sid: SplitId = active_split.into();

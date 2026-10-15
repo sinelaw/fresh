@@ -607,8 +607,9 @@ impl Editor {
                 namespace,
                 range,
                 options,
+                compose_only,
             } => {
-                self.handle_add_overlay(buffer_id, namespace, range, options);
+                self.handle_add_overlay(buffer_id, namespace, range, options, compose_only);
             }
             PluginCommand::RemoveOverlay { buffer_id, handle } => {
                 self.handle_remove_overlay(buffer_id, handle);
@@ -675,6 +676,7 @@ impl Editor {
                 before,
                 epoch,
                 pad_to_column,
+                compose_only,
             } => {
                 self.handle_add_virtual_text_styled(
                     buffer_id,
@@ -688,6 +690,7 @@ impl Editor {
                     before,
                     epoch,
                     pad_to_column,
+                    compose_only,
                 );
             }
             PluginCommand::RemoveVirtualText {
@@ -715,6 +718,7 @@ impl Editor {
                 gutter_color,
                 text_overlays,
                 epoch,
+                compose_only,
             } => {
                 self.handle_add_virtual_line(
                     buffer_id,
@@ -729,6 +733,7 @@ impl Editor {
                     gutter_color,
                     text_overlays,
                     epoch,
+                    compose_only,
                 );
             }
             PluginCommand::ClearVirtualTextNamespace {
@@ -765,6 +770,7 @@ impl Editor {
                 replacement,
                 epoch,
                 activation,
+                compose_only,
             } => {
                 self.handle_add_conceal(
                     buffer_id,
@@ -774,6 +780,7 @@ impl Editor {
                     replacement,
                     epoch,
                     activation,
+                    compose_only,
                 );
             }
             PluginCommand::ClearConcealNamespace {
@@ -6741,6 +6748,8 @@ impl Editor {
         left_split: SplitId,
         right_split: SplitId,
     ) {
+        // A group whose pane closed earlier in this batch still holds its id.
+        self.active_window_mut().prune_scroll_sync_groups();
         let success = self
             .active_window_mut()
             .scroll_sync_manager

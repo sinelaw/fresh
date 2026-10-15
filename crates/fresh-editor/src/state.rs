@@ -713,10 +713,10 @@ impl EditorState {
     /// cursor-dependent activation is the renderer's business, and letting it
     /// reach the index would mean scroll position changed when a cursor moved.
     ///
-    /// `view_mode` decides the one namespace that is mode-specific:
-    /// markdown_compose's `md-syntax` conceals are emitted whenever any split
-    /// composes the buffer, so a Source-mode split must ignore them — the same
-    /// gate `build_view_data` applies. Compose's frame lines and code rails are
+    /// `view_mode` decides whether conceals added as `composeOnly` apply:
+    /// markdown_compose emits them whenever any split composes the buffer, so
+    /// a Source-mode split must ignore them — the same gate `build_view_data`
+    /// applies. Compose's frame lines and code rails are
     /// deliberately *not* gated here; see the comment on `virtual_lines`.
     /// Collapsed byte ranges for `folds`, sorted — the form the index and the
     /// renderer both want. Folds live on the split, so they arrive as an
@@ -758,9 +758,8 @@ impl EditorState {
         let conceals = if self.conceals.is_empty() {
             Vec::new()
         } else {
-            let exclude = (!is_compose).then(crate::view::compose_only::md_syntax_namespace);
             self.conceals
-                .query_viewport_excluding(0, end, &self.marker_list, exclude.as_ref(), no_cursors)
+                .query_viewport_in(0, end, &self.marker_list, is_compose, no_cursors)
                 .into_iter()
                 .map(|(r, t)| (r, t.map(str::to_owned)))
                 .collect()
