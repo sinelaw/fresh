@@ -243,3 +243,104 @@ fn web_scene_and_tui_cells_agree() {
         apply_step(&mut ed, &json!({"key": "Escape"}));
     }
 }
+
+/// A confirmation is a modal card in both renderers, buttons included.
+///
+/// The web used to project a confirm prompt as palette text — its question
+/// with none of its answers — while the TUI drew the card, so closing a
+/// modified buffer (or quitting) in a browser asked something the page gave no
+/// way to answer. The card now reaches the web as a `"confirm"` surface of the
+/// display list: its button labels must be in the scene AND the cells, there
+/// must be no palette competing with it, and a click on a button's cells must
+/// answer it exactly as a terminal click does.
+#[test]
+fn confirm_dialog_reaches_the_web_with_its_buttons() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let file = dir.path().join("note.txt");
+    std::fs::write(&file, "unchanged\n").expect("write temp file");
+    let mut ed =
+        build_editor(COLS, ROWS, std::slice::from_ref(&file), false).expect("build editor");
+    settle(&mut ed);
+
+    // Modify the buffer, then close it: the unsaved-changes confirmation.
+    apply_step(&mut ed, &json!({"type": "x"}));
+    apply_step(&mut ed, &json!({"action": "close"}));
+
+    let scene = scene_value(&mut ed, COLS, ROWS);
+    let cells = render_tui_cells(&mut ed, COLS, ROWS);
+    assert!(
+        scene["regions"]["palette"].is_null(),
+        "a confirmation is the card, not a palette row: {}",
+        scene["regions"]["palette"]
+    );
+    let tree = &scene["regions"]["tree"];
+    let surface = tree["surfaces"]
+        .as_array()
+        .and_then(|s| s.iter().position(|s| s["kind"] == json!("confirm")))
+        .expect("the confirm card must be a surface of the scene's display list");
+
+    // Each button is a row of runs (the accelerator is a run of its own), so
+    // join the card's one-row runs per row and look for the labels there.
+    let mut rows: std::collections::BTreeMap<i64, Vec<(i64, String)>> = Default::default();
+    for it in tree["items"].as_array().expect("tree items") {
+        if it["surface"] != json!(surface) || it["kind"] != json!("lines") || it["h"] != json!(1) {
+            continue;
+        }
+        let (Some(x), Some(y), Some(text)) =
+            (it["x"].as_i64(), it["y"].as_i64(), it["lines"][0].as_str())
+        else {
+            continue;
+        };
+        rows.entry(y).or_default().push((x, text.to_string()));
+    }
+    let find = |label: &str| -> Option<(i64, i64)> {
+        rows.iter().find_map(|(y, runs)| {
+            let mut runs = runs.clone();
+            runs.sort();
+            let line: String = runs.iter().map(|(_, t)| t.as_str()).collect();
+            let at = line.find(label)?;
+            // The cell the label starts at: walk the runs to that byte.
+            let mut seen = 0;
+            runs.iter().find_map(|(x, t)| {
+                let start = seen;
+                seen += t.len();
+                (at >= start && at < seen).then(|| (x + (at - start) as i64, *y))
+            })
+        })
+    };
+    let cancel = find("Cancel").expect("the card's Cancel button in the scene");
+    assert!(
+        cells.contains("Cancel"),
+        "the button the scene reports must also be in the TUI cells\n{cells}"
+    );
+
+    // Clicking Cancel's cells answers the dialog: the card is gone, the
+    // buffer is still open and still modified.
+    let (col, row) = (cancel.0 + 1, cancel.1);
+    apply_step(&mut ed, &json!({"kind": "down", "col": col, "row": row}));
+    apply_step(&mut ed, &json!({"kind": "up", "col": col, "row": row}));
+    let scene = scene_value(&mut ed, COLS, ROWS);
+    let still_open = scene["regions"]["tree"]["surfaces"]
+        .as_array()
+        .is_some_and(|s| s.iter().any(|s| s["kind"] == json!("confirm")));
+    assert!(!still_open, "clicking Cancel must dismiss the card");
+    let tab = scene["regions"]["panes"]
+        .as_array()
+        .and_then(|panes| {
+            panes
+                .iter()
+                .flat_map(|p| p["tabs"].as_array().into_iter().flatten())
+                .find_map(|x| x["label"].as_str())
+        })
+        .map(str::to_string);
+    assert_eq!(
+        tab.as_deref(),
+        Some("note.txt*"),
+        "Cancel keeps the buffer open, and still modified"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&file).expect("read temp file"),
+        "unchanged\n",
+        "nothing was saved"
+    );
+}

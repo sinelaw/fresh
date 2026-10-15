@@ -1,0 +1,333 @@
+# Fresh Desktop - the web UI (`fresh --web`) as a standalone Electron app with
+# the editor bundled inside it, so it needs no browser and no separate install.
+# The app itself lives in desktop/; see desktop/README.md.
+#
+# Called from the release workflow after the build job: it repackages the
+# release binaries (built there with `--features web`) instead of compiling its
+# own, so Fresh Desktop runs exactly the editor the terminal archives ship.
+#
+# On a pull request that touches the app there are no release binaries to
+# repackage, so the editor is built from source instead; everything after that
+# — packaging, smoke tests — is the same path a release takes.
+#
+# Produces one artifact per platform, each smoke-tested on its own OS before it
+# is uploaded:
+#   fresh-desktop-<version>-linux-x86_64.AppImage
+#   fresh-desktop-<version>-macos-universal.dmg    (Intel + Apple Silicon)
+#   fresh-desktop-<version>-windows-x64-setup.exe
+
+name: Desktop Builds
+
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version to build'
+        required: true
+        type: string
+      run-id:
+        description: 'Workflow run whose binaries to package (default: the calling run)'
+        required: false
+        type: string
+        default: ''
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g., 0.5.4)'
+        required: true
+        type: string
+      run-id:
+        description: 'Release workflow run whose binaries to package'
+        required: true
+        type: string
+  pull_request:
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/desktop-builds.yml'
+      # The bridge the app drives (its routes, `/quit` among them).
+      - 'crates/fresh-editor/src/webui/**'
+
+jobs:
+  build-desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            os: ubuntu-22.04
+          - platform: macos
+            os: macos-latest
+          - platform: windows
+            os: windows-2022
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      # download-artifact from another run (workflow_dispatch's run-id). The
+      # release workflow grants it to this job's caller for the same reason.
+      actions: read
+    env:
+      VERSION: ${{ inputs.version || '0.0.0-dev' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      # ── The editor binaries, from the release build job ──────────────────
+      - name: Download editor (Linux)
+        if: matrix.platform == 'linux' && github.event_name != 'pull_request'
+        uses: actions/download-artifact@v7
+        with:
+          name: artifacts-x86_64-unknown-linux-gnu
+          path: artifacts/
+          run-id: ${{ inputs.run-id || github.run_id }}
+          # A token switches download-artifact to the cross-run API; without
+          # one it reads the calling run's own artifacts.
+          github-token: ${{ inputs.run-id && github.token || '' }}
+
+      - name: Download editor (macOS x86_64)
+        if: matrix.platform == 'macos' && github.event_name != 'pull_request'
+        uses: actions/download-artifact@v7
+        with:
+          name: artifacts-x86_64-apple-darwin
+          path: artifacts/
+          run-id: ${{ inputs.run-id || github.run_id }}
+          github-token: ${{ inputs.run-id && github.token || '' }}
+
+      - name: Download editor (macOS aarch64)
+        if: matrix.platform == 'macos' && github.event_name != 'pull_request'
+        uses: actions/download-artifact@v7
+        with:
+          name: artifacts-aarch64-apple-darwin
+          path: artifacts/
+          run-id: ${{ inputs.run-id || github.run_id }}
+          github-token: ${{ inputs.run-id && github.token || '' }}
+
+      - name: Download editor (Windows)
+        if: matrix.platform == 'windows' && github.event_name != 'pull_request'
+        uses: actions/download-artifact@v7
+        with:
+          name: artifacts-x86_64-pc-windows-msvc
+          path: artifacts/
+          run-id: ${{ inputs.run-id || github.run_id }}
+          github-token: ${{ inputs.run-id && github.token || '' }}
+
+      - name: Extract editor (Linux)
+        if: matrix.platform == 'linux' && github.event_name != 'pull_request'
+        run: |
+          tar -xJf artifacts/fresh-editor-x86_64-unknown-linux-gnu.tar.xz -C artifacts
+          strip --strip-all artifacts/fresh-editor-x86_64-unknown-linux-gnu/fresh
+          echo "FRESH_BIN=$PWD/artifacts/fresh-editor-x86_64-unknown-linux-gnu/fresh" >> "$GITHUB_ENV"
+
+      # One fat binary for both architectures: the .app is universal, and
+      # electron-builder passes a file that already is through as is.
+      - name: Extract editor (macOS universal)
+        if: matrix.platform == 'macos' && github.event_name != 'pull_request'
+        run: |
+          for t in x86_64-apple-darwin aarch64-apple-darwin; do
+            tar -xJf "artifacts/fresh-editor-$t.tar.xz" -C artifacts
+          done
+          mkdir -p artifacts/universal
+          lipo -create -output artifacts/universal/fresh \
+            artifacts/fresh-editor-x86_64-apple-darwin/fresh \
+            artifacts/fresh-editor-aarch64-apple-darwin/fresh
+          lipo -info artifacts/universal/fresh
+          echo "FRESH_BIN=$PWD/artifacts/universal/fresh" >> "$GITHUB_ENV"
+
+      - name: Extract editor (Windows)
+        if: matrix.platform == 'windows' && github.event_name != 'pull_request'
+        shell: pwsh
+        run: |
+          Expand-Archive -Path artifacts/fresh-editor-x86_64-pc-windows-msvc.zip -DestinationPath artifacts/win
+          "FRESH_BIN=$PWD\artifacts\win\fresh.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      # ── …or, on a pull request, built from source with the release flags ─
+      - name: Install Rust toolchain (pull request)
+        if: github.event_name == 'pull_request'
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+
+      - name: Cache Cargo dependencies (pull request)
+        if: github.event_name == 'pull_request'
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Build editor (pull request)
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          # As in release.yml: vendored liblzma, not the runner's.
+          LZMA_API_STATIC: 1
+        run: |
+          case "$PLATFORM" in
+            linux)
+              cargo build --release --features web
+              echo "FRESH_BIN=$PWD/target/release/fresh" >> "$GITHUB_ENV"
+              ;;
+            windows)
+              export RUSTFLAGS="-C target-feature=+crt-static"
+              cargo build --release --features web
+              # A Windows path: node, not Git Bash, reads it.
+              echo "FRESH_BIN=$(cygpath -w "$PWD/target/release/fresh.exe")" >> "$GITHUB_ENV"
+              ;;
+            macos)
+              # rust-toolchain.toml pins the toolchain, so add targets to it.
+              rustup target add x86_64-apple-darwin aarch64-apple-darwin
+              for t in x86_64-apple-darwin aarch64-apple-darwin; do
+                cargo build --release --features web --target "$t"
+              done
+              mkdir -p target/universal
+              lipo -create -output target/universal/fresh \
+                target/x86_64-apple-darwin/release/fresh \
+                target/aarch64-apple-darwin/release/fresh
+              lipo -info target/universal/fresh
+              echo "FRESH_BIN=$PWD/target/universal/fresh" >> "$GITHUB_ENV"
+              ;;
+          esac
+
+      # ── Package ──────────────────────────────────────────────────────────
+      - name: Install Electron and electron-builder
+        working-directory: desktop
+        run: npm ci --no-audit --no-fund
+
+      - name: Stage the editor and icons
+        working-directory: desktop
+        shell: bash
+        run: node scripts/stage.js "$FRESH_BIN"
+
+      # The app's window and editor lifecycle (desktop/test/e2e.mjs): second
+      # launches, closing with and without unsaved work, closing during
+      # startup, quitting from the editor, re-attaching after a crash. Run
+      # from source against the staged editor; the platform-independent logic
+      # it covers is the same on every OS, so Linux runs it.
+      - name: Install Xvfb (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+
+      - name: End-to-end tests (Linux)
+        if: matrix.platform == 'linux'
+        working-directory: desktop
+        timeout-minutes: 10
+        env:
+          FRESH_DESKTOP_BINARY: ${{ env.FRESH_BIN }}
+        run: xvfb-run -a -s "-screen 0 1600x1000x24" npm run test:e2e
+
+      - name: Build installer
+        working-directory: desktop
+        shell: bash
+        env:
+          # No signing certificate in CI: macOS is ad-hoc signed (see
+          # electron-builder.yml), Windows is unsigned.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          # electron-builder skips ALL signing on pull-request builds (it keys
+          # on GITHUB_BASE_REF), and an unsigned app does not run on Apple
+          # Silicon, so the smoke test could not run. Its warning is about
+          # exposing signing secrets to forks; ad-hoc signing uses none.
+          CSC_FOR_PULL_REQUEST: 'true'
+        run: npx electron-builder --publish never "-c.extraMetadata.version=$VERSION"
+
+      # ── Smoke test the artifact that will ship ───────────────────────────
+      # FRESH_DESKTOP_SMOKE_TEST makes the app start the bundled editor, wait
+      # for the page to connect and render, type a key and see the frame that
+      # answers it, screenshot the window, quit the editor cleanly and exit 0
+      # (src/main.js, smokeTest()).
+      - name: Prepare a project to open
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/smoke-project"
+          printf 'hello from the smoke test\n' > "$RUNNER_TEMP/smoke-project/hello.txt"
+
+      - name: Smoke test (Linux AppImage)
+        if: matrix.platform == 'linux'
+        timeout-minutes: 5
+        env:
+          FRESH_DESKTOP_SMOKE_TEST: ${{ runner.temp }}/smoke-linux.png
+          # No FUSE on the runner; the AppImage runs from a temporary extraction.
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: |
+          appimage="$PWD/desktop/dist/fresh-desktop-${VERSION}-linux-x86_64.AppImage"
+          chmod +x "$appimage"
+          cd "$RUNNER_TEMP/smoke-project"
+          xvfb-run -a -s "-screen 0 1600x1000x24" "$appimage" hello.txt
+
+      - name: Smoke test (macOS dmg)
+        if: matrix.platform == 'macos'
+        timeout-minutes: 5
+        env:
+          FRESH_DESKTOP_SMOKE_TEST: ${{ runner.temp }}/smoke-macos.png
+        run: |
+          dmg="$PWD/desktop/dist/fresh-desktop-${VERSION}-macos-universal.dmg"
+          mnt="$RUNNER_TEMP/fresh-desktop-dmg"
+          hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mnt"
+          app="$mnt/Fresh Desktop.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          lipo -info "$app/Contents/MacOS/Fresh Desktop"
+          lipo -info "$app/Contents/Resources/bin/fresh"
+          cd "$RUNNER_TEMP/smoke-project"
+          status=0
+          "$app/Contents/MacOS/Fresh Desktop" hello.txt || status=$?
+          hdiutil detach "$mnt"
+          exit "$status"
+
+      - name: Smoke test (Windows installer)
+        if: matrix.platform == 'windows'
+        timeout-minutes: 5
+        shell: pwsh
+        env:
+          FRESH_DESKTOP_SMOKE_TEST: ${{ runner.temp }}\smoke-windows.png
+        run: |
+          $installer = "desktop\dist\fresh-desktop-$env:VERSION-windows-x64-setup.exe"
+          $dir = Join-Path $env:RUNNER_TEMP "fresh-desktop-install"
+          # NSIS: /S silent, /D=<dir> must come last and unquoted.
+          $p = Start-Process -FilePath $installer -ArgumentList "/S", "/D=$dir" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "installer exited with $($p.ExitCode)" }
+          $exe = Join-Path $dir "Fresh Desktop.exe"
+          if (-not (Test-Path (Join-Path $dir "resources\bin\fresh.exe"))) { throw "editor missing from the install" }
+          $p = Start-Process -FilePath $exe -ArgumentList "hello.txt" `
+            -WorkingDirectory (Join-Path $env:RUNNER_TEMP "smoke-project") -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "smoke test failed: exit code $($p.ExitCode)" }
+          if (-not (Test-Path $env:FRESH_DESKTOP_SMOKE_TEST)) { throw "no screenshot written" }
+
+      - name: Upload smoke-test screenshot
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: desktop-smoke-${{ matrix.platform }}
+          path: ${{ runner.temp }}/smoke-*.png
+          if-no-files-found: ignore
+
+      # ── Checksums + upload ───────────────────────────────────────────────
+      # Node rather than sha256sum/shasum/Get-FileHash so all three write the
+      # same `<sha256>  <name>\n` sidecar (LF, two spaces) the release expects.
+      - name: Checksums
+        working-directory: desktop/dist
+        shell: bash
+        run: |
+          for f in fresh-desktop-*.AppImage fresh-desktop-*.dmg fresh-desktop-*-setup.exe; do
+            [ -f "$f" ] || continue
+            node -e 'const f=process.argv[1];const h=require("crypto").createHash("sha256").update(require("fs").readFileSync(f)).digest("hex");require("fs").writeFileSync(f+".sha256",`${h}  ${f}\n`)' "$f"
+            cat "$f.sha256"
+          done
+
+      - name: Upload Fresh Desktop
+        uses: actions/upload-artifact@v6
+        with:
+          name: artifacts-desktop-${{ matrix.platform }}
+          path: |
+            desktop/dist/fresh-desktop-*.AppImage
+            desktop/dist/fresh-desktop-*.AppImage.sha256
+            desktop/dist/fresh-desktop-*.dmg
+            desktop/dist/fresh-desktop-*.dmg.sha256
+            desktop/dist/fresh-desktop-*-setup.exe
+            desktop/dist/fresh-desktop-*-setup.exe.sha256
+          if-no-files-found: error

@@ -954,7 +954,7 @@ fn handle_http(
         (
             "POST",
             p @ ("/key" | "/paste" | "/mouse" | "/action" | "/widget" | "/settings" | "/kbedit"
-            | "/resize"),
+            | "/resize" | "/quit" | "/open"),
         ) => {
             apply_message(editor, &p[1..], &body_json(), cols, rows);
             let s = tick_scene(editor, *cols, *rows, clip).to_string();
@@ -1026,6 +1026,8 @@ fn apply_message(
         "settings" => apply_settings(editor, v),
         "kbedit" => apply_kbedit(editor, v),
         "resize" => apply_resize(editor, v, cols, rows),
+        "quit" => apply_quit(editor),
+        "open" => apply_open(editor, v),
         _ => return false,
     }
     true
@@ -1045,6 +1047,35 @@ fn apply_action(editor: &mut Editor, v: &Value) {
             }
         }
     }
+}
+
+/// Files the page's host was asked to open (a desktop app's second launch, a
+/// file dropped on its icon): `{"files": [absolute paths]}`, queued exactly as
+/// `fresh --cmd session open-file` queues them in a daemon. A host that owns
+/// this bridge hands files over here rather than through the session socket,
+/// whose liveness probe can lose a race with a daemon still starting up and
+/// then hand the files to a second, headless daemon instead.
+fn apply_open(editor: &mut Editor, v: &Value) {
+    let Some(files) = v.get("files").and_then(|f| f.as_array()) else {
+        return;
+    };
+    for f in files.iter().filter_map(|f| f.as_str()) {
+        let path = std::path::PathBuf::from(f);
+        if path.is_absolute() {
+            editor.queue_file_open(path, None, None, None, None, None, None);
+        }
+    }
+}
+
+/// A request from the page's host to close it — a desktop window's close
+/// button, say. Unlike the `quit` action, which in a session daemon asks
+/// whether to detach the client or stop the session, closing the window that
+/// IS the session's only front end means stopping it: what remains to ask
+/// about is the unsaved work hot exit cannot keep (and the clean-quit
+/// confirmation, for whoever opted into it).
+fn apply_quit(editor: &mut Editor) {
+    let confirm_clean = editor.config().editor.confirm_quit;
+    editor.quit_with_prompts(confirm_clean);
 }
 
 /// Inbound OS clipboard (docs/internal/web-ui.md §3.5/§4). The frontend's
@@ -2360,6 +2391,65 @@ mod tests {
     use super::{
         digit_row_char, host_only, origin_host_matches, try_parse_request, HTTP_REQUEST_CAP,
     };
+
+    /// Whether the scene shows a confirmation card.
+    fn confirm_open(editor: &mut crate::app::Editor) -> bool {
+        super::scene_value(editor, 120, 40)["regions"]["tree"]["surfaces"]
+            .as_array()
+            .is_some_and(|s| s.iter().any(|s| s["kind"] == "confirm"))
+    }
+
+    #[test]
+    fn quit_message_stops_a_clean_editor_and_asks_about_unsaved_work() {
+        // The desktop app's window close: a clean editor quits outright —
+        // no Detach/Quit question, since the window is the session's only
+        // front end — while a modified file is asked about first.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("note.txt");
+        std::fs::write(&file, "unchanged\n").expect("write temp file");
+        let (mut cols, mut rows) = (120, 40);
+        let quit = serde_json::json!({});
+
+        let mut clean = super::build_editor(cols, rows, std::slice::from_ref(&file), false)
+            .expect("build editor");
+        assert!(super::apply_message(
+            &mut clean, "quit", &quit, &mut cols, &mut rows
+        ));
+        assert!(clean.should_quit(), "a clean editor quits at once");
+
+        let mut dirty = super::build_editor(cols, rows, std::slice::from_ref(&file), false)
+            .expect("build editor");
+        super::apply_step(&mut dirty, &serde_json::json!({"type": "x"}));
+        super::apply_message(&mut dirty, "quit", &quit, &mut cols, &mut rows);
+        assert!(!dirty.should_quit(), "unsaved work must be asked about");
+        assert!(
+            confirm_open(&mut dirty),
+            "the unsaved-changes card is shown"
+        );
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "unchanged\n");
+    }
+
+    #[test]
+    fn open_message_opens_absolute_paths_and_ignores_the_rest() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (a, b) = (dir.path().join("a.txt"), dir.path().join("b.txt"));
+        std::fs::write(&a, "a\n").unwrap();
+        std::fs::write(&b, "b\n").unwrap();
+        let (mut cols, mut rows) = (120, 40);
+        let mut ed =
+            super::build_editor(cols, rows, std::slice::from_ref(&a), false).expect("build editor");
+        let msg = serde_json::json!({ "files": [b.to_string_lossy(), "relative.txt"] });
+        assert!(super::apply_message(
+            &mut ed, "open", &msg, &mut cols, &mut rows
+        ));
+        super::apply_step(&mut ed, &serde_json::json!({}));
+        let tabs = super::scene_value(&mut ed, cols, rows)["regions"]["panes"].to_string();
+        assert!(tabs.contains("b.txt"), "b.txt opened: {tabs}");
+        assert!(
+            !tabs.contains("relative.txt"),
+            "a relative path is not opened"
+        );
+    }
 
     #[test]
     fn digit_row_is_recovered_from_the_physical_key() {

@@ -116,7 +116,7 @@ Pick a numeric prefix that places a new file where its concern belongs; gaps
 | `90-cosmos.css` | COSMOS shell (the Cosmos web theme): wallpaper, device bezel, glass dock, motion |
 | `91-theme-switch.css` | the web-theme switcher pill + drop menu (token-driven, re-skinned per theme) |
 | `92-theme-macos.css` | macOS web themes (Light + Dark): title bar + traffic lights, vibrancy, SF font — one token-driven structural pass, gated on `body.macfam` |
-| `94-theme-compact.css` | Compact web theme: full-bleed, dense spacing, flat surfaces |
+| `94-theme-compact.css` | Compact web theme: full-bleed, dense spacing, UI font, cards; colours derived from the editor theme |
 
 | JS | concern |
 |---|---|
@@ -152,8 +152,13 @@ editor. Four ship:
   light or dark vibrancy panels, the system accent blue and a Finder-style
   source-list dock. Both variants are one token-driven structural pass gated on
   `body.macfam`; only their colour tokens differ.
-- **Compact** — a dense, chrome-light IDE: no wallpaper/bezel, a ~8% smaller
-  measured grid, tight paddings, hairline rules and flat surfaces.
+- **Compact** — a quiet, professional IDE frame: no wallpaper/bezel, a ~8%
+  smaller measured grid, a proportional UI font for the chrome, tight
+  paddings, hairline rules and lifted cards. Its colours are not a fixed
+  palette: `deriveCompact()` computes them from the editor theme's own
+  background (a shade lighter on a dark theme, darker on a light one, neutral
+  inks, one accent), so the frame matches whatever theme the buffer uses.
+  Fresh Desktop opens on this theme.
 
 `js/15-theme.js` is the whole mechanism. `applyWebTheme()` (called from
 `render()` right after `applyTheme()`) does two things: it sets the

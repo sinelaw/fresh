@@ -1,52 +1,102 @@
-  /* Web theme: Compact — a dense, chrome-light IDE.
+  /* Web theme: Compact — a quiet, professional IDE frame.
      (web-ui/css — concatenated in filename order into the page's single
      <style> block by crates/fresh-editor/build.rs; order is load-bearing:
      later files deliberately override earlier ones.) */
   /* ======================================================================
      Gated on body.theme-compact (set by js/15-theme.js). Maximises editor real
-     estate: no wallpaper margin, no hardware bezel (both off), a ~8% smaller
-     grid (webThemeScale), tight paddings, hairline dividers and small radii.
-     COLOURS come from applyWebTheme()'s inline tokens (a flat, quiet dark);
-     this file owns the DENSITY and the flat, glass-free surfaces.
+     estate: no wallpaper margin, no hardware bezel, a ~8% smaller grid
+     (webThemeScale), tight paddings and hairline dividers.
+
+     COLOURS are derived from the editor theme's own background by
+     deriveCompact() (js/15-theme.js): the frame sits one shade off the buffer
+     — lighter on a dark theme, darker on a light one — with neutral inks and
+     one calm accent, so the window reads as a single surface under any
+     editor theme. This file owns the type, the DENSITY and the shapes.
      ====================================================================== */
+
+  /* ---- type: a UI face for the chrome, the grid stays monospace ----------
+     The buffer (svg.cells) and the display-list panels (tree items) are pinned
+     to --mono-family and measured against it; only native chrome follows
+     --font-family. Cell-tracking is for monospace text, so it goes too. */
+  body.theme-compact{
+    --font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI Variable Text","Segoe UI",
+      Inter,Ubuntu,Cantarell,"Noto Sans","Helvetica Neue",Arial,sans-serif;
+    letter-spacing:normal}
 
   /* Full-bleed: reclaim the Cosmos wallpaper margin + bezel for the editor. */
   body.theme-compact:not(.mobile) #app{left:0;top:0;right:0;bottom:0}
   body.theme-compact:not(.mobile) .menubar{clip-path:none}
+  body.theme-compact{background:var(--shell)}
 
-  /* ---- flatten the frame: quiet bars, hairline rules, no heavy fills ---- */
+  /* ---- menu bar: quiet labels, a soft pill under the pointer ------------ */
   body.theme-compact .menubar{background:var(--shell);border-bottom:1px solid var(--hairline);padding:0 2px}
-  body.theme-compact .menu{padding:0 8px}
-  body.theme-compact .tabbar{background:var(--shell)}
-  body.theme-compact .tab{padding:0 9px}
-  body.theme-compact .tab.active::after{height:1px}
-  body.theme-compact .statusbar{background:var(--shell);padding:0 8px}
+  body.theme-compact .menu{top:2px;height:calc(100% - 4px);border-radius:var(--r-sm);
+    color:color-mix(in srgb,var(--fg) 78%,var(--shell));transition:background .1s ease,color .1s ease}
+  body.theme-compact .menu:hover{background:var(--hover);color:var(--fg)}
+  body.theme-compact .menu.open{background:color-mix(in srgb,var(--fg) 12%,transparent);color:var(--fg)}
+
+  /* ---- menus: a lifted card with inset rows -------------------------------
+     The highlighted row is the one place the accent is solid: it is the
+     answer Enter takes, and it should look like it. */
+  body.theme-compact .dropdown{background:var(--bg3);border:1px solid var(--hairline-strong);
+    border-radius:var(--r-lg);box-shadow:var(--shadow)}
+  body.theme-compact .mitem{border-radius:var(--r-sm);gap:24px;padding:0 10px}
+  body.theme-compact .mitem.hi,body.theme-compact .mitem.hi .lab{background:var(--ui-accent);color:var(--on-ui-accent)}
+  body.theme-compact .mitem.hi .accel,body.theme-compact .mitem.hi .arrow{color:color-mix(in srgb,var(--on-ui-accent) 80%,transparent)}
+  body.theme-compact .mitem .accel{font-size:.92em}
+  body.theme-compact .msep{opacity:.7}
+
+  /* ---- tabs: inactive tabs recede into the frame; the active one is part
+     of the buffer below it, marked by a single accent edge. */
+  body.theme-compact .tabbar{background:var(--shell);border-bottom:1px solid var(--hairline)}
+  body.theme-compact .tab{padding:0 10px 0 12px;gap:6px;color:var(--muted);border-right:1px solid var(--hairline)}
+  body.theme-compact .tab.active{background:var(--bg);color:var(--fg)}
+  body.theme-compact .tab.active::after{top:0;bottom:auto;height:2px;background:var(--ui-accent);border-radius:0}
+  body.theme-compact .tab:not(.active):hover{background:var(--hover);color:var(--fg)}
+  body.theme-compact .tab .x{opacity:0;transition:opacity .12s ease}
+  body.theme-compact .tab:hover .x,body.theme-compact .tab.active .x{opacity:.7}
+  body.theme-compact .tab .x:hover{opacity:1}
+  body.theme-compact .tab .dot{width:7px;height:7px;background:currentColor;opacity:.75}
+
+  /* ---- status bar: one quiet line along the bottom ---------------------- */
+  body.theme-compact .statusbar{background:var(--status-bg);color:var(--status-fg);
+    border-top:1px solid var(--hairline);padding:0 8px;font-size:.92em}
+  body.theme-compact .statusbar .txt{color:var(--status-fg)}
+  body.theme-compact .statusbar .seg:hover{background:var(--hover);color:var(--fg)}
+
+  /* ---- file explorer: the frame's shade, with a soft tinted selection ---- */
   body.theme-compact .fileexplorer{background:var(--shell);border-right:1px solid var(--hairline)}
-
-  /* ---- density: tight rows and padding across every native list ---- */
-  body.theme-compact .fileexplorer .fx-title{padding:3px 8px 2px;letter-spacing:.03em}
+  body.theme-compact .fileexplorer .fx-title{padding:4px 10px 3px;color:var(--muted);font-size:.84em;
+    font-weight:600;letter-spacing:.06em;text-transform:uppercase}
   body.theme-compact .fileexplorer .fx-list{padding:2px 4px}
-  body.theme-compact .fileexplorer .fx-row{line-height:1.28;margin:0;padding:0 5px}
-  body.theme-compact .palette .plist{padding:3px 4px}
-  body.theme-compact .palette .prow{padding:2px 10px}
-  body.theme-compact .palette .pinput{padding:5px 12px}
-  body.theme-compact .palette .ptitle{padding:6px 12px 1px}
-  body.theme-compact .popup .popup-body{padding:2px 4px}
-  body.theme-compact .popup .popup-row{padding:1px 9px}
-  body.theme-compact .ctxmenu{padding:3px 4px}
-  body.theme-compact .ctxmenu .ctxitem{padding:2px 10px}
-  body.theme-compact .mitem{gap:12px;padding:0 10px}
-  body.theme-compact .settings-modal .set-cats{padding:4px 4px}
-  body.theme-compact .settings-modal .set-items{padding:4px 6px}
-  body.theme-compact .settings-modal .set-cat{padding:2px 10px}
-  body.theme-compact .settings-modal .set-item{padding:3px 10px;margin:0}
+  body.theme-compact .fileexplorer .fx-row{line-height:1.3;margin:0;padding:0 6px;border-radius:var(--r-sm)}
+  body.theme-compact .fileexplorer .fx-row.sel{background:var(--sel);color:var(--on-sel);box-shadow:none}
 
-  /* Flat floating surfaces: keep the frosted-glass blur off so panels read as
-     crisp dense cards (the skin's backdrop-filter is neutralised). */
+  /* ---- command palette and popups: one card language --------------------- */
   body.theme-compact .dropdown,body.theme-compact .popup,body.theme-compact .ctxmenu,
   body.theme-compact .palette,body.theme-compact .m-sheet{
     -webkit-backdrop-filter:none;backdrop-filter:none;background:var(--bg2)}
   body.theme-compact .dropdown{background:var(--bg3)}
+  body.theme-compact .palette,body.theme-compact .popup,body.theme-compact .ctxmenu{
+    border:1px solid var(--hairline-strong);border-radius:var(--r-lg);box-shadow:var(--shadow)}
+  body.theme-compact .palette .ptitle{padding:8px 14px 2px;font-weight:600}
+  body.theme-compact .palette .pinput{padding:7px 14px;border-bottom:1px solid var(--hairline)}
+  body.theme-compact .palette .plist{padding:4px}
+  body.theme-compact .palette .prow{padding:3px 10px;border-radius:var(--r-sm)}
+  body.theme-compact .palette .prow.sel{background:var(--sel);color:var(--on-sel);box-shadow:none}
+  body.theme-compact .palette .prow .pkey{border-radius:var(--r-sm);font-size:.88em}
+  body.theme-compact .popup .popup-body{padding:3px 4px}
+  body.theme-compact .popup .popup-row{padding:1px 9px;border-radius:var(--r-sm)}
+  body.theme-compact .ctxmenu{padding:4px}
+  body.theme-compact .ctxmenu .ctxitem{padding:3px 10px;border-radius:var(--r-sm)}
+  body.theme-compact .ctxmenu .ctxitem.sel{background:var(--ui-accent);color:var(--on-ui-accent)}
+
+  /* ---- settings ------------------------------------------------------------ */
+  body.theme-compact .settings-modal{border:1px solid var(--hairline-strong);border-radius:var(--r-lg);box-shadow:var(--shadow)}
+  body.theme-compact .settings-modal .set-cats{padding:6px 4px;background:var(--shell)}
+  body.theme-compact .settings-modal .set-items{padding:6px 8px}
+  body.theme-compact .settings-modal .set-cat{padding:3px 10px;border-radius:var(--r-sm)}
+  body.theme-compact .settings-modal .set-item{padding:5px 10px;margin:0 0 2px;border-radius:var(--r-md)}
 
   /* ---- flat dock: a plain panel that matches the frame -------------------
      Folded from the display list (72-tree.js); the skin re-maps the theme keys
@@ -76,6 +126,13 @@
   body.theme-compact:not(.mobile) .tree-item[data-surface-kind="dock"][data-fg="editor.whitespace_indicator_fg"]{
     --ink-fg:var(--muted)}
   body.theme-compact:not(.mobile) .tree-item[data-surface-kind="dock"][data-fg="editor.cursor"]{
+    --ink-fg:var(--hairline-strong)}
+
+  /* The dock's dividers — the rule under its header and the wall down its
+     edge — are drawn in mid-grey inks that read as heavy lines; in this
+     theme they are the same hairline every other divider is. */
+  body.theme-compact:not(.mobile) .tree-item.k-rule[data-surface-kind="dock"],
+  body.theme-compact:not(.mobile) .tree-item[data-surface-kind="dock"][data-fg="ui.popup_border_fg"]{
     --ink-fg:var(--hairline-strong)}
 
   /* ---- pop-overs the dock raises: a flat menu card ----------------------
@@ -128,14 +185,41 @@
   body.theme-compact:not(.mobile) .tree-item.k-fill[data-surface][data-class~="button.bare"][data-class~="button.hover"]{
     background:color-mix(in srgb,var(--fg) 14%,transparent);border-radius:3px}
 
-  /* ---- the theme switcher, at the theme's density -----------------------
-     `#themeswitch` is frontend furniture (js/15-theme.js) with a token-only
-     base; flattened here to match, with the pill's radius brought down to the
-     theme's own. */
-  body.theme-compact #themebtn{background:var(--bg2);border:1px solid var(--hairline-strong);
-    border-radius:4px;box-shadow:none;padding:4px 10px}
-  body.theme-compact #themebtn:hover{background:var(--bg3)}
-  body.theme-compact #thememenu{background:var(--bg2);border:1px solid var(--hairline-strong);
-    border-radius:4px;box-shadow:0 8px 20px rgba(0,0,0,.35);padding:4px}
-  body.theme-compact .ts-row{border-radius:3px;padding:5px 8px}
-  body.theme-compact .ts-row.on{background:color-mix(in srgb,var(--ui-accent) 22%,transparent)}
+  /* ---- the theme switcher, tucked into the menu bar -----------------------
+     `#themeswitch` is frontend furniture (js/15-theme.js). Floating as a pill
+     it sat over the tab bar's right end; here it is a quiet label in the
+     menu bar's free space, as tall as the bar and as loud as a menu title. */
+  body.theme-compact:not(.mobile) #themeswitch{top:2px;right:6px}
+  body.theme-compact #themebtn{background:transparent;border:1px solid transparent;
+    border-radius:var(--r-sm);box-shadow:none;padding:0 8px;height:15px;line-height:15px;
+    gap:6px;font-size:11.5px;color:var(--muted)}
+  body.theme-compact #themebtn:hover{background:var(--hover);color:var(--fg)}
+  body.theme-compact #themebtn .ts-name{font-weight:500}
+  body.theme-compact #themebtn .ts-dot{width:8px;height:8px}
+  body.theme-compact #thememenu{top:calc(100% + 6px);background:var(--bg2);border:1px solid var(--hairline-strong);
+    border-radius:var(--r-lg);box-shadow:var(--shadow);padding:4px}
+  body.theme-compact .ts-row{border-radius:var(--r-sm);padding:5px 8px}
+  body.theme-compact .ts-row.on{background:var(--sel)}
+
+  /* ---- the confirmation card ------------------------------------------------
+     Folded from the display list like the dock (72-tree.js), so it is dressed
+     by the theme keys its items name. The card is the theme's card; the
+     rules dividing it are hairlines; the title is the one bold run in the
+     border ink; the armed button is the accent, the way a focused button is
+     everywhere else in this theme. */
+  body.theme-compact:not(.mobile) .tree-item[data-surface-kind="confirm"][data-bg="ui.popup_bg"]{--ink-bg:var(--bg2)}
+  body.theme-compact:not(.mobile) .tree-item[data-surface-kind="confirm"][data-fg="ui.popup_text_fg"]{--ink-fg:var(--fg)}
+  body.theme-compact:not(.mobile) .tree-item[data-surface-kind="confirm"][data-fg="ui.popup_border_fg"]{--ink-fg:var(--hairline-strong)}
+  body.theme-compact:not(.mobile) .tree-item[data-surface-kind="confirm"][data-fg="ui.popup_border_fg"][data-bold]{--ink-fg:var(--fg)}
+  body.theme-compact:not(.mobile) .tree-item.k-border[data-surface-kind="confirm"]{
+    border-radius:var(--r-lg);box-shadow:inset 0 0 0 1px var(--hairline-strong),var(--shadow)}
+  body.theme-compact:not(.mobile) .tree-item.k-fill[data-surface-kind="confirm"][data-key="#confirm_dialog"]{border-radius:var(--r-lg)}
+  body.theme-compact:not(.mobile) .tree-item[data-surface-kind="confirm"][data-bg="ui.help_key_fg"]{
+    --ink-bg:var(--ui-accent);--ink-fg:var(--on-ui-accent)}
+  body.theme-compact:not(.mobile) .tree-item[data-surface-kind="confirm"][data-fg="diagnostic.error_fg"]{
+    --ink-fg:var(--danger)}
+  body.theme-compact:not(.mobile) .tree-item[data-surface-kind="confirm"][data-bg="diagnostic.error_fg"]{
+    --ink-bg:var(--danger);--ink-fg:#ffffff}
+  body.theme-compact:not(.mobile) .tree-item[data-surface-kind="confirm"][data-bg="ui.popup_selection_bg"]{
+    --ink-bg:var(--hover);--ink-fg:var(--fg)}
+  body.theme-compact:not(.mobile) .tree-item.k-scrim.dim[data-surface-kind="confirm"]{background:rgba(0,0,0,.38)}

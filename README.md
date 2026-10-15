@@ -96,6 +96,7 @@ Or, pick your preferred method:
 | Gentoo | [GURU](#gentoo-guru) |
 | Solus | [eopkg](#solus-eopkg) |
 | Linux (sandboxed / portable) | [AppImage](#appimage), [Flatpak](#flatpak) |
+| Desktop app (Windows, macOS, Linux) | [Fresh Desktop](#fresh-desktop) |
 | All platforms | [Pre-built binaries](#pre-built-binaries) |
 | npm | [npm / npx](#npm) |
 | Rust users (Fast) | [cargo-binstall](#using-cargo-binstall) |
@@ -265,6 +266,27 @@ flatpak run io.github.sinelaw.fresh
 ```
 
 See [flatpak/README.md](flatpak/README.md) for building from source.
+
+### Fresh Desktop
+
+A standalone desktop application: Fresh in its own window, with the editor
+bundled inside, so there is nothing else to install and no browser or terminal
+to open. Download it from the [releases page](https://github.com/sinelaw/fresh/releases):
+
+| Platform | File |
+|----------|------|
+| Windows (x64) | `fresh-desktop-VERSION-windows-x64-setup.exe` |
+| macOS (Intel and Apple Silicon) | `fresh-desktop-VERSION-macos-universal.dmg` |
+| Linux (x86_64) | `fresh-desktop-VERSION-linux-x86_64.AppImage` |
+
+It opens your home directory, or the folder or files you open it with, and
+remembers each project's session like the terminal edition does. The builds
+are not signed with a developer certificate yet. On macOS, the first launch is
+refused; allow it under **System Settings → Privacy & Security → Open Anyway**
+(or run `xattr -dr com.apple.quarantine "/Applications/Fresh Desktop.app"`).
+On Windows, choose **More info → Run anyway** in the SmartScreen prompt.
+Update by installing a newer release.
+See [desktop/README.md](desktop/README.md) for details and building it yourself.
 
 ### Pre-built binaries
 

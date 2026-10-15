@@ -1,0 +1,25 @@
+{
+  "name": "fresh-desktop",
+  "productName": "Fresh Desktop",
+  "version": "0.0.0-dev",
+  "description": "Fresh, the terminal-first text editor, as a standalone desktop application",
+  "homepage": "https://sinelaw.github.io/fresh/",
+  "author": {
+    "name": "Noam Lewis"
+  },
+  "license": "GPL-3.0-or-later",
+  "private": true,
+  "main": "src/main.js",
+  "scripts": {
+    "stage": "node scripts/stage.js",
+    "start": "electron .",
+    "dist": "electron-builder --publish never",
+    "test:e2e": "node test/e2e.mjs"
+  },
+  "devDependencies": {
+    "electron": "44.4.5",
+    "electron-builder": "26.15.3",
+    "playwright-core": "1.61.1"
+  },
+  "repository": "https://github.com/sinelaw/fresh"
+}

@@ -1,0 +1,6 @@
+node_modules/
+dist/
+# Staged by scripts/stage.js
+bin/
+build/
+assets/
