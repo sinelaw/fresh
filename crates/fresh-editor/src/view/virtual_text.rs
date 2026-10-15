@@ -419,6 +419,7 @@ impl VirtualTextManager {
         priority: i32,
         string_id: String,
         pad_to_column: Option<u32>,
+        compose_only: bool,
     ) -> VirtualTextId {
         debug_assert!(
             vtext_position.is_inline(),
@@ -447,7 +448,7 @@ impl VirtualTextManager {
                 gutter_glyph: None,
                 gutter_color: None,
                 text_overlays: Vec::new(),
-                compose_only: false,
+                compose_only,
             },
         );
 
@@ -490,6 +491,7 @@ impl VirtualTextManager {
             None,
             None,
             Vec::new(),
+            false,
         )
     }
 
@@ -515,6 +517,7 @@ impl VirtualTextManager {
         gutter_glyph: Option<String>,
         gutter_color: Option<Color>,
         text_overlays: Vec<fresh_core::api::VirtualLineTextOverlay>,
+        compose_only: bool,
     ) -> VirtualTextId {
         debug_assert!(
             placement.is_line(),
@@ -543,21 +546,12 @@ impl VirtualTextManager {
                 gutter_glyph,
                 gutter_color,
                 text_overlays,
-                compose_only: false,
+                compose_only,
             },
         );
         self.bump_version();
 
         id
-    }
-
-    /// Mark the entry `id` as drawn only in compose view (see
-    /// [`VirtualText::compose_only`]). Called right after the add.
-    pub fn set_compose_only(&mut self, id: VirtualTextId) {
-        if let Some(vt) = self.texts.get_mut(&id) {
-            vt.compose_only = true;
-            self.bump_version();
-        }
     }
 
     /// Remove a virtual text entry by its string identifier

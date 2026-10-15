@@ -174,21 +174,21 @@ impl crate::app::window::Window {
     ///
     /// Vertical sync maps lines through the group's anchors; horizontal sync
     /// is a plain column copy, and only between panes that pan horizontally
-    /// at all (`pans_horizontally`). A wrapped or compose pane neither drives
+    /// at all (`shares_horizontal_scroll`). A wrapped or compose pane neither drives
     /// its partner back to column 0 nor gets shifted off screen by it.
     /// Same-buffer scroll sync stays vertical only.
     ///
     /// Called after a frame's layout for the focused pane (whose column is
     /// only final then: the cursor's visual column needs the laid-out rows),
     /// and on a wheel pan for the pane under the pointer.
-    pub(crate) fn sync_left_column_from(&mut self, source: LeafId) -> bool {
+    pub(super) fn sync_left_column_from(&mut self, source: LeafId) -> bool {
         let source_id: SplitId = source.into();
         let Some(left_column) = self
             .buffers
             .split_view_states()
             .and_then(|vs_map| vs_map.get(&source))
             .map(|vs| vs.buffer_tab_state())
-            .filter(|state| state.pans_horizontally())
+            .filter(|state| state.shares_horizontal_scroll())
             .map(|state| state.viewport.left_column)
         else {
             return false;
@@ -214,13 +214,42 @@ impl crate::app::window::Window {
             let Some(state) = vs_map.get_mut(&partner).map(|vs| vs.buffer_tab_state_mut()) else {
                 continue;
             };
-            if state.pans_horizontally() && state.viewport.left_column != left_column {
+            if state.shares_horizontal_scroll() && state.viewport.left_column != left_column {
                 state.viewport.left_column = left_column;
                 state.viewport.set_skip_ensure_visible();
                 moved = true;
             }
         }
         moved
+    }
+
+    /// After a frame's layout, carry the focused pane's column to its
+    /// partners. Returns whether one more frame is owed.
+    ///
+    /// The focused pane's column is only final after layout: the cursor's
+    /// column is a visual one (tabs, wide characters, inlay hints), which
+    /// only the laid-out rows know. Its partners were laid out from their old
+    /// column, so a move owes a frame.
+    ///
+    /// Only a column not synced yet is copied. A partner that cannot scroll
+    /// as far (a file of shorter lines) settles short of it; copying the same
+    /// column again would push it back out, its settle would pull it in, and
+    /// each frame would owe the next.
+    pub(crate) fn sync_left_column_after_layout(&mut self) -> bool {
+        let focused = self.effective_active_split();
+        let Some(column) = self
+            .buffers
+            .split_view_states()
+            .and_then(|vs_map| vs_map.get(&focused))
+            .map(|vs| vs.buffer_tab_state().viewport.left_column)
+        else {
+            return false;
+        };
+        if self.last_horizontal_sync == Some((focused, column)) {
+            return false;
+        }
+        self.last_horizontal_sync = Some((focused, column));
+        self.sync_left_column_from(focused)
     }
 
     /// Drop every scroll-sync group with a pane that has closed.

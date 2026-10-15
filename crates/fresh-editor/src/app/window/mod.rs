@@ -765,6 +765,13 @@ pub struct Window {
     /// buffer. Per-window UX toggle.
     pub same_buffer_scroll_sync: bool,
 
+    /// The focused pane and the column its partners were last given after a
+    /// frame's layout (`sync_left_column_after_layout`), so that column is
+    /// not copied again: a partner that cannot scroll that far would be
+    /// pushed out and pulled back on every frame. Cleared when a group is
+    /// created, so a new partner gets the column.
+    pub(crate) last_horizontal_sync: Option<(LeafId, usize)>,
+
     /// Per-window interactive search-and-replace session state.
     /// Drives the F+y/n/!/q UX during `replace_in_buffer` /
     /// `replace_all`. Per-window because the search target buffer
@@ -2488,6 +2495,7 @@ impl Window {
             seen_byte_ranges: HashMap::new(),
             previous_viewports: HashMap::new(),
             same_buffer_scroll_sync: false,
+            last_horizontal_sync: None,
             interactive_replace_state: None,
             scroll_sync_manager: crate::view::scroll_sync::ScrollSyncManager::new(),
             file_explorer_visible: false,

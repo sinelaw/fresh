@@ -21,7 +21,6 @@ pub mod animation;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub use fresh_editor_core::color_support;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
-#[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod composite_view;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod conceal;

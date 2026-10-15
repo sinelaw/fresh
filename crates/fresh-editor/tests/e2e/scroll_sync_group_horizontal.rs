@@ -43,6 +43,20 @@ registerHandler("hsync_pair", async () => {
 });
 editor.registerCommand("hsync: Pair", "Split and sync", "hsync_pair", null);
 
+// Pair the active pane with a new pane on a different, narrower file.
+registerHandler("hsync_pair_short", async () => {
+    const created = await editor.splitWindow({
+        direction: "vertical",
+        place: "after",
+        keepFocus: true,
+        file: "short.txt",
+    });
+    right = created.splitId;
+    editor.createScrollSyncGroup(42, created.sourceSplitId, created.splitId);
+    editor.setStatus("hsync-paired-short");
+});
+editor.registerCommand("hsync: Pair Short", "Split on short.txt and sync", "hsync_pair_short", null);
+
 registerHandler("hsync_compose_right", async () => {
     const left = editor.getActiveSplitId();
     const buffer = editor.getActiveBufferId();
@@ -83,6 +97,19 @@ fn fixture_text() -> String {
 }
 
 fn harness_with_pair() -> (EditorTestHarness, tempfile::TempDir) {
+    harness_paired_by("hsync: Pair", "hsync-paired-1", 2)
+}
+
+/// Pair `long.txt` with `short.txt`, whose lines are all narrower than a pane.
+fn harness_with_short_partner() -> (EditorTestHarness, tempfile::TempDir) {
+    harness_paired_by("hsync: Pair Short", "hsync-paired-short", 1)
+}
+
+fn harness_paired_by(
+    command: &str,
+    done_status: &str,
+    start_markers: usize,
+) -> (EditorTestHarness, tempfile::TempDir) {
     let temp = tempfile::TempDir::new().expect("tempdir");
     let working_dir = temp.path().join("work");
     let plugins_dir = working_dir.join("plugins");
@@ -92,6 +119,7 @@ fn harness_with_pair() -> (EditorTestHarness, tempfile::TempDir) {
 
     let file = working_dir.join("long.txt");
     fs::write(&file, fixture_text()).unwrap();
+    fs::write(working_dir.join("short.txt"), "short one\nshort two\n").unwrap();
 
     let mut config = Config::default();
     config.editor.line_wrap = false;
@@ -101,11 +129,12 @@ fn harness_with_pair() -> (EditorTestHarness, tempfile::TempDir) {
     harness.open_file(&file).unwrap();
     harness.render().unwrap();
 
-    run_command(&mut harness, "hsync: Pair", "hsync-paired-1");
+    run_command(&mut harness, command, done_status);
+    paint_owed_frames(&mut harness);
     assert_eq!(
         marker_count(&harness, "START"),
-        2,
-        "setup: both panes should start at column 0. Screen:\n{}",
+        start_markers,
+        "setup: the panes should start at column 0. Screen:\n{}",
         harness.screen_to_string()
     );
     (harness, temp)
@@ -255,6 +284,20 @@ fn cursor_driven_pan_on_a_tabbed_line_reaches_the_partner() {
     );
 }
 
+/// A partner on a narrower file cannot scroll as far as the focused pane: it
+/// settles short of the copied column on every frame. That must not owe a
+/// frame every frame — the editor would repaint forever.
+#[test]
+fn a_partner_that_cannot_scroll_as_far_does_not_repaint_forever() {
+    let (mut harness, _tmp) = harness_with_short_partner();
+
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    paint_owed_frames(&mut harness);
+
+    harness.assert_screen_contains("FINISH");
+    harness.assert_screen_contains("short one");
+}
+
 /// A compose-view partner wraps its own lines: it has no horizontal scroll,
 /// so a pan in the source pane must not shift it. Shifting it blanked the
 /// whole pane, since every wrapped row is narrower than the shift.
@@ -276,19 +319,20 @@ fn horizontal_pan_leaves_a_compose_partner_in_place() {
     );
 }
 
-/// Shift+wheel over the compose pane itself doesn't shift it either, and
-/// doesn't pan the source pane.
+/// Shift+wheel over the compose pane pans only that pane, as it would
+/// unpaired: a compose pane's column is not shared, so the source pane stays
+/// at column 0.
 #[test]
-fn wheel_pan_over_a_compose_pane_moves_neither_pane() {
+fn wheel_pan_over_a_compose_pane_leaves_the_source_pane() {
     let (mut harness, _tmp) = harness_with_compose_partner();
-    let (_, (col, row)) = start_cells(&harness);
+    let ((left_col, row), (right_col, _)) = start_cells(&harness);
 
-    pan_right(&mut harness, col + 2, row, 10);
+    pan_right(&mut harness, right_col + 2, row, 10);
 
     assert_eq!(
-        marker_count(&harness, "START"),
-        2,
-        "neither pane should have panned. Screen:\n{}",
+        harness.find_text_on_screen("START"),
+        Some((left_col, row)),
+        "the source pane should still show column 0. Screen:\n{}",
         harness.screen_to_string()
     );
 }

@@ -531,12 +531,6 @@ impl OverlayManager {
         }
     }
 
-    /// The overlay `handle` names, to adjust after `add`. O(1).
-    pub fn get_mut(&mut self, handle: &OverlayHandle) -> Option<&mut Overlay> {
-        let idx = *self.handle_to_idx.get(handle)?;
-        self.overlays.get_mut(idx)
-    }
-
     /// Remove an overlay by its handle. O(1): the handle index says where
     /// it is instead of the vector being searched for it.
     pub fn remove_by_handle(

@@ -379,12 +379,16 @@ impl BufferViewState {
         }
     }
 
-    /// Whether this view has a horizontal scroll at all. A wrapped view
-    /// doesn't, nor does one with horizontal scroll switched off (a plugin
-    /// widget panel), and neither does page view: it turns builtin wrap off,
-    /// but only because the compose plugin wraps every line to the page width
-    /// itself, so a `left_column` past zero just shifts those rows off screen.
-    pub fn pans_horizontally(&self) -> bool {
+    /// Whether this view takes part in horizontal scroll sync: gives its
+    /// column to, and takes one from, the panes it is scroll-synced with.
+    ///
+    /// A wrapped view has no horizontal scroll, nor does one with horizontal
+    /// scroll switched off (a plugin widget panel). Page view turns builtin
+    /// wrap off, but only because the compose plugin wraps every line to the
+    /// page width itself: a column copied from a source pane would shift those
+    /// rows off screen, and its own column (normally 0) would drag the source
+    /// pane back.
+    pub fn shares_horizontal_scroll(&self) -> bool {
         !self.viewport.line_wrap_enabled
             && self.viewport.horizontal_scroll_enabled
             && self.view_mode != ViewMode::PageView
@@ -1863,28 +1867,28 @@ impl SplitManager {
 mod tests {
     use super::*;
 
-    /// Only an unwrapped Source view with horizontal scroll on pans: scroll
-    /// sync copies a column to (and from) nothing else.
+    /// Only an unwrapped Source view with horizontal scroll on shares its
+    /// column: scroll sync copies a column to (and from) nothing else.
     #[test]
-    fn only_an_unwrapped_scrollable_source_view_pans_horizontally() {
+    fn only_an_unwrapped_scrollable_source_view_shares_horizontal_scroll() {
         let unwrapped = || {
             let mut state = BufferViewState::new(80, 24);
             state.viewport.line_wrap_enabled = false;
             state
         };
-        assert!(unwrapped().pans_horizontally());
+        assert!(unwrapped().shares_horizontal_scroll());
 
         let mut wrapped = unwrapped();
         wrapped.viewport.line_wrap_enabled = true;
-        assert!(!wrapped.pans_horizontally());
+        assert!(!wrapped.shares_horizontal_scroll());
 
         let mut panel = unwrapped();
         panel.viewport.horizontal_scroll_enabled = false;
-        assert!(!panel.pans_horizontally());
+        assert!(!panel.shares_horizontal_scroll());
 
         let mut page = unwrapped();
         page.activate_page_view(None);
-        assert!(!page.pans_horizontally());
+        assert!(!page.shares_horizontal_scroll());
     }
 
     /// **A pane shows one tab, and the buffer behind a group is not on

@@ -1285,6 +1285,32 @@ impl EditorState {
         extend_to_line_end: bool,
         url: Option<String>,
     ) -> crate::view::overlay::OverlayHandle {
+        let overlay = self.build_overlay(
+            namespace,
+            range,
+            face,
+            priority,
+            message,
+            extend_to_line_end,
+            url,
+        );
+        self.overlays.add(overlay)
+    }
+
+    /// The overlay [`add_overlay`](Self::add_overlay) adds, built (its
+    /// markers created) but not yet added: for a caller that sets a field
+    /// `add_overlay` takes no argument for before the overlay goes in.
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_overlay(
+        &mut self,
+        namespace: Option<crate::view::overlay::OverlayNamespace>,
+        range: Range<usize>,
+        face: EventOverlayFace,
+        priority: i32,
+        message: Option<String>,
+        extend_to_line_end: bool,
+        url: Option<String>,
+    ) -> Overlay {
         let overlay_face = convert_event_face_to_overlay_face(&face);
         let mut overlay =
             Overlay::with_priority(&mut self.marker_list, range, overlay_face, priority);
@@ -1292,7 +1318,7 @@ impl EditorState {
         overlay.message = message;
         overlay.extend_to_line_end = extend_to_line_end;
         overlay.url = url;
-        self.overlays.add(overlay)
+        overlay
     }
 
     /// Show a popup synthesized from replayed [`PopupData`].

@@ -6750,6 +6750,9 @@ impl Editor {
     ) {
         // A group whose pane closed earlier in this batch still holds its id.
         self.active_window_mut().prune_scroll_sync_groups();
+        // A new partner owes the frame that gives it the focused pane's column,
+        // even if that column is the one last synced.
+        self.active_window_mut().last_horizontal_sync = None;
         let success = self
             .active_window_mut()
             .scroll_sync_manager

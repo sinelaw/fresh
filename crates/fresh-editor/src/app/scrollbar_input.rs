@@ -113,9 +113,8 @@ impl crate::app::window::Window {
         }
 
         if let Some(view_state) = self.split_view_states_mut().get_mut(&target_split) {
-            // Line wrap (builtin, or compose's own) makes horizontal scroll a
-            // no-op.
-            if !view_state.buffer_tab_state().pans_horizontally() {
+            // Line wrap makes horizontal scroll a no-op.
+            if view_state.buffer_tab_state().viewport.line_wrap_enabled {
                 return Ok(());
             }
 

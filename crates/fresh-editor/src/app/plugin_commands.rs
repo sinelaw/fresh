@@ -140,7 +140,7 @@ impl Editor {
             // Added directly rather than through an `AddOverlay` event, which
             // has no `compose_only`: that event's only effect is this add.
             // Overlays are ephemeral, not added to the event log for undo/redo.
-            let handle = state.add_overlay(
+            let mut overlay = state.build_overlay(
                 namespace,
                 range,
                 face,
@@ -149,11 +149,8 @@ impl Editor {
                 options.extend_to_line_end,
                 options.url.clone(),
             );
-            if compose_only {
-                if let Some(overlay) = state.overlays.get_mut(&handle) {
-                    overlay.compose_only = true;
-                }
-            }
+            overlay.compose_only = compose_only;
+            state.overlays.add(overlay);
 
             // Request a re-render so overlays added asynchronously (e.g. after
             // an external process returns) become visible without requiring
@@ -493,7 +490,7 @@ impl Editor {
                 None => return,
             };
 
-            let id = state.virtual_texts.add_with_id_and_theme_keys(
+            state.virtual_texts.add_with_id_and_theme_keys(
                 &mut state.marker_list,
                 position,
                 text,
@@ -504,10 +501,8 @@ impl Editor {
                 0, // priority
                 virtual_text_id,
                 pad_to_column,
+                compose_only,
             );
-            if compose_only {
-                state.virtual_texts.set_compose_only(id);
-            }
         }
     }
 
@@ -647,7 +642,7 @@ impl Editor {
             };
             let ns = VirtualTextNamespace::from_string(namespace);
 
-            let id = state.virtual_texts.add_line_with_theme_keys(
+            state.virtual_texts.add_line_with_theme_keys(
                 &mut state.marker_list,
                 position,
                 text,
@@ -660,10 +655,8 @@ impl Editor {
                 gutter_glyph,
                 gutter_color_fallback,
                 text_overlays,
+                compose_only,
             );
-            if compose_only {
-                state.virtual_texts.set_compose_only(id);
-            }
         }
     }
 
