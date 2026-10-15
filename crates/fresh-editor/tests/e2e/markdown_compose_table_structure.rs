@@ -276,30 +276,39 @@ fn wrapped_table_row_keeps_every_visual_line() {
     );
 }
 
+/// A cell of double-width text (CJK) wraps at the column's width in screen
+/// cells, so its rows stay inside the frame. Measured in characters, a row of
+/// it was twice as wide as its column and pushed the right edge out.
 #[cfg(feature = "plugins")]
 #[test]
-fn test_demo_md_table_renders_cleanly() {
-    let md = "\
-### 🎯 Desglose de \"Hard Negatives\" y Brechas Detectadas
-
-| Subárea | Precisión | \"No Idea\" | Latencia Promedio | Diagnóstico de Conceptos Fallados |
-|---|---|---|---|---|
-| **2.3 Redes** | **0.0%** (0/3) | 2 | 98.8 s | Direccionamiento IPv6 (reglas de compresión `::`), Enrutamiento OSPF (métrica de costo y Área 0 troncal), DNS recursivo vs iterativo. |
-| **2.2 Compiladores** | **0.0%** (0/4) | 1 | 88.4 s | Análisis léxico (token, lexema, patrón), SDD (atributos sintetizados vs heredados), Tabla de símbolos jerárquica por ámbitos, Enlace dinámico (`.so`/PIC/PLT/GOT). |
-";
-    let (mut harness, _tmp) = compose_harness(md, 120, 30);
-    harness
-        .wait_until_stable(|h| h.screen_to_string().contains('┌'))
-        .unwrap();
-
-    let screen = harness.screen_to_string();
-    eprintln!("DEMO TABLE SCREEN:\n{screen}");
-    assert!(screen.contains('┌'), "Table must have top border ┌");
-    assert!(screen.contains('└'), "Table must have bottom border └");
-    assert!(screen.contains('├'), "Table must have separator ├");
-    assert!(screen.contains('│'), "Table must have column rails │");
-    assert!(
-        !screen.contains("|---|"),
-        "Delimiter row |---| must be concealed"
+fn wrapped_cell_of_wide_text_stays_inside_the_frame() {
+    let md = format!(
+        "# Doc\n\n| Term | Meaning |\n|------|---------|\n| kanji | {}ENDMARK |\n",
+        "漢字 ".repeat(25)
     );
+    let (mut harness, _tmp) = compose_harness(&md, 60, 30);
+    let edges = |h: &EditorTestHarness, y: usize| -> (Option<u16>, Option<u16>) {
+        let cells: Vec<u16> = (0..h.buffer().area.width)
+            .filter(|&x| {
+                h.get_cell(x, y as u16)
+                    .is_some_and(|s| s.chars().any(|c| "┌┐└┘│├┤".contains(c)))
+            })
+            .collect();
+        (cells.first().copied(), cells.last().copied())
+    };
+    // The frame from its top edge to its bottom one, the cell wrapped onto
+    // several rows, every row's edges in the top edge's columns.
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            let top = screen.lines().position(|l| l.contains('┌'));
+            let bottom = screen.lines().position(|l| l.contains('└'));
+            let (Some(top), Some(bottom)) = (top, bottom) else {
+                return false;
+            };
+            screen.contains("ENDMARK")
+                && bottom > top + 4
+                && (top..=bottom).all(|y| edges(h, y) == edges(h, top))
+        })
+        .unwrap();
 }
