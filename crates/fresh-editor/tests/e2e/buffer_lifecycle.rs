@@ -1048,3 +1048,221 @@ fn test_close_last_buffer_blank_workspace_when_both_disabled() {
         tab_bar
     );
 }
+
+/// Editor with `left.txt` active in the left pane (beside an unnamed buffer
+/// holding `left_draft`, when given) and a vertical split whose right pane's
+/// only tab is the modified buffer `open_right_tab` opens there, which is
+/// active. Returns the project root.
+fn split_with_sole_modified_tab(
+    harness: &mut EditorTestHarness,
+    left_draft: Option<&str>,
+    open_right_tab: impl FnOnce(&mut EditorTestHarness),
+) -> std::path::PathBuf {
+    let root = harness.project_dir().unwrap();
+    let left = root.join("left.txt");
+    std::fs::write(&left, "left content").unwrap();
+    harness.open_file(&left).unwrap();
+    if let Some(draft) = left_draft {
+        type_in_new_buffer(harness, draft);
+        harness.open_file(&left).unwrap();
+    }
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("split vert").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    open_right_tab(harness);
+    // The new pane starts with `left.txt` too: drop it from this pane only,
+    // so the modified buffer is the pane's sole tab.
+    harness
+        .send_key(KeyCode::PageUp, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(
+        split_layout_shown(harness),
+        "setup must leave two panes:\n{}",
+        harness.screen_to_string()
+    );
+    root
+}
+
+fn type_in_new_buffer(harness: &mut EditorTestHarness, text: &str) {
+    harness.new_buffer().unwrap();
+    harness.type_text(text).unwrap();
+}
+
+/// Close the active (modified) tab with Alt+W and answer the
+/// unsaved-changes dialog with `key`.
+fn close_modified_tab_answering(harness: &mut EditorTestHarness, key: char) {
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Unsaved Changes");
+    harness
+        .send_key(KeyCode::Char(key), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+}
+
+/// A vertical split draws its separator through the tab-bar row, between
+/// the two panes' tab bars.
+fn split_layout_shown(harness: &EditorTestHarness) -> bool {
+    use crate::common::harness::layout;
+    harness
+        .screen_row_text(layout::TAB_BAR_ROW as u16)
+        .contains('│')
+}
+
+/// The left pane, alone on screen, still shows `left.txt` with its tabs
+/// `expected_tabs`, and nothing of the closed pane is left.
+fn assert_only_left_pane(harness: &EditorTestHarness, expected_tabs: &[&str], gone: &str) {
+    use crate::common::harness::layout;
+    let screen = harness.screen_to_string();
+    assert!(
+        !split_layout_shown(harness),
+        "the emptied split must close:\n{screen}"
+    );
+    let tab_bar = harness.screen_row_text(layout::TAB_BAR_ROW as u16);
+    let tabs: Vec<&str> = tab_bar
+        .split('×')
+        .map(str::trim)
+        .filter(|t| !t.is_empty() && *t != "+")
+        .collect();
+    assert_eq!(tabs, expected_tabs, "left pane tabs:\n{screen}");
+    harness.assert_screen_contains("left content");
+    harness.assert_screen_not_contains(gone);
+}
+
+/// Discarding the only tab of a split closes the split, leaving the other
+/// pane's tabs and active buffer as they were.
+#[test]
+fn test_confirmed_close_collapses_split_on_discard() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 20).unwrap();
+    split_with_sole_modified_tab(&mut harness, None, |h| type_in_new_buffer(h, "right draft"));
+
+    close_modified_tab_answering(&mut harness, 'd');
+
+    assert_only_left_pane(&harness, &["left.txt"], "right draft");
+}
+
+/// Same, when the other pane also holds an unsaved unnamed buffer: that
+/// buffer must not take over the emptied pane, nor be lost.
+#[test]
+fn test_confirmed_close_collapses_split_on_discard_beside_unnamed_buffer() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 20).unwrap();
+    split_with_sole_modified_tab(&mut harness, Some("left draft"), |h| {
+        type_in_new_buffer(h, "right draft")
+    });
+
+    close_modified_tab_answering(&mut harness, 'd');
+
+    assert_only_left_pane(&harness, &["left.txt", "[No Name]*"], "right draft");
+}
+
+/// Save on a file-backed buffer writes it, then closes its split.
+#[test]
+fn test_confirmed_close_collapses_split_on_save() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 20).unwrap();
+    let mut right = std::path::PathBuf::new();
+    split_with_sole_modified_tab(&mut harness, None, |h| {
+        right = h.project_dir().unwrap().join("right.txt");
+        std::fs::write(&right, "right content").unwrap();
+        h.open_file(&right).unwrap();
+        h.type_text("edited ").unwrap();
+    });
+
+    close_modified_tab_answering(&mut harness, 's');
+
+    assert_eq!(
+        std::fs::read_to_string(&right).unwrap(),
+        "edited right content"
+    );
+    assert_only_left_pane(&harness, &["left.txt"], "right.txt");
+}
+
+/// Same, when the tab is closed from its menu while the other pane is
+/// focused: saving must not leave the buffer behind as a tab of the focused
+/// pane, which would keep the emptied split open.
+#[test]
+fn test_confirmed_close_collapses_split_on_save_from_inactive_pane() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 20).unwrap();
+    let mut right = std::path::PathBuf::new();
+    split_with_sole_modified_tab(&mut harness, None, |h| {
+        right = h.project_dir().unwrap().join("right.txt");
+        std::fs::write(&right, "right content").unwrap();
+        h.open_file(&right).unwrap();
+        h.type_text("edited ").unwrap();
+    });
+    // Focus the left pane by clicking into its text.
+    let (col, row) = harness.find_text_on_screen("left content").unwrap();
+    harness.mouse_click(col, row).unwrap();
+    harness.render().unwrap();
+
+    let (col, row) = harness.find_text_on_screen("right.txt").unwrap();
+    harness.mouse_right_click(col, row).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Close Others");
+    // The menu's first item is "Close"; its other entries read "Close …".
+    let (col, row) = harness.find_text_on_screen("Close").unwrap();
+    harness.mouse_click(col, row).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Unsaved Changes");
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(&right).unwrap(),
+        "edited right content"
+    );
+    assert_only_left_pane(&harness, &["left.txt"], "right.txt");
+}
+
+/// Save on an unnamed buffer asks for a name, writes the file, then closes
+/// its split.
+#[test]
+fn test_confirmed_close_collapses_split_on_save_as() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 20).unwrap();
+    let root =
+        split_with_sole_modified_tab(&mut harness, None, |h| type_in_new_buffer(h, "right draft"));
+
+    close_modified_tab_answering(&mut harness, 's');
+    harness.assert_screen_contains("Save as:");
+    let target = root.join("saved.txt");
+    harness.type_text(target.to_str().unwrap()).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "right draft");
+    assert_only_left_pane(&harness, &["left.txt"], "right draft");
+}
+
+/// Cancel keeps the split and its modified tab.
+#[test]
+fn test_confirmed_close_collapses_split_not_on_cancel() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 20).unwrap();
+    split_with_sole_modified_tab(&mut harness, None, |h| type_in_new_buffer(h, "right draft"));
+
+    close_modified_tab_answering(&mut harness, 'c');
+
+    harness.assert_screen_contains("Close cancelled");
+    assert!(
+        split_layout_shown(&harness),
+        "cancel must keep the split:\n{}",
+        harness.screen_to_string()
+    );
+    harness.assert_screen_contains("[No Name]*");
+    harness.assert_screen_contains("right draft");
+}
