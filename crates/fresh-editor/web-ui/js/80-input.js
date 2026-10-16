@@ -224,7 +224,12 @@ document.addEventListener("click",e=>{ if(!onChrome(e)) focusSink(); });
 /** const onScrollable: (UiEvent) => El | Null */
 const onScrollable = e => {
   const s=e.target.closest(".set-items,.set-cats,.w-list,.widget-surface,.native-panel");
-  return (s!==null&&!s.matches(".native-panel.paged"))?s:null;
+  if(s===null) return null;
+  // A page is scrolled by the editor, so the wheel goes there — unless it is
+  // over a list in the page that scrolls by itself.
+  const page=s.closest(".native-panel.paged");
+  if(page===null) return s;
+  return (s!==page&&s.scrollHeight>s.clientHeight)?s:null;
 };
 // Ctrl+wheel = app zoom (frontend-owned, like Ctrl+=/-/0 above). Must be a
 // non-passive listener so the browser's own page zoom can be preventDefault-ed.

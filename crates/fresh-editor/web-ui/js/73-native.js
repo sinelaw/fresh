@@ -114,11 +114,14 @@ function nativePanelEl(p){
     el.style.maxHeight="calc(100% - "+el.style.top+" - 4px)";
   }
   el.dataset.slot=p.kind;
-  // A page scrolls where the editor scrolls it, not by itself.
-  if(p.page) el.classList.add("paged");
+  // A page scrolls where the editor scrolls it, not by itself — when the
+  // editor can scroll it: one the terminal window holds whole has no offset
+  // to follow, so it scrolls itself if it runs longer here.
+  const paged=!!p.page&&p.page.content>p.page.window;
+  if(paged) el.classList.add("paged");
   // A strip — a toolbar or key-hint row a buffer group mounts in a pane a
   // cell or two tall — is laid out on that height, not padded past it.
-  if(p.kind==="pane"&&p.rect&&p.rect.h<=3){ el.classList.add("strip"); el.style.setProperty("--cell-h", CH+"px"); }
+  if(p.kind==="pane"&&!p.page&&p.rect&&p.rect.h<=3){ el.classList.add("strip"); el.style.setProperty("--cell-h", CH+"px"); }
   // A floating panel is a dialog (modal while centred); a docked one a region.
   if(p.kind==="floating") aria(el, "dialog", {modal:!p.anchored, label:p.title||null});
   else aria(el, "region", {label:p.title||p.kind});
@@ -142,13 +145,15 @@ function nativePanelEl(p){
   // would — focusing the panel — without reaching through to what is under.
   /** const ctx: WidgetCtx */
   const ctx={kind:"panel", slot:p.kind, section:p.section, pane:p.pane, focusKey:p.focusKey,
-    instances:p.instances, native:true};
+    instances:p.instances, native:true, page:!!p.page};
   body.appendChild(widgetEl(p.spec, ctx));
   // Keep the selected row of a list or tree in view as the keyboard moves it:
-  // the page scrolls its own lists.
+  // the panel scrolls its own lists. A page's window is the editor's, which
+  // already keeps the selection in it — scrolling to it here would move the
+  // page off that window.
   requestAnimationFrame(()=>{
     alignFieldLabels(el);
-    if(p.page) syncPage(el, p.page);
+    if(p.page&&paged){ syncPage(el, p.page); return; }
     for(const s of el.querySelectorAll(".w-list-row.sel,.w-list-card.sel,.w-tree-row.sel")){
       s.scrollIntoView({block:"nearest"});
     }

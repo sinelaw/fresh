@@ -442,6 +442,7 @@
 /** type TreeItem = {
     surface: Number,
     interior?: Boolean,
+    page?: Boolean,
     layer?: Boolean,
     key?: String,
     kind: "fill" | "wash" | "rule" | "border" | "overflow-before" | "overflow-after"

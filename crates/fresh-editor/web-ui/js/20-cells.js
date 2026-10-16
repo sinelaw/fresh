@@ -250,6 +250,11 @@ function applyTheme(t){
   // that ink was chosen against, or a light chrome skin puts dark-theme text
   // on a light card. No web theme overrides these two, by design.
   set("--ed-popup-bg",t.popupBg); set("--ed-popup-fg",t.popupFg);
+  // The same for the buffer's own ground: a panel mounted into a pane (a
+  // page, Search & Replace, a toolbar strip) stands on the editor's `--bg`,
+  // so its text is the editor's ink, not the chrome skin's — macOS Light's
+  // dark chrome text on a dark editor theme's buffer was unreadable.
+  set("--ed-fg",t.fg); set("--ed-muted",legibleMuted(t.muted,t.fg,[t.bg]));
   set("--status-bg",t.statusBg); set("--status-fg",t.statusFg);
   set("--on-accent", onColor(t.accent));
   // Same question for a row filled SOLID with the menu-highlight: a theme
