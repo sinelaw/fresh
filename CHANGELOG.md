@@ -1,21 +1,31 @@
 # Release Notes
 
-## Unreleased
+## 0.5.4
+
+For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
+
+> Most config options below can be changed in the **Settings UI** - run **Open Settings** from the command palette (`Ctrl+P`).
 
 ### Features
 
-* **Fresh Desktop** - Fresh as a standalone desktop application, in its own window with the editor bundled inside: no browser, no terminal, nothing else to install. Each release attaches `fresh-desktop-<version>-windows-x64-setup.exe`, `fresh-desktop-<version>-macos-universal.dmg` (Intel and Apple Silicon) and `fresh-desktop-<version>-linux-x86_64.AppImage`. It is the web UI served by the same editor (`fresh --web`), so sessions, workspaces and hot exit work as in the terminal. The builds are not yet signed with a developer certificate
-* **A package for Debian testing and unstable** - each release also attaches `fresh-editor_<version>-1_<arch>.debian-testing.deb` (amd64 and arm64), built the way Debian's own archive would build it: from Debian's packaged Rust crates, with Debian's QuickJS running plugins and Debian's `esbuild` compiling their TypeScript. It installs only on Debian testing or unstable. Its bundled plugins are compiled when it is built, so it runs them without a TypeScript compiler; install the `esbuild` package (suggested, not pulled in) for your own `init.ts` and plugins, including those the package manager installs. It leaves out the update checker, telemetry and tree-sitter. Its source package is attached as `fresh-editor_<version>-1.debian-testing-source.tar.gz`. The usual `.deb`, for any Debian or Ubuntu, is unchanged
-
-### Improvements
-
-* **`fresh FILE` opens just that file** - as `$EDITOR` or git's `core.editor`, Fresh no longer brings the session along: no restored or saved workspace, no dock, no Welcome tab, and no other file's unsaved changes (the named file's own still come back). `git config --global core.editor fresh` is all git needs, and `fresh --wait` is accepted. `fresh --simple` does the same without needing a file. A bare `fresh`, `fresh DIR` and `fresh -a` are unchanged; `--restore`, or turning off `editor.skip_session_restore_when_files_passed`, makes a file launch a full session (#3555, reported by @zipproth)
-* **The workspace dock starts closed on a first run** - a bare `fresh` no longer opens the Orchestrator dock for new users. Open it from View ▸ Orchestrator Dock (or Orchestrator: Toggle Dock) and it stays open at every later start until you close it
-* **Faster startup with many workspaces** - saved workspaces are read when the dock, the workspace picker or the Welcome page first lists them, not at startup (#3555)
+* **Simple launch by default** - based on your feedback, some defaults are dialed back so launching is simple. Nothing was removed (#3555, #3556, #3568, reported by @zipproth)
+    * `fresh FILE` opens just that file, with no restored session, dock or Welcome tab. This makes Fresh a better `$EDITOR` / git `core.editor`; `fresh --simple` does the same without a file
+    * The Orchestrator dock starts closed on a first run; open it from View ▸ Orchestrator Dock and it stays open from then on
+    * `fresh`, `fresh DIR` and `fresh -a` behave as before, and `--restore` brings the full session back to a file launch
+    * Startup is faster with many workspaces, which now load on first use
+* **Markdown Source / Rendered / Source+Compose modes** - new commands switch a Markdown pane between the raw text and the composed view, and a dual mode shows both side by side in one scroll-synced tab (edit on the source side; closing the tab leaves your file and panes as they were). "Cycle View Mode" steps through all three (#3562, by @PilotLeoYan)
+* **Debian testing/unstable package** - each release also attaches a `.debian-testing.deb` built from Debian's own packaged crates (#3519)
 
 ### Bug Fixes
 
-* **git no longer hangs on a detached daemon** - `fresh --cmd daemon open-file … --wait` aimed at a daemon with nothing attached attaches your terminal (or fails without one) instead of waiting on an editor nobody can see (#3555)
+* **Markdown compose layout with emoji and CJK text** - code-block frames keep their edges and wrapped table cells no longer start with a stray space or break early (#3562)
+* **Clear error in mintty / Git Bash** - Fresh now explains it needs a real console instead of failing with `os error 6` (#3547, #3549, reported by @netoffice-zz)
+* **git no longer hangs on a detached daemon** - `--wait` against a daemon with nothing attached no longer waits on an invisible editor (#3555)
+* **Plugin bundling uses a private temp directory**, closing a local-user file-overwrite risk (#3557)
+
+### Internals
+
+* Plugin buffer groups can show a file the user has open as an editable panel, with a new `buffer_group_closed` hook (#3560, #3562)
 
 ## 0.5.3
 

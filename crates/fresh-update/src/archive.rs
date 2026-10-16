@@ -83,10 +83,12 @@ pub fn from_zip(bytes: &[u8], name: &str) -> Result<Vec<u8>, String> {
         let mut file = zip
             .by_index(i)
             .map_err(|e| format!("read zip entry: {e}"))?;
-        let matches = Path::new(file.name())
-            .file_name()
-            .map(|n| n == name)
-            .unwrap_or(false);
+        let matches = file.name().is_ok_and(|entry_name| {
+            Path::new(&*entry_name)
+                .file_name()
+                .map(|n| n == name)
+                .unwrap_or(false)
+        });
         if matches {
             return read_capped(&mut file, name);
         }
@@ -214,7 +216,7 @@ mod tests {
         let mut buf = Vec::new();
         {
             let mut w = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
-            let opts: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default()
+            let opts: zip::write::FileOptions<'_, '_, ()> = zip::write::FileOptions::default()
                 .compression_method(zip::CompressionMethod::Deflated);
             w.start_file("fresh-editor-x/fresh.exe", opts).unwrap();
             w.write_all(b"MZ fake exe").unwrap();
