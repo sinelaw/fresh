@@ -3139,9 +3139,7 @@ fn kill_session_command(session: Option<&str>, args: &Args) -> AnyhowResult<()> 
 
     // We need to do a minimal handshake first
     use fresh::server::protocol::{ClientHello, TermSize};
-    let hello = ClientHello::new(TermSize::new(80, 24));
-    let hello_json = serde_json::to_string(&ClientControl::Hello(hello))?;
-    conn.write_control(&hello_json)?;
+    conn.send_hello(ClientHello::new(TermSize::new(80, 24)))?;
 
     // Read server response (we don't care about version mismatch here)
     let _ = conn.read_control()?;
@@ -3704,13 +3702,10 @@ fn client_handshake_reading<F>(
 where
     F: FnMut() -> AnyhowResult<Option<String>>,
 {
-    use fresh::server::protocol::{
-        ClientControl, ClientHello, ServerControl, TermSize, PROTOCOL_VERSION,
-    };
+    use fresh::server::protocol::{ClientHello, ServerControl, TermSize, PROTOCOL_VERSION};
 
     // Size doesn't matter — these clients never render.
-    let hello = ClientHello::new(TermSize::new(80, 24));
-    conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello))?)?;
+    conn.send_hello(ClientHello::new(TermSize::new(80, 24)))?;
 
     let response = read_reply()?
         .ok_or_else(|| anyhow::anyhow!("Server closed connection during handshake"))?;
@@ -5569,9 +5564,7 @@ fn run_attach(
     let term_size = TermSize::new(cols, rows);
 
     // Perform handshake
-    let hello = ClientHello::new(term_size);
-    let hello_json = serde_json::to_string(&ClientControl::Hello(hello))?;
-    conn.write_control(&hello_json)?;
+    conn.send_hello(ClientHello::new(term_size))?;
 
     // Read server response
     let response = conn

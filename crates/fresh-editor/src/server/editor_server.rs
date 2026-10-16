@@ -26,9 +26,7 @@ use crate::server::capture_backend::{
 use crate::server::command_access;
 use crate::server::input_parser::ClientInputParser;
 use crate::server::ipc::{ServerConnection, ServerListener, SocketPaths, StreamWrapper};
-use crate::server::protocol::{
-    ClientControl, ServerControl, ServerHello, TermSize, VersionMismatch, PROTOCOL_VERSION,
-};
+use crate::server::protocol::{ClientControl, ServerControl, ServerHello, TermSize};
 use crate::view::color_support::ColorCapability;
 
 /// Configuration for the editor server
@@ -1016,47 +1014,9 @@ impl EditorServer {
         client_id: u64,
         cursor_style: crate::config::CursorStyle,
     ) -> io::Result<ConnectedClient> {
-        // Read client hello
-        // On Windows, don't toggle blocking mode - named pipes don't support mode switching
-        // after connection. The read_control() method handles this internally.
-        #[cfg(not(windows))]
-        conn.control.set_nonblocking(false)?;
-        let hello_json = conn
-            .read_control()?
-            .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "No hello received"))?;
-
-        let client_msg: ClientControl = serde_json::from_str(&hello_json)
-            .map_err(|e| io::Error::other(format!("Invalid hello: {}", e)))?;
-
-        let hello = match client_msg {
-            ClientControl::Hello(h) => h,
-            _ => {
-                return Err(io::Error::other("Expected Hello message"));
-            }
-        };
-
-        // Check protocol version
-        if hello.protocol_version != PROTOCOL_VERSION {
-            let mismatch = VersionMismatch {
-                server_version: env!("CARGO_PKG_VERSION").to_string(),
-                client_version: hello.client_version.clone(),
-                action: if hello.protocol_version > PROTOCOL_VERSION {
-                    "upgrade_server".to_string()
-                } else {
-                    "restart_server".to_string()
-                },
-                message: format!(
-                    "Protocol version mismatch: server={}, client={}",
-                    PROTOCOL_VERSION, hello.protocol_version
-                ),
-            };
-
-            let response = serde_json::to_string(&ServerControl::VersionMismatch(mismatch))
-                .map_err(|e| io::Error::other(e.to_string()))?;
-            conn.write_control(&response)?;
-
-            return Err(io::Error::other("Version mismatch"));
-        }
+        // `accept` read the Hello, and answered one of another protocol
+        // version itself
+        let hello = conn.hello.clone();
 
         // Send server hello
         let session_id = self.config.session_name.clone().unwrap_or_else(|| {

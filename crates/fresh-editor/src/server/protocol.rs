@@ -17,7 +17,11 @@ use std::collections::HashMap;
 /// v4: the channel carries *scripts* rather than command ids —
 /// `ClientControl::RunScript` / `ServerControl::ScriptResult` replace the
 /// command-id verbs (`ListCommands` / `RunCommand` / `CommandList`).
-pub const PROTOCOL_VERSION: u32 = 4;
+/// v5: a client's two connections are matched by a token rather than by the
+/// order they arrive in — `ClientHello::pair_token` on the control stream,
+/// and the same token at the start of the data stream (see
+/// `ipc::ServerListener::accept`).
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// Terminal size in columns and rows
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,6 +55,12 @@ pub struct ClientHello {
     /// client) — script evaluation is then refused.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cmd_token: Option<String>,
+    /// The token this client also sent at the start of its data stream, which
+    /// is how the server tells which data stream goes with this control
+    /// stream. Set by `ClientConnection::send_hello`; `None` only from a
+    /// client older than protocol v5.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pair_token: Option<String>,
 }
 
 impl ClientHello {
@@ -80,6 +90,7 @@ impl ClientHello {
             cmd_token: std::env::var("FRESH_CMD_TOKEN")
                 .ok()
                 .filter(|t| !t.is_empty()),
+            pair_token: None,
         }
     }
 
@@ -127,6 +138,25 @@ pub struct VersionMismatch {
     /// Suggested action: "restart_server", "upgrade_client"
     pub action: String,
     pub message: String,
+}
+
+impl VersionMismatch {
+    /// The reply to a client whose protocol version is not this server's.
+    pub fn for_client(hello: &ClientHello) -> Self {
+        Self {
+            server_version: env!("CARGO_PKG_VERSION").to_string(),
+            client_version: hello.client_version.clone(),
+            action: if hello.protocol_version > PROTOCOL_VERSION {
+                "upgrade_server".to_string()
+            } else {
+                "restart_server".to_string()
+            },
+            message: format!(
+                "Protocol version mismatch: server={}, client={}",
+                PROTOCOL_VERSION, hello.protocol_version
+            ),
+        }
+    }
 }
 
 /// Control messages from client to server

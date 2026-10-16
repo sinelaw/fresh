@@ -106,8 +106,7 @@ mod integration_tests {
     /// Send the client hello and return the server's reply.
     fn client_hello(conn: &ClientConnection) -> ServerControl {
         let hello = ClientHello::new(TermSize::new(80, 24));
-        conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
-            .unwrap();
+        conn.send_hello(hello).unwrap();
         let response = conn.read_control().unwrap().unwrap();
         serde_json::from_str(&response).unwrap()
     }
@@ -128,6 +127,29 @@ mod integration_tests {
         // Sockets should exist after bind
         assert!(paths.data.exists());
         assert!(paths.control.exists());
+
+        shutdown.store(true, Ordering::SeqCst);
+        drop(handle.join());
+        drop(paths.cleanup());
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    /// A liveness probe — a connection to the control socket that hangs up at
+    /// once — leaves the daemon serving: the next client's handshake is
+    /// answered. The daemon used to wait for a data stream to go with the
+    /// probe's control stream, stalling its main loop, and then gave the next
+    /// client's data stream to the probe's closed control stream.
+    #[cfg(unix)]
+    #[test]
+    fn a_liveness_probe_does_not_stall_the_daemon() {
+        let temp_dir = test_temp_dir("probe");
+        let (paths, shutdown, handle) =
+            spawn_editor_server(&temp_dir, &unique_session_name("probe"), None);
+
+        drop(std::os::unix::net::UnixStream::connect(&paths.control).unwrap());
+        let conn = ClientConnection::connect(&paths).unwrap();
+        let reply = client_hello(&conn);
+        assert!(matches!(reply, ServerControl::Hello(_)), "{reply:?}");
 
         shutdown.store(true, Ordering::SeqCst);
         drop(handle.join());
@@ -370,17 +392,10 @@ mod integration_tests {
                 }
             };
 
-            // Do handshake
-            let hello_json = conn.read_control().unwrap().unwrap();
-            let client_msg: ClientControl = serde_json::from_str(&hello_json).unwrap();
-
-            if let ClientControl::Hello(_hello) = client_msg {
-                let server_hello = ServerHello::new(session_for_server);
-                let response = serde_json::to_string(&ServerControl::Hello(server_hello)).unwrap();
-                conn.write_control(&response).unwrap();
-            } else {
-                panic!("Expected Hello, got {:?}", client_msg);
-            }
+            // Do handshake (`accept` has read the client's Hello)
+            let server_hello = ServerHello::new(session_for_server);
+            let response = serde_json::to_string(&ServerControl::Hello(server_hello)).unwrap();
+            conn.write_control(&response).unwrap();
 
             // Send connection to main test thread
             conn_tx.send(conn).unwrap();
@@ -397,8 +412,7 @@ mod integration_tests {
 
         // Do client handshake
         let hello = ClientHello::new(TermSize::new(80, 24));
-        conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
-            .unwrap();
+        conn.send_hello(hello).unwrap();
         let response = conn.read_control().unwrap().unwrap();
         let _server_msg: ServerControl = serde_json::from_str(&response).unwrap();
 
@@ -516,8 +530,7 @@ mod integration_tests {
 
         let conn = conn.unwrap();
         let hello = ClientHello::new(TermSize::new(80, 24));
-        conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
-            .unwrap();
+        conn.send_hello(hello).unwrap();
         let _ = conn.read_control().unwrap();
         conn.write_control(&serde_json::to_string(&ClientControl::Quit).unwrap())
             .unwrap();
@@ -576,8 +589,7 @@ mod integration_tests {
 
         let conn = ClientConnection::connect(&socket_paths).expect("connect to server");
         let hello = ClientHello::new(TermSize::new(80, 24));
-        conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
-            .unwrap();
+        conn.send_hello(hello).unwrap();
         let _ = conn.read_control().unwrap().unwrap();
 
         let mut output = Vec::new();
@@ -708,8 +720,7 @@ mod integration_tests {
         // Perform handshake
         eprintln!("[e2e] Sending Hello...");
         let hello = ClientHello::new(TermSize::new(80, 24));
-        conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
-            .unwrap();
+        conn.send_hello(hello).unwrap();
         eprintln!("[e2e] Hello sent, reading response...");
 
         let response = conn.read_control().unwrap().unwrap();
@@ -761,9 +772,7 @@ mod integration_tests {
         // Handshake again
         eprintln!("[e2e] Sending Hello from second client...");
         let hello2 = ClientHello::new(TermSize::new(80, 24));
-        conn2
-            .write_control(&serde_json::to_string(&ClientControl::Hello(hello2)).unwrap())
-            .unwrap();
+        conn2.send_hello(hello2).unwrap();
         eprintln!("[e2e] Reading second Hello response...");
 
         let response2 = conn2.read_control().unwrap().unwrap();
@@ -884,9 +893,7 @@ mod integration_tests {
 
         eprintln!("[multi] Sending Hello from first client...");
         let hello1 = ClientHello::new(TermSize::new(80, 24));
-        conn1
-            .write_control(&serde_json::to_string(&ClientControl::Hello(hello1)).unwrap())
-            .unwrap();
+        conn1.send_hello(hello1).unwrap();
         eprintln!("[multi] Reading first Hello response...");
 
         let response1 = conn1.read_control().unwrap().unwrap();
@@ -931,9 +938,7 @@ mod integration_tests {
 
         eprintln!("[multi] Sending Hello from second client...");
         let hello2 = ClientHello::new(TermSize::new(80, 24));
-        conn2
-            .write_control(&serde_json::to_string(&ClientControl::Hello(hello2)).unwrap())
-            .unwrap();
+        conn2.send_hello(hello2).unwrap();
         eprintln!("[multi] Reading second Hello response...");
 
         let response2 = conn2.read_control().unwrap().unwrap();
@@ -1016,8 +1021,7 @@ mod integration_tests {
 
         let hello = |conn: &ClientConnection, cols, rows| {
             let hello = ClientHello::new(TermSize::new(cols, rows));
-            conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
-                .unwrap();
+            conn.send_hello(hello).unwrap();
             drop(conn.read_control().unwrap());
         };
         let resize = |conn: &ClientConnection, cols, rows| {
@@ -1075,8 +1079,7 @@ mod integration_tests {
 
         let conn = ClientConnection::connect(&socket_paths).unwrap();
         let hello = ClientHello::new(TermSize::new(80, 24));
-        conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
-            .unwrap();
+        conn.send_hello(hello).unwrap();
         drop(conn.read_control().unwrap());
         let mut out = Vec::new();
         read_until_grid_rows(&conn, &mut out, 24);
@@ -1111,8 +1114,7 @@ mod integration_tests {
             for (k, v) in env {
                 hello.env.insert(k.to_string(), v.map(str::to_string));
             }
-            conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
-                .unwrap();
+            conn.send_hello(hello).unwrap();
             drop(conn.read_control().unwrap());
             let mut out = Vec::new();
             read_until_grid_rows(&conn, &mut out, 24);
@@ -1195,8 +1197,7 @@ mod integration_tests {
         // Connect
         let conn = ClientConnection::connect(&socket_paths).expect("Failed to connect");
         let hello = ClientHello::new(TermSize::new(80, 24));
-        conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
-            .unwrap();
+        conn.send_hello(hello).unwrap();
         let response = conn.read_control().unwrap().unwrap();
         assert!(matches!(
             serde_json::from_str::<ServerControl>(&response).unwrap(),
@@ -1795,8 +1796,7 @@ mod integration_tests {
         //     the browser is served the size the terminal can display.
         let conn = ClientConnection::connect(&socket_paths).expect("connect terminal client");
         let hello = ClientHello::new(TermSize::new(80, 24));
-        conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
-            .unwrap();
+        conn.send_hello(hello).unwrap();
         let response = conn.read_control().unwrap().unwrap();
         match serde_json::from_str::<ServerControl>(&response).unwrap() {
             ServerControl::Hello(h) => assert_eq!(h.protocol_version, PROTOCOL_VERSION),
@@ -1830,9 +1830,7 @@ mod integration_tests {
         //     send a resize of its own.
         let second = ClientConnection::connect(&socket_paths).expect("connect second terminal");
         let hello = ClientHello::new(TermSize::new(60, 18));
-        second
-            .write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
-            .unwrap();
+        second.send_hello(hello).unwrap();
         drop(second.read_control().unwrap());
         // A second client that has only said Hello (a one-shot `fresh FILE`,
         // say) is not in use — it must not resize the session.

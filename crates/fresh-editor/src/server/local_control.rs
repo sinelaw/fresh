@@ -38,9 +38,7 @@ use std::time::Duration;
 use crate::app::Editor;
 use crate::server::command_access;
 use crate::server::ipc::{ServerConnection, ServerListener, SocketPaths, StreamWrapper};
-use crate::server::protocol::{
-    ClientControl, FileRequest, ServerControl, ServerHello, VersionMismatch, PROTOCOL_VERSION,
-};
+use crate::server::protocol::{ClientControl, FileRequest, ServerControl, ServerHello};
 
 /// Time the accept thread sleeps between non-blocking accept polls. Only
 /// affects how quickly a freshly-launched nested `fresh` is picked up;
@@ -374,7 +372,7 @@ fn handle_connection(
 
     // The capability token (from the client's `Hello`) is captured once and
     // reused for every `RunScript` on this connection.
-    let cmd_token = match handshake(&conn, &mut reader) {
+    let cmd_token = match handshake(&conn) {
         Ok(token) => token,
         Err(e) => {
             tracing::debug!("Local control handshake failed: {}", e);
@@ -468,57 +466,19 @@ fn handle_connection(
     }
 }
 
-/// Read the `Hello`, version-check, and reply with `ServerHello` — the
-/// same shape as the daemon server's handshake, minus the data-channel
-/// terminal setup (nested clients never render). Returns the client's
-/// capability token (`cmd_token` from the `Hello`, `None` if absent) so the
-/// command loop can authorize `RunScript`.
-///
-/// Shares the connection's [`BufReader`] with the post-handshake command
-/// loop so no buffered bytes are lost between the two.
-fn handshake(
-    conn: &ServerConnection,
-    reader: &mut std::io::BufReader<&StreamWrapper>,
-) -> std::io::Result<Option<String>> {
-    // `accept()` hands us a non-blocking control socket; the Hello read must
-    // block until the client sends it (see the command loop for the same
-    // reason `write_control` requires re-asserting this).
-    #[cfg(not(windows))]
-    conn.control.set_nonblocking(false)?;
-
-    let hello_json = read_msg(reader)?
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "no hello"))?;
-
-    let hello = match hello_json {
-        ClientControl::Hello(h) => h,
-        _ => return Err(std::io::Error::other("expected Hello")),
-    };
-
-    if hello.protocol_version != PROTOCOL_VERSION {
-        let mismatch = VersionMismatch {
-            server_version: env!("CARGO_PKG_VERSION").to_string(),
-            client_version: hello.client_version.clone(),
-            action: if hello.protocol_version > PROTOCOL_VERSION {
-                "upgrade_server".to_string()
-            } else {
-                "restart_server".to_string()
-            },
-            message: format!(
-                "Protocol version mismatch: server={}, client={}",
-                PROTOCOL_VERSION, hello.protocol_version
-            ),
-        };
-        let response = serde_json::to_string(&ServerControl::VersionMismatch(mismatch))
-            .map_err(std::io::Error::other)?;
-        conn.write_control(&response)?;
-        return Err(std::io::Error::other("version mismatch"));
-    }
-
+/// Reply to the client's `Hello` with `ServerHello` — the same shape as the
+/// daemon server's handshake, minus the data-channel terminal setup (nested
+/// clients never render). Returns the client's capability token (`cmd_token`
+/// from the `Hello`, `None` if absent) so the command loop can authorize
+/// `RunScript`.
+fn handshake(conn: &ServerConnection) -> std::io::Result<Option<String>> {
+    // `accept` read the Hello, and answered one of another protocol version
+    // itself
     let session_id = local_session_id().unwrap_or("local").to_string();
     let response = serde_json::to_string(&ServerControl::Hello(ServerHello::new(session_id)))
         .map_err(std::io::Error::other)?;
     conn.write_control(&response)?;
-    Ok(hello.cmd_token)
+    Ok(conn.hello.cmd_token.clone())
 }
 
 /// Read one newline-delimited control message from a shared connection
@@ -576,8 +536,7 @@ mod tests {
     fn connect_client(paths: &SocketPaths) -> ClientConnection {
         let conn = ClientConnection::connect(paths).expect("client connect");
         let hello = ClientHello::new(TermSize::new(80, 24));
-        conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
-            .expect("write hello");
+        conn.send_hello(hello).expect("write hello");
         let resp = conn
             .read_control()
             .expect("read server hello")
@@ -814,8 +773,7 @@ mod tests {
         let conn = ClientConnection::connect(paths).expect("client connect");
         let mut hello = ClientHello::new(TermSize::new(80, 24));
         hello.cmd_token = Some(token.to_string());
-        conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
-            .expect("write hello");
+        conn.send_hello(hello).expect("write hello");
         let resp = conn
             .read_control()
             .expect("read server hello")
