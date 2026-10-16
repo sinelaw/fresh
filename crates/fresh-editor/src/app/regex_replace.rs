@@ -131,8 +131,9 @@ fn normalize_replacement(template: &str) -> String {
             out.push('}');
             i = end;
         } else {
-            out.push(bytes[i] as char);
-            i += 1;
+            let ch = template[i..].chars().next().unwrap();
+            out.push(ch);
+            i += ch.len_utf8();
         }
     }
     out
@@ -361,6 +362,30 @@ mod tests {
         assert_eq!(normalize_replacement("$name"), "$name");
         // Literal $$ → passed through ($ not followed by digit)
         assert_eq!(normalize_replacement("$$"), "$$");
+    }
+
+    #[test]
+    fn normalize_preserves_non_ascii_text() {
+        assert_eq!(normalize_replacement("、"), "、");
+        assert_eq!(normalize_replacement("ほげ$1ふが"), "ほげ${1}ふが");
+        assert_eq!(normalize_replacement("café $1 🎉"), "café ${1} 🎉");
+    }
+
+    #[test]
+    fn collect_regex_matches_non_ascii_replacement() {
+        let re = build_regex(r"\n", true, false, true).unwrap();
+        let input = "1\n2\n3".as_bytes();
+        let matches = collect_regex_matches(&re, input, "、");
+
+        assert_eq!(matches.len(), 2);
+        assert!(matches.iter().all(|m| m.replacement == "、"));
+    }
+
+    #[test]
+    fn expand_replacement_non_ascii_with_groups_and_escapes() {
+        let re = build_regex(r"(\w+)=(\w+)", true, false, true).unwrap();
+        let result = expand_replacement(&re, "名前=値".as_bytes(), r"$2・$1\tほげ");
+        assert_eq!(result, "値・名前\tほげ");
     }
 
     #[test]
