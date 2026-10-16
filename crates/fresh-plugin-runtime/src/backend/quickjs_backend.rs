@@ -8573,6 +8573,7 @@ impl JsEditorApi {
     /// public API is `handle.kill()` from the `spawnHostProcess`
     /// wrapper.
     #[plugin_api(js_name = "_killHostProcess")]
+    #[qjs(rename = "_killHostProcess")]
     pub fn kill_host_process(&self, process_id: u64) -> bool {
         self.command_sender
             .send(PluginCommand::KillHostProcess { process_id })
@@ -11675,6 +11676,49 @@ mod tests {
             }
             _ => panic!("Expected SetStatus command, got {:?}", cmd),
         }
+    }
+
+    /// `handle.kill()` on a `spawnProcess` / `spawnHostProcess` handle asks
+    /// the editor to kill that very process. The wrappers look the binding
+    /// up by name and quietly return `false` when it is missing, so a binding
+    /// exposed under any other name turns every kill into a no-op that
+    /// leaves the child running.
+    #[test]
+    fn test_api_process_handle_kill_reaches_the_editor() {
+        let (mut backend, rx) = create_test_backend();
+
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            editor.spawnProcess("git", ["status"], "/tmp").kill();
+            editor.spawnHostProcess("git", ["status"], "/tmp").kill();
+        "#,
+                "test.js",
+            )
+            .unwrap();
+
+        let spawned: Vec<PluginCommand> = rx.try_iter().collect();
+        let started: Vec<u64> = spawned
+            .iter()
+            .filter_map(|cmd| match cmd {
+                PluginCommand::SpawnProcess { callback_id, .. }
+                | PluginCommand::SpawnHostProcess { callback_id, .. } => Some(callback_id.as_u64()),
+                _ => None,
+            })
+            .collect();
+        let killed: Vec<u64> = spawned
+            .iter()
+            .filter_map(|cmd| match cmd {
+                PluginCommand::KillHostProcess { process_id } => Some(*process_id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(started.len(), 2, "both spawns should be sent: {spawned:?}");
+        assert_eq!(
+            killed, started,
+            "each kill should name its spawn: {spawned:?}"
+        );
     }
 
     #[test]

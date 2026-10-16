@@ -5294,16 +5294,55 @@ const gitProbesInFlight = new Set<number>();
 // stale — the bursts just get spread across a few ticks.
 const MAX_CONCURRENT_GIT_PROBES = 6;
 
+// Sessions whose worktree is being moved or removed. Every probe runs with its
+// cwd inside the worktree, and Windows refuses to delete (or rename) a
+// directory a live process is sitting in: a poll-tick `git status` or
+// `gh pr view` still running in the next row of a bulk Delete failed it with
+// "Permission denied". `holdProbesOff` stops a session's probes from spawning,
+// kills the ones already running, and waits for them to exit before the
+// caller touches the directory.
+const probesHeldOff = new Set<number>();
+const probeProcs = new Map<number, Set<ProcessHandle<SpawnResult>>>();
+
+// Every probe subprocess goes through here, so `holdProbesOff` can find it.
+// A held session spawns nothing: its probe sees a failed command.
+async function probeSpawn(s: AgentSession, command: string, args: string[]): Promise<SpawnResult> {
+  if (probesHeldOff.has(s.id)) return { stdout: "", stderr: "", exit_code: -1 };
+  const handle = editor.spawnProcess(command, args, s.root);
+  let running = probeProcs.get(s.id);
+  if (!running) {
+    running = new Set();
+    probeProcs.set(s.id, running);
+  }
+  running.add(handle);
+  try {
+    return await handle;
+  } finally {
+    running.delete(handle);
+    if (running.size === 0 && probeProcs.get(s.id) === running) probeProcs.delete(s.id);
+  }
+}
+
+async function holdProbesOff<T>(id: number, action: () => Promise<T>): Promise<T> {
+  probesHeldOff.add(id);
+  try {
+    const running = [...(probeProcs.get(id) ?? [])];
+    for (const handle of running) void handle.kill();
+    // A killed spawn settles once the child has been reaped, so after this
+    // nothing of the probe's is left in the directory.
+    await Promise.allSettled(running.map((handle) => handle.result));
+    return await action();
+  } finally {
+    probesHeldOff.delete(id);
+  }
+}
+
 // Resolve (and cache) a session's branch. Live sessions don't carry
 // `branch` up front, so ask git in the worktree once.
 async function sessionBranch(s: AgentSession): Promise<string> {
   if (s.branch) return s.branch;
   try {
-    const r = await spawnCollect(
-      "git",
-      ["rev-parse", "--abbrev-ref", "HEAD"],
-      s.root,
-    );
+    const r = await probeSpawn(s, "git", ["rev-parse", "--abbrev-ref", "HEAD"]);
     if (r.exit_code === 0) {
       const b = (r.stdout || "").trim();
       if (b && b !== "HEAD") {
@@ -5345,12 +5384,13 @@ function rollupCounts(
 }
 
 async function probePr(s: AgentSession): Promise<void> {
-  if (prProbesInFlight.has(s.id)) return;
+  if (prProbesInFlight.has(s.id) || probesHeldOff.has(s.id)) return;
   const now = Date.now();
   if (s.pr && s.pr.status !== "loading" && now - s.pr.fetchedAt < PR_PROBE_TTL_MS) {
     return;
   }
   prProbesInFlight.add(s.id);
+  const prior = s.pr;
   // Keep any prior info visible while re-checking (avoids a flicker
   // back to the branch fallback on refresh).
   s.pr = { status: "loading", fetchedAt: s.pr?.fetchedAt ?? 0, info: s.pr?.info };
@@ -5362,11 +5402,7 @@ async function probePr(s: AgentSession): Promise<void> {
     }
     const fields =
       "number,state,isDraft,reviewDecision,mergeable,statusCheckRollup,comments";
-    const r = await spawnCollect(
-      "gh",
-      ["pr", "view", branch, "--json", fields],
-      s.root,
-    );
+    const r = await probeSpawn(s, "gh", ["pr", "view", branch, "--json", fields]);
     if (r.exit_code !== 0) {
       // No PR for this branch, or `gh` unavailable / not a GH remote.
       s.pr = { status: "none", fetchedAt: Date.now() };
@@ -5397,6 +5433,9 @@ async function probePr(s: AgentSession): Promise<void> {
   } catch (_e) {
     s.pr = { status: "none", fetchedAt: Date.now() };
   } finally {
+    // Killed (or never run) for a move/remove: that says nothing about the
+    // PR, so keep what was known in case the action fails and the row stays.
+    if (probesHeldOff.has(s.id)) s.pr = prior;
     prProbesInFlight.delete(s.id);
     // Surface the freshly-gathered badge (debounced so a batch of
     // probes finishing together collapses into one render).
@@ -5446,7 +5485,7 @@ function drainGitProbes(): void {
 }
 
 async function probeGit(s: AgentSession): Promise<void> {
-  if (gitProbesInFlight.has(s.id)) return;
+  if (gitProbesInFlight.has(s.id) || probesHeldOff.has(s.id)) return;
   const now = Date.now();
   if (s.git && s.git.status === "ok" && now - s.git.fetchedAt < GIT_PROBE_TTL_MS) {
     return;
@@ -5459,11 +5498,7 @@ async function probeGit(s: AgentSession): Promise<void> {
   gitProbesInFlight.add(s.id);
   s.git = { status: "loading", fetchedAt: s.git?.fetchedAt ?? 0, info: s.git?.info };
   try {
-    const st = await spawnCollect(
-      "git",
-      ["status", "--porcelain=v2", "--branch"],
-      s.root,
-    );
+    const st = await probeSpawn(s, "git", ["status", "--porcelain=v2", "--branch"]);
     if (st.exit_code !== 0) {
       // `git status` failed. This is usually transient — an agent holding
       // `.git/index.lock`, a mid-checkout worktree, etc. — so KEEP the last
@@ -5479,11 +5514,7 @@ async function probeGit(s: AgentSession): Promise<void> {
     // because this runs on the session poll: `--shortstat` prints one line
     // either way, but without the cap git still diffs a multi-megabyte blob
     // in full to count it, once per session per tick.
-    const diff = await spawnCollect(
-      "git",
-      [...BIG_FILE_ARGS, "diff", "--shortstat", "HEAD"],
-      s.root,
-    );
+    const diff = await probeSpawn(s, "git", [...BIG_FILE_ARGS, "diff", "--shortstat", "HEAD"]);
     if (diff.exit_code === 0) {
       const ins = (diff.stdout || "").match(/(\d+) insertion/);
       const del = (diff.stdout || "").match(/(\d+) deletion/);
@@ -7919,7 +7950,11 @@ function archivedPathFor(repoRoot: string, s: AgentSession): string {
   return candidate;
 }
 
-async function archiveOne(id: number): Promise<LifecycleResult> {
+function archiveOne(id: number): Promise<LifecycleResult> {
+  return holdProbesOff(id, () => archiveOneNow(id));
+}
+
+async function archiveOneNow(id: number): Promise<LifecycleResult> {
   const s = orchestratorSessions.get(id);
   if (!s) return { ok: false, err: editor.t("err.workspace_gone") };
   const removable = ownsWorktree(s);
@@ -8022,7 +8057,7 @@ async function archiveOne(id: number): Promise<LifecycleResult> {
 // can always be opened there again). Handles discovered on-disk
 // worktrees (no window to close). Does NOT trigger sync — the caller
 // batches it.
-async function deleteOne(
+function deleteOne(
   id: number,
   // Whether to remove the worktree as well as the workspace record. The
   // confirm dialog offers this as a checkbox; every other caller (the plugin
@@ -8030,6 +8065,10 @@ async function deleteOne(
   // choice cannot leak out of the dialog that asked for it.
   removeWorktree = true,
 ): Promise<LifecycleResult> {
+  return holdProbesOff(id, () => deleteOneNow(id, removeWorktree));
+}
+
+async function deleteOneNow(id: number, removeWorktree: boolean): Promise<LifecycleResult> {
   const s = orchestratorSessions.get(id);
   if (!s) return { ok: false, err: editor.t("err.workspace_gone") };
   const removable = ownsWorktree(s);
