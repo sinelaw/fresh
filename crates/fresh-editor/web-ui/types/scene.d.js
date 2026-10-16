@@ -442,6 +442,7 @@
 /** type TreeItem = {
     surface: Number,
     interior?: Boolean,
+    page?: Boolean,
     layer?: Boolean,
     key?: String,
     kind: "fill" | "wash" | "rule" | "border" | "overflow-before" | "overflow-after"
@@ -485,6 +486,10 @@
 
 // view/native.rs `NativePanelView`. `rect`/`frame` are `json!` rects;
 // `spec` is the panel's `WidgetSpec` run through `styled_spec`.
+// view/native.rs `PageView`: a page's window, in content rows, and the row
+// each keyed widget starts on (`[row, key]`).
+/** type PageView = { offset: Number, window: Number, content: Number, marks: [Number, String][] } */
+
 /** type NativePanel = {
     kind: "dock" | "floating" | "sidebar" | "pane",
     section?: Number,
@@ -497,7 +502,8 @@
     anchored: Boolean,
     frame?: Rect,
     title?: String,
-    closeKey?: TreeKey
+    closeKey?: TreeKey,
+    page?: PageView
 } */
 
 // view/native.rs `ConfirmCardView`.

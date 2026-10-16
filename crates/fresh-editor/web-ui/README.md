@@ -205,6 +205,13 @@ Presses still go to the tree: by node key, or as the widget's identity the
 bridge resolves against the mounted spec. `fresh.nativePanels` in
 localStorage (`on`/`off`) overrides the theme's choice.
 
+A *page* mounted into a pane (the Welcome screen) is laid out in the same
+column the terminal sets it in (its `composeWidth`), and is scrolled by the
+editor, not the browser: the wheel goes to the editor as over any buffer, and
+the page follows the editor's window (`regions.native.panels[].page`: the
+offset, and the content row each keyed widget starts on), so the wheel, the
+page keys and a card's "jump ↓" are one scroll position.
+
 Every control the page draws says what it is to assistive tech: a role
 (`button`, `switch`, `radio`, `combobox`/`listbox`, `textbox`, `tree`,
 `menubar`/`menu`/`menuitem`, `dialog`/`alertdialog`), a name (its label, or a

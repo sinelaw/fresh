@@ -81,12 +81,12 @@ function formLabel(text, labelWidth){
 /** type WidgetCtx =
     { kind: "toolbar", focusKey: String | Undefined }
     | { kind: "panel", slot: String, section: Number | Undefined, pane: Number | Undefined,
-        focusKey: String, instances: Dict<WidgetInstance>, native: Boolean } */
+        focusKey: String, instances: Dict<WidgetInstance>, native: Boolean, page: Boolean } */
 /** type WCtx = {
     kind: "toolbar" | "panel", slot: String | Undefined, section: Number | Undefined,
     pane: Number | Undefined, focusKey: String | Undefined,
-    instances: Dict<WidgetInstance> | Null, native: Boolean, grid: Boolean, table: Boolean,
-    inRow: Boolean } */
+    instances: Dict<WidgetInstance> | Null, native: Boolean, page: Boolean, grid: Boolean,
+    table: Boolean, inRow: Boolean } */
 // An undefined section/pane is left out of the JSON, as before.
 /** function panelBase(WCtx) => {surface: String, slot: String | Undefined, section: Number | Undefined, pane: Number | Undefined} */
 function panelBase(ctx){
@@ -258,9 +258,9 @@ function syncWidgetInputFocus(){
 function widgetEl(spec, ctx){
   return widgetNode(spec, ctx.kind==="panel"
     ? {kind:"panel", slot:ctx.slot, section:ctx.section, pane:ctx.pane, focusKey:ctx.focusKey,
-       instances:ctx.instances, native:ctx.native, grid:false, table:false, inRow:false}
+       instances:ctx.instances, native:ctx.native, page:ctx.page, grid:false, table:false, inRow:false}
     : {kind:"toolbar", slot:undefined, section:undefined, pane:undefined, focusKey:ctx.focusKey,
-       instances:null, native:false, grid:false, table:false, inRow:false});
+       instances:null, native:false, page:false, grid:false, table:false, inRow:false});
 }
 // The host instance state of the widget keyed `key`, if any.
 /** function instOf(WCtx, String | Undefined) => WidgetInstance | Null */
@@ -274,8 +274,57 @@ function specKey(s){ return s.kind==="label"?undefined:s.key; }
 // A grid row's cells (none for anything else).
 /** function rowCells(WidgetSpec) => WidgetSpec[] */
 function rowCells(s){ return s.kind==="row"?s.children:[]; }
+// Every native control carries its widget key (`data-wkey`): a page finds
+// its widgets by it to scroll as the editor does (`syncPage`, 73-native.js).
 /** function widgetNode(WidgetSpec, WCtx) => El */
 function widgetNode(spec, ctx){
+  const el=widgetNodeOf(spec, ctx);
+  const k=spec?specKey(spec):undefined;
+  if(k&&el.nodeType===1&&el.dataset.wkey===undefined) el.dataset.wkey=k;
+  return el;
+}
+// Lines a terminal layout wrapped to its measure, one row per line, read as
+// one paragraph natively: a run of rows that each hold just a bare full-width
+// button with the same press target and style (a card's description) becomes
+// one button whose text the browser wraps to the card (`para`). Rows of other
+// targets, and the empty lines between paragraphs, are left as they are.
+// The code of a markdown document that is ONE fenced block — its opening
+// fence, then lines up to a closing fence that ends the document (or to the
+// end, unclosed) — or null for any other document.
+/** function fencedBlock(String) => String | Null */
+function fencedBlock(md){
+  const lines=md.trim().split("\n");
+  if(!/^```/.test(lines[0]??"")) return null;
+  const body=lines.slice(1), close=body.findIndex(l=>/^\s*```/.test(l));
+  if(close>=0&&close!==body.length-1) return null;
+  return (close>=0?body.slice(0,close):body).join("\n");
+}
+/** function paragraphs(WidgetSpec[]) => {spec: WidgetSpec, para: Boolean}[] */
+function paragraphs(kids){
+  /** const line: (WidgetSpec) => WidgetSpec | Null */
+  const line=c=>{
+    const b=(c.kind==="row"&&c.children.length===1)?c.children[0]:null;
+    return (b&&b.kind==="button"&&b.bare&&b.fullWidth&&(b.label||"").trim()!=="")?b:null;
+  };
+  const out=[];
+  for(let i=0;i<kids.length;i++){
+    const first=line(kids[i]);
+    if(first===null||first.kind!=="button"){ out.push({spec:kids[i],para:false}); continue; }
+    /** const same: (WidgetSpec | Null) => Boolean */
+    const same=b=>b!==null&&b.kind==="button"&&b.key===first.key&&b.focusable===first.focusable
+      &&!!b.disabled===!!first.disabled
+      &&JSON.stringify(b.style??null)===JSON.stringify(first.style??null)
+      &&JSON.stringify(b.hoverStyle??null)===JSON.stringify(first.hoverStyle??null);
+    // The first line's leading spaces stay: they are the paragraph's indent.
+    let j=i+1, text=(first.label||"").trimEnd();
+    while(j<kids.length&&same(line(kids[j]))){ const b=line(kids[j]); text+=" "+((b&&b.kind==="button"?b.label:"")||"").trim(); j++; }
+    out.push(j>i+1?{spec:{...first,label:text},para:true}:{spec:kids[i],para:false});
+    i=j-1;
+  }
+  return out;
+}
+/** function widgetNodeOf(WidgetSpec, WCtx) => El */
+function widgetNodeOf(spec, ctx){
   if(!spec) return document.createTextNode("");
   const kind=spec.kind, fk=ctx.focusKey, wkey=specKey(spec);
   const focused = !!wkey && wkey===fk;
@@ -311,7 +360,13 @@ function widgetNode(spec, ctx){
     const wrap=spec.kind==="row"&&spec.wrap, end=spec.kind==="row"&&spec.justifyEnd;
     const el=div("w-"+kind+(wrap?" wrap":"")+(grid&&!ctx.grid?" grid":"")+(end?" end":""));
     const cctx={...ctx,grid:grid||ctx.grid,inRow:kind==="row"};
-    for(const c of kids) el.appendChild(widgetNode(c, cctx));
+    if(ctx.native&&!grid&&kind==="col"){
+      for(const {spec:c,para} of paragraphs(kids)){
+        const ce=widgetNode(c, cctx);
+        if(para&&ce.nodeType===1) ce.classList.add("para");
+        el.appendChild(ce);
+      }
+    } else for(const c of kids) el.appendChild(widgetNode(c, cctx));
     return el;
   }
   if(spec.kind==="label"){
@@ -361,6 +416,19 @@ function widgetNode(spec, ctx){
     // spaces fill the row to the close box); a laid-out button has a box. In
     // a grid row the padding IS the layout, so it stays.
     const label=ctx.grid?(spec.label||""):(spec.label||"").trim();
+    if(ctx.native&&!ctx.grid&&spec.bare&&spec.fullWidth){
+      // A bare full-width line of text is a line of the page: an empty one is
+      // the gap between paragraphs (a run of them is one, `paragraphs`), and
+      // the spaces leading one are its indent, not centring.
+      // The gap still answers a press: a door card's blank rows are the card.
+      if(label===""){
+        const gap=div("w-para-gap");
+        if(wkey && !spec.disabled) gap.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,wkey,kind); };
+        return gap;
+      }
+      const raw=spec.label||"", indent=raw.length-raw.trimStart().length;
+      if(indent>0) el.style.paddingLeft=`calc(${indent*CW}px + .35em)`;
+    }
     // A menu entry that says what it sets: `(•)`/`( )` a choice, `[✓]`/`[ ]`
     // a switch — drawn as the marks they stand for.
     const mark=(!ctx.grid&&ctx.native)?/^(\(•\)|\( \)|\[✓\]|\[ \])\s+(.*)$/.exec(label):null;
@@ -386,6 +454,11 @@ function widgetNode(spec, ctx){
   }
   if(spec.kind==="labeledSection"){
     const el=div("w-section"); if(spec.label){ const l=div("w-section-label"); l.textContent=spec.label; el.appendChild(l); }
+    // A section the page sized in cells (a card of a row of cards, a framed
+    // box on the page's axis) keeps that width, so cards set side by side
+    // come out alike and a box sits where the terminal puts it.
+    const wc=spec.widthCols??0;
+    if(ctx.native&&wc>0){ el.classList.add("sized"); el.style.width=`${wc*CW}px`; }
     aria(el, "group", {label:spec.label||null});
     if(spec.child) el.appendChild(widgetNode(spec.child, ctx)); return el;
   }
@@ -400,6 +473,16 @@ function widgetNode(spec, ctx){
     // browser-computed click-to-caret positions for free.
     const inst=instOf(ctx, wkey);
     const val=(inst&&inst.textValue!=null)?inst.textValue:(spec.value||"");
+    // Read-only markdown is something to read, not a field: a document that
+    // is one fenced block (a page's code sample) is that code, in the buffer's
+    // font; any other is its text, wrapped.
+    if(ctx.native&&spec.readOnly&&spec.markdown){
+      const code=fencedBlock(val);
+      const md=document.createElement(code!==null?"pre":"div");
+      md.className=code!==null?"w-code":"w-md";
+      md.textContent=code!==null?code.replace(/[ \t]+$/gm,""):val;
+      return md;
+    }
     // Width as the terminal sizes it: a multi-line field (or one asked to)
     // fills its row; a `fieldWidth` is a width in characters.
     const fill=spec.fullWidth||((spec.rows||1)>1&&!spec.fieldWidth);
@@ -588,8 +671,12 @@ function widgetNode(spec, ctx){
         el.appendChild(card);
       });
     } else {
+      // A list whose rows pad their columns with spaces (a name, then its
+      // kind tag at a fixed column) only lines up in the buffer's font — all
+      // of it, or a row whose name happens to fill its column falls out.
+      const cells=ctx.native&&(spec.items||[]).some(it=>/\S {2,}\S/.test(entryText(it)));
       (spec.items||[]).forEach((it,i)=>{
-        const row=aria(div("w-list-row"+(i===sel?" sel":"")), "option", {selected:i===sel});
+        const row=aria(div("w-list-row"+(i===sel?" sel":"")+(cells?" cells":"")), "option", {selected:i===sel});
         fillEntry(row, it);
         row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeListItem(ctx,wkey,spec.itemKeys,i,e); };
         el.appendChild(row);
@@ -722,6 +809,10 @@ function widgetNode(spec, ctx){
       // In a row, spaces are a gap as wide as they are; in a column, blank
       // rows push what follows down.
       if(ctx.inRow){ const g=div("w-gap"); g.style.width=`${spec.entries.reduce((m,e)=>Math.max(m,entryText(e).length),1)*0.6}ch`; return g; }
+      // A page (a panel mounted into a pane, scrolled as a whole) has no
+      // bottom to push toward: its blank rows are the air between its blocks,
+      // one row each, as the terminal sets them.
+      if(ctx.page){ const b=div("w-blank"); b.style.height=`${CH*spec.entries.length}px`; return b; }
       return div("w-fill");
     }
     const el=div("w-raw");

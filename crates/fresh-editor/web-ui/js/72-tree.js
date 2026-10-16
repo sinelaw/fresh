@@ -60,6 +60,9 @@ function treeItemEl(it,kindOf){
   // Inside a plugin panel's interior: hidden while the page lays panels out
   // natively (46-native.css), since `regions.native` draws that content.
   if(it.interior) el.dataset.interior="";
+  // Inside a page's viewport: its scrollbar stays, as the page's (the page
+  // follows the editor's scroll, js/73-native.js `syncPage`).
+  if(it.page) el.dataset.page="";
   // What the item IS, as opposed to how the fold painted it. Read it with
   // `k-<kind>`: a classed node emits a `fill` over its own rect and its label
   // arrives as a separate `lines` item wearing the same class, so

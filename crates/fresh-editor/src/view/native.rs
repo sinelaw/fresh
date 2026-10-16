@@ -83,6 +83,32 @@ pub struct NativePanelView {
     /// The tree key of the frame's `[×]`, when it offers one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub close_key: Option<Value>,
+    /// Where a page (a panel that scrolls as a whole, the welcome screen)
+    /// is scrolled to, for `pane`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page: Option<PageView>,
+}
+
+/// A page's window, as the shell's layout left it, in content rows.
+///
+/// **The editor scrolls the page; the web follows.** The page's offset is the
+/// host's (its anchor's), moved by the wheel, the page's keys and the page's
+/// own commands (a card's "jump ↓" is `scrollToWidget`). The web lays the
+/// page out in its own heights, so a row count means nothing there on its
+/// own: `marks` are the rows the page's keyed widgets start on, and the web
+/// puts the same widgets at the top of its view that the terminal's window
+/// starts at — exact at each mark, in proportion between two.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PageView {
+    /// The first content row in the window.
+    pub offset: i32,
+    /// The window's height, and the content's.
+    pub window: i32,
+    pub content: i32,
+    /// `(content row, widget key)` of each keyed widget, by row: the first
+    /// row any node of that widget is on.
+    pub marks: Vec<(i32, String)>,
 }
 
 /// The confirmation card (`view::confirm::Confirm`, drawn in the terminal by
@@ -173,6 +199,7 @@ impl Editor {
                         .as_ref()
                         .filter(|d| d.closable)
                         .map(|_| key_json(&crate::view::shell::panel::close_key())),
+                    page: None,
                 })
             })
             .collect();
@@ -186,11 +213,15 @@ impl Editor {
             else {
                 continue;
             };
+            // A composed page is a column in the pane, as the terminal lays it
+            // out: centred rows and left-aligned ones share its edges.
+            let (left, _, width) =
+                crate::view::shell::splits::compose_column(rect.width, interior.compose);
             out.push(NativePanelView {
                 kind: "pane",
                 section: None,
                 pane: Some(leaf.0 .0 as u64),
-                rect: json!({ "x": rect.x, "y": rect.y, "w": rect.width, "h": rect.height }),
+                rect: json!({ "x": rect.x + left, "y": rect.y, "w": width, "h": rect.height }),
                 spec: self.styled_spec(&interior.spec),
                 instances: interior
                     .states
@@ -203,9 +234,51 @@ impl Editor {
                 frame: None,
                 title: None,
                 close_key: None,
+                page: self.page_view(leaf, &interior),
             });
         }
         out
+    }
+
+    /// A page's window and the rows its widgets start on. `None` for a panel
+    /// that is not a page, or one not laid out yet.
+    fn page_view(
+        &self,
+        leaf: crate::model::event::LeafId,
+        interior: &crate::view::shell::panel::Interior,
+    ) -> Option<PageView> {
+        use crate::view::shell::widgets::{widget_key_of_any, Slot};
+        let ui = self.shell_ui.as_ref()?;
+        let vp = interior.page.as_ref()?.target()?;
+        let (scroll, content) = ui.scroll(vp);
+        let origin = ui.rect_of(vp);
+        let root = ui.find_by_key(&crate::view::shell::panel::interior_key(Slot::Pane(leaf)))?;
+        let mut first: std::collections::HashMap<String, i32> = std::collections::HashMap::new();
+        let mut stack = vec![root];
+        while let Some(el) = stack.pop() {
+            stack.extend(ui.children(el));
+            let Some(key) = ui.key_of(el) else { continue };
+            let Some(key) = widget_key_of_any(&key) else {
+                continue;
+            };
+            let r = ui.rect_of(el);
+            if r.h == 0 || r.w == 0 {
+                continue;
+            }
+            let row = (r.y - origin.y + scroll.y).max(0);
+            first
+                .entry(key.to_string())
+                .and_modify(|r0| *r0 = (*r0).min(row))
+                .or_insert(row);
+        }
+        let mut marks: Vec<(i32, String)> = first.into_iter().map(|(k, r)| (r, k)).collect();
+        marks.sort();
+        Some(PageView {
+            offset: scroll.y,
+            window: origin.h as i32,
+            content: content.h as i32,
+            marks,
+        })
     }
 
     fn confirm_card_view(&self) -> Option<ConfirmCardView> {

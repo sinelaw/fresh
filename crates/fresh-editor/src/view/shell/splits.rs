@@ -1842,14 +1842,7 @@ fn panel_content(id: LeafId, i: super::panel::Interior, active: bool) -> Node<Ui
         // right-aligned control comes out a column past where the plugin put
         // everything else. The held-back column joins the right margin, which
         // is where the composed buffer's painter left it too.
-        let (left_pad, right_pad, inner_w) = match compose.map(|cw| cw.max(11)) {
-            Some(cw) if cw < pane_w => {
-                let inner = cw - 1;
-                let left = (pane_w - cw) / 2;
-                (left, pane_w - left - inner, inner)
-            }
-            _ => (0, 0, pane_w),
-        };
+        let (left_pad, right_pad, inner_w) = compose_column(pane_w, compose);
         let widgets = super::widgets::node(
             &i.spec,
             inner_w,
@@ -2553,5 +2546,26 @@ impl<M: 'static> PaneSlots<M> {
             vscroll: row(),
             hscroll: row(),
         }
+    }
+}
+
+/// Where a composed panel's column sits in a pane `pane_w` cells wide:
+/// `(left margin, right margin, column width)`. `compose` is the panel's
+/// `setLayoutHints({ composeWidth })`; without one, or when it is not
+/// narrower than the pane, the column is the pane.
+///
+/// The column is the width less the one cell the plugin was told to hold
+/// back (`widget_panel_width` hands it `composeWidth - 1`), so a row laid
+/// out to the plugin's number fills it exactly; that cell joins the right
+/// margin. Shared with the web's native layout (`view::native`), which
+/// places the page in the same column.
+pub(crate) fn compose_column(pane_w: u16, compose: Option<u16>) -> (u16, u16, u16) {
+    match compose.map(|cw| cw.max(11)) {
+        Some(cw) if cw < pane_w => {
+            let inner = cw - 1;
+            let left = (pane_w - cw) / 2;
+            (left, pane_w - left - inner, inner)
+        }
+        _ => (0, 0, pane_w),
     }
 }

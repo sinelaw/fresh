@@ -1359,6 +1359,11 @@ pub struct TreeItemView {
     /// the interior out itself from `regions.native` hides these.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub interior: bool,
+    /// Inside a page's viewport (a pane panel the editor scrolls as a whole,
+    /// the welcome screen). The web lays the page out natively but follows
+    /// the editor's scroll, so this viewport's scrollbar is the page's.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub page: bool,
     /// Painted by a layer the subtree raised — a pop-over, a scrim — rather
     /// than by the subtree's own flow. Layers paint after everything in flow.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -1606,7 +1611,8 @@ impl Editor {
         // Panels mounted into panes (Search & Replace, the welcome page, a
         // review diff): their pane's cells are left to the tree, so without a
         // surface here the web showed those panes empty.
-        let mut pane_leaves: Vec<_> = self.pane_interiors().into_keys().collect();
+        let pane_interiors = self.pane_interiors();
+        let mut pane_leaves: Vec<_> = pane_interiors.keys().copied().collect();
         pane_leaves.sort_by_key(|leaf| leaf.0 .0);
         for leaf in &pane_leaves {
             push(
@@ -1628,6 +1634,10 @@ impl Editor {
             .chain((0..self.sidebar_sections.len()).map(Slot::Sidebar))
             .chain(pane_leaves.iter().copied().map(Slot::Pane))
             .filter_map(|slot| ui.find_by_key(&crate::view::shell::panel::interior_key(slot)))
+            .collect();
+        let pages: Vec<_> = pane_interiors
+            .values()
+            .filter_map(|i| i.page.as_ref()?.target())
             .collect();
         let mut items = Vec::new();
         for (index, item) in spec.items.iter().enumerate() {
@@ -1739,6 +1749,7 @@ impl Editor {
             items.push(TreeItemView {
                 surface,
                 interior: interiors.iter().any(|r| ui.contains(*r, item.id)),
+                page: pages.iter().any(|r| ui.contains(*r, item.id)),
                 layer: index >= spec.layers_from,
                 key: item.key.as_ref().map(|k| k.to_string()),
                 kind,

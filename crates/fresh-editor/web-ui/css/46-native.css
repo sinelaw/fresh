@@ -151,6 +151,21 @@ body.macfam .native-panel.np-dock{background:var(--mac-sidebar)}
 .native-panel .w-section > .w-text{display:flex}
 /* A panel mounted into a pane: over the pane's cells, in the pane's ground. */
 .native-panel.np-pane{z-index:87;background:var(--bg);padding:.75em 1em}
+/* A pane panel stands on the buffer's ground (`--bg`, the editor theme's), so
+   it takes the editor's ink (`--ed-fg`/`--ed-muted`, js/20-cells.js) rather
+   than the chrome skin's, and its rules and hover tints are mixed from that
+   ink: a light chrome skin over a dark editor theme, or the reverse, reads. */
+.native-panel.np-pane{--fg:var(--ed-fg);--muted:var(--ed-muted);color:var(--fg);
+  --hairline:color-mix(in srgb,var(--ed-fg) 12%,transparent);
+  --hairline-strong:color-mix(in srgb,var(--ed-fg) 22%,transparent);
+  --border:color-mix(in srgb,var(--ed-fg) 25%,transparent);
+  --hover:color-mix(in srgb,var(--ed-fg) 8%,transparent)}
+/* The macOS skin paints every `.w-button` in its push-button ink and every
+   `.w-text` as a boxed field (css/92-theme-macos.css); on a pane's ground a
+   bare button is text in that ground's ink, and a field's label sits outside
+   its input (above), as on the other skins. */
+.native-panel.np-pane .w-button.bare{color:var(--fg)}
+.native-panel.np-pane .w-text{background:none;border:0}
 /* A run the plugin gave a ground of its own (a chip). */
 .native-panel .w-chip{border-radius:3px;padding:0 .2em}
 .native-panel .w-row.grid .w-chip,.native-panel .w-raw .w-chip{padding:0;border-radius:0}
@@ -172,3 +187,38 @@ body.macfam .native-panel.np-dock{background:var(--mac-sidebar)}
    way first when the chrome font makes a row wider than its cells were. */
 .native-panel .w-gap{flex:0 1 auto;min-width:.6em}
 .native-panel .w-toggle .w-label,.native-panel .w-button{white-space:nowrap}
+/* A page's text set as text (js/65-widgets.js `paragraphs`): bare lines sit
+   flush left like the terminal's, a wrapped run is one paragraph, the empty
+   line between paragraphs is a paragraph's worth of air. */
+.native-panel .w-button.bare.full{text-align:left;justify-content:flex-start}
+.native-panel .w-button.bare.para{white-space:normal;line-height:1.45}
+.native-panel .w-para-gap{height:.6em;flex:1 1 auto;align-self:stretch}
+.native-panel .w-blank{flex:none}
+/* A sized section keeps its width; sections side by side stand as tall as
+   the tallest, tops aligned, as boxes in a row do. Their row is spaced by the
+   page's own spacers alone: it was laid out to fill the column exactly. */
+.native-panel .w-row > .w-section.sized{flex:0 1 auto;min-width:0;box-sizing:border-box}
+.native-panel .w-row:has(> .w-section.sized){align-items:stretch;gap:0;flex-wrap:nowrap}
+.native-panel .w-button.bare.full{padding-top:.1em;padding-bottom:.1em}
+.native-panel .w-code{margin:0;font-family:var(--mono-family);font-size:inherit;line-height:1.4;
+  white-space:pre;overflow:auto;padding:.5em .75em;border-radius:var(--r-sm,4px);
+  background:color-mix(in srgb,var(--fg) 4%,var(--bg))}
+.native-panel .w-md{white-space:pre-wrap;line-height:1.45}
+/* A page is scrolled by the editor (`syncPage`): no scrollbar of its own. Its
+   bar is the display list's, at the pane's edge beside the page's column,
+   dragged as in the terminal. */
+.native-panel.paged{overflow:hidden}
+/* Its rows were laid out to fill its column exactly (the rules, a fold
+   heading's hint at the right edge), and the column's margins are the
+   pane's: no inset of its own, or every full-width row runs over. */
+.native-panel.np-pane.paged{padding-left:0;padding-right:0}
+body.native-panels .tree-item.k-scrollbar[data-page]{visibility:visible}
+/* A strip pane (js/73-native.js): one row of the panel per cell row, no
+   inset, controls flattened to the row — a toolbar a cell tall stays one. */
+.native-panel.np-pane.strip{padding:0 .75em;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-start}
+.native-panel.strip .w-col{gap:0}
+.native-panel.strip .w-row,.native-panel.strip .w-hintbar{height:var(--cell-h);min-height:0;align-items:center;flex-wrap:nowrap;overflow:hidden}
+.native-panel.strip .w-button{padding-top:0;padding-bottom:0;line-height:calc(var(--cell-h) - 4px)}
+/* A list row set in columns of spaces (js/65-widgets.js) keeps them. */
+.native-panel .w-list-row.cells{font-family:var(--mono-family);white-space:pre}
+
