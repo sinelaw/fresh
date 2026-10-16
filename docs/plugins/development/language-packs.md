@@ -316,7 +316,7 @@ The fastest way to test your language pack during development:
 
 ### Alternative: Manual Installation
 
-1. **Copy** your language pack to `~/.config/fresh/grammars/<package-name>/`
+1. **Copy** your language pack to `~/.config/fresh/languages/packages/<package-name>/`
 2. **Validate manifest**: Run `./validate.sh` in your package directory
 3. **Restart Fresh** to load the new grammar
 

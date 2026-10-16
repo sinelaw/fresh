@@ -2231,3 +2231,96 @@ fn test_pkg_url_installed_package_appears_in_open_browser() {
         env.packages_dir.join("plugin-gamma")
     );
 }
+
+/// A bundle's plugin must be able to use the bundle's own grammars as soon as
+/// it loads. Detection plugins (e.g. ssh-config in fresh-plugins) switch
+/// already-open buffers to the bundle's language at load time; that only
+/// works if the bundle's grammars are applied before its plugins run.
+#[test]
+#[cfg_attr(windows, ignore)] // like the other local-path install tests above
+fn test_pkg_install_bundle_plugin_sees_bundle_grammar_on_load() {
+    let env = setup_pkg_ui_env("{}");
+
+    let bundle_temp = tempfile::TempDir::new().unwrap();
+    let bundle_dir = bundle_temp.path().join("probe-bundle");
+    fs::create_dir_all(bundle_dir.join("grammars")).unwrap();
+    fs::create_dir_all(bundle_dir.join("plugins")).unwrap();
+    fs::write(
+        bundle_dir.join("grammars").join("ProbeLang.sublime-syntax"),
+        r#"%YAML 1.2
+---
+name: ProbeLang
+file_extensions: [probelang]
+scope: source.probelang
+contexts:
+  main:
+    - match: '#.*'
+      scope: comment.line
+"#,
+    )
+    .unwrap();
+    // Claims `.probe` files, which no grammar maps by extension.
+    fs::write(
+        bundle_dir.join("plugins").join("detect.ts"),
+        r#"
+const editor = getEditor();
+for (const buffer of editor.listBuffers()) {
+    if (!buffer.is_virtual && buffer.language === "text" && buffer.path.endsWith(".probe")) {
+        editor.setBufferLanguage(buffer.id, "detected.probelang");
+    }
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        bundle_dir.join("package.json"),
+        r##"{
+    "name": "probe-bundle",
+    "version": "1.0.0",
+    "description": "Bundle whose plugin uses the bundle's grammar on load",
+    "type": "bundle",
+    "fresh": {
+        "languages": [
+            {
+                "id": "probelang",
+                "grammar": {
+                    "file": "grammars/ProbeLang.sublime-syntax",
+                    "extensions": ["probelang"]
+                }
+            }
+        ],
+        "plugins": [{ "entry": "plugins/detect.ts" }]
+    }
+}"##,
+    )
+    .unwrap();
+
+    let probe_file = env.repo.path.join("notes.probe");
+    fs::write(&probe_file, "# a comment\n").unwrap();
+
+    let _guard = env.repo.change_to_repo_dir();
+
+    let mut harness = EditorTestHarness::with_shared_dir_context(
+        120,
+        35,
+        Default::default(),
+        env.repo.path.clone(),
+        env.dir_context.clone(),
+    )
+    .unwrap();
+    harness.open_file(&probe_file).unwrap();
+    harness
+        .wait_until(|h| h.get_status_bar().contains("Text"))
+        .unwrap();
+
+    install_from_url(&mut harness, &bundle_dir.display().to_string());
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Installed bundle"))
+        .unwrap();
+
+    // Without the fix the plugin runs before the grammar is applied, the
+    // language switch resolves to nothing, and the buffer stays "Text".
+    harness
+        .wait_until(|h| h.get_status_bar().contains("ProbeLang"))
+        .unwrap();
+}

@@ -1729,6 +1729,16 @@ async function loadBundle(packageDir: string, manifest: PackageManifest): Promis
     }
   }
 
+  // Reload themes if bundle contains any (uses same format as theme-packs)
+  if (manifest.fresh?.themes && manifest.fresh.themes.length > 0) {
+    editor.debug(`[pkg] Bundle contains ${manifest.fresh.themes.length} theme(s), reloading themes`);
+    editor.reloadThemes();
+  }
+
+  // Apply grammar changes before loading plugins, so a bundle plugin can
+  // switch already-open buffers to the bundle's languages when it loads.
+  await editor.reloadGrammars();
+
   // Load all plugins from the bundle
   if (manifest.fresh?.plugins) {
     for (const plugin of manifest.fresh.plugins) {
@@ -1751,14 +1761,6 @@ async function loadBundle(packageDir: string, manifest: PackageManifest): Promis
     }
   }
 
-  // Reload themes if bundle contains any (uses same format as theme-packs)
-  if (manifest.fresh?.themes && manifest.fresh.themes.length > 0) {
-    editor.debug(`[pkg] Bundle contains ${manifest.fresh.themes.length} theme(s), reloading themes`);
-    editor.reloadThemes();
-  }
-
-  // Apply grammar changes
-  await editor.reloadGrammars();
   editor.debug(`[pkg] Bundle loaded: ${bundleName}`);
 }
 
