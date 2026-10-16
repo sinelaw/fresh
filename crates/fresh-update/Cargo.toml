@@ -49,7 +49,7 @@ xz2 = { version = "0.1", optional = true }
 # gzip for the universal (musl) archive. Default backend is miniz_oxide —
 # pure Rust, unlike xz2 which links liblzma.
 flate2 = { version = "1", optional = true }
-zip = { version = "2", default-features = false, features = [
+zip = { version = "9", default-features = false, features = [
     "deflate",
 ], optional = true }
 
