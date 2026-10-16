@@ -1517,36 +1517,38 @@ check('its door cards stand side by side, alike', doors.length === 3
   && doors.every(d => d.top === doors[0].top && d.h === doors[0].h), JSON.stringify(doors));
 const pageOffset = () => page.evaluate(() =>
   (window.fresh.scene.regions.native.panels.find(x => x.page) || {}).page?.offset ?? -1);
-await welcome.getByRole('button', { name: /jump/ }).first().click().catch(() => {});
-await page.waitForFunction(() => ((window.fresh.scene.regions.native.panels.find(x => x.page) || {}).page?.offset || 0) > 0,
-  null, { timeout: 5000 }).catch(() => {});
-const jumped = await pageOffset();
-check('a card\'s jump scrolls the page in the editor, and the view follows',
-  jumped > 0 && await page.evaluate(() => document.querySelector('.native-panel.paged').scrollTop > 0), 'offset=' + jumped);
+const offsetPast = (cmp, o) => page.waitForFunction(([c, o]) => {
+  const v = (window.fresh.scene.regions.native.panels.find(x => x.page) || {}).page?.offset ?? -1;
+  return c === 'gt' ? v > o : c === 'lt' ? v >= 0 && v < o : v === o;
+}, [cmp, o], { timeout: 5000 }).catch(() => {});
+// A door card is one target: a blank row of it jumps as its button does.
+// Pressed on the row itself — whether the page shows the doors at the top
+// depends on the pane's height.
+const gapW = await page.evaluate(() => {
+  const g = document.querySelector('.native-panel.paged .w-section.sized .w-para-gap[data-wkey]');
+  if (!g) return 0;
+  g.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+  return g.getBoundingClientRect().width;
+});
+await offsetPast('gt', 0);
+const gapJump = await pageOffset();
+check('a blank row of a door card jumps the page', gapW > 0 && gapJump > 0, `width=${gapW} offset=${gapJump}`);
+// The wheel over the page scrolls it in the editor: back up to the top.
 const wbox = await welcome.boundingBox();
 if (wbox) {
   await page.mouse.move(wbox.x + wbox.width / 2, wbox.y + wbox.height / 2);
-  // Up, from where the jump left it: down could already be at the end.
-  await page.mouse.wheel(0, -400);
-  await page.waitForFunction(o => ((window.fresh.scene.regions.native.panels.find(x => x.page) || {}).page?.offset ?? -1) < o,
-    jumped, { timeout: 5000 }).catch(() => {});
+  for (let i = 0; i < 6 && (await pageOffset()) > 0; i++) { await page.mouse.wheel(0, -800); await offsetPast('lt', gapJump); }
 }
 const wheeled = await pageOffset();
-check('the wheel over the page scrolls it in the editor', wheeled >= 0 && wheeled < jumped, `${jumped} → ${wheeled}`);
-// A door card is one target: its blank rows answer as its jump does.
-const gapBox = await page.evaluate(() => {
-  const g = document.querySelector('.native-panel.paged .w-section.sized .w-para-gap[data-wkey]');
-  const r = g ? g.getBoundingClientRect() : null;
-  return r && { x: r.x + r.width / 2, y: r.y + r.height / 2, w: r.width };
-});
-if (gapBox && gapBox.w > 0) {
-  await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)
-    ?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: x, clientY: y })), gapBox);
-  await page.waitForFunction(o => (window.fresh.scene.regions.native.panels.find(x => x.page) || {}).page?.offset === o,
-    jumped, { timeout: 5000 }).catch(() => {});
-}
-check('a blank row of a door card jumps as its button does', gapBox != null && gapBox.w > 0
-  && (await pageOffset()) === jumped, JSON.stringify(gapBox));
+check('the wheel over the page scrolls it in the editor', wheeled >= 0 && wheeled < gapJump, `${gapJump} → ${wheeled}`);
+await page.waitForFunction(() => ((window.fresh.scene.regions.native.panels.find(x => x.page) || {}).page?.offset ?? -1) === 0,
+  null, { timeout: 5000 }).catch(() => {});
+await welcome.getByRole('button', { name: /jump/ }).first().click().catch(() => {});
+await offsetPast('gt', 0);
+const jumped = await pageOffset();
+check('a card\'s jump scrolls the page in the editor, and the view follows',
+  jumped > 0 && jumped === gapJump && await page.evaluate(() => document.querySelector('.native-panel.paged').scrollTop > 0),
+  `offset=${jumped} (gap ${gapJump})`);
 check('no cell caret is drawn over the page', await page.evaluate(() =>
   [...document.querySelectorAll('.caret,.tree-caret')].every(c => getComputedStyle(c).visibility === 'hidden')));
 await page.screenshot({ path: `${SHOTS}/43-native-welcome.png` });
