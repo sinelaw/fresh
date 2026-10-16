@@ -745,20 +745,7 @@ impl Editor {
             Arc::clone(&self.authority().filesystem),
         );
         // Note: line_wrap_enabled is set on SplitViewState.viewport when the split is created
-        state
-            .margins
-            .configure_for_line_numbers(self.config.editor.line_numbers);
-        // Set default line ending for new buffers from config
-        state
-            .buffer
-            .set_default_line_ending(self.config.editor.default_line_ending.to_line_ending());
-        state.apply_occurrence_highlight(self.config.editor.highlight_occurrences);
-        // Buffer settings (whitespace visibility, tabs, guides, …): resolve
-        // from the user's config so a brand-new buffer behaves the same as an
-        // opened file. Without this the buffer kept `BufferSettings::default()`
-        // (e.g. tabs-on/spaces-off whitespace), so configured space indicators
-        // never showed in a new file (issue #2580).
-        state.apply_buffer_config(&self.config);
+        state.apply_unnamed_buffer_config(&self.config);
         self.windows
             .get_mut(&self.active_window)
             .map(|w| &mut w.buffers)

@@ -2414,16 +2414,7 @@ impl crate::app::window::Window {
             self.resources.config.editor.large_file_threshold_bytes as usize,
             std::sync::Arc::clone(&self.authority().filesystem),
         );
-        state
-            .margins
-            .configure_for_line_numbers(self.resources.config.editor.line_numbers);
-        state.buffer.set_default_line_ending(
-            self.resources
-                .config
-                .editor
-                .default_line_ending
-                .to_line_ending(),
-        );
+        state.apply_unnamed_buffer_config(&self.resources.config);
         state.buffer.insert(0, text);
         state.buffer.set_modified(true);
         state.buffer.set_recovery_pending(false);
@@ -2455,16 +2446,7 @@ impl crate::app::window::Window {
             self.resources.config.editor.large_file_threshold_bytes as usize,
             std::sync::Arc::clone(&self.authority().filesystem),
         );
-        state
-            .margins
-            .configure_for_line_numbers(self.resources.config.editor.line_numbers);
-        state.buffer.set_default_line_ending(
-            self.resources
-                .config
-                .editor
-                .default_line_ending
-                .to_line_ending(),
-        );
+        state.apply_unnamed_buffer_config(&self.resources.config);
         let manager = crate::view::split::SplitManager::new(buf);
         let active_leaf = manager.active_split();
         let mut view_states = HashMap::new();
