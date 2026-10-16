@@ -78,6 +78,10 @@ struct PtyWriteListener {
     /// `process_output` drains this after parsing to update the
     /// terminal's stored title.
     pending_title: Arc<Mutex<Option<String>>>,
+    /// Clipboard writes requested by the program via OSC 52. Drained by
+    /// the terminal manager after each read and forwarded to the editor's
+    /// clipboard, so a copy made inside the terminal reaches the host.
+    pending_clipboard: Arc<Mutex<Vec<String>>>,
 }
 
 impl PtyWriteListener {
@@ -85,6 +89,7 @@ impl PtyWriteListener {
         Self {
             write_queue: Arc::new(Mutex::new(Vec::new())),
             pending_title: Arc::new(Mutex::new(None)),
+            pending_clipboard: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -113,7 +118,15 @@ impl EventListener for PtyWriteListener {
                     *pending = Some(String::new());
                 }
             }
-            // Other events (ClipboardStore, etc.) are ignored for now.
+            // OSC 52 write. Only stores are forwarded; `ClipboardLoad`
+            // (OSC 52 read) stays ignored so a child can't read the
+            // host clipboard.
+            Event::ClipboardStore(_, text) => {
+                if let Ok(mut queue) = self.pending_clipboard.lock() {
+                    queue.push(text);
+                }
+            }
+            // Other events (ClipboardLoad, etc.) are ignored for now.
             _ => {}
         }
     }
@@ -491,6 +504,9 @@ pub struct TerminalState {
     /// Pending title set by the program via OSC 0/1/2 (shared with the
     /// event listener). Drained in `process_output` into `terminal_title`.
     pending_title: Arc<Mutex<Option<String>>>,
+    /// OSC 52 clipboard writes captured by the event listener, drained via
+    /// `drain_clipboard_queue`.
+    pending_clipboard: Arc<Mutex<Vec<String>>>,
     /// Working directory most recently reported by the shell via OSC 7, used
     /// to resolve relative paths the running program prints (e.g. for
     /// Ctrl+Click to open). `None` until the shell emits OSC 7.
@@ -544,6 +560,7 @@ impl TerminalState {
         let listener = PtyWriteListener::new();
         let pty_write_queue = listener.write_queue.clone();
         let pending_title = listener.pending_title.clone();
+        let pending_clipboard = listener.pending_clipboard.clone();
         let term = Term::new(config, &size, listener);
 
         Self {
@@ -562,6 +579,7 @@ impl TerminalState {
             backing_file_has_tail: false,
             pty_write_queue,
             pending_title,
+            pending_clipboard,
             cwd: None,
             osc7: Osc7Scanner::default(),
             osc_activity: OscActivityScanner::default(),
@@ -590,6 +608,15 @@ impl TerminalState {
     /// The caller should write this data to the PTY writer.
     pub fn drain_pty_write_queue(&self) -> Vec<String> {
         if let Ok(mut queue) = self.pty_write_queue.lock() {
+            std::mem::take(&mut *queue)
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Drain clipboard writes the program requested via OSC 52
+    pub fn drain_clipboard_queue(&self) -> Vec<String> {
+        if let Ok(mut queue) = self.pending_clipboard.lock() {
             std::mem::take(&mut *queue)
         } else {
             Vec::new()
@@ -2470,6 +2497,21 @@ mod tests {
         assert_eq!(state.title(), "second");
         // The printable bytes still landed on the grid.
         assert!(state.content_string().contains("helloworld"));
+    }
+
+    /// An OSC 52 write from the program is queued for the host clipboard;
+    /// an OSC 52 read is not answered.
+    #[test]
+    fn test_osc52_clipboard_store_is_queued() {
+        let mut state = TerminalState::new(80, 24);
+        // "aGVsbG8=" is base64 for "hello".
+        state.process_output(b"\x1b]52;c;aGVsbG8=\x07");
+        assert_eq!(state.drain_clipboard_queue(), vec!["hello".to_string()]);
+        assert!(state.drain_clipboard_queue().is_empty());
+
+        state.process_output(b"\x1b]52;c;?\x07");
+        assert!(state.drain_clipboard_queue().is_empty());
+        assert!(state.drain_pty_write_queue().is_empty());
     }
 
     /// OSC 7 with a `file://host/path` payload, BEL-terminated, updates the
