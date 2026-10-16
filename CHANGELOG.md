@@ -21,6 +21,10 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Markdown compose layout with emoji and CJK text** - code-block frames keep their edges and wrapped table cells no longer start with a stray space or break early (#3562)
 * **Clear error in mintty / Git Bash** - Fresh now explains it needs a real console instead of failing with `os error 6` (#3547, #3549, reported by @netoffice-zz)
 * **git no longer hangs on a detached daemon** - `--wait` against a daemon with nothing attached no longer waits on an invisible editor (#3555)
+* **Daemon no longer stalls on a half-open connection** - a liveness probe hanging up mid-connect could leave sessions with no rendering or input, or pair a client with the wrong streams (#3542)
+* **Orchestrator deletes and archives worktrees on Windows** without "Permission denied" (#3545)
+* **Plugin `kill()` works** - stopping a spawned process from a plugin was silently a no-op (#3545)
+* **Language-pack bundles detect languages on load** - a bundle plugin switching open buffers to the bundle's language no longer finds no grammar until restart (#3544)
 * **Plugin bundling uses a private temp directory**, closing a local-user file-overwrite risk (#3557)
 
 ### Internals
