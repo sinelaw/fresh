@@ -970,6 +970,23 @@ impl ReaderLoop {
                 .send(TerminalCommand::Write(response.into_bytes()));
         }
 
+        // Forward OSC 52 clipboard writes to the editor, which owns the
+        // host clipboard (OSC 52 to the outer terminal / arboard / session
+        // client relay).
+        let clipboard_writes = state.drain_clipboard_queue();
+        if !clipboard_writes.is_empty() {
+            if let Some(bridge) = &self.async_bridge {
+                for text in clipboard_writes {
+                    #[allow(clippy::let_underscore_must_use)]
+                    let _ = bridge.sender().send(
+                        crate::services::async_bridge::AsyncMessage::TerminalClipboardStore {
+                            text,
+                        },
+                    );
+                }
+            }
+        }
+
         // Incrementally stream new scrollback lines to the backing file.
         if let Some(writer) = self.backing_writer.as_mut() {
             match state.flush_new_scrollback(writer) {
