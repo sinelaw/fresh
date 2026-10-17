@@ -31,6 +31,7 @@ pub enum StatusBarClickable {
     Encoding,
     Language,
     Lsp,
+    Palette,
     Warnings,
     Messages,
     RemoteIndicator,
@@ -724,7 +725,13 @@ impl StatusBarRenderer {
                     )
                     .unwrap_or_else(|| "?".to_string());
                 let text = t!("status.palette", shortcut = shortcut).to_string();
-                item(text, "text", PALETTE, None, hovered)
+                clickable(
+                    text,
+                    "text",
+                    StatusBarClickable::Palette,
+                    PALETTE,
+                    Hover::Swap(MENU_HOVER),
+                )
             }
             StatusBarElement::Clock => {
                 let now = chrono::Local::now();
