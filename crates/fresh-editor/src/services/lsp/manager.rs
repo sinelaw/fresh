@@ -177,6 +177,10 @@ pub struct ServerCapabilitySummary {
     pub document_formatting: bool,
     pub document_range_formatting: bool,
     pub rename: bool,
+    /// `renameProvider.prepareProvider`: the server answers
+    /// `textDocument/prepareRename`. A bare `renameProvider: true` (e.g.
+    /// pylsp) supports rename but not prepareRename.
+    pub rename_prepare: bool,
     pub signature_help: bool,
     pub inlay_hints: bool,
     pub folding_ranges: bool,
@@ -246,7 +250,14 @@ impl ServerCapabilitySummary {
             "textDocument/references" => self.references = register,
             "textDocument/formatting" => self.document_formatting = register,
             "textDocument/rangeFormatting" => self.document_range_formatting = register,
-            "textDocument/rename" => self.rename = register,
+            "textDocument/rename" => {
+                self.rename = register;
+                self.rename_prepare = register
+                    && register_options
+                        .and_then(|opts| opts.get("prepareProvider"))
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false);
+            }
             "textDocument/signatureHelp" => self.signature_help = register,
             "textDocument/inlayHint" => self.inlay_hints = register,
             "textDocument/foldingRange" => self.folding_ranges = register,
@@ -2673,6 +2684,26 @@ mod tests {
         assert!(!caps.completion);
         assert!(!caps.completion_resolve);
         assert!(caps.completion_trigger_characters.is_empty());
+    }
+
+    #[test]
+    fn dynamic_registration_parses_rename_prepare_provider() {
+        let mut caps = ServerCapabilitySummary::default();
+
+        // No options: rename only, no prepareRename.
+        caps.apply_dynamic_registration("textDocument/rename", None, true);
+        assert!(caps.rename);
+        assert!(!caps.rename_prepare);
+
+        let opts = serde_json::json!({ "prepareProvider": true });
+        caps.apply_dynamic_registration("textDocument/rename", Some(&opts), true);
+        assert!(caps.rename);
+        assert!(caps.rename_prepare);
+
+        // Unregister clears both.
+        caps.apply_dynamic_registration("textDocument/rename", None, false);
+        assert!(!caps.rename);
+        assert!(!caps.rename_prepare);
     }
 
     #[test]

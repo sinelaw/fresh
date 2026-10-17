@@ -736,6 +736,10 @@ fn extract_capability_summary(caps: &ServerCapabilities) -> ServerCapabilitySumm
             lsp_types::OneOf::Left(v) => *v,
             lsp_types::OneOf::Right(_) => true,
         }),
+        rename_prepare: bool_or_options(&caps.rename_provider, |p| match p {
+            lsp_types::OneOf::Left(_) => false,
+            lsp_types::OneOf::Right(o) => o.prepare_provider.unwrap_or(false),
+        }),
         signature_help: caps.signature_help_provider.is_some(),
         inlay_hints: bool_or_options(&caps.inlay_hint_provider, |p| match p {
             lsp_types::OneOf::Left(v) => *v,
@@ -7495,5 +7499,29 @@ mod tests {
         assert!(!object.contains_key("identifier"), "{json}");
         assert!(!object.contains_key("previousResultId"), "{json}");
         assert_eq!(json["textDocument"]["uri"], "file:///a.ts");
+    }
+
+    /// pylsp advertises `renameProvider: true`, which supports rename but not
+    /// prepareRename; only `{ prepareProvider: true }` enables the latter.
+    #[test]
+    fn rename_prepare_requires_prepare_provider_option() {
+        let caps = |rename_provider: serde_json::Value| {
+            let caps: lsp_types::ServerCapabilities =
+                serde_json::from_value(serde_json::json!({ "renameProvider": rename_provider }))
+                    .unwrap();
+            super::extract_capability_summary(&caps)
+        };
+
+        let bare = caps(serde_json::json!(true));
+        assert!(bare.rename);
+        assert!(!bare.rename_prepare);
+
+        let with_prepare = caps(serde_json::json!({ "prepareProvider": true }));
+        assert!(with_prepare.rename);
+        assert!(with_prepare.rename_prepare);
+
+        let without_prepare = caps(serde_json::json!({}));
+        assert!(without_prepare.rename);
+        assert!(!without_prepare.rename_prepare);
     }
 }
