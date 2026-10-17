@@ -496,6 +496,31 @@ impl EditorState {
             .unwrap_or(global_default);
     }
 
+    /// Stamp the `editor.*` settings onto an unnamed buffer the editor creates
+    /// itself rather than opens from a file: a new buffer (Ctrl+N), the initial
+    /// and per-window scratch buffers, and an unnamed buffer restored by hot
+    /// exit.
+    ///
+    /// [`EditorState::new`] takes no config, so the state it returns keeps
+    /// built-in defaults — occurrence highlighting on, `BufferSettings::default()`
+    /// for tab size, auto-close, whitespace indicators and the rest — until
+    /// something stamps it. The file-open paths stamp inline, between their
+    /// language and `.editorconfig` resolution; every unnamed buffer comes
+    /// through here, so a path that creates one cannot stamp only half of it.
+    pub fn apply_unnamed_buffer_config(&mut self, config: &crate::config::Config) {
+        self.margins
+            .configure_for_line_numbers(config.editor.line_numbers);
+        self.buffer
+            .set_default_line_ending(config.editor.default_line_ending.to_line_ending());
+        self.apply_occurrence_highlight(config.editor.highlight_occurrences);
+        // Buffer settings (whitespace visibility, tabs, guides, …): resolve
+        // from the user's config so a brand-new buffer behaves the same as an
+        // opened file. Without this the buffer kept `BufferSettings::default()`
+        // (e.g. tabs-on/spaces-off whitespace), so configured space indicators
+        // never showed in a new file (issue #2580).
+        self.apply_buffer_config(config);
+    }
+
     /// Create a new state with a buffer and default (plain text) language.
     /// All other fields are initialized to their defaults.
     fn new_from_buffer(buffer: Buffer) -> Self {
