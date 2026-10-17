@@ -34,6 +34,10 @@ impl Editor {
             }
             // Owns its own toggle (second click closes the popup).
             C::Lsp => self.handle_action(Action::ShowLspStatus),
+            C::Palette => {
+                self.dismiss_menu_popups_for_prompt();
+                self.handle_action(Action::QuickOpen)
+            }
             // Owns its own toggle; clears other popups itself after the check.
             C::RemoteIndicator => self.handle_action(Action::ShowRemoteIndicatorMenu),
             C::WorkspaceTrust => {
