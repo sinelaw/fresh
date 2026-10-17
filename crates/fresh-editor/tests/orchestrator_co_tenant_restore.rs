@@ -16,7 +16,7 @@
 //! `set_var` it replaced was process-global, and once every root was folded
 //! into one `all_tests` binary a sibling's `set_var` moved this test's
 //! workspaces dir out from under it between the save and the read below.
-//! Linux-gated: `dirs::data_dir()` ignores `XDG_DATA_HOME` off Linux, so the
+//! Linux-gated: `dirs::data_dir()` ignores `XDG_DATA_HOME` on Windows, so the
 //! fallback these paths model is not the platform one there.
 #![cfg(target_os = "linux")]
 

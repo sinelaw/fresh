@@ -26,7 +26,7 @@
 //! Workspace persistence is isolated by
 //! `common::global_state::isolated_dir_context`; Linux-gated for the same
 //! reason as `orchestrator_co_tenant_restore.rs` (`dirs::data_dir()` ignores
-//! `XDG_DATA_HOME` elsewhere). Skips when the environment has no PTY.
+//! `XDG_DATA_HOME` on Windows). Skips when the environment has no PTY.
 #![cfg(target_os = "linux")]
 
 use fresh::config::Config;
