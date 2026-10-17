@@ -134,7 +134,9 @@ jobs:
             || { echo "::error::musl archive has $icons icons, expected at least 9"; exit 1; }
           echo "desktop entry present, $icons icons present"
 
+      # Only release consumes these; PR runs just prove the archive builds.
       - name: Upload artifacts
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v6
         with:
           name: artifacts-musl-${{ matrix.target }}

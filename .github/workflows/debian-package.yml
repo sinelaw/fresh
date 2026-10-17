@@ -146,6 +146,8 @@ jobs:
         with:
           name: fresh-editor-debian-testing-${{ matrix.arch }}
           if-no-files-found: error
+          # Handy for trying a PR's package, not worth 90 days of storage.
+          retention-days: ${{ github.event_name == 'pull_request' && 3 || 30 }}
           path: |
             /build/*.deb
             /build/*.dsc
