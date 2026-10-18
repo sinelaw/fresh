@@ -5148,6 +5148,117 @@ diff --git a/tools/check.py b/tools/check.py
         );
     }
 
+    /// `notify_edits` applies a batch in order, each position in the text as
+    /// the edits before it left it, so the end of the dirty range must follow
+    /// every later shift — whatever order the sites come in. An insert near
+    /// the top that is longer than a checkpoint interval moves an earlier,
+    /// lower edit past the checkpoint between them; a dirty end left behind
+    /// lets the walk converge on that checkpoint before it re-parses the
+    /// lower edit. Also covers ascending batches, a newline replaced by a
+    /// space (which pulls a checkpoint off its line start) and its inverse,
+    /// each on LF and CRLF text, against a fresh full parse after every batch.
+    #[test]
+    fn test_bulk_edits_in_any_order_match_full_parse() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let path = Path::new("config.yaml");
+
+        // Apply `(position, deleted bytes, inserted text)` edits in order and
+        // return them in the form `notify_edits` takes.
+        fn apply(
+            text: &mut String,
+            batch: &[(usize, usize, String)],
+        ) -> Vec<(usize, usize, usize)> {
+            batch
+                .iter()
+                .map(|(pos, del, ins)| {
+                    text.replace_range(*pos..*pos + *del, ins);
+                    (*pos, *del, ins.len())
+                })
+                .collect()
+        }
+        let spans_of = |engine: &mut HighlightEngine, text: &str| {
+            let buffer = Buffer::from_str(text, 0, test_fs());
+            engine
+                .highlight_viewport(&buffer, 0, text.len(), &theme, text.len())
+                .into_iter()
+                .map(|span| (span.range, span.category))
+                .collect::<Vec<_>>()
+        };
+        let full_parse = |text: &str| {
+            let mut fresh = HighlightEngine::for_file(path, None, &registry);
+            spans_of(&mut fresh, text)
+        };
+
+        for nl in ["\n", "\r\n"] {
+            // Same shape as `test_bulk_line_start_comment_edits_match_full_parse`:
+            // a quoted string opened on every even line and closed on the
+            // next, so the state differs from line to line.
+            let lines: Vec<String> = (0..48)
+                .map(|i| {
+                    if i % 2 == 0 {
+                        format!("key_{i:02}: \"one long quoted string{nl}")
+                    } else {
+                        format!("  spans two lines; no {i:02} pads.\"{nl}")
+                    }
+                })
+                .collect();
+            let line_len = lines[0].len();
+            assert!(lines.iter().all(|line| line.len() == line_len));
+            let original: String = lines.concat();
+            let line_start = |i: usize| i * line_len;
+            // Complete top-level lines, so the state after them is the state
+            // before them, and more than a checkpoint interval of them.
+            let pad: String = (0..30).map(|k| format!("pad_{k:02}: 1{nl}")).collect();
+            assert!(pad.len() > CHECKPOINT_INTERVAL + line_len);
+            let edited = [2, 4, 6, 8, 10, 12, 18, 20, 22, 24];
+            let s = |text: &str| text.to_string();
+
+            let batches: Vec<Vec<(usize, usize, String)>> = vec![
+                // Comment, ascending: each site past the earlier inserts.
+                edited
+                    .iter()
+                    .enumerate()
+                    .map(|(n, &i)| (line_start(i) + 2 * n, 0, s("# ")))
+                    .collect(),
+                // Uncomment, ascending: each site past the earlier deletes.
+                edited
+                    .iter()
+                    .map(|&i| (line_start(i), 2, String::new()))
+                    .collect(),
+                // A lower edit, then a long insert above it.
+                vec![
+                    (line_start(24), 0, s("# ")),
+                    (line_start(2), 0, pad.clone()),
+                ],
+                // The inverse, lower site first.
+                vec![
+                    (line_start(24) + pad.len(), 2, String::new()),
+                    (line_start(2), pad.len(), String::new()),
+                ],
+                // Join line 15 to the checkpointed line 16, then split it again.
+                vec![(line_start(16) - nl.len(), nl.len(), s(" "))],
+                vec![(line_start(16) - nl.len(), 1, s(nl))],
+            ];
+
+            let mut engine = HighlightEngine::for_file(path, None, &registry);
+            assert_eq!(engine.backend_name(), "textmate");
+            let mut text = original.clone();
+            let _ = spans_of(&mut engine, &text);
+            for (n, batch) in batches.iter().enumerate() {
+                let edits = apply(&mut text, batch);
+                engine.notify_edits(&edits);
+                assert_eq!(
+                    spans_of(&mut engine, &text),
+                    full_parse(&text),
+                    "partial re-highlight after batch {n} ({nl:?} lines) must match a full parse"
+                );
+            }
+            assert_eq!(text, original, "the batches undo each other");
+        }
+    }
+
     /// Bulk edits whose positions are all outside the cached viewport must
     /// not invalidate the cache at all on the tree-sitter / `Highlighter`
     /// path. (TextMate has a richer convergence model, but for both engines
