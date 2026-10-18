@@ -22,7 +22,8 @@
 //! `handle_plugin_command` entry point only exists with it. Linux-gated like
 //! `remote_restore_terminal_e2e.rs`, which shares the same scaffolding
 //! constraints: persistence isolation rides `XDG_DATA_HOME` (ignored by the
-//! Windows data dirs) and the fake `ssh` is a Unix shell script.
+//! Windows data dir, and on macOS followed only once `$XDG_DATA_HOME/fresh`
+//! exists) and the fake `ssh` is a Unix shell script.
 #![cfg(all(target_os = "linux", feature = "plugins"))]
 
 use crate::common::dormant_ssh::{

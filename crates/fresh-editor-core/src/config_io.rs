@@ -916,10 +916,12 @@ fn is_empty_diff(value: &serde_json::Value) -> bool {
 pub struct DirectoryContext {
     /// Data directory for persistent state (recovery, workspaces, history)
     /// e.g., ~/.local/share/fresh on Linux, ~/Library/Application Support/fresh on macOS
+    /// (or `$XDG_DATA_HOME/fresh`; see `data_dir::system_data_dir`)
     pub data_dir: std::path::PathBuf,
 
     /// Config directory for user configuration
-    /// e.g., ~/.config/fresh on Linux, ~/Library/Application Support/fresh on macOS
+    /// e.g., ~/.config/fresh on Linux and macOS (or `$XDG_CONFIG_HOME/fresh`;
+    /// see `DirectoryContext::default_config_dir`)
     pub config_dir: std::path::PathBuf,
 
     /// User's home directory (for file open dialog shortcuts)
