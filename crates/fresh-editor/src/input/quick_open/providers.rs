@@ -514,6 +514,11 @@ impl FileProvider {
     /// For example, if `cwd` is `/` and `query` is `etc/hosts`, this will
     /// list `/etc/` and return every file whose name starts with `hosts`
     /// (e.g. `etc/hosts`, `etc/hosts.allow`, `etc/hosts.deny`).
+    ///
+    /// Dot files follow Show Hidden Files, except that a typed name starting
+    /// with `.` matches dot files regardless, as shell completion does.
+    /// `custom_ignore_patterns` and `.gitignore` are not applied: a typed path
+    /// is an explicit request for that file.
     fn probe_prefix(&self, cwd: &str, query: &str) -> Vec<FileEntry> {
         use std::path::Path;
 
@@ -521,6 +526,7 @@ impl FileProvider {
             return vec![];
         }
 
+        let show_hidden = self.show_hidden.load(std::sync::atomic::Ordering::Relaxed);
         let abs_path = Path::new(cwd).join(query);
         let mut results = Vec::new();
 
@@ -528,7 +534,7 @@ impl FileProvider {
         if let Ok(entries) = self.filesystem.read_dir(&abs_path) {
             let query_trimmed = query.trim_end_matches('/');
             for entry in entries {
-                if entry.is_file() && !entry.name.starts_with('.') {
+                if entry.is_file() && (show_hidden || !entry.name.starts_with('.')) {
                     let rel = format!("{}/{}", query_trimmed, entry.name);
                     results.push(FileEntry {
                         frecency_score: self.get_frecency_score(&rel),
@@ -559,9 +565,10 @@ impl FileProvider {
             Err(_) => return results,
         };
 
+        let include_hidden = show_hidden || basename.starts_with('.');
         if let Ok(entries) = self.filesystem.read_dir(parent) {
             for entry in entries {
-                if entry.name.starts_with('.') {
+                if !include_hidden && entry.name.starts_with('.') {
                     continue;
                 }
                 if !entry.name.starts_with(basename) {
@@ -1675,6 +1682,48 @@ mod tests {
             !paths.contains(&"README.md"),
             "README.md shouldn't match prefix 'Makefile': {paths:?}"
         );
+    }
+
+    /// Dot files in a typed directory follow Show Hidden Files; a typed name
+    /// that itself starts with `.` finds dot files either way.
+    #[test]
+    fn test_probe_prefix_follows_show_hidden() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        std::fs::write(base.join(".env"), b"").unwrap();
+        std::fs::write(base.join(".envrc"), b"").unwrap();
+        std::fs::write(base.join("env.rs"), b"").unwrap();
+        std::fs::create_dir(base.join("conf")).unwrap();
+        std::fs::write(base.join("conf").join(".secret"), b"").unwrap();
+        std::fs::write(base.join("conf").join("app.toml"), b"").unwrap();
+
+        let provider = make_file_provider();
+        let cwd = base.display().to_string();
+        let probe = |query: &str| -> Vec<String> {
+            let mut paths: Vec<String> = provider
+                .probe_prefix(&cwd, query)
+                .into_iter()
+                .map(|e| e.relative_path)
+                .collect();
+            paths.sort();
+            paths
+        };
+
+        for show_hidden in [false, true] {
+            provider.set_visibility(show_hidden);
+            // A typed leading `.` asks for dot files, whatever the setting.
+            assert_eq!(probe(".env"), vec![".env", ".envrc"], "{show_hidden}");
+            assert_eq!(probe("conf/.s"), vec!["conf/.secret"], "{show_hidden}");
+        }
+
+        provider.set_visibility(false);
+        assert_eq!(probe("conf"), vec!["conf/app.toml"]);
+        assert_eq!(probe("e"), vec!["env.rs"]);
+
+        provider.set_visibility(true);
+        assert_eq!(probe("conf"), vec!["conf/.secret", "conf/app.toml"]);
+        assert_eq!(probe("conf/"), vec!["conf/.secret", "conf/app.toml"]);
+        assert_eq!(probe("e"), vec!["env.rs"]);
     }
 
     // ====================================================================
