@@ -310,44 +310,87 @@ const IGNORED_DIRS: &[&str] = &[
     ".DS_Store",
 ];
 
-/// `IGNORED_DIRS` plus heavy hidden tool and cache directories, for walks that
-/// include hidden entries. Only dot-prefixed names belong in the extra part:
-/// a non-hidden directory listed here would vanish from Quick Open exactly when
-/// Show Hidden Files is turned on.
-const IGNORED_DIRS_WITH_HIDDEN: &[&str] = &[
-    ".git",
-    "node_modules",
-    "target",
-    "__pycache__",
-    ".hg",
-    ".svn",
-    ".DS_Store",
-    ".cache",
-    ".cargo",
-    ".rustup",
-    ".npm",
-    ".venv",
-    ".tox",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".gradle",
-    ".next",
-    ".idea",
-];
-
 const MAX_FILES: usize = 50_000;
 
-fn walk_options(show_hidden: bool) -> crate::model::filesystem::WalkOptions<'static> {
-    crate::model::filesystem::WalkOptions {
-        skip_dirs: if show_hidden {
-            IGNORED_DIRS_WITH_HIDDEN
+/// `file_explorer.custom_ignore_patterns` applied to a Quick Open listing, read
+/// as `.gitignore` lines relative to the project root. It filters the directory
+/// walk and `git ls-files` alike.
+struct CustomIgnore {
+    matcher: Option<ignore::gitignore::Gitignore>,
+    /// Directory names a pattern ignores at every depth, so the walk skips them
+    /// instead of entering them and discarding everything inside. Left empty
+    /// when any pattern negates, since a `!` line can re-include such a name.
+    prune_dirs: Vec<String>,
+}
+
+impl CustomIgnore {
+    fn new(root: &std::path::Path, patterns: &[String]) -> Self {
+        if patterns.is_empty() {
+            return Self {
+                matcher: None,
+                prune_dirs: Vec::new(),
+            };
+        }
+        let mut builder = ignore::gitignore::GitignoreBuilder::new(root);
+        for pattern in patterns {
+            if let Err(e) = builder.add_line(None, pattern) {
+                tracing::warn!("Skipping custom ignore pattern {pattern:?}: {e}");
+            }
+        }
+        let matcher = builder
+            .build()
+            .map_err(|e| tracing::warn!("Failed to build custom ignore patterns: {e}"))
+            .ok();
+        let negates = patterns.iter().any(|p| p.trim_start().starts_with('!'));
+        let prune_dirs = if matcher.is_none() || negates {
+            Vec::new()
         } else {
-            IGNORED_DIRS
-        },
+            patterns.iter().filter_map(|p| any_depth_name(p)).collect()
+        };
+        Self {
+            matcher,
+            prune_dirs,
+        }
+    }
+
+    /// Whether the file at `rel` (relative to the root, `/`-separated) is ignored.
+    fn is_ignored(&self, rel: &str) -> bool {
+        self.matcher
+            .as_ref()
+            .is_some_and(|m| m.matched_path_or_any_parents(rel, false).is_ignore())
+    }
+
+    /// `IGNORED_DIRS` plus every `prune_dirs` name, for `walk_options`.
+    fn skip_dirs(&self) -> Vec<&str> {
+        IGNORED_DIRS
+            .iter()
+            .copied()
+            .chain(self.prune_dirs.iter().map(String::as_str))
+            .collect()
+    }
+}
+
+fn walk_options<'a>(
+    skip_dirs: &'a [&'a str],
+    show_hidden: bool,
+) -> crate::model::filesystem::WalkOptions<'a> {
+    crate::model::filesystem::WalkOptions {
+        skip_dirs,
         include_hidden: show_hidden,
         max_entries: usize::MAX,
         ..Default::default()
     }
+}
+
+/// The name a `.gitignore` pattern matches at any depth: `name` or `name/` with
+/// no other slash and no glob. Such a pattern ignores every directory of that
+/// name, which is exactly what a walk's `skip_dirs` does.
+fn any_depth_name(pattern: &str) -> Option<String> {
+    let pattern = pattern.trim();
+    let name = pattern.strip_suffix('/').unwrap_or(pattern);
+    let plain =
+        !name.is_empty() && !name.starts_with('#') && !name.contains(['/', '\\', '*', '?', '[']);
+    plain.then(|| name.to_string())
 }
 
 /// A single file entry in the Quick Open file list.
@@ -401,6 +444,8 @@ pub struct FileProvider {
     /// Cancel flag shared with the background walk task.
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     show_hidden: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// `file_explorer.custom_ignore_patterns`, as `.gitignore` lines.
+    custom_ignore_patterns: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 impl FileProvider {
@@ -423,6 +468,7 @@ impl FileProvider {
             async_sender,
             cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             show_hidden: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            custom_ignore_patterns: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
 
@@ -434,6 +480,30 @@ impl FileProvider {
         if hidden_changed {
             self.clear_cache();
         }
+    }
+
+    /// Leave out what `file_explorer.custom_ignore_patterns` ignores. A change
+    /// makes the existing file list stale.
+    pub fn set_custom_ignore_patterns(&self, patterns: &[String]) {
+        let changed = match self.custom_ignore_patterns.lock() {
+            Ok(mut current) if current.as_slice() != patterns => {
+                *current = patterns.to_vec();
+                true
+            }
+            _ => false,
+        };
+        if changed {
+            self.clear_cache();
+        }
+    }
+
+    fn custom_ignore(&self, cwd: &str) -> CustomIgnore {
+        let patterns = self
+            .custom_ignore_patterns
+            .lock()
+            .map(|p| p.clone())
+            .unwrap_or_default();
+        CustomIgnore::new(std::path::Path::new(cwd), &patterns)
     }
 
     /// Re-point this provider at a new authority's filesystem + process
@@ -651,6 +721,7 @@ impl FileProvider {
         let filesystem = std::sync::Arc::clone(&self.filesystem);
         let process_spawner = std::sync::Arc::clone(&self.process_spawner);
         let show_hidden = self.show_hidden.load(std::sync::atomic::Ordering::Relaxed);
+        let custom_ignore = self.custom_ignore(cwd);
         let cwd = cwd.to_string();
 
         runtime.spawn_blocking(move || {
@@ -659,6 +730,7 @@ impl FileProvider {
                 let frecency_map = frecency.read().ok();
                 let entries: Vec<FileEntry> = files
                     .into_iter()
+                    .filter(|path| !custom_ignore.is_ignored(path))
                     .map(|path| {
                         let score = frecency_map
                             .as_ref()
@@ -685,7 +757,15 @@ impl FileProvider {
 
             // Slow path: directory walk with periodic incremental updates so
             // the UI can show partial results while the scan continues.
-            walk_dir_with_updates(&*filesystem, &cwd, &cancel, &frecency, &sender, show_hidden);
+            walk_dir_with_updates(
+                &*filesystem,
+                &cwd,
+                &cancel,
+                &frecency,
+                &sender,
+                show_hidden,
+                &custom_ignore,
+            );
         });
 
         None
@@ -693,12 +773,14 @@ impl FileProvider {
 
     /// Synchronous fallback when no tokio runtime is available (e.g., tests).
     fn load_files_sync(&self, cwd: &str) -> Option<std::sync::Arc<Vec<FileEntry>>> {
+        let custom_ignore = self.custom_ignore(cwd);
         let files = self
             .try_git_files(cwd)
-            .or_else(|| self.try_walk_dir(cwd))
+            .or_else(|| self.try_walk_dir(cwd, &custom_ignore))
             .unwrap_or_default();
         let entries: Vec<FileEntry> = files
             .into_iter()
+            .filter(|path| !custom_ignore.is_ignored(path))
             .map(|path| FileEntry {
                 frecency_score: self.get_frecency_score(&path),
                 relative_path: path,
@@ -717,13 +799,14 @@ impl FileProvider {
     }
 
     /// Synchronous `try_walk_dir` — used by the sync fallback path.
-    fn try_walk_dir(&self, cwd: &str) -> Option<Vec<String>> {
+    fn try_walk_dir(&self, cwd: &str, custom_ignore: &CustomIgnore) -> Option<Vec<String>> {
         let cancel = std::sync::atomic::AtomicBool::new(false);
         try_walk_dir_blocking(
             &*self.filesystem,
             cwd,
             &cancel,
             self.show_hidden.load(std::sync::atomic::Ordering::Relaxed),
+            custom_ignore,
         )
     }
 }
@@ -787,27 +870,30 @@ fn try_git_files_with_handle(
     Some(files)
 }
 
-/// Walk the directory tree via `FileSystem::walk_files` (blocking).
+/// Walk the directory tree via `FileSystem::walk` (blocking).
 fn try_walk_dir_blocking(
     fs: &dyn crate::model::filesystem::FileSystem,
     cwd: &str,
     cancel: &std::sync::atomic::AtomicBool,
     show_hidden: bool,
+    custom_ignore: &CustomIgnore,
 ) -> Option<Vec<String>> {
     use std::path::Path;
 
     let base = Path::new(cwd);
     let mut files = Vec::new();
+    let skip_dirs = custom_ignore.skip_dirs();
+    let opts = walk_options(&skip_dirs, show_hidden);
 
     // Errors (e.g., root doesn't exist) are treated as "no files found".
-    drop(
-        fs.walk(base, &walk_options(show_hidden), cancel, &mut |entry| {
-            if entry.entry_type == crate::model::filesystem::EntryType::File {
-                files.push(entry.rel.to_string());
-            }
-            files.len() < MAX_FILES
-        }),
-    );
+    drop(fs.walk(base, &opts, cancel, &mut |entry| {
+        if entry.entry_type == crate::model::filesystem::EntryType::File
+            && !custom_ignore.is_ignored(entry.rel)
+        {
+            files.push(entry.rel.to_string());
+        }
+        files.len() < MAX_FILES
+    }));
 
     if files.is_empty() {
         None
@@ -829,6 +915,7 @@ fn walk_dir_with_updates(
     frecency: &std::sync::RwLock<std::collections::HashMap<String, FrecencyData>>,
     sender: &std::sync::mpsc::Sender<crate::services::async_bridge::AsyncMessage>,
     show_hidden: bool,
+    custom_ignore: &CustomIgnore,
 ) {
     use std::path::Path;
 
@@ -836,12 +923,16 @@ fn walk_dir_with_updates(
     let mut paths: Vec<String> = Vec::new();
     let mut last_send = std::time::Instant::now();
     let mut receiver_gone = false;
+    let skip_dirs = custom_ignore.skip_dirs();
+    let opts = walk_options(&skip_dirs, show_hidden);
 
-    // `walk_files` errors (e.g. root doesn't exist, permission denied at the
+    // `walk` errors (e.g. root doesn't exist, permission denied at the
     // top level) are treated as "no files found" — any paths already
     // collected in `paths` are still surfaced via the final send below.
-    if let Err(e) = fs.walk(base, &walk_options(show_hidden), cancel, &mut |entry| {
-        if entry.entry_type != crate::model::filesystem::EntryType::File {
+    if let Err(e) = fs.walk(base, &opts, cancel, &mut |entry| {
+        if entry.entry_type != crate::model::filesystem::EntryType::File
+            || custom_ignore.is_ignored(entry.rel)
+        {
             return true;
         }
         paths.push(entry.rel.to_string());
@@ -1513,44 +1604,82 @@ mod tests {
         assert_eq!(suggestions[0].value.as_deref(), Some("visible.txt"));
     }
 
-    #[test]
-    fn test_hidden_walk_still_skips_every_ignored_dir() {
-        for dir in IGNORED_DIRS {
-            assert!(IGNORED_DIRS_WITH_HIDDEN.contains(dir), "{dir}");
-        }
+    fn file_values(provider: &FileProvider, base: &std::path::Path) -> Vec<String> {
+        let context = make_test_context(&base.display().to_string());
+        provider
+            .suggestions("", &context)
+            .into_iter()
+            .filter_map(|s| s.value)
+            .collect()
     }
 
-    /// Turning Show Hidden Files on must only add entries, so the extra skips
-    /// for hidden walks may only name hidden directories.
+    /// `custom_ignore_patterns` leave files out of Quick Open whether or not
+    /// hidden files are shown, read with `.gitignore` syntax.
     #[test]
-    fn test_hidden_walk_only_adds_skips_for_hidden_dirs() {
-        for dir in IGNORED_DIRS_WITH_HIDDEN {
-            assert!(
-                IGNORED_DIRS.contains(dir) || dir.starts_with('.'),
-                "{dir} is not hidden, so skipping it only when hidden files are shown hides it from Quick Open"
-            );
-        }
-    }
-
-    #[test]
-    fn test_file_provider_lists_venv_whether_or_not_hidden_files_are_shown() {
+    fn test_file_provider_leaves_out_custom_ignore_patterns() {
         let dir = tempfile::tempdir().unwrap();
         let base = dir.path();
-        std::fs::create_dir(base.join("venv")).unwrap();
-        std::fs::write(base.join("venv/pyvenv.cfg"), b"").unwrap();
+        std::fs::create_dir_all(base.join(".cache/pip")).unwrap();
+        std::fs::write(base.join(".cache/pip/wheel.bin"), b"").unwrap();
+        std::fs::create_dir_all(base.join("src/build")).unwrap();
+        std::fs::write(base.join("src/build/out.o"), b"").unwrap();
+        std::fs::write(base.join("src/main.rs"), b"").unwrap();
+        std::fs::write(base.join("debug.log"), b"").unwrap();
+        std::fs::write(base.join("keep.log"), b"").unwrap();
+        std::fs::write(base.join(".env"), b"").unwrap();
 
         let provider = make_file_provider();
-        let context = make_test_context(&base.display().to_string());
+        provider.set_custom_ignore_patterns(&[
+            ".cache/".to_string(),
+            "build/".to_string(),
+            "*.log".to_string(),
+            "!keep.log".to_string(),
+        ]);
         for show_hidden in [false, true] {
             provider.set_visibility(show_hidden);
-            let suggestions = provider.suggestions("", &context);
-            assert!(
-                suggestions
-                    .iter()
-                    .any(|s| s.value.as_deref() == Some("venv/pyvenv.cfg")),
-                "show_hidden={show_hidden}"
+            let values = file_values(&provider, base);
+            assert!(values.contains(&"src/main.rs".to_string()), "{values:?}");
+            assert!(values.contains(&"keep.log".to_string()), "{values:?}");
+            for ignored in [".cache/pip/wheel.bin", "src/build/out.o", "debug.log"] {
+                assert!(
+                    !values.contains(&ignored.to_string()),
+                    "{ignored}: {values:?}"
+                );
+            }
+            assert_eq!(
+                values.contains(&".env".to_string()),
+                show_hidden,
+                "{values:?}"
             );
         }
+
+        // Dropping the patterns brings the files back.
+        provider.set_custom_ignore_patterns(&[]);
+        provider.set_visibility(true);
+        let values = file_values(&provider, base);
+        assert!(
+            values.contains(&".cache/pip/wheel.bin".to_string()),
+            "{values:?}"
+        );
+        assert!(values.contains(&"debug.log".to_string()), "{values:?}");
+    }
+
+    /// Only a pattern that names a directory at any depth is pruned from the
+    /// walk, and none is once a pattern negates.
+    #[test]
+    fn test_custom_ignore_prunes_only_any_depth_names() {
+        let root = std::path::Path::new("/project");
+        let patterns = |ps: &[&str]| ps.iter().map(|p| p.to_string()).collect::<Vec<_>>();
+
+        let ignore = CustomIgnore::new(
+            root,
+            &patterns(&[".cache/", "build", "*.o", "/dist", "a/b/", "# note", ""]),
+        );
+        assert_eq!(ignore.prune_dirs, vec![".cache", "build"]);
+
+        let ignore = CustomIgnore::new(root, &patterns(&[".cache/", "!.cache/keep"]));
+        assert!(ignore.prune_dirs.is_empty());
+        assert!(ignore.is_ignored(".cache/other"));
     }
 
     #[test]

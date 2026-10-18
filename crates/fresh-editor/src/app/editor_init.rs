@@ -1323,6 +1323,7 @@ impl Editor {
             Some(async_bridge.sender()),
         )));
         quick_open_registry.set_file_visibility(config.file_explorer.show_hidden);
+        quick_open_registry.set_file_ignore_patterns(&config.file_explorer.custom_ignore_patterns);
         quick_open_registry.register(Box::new(CommandProvider::new(
             Arc::clone(&command_registry),
             Arc::clone(&keybindings),

@@ -276,6 +276,16 @@ impl QuickOpenRegistry {
         }
     }
 
+    /// Leave out of the file picker what `file_explorer.custom_ignore_patterns`
+    /// ignores.
+    pub fn set_file_ignore_patterns(&self, patterns: &[String]) {
+        if let Some((provider, _)) = self.get_provider_for_input("") {
+            if let Some(fp) = provider.as_any().downcast_ref::<FileProvider>() {
+                fp.set_custom_ignore_patterns(patterns);
+            }
+        }
+    }
+
     /// Get the provider for a given input
     ///
     /// Returns (provider, query_without_prefix)

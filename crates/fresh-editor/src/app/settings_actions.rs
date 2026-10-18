@@ -212,6 +212,8 @@ impl Editor {
         self.active_window_mut().file_explorer_side = self.config.file_explorer.side;
         self.quick_open_registry
             .set_file_visibility(self.config.file_explorer.show_hidden);
+        self.quick_open_registry
+            .set_file_ignore_patterns(&self.config.file_explorer.custom_ignore_patterns);
         let active_id = self.active_window;
         if let Some(explorer) = self
             .windows
