@@ -304,7 +304,11 @@ pub(crate) struct GrepProjectRequest {
     pub regex: regex::bytes::Regex,
     pub max_results: usize,
     pub root: PathBuf,
-    pub ignored_dirs: &'static [&'static str],
+    /// Runs `git ls-files` to list the project's files; the authority's, so a
+    /// remote session lists the remote project.
+    pub spawner: Arc<dyn crate::services::remote::ProcessSpawner>,
+    /// `file_explorer.custom_ignore_patterns`, rooted at `root`.
+    pub custom_ignore: crate::view::file_tree::ignore::CustomIgnore,
     pub callback_id: JsCallbackId,
     /// Open, modified buffers keyed by path — searched through their plan so
     /// unsaved edits are visible to the grep.
@@ -318,7 +322,10 @@ pub(crate) struct GrepProjectRequest {
     pub cancel: Arc<AtomicBool>,
 }
 
-/// Walk `root` and grep every file, entirely off the editor thread.
+/// Grep every project file under `root` (see [`project_files`]), entirely off
+/// the editor thread.
+///
+/// [`project_files`]: crate::services::project_files
 ///
 /// Concurrency is capped so a plugin looping on `grepProject` cannot saturate
 /// the runtime, and every stage re-checks `cancel` so a superseded request
@@ -331,7 +338,8 @@ pub(crate) fn grep_project(runtime: &LiveRuntime, cap: OffLoop, req: GrepProject
             regex,
             max_results,
             root,
-            ignored_dirs,
+            spawner,
+            custom_ignore,
             callback_id,
             mut dirty_plans,
             clean_buffers,
@@ -343,10 +351,15 @@ pub(crate) fn grep_project(runtime: &LiveRuntime, cap: OffLoop, req: GrepProject
         let walk_fs = Arc::clone(&cap.filesystem);
         let walk_cancel = Arc::clone(&cancel);
         tokio::task::spawn_blocking(move || {
-            if let Err(e) = walk_fs.walk_files(&root, ignored_dirs, &walk_cancel, &mut |path, _| {
-                path_tx.blocking_send(path.to_path_buf()).is_ok()
-            }) {
-                tracing::warn!("grepProject: walk_files failed: {}", e);
+            if let Err(e) = crate::services::project_files::for_each_file_blocking(
+                &spawner,
+                &*walk_fs,
+                &root,
+                &custom_ignore,
+                &walk_cancel,
+                &mut |path, _| path_tx.blocking_send(path.to_path_buf()).is_ok(),
+            ) {
+                tracing::warn!("grepProject: listing project files failed: {}", e);
             }
         });
 
@@ -698,6 +711,41 @@ mod tests {
     }
 
     fn run_grep(root: PathBuf, cancel: Arc<AtomicBool>) -> Result<String, String> {
+        run_grep_ignoring(root, cancel, &[])
+    }
+
+    /// A spawner with no `git`, so the grep walks the root rather than
+    /// depending on whether the temp dir happens to sit in a repository.
+    struct NoGit;
+
+    #[async_trait::async_trait]
+    impl crate::services::remote::ProcessSpawner for NoGit {
+        async fn spawn_raw(
+            &self,
+            _command: String,
+            _args: Vec<String>,
+            _cwd: Option<String>,
+        ) -> Result<crate::services::remote::RawSpawnResult, crate::services::remote::SpawnError>
+        {
+            Err(crate::services::remote::SpawnError::Process(
+                "no git in test".to_string(),
+            ))
+        }
+    }
+
+    /// `run_grep` with `custom_ignore_patterns`.
+    fn run_grep_ignoring(
+        root: PathBuf,
+        cancel: Arc<AtomicBool>,
+        custom_ignore_patterns: &[&str],
+    ) -> Result<String, String> {
+        use crate::view::file_tree::ignore::CustomIgnore;
+
+        let patterns: Vec<String> = custom_ignore_patterns
+            .iter()
+            .map(|p| p.to_string())
+            .collect();
+        let custom_ignore = CustomIgnore::new(&root, &patterns);
         let runtime = LiveRuntime::multi_thread("offloop-test", 2).unwrap();
         let (tx, rx) = std::sync::mpsc::channel();
         grep_project(
@@ -713,7 +761,8 @@ mod tests {
                 regex: regex::bytes::Regex::new("NEEDLE").unwrap(),
                 max_results: 100,
                 root,
-                ignored_dirs: &[],
+                spawner: Arc::new(NoGit),
+                custom_ignore,
                 callback_id: JsCallbackId::new(1),
                 dirty_plans: HashMap::new(),
                 clean_buffers: HashMap::new(),
@@ -738,6 +787,31 @@ mod tests {
             result.contains("a.txt"),
             "the match should be reported: {result}"
         );
+    }
+
+    /// Files `custom_ignore_patterns` match, and directories a project walk
+    /// never enters, are not searched.
+    #[test]
+    fn grep_leaves_out_ignored_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("kept.txt"), "NEEDLE\n").unwrap();
+        std::fs::write(root.join("skipped.log"), "NEEDLE\n").unwrap();
+        for sub in ["generated", "node_modules"] {
+            std::fs::create_dir(root.join(sub)).unwrap();
+            std::fs::write(root.join(sub).join("inner.txt"), "NEEDLE\n").unwrap();
+        }
+
+        let result = run_grep_ignoring(
+            root.to_path_buf(),
+            Arc::new(AtomicBool::new(false)),
+            &["*.log", "generated/"],
+        )
+        .expect("an uncancelled grep should resolve");
+        let matches: Vec<GrepMatch> = serde_json::from_str(&result).unwrap();
+        let files: Vec<&str> = matches.iter().map(|m| m.file.as_str()).collect();
+        assert_eq!(files.len(), 1, "only kept.txt should match: {files:?}");
+        assert!(files[0].ends_with("kept.txt"), "got {files:?}");
     }
 
     /// A baseline load settles, and the work it spawned holds no owning

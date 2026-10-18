@@ -15,17 +15,6 @@ use std::sync::Arc;
 
 use super::Editor;
 
-/// Directory names to always skip during project file walking.
-const IGNORED_DIRS: &[&str] = &[
-    ".git",
-    "node_modules",
-    "target",
-    "__pycache__",
-    ".hg",
-    ".svn",
-    ".DS_Store",
-];
-
 /// Does `item` answer to `needle` — either as its action id or as its
 /// display label?
 ///
@@ -3610,10 +3599,11 @@ impl Editor {
     /// Handle GrepProject: snapshot what only the editor thread can see, then
     /// hand the walk-and-search to [`plugin_offloop::grep_project`].
     ///
-    /// The project walk, the per-file greps and the callback resolution all
-    /// happen on the tokio runtime; a second grep from the same plugin
-    /// supersedes and cancels the first, so a plugin looping on `grepProject`
-    /// collapses instead of queueing.
+    /// It searches the files Quick Open lists (see
+    /// [`crate::services::project_files`]). Listing them, the per-file greps
+    /// and the callback resolution all happen on the tokio runtime; a second
+    /// grep from the same plugin supersedes and cancels the first, so a plugin
+    /// looping on `grepProject` collapses instead of queueing.
     ///
     /// What stays on the editor thread is the snapshot, and it is not free:
     /// `search_hybrid_plan` copies the loaded bytes of every *modified* open
@@ -3711,6 +3701,11 @@ impl Editor {
         self.grep_project_cancel
             .insert(plugin_name, Arc::clone(&cancel));
 
+        let root = self.working_dir().to_path_buf();
+        let custom_ignore = crate::view::file_tree::ignore::CustomIgnore::new(
+            &root,
+            &self.config.file_explorer.custom_ignore_patterns,
+        );
         super::plugin_offloop::grep_project(
             &runtime,
             super::plugin_offloop::OffLoop {
@@ -3725,8 +3720,9 @@ impl Editor {
                 opts: fs_opts,
                 regex,
                 max_results,
-                root: self.working_dir().to_path_buf(),
-                ignored_dirs: IGNORED_DIRS,
+                root,
+                spawner: self.authority().process_spawner.clone(),
+                custom_ignore,
                 callback_id,
                 dirty_plans,
                 clean_buffers,
@@ -3893,18 +3889,25 @@ impl Editor {
 
         let filesystem = self.authority().filesystem.clone();
         let filesystem_walker = self.authority().filesystem.clone();
+        let spawner = self.authority().process_spawner.clone();
         let cwd = self.working_dir().to_path_buf();
+        let custom_ignore = crate::view::file_tree::ignore::CustomIgnore::new(
+            &cwd,
+            &self.config.file_explorer.custom_ignore_patterns,
+        );
         let query_len = pattern.len();
 
-        // The project walk below misses files the user can plainly have open:
-        // anything outside `cwd` (e.g. opened from /tmp), hidden files such as
-        // `.fresh-tour.json`, and files under skipped directories. A
-        // current-file search filters this walk's results, so for those it
-        // found nothing. Queue the source buffer's file explicitly, ahead of
-        // the walk, so it flows through the same per-file search path (which
-        // also handles the dirty-buffer hybrid plan) and its matches arrive
-        // before `max_results` can cut them off. The walk skips that path so
-        // it isn't searched twice.
+        // The project listing below (the files Quick Open lists, see
+        // `services::project_files`) misses files the user can plainly have
+        // open: anything outside `cwd` (e.g. opened from /tmp), hidden files
+        // such as `.fresh-tour.json` outside a git repository, and gitignored,
+        // custom-ignored or skipped-directory files. A current-file search
+        // filters this listing's results, so for those it found nothing. Queue
+        // the source buffer's file explicitly, ahead of the listing, so it
+        // flows through the same per-file search path (which also handles the
+        // dirty-buffer hybrid plan) and its matches arrive before
+        // `max_results` can cut them off. The listing skips that path so it
+        // isn't searched twice.
         let source_file = (source_buffer_id != 0)
             .then_some(BufferId(source_buffer_id))
             .and_then(|bid| {
@@ -3947,9 +3950,11 @@ impl Editor {
             let walk_tx = path_tx.clone();
             let walk_file_glob = file_glob.clone();
             tokio::task::spawn_blocking(move || {
-                if let Err(e) = filesystem_walker.walk_files(
+                if let Err(e) = crate::services::project_files::for_each_file_blocking(
+                    &spawner,
+                    &*filesystem_walker,
                     &cwd,
-                    IGNORED_DIRS,
+                    &custom_ignore,
                     &walker_handle.cancel,
                     &mut |path, rel| {
                         if source_file.as_deref() == Some(path) {
@@ -3962,7 +3967,7 @@ impl Editor {
                         }
                     },
                 ) {
-                    tracing::warn!("BeginSearch walk_files failed: {}", e);
+                    tracing::warn!("BeginSearch: listing project files failed: {}", e);
                 }
             });
             // Drop our retained sender so the receive loop terminates once the
