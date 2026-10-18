@@ -40,9 +40,12 @@ pub enum ClientExitReason {
 /// Run the relay loop with an already-handshaked connection
 ///
 /// Use this when handshake has already been performed externally.
-/// Caller must have already enabled raw mode.
+/// Caller must have already enabled raw mode. `keyboard` is what the server's
+/// `Hello` reported it pushed (`ServerHello::keyboard_flags`), so a suspend
+/// pops exactly that and no more.
 pub fn run_client_relay(
     #[allow(unused_mut)] mut conn: ClientConnection,
+    keyboard: crate::services::terminal_modes::KeyboardConfig,
 ) -> io::Result<ClientExitReason> {
     // Set up for relay
     // On Windows, don't set nonblocking here - the relay loop uses try_read() which handles this
@@ -58,11 +61,12 @@ pub fn run_client_relay(
         // in use here, and fits the session to it (#3517).
         let resize_flag = Arc::new(AtomicBool::new(true));
         relay_unix::setup_resize_handler(resize_flag.clone())?;
-        relay_unix::relay_loop(&mut conn, resize_flag)
+        relay_unix::relay_loop(&mut conn, resize_flag, keyboard)
     }
 
     #[cfg(windows)]
     {
+        let _ = keyboard;
         let result = fresh_winterm::relay_loop(&mut conn)?;
         return Ok(match result {
             fresh_winterm::RelayExitReason::ServerQuit => ClientExitReason::ServerQuit,

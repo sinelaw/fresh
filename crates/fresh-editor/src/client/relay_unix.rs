@@ -15,6 +15,7 @@ use crate::server::protocol::ClientControl;
 pub fn relay_loop(
     conn: &mut ClientConnection,
     resize_flag: Arc<AtomicBool>,
+    keyboard: crate::services::terminal_modes::KeyboardConfig,
 ) -> io::Result<ClientExitReason> {
     let mut stdin = io::stdin();
     let mut stdout = io::stdout();
@@ -201,7 +202,7 @@ pub fn relay_loop(
                             crate::services::terminal_title::write_terminal_title(&title);
                         }
                         crate::server::protocol::ServerControl::SuspendClient => {
-                            suspend_client(&mut stdout, conn)?;
+                            suspend_client(&mut stdout, conn, &keyboard)?;
                         }
                         crate::server::protocol::ServerControl::Pong => {
                             // Ignore pong responses
@@ -232,19 +233,24 @@ pub fn relay_loop(
 /// teardown bytes the server would have sent had the client detached, drop
 /// raw mode, raise SIGTSTP, and on resume re-enable raw mode and nudge the
 /// server to repaint by echoing the current terminal size back.
-fn suspend_client(stdout: &mut io::Stdout, conn: &mut ClientConnection) -> io::Result<()> {
+fn suspend_client(
+    stdout: &mut io::Stdout,
+    conn: &mut ClientConnection,
+    keyboard: &crate::services::terminal_modes::KeyboardConfig,
+) -> io::Result<()> {
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
     use nix::sys::signal::{raise, Signal};
 
     // Leave alternate screen, disable mouse + bracketed paste, etc. — mirrors
     // what `TerminalModes::undo()` does in direct mode. The server already
-    // marked this client `needs_full_render`, so the bytes it queues next
-    // will include the matching setup sequences + a full paint.
-    // The client cannot see the server's keyboard settings, so pop the kitty
-    // flags unconditionally, as `terminal_modes::emergency_cleanup` does.
-    let teardown = crate::server::capture_backend::terminal_teardown_sequences(
-        &crate::services::terminal_modes::KeyboardConfig::default(),
-    );
+    // marked this client for a full render plus terminal setup, so the bytes
+    // it queues next will include the matching setup sequences + a full paint.
+    //
+    // The flags come from the server's `ServerHello`: it is the server that
+    // pushed them, and only it knows whether the settings ask for any. Popping
+    // when it pushed nothing (every flag off) would unbalance the terminal's
+    // stack, and not popping would leave the pushed flags on it.
+    let teardown = crate::server::capture_backend::terminal_teardown_sequences(keyboard);
     stdout.write_all(&teardown)?;
     stdout.flush()?;
 
@@ -263,7 +269,10 @@ fn suspend_client(stdout: &mut io::Stdout, conn: &mut ClientConnection) -> io::R
     }
 
     // Resumed. Re-enable raw mode; the server will repaint on its next tick
-    // because `needs_full_render` was set before we left.
+    // because it marked this client for terminal setup and a full render
+    // before we left. That mark is a request to re-send the setup sequences
+    // (alternate screen, mouse, kitty flags) the teardown above undid, and it
+    // is why Ctrl+Shift+<letter> keeps working after a Ctrl+Z / fg.
     if let Err(e) = enable_raw_mode() {
         tracing::error!("Failed to re-enable raw mode after resume: {}", e);
         return Err(io::Error::other(format!("enable_raw_mode failed: {}", e)));
