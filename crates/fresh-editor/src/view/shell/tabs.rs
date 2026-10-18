@@ -280,7 +280,6 @@ fn name_node(pane: LeafId, t: TabTarget, s: String, ink: String) -> Node<UiMsg> 
                         e.stop();
                         Some(UiMsg::Ui(UiFact::PaneTabClose { pane, target: t }))
                     }
-                    _ => None,
                 }
             }),
         )
