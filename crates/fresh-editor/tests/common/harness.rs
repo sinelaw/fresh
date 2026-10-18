@@ -1632,6 +1632,26 @@ impl EditorTestHarness {
         Ok(())
     }
 
+    /// Simulate a middle-click at specific coordinates
+    pub fn mouse_middle_click(&mut self, col: u16, row: u16) -> anyhow::Result<()> {
+        self.send_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Middle),
+            column: col,
+            row,
+            modifiers: KeyModifiers::empty(),
+        })?;
+        self.send_mouse(MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Middle),
+            column: col,
+            row,
+            modifiers: KeyModifiers::empty(),
+        })?;
+        // Same drain as `mouse_click`: a close can kick off async work.
+        self.drain_async_work();
+        self.render()?;
+        Ok(())
+    }
+
     /// Simulate a mouse move (hover) at specific coordinates
     pub fn mouse_move(&mut self, col: u16, row: u16) -> anyhow::Result<()> {
         let mouse_event = MouseEvent {
