@@ -715,6 +715,8 @@ impl Editor {
         if id == self.active_window {
             self.sync_terminal_mode_to_active_buffer();
             // Quick Open follows a restored Show Hidden Files even before the explorer opens.
+            // Only `true` is applied, mirroring `restore_file_explorer_settings`: a restored
+            // `false` is not an override there, and the explorer falls back to config.
             if workspace.file_explorer.show_hidden {
                 self.quick_open_registry.set_file_visibility(true);
             }
