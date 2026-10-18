@@ -6353,9 +6353,9 @@ impl JsEditorApi {
 
     /// Load every saved workspace into `listWindows()`, once.
     ///
-    /// A launch starts with only the workspaces of its own directory (all of
-    /// them in Orchestrator mode); the rest of the registry is read on first
-    /// use rather than at startup. Call this before listing workspaces to a
+    /// A launch starts with only the workspaces of its own directory (plus,
+    /// in Orchestrator mode, the one last used); the rest of the registry is
+    /// read on first use rather than at startup. Call this before listing workspaces to a
     /// user. Resolves once `listWindows()` includes them all; resolves at
     /// once when they already are.
     #[plugin_api(async_promise, js_name = "loadWorkspaces", ts_return = "void")]

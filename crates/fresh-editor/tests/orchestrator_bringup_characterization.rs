@@ -88,6 +88,26 @@ impl Scenario {
         .unwrap();
     }
 
+    /// Like [`Self::place_workspace`], stamped as last focused at `at` — the
+    /// stamp Orchestrator mode reopens the newest of.
+    fn place_focused_workspace(&self, root: &Path, label: &str, at: u64) {
+        let ws_dir = self.data_dir().join("workspaces");
+        std::fs::create_dir_all(&ws_dir).unwrap();
+        let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        let mut ws = fresh::workspace::Workspace::new(canonical.clone());
+        ws.label = Some(label.to_string());
+        ws.last_focused_at = Some(at);
+        let filename = format!(
+            "{}.json",
+            fresh::workspace::encode_path_for_filename(&canonical)
+        );
+        std::fs::write(
+            ws_dir.join(filename),
+            serde_json::to_vec_pretty(&ws).unwrap(),
+        )
+        .unwrap();
+    }
+
     /// Seed an id-keyed **co-tenant** workspace file
     /// (`<encoded-root>.<stable_id>.json`) — the way a workspace extracted
     /// into its own window over the same project persists. Several may share
@@ -167,6 +187,15 @@ impl Scenario {
     /// The editor as construction leaves it, before anything has listed the
     /// workspaces.
     fn boot_in(&self, cwd: &Path) -> fresh::app::Editor {
+        self.boot_with(cwd, false)
+    }
+
+    /// [`Self::boot_in`] as a bare `fresh` with Orchestrator mode on boots.
+    fn boot_orchestrator_in(&self, cwd: &Path) -> fresh::app::Editor {
+        self.boot_with(cwd, true)
+    }
+
+    fn boot_with(&self, cwd: &Path, orchestrator_mode: bool) -> fresh::app::Editor {
         let dir_context = DirectoryContext::for_testing(self.data_root.path());
         let filesystem: Arc<dyn fresh::model::filesystem::FileSystem + Send + Sync> =
             Arc::new(StdFileSystem);
@@ -186,7 +215,7 @@ impl Scenario {
             None,
             false,
             false,
-            false,
+            orchestrator_mode,
         )
         .unwrap()
     }
@@ -501,4 +530,49 @@ fn boot_reads_only_the_launch_dirs_workspaces_until_they_are_listed() {
     // Idempotent: a second listing adds nothing.
     editor.ensure_all_workspaces_loaded();
     assert_eq!(window_roots(&editor), expected);
+}
+
+/// Orchestrator mode reads the whole registry, but only to reopen the
+/// workspace used last. It builds windows for that one and the launch
+/// directory's; the rest wait, as on any other launch, until something lists
+/// them — so a bare `fresh` does not get slower with every workspace saved.
+#[test]
+fn orchestrator_boot_builds_the_last_used_and_launch_dir_workspaces_only() {
+    let s = Scenario::new();
+    s.place_focused_workspace(&s.project_canon, "project", 100);
+    s.place_focused_workspace(&s.worktree_canon, "worktree", 200);
+    s.place_focused_workspace(&s.other_canon, "other", 300);
+
+    let mut editor = s.boot_orchestrator_in(&s.project_canon);
+    let mut booted = vec![s.project_canon.clone(), s.other_canon.clone()];
+    booted.sort();
+    assert_eq!(
+        window_roots(&editor),
+        booted,
+        "boot builds the last-used workspace and the launch directory's, nothing else"
+    );
+    let active = editor.active_window_id();
+    assert_eq!(
+        editor.session(active).map(|w| w.root.clone()),
+        Some(s.other_canon.clone()),
+        "a bare `fresh` reopens the workspace used last, wherever it is"
+    );
+
+    editor.ensure_all_workspaces_loaded();
+    let mut all = vec![
+        s.project_canon.clone(),
+        s.worktree_canon.clone(),
+        s.other_canon.clone(),
+    ];
+    all.sort();
+    assert_eq!(
+        window_roots(&editor),
+        all,
+        "listing the workspaces adds the rest"
+    );
+    assert_eq!(
+        editor.active_window_id(),
+        active,
+        "loading the registry does not switch windows"
+    );
 }

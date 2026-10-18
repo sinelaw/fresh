@@ -33,6 +33,7 @@ specific to filming *this* program.
 | `fresh-review-syntax.json` | comparison | source highlighted inside a Review Diff stream |
 | `fresh-ui-anatomy.json` | explode | the retained UI tree, one element at a time |
 | `fresh-welcome-scroll.json` | solo, stepped | the Welcome screen, scrolled from the wordmark to the theme card, then restyled live |
+| `social-0.5.4/` | scripted cut, not a spec | 0.5.4 for social: many features, still light and fast (tmux-captured, own compositor) |
 
 `assets/<clip>/fresh/config.json` is a config directory a spec copies in, so a
 capture gets a deliberate theme and a known set of enabled plugins instead of
