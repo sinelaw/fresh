@@ -369,6 +369,9 @@ pub enum AsyncMessage {
         terminal: fresh_core::WindowTerminalId,
     },
 
+    /// A program in a terminal asked to set the clipboard via OSC 52.
+    TerminalClipboardStore { text: String },
+
     /// Result of an asynchronous system-clipboard read. The main loop
     /// blocks input dispatch while a paste is in flight; the matching
     /// `request_id` ensures a late result that arrived after the

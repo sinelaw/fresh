@@ -481,6 +481,9 @@ impl Editor {
                 AsyncMessage::TerminalOutput { terminal } => {
                     self.handle_terminal_output(terminal);
                 }
+                AsyncMessage::TerminalClipboardStore { text } => {
+                    self.clipboard.copy(text);
+                }
                 AsyncMessage::PathChanged { handle, path, kind } => {
                     self.handle_path_changed(handle, path, kind);
                 }
