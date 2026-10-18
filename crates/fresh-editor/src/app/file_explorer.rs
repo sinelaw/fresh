@@ -1170,6 +1170,24 @@ impl Editor {
         );
     }
 
+    /// Point Quick Open's file list at the active window's Show Hidden Files.
+    ///
+    /// The setting lives on each window's explorer, but Quick Open is
+    /// editor-wide, so every change of active window (and every change to the
+    /// setting) re-syncs it from here. A window whose explorer has not been
+    /// built yet uses the value its explorer will start with: a restored one,
+    /// else the config default.
+    pub(crate) fn sync_quick_open_file_visibility(&self) {
+        let window = self.active_window();
+        let show_hidden = match &window.file_explorer {
+            Some(explorer) => explorer.ignore_patterns().show_hidden(),
+            None => window
+                .pending_file_explorer_show_hidden
+                .unwrap_or(self.config.file_explorer.show_hidden),
+        };
+        self.quick_open_registry.set_file_visibility(show_hidden);
+    }
+
     pub fn file_explorer_toggle_hidden(&mut self) {
         let show_hidden = if let Some(explorer) = self.file_explorer_mut() {
             explorer.toggle_show_hidden();
@@ -1187,7 +1205,7 @@ impl Editor {
 
         // Persist to config so the setting survives across sessions
         self.config_mut().file_explorer.show_hidden = show_hidden;
-        self.quick_open_registry.set_file_visibility(show_hidden);
+        self.sync_quick_open_file_visibility();
         self.persist_config_change(crate::config_keys::FILE_EXPLORER_SHOW_HIDDEN, show_hidden);
     }
 

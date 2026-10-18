@@ -1580,12 +1580,9 @@ impl Editor {
         let Some(win) = self.windows.get_mut(&window) else {
             return;
         };
-        let restored_show_hidden = win.pending_file_explorer_show_hidden;
         win.install_initialized_file_explorer(view, defaults);
         if is_active {
-            if let Some(show_hidden) = restored_show_hidden {
-                self.quick_open_registry.set_file_visibility(show_hidden);
-            }
+            self.sync_quick_open_file_visibility();
         }
         // "Ready" replaces "initializing" and nothing more specific: a focus
         // or a reveal that spoke since keeps its word.

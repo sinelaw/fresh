@@ -211,8 +211,6 @@ impl Editor {
         self.active_window_mut().file_explorer_width = self.config.file_explorer.width;
         self.active_window_mut().file_explorer_side = self.config.file_explorer.side;
         self.quick_open_registry
-            .set_file_visibility(self.config.file_explorer.show_hidden);
-        self.quick_open_registry
             .set_file_ignore_patterns(&self.config.file_explorer.custom_ignore_patterns);
         let active_id = self.active_window;
         if let Some(explorer) = self
@@ -228,6 +226,7 @@ impl Editor {
             patterns.set_custom_patterns(&root, &self.config.file_explorer.custom_ignore_patterns);
             explorer.set_compact_directories(self.config.file_explorer.compact_directories);
         }
+        self.sync_quick_open_file_visibility();
 
         // On Windows, switch mouse tracking mode when mouse_hover_enabled changes.
         // Mode 1003 (all motion) is used for hover; mode 1002 (cell motion) otherwise.
