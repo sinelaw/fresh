@@ -275,7 +275,8 @@ impl CustomIgnore {
             .build()
             .map_err(|e| tracing::warn!("Failed to build custom ignore patterns: {e}"))
             .ok();
-        let negates = patterns.iter().any(|p| p.trim_start().starts_with('!'));
+        // As `.gitignore` reads lines: leading blanks are part of the pattern.
+        let negates = patterns.iter().any(|p| p.starts_with('!'));
         let prune_dirs = if matcher.is_none() || negates {
             Vec::new()
         } else {
@@ -320,10 +321,13 @@ impl CustomIgnore {
 /// no other slash and no glob. Such a pattern ignores every directory of that
 /// name, which is exactly what a walk's `skip_dirs` does.
 fn any_depth_name(pattern: &str) -> Option<String> {
-    let pattern = pattern.trim();
+    // `.gitignore` drops trailing blanks only; a leading one is part of the
+    // name, which `contains(' ')` below then keeps out of `skip_dirs`.
+    let pattern = pattern.trim_end();
     let name = pattern.strip_suffix('/').unwrap_or(pattern);
-    let plain =
-        !name.is_empty() && !name.starts_with('#') && !name.contains(['/', '\\', '*', '?', '[']);
+    let plain = !name.is_empty()
+        && !name.starts_with('#')
+        && !name.contains(['/', '\\', '*', '?', '[', ' ']);
     plain.then(|| name.to_string())
 }
 
@@ -433,6 +437,14 @@ mod tests {
         let ignore = CustomIgnore::new(root, &patterns(&[".cache/", "!.cache/keep"]));
         assert!(ignore.prune_dirs().is_empty());
         assert!(ignore.matches(Path::new(".cache/other"), false));
+
+        // Blanks as `.gitignore` reads them: trailing ones are dropped, a
+        // leading one is part of the name, so ` build` is not `build`.
+        let ignore = CustomIgnore::new(root, &patterns(&["out  ", " build"]));
+        assert_eq!(ignore.prune_dirs(), ["out"]);
+        assert!(!ignore.matches(Path::new("build/x"), false));
+        let ignore = CustomIgnore::new(root, &patterns(&["build", " !build/keep"]));
+        assert_eq!(ignore.prune_dirs(), ["build"], "` !x` is not a negation");
     }
 
     #[test]

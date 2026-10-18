@@ -4459,7 +4459,10 @@ interface FileExplorerConfig {
 		*/
 		show_gitignored?: boolean;
 		/**
-		* Extra patterns to ignore, on top of `.gitignore`.
+		* Extra patterns to ignore, on top of `.gitignore`, written as
+		* `.gitignore` lines relative to the project root (`build/`, `/dist`,
+		* `*.log`, `!keep.log`). The file explorer, Quick Open, project search
+		* and Live Grep all leave out what they match.
 		*/
 		custom_ignore_patterns?: string[];
 		/**
@@ -8169,11 +8172,13 @@ interface EditorAPI {
 	delay(durationMs: number): Promise<void>;
 	/**
 	* Project-wide grep search (async)
-	* Searches the files Quick Open lists: in a git repository, what
-	* `git ls-files --cached --others --exclude-standard` reports (so
-	* .gitignore is respected); otherwise every non-hidden file outside
-	* `.git`, `node_modules`, `target` and similar directories. Either way,
-	* files matched by `file_explorer.custom_ignore_patterns` are left out.
+	* Searches the project's files by Quick Open's rules, with hidden and
+	* gitignored files left out whatever the explorer shows: in a git
+	* repository, what `git ls-files --cached --others --exclude-standard`
+	* reports (so .gitignore is respected) plus the files of submodules and
+	* nested repositories; otherwise every non-hidden file outside `.git`,
+	* `node_modules`, `target` and similar directories. Either way, files
+	* matched by `file_explorer.custom_ignore_patterns` are left out.
 	* Open buffers with dirty edits are searched in-memory.
 	*/
 	grepProject(pattern: string, fixedString: boolean | null, caseSensitive: boolean | null, maxResults: number | null, wholeWords: boolean | null): Promise<GrepMatch[]>;

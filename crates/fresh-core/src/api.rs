@@ -6084,9 +6084,10 @@ pub enum PluginCommand {
     },
 
     /// Project-wide grep search (async)
-    /// Searches the project's files as Quick Open lists them
-    /// (`services::project_files`): `git ls-files` in a git repository, so
-    /// .gitignore is respected, else a walk; minus `custom_ignore_patterns`.
+    /// Searches the project's files by Quick Open's rules with hidden and
+    /// gitignored files left out (`services::project_files`): `git ls-files`
+    /// in a git repository, so .gitignore is respected, else a walk; minus
+    /// `custom_ignore_patterns`.
     /// For open buffers with dirty edits, searches the buffer's piece tree.
     GrepProject {
         /// Which plugin asked. Coalescing is per plugin: a newer grep replaces

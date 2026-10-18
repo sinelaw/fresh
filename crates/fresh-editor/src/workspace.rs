@@ -541,12 +541,22 @@ pub struct FileExplorerState {
     /// Show Gitignored Files, as [`Self::show_hidden_files`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub show_gitignored_files: Option<bool>,
-    /// The superseded `show_hidden` key, read only for its unambiguous `true`
-    /// and never written back.
-    #[serde(default, rename = "show_hidden", skip_serializing)]
+    /// The superseded `show_hidden` key, read only for its unambiguous `true`.
+    /// Written only as `true` (see [`Self::with_legacy_keys`]), so an older
+    /// build reading this file keeps a toggle that is on; for one that is off
+    /// it falls back to `false`, its default, which is the same thing.
+    #[serde(
+        default,
+        rename = "show_hidden",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
     pub legacy_show_hidden: bool,
     /// The superseded `show_gitignored` key, as [`Self::legacy_show_hidden`].
-    #[serde(default, rename = "show_gitignored", skip_serializing)]
+    #[serde(
+        default,
+        rename = "show_gitignored",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
     pub legacy_show_gitignored: bool,
     /// The sidebar's sections, top to bottom. Empty — every workspace
     /// written before sections existed — restores as exactly one explorer
@@ -573,6 +583,16 @@ impl Default for FileExplorerState {
 }
 
 impl FileExplorerState {
+    /// This state with the superseded keys set from the current ones, for
+    /// writing: older builds read only those.
+    pub fn with_legacy_keys(self) -> Self {
+        Self {
+            legacy_show_hidden: self.show_hidden_files == Some(true),
+            legacy_show_gitignored: self.show_gitignored_files == Some(true),
+            ..self
+        }
+    }
+
     /// The Show Hidden Files this workspace restores, or `None` to leave the
     /// config default. A file from before `show_hidden_files` only speaks
     /// for `true`.
@@ -2204,9 +2224,37 @@ mod tests {
         assert_eq!(restored.restored_show_hidden(), None);
         assert_eq!(restored.restored_show_gitignored(), None);
 
-        let json = serde_json::to_string(&FileExplorerState::default()).unwrap();
+        let json = serde_json::to_string(&FileExplorerState::default().with_legacy_keys()).unwrap();
         assert!(!json.contains("show_hidden"), "{json}");
         assert!(!json.contains("show_gitignored"), "{json}");
+    }
+
+    /// An older build reads only the superseded keys, defaulting to `false`:
+    /// writing them for a toggle that is on keeps it on across a downgrade.
+    #[test]
+    fn test_file_explorer_state_writes_legacy_keys_for_older_builds() {
+        let state = FileExplorerState {
+            show_hidden_files: Some(true),
+            show_gitignored_files: Some(false),
+            ..FileExplorerState::default()
+        }
+        .with_legacy_keys();
+        let json = serde_json::to_string(&state).unwrap();
+
+        #[derive(serde::Deserialize)]
+        struct OlderBuild {
+            #[serde(default)]
+            show_hidden: bool,
+            #[serde(default)]
+            show_gitignored: bool,
+        }
+        let older: OlderBuild = serde_json::from_str(&json).unwrap();
+        assert!(older.show_hidden, "{json}");
+        assert!(!older.show_gitignored, "{json}");
+
+        let restored: FileExplorerState = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.restored_show_hidden(), Some(true));
+        assert_eq!(restored.restored_show_gitignored(), Some(false));
     }
 
     /// The superseded `show_hidden` / `show_gitignored` keys were written as
@@ -2222,15 +2270,15 @@ mod tests {
         assert_eq!(restored.restored_show_hidden(), Some(true));
         assert_eq!(restored.restored_show_gitignored(), None);
 
-        // The new keys win over the old ones, and the old ones are dropped on
-        // the next save.
+        // The new keys win over the old ones, and the next save rewrites the
+        // old ones from them.
         let restored: FileExplorerState = serde_json::from_str(
             r#"{ "visible": true, "expanded_dirs": [], "scroll_offset": 0,
                  "show_hidden": true, "show_hidden_files": false }"#,
         )
         .unwrap();
         assert_eq!(restored.restored_show_hidden(), Some(false));
-        let json = serde_json::to_string(&restored).unwrap();
+        let json = serde_json::to_string(&restored.with_legacy_keys()).unwrap();
         assert!(!json.contains("\"show_hidden\""), "{json}");
     }
 

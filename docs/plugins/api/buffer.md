@@ -533,11 +533,13 @@ hasActiveSearch(): boolean;
 ### `grepProject`
 
 Project-wide grep search (async)
-Searches the files Quick Open lists: in a git repository, what
-`git ls-files --cached --others --exclude-standard` reports (so
-.gitignore is respected); otherwise every non-hidden file outside
-`.git`, `node_modules`, `target` and similar directories. Either way,
-files matched by `file_explorer.custom_ignore_patterns` are left out.
+Searches the project's files by Quick Open's rules, with hidden and
+gitignored files left out whatever the explorer shows: in a git
+repository, what `git ls-files --cached --others --exclude-standard`
+reports (so .gitignore is respected) plus the files of submodules and
+nested repositories; otherwise every non-hidden file outside `.git`,
+`node_modules`, `target` and similar directories. Either way, files
+matched by `file_explorer.custom_ignore_patterns` are left out.
 Open buffers with dirty edits are searched in-memory.
 
 ```typescript

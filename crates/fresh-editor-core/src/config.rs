@@ -1898,7 +1898,10 @@ pub struct FileExplorerConfig {
     #[serde(default = "default_false")]
     pub show_gitignored: bool,
 
-    /// Extra patterns to ignore, on top of `.gitignore`.
+    /// Extra patterns to ignore, on top of `.gitignore`, written as
+    /// `.gitignore` lines relative to the project root (`build/`, `/dist`,
+    /// `*.log`, `!keep.log`). The file explorer, Quick Open, project search
+    /// and Live Grep all leave out what they match.
     #[serde(default)]
     pub custom_ignore_patterns: Vec<String>,
 

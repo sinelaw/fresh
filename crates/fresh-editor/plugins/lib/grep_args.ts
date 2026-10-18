@@ -22,8 +22,22 @@
  * Grep, though the file explorer shows it.
  *
  * `.git` is excluded by every builder: it is VCS metadata, never a hit the
- * user wants, even with the "Ignored & hidden" scope on.
+ * user wants, even with the "Ignored & hidden" scope on. Unless that scope is
+ * on, so are the rest of `IGNORED_DIRS` — the directories Quick Open and
+ * project search never enter. `.gitignore` usually covers them already, but
+ * not outside a git repo (rg and ag only read `.gitignore` inside one) or
+ * when it doesn't list them.
  */
+
+/** `IGNORED_DIRS` in src/services/project_files.rs, less `.git`. */
+export const IGNORED_DIRS: readonly string[] = [
+  "node_modules",
+  "target",
+  "__pycache__",
+  ".hg",
+  ".svn",
+  ".DS_Store",
+];
 
 /** The search options the builders read (a subset of Live Grep's `SearchOpts`). */
 export interface GrepArgOpts {
@@ -87,7 +101,12 @@ export function parseIgnoreLines(lines: readonly unknown[]): IgnoreRule[] {
 /** Where `dir` sits below `root`, as a `/`-separated relative path: `""` for
  *  `root` itself, null when `dir` is not inside it. */
 export function relativeUnder(root: string, dir: string): string | null {
-  const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "");
+  // Windows drive letters compare without case (`C:` is `c:`).
+  const norm = (p: string) =>
+    p
+      .replace(/\\/g, "/")
+      .replace(/\/+$/, "")
+      .replace(/^[A-Za-z]:/, (d) => d.toLowerCase());
   const r = norm(root);
   const d = norm(dir);
   if (d === r) return "";
@@ -111,6 +130,7 @@ export function rgArgs(query: string, o: GrepArgOpts): string[] {
   // Search ignored *and* hidden files (dotfiles). `.git` stays excluded via
   // the glob above.
   if (o.includeIgnored) args.push("--no-ignore", "--hidden");
+  else for (const dir of IGNORED_DIRS) args.push("-g", `!${dir}`);
   for (const rule of parseIgnoreLines(o.ignorePatterns ?? [])) {
     if (!rule.negated) args.push("-g", `!${rule.line}`);
   }
@@ -132,6 +152,7 @@ export function agArgs(query: string, o: GrepArgOpts): string[] {
   if (o.regex === false) args.push("--literal");
   if (o.wholeWord) args.push("--word-regexp");
   if (o.includeIgnored) args.push("--skip-vcs-ignores", "--hidden");
+  else for (const dir of IGNORED_DIRS) args.push("--ignore", dir);
   for (const rule of parseIgnoreLines(o.ignorePatterns ?? [])) {
     if (rule.negated) continue;
     // ag has no `\!`/`\#` escape; the line otherwise goes through as written,
@@ -202,6 +223,9 @@ export function gitGrepArgs(query: string, o: GrepArgOpts, prefix: string | null
   args.push("-e", query);
   // Exclude-only pathspecs search what no pathspec would (git 2.13+).
   const specs = gitExcludePathspecs(parseIgnoreLines(o.ignorePatterns ?? []), prefix);
+  if (!o.includeIgnored) {
+    for (const dir of IGNORED_DIRS) specs.push(`:(exclude,glob)**/${dir}`, `:(exclude,glob)**/${dir}/**`);
+  }
   if (specs.length > 0) args.push("--", ...specs);
   return args;
 }
@@ -269,11 +293,9 @@ const hasWildcard = (glob: string) => /[*?[\\]/.test(glob);
 export function grepArgs(query: string, o: GrepArgOpts): string[] {
   const args = ["-rn", "-I", "--exclude-dir=.git"];
   if (!o.includeIgnored) {
-    // Plain grep can't read `.gitignore`, so the two build/vendor trees that
-    // are ignored in nearly every project would otherwise bury real hits and
-    // make this last-resort fallback crawl. They stand in for `.gitignore`,
-    // so like it they make way when the "Ignored & hidden" scope is on.
-    args.push("--exclude-dir=node_modules", "--exclude-dir=target");
+    // Plain grep can't read `.gitignore`, so these build/vendor trees would
+    // otherwise bury real hits and make this last-resort fallback crawl.
+    for (const dir of IGNORED_DIRS) args.push(`--exclude-dir=${dir}`);
   }
   if (!o.caseSensitive) args.push("-i");
   args.push(o.regex === false ? "-F" : "-E");
@@ -295,6 +317,7 @@ export function grepArgs(query: string, o: GrepArgOpts): string[] {
 
 export function ackArgs(query: string, o: GrepArgOpts): string[] {
   const args = ["--nocolor", "--column"];
+  if (!o.includeIgnored) for (const dir of IGNORED_DIRS) args.push(`--ignore-dir=${dir}`);
   if (!o.caseSensitive) args.push("--ignore-case");
   if (o.regex === false) args.push("--literal");
   if (o.wholeWord) args.push("--word-regexp");

@@ -3599,8 +3599,8 @@ impl Editor {
     /// Handle GrepProject: snapshot what only the editor thread can see, then
     /// hand the walk-and-search to [`plugin_offloop::grep_project`].
     ///
-    /// It searches the files Quick Open lists (see
-    /// [`crate::services::project_files`]). Listing them, the per-file greps
+    /// It searches the project's files by Quick Open's rules, hidden and
+    /// gitignored files left out (see [`crate::services::project_files`]). Listing them, the per-file greps
     /// and the callback resolution all happen on the tokio runtime; a second
     /// grep from the same plugin supersedes and cancels the first, so a plugin
     /// looping on `grepProject` collapses instead of queueing.
@@ -3897,8 +3897,8 @@ impl Editor {
         );
         let query_len = pattern.len();
 
-        // The project listing below (the files Quick Open lists, see
-        // `services::project_files`) misses files the user can plainly have
+        // The project listing below (Quick Open's rules with hidden and
+        // gitignored files left out, see `services::project_files`) misses files the user can plainly have
         // open: anything outside `cwd` (e.g. opened from /tmp), hidden files
         // such as `.fresh-tour.json` outside a git repository, and gitignored,
         // custom-ignored or skipped-directory files. A current-file search

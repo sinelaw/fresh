@@ -330,6 +330,14 @@ struct FileCache {
     /// the first project's files. Late-arriving results for a stale
     /// cwd are dropped on the same check.
     loaded_cwd: Option<String>,
+    /// Counts loads started: each load's results carry the number it was
+    /// started under, and only the latest load's are kept. A visibility or
+    /// pattern change reloads the same cwd, so the cwd alone can't tell a
+    /// stale load's late results from the current one's.
+    generation: u64,
+    /// The latest load's cancel flag. Each load gets its own, so starting a
+    /// new one can't revive one that was told to stop.
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Provider for finding files in the project.
@@ -354,8 +362,6 @@ pub struct FileProvider {
     process_spawner: std::sync::Arc<dyn crate::services::remote::ProcessSpawner>,
     runtime: Option<crate::services::runtime::LiveRuntime>,
     async_sender: Option<std::sync::mpsc::Sender<crate::services::async_bridge::AsyncMessage>>,
-    /// Cancel flag shared with the background walk task.
-    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     show_hidden: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// List files `.gitignore` leaves out too (Git repos only).
     include_gitignored: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -375,13 +381,14 @@ impl FileProvider {
                 files: None,
                 loading: false,
                 loaded_cwd: None,
+                generation: 0,
+                cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             })),
             frecency: std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
             filesystem,
             process_spawner,
             runtime,
             async_sender,
-            cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             show_hidden: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             include_gitignored: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             custom_ignore_patterns: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
@@ -451,9 +458,9 @@ impl FileProvider {
 
     /// Clear the file cache (e.g., after file system changes).
     pub fn clear_cache(&self) {
-        self.cancel
-            .store(true, std::sync::atomic::Ordering::Relaxed);
         if let Ok(mut c) = self.cache.lock() {
+            c.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            c.generation += 1;
             c.files = None;
             c.loading = false;
             c.loaded_cwd = None;
@@ -463,20 +470,19 @@ impl FileProvider {
     /// Cancel any in-progress background file load.
     /// Called when the user closes Quick Open so we don't keep walking.
     pub fn cancel_loading(&self) {
-        self.cancel
-            .store(true, std::sync::atomic::Ordering::Relaxed);
         if let Ok(mut c) = self.cache.lock() {
+            c.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
             c.loading = false;
         }
     }
 
     /// Update the file cache with final results from a completed
-    /// background load. Dropped if `cwd` no longer matches the cache's
-    /// in-flight cwd — i.e. the user switched projects mid-load, so
-    /// these results are stale.
-    pub fn set_cache(&self, cwd: &str, files: std::sync::Arc<Vec<FileEntry>>) {
+    /// background load. Dropped unless they come from the latest load
+    /// (`generation`) for the cache's cwd — otherwise the user switched
+    /// projects, or a setting changed, mid-load and they are stale.
+    pub fn set_cache(&self, cwd: &str, generation: u64, files: std::sync::Arc<Vec<FileEntry>>) {
         if let Ok(mut c) = self.cache.lock() {
-            if c.loaded_cwd.as_deref() != Some(cwd) {
+            if c.loaded_cwd.as_deref() != Some(cwd) || c.generation != generation {
                 return;
             }
             c.files = Some(files);
@@ -486,9 +492,14 @@ impl FileProvider {
 
     /// Update the file cache with partial results while the background scan
     /// is still running.  Unlike [`set_cache`], this keeps `loading = true`.
-    pub fn set_partial_cache(&self, cwd: &str, files: std::sync::Arc<Vec<FileEntry>>) {
+    pub fn set_partial_cache(
+        &self,
+        cwd: &str,
+        generation: u64,
+        files: std::sync::Arc<Vec<FileEntry>>,
+    ) {
         if let Ok(mut c) = self.cache.lock() {
-            if c.loaded_cwd.as_deref() != Some(cwd) {
+            if c.loaded_cwd.as_deref() != Some(cwd) || c.generation != generation {
                 return;
             }
             c.files = Some(files);
@@ -640,7 +651,8 @@ impl FileProvider {
         } else {
             // Stale cwd: cancel any in-flight load for the old cwd and
             // reset so the load below starts fresh for `cwd`.
-            self.cancel
+            cache
+                .cancel
                 .store(true, std::sync::atomic::Ordering::Relaxed);
             cache.files = None;
             cache.loading = false;
@@ -648,6 +660,8 @@ impl FileProvider {
 
         // No cache for this cwd, not loading — kick off background load
         cache.loaded_cwd = Some(cwd.to_string());
+        cache.generation += 1;
+        let generation = cache.generation;
         let (sender, runtime) = match (&self.async_sender, &self.runtime) {
             (Some(s), Some(rt)) => (s.clone(), rt.clone()),
             _ => {
@@ -658,10 +672,8 @@ impl FileProvider {
         };
 
         cache.loading = true;
-        // Reset cancel flag for this new load
-        self.cancel
-            .store(false, std::sync::atomic::Ordering::Relaxed);
-        let cancel = std::sync::Arc::clone(&self.cancel);
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        cache.cancel = std::sync::Arc::clone(&cancel);
         let frecency = std::sync::Arc::clone(&self.frecency);
         let filesystem = std::sync::Arc::clone(&self.filesystem);
         let process_spawner = std::sync::Arc::clone(&self.process_spawner);
@@ -674,12 +686,22 @@ impl FileProvider {
 
         runtime.spawn_blocking(move || {
             // Fast path: git ls-files returns everything at once.
+            let listing = project_files::Listing {
+                include_hidden: show_hidden,
+                include_gitignored,
+                custom_ignore: &custom_ignore,
+            };
             if let Some(files) = project_files::git_files_blocking(
                 &process_spawner,
+                &*filesystem,
                 std::path::Path::new(&cwd),
-                &custom_ignore,
-                include_gitignored,
+                listing,
+                &cancel,
+                MAX_FILES,
             ) {
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                }
                 let frecency_map = frecency.read().ok();
                 let entries: Vec<FileEntry> = files
                     .into_iter()
@@ -700,6 +722,7 @@ impl FileProvider {
                 drop(sender.send(
                     crate::services::async_bridge::AsyncMessage::QuickOpenFilesLoaded {
                         cwd: cwd.clone(),
+                        generation,
                         files: std::sync::Arc::new(entries),
                         complete: true,
                     },
@@ -712,6 +735,7 @@ impl FileProvider {
             walk_dir_with_updates(
                 &*filesystem,
                 &cwd,
+                generation,
                 &cancel,
                 &frecency,
                 &sender,
@@ -725,6 +749,7 @@ impl FileProvider {
 
     /// Synchronous fallback when no tokio runtime is available (e.g., tests).
     fn load_files_sync(&self, cwd: &str) -> Option<std::sync::Arc<Vec<FileEntry>>> {
+        let generation = self.cache.lock().map(|c| c.generation).unwrap_or(0);
         let custom_ignore = self.custom_ignore(cwd);
         let files = self
             .try_git_files(cwd, &custom_ignore)
@@ -739,20 +764,28 @@ impl FileProvider {
             .collect();
 
         let files = std::sync::Arc::new(entries);
-        self.set_cache(cwd, std::sync::Arc::clone(&files));
+        self.set_cache(cwd, generation, std::sync::Arc::clone(&files));
         Some(files)
     }
 
     /// Synchronous `try_git_files` — used by the sync fallback path.
     fn try_git_files(&self, cwd: &str, custom_ignore: &CustomIgnore) -> Option<Vec<String>> {
         let runtime = self.runtime.as_ref()?;
+        let listing = project_files::Listing {
+            include_hidden: self.show_hidden.load(std::sync::atomic::Ordering::Relaxed),
+            include_gitignored: self
+                .include_gitignored
+                .load(std::sync::atomic::Ordering::Relaxed),
+            custom_ignore,
+        };
         project_files::git_files_with_handle(
             &self.process_spawner,
-            std::path::Path::new(cwd),
             runtime.handle(),
-            custom_ignore,
-            self.include_gitignored
-                .load(std::sync::atomic::Ordering::Relaxed),
+            &*self.filesystem,
+            std::path::Path::new(cwd),
+            listing,
+            &std::sync::atomic::AtomicBool::new(false),
+            MAX_FILES,
         )
     }
 
@@ -815,6 +848,7 @@ const WALK_UPDATE_INTERVAL: std::time::Duration = std::time::Duration::from_mill
 fn walk_dir_with_updates(
     fs: &dyn crate::model::filesystem::FileSystem,
     cwd: &str,
+    generation: u64,
     cancel: &std::sync::atomic::AtomicBool,
     frecency: &std::sync::RwLock<std::collections::HashMap<String, FrecencyData>>,
     sender: &std::sync::mpsc::Sender<crate::services::async_bridge::AsyncMessage>,
@@ -857,6 +891,7 @@ fn walk_dir_with_updates(
                     .send(
                         crate::services::async_bridge::AsyncMessage::QuickOpenFilesLoaded {
                             cwd: cwd.to_string(),
+                            generation,
                             files: std::sync::Arc::new(entries),
                             complete: false,
                         },
@@ -900,6 +935,7 @@ fn walk_dir_with_updates(
     drop(sender.send(
         crate::services::async_bridge::AsyncMessage::QuickOpenFilesLoaded {
             cwd: cwd.to_string(),
+            generation,
             files: std::sync::Arc::new(entries),
             complete: true,
         },
@@ -1861,7 +1897,7 @@ mod tests {
             relative_path: "foo.rs".to_string(),
             frecency_score: 0.0,
         }]);
-        provider.set_partial_cache("/proj", partial);
+        provider.set_partial_cache("/proj", 0, partial);
 
         assert!(provider.is_loading());
         assert!(provider.cache.lock().unwrap().files.is_some());
@@ -1871,7 +1907,7 @@ mod tests {
             relative_path: "foo.rs".to_string(),
             frecency_score: 0.0,
         }]);
-        provider.set_cache("/proj", final_files);
+        provider.set_cache("/proj", 0, final_files);
 
         assert!(!provider.is_loading());
 
@@ -1880,11 +1916,36 @@ mod tests {
             relative_path: "other.rs".to_string(),
             frecency_score: 0.0,
         }]);
-        provider.set_cache("/different", stale);
+        provider.set_cache("/different", 0, stale);
         assert_eq!(
             provider.cache.lock().unwrap().files.as_ref().unwrap()[0].relative_path,
             "foo.rs",
             "results for a different cwd must not overwrite the current cache"
         );
+
+        // A load started before a setting change (an older generation) is
+        // stale too, even for the same cwd.
+        provider.clear_cache();
+        {
+            let mut cache = provider.cache.lock().unwrap();
+            cache.loading = true;
+            cache.loaded_cwd = Some("/proj".to_string());
+        }
+        let generation = provider.cache.lock().unwrap().generation;
+        let old = std::sync::Arc::new(vec![FileEntry {
+            relative_path: ".hidden".to_string(),
+            frecency_score: 0.0,
+        }]);
+        provider.set_cache("/proj", generation - 1, old);
+        assert!(
+            provider.cache.lock().unwrap().files.is_none(),
+            "an older load's results must not land in the cache"
+        );
+        let current = std::sync::Arc::new(vec![FileEntry {
+            relative_path: "foo.rs".to_string(),
+            frecency_score: 0.0,
+        }]);
+        provider.set_cache("/proj", generation, current);
+        assert!(provider.cache.lock().unwrap().files.is_some());
     }
 }

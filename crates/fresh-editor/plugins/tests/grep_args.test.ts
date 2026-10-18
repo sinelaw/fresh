@@ -1,6 +1,7 @@
 /** Live Grep backend command lines and how each one leaves out
  *  `file_explorer.custom_ignore_patterns` (`lib/grep_args.ts`). */
 import {
+  IGNORED_DIRS,
   ackArgs,
   agArgs,
   gitExcludePathspecs,
@@ -26,8 +27,31 @@ function eq(actual: unknown, expected: unknown, name: string): void {
 }
 
 /** The arguments after `head`, up to the `--` that ends the options. */
+/** `args` without the `IGNORED_DIRS` stand-ins every builder adds outside
+ *  the Ignored scope (and without a `--` they leave with nothing after it). */
+function noStandIns(args: string[]): string[] {
+  const values = new Set(
+    IGNORED_DIRS.flatMap((d) => [
+      d,
+      `!${d}`,
+      `--exclude-dir=${d}`,
+      `--ignore-dir=${d}`,
+      `:(exclude,glob)**/${d}`,
+      `:(exclude,glob)**/${d}/**`,
+    ]),
+  );
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if ((args[i] === "-g" || args[i] === "--ignore") && values.has(args[i + 1])) i++;
+    else if (!values.has(args[i])) out.push(args[i]);
+  }
+  return out[out.length - 1] === "--" ? out.slice(0, -1) : out;
+}
+
+/** The flags between the first `head` and the `--`, stand-ins left out. */
 function between(args: string[], head: number): string[] {
-  return args.slice(head, args.indexOf("--"));
+  const rest = noStandIns(args);
+  return rest.slice(head, rest.indexOf("--"));
 }
 
 const base = { maxResults: 10 };
@@ -69,6 +93,7 @@ eq(relativeUnder("/p", "/p"), "", "the root is itself");
 eq(relativeUnder("/p/", "/p/a/b"), "a/b", "a directory below the root");
 eq(relativeUnder("/p", "/pq/a"), null, "a sibling sharing a prefix is outside");
 eq(relativeUnder("C:\\p", "C:\\p\\a"), "a", "Windows separators");
+eq(relativeUnder("C:\\p", "c:\\p\\a"), "a", "Windows drive letters in either case");
 
 // ── rg ──────────────────────────────────────────────────────────
 
@@ -76,19 +101,20 @@ const rgHead = 8; // fixed flags up to and including `-g !.git`
 eq(rgArgs("q", base).slice(-2), ["--", "q"], "rg: the query follows --");
 eq(rgArgs("q", base).slice(rgHead - 2, rgHead), ["-g", "!.git"], "rg: .git is always left out");
 eq(
-  between(rgArgs("q", base), rgHead),
-  [],
-  "rg: no excludes of its own beyond .git (it honours .gitignore)",
+  rgArgs("q", base).slice(rgHead, rgHead + 2 * IGNORED_DIRS.length),
+  IGNORED_DIRS.flatMap((d) => ["-g", `!${d}`]),
+  "rg: IGNORED_DIRS left out, as Quick Open and project search leave them out",
 );
+eq(between(rgArgs("q", base), rgHead), [], "rg: nothing else (it honours .gitignore)");
 eq(
   between(rgArgs("q", { ...base, ignorePatterns: ["build/", "/target", "*.log", "!keep.log", "# c"] }), rgHead),
   ["-g", "!build/", "-g", "!/target", "-g", "!*.log"],
   "rg: each line passes through as an exclude glob; a negation is left out (it would whitelist)",
 );
 eq(
-  between(rgArgs("q", { ...base, includeIgnored: true }), rgHead),
+  rgArgs("q", { ...base, includeIgnored: true }).slice(rgHead, -2),
   ["--no-ignore", "--hidden"],
-  "rg: the Ignored scope searches ignored and hidden files",
+  "rg: the Ignored scope searches ignored and hidden files, IGNORED_DIRS too",
 );
 
 // ── ag ──────────────────────────────────────────────────────────
@@ -99,9 +125,14 @@ eq(
   "ag: .git, then each line as --ignore",
 );
 eq(
-  between(agArgs("q", { ...base, includeIgnored: true }), 7),
+  agArgs("q", { ...base, includeIgnored: true }).slice(7, -2),
   ["--skip-vcs-ignores", "--hidden"],
-  "ag: the Ignored scope searches ignored and hidden files",
+  "ag: the Ignored scope searches ignored and hidden files, IGNORED_DIRS too",
+);
+eq(
+  agArgs("q", base).filter((a, i, all) => all[i - 1] === "--ignore"),
+  [".git", ...IGNORED_DIRS],
+  "ag: .git and IGNORED_DIRS left out",
 );
 
 // ── git grep ────────────────────────────────────────────────────
@@ -137,7 +168,17 @@ eq(
   [":(exclude,glob)**/*.log", ":(exclude,glob)**/*.log/**"],
   "git: outside the root only any-depth patterns apply",
 );
-eq(gitGrepArgs("q", base, "").slice(-2), ["-e", "q"], "git: no pathspecs without patterns");
+eq(noStandIns(gitGrepArgs("q", base, "")).slice(-2), ["-e", "q"], "git: no pathspecs without patterns");
+eq(
+  gitGrepArgs("q", base, "").slice(-2 * IGNORED_DIRS.length),
+  IGNORED_DIRS.flatMap((d) => [`:(exclude,glob)**/${d}`, `:(exclude,glob)**/${d}/**`]),
+  "git: IGNORED_DIRS left out",
+);
+eq(
+  gitGrepArgs("q", { ...base, includeIgnored: true }, "").slice(-2),
+  ["-e", "q"],
+  "git: the Ignored scope keeps IGNORED_DIRS in",
+);
 eq(
   gitGrepArgs("q", base, "").slice(0, 7),
   ["-c", "core.quotePath=false", "grep", "-n", "--column", "-I", "--untracked"],
@@ -150,7 +191,7 @@ eq(
   "git: the ignored scope searches .gitignored files",
 );
 eq(
-  gitGrepArgs("q", { ...base, ignorePatterns: ["build/"] }, "").slice(-4),
+  noStandIns(gitGrepArgs("q", { ...base, ignorePatterns: ["build/"] }, "")).slice(-4),
   ["-e", "q", "--", ":(exclude,glob)**/build/**"],
   "git: pathspecs follow the query after --",
 );
@@ -168,17 +209,17 @@ eq(new RegExp(nameGlobRegexSource("[!a]?.c")).test("bx.c"), true, "glob regex: [
 eq(new RegExp(nameGlobRegexSource("[!a]?.c")).test("ax.c"), false, "glob regex: [!...] excludes");
 
 eq(
-  between(grepArgs("q", base), 0),
-  ["-rn", "-I", "--exclude-dir=.git", "--exclude-dir=node_modules", "--exclude-dir=target", "-i", "-E"],
-  "grep: stands in for .gitignore with node_modules and target",
+  grepArgs("q", base).slice(0, -3),
+  ["-rn", "-I", "--exclude-dir=.git", ...IGNORED_DIRS.map((d) => `--exclude-dir=${d}`), "-i", "-E"],
+  "grep: stands in for .gitignore with IGNORED_DIRS",
 );
 eq(
-  between(grepArgs("q", { ...base, includeIgnored: true }), 0),
+  grepArgs("q", { ...base, includeIgnored: true }).slice(0, -3),
   ["-rn", "-I", "--exclude-dir=.git", "-i", "-E"],
   "grep: the Ignored scope drops the stand-ins but keeps .git",
 );
 eq(
-  between(grepArgs("q", { ...base, ignorePatterns: ["*.log", "build/", "src/gen", ".*"] }), 7),
+  between(grepArgs("q", { ...base, ignorePatterns: ["*.log", "build/", "src/gen", ".*"] }), 5),
   ["--exclude=*.log", "--exclude-dir=*.log", "--exclude-dir=build", "--exclude=.*"],
   "grep: name globs only; a glob matching . never becomes --exclude-dir",
 );
@@ -193,6 +234,16 @@ eq(
     "--ignore-dir=build",
   ],
   "ack: files by name or regex, plain directory names only",
+);
+eq(
+  ackArgs("q", base).slice(2, 2 + IGNORED_DIRS.length),
+  IGNORED_DIRS.map((d) => `--ignore-dir=${d}`),
+  "ack: IGNORED_DIRS left out",
+);
+eq(
+  ackArgs("q", { ...base, includeIgnored: true }).some((a) => a.startsWith("--ignore-dir")),
+  false,
+  "ack: the Ignored scope keeps them in",
 );
 
 if (failures > 0) {

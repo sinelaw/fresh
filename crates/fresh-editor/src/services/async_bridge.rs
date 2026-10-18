@@ -504,6 +504,8 @@ pub enum AsyncMessage {
         /// the editor drop results that arrive after the user has
         /// switched windows/projects (the cache is keyed by cwd).
         cwd: String,
+        /// The load these files come from; only the latest is kept.
+        generation: u64,
         files: std::sync::Arc<Vec<crate::input::quick_open::providers::FileEntry>>,
         complete: bool,
     },

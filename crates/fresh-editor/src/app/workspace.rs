@@ -3187,7 +3187,8 @@ impl crate::app::window::Window {
                 sections: Vec::new(),
                 ..FileExplorerState::default()
             }
-        };
+        }
+        .with_legacy_keys();
 
         let cfg = &self.resources.config.editor;
         let config_overrides = WorkspaceConfigOverrides {
