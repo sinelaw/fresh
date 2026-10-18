@@ -42,7 +42,7 @@ Settings are loaded from multiple layers, with higher layers overriding lower on
 | Layer | Location | Scope | Use Case |
 |-------|----------|-------|----------|
 | **System** | Built-in defaults | Global | Factory defaults (read-only) |
-| **User** | `~/.config/fresh/config.json`, or `$XDG_CONFIG_HOME/fresh/config.json` when that variable is set | All projects | Personal preferences |
+| **User** | `~/.config/fresh/config.json`, or `$XDG_CONFIG_HOME/fresh/config.json` when that variable is an absolute path | All projects | Personal preferences |
 | **Project** | `.fresh/config.json` in project root | Single project | Project-specific settings |
 | **Session** | `.fresh/session.json` (temporary) | Current run | Temporary overrides |
 
@@ -55,6 +55,7 @@ Settings are loaded from multiple layers, with higher layers overriding lower on
 
 **Path Notes:**
 - On Windows, User config is at `%APPDATA%\fresh\config.json`
+- On macOS, an existing `~/.config/fresh` keeps being used until `$XDG_CONFIG_HOME/fresh` exists; create that directory (and move your files into it) to switch. The same applies to `XDG_DATA_HOME` and `~/Library/Application Support/fresh`, where sessions and recovery files live
 - Project config is found by searching up from the current directory for `.fresh/config.json`
 
 ### Per-Buffer Overrides
