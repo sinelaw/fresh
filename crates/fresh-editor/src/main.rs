@@ -5857,8 +5857,8 @@ fn run_attach(
 
     // What the server pushed on this terminal's kitty keyboard stack. Only it
     // knows (the flags come from its settings), and the relay has to pop
-    // exactly that when the client suspends.
-    let mut keyboard_flags = 0u8;
+    // exactly that when the client suspends. Every other answer returns below.
+    let keyboard_flags: u8;
 
     match server_msg {
         ServerControl::Hello(server_hello) => {

@@ -207,6 +207,8 @@ struct ConnectedClient {
     /// flags) and the cursor shape — set when a suspended client is about to
     /// resume, since its own teardown undid them.
     needs_terminal_setup: bool,
+    /// SuspendClient was sent; withhold output until this client says Resumed.
+    suspended: bool,
     /// If set, this client is waiting for a --wait completion signal
     wait_id: Option<u64>,
     /// Control-socket bytes not yet ending in a newline.
@@ -494,11 +496,9 @@ impl EditorServer {
                 continue;
             }
 
-            // Check if the client should suspend itself (SIGTSTP). The server
-            // keeps running — only the client drops back to the shell. On
-            // resume, the client sends a Resize to nudge a full redraw; we
-            // pre-mark `needs_full_render` so the next rendered frame after
-            // resume re-emits setup sequences and a complete paint.
+            // Only this client's explicit Resumed message may re-arm its
+            // terminal. Other clients and queued Resize messages can cause
+            // renders before it has processed SuspendClient.
             let suspend_requested = self
                 .editor
                 .as_mut()
@@ -514,14 +514,8 @@ impl EditorServer {
                         // Best-effort: client may already be disconnected
                         #[allow(clippy::let_underscore_must_use)]
                         let _ = self.clients[idx].conn.write_control(&suspend_msg);
-                        // Mark so the next render re-emits setup sequences and a
-                        // full paint once the client resumes and reconnects its
-                        // terminal. The client's own teardown popped the kitty
-                        // keyboard flags and left the alternate screen, so the
-                        // setup it needs back is the same one a new connection
-                        // gets.
-                        self.clients[idx].needs_full_render = true;
-                        self.clients[idx].needs_terminal_setup = true;
+                        self.clients[idx].suspended = true;
+                        self.clients[idx].needs_terminal_setup = false;
                     }
                 } else {
                     tracing::warn!("Suspend requested but no input source; ignoring");
@@ -1077,6 +1071,7 @@ impl EditorServer {
             needs_full_render: true,
             // The setup sequences were just written above.
             needs_terminal_setup: false,
+            suspended: false,
             wait_id: None,
             gpm_pointer: false,
             control_buf: Vec::new(),
@@ -1228,6 +1223,18 @@ impl EditorServer {
             match msg {
                 ClientControl::Hello(_) => {
                     tracing::warn!("Unexpected Hello from client");
+                }
+                ClientControl::Resumed => {
+                    if let Some(client) = self.clients.get_mut(idx) {
+                        // Ignore duplicates: another setup would push kitty
+                        // flags twice for just one suspend teardown.
+                        if client.suspended {
+                            client.suspended = false;
+                            client.needs_terminal_setup = true;
+                            client.needs_full_render = true;
+                            resize_occurred = true; // force a fresh full paint
+                        }
+                    }
                 }
                 ClientControl::Resize { cols, rows } => {
                     if let Some(client) = self.clients.get_mut(idx) {
@@ -1589,7 +1596,10 @@ impl EditorServer {
         };
 
         // Check if any client needs a full render (e.g., newly connected)
-        let any_needs_full = self.clients.iter().any(|c| c.needs_full_render);
+        let any_needs_full = self
+            .clients
+            .iter()
+            .any(|c| !c.suspended && c.needs_full_render);
         if any_needs_full {
             tracing::info!(
                 "Full render requested for {} client(s)",
@@ -1619,6 +1629,9 @@ impl EditorServer {
                 .or_else(|| needs_full.then(|| editor.current_window_title()).flatten())
         };
         for client in &mut self.clients {
+            if client.suspended {
+                continue;
+            }
             if let Some(title) = title_for(client.needs_full_render) {
                 let msg = serde_json::to_string(&ServerControl::SetTitle {
                     title: title.to_string(),
@@ -1642,7 +1655,7 @@ impl EditorServer {
 
         // Broadcast to all clients via non-blocking writer threads (skip waiting clients)
         for client in &mut self.clients {
-            if client.wait_id.is_some() {
+            if client.wait_id.is_some() || client.suspended {
                 continue;
             }
             // Combine pending sequences and output into a single frame

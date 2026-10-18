@@ -21,7 +21,9 @@ use std::collections::HashMap;
 /// order they arrive in — `ClientHello::pair_token` on the control stream,
 /// and the same token at the start of the data stream (see
 /// `ipc::ServerListener::accept`).
-pub const PROTOCOL_VERSION: u32 = 5;
+/// v6: clients explicitly report returning from SIGTSTP before the daemon
+/// restores terminal modes; Resize alone is not a resume acknowledgement.
+pub const PROTOCOL_VERSION: u32 = 6;
 
 /// Terminal size in columns and rows
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -184,6 +186,8 @@ impl VersionMismatch {
 pub enum ClientControl {
     /// Initial handshake
     Hello(ClientHello),
+    /// This client has returned from SIGTSTP and re-enabled raw mode.
+    Resumed,
     /// Terminal was resized
     Resize { cols: u16, rows: u16 },
     /// This terminal is a Linux console whose mouse the client forwards from
