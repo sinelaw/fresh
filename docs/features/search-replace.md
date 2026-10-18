@@ -86,7 +86,7 @@ Run **Clear Search Highlights** from the command palette to remove the active se
 
 ## Project-Wide Search and Replace
 
-Use "Search and Replace in Project" from the command palette to search across all git-tracked files in the project. Press `Alt+Enter` to replace all matches across the project. Works with unsaved buffers and large files, up to 10,000 results.
+Use "Search and Replace in Project" from the command palette to search across the project's files: in a git repository, tracked and untracked files that `.gitignore` does not exclude. `file_explorer.custom_ignore_patterns` leave files out too. Press `Alt+Enter` to replace all matches across the project. Works with unsaved buffers and large files, up to 10,000 results.
 
 Use the **Files** field to limit project search to comma-separated globs. A
 pattern without a directory separator matches file names at any depth (for

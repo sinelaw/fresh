@@ -114,7 +114,9 @@ async function searchWithGitGrep(query: string): Promise<GrepMatch[]> {
     return [];
   }
 
-  const args = ["grep", "-n", "--column", "-I"];
+  // `core.quotePath=false` prints non-ASCII names as they are rather than as
+  // quoted octal escapes, which would not open.
+  const args = ["-c", "core.quotePath=false", "grep", "-n", "--column", "-I"];
   if (!caseSensitive) args.push("-i");
   args.push("--", query);
   const result = await git(editor, repo, args);

@@ -186,18 +186,19 @@ export function gitExcludePathspecs(rules: readonly IgnoreRule[], prefix: string
 }
 
 export function gitGrepArgs(query: string, o: GrepArgOpts, prefix: string | null): string[] {
-  const args = ["grep", "-n", "--column", "-I"];
+  // `core.quotePath=false` prints non-ASCII names as they are rather than as
+  // quoted octal escapes, which would not open. `--untracked` searches new
+  // files too, as the other tools and Quick Open do; `.gitignore` still
+  // applies unless the "Ignored & hidden" scope is on.
+  const args = ["-c", "core.quotePath=false", "grep", "-n", "--column", "-I", "--untracked"];
   if (!o.caseSensitive) args.push("-i");
   // Default git-grep is basic regex; use extended when regex is on, or
   // fixed-strings when it's off so the query is matched literally.
   args.push(o.regex === false ? "-F" : "-E");
   if (o.wholeWord) args.push("-w");
-  if (o.includeIgnored) {
-    // Widen beyond tracked files: include untracked, and stop
-    // honouring the standard ignore files so `.gitignore`d content
-    // is searched too.
-    args.push("--untracked", "--no-exclude-standard");
-  }
+  // Stop honouring the standard ignore files so `.gitignore`d content is
+  // searched too.
+  if (o.includeIgnored) args.push("--no-exclude-standard");
   args.push("-e", query);
   // Exclude-only pathspecs search what no pathspec would (git 2.13+).
   const specs = gitExcludePathspecs(parseIgnoreLines(o.ignorePatterns ?? []), prefix);

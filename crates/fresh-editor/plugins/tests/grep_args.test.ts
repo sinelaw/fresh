@@ -139,6 +139,17 @@ eq(
 );
 eq(gitGrepArgs("q", base, "").slice(-2), ["-e", "q"], "git: no pathspecs without patterns");
 eq(
+  gitGrepArgs("q", base, "").slice(0, 7),
+  ["-c", "core.quotePath=false", "grep", "-n", "--column", "-I", "--untracked"],
+  "git: unquoted names, untracked files searched",
+);
+eq(gitGrepArgs("q", base, "").includes("--no-exclude-standard"), false, "git: .gitignore honoured by default");
+eq(
+  gitGrepArgs("q", { ...base, includeIgnored: true }, "").includes("--no-exclude-standard"),
+  true,
+  "git: the ignored scope searches .gitignored files",
+);
+eq(
   gitGrepArgs("q", { ...base, ignorePatterns: ["build/"] }, "").slice(-4),
   ["-e", "q", "--", ":(exclude,glob)**/build/**"],
   "git: pathspecs follow the query after --",
