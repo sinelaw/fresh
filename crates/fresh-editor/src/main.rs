@@ -2063,12 +2063,7 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
 
     // Enable terminal modes (raw mode, alternate screen, mouse capture, etc.)
     // This checks support for each mode and tracks what was enabled
-    let keyboard_config = KeyboardConfig {
-        disambiguate_escape_codes: config.editor.keyboard_disambiguate_escape_codes,
-        report_event_types: config.editor.keyboard_report_event_types,
-        report_alternate_keys: config.editor.keyboard_report_alternate_keys,
-        report_all_keys_as_escape_codes: config.editor.keyboard_report_all_keys_as_escape_codes,
-    };
+    let keyboard_config = KeyboardConfig::from_editor_config(&config.editor);
     tracing::info!("Enabling terminal modes...");
     let terminal_modes = TerminalModes::enable(Some(&keyboard_config))?;
     tracing::info!("Terminal modes enabled");
@@ -6890,15 +6885,7 @@ fn handle_suspend_request(
 ) -> AnyhowResult<()> {
     #[cfg(unix)]
     {
-        let keyboard_config = KeyboardConfig {
-            disambiguate_escape_codes: editor.config().editor.keyboard_disambiguate_escape_codes,
-            report_event_types: editor.config().editor.keyboard_report_event_types,
-            report_alternate_keys: editor.config().editor.keyboard_report_alternate_keys,
-            report_all_keys_as_escape_codes: editor
-                .config()
-                .editor
-                .keyboard_report_all_keys_as_escape_codes,
-        };
+        let keyboard_config = KeyboardConfig::from_editor_config(&editor.config().editor);
         terminal_modes::suspend_and_resume(terminal_modes, Some(&keyboard_config))
             .context("Failed to suspend process")?;
         editor.request_full_redraw();

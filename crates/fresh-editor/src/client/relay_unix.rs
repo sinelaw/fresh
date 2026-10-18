@@ -240,7 +240,11 @@ fn suspend_client(stdout: &mut io::Stdout, conn: &mut ClientConnection) -> io::R
     // what `TerminalModes::undo()` does in direct mode. The server already
     // marked this client `needs_full_render`, so the bytes it queues next
     // will include the matching setup sequences + a full paint.
-    let teardown = crate::server::capture_backend::terminal_teardown_sequences();
+    // The client cannot see the server's keyboard settings, so pop the kitty
+    // flags unconditionally, as `terminal_modes::emergency_cleanup` does.
+    let teardown = crate::server::capture_backend::terminal_teardown_sequences(
+        &crate::services::terminal_modes::KeyboardConfig::default(),
+    );
     stdout.write_all(&teardown)?;
     stdout.flush()?;
 

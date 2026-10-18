@@ -465,7 +465,7 @@ impl EditorServer {
                     if idx < self.clients.len() {
                         tracing::info!("Client {} requested detach", self.clients[idx].id);
                         let client = self.clients.remove(idx);
-                        let teardown = terminal_teardown_sequences();
+                        let teardown = terminal_teardown_sequences(&self.keyboard_config());
                         // Best-effort: client may already be disconnected
                         #[allow(clippy::let_underscore_must_use)]
                         let _ = client.data_writer.try_write(&teardown);
@@ -1036,7 +1036,7 @@ impl EditorServer {
 
         // Send terminal setup sequences
         let mouse_hover_enabled = self.config.editor_config.editor.mouse_hover_enabled;
-        let setup = terminal_setup_sequences(mouse_hover_enabled);
+        let setup = terminal_setup_sequences(mouse_hover_enabled, &self.keyboard_config());
         conn.write_data(&setup)?;
 
         // Send cursor style (from editor if running, otherwise from config)
@@ -1407,7 +1407,7 @@ impl EditorServer {
                 }
             }
             // Best-effort teardown via the non-blocking writer
-            let teardown = terminal_teardown_sequences();
+            let teardown = terminal_teardown_sequences(&self.keyboard_config());
             let _ = client.data_writer.try_write(&teardown);
             tracing::info!("Client {} disconnected", client.id);
             // Invalidate input source if that client disconnected
@@ -1638,9 +1638,17 @@ impl EditorServer {
         Ok(())
     }
 
+    /// The kitty keyboard flags a client's terminal is set up with, from the
+    /// same `editor.keyboard_*` settings direct mode uses.
+    fn keyboard_config(&self) -> crate::services::terminal_modes::KeyboardConfig {
+        crate::services::terminal_modes::KeyboardConfig::from_editor_config(
+            &self.config.editor_config.editor,
+        )
+    }
+
     /// Disconnect all clients
     fn disconnect_all_clients(&mut self, reason: &str) -> io::Result<()> {
-        let teardown = terminal_teardown_sequences();
+        let teardown = terminal_teardown_sequences(&self.keyboard_config());
         for client in &mut self.clients {
             // Best-effort: client may already be disconnected
             #[allow(clippy::let_underscore_must_use)]

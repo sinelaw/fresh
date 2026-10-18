@@ -367,13 +367,22 @@ impl Backend for CaptureBackend {
 /// omitted and only mode 1002 (cell motion) is enabled, reducing event volume
 /// and avoiding input corruption. On non-Windows platforms the parameter is
 /// ignored and full mouse tracking is always enabled.
-pub fn terminal_setup_sequences(mouse_hover_enabled: bool) -> Vec<u8> {
+pub fn terminal_setup_sequences(
+    mouse_hover_enabled: bool,
+    keyboard: &crate::services::terminal_modes::KeyboardConfig,
+) -> Vec<u8> {
     use crate::services::terminal_modes::sequences as seq;
 
     let mut buf = Vec::new();
 
     // Enter alternate screen
     buf.extend_from_slice(seq::ENTER_ALTERNATE_SCREEN);
+    // Push the kitty keyboard flags, as direct mode does. Without them the
+    // terminal falls back to the legacy encoding, which has no spelling for
+    // Ctrl+Shift+<letter> (0x05 is both Ctrl+E and Ctrl+Shift+E). The push
+    // must come after entering the alternate screen: the protocol keeps a
+    // separate flag stack per screen.
+    buf.extend_from_slice(&keyboard.push_sequence());
     // Enable mouse tracking (SGR format)
     buf.extend_from_slice(seq::ENABLE_MOUSE_CLICK);
     buf.extend_from_slice(seq::ENABLE_MOUSE_DRAG);
@@ -402,10 +411,16 @@ pub fn terminal_setup_sequences(mouse_hover_enabled: bool) -> Vec<u8> {
 ///
 /// Uses shared constants from `terminal_modes::sequences` to stay in sync
 /// with the cleanup in `TerminalModes::undo()` and `emergency_cleanup()`.
-pub fn terminal_teardown_sequences() -> Vec<u8> {
+pub fn terminal_teardown_sequences(
+    keyboard: &crate::services::terminal_modes::KeyboardConfig,
+) -> Vec<u8> {
     use crate::services::terminal_modes::sequences as seq;
 
     let mut buf = Vec::new();
+
+    // Pop the kitty keyboard flags while still on the alternate screen, whose
+    // stack they were pushed on.
+    buf.extend_from_slice(keyboard.pop_sequence());
 
     // Show cursor
     buf.extend_from_slice(seq::SHOW_CURSOR);
@@ -431,6 +446,7 @@ pub fn terminal_teardown_sequences() -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::terminal_modes::KeyboardConfig;
     use ratatui::buffer::Buffer;
     use ratatui::style::Style;
 
@@ -514,7 +530,7 @@ mod tests {
 
     #[test]
     fn test_setup_sequences_enable_features() {
-        let setup = terminal_setup_sequences(true);
+        let setup = terminal_setup_sequences(true, &KeyboardConfig::default());
         let setup_str = String::from_utf8_lossy(&setup);
 
         // Alternate screen
@@ -525,9 +541,54 @@ mod tests {
         assert!(setup_str.contains("\x1b[?1004h"));
     }
 
+    /// A session client used to get no kitty keyboard flags at all, so the
+    /// terminal sent Ctrl+Shift+E as Ctrl+E (0x05) and Ctrl+Shift+Tab as
+    /// `CSI 1 ; 5 Z`, while the same keys worked in direct mode.
+    #[test]
+    fn test_setup_pushes_kitty_keyboard_flags_on_the_alternate_screen() {
+        let setup = terminal_setup_sequences(true, &KeyboardConfig::default());
+        let setup_str = String::from_utf8_lossy(&setup);
+
+        // The default flags: DISAMBIGUATE_ESCAPE_CODES | REPORT_ALTERNATE_KEYS.
+        let push = setup_str.find("\x1b[>5u").expect("kitty flags pushed");
+        let alt = setup_str.find("\x1b[?1049h").unwrap();
+        assert!(alt < push, "pushed after entering the alternate screen");
+
+        let teardown = terminal_teardown_sequences(&KeyboardConfig::default());
+        let teardown_str = String::from_utf8_lossy(&teardown);
+        let pop = teardown_str.find("\x1b[<1u").expect("kitty flags popped");
+        let leave = teardown_str.find("\x1b[?1049l").unwrap();
+        assert!(pop < leave, "popped before leaving the alternate screen");
+    }
+
+    #[test]
+    fn test_kitty_keyboard_flags_follow_the_config() {
+        let off = KeyboardConfig {
+            disambiguate_escape_codes: false,
+            report_event_types: false,
+            report_alternate_keys: false,
+            report_all_keys_as_escape_codes: false,
+        };
+        // Nothing pushed, so nothing may be popped either: a stray pop would
+        // drop flags another program pushed before fresh started.
+        let setup = String::from_utf8_lossy(&terminal_setup_sequences(true, &off)).into_owned();
+        let teardown = String::from_utf8_lossy(&terminal_teardown_sequences(&off)).into_owned();
+        assert!(!setup.contains("\x1b[>"), "{setup:?}");
+        assert!(!teardown.contains("\x1b[<"), "{teardown:?}");
+
+        let all = KeyboardConfig {
+            disambiguate_escape_codes: true,
+            report_event_types: true,
+            report_alternate_keys: true,
+            report_all_keys_as_escape_codes: true,
+        };
+        let setup = String::from_utf8_lossy(&terminal_setup_sequences(true, &all)).into_owned();
+        assert!(setup.contains("\x1b[>15u"), "{setup:?}");
+    }
+
     #[test]
     fn test_teardown_sequences_disable_features() {
-        let teardown = terminal_teardown_sequences();
+        let teardown = terminal_teardown_sequences(&KeyboardConfig::default());
         let teardown_str = String::from_utf8_lossy(&teardown);
 
         // Leave alternate screen

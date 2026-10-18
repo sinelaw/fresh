@@ -87,6 +87,36 @@ impl Default for KeyboardConfig {
 }
 
 impl KeyboardConfig {
+    /// The `editor.keyboard_*` settings, shared by direct mode and the session
+    /// server so the two cannot ask the terminal for different flags.
+    pub fn from_editor_config(editor: &crate::config::EditorConfig) -> Self {
+        Self {
+            disambiguate_escape_codes: editor.keyboard_disambiguate_escape_codes,
+            report_event_types: editor.keyboard_report_event_types,
+            report_alternate_keys: editor.keyboard_report_alternate_keys,
+            report_all_keys_as_escape_codes: editor.keyboard_report_all_keys_as_escape_codes,
+        }
+    }
+
+    /// The kitty keyboard protocol push for these flags (`CSI > flags u`), or
+    /// nothing when every flag is off.
+    pub fn push_sequence(&self) -> Vec<u8> {
+        if !self.any_enabled() {
+            return Vec::new();
+        }
+        format!("\x1b[>{}u", self.to_flags().bits()).into_bytes()
+    }
+
+    /// The pop matching [`push_sequence`](Self::push_sequence) (`CSI < 1 u`),
+    /// or nothing when every flag is off and nothing was pushed.
+    pub fn pop_sequence(&self) -> &'static [u8] {
+        if self.any_enabled() {
+            b"\x1b[<1u"
+        } else {
+            b""
+        }
+    }
+
     /// Build crossterm KeyboardEnhancementFlags from this config.
     pub fn to_flags(&self) -> KeyboardEnhancementFlags {
         let mut flags = KeyboardEnhancementFlags::empty();
