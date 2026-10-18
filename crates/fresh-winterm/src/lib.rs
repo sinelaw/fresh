@@ -20,8 +20,9 @@ mod vt_input;
 
 #[cfg(windows)]
 pub use vt_input::{
-    disable_mouse_tracking, enable_mouse_tracking, enable_vt_input, restore_console_mode,
-    save_console_mode, set_mouse_mode, MouseMode, VtInputEvent, VtInputReader,
+    disable_mouse_tracking, disable_win32_input_mode, enable_mouse_tracking, enable_vt_input,
+    enable_win32_input_mode, restore_console_mode, save_console_mode, set_mouse_mode, MouseMode,
+    VtInputEvent, VtInputReader,
 };
 
 #[cfg(windows)]

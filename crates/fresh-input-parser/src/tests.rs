@@ -2019,3 +2019,238 @@ fn scanner_survives_keystrokes_mixed_into_the_stream() {
         "a report between keystrokes still registers"
     );
 }
+
+// ---- win32-input-mode (Windows, `CSI ? 9001 h`) ----
+//
+// The byte strings below were recorded from Windows Terminal and WezTerm on
+// Windows 10 with win32-input-mode requested, reading the console the way
+// fresh does (VT input mode + ReadConsoleInputW).
+
+fn parse_all(bytes: &[u8]) -> Vec<Event> {
+    let mut p = InputParser::new();
+    let mut ev = p.parse(bytes);
+    ev.extend(p.flush());
+    ev
+}
+
+#[test]
+fn win32_ctrl_tab_keeps_ctrl() {
+    // Over ConPTY's VT encoding this chord arrives as a bare Tab.
+    let ev = parse_all(b"\x1b[9;15;0;1;8;1_");
+    assert_eq!(keys(&ev), vec![(KeyCode::Tab, KeyModifiers::CONTROL)]);
+}
+
+#[test]
+fn win32_ctrl_shift_tab_and_shift_tab() {
+    let ev = parse_all(b"\x1b[9;15;0;1;24;1_");
+    assert_eq!(
+        keys(&ev),
+        vec![(KeyCode::Tab, KeyModifiers::CONTROL | KeyModifiers::SHIFT)]
+    );
+    let ev = parse_all(b"\x1b[9;15;0;1;16;1_");
+    assert_eq!(keys(&ev), vec![(KeyCode::BackTab, KeyModifiers::SHIFT)]);
+}
+
+#[test]
+fn win32_ctrl_shift_letter_keeps_shift() {
+    // Windows Terminal's VT encoding sends this as 0x05, i.e. Ctrl+E.
+    let ev = parse_all(b"\x1b[69;18;5;1;24;1_");
+    assert_eq!(
+        keys(&ev),
+        vec![(
+            KeyCode::Char('e'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT
+        )]
+    );
+}
+
+#[test]
+fn win32_reports_match_the_kitty_spelling_of_the_same_chord() {
+    for (win32, kitty) in [
+        (&b"\x1b[69;18;5;1;24;1_"[..], &b"\x1b[101:69;6u"[..]), // Ctrl+Shift+E
+        (b"\x1b[69;18;5;1;8;1_", b"\x1b[101;5u"),               // Ctrl+E
+        (b"\x1b[9;15;0;1;8;1_", b"\x1b[9;5u"),                  // Ctrl+Tab
+        (b"\x1b[9;15;0;1;24;1_", b"\x1b[9;6u"),                 // Ctrl+Shift+Tab
+        (b"\x1b[67;46;3;1;8;1_", b"\x1b[99;5u"),                // Ctrl+C
+    ] {
+        assert_eq!(
+            keys(&parse_all(win32)),
+            keys(&parse_all(kitty)),
+            "{win32:?} vs {kitty:?}"
+        );
+    }
+}
+
+#[test]
+fn win32_plain_and_shifted_characters() {
+    assert_eq!(
+        keys(&parse_all(b"\x1b[69;18;101;1;0;1_")),
+        vec![(KeyCode::Char('e'), KeyModifiers::empty())]
+    );
+    // Shift+E types `E`, the same as the legacy byte 0x45.
+    assert_eq!(
+        keys(&parse_all(b"\x1b[69;18;69;1;16;1_")),
+        keys(&parse_all(b"E"))
+    );
+}
+
+#[test]
+fn win32_key_ups_and_keys_that_type_nothing_are_dropped() {
+    let ev = parse_all(
+        b"\x1b[17;29;0;1;8;1_\x1b[16;42;0;1;24;1_\x1b[69;18;5;0;24;1_\
+          \x1b[17;29;0;0;0;1_\x1b[25;41;0;1;2;1_\x1b[13;28;13;0;0;1_",
+    );
+    assert!(ev.is_empty(), "{ev:?}");
+}
+
+#[test]
+fn win32_functional_keys() {
+    assert_eq!(
+        keys(&parse_all(b"\x1b[13;28;13;1;0;1_")),
+        vec![(KeyCode::Enter, KeyModifiers::empty())]
+    );
+    // Arrow keys carry ENHANCED_KEY (0x100).
+    assert_eq!(
+        keys(&parse_all(b"\x1b[38;72;0;1;256;1_\x1b[37;75;0;1;264;1_")),
+        vec![
+            (KeyCode::Up, KeyModifiers::empty()),
+            (KeyCode::Left, KeyModifiers::CONTROL),
+        ]
+    );
+    assert_eq!(
+        keys(&parse_all(
+            b"\x1b[46;83;0;1;256;1_\x1b[8;14;8;1;0;1_\x1b[27;1;27;1;0;1_\x1b[114;61;0;1;16;1_"
+        )),
+        vec![
+            (KeyCode::Delete, KeyModifiers::empty()),
+            (KeyCode::Backspace, KeyModifiers::empty()),
+            (KeyCode::Esc, KeyModifiers::empty()),
+            (KeyCode::F(3), KeyModifiers::SHIFT),
+        ]
+    );
+}
+
+#[test]
+fn win32_ctrl_letters_are_not_their_c0_namesakes() {
+    // Ctrl+H, Ctrl+I and Ctrl+M type 0x08, 0x09 and 0x0D, but they are not
+    // Backspace, Tab and Enter: the virtual key says which key was pressed.
+    assert_eq!(
+        keys(&parse_all(
+            b"\x1b[72;35;8;1;8;1_\x1b[73;23;9;1;8;1_\x1b[77;50;13;1;8;1_"
+        )),
+        vec![
+            (KeyCode::Char('h'), KeyModifiers::CONTROL),
+            (KeyCode::Char('i'), KeyModifiers::CONTROL),
+            (KeyCode::Char('m'), KeyModifiers::CONTROL),
+        ]
+    );
+}
+
+#[test]
+fn win32_alt_and_altgr() {
+    assert_eq!(
+        keys(&parse_all(b"\x1b[70;33;102;1;2;1_")),
+        vec![(KeyCode::Char('f'), KeyModifiers::ALT)]
+    );
+    // AltGr+Q on a German layout types `@` and reports LEFT_CTRL | RIGHT_ALT.
+    assert_eq!(
+        keys(&parse_all(b"\x1b[81;16;64;1;9;1_")),
+        vec![(KeyCode::Char('@'), KeyModifiers::empty())]
+    );
+}
+
+#[test]
+fn win32_ime_text_arrives_one_character_per_report() {
+    // WezTerm reports committed IME text with a zero virtual key.
+    let ev = parse_all(
+        b"\x1b[0;0;12395;1;0;1_\x1b[0;0;12395;0;0;1_\x1b[0;0;12411;1;0;1_\x1b[0;0;12411;0;0;1_",
+    );
+    assert_eq!(
+        keys(&ev),
+        vec![
+            (KeyCode::Char('に'), KeyModifiers::empty()),
+            (KeyCode::Char('ほ'), KeyModifiers::empty()),
+        ]
+    );
+}
+
+#[test]
+fn win32_surrogate_pair_is_reassembled_across_reads() {
+    // 😀 is U+1F600: high surrogate 0xD83D (55357), low 0xDE00 (56832), each
+    // with its own key-down and key-up, split here at an arbitrary read
+    // boundary.
+    let bytes: &[u8] =
+        b"\x1b[0;0;55357;1;0;1_\x1b[0;0;55357;0;0;1_\x1b[0;0;56832;1;0;1_\x1b[0;0;56832;0;0;1_";
+    for split in 0..=bytes.len() {
+        let mut p = InputParser::new();
+        let mut ev = p.parse(&bytes[..split]);
+        ev.extend(p.parse(&bytes[split..]));
+        assert_eq!(
+            keys(&ev),
+            vec![(KeyCode::Char('😀'), KeyModifiers::empty())],
+            "split at {split}"
+        );
+    }
+}
+
+#[test]
+fn win32_lone_low_surrogate_is_dropped() {
+    assert!(keys(&parse_all(b"\x1b[0;0;56832;1;0;1_")).is_empty());
+}
+
+#[test]
+fn win32_repeat_count() {
+    assert_eq!(
+        keys(&parse_all(b"\x1b[65;30;97;1;0;3_")),
+        vec![(KeyCode::Char('a'), KeyModifiers::empty()); 3]
+    );
+}
+
+#[test]
+fn win32_reports_mix_with_plain_vt() {
+    // Mouse reports stay SGR, and a terminal's own send-string bindings (for
+    // instance WezTerm's `SendString`) arrive as plain VT between the reports.
+    let ev = parse_all(b"\x1b[<0;62;14M\x1b[9;15;0;1;8;1_\x1b[9;6u");
+    assert!(matches!(ev[0], Event::Mouse(_)), "{ev:?}");
+    assert_eq!(
+        keys(&ev),
+        vec![
+            (KeyCode::Tab, KeyModifiers::CONTROL),
+            (KeyCode::Tab, KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+        ]
+    );
+}
+
+#[test]
+fn win32_line_breaks_inside_a_paste_are_restored() {
+    // Windows Terminal pastes the text itself as plain characters but each
+    // line break as an Enter key report, down and up.
+    let ev = parse_all(
+        "\x1b[200~test\x1b[13;28;13;1;0;1_\x1b[13;28;13;0;0;1_あいう abc\x1b[13;28;13;1;0;1_\x1b[13;28;13;0;0;1_😀\x1b[201~"
+            .as_bytes(),
+    );
+    assert_eq!(ev.len(), 1, "{ev:?}");
+    assert!(
+        matches!(&ev[0], Event::Paste(t) if t == "test\rあいう abc\r😀"),
+        "{ev:?}"
+    );
+}
+
+#[test]
+fn win32_characters_inside_a_paste_are_decoded() {
+    let ev = parse_all(
+        b"\x1b[200~\x1b[0;0;12395;1;0;1_\x1b[0;0;12395;0;0;1_\x1b[0;0;55357;1;0;1_\x1b[0;0;56832;1;0;1_\x1b[201~",
+    );
+    assert!(matches!(&ev[0], Event::Paste(t) if t == "に😀"), "{ev:?}");
+}
+
+#[test]
+fn win32_malformed_reports_are_dropped() {
+    for bytes in [
+        &b"\x1b[1;2;3;4;5;6;7_"[..], // too many fields
+        b"\x1b[99999;0;0;1;0;1_",    // virtual key out of range
+        b"\x1b[65;0;99999;1;0;1_",   // UTF-16 unit out of range
+    ] {
+        assert!(parse_all(bytes).is_empty(), "{bytes:?}");
+    }
+}
