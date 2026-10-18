@@ -299,6 +299,9 @@ pub struct InputParser {
     /// Accumulated bracketed-paste content (including the trailing end marker
     /// until it is recognised and stripped).
     paste: Vec<u8>,
+    /// The high surrogate of a character a win32-input-mode report split in
+    /// two, waiting for the report that carries its low surrogate.
+    win32_high_surrogate: Option<u16>,
 }
 
 impl Default for InputParser {
@@ -313,6 +316,7 @@ impl InputParser {
             state: State::Ground,
             buffer: Vec::with_capacity(32),
             paste: Vec::new(),
+            win32_high_surrogate: None,
         }
     }
 
@@ -756,7 +760,7 @@ impl InputParser {
         // paste pays for a full marker comparison.
         if byte == b'~' && self.paste.ends_with(PASTE_END) {
             let content_len = self.paste.len() - PASTE_END.len();
-            let text = sanitize_paste(&self.paste[..content_len]);
+            let text = sanitize_paste(&decode_win32_text(&self.paste[..content_len]));
             self.paste.clear();
             self.state = State::Ground;
             out.push(Event::Paste(text));
@@ -768,7 +772,7 @@ impl InputParser {
             // Emitting here bounds memory; discarding rather than returning to
             // ground keeps the tail from being sprayed out as keystrokes.
             tracing::trace!("InputParser: paste exceeded {} bytes, flushing", MAX_PASTE);
-            let text = sanitize_paste(&self.paste);
+            let text = sanitize_paste(&decode_win32_text(&self.paste));
             self.paste.clear();
             self.state = State::PasteOverflow;
             out.push(Event::Paste(text));
@@ -869,6 +873,7 @@ impl InputParser {
             b'I' => out.push(Event::FocusGained),
             b'O' => out.push(Event::FocusLost),
             b'u' => self.dispatch_csi_u(&params, out),
+            b'_' => self.dispatch_win32_input(&params, out),
             other => {
                 tracing::trace!("InputParser: unknown CSI final {:#04x}, dropping", other);
             }
@@ -979,6 +984,261 @@ impl InputParser {
             )));
         }
     }
+
+    /// Dispatch a win32-input-mode key report, `CSI Vk ; Sc ; Uc ; Kd ; Cs ; Rc _`.
+    ///
+    /// On Windows the console hands fresh its input as VT text
+    /// (`ENABLE_VIRTUAL_TERMINAL_INPUT`), and ConPTY's VT encoding drops every
+    /// modifier the legacy encoding has no spelling for: Ctrl+Tab arrives as a
+    /// plain Tab and Ctrl+Shift+E as Ctrl+E. With win32-input-mode
+    /// (`CSI ? 9001 h`) the terminal reports each key as the console's own
+    /// KEY_EVENT record instead — virtual key, scan code, UTF-16 unit, key-down
+    /// flag, control-key state and repeat count — so the modifiers survive.
+    ///
+    /// Key-ups and keys that type nothing (a bare Shift or Ctrl, the IME's
+    /// Hankaku/Zenkaku toggle) are dropped. What remains is spelled the way the
+    /// same chord arrives over the kitty protocol, so a keymap cannot tell which
+    /// encoding the terminal spoke.
+    fn dispatch_win32_input(&mut self, params: &[u8], out: &mut Vec<Event>) {
+        let Some(key) = Win32Key::parse(params) else {
+            tracing::trace!("InputParser: malformed win32-input-mode report, dropping");
+            return;
+        };
+        if !key.down {
+            return;
+        }
+        let Some(event) = self.win32_key_event(&key) else {
+            return;
+        };
+        for _ in 0..key.repeat.clamp(1, MAX_WIN32_REPEAT) {
+            out.push(Event::key(event));
+        }
+    }
+
+    /// The key event a win32-input-mode key-down stands for, or `None` for a
+    /// key that types nothing (or the first half of a surrogate pair).
+    fn win32_key_event(&mut self, key: &Win32Key) -> Option<KeyEvent> {
+        let mut modifiers = key.modifiers();
+        if let Some(code) = win32_functional_key(key.vk) {
+            self.win32_high_surrogate = None;
+            // Shift+Tab is BackTab, as over the legacy encoding (`CSI Z`).
+            let code = if code == KeyCode::Tab && modifiers == KeyModifiers::SHIFT {
+                KeyCode::BackTab
+            } else {
+                code
+            };
+            return Some(KeyEvent::new(code, modifiers));
+        }
+        // An IME commits text, and an emoji picker types a character outside
+        // the BMP, one UTF-16 unit per report.
+        let ch = match key.unicode {
+            high @ 0xD800..=0xDBFF => {
+                self.win32_high_surrogate = Some(high);
+                return None;
+            }
+            low @ 0xDC00..=0xDFFF => {
+                let high = self.win32_high_surrogate.take()?;
+                char::decode_utf16([high, low]).next()?.ok()?
+            }
+            unit => {
+                self.win32_high_surrogate = None;
+                char::from_u32(u32::from(unit))?
+            }
+        };
+        if key.unicode == 0 || ch.is_control() {
+            // Ctrl turns a letter's character into its C0 code (Ctrl+E types
+            // 0x05), and some layouts report no character at all for a Ctrl or
+            // Alt chord. The virtual key still names the key, and naming it is
+            // what keeps Shift: Ctrl+Shift+E stays Ctrl+Shift+e rather than
+            // collapsing onto Ctrl+E.
+            if let Some(base) = win32_letter_or_digit(key.vk) {
+                return Some(KeyEvent::new(KeyCode::Char(base), modifiers));
+            }
+            // Any other key: read its C0 code the way the legacy encoding would
+            // (Ctrl+[ is Escape), keeping Alt.
+            if key.unicode == 0 || key.unicode >= 0x20 {
+                return None;
+            }
+            let byte = key.unicode as u8;
+            return Some(KeyEvent::new(
+                byte_to_keycode(byte),
+                c0_control_modifier(byte) | (modifiers & KeyModifiers::ALT),
+            ));
+        }
+        // A printable character. Windows reports AltGr as Ctrl+Alt; when that
+        // chord types a character, the character is what the user pressed for.
+        if modifiers.contains(KeyModifiers::CONTROL | KeyModifiers::ALT) {
+            modifiers.remove(KeyModifiers::CONTROL | KeyModifiers::ALT);
+        }
+        // Without Ctrl the character already carries the shift (Shift+E types
+        // `E`), exactly as over the legacy encoding.
+        if !modifiers.contains(KeyModifiers::CONTROL) {
+            modifiers.remove(KeyModifiers::SHIFT);
+        }
+        Some(KeyEvent::new(KeyCode::Char(ch), modifiers))
+    }
+}
+
+/// Upper bound on the repeat count of one win32-input-mode report. A held key
+/// reports one press per auto-repeat, so a larger count is a malformed report;
+/// the bound keeps it from flooding the event queue.
+const MAX_WIN32_REPEAT: u16 = 64;
+
+// `dwControlKeyState` bits of a win32-input-mode report.
+const WIN32_RIGHT_ALT: u32 = 0x0001;
+const WIN32_LEFT_ALT: u32 = 0x0002;
+const WIN32_RIGHT_CTRL: u32 = 0x0004;
+const WIN32_LEFT_CTRL: u32 = 0x0008;
+const WIN32_SHIFT: u32 = 0x0010;
+
+/// One win32-input-mode key report, `CSI Vk ; Sc ; Uc ; Kd ; Cs ; Rc _`.
+/// An omitted field takes its default: 0, except the repeat count's 1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Win32Key {
+    /// `wVirtualKeyCode`.
+    vk: u16,
+    /// `uChar.UnicodeChar`: one UTF-16 unit, or 0 when the key types nothing.
+    unicode: u16,
+    /// `bKeyDown`.
+    down: bool,
+    /// `dwControlKeyState`.
+    state: u32,
+    /// `wRepeatCount`.
+    repeat: u16,
+}
+
+impl Win32Key {
+    fn parse(params: &[u8]) -> Option<Self> {
+        let params = std::str::from_utf8(params).ok()?;
+        let fields: Vec<&str> = params.split(';').collect();
+        if fields.len() > 6 {
+            return None;
+        }
+        let field = |i: usize, default: u32| -> Option<u32> {
+            match fields.get(i).copied() {
+                None | Some("") => Some(default),
+                Some(f) => f.parse().ok(),
+            }
+        };
+        Some(Self {
+            vk: u16::try_from(field(0, 0)?).ok()?,
+            // Field 1 is the scan code, which nothing here needs.
+            unicode: u16::try_from(field(2, 0)?).ok()?,
+            down: field(3, 0)? != 0,
+            state: field(4, 0)?,
+            repeat: u16::try_from(field(5, 1)?).ok()?,
+        })
+    }
+
+    fn modifiers(&self) -> KeyModifiers {
+        let mut modifiers = KeyModifiers::empty();
+        if self.state & WIN32_SHIFT != 0 {
+            modifiers |= KeyModifiers::SHIFT;
+        }
+        if self.state & (WIN32_LEFT_CTRL | WIN32_RIGHT_CTRL) != 0 {
+            modifiers |= KeyModifiers::CONTROL;
+        }
+        if self.state & (WIN32_LEFT_ALT | WIN32_RIGHT_ALT) != 0 {
+            modifiers |= KeyModifiers::ALT;
+        }
+        modifiers
+    }
+}
+
+/// The key a Windows virtual-key code names when it is not a character key.
+fn win32_functional_key(vk: u16) -> Option<KeyCode> {
+    Some(match vk {
+        0x08 => KeyCode::Backspace,
+        0x09 => KeyCode::Tab,
+        // VK_CLEAR: the keypad's center "5" with NumLock off.
+        0x0C => KeyCode::KeypadBegin,
+        0x0D => KeyCode::Enter,
+        0x1B => KeyCode::Esc,
+        0x20 => KeyCode::Char(' '),
+        0x21 => KeyCode::PageUp,
+        0x22 => KeyCode::PageDown,
+        0x23 => KeyCode::End,
+        0x24 => KeyCode::Home,
+        0x25 => KeyCode::Left,
+        0x26 => KeyCode::Up,
+        0x27 => KeyCode::Right,
+        0x28 => KeyCode::Down,
+        0x2D => KeyCode::Insert,
+        0x2E => KeyCode::Delete,
+        0x70..=0x87 => KeyCode::F((vk - 0x70 + 1) as u8),
+        _ => return None,
+    })
+}
+
+/// The base character of a letter or digit key (`VK_A`–`VK_Z`, `VK_0`–`VK_9`).
+/// Their virtual-key codes are the uppercase ASCII letters and the digits.
+fn win32_letter_or_digit(vk: u16) -> Option<char> {
+    match vk {
+        0x41..=0x5A => Some(char::from(vk as u8).to_ascii_lowercase()),
+        0x30..=0x39 => Some(char::from(vk as u8)),
+        _ => None,
+    }
+}
+
+/// The win32-input-mode key report at the start of `bytes`, with its length.
+fn win32_report_at(bytes: &[u8]) -> Option<(usize, Win32Key)> {
+    let rest = bytes.strip_prefix(b"\x1b[")?;
+    let end = rest
+        .iter()
+        .position(|&b| !(b.is_ascii_digit() || b == b';'))?;
+    if rest[end] != b'_' {
+        return None;
+    }
+    Some((2 + end + 1, Win32Key::parse(&rest[..end])?))
+}
+
+/// The text of a bracketed paste with every win32-input-mode key report in it
+/// replaced by the character it types.
+///
+/// Windows Terminal sends pasted text as plain characters but each line break
+/// as an Enter key report (a key-down and a key-up), so without this a
+/// multi-line paste lost its line breaks to the reports' raw bytes.
+fn decode_win32_text(bytes: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if !bytes.windows(2).any(|w| w == b"\x1b[") {
+        return std::borrow::Cow::Borrowed(bytes);
+    }
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut high = None;
+    let mut i = 0;
+    while i < bytes.len() {
+        let Some((len, key)) = win32_report_at(&bytes[i..]) else {
+            out.push(bytes[i]);
+            i += 1;
+            continue;
+        };
+        i += len;
+        if !key.down {
+            continue;
+        }
+        let ch = match key.unicode {
+            0 => continue,
+            unit @ 0xD800..=0xDBFF => {
+                high = Some(unit);
+                continue;
+            }
+            unit @ 0xDC00..=0xDFFF => {
+                let Some(h) = high.take() else { continue };
+                match char::decode_utf16([h, unit]).next() {
+                    Some(Ok(c)) => c,
+                    _ => continue,
+                }
+            }
+            unit => match char::from_u32(u32::from(unit)) {
+                Some(c) => c,
+                None => continue,
+            },
+        };
+        let mut buf = [0u8; 4];
+        for _ in 0..key.repeat.clamp(1, MAX_WIN32_REPEAT) {
+            out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+        }
+    }
+    std::borrow::Cow::Owned(out)
 }
 
 /// The event type encoded in the second sub-parameter of a kitty modifier field
