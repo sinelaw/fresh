@@ -531,8 +531,9 @@ impl FileProvider {
     ///
     /// Dot files follow Show Hidden Files, except that a typed name starting
     /// with `.` matches dot files regardless, as shell completion does.
-    /// `custom_ignore_patterns` and `.gitignore` are not applied: a typed path
-    /// is an explicit request for that file.
+    /// Likewise, what `custom_ignore_patterns` leave out stays out unless the
+    /// typed path goes into an ignored directory (`build/`), which is an
+    /// explicit request for it. `.gitignore` is not consulted here.
     fn probe_prefix(&self, cwd: &str, query: &str) -> Vec<FileEntry> {
         use std::path::Path;
 
@@ -541,6 +542,11 @@ impl FileProvider {
         }
 
         let show_hidden = self.show_hidden.load(std::sync::atomic::Ordering::Relaxed);
+        let custom_ignore = self.custom_ignore(cwd);
+        let left_out = |dir: &str, rel: &str| {
+            let typed_into_ignored = !dir.is_empty() && custom_ignore.matches(Path::new(dir), true);
+            !typed_into_ignored && custom_ignore.matches(Path::new(rel), false)
+        };
         let abs_path = Path::new(cwd).join(query);
         let mut results = Vec::new();
 
@@ -550,6 +556,9 @@ impl FileProvider {
             for entry in entries {
                 if entry.is_file() && (show_hidden || !entry.name.starts_with('.')) {
                     let rel = format!("{}/{}", query_trimmed, entry.name);
+                    if left_out(query_trimmed, &rel) {
+                        continue;
+                    }
                     results.push(FileEntry {
                         frecency_score: self.get_frecency_score(&rel),
                         relative_path: rel,
@@ -594,6 +603,9 @@ impl FileProvider {
                     } else {
                         format!("{}/{}", rel_parent, entry.name)
                     };
+                    if left_out(&rel_parent, &rel) {
+                        continue;
+                    }
                     results.push(FileEntry {
                         frecency_score: self.get_frecency_score(&rel),
                         relative_path: rel,
@@ -1744,6 +1756,41 @@ mod tests {
         assert_eq!(probe("conf"), vec!["conf/.secret", "conf/app.toml"]);
         assert_eq!(probe("conf/"), vec!["conf/.secret", "conf/app.toml"]);
         assert_eq!(probe("e"), vec!["env.rs"]);
+    }
+
+    /// Typing the start of a name doesn't bring back what
+    /// `custom_ignore_patterns` leave out; typing a path into an ignored
+    /// directory does.
+    #[test]
+    fn test_probe_prefix_follows_custom_ignore_patterns() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        std::fs::write(base.join("debug.log"), b"").unwrap();
+        std::fs::write(base.join("debug.rs"), b"").unwrap();
+        std::fs::create_dir(base.join("src")).unwrap();
+        std::fs::write(base.join("src").join("trace.log"), b"").unwrap();
+        std::fs::write(base.join("src").join("trace.rs"), b"").unwrap();
+        std::fs::create_dir(base.join("build")).unwrap();
+        std::fs::write(base.join("build").join("out.txt"), b"").unwrap();
+
+        let provider = make_file_provider();
+        provider.set_custom_ignore_patterns(&["*.log".to_string(), "build/".to_string()]);
+        let cwd = base.display().to_string();
+        let probe = |query: &str| -> Vec<String> {
+            let mut paths: Vec<String> = provider
+                .probe_prefix(&cwd, query)
+                .into_iter()
+                .map(|e| e.relative_path)
+                .collect();
+            paths.sort();
+            paths
+        };
+
+        assert_eq!(probe("debug"), vec!["debug.rs"]);
+        assert_eq!(probe("src/"), vec!["src/trace.rs"]);
+        assert_eq!(probe("src/tr"), vec!["src/trace.rs"]);
+        assert_eq!(probe("build/"), vec!["build/out.txt"]);
+        assert_eq!(probe("build/o"), vec!["build/out.txt"]);
     }
 
     /// Changing whether gitignored files are listed drops the cached list.
