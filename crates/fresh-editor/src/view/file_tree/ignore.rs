@@ -288,13 +288,15 @@ impl CustomIgnore {
         }
     }
 
-    /// Whether `path` is ignored. It is either relative to the root or an
-    /// absolute path under it; anything else, the root included, is not.
+    /// Whether `path` is ignored. It is either relative to the root or a
+    /// rooted path under it; anything else, the root included, is not.
     pub fn matches(&self, path: &Path, is_dir: bool) -> bool {
         let Some(matcher) = &self.matcher else {
             return false;
         };
-        let rel = if path.is_absolute() {
+        // `has_root`, not `is_absolute`: on Windows `\foo` is rooted but not
+        // absolute, and the matcher panics on any path that keeps a root.
+        let rel = if path.has_root() {
             match path.strip_prefix(&self.root) {
                 Ok(rel) => rel,
                 Err(_) => return false,
