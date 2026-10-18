@@ -5,13 +5,19 @@
 
 use std::io::Write;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::Duration;
 
 use super::shell_command::shell_command;
 use super::Editor;
 use crate::config::{FormatterConfig, OnSaveAction};
 use crate::model::event::Event;
+// Formatter and on-save commands are probed the same way as LSP servers:
+// on PATH, or as an absolute/relative path (resolved against the process
+// working directory). Shelling out to Windows' `where` instead misparsed
+// drive-letter paths such as `D:\tools\ruff.exe` as its `path:pattern`
+// search syntax and reported installed binaries missing (#3281).
+use crate::services::lsp::command_exists;
 use crate::services::process_hidden::HideWindow;
 use fresh_i18n::t;
 
@@ -637,18 +643,6 @@ impl Editor {
         self.replace_buffer_with_output(&with_newline)?;
         Ok(true)
     }
-}
-
-/// Check if a command exists — on PATH, or as an absolute/relative path.
-fn command_exists(command: &str) -> bool {
-    // Use the `which` crate, mirroring the LSP server probe. Shelling out to
-    // Windows' `where` misparsed drive-letter absolute paths as its
-    // `path:pattern` search syntax and reported installed binaries missing
-    // (issue #3281).
-    if command.is_empty() {
-        return false;
-    }
-    which::which(command).is_ok()
 }
 
 /// Detect the shell to use for executing commands.
