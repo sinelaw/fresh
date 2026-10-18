@@ -676,3 +676,23 @@ fn detect_shell() -> String {
     // Last resort
     "sh".to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_exists_accepts_an_absolute_path() {
+        // The test binary's own path. On Windows it is a drive-letter path
+        // (`C:\...\fresh-*.exe`), the shape `where.exe` used to reject (#3281).
+        let exe = std::env::current_exe().unwrap();
+        assert!(exe.is_absolute());
+        assert!(command_exists(exe.to_str().unwrap()));
+    }
+
+    #[test]
+    fn command_exists_rejects_missing_and_empty_commands() {
+        assert!(!command_exists("fresh-unlikely-formatter-name-q8v3z"));
+        assert!(!command_exists(""));
+    }
+}
