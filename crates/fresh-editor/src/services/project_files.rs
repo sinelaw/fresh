@@ -55,13 +55,14 @@ pub fn git_files_blocking(
     spawner: &Arc<dyn ProcessSpawner>,
     root: &Path,
     custom_ignore: &CustomIgnore,
+    include_gitignored: bool,
 ) -> Option<Vec<String>> {
     // Running on the runtime's own blocking pool, so the runtime provably
     // exists for as long as this closure does — the liveness a `Handle` cannot
     // carry on its own is established by where we are, not by the handle.
     #[allow(clippy::disallowed_types)]
     let handle = tokio::runtime::Handle::try_current().ok()?;
-    git_files_with_handle(spawner, root, &handle, custom_ignore)
+    git_files_with_handle(spawner, root, &handle, custom_ignore, include_gitignored)
 }
 
 /// [`git_files_blocking`] on an explicit `handle`, which must belong to a
@@ -75,20 +76,13 @@ pub fn git_files_with_handle(
     root: &Path,
     handle: &tokio::runtime::Handle,
     custom_ignore: &CustomIgnore,
+    include_gitignored: bool,
 ) -> Option<Vec<String>> {
-    // `-z`: NUL-terminated and unquoted, so names with spaces or non-ASCII
-    // characters come back verbatim rather than `core.quotePath`-escaped.
     #[allow(clippy::disallowed_methods)] // liveness established by the caller, above
     let result = handle
         .block_on(spawner.spawn_raw(
             "git".to_string(),
-            vec![
-                "ls-files".to_string(),
-                "-z".to_string(),
-                "--cached".to_string(),
-                "--others".to_string(),
-                "--exclude-standard".to_string(),
-            ],
+            git_ls_files_args(include_gitignored),
             Some(root.to_string_lossy().into_owned()),
         ))
         .ok()?;
@@ -97,6 +91,30 @@ pub fn git_files_with_handle(
         return None;
     }
     Some(parse_ls_files(&result.stdout, custom_ignore))
+}
+
+/// Arguments for the `git ls-files` that lists a repo's files: tracked plus
+/// untracked, leaving out what `.gitignore` ignores unless
+/// `include_gitignored`. Without `--exclude-standard`, `--others` lists
+/// ignored files too; the `IGNORED_DIRS` excludes then keep dependency and
+/// build trees out as the directory walk does (`--exclude` only applies to
+/// untracked files, so a tracked file under such a directory stays). Git
+/// never lists `.git/` itself. `-z`: NUL-terminated and unquoted, so names
+/// with spaces or non-ASCII characters come back verbatim rather than
+/// `core.quotePath`-escaped.
+fn git_ls_files_args(include_gitignored: bool) -> Vec<String> {
+    let mut args = vec![
+        "ls-files".to_string(),
+        "-z".to_string(),
+        "--cached".to_string(),
+        "--others".to_string(),
+    ];
+    if include_gitignored {
+        args.extend(IGNORED_DIRS.iter().map(|dir| format!("--exclude={dir}")));
+    } else {
+        args.push("--exclude-standard".to_string());
+    }
+    args
 }
 
 /// Split `git ls-files -z` output into paths, dropping anything under `.git/`
@@ -155,7 +173,7 @@ pub fn for_each_file_blocking(
     if cancel.load(Ordering::Relaxed) {
         return Ok(());
     }
-    match git_files_blocking(spawner, root, custom_ignore) {
+    match git_files_blocking(spawner, root, custom_ignore, false) {
         Some(files) => {
             for rel in files {
                 // Joined a component at a time so the path uses the
@@ -359,6 +377,31 @@ mod tests {
             parse_ls_files(stdout, &custom),
             vec!["a b.txt", "año.rs", "line\nbreak.md", ".github/ci.yml"],
         );
+    }
+
+    /// Showing gitignored files drops `--exclude-standard` (so `--others`
+    /// lists ignored files too) but still keeps the walk's heavy directories
+    /// out.
+    #[test]
+    fn test_git_ls_files_args_follow_include_gitignored() {
+        let args = git_ls_files_args(false);
+        assert_eq!(
+            args,
+            vec![
+                "ls-files",
+                "-z",
+                "--cached",
+                "--others",
+                "--exclude-standard"
+            ]
+        );
+
+        let args = git_ls_files_args(true);
+        assert_eq!(&args[..4], &["ls-files", "-z", "--cached", "--others"]);
+        assert!(!args.iter().any(|a| a == "--exclude-standard"), "{args:?}");
+        for dir in IGNORED_DIRS {
+            assert!(args.contains(&format!("--exclude={dir}")), "{args:?}");
+        }
     }
 
     /// In a git work tree the project's files are what `git ls-files` lists

@@ -335,8 +335,9 @@ struct FileCache {
 /// Provider for finding files in the project.
 ///
 /// Lists the files [`project_files`] defines: `git ls-files` via
-/// [`ProcessSpawner`] as the fast path (respects `.gitignore`, works on remote
-/// hosts), then a recursive directory walk via the [`FileSystem`] trait.
+/// [`ProcessSpawner`] as the fast path (respects `.gitignore` unless the
+/// explorer shows gitignored files, works on remote hosts), then a recursive
+/// directory walk via the [`FileSystem`] trait.
 ///
 /// [`project_files`]: crate::services::project_files
 ///
@@ -356,6 +357,8 @@ pub struct FileProvider {
     /// Cancel flag shared with the background walk task.
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     show_hidden: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// List files `.gitignore` leaves out too (Git repos only).
+    include_gitignored: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// `file_explorer.custom_ignore_patterns`, as `.gitignore` lines.
     custom_ignore_patterns: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 }
@@ -380,6 +383,7 @@ impl FileProvider {
             async_sender,
             cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             show_hidden: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            include_gitignored: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             custom_ignore_patterns: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
@@ -390,6 +394,16 @@ impl FileProvider {
         use std::sync::atomic::Ordering::Relaxed;
         let hidden_changed = self.show_hidden.swap(show_hidden, Relaxed) != show_hidden;
         if hidden_changed {
+            self.clear_cache();
+        }
+    }
+
+    /// Match the project explorer showing gitignored files (Show Gitignored
+    /// Files on, or `respect_gitignore` off) in Git repos. A change makes the
+    /// existing file list stale.
+    pub fn set_include_gitignored(&self, include_gitignored: bool) {
+        use std::sync::atomic::Ordering::Relaxed;
+        if self.include_gitignored.swap(include_gitignored, Relaxed) != include_gitignored {
             self.clear_cache();
         }
     }
@@ -640,6 +654,9 @@ impl FileProvider {
         let filesystem = std::sync::Arc::clone(&self.filesystem);
         let process_spawner = std::sync::Arc::clone(&self.process_spawner);
         let show_hidden = self.show_hidden.load(std::sync::atomic::Ordering::Relaxed);
+        let include_gitignored = self
+            .include_gitignored
+            .load(std::sync::atomic::Ordering::Relaxed);
         let custom_ignore = self.custom_ignore(cwd);
         let cwd = cwd.to_string();
 
@@ -649,6 +666,7 @@ impl FileProvider {
                 &process_spawner,
                 std::path::Path::new(&cwd),
                 &custom_ignore,
+                include_gitignored,
             ) {
                 let frecency_map = frecency.read().ok();
                 let entries: Vec<FileEntry> = files
@@ -721,6 +739,8 @@ impl FileProvider {
             std::path::Path::new(cwd),
             runtime.handle(),
             custom_ignore,
+            self.include_gitignored
+                .load(std::sync::atomic::Ordering::Relaxed),
         )
     }
 
@@ -1724,6 +1744,31 @@ mod tests {
         assert_eq!(probe("conf"), vec!["conf/.secret", "conf/app.toml"]);
         assert_eq!(probe("conf/"), vec!["conf/.secret", "conf/app.toml"]);
         assert_eq!(probe("e"), vec!["env.rs"]);
+    }
+
+    /// Changing whether gitignored files are listed drops the cached list.
+    #[test]
+    fn test_set_include_gitignored_clears_cache_on_change() {
+        let provider = make_file_provider();
+        let seed = |provider: &FileProvider| {
+            let mut c = provider.cache.lock().unwrap();
+            c.loaded_cwd = Some("/proj".to_string());
+            c.files = Some(std::sync::Arc::new(vec![]));
+        };
+        let cached = |provider: &FileProvider| provider.cache.lock().unwrap().files.is_some();
+
+        seed(&provider);
+        provider.set_include_gitignored(false);
+        assert!(cached(&provider), "an unchanged setting keeps the cache");
+
+        provider.set_include_gitignored(true);
+        assert!(!cached(&provider), "turning it on must reload");
+
+        seed(&provider);
+        provider.set_include_gitignored(true);
+        assert!(cached(&provider), "an unchanged setting keeps the cache");
+        provider.set_include_gitignored(false);
+        assert!(!cached(&provider), "turning it off must reload");
     }
 
     // ====================================================================

@@ -276,6 +276,16 @@ impl QuickOpenRegistry {
         }
     }
 
+    /// List gitignored files in the file picker when the project explorer
+    /// shows them.
+    pub fn set_file_include_gitignored(&self, include_gitignored: bool) {
+        if let Some((provider, _)) = self.get_provider_for_input("") {
+            if let Some(fp) = provider.as_any().downcast_ref::<FileProvider>() {
+                fp.set_include_gitignored(include_gitignored);
+            }
+        }
+    }
+
     /// Leave out of the file picker what `file_explorer.custom_ignore_patterns`
     /// ignores.
     pub fn set_file_ignore_patterns(&self, patterns: &[String]) {

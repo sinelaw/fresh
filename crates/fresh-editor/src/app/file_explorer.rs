@@ -1170,22 +1170,39 @@ impl Editor {
         );
     }
 
-    /// Point Quick Open's file list at the active window's Show Hidden Files.
+    /// Point Quick Open's file list at the active window's Show Hidden Files
+    /// and whether its explorer shows gitignored files.
     ///
-    /// The setting lives on each window's explorer, but Quick Open is
-    /// editor-wide, so every change of active window (and every change to the
-    /// setting) re-syncs it from here. A window whose explorer has not been
-    /// built yet uses the value its explorer will start with: a restored one,
-    /// else the config default.
+    /// These live on each window's explorer, but Quick Open is editor-wide, so
+    /// every change of active window (and every change to the settings)
+    /// re-syncs it from here. A window whose explorer has not been built yet
+    /// uses the values its explorer will start with: a restored one, else the
+    /// config default.
     pub(crate) fn sync_quick_open_file_visibility(&self) {
         let window = self.active_window();
-        let show_hidden = match &window.file_explorer {
-            Some(explorer) => explorer.ignore_patterns().show_hidden(),
-            None => window
-                .pending_file_explorer_show_hidden
-                .unwrap_or(self.config.file_explorer.show_hidden),
+        let config = &self.config.file_explorer;
+        let (show_hidden, show_gitignored, respect_gitignore) = match &window.file_explorer {
+            Some(explorer) => {
+                let patterns = explorer.ignore_patterns();
+                (
+                    patterns.show_hidden(),
+                    patterns.show_gitignored(),
+                    patterns.respect_gitignore(),
+                )
+            }
+            None => (
+                window
+                    .pending_file_explorer_show_hidden
+                    .unwrap_or(config.show_hidden),
+                window
+                    .pending_file_explorer_show_gitignored
+                    .unwrap_or(config.show_gitignored),
+                config.respect_gitignore,
+            ),
         };
         self.quick_open_registry.set_file_visibility(show_hidden);
+        self.quick_open_registry
+            .set_file_include_gitignored(show_gitignored || !respect_gitignore);
     }
 
     pub fn file_explorer_toggle_hidden(&mut self) {
@@ -1226,6 +1243,7 @@ impl Editor {
 
         // Persist to config so the setting survives across sessions
         self.config_mut().file_explorer.show_gitignored = show_gitignored;
+        self.sync_quick_open_file_visibility();
         self.persist_config_change(
             crate::config_keys::FILE_EXPLORER_SHOW_GITIGNORED,
             show_gitignored,
