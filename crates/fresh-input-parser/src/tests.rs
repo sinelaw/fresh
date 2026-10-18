@@ -2066,17 +2066,56 @@ fn win32_ctrl_shift_letter_keeps_shift() {
 
 #[test]
 fn win32_reports_match_the_kitty_spelling_of_the_same_chord() {
+    // The layout character is part of the spelling: a chord that keeps its base
+    // key has to report the typed character here exactly as it does over kitty.
     for (win32, kitty) in [
         (&b"\x1b[69;18;5;1;24;1_"[..], &b"\x1b[101:69;6u"[..]), // Ctrl+Shift+E
         (b"\x1b[69;18;5;1;8;1_", b"\x1b[101;5u"),               // Ctrl+E
         (b"\x1b[9;15;0;1;8;1_", b"\x1b[9;5u"),                  // Ctrl+Tab
         (b"\x1b[9;15;0;1;24;1_", b"\x1b[9;6u"),                 // Ctrl+Shift+Tab
         (b"\x1b[67;46;3;1;8;1_", b"\x1b[99;5u"),                // Ctrl+C
+        // Ctrl+Shift+1 types `!` on a US layout: both spellings keep the
+        // digit and carry the `!` alongside.
+        (b"\x1b[49;2;33;1;24;1_", b"\x1b[49:33;6u"),
+        // The same chord on a German layout, where Shift+7 types `/`.
+        (b"\x1b[55;8;47;1;24;1_", b"\x1b[55:47;6u"),
     ] {
         assert_eq!(
-            keys(&parse_all(win32)),
-            keys(&parse_all(kitty)),
+            keys_with_layout(&parse_all(win32)),
+            keys_with_layout(&parse_all(kitty)),
             "{win32:?} vs {kitty:?}"
+        );
+    }
+}
+
+#[test]
+fn win32_ctrl_shift_digit_names_the_key_and_carries_the_typed_character() {
+    // Before the fix this arrived as `ctrl+shift+!`, which a `ctrl+shift+1`
+    // binding never saw, while the kitty spelling of the same chord stayed on
+    // `1`. The digit is the key; `!` is what it types.
+    assert_eq!(
+        keys_with_layout(&parse_all(b"\x1b[49;2;33;1;24;1_")),
+        vec![(
+            KeyCode::Char('1'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            Some('!')
+        )]
+    );
+    // Ctrl+Shift+A stays as before: `A` is just the letter's uppercase, which
+    // the SHIFT bit already says — both when the console reports `A` and when
+    // it reports the C0 code.
+    for bytes in [
+        &b"\x1b[65;30;65;1;24;1_"[..], // Uc is the typed `A`
+        b"\x1b[65;30;1;1;24;1_",       // Uc is Ctrl+A's 0x01
+    ] {
+        assert_eq!(
+            keys_with_layout(&parse_all(bytes)),
+            vec![(
+                KeyCode::Char('a'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+                None
+            )],
+            "{bytes:?}"
         );
     }
 }
