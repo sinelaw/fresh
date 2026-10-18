@@ -1030,9 +1030,9 @@ fn migrate_legacy_plugin_state(
 
 impl Editor {
     /// Bring every persisted workspace into the editor, once. A launch starts
-    /// with only its own directory's workspaces (Orchestrator mode, whose
-    /// whole point is the full list, starts with all of them); the rest of
-    /// the registry is read the first time something uses it — the
+    /// with only its own directory's workspaces (Orchestrator mode adds the
+    /// one it reopens, the last used anywhere); the rest of the registry is
+    /// read the first time something uses it — the
     /// Orchestrator listing workspaces (`editor.loadWorkspaces()`), or a
     /// window being created, which must see an existing workspace for its
     /// root rather than mint a duplicate.
