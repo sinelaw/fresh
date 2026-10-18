@@ -310,7 +310,10 @@ const IGNORED_DIRS: &[&str] = &[
     ".DS_Store",
 ];
 
-/// `IGNORED_DIRS` plus heavy tool and cache directories, for walks that include hidden entries.
+/// `IGNORED_DIRS` plus heavy hidden tool and cache directories, for walks that
+/// include hidden entries. Only dot-prefixed names belong in the extra part:
+/// a non-hidden directory listed here would vanish from Quick Open exactly when
+/// Show Hidden Files is turned on.
 const IGNORED_DIRS_WITH_HIDDEN: &[&str] = &[
     ".git",
     "node_modules",
@@ -324,7 +327,6 @@ const IGNORED_DIRS_WITH_HIDDEN: &[&str] = &[
     ".rustup",
     ".npm",
     ".venv",
-    "venv",
     ".tox",
     ".mypy_cache",
     ".pytest_cache",
@@ -1515,6 +1517,39 @@ mod tests {
     fn test_hidden_walk_still_skips_every_ignored_dir() {
         for dir in IGNORED_DIRS {
             assert!(IGNORED_DIRS_WITH_HIDDEN.contains(dir), "{dir}");
+        }
+    }
+
+    /// Turning Show Hidden Files on must only add entries, so the extra skips
+    /// for hidden walks may only name hidden directories.
+    #[test]
+    fn test_hidden_walk_only_adds_skips_for_hidden_dirs() {
+        for dir in IGNORED_DIRS_WITH_HIDDEN {
+            assert!(
+                IGNORED_DIRS.contains(dir) || dir.starts_with('.'),
+                "{dir} is not hidden, so skipping it only when hidden files are shown hides it from Quick Open"
+            );
+        }
+    }
+
+    #[test]
+    fn test_file_provider_lists_venv_whether_or_not_hidden_files_are_shown() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        std::fs::create_dir(base.join("venv")).unwrap();
+        std::fs::write(base.join("venv/pyvenv.cfg"), b"").unwrap();
+
+        let provider = make_file_provider();
+        let context = make_test_context(&base.display().to_string());
+        for show_hidden in [false, true] {
+            provider.set_visibility(show_hidden);
+            let suggestions = provider.suggestions("", &context);
+            assert!(
+                suggestions
+                    .iter()
+                    .any(|s| s.value.as_deref() == Some("venv/pyvenv.cfg")),
+                "show_hidden={show_hidden}"
+            );
         }
     }
 
