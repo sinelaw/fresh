@@ -1,6 +1,7 @@
 //! Path utilities for path expansion and normalization.
 
-use std::path::PathBuf;
+use std::borrow::Cow;
+use std::path::{Path, PathBuf};
 
 /// Expand tilde (~) in a path to the user's home directory.
 ///
@@ -20,6 +21,52 @@ pub fn expand_tilde(path: &str) -> PathBuf {
         }
     } else {
         PathBuf::from(path)
+    }
+}
+
+/// Convert a Windows verbatim path (`\\?\C:\…` or `\\?\UNC\server\share\…`)
+/// into its non-verbatim equivalent (`C:\…` or `\\server\share\…`).
+///
+/// Returns the input unchanged on non-Windows platforms or for paths that
+/// have no verbatim prefix.
+pub fn strip_verbatim_prefix(path: &Path) -> Cow<'_, Path> {
+    #[cfg(windows)]
+    {
+        use std::path::{Component, Prefix};
+
+        let mut components = path.components();
+        let prefix = match components.next() {
+            Some(Component::Prefix(p)) => p,
+            _ => return Cow::Borrowed(path),
+        };
+
+        let mut rebuilt = PathBuf::new();
+        match prefix.kind() {
+            Prefix::VerbatimDisk(drive) => {
+                rebuilt.push(format!("{}:\\", drive as char));
+            }
+            Prefix::VerbatimUNC(server, share) => {
+                rebuilt.push(format!(
+                    r"\\{}\{}\",
+                    server.to_string_lossy(),
+                    share.to_string_lossy()
+                ));
+            }
+            _ => return Cow::Borrowed(path),
+        }
+        // Skip the original RootDir (which the rebuilt prefix already includes)
+        // and append the rest of the components.
+        for component in components {
+            if matches!(component, Component::RootDir) {
+                continue;
+            }
+            rebuilt.push(component.as_os_str());
+        }
+        Cow::Owned(rebuilt)
+    }
+    #[cfg(not(windows))]
+    {
+        Cow::Borrowed(path)
     }
 }
 
@@ -61,5 +108,44 @@ mod tests {
         if let Some(home) = dirs::home_dir() {
             assert_eq!(result, home);
         }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn strip_verbatim_prefix_is_noop_on_unix() {
+        let p = Path::new("/home/user/project");
+        assert_eq!(strip_verbatim_prefix(p).as_ref(), p);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn strip_verbatim_prefix_removes_verbatim_disk() {
+        let verbatim = PathBuf::from(r"\\?\C:\Users\HP\OneDrive\Desktop\PY'PGMS");
+        let stripped = strip_verbatim_prefix(&verbatim);
+        assert_eq!(
+            stripped.as_ref(),
+            Path::new(r"C:\Users\HP\OneDrive\Desktop\PY'PGMS"),
+            "verbatim disk prefix should be replaced with plain drive form"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn strip_verbatim_prefix_removes_verbatim_unc() {
+        let verbatim = PathBuf::from(r"\\?\UNC\server\share\dir\file");
+        let stripped = strip_verbatim_prefix(&verbatim);
+        assert_eq!(
+            stripped.as_ref(),
+            Path::new(r"\\server\share\dir\file"),
+            "verbatim UNC prefix should be replaced with plain UNC form"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn strip_verbatim_prefix_passes_plain_paths_through() {
+        let plain = PathBuf::from(r"C:\Users\HP\project");
+        let result = strip_verbatim_prefix(&plain);
+        assert_eq!(result.as_ref(), Path::new(r"C:\Users\HP\project"));
     }
 }
