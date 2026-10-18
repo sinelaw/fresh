@@ -60,7 +60,7 @@ type ActionSpec = {
   * macro — which contains `InsertChar` and other payload actions —
   * round-trip losslessly through `executeActions`.
   */
-  args: Record<string, unknown>;
+  args?: Record<string, unknown>;
 };
 ```
 

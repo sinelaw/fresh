@@ -416,7 +416,7 @@ pub struct ActionSpec {
     /// macro — which contains `InsertChar` and other payload actions —
     /// round-trip losslessly through `executeActions`.
     #[serde(default)]
-    #[ts(type = "Record<string, unknown>")]
+    #[ts(optional, type = "Record<string, unknown>")]
     pub args: std::collections::HashMap<String, serde_json::Value>,
 }
 
