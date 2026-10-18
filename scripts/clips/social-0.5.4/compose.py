@@ -337,7 +337,7 @@ def scene_hook(c, t):
             ov.putalpha(Image.eval(im.getchannel("A"), lambda v: int(v * dim)))
             im = Image.alpha_composite(im, ov)
         c.alpha_composite(im, (int(x - im.width / 2), int(y - im.height / 2)))
-    sad_emoji(c, t, collapse)
+    pile_faces(c, t, collapse)
 
 
 @lru_cache(maxsize=None)
@@ -350,22 +350,29 @@ def emoji(ch, height):
     return im.resize((int(im.width * height / im.height), height), Image.LANCZOS)
 
 
-def sad_emoji(c, t, collapse):
-    """the pile is getting heavy: a big sad face, tipped over, wobbling, swept
-    away with the cards when they go"""
-    a = prog(t, ARRIVE[9], ARRIVE[9] + 0.35)
-    if a <= 0:
-        return
-    s = out_back(a, 2.0) * (1 - in_cubic(collapse))
-    if s < 0.02:
-        return
-    rot = -17 + 5 * math.sin((t - ARRIVE[9]) * 2 * math.pi * 1.4)
-    im = emoji("\U0001F622", 300)
-    im = im.resize((max(1, int(im.width * s)), max(1, int(im.height * s))), Image.LANCZOS)
-    im = im.rotate(rot, resample=Image.BICUBIC, expand=True)
-    x = lerp(860, 540, in_cubic(collapse))
-    y = lerp(820, 560, in_cubic(collapse))
-    c.alpha_composite(im, (int(x - im.width / 2), int(y - im.height / 2)))
+# Two faces on the pile: delight while the features arrive, dismay once it
+# is heavy. Each lands tipped over, wobbles, and is swept away with the cards.
+# (char, card it lands with, height, centre, tilt)
+FACES = [("\U0001F929", 2, 260, (215, 395), 15),
+         ("\U0001F622", 9, 300, (860, 820), -17)]
+
+
+def pile_faces(c, t, collapse):
+    for ch, card_i, height, (cx, cy), tilt in FACES:
+        a = prog(t, ARRIVE[card_i], ARRIVE[card_i] + 0.35)
+        if a <= 0:
+            continue
+        s = out_back(a, 2.0) * (1 - in_cubic(collapse))
+        if s < 0.02:
+            continue
+        rot = tilt + 5 * math.sin((t - ARRIVE[card_i]) * 2 * math.pi * 1.4)
+        im = emoji(ch, height)
+        im = im.resize((max(1, int(im.width * s)), max(1, int(im.height * s))),
+                       Image.LANCZOS)
+        im = im.rotate(rot, resample=Image.BICUBIC, expand=True)
+        x = lerp(cx, 540, in_cubic(collapse))
+        y = lerp(cy, 560, in_cubic(collapse))
+        c.alpha_composite(im, (int(x - im.width / 2), int(y - im.height / 2)))
 
 
 T_TURN = T_COLLAPSE + 0.3
@@ -582,7 +589,7 @@ def scene_out(c, t):
     put(c, "Every feature.", font(SERIF_I, 88), PAPER, 540, 530, anchor="c", alpha=b,
         rise=(1 - b) * 20)
     b2 = out_cubic(prog(u, 0.85, 1.25))
-    put(c, "Speed is one of them.", font(SERIF_I, 88), MINT, 540, 630, anchor="c", alpha=b2,
+    put(c, "Light and fast: still the goal.", font(SERIF_I, 88), MINT, 540, 630, anchor="c", alpha=b2,
         rise=(1 - b2) * 20)
     d = out_cubic(prog(u, 1.3, 1.7))
     pill(c, "0.5.4 · coming soon", 540, 830, INK, SAGE, size=34, weight="Bold", alpha=d,

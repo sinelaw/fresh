@@ -63,7 +63,7 @@ x86_64-unknown-linux-musl`), 4-vCPU Linux VM, median of 9-15 launches.
 | Fast again, even with hundreds of workspaces | 200 workspaces, 800 unsaved buffers: bare `fresh` 1.69 s (0.5.3) -> 0.46 s (with #3579), against ~0.37 s for an empty state; `fresh FILE` 0.52 s -> 0.42 s, and it opens 7 workspace files instead of ~800 |
 | 1 process for fresh FILE | every `fresh FILE` launch measured; a bare `fresh` runs a background daemon as well |
 | no Welcome tab, dock stays closed, your session untouched | the 0.5.3/0.5.4 frames; the dock stays closed under the default `autoOpenDock: auto` (one the user pinned open stays open), and a file launch no longer writes the workspace back |
-| Every feature. Speed is one of them. | slogan: speed treated as a feature to keep; memory is unchanged release to release (~55-57 MB for a file launch) |
+| Every feature. Light and fast: still the goal. | slogan: what we aim for, not a record; memory is unchanged release to release (~55-57 MB for a file launch) |
 
 Not claimed, because it does not hold: a faster first frame for a single
 file from an empty state. 0.5.2 paints it ~45 ms sooner than 0.5.3 or master
