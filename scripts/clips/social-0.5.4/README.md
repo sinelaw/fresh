@@ -10,8 +10,8 @@ neither well) and lets the camera zoom anywhere at full resolution.
 | Beat | Shows |
 |---|---|
 | Fresh keeps growing. | fourteen real screens piling up: palette, multi-cursor, explorer, splits, live/review diff, git log, settings, keybindings, orchestrator, terminal, markdown, themes |
-| Still light. Still fast. | |
-| Opens in a blink. | `fresh notes.md` typed in a shell, the captured boot frames at their real timing, then "Starts fast, even with hundreds of workspaces" |
+| Fast again. | bare `fresh` slowed down in 0.5.2 (daemon by default) and with many workspaces; 0.5.4 brings it back |
+| Opens in a blink. | `fresh notes.md` typed in a shell, the captured boot frames at their real timing, then "Fast again, even with hundreds of workspaces" |
 | Just the file you asked for. | `fresh notes.md` in a lived-in session: 0.5.3 brings the dock and Welcome tab, 0.5.4 opens the file alone |
 | New: Markdown, three ways. | the status-bar palette hint clicked, *Cycle View Mode*: Source, Rendered, Source/Compose |
 
@@ -59,10 +59,11 @@ x86_64-unknown-linux-musl`), 4-vCPU Linux VM, median of 9-15 launches.
 
 | On screen | Evidence |
 |---|---|
-| Starts fast, even with hundreds of workspaces | 200 workspaces, 800 unsaved buffers: bare `fresh` 1.69 s (0.5.3) -> 0.46 s (with #3579), against ~0.37 s for an empty state; `fresh FILE` 0.52 s -> 0.42 s, and it opens 7 workspace files instead of ~800 |
+| Fast again. | bare `fresh`, empty state: 0.30 s (0.5.1) -> 1.06 s (0.5.2), once it went through the background daemon; 0.35 s again in 0.5.3. With 200 workspaces it was still 1.69 s in 0.5.3 |
+| Fast again, even with hundreds of workspaces | 200 workspaces, 800 unsaved buffers: bare `fresh` 1.69 s (0.5.3) -> 0.46 s (with #3579), against ~0.37 s for an empty state; `fresh FILE` 0.52 s -> 0.42 s, and it opens 7 workspace files instead of ~800 |
 | 1 process for fresh FILE | every `fresh FILE` launch measured; a bare `fresh` runs a background daemon as well |
 | no Welcome tab, dock stays closed, your session untouched | the 0.5.3/0.5.4 frames; the dock stays closed under the default `autoOpenDock: auto` (one the user pinned open stays open), and a file launch no longer writes the workspace back |
-| Every feature. Still light. | slogan; memory is unchanged release to release (~55-57 MB for a file launch) |
+| Every feature. Speed is one of them. | slogan: speed treated as a feature to keep; memory is unchanged release to release (~55-57 MB for a file launch) |
 
 Not claimed, because it does not hold: a faster first frame for a single
 file from an empty state. 0.5.2 paints it ~45 ms sooner than 0.5.3 or master

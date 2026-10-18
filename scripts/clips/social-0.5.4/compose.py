@@ -16,7 +16,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 REPO = os.path.abspath(os.path.join(HERE, "../../.."))
 WORK = os.environ.get("CLIP_WORK", os.path.join(REPO, "target/clips/social-0.5.4"))
-from ansirender import Painter  # noqa: E402
+from ansirender import EMOJI, Painter  # noqa: E402
 
 W = H = 1080
 FPS = 30
@@ -337,22 +337,48 @@ def scene_hook(c, t):
             ov.putalpha(Image.eval(im.getchannel("A"), lambda v: int(v * dim)))
             im = Image.alpha_composite(im, ov)
         c.alpha_composite(im, (int(x - im.width / 2), int(y - im.height / 2)))
+    sad_emoji(c, t, collapse)
+
+
+@lru_cache(maxsize=None)
+def emoji(ch, height):
+    """a colour emoji at `height` px: Noto's are bitmaps cut at one size, so
+    draw at that size and scale"""
+    im = Image.new("RGBA", (160, 160), (0, 0, 0, 0))
+    ImageDraw.Draw(im).text((0, 0), ch, font=font(EMOJI, 109), embedded_color=True)
+    im = im.crop(im.getbbox())
+    return im.resize((int(im.width * height / im.height), height), Image.LANCZOS)
+
+
+def sad_emoji(c, t, collapse):
+    """the pile is getting heavy: a big sad face, tipped over, wobbling, swept
+    away with the cards when they go"""
+    a = prog(t, ARRIVE[9], ARRIVE[9] + 0.35)
+    if a <= 0:
+        return
+    s = out_back(a, 2.0) * (1 - in_cubic(collapse))
+    if s < 0.02:
+        return
+    rot = -17 + 5 * math.sin((t - ARRIVE[9]) * 2 * math.pi * 1.4)
+    im = emoji("\U0001F622", 300)
+    im = im.resize((max(1, int(im.width * s)), max(1, int(im.height * s))), Image.LANCZOS)
+    im = im.rotate(rot, resample=Image.BICUBIC, expand=True)
+    x = lerp(860, 540, in_cubic(collapse))
+    y = lerp(820, 560, in_cubic(collapse))
+    c.alpha_composite(im, (int(x - im.width / 2), int(y - im.height / 2)))
 
 
 T_TURN = T_COLLAPSE + 0.3
-T_PROOF = T_TURN + 1.75
+T_PROOF = T_TURN + 1.4
 
 
 def scene_turn(c, t):
     u = t - T_TURN
     out = prog(t, T_PROOF - 0.25, T_PROOF)
     blink = (int(u * 2.4) % 2 == 0) or u > 1.2
-    a1 = out_cubic(prog(u, 0.15, 0.5)) * (1 - out)
-    a2 = out_cubic(prog(u, 0.6, 0.95)) * (1 - out)
-    put(c, "Still light.", font(SERIF_I, 170), PAPER, 540, 330, anchor="c", alpha=a1,
-        rise=(1 - a1) * 40)
-    put(c, "Still fast.", font(SERIF_I, 170), MINT, 540, 540, anchor="c", alpha=a2,
-        rise=(1 - a2) * 40)
+    a = out_cubic(prog(u, 0.15, 0.5)) * (1 - out)
+    put(c, "Fast again.", font(SERIF_I, 210), MINT, 540, 400, anchor="c", alpha=a,
+        rise=(1 - a) * 40)
     if blink and out < 1:
         d = ImageDraw.Draw(c)
         d.rectangle([522, 790, 558, 850], fill=MINT + (int(255 * (1 - out)),))
@@ -416,7 +442,7 @@ def scene_proof(c, t):
             d.rounded_rectangle([0, 0, 739, 279], 36, fill=INK + (238,),
                                 outline=MINT + (255,), width=3)
             f = font(DISPLAY.format("Black"), 118)
-            put(card_im, "Starts fast", f, MINT, 370, 42, anchor="c")
+            put(card_im, "Fast again", f, MINT, 370, 42, anchor="c")
             put(card_im, "even with hundreds of workspaces",
                 font(INTER.format("Medium"), 36), PAPER, 370, 196, anchor="c")
             card_im = card_im.resize((int(bw), int(bh)), Image.LANCZOS)
@@ -556,7 +582,7 @@ def scene_out(c, t):
     put(c, "Every feature.", font(SERIF_I, 88), PAPER, 540, 530, anchor="c", alpha=b,
         rise=(1 - b) * 20)
     b2 = out_cubic(prog(u, 0.85, 1.25))
-    put(c, "Still light.", font(SERIF_I, 88), MINT, 540, 630, anchor="c", alpha=b2,
+    put(c, "Speed is one of them.", font(SERIF_I, 88), MINT, 540, 630, anchor="c", alpha=b2,
         rise=(1 - b2) * 20)
     d = out_cubic(prog(u, 1.3, 1.7))
     pill(c, "0.5.4 · coming soon", 540, 830, INK, SAGE, size=34, weight="Bold", alpha=d,
