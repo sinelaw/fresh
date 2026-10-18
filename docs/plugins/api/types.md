@@ -60,7 +60,7 @@ type ActionSpec = {
   * macro — which contains `InsertChar` and other payload actions —
   * round-trip losslessly through `executeActions`.
   */
-  args: Record<string, unknown>;
+  args?: Record<string, unknown>;
 };
 ```
 
@@ -2016,7 +2016,10 @@ interface FileExplorerConfig {
     */
     show_gitignored?: boolean;
     /**
-    * Extra patterns to ignore, on top of `.gitignore`.
+    * Extra patterns to ignore, on top of `.gitignore`, written as
+    * `.gitignore` lines relative to the project root (`build/`, `/dist`,
+    * `*.log`, `!keep.log`). The file explorer, Quick Open, project search
+    * and Live Grep all leave out what they match.
     */
     custom_ignore_patterns?: string[];
     /**

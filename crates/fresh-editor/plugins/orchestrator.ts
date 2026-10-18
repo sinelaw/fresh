@@ -6210,10 +6210,10 @@ function buildDockSpec(): WidgetSpec {
       // columns are already the ▼/▶ gutter and its state glyph, and a
       // folder's rows read as its own at one column in from its name.
       indentCols: 1,
-      // Focusable in the dock (unlike the modal, where Up/Down forward
-      // from the filter): the tree itself is the default focus so ↑↓
-      // drive live-switch, →← fold, and Enter dives / toggles a folder.
-      focusable: true,
+      // In the dock (unlike the modal, where Up/Down forward from the
+      // filter) the tree itself is the default focus — trees are always
+      // focusable — so ↑↓ drive live-switch, →← fold, and Enter dives /
+      // toggles a folder.
       key: "sessions",
     }),
     ...bottomPad,
@@ -15821,7 +15821,10 @@ async function runLocalCreate(id: number): Promise<void> {
       projectPath: effectiveProjectPath,
       sharedWorktree,
       terminalId: result.terminalId,
-      state: "running",
+      state: "idle",
+      // Quiet, not unheard-from (`null` would show `?`): the shell's first
+      // prompt arrives before this row exists, so it never stamps it.
+      lastOutputAt: 0,
       createdAt: Date.now(),
       branch: reportedBranch || undefined,
     });
@@ -16235,7 +16238,10 @@ async function attachToWorktree(opts: {
       projectPath: opts.projectPath,
       sharedWorktree: false,
       terminalId: result.terminalId,
-      state: "running",
+      state: "idle",
+      // Quiet, not unheard-from (`null` would show `?`): the shell's first
+      // prompt arrives before this row exists, so it never stamps it.
+      lastOutputAt: 0,
       createdAt: Date.now(),
       branch: opts.branch,
     });
@@ -18559,7 +18565,7 @@ editor.on("widget_event", (e) => {
       if (dockMode && openPanel) {
         // Dock stays visible; Enter just hands keyboard focus to the
         // editor (the session is already active via live-switch).
-        editor.floatingPanelControl(openPanel.id(), "blur");
+        editor.floatingPanelControl(openPanel.id(), "blur", 0);
         dockBlurred = true;
         return;
       }

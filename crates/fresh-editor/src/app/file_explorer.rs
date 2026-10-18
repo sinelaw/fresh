@@ -1170,6 +1170,41 @@ impl Editor {
         );
     }
 
+    /// Point Quick Open's file list at the active window's Show Hidden Files
+    /// and whether its explorer shows gitignored files.
+    ///
+    /// These live on each window's explorer, but Quick Open is editor-wide, so
+    /// every change of active window (and every change to the settings)
+    /// re-syncs it from here. A window whose explorer has not been built yet
+    /// uses the values its explorer will start with: a restored one, else the
+    /// config default.
+    pub(crate) fn sync_quick_open_file_visibility(&self) {
+        let window = self.active_window();
+        let config = &self.config.file_explorer;
+        let (show_hidden, show_gitignored, respect_gitignore) = match &window.file_explorer {
+            Some(explorer) => {
+                let patterns = explorer.ignore_patterns();
+                (
+                    patterns.show_hidden(),
+                    patterns.show_gitignored(),
+                    patterns.respect_gitignore(),
+                )
+            }
+            None => (
+                window
+                    .pending_file_explorer_show_hidden
+                    .unwrap_or(config.show_hidden),
+                window
+                    .pending_file_explorer_show_gitignored
+                    .unwrap_or(config.show_gitignored),
+                config.respect_gitignore,
+            ),
+        };
+        self.quick_open_registry.set_file_visibility(show_hidden);
+        self.quick_open_registry
+            .set_file_include_gitignored(show_gitignored || !respect_gitignore);
+    }
+
     pub fn file_explorer_toggle_hidden(&mut self) {
         let show_hidden = if let Some(explorer) = self.file_explorer_mut() {
             explorer.toggle_show_hidden();
@@ -1187,6 +1222,7 @@ impl Editor {
 
         // Persist to config so the setting survives across sessions
         self.config_mut().file_explorer.show_hidden = show_hidden;
+        self.sync_quick_open_file_visibility();
         self.persist_config_change(crate::config_keys::FILE_EXPLORER_SHOW_HIDDEN, show_hidden);
     }
 
@@ -1207,6 +1243,7 @@ impl Editor {
 
         // Persist to config so the setting survives across sessions
         self.config_mut().file_explorer.show_gitignored = show_gitignored;
+        self.sync_quick_open_file_visibility();
         self.persist_config_change(
             crate::config_keys::FILE_EXPLORER_SHOW_GITIGNORED,
             show_gitignored,
@@ -2326,15 +2363,9 @@ impl crate::app::window::Window {
         // this one only ever comes from config.
         view.ignore_patterns_mut()
             .set_respect_gitignore(defaults.respect_gitignore);
-        {
-            // Wire the configured custom ignore patterns into the matcher (previously the
-            // `custom_ignore_patterns` config field was parsed but never applied).
-            let ip = view.ignore_patterns_mut();
-            ip.clear_custom_patterns();
-            for pattern in &defaults.custom_ignore_patterns {
-                ip.add_custom_pattern(pattern.clone());
-            }
-        }
+        let root = view.tree().root_path().to_path_buf();
+        view.ignore_patterns_mut()
+            .set_custom_patterns(&root, &defaults.custom_ignore_patterns);
         view.set_compact_directories(defaults.compact_directories);
         self.file_explorer = Some(view);
         // The initial build is done; release the column reservation set in

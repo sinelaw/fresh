@@ -1271,7 +1271,7 @@
           "default": false
         },
         "custom_ignore_patterns": {
-          "description": "Extra patterns to ignore, on top of `.gitignore`.",
+          "description": "Extra patterns to ignore, on top of `.gitignore`, written as\n`.gitignore` lines relative to the project root (`build/`, `/dist`,\n`*.log`, `!keep.log`). The file explorer, Quick Open, project search\nand Live Grep all leave out what they match.",
           "type": "array",
           "items": {
             "type": "string"

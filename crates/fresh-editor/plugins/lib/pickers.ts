@@ -129,7 +129,13 @@ export class PathPicker {
   /** The open browser, or null. */
   browser: FolderBrowser | null = null;
 
-  constructor(private readonly o: PathPickerOptions) {}
+  // A plain field rather than a parameter property, so Node can run the unit
+  // tests by stripping types.
+  private readonly o: PathPickerOptions;
+
+  constructor(o: PathPickerOptions) {
+    this.o = o;
+  }
 
   /** The field row, and the browser under it while it is open. `fieldLabel`
    *  overrides the options' for this draw. */

@@ -959,6 +959,19 @@ interface HookEventMap {
     missing_servers: string[];
     user_dismissed: boolean;
   };
+  /**
+   * An LSP navigation resolved to a URI whose scheme this plugin claimed
+   * with `registerLspUriScheme`. `line` and `character` are 0-indexed, as
+   * the server sent them.
+   */
+  lsp_open_external_uri: {
+    uri: string;
+    scheme: string;
+    line: number;
+    character: number;
+    language: string;
+    server_name: string;
+  };
 
   // ── UI events ────────────────────────────────────────────────────────────
   /** The user chose an action in a popup opened with `editor.showActionPopup`. */
@@ -983,7 +996,17 @@ interface HookEventMap {
    * `window_id` is the window that owns the terminal, so a plugin can tell
    * which session the output belongs to.
    */
-  terminal_output: { terminal_id: number; window_id: number; last_line: string };
+  terminal_output: {
+    terminal_id: number;
+    window_id: number;
+    last_line: string;
+    /** The terminal's tab title; empty until it has a meaningful one. */
+    terminal_title: string;
+    /** The last OSC 133 / OSC 9;4 activity marker: `true` while a command
+     *  runs, `false` once it has finished, `null` if the program never
+     *  emitted one. */
+    osc_activity: boolean | null;
+  };
   /** A terminal's process exited. `exit_code` is `null` when a signal ended it. */
   terminal_exit: { terminal_id: number; window_id: number; exit_code: number | null };
 

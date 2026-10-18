@@ -114,6 +114,89 @@ fn test_live_grep_git_grep_flow_finds_match_in_repo() {
     );
 }
 
+/// `file_explorer.custom_ignore_patterns` is the one list of what to leave
+/// out, so Live Grep honours it like the file explorer and Quick Open do: a
+/// tracked file under an ignored directory is not a result, while its
+/// sibling outside it is.
+#[test]
+fn test_live_grep_leaves_out_custom_ignore_patterns() {
+    let git_check = std::process::Command::new("git").arg("--version").output();
+    if git_check.is_err() || !git_check.as_ref().unwrap().status.success() {
+        eprintln!("Skipping test: `git` is not installed or not in PATH");
+        return;
+    }
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().canonicalize().unwrap().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+    let run_git = |args: &[&str]| {
+        let out = git_command(&project_root).args(args).output().unwrap();
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    run_git(&["init", "--quiet", "-b", "main"]);
+
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "live_grep");
+
+    let unique = "CUSTOM_IGNORE_TOKEN_5c1d";
+    fs::write(project_root.join("kept.rs"), format!("// {unique}\n")).unwrap();
+    fs::create_dir(project_root.join("generated")).unwrap();
+    fs::write(
+        project_root.join("generated/dropped.rs"),
+        format!("// {unique}\n"),
+    )
+    .unwrap();
+    run_git(&["add", "kept.rs", "generated/dropped.rs"]);
+    run_git(&["commit", "--quiet", "-m", "seed"]);
+
+    let start_file = project_root.join("start.txt");
+    fs::write(&start_file, "start\n").unwrap();
+
+    let mut config = fresh::config::Config::default();
+    config.file_explorer.custom_ignore_patterns = vec!["generated/".to_string()];
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(140, 30, config, project_root.clone())
+            .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Live Grep").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Live Grep"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    harness.type_text(unique).unwrap();
+
+    // One provider call returns every file hit at once, so once `kept.rs`
+    // is listed the ignored file would be too, were it searched.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("kept.rs") && s.contains("git-grep")
+        })
+        .unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("dropped.rs"),
+        "a file under a custom_ignore_patterns directory must not be a result; got:\n{screen}"
+    );
+}
+
 /// The Buffers scope must find matches in *open* buffers, including
 /// unmodified ones, when it is the only file-backed scope active. The
 /// buffer scan is otherwise restricted to modified buffers (the disk grep

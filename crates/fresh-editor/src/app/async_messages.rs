@@ -1581,6 +1581,9 @@ impl Editor {
             return;
         };
         win.install_initialized_file_explorer(view, defaults);
+        if is_active {
+            self.sync_quick_open_file_visibility();
+        }
         // "Ready" replaces "initializing" and nothing more specific: a focus
         // or a reveal that spoke since keeps its word.
         let still_initializing = self

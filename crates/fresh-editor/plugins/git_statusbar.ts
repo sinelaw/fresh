@@ -114,12 +114,12 @@ editor.registerStatusBarElement(GIT_BRANCH, editor.t("status.git_branch"));
 // cursor_moved, after_insert, after_delete, buffer_deactivated, buffer_closed.
 // None of them can change the current branch, and render_start was being
 // fired ~300/s — see #2009 for the feedback-loop investigation.
-[
+([
   "buffer_activated",
   "after_file_open",
   "after_file_save",
   "focus_gained",
-].forEach((event) => {
+] as const).forEach((event) => {
   editor.on(event, async () => {
     await refreshForActiveBuffer();
   });

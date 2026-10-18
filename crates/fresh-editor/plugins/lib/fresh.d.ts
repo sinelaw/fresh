@@ -1020,7 +1020,7 @@ type ActionSpec = {
 	* macro — which contains `InsertChar` and other payload actions —
 	* round-trip losslessly through `executeActions`.
 	*/
-	args: Record<string, unknown>;
+	args?: Record<string, unknown>;
 };
 /**
 * Action button for action popups
@@ -4459,7 +4459,10 @@ interface FileExplorerConfig {
 		*/
 		show_gitignored?: boolean;
 		/**
-		* Extra patterns to ignore, on top of `.gitignore`.
+		* Extra patterns to ignore, on top of `.gitignore`, written as
+		* `.gitignore` lines relative to the project root (`build/`, `/dist`,
+		* `*.log`, `!keep.log`). The file explorer, Quick Open, project search
+		* and Live Grep all leave out what they match.
 		*/
 		custom_ignore_patterns?: string[];
 		/**
@@ -8169,7 +8172,13 @@ interface EditorAPI {
 	delay(durationMs: number): Promise<void>;
 	/**
 	* Project-wide grep search (async)
-	* Searches all files in the project, respecting .gitignore.
+	* Searches the project's files by Quick Open's rules, with hidden and
+	* gitignored files left out whatever the explorer shows: in a git
+	* repository, what `git ls-files --cached --others --exclude-standard`
+	* reports (so .gitignore is respected) plus the files of submodules and
+	* nested repositories; otherwise every non-hidden file outside `.git`,
+	* `node_modules`, `target` and similar directories. Either way, files
+	* matched by `file_explorer.custom_ignore_patterns` are left out.
 	* Open buffers with dirty edits are searched in-memory.
 	*/
 	grepProject(pattern: string, fixedString: boolean | null, caseSensitive: boolean | null, maxResults: number | null, wholeWords: boolean | null): Promise<GrepMatch[]>;
@@ -8177,7 +8186,7 @@ interface EditorAPI {
 	* Begin a streaming project-wide search and return a `SearchHandle`.
 	* The producer (host) writes matches at full speed into shared state;
 	* the consumer drains via `handle.take()` at its own cadence. Call
-	* `handle.cancel()` to abort.
+	* `handle.cancel()` to abort. Searches the same files as `grepProject`.
 	*/
 	beginSearch(pattern: string, opts?: {
 		fixedString?: boolean;
@@ -8864,6 +8873,19 @@ interface HookEventMap {
 		missing_servers: string[];
 		user_dismissed: boolean;
 	};
+	/**
+	* An LSP navigation resolved to a URI whose scheme this plugin claimed
+	* with `registerLspUriScheme`. `line` and `character` are 0-indexed, as
+	* the server sent them.
+	*/
+	lsp_open_external_uri: {
+		uri: string;
+		scheme: string;
+		line: number;
+		character: number;
+		language: string;
+		server_name: string;
+	};
 	// ── UI events ────────────────────────────────────────────────────────────
 	/** The user chose an action in a popup opened with `editor.showActionPopup`. */
 	action_popup_result: {
@@ -8910,6 +8932,12 @@ interface HookEventMap {
 		terminal_id: number;
 		window_id: number;
 		last_line: string;
+		/** The terminal's tab title; empty until it has a meaningful one. */
+		terminal_title: string;
+		/** The last OSC 133 / OSC 9;4 activity marker: `true` while a command
+		*  runs, `false` once it has finished, `null` if the program never
+		*  emitted one. */
+		osc_activity: boolean | null;
 	};
 	/** A terminal's process exited. `exit_code` is `null` when a signal ended it. */
 	terminal_exit: {

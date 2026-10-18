@@ -2161,3 +2161,120 @@ fn test_command_palette_page_down_moves_by_the_clamped_window() {
         "a page is the {rows} rows on screen:\n{screen}"
     );
 }
+
+/// Quick Open in a non-Git folder lists dotfiles only while Show Hidden Files is on.
+#[test]
+fn test_quick_open_follows_show_hidden_files_in_non_git_folder() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+    fs::write(project_root.join(".quickopen_dotfile"), "hidden").unwrap();
+    fs::write(project_root.join("quickopen_dot_visible.txt"), "visible").unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness
+        .wait_for_file_explorer_item("quickopen_dot_visible.txt")
+        .unwrap();
+
+    // Hide the explorer so only Quick Open can put the dotfile on screen.
+    harness.editor_mut().file_explorer_toggle_hidden();
+    harness.editor_mut().toggle_file_explorer();
+    harness.render().unwrap();
+
+    let open_quick_open = |harness: &mut EditorTestHarness| {
+        harness
+            .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
+        harness.type_text("quickopen_dot").unwrap();
+        harness
+            .wait_until(|h| h.screen_to_string().contains("quickopen_dot_visible.txt"))
+            .unwrap();
+    };
+
+    open_quick_open(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains(".quickopen_dotfile"))
+        .unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+
+    harness.editor_mut().file_explorer_toggle_hidden();
+    harness.render().unwrap();
+    open_quick_open(&mut harness);
+    harness.assert_screen_not_contains(".quickopen_dotfile");
+}
+
+/// Show Hidden Files is per window, but Quick Open is editor-wide: switching
+/// windows makes Quick Open follow the newly active window's setting.
+#[test]
+fn test_quick_open_follows_show_hidden_files_of_active_window() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let alpha = harness.project_dir().unwrap();
+    let beta_dir = tempfile::TempDir::new().unwrap();
+    let beta = beta_dir.path().to_path_buf();
+    for root in [&alpha, &beta] {
+        fs::write(root.join(".winswitch_dotfile"), "hidden").unwrap();
+        fs::write(root.join("winswitch_visible.txt"), "visible").unwrap();
+    }
+
+    // Toggle Show Hidden Files in the active window's explorer, then hide the
+    // explorer so only Quick Open can put the dotfile on screen.
+    let toggle_hidden_in_explorer = |harness: &mut EditorTestHarness| {
+        harness.editor_mut().focus_file_explorer();
+        harness.wait_for_file_explorer().unwrap();
+        harness
+            .wait_for_file_explorer_item("winswitch_visible.txt")
+            .unwrap();
+        harness.editor_mut().file_explorer_toggle_hidden();
+        harness.editor_mut().toggle_file_explorer();
+        harness.render().unwrap();
+    };
+    let open_quick_open = |harness: &mut EditorTestHarness| {
+        harness
+            .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
+        harness.type_text("winswitch_").unwrap();
+        harness
+            .wait_until(|h| h.screen_to_string().contains("winswitch_visible.txt"))
+            .unwrap();
+    };
+
+    // Window A: hidden files on.
+    let alpha_window = harness.editor().active_window_id();
+    toggle_hidden_in_explorer(&mut harness);
+
+    // Window B: its explorer starts from the config A's toggle saved (on), so
+    // one toggle turns hidden files off there.
+    let beta_window = harness
+        .editor_mut()
+        .create_window_at(beta.clone(), "beta".to_string());
+    harness.editor_mut().set_active_window(beta_window);
+    toggle_hidden_in_explorer(&mut harness);
+    open_quick_open(&mut harness);
+    harness.assert_screen_not_contains(".winswitch_dotfile");
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+
+    // Back in A, Quick Open shows hidden files again.
+    harness.editor_mut().set_active_window(alpha_window);
+    harness.render().unwrap();
+    open_quick_open(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains(".winswitch_dotfile"))
+        .unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+
+    // And in B they are hidden again.
+    harness.editor_mut().set_active_window(beta_window);
+    harness.render().unwrap();
+    open_quick_open(&mut harness);
+    harness.assert_screen_not_contains(".winswitch_dotfile");
+}

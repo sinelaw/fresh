@@ -714,6 +714,8 @@ impl Editor {
         // drops the binding), so this correctly leaves it read-only.
         if id == self.active_window {
             self.sync_terminal_mode_to_active_buffer();
+            // Quick Open follows a restored Show Hidden Files even before the explorer opens.
+            self.sync_quick_open_file_visibility();
         }
 
         // Active-window only: refresh the plugin snapshot and fire
@@ -1993,12 +1995,9 @@ impl crate::app::window::Window {
         self.file_explorer_side = fe.side;
 
         // Store pending settings (fixes #569); applied when explorer initialises (async).
-        if fe.show_hidden {
-            self.pending_file_explorer_show_hidden = Some(true);
-        }
-        if fe.show_gitignored {
-            self.pending_file_explorer_show_gitignored = Some(true);
-        }
+        // `None` leaves the config default.
+        self.pending_file_explorer_show_hidden = fe.restored_show_hidden();
+        self.pending_file_explorer_show_gitignored = fe.restored_show_gitignored();
 
         // Keep key_context as Normal so the editor (not the explorer) has focus.
         if self.file_explorer_visible && self.file_explorer.is_none() {
@@ -3169,9 +3168,10 @@ impl crate::app::window::Window {
                 side: self.file_explorer_side,
                 expanded_dirs,
                 scroll_offset: explorer.window_top(),
-                show_hidden: explorer.ignore_patterns().show_hidden(),
-                show_gitignored: explorer.ignore_patterns().show_gitignored(),
+                show_hidden_files: Some(explorer.ignore_patterns().show_hidden()),
+                show_gitignored_files: Some(explorer.ignore_patterns().show_gitignored()),
                 sections: Vec::new(),
+                ..FileExplorerState::default()
             }
         } else {
             FileExplorerState {
@@ -3180,11 +3180,15 @@ impl crate::app::window::Window {
                 side: self.file_explorer_side,
                 expanded_dirs: Vec::new(),
                 scroll_offset: 0,
-                show_hidden: false,
-                show_gitignored: false,
+                // An explorer never built this session still owes the window
+                // what the workspace restored for it.
+                show_hidden_files: self.pending_file_explorer_show_hidden,
+                show_gitignored_files: self.pending_file_explorer_show_gitignored,
                 sections: Vec::new(),
+                ..FileExplorerState::default()
             }
-        };
+        }
+        .with_legacy_keys();
 
         let cfg = &self.resources.config.editor;
         let config_overrides = WorkspaceConfigOverrides {

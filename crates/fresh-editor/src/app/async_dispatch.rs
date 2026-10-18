@@ -573,10 +573,11 @@ impl Editor {
                 }
                 AsyncMessage::QuickOpenFilesLoaded {
                     cwd,
+                    generation,
                     files,
                     complete,
                 } => {
-                    self.handle_quick_open_files_loaded(cwd, files, complete);
+                    self.handle_quick_open_files_loaded(cwd, generation, files, complete);
                 }
                 AsyncMessage::PluginsDirLoaded {
                     dir,
@@ -1994,6 +1995,7 @@ impl Editor {
     fn handle_quick_open_files_loaded(
         &mut self,
         cwd: String,
+        generation: u64,
         files: std::sync::Arc<Vec<crate::input::quick_open::providers::FileEntry>>,
         complete: bool,
     ) {
@@ -2005,9 +2007,9 @@ impl Editor {
                 .downcast_ref::<crate::input::quick_open::providers::FileProvider>()
             {
                 if complete {
-                    fp.set_cache(&cwd, files);
+                    fp.set_cache(&cwd, generation, files);
                 } else {
-                    fp.set_partial_cache(&cwd, files);
+                    fp.set_partial_cache(&cwd, generation, files);
                 }
             }
         }

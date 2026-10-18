@@ -773,6 +773,9 @@ impl Editor {
             )
         };
         self.quick_open_registry.set_file_backends(fs, sp);
+        // Every switch of active window comes through here, so this is where
+        // Quick Open picks up the incoming window's explorer visibility.
+        self.sync_quick_open_file_visibility();
         if label_changed {
             #[cfg(feature = "plugins")]
             {
@@ -1394,6 +1397,7 @@ impl Editor {
                 .is_some_and(|w| w.buffers.get(&buffer).is_some());
             if exists {
                 self.active_window = window;
+                self.sync_quick_open_file_visibility();
                 self.active_window_mut().set_active_buffer(buffer);
                 return;
             }

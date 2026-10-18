@@ -220,6 +220,8 @@ interface PackageManifest {
     min_version?: string;
     min_api_version?: number;
     entry?: string;
+    /** Alias for `entry`. */
+    main?: string;
     themes?: Array<{
       file: string;
       name: string;

@@ -42,7 +42,8 @@ async function loadGitFiles(): Promise<GitFile[]> {
 
   const result = await editor.spawnProcess(
     "git",
-    ["ls-files", "--full-name"],
+    // `-z`: names as they are, unquoted, whatever characters they hold.
+    ["ls-files", "-z", "--full-name"],
     repo.root,
   );
   if (result.exit_code !== 0) {
@@ -53,8 +54,7 @@ async function loadGitFiles(): Promise<GitFile[]> {
   // `ls-files --full-name` yields repo-relative paths. Keep them for display
   // and join to the repo root for opening.
   return result.stdout
-    .split("\n")
-    .map((line) => line.trim())
+    .split("\0")
     .filter((line) => line !== "")
     .map((rel) => ({ rel, abs: toAbsInRepo(editor, repo, rel) }));
 }

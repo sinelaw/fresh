@@ -33,6 +33,7 @@ import { gitCwdCandidate } from "./lib/git_repo.ts";
  */
 
 import { Finder, parseGrepOutput } from "./lib/finder.ts";
+import { ackArgs, agArgs, gitGrepArgs, grepArgs, relativeUnder, rgArgs } from "./lib/grep_args.ts";
 import { col, dropdown, raw, row, spacer, styledRow, toggle, wrappingRow } from "./lib/widgets.ts";
 
 const editor = getEditor();
@@ -66,10 +67,16 @@ export interface SearchOpts {
    *  `maxResults`. */
   maxResults: number;
   /** When true, the "Ignored & hidden" scope is on: providers should
-   *  also search `.gitignore`d / hidden files. Built-in `rg` and
-   *  `git-grep` honour this; other built-ins (ag/ack/grep) currently
-   *  ignore it and always search their default set. */
+   *  also search `.gitignore`d / hidden files. Built-in `rg`, `git-grep`
+   *  and `ag` honour this, and `grep` drops its stand-in excludes; `ack`
+   *  ignores it and always searches its default set. */
   includeIgnored?: boolean;
+  /** `file_explorer.custom_ignore_patterns`: `.gitignore` lines, relative
+   *  to `cwd`, naming what to leave out — the same list the file explorer
+   *  and Quick Open honour. Empty when `includeIgnored` is on, since that
+   *  scope searches everything but `.git`. Built-ins pass them as their
+   *  closest exclude flags (see `lib/grep_args.ts`). */
+  ignorePatterns?: string[];
   /** When true, match whole words only (rg `-w`, git-grep/grep `-w`).
    *  Providers should add the appropriate flag. */
   wholeWord?: boolean;
@@ -580,30 +587,9 @@ registerProvider({
       return false;
     }
   },
-  search: async (query, { cwd, maxResults, includeIgnored, wholeWord, regex, caseSensitive }) => {
-    const args = [
-      "--line-number",
-      "--column",
-      "--no-heading",
-      "--color=never",
-      caseSensitive ? "--case-sensitive" : "--ignore-case",
-      `--max-count=${maxResults}`,
-      // Always skip the VCS metadata dir — even with the Ignored scope
-      // on, `.git` internals are never what the user is looking for.
-      "-g", "!.git",
-    ];
-    if (regex === false) args.push("--fixed-strings");
-    if (wholeWord) args.push("--word-regexp");
-    if (includeIgnored) {
-      // Search ignored *and* hidden files (dotfiles). `.git` stays
-      // excluded via the glob above.
-      args.push("--no-ignore", "--hidden");
-    } else {
-      // Default: respect ignore files, plus prune the usual heavy
-      // build/vendor dirs and lockfiles that bury real hits.
-      args.push("-g", "!node_modules", "-g", "!target", "-g", "!*.lock");
-    }
-    args.push("--", query);
+  search: async (query, opts) => {
+    const { cwd, maxResults } = opts;
+    const args = rgArgs(query, opts);
     const r = await editor.spawnProcess("rg", args, cwd);
     if (r.exit_code === 0) {
       return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg)) as GrepMatch[];
@@ -623,21 +609,9 @@ registerProvider({
       return false;
     }
   },
-  search: async (query, { cwd, maxResults, wholeWord, regex, caseSensitive }) => {
-    const args = [
-      "--column",
-      "--numbers",
-      "--nogroup",
-      "--nocolor",
-      caseSensitive ? "--case-sensitive" : "--ignore-case",
-      "--ignore", ".git",
-      "--ignore", "node_modules",
-      "--ignore", "target",
-      "--ignore", "*.lock",
-    ];
-    if (regex === false) args.push("--literal");
-    if (wholeWord) args.push("--word-regexp");
-    args.push("--", query);
+  search: async (query, opts) => {
+    const { cwd, maxResults } = opts;
+    const args = agArgs(query, opts);
     const r = await editor.spawnProcess("ag", args, cwd);
     if (r.exit_code === 0 || r.exit_code === 1) {
       return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg)) as GrepMatch[];
@@ -684,24 +658,15 @@ registerProvider({
       return false;
     }
   },
-  search: async (query, { cwd, maxResults, includeIgnored, wholeWord, regex, caseSensitive }) => {
+  search: async (query, opts) => {
+    const { cwd, maxResults } = opts;
     // Run in the same repo cwd isAvailable() confirmed. Null means the
     // context is no longer a repo — return empty rather than throwing.
     const gitCwd = await gitGrepCwd(cwd);
     if (!gitCwd) return [] as GrepMatch[];
-    const args = ["grep", "-n", "--column", "-I"];
-    if (!caseSensitive) args.push("-i");
-    // Default git-grep is basic regex; use extended when regex is on, or
-    // fixed-strings when it's off so the query is matched literally.
-    args.push(regex === false ? "-F" : "-E");
-    if (wholeWord) args.push("-w");
-    if (includeIgnored) {
-      // Widen beyond tracked files: include untracked, and stop
-      // honouring the standard ignore files so `.gitignore`d content
-      // is searched too.
-      args.push("--untracked", "--no-exclude-standard");
-    }
-    args.push("-e", query);
+    // The ignore patterns are relative to `cwd`; tell the builder where
+    // the repo cwd sits below it so rooted ones can be rebased.
+    const args = gitGrepArgs(query, opts, relativeUnder(cwd, gitCwd));
     const r = await editor.spawnProcess("git", args, gitCwd);
     // git grep exits 1 when no matches — treat as empty, not error.
     if (r.exit_code === 0 || r.exit_code === 1) {
@@ -725,12 +690,9 @@ registerProvider({
       return false;
     }
   },
-  search: async (query, { cwd, maxResults, wholeWord, regex, caseSensitive }) => {
-    const args = ["--nocolor", "--column"];
-    if (!caseSensitive) args.push("--ignore-case");
-    if (regex === false) args.push("--literal");
-    if (wholeWord) args.push("--word-regexp");
-    args.push("--", query);
+  search: async (query, opts) => {
+    const { cwd, maxResults } = opts;
+    const args = ackArgs(query, opts);
     const r = await editor.spawnProcess("ack", args, cwd);
     if (r.exit_code === 0 || r.exit_code === 1) {
       return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg)) as GrepMatch[];
@@ -760,18 +722,9 @@ registerProvider({
       return false;
     }
   },
-  search: async (query, { cwd, maxResults, wholeWord, regex, caseSensitive }) => {
-    const args = [
-      "-rn",
-      "-I",
-      "--exclude-dir=.git",
-      "--exclude-dir=node_modules",
-      "--exclude-dir=target",
-    ];
-    if (!caseSensitive) args.push("-i");
-    args.push(regex === false ? "-F" : "-E");
-    if (wholeWord) args.push("-w");
-    args.push("--", query, ".");
+  search: async (query, opts) => {
+    const { cwd, maxResults } = opts;
+    const args = grepArgs(query, opts);
     const r = await editor.spawnProcess("grep", args, cwd);
     if (r.exit_code === 0 || r.exit_code === 1) {
       // grep emits `path:line:content` (no column). parseGrepOutput's
@@ -1096,6 +1049,13 @@ function searchDiagnostics(query: string, limit: number): GrepMatch[] {
   return out;
 }
 
+/** `file_explorer.custom_ignore_patterns`, read per search so a settings
+ *  change applies to the next keystroke. Non-strings are dropped. */
+function customIgnorePatterns(): string[] {
+  const patterns = editor.getConfig()?.file_explorer?.custom_ignore_patterns;
+  return Array.isArray(patterns) ? patterns.filter((p): p is string => typeof p === "string") : [];
+}
+
 // Run the project-file grep for the enabled file-backed scopes
 // (`files` / `ignored`). Returns null when no provider is available so
 // the caller can decide whether that's fatal (no other scope on) or
@@ -1108,6 +1068,7 @@ async function searchFiles(query: string): Promise<GrepMatch[] | null> {
       cwd: editor.getCwd(),
       maxResults: MAX_RESULTS,
       includeIgnored: scopeEnabled.ignored,
+      ignorePatterns: scopeEnabled.ignored ? [] : customIgnorePatterns(),
       wholeWord: searchModes.word,
       regex: searchModes.regex,
       caseSensitive: searchModes.case,
