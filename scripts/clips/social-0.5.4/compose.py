@@ -399,7 +399,9 @@ def scene_proof(c, t):
     headline(c, t, T_PROOF + 0.1, "Opens in a blink.",
              "fresh notes.md, from a shell", t_out=T_SIMPLE - 0.25)
     panel(c, pic, bx, alpha=1 - close * 0.0)
-    # the number
+    # the claim: qualitative, since the first frame varies by build and
+    # machine; what was measured is that it no longer grows with the number
+    # of saved workspaces (see README)
     done_u = next((uu for uu in [P["enter"] + k / FPS for k in range(60)] if boot_done(uu)),
                   P["enter"] + 0.2)
     sa = prog(u, done_u, done_u + 0.3)
@@ -407,22 +409,21 @@ def scene_proof(c, t):
         fade = 1 - prog(u, 4.15, 4.45)
         sc = out_back(sa, 2.2)
         cx, cy = 540, 560
-        bw, bh = 560 * sc, 290 * sc
+        bw, bh = 740 * sc, 280 * sc
         if bw > 8:
-            card_im = Image.new("RGBA", (560, 290), (0, 0, 0, 0))
+            card_im = Image.new("RGBA", (740, 280), (0, 0, 0, 0))
             d = ImageDraw.Draw(card_im)
-            d.rounded_rectangle([0, 0, 559, 289], 36, fill=INK + (238,),
+            d.rounded_rectangle([0, 0, 739, 279], 36, fill=INK + (238,),
                                 outline=MINT + (255,), width=3)
-            f = font(DISPLAY.format("Black"), 150)
-            put(card_im, "0.12 s", f, MINT, 280, 30, anchor="c")
-            put(card_im, "to first frame", font(INTER.format("Medium"), 36), PAPER, 280,
-                210, anchor="c")
+            f = font(DISPLAY.format("Black"), 118)
+            put(card_im, "Starts fast", f, MINT, 370, 42, anchor="c")
+            put(card_im, "even with hundreds of workspaces",
+                font(INTER.format("Medium"), 36), PAPER, 370, 196, anchor="c")
             card_im = card_im.resize((int(bw), int(bh)), Image.LANCZOS)
             if fade < 1:
                 card_im.putalpha(card_im.getchannel("A").point(lambda q: int(q * fade)))
             c.alpha_composite(card_im, (int(cx - bw / 2), int(cy - bh / 2)))
-    chips = [("1 process", 2.75), ("~80 MB RAM", 2.95), ("same speed as 0.5.3", 3.15)]
-    xs = 540 - 0
+    chips = [("1 process for fresh FILE", 2.75)]
     widths = []
     for s, at in chips:
         f = font(INTER.format("Bold"), 34)
@@ -434,13 +435,10 @@ def scene_proof(c, t):
         a = prog(u, at, at + 0.3)
         fade = 1 - prog(u, 4.15, 4.45)
         if a > 0:
-            pill(c, s, x0 + wd / 2, 830 - (1 - out_cubic(a)) * 30, INK, MINT if not s.startswith("same") else SAGE,
+            pill(c, s, x0 + wd / 2, 830 - (1 - out_cubic(a)) * 30, INK, MINT,
                  size=34, weight="Bold", alpha=a * fade, scale=lerp(0.7, 1, out_back(a)),
                  anchor="c")
         x0 += wd + gap
-    na = prog(u, 3.3, 3.6) * (1 - prog(u, 4.15, 4.45))
-    put(c, "median of 15 launches · release build of master · 4-vCPU Linux VM",
-        font(INTER.format("Regular"), 21), MUTE, 540, 1018, anchor="c", alpha=na)
 
 
 T_MD = T_SIMPLE + 3.4
@@ -449,7 +447,7 @@ T_MD = T_SIMPLE + 3.4
 def scene_simple(c, t):
     v = t - T_SIMPLE
     headline(c, t, T_SIMPLE + 0.05, "Just the file you asked for.",
-             "0.5.4: fresh FILE skips the session, the dock and the Welcome tab",
+             "0.5.4: no Welcome tab, dock stays closed, your session untouched",
              t_out=T_MD - 0.25)
     x, y, w, h = PANEL
     old = shot(screen("sess-v053", "v053_file"), FULL, w, h)
@@ -558,7 +556,7 @@ def scene_out(c, t):
     put(c, "Every feature.", font(SERIF_I, 88), PAPER, 540, 530, anchor="c", alpha=b,
         rise=(1 - b) * 20)
     b2 = out_cubic(prog(u, 0.85, 1.25))
-    put(c, "None of the weight.", font(SERIF_I, 88), MINT, 540, 630, anchor="c", alpha=b2,
+    put(c, "Still light.", font(SERIF_I, 88), MINT, 540, 630, anchor="c", alpha=b2,
         rise=(1 - b2) * 20)
     d = out_cubic(prog(u, 1.3, 1.7))
     pill(c, "0.5.4 · coming soon", 540, 830, INK, SAGE, size=34, weight="Bold", alpha=d,

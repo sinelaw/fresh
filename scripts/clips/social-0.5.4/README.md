@@ -11,7 +11,7 @@ neither well) and lets the camera zoom anywhere at full resolution.
 |---|---|
 | Fresh keeps growing. | fourteen real screens piling up: palette, multi-cursor, explorer, splits, live/review diff, git log, settings, keybindings, orchestrator, terminal, markdown, themes |
 | Still light. Still fast. | |
-| Opens in a blink. | `fresh notes.md` typed in a shell, the captured boot frames at their real timing, then the measured numbers |
+| Opens in a blink. | `fresh notes.md` typed in a shell, the captured boot frames at their real timing, then "Starts fast, even with hundreds of workspaces" |
 | Just the file you asked for. | `fresh notes.md` in a lived-in session: 0.5.3 brings the dock and Welcome tab, 0.5.4 opens the file alone |
 | New: Markdown, three ways. | the status-bar palette hint clicked, *Cycle View Mode*: Source, Rendered, Source/Compose |
 
@@ -49,22 +49,29 @@ Everything lands under `target/clips/social-0.5.4` (`CLIP_WORK` overrides).
 Each pane gets its own XDG directories and `HOME`, so a take never sees, or
 leaves behind, a real session.
 
-## The numbers on screen
+## The claims on screen
 
-`measure.py` launches `fresh notes.md` in a 100×36 pty fifteen times and
-reports the median time to the first full frame (the status bar's `Ln 1`
-written) and the summed RSS of every process running the binary after 2s.
-Measured on a 4-vCPU Linux VM, release builds:
+The clip shows no absolute timings: a first frame measured on one machine and
+build is not what a viewer's install will do. Each claim below is what was
+measured on official universal (musl) release builds and a master build made
+the same way (`cargo build --release --features web --target
+x86_64-unknown-linux-musl`), 4-vCPU Linux VM, median of 9-15 launches.
 
-| | first frame | RSS | processes |
-|---|---|---|---|
-| 0.5.3, first run | 136 ms | 82.8 MB | 1 |
-| master, first run | 135 ms | 82.3 MB | 1 |
-| 0.5.3, saved session | 119 ms | 82.3 MB | 1 |
-| master, saved session | 125 ms | 81.0 MB | 1 |
+| On screen | Evidence |
+|---|---|
+| Starts fast, even with hundreds of workspaces | 200 workspaces, 800 unsaved buffers: bare `fresh` 1.69 s (0.5.3) -> 0.46 s (with #3579), against ~0.37 s for an empty state; `fresh FILE` 0.52 s -> 0.42 s, and it opens 7 workspace files instead of ~800 |
+| 1 process for fresh FILE | every `fresh FILE` launch measured; a bare `fresh` runs a background daemon as well |
+| no Welcome tab, dock stays closed, your session untouched | the 0.5.3/0.5.4 frames; the dock stays closed under the default `autoOpenDock: auto` (one the user pinned open stays open), and a file launch no longer writes the workspace back |
+| Every feature. Still light. | slogan; memory is unchanged release to release (~55-57 MB for a file launch) |
 
-Hence "0.12 s · 1 process · ~80 MB · same speed as 0.5.3". Re-measure before reusing
-the clip for a later release, and change the card if the numbers move.
+Not claimed, because it does not hold: a faster first frame for a single
+file from an empty state. 0.5.2 paints it ~45 ms sooner than 0.5.3 or master
+(338 vs 383 ms over 15 launches), though master finishes its startup work far
+sooner (0.38 s vs 1.07 s).
+
+`measure.py` is the simple harness: `fresh notes.md` in a 100x36 pty, time to
+the status bar's `Ln 1`, summed RSS of every process running the binary.
+Re-measure before reusing the clip for a later release.
 
 ```sh
 X=$(mktemp -d); mkdir -p $X/config/fresh $X/run; chmod 700 $X/run
