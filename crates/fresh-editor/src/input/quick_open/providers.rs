@@ -11,6 +11,7 @@ use super::{
 };
 use crate::input::commands::Suggestion;
 use crate::input::fuzzy::FuzzyMatcher;
+use crate::view::file_tree::ignore::CustomIgnore;
 use fresh_i18n::t;
 
 // ============================================================================
@@ -312,62 +313,19 @@ const IGNORED_DIRS: &[&str] = &[
 
 const MAX_FILES: usize = 50_000;
 
-/// `file_explorer.custom_ignore_patterns` applied to a Quick Open listing, read
-/// as `.gitignore` lines relative to the project root. It filters the directory
-/// walk and `git ls-files` alike.
-struct CustomIgnore {
-    matcher: Option<ignore::gitignore::Gitignore>,
-    /// Directory names a pattern ignores at every depth, so the walk skips them
-    /// instead of entering them and discarding everything inside. Left empty
-    /// when any pattern negates, since a `!` line can re-include such a name.
-    prune_dirs: Vec<String>,
+/// `IGNORED_DIRS` plus the directories `custom_ignore` prunes, for `walk_options`.
+fn skip_dirs(custom_ignore: &CustomIgnore) -> Vec<&str> {
+    IGNORED_DIRS
+        .iter()
+        .copied()
+        .chain(custom_ignore.prune_dirs().iter().map(String::as_str))
+        .collect()
 }
 
-impl CustomIgnore {
-    fn new(root: &std::path::Path, patterns: &[String]) -> Self {
-        if patterns.is_empty() {
-            return Self {
-                matcher: None,
-                prune_dirs: Vec::new(),
-            };
-        }
-        let mut builder = ignore::gitignore::GitignoreBuilder::new(root);
-        for pattern in patterns {
-            if let Err(e) = builder.add_line(None, pattern) {
-                tracing::warn!("Skipping custom ignore pattern {pattern:?}: {e}");
-            }
-        }
-        let matcher = builder
-            .build()
-            .map_err(|e| tracing::warn!("Failed to build custom ignore patterns: {e}"))
-            .ok();
-        let negates = patterns.iter().any(|p| p.trim_start().starts_with('!'));
-        let prune_dirs = if matcher.is_none() || negates {
-            Vec::new()
-        } else {
-            patterns.iter().filter_map(|p| any_depth_name(p)).collect()
-        };
-        Self {
-            matcher,
-            prune_dirs,
-        }
-    }
-
-    /// Whether the file at `rel` (relative to the root, `/`-separated) is ignored.
-    fn is_ignored(&self, rel: &str) -> bool {
-        self.matcher
-            .as_ref()
-            .is_some_and(|m| m.matched_path_or_any_parents(rel, false).is_ignore())
-    }
-
-    /// `IGNORED_DIRS` plus every `prune_dirs` name, for `walk_options`.
-    fn skip_dirs(&self) -> Vec<&str> {
-        IGNORED_DIRS
-            .iter()
-            .copied()
-            .chain(self.prune_dirs.iter().map(String::as_str))
-            .collect()
-    }
+/// Whether `file_explorer.custom_ignore_patterns` leave out the file at `rel`
+/// (relative to the project root, `/`-separated).
+fn is_custom_ignored(custom_ignore: &CustomIgnore, rel: &str) -> bool {
+    custom_ignore.matches(std::path::Path::new(rel), false)
 }
 
 fn walk_options<'a>(
@@ -380,17 +338,6 @@ fn walk_options<'a>(
         max_entries: usize::MAX,
         ..Default::default()
     }
-}
-
-/// The name a `.gitignore` pattern matches at any depth: `name` or `name/` with
-/// no other slash and no glob. Such a pattern ignores every directory of that
-/// name, which is exactly what a walk's `skip_dirs` does.
-fn any_depth_name(pattern: &str) -> Option<String> {
-    let pattern = pattern.trim();
-    let name = pattern.strip_suffix('/').unwrap_or(pattern);
-    let plain =
-        !name.is_empty() && !name.starts_with('#') && !name.contains(['/', '\\', '*', '?', '[']);
-    plain.then(|| name.to_string())
 }
 
 /// A single file entry in the Quick Open file list.
@@ -730,7 +677,7 @@ impl FileProvider {
                 let frecency_map = frecency.read().ok();
                 let entries: Vec<FileEntry> = files
                     .into_iter()
-                    .filter(|path| !custom_ignore.is_ignored(path))
+                    .filter(|path| !is_custom_ignored(&custom_ignore, path))
                     .map(|path| {
                         let score = frecency_map
                             .as_ref()
@@ -780,7 +727,7 @@ impl FileProvider {
             .unwrap_or_default();
         let entries: Vec<FileEntry> = files
             .into_iter()
-            .filter(|path| !custom_ignore.is_ignored(path))
+            .filter(|path| !is_custom_ignored(&custom_ignore, path))
             .map(|path| FileEntry {
                 frecency_score: self.get_frecency_score(&path),
                 relative_path: path,
@@ -882,13 +829,13 @@ fn try_walk_dir_blocking(
 
     let base = Path::new(cwd);
     let mut files = Vec::new();
-    let skip_dirs = custom_ignore.skip_dirs();
+    let skip_dirs = skip_dirs(custom_ignore);
     let opts = walk_options(&skip_dirs, show_hidden);
 
     // Errors (e.g., root doesn't exist) are treated as "no files found".
     drop(fs.walk(base, &opts, cancel, &mut |entry| {
         if entry.entry_type == crate::model::filesystem::EntryType::File
-            && !custom_ignore.is_ignored(entry.rel)
+            && !is_custom_ignored(custom_ignore, entry.rel)
         {
             files.push(entry.rel.to_string());
         }
@@ -923,7 +870,7 @@ fn walk_dir_with_updates(
     let mut paths: Vec<String> = Vec::new();
     let mut last_send = std::time::Instant::now();
     let mut receiver_gone = false;
-    let skip_dirs = custom_ignore.skip_dirs();
+    let skip_dirs = skip_dirs(custom_ignore);
     let opts = walk_options(&skip_dirs, show_hidden);
 
     // `walk` errors (e.g. root doesn't exist, permission denied at the
@@ -931,7 +878,7 @@ fn walk_dir_with_updates(
     // collected in `paths` are still surfaced via the final send below.
     if let Err(e) = fs.walk(base, &opts, cancel, &mut |entry| {
         if entry.entry_type != crate::model::filesystem::EntryType::File
-            || custom_ignore.is_ignored(entry.rel)
+            || is_custom_ignored(custom_ignore, entry.rel)
         {
             return true;
         }
@@ -1662,24 +1609,6 @@ mod tests {
             "{values:?}"
         );
         assert!(values.contains(&"debug.log".to_string()), "{values:?}");
-    }
-
-    /// Only a pattern that names a directory at any depth is pruned from the
-    /// walk, and none is once a pattern negates.
-    #[test]
-    fn test_custom_ignore_prunes_only_any_depth_names() {
-        let root = std::path::Path::new("/project");
-        let patterns = |ps: &[&str]| ps.iter().map(|p| p.to_string()).collect::<Vec<_>>();
-
-        let ignore = CustomIgnore::new(
-            root,
-            &patterns(&[".cache/", "build", "*.o", "/dist", "a/b/", "# note", ""]),
-        );
-        assert_eq!(ignore.prune_dirs, vec![".cache", "build"]);
-
-        let ignore = CustomIgnore::new(root, &patterns(&[".cache/", "!.cache/keep"]));
-        assert!(ignore.prune_dirs.is_empty());
-        assert!(ignore.is_ignored(".cache/other"));
     }
 
     #[test]

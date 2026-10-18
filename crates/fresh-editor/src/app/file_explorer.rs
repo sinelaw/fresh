@@ -2327,15 +2327,9 @@ impl crate::app::window::Window {
         // this one only ever comes from config.
         view.ignore_patterns_mut()
             .set_respect_gitignore(defaults.respect_gitignore);
-        {
-            // Wire the configured custom ignore patterns into the matcher (previously the
-            // `custom_ignore_patterns` config field was parsed but never applied).
-            let ip = view.ignore_patterns_mut();
-            ip.clear_custom_patterns();
-            for pattern in &defaults.custom_ignore_patterns {
-                ip.add_custom_pattern(pattern.clone());
-            }
-        }
+        let root = view.tree().root_path().to_path_buf();
+        view.ignore_patterns_mut()
+            .set_custom_patterns(&root, &defaults.custom_ignore_patterns);
         view.set_compact_directories(defaults.compact_directories);
         self.file_explorer = Some(view);
         // The initial build is done; release the column reservation set in
