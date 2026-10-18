@@ -80,11 +80,15 @@ impl Editor {
             .active_window()
             .split_view_states()
             .iter()
-            .filter(|(_, view_state)| view_state.has_buffer(id))
+            .filter(|(&split_id, view_state)| {
+                view_state.has_buffer(id) && !self.active_window().is_borrowing_panel(split_id, id)
+            })
             .map(|(&split_id, _)| split_id)
             .collect();
         // A buffer that is still a tab of another split keeps its view
-        // there; no split closes.
+        // there; no split closes. A buffer-group panel that borrows the
+        // buffer is no tab of it (it closes with the buffer), so it does not
+        // count, as in `close_tab_in_split`.
         let collapsed = match hosts[..] {
             [split_id] => self.close_split_if_sole_tab(split_id),
             _ => false,

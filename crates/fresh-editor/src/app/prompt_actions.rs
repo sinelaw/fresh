@@ -1475,13 +1475,18 @@ impl Editor {
                 // Save from a split that shows the buffer. The tab menu can
                 // close a tab of an unfocused split, and focusing the buffer
                 // in the focused split would add it there as a tab, so the
-                // close would no longer find its own split emptied.
+                // close would no longer find its own split emptied. A
+                // buffer-group panel borrowing the buffer is no such split:
+                // it is not in the split tree, so it cannot be focused.
                 let old_split = self.active_window().split_manager().active_split();
                 let host = self
                     .active_window()
                     .split_view_states()
                     .iter()
-                    .find(|(_, vs)| vs.has_buffer(buffer_id))
+                    .find(|(&split_id, vs)| {
+                        vs.has_buffer(buffer_id)
+                            && !self.active_window().is_borrowing_panel(split_id, buffer_id)
+                    })
                     .map(|(&split_id, _)| split_id);
                 let refocus_after = match host {
                     Some(host) if host != old_split => {
