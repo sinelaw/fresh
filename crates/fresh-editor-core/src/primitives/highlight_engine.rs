@@ -293,8 +293,9 @@ pub struct TextMateEngine {
     checkpoint_markers: MarkerList,
     checkpoint_states: HashMap<MarkerId, ParseSnapshot>,
     dirty_from: Option<usize>,
-    // End of the last edited byte range, in current buffer offsets; only
-    // meaningful while `dirty_from` is set. A bulk edit touches many sites,
+    // Furthest end of any edit since the cache was last clean (the largest
+    // edit end, in current buffer offsets: later edits before it shift it);
+    // only meaningful while `dirty_from` is set. A bulk edit touches many sites,
     // and a stored state matching past the first one says nothing about the
     // spans of the later ones, so convergence must not be accepted before it.
     dirty_end: usize,
