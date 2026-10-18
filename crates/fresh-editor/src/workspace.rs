@@ -529,12 +529,25 @@ pub struct FileExplorerState {
     /// Scroll offset
     #[serde(default)]
     pub scroll_offset: usize,
-    /// Show hidden files (fixes #569)
-    #[serde(default)]
-    pub show_hidden: bool,
-    /// Show gitignored files (fixes #569)
-    #[serde(default)]
-    pub show_gitignored: bool,
+    /// Show Hidden Files as this workspace's explorer had it (fixes #569),
+    /// `false` included, or `None` when it has no say and the config default
+    /// applies.
+    ///
+    /// Not the superseded `show_hidden` key: that one was also written as
+    /// `false` whenever the explorer had never been built, so a `false` in it
+    /// cannot be told from "nobody looked". See [`Self::restored_show_hidden`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show_hidden_files: Option<bool>,
+    /// Show Gitignored Files, as [`Self::show_hidden_files`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show_gitignored_files: Option<bool>,
+    /// The superseded `show_hidden` key, read only for its unambiguous `true`
+    /// and never written back.
+    #[serde(default, rename = "show_hidden", skip_serializing)]
+    pub legacy_show_hidden: bool,
+    /// The superseded `show_gitignored` key, as [`Self::legacy_show_hidden`].
+    #[serde(default, rename = "show_gitignored", skip_serializing)]
+    pub legacy_show_gitignored: bool,
     /// The sidebar's sections, top to bottom. Empty — every workspace
     /// written before sections existed — restores as exactly one explorer
     /// section filling the column.
@@ -550,10 +563,29 @@ impl Default for FileExplorerState {
             side: crate::config::FileExplorerSide::Left,
             expanded_dirs: Vec::new(),
             scroll_offset: 0,
-            show_hidden: false,
-            show_gitignored: false,
+            show_hidden_files: None,
+            show_gitignored_files: None,
+            legacy_show_hidden: false,
+            legacy_show_gitignored: false,
             sections: Vec::new(),
         }
+    }
+}
+
+impl FileExplorerState {
+    /// The Show Hidden Files this workspace restores, or `None` to leave the
+    /// config default. A file from before `show_hidden_files` only speaks
+    /// for `true`.
+    pub fn restored_show_hidden(&self) -> Option<bool> {
+        self.show_hidden_files
+            .or(self.legacy_show_hidden.then_some(true))
+    }
+
+    /// The Show Gitignored Files this workspace restores, as
+    /// [`Self::restored_show_hidden`].
+    pub fn restored_show_gitignored(&self) -> Option<bool> {
+        self.show_gitignored_files
+            .or(self.legacy_show_gitignored.then_some(true))
     }
 }
 
@@ -2130,9 +2162,9 @@ mod tests {
                 PathBuf::from("tests"),
             ],
             scroll_offset: 5,
-            show_hidden: true,
-            show_gitignored: false,
-            sections: Vec::new(),
+            show_hidden_files: Some(true),
+            show_gitignored_files: Some(false),
+            ..FileExplorerState::default()
         };
 
         let json = serde_json::to_string(&state).unwrap();
@@ -2142,8 +2174,64 @@ mod tests {
         assert_eq!(restored.width, crate::config::ExplorerWidth::Percent(25));
         assert_eq!(restored.expanded_dirs.len(), 3);
         assert_eq!(restored.scroll_offset, 5);
-        assert!(restored.show_hidden);
-        assert!(!restored.show_gitignored);
+        assert_eq!(restored.restored_show_hidden(), Some(true));
+        assert_eq!(restored.restored_show_gitignored(), Some(false));
+    }
+
+    /// A saved `false` is restored as `false` (overriding a config default of
+    /// `true`), not dropped in favour of the config.
+    #[test]
+    fn test_file_explorer_state_saved_false_round_trips() {
+        let state = FileExplorerState {
+            show_hidden_files: Some(false),
+            show_gitignored_files: Some(false),
+            ..FileExplorerState::default()
+        };
+        let json = serde_json::to_string(&state).unwrap();
+        assert!(json.contains("\"show_hidden_files\":false"), "{json}");
+        let restored: FileExplorerState = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.restored_show_hidden(), Some(false));
+        assert_eq!(restored.restored_show_gitignored(), Some(false));
+    }
+
+    /// A workspace with nothing to say about the toggles leaves them to the
+    /// config default, and writes nothing for them.
+    #[test]
+    fn test_file_explorer_state_missing_toggles_fall_back_to_config() {
+        let restored: FileExplorerState =
+            serde_json::from_str(r#"{ "visible": true, "expanded_dirs": [], "scroll_offset": 0 }"#)
+                .unwrap();
+        assert_eq!(restored.restored_show_hidden(), None);
+        assert_eq!(restored.restored_show_gitignored(), None);
+
+        let json = serde_json::to_string(&FileExplorerState::default()).unwrap();
+        assert!(!json.contains("show_hidden"), "{json}");
+        assert!(!json.contains("show_gitignored"), "{json}");
+    }
+
+    /// The superseded `show_hidden` / `show_gitignored` keys were written as
+    /// `false` even when the explorer had never been built, so only their
+    /// `true` is restored; their `false` leaves the config default.
+    #[test]
+    fn test_file_explorer_state_legacy_toggle_keys() {
+        let restored: FileExplorerState = serde_json::from_str(
+            r#"{ "visible": true, "expanded_dirs": [], "scroll_offset": 0,
+                 "show_hidden": true, "show_gitignored": false }"#,
+        )
+        .unwrap();
+        assert_eq!(restored.restored_show_hidden(), Some(true));
+        assert_eq!(restored.restored_show_gitignored(), None);
+
+        // The new keys win over the old ones, and the old ones are dropped on
+        // the next save.
+        let restored: FileExplorerState = serde_json::from_str(
+            r#"{ "visible": true, "expanded_dirs": [], "scroll_offset": 0,
+                 "show_hidden": true, "show_hidden_files": false }"#,
+        )
+        .unwrap();
+        assert_eq!(restored.restored_show_hidden(), Some(false));
+        let json = serde_json::to_string(&restored).unwrap();
+        assert!(!json.contains("\"show_hidden\""), "{json}");
     }
 
     #[test]
@@ -2154,9 +2242,7 @@ mod tests {
             side: crate::config::FileExplorerSide::Left,
             expanded_dirs: vec![],
             scroll_offset: 0,
-            show_hidden: false,
-            show_gitignored: false,
-            sections: Vec::new(),
+            ..FileExplorerState::default()
         };
         let json = serde_json::to_string(&state).unwrap();
         let restored: FileExplorerState = serde_json::from_str(&json).unwrap();
