@@ -1007,17 +1007,19 @@ impl InputParser {
         if !key.down {
             return;
         }
-        let Some(event) = self.win32_key_event(&key) else {
+        let Some((event, layout_char)) = self.win32_key_event(&key) else {
             return;
         };
         for _ in 0..key.repeat.clamp(1, MAX_WIN32_REPEAT) {
-            out.push(Event::key(event));
+            out.push(Event::Key(KeyPress::with_layout_char(event, layout_char)));
         }
     }
 
-    /// The key event a win32-input-mode key-down stands for, or `None` for a
-    /// key that types nothing (or the first half of a surrogate pair).
-    fn win32_key_event(&mut self, key: &Win32Key) -> Option<KeyEvent> {
+    /// The key event a win32-input-mode key-down stands for, together with the
+    /// character it types when the chord keeps its base spelling (`Ctrl+Shift+1`
+    /// is the digit key, and `!` is what it types), or `None` for a key that
+    /// types nothing (or the first half of a surrogate pair).
+    fn win32_key_event(&mut self, key: &Win32Key) -> Option<(KeyEvent, Option<char>)> {
         let mut modifiers = key.modifiers();
         if let Some(code) = win32_functional_key(key.vk) {
             self.win32_high_surrogate = None;
@@ -1027,7 +1029,7 @@ impl InputParser {
             } else {
                 code
             };
-            return Some(KeyEvent::new(code, modifiers));
+            return Some((KeyEvent::new(code, modifiers), None));
         }
         // An IME commits text, and an emoji picker types a character outside
         // the BMP, one UTF-16 unit per report.
@@ -1052,7 +1054,7 @@ impl InputParser {
             // what keeps Shift: Ctrl+Shift+E stays Ctrl+Shift+e rather than
             // collapsing onto Ctrl+E.
             if let Some(base) = win32_letter_or_digit(key.vk) {
-                return Some(KeyEvent::new(KeyCode::Char(base), modifiers));
+                return Some((KeyEvent::new(KeyCode::Char(base), modifiers), None));
             }
             // Any other key: read its C0 code the way the legacy encoding would
             // (Ctrl+[ is Escape), keeping Alt.
@@ -1060,9 +1062,12 @@ impl InputParser {
                 return None;
             }
             let byte = key.unicode as u8;
-            return Some(KeyEvent::new(
-                byte_to_keycode(byte),
-                c0_control_modifier(byte) | (modifiers & KeyModifiers::ALT),
+            return Some((
+                KeyEvent::new(
+                    byte_to_keycode(byte),
+                    c0_control_modifier(byte) | (modifiers & KeyModifiers::ALT),
+                ),
+                None,
             ));
         }
         // A printable character. Windows reports AltGr as Ctrl+Alt; when that
@@ -1070,13 +1075,45 @@ impl InputParser {
         if modifiers.contains(KeyModifiers::CONTROL | KeyModifiers::ALT) {
             modifiers.remove(KeyModifiers::CONTROL | KeyModifiers::ALT);
         }
+        // Ctrl+Shift+1 types `!`, but the binding is on the digit key: keep the
+        // base spelling the kitty protocol reports for the same chord and carry
+        // the typed character alongside, the way `dispatch_csi_u` does. Without
+        // this the win32 and kitty spellings of one chord disagree, and a
+        // `ctrl+shift+1` binding fires only from one of them.
+        if modifiers.contains(KeyModifiers::CONTROL) {
+            if let Some(base) = win32_letter_or_digit(key.vk) {
+                return Some((
+                    KeyEvent::new(KeyCode::Char(base), modifiers),
+                    win32_layout_char(base, ch, modifiers),
+                ));
+            }
+        }
         // Without Ctrl the character already carries the shift (Shift+E types
         // `E`), exactly as over the legacy encoding.
         if !modifiers.contains(KeyModifiers::CONTROL) {
             modifiers.remove(KeyModifiers::SHIFT);
         }
-        Some(KeyEvent::new(KeyCode::Char(ch), modifiers))
+        Some((KeyEvent::new(KeyCode::Char(ch), modifiers), None))
     }
+}
+
+/// The character a Ctrl chord types on the current layout, when the chord's own
+/// spelling does not say so — the win32 form of [`hidden_layout_char`].
+///
+/// Windows fills `Uc` with the character the key types, so `Ctrl+Shift+1`
+/// arrives as `!` on a US layout and as `/` on a German one (`Shift+7`). The
+/// chord keeps its base key either way; this is the typed character the keymap
+/// gets to look at.
+fn win32_layout_char(base: char, typed: char, modifiers: KeyModifiers) -> Option<char> {
+    if !modifiers.contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT) {
+        return None;
+    }
+    // Same rule as the kitty path: a letter's shifted character is its
+    // uppercase, which the chord's SHIFT bit already says.
+    if typed == base || uppercase_letter(base) == Some(typed) {
+        return None;
+    }
+    Some(typed)
 }
 
 /// Upper bound on the repeat count of one win32-input-mode report. A held key
