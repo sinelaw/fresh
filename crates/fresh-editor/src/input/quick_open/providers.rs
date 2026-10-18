@@ -11,6 +11,7 @@ use super::{
 };
 use crate::input::commands::Suggestion;
 use crate::input::fuzzy::FuzzyMatcher;
+use crate::services::project_files;
 use crate::view::file_tree::ignore::CustomIgnore;
 use fresh_i18n::t;
 
@@ -300,45 +301,7 @@ impl QuickOpenProvider for GotoLineProvider {
 // File Provider (default, no prefix)
 // ============================================================================
 
-/// Directory names to skip during file walking (shared with plugin_commands.rs pattern).
-const IGNORED_DIRS: &[&str] = &[
-    ".git",
-    "node_modules",
-    "target",
-    "__pycache__",
-    ".hg",
-    ".svn",
-    ".DS_Store",
-];
-
 const MAX_FILES: usize = 50_000;
-
-/// `IGNORED_DIRS` plus the directories `custom_ignore` prunes, for `walk_options`.
-fn skip_dirs(custom_ignore: &CustomIgnore) -> Vec<&str> {
-    IGNORED_DIRS
-        .iter()
-        .copied()
-        .chain(custom_ignore.prune_dirs().iter().map(String::as_str))
-        .collect()
-}
-
-/// Whether `file_explorer.custom_ignore_patterns` leave out the file at `rel`
-/// (relative to the project root, `/`-separated).
-fn is_custom_ignored(custom_ignore: &CustomIgnore, rel: &str) -> bool {
-    custom_ignore.matches(std::path::Path::new(rel), false)
-}
-
-fn walk_options<'a>(
-    skip_dirs: &'a [&'a str],
-    show_hidden: bool,
-) -> crate::model::filesystem::WalkOptions<'a> {
-    crate::model::filesystem::WalkOptions {
-        skip_dirs,
-        include_hidden: show_hidden,
-        max_entries: usize::MAX,
-        ..Default::default()
-    }
-}
 
 /// A single file entry in the Quick Open file list.
 #[derive(Clone, Debug)]
@@ -371,9 +334,11 @@ struct FileCache {
 
 /// Provider for finding files in the project.
 ///
-/// Uses `git ls-files` via [`ProcessSpawner`] as the fast path (respects
-/// `.gitignore`, works on remote hosts), then falls back to recursive
-/// directory walking via the [`FileSystem`] trait.
+/// Lists the files [`project_files`] defines: `git ls-files` via
+/// [`ProcessSpawner`] as the fast path (respects `.gitignore`, works on remote
+/// hosts), then a recursive directory walk via the [`FileSystem`] trait.
+///
+/// [`project_files`]: crate::services::project_files
 ///
 /// File enumeration runs on a background thread to avoid blocking the UI.
 /// When the cache is empty, `suggestions()` returns a "Loading…" placeholder
@@ -673,11 +638,14 @@ impl FileProvider {
 
         runtime.spawn_blocking(move || {
             // Fast path: git ls-files returns everything at once.
-            if let Some(files) = try_git_files_blocking(&process_spawner, &cwd) {
+            if let Some(files) = project_files::git_files_blocking(
+                &process_spawner,
+                std::path::Path::new(&cwd),
+                &custom_ignore,
+            ) {
                 let frecency_map = frecency.read().ok();
                 let entries: Vec<FileEntry> = files
                     .into_iter()
-                    .filter(|path| !is_custom_ignored(&custom_ignore, path))
                     .map(|path| {
                         let score = frecency_map
                             .as_ref()
@@ -722,12 +690,11 @@ impl FileProvider {
     fn load_files_sync(&self, cwd: &str) -> Option<std::sync::Arc<Vec<FileEntry>>> {
         let custom_ignore = self.custom_ignore(cwd);
         let files = self
-            .try_git_files(cwd)
+            .try_git_files(cwd, &custom_ignore)
             .or_else(|| self.try_walk_dir(cwd, &custom_ignore))
             .unwrap_or_default();
         let entries: Vec<FileEntry> = files
             .into_iter()
-            .filter(|path| !is_custom_ignored(&custom_ignore, path))
             .map(|path| FileEntry {
                 frecency_score: self.get_frecency_score(&path),
                 relative_path: path,
@@ -740,9 +707,14 @@ impl FileProvider {
     }
 
     /// Synchronous `try_git_files` — used by the sync fallback path.
-    fn try_git_files(&self, cwd: &str) -> Option<Vec<String>> {
+    fn try_git_files(&self, cwd: &str, custom_ignore: &CustomIgnore) -> Option<Vec<String>> {
         let runtime = self.runtime.as_ref()?;
-        try_git_files_with_handle(&self.process_spawner, cwd, runtime.handle())
+        project_files::git_files_with_handle(
+            &self.process_spawner,
+            std::path::Path::new(cwd),
+            runtime.handle(),
+            custom_ignore,
+        )
     }
 
     /// Synchronous `try_walk_dir` — used by the sync fallback path.
@@ -762,61 +734,6 @@ impl FileProvider {
 // Free functions used by both the sync path and the background task
 // ---------------------------------------------------------------------------
 
-/// List files via `git ls-files` using a `ProcessSpawner` (blocking).
-///
-/// Called from `spawn_blocking`, which is already running on the runtime's
-/// blocking pool — so the runtime provably exists for the duration, and
-/// `Handle::current` is sound here in a way that storing one never is.
-fn try_git_files_blocking(
-    spawner: &std::sync::Arc<dyn crate::services::remote::ProcessSpawner>,
-    cwd: &str,
-) -> Option<Vec<String>> {
-    // Running on the runtime's own blocking pool, so the runtime provably
-    // exists for as long as this closure does — the liveness a `Handle` cannot
-    // carry on its own is established by where we are, not by the handle.
-    #[allow(clippy::disallowed_types)]
-    let handle = tokio::runtime::Handle::try_current().ok()?;
-    try_git_files_with_handle(spawner, cwd, &handle)
-}
-
-/// `handle` must belong to a runtime the caller has already established is
-/// alive — either by holding a `LiveRuntime` or by running on that runtime's
-/// blocking pool. A `Handle` carries no such guarantee on its own, which is
-/// why nothing stores one; see `services::runtime::LiveRuntime`.
-#[allow(clippy::disallowed_types)] // liveness established by both callers, above
-fn try_git_files_with_handle(
-    spawner: &std::sync::Arc<dyn crate::services::remote::ProcessSpawner>,
-    cwd: &str,
-    handle: &tokio::runtime::Handle,
-) -> Option<Vec<String>> {
-    #[allow(clippy::disallowed_methods)] // liveness established by the caller, above
-    let result = handle
-        .block_on(spawner.spawn(
-            "git".to_string(),
-            vec![
-                "ls-files".to_string(),
-                "--cached".to_string(),
-                "--others".to_string(),
-                "--exclude-standard".to_string(),
-            ],
-            Some(cwd.to_string()),
-        ))
-        .ok()?;
-
-    if result.exit_code != 0 {
-        return None;
-    }
-
-    let files: Vec<String> = result
-        .stdout
-        .lines()
-        .filter(|line| !line.is_empty() && !line.starts_with(".git/"))
-        .map(|s| s.to_string())
-        .collect();
-
-    Some(files)
-}
-
 /// Walk the directory tree via `FileSystem::walk` (blocking).
 fn try_walk_dir_blocking(
     fs: &dyn crate::model::filesystem::FileSystem,
@@ -829,18 +746,19 @@ fn try_walk_dir_blocking(
 
     let base = Path::new(cwd);
     let mut files = Vec::new();
-    let skip_dirs = skip_dirs(custom_ignore);
-    let opts = walk_options(&skip_dirs, show_hidden);
 
     // Errors (e.g., root doesn't exist) are treated as "no files found".
-    drop(fs.walk(base, &opts, cancel, &mut |entry| {
-        if entry.entry_type == crate::model::filesystem::EntryType::File
-            && !is_custom_ignored(custom_ignore, entry.rel)
-        {
-            files.push(entry.rel.to_string());
-        }
-        files.len() < MAX_FILES
-    }));
+    drop(project_files::walk_files(
+        fs,
+        base,
+        show_hidden,
+        custom_ignore,
+        cancel,
+        &mut |_, rel| {
+            files.push(rel.to_string());
+            files.len() < MAX_FILES
+        },
+    ));
 
     if files.is_empty() {
         None
@@ -870,53 +788,53 @@ fn walk_dir_with_updates(
     let mut paths: Vec<String> = Vec::new();
     let mut last_send = std::time::Instant::now();
     let mut receiver_gone = false;
-    let skip_dirs = skip_dirs(custom_ignore);
-    let opts = walk_options(&skip_dirs, show_hidden);
 
     // `walk` errors (e.g. root doesn't exist, permission denied at the
     // top level) are treated as "no files found" — any paths already
     // collected in `paths` are still surfaced via the final send below.
-    if let Err(e) = fs.walk(base, &opts, cancel, &mut |entry| {
-        if entry.entry_type != crate::model::filesystem::EntryType::File
-            || is_custom_ignored(custom_ignore, entry.rel)
-        {
-            return true;
-        }
-        paths.push(entry.rel.to_string());
+    if let Err(e) = project_files::walk_files(
+        fs,
+        base,
+        show_hidden,
+        custom_ignore,
+        cancel,
+        &mut |_, rel| {
+            paths.push(rel.to_string());
 
-        // Send a partial snapshot at regular intervals.
-        if last_send.elapsed() >= WALK_UPDATE_INTERVAL {
-            let frecency_map = frecency.read().ok();
-            let entries: Vec<FileEntry> = paths
-                .iter()
-                .map(|p| FileEntry {
-                    frecency_score: frecency_map
-                        .as_ref()
-                        .and_then(|m| m.get(p).map(frecency_score))
-                        .unwrap_or(0.0),
-                    relative_path: p.clone(),
-                })
-                .collect();
-            if sender
-                .send(
-                    crate::services::async_bridge::AsyncMessage::QuickOpenFilesLoaded {
-                        cwd: cwd.to_string(),
-                        files: std::sync::Arc::new(entries),
-                        complete: false,
-                    },
-                )
-                .is_err()
-            {
-                // Receiver dropped (editor shutting down) — stop walking
-                // so we don't waste CPU on results nobody will see.
-                receiver_gone = true;
-                return false;
+            // Send a partial snapshot at regular intervals.
+            if last_send.elapsed() >= WALK_UPDATE_INTERVAL {
+                let frecency_map = frecency.read().ok();
+                let entries: Vec<FileEntry> = paths
+                    .iter()
+                    .map(|p| FileEntry {
+                        frecency_score: frecency_map
+                            .as_ref()
+                            .and_then(|m| m.get(p).map(frecency_score))
+                            .unwrap_or(0.0),
+                        relative_path: p.clone(),
+                    })
+                    .collect();
+                if sender
+                    .send(
+                        crate::services::async_bridge::AsyncMessage::QuickOpenFilesLoaded {
+                            cwd: cwd.to_string(),
+                            files: std::sync::Arc::new(entries),
+                            complete: false,
+                        },
+                    )
+                    .is_err()
+                {
+                    // Receiver dropped (editor shutting down) — stop walking
+                    // so we don't waste CPU on results nobody will see.
+                    receiver_gone = true;
+                    return false;
+                }
+                last_send = std::time::Instant::now();
             }
-            last_send = std::time::Instant::now();
-        }
 
-        paths.len() < MAX_FILES
-    }) {
+            paths.len() < MAX_FILES
+        },
+    ) {
         tracing::debug!("Quick Open walk_files failed: {}", e);
     }
 

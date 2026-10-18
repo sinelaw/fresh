@@ -20,6 +20,8 @@ pub use fresh_editor_core::log_dirs;
 pub mod lsp;
 pub use fresh_editor_core::packages;
 pub mod plugins;
+/// The project's file list, shared by Quick Open and project search.
+pub mod project_files;
 pub use fresh_editor_core::process_hidden;
 // Lives in `fresh-editor-core`: the impl blocks hang off `types::ProcessLimits`,
 // which is defined down there.
