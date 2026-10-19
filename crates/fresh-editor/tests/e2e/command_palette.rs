@@ -2278,3 +2278,131 @@ fn test_quick_open_follows_show_hidden_files_of_active_window() {
     open_quick_open(&mut harness);
     harness.assert_screen_not_contains(".winswitch_dotfile");
 }
+
+/// A project with two crates whose names share the `fresh-` prefix, plus a
+/// top-level file, with Quick Open in file mode showing `input`'s matches.
+///
+/// Waits for every file `input` should match to be on screen, so Tab sees
+/// the whole list rather than a partially scanned one.
+fn quick_open_files(input: &str, expected: &[&str]) -> EditorTestHarness {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(100, 24, Default::default()).unwrap();
+    let project_root = harness.project_dir().unwrap();
+    fs::create_dir_all(project_root.join("crates/fresh-editor/src")).unwrap();
+    fs::create_dir_all(project_root.join("crates/fresh-gui")).unwrap();
+    fs::write(
+        project_root.join("crates/fresh-editor/src/main.rs"),
+        "fn main() {}\n",
+    )
+    .unwrap();
+    fs::write(
+        project_root.join("crates/fresh-gui/lib.rs"),
+        "pub fn gui() {}\n",
+    )
+    .unwrap();
+    fs::write(project_root.join("notes.txt"), "first\nsecond line\n").unwrap();
+
+    // Open Quick Open (command mode), then switch to file mode
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text(input).unwrap();
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            expected.iter().all(|path| screen.contains(path))
+        })
+        .expect("Quick Open should list the matching files");
+    harness
+}
+
+const QUICK_OPEN_CRATES: &[&str] = &["crates/fresh-editor/src/main.rs", "crates/fresh-gui/lib.rs"];
+
+/// Press Tab and return the prompt line. The suggestion list shows full
+/// paths, so the assertions read the prompt line rather than the screen.
+fn tab_and_read_prompt(harness: &mut EditorTestHarness) -> String {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness.get_prompt_line()
+}
+
+/// Tab in Quick Open's file finder completes one directory at a time, and
+/// only as far as the matching paths agree, like shell completion.
+#[test]
+fn test_quick_open_tab_completes_shared_prefix_by_directory() {
+    let mut harness = quick_open_files("crat", QUICK_OPEN_CRATES);
+
+    let prompt = tab_and_read_prompt(&mut harness);
+    assert!(prompt.contains("crates/"), "prompt: {prompt}");
+    assert!(
+        !prompt.contains("crates/fresh"),
+        "stopped past the directory: {prompt}"
+    );
+
+    let prompt = tab_and_read_prompt(&mut harness);
+    assert!(prompt.contains("crates/fresh-"), "prompt: {prompt}");
+    assert!(
+        !prompt.contains("crates/fresh-editor"),
+        "picked one crate: {prompt}"
+    );
+    assert!(
+        !prompt.contains("crates/fresh-gui"),
+        "picked one crate: {prompt}"
+    );
+}
+
+/// Arrowing to a row and pressing Tab still fills in that row's full path.
+#[test]
+fn test_quick_open_tab_after_arrowing_accepts_highlighted_path() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness = quick_open_files("crates/fre", QUICK_OPEN_CRATES);
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+
+    let prompt = tab_and_read_prompt(&mut harness);
+    assert!(
+        QUICK_OPEN_CRATES.iter().any(|path| prompt.contains(path)),
+        "Tab should accept the highlighted path: {prompt}"
+    );
+}
+
+/// When nothing starts with the typed text, Tab accepts the highlighted
+/// fuzzy match as it always has.
+#[test]
+fn test_quick_open_tab_fuzzy_match_accepts_highlighted_path() {
+    let mut harness = quick_open_files("main", &["crates/fresh-editor/src/main.rs"]);
+
+    let prompt = tab_and_read_prompt(&mut harness);
+    assert!(
+        prompt.contains("crates/fresh-editor/src/main.rs"),
+        "prompt: {prompt}"
+    );
+}
+
+/// A completed file name keeps its `:line` suffix and opens at that line.
+#[test]
+fn test_quick_open_tab_keeps_line_suffix_and_opens_file() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness = quick_open_files("not:2", &["notes.txt"]);
+
+    let prompt = tab_and_read_prompt(&mut harness);
+    assert!(prompt.contains("notes.txt:2"), "prompt: {prompt}");
+
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("Ln 2") && screen.contains("second line")
+        })
+        .expect("Enter should open notes.txt at line 2");
+}
