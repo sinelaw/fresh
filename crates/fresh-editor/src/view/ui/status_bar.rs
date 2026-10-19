@@ -782,10 +782,13 @@ impl StatusBarRenderer {
                 };
                 // Connecting and Connected share a palette so the transition
                 // is a glyph swap rather than a colour flash; the two ways of
-                // not reaching the remote share the error palette.
+                // not reaching the remote share the error palette. Being
+                // attached is the healthy state, so it gets its own keys that
+                // blend into the bar by default (the help-indicator palette it
+                // used to borrow is red in every built-in theme).
                 let keys = match state {
                     RemoteIndicatorState::Connecting | RemoteIndicatorState::Connected => {
-                        ("ui.help_indicator_fg", "ui.help_indicator_bg")
+                        REMOTE_CONNECTED
                     }
                     RemoteIndicatorState::FailedAttach | RemoteIndicatorState::Disconnected => {
                         ERROR
@@ -854,6 +857,12 @@ const ERROR: Keys = (
     "ui.status_error_indicator_bg",
 );
 const MENU_HOVER: Keys = ("ui.menu_hover_fg", "ui.menu_hover_bg");
+/// The `{remote}` indicator while connecting or connected, on keys of its own
+/// so attached does not read as an error.
+const REMOTE_CONNECTED: Keys = (
+    "ui.status_remote_connected_fg",
+    "ui.status_remote_connected_bg",
+);
 /// The palette hint, on keys of its own so a theme can repaint it without
 /// breaking the bar's colour band (#1711).
 const PALETTE: Keys = ("ui.status_palette_fg", "ui.status_palette_bg");
@@ -1086,6 +1095,29 @@ mod tests {
         assert_eq!(
             keys(LspIndicatorState::Error),
             ("diagnostic.error_fg", "diagnostic.error_bg")
+        );
+    }
+
+    #[test]
+    fn test_remote_connected_uses_dedicated_theme_keys() {
+        // Attached to a container used to borrow the help-indicator palette,
+        // which is red in every built-in theme, so a healthy attach looked
+        // like an error. It now has its own keys that fall back to the bar.
+        use crate::view::theme::Theme;
+        assert_eq!(
+            REMOTE_CONNECTED,
+            (
+                "ui.status_remote_connected_fg",
+                "ui.status_remote_connected_bg"
+            )
+        );
+        assert_eq!(
+            Theme::fallback_key("ui.status_remote_connected_fg"),
+            Some("ui.status_bar_fg")
+        );
+        assert_eq!(
+            Theme::fallback_key("ui.status_remote_connected_bg"),
+            Some("ui.status_bar_bg")
         );
     }
 

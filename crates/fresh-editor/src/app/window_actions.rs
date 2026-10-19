@@ -129,6 +129,8 @@ impl crate::app::Editor {
         if self.active_window != existing {
             self.set_active_window(existing);
         }
+        // So are its language servers.
+        self.move_window_lsp_to_its_authority();
         existing
     }
 
