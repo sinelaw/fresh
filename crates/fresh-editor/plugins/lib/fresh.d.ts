@@ -5049,6 +5049,14 @@ interface TerminalConfig {
 		* Default: `"requested"`
 		*/
 		mouse_forwarding?: TerminalMouseForwarding;
+		/**
+		* Close a shell's tab (and its pane, if it was the only tab) when the
+		* shell exits (`exit`, Ctrl+D) instead of keeping it as read-only
+		* scrollback. Terminals running a command (agents, plugins) are kept.
+		*
+		* Default: `false`
+		*/
+		close_on_exit?: boolean;
 	}
 	/**
 	* When programs in the terminal get mouse events.

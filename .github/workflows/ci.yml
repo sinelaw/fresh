@@ -100,7 +100,7 @@ jobs:
       - name: Check they are up-to-date
         run: |
           if ! git diff --exit-code -- crates/fresh-editor/plugins/lib/fresh.d.ts docs/plugins/api; then
-            echo "::error::fresh.d.ts or docs/plugins/api is out of date. Run: cargo test -p fresh-plugin-runtime write_fresh_dts_file -- --ignored"
+            echo "::error::fresh.d.ts or docs/plugins/api is out of date. Run: ./scripts/gen_schema.sh"
             exit 1
           fi
           untracked=$(git ls-files --others --exclude-standard -- docs/plugins/api)

@@ -1542,9 +1542,19 @@ impl Editor {
         // The owning window may already be gone (closed while its PTY was
         // winding down); then there is nothing left to tear down, but the
         // plugin hook below still fires.
+        let mut close_buffer = None;
         if let Some(window) = self.windows.get_mut(&exited_window_id) {
+            let buffer_id = window
+                .terminal_buffers
+                .iter()
+                .find(|(_, tb)| tb.terminal_id == terminal_id)
+                .map(|(&id, _)| id);
             Self::teardown_exited_terminal(window, terminal_id, exit_code);
+            close_buffer = buffer_id.filter(|&id| Self::closes_on_exit(window, id, terminal_id));
         }
+        // The self-update terminal is where its outcome is read.
+        let close_buffer =
+            close_buffer.filter(|&id| self.self_update_output != Some((exited_window_id, id)));
 
         // Notify plugins after the editor's own exit handling
         // is complete. Orchestrator's state machine reads this
@@ -1559,6 +1569,52 @@ impl Editor {
                 exit_code,
             },
         );
+
+        if let Some(buffer_id) = close_buffer {
+            self.with_window_retargeted(exited_window_id, |editor| {
+                editor.close_exited_terminal_tabs(buffer_id, terminal_id);
+            });
+        }
+    }
+
+    /// Whether `terminal.close_on_exit` applies to the just-exited terminal
+    /// behind `buffer_id`: only a shell the user opened. A plugin's terminal —
+    /// an agent, a build — keeps its scrollback, since that output is what the
+    /// user is there to read; every one of them is either ephemeral or has a
+    /// `terminal_commands` entry (empty for a plugin-run shell). A terminal
+    /// held for a remote reconnect has no exit record, so it stays too.
+    fn closes_on_exit(
+        window: &crate::app::window::Window,
+        buffer_id: crate::model::event::BufferId,
+        terminal_id: crate::services::terminal::TerminalId,
+    ) -> bool {
+        window.resources.config.terminal.close_on_exit
+            && !window.terminal_commands.contains_key(&terminal_id)
+            && window
+                .exited_terminals
+                .get(&buffer_id)
+                .is_some_and(|exited| !exited.ephemeral && !exited.script_access)
+    }
+
+    /// Close every tab showing the exited terminal's buffer in the active
+    /// window, collapsing a pane it was the only tab of — the same path as
+    /// the tab's × button.
+    fn close_exited_terminal_tabs(
+        &mut self,
+        buffer_id: crate::model::event::BufferId,
+        terminal_id: crate::services::terminal::TerminalId,
+    ) {
+        let splits: Vec<crate::model::event::LeafId> = self
+            .active_window()
+            .split_view_states()
+            .iter()
+            .filter(|(_, vs)| vs.has_buffer(buffer_id))
+            .map(|(&leaf, _)| leaf)
+            .collect();
+        for split in splits {
+            self.close_tab_in_split(buffer_id, split);
+        }
+        self.set_status_message(t!("terminal.closed", id = terminal_id.0).to_string());
     }
 
     /// Editor-side teardown of an exited terminal, applied to the window that

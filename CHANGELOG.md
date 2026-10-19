@@ -15,6 +15,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
     * Startup is faster with many workspaces, which now load on first use
 * **Markdown Source / Rendered / Source+Compose modes** - new commands switch a Markdown pane between the raw text and the composed view, and a dual mode shows both side by side in one scroll-synced tab (edit on the source side; closing the tab leaves your file and panes as they were). "Cycle View Mode" steps through all three (#3562, by @PilotLeoYan)
 * **Debian testing/unstable package** - each release also attaches a `.debian-testing.deb` built from Debian's own packaged crates (#3519)
+* **`terminal.close_on_exit` closes a shell's tab when the shell exits** - with it on, `exit` or Ctrl+D in an integrated terminal closes its tab, and the pane too when the terminal was its only tab, instead of leaving it as read-only "(exited)" scrollback. Off by default; terminals running a command (agents, plugins) keep their output either way (#3537 by @cychitivav)
 
 ### Bug Fixes
 
