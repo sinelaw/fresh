@@ -2287,7 +2287,6 @@ pub struct TerminalConfig {
     /// Close a shell's tab (and its pane, if it was the only tab) when the
     /// shell exits (`exit`, Ctrl+D) instead of keeping it as read-only
     /// scrollback. Terminals running a command (agents, plugins) are kept.
-    /// Default: false
     #[serde(default)]
     pub close_on_exit: bool,
 }

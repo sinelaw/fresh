@@ -1429,7 +1429,7 @@
           "default": "requested"
         },
         "close_on_exit": {
-          "description": "Close a shell's tab (and its pane, if it was the only tab) when the\nshell exits (`exit`, Ctrl+D) instead of keeping it as read-only\nscrollback. Terminals running a command (agents, plugins) are kept.\nDefault: false",
+          "description": "Close a shell's tab (and its pane, if it was the only tab) when the\nshell exits (`exit`, Ctrl+D) instead of keeping it as read-only\nscrollback. Terminals running a command (agents, plugins) are kept.",
           "type": "boolean",
           "default": false
         }
