@@ -69,6 +69,72 @@ impl Editor {
         self.close_buffer_internal(id, true)
     }
 
+    /// Close `buffer_id` once the user has confirmed closing its last tab
+    /// (Discard, or Save once the file is written). When that tab is the
+    /// only one of its split and another editor split exists, the split
+    /// closes first, as when closing an unmodified buffer's last tab in
+    /// [`Editor::close_tab_in_split`]; without that, the emptied pane would
+    /// be refilled with some unrelated buffer.
+    pub(crate) fn close_confirmed_buffer(&mut self, id: BufferId) -> anyhow::Result<()> {
+        let hosts: Vec<LeafId> = self
+            .active_window()
+            .split_view_states()
+            .iter()
+            .filter(|(&split_id, view_state)| {
+                view_state.has_buffer(id) && !self.active_window().is_borrowing_panel(split_id, id)
+            })
+            .map(|(&split_id, _)| split_id)
+            .collect();
+        // A buffer that is still a tab of another split keeps its view
+        // there; no split closes. A buffer-group panel that borrows the
+        // buffer is no tab of it (it closes with the buffer), so it does not
+        // count, as in `close_tab_in_split`.
+        let collapsed = match hosts[..] {
+            [split_id] => self.close_split_if_sole_tab(split_id),
+            _ => false,
+        };
+        let closed = self.force_close_buffer(id);
+        if collapsed {
+            // Focus moved to the surviving split; restore terminal mode for
+            // its buffer after the close, as `close_tab_in_split` does
+            // (issue #2485).
+            self.sync_terminal_mode_to_active_buffer();
+        }
+        closed
+    }
+
+    /// Close `split_id` when it holds at most one buffer tab and another
+    /// EDITOR split exists to take its space. Returns whether it closed.
+    ///
+    /// The Utility Dock is a role-tagged leaf, NOT an editor split, so it
+    /// must be excluded from this count (issue #2283). Counting it took the
+    /// "close the whole split" path when the sole editor tab was closed,
+    /// collapsing the editor leaf and promoting the dock's terminals into
+    /// the main tab bar.
+    fn close_split_if_sole_tab(&mut self, split_id: LeafId) -> bool {
+        let sole_tab = self
+            .active_window()
+            .split_view_states()
+            .get(&split_id)
+            .is_none_or(|vs| vs.buffer_tab_ids_vec().len() <= 1);
+        let has_other_editor_splits = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| {
+                use crate::view::split::SplitRole;
+                mgr.root().leaf_split_ids().iter().any(|&lid| {
+                    lid != split_id && mgr.leaf_role(lid) != Some(SplitRole::UtilityDock)
+                })
+            })
+            .expect("active window must have a populated split layout");
+        if !(sole_tab && has_other_editor_splits) {
+            return false;
+        }
+        self.handle_close_split(split_id.into());
+        true
+    }
+
     /// Internal helper to close a buffer (shared by close_buffer and force_close_buffer)
     fn close_buffer_internal(
         &mut self,
@@ -651,28 +717,7 @@ impl Editor {
             // Close Buffer/Close Tab commands behave the same — without
             // this, the × button leaves a leftover split showing some
             // unrelated buffer (observed with the Search/Replace panel).
-            //
-            // The Utility Dock is a role-tagged leaf, NOT an editor split, so
-            // it must be excluded from this count (issue #2283). Counting it
-            // took the "close the whole split" path when the sole editor tab
-            // was closed, collapsing the editor leaf and promoting the dock's
-            // terminals into the main tab bar. See `LayoutRoles` below.
-            let (has_other_editor_splits, dock_present, this_is_dock) = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| {
-                    use crate::view::split::SplitRole;
-                    let has_other_editor_splits = mgr.root().leaf_split_ids().iter().any(|&lid| {
-                        lid != split_id && mgr.leaf_role(lid) != Some(SplitRole::UtilityDock)
-                    });
-                    let dock_present = mgr.find_leaf_by_role(SplitRole::UtilityDock).is_some();
-                    let this_is_dock = mgr.leaf_role(split_id) == Some(SplitRole::UtilityDock);
-                    (has_other_editor_splits, dock_present, this_is_dock)
-                })
-                .expect("active window must have a populated split layout");
-            if split_tabs.len() <= 1 && has_other_editor_splits {
-                self.handle_close_split(split_id.into());
+            if self.close_split_if_sole_tab(split_id) {
                 // handle_close_split also disposes the buffer-less split;
                 // buffer lifetime cleanup happens via its own path.
                 if let Err(e) = self.close_buffer(buffer_id) {
@@ -689,6 +734,17 @@ impl Editor {
                 self.set_status_message(t!("buffer.tab_closed").to_string());
                 return true;
             }
+            let (dock_present, this_is_dock) = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.splits())
+                .map(|(mgr, _)| {
+                    use crate::view::split::SplitRole;
+                    let dock_present = mgr.find_leaf_by_role(SplitRole::UtilityDock).is_some();
+                    let this_is_dock = mgr.leaf_role(split_id) == Some(SplitRole::UtilityDock);
+                    (dock_present, this_is_dock)
+                })
+                .expect("active window must have a populated split layout");
             // Sole editor tab, a Utility Dock is the only other leaf: keep the
             // editor leaf alive but EMPTY (placeholder empty-state) instead of
             // collapsing it into the dock or adopting a dock terminal buffer
