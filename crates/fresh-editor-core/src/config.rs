@@ -7072,29 +7072,51 @@ impl Config {
             }]),
         );
 
-        // pylsp (installed via pip)
+        // Python: pylsp (installed via pip) and basedpyright (installed via pip/npm)
         lsp.insert(
             "python".to_string(),
-            LspLanguageConfig::Multi(vec![LspServerConfig {
-                command: "pylsp".to_string(),
-                args: Some(vec![]),
-                enabled: true,
-                auto_start: false,
-                process_limits: ProcessLimits::default(),
-                initialization_options: None,
-                env: Default::default(),
-                language_id_overrides: Default::default(),
-                name: None,
-                only_features: None,
-                except_features: None,
-                root_markers: vec![
-                    "pyproject.toml".to_string(),
-                    "setup.py".to_string(),
-                    "setup.cfg".to_string(),
-                    "pyrightconfig.json".to_string(),
-                    ".git".to_string(),
-                ],
-            }]),
+            LspLanguageConfig::Multi(vec![
+                LspServerConfig {
+                    command: "pylsp".to_string(),
+                    args: Some(vec![]),
+                    enabled: true,
+                    auto_start: false,
+                    process_limits: ProcessLimits::default(),
+                    initialization_options: None,
+                    env: Default::default(),
+                    language_id_overrides: Default::default(),
+                    name: None,
+                    only_features: None,
+                    except_features: None,
+                    root_markers: vec![
+                        "pyproject.toml".to_string(),
+                        "setup.py".to_string(),
+                        "setup.cfg".to_string(),
+                        "pyrightconfig.json".to_string(),
+                        ".git".to_string(),
+                    ],
+                },
+                LspServerConfig {
+                    command: "basedpyright-langserver".to_string(),
+                    args: Some(vec!["--stdio".to_string()]),
+                    enabled: true,
+                    auto_start: false,
+                    process_limits: ProcessLimits::default(),
+                    initialization_options: None,
+                    env: Default::default(),
+                    language_id_overrides: Default::default(),
+                    name: Some("basedpyright".to_string()),
+                    only_features: None,
+                    except_features: None,
+                    root_markers: vec![
+                        "pyproject.toml".to_string(),
+                        "setup.py".to_string(),
+                        "setup.cfg".to_string(),
+                        "pyrightconfig.json".to_string(),
+                        ".git".to_string(),
+                    ],
+                },
+            ]),
         );
 
         // Godot's built-in GDScript language server listens on TCP port 6005
@@ -9444,5 +9466,57 @@ mod tests {
                 "{language}: asm-lsp must exclude pull diagnostics"
             );
         }
+    }
+
+    #[test]
+    fn test_default_lsp_config_python_contains_basedpyright_and_pylsp() {
+        let config = Config::default();
+        let python_lsp = config
+            .lsp
+            .get("python")
+            .expect("default LSP config should include 'python'");
+        let servers = python_lsp.as_slice();
+
+        let basedpyright = servers
+            .iter()
+            .find(|s| s.command == "basedpyright-langserver")
+            .expect("python LSP config should include basedpyright-langserver");
+        assert_eq!(
+            basedpyright.args.as_deref(),
+            Some(&["--stdio".to_string()][..]),
+            "basedpyright should have args ['--stdio']"
+        );
+        assert_eq!(
+            basedpyright.name.as_deref(),
+            Some("basedpyright"),
+            "basedpyright should have name 'basedpyright'"
+        );
+        assert!(basedpyright.enabled, "basedpyright should be enabled");
+        assert!(
+            !basedpyright.auto_start,
+            "basedpyright should have auto_start == false"
+        );
+        assert_eq!(
+            basedpyright.process_limits,
+            ProcessLimits::default(),
+            "basedpyright should have default process limits"
+        );
+        assert_eq!(
+            basedpyright.root_markers,
+            vec![
+                "pyproject.toml".to_string(),
+                "setup.py".to_string(),
+                "setup.cfg".to_string(),
+                "pyrightconfig.json".to_string(),
+                ".git".to_string(),
+            ]
+        );
+
+        let pylsp = servers
+            .iter()
+            .find(|s| s.command == "pylsp")
+            .expect("python LSP config should include pylsp");
+        assert!(pylsp.enabled, "pylsp should be enabled");
+        assert!(!pylsp.auto_start, "pylsp should have auto_start == false");
     }
 }

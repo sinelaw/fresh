@@ -3899,6 +3899,7 @@ impl Window {
             tab_indicators: None,
             highlight_current_line: None,
             highlight_occurrences: None,
+            diagnostics_inline_text: None,
             plugin_state: std::collections::HashMap::new(),
             folds: Vec::new(),
         };

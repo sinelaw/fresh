@@ -3780,6 +3780,7 @@ pub fn action_to_events(
         | Action::ToggleLineWrap
         | Action::ToggleCurrentLineHighlight
         | Action::ToggleOccurrenceHighlight
+        | Action::ToggleInlineDiagnostics
         | Action::ToggleReadOnly
         | Action::TogglePageView
         | Action::SetPageWidth
@@ -3925,6 +3926,7 @@ pub fn action_to_events(
         | Action::ToggleFoldIndicatorsCurrentBuffer
         | Action::ToggleCurrentLineHighlightCurrentBuffer
         | Action::ToggleOccurrenceHighlightCurrentBuffer
+        | Action::ToggleInlineDiagnosticsCurrentBuffer
         | Action::TriggerWaveAnimation
         | Action::ToggleScrollSync
         | Action::ToggleMouseCapture

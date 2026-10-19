@@ -440,6 +440,11 @@ pub(crate) fn compute_buffer_layout(
         }
     };
 
+    let effective_diagnostics_inline_text = state
+        .buffer_settings
+        .diagnostics_inline_text_override
+        .unwrap_or(diagnostics_inline_text);
+
     let decorations = decoration_context(
         state,
         viewport_start,
@@ -450,7 +455,7 @@ pub(crate) fn compute_buffer_layout(
         theme,
         highlight_context_bytes,
         &view_mode,
-        diagnostics_inline_text,
+        effective_diagnostics_inline_text,
         bracket_highlight,
         &view_data.lines,
         fold_indicators_visible,
