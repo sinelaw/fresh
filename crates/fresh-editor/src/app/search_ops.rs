@@ -191,6 +191,9 @@ impl Editor {
         let matches: Vec<usize> = match_ranges.iter().map(|(pos, _)| *pos).collect();
         let match_lengths: Vec<usize> = match_ranges.iter().map(|(_, len)| *len).collect();
         let is_large = self.active_state().buffer.is_large_file();
+        // Taken before the `&mut search_state` borrow below.
+        let active_buffer = self.active_buffer();
+        let buffer_version = self.active_state().buffer.version();
 
         // Find the first match at or after the current cursor position
         let cursor_pos = self.active_cursors().primary().position;
@@ -215,6 +218,9 @@ impl Editor {
             wrap_search: search_range.is_none(),
             search_range,
             capped,
+            collected_from: (active_buffer, buffer_version),
+            // Only the small-file branch below builds an overlay per match.
+            overlays_track_matches: !is_large,
         });
 
         if is_large {
@@ -570,6 +576,48 @@ impl Editor {
         // prompt owns the keyboard, so no edit can shift the stored offsets.
         let search_bar_open = self.active_search_prompt_query().is_some();
 
+        let active_buffer = self.active_buffer();
+        let buffer_version = self.active_state().buffer.version();
+
+        // When the stored match set no longer describes what is on screen —
+        // another buffer, or this one after an edit the overlays did not
+        // track — its offsets mean nothing, so search again rather than
+        // navigate them. Skipped for a large file (re-scanning one per
+        // keypress is what the snapshot avoids), an open search bar (owns
+        // the keyboard, so nothing can have edited) and a search in a
+        // selection (re-running loses the range).
+        if let Some(ss) = self.active_window().search_state.as_ref() {
+            let overlays_are_authority = !is_large
+                && !search_bar_open
+                && ss.overlays_track_matches
+                && ss.collected_from.0 == active_buffer;
+            let describes_now = ss.collected_from == (active_buffer, buffer_version);
+            if !overlays_are_authority
+                && !describes_now
+                && !is_large
+                && !search_bar_open
+                && ss.search_range.is_none()
+            {
+                let query = ss.query.clone();
+                let previous = self.active_window().search_state.clone();
+                self.perform_search(&query);
+                if self.active_window().search_state.is_none() {
+                    // `perform_search` drops the search when it finds
+                    // nothing. Put it back, so the buffer it came from is
+                    // still navigable on return.
+                    self.active_window_mut().search_state = previous;
+                    return;
+                }
+                // `perform_search` lands on the first match at/after the
+                // cursor, where a forward step wants to be; a backward one
+                // needs one more.
+                if matches!(direction, SearchDirection::Backward) {
+                    self.find_match_in_direction(SearchDirection::Backward);
+                }
+                return;
+            }
+        }
+
         // Snapshot cursor_pos up front so the `&mut search_state` borrow
         // below doesn't conflict with the read of self.windows.
         let cursor_pos = {
@@ -596,9 +644,14 @@ impl Editor {
         if let Some(ref mut search_state) = self.active_window_mut().search_state {
             // Use overlay positions for small files (they auto-track edits),
             // otherwise reference search_state.matches directly to avoid cloning.
+            //
+            // An empty overlay set is not a reason to fall back: while the
+            // overlays are the match set, empty means the edits removed
+            // every match (issue #3444).
             let use_overlays = !is_large
                 && !search_bar_open
-                && !overlay_positions.is_empty()
+                && search_state.overlays_track_matches
+                && search_state.collected_from.0 == active_buffer
                 && search_state.search_range.is_none();
             let (match_positions, match_lengths): (&[usize], &[usize]) = if use_overlays {
                 (&overlay_positions, &overlay_lengths)
@@ -607,6 +660,7 @@ impl Editor {
             };
 
             if match_positions.is_empty() {
+                self.set_status_message(t!("search.no_matches").to_string());
                 return;
             }
 
