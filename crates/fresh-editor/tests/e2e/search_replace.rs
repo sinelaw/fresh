@@ -3260,9 +3260,11 @@ fn test_search_results_grow_with_the_panel_on_resize() {
     open_search_replace_via_palette(&mut harness);
     harness.type_text("NEEDLE_MARKER").unwrap();
 
-    // The tree is windowing (40 matches, a panel that fits a handful).
+    // The tree is windowing (40 matches, a panel that fits a handful). Wait
+    // for the whole search: the open file is searched first, so its single
+    // match can be on screen while the other 39 are still streaming in.
     harness
-        .wait_until(|h| h.screen_to_string().matches("NEEDLE_MARKER here").count() >= 2)
+        .wait_until(|h| h.screen_to_string().contains("(40 matches"))
         .unwrap();
     let before = harness
         .screen_to_string()
