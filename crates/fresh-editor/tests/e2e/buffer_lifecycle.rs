@@ -579,6 +579,130 @@ fn test_click_tab_close_button() {
     assert_eq!(tabs_after, 1, "Should have 1 tab after close");
 }
 
+/// Middle-clicking a tab's name closes that tab (issue #3284).
+#[test]
+fn test_middle_click_tab_name_closes_tab() {
+    use crate::common::harness::layout;
+
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let file1_path = temp_dir.path().join("first.txt");
+    let file2_path = temp_dir.path().join("to_close.txt");
+    std::fs::write(&file1_path, "First file content").unwrap();
+    std::fs::write(&file2_path, "UNIQUE_CONTENT_TO_CLOSE").unwrap();
+
+    harness.open_file(&file1_path).unwrap();
+    harness.render().unwrap();
+    harness.open_file(&file2_path).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("UNIQUE_CONTENT_TO_CLOSE");
+
+    let tab_row = harness.get_screen_row(layout::TAB_BAR_ROW);
+    assert_eq!(
+        tab_row.matches('×').count(),
+        2,
+        "two tabs before: {tab_row}"
+    );
+    let name_col = tab_row
+        .find("to_close.txt")
+        .map(|byte| tab_row[..byte].chars().count())
+        .expect("to_close.txt tab should be on the tab bar");
+
+    // Middle-click the middle of the tab's name, away from its `×`.
+    harness
+        .mouse_middle_click((name_col + 3) as u16, layout::TAB_BAR_ROW as u16)
+        .unwrap();
+
+    harness.assert_screen_not_contains("UNIQUE_CONTENT_TO_CLOSE");
+    harness.assert_screen_contains("First file content");
+    let tab_row_after = harness.get_screen_row(layout::TAB_BAR_ROW);
+    assert!(
+        !tab_row_after.contains("to_close.txt"),
+        "the middle-clicked tab should be gone: {tab_row_after}"
+    );
+    assert_eq!(
+        tab_row_after.matches('×').count(),
+        1,
+        "one tab after: {tab_row_after}"
+    );
+}
+
+/// Middle-clicking a tab's `×` closes it too, rather than doing nothing.
+#[test]
+fn test_middle_click_tab_close_button_closes_tab() {
+    use crate::common::harness::layout;
+
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let file1_path = temp_dir.path().join("first.txt");
+    let file2_path = temp_dir.path().join("to_close.txt");
+    std::fs::write(&file1_path, "First file content").unwrap();
+    std::fs::write(&file2_path, "UNIQUE_CONTENT_TO_CLOSE").unwrap();
+
+    harness.open_file(&file1_path).unwrap();
+    harness.render().unwrap();
+    harness.open_file(&file2_path).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("UNIQUE_CONTENT_TO_CLOSE");
+
+    // The `×` after the to_close.txt tab's name, as a screen column.
+    let tab_row = harness.get_screen_row(layout::TAB_BAR_ROW);
+    let name_byte = tab_row
+        .find("to_close.txt")
+        .expect("to_close.txt tab should be on the tab bar");
+    let close_byte = name_byte
+        + tab_row[name_byte..]
+            .find('×')
+            .expect("the tab should have a close button");
+    let close_col = tab_row[..close_byte].chars().count();
+
+    harness
+        .mouse_middle_click(close_col as u16, layout::TAB_BAR_ROW as u16)
+        .unwrap();
+
+    harness.assert_screen_not_contains("UNIQUE_CONTENT_TO_CLOSE");
+    let tab_row_after = harness.get_screen_row(layout::TAB_BAR_ROW);
+    assert!(
+        !tab_row_after.contains("to_close.txt"),
+        "the tab whose close button was middle-clicked should be gone: {tab_row_after}"
+    );
+}
+
+/// Middle-clicking a modified tab's name asks before closing, as the `×` does.
+#[test]
+fn test_middle_click_modified_tab_name_prompts() {
+    use crate::common::harness::layout;
+
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("dirty.txt");
+    std::fs::write(&file_path, "saved text").unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.type_text("UNSAVED_EDIT").unwrap();
+    harness.render().unwrap();
+
+    let tab_row = harness.get_screen_row(layout::TAB_BAR_ROW);
+    let name_col = tab_row
+        .find("dirty.txt")
+        .map(|byte| tab_row[..byte].chars().count())
+        .expect("dirty.txt tab should be on the tab bar");
+    harness
+        .mouse_middle_click((name_col + 2) as u16, layout::TAB_BAR_ROW as u16)
+        .unwrap();
+
+    harness.assert_screen_contains("Unsaved Changes");
+    // The prompt is pending: the buffer and its edit are still there.
+    harness.assert_screen_contains("UNSAVED_EDIT");
+    assert_eq!(
+        std::fs::read_to_string(&file_path).unwrap(),
+        "saved text",
+        "nothing should be saved by the prompt appearing"
+    );
+}
+
 /// Test clicking X on modified buffer shows confirmation prompt
 #[test]
 fn test_click_tab_close_button_modified_buffer() {
