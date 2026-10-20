@@ -3046,6 +3046,9 @@ impl Editor {
         self.plugin_timers
             .retain(|t| t.repeat || !fired.contains(&t.id));
 
+        // Timer handlers are not user input, so they stay out of any macro
+        // being recorded (otherwise every tick lands in the saved macro).
+        let was_suppressed = std::mem::replace(&mut self.suppress_macro_recording, true);
         for (id, plugin_name, handler_name) in due {
             if let Err(e) = self.handle_action(Action::PluginAction(handler_name.clone())) {
                 tracing::warn!(
@@ -3053,6 +3056,7 @@ impl Editor {
                 );
             }
         }
+        self.suppress_macro_recording = was_suppressed;
         true
     }
 
@@ -3226,9 +3230,11 @@ impl Editor {
     /// Define (or replace) an in-memory macro under `register` from a step
     /// list supplied by a plugin (`editor.defineMacro`). Each step is parsed
     /// through `Action::from_str` (with its args), so payload actions like
-    /// `insert_char` reconstruct faithfully. Unknown action names are skipped
-    /// with a warning rather than aborting, so one typo in a hand-edited
-    /// `init.ts` macro doesn't discard the whole register.
+    /// `insert_char` reconstruct faithfully. A name that isn't a built-in
+    /// action parses as a plugin action, so a typo is stored rather than
+    /// rejected. A step whose required args are missing (e.g. `insert_char`
+    /// with no `char`) is skipped with a warning rather than aborting, so one
+    /// bad step in a hand-edited `init.ts` macro doesn't discard the register.
     fn handle_define_macro(&mut self, register: String, steps: Vec<fresh_core::api::ActionSpec>) {
         use crate::input::keybindings::Action;
 
@@ -3247,7 +3253,7 @@ impl Editor {
                 }
                 None => {
                     tracing::warn!(
-                        "defineMacro['{}']: unknown action '{}' skipped",
+                        "defineMacro['{}']: action '{}' is missing its args, skipped",
                         key,
                         spec.action
                     );

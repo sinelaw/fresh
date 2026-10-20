@@ -1168,6 +1168,12 @@ pub struct Editor {
     #[cfg(feature = "plugins")]
     plugin_timers: Vec<crate::app::plugin_timers::PluginTimer>,
 
+    /// True while `check_plugin_timers` dispatches a timer's handler. A tick
+    /// is the plugin's doing, not the user's, so `record_macro_action` must
+    /// not append it to an in-flight macro recording.
+    #[cfg(feature = "plugins")]
+    suppress_macro_recording: bool,
+
     /// Registered diff baselines (registerDiffBaseline plugin API family).
     /// Shared with off-loop loader tasks; see `app/diff_baselines.rs`.
     #[cfg(feature = "plugins")]

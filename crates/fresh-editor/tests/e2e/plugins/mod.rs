@@ -88,6 +88,7 @@ pub mod set_split_ratio_leaf;
 pub mod tab_actions;
 pub mod terminal_hooks;
 pub mod theme_editor;
+pub mod timer_macro_recording;
 pub mod trust_lockdown;
 pub mod unified_keybindings;
 pub mod vi_mode_autostart;

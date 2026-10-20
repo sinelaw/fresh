@@ -213,7 +213,7 @@ A recorded macro lives only in its register until you persist it:
 - **Macro: Save to init.ts** writes the macro to your [`init.ts`](../configuration/init.md) as an editable `editor.defineMacro("0", [...])` block. Saved macros are seeded back into their registers at startup.
 - **Macro: Promote to command** turns the macro into a `registerCommand` handler in `init.ts`, seeded with the recorded steps — a starting point you can extend with loops, conditionals, or any plugin API.
 
-Both write a sentinel-delimited block and reload `init.ts` immediately.
+Both write a sentinel-delimited block and reload `init.ts` immediately. Each step is `{ action, args?, count? }`; the [Actions reference](../configuration/actions.md) lists every action name and the args it takes.
 
 To bind a custom key to play a macro, follow the example below to add a `keybindings` section to your local `config.json`. 
 

@@ -155,6 +155,10 @@ impl Editor {
     /// contain at replay time. Everything else is forwarded unchanged to the
     /// subsystem, which applies its own control-action filter.
     pub(super) fn record_macro_action(&mut self, action: &Action) {
+        #[cfg(feature = "plugins")]
+        if self.suppress_macro_recording {
+            return;
+        }
         if let Action::PromptConfirm = action {
             if let Some(prompt) = &self.active_window_mut().prompt {
                 let text = prompt.get_text().to_string();
