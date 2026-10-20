@@ -5,6 +5,9 @@ permissions:
 
 on:
   pull_request:
+    # The defaults, plus auto_merge_enabled: turning auto-merge on is what
+    # starts the macOS and Windows tests (see `plan`).
+    types: [opened, synchronize, reopened, auto_merge_enabled]
   push:
     branches:
       - main
@@ -24,6 +27,34 @@ concurrency:
 # run the pull request's own code — a build.rs, a proc macro, a test — and the
 # default checkout leaves the job token in `.git/config` for that code to read.
 jobs:
+  # Whether this is a full run. Every push to a pull request gets the quick
+  # checks and the Linux tests; the macOS and Windows tests, the musl build and
+  # the Debian system-QuickJS build join once the pull request has auto-merge
+  # on or carries the `full-ci` label (read at the next push), and always run
+  # on pushes to the default branch. Nothing merges on a Linux-only run: `ci-ok`
+  # reports under that name only after a full run, so until then the required
+  # check stays "expected" and the pull request cannot merge.
+  plan:
+    name: plan
+    runs-on: ubuntu-latest
+    outputs:
+      full: ${{ steps.plan.outputs.full }}
+      os: ${{ steps.plan.outputs.os }}
+    steps:
+      - name: Choose the test matrix
+        id: plan
+        env:
+          FULL: ${{ github.event_name != 'pull_request' || github.event.pull_request.auto_merge != null || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+        run: |
+          if [ "$FULL" = true ]; then
+            os='["ubuntu-latest","macos-latest","windows-latest"]'
+          else
+            os='["ubuntu-latest"]'
+            echo "Linux only: macOS and Windows run once auto-merge is on or the pull request has the full-ci label." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "full=$FULL" >> "$GITHUB_OUTPUT"
+          echo "os=$os" >> "$GITHUB_OUTPUT"
+
   fmt:
     name: fmt
     runs-on: ubuntu-latest
@@ -161,13 +192,19 @@ jobs:
       - name: Failure modes
         run: ./scripts/test-install-failure-modes.sh
 
+  # Each OS's tests run in two shards: with a warm cache the build takes a few
+  # minutes and running the tests takes 20-35, so splitting the run roughly
+  # halves the time to a result. Every shard builds the same test binaries;
+  # `--partition` picks which tests it runs, by a hash of the test's name.
   test:
+    needs: plan
     runs-on: ${{ matrix.os }}
-    name: test ${{ matrix.os }}
+    name: test ${{ matrix.os }} (${{ matrix.shard }}/2)
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ fromJSON(needs.plan.outputs.os) }}
+        shard: [1, 2]
     steps:
       # if your project needs OpenSSL, uncomment this to fix Windows builds.
       # it's commented out by default as the install command takes 5-10m.
@@ -180,8 +217,11 @@ jobs:
           persist-credentials: false
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+      # Both shards build the same thing; one saving the cache is enough.
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          save-if: ${{ matrix.shard == 1 }}
       - name: Install cargo-nextest
         uses: taiki-e/install-action@c3ec0de9ae7f1019cea21aa96aa0a895b9552063 # v2
         with:
@@ -201,13 +241,13 @@ jobs:
         run: cargo generate-lockfile
       - name: Run tests (Linux — headless with Xvfb + lavapipe)
         if: runner.os == 'Linux'
-        run: xvfb-run cargo nextest run -j=4 --no-fail-fast --locked --all-features --all-targets
+        run: xvfb-run cargo nextest run -j=4 --partition hash:${{ matrix.shard }}/2 --no-fail-fast --locked --all-features --all-targets
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
           WGPU_BACKEND: "vulkan"
       - name: Run tests
         if: runner.os != 'Linux'
-        run: cargo nextest run -j=4 --no-fail-fast --locked --all-features --all-targets
+        run: cargo nextest run -j=4 --partition hash:${{ matrix.shard }}/2 --no-fail-fast --locked --all-features --all-targets
 
   # Fresh as a Debian package would build it, inside a Debian testing
   # container so every system tool is what Debian ships:
@@ -227,6 +267,8 @@ jobs:
   # See docs/internal/debian-quickjs-spike.md.
   system-quickjs:
     name: Debian build (system QuickJS, esbuild)
+    needs: plan
+    if: needs.plan.outputs.full == 'true'
     runs-on: ubuntu-latest
     container: debian:testing
     # cargo test has no per-test timeout; cap the job so a hang fails it
@@ -308,5 +350,71 @@ jobs:
         uses: taiki-e/install-action@c3ec0de9ae7f1019cea21aa96aa0a895b9552063 # v2
         with:
           tool: cargo-deny
-      - name: Check advisories, sources and licenses
-        run: cargo deny --all-features check advisories sources licenses
+      - name: Check sources and licenses
+        run: cargo deny --all-features check sources licenses
+
+  # Kept out of `ci-ok`: a new RustSec advisory turns this red on every pull
+  # request at once, whatever the pull request changed.
+  advisories:
+    name: advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@c3ec0de9ae7f1019cea21aa96aa0a895b9552063 # v2
+        with:
+          tool: cargo-deny
+      - name: Check advisories
+        run: cargo deny --all-features check advisories
+
+  # The static Linux build (musl-builds.yml), on full runs only.
+  musl:
+    name: musl
+    needs: plan
+    if: needs.plan.outputs.full == 'true'
+    uses: ./.github/workflows/musl-builds.yml
+    with:
+      check-only: true
+
+  # The one check the ruleset needs to require: it fails unless every job above
+  # succeeded, so adding, renaming or sharding a job never touches the ruleset.
+  # `always()` rather than `!cancelled()`: a skipped required check counts as
+  # passing, so this must run, and fail, when anything it needs was cancelled
+  # or skipped. On a Linux-only run it reports under another name, so the
+  # required `ci-ok` is only ever satisfied by a full run; there, and only
+  # there, the jobs that wait for a full run may be skipped.
+  ci-ok:
+    name: ${{ needs.plan.outputs.full == 'true' && 'ci-ok' || 'ci-ok (Linux only)' }}
+    if: always()
+    needs:
+      - plan
+      - fmt
+      - clippy
+      - doc
+      - schema
+      - plugin-api
+      - check-no-plugins
+      - newer-toolchain
+      - installer
+      - test
+      - system-quickjs
+      - musl
+      - actionlint
+      - supply-chain
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          FULL: ${{ needs.plan.outputs.full }}
+        run: |
+          failed=$(jq -r --arg full "$FULL" 'to_entries[]
+            | select(.value.result != "success")
+            | select($full == "true" or .value.result != "skipped" or (.key | IN("system-quickjs", "musl") | not))
+            | "\(.key): \(.value.result)"' <<< "$NEEDS")
+          if [ -n "$failed" ]; then
+            while IFS= read -r line; do echo "::error::$line"; done <<< "$failed"
+            exit 1
+          fi
