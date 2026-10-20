@@ -3768,6 +3768,14 @@ where
 /// - `None` — not a nested launch, nothing to forward, or the parent
 ///   socket is unreachable; the caller should launch inline as usual.
 fn try_forward_nested(args: &Args) -> Option<AnyhowResult<()>> {
+    // A bare `fresh` with Auto Attach on is already where it would attach:
+    // no second editor nested in the terminal.
+    if args.files.is_empty() && is_bare_terminal_launch() {
+        let session = enclosing_session()?;
+        auto_attach_config()?;
+        return already_in_enclosing(&session);
+    }
+
     // Only plain interactive file/dir opens are forwarded. Subcommands,
     // --server and --attach are already handled before we get here;
     // --stdin pipes content into a real editor and can't be forwarded.
@@ -3790,6 +3798,33 @@ fn try_forward_nested(args: &Args) -> Option<AnyhowResult<()>> {
             None
         }
     }
+}
+
+/// The Fresh editor whose embedded terminal this process runs in, from the
+/// `FRESH_SESSION` every such terminal advertises (see `server::local_control`).
+fn enclosing_session() -> Option<String> {
+    std::env::var("FRESH_SESSION")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+}
+
+/// A bare `fresh` (or `fresh -a`) typed in a Fresh terminal, with Auto Attach
+/// on. That terminal is already inside the editor it would attach to, so
+/// there is nothing to attach: rather than nest a second editor in the
+/// terminal, or move the enclosing one to another workspace under the
+/// prompt you typed at, it leaves the editor exactly as it is and says how
+/// to act on it. `fresh FILE` and `fresh DIR` still do.
+///
+/// `None` when the enclosing editor cannot be reached: the caller launches as
+/// it would have before.
+fn already_in_enclosing(session: &str) -> Option<AnyhowResult<()>> {
+    let socket_paths = resolve_session(Some(session)).ok()?;
+    socket_paths.cleanup_if_stale();
+    if !socket_paths.is_server_alive() {
+        return None;
+    }
+    eprintln!("Already in Fresh. `fresh FILE` opens a file here, `fresh DIR` opens a workspace.");
+    Some(Ok(()))
 }
 
 /// Forward `files` (a mix of files and directories) to the parent session.
@@ -5408,7 +5443,37 @@ fn read_script_source(from: &[&str]) -> AnyhowResult<String> {
 }
 
 /// Attach to an existing daemon, starting one if needed
+///
+/// With Auto Attach on, `fresh -a` with no name is a bare `fresh`: the one
+/// shared daemon, in this directory's workspace (with any files opened
+/// there); inside a Fresh terminal that is the editor around it, so it
+/// does nothing (see `already_in_enclosing`), or forwards its files. `fresh -a NAME`, and `-a` with Auto Attach off,
+/// keep their own daemons.
 fn run_attach_command(args: &Args) -> AnyhowResult<()> {
+    if args.session_name.is_none() {
+        if let Some(config) = auto_attach_config() {
+            match enclosing_session() {
+                Some(session) if args.files.is_empty() => {
+                    if let Some(result) = already_in_enclosing(&session) {
+                        return result;
+                    }
+                }
+                Some(session) => {
+                    if forward_to_session(&session, &args.files)? {
+                        return Ok(());
+                    }
+                }
+                None => {
+                    return run_orchestrator_launch(
+                        &config,
+                        &args.files,
+                        args.locale.as_deref(),
+                        args.config.as_deref(),
+                    );
+                }
+            }
+        }
+    }
     run_attach(
         args.session_name.as_deref(),
         &args.files,
@@ -5436,12 +5501,20 @@ fn run_attach_command(args: &Args) -> AnyhowResult<()> {
 /// With `open_last_workspace` on, a running daemon is left on the workspace
 /// it shows (the one used last), and one started here opens the workspace
 /// used last itself (see `bare_launch_dir`).
-fn run_orchestrator_launch(config: &config::Config) -> AnyhowResult<()> {
+///
+/// `files`, `locale` and `config_path` are a `fresh -a`'s (see
+/// `run_attach_command`); a bare `fresh` has none.
+fn run_orchestrator_launch(
+    config: &config::Config,
+    files: &[String],
+    locale: Option<&str>,
+    config_path: Option<&Path>,
+) -> AnyhowResult<()> {
     run_attach(
         Some(fresh::server::ORCHESTRATOR_DAEMON),
-        &[],
-        None,
-        None,
+        files,
+        locale,
+        config_path,
         true,
         !config.open_last_workspace,
     )
@@ -5482,9 +5555,16 @@ fn wants_orchestrator_launch() -> Option<config::Config> {
     if !is_bare_terminal_launch() {
         return None;
     }
-    if std::env::var("FRESH_SESSION").is_ok_and(|s| !s.trim().is_empty()) {
+    if enclosing_session().is_some() {
         return None;
     }
+    auto_attach_config()
+}
+
+/// The config for this directory, when it has Auto Attach on. A config that
+/// cannot be read is not an error here — it means the ordinary launch, which
+/// will report the problem properly.
+fn auto_attach_config() -> Option<config::Config> {
     let dir_context = fresh::config_io::DirectoryContext::from_system().ok()?;
     let working_dir = std::env::current_dir().unwrap_or_default();
     let config = config::Config::load_with_layers(&dir_context, &working_dir);
@@ -6276,7 +6356,7 @@ fn real_main() -> AnyhowResult<()> {
     // clap, so `--help` and `--version` still answer for themselves — both
     // put something on the command line, so neither reaches this.
     if let Some(config) = wants_orchestrator_launch() {
-        return run_orchestrator_launch(&config);
+        return run_orchestrator_launch(&config, &[], None, None);
     }
 
     // `--skill` is the shortcut an agent is told to run first: one short,

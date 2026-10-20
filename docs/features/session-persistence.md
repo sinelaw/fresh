@@ -25,6 +25,10 @@ fresh            # this directory's workspace, in the shared daemon
 fresh notes.md   # unaffected: an editor here, on this file
 ```
 
+Typed in one of Fresh's own terminals, a bare `fresh` or `fresh -a` does nothing to
+the editor: you are already in it. It says so and exits; `fresh FILE` and
+`fresh DIR` still open files and workspaces in that editor.
+
 To have a bare `fresh` reopen the workspace you used last instead, wherever
 you type it, turn on **Open Last Workspace** (`"open_last_workspace": true`).
 It works with Auto Attach on or off, and changes nothing for `fresh
@@ -92,7 +96,7 @@ The `daemon` subcommand is an alias for the older `session` subcommand; both for
 | `fresh myfile.txt` | Direct | Just that file: no background process, no workspace restored or saved, no dock. See [Opening Files](#opening-files). |
 | `fresh --simple` | Direct | The same, with or without files: an empty buffer in this terminal. |
 | `fresh` | Daemon | Auto Attach: the shared `orchestrator` daemon, in this directory's workspace, and the dock once you have opened it. Direct when `auto_attach` is off. |
-| `fresh -a` | Daemon | Background daemon for this directory. Supports detach/reattach. |
+| `fresh -a` | Daemon | With Auto Attach on, the same as a bare `fresh` (files given with it open there too). With it off, a background daemon for this directory. Supports detach/reattach. |
 | `fresh --web [ADDR]` | Daemon | Foreground daemon that also serves the browser UI. |
 
 Use daemon mode for long-running tasks or remote work where the connection may drop.
