@@ -1446,14 +1446,20 @@ impl Editor {
                     // (`getPanelFocusKey`); it must read the host's answer as
                     // of this key, not the last full snapshot's.
                     self.publish_panel_focus();
+                    // A macro replay step runs as an answerable call, so the
+                    // replay learns when the handler has settled.
+                    let request_id = self.macro_replay.as_ref().and_then(|r| r.dispatch_request);
                     let result = self.plugin_manager.read().unwrap().execute_action_async(
                         &action_name,
                         None,
-                        None,
+                        request_id,
                     );
                     if let Some(result) = result {
                         match result {
                             Ok(receiver) => {
+                                if let Some(replay) = self.macro_replay.as_mut() {
+                                    replay.dispatch_request = None;
+                                }
                                 // Store pending action for processing in main loop
                                 self.pending_plugin_actions
                                     .push((action_name.clone(), receiver));

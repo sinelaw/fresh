@@ -66,6 +66,7 @@ pub mod orchestrator_open_cross_project;
 pub mod orchestrator_plugin_api;
 pub mod package_manager;
 pub mod plugin;
+pub mod plugin_action_macro_replay;
 pub mod plugin_authoring;
 pub mod plugin_config_changed_hook;
 pub mod plugin_config_registration;

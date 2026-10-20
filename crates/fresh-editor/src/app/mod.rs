@@ -1168,9 +1168,14 @@ pub struct Editor {
     #[cfg(feature = "plugins")]
     plugin_timers: Vec<crate::app::plugin_timers::PluginTimer>,
 
-    /// True while `check_plugin_timers` dispatches a timer's handler. A tick
-    /// is the plugin's doing, not the user's, so `record_macro_action` must
-    /// not append it to an in-flight macro recording.
+    /// The macro replay in progress, if any. A replay outlives the call that
+    /// started it when it waits on a plugin step; see `play_macro`.
+    macro_replay: Option<crate::app::macro_actions::MacroReplay>,
+
+    /// True while dispatching actions that are a plugin's doing rather than
+    /// the user's (a timer tick, an `executeActions` step), so
+    /// `record_macro_action` leaves them out of an in-flight recording. Set
+    /// through `without_macro_recording`.
     #[cfg(feature = "plugins")]
     suppress_macro_recording: bool,
 

@@ -1714,8 +1714,10 @@ impl Editor {
             }
 
             // ==================== Vi Mode Commands ====================
+            // Actions a plugin issues are its handler's doing, and replaying
+            // the handler issues them again, so they stay out of a recording.
             PluginCommand::ExecuteAction { action_name } => {
-                self.handle_execute_action(action_name);
+                self.without_macro_recording(|editor| editor.handle_execute_action(action_name));
             }
             PluginCommand::CompleteCommand {
                 request_id,
@@ -1730,7 +1732,7 @@ impl Editor {
                 crate::server::command_access::complete(request_id, ok, output, error);
             }
             PluginCommand::ExecuteActions { actions } => {
-                self.handle_execute_actions(actions);
+                self.without_macro_recording(|editor| editor.handle_execute_actions(actions));
             }
             PluginCommand::DefineMacro { register, steps } => {
                 self.handle_define_macro(register, steps);
@@ -3048,15 +3050,15 @@ impl Editor {
 
         // Timer handlers are not user input, so they stay out of any macro
         // being recorded (otherwise every tick lands in the saved macro).
-        let was_suppressed = std::mem::replace(&mut self.suppress_macro_recording, true);
-        for (id, plugin_name, handler_name) in due {
-            if let Err(e) = self.handle_action(Action::PluginAction(handler_name.clone())) {
-                tracing::warn!(
-                    "plugin timer {id} ({plugin_name}) handler '{handler_name}' failed: {e}"
-                );
+        self.without_macro_recording(|editor| {
+            for (id, plugin_name, handler_name) in due {
+                if let Err(e) = editor.handle_action(Action::PluginAction(handler_name.clone())) {
+                    tracing::warn!(
+                        "plugin timer {id} ({plugin_name}) handler '{handler_name}' failed: {e}"
+                    );
+                }
             }
-        }
-        self.suppress_macro_recording = was_suppressed;
+        });
         true
     }
 
