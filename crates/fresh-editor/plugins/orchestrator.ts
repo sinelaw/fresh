@@ -16086,7 +16086,9 @@ function recoverPendingWorkspaces(): void {
     void startPendingWorkspace(spec, { restored: true, label });
     restored++;
   }
-  if (restored > 0) showDockUnfocused();
+  // A file launch (`fresh FILE`, `--simple`) keeps the dock closed; the rows
+  // are there when the user opens it.
+  if (restored > 0 && !editor.fileLaunch()) showDockUnfocused();
 }
 
 // `visit`: "Create & Visit" — focus follows into the workspace once it's real.
@@ -18839,8 +18841,8 @@ editor.on("ready", () => {
   void loadDetectionRules();
   recoverPendingWorkspaces();
   // Blurred, so the keyboard stays with the editor. Whether it opens is the
-  // host's call (`orchestrator.manifest.json` and what the user left); the
-  // column is already carved, and the mount fills it.
+  // host's call (`orchestrator.manifest.json`, what the user left, and never
+  // on a file launch); the column is already carved, and the mount fills it.
   if (editor.dockOpen()) {
     showDockUnfocused();
   }

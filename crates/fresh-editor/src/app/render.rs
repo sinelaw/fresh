@@ -6549,6 +6549,52 @@ mod dock_reservation_tests {
         }
     }
 
+    /// A file launch (`fresh FILE`, `--simple`) starts without the dock even
+    /// when the user left it open — by `always` or by what was remembered at
+    /// quit — and writes nothing back, so the next session launch still
+    /// finds it open.
+    #[test]
+    fn a_file_launch_starts_without_the_dock_whatever_was_left() {
+        let manifests: std::collections::HashMap<
+            String,
+            crate::services::plugins::manifest::PluginManifest,
+        > = std::collections::HashMap::from([(
+            "orchestrator".to_string(),
+            serde_json::from_str(DECLARES_DOCK).unwrap(),
+        )]);
+        for (case, setting) in [
+            ("`always`", serde_json::json!({ "autoOpenDock": "always" })),
+            (
+                "`auto`, left open at quit",
+                serde_json::json!({ "autoOpenDock": "auto" }),
+            ),
+        ] {
+            let dir_context = home(Some(DECLARES_DOCK));
+            let chrome = dir_context.data_dir.join("chrome.json");
+            std::fs::create_dir_all(&dir_context.data_dir).unwrap();
+            std::fs::write(&chrome, r#"{"dock":{"open":true}}"#).unwrap();
+            let config = orchestrator_config(true, setting);
+            let mut editor = editor(dir_context, config, false);
+            assert!(
+                dock_width_of(&editor).is_some(),
+                "{case}: a session launch opens it"
+            );
+
+            editor.file_launch = true;
+            editor.apply_startup_dock_chrome(&manifests);
+            assert_eq!(
+                dock_width_of(&editor),
+                None,
+                "{case}: a file launch does not"
+            );
+            assert_eq!(
+                std::fs::read_to_string(&chrome).unwrap(),
+                r#"{"dock":{"open":true}}"#,
+                "{case}: nothing is written back"
+            );
+        }
+    }
+
     /// The pre-#3442 boolean is rewritten as the mode it meant, in memory and
     /// on disk, so the Settings UI shows what startup used. See
     /// `Editor::rewrite_legacy_dock_open_setting` for why that matters.
