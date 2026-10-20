@@ -27,6 +27,14 @@ pub fn get_socket_dir() -> io::Result<PathBuf> {
     Ok(socket_dir)
 }
 
+/// The longest socket path `bind(2)` accepts, in bytes: `sun_path` less its
+/// terminating NUL (107 on Linux, 103 on macOS and the BSDs).
+pub fn max_socket_path_len() -> Option<usize> {
+    // SAFETY: `sockaddr_un` is plain old data; all-zero is a valid value.
+    let addr: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    Some(addr.sun_path.len() - 1)
+}
+
 /// Convert a socket path to an interprocess socket name on Unix
 pub fn socket_name_for_path(path: &Path) -> io::Result<interprocess::local_socket::Name<'static>> {
     // Convert to owned PathBuf to get 'static lifetime
