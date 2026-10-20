@@ -15,7 +15,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
     * The Orchestrator dock starts closed, for a bare `fresh` too and for existing users whose dock was open at their last quit; open it from View ▸ Orchestrator Dock and it stays open from then on
     * A bare `fresh` opens the directory you typed it in, also when it reattaches to a running daemon, instead of the workspace you used last. The new **Open Last Workspace** setting (`open_last_workspace`, off by default) brings back the old behaviour, with Auto Attach on or off
     * An empty workspace behaves the same for a bare `fresh` as in any launch: a `[No Name]` buffer on a first run, and closing the last tab follows `auto_create_empty_buffer_on_last_buffer_close` and `file_explorer.auto_open_on_last_buffer_close` instead of always leaving a blank pane
-    * `fresh DIR` behaves as before, and `--restore` brings the full session back to a file launch
+    * `fresh DIR` still restores that directory's previous workspace (open files, layout) and shows the dock and Welcome tab; `fresh --restore FILE` does the same for a file launch
     * `fresh DIR` opens the file explorer unless you closed it in that directory yourself; `fresh --simple` (with or without a directory) starts with it closed
     * Startup is faster with many workspaces, which now load on first use
 * **Markdown Source / Rendered / Source+Compose modes** - new commands switch a Markdown pane between the raw text and the composed view, and a dual mode shows both side by side in one scroll-synced tab (edit on the source side; closing the tab leaves your file and panes as they were). "Cycle View Mode" steps through all three (#3562, by @PilotLeoYan)
