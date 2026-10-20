@@ -1482,7 +1482,7 @@ fn settings_dialog_does_not_overlap_dock() {
     h.wait_until(|h| h.screen_to_string().contains("Open Settings"))
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Orchestrator Mode"))
+    h.wait_until(|h| h.screen_to_string().contains("Auto Attach"))
         .unwrap();
 
     // The full title — including the leading space and the [User]

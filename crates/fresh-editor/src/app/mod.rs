@@ -1089,9 +1089,9 @@ pub struct Editor {
     /// Event broadcaster for control events (observable by external systems)
     event_broadcaster: crate::model::control_event::EventBroadcaster,
 
-    /// This editor was launched by a bare `fresh` with
-    /// [`Config::orchestrator_mode`](crate::config::Config::orchestrator_mode)
-    /// on, so it is a workspace switcher first and a file editor second.
+    /// This editor is the daemon a bare `fresh` with
+    /// [`Config::auto_attach`](crate::config::Config::auto_attach) on attaches
+    /// to (the launch is still called Orchestrator mode internally).
     ///
     /// Read through [`Editor::orchestrator_mode`]. Set once at
     /// construction and never mutated: it describes how the process was

@@ -10,9 +10,10 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 * **Simple launch by default** - based on your feedback, some defaults are dialed back so launching is simple. Nothing was removed (#3555, #3556, #3568, reported by @zipproth)
     * `fresh FILE` opens just that file, with no restored session, dock or Welcome tab (even if you left the dock open). This makes Fresh a better `$EDITOR` / git `core.editor`; `fresh --simple` does the same without a file
-    * The Orchestrator dock starts closed, in Orchestrator mode too and for existing users whose dock was open at their last quit; open it from View ▸ Orchestrator Dock and it stays open from then on
-    * A bare `fresh` opens the directory you typed it in, also when it reattaches to a running daemon, instead of the workspace you used last. The new **Open Last Workspace** setting (`open_last_workspace`, off by default) brings back the old behaviour, with Orchestrator mode on or off
-    * An empty workspace behaves the same in Orchestrator mode as in any launch: a `[No Name]` buffer on a first run, and closing the last tab follows `auto_create_empty_buffer_on_last_buffer_close` and `file_explorer.auto_open_on_last_buffer_close` instead of always leaving a blank pane
+    * **Orchestrator mode is now Auto Attach** (`auto_attach`): what the setting does is attach a bare `fresh` to the shared background editor, so it is named for that. `orchestrator_mode` in an existing config is still read, and moves to the new name the next time a setting is saved
+    * The Orchestrator dock starts closed, for a bare `fresh` too and for existing users whose dock was open at their last quit; open it from View ▸ Orchestrator Dock and it stays open from then on
+    * A bare `fresh` opens the directory you typed it in, also when it reattaches to a running daemon, instead of the workspace you used last. The new **Open Last Workspace** setting (`open_last_workspace`, off by default) brings back the old behaviour, with Auto Attach on or off
+    * An empty workspace behaves the same for a bare `fresh` as in any launch: a `[No Name]` buffer on a first run, and closing the last tab follows `auto_create_empty_buffer_on_last_buffer_close` and `file_explorer.auto_open_on_last_buffer_close` instead of always leaving a blank pane
     * `fresh DIR` and `fresh -a` behave as before, and `--restore` brings the full session back to a file launch
     * `fresh DIR` opens the file explorer unless you closed it in that directory yourself; `fresh --simple` (with or without a directory) starts with it closed
     * Startup is faster with many workspaces, which now load on first use
@@ -22,7 +23,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Bug Fixes
 
-* **Unsaved changes carry over between Orchestrator mode and a direct launch** - an edit left unsaved in a bare `fresh` now comes back in `fresh FILE` or with Orchestrator mode off, and the other way round; each mode used to keep its own recovery store
+* **Unsaved changes carry over between the background daemon and a direct launch** - an edit left unsaved in a bare `fresh` now comes back in `fresh FILE` or with Auto Attach off, and the other way round; each mode used to keep its own recovery store
 * **A detached daemon no longer shuts itself down** - it used to exit after an hour with no terminal attached, taking running agents with it; it now runs until you quit it
 * **Markdown compose layout with emoji and CJK text** - code-block frames keep their edges and wrapped table cells no longer start with a stray space or break early (#3562)
 * **Clear error in mintty / Git Bash** - Fresh now explains it needs a real console instead of failing with `os error 6` (#3547, #3549, reported by @netoffice-zz)

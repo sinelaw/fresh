@@ -7,11 +7,11 @@
 > alias, and this page keeps its `/features/session-persistence` URL so
 > existing links and bookmarks continue to work.
 
-> **Palette:** `Detach`. **CLI:** `fresh`, `fresh -a`, `fresh --cmd daemon list|new|kill`, `fresh --restore`, `fresh --no-restore`. **Config:** `orchestrator_mode`, `open_last_workspace`, `hot_exit`, `editor.restore_previous_session`, `editor.ephemeral_file_patterns`.
+> **Palette:** `Detach`. **CLI:** `fresh`, `fresh -a`, `fresh --cmd daemon list|new|kill`, `fresh --restore`, `fresh --no-restore`. **Config:** `auto_attach`, `open_last_workspace`, `hot_exit`, `editor.restore_previous_session`, `editor.ephemeral_file_patterns`.
 
 Detach from Fresh and reattach later, similar to tmux. The Fresh daemon keeps running in the background, so your editor state survives even after you close the terminal.
 
-## Orchestrator mode (a bare `fresh`)
+## Auto Attach (a bare `fresh`)
 
 Typing `fresh` with nothing after it opens the workspace for the directory
 you typed it in, with the workspace dock on screen if you opened it yourself
@@ -27,7 +27,7 @@ fresh notes.md   # unaffected: an editor here, on this file
 
 To have a bare `fresh` reopen the workspace you used last instead, wherever
 you type it, turn on **Open Last Workspace** (`"open_last_workspace": true`).
-It works with Orchestrator mode on or off, and changes nothing for `fresh
+It works with Auto Attach on or off, and changes nothing for `fresh
 DIR`, `fresh FILE` or any other run with arguments.
 
 The rule is exactly "the command line is empty". A file, or any flag, means
@@ -35,8 +35,9 @@ The rule is exactly "the command line is empty". A file, or any flag, means
 workspaces — sets up a workspace for the current directory and opens the
 welcome screen beside an empty buffer, as any launch does.
 
-Turn it off with **Orchestrator Mode** in the Settings UI, the checkbox at the
-top of the welcome screen, or `"orchestrator_mode": false` in `config.json`.
+Turn it off with **Auto Attach** in the Settings UI, the checkbox at the
+top of the welcome screen, or `"auto_attach": false` in `config.json` (the
+setting was called `orchestrator_mode` before; that name is still read).
 With it off, a bare `fresh` is a plain editor in this terminal, in this
 directory, with no daemon.
 
@@ -50,7 +51,7 @@ See also: [Remote Editing (SSH)](./ssh.md) for pairing daemon mode with remote b
 
 All buffers — including unnamed scratch buffers — persist automatically. When you quit Fresh, unsaved changes are preserved and restored on next startup. Configurable via the `hot_exit` setting (default: on).
 
-Unsaved changes follow the directory, not the way Fresh was launched: an edit left unsaved in a bare `fresh` (Orchestrator mode) comes back in `fresh FILE`, `fresh DIR` or a bare `fresh` with Orchestrator mode off, and the other way round. While the editor that holds them is still running — a detached daemon, say — they stay with it.
+Unsaved changes follow the directory, not the way Fresh was launched: an edit left unsaved in a bare `fresh` (with Auto Attach) comes back in `fresh FILE`, `fresh DIR` or a bare `fresh` with Auto Attach off, and the other way round. While the editor that holds them is still running — a detached daemon, say — they stay with it.
 
 ## Workspace Storage
 
@@ -90,7 +91,7 @@ The `daemon` subcommand is an alias for the older `session` subcommand; both for
 |---------|------|-------------|
 | `fresh myfile.txt` | Direct | Just that file: no background process, no workspace restored or saved, no dock. See [Opening Files](#opening-files). |
 | `fresh --simple` | Direct | The same, with or without files: an empty buffer in this terminal. |
-| `fresh` | Daemon | Orchestrator mode: the shared `orchestrator` daemon, in this directory's workspace, and the dock once you have opened it. Direct when `orchestrator_mode` is off. |
+| `fresh` | Daemon | Auto Attach: the shared `orchestrator` daemon, in this directory's workspace, and the dock once you have opened it. Direct when `auto_attach` is off. |
 | `fresh -a` | Daemon | Background daemon for this directory. Supports detach/reattach. |
 | `fresh --web [ADDR]` | Daemon | Foreground daemon that also serves the browser UI. |
 

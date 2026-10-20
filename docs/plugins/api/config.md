@@ -159,7 +159,7 @@ the Settings UI does (same layer resolution, same comment-preserving
 rewrite) *and* applies the value immediately, so a checkbox a plugin
 draws can own a real setting.
 
-`path` is dot-separated (e.g. `"orchestrator_mode"`,
+`path` is dot-separated (e.g. `"auto_attach"`,
 `"editor.tab_size"`). The host refuses a path that is not a real
 config setting rather than writing a key that would be silently
 dropped on the next load, and says so in the status bar.

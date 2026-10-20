@@ -190,7 +190,7 @@ impl Scenario {
         self.boot_with(cwd, false)
     }
 
-    /// [`Self::boot_in`] as a bare `fresh` with Orchestrator mode on boots.
+    /// [`Self::boot_in`] as a bare `fresh` with Auto Attach on boots.
     fn boot_orchestrator_in(&self, cwd: &Path) -> fresh::app::Editor {
         self.boot_with(cwd, true)
     }

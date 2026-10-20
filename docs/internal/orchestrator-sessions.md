@@ -207,7 +207,7 @@ depends on how the editor was launched.
 > below is what actually implements "where I was last", on a per-workspace
 > stamp rather than a single pointer.
 
-**Orchestrator mode** follows the same cwd rule: a bare `fresh` opens the
+**Auto Attach** (Orchestrator mode) follows the same cwd rule: a bare `fresh` opens the
 directory it was typed in. It used to reopen the most recently focused
 workspace wherever it was; with the dock closed by default nothing on screen
 said you were somewhere else.
@@ -342,11 +342,14 @@ wrong badge is a bug report with evidence. The CLI verbs (`fresh --cmd
 workspace list`, `agent list|get|explain|wait|start`) are documented in
 agent-fresh-cli-exposure-plan.md.
 
-### 4.5 Orchestrator mode (the bare-`fresh` launch)
+### 4.5 Auto Attach (the bare-`fresh` launch, "Orchestrator mode" in the code)
 
-`config.orchestrator_mode` (top-level boolean, default **true**) makes a
-command line with *nothing on it* open the workspace switcher rather than an
-editor on the current directory. It is consulted for that one shape of
+`config.auto_attach` (top-level boolean, default **true**; `orchestrator_mode`
+before, which the v3 config migration renames) makes a command line with
+*nothing on it* attach to the shared background editor rather than open an
+editor in this terminal. Internally the launch is still called Orchestrator
+mode (`--orchestrator-mode`, `Editor::orchestrator_mode`, the `orchestrator`
+daemon name). It is consulted for that one shape of
 invocation and no other: `fresh FILE`, `fresh --cmd …`, `fresh -a …` all behave
 identically whether it is on or off. The gate is literally
 `std::env::args_os().count() == 1` plus "stdin is a terminal"
@@ -370,7 +373,7 @@ What the mode is, end to end:
   forwards `--orchestrator-mode`, which becomes
   `EditorServerConfig::orchestrator_mode` and then the `orchestrator_mode`
   parameter of `Editor::with_options`. It is a *parameter*, not a read of
-  `config.orchestrator_mode`: the config field is the user's preference, which
+  `config.auto_attach`: the config field is the user's preference, which
   can be on while this particular launch named a file.
 - **The cwd's workspace comes back**, as for any launch (§4.1).
 - **The editor itself is an ordinary one.** The empty-workspace settings
@@ -414,7 +417,7 @@ What the mode is, end to end:
   with its `[No Name]` buffer, and the welcome screen opens itself as a tab as
   in any launch.
 
-The switch is user-visible in two places: **Orchestrator Mode** in Settings
+The switch is user-visible in two places: **Auto Attach** in Settings
 (schema-driven, no UI code), and the checkbox at the top of the welcome screen,
 which writes the core setting through the `saveSetting` plugin API.
 

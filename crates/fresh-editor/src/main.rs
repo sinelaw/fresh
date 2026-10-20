@@ -147,8 +147,8 @@ struct Cli {
     #[arg(long, hide = true, value_name = "NAME")]
     session_name: Option<String>,
 
-    /// Boot the daemon in Orchestrator mode (internal, used by
-    /// spawn_server_detached). The client knows the launch was a bare
+    /// Boot the daemon as the one a bare `fresh` auto-attaches to (internal,
+    /// used by spawn_server_detached). The client knows the launch was a bare
     /// `fresh`; the daemon is a different process and cannot see that.
     #[arg(long, hide = true)]
     orchestrator_mode: bool,
@@ -244,7 +244,7 @@ struct Args {
     /// `files`.  Populated only for the daemon side.
     ssh_url: Option<String>,
     /// Forwarded to the detached daemon by `spawn_server_detached` when the
-    /// client was a bare `fresh` and `orchestrator_mode` was on.  Populated
+    /// client was a bare `fresh` and `auto_attach` was on.  Populated
     /// only for the daemon side.
     orchestrator_mode: bool,
     // Daemon-related fields (set via subcommands or -a shortcut)
@@ -949,7 +949,7 @@ fn handle_first_run_setup(
     }
     // The warning-log channel and status-log path are wired up in main.
 
-    // Unsaved work a bare `fresh` (Orchestrator mode) left for this
+    // Unsaved work a bare `fresh` (Auto Attach's daemon) left for this
     // directory, so every launch below can restore it — including the ones
     // that restore no workspace (`fresh FILE`, `--no-restore`).
     editor.adopt_recovery_for(editor.active_window_id());
@@ -5419,8 +5419,8 @@ fn run_attach_command(args: &Args) -> AnyhowResult<()> {
     )
 }
 
-/// A bare `fresh` — no files, no flags, nothing — with
-/// `orchestrator_mode` left on.
+/// A bare `fresh` — no files, no flags, nothing — with `auto_attach` left
+/// on.
 ///
 /// The whole launch is "attach to the shared daemon, starting it if it isn't
 /// up, in this directory's workspace". When the daemon already runs, this
@@ -5430,7 +5430,7 @@ fn run_attach_command(args: &Args) -> AnyhowResult<()> {
 ///
 /// The daemon it starts is told `--orchestrator-mode` because it is a
 /// separate process: the shape of *this* command line is the only evidence
-/// that orchestrator mode was chosen, and it does not survive the spawn on
+/// that auto-attach was chosen, and it does not survive the spawn on
 /// its own (see [`fresh::server::DaemonSpawn`]).
 ///
 /// With `open_last_workspace` on, a running daemon is left on the workspace
@@ -5447,7 +5447,7 @@ fn run_orchestrator_launch(config: &config::Config) -> AnyhowResult<()> {
     )
 }
 
-/// Whether a bare `fresh` should launch into Orchestrator mode.
+/// Whether a bare `fresh` should auto-attach to the shared daemon.
 ///
 /// Three conditions, and all of them are about *this* invocation rather than
 /// about the editor:
@@ -5458,13 +5458,13 @@ fn run_orchestrator_launch(config: &config::Config) -> AnyhowResult<()> {
 ///     a subprocess is not someone sitting down to work; and
 ///   * we are not already *inside* a Fresh editor's embedded terminal.
 ///
-/// That last one is not a nicety. Orchestrator mode attaches to the shared
+/// That last one is not a nicety. Auto-attach attaches to the shared
 /// daemon, and a terminal buffer inside that very daemon is exactly where
 /// this can be typed: the daemon then renders one shared screen into a
 /// client that lives inside its own output, which is not a second editor
 /// but a feedback loop — the pane fills with shredded frames. Falling
 /// through here launches an ordinary inline editor in the terminal, which
-/// is what a nested `fresh` did before Orchestrator mode existed and which
+/// is what a nested `fresh` did before auto-attach existed and which
 /// renders perfectly well. `FRESH_SESSION` is the signal because it is what
 /// every local embedded terminal advertises (see
 /// `server::local_control`); a stale or unreachable value costs nothing,
@@ -5488,7 +5488,7 @@ fn wants_orchestrator_launch() -> Option<config::Config> {
     let dir_context = fresh::config_io::DirectoryContext::from_system().ok()?;
     let working_dir = std::env::current_dir().unwrap_or_default();
     let config = config::Config::load_with_layers(&dir_context, &working_dir);
-    config.orchestrator_mode.then_some(config)
+    config.auto_attach.then_some(config)
 }
 
 /// A bare `fresh`: nothing on the command line, and someone at a terminal.
@@ -6271,7 +6271,7 @@ fn real_main() -> AnyhowResult<()> {
     // Print deprecation warnings for old flags
     print_deprecation_warnings(&cli);
 
-    // A bare `fresh` on a terminal, with `orchestrator_mode` on: hand the
+    // A bare `fresh` on a terminal, with `auto_attach` on: hand the
     // whole launch to the shared daemon and relay it. Checked here, after
     // clap, so `--help` and `--version` still answer for themselves — both
     // put something on the command line, so neither reaches this.
@@ -6480,7 +6480,7 @@ fn real_main() -> AnyhowResult<()> {
             true, // defer_plugin_load: TUI startup; plugin loads run on the
             // plugin thread and arrive via AsyncBridge each tick.
             //
-            // Never orchestrator mode: a bare `fresh` with the setting on
+            // Never the auto-attach daemon: a bare `fresh` with the setting on
             // hands off to the daemon long before this loop, so an editor
             // built here is by construction an ordinary in-terminal launch.
             false,

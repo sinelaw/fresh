@@ -40,9 +40,8 @@ pub struct DaemonSpawn<'a> {
     /// because the daemon inherits this process's working directory, so a
     /// relative path resolves the same on both sides.
     pub config: Option<&'a Path>,
-    /// `--orchestrator-mode`: boot into Orchestrator mode — bring back the
-    /// workspace that was last focused rather than the one matching the launch
-    /// directory. Set by the bare-`fresh` launch (see `config.orchestrator_mode`);
+    /// `--orchestrator-mode`: boot as the daemon a bare `fresh` auto-attaches
+    /// to. Set by the bare-`fresh` launch (see `config.auto_attach`);
     /// never inferred by the daemon, which has no way to know how it was started.
     pub orchestrator_mode: bool,
 }

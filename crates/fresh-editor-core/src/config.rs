@@ -469,17 +469,17 @@ pub struct Config {
     #[serde(default = "default_true")]
     pub self_update: bool,
 
-    /// When on (default), `fresh` with no arguments opens the current directory in a
-    /// single background editor that outlives the terminal and that every bare `fresh`
-    /// reattaches to. When off, it opens a plain editor in this terminal; runs with
-    /// files or flags are unaffected.
+    /// When on (default), `fresh` with no arguments runs in a single background editor
+    /// that outlives the terminal, and every later bare `fresh` reattaches to it. When
+    /// off, it opens a plain editor in this terminal. Runs with files or flags are
+    /// unaffected. Formerly `orchestrator_mode`.
     #[serde(default = "default_true")]
     #[schemars(extend("x-order" = 1))]
-    pub orchestrator_mode: bool,
+    pub auto_attach: bool,
 
     /// When on, `fresh` with no arguments reopens the workspace you used last,
     /// wherever you type it. When off (default), it opens the current directory.
-    /// Works with Orchestrator Mode on or off; runs with files or flags are
+    /// Works with Auto Attach on or off; runs with files or flags are
     /// unaffected.
     #[serde(default)]
     #[schemars(extend("x-order" = 2))]
@@ -2985,7 +2985,7 @@ impl Default for Config {
             locale: LocaleName::default(),
             check_for_updates: true,
             self_update: true,
-            orchestrator_mode: true,
+            auto_attach: true,
             open_last_workspace: false,
             editor: EditorConfig::default(),
             file_explorer: FileExplorerConfig::default(),
@@ -3931,7 +3931,7 @@ impl Config {
 
         // Parse as JSONC (comments/trailing commas tolerated), then deserialize
         // as PartialConfig and resolve with defaults.
-        let value = parse_config_jsonc(&contents)?;
+        let value = crate::config_io::migrate_config(parse_config_jsonc(&contents)?)?;
         let partial: crate::partial_config::PartialConfig =
             serde_json::from_value(value).map_err(|e| ConfigError::ParseError(e.to_string()))?;
 

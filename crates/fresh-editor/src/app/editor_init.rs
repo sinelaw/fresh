@@ -885,7 +885,7 @@ impl Editor {
     /// waiting on TS parse/transpile/register.
     ///
     /// `orchestrator_mode` says this editor is the one a bare `fresh`
-    /// launched into (see [`crate::config::Config::orchestrator_mode`]).
+    /// launched into (see [`crate::config::Config::auto_attach`]).
     /// It has to be a parameter rather than a read of `config`: the config
     /// field is the user's *preference*, while this is a property of the
     /// invocation — the preference can be on while the launch named a file,
