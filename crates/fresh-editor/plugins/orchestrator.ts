@@ -1011,7 +1011,7 @@ editor.defineConfigEnum("autoOpenDock", {
   values: ["auto", "always", "never"] as const,
   default: "auto",
   description:
-    "Whether the workspace dock opens when Fresh starts. Opening or closing the dock yourself (View ▸ Orchestrator Dock, Orchestrator: Toggle Dock, the dock's ×) sets this to 'always' or 'never', so Fresh starts the way you last asked; choosing 'always' or 'never' here also opens or closes the dock now. 'auto' (the default, until you first open or close the dock) brings it back the way it was at quit, and on a first run leaves it closed. Replaces the old true/false, which are still read as 'auto' and 'never'.",
+    "Whether the workspace dock opens when Fresh starts. Opening or closing the dock yourself (View ▸ Orchestrator Dock, Orchestrator: Toggle Dock, the dock's ×) sets this to 'always' or 'never', so Fresh starts the way you last asked; choosing 'always' or 'never' here also opens or closes the dock now. 'auto' (the default, until you first open or close the dock) starts with it closed. Replaces the old true/false, which are still read as 'auto' and 'never'.",
 });
 editor.defineConfigEnum("defaultView", {
   values: ["compact", "card"] as const,

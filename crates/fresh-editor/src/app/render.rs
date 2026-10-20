@@ -6549,6 +6549,31 @@ mod dock_reservation_tests {
         }
     }
 
+    /// Under `auto` a dock remembered as open at quit stays closed when the
+    /// manifest says closed: older builds opened it by default and the plugin
+    /// opens it for its own reasons, so only the user's open (`always`) brings
+    /// it back. A bare `fresh` and `fresh .` alike.
+    #[test]
+    fn auto_does_not_reopen_a_dock_remembered_open() {
+        const DECLARES_CLOSED_DOCK: &str =
+            r#"{"chrome":{"dock":{"open":false,"open_setting":"autoOpenDock"}}}"#;
+        for orchestrator_mode in [true, false] {
+            let dir_context = home(Some(DECLARES_CLOSED_DOCK));
+            std::fs::create_dir_all(&dir_context.data_dir).unwrap();
+            std::fs::write(
+                dir_context.data_dir.join("chrome.json"),
+                r#"{"dock":{"open":true}}"#,
+            )
+            .unwrap();
+            let editor = editor(dir_context, Config::default(), orchestrator_mode);
+            assert_eq!(
+                dock_width_of(&editor),
+                None,
+                "orchestrator_mode={orchestrator_mode}"
+            );
+        }
+    }
+
     /// A file launch (`fresh FILE`, `--simple`) starts without the dock even
     /// when the user left it open — by `always` or by what was remembered at
     /// quit — and writes nothing back, so the next session launch still

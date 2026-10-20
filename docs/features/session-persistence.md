@@ -15,7 +15,7 @@ Detach from Fresh and reattach later, similar to tmux. The Fresh daemon keeps ru
 
 Typing `fresh` with nothing after it opens the workspace you were last in —
 whichever directory you typed it in — with the workspace dock on screen if
-you left it open. It runs as a daemon, so the session outlives the terminal, and a
+you opened it yourself (View ▸ Orchestrator Dock). It runs as a daemon, so the session outlives the terminal, and a
 second bare `fresh` anywhere reattaches to that same editor instead of
 starting a second one.
 

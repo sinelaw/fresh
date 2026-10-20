@@ -10,7 +10,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 * **Simple launch by default** - based on your feedback, some defaults are dialed back so launching is simple. Nothing was removed (#3555, #3556, #3568, reported by @zipproth)
     * `fresh FILE` opens just that file, with no restored session, dock or Welcome tab (even if you left the dock open). This makes Fresh a better `$EDITOR` / git `core.editor`; `fresh --simple` does the same without a file
-    * The Orchestrator dock starts closed on a first run; open it from View ▸ Orchestrator Dock and it stays open from then on
+    * The Orchestrator dock starts closed, in Orchestrator mode too and for existing users whose dock was open at their last quit; open it from View ▸ Orchestrator Dock and it stays open from then on
     * `fresh`, `fresh DIR` and `fresh -a` behave as before, and `--restore` brings the full session back to a file launch
     * `fresh DIR` opens the file explorer unless you closed it in that directory yourself; `fresh --simple` (with or without a directory) starts with it closed
     * Startup is faster with many workspaces, which now load on first use
