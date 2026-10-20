@@ -4,4 +4,4 @@ fresh-editor (0.5.4-1) unstable; urgency=medium
     Built from Debian's packaged crates, with Debian's QuickJS running
     plugins and esbuild compiling the bundled ones.
 
- -- Noam Lewis <i9uqoqj7k@mozmail.com>  Thu, 08 Oct 2026 20:00:00 +0000
+ -- Noam Lewis <jones.noamle@gmail.com>  Thu, 08 Oct 2026 20:00:00 +0000

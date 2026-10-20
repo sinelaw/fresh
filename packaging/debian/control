@@ -1,7 +1,7 @@
 Source: fresh-editor
 Section: editors
 Priority: optional
-Maintainer: Noam Lewis <i9uqoqj7k@mozmail.com>
+Maintainer: Noam Lewis <jones.noamle@gmail.com>
 # The librust-*-dev entries are generated:
 #   scripts/debian.py packages --control Packages.xz
 # (Debian testing's index), which lists every crate dependency of every
