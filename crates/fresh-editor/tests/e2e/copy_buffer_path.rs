@@ -77,6 +77,65 @@ fn copy_file_path_via_command_palette_uses_absolute_path() {
     );
 }
 
+/// Buffer paths are canonicalized, and on Windows that spells them in the
+/// verbatim form, `\\?\C:\...`. The copied path is meant to be pasted by a
+/// person, so the status line (the same text the clipboard gets) has to show
+/// the plain spelling.
+#[cfg(windows)]
+#[test]
+fn copy_file_path_on_windows_has_no_verbatim_prefix() {
+    let mut harness = wide_temp_project_harness();
+    let project_root = harness.project_dir().unwrap();
+
+    let file_path = project_root.join("plain.txt");
+    fs::write(&file_path, "x\n").unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    run_command_palette(&mut harness, "Copy File Path");
+
+    let screen = harness.screen_to_string();
+    let expected_segment = format!("project_root{}plain.txt", MAIN_SEPARATOR);
+    assert!(
+        screen.contains("Copied path:") && screen.contains(&expected_segment),
+        "expected status bar to render the absolute path containing {expected_segment:?}, \
+         got screen:\n{screen}"
+    );
+    assert!(
+        !screen.contains(r"\\?\"),
+        "expected the plain path, without the verbatim prefix, got screen:\n{screen}"
+    );
+}
+
+/// A name ending in a dot can only be reached through the verbatim form:
+/// Win32 drops the trailing dot from a plain path, so `C:\...\notes.` would
+/// open `notes` (or nothing). Copy File Path has to keep the prefix here, or
+/// the pasted path names another file.
+#[cfg(windows)]
+#[test]
+fn copy_file_path_on_windows_keeps_the_prefix_when_the_plain_path_differs() {
+    let mut harness = wide_temp_project_harness();
+    let project_root = std::fs::canonicalize(harness.project_dir().unwrap()).unwrap();
+    assert!(
+        project_root.to_string_lossy().starts_with(r"\\?\"),
+        "canonicalize is expected to give the verbatim form, got {project_root:?}"
+    );
+
+    let file_path = project_root.join("notes.");
+    fs::write(&file_path, "x\n").unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    run_command_palette(&mut harness, "Copy File Path");
+
+    let screen = harness.screen_to_string();
+    let expected = file_path.to_string_lossy();
+    assert!(
+        screen.contains(&format!("Copied path: {expected}")),
+        "expected the verbatim path {expected:?}, got screen:\n{screen}"
+    );
+}
+
 #[test]
 fn copy_relative_file_path_falls_back_to_absolute_outside_workspace() {
     // When the buffer's file lives outside the workspace, strip_prefix fails
