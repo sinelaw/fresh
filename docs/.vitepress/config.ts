@@ -96,6 +96,7 @@ export default defineConfig({
           { text: "Overview", link: "/configuration/" },
           { text: "Startup Script (init.ts)", link: "/configuration/init" },
           { text: "Keyboard", link: "/configuration/keyboard" },
+          { text: "Actions", link: "/configuration/actions" },
         ],
       },
       {

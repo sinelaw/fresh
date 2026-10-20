@@ -220,7 +220,7 @@ If you find that certain Alt combinations insert characters instead of triggerin
 
 ## Key Names
 
-The `key` field of a binding takes one of the names below.
+The `key` field of a binding takes one of the names below. For the `action` field, see the [Actions reference](./actions.md).
 
 <!-- BEGIN GENERATED KEY NAMES -->
 

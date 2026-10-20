@@ -3,6 +3,7 @@
 - [Overview](./) - Layered configuration system
 - [Startup Script (init.ts)](./init.md) - Run TypeScript at startup for environment-dependent setup
 - [Keyboard](./keyboard.md) - Keyboard shortcuts and keybinding configuration
+- [Actions](./actions.md) - Every built-in action name and the args it takes
 
 ---
 
