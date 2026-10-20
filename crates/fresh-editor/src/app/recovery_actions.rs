@@ -31,11 +31,25 @@ impl Editor {
     /// Called before a workspace's unsaved work is restored: from
     /// `restore_workspace_for`, and at a direct launch's startup for the
     /// launches that restore no workspace (`fresh FILE`, `--no-restore`).
-    pub fn adopt_recovery_for(&mut self, id: WindowId) {
+    ///
+    /// `only` limits it to entries for those files: a file launch restores
+    /// only the files it names, and an entry it took over but did not
+    /// restore would be dropped at its quit if the same file was opened
+    /// clean during the session (opening a file applies no hot-exit content;
+    /// see `end_session_accounting`). Left in the other store, it waits for
+    /// the next launch that restores the workspace.
+    pub fn adopt_other_mode_recovery(&mut self, id: WindowId, only: Option<&[PathBuf]>) {
         use crate::services::recovery::RecoveryScope;
         let orchestrator = crate::server::ORCHESTRATOR_DAEMON;
         let Some(root) = self.windows.get(&id).map(|w| w.root.clone()) else {
             return;
+        };
+        let named = |meta: &crate::services::recovery::RecoveryMetadata| {
+            only.is_none_or(|paths| {
+                meta.original_path
+                    .as_ref()
+                    .is_some_and(|path| paths.contains(path))
+            })
         };
         let mut service = self.recovery_service.lock().unwrap();
         let adopted = if service.is_standalone() {
@@ -53,17 +67,20 @@ impl Editor {
                 &RecoveryScope::Session {
                     name: orchestrator.to_string(),
                 },
-                |meta| match &meta.workspace_id {
-                    Some(workspace) => workspaces.contains(workspace),
-                    // Older entries carry no workspace; go by where the file is.
-                    None => meta
-                        .original_path
-                        .as_ref()
-                        .is_some_and(|path| path.starts_with(&root)),
+                |meta| {
+                    named(meta)
+                        && match &meta.workspace_id {
+                            Some(workspace) => workspaces.contains(workspace),
+                            // Older entries carry no workspace; go by where the file is.
+                            None => meta
+                                .original_path
+                                .as_ref()
+                                .is_some_and(|path| path.starts_with(&root)),
+                        }
                 },
             )
         } else if self.session_name.as_deref() == Some(orchestrator) {
-            service.adopt_from(&RecoveryScope::Standalone { working_dir: root }, |_| true)
+            service.adopt_from(&RecoveryScope::Standalone { working_dir: root }, named)
         } else {
             return;
         };

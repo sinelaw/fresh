@@ -255,6 +255,16 @@ impl Editor {
     /// active-window wrapper over [`Editor::restore_workspace_for`].
     ///
     /// Returns true if a workspace was successfully loaded and applied.
+    /// Stamp the active window as the one in front now, as a switch to it
+    /// does (`set_active_window`). For the window a launch boots into, which
+    /// is never switched to: its restore re-adopts the stamp it last saved,
+    /// so without this a workspace reached by a launch would look older than
+    /// one reached by a switch, and `open_last_workspace` would reopen the
+    /// wrong one.
+    pub fn mark_active_window_focused(&mut self) {
+        self.active_window_mut().last_focused_at = crate::workspace::now_millis();
+    }
+
     pub fn try_restore_workspace(&mut self) -> Result<bool, WorkspaceError> {
         self.restore_workspace_for(self.active_window)
     }
@@ -645,7 +655,7 @@ impl Editor {
             return Ok(false);
         };
         // Before anything below restores this workspace's unsaved work.
-        self.adopt_recovery_for(id);
+        self.adopt_other_mode_recovery(id, None);
 
         let Some(workspace) = load_window_workspace(&root, &stable_id)? else {
             tracing::debug!("No workspace found for {:?}", root);

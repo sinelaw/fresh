@@ -951,8 +951,15 @@ fn handle_first_run_setup(
 
     // Unsaved work a bare `fresh` (Auto Attach's daemon) left for this
     // directory, so every launch below can restore it — including the ones
-    // that restore no workspace (`fresh FILE`, `--no-restore`).
-    editor.adopt_recovery_for(editor.active_window_id());
+    // that restore no workspace (`--no-restore`). A file launch restores
+    // only the files it names, so it takes over only theirs.
+    let named_files: Vec<PathBuf> = file_locations
+        .iter()
+        .filter(|loc| !loc.path.is_dir())
+        .map(|loc| loc.path.canonicalize().unwrap_or_else(|_| loc.path.clone()))
+        .collect();
+    let only = editor.file_launch().then_some(named_files.as_slice());
+    editor.adopt_other_mode_recovery(editor.active_window_id(), only);
 
     // If the user passed any file argument on the command line and the
     // `skip_session_restore_when_files_passed` option is on (default), the
@@ -974,7 +981,9 @@ fn handle_first_run_setup(
         // A bare single-directory launch (`show_file_explorer`) then shows
         // the tree unless the user closed it in that directory, which keeps
         // a deliberately-closed explorer closed across relaunches.
-        match editor.restore_active_window_on_launch(explorer) {
+        let restored = editor.restore_active_window_on_launch(explorer);
+        editor.mark_active_window_focused();
+        match restored {
             Ok(true) => {
                 tracing::info!("Workspace restored successfully");
             }
@@ -3761,12 +3770,14 @@ where
 
 /// When launched from inside Fresh's own embedded terminal, forward the
 /// file/dir arguments to the parent editor (identified by `FRESH_SESSION`)
-/// instead of starting a second editor in the terminal.
+/// instead of starting a second editor in the terminal; with nothing to
+/// forward, answer "Already in Fresh" (see `already_in_enclosing`).
 ///
 /// Returns:
-/// - `Some(Ok(()))` — forwarded; the caller should exit.
-/// - `None` — not a nested launch, nothing to forward, or the parent
-///   socket is unreachable; the caller should launch inline as usual.
+/// - `Some(Ok(()))` — forwarded, or answered; the caller should exit. A
+///   refused launch exits the process with status 1 instead.
+/// - `None` — not a nested launch, or the parent socket is unreachable; the
+///   caller should launch inline as usual.
 fn try_forward_nested(args: &Args) -> Option<AnyhowResult<()>> {
     // Nothing starts a second editor nested in a Fresh terminal, whatever
     // Auto Attach says: every such terminal, a direct editor's included, is
@@ -3783,9 +3794,9 @@ fn try_forward_nested(args: &Args) -> Option<AnyhowResult<()>> {
         let nested = if !stdin_is_terminal() {
             // Not supported yet: the input would have to travel to the
             // enclosing editor as a new buffer.
-            NestedLaunch::Refused("piped input can't be opened in it from here yet")
+            NestedLaunch::refused("piped input can't be opened in it from here yet")
         } else if args.simple {
-            NestedLaunch::Refused(
+            NestedLaunch::refused(
                 "`fresh --simple` would start a second editor inside this terminal",
             )
         } else {
@@ -3834,7 +3845,34 @@ enum NestedLaunch {
     Bare,
     /// A request for a separate editor (`--simple`, piped input,
     /// `fresh -a NAME`) that cannot be met without nesting one: why. Fails.
-    Refused(&'static str),
+    /// The hint repeats the command line with `FRESH_SESSION` cleared, unless
+    /// `simple_hint` says that would loop (see `NestedLaunch::with_simple_hint`).
+    Refused {
+        why: &'static str,
+        simple_hint: bool,
+    },
+}
+
+impl NestedLaunch {
+    fn refused(why: &'static str) -> Self {
+        Self::Refused {
+            why,
+            simple_hint: false,
+        }
+    }
+
+    /// Hint `FRESH_SESSION= fresh --simple` instead of the command line: for
+    /// a command that, outside Fresh's reach, would attach the enclosing
+    /// daemon to itself.
+    fn with_simple_hint(self) -> Self {
+        match self {
+            Self::Refused { why, .. } => Self::Refused {
+                why,
+                simple_hint: true,
+            },
+            other => other,
+        }
+    }
 }
 
 /// This command line, as the user would retype it to run it outside the
@@ -3887,12 +3925,18 @@ fn already_in_enclosing(session: &str, nested: NestedLaunch) -> Option<AnyhowRes
             eprintln!("To start a separate editor in this terminal: FRESH_SESSION= fresh --simple");
             Some(Ok(()))
         }
-        NestedLaunch::Refused(why) => {
+        NestedLaunch::Refused { why, simple_hint } => {
             eprintln!("Already in Fresh: {why}. {HOW}");
-            eprintln!(
-                "To run it in a separate editor in this terminal: {}",
-                bypass_command()
-            );
+            if simple_hint {
+                eprintln!(
+                    "To start a separate editor in this terminal: FRESH_SESSION= fresh --simple"
+                );
+            } else {
+                eprintln!(
+                    "To run it in a separate editor in this terminal: {}",
+                    bypass_command()
+                );
+            }
             std::process::exit(1);
         }
     }
@@ -5526,10 +5570,19 @@ fn read_script_source(from: &[&str]) -> AnyhowResult<String> {
 /// own daemons.
 fn run_attach_command(args: &Args) -> AnyhowResult<()> {
     if let Some(session) = enclosing_session() {
-        if args.session_name.is_some() {
-            let refused = NestedLaunch::Refused(
+        // An unreachable enclosing editor (a stale `FRESH_SESSION`) falls
+        // through to the launch below, as if outside Fresh.
+        if let Some(name) = &args.session_name {
+            let refused = NestedLaunch::refused(
                 "`fresh -a NAME` would attach a second editor inside this terminal",
             );
+            // Attaching to the enclosing daemon itself is the feedback loop
+            // `already_in_enclosing`'s bare hint steers around.
+            let refused = if *name == session || name == fresh::server::ORCHESTRATOR_DAEMON {
+                refused.with_simple_hint()
+            } else {
+                refused
+            };
             if let Some(result) = already_in_enclosing(&session, refused) {
                 return result;
             }
@@ -5537,10 +5590,15 @@ fn run_attach_command(args: &Args) -> AnyhowResult<()> {
             if let Some(result) = already_in_enclosing(&session, NestedLaunch::Bare) {
                 return result;
             }
-        } else if forward_to_session(&session, &args.files)? {
-            return Ok(());
+        } else {
+            match forward_to_session(&session, &args.files) {
+                Ok(true) => return Ok(()),
+                Ok(false) => {}
+                Err(e) => tracing::warn!("Nested forward failed ({}); attaching instead", e),
+            }
         }
-    } else if args.session_name.is_none() {
+    }
+    if args.session_name.is_none() && !attaches_elsewhere(&args.files) {
         if let Some(config) = auto_attach_config() {
             return run_orchestrator_launch(
                 &config,
@@ -5558,6 +5616,26 @@ fn run_attach_command(args: &Args) -> AnyhowResult<()> {
         false,
         false,
     )
+}
+
+/// Whether a `fresh -a` (no name) keeps the daemon it reached before Auto
+/// Attach, rather than taking the shared one:
+///
+///   * a remote spec (`user@host:path`, `ssh://…`) starts a daemon whose
+///     authority is that host — turning the shared daemon, which every later
+///     bare `fresh` joins, into a remote one would be wrong for all of them;
+///   * a per-directory daemon already running for this directory (started by
+///     `fresh -a` before Auto Attach, or with it off) keeps being the one
+///     `fresh -a` here reaches, with its terminals and agents, rather than
+///     being stranded.
+fn attaches_elsewhere(files: &[String]) -> bool {
+    if extract_ssh_url_from_files(files).ok().flatten().is_some() {
+        return true;
+    }
+    std::env::current_dir()
+        .ok()
+        .and_then(|cwd| fresh::server::ipc::SocketPaths::for_working_dir(&cwd).ok())
+        .is_some_and(|paths| paths.is_server_alive())
 }
 
 /// A bare `fresh` — no files, no flags, nothing — with `auto_attach` left
@@ -5612,10 +5690,9 @@ fn run_orchestrator_launch(
 /// this can be typed: the daemon then renders one shared screen into a
 /// client that lives inside its own output, which is not a second editor
 /// but a feedback loop — the pane fills with shredded frames. Falling
-/// through here launches an ordinary inline editor in the terminal, which
-/// is what a nested `fresh` did before auto-attach existed and which
-/// renders perfectly well. `FRESH_SESSION` is the signal because it is what
-/// every local embedded terminal advertises (see
+/// through here reaches `try_forward_nested`, which answers "Already in
+/// Fresh" instead of starting anything. `FRESH_SESSION` is the signal because
+/// it is what every local embedded terminal advertises (see
 /// `server::local_control`); a stale or unreachable value costs nothing,
 /// since the fallback is the ordinary launch either way.
 ///
@@ -5812,6 +5889,19 @@ fn run_attach(
         }
     }
 
+    // A bare `fresh` opens the directory it was typed in, also when the
+    // daemon is already up and showing another one: switch it to this
+    // directory's workspace (created if there is none). A daemon started
+    // just now booted in this directory already, and is left alone so its
+    // startup does not read the whole workspace registry. Before any files:
+    // they open in whatever workspace is active when they arrive.
+    if open_cwd && !server_was_started {
+        let msg = serde_json::to_string(&ClientControl::OpenWindow {
+            path: working_dir.to_string_lossy().into_owned(),
+        })?;
+        conn.write_control(&msg)?;
+    }
+
     // Send file open requests if any files were specified on the
     // command line.  When `ssh_url` was extracted above the file
     // list carried remote specs; strip them to bare paths so the
@@ -5838,18 +5928,6 @@ fn run_attach(
             })?;
             conn.write_control(&msg)?;
         }
-    }
-
-    // A bare `fresh` opens the directory it was typed in, also when the
-    // daemon is already up and showing another one: switch it to this
-    // directory's workspace (created if there is none). A daemon started
-    // just now booted in this directory already, and is left alone so its
-    // startup does not read the whole workspace registry.
-    if open_cwd && !server_was_started {
-        let msg = serde_json::to_string(&ClientControl::OpenWindow {
-            path: working_dir.to_string_lossy().into_owned(),
-        })?;
-        conn.write_control(&msg)?;
     }
 
     // Continue to relay loop

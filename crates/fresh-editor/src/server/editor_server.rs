@@ -910,7 +910,9 @@ impl EditorServer {
 
         // Restore workspace and recovery data (mirrors the standalone startup
         // path in handle_first_run_setup in main.rs).
-        match editor.try_restore_workspace() {
+        let restored = editor.try_restore_workspace();
+        editor.mark_active_window_focused();
+        match restored {
             Ok(true) => {
                 tracing::info!("Session workspace restored successfully");
             }

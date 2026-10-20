@@ -337,6 +337,10 @@ pub fn migrate_config(mut value: Value) -> Result<Value, ConfigError> {
     if version < 3 {
         value = migrate_v2_to_v3(value)?;
     }
+    // Whatever the version says: an old name can come back into a current
+    // file (pasted from older docs, or written by an older build sharing the
+    // dotfiles), and is read under its new name rather than ignored.
+    rename_legacy_keys(&mut value);
 
     Ok(value)
 }
@@ -407,7 +411,7 @@ fn migrate_v2_to_v3(mut value: Value) -> Result<Value, ConfigError> {
 /// a file before it is written back, so a file still on an old name moves to
 /// the new one the first time any setting is saved — rather than holding the
 /// two side by side.
-fn rename_legacy_keys(value: &mut Value) {
+pub fn rename_legacy_keys(value: &mut Value) {
     const RENAMED: [(&str, &str); 1] = [("orchestrator_mode", "auto_attach")];
     if let Value::Object(map) = value {
         for (old, new) in RENAMED {
@@ -1975,9 +1979,16 @@ mod tests {
     }
 
     /// `orchestrator_mode` is now `auto_attach`; when a file somehow holds
-    /// both, the new name wins.
+    /// both, the new name wins — also in a file already at the current
+    /// version.
     #[test]
     fn migration_renames_orchestrator_mode_to_auto_attach() {
+        let current =
+            serde_json::json!({ "version": CURRENT_CONFIG_VERSION, "orchestrator_mode": false });
+        let migrated = migrate_config(current).unwrap();
+        assert_eq!(migrated.get("auto_attach"), Some(&serde_json::json!(false)));
+        assert!(migrated.get("orchestrator_mode").is_none());
+
         let migrated = migrate_config(serde_json::json!({ "orchestrator_mode": false })).unwrap();
         assert_eq!(migrated.get("auto_attach"), Some(&serde_json::json!(false)));
         assert!(migrated.get("orchestrator_mode").is_none());

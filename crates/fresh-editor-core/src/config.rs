@@ -3931,7 +3931,10 @@ impl Config {
 
         // Parse as JSONC (comments/trailing commas tolerated), then deserialize
         // as PartialConfig and resolve with defaults.
-        let value = crate::config_io::migrate_config(parse_config_jsonc(&contents)?)?;
+        // Only the key renames, not the layered migrations: this file is
+        // used as given.
+        let mut value = parse_config_jsonc(&contents)?;
+        crate::config_io::rename_legacy_keys(&mut value);
         let partial: crate::partial_config::PartialConfig =
             serde_json::from_value(value).map_err(|e| ConfigError::ParseError(e.to_string()))?;
 

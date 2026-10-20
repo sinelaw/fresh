@@ -158,7 +158,7 @@ impl RecoveryService {
     /// Move into this store the entries `from`'s store holds that `owns`
     /// claims, returning how many moved. Used when one launch mode opens a
     /// workspace whose unsaved work the other mode left in its own store
-    /// (see `Editor::adopt_recovery_for`).
+    /// (see `Editor::adopt_other_mode_recovery`).
     ///
     /// Nothing is taken while `from`'s editor is still running: those
     /// entries are still its live buffers. An entry both stores hold is left
