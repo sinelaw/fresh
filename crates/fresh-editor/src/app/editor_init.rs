@@ -738,6 +738,8 @@ impl Editor {
             #[cfg(feature = "plugins")]
             plugin_timers: Vec::new(),
             #[cfg(feature = "plugins")]
+            suppress_macro_recording: false,
+            #[cfg(feature = "plugins")]
             diff_baselines: crate::app::diff_baselines::BaselineStore::default(),
             #[cfg(feature = "plugins")]
             next_diff_baseline_id: 1,
