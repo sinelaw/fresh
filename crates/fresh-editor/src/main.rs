@@ -949,6 +949,11 @@ fn handle_first_run_setup(
     }
     // The warning-log channel and status-log path are wired up in main.
 
+    // Unsaved work a bare `fresh` (Orchestrator mode) left for this
+    // directory, so every launch below can restore it — including the ones
+    // that restore no workspace (`fresh FILE`, `--no-restore`).
+    editor.adopt_recovery_for(editor.active_window_id());
+
     // If the user passed any file argument on the command line and the
     // `skip_session_restore_when_files_passed` option is on (default), the
     // launch is a focused "open these files" invocation (`Editor::file_launch`):
@@ -3430,7 +3435,9 @@ fn run_server_command(args: &Args, web_addr: Option<String>) -> AnyhowResult<()>
     let config = EditorServerConfig {
         working_dir: working_dir.clone(),
         session_name: args.session_name.clone(),
-        idle_timeout: Some(std::time::Duration::from_secs(3600)), // 1 hour default
+        // A daemon runs until it is told to quit: with nothing attached it is
+        // still holding your workspaces, terminals and agents.
+        idle_timeout: None,
         editor_config,
         dir_context,
         plugins_enabled: !args.no_plugins,

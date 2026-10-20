@@ -21,6 +21,8 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Bug Fixes
 
+* **Unsaved changes carry over between Orchestrator mode and a direct launch** - an edit left unsaved in a bare `fresh` now comes back in `fresh FILE` or with Orchestrator mode off, and the other way round; each mode used to keep its own recovery store
+* **A detached daemon no longer shuts itself down** - it used to exit after an hour with no terminal attached, taking running agents with it; it now runs until you quit it
 * **Markdown compose layout with emoji and CJK text** - code-block frames keep their edges and wrapped table cells no longer start with a stray space or break early (#3562)
 * **Clear error in mintty / Git Bash** - Fresh now explains it needs a real console instead of failing with `os error 6` (#3547, #3549, reported by @netoffice-zz)
 * **git no longer hangs on a detached daemon** - `--wait` against a daemon with nothing attached no longer waits on an invisible editor (#3555)

@@ -644,6 +644,8 @@ impl Editor {
         else {
             return Ok(false);
         };
+        // Before anything below restores this workspace's unsaved work.
+        self.adopt_recovery_for(id);
 
         let Some(workspace) = load_window_workspace(&root, &stable_id)? else {
             tracing::debug!("No workspace found for {:?}", root);

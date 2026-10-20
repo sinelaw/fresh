@@ -50,6 +50,8 @@ See also: [Remote Editing (SSH)](./ssh.md) for pairing daemon mode with remote b
 
 All buffers — including unnamed scratch buffers — persist automatically. When you quit Fresh, unsaved changes are preserved and restored on next startup. Configurable via the `hot_exit` setting (default: on).
 
+Unsaved changes follow the directory, not the way Fresh was launched: an edit left unsaved in a bare `fresh` (Orchestrator mode) comes back in `fresh FILE`, `fresh DIR` or a bare `fresh` with Orchestrator mode off, and the other way round. While the editor that holds them is still running — a detached daemon, say — they stay with it.
+
 ## Workspace Storage
 
 Each workspace's state (open files, split layout, plugin state) is restored on startup by default. Control this with:
@@ -130,7 +132,7 @@ Terminal (Client)  ←→  Unix Socket  ←→  Fresh Daemon (Background)
                                         Running terminals
 ```
 
-Detaching exits only the client; the daemon keeps running.
+Detaching exits only the client; the daemon keeps running. It never shuts itself down: it runs until you quit it (Ctrl+Q ▸ Quit and Stop All, or `fresh --cmd daemon kill`), however long nothing is attached.
 
 ## Commands
 

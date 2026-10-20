@@ -618,6 +618,54 @@ impl RecoveryStorage {
         Ok(())
     }
 
+    /// Move entry `id` — its metadata, content and chunk files — from `from`
+    /// into this store. Returns whether it moved.
+    ///
+    /// An entry this store already holds under the same id is a conflict
+    /// between two unsaved versions; both are left where they are rather than
+    /// guessing which one to drop.
+    pub fn take_entry_from(&self, from: &RecoveryStorage, id: &str) -> io::Result<bool> {
+        if from.recovery_dir == self.recovery_dir {
+            return Ok(false);
+        }
+        if self.entry_recorded(id)? {
+            tracing::warn!(
+                "recovery: {id} is recorded in both {:?} and {:?}; leaving both",
+                from.recovery_dir,
+                self.recovery_dir
+            );
+            return Ok(false);
+        }
+        let meta = format!("{id}.{}", Self::META_EXT);
+        let content = format!("{id}.{}", Self::CONTENT_EXT);
+        let chunk_prefix = format!("{id}.chunk.");
+        let mut names = Vec::new();
+        for entry in fs::read_dir(&from.recovery_dir)? {
+            let name = entry?.file_name();
+            let Some(name) = name.to_str() else { continue };
+            let is_chunk = name
+                .strip_prefix(&chunk_prefix)
+                .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+            if is_chunk || name == content {
+                names.push(name.to_string());
+            }
+        }
+        if !from.recovery_dir.join(&meta).exists() {
+            return Ok(false);
+        }
+        // The metadata last: an entry is listed by its metadata, so a move cut
+        // short leaves no half-entry in this store.
+        names.push(meta);
+        self.ensure_dir()?;
+        for name in names {
+            move_file(
+                &from.recovery_dir.join(&name),
+                &self.recovery_dir.join(&name),
+            )?;
+        }
+        Ok(true)
+    }
+
     /// List all recovery entries
     pub fn list_entries(&self) -> io::Result<Vec<RecoveryEntry>> {
         if !self.recovery_dir.exists() {
@@ -699,6 +747,16 @@ impl RecoveryStorage {
         }
         result
     }
+}
+
+/// `rename`, or copy-and-remove where the two paths are on different
+/// filesystems.
+fn move_file(from: &Path, to: &Path) -> io::Result<()> {
+    if fs::rename(from, to).is_ok() {
+        return Ok(());
+    }
+    fs::copy(from, to)?;
+    fs::remove_file(from)
 }
 
 #[cfg(test)]
