@@ -15,12 +15,16 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
     * The Orchestrator dock starts closed, for a bare `fresh` too and for existing users whose dock was open at their last quit; open it from View ▸ Orchestrator Dock and it stays open from then on
     * A bare `fresh` opens the directory you typed it in, also when it reattaches to a running daemon, instead of the workspace you used last. The new **Open Last Workspace** setting (`open_last_workspace`, off by default) brings back the old behaviour, with Auto Attach on or off
     * An empty workspace behaves the same for a bare `fresh` as in any launch: a `[No Name]` buffer on a first run, and closing the last tab follows `auto_create_empty_buffer_on_last_buffer_close` and `file_explorer.auto_open_on_last_buffer_close` instead of always leaving a blank pane
-    * `fresh DIR` behaves as before, and `--restore` brings the full session back to a file launch
+    * `fresh DIR` still restores that directory's previous workspace (open files, layout) and shows the Welcome tab; `fresh --restore FILE` does the same for a file launch
     * `fresh DIR` opens the file explorer unless you closed it in that directory yourself; `fresh --simple` (with or without a directory) starts with it closed
     * Startup is faster with many workspaces, which now load on first use
 * **Markdown Source / Rendered / Source+Compose modes** - new commands switch a Markdown pane between the raw text and the composed view, and a dual mode shows both side by side in one scroll-synced tab (edit on the source side; closing the tab leaves your file and panes as they were). "Cycle View Mode" steps through all three (#3562, by @PilotLeoYan)
 * **Debian testing/unstable package** - each release also attaches a `.debian-testing.deb` built from Debian's own packaged crates (#3519)
-* **`terminal.close_on_exit` closes a shell's tab when the shell exits** - with it on, `exit` or Ctrl+D in an integrated terminal closes its tab, and the pane too when the terminal was its only tab, instead of leaving it as read-only "(exited)" scrollback. Off by default; terminals running a command (agents, plugins) keep their output either way (#3537 by @cychitivav)
+* **New config option: close a shell's tab when the shell exits** - with it on, `exit` or Ctrl+D in an integrated terminal closes its tab (and the pane, if it was the only tab). Off by default; enable it in the Settings UI (#3537, by @cychitivav)
+* **Middle-click closes a tab** (#3284, #3286, requested by @CnsMaple)
+* **Clickable "Palette: Ctrl+P" status hint** opens the command palette (#3250, #3576, requested by @Korkman, by @peyton-durand)
+* **Duplicate Line Above command**, and duplicated lines keep carets and selections on the copy (#3244, by @kimprap)
+* **Terminal programs can set your clipboard** - OSC 52 writes from the integrated terminal reach the host clipboard (#3572, #3573, reported by @mycloa)
 
 ### Bug Fixes
 
@@ -31,10 +35,25 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **git no longer hangs on a detached daemon** - `--wait` against a daemon with nothing attached no longer waits on an invisible editor (#3555)
 * **Plugin bundling uses a private temp directory**, closing a local-user file-overwrite risk (#3557)
 * **`fresh -a` works in deeply nested directories** - the daemon no longer dies at startup when the directory path is too long for a Unix socket name; such directories get a shortened, hashed socket name, and every other directory keeps the name it had
+* **macOS file-descriptor leak** - the daemon no longer runs out of fds after files change in the project root (#3523, #3584, reported by @IconRunner05)
+* **Windows fixes** (#3281, #3289, #3296, #3545, reported by @CnsMaple)
+    * formatters given as absolute paths (`D:\...`) are found again
+    * Copy Path no longer pastes `\\?\` prefixed paths
+    * removing an Orchestrator worktree no longer fails with "Permission denied"
+* **Stale syntax colors after commenting a block of lines** (#3551, by @kimprap)
+* **Closing a discarded or saved last tab now closes its empty split** (#3552, by @kimprap)
+* **Rename works with servers lacking prepareRename**, such as pylsp (#3540, by @cychitivav)
+* **Regex replace keeps non-ASCII text** in the replacement intact (#3571, by @neatsorg)
+* **Unnamed buffers honor editor settings** such as auto-close and occurrence highlight after restore (#3570, by @neatsorg)
+* **A half-open client connection can't stall the daemon** (#3542)
+* **Hidden/ignored files are treated consistently** across Quick Open, the explorer and project search (#3580)
+* **Bundled grammars load before bundle plugins** (#3544)
+* **Docs clarify `textmate_grammar` only supports `.sublime-syntax`** (#3115, #3583, reported by @sgon00, by @peyton-durand)
 
 ### Internals
 
 * Plugin buffer groups can show a file the user has open as an editable panel, with a new `buffer_group_closed` hook (#3560, #3562)
+* Virtual text always invalidates the wrap cache (#3311, #3485); CI artifact usage reduced (#3577)
 
 ## 0.5.3
 
