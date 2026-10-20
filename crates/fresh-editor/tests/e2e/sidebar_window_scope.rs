@@ -144,7 +144,7 @@ fn a_restored_section_nobody_mounts_does_not_outlive_plugin_load() {
     let mut h = launch(&project, &dir_context);
     let restored = h
         .editor_mut()
-        .restore_active_window_on_launch(false)
+        .restore_active_window_on_launch(fresh::app::workspace::ExplorerOnEntry::Enter)
         .unwrap();
     assert!(restored, "the saved workspace restores");
     h.wait_for_file_explorer().unwrap();

@@ -785,6 +785,12 @@ pub struct Window {
     /// Whether the file-explorer panel is visible in this window.
     pub file_explorer_visible: bool,
 
+    /// Whether the user's own close is what hid the explorer (see
+    /// `FileExplorerState::closed_by_user`). Set and cleared by
+    /// `Editor::toggle_file_explorer`; saved only while the explorer is
+    /// hidden, so any later open forgets it.
+    pub file_explorer_closed_by_user: bool,
+
     /// Whether a file-explorer rebuild is in flight (debounce flag).
     pub file_explorer_sync_in_progress: bool,
 
@@ -2494,6 +2500,7 @@ impl Window {
             interactive_replace_state: None,
             scroll_sync_manager: crate::view::scroll_sync::ScrollSyncManager::new(),
             file_explorer_visible: false,
+            file_explorer_closed_by_user: false,
             file_explorer_sync_in_progress: false,
             file_explorer_sync_deferred: None,
             file_explorer_width: resources.config.file_explorer.width,

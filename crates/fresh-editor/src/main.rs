@@ -955,6 +955,8 @@ fn handle_first_run_setup(
     // skip the session restore and recover only those files' hot-exit
     // content. `--restore` (force) is a deliberate user override that wins.
     let cli_overrides_restore = editor.file_launch();
+    let explorer =
+        fresh::app::workspace::ExplorerOnEntry::for_launch(args.simple, show_file_explorer);
 
     let restore_full_session = workspace_enabled
         && !cli_overrides_restore
@@ -963,12 +965,11 @@ fn handle_first_run_setup(
     if restore_full_session {
         // Shared window-restore flow — the same `restore_window` the
         // orchestrator dock's `materialize_window` uses — so the
-        // foreground directory applies its persisted explorer visibility,
-        // or the fresh-session default, exactly as a dock switch would. A
-        // bare single-directory launch (`show_file_explorer`) defaults to
-        // the tree only when nothing was restored, which keeps a
-        // deliberately-closed explorer closed across relaunches.
-        match editor.restore_active_window_on_launch(!show_file_explorer) {
+        // foreground directory applies its persisted explorer visibility.
+        // A bare single-directory launch (`show_file_explorer`) then shows
+        // the tree unless the user closed it in that directory, which keeps
+        // a deliberately-closed explorer closed across relaunches.
+        match editor.restore_active_window_on_launch(explorer) {
             Ok(true) => {
                 tracing::info!("Workspace restored successfully");
             }
@@ -1024,9 +1025,10 @@ fn handle_first_run_setup(
             }
         }
         // No workspace was restored, so the persisted explorer visibility
-        // never loaded — apply the same fresh-session default the restore
-        // flow would, so a bare directory launch still opens the tree.
-        editor.apply_active_window_explorer_default(!show_file_explorer, false);
+        // never loaded — apply the same default the restore flow would, so
+        // a bare directory launch still opens the tree (and `--simple`
+        // keeps it closed).
+        editor.apply_active_window_explorer_default(explorer, false);
     }
 
     // Handle stdin streaming (takes priority over files)

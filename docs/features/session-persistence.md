@@ -14,8 +14,8 @@ Detach from Fresh and reattach later, similar to tmux. The Fresh daemon keeps ru
 ## Orchestrator mode (a bare `fresh`)
 
 Typing `fresh` with nothing after it opens the workspace you were last in —
-whichever directory you typed it in — with the workspace dock already on
-screen. It runs as a daemon, so the session outlives the terminal, and a
+whichever directory you typed it in — with the workspace dock on screen if
+you left it open. It runs as a daemon, so the session outlives the terminal, and a
 second bare `fresh` anywhere reattaches to that same editor instead of
 starting a second one.
 
@@ -103,14 +103,14 @@ with `--session-name NAME`.
 
 - opens only the files you named — the project's workspace (tabs, splits, layout) is neither restored nor saved, so quitting leaves it as your last full session left it;
 - brings back those files' own unsaved changes (hot exit), but no other file's — those stay stashed for the next `fresh` in the project;
-- does not open the dock on its own (unless the dock is set to open always), and does not read the list of saved workspaces until you open the dock;
+- does not open the dock, even if you left it open last time, and does not read the list of saved workspaces until you open the dock;
 - runs in this terminal and returns when you quit — no daemon.
 
 Search history, crash recovery, remembered cursor positions and the Workspace Trust question work as in any launch.
 
-`fresh --simple` is the same launch without needing a file: with no arguments it opens an empty buffer in this terminal, with no session restored or saved, no dock and no daemon. The dock and the rest of the Orchestrator stay available — open the dock from the command palette and your workspaces load then.
+`fresh --simple` is the same launch without needing a file: with no arguments it opens an empty buffer in this terminal, with no session restored or saved, no dock, no file explorer (`fresh --simple DIR` included) and no daemon. The dock and the rest of the Orchestrator stay available — open the dock from the command palette and your workspaces load then.
 
-A bare `fresh`, `fresh DIR` and `fresh -a` are sessions: they restore and save the workspace. To make `fresh FILE` a session too, pass `--restore`, or turn off `editor.skip_session_restore_when_files_passed` to do it for every launch.
+A bare `fresh`, `fresh DIR` and `fresh -a` are sessions: they restore and save the workspace. `fresh DIR` also opens the file explorer, unless you closed it in that directory yourself. To make `fresh FILE` a session too, pass `--restore`, or turn off `editor.skip_session_restore_when_files_passed` to do it for every launch.
 
 ## How It Works
 

@@ -233,18 +233,17 @@ fn pump_shared(shared: &Shared, editor: &mut Editor) -> bool {
                         .map(|s| s.to_string_lossy().into_owned())
                         .unwrap_or_else(|| path.to_string_lossy().into_owned());
                     // A directory that already has a session window is
-                    // restored by `set_active_window` → `materialize_window`
-                    // and keeps its persisted explorer visibility. Only a
-                    // brand-new directory gets the fresh-session default,
-                    // mirroring a normal `fresh <dir>` launch instead of
-                    // leaving the new window on an empty buffer.
-                    let known_session = editor.find_window_by_root(&path).is_some();
+                    // restored by `set_active_window` → `materialize_window`.
+                    // Either way the tree then opens unless the user closed
+                    // it there, mirroring a normal `fresh <dir>` launch
+                    // instead of leaving the window on an empty buffer.
                     let id = editor.create_window_at(path, label);
                     editor.set_active_window(id);
-                    if !known_session {
-                        editor.apply_active_window_explorer_default(false, false);
-                        editor.relayout();
-                    }
+                    editor.apply_active_window_explorer_default(
+                        crate::app::workspace::ExplorerOnEntry::Directory,
+                        false,
+                    );
+                    editor.relayout();
                     changed = true;
                 } else {
                     tracing::warn!("OpenWindow ignored: path must be absolute: {:?}", path);

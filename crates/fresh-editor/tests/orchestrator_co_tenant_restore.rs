@@ -95,7 +95,7 @@ fn co_tenants_persist_and_restore_each_own_file() {
     // co-tenant windows; restore the foreground (as a real launch does) and
     // lazily materialize the background co-tenant.
     let mut e2 = editor_in(&project, &dir_context);
-    e2.restore_active_window_on_launch(false).unwrap();
+    e2.restore_active_window_on_launch(fresh::app::workspace::ExplorerOnEntry::Enter).unwrap();
     e2.materialize_all_windows();
 
     let mut file_sets: Vec<BTreeSet<PathBuf>> = Vec::new();

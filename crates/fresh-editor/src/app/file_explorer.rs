@@ -295,6 +295,7 @@ impl Editor {
     pub fn toggle_file_explorer(&mut self) {
         let new_visible = !self.active_window().file_explorer_visible;
         self.active_window_mut().file_explorer_visible = new_visible;
+        self.active_window_mut().file_explorer_closed_by_user = !new_visible;
 
         if new_visible {
             if self.file_explorer().is_none() {

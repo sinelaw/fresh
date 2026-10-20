@@ -130,7 +130,7 @@ fn new_terminal_does_not_adopt_a_restored_terminal_transcript() {
     // keeping its saved path. Plant a marker in that transcript standing in
     // for the history the user still has in their scroll-back.
     let mut e2 = editor_in(&project, &dir_context);
-    e2.restore_active_window_on_launch(false).unwrap();
+    e2.restore_active_window_on_launch(fresh::app::workspace::ExplorerOnEntry::Enter).unwrap();
     let restored_backing = active_terminal_backing(&e2);
     const MARKER: &str = "RESTORED_TERMINAL_HISTORY";
     std::fs::write(&restored_backing, format!("{MARKER}\n")).unwrap();

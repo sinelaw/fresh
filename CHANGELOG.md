@@ -12,6 +12,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
     * `fresh FILE` opens just that file, with no restored session, dock or Welcome tab (even if you left the dock open). This makes Fresh a better `$EDITOR` / git `core.editor`; `fresh --simple` does the same without a file
     * The Orchestrator dock starts closed on a first run; open it from View ▸ Orchestrator Dock and it stays open from then on
     * `fresh`, `fresh DIR` and `fresh -a` behave as before, and `--restore` brings the full session back to a file launch
+    * `fresh DIR` opens the file explorer unless you closed it in that directory yourself; `fresh --simple` (with or without a directory) starts with it closed
     * Startup is faster with many workspaces, which now load on first use
 * **Markdown Source / Rendered / Source+Compose modes** - new commands switch a Markdown pane between the raw text and the composed view, and a dual mode shows both side by side in one scroll-synced tab (edit on the source side; closing the tab leaves your file and panes as they were). "Cycle View Mode" steps through all three (#3562, by @PilotLeoYan)
 * **Debian testing/unstable package** - each release also attaches a `.debian-testing.deb` built from Debian's own packaged crates (#3519)
