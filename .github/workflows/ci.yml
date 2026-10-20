@@ -378,40 +378,6 @@ jobs:
     with:
       check-only: true
 
-  # The ruleset requires `build-musl (x86_64-unknown-linux-musl)`, the name the
-  # musl build reported under when it ran as its own workflow; inside this one
-  # it reports as `musl / build-musl (...)`. Remove with `test-rollup`. A
-  # Linux-only run reports under another name, as `ci-ok` does.
-  musl-rollup:
-    name: ${{ needs.plan.outputs.full == 'true' && 'build-musl (x86_64-unknown-linux-musl)' || 'build-musl (not built, Linux only)' }}
-    if: always()
-    needs: [plan, musl]
-    runs-on: ubuntu-latest
-    steps:
-      - name: The musl build passed
-        if: needs.plan.outputs.full == 'true'
-        env:
-          RESULT: ${{ needs.musl.result }}
-        run: test "$RESULT" = success
-
-  # The ruleset requires the per-OS names `test <os>` from before the tests
-  # were sharded; these report the sharded matrix under them. Each mirrors the
-  # whole matrix, so a failing shard on one OS fails them all. Remove once the
-  # ruleset requires `ci-ok` instead.
-  test-rollup:
-    name: test ${{ matrix.os }}
-    if: always()
-    needs: [plan, test]
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        os: ${{ fromJSON(needs.plan.outputs.os || '["ubuntu-latest"]') }}
-    steps:
-      - name: Every test shard passed
-        env:
-          RESULT: ${{ needs.test.result }}
-        run: test "$RESULT" = success
-
   # The one check the ruleset needs to require: it fails unless every job above
   # succeeded, so adding, renaming or sharding a job never touches the ruleset.
   # `always()` rather than `!cancelled()`: a skipped required check counts as
