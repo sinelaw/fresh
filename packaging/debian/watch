@@ -1,0 +1,5 @@
+version=4
+opts="searchmode=plain, \
+      filenamemangle=s%.*/v?(\d[\d.]*)$%@PACKAGE@-$1.tar.gz%" \
+  https://api.github.com/repos/sinelaw/fresh/tags?per_page=50 \
+  https://api.github.com/repos/[^/]+/[^/]+/tarball/(?:refs/tags/)?v?(\d[\d.]*)

@@ -1,6 +1,7 @@
-fresh-editor (0.5.3-1) UNRELEASED; urgency=medium
+fresh-editor (0.5.4-1) unstable; urgency=medium
 
-  * Initial release, built from Debian's packaged crates with Debian's
-    QuickJS and esbuild. (ITP bug to be filed.)
+  * Initial release. (Closes: #1124035)
+    Built from Debian's packaged crates, with Debian's QuickJS running
+    plugins and esbuild compiling the bundled ones.
 
  -- Noam Lewis <i9uqoqj7k@mozmail.com>  Thu, 08 Oct 2026 20:00:00 +0000
