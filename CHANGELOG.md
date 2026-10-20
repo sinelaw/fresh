@@ -12,6 +12,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
     * `fresh FILE` opens just that file, with no restored session, dock or Welcome tab (even if you left the dock open). This makes Fresh a better `$EDITOR` / git `core.editor`; `fresh --simple` does the same without a file
     * The Orchestrator dock starts closed, in Orchestrator mode too and for existing users whose dock was open at their last quit; open it from View ▸ Orchestrator Dock and it stays open from then on
     * A bare `fresh` opens the directory you typed it in, also when it reattaches to a running daemon, instead of the workspace you used last. The new **Open Last Workspace** setting (`open_last_workspace`, off by default) brings back the old behaviour, with Orchestrator mode on or off
+    * An empty workspace behaves the same in Orchestrator mode as in any launch: a `[No Name]` buffer on a first run, and closing the last tab follows `auto_create_empty_buffer_on_last_buffer_close` and `file_explorer.auto_open_on_last_buffer_close` instead of always leaving a blank pane
     * `fresh DIR` and `fresh -a` behave as before, and `--restore` brings the full session back to a file launch
     * `fresh DIR` opens the file explorer unless you closed it in that directory yourself; `fresh --simple` (with or without a directory) starts with it closed
     * Startup is faster with many workspaces, which now load on first use

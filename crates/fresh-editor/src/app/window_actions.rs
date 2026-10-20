@@ -1393,11 +1393,10 @@ impl crate::app::Editor {
                 // source window genuinely looks blank instead of forcing a
                 // visible `[No Name]`.
                 let new_id = self.new_buffer();
-                if !(self.fills_an_empty_workspace()
-                    && self
-                        .config
-                        .editor
-                        .auto_create_empty_buffer_on_last_buffer_close)
+                if !self
+                    .config
+                    .editor
+                    .auto_create_empty_buffer_on_last_buffer_close
                 {
                     if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(&new_id) {
                         meta.hidden_from_tabs = true;

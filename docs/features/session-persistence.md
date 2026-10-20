@@ -33,7 +33,7 @@ DIR`, `fresh FILE` or any other run with arguments.
 The rule is exactly "the command line is empty". A file, or any flag, means
 *just this, here*, and behaves as it always has. A first run — no saved
 workspaces — sets up a workspace for the current directory and opens the
-welcome screen; there is no untitled buffer in the way.
+welcome screen beside an empty buffer, as any launch does.
 
 Turn it off with **Orchestrator Mode** in the Settings UI, the checkbox at the
 top of the welcome screen, or `"orchestrator_mode": false` in `config.json`.
