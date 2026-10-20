@@ -20,7 +20,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
     * Startup is faster with many workspaces, which now load on first use
 * **Markdown Source / Rendered / Source+Compose modes** - new commands switch a Markdown pane between the raw text and the composed view, and a dual mode shows both side by side in one scroll-synced tab (edit on the source side; closing the tab leaves your file and panes as they were). "Cycle View Mode" steps through all three (#3562, by @PilotLeoYan)
 * **Debian testing/unstable package** - each release also attaches a `.debian-testing.deb` built from Debian's own packaged crates (#3519)
-* **`terminal.close_on_exit` closes a shell's tab when the shell exits** - with it on, `exit` or Ctrl+D in an integrated terminal closes its tab, and the pane too when the terminal was its only tab, instead of leaving it as read-only "(exited)" scrollback. Off by default; terminals running a command (agents, plugins) keep their output either way (#3537, by @cychitivav)
+* **New config option: close a shell's tab when the shell exits** - with it on, `exit` or Ctrl+D in an integrated terminal closes its tab (and the pane, if it was the only tab). Off by default; enable it in the Settings UI (#3537, by @cychitivav)
 * **Middle-click closes a tab** (#3284, #3286, requested by @CnsMaple)
 * **Clickable "Palette: Ctrl+P" status hint** opens the command palette (#3250, #3576, requested by @Korkman, by @peyton-durand)
 * **Duplicate Line Above command**, and duplicated lines keep carets and selections on the copy (#3244, by @kimprap)
