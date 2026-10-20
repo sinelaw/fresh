@@ -21,6 +21,9 @@ permissions:
 
 on:
   pull_request:
+    # As in ci.yml: pull requests build the package once auto-merge is on or
+    # they carry the `full-ci` label, not on every push. Not a required check.
+    types: [opened, synchronize, reopened, auto_merge_enabled]
   push:
     branches:
       - main
@@ -40,6 +43,7 @@ concurrency:
 jobs:
   debian-package:
     name: Debian package (testing, ${{ matrix.arch }})
+    if: github.event_name != 'pull_request' || github.event.pull_request.auto_merge != null || contains(github.event.pull_request.labels.*.name, 'full-ci')
     strategy:
       fail-fast: false
       matrix:

@@ -14,6 +14,15 @@ on:
   # self-update: breaking it should fail the PR, not the release.
   pull_request:
 
+# A newer push to the same pull request supersedes the build in flight. The
+# group is named rather than built from github.workflow: when release.yml calls
+# this, github.workflow is the caller's name, which debian-package.yml's group
+# also starts with, and two called workflows sharing a group would cancel
+# each other.
+concurrency:
+  group: musl-builds-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   build-musl:
     strategy:
