@@ -9,19 +9,14 @@ permissions:
 
 on:
   workflow_call:
+    inputs:
+      # ci.yml's call: the default Linux install, and the one artifact whose
+      # receipt gates self-update, so breaking it should fail the pull request,
+      # not the release. Builds the native target only and uploads nothing.
+      check-only:
+        type: boolean
+        default: false
   workflow_dispatch:
-  # The default Linux install, and the one artifact whose receipt gates
-  # self-update: breaking it should fail the PR, not the release.
-  pull_request:
-
-# A newer push to the same pull request supersedes the build in flight. The
-# group is named rather than built from github.workflow: when release.yml calls
-# this, github.workflow is the caller's name, which debian-package.yml's group
-# also starts with, and two called workflows sharing a group would cancel
-# each other.
-concurrency:
-  group: musl-builds-${{ github.head_ref || github.run_id }}
-  cancel-in-progress: true
 
 jobs:
   build-musl:
@@ -29,9 +24,9 @@ jobs:
       fail-fast: false
       matrix:
         # aarch64 cross-compiles by building `cross` from git, which dominates
-        # the job. PRs get the native target — enough to prove the archive,
+        # the job. CI gets the native target — enough to prove the archive,
         # receipt and assertions are sound — and releases get both.
-        target: ${{ fromJSON(github.event_name == 'pull_request' && '["x86_64-unknown-linux-musl"]' || '["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"]') }}
+        target: ${{ fromJSON(inputs.check-only && '["x86_64-unknown-linux-musl"]' || '["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"]') }}
     runs-on: ubuntu-22.04
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -143,9 +138,9 @@ jobs:
             || { echo "::error::musl archive has $icons icons, expected at least 9"; exit 1; }
           echo "desktop entry present, $icons icons present"
 
-      # Only release consumes these; PR runs just prove the archive builds.
+      # Only release consumes these; CI runs just prove the archive builds.
       - name: Upload artifacts
-        if: github.event_name != 'pull_request'
+        if: ${{ !inputs.check-only }}
         uses: actions/upload-artifact@v6
         with:
           name: artifacts-musl-${{ matrix.target }}

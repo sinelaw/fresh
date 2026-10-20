@@ -27,12 +27,13 @@ concurrency:
 # run the pull request's own code — a build.rs, a proc macro, a test — and the
 # default checkout leaves the job token in `.git/config` for that code to read.
 jobs:
-  # Which operating systems the tests run on. Every push to a pull request runs
-  # them on Linux; macOS and Windows join once the pull request has auto-merge
-  # on or carries the `full-ci` label (read at the next push), and always on
-  # pushes to the default branch. Nothing merges on the Linux-only run: `ci-ok`
-  # reports under that name only after the full matrix ran, so until then the
-  # required check stays "expected" and the pull request cannot merge.
+  # Whether this is a full run. Every push to a pull request gets the quick
+  # checks and the Linux tests; the macOS and Windows tests, the musl build and
+  # the Debian system-QuickJS build join once the pull request has auto-merge
+  # on or carries the `full-ci` label (read at the next push), and always run
+  # on pushes to the default branch. Nothing merges on a Linux-only run: `ci-ok`
+  # reports under that name only after a full run, so until then the required
+  # check stays "expected" and the pull request cannot merge.
   plan:
     name: plan
     runs-on: ubuntu-latest
@@ -266,6 +267,8 @@ jobs:
   # See docs/internal/debian-quickjs-spike.md.
   system-quickjs:
     name: Debian build (system QuickJS, esbuild)
+    needs: plan
+    if: needs.plan.outputs.full == 'true'
     runs-on: ubuntu-latest
     container: debian:testing
     # cargo test has no per-test timeout; cap the job so a hang fails it
@@ -366,6 +369,31 @@ jobs:
       - name: Check advisories
         run: cargo deny --all-features check advisories
 
+  # The static Linux build (musl-builds.yml), on full runs only.
+  musl:
+    name: musl
+    needs: plan
+    if: needs.plan.outputs.full == 'true'
+    uses: ./.github/workflows/musl-builds.yml
+    with:
+      check-only: true
+
+  # The ruleset requires `build-musl (x86_64-unknown-linux-musl)`, the name the
+  # musl build reported under when it ran as its own workflow; inside this one
+  # it reports as `musl / build-musl (...)`. Remove with `test-rollup`. A
+  # Linux-only run reports under another name, as `ci-ok` does.
+  musl-rollup:
+    name: ${{ needs.plan.outputs.full == 'true' && 'build-musl (x86_64-unknown-linux-musl)' || 'build-musl (not built, Linux only)' }}
+    if: always()
+    needs: [plan, musl]
+    runs-on: ubuntu-latest
+    steps:
+      - name: The musl build passed
+        if: needs.plan.outputs.full == 'true'
+        env:
+          RESULT: ${{ needs.musl.result }}
+        run: test "$RESULT" = success
+
   # The ruleset requires the per-OS names `test <os>` from before the tests
   # were sharded; these report the sharded matrix under them. Each mirrors the
   # whole matrix, so a failing shard on one OS fails them all. Remove once the
@@ -389,7 +417,8 @@ jobs:
   # `always()` rather than `!cancelled()`: a skipped required check counts as
   # passing, so this must run, and fail, when anything it needs was cancelled
   # or skipped. On a Linux-only run it reports under another name, so the
-  # required `ci-ok` is only ever satisfied by a run that tested every OS.
+  # required `ci-ok` is only ever satisfied by a full run; there, and only
+  # there, the jobs that wait for a full run may be skipped.
   ci-ok:
     name: ${{ needs.plan.outputs.full == 'true' && 'ci-ok' || 'ci-ok (Linux only)' }}
     if: always()
@@ -405,6 +434,7 @@ jobs:
       - installer
       - test
       - system-quickjs
+      - musl
       - actionlint
       - supply-chain
     runs-on: ubuntu-latest
@@ -412,8 +442,12 @@ jobs:
       - name: Every job succeeded
         env:
           NEEDS: ${{ toJSON(needs) }}
+          FULL: ${{ needs.plan.outputs.full }}
         run: |
-          failed=$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<< "$NEEDS")
+          failed=$(jq -r --arg full "$FULL" 'to_entries[]
+            | select(.value.result != "success")
+            | select($full == "true" or .value.result != "skipped" or (.key | IN("system-quickjs", "musl") | not))
+            | "\(.key): \(.value.result)"' <<< "$NEEDS")
           if [ -n "$failed" ]; then
             while IFS= read -r line; do echo "::error::$line"; done <<< "$failed"
             exit 1
