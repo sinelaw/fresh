@@ -115,8 +115,8 @@ fn settings_labels_follow_the_locale() {
         "一般",
         "エディタ",
         // The first page is General: a setting's name and its description.
-        "テーマ",
-        "カラーテーマの名前",
+        "更新を確認",
+        "起動時に新しいバージョンを確認します",
     ] {
         assert!(
             screen.contains(label),

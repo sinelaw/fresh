@@ -6549,6 +6549,77 @@ mod dock_reservation_tests {
         }
     }
 
+    /// Under `auto` a dock remembered as open at quit stays closed when the
+    /// manifest says closed: older builds opened it by default and the plugin
+    /// opens it for its own reasons, so only the user's open (`always`) brings
+    /// it back. A bare `fresh` and `fresh .` alike.
+    #[test]
+    fn auto_does_not_reopen_a_dock_remembered_open() {
+        const DECLARES_CLOSED_DOCK: &str =
+            r#"{"chrome":{"dock":{"open":false,"open_setting":"autoOpenDock"}}}"#;
+        for orchestrator_mode in [true, false] {
+            let dir_context = home(Some(DECLARES_CLOSED_DOCK));
+            std::fs::create_dir_all(&dir_context.data_dir).unwrap();
+            std::fs::write(
+                dir_context.data_dir.join("chrome.json"),
+                r#"{"dock":{"open":true}}"#,
+            )
+            .unwrap();
+            let editor = editor(dir_context, Config::default(), orchestrator_mode);
+            assert_eq!(
+                dock_width_of(&editor),
+                None,
+                "orchestrator_mode={orchestrator_mode}"
+            );
+        }
+    }
+
+    /// A file launch (`fresh FILE`, `--simple`) starts without the dock even
+    /// when the user left it open — by `always` or by what was remembered at
+    /// quit — and writes nothing back, so the next session launch still
+    /// finds it open.
+    #[test]
+    fn a_file_launch_starts_without_the_dock_whatever_was_left() {
+        let manifests: std::collections::HashMap<
+            String,
+            crate::services::plugins::manifest::PluginManifest,
+        > = std::collections::HashMap::from([(
+            "orchestrator".to_string(),
+            serde_json::from_str(DECLARES_DOCK).unwrap(),
+        )]);
+        for (case, setting) in [
+            ("`always`", serde_json::json!({ "autoOpenDock": "always" })),
+            (
+                "`auto`, left open at quit",
+                serde_json::json!({ "autoOpenDock": "auto" }),
+            ),
+        ] {
+            let dir_context = home(Some(DECLARES_DOCK));
+            let chrome = dir_context.data_dir.join("chrome.json");
+            std::fs::create_dir_all(&dir_context.data_dir).unwrap();
+            std::fs::write(&chrome, r#"{"dock":{"open":true}}"#).unwrap();
+            let config = orchestrator_config(true, setting);
+            let mut editor = editor(dir_context, config, false);
+            assert!(
+                dock_width_of(&editor).is_some(),
+                "{case}: a session launch opens it"
+            );
+
+            editor.file_launch = true;
+            editor.apply_startup_dock_chrome(&manifests);
+            assert_eq!(
+                dock_width_of(&editor),
+                None,
+                "{case}: a file launch does not"
+            );
+            assert_eq!(
+                std::fs::read_to_string(&chrome).unwrap(),
+                r#"{"dock":{"open":true}}"#,
+                "{case}: nothing is written back"
+            );
+        }
+    }
+
     /// The pre-#3442 boolean is rewritten as the mode it meant, in memory and
     /// on disk, so the Settings UI shows what startup used. See
     /// `Editor::rewrite_legacy_dock_open_setting` for why that matters.

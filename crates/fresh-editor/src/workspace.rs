@@ -511,6 +511,12 @@ pub struct WorkspaceConfigOverrides {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileExplorerState {
     pub visible: bool,
+    /// The explorer is closed because the user closed it here (Toggle File
+    /// Explorer, the explorer's ×), not merely never opened. `fresh DIR`
+    /// opens the tree unless this is set. Only ever `true` with `visible`
+    /// off.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub closed_by_user: bool,
     /// File explorer width. See [`crate::config::ExplorerWidth`] for
     /// the accepted wire formats (percent string, column string, legacy
     /// numeric forms). The `width_percent` alias preserves read
@@ -569,6 +575,7 @@ impl Default for FileExplorerState {
     fn default() -> Self {
         Self {
             visible: false,
+            closed_by_user: false,
             width: crate::config::default_explorer_width_value(),
             side: crate::config::FileExplorerSide::Left,
             expanded_dirs: Vec::new(),

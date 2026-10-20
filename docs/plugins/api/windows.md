@@ -222,8 +222,8 @@ getScreenSize(): ScreenSize;
 
 ### `orchestratorMode`
 
-Whether the editor was launched by a bare `fresh` in Orchestrator mode.
-This reflects the launch, not the `orchestrator_mode` preference,
+Whether the editor is the daemon a bare `fresh` with Auto Attach on
+attaches to. This reflects the launch, not the `auto_attach` preference,
 which stays on for `fresh FILE`. Plugins in the mode use it to
 override their own settings.
 

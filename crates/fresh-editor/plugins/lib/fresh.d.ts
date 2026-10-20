@@ -3645,13 +3645,23 @@ interface FreshConfig {
 	*/
 	self_update?: boolean;
 	/**
-	* When on (default), `fresh` with no arguments reattaches to a single background
-	* editor with the workspace dock and your last workspace. When off, it opens a
-	* plain editor in the current directory; runs with files or flags are unaffected.
+	* When on (default), `fresh` with no arguments is `fresh -a`: it runs in a single
+	* background editor that outlives the terminal, and every later bare `fresh`
+	* reattaches to it. When off, it opens a plain editor in this terminal. Runs with
+	* files or flags are unaffected. Formerly `orchestrator_mode`.
 	*
 	* Default: `true`
 	*/
-	orchestrator_mode?: boolean;
+	auto_attach?: boolean;
+	/**
+	* When on, `fresh` with no arguments reopens the workspace you used last,
+	* wherever you type it. When off (default), it opens the current directory.
+	* Works with Auto Attach on or off; runs with files or flags are
+	* unaffected.
+	*
+	* Default: `false`
+	*/
+	open_last_workspace?: boolean;
 	/**
 	* Editor behavior settings (indentation, line numbers, wrapping, etc.)
 	*/
@@ -5689,8 +5699,8 @@ interface EditorAPI {
 	*/
 	envActive(): boolean;
 	/**
-	* Whether the editor was launched by a bare `fresh` in Orchestrator mode.
-	* This reflects the launch, not the `orchestrator_mode` preference,
+	* Whether the editor is the daemon a bare `fresh` with Auto Attach on
+	* attaches to. This reflects the launch, not the `auto_attach` preference,
 	* which stays on for `fresh FILE`. Plugins in the mode use it to
 	* override their own settings.
 	*/
@@ -6108,7 +6118,7 @@ interface EditorAPI {
 	* rewrite) *and* applies the value immediately, so a checkbox a plugin
 	* draws can own a real setting.
 	* 
-	* `path` is dot-separated (e.g. `"orchestrator_mode"`,
+	* `path` is dot-separated (e.g. `"auto_attach"`,
 	* `"editor.tab_size"`). The host refuses a path that is not a real
 	* config setting rather than writing a key that would be silently
 	* dropped on the next load, and says so in the status bar.

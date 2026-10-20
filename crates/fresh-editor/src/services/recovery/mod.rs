@@ -92,6 +92,9 @@ pub struct RecoveryService {
     /// The scope `storage` was built from, so callers can ask whether a given
     /// workspace's entries would live in this store at all.
     scope: RecoveryScope,
+    /// The directory every scope's store lives under, so another scope's
+    /// store can be found ([`Self::adopt_from`]).
+    base_recovery_dir: std::path::PathBuf,
     /// Configuration
     config: RecoveryConfig,
     /// Last auto-recovery-save time per buffer
@@ -116,6 +119,7 @@ impl RecoveryService {
         Self {
             storage: RecoveryStorage::with_scope(base_recovery_dir, scope),
             scope: scope.clone(),
+            base_recovery_dir: base_recovery_dir.to_path_buf(),
             config,
             last_save_times: HashMap::new(),
             session_started: false,
@@ -149,6 +153,43 @@ impl RecoveryService {
             RecoveryScope::Session { .. } => true,
             RecoveryScope::Standalone { ref working_dir } => working_dir == root,
         }
+    }
+
+    /// Move into this store the entries `from`'s store holds that `owns`
+    /// claims, returning how many moved. Used when one launch mode opens a
+    /// workspace whose unsaved work the other mode left in its own store
+    /// (see `Editor::adopt_other_mode_recovery`).
+    ///
+    /// Nothing is taken while `from`'s editor is still running: those
+    /// entries are still its live buffers. An entry both stores hold is left
+    /// in both ([`RecoveryStorage::take_entry_from`]).
+    pub fn adopt_from(
+        &mut self,
+        from: &RecoveryScope,
+        owns: impl Fn(&RecoveryMetadata) -> bool,
+    ) -> io::Result<usize> {
+        if !self.config.enabled {
+            return Ok(0);
+        }
+        let other = RecoveryStorage::with_scope(&self.base_recovery_dir, from);
+        if other.base_dir() == self.storage.base_dir() || !other.base_dir().exists() {
+            return Ok(0);
+        }
+        if other
+            .read_session_lock()
+            .ok()
+            .flatten()
+            .is_some_and(|session| session.is_running())
+        {
+            return Ok(0);
+        }
+        let mut moved = 0;
+        for entry in other.list_entries()? {
+            if owns(&entry.metadata) && self.storage.take_entry_from(&other, &entry.id)? {
+                moved += 1;
+            }
+        }
+        Ok(moved)
     }
 
     /// Check if recovery is enabled
@@ -466,11 +507,119 @@ mod tests {
             scope: RecoveryScope::Standalone {
                 working_dir: temp_dir.path().to_path_buf(),
             },
+            base_recovery_dir: temp_dir.path().to_path_buf(),
             config: RecoveryConfig::default(),
             last_save_times: HashMap::new(),
             session_started: false,
         };
         (service, temp_dir)
+    }
+
+    /// Two scopes' stores under one recovery directory: a bare `fresh`'s
+    /// `orchestrator` daemon, and a direct launch in `project`.
+    fn two_stores() -> (TempDir, RecoveryScope, RecoveryScope) {
+        let base = TempDir::new().unwrap();
+        let daemon = RecoveryScope::Session {
+            name: "orchestrator".into(),
+        };
+        let direct = RecoveryScope::Standalone {
+            working_dir: base.path().join("project"),
+        };
+        (base, daemon, direct)
+    }
+
+    fn service_for(base: &TempDir, scope: &RecoveryScope) -> RecoveryService {
+        RecoveryService::with_scope(RecoveryConfig::default(), base.path(), scope)
+    }
+
+    /// Save unsaved `text` for `path`, stamped with `workspace`.
+    fn save_unsaved(service: &mut RecoveryService, path: &str, workspace: &str, text: &[u8]) {
+        let path = Path::new(path);
+        let id = service.get_buffer_id(Some(path));
+        let chunks = vec![RecoveryChunk::new(0, 0, text.to_vec())];
+        service
+            .save_buffer_owned(
+                &id,
+                chunks,
+                Some(path),
+                None,
+                Some(1),
+                0,
+                text.len(),
+                Some(workspace),
+            )
+            .unwrap();
+    }
+
+    fn paths_in(service: &RecoveryService) -> Vec<std::path::PathBuf> {
+        let mut paths: Vec<_> = service
+            .list_recoverable()
+            .unwrap()
+            .into_iter()
+            .filter_map(|e| e.metadata.original_path)
+            .collect();
+        paths.sort();
+        paths
+    }
+
+    /// Unsaved work one launch mode left is taken over — moved, not copied —
+    /// by the other when it opens that workspace, and only the work it owns.
+    #[test]
+    fn adopt_from_moves_the_entries_it_owns() {
+        let (base, daemon_scope, direct_scope) = two_stores();
+        let mut daemon = service_for(&base, &daemon_scope);
+        save_unsaved(&mut daemon, "/project/mine.txt", "ws-mine", b"mine");
+        save_unsaved(&mut daemon, "/other/theirs.txt", "ws-other", b"theirs");
+
+        let mut direct = service_for(&base, &direct_scope);
+        let moved = direct
+            .adopt_from(&daemon_scope, |m| {
+                m.workspace_id.as_deref() == Some("ws-mine")
+            })
+            .unwrap();
+
+        assert_eq!(moved, 1);
+        assert_eq!(paths_in(&direct), vec![Path::new("/project/mine.txt")]);
+        assert_eq!(paths_in(&daemon), vec![Path::new("/other/theirs.txt")]);
+        let entry = direct.list_recoverable().unwrap().remove(0);
+        let chunk = direct
+            .storage
+            .base_dir()
+            .join(format!("{}.chunk.0", entry.id));
+        assert_eq!(
+            std::fs::read(chunk).unwrap(),
+            b"mine",
+            "the content moved too"
+        );
+    }
+
+    /// While the other store's editor still runs, its entries are its live
+    /// buffers' and stay put.
+    #[test]
+    fn adopt_from_leaves_a_running_editors_store_alone() {
+        let (base, daemon_scope, direct_scope) = two_stores();
+        let mut daemon = service_for(&base, &daemon_scope);
+        daemon.start_session().unwrap(); // a session lock held by this live process
+        save_unsaved(&mut daemon, "/project/mine.txt", "ws-mine", b"mine");
+
+        let mut direct = service_for(&base, &direct_scope);
+        assert_eq!(direct.adopt_from(&daemon_scope, |_| true).unwrap(), 0);
+        assert_eq!(paths_in(&daemon), vec![Path::new("/project/mine.txt")]);
+    }
+
+    /// Two unsaved versions of one file, one in each store: neither is
+    /// dropped on a guess.
+    #[test]
+    fn adopt_from_keeps_both_sides_of_a_conflict() {
+        let (base, daemon_scope, direct_scope) = two_stores();
+        let mut daemon = service_for(&base, &daemon_scope);
+        save_unsaved(&mut daemon, "/project/a.txt", "ws", b"daemon's");
+        let mut direct = service_for(&base, &direct_scope);
+        save_unsaved(&mut direct, "/project/a.txt", "ws", b"direct's");
+
+        assert_eq!(direct.adopt_from(&daemon_scope, |_| true).unwrap(), 0);
+        assert_eq!(paths_in(&daemon), vec![Path::new("/project/a.txt")]);
+        assert_eq!(paths_in(&direct), vec![Path::new("/project/a.txt")]);
     }
 
     #[test]

@@ -29,7 +29,7 @@ const SWEPT: &str = "Thread Backtrace Dump";
 ///
 /// The config is written, not merely pointed at, because these tests run
 /// the binary with an *empty* command line — which is the one invocation
-/// Orchestrator mode claims (`config.orchestrator_mode`, on by default).
+/// Auto Attach claims (`config.auto_attach`, on by default).
 /// Left on, a bare `fresh` hands the editor to a detached daemon and this
 /// process becomes a relay client: the signal would land on the client,
 /// and the banner the assertions read comes from the editor. What is
@@ -40,7 +40,7 @@ fn isolated_fresh(home: &Path) -> Command {
     std::fs::create_dir_all(&config_dir).expect("create the isolated config dir");
     std::fs::write(
         config_dir.join("config.json"),
-        "{\n  \"orchestrator_mode\": false,\n  \"check_for_updates\": false\n}\n",
+        "{\n  \"auto_attach\": false,\n  \"check_for_updates\": false\n}\n",
     )
     .expect("write the isolated config");
 

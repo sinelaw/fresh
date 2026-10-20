@@ -1011,7 +1011,7 @@ editor.defineConfigEnum("autoOpenDock", {
   values: ["auto", "always", "never"] as const,
   default: "auto",
   description:
-    "Whether the workspace dock opens when Fresh starts. Opening or closing the dock yourself (View ▸ Orchestrator Dock, Orchestrator: Toggle Dock, the dock's ×) sets this to 'always' or 'never', so Fresh starts the way you last asked; choosing 'always' or 'never' here also opens or closes the dock now. 'auto' (the default, until you first open or close the dock) brings it back the way it was at quit, and on a first run leaves it closed. Replaces the old true/false, which are still read as 'auto' and 'never'.",
+    "Whether the workspace dock opens when Fresh starts. Opening or closing the dock yourself (View ▸ Orchestrator Dock, Orchestrator: Toggle Dock, the dock's ×) sets this to 'always' or 'never', so Fresh starts the way you last asked; choosing 'always' or 'never' here also opens or closes the dock now. 'auto' (the default, until you first open or close the dock) starts with it closed. Replaces the old true/false, which are still read as 'auto' and 'never'.",
 });
 editor.defineConfigEnum("defaultView", {
   values: ["compact", "card"] as const,
@@ -16086,7 +16086,9 @@ function recoverPendingWorkspaces(): void {
     void startPendingWorkspace(spec, { restored: true, label });
     restored++;
   }
-  if (restored > 0) showDockUnfocused();
+  // A file launch (`fresh FILE`, `--simple`) keeps the dock closed; the rows
+  // are there when the user opens it.
+  if (restored > 0 && !editor.fileLaunch()) showDockUnfocused();
 }
 
 // `visit`: "Create & Visit" — focus follows into the workspace once it's real.
@@ -18839,8 +18841,8 @@ editor.on("ready", () => {
   void loadDetectionRules();
   recoverPendingWorkspaces();
   // Blurred, so the keyboard stays with the editor. Whether it opens is the
-  // host's call (`orchestrator.manifest.json` and what the user left); the
-  // column is already carved, and the mount fills it.
+  // host's call (`orchestrator.manifest.json`, what the user left, and never
+  // on a file launch); the column is already carved, and the mount fills it.
   if (editor.dockOpen()) {
     showDockUnfocused();
   }

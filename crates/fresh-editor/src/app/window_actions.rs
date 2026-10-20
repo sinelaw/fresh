@@ -720,9 +720,9 @@ impl crate::app::Editor {
         // is all it takes (no separate working_dir to sync).
         self.active_window = id;
         // ...and the one thing about the switch worth remembering past
-        // this process: which workspace you were last in. Orchestrator
-        // mode reopens it on the next bare `fresh`, whatever directory
-        // that `fresh` is typed in.
+        // this process: which workspace you were last in. With
+        // `open_last_workspace` the next bare `fresh` reopens it, whatever
+        // directory that `fresh` is typed in.
         if let Some(window) = self.windows.get_mut(&id) {
             window.last_focused_at = crate::workspace::now_millis();
         }
@@ -1393,11 +1393,10 @@ impl crate::app::Editor {
                 // source window genuinely looks blank instead of forcing a
                 // visible `[No Name]`.
                 let new_id = self.new_buffer();
-                if !(self.fills_an_empty_workspace()
-                    && self
-                        .config
-                        .editor
-                        .auto_create_empty_buffer_on_last_buffer_close)
+                if !self
+                    .config
+                    .editor
+                    .auto_create_empty_buffer_on_last_buffer_close
                 {
                     if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(&new_id) {
                         meta.hidden_from_tabs = true;

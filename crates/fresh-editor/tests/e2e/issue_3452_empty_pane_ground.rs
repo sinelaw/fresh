@@ -7,14 +7,14 @@ use fresh::input::keybindings::Action;
 use ratatui::style::Color;
 
 /// One buffer, closed, with the auto-created replacement and the explorer
-/// both suppressed so the placeholder pane survives. `orchestrator_mode` is
+/// both suppressed so the placeholder pane survives. `auto_attach` is
 /// off so the pane spans the frame and column 5 is the pane, not the dock.
 fn empty_workspace(use_terminal_bg: bool) -> EditorTestHarness {
     let mut config = Config::default();
     config.editor.auto_create_empty_buffer_on_last_buffer_close = false;
     config.file_explorer.auto_open_on_last_buffer_close = false;
     config.editor.use_terminal_bg = use_terminal_bg;
-    config.orchestrator_mode = false;
+    config.auto_attach = false;
 
     let mut harness = EditorTestHarness::with_config(100, 32, config).unwrap();
     harness.load_buffer_from_text("line one\nline two").unwrap();

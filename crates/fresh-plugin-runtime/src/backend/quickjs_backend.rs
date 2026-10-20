@@ -2802,8 +2802,8 @@ impl JsEditorApi {
     }
 
     #[plugin_api(section = "Windows")]
-    /// Whether the editor was launched by a bare `fresh` in Orchestrator mode.
-    /// This reflects the launch, not the `orchestrator_mode` preference,
+    /// Whether the editor is the daemon a bare `fresh` with Auto Attach on
+    /// attaches to. This reflects the launch, not the `auto_attach` preference,
     /// which stays on for `fresh FILE`. Plugins in the mode use it to
     /// override their own settings.
     pub fn orchestrator_mode(&self) -> bool {
@@ -3832,7 +3832,7 @@ impl JsEditorApi {
     /// rewrite) *and* applies the value immediately, so a checkbox a plugin
     /// draws can own a real setting.
     ///
-    /// `path` is dot-separated (e.g. `"orchestrator_mode"`,
+    /// `path` is dot-separated (e.g. `"auto_attach"`,
     /// `"editor.tab_size"`). The host refuses a path that is not a real
     /// config setting rather than writing a key that would be silently
     /// dropped on the next load, and says so in the status bar.

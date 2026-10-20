@@ -1663,8 +1663,9 @@ pub struct EditorStateSnapshot {
     /// after the restart that activation triggers.
     #[serde(default)]
     pub env_active: bool,
-    /// Launched by a bare `fresh` in Orchestrator mode. The launch, not the
-    /// `orchestrator_mode` preference, which stays on for `fresh FILE`.
+    /// Launched by a bare `fresh` with Auto Attach on (its daemon). The
+    /// launch, not the `auto_attach` preference, which stays on for
+    /// `fresh FILE`.
     #[serde(default)]
     pub orchestrator_mode: bool,
     /// Launched to open the files on its command line (`fresh FILE…`,

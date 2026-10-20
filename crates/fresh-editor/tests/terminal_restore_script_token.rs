@@ -175,7 +175,7 @@ fn a_restored_agent_terminal_can_still_drive_the_editor() {
 
     // Session 2: cold reboot, exactly what the user gets on relaunch.
     let mut e2 = editor_in(&project, &dir_context);
-    e2.restore_active_window_on_launch(false).unwrap();
+    e2.restore_active_window_on_launch(fresh::app::workspace::ExplorerOnEntry::Enter).unwrap();
     let restored_window = e2.active_window_id();
 
     let log = transcript_path(&e2);

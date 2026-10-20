@@ -89,7 +89,7 @@ impl Scenario {
     }
 
     /// Like [`Self::place_workspace`], stamped as last focused at `at` — the
-    /// stamp Orchestrator mode reopens the newest of.
+    /// stamp `open_last_workspace` reopens the newest of.
     fn place_focused_workspace(&self, root: &Path, label: &str, at: u64) {
         let ws_dir = self.data_dir().join("workspaces");
         std::fs::create_dir_all(&ws_dir).unwrap();
@@ -190,7 +190,7 @@ impl Scenario {
         self.boot_with(cwd, false)
     }
 
-    /// [`Self::boot_in`] as a bare `fresh` with Orchestrator mode on boots.
+    /// [`Self::boot_in`] as a bare `fresh` with Auto Attach on boots.
     fn boot_orchestrator_in(&self, cwd: &Path) -> fresh::app::Editor {
         self.boot_with(cwd, true)
     }
@@ -532,30 +532,28 @@ fn boot_reads_only_the_launch_dirs_workspaces_until_they_are_listed() {
     assert_eq!(window_roots(&editor), expected);
 }
 
-/// Orchestrator mode reads the whole registry, but only to reopen the
-/// workspace used last. It builds windows for that one and the launch
-/// directory's; the rest wait, as on any other launch, until something lists
-/// them — so a bare `fresh` does not get slower with every workspace saved.
+/// Orchestrator mode opens the launch directory's workspace, like any other
+/// launch, even when another one was used more recently; and boot reads only
+/// that directory's, so a bare `fresh` does not get slower with every
+/// workspace saved. The rest are added when something lists them.
 #[test]
-fn orchestrator_boot_builds_the_last_used_and_launch_dir_workspaces_only() {
+fn orchestrator_boot_opens_the_launch_dir_workspace() {
     let s = Scenario::new();
     s.place_focused_workspace(&s.project_canon, "project", 100);
     s.place_focused_workspace(&s.worktree_canon, "worktree", 200);
     s.place_focused_workspace(&s.other_canon, "other", 300);
 
     let mut editor = s.boot_orchestrator_in(&s.project_canon);
-    let mut booted = vec![s.project_canon.clone(), s.other_canon.clone()];
-    booted.sort();
     assert_eq!(
         window_roots(&editor),
-        booted,
-        "boot builds the last-used workspace and the launch directory's, nothing else"
+        vec![s.project_canon.clone()],
+        "boot builds the launch directory's workspace, nothing else"
     );
     let active = editor.active_window_id();
     assert_eq!(
         editor.session(active).map(|w| w.root.clone()),
-        Some(s.other_canon.clone()),
-        "a bare `fresh` reopens the workspace used last, wherever it is"
+        Some(s.project_canon.clone()),
+        "a bare `fresh` opens the directory it was typed in"
     );
 
     editor.ensure_all_workspaces_loaded();
@@ -575,4 +573,23 @@ fn orchestrator_boot_builds_the_last_used_and_launch_dir_workspaces_only() {
         active,
         "loading the registry does not switch windows"
     );
+}
+
+/// `open_last_workspace` sends a bare `fresh` to the workspace focused most
+/// recently, wherever it is. With none stamped there is nowhere to go, and
+/// the launch stays in the current directory.
+#[test]
+fn the_last_used_workspace_is_the_most_recently_focused() {
+    let s = Scenario::new();
+    let dir_context = DirectoryContext::for_testing(s.data_root.path());
+    let last_used = || fresh::app::Editor::last_used_workspace_root(&dir_context);
+    assert_eq!(last_used(), None, "a first run has none");
+
+    s.place_workspace(&s.project_canon, "project");
+    assert_eq!(last_used(), None, "a workspace never stamped was not used last");
+
+    s.place_focused_workspace(&s.project_canon, "project", 100);
+    s.place_focused_workspace(&s.other_canon, "other", 300);
+    s.place_focused_workspace(&s.worktree_canon, "worktree", 200);
+    assert_eq!(last_used(), Some(s.other_canon.clone()));
 }

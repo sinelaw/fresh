@@ -68,8 +68,10 @@ enum DockOpenPolicy {
     Never,
     /// Open, ignoring what was remembered.
     Always,
-    /// What was remembered; on a first launch, the launch mode, then the
-    /// manifest's `open`.
+    /// The manifest's `open`, unless the dock was closed at the last quit.
+    /// A dock remembered as *open* does not come back on its own: older
+    /// builds opened it by default and the plugin opens it for its own
+    /// reasons, so only the user's own open (written as `Always`) does.
     Auto,
 }
 
@@ -114,11 +116,13 @@ impl Editor {
     ///
     /// The launch mode plays no part: a bare `fresh` (Orchestrator mode)
     /// starts with the dock closed like any other launch until the user opens
-    /// it, and from then on it comes back the way they left it.
+    /// it, and from then on it comes back the way they left it. Under `auto`
+    /// a remembered open is not enough (see [`DockOpenPolicy::Auto`]).
     ///
-    /// A file launch (`Editor::file_launch`) is not a session, so under
-    /// `auto` the dock stays closed and nothing remembered about it applies;
-    /// `always` still opens it.
+    /// A file launch (`Editor::file_launch`: `fresh FILE`, `--simple`) is not
+    /// a session, so the dock stays closed whatever the setting says or was
+    /// remembered — `always` included. Nothing is written back: the next
+    /// session launch still finds the dock the way the user left it.
     pub(crate) fn apply_startup_dock_chrome(
         &mut self,
         manifests: &HashMap<String, PluginManifest>,
@@ -155,10 +159,10 @@ impl Editor {
         let policy = DockOpenPolicy::read(stored);
         let legacy = DockOpenPolicy::is_legacy(stored);
         self.dock_reserved = match policy {
+            _ if self.file_launch => false,
             DockOpenPolicy::Never => false,
             DockOpenPolicy::Always => true,
-            DockOpenPolicy::Auto if self.file_launch => false,
-            DockOpenPolicy::Auto => remembered.open.unwrap_or(decl.open),
+            DockOpenPolicy::Auto => decl.open && remembered.open != Some(false),
         };
         tracing::debug!(
             plugin = %name,
