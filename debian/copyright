@@ -1,14 +1,14 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: fresh-editor
-Upstream-Contact: Noam Lewis <i9uqoqj7k@mozmail.com>
+Upstream-Contact: Noam Lewis <jones.noamle@gmail.com>
 Source: https://github.com/sinelaw/fresh
 
 Files: *
-Copyright: 2024-2026 Noam Lewis <i9uqoqj7k@mozmail.com>
+Copyright: 2024-2026 Noam Lewis <jones.noamle@gmail.com>
 License: GPL-3+
 
 Files: debian/*
-Copyright: 2026 Noam Lewis <i9uqoqj7k@mozmail.com>
+Copyright: 2026 Noam Lewis <jones.noamle@gmail.com>
 License: GPL-3+
 
 License: GPL-3+
