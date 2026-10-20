@@ -3768,13 +3768,13 @@ where
 /// - `None` — not a nested launch, nothing to forward, or the parent
 ///   socket is unreachable; the caller should launch inline as usual.
 fn try_forward_nested(args: &Args) -> Option<AnyhowResult<()>> {
-    // With Auto Attach on, nothing starts a second editor nested in a Fresh
-    // terminal. Everything that reaches here without a file to forward is
-    // such a launch: subcommands, `--server`, `-a`, `--web` and `--gui` have
-    // all returned before this.
+    // Nothing starts a second editor nested in a Fresh terminal, whatever
+    // Auto Attach says: every such terminal, a direct editor's included, is
+    // inside an editor it can reach. Everything that reaches here without a
+    // file to forward is such a launch: subcommands, `--server`, `-a`,
+    // `--web` and `--gui` have all returned before this.
     if args.files.iter().all(|f| f == "-") {
         let session = enclosing_session()?;
-        auto_attach_config()?;
         let asked_for_stdin = args.stdin || args.files.iter().any(|f| f == "-");
         if asked_for_stdin && stdin_is_terminal() {
             // Asked for stdin with nothing piped: the ordinary launch reports it.
@@ -3826,8 +3826,8 @@ fn enclosing_session() -> Option<String> {
         .filter(|s| !s.trim().is_empty())
 }
 
-/// A launch typed in a Fresh terminal, with Auto Attach on, that would
-/// start a second editor inside it (see `already_in_enclosing`).
+/// A launch typed in a Fresh terminal that would start a second editor
+/// inside it (see `already_in_enclosing`).
 enum NestedLaunch {
     /// A bare `fresh`, `fresh -a`, or flags without a file: a request to be
     /// in Fresh, which you already are. Succeeds.
@@ -3863,8 +3863,9 @@ fn bypass_command() -> String {
     }
 }
 
-/// A launch typed in a Fresh terminal, with Auto Attach on, that would start
-/// a second editor inside that terminal (see [`NestedLaunch`]). Rather than
+/// A launch typed in a Fresh terminal — the daemon's or a direct editor's —
+/// that would start a second editor inside that terminal (see
+/// [`NestedLaunch`]). Rather than
 /// nest one, or move the enclosing editor to another workspace under the
 /// prompt you typed at, it leaves the editor exactly as it is and says how to
 /// act on it: `fresh FILE` and `fresh DIR` still do.
@@ -5514,44 +5515,39 @@ fn read_script_source(from: &[&str]) -> AnyhowResult<String> {
 
 /// Attach to an existing daemon, starting one if needed
 ///
-/// With Auto Attach on, `fresh -a` with no name is a bare `fresh`: the one
-/// shared daemon, in this directory's workspace (with any files opened
-/// there); inside a Fresh terminal that is the editor around it, so it
-/// does nothing (see `already_in_enclosing`), or forwards its files. `fresh -a NAME`, and `-a` with Auto Attach off,
-/// keep their own daemons.
+/// Inside a Fresh terminal — whatever Auto Attach says — `fresh -a` acts on
+/// the editor around it: with files it forwards them, without it does
+/// nothing (see `already_in_enclosing`), and `fresh -a NAME` is refused
+/// rather than nested.
+///
+/// Elsewhere, with Auto Attach on, `fresh -a` with no name is a bare `fresh`:
+/// the one shared daemon, in this directory's workspace (with any files
+/// opened there). `fresh -a NAME`, and `-a` with Auto Attach off, keep their
+/// own daemons.
 fn run_attach_command(args: &Args) -> AnyhowResult<()> {
-    if let (Some(_), Some(session)) = (&args.session_name, enclosing_session()) {
-        if auto_attach_config().is_some() {
+    if let Some(session) = enclosing_session() {
+        if args.session_name.is_some() {
             let refused = NestedLaunch::Refused(
                 "`fresh -a NAME` would attach a second editor inside this terminal",
             );
             if let Some(result) = already_in_enclosing(&session, refused) {
                 return result;
             }
-        }
-    }
-    if args.session_name.is_none() {
-        if let Some(config) = auto_attach_config() {
-            match enclosing_session() {
-                Some(session) if args.files.is_empty() => {
-                    if let Some(result) = already_in_enclosing(&session, NestedLaunch::Bare) {
-                        return result;
-                    }
-                }
-                Some(session) => {
-                    if forward_to_session(&session, &args.files)? {
-                        return Ok(());
-                    }
-                }
-                None => {
-                    return run_orchestrator_launch(
-                        &config,
-                        &args.files,
-                        args.locale.as_deref(),
-                        args.config.as_deref(),
-                    );
-                }
+        } else if args.files.is_empty() {
+            if let Some(result) = already_in_enclosing(&session, NestedLaunch::Bare) {
+                return result;
             }
+        } else if forward_to_session(&session, &args.files)? {
+            return Ok(());
+        }
+    } else if args.session_name.is_none() {
+        if let Some(config) = auto_attach_config() {
+            return run_orchestrator_launch(
+                &config,
+                &args.files,
+                args.locale.as_deref(),
+                args.config.as_deref(),
+            );
         }
     }
     run_attach(

@@ -366,6 +366,13 @@ What the mode is, end to end:
   daemon switches to that directory's workspace (creating it if needed);
   nothing else is reconfigured. With `open_last_workspace` on it sends nothing
   and the daemon stays where it is.
+- **`fresh -a` with no name is the same launch** while the setting is on.
+- **Inside a Fresh terminal it plays no part.** Every such terminal sets
+  `FRESH_SESSION`, a direct editor's included, so a `fresh` there is already
+  inside an editor it can reach: files and directories are forwarded to it, and
+  anything that would nest a second editor (a bare `fresh`, `-a`, `--simple`,
+  `-a NAME`, piped input) is answered "Already in Fresh" instead
+  (`try_forward_nested` / `already_in_enclosing` in `main.rs`).
 - **It runs until it is told to quit.** No idle timeout: with nothing attached
   it still holds the workspaces, terminals and agents.
 - **The mode crosses the spawn as a flag.** The daemon is a separate process

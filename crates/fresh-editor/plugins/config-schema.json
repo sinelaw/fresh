@@ -32,7 +32,7 @@
       "default": true
     },
     "auto_attach": {
-      "description": "When on (default), `fresh` with no arguments runs in a single background editor\nthat outlives the terminal, and every later bare `fresh` reattaches to it. When\noff, it opens a plain editor in this terminal. Runs with files or flags are\nunaffected. Formerly `orchestrator_mode`.",
+      "description": "When on (default), `fresh` with no arguments is `fresh -a`: it runs in a single\nbackground editor that outlives the terminal, and every later bare `fresh`\nreattaches to it. When off, it opens a plain editor in this terminal. Runs with\nfiles or flags are unaffected. Formerly `orchestrator_mode`.",
       "type": "boolean",
       "default": true,
       "x-order": 1

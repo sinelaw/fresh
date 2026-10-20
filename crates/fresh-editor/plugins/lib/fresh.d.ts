@@ -3645,10 +3645,10 @@ interface FreshConfig {
 	*/
 	self_update?: boolean;
 	/**
-	* When on (default), `fresh` with no arguments runs in a single background editor
-	* that outlives the terminal, and every later bare `fresh` reattaches to it. When
-	* off, it opens a plain editor in this terminal. Runs with files or flags are
-	* unaffected. Formerly `orchestrator_mode`.
+	* When on (default), `fresh` with no arguments is `fresh -a`: it runs in a single
+	* background editor that outlives the terminal, and every later bare `fresh`
+	* reattaches to it. When off, it opens a plain editor in this terminal. Runs with
+	* files or flags are unaffected. Formerly `orchestrator_mode`.
 	*
 	* Default: `true`
 	*/
