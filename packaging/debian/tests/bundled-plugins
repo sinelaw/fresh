@@ -1,0 +1,46 @@
+#!/bin/sh
+# Without esbuild, Fresh runs its bundled plugins (compiled at build time),
+# and tells the user to install esbuild for their own TypeScript.
+set -eu
+
+if command -v esbuild >/dev/null; then
+    echo "esbuild is installed, and this test is about running without it"
+    exit 77
+fi
+
+export HOME="$AUTOPKGTEST_TMP/home"
+export TERM=xterm-256color
+mkdir -p "$HOME"
+cd "$AUTOPKGTEST_TMP"
+log="$AUTOPKGTEST_TMP/fresh.log"
+
+# Fresh queries the terminal as it starts, so it runs in tmux, which answers.
+# The plugin loader logs (at debug level) how many plugins it loaded, and how
+# many failed.
+tmux -L autopkgtest new-session -d -x 120 -y 40 \
+    "RUST_LOG=fresh_plugin_runtime=debug,info fresh --simple --no-upgrade-check --log-file '$log'"
+for _ in $(seq 60); do
+    grep -q 'Discovered [0-9]* plugins' "$log" 2>/dev/null && break
+    sleep 1
+done
+tmux -L autopkgtest kill-server 2>/dev/null || true
+
+summary=$(sed 's/\x1b\[[0-9;]*m//g' "$log" | grep -o 'Discovered [0-9]* plugins, [0-9]* errors' || true)
+echo "${summary:-the log has no plugin summary}"
+case "$summary" in
+    "" | "Discovered 0 plugins"*)
+        exit 1 ;;
+    *", 0 errors") ;;
+    *)
+        sed 's/\x1b\[[0-9;]*m//g' "$log" | grep ERROR >&2 || true
+        exit 1 ;;
+esac
+
+# The user's own TypeScript needs esbuild; without it, Fresh says so.
+mkdir -p "$HOME/.config/fresh"
+printf 'const answer: number = 42;\neditor.setStatus(`answer ${answer}`);\n' > "$HOME/.config/fresh/init.ts"
+if fresh --cmd init check > init-check.txt 2>&1; then
+    echo "init.ts checked out without esbuild"
+    exit 1
+fi
+grep 'apt install esbuild' init-check.txt

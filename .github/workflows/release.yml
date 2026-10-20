@@ -790,64 +790,44 @@ jobs:
           git push
 
   # Publish to npm
+  # npm only accepts a trusted (OIDC) publish from the workflow file named in
+  # the package's trusted-publisher settings on npmjs.com: release-npm.yml.
+  # Publishing from a job here fails with ENEEDAUTH, so this starts that
+  # workflow on the release tag, as a run of its own, and waits for it.
   publish-npm:
     needs: [plan, promote]
     if: ${{ needs.plan.outputs.publishing == 'true' }}
     runs-on: ubuntu-22.04
     permissions:
+      actions: write
       contents: read
-      id-token: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      VERSION: ${{ needs.plan.outputs.version }}
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Determine version
-        id: version
+      - name: Run release-npm.yml on the release tag
         run: |
-          if [ -n "${{ needs.plan.outputs.version }}" ]; then
-            VERSION="${{ needs.plan.outputs.version }}"
-          else
-            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          # A little early, in case the runner's clock is ahead of GitHub's.
+          since=$(date -u -d '-30 seconds' +%Y-%m-%dT%H:%M:%SZ)
+          gh workflow run release-npm.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG" -f version="$VERSION"
+          # `gh workflow run` does not say which run it started: take the
+          # first dispatch of this workflow on the tag since then.
+          run_id=
+          for _ in $(seq 30); do
+            sleep 10
+            run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow release-npm.yml \
+              --event workflow_dispatch --branch "$TAG" --limit 10 \
+              --json databaseId,createdAt \
+              --jq "[.[] | select(.createdAt >= \"$since\")] | sort_by(.createdAt) | first | .databaseId // empty")
+            [ -n "$run_id" ] && break
+          done
+          if [ -z "$run_id" ]; then
+            echo "::error::release-npm.yml did not start"
+            exit 1
           fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Publishing npm package for version: $VERSION"
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-
-      - name: Update npm
-        run: npm install -g npm@latest
-
-      - name: Create npm package
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          # Copy JS files from npm-package template
-          mkdir -p dist-npm
-          cp crates/fresh-editor/npm-package/*.js dist-npm/
-
-          # Create package.json from template with version
-          sed "s/VERSION_PLACEHOLDER/${VERSION}/g" crates/fresh-editor/npm-package/package.json.template > dist-npm/package.json
-
-          # Copy supporting files. Plugins/themes are embedded in the binary.
-          cp README.md LICENSE CHANGELOG.md dist-npm/
-
-          # Create the tarball
-          cd dist-npm
-          npm pack
-          mv *.tgz ../fresh-editor-npm-package.tar.gz
-          cd ..
-
-          echo "Created npm package:"
-          ls -la fresh-editor-npm-package.tar.gz
-
-      - name: Publish to npm with provenance (OIDC)
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          echo "Publishing npm package for version ${VERSION}"
-          npm publish --access public --provenance ./fresh-editor-npm-package.tar.gz
+          echo "release-npm.yml run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id"
+          gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status --interval 15
 
   # Publish to AUR
   publish-aur:
