@@ -23,6 +23,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Clear error in mintty / Git Bash** - Fresh now explains it needs a real console instead of failing with `os error 6` (#3547, #3549, reported by @netoffice-zz)
 * **git no longer hangs on a detached daemon** - `--wait` against a daemon with nothing attached no longer waits on an invisible editor (#3555)
 * **Plugin bundling uses a private temp directory**, closing a local-user file-overwrite risk (#3557)
+* **`fresh -a` works in deeply nested directories** - the daemon no longer dies at startup when the directory path is too long for a Unix socket name; such directories get a shortened, hashed socket name, and every other directory keeps the name it had
 
 ### Internals
 

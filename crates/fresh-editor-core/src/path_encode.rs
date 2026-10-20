@@ -82,21 +82,39 @@ fn fold_to_max_len(encoded: String) -> String {
     if encoded.len() <= MAX_ENCODED_LEN {
         return encoded;
     }
+    fold_to_len(&encoded, MAX_ENCODED_LEN)
+}
+
+/// Shorten `name` to at most `max_len` bytes as `<head>~<hash>`, or return
+/// it unchanged when it already fits.
+///
+/// The same fold as [`encode_path_for_filename`] applies at `NAME_MAX`, for
+/// callers with a tighter limit of their own — a Unix socket's whole path has
+/// to fit `sun_path`. The hash runs over all of `name`, so two names sharing
+/// the kept head still come out different, and the result is the same on
+/// every call. When `max_len` cannot hold even the mark and the hash, the
+/// result is the bare `~<hash>` and so longer than asked.
+pub fn fold_to_len(name: &str, max_len: usize) -> String {
+    if name.len() <= max_len {
+        return name.to_string();
+    }
     // 1 mark + 16 hex digits.
     const SUFFIX_LEN: usize = 17;
-    let keep = MAX_ENCODED_LEN - SUFFIX_LEN;
-    // The encoder emits ASCII and nothing else — every other byte is
-    // percent-escaped — so cutting on a byte is cutting on a character. It
-    // can still land *inside* a `%XX` triple, which would leave a stray `%`
+    let mut keep = max_len.saturating_sub(SUFFIX_LEN);
+    // Encoder output is ASCII, but a caller's name need not be.
+    while !name.is_char_boundary(keep) {
+        keep -= 1;
+    }
+    // A cut can land *inside* a `%XX` triple, which would leave a stray `%`
     // or a half-escape that decodes as text, so back off to the escape's
     // start.
-    let mut head = &encoded[..keep];
+    let mut head = &name[..keep];
     if head.ends_with('%') {
         head = &head[..head.len() - 1];
     } else if head.len() >= 2 && head.as_bytes()[head.len() - 2] == b'%' {
         head = &head[..head.len() - 2];
     }
-    format!("{head}{FOLD_MARK}{:016x}", fold_hash(encoded.as_bytes()))
+    format!("{head}{FOLD_MARK}{:016x}", fold_hash(name.as_bytes()))
 }
 
 /// Encode a path into a filesystem-safe filename using percent encoding

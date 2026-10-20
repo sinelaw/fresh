@@ -67,13 +67,7 @@ impl SocketPaths {
     pub fn for_working_dir(working_dir: &Path) -> io::Result<Self> {
         let socket_dir = platform::get_socket_dir()?;
         let encoded = encode_path_for_filename(working_dir);
-
-        Ok(Self {
-            data: socket_dir.join(format!("{}.data.sock", encoded)),
-            control: socket_dir.join(format!("{}.ctrl.sock", encoded)),
-            pid: socket_dir.join(format!("{}.pid", encoded)),
-            lock: socket_dir.join(format!("{}.lock", encoded)),
-        })
+        Ok(Self::for_session_name_in_dir(&encoded, &socket_dir))
     }
 
     /// Get socket paths for a named daemon
@@ -85,11 +79,12 @@ impl SocketPaths {
     /// Get socket paths for a named daemon in a specific directory
     /// (primarily for testing with isolated temp directories)
     pub fn for_session_name_in_dir(name: &str, socket_dir: &Path) -> Self {
+        let stem = socket_stem(name, socket_dir, platform::max_socket_path_len());
         Self {
-            data: socket_dir.join(format!("{}.data.sock", name)),
-            control: socket_dir.join(format!("{}.ctrl.sock", name)),
-            pid: socket_dir.join(format!("{}.pid", name)),
-            lock: socket_dir.join(format!("{}.lock", name)),
+            data: socket_dir.join(format!("{}.data.sock", stem)),
+            control: socket_dir.join(format!("{}.ctrl.sock", stem)),
+            pid: socket_dir.join(format!("{}.pid", stem)),
+            lock: socket_dir.join(format!("{}.lock", stem)),
         }
     }
 
@@ -181,6 +176,33 @@ impl SocketPaths {
         }
         Ok(())
     }
+}
+
+/// The longest suffix a session's files carry; every other one is shorter.
+const LONGEST_SUFFIX: &str = ".data.sock";
+
+/// The file-name stem for a session's sockets in `socket_dir`.
+///
+/// A Unix socket's whole path has to fit `sun_path` (`max_path_len`), and a
+/// working-directory session's name is the entire encoded directory, so a
+/// deep project left `bind(2)` nothing to work with. A name that fits keeps
+/// exactly the stem it always had — a daemon an older Fresh started is still
+/// found — and only one that would not fit is folded to `<head>~<hash>`
+/// (see [`fold_to_len`]): deterministic, so every `fresh -a` in a directory
+/// meets the same daemon, and unique, since the hash covers the full name.
+///
+/// A folded stem is a fixed point: it already fits, so passing it back in as
+/// a session name — as `daemon list` does with each `*.ctrl.sock` it finds —
+/// names the same files.
+///
+/// [`fold_to_len`]: fresh_editor_core::path_encode::fold_to_len
+fn socket_stem(name: &str, socket_dir: &Path, max_path_len: Option<usize>) -> String {
+    let Some(max_path_len) = max_path_len else {
+        return name.to_string();
+    };
+    // `<socket_dir>/<stem>.data.sock`
+    let overhead = socket_dir.as_os_str().len() + 1 + LONGEST_SUFFIX.len();
+    fresh_editor_core::path_encode::fold_to_len(name, max_path_len.saturating_sub(overhead))
 }
 
 /// Type alias for interprocess local socket stream
@@ -1063,6 +1085,70 @@ mod tests {
             .control
             .to_string_lossy()
             .contains("my-session.ctrl.sock"));
+    }
+
+    /// A working directory deep enough that its socket path overflows
+    /// `sun_path` gets a folded stem that fits, while a short one keeps the
+    /// name every earlier release gave it.
+    #[test]
+    fn socket_paths_for_a_long_working_dir_fit_sun_path() {
+        let socket_dir = Path::new("/run/user/1000/fresh");
+        let limit = Some(107);
+        let deep = format!("/tmp/{}/proj", "x".repeat(100));
+        let sibling = format!("/tmp/{}/proj2", "x".repeat(100));
+        let stem =
+            |dir: &str| socket_stem(&encode_path_for_filename(Path::new(dir)), socket_dir, limit);
+
+        let a = stem(&deep);
+        let full = socket_dir.join(format!("{a}{LONGEST_SUFFIX}"));
+        assert!(full.as_os_str().len() <= 107, "{}", full.display());
+        assert!(a.starts_with("tmp_xxx"), "keeps a readable head: {a}");
+        assert_eq!(a, stem(&deep), "stable across calls");
+        assert_ne!(a, stem(&sibling), "distinct directories stay distinct");
+        // A folded stem fits, so it names the same files when handed back as
+        // a session name (as `daemon list` does).
+        assert_eq!(socket_stem(&a, socket_dir, limit), a);
+
+        assert_eq!(stem("/home/user/project"), "home_user_project");
+        // Named pipes have no such limit: nothing folds on Windows.
+        let long = encode_path_for_filename(Path::new(&deep));
+        assert_eq!(socket_stem(&long, socket_dir, None), long);
+    }
+
+    /// The same, through the real socket directory and platform limit, for
+    /// every file a session has.
+    #[cfg(unix)]
+    #[test]
+    fn every_session_file_for_a_long_working_dir_fits() {
+        let max = platform::max_socket_path_len().unwrap();
+        let deep = std::env::temp_dir().join("x".repeat(200)).join("proj");
+        let paths = SocketPaths::for_working_dir(&deep).unwrap();
+        for p in [&paths.data, &paths.control, &paths.pid, &paths.lock] {
+            assert!(p.as_os_str().len() <= max, "{}", p.display());
+        }
+        let again = SocketPaths::for_working_dir(&deep).unwrap();
+        assert_eq!(paths.data, again.data);
+
+        let short = SocketPaths::for_working_dir(Path::new("/home/user/project")).unwrap();
+        assert_eq!(
+            short.data.file_name().unwrap(),
+            "home_user_project.data.sock"
+        );
+    }
+
+    /// A named daemon with an over-long name folds the same way.
+    #[cfg(unix)]
+    #[test]
+    fn a_long_session_name_fits() {
+        let max = platform::max_socket_path_len().unwrap();
+        let temp_dir = TempDir::new().unwrap();
+        let name = "n".repeat(300);
+        let paths = SocketPaths::for_session_name_in_dir(&name, temp_dir.path());
+        assert!(paths.data.as_os_str().len() <= max);
+        let stem = paths.data.file_name().unwrap().to_str().unwrap();
+        let stem = stem.strip_suffix(".data.sock").unwrap();
+        let listed = SocketPaths::for_session_name_in_dir(stem, temp_dir.path());
+        assert_eq!(listed.control, paths.control);
     }
 
     #[test]
