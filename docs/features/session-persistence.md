@@ -25,9 +25,13 @@ fresh            # this directory's workspace, in the shared daemon
 fresh notes.md   # unaffected: an editor here, on this file
 ```
 
-Typed in one of Fresh's own terminals, a bare `fresh` or `fresh -a` does nothing to
-the editor: you are already in it. It says so and exits; `fresh FILE` and
-`fresh DIR` still open files and workspaces in that editor.
+Typed in one of Fresh's own terminals, nothing starts a second editor inside that
+terminal: you are already in Fresh. A bare `fresh` or `fresh -a` says so and
+exits; `fresh --simple`, `fresh -a NAME` and piped input (`cmd | fresh`) are
+refused the same way, with an error. `fresh FILE` and `fresh DIR` still open
+files and workspaces in that editor. To start a separate editor in the terminal
+anyway, clear `FRESH_SESSION` for the command, as the message suggests:
+`FRESH_SESSION= fresh --simple`.
 
 To have a bare `fresh` reopen the workspace you used last instead, wherever
 you type it, turn on **Open Last Workspace** (`"open_last_workspace": true`).
