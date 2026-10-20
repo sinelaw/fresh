@@ -32,10 +32,16 @@
       "default": true
     },
     "orchestrator_mode": {
-      "description": "When on (default), `fresh` with no arguments reattaches to a single background\neditor with the workspace dock and your last workspace. When off, it opens a\nplain editor in the current directory; runs with files or flags are unaffected.",
+      "description": "When on (default), `fresh` with no arguments opens the current directory in a\nsingle background editor that outlives the terminal and that every bare `fresh`\nreattaches to. When off, it opens a plain editor in this terminal; runs with\nfiles or flags are unaffected.",
       "type": "boolean",
       "default": true,
       "x-order": 1
+    },
+    "open_last_workspace": {
+      "description": "When on, `fresh` with no arguments reopens the workspace you used last,\nwherever you type it. When off (default), it opens the current directory.\nWorks with Orchestrator Mode on or off; runs with files or flags are\nunaffected.",
+      "type": "boolean",
+      "default": false,
+      "x-order": 2
     },
     "editor": {
       "description": "Editor behavior settings (indentation, line numbers, wrapping, etc.)",

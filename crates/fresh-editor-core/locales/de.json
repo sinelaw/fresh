@@ -1546,7 +1546,7 @@
   "settings.field.locale": "Sprache",
   "settings.field.locale_desc": "Sprache der Oberfläche. Ohne Angabe wird sie aus LC_ALL, LC_MESSAGES oder LANG ermittelt.",
   "settings.field.orchestrator_mode": "Orchestrator-Modus",
-  "settings.field.orchestrator_mode_desc": "Ist dies an (Standard), verbindet sich `fresh` ohne Argumente wieder mit einem einzelnen Hintergrund-Editor samt Workspace-Dock und letztem Workspace. Ist es aus, öffnet sich ein einfacher Editor im aktuellen Verzeichnis; Aufrufe mit Dateien oder Optionen sind nicht betroffen.",
+  "settings.field.orchestrator_mode_desc": "Ist dies an (Standard), öffnet `fresh` ohne Argumente das aktuelle Verzeichnis in einem einzelnen Hintergrund-Editor, der das Terminal überdauert und mit dem sich jedes weitere `fresh` ohne Argumente wieder verbindet. Ist es aus, öffnet sich ein einfacher Editor in diesem Terminal; Aufrufe mit Dateien oder Optionen sind nicht betroffen.",
   "settings.field.self_update": "Selbstaktualisierung",
   "settings.field.self_update_desc": "Bei einer neuen Version das Update direkt im Editor anbieten (Standard: true). Ist dies aus, meldet die Statusleiste nur, dass ein Update verfügbar ist. Erfordert `check_for_updates` und eine Installationsart, die sich selbst aktualisieren kann.",
   "settings.field.theme": "Theme",

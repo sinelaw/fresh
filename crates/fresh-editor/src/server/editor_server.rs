@@ -45,10 +45,9 @@ pub struct EditorServerConfig {
     pub plugins_enabled: bool,
     /// Whether to auto-load ~/.config/fresh/init.ts (requires `plugins_enabled`).
     pub init_enabled: bool,
-    /// Boot into Orchestrator mode: bring back the workspace that was last
-    /// focused rather than the one matching `working_dir`, and leave the
-    /// launch directory's empty buffer out of the way (see
-    /// `Config::orchestrator_mode`).
+    /// Boot into Orchestrator mode: leave the launch directory's empty buffer
+    /// out of the way (see `Config::orchestrator_mode`). The workspace is
+    /// still the one matching `working_dir`, as for any launch.
     ///
     /// Set from the `--orchestrator-mode` flag the bare-`fresh` client
     /// forwards. The daemon cannot infer it: `working_dir` and the config

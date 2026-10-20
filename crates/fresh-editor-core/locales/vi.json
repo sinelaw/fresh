@@ -1542,7 +1542,7 @@
   "settings.field.locale": "Ngôn ngữ",
   "settings.field.locale_desc": "Ngôn ngữ giao diện. Nếu không đặt, sẽ được phát hiện từ LC_ALL, LC_MESSAGES hoặc LANG.",
   "settings.field.orchestrator_mode": "Chế độ điều phối",
-  "settings.field.orchestrator_mode_desc": "Khi bật (mặc định), `fresh` không kèm đối số sẽ kết nối lại với một trình soạn thảo chạy nền duy nhất, cùng thanh không gian làm việc và không gian làm việc gần nhất. Khi tắt, nó mở một trình soạn thảo thường trong thư mục hiện tại; các lần chạy có tệp hoặc cờ không bị ảnh hưởng.",
+  "settings.field.orchestrator_mode_desc": "Khi bật (mặc định), `fresh` không kèm đối số sẽ mở thư mục hiện tại trong một trình soạn thảo chạy nền duy nhất, vẫn tiếp tục chạy sau khi đóng terminal và mọi lần chạy `fresh` không kèm đối số đều kết nối lại vào đó. Khi tắt, nó mở một trình soạn thảo thông thường ngay trong terminal này; các lần chạy kèm tệp hoặc tùy chọn không bị ảnh hưởng.",
   "settings.field.self_update": "Tự cập nhật",
   "settings.field.self_update_desc": "Đề nghị cập nhật ngay trong trình soạn thảo khi có phiên bản mới (mặc định: true). Khi tắt, chỉ báo trên thanh trạng thái chỉ cho biết có bản cập nhật. Cần `check_for_updates` và cách cài đặt có thể tự cập nhật.",
   "settings.field.theme": "Giao diện",

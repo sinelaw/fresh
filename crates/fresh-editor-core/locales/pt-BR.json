@@ -1546,7 +1546,7 @@
   "settings.field.locale": "Idioma",
   "settings.field.locale_desc": "Idioma da interface. Se não definido, é detectado a partir de LC_ALL, LC_MESSAGES ou LANG.",
   "settings.field.orchestrator_mode": "Modo orquestrador",
-  "settings.field.orchestrator_mode_desc": "Ativado (padrão), `fresh` sem argumentos se reconecta a um único editor em segundo plano, com o painel de espaços de trabalho e seu último espaço de trabalho. Desativado, abre um editor simples no diretório atual; execuções com arquivos ou opções não mudam.",
+  "settings.field.orchestrator_mode_desc": "Ativado (padrão), `fresh` sem argumentos abre o diretório atual em um único editor em segundo plano, que continua rodando depois que o terminal fecha e ao qual cada `fresh` sem argumentos se reconecta. Desativado, abre um editor simples neste terminal; execuções com arquivos ou opções não são afetadas.",
   "settings.field.self_update": "Autoatualização",
   "settings.field.self_update_desc": "Oferece a atualização dentro do editor quando uma nova versão é encontrada (padrão: true). Desativado, o indicador da barra de status apenas avisa que há uma atualização. Requer `check_for_updates` e um método de instalação capaz de se atualizar.",
   "settings.field.theme": "Tema",

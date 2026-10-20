@@ -768,7 +768,7 @@ function orchestratorRow(): WidgetSpec[] {
     centred([
       {
         text: on
-          ? "`fresh` reopens your last workspace in a background daemon."
+          ? "`fresh` opens this directory in a background daemon you can detach from."
           : "`fresh` opens a plain editor here, in this terminal.",
         style: { fg: C.muted, italic: true },
       },
@@ -2812,7 +2812,7 @@ function activateKey(k: string): void {
       // effect you cannot see is a switch you cannot tell you flipped.
       editor.setStatus(
         next
-          ? "Orchestrator mode on — `fresh` reopens your last workspace"
+          ? "Orchestrator mode on — `fresh` runs in a background daemon"
           : "Orchestrator mode off — `fresh` opens an editor here",
       );
       render();

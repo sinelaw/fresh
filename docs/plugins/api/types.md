@@ -1167,13 +1167,23 @@ interface FreshConfig {
   */
   self_update?: boolean;
   /**
-  * When on (default), `fresh` with no arguments reattaches to a single background
-  * editor with the workspace dock and your last workspace. When off, it opens a
-  * plain editor in the current directory; runs with files or flags are unaffected.
+  * When on (default), `fresh` with no arguments opens the current directory in a
+  * single background editor that outlives the terminal and that every bare `fresh`
+  * reattaches to. When off, it opens a plain editor in this terminal; runs with
+  * files or flags are unaffected.
   *
   * Default: `true`
   */
   orchestrator_mode?: boolean;
+  /**
+  * When on, `fresh` with no arguments reopens the workspace you used last,
+  * wherever you type it. When off (default), it opens the current directory.
+  * Works with Orchestrator Mode on or off; runs with files or flags are
+  * unaffected.
+  *
+  * Default: `false`
+  */
+  open_last_workspace?: boolean;
   /**
   * Editor behavior settings (indentation, line numbers, wrapping, etc.)
   */

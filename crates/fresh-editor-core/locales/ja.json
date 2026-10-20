@@ -1542,7 +1542,7 @@
   "settings.field.locale": "表示言語",
   "settings.field.locale_desc": "UI の言語。未設定の場合は LC_ALL、LC_MESSAGES、LANG から判別します。",
   "settings.field.orchestrator_mode": "オーケストレーターモード",
-  "settings.field.orchestrator_mode_desc": "オン（既定）の場合、引数なしの `fresh` は、ワークスペースドックと前回のワークスペースを持つ 1 つのバックグラウンドエディタに再接続します。オフの場合は、現在のディレクトリで通常のエディタを開きます。ファイルやフラグを指定した起動には影響しません。",
+  "settings.field.orchestrator_mode_desc": "オン（既定）の場合、引数なしの `fresh` は現在のディレクトリを、ターミナルを閉じても残る単一のバックグラウンドエディターで開き、以降の引数なしの `fresh` はすべてそこへ再接続します。オフの場合は、このターミナルで通常のエディターを開きます。ファイルやオプションを指定した起動には影響しません。",
   "settings.field.self_update": "自己更新",
   "settings.field.self_update_desc": "新しいバージョンが見つかったとき、エディタ内から更新するよう提案します（既定: true）。オフの場合、ステータスバーの表示は更新があることを知らせるだけです。`check_for_updates` と、自己更新できるインストール方法が必要です。",
   "settings.field.theme": "テーマ",

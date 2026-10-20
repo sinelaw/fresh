@@ -509,12 +509,12 @@ fn test_settings_selection_indicator() {
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Now Check For Updates should have the focus indicator
+    // Now Open Last Workspace (second item) should have the focus indicator
     // Format: ">  " (3-char indicator area: focus, modified, space)
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains(">  Check For Updates"),
-        "Focus indicator '>' should move to Check For Updates. Screen:\n{}",
+        screen.contains(">  Open Last Workspace"),
+        "Focus indicator '>' should move to Open Last Workspace. Screen:\n{}",
         screen
     );
 
@@ -2913,7 +2913,8 @@ fn test_settings_toggle_persists_after_save_and_reopen() {
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Navigate down to "Check For Updates" (second item in General)
+    // Navigate down to "Check For Updates" (third item in General)
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
@@ -2972,6 +2973,7 @@ fn test_settings_toggle_persists_after_save_and_reopen() {
     harness.render().unwrap();
 
     // Navigate to Check For Updates
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 

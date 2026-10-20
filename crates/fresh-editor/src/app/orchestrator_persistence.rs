@@ -98,8 +98,7 @@ pub(crate) struct PersistedWindow {
     pub(crate) stable_id: Option<String>,
     /// When this workspace was last the foreground one, from the workspace
     /// file's `last_focused_at` (Unix epoch milliseconds). `None` for files
-    /// written before the field existed. Orchestrator mode's boot pick
-    /// takes the highest.
+    /// written before the field existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) last_focused_at: Option<u64>,
 }
@@ -631,44 +630,37 @@ pub(crate) fn pick_active_window_for_cwd<'a>(
         .max_by_key(|w| w.id)
 }
 
-/// Pick which persisted session to bring up at boot in **Orchestrator
-/// mode** — the mode a bare `fresh` launches into.
+/// The directory of the workspace focused most recently, anywhere in the
+/// registry: where a bare `fresh` opens with `open_last_workspace` on. Only a
+/// local workspace whose directory still exists qualifies; `None` when there
+/// is none (a first run, or files that predate `last_focused_at`), and the
+/// launch stays in the current directory.
 ///
-/// The rule is the one the dock already implies: you are switching between
-/// workspaces, not opening a directory, so the editor comes back where you
-/// left it. The most recently focused workspace wins *whatever directory it
-/// is rooted at* — which is the whole difference from
-/// [`pick_active_window_for_cwd`], and the reason this is a separate
-/// function rather than a flag on that one. Deliberately ignoring the launch
-/// cwd is the feature here; in every other launch it is a bug (issue #2056).
-///
-/// Recency comes from each workspace's own `last_focused_at`, not from a
-/// single "active session" pointer: there is no such pointer on disk
-/// (`PersistedWindows::active` is synthesised as 0 by the loader — the
-/// registry is the set of workspace files, and nothing writes an index over
-/// them), and a per-workspace stamp is the more robust shape anyway. It
-/// cannot dangle, and deleting the most recent workspace simply promotes
-/// the next one.
-///
-/// Falls back to the cwd-scoped rule when no workspace carries a stamp —
-/// every file predates the field — so an upgrade opens something sensible
-/// rather than nothing. `None` means the caller boots a clean base window at
-/// `cwd`, which in orchestrator mode is the first-run path: a workspace for
-/// the directory you typed `fresh` in.
-pub(crate) fn pick_active_window_globally<'a>(
-    env: Option<&'a PersistedWindows>,
-    cwd: &Path,
-) -> Option<&'a PersistedWindow> {
-    let env = env?;
-    if let Some(w) = env
-        .windows
-        .iter()
-        .filter(|w| w.last_focused_at.is_some())
+/// Reads the whole registry, so it is asked only when the setting is on.
+pub(crate) fn last_used_workspace_root(
+    filesystem: &(dyn crate::model::filesystem::FileSystem + Send + Sync),
+    data_dir: &Path,
+) -> Option<PathBuf> {
+    let env = read_persisted_windows(filesystem, data_dir, data_dir, WorkspaceScope::All)?;
+    env.windows
+        .into_iter()
+        .filter(|w| w.last_focused_at.is_some() && is_local_authority_spec(&w.authority_spec))
+        .filter(|w| w.root.is_dir())
         .max_by_key(|w| w.last_focused_at)
-    {
-        return Some(w);
+        .map(|w| w.root)
+}
+
+impl Editor {
+    /// See [`last_used_workspace_root`]. For the launch paths, which decide
+    /// the working directory before an editor exists.
+    pub fn last_used_workspace_root(
+        dir_context: &crate::config_io::DirectoryContext,
+    ) -> Option<PathBuf> {
+        last_used_workspace_root(
+            &crate::model::filesystem::StdFileSystem,
+            &dir_context.data_dir,
+        )
     }
-    pick_active_window_for_cwd(Some(env), cwd)
 }
 
 fn window_matches_cwd(w: &PersistedWindow, cwd: &Path) -> bool {

@@ -11,7 +11,8 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Simple launch by default** - based on your feedback, some defaults are dialed back so launching is simple. Nothing was removed (#3555, #3556, #3568, reported by @zipproth)
     * `fresh FILE` opens just that file, with no restored session, dock or Welcome tab (even if you left the dock open). This makes Fresh a better `$EDITOR` / git `core.editor`; `fresh --simple` does the same without a file
     * The Orchestrator dock starts closed, in Orchestrator mode too and for existing users whose dock was open at their last quit; open it from View ▸ Orchestrator Dock and it stays open from then on
-    * `fresh`, `fresh DIR` and `fresh -a` behave as before, and `--restore` brings the full session back to a file launch
+    * A bare `fresh` opens the directory you typed it in, also when it reattaches to a running daemon, instead of the workspace you used last. The new **Open Last Workspace** setting (`open_last_workspace`, off by default) brings back the old behaviour, with Orchestrator mode on or off
+    * `fresh DIR` and `fresh -a` behave as before, and `--restore` brings the full session back to a file launch
     * `fresh DIR` opens the file explorer unless you closed it in that directory yourself; `fresh --simple` (with or without a directory) starts with it closed
     * Startup is faster with many workspaces, which now load on first use
 * **Markdown Source / Rendered / Source+Compose modes** - new commands switch a Markdown pane between the raw text and the composed view, and a dual mode shows both side by side in one scroll-synced tab (edit on the source side; closing the tab leaves your file and panes as they were). "Cycle View Mode" steps through all three (#3562, by @PilotLeoYan)

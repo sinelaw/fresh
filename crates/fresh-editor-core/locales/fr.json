@@ -1546,7 +1546,7 @@
   "settings.field.locale": "Langue",
   "settings.field.locale_desc": "Langue de l'interface. Si elle n'est pas définie, elle est déduite de LC_ALL, LC_MESSAGES ou LANG.",
   "settings.field.orchestrator_mode": "Mode orchestrateur",
-  "settings.field.orchestrator_mode_desc": "Activé (par défaut), `fresh` sans argument se reconnecte à un éditeur unique en arrière-plan, avec le dock des espaces de travail et votre dernier espace de travail. Désactivé, il ouvre un éditeur simple dans le dossier courant ; les lancements avec fichiers ou options ne changent pas.",
+  "settings.field.orchestrator_mode_desc": "Activé (par défaut), `fresh` sans argument ouvre le dossier courant dans un éditeur unique en arrière-plan, qui survit au terminal et auquel chaque `fresh` sans argument se rattache. Désactivé, il ouvre un éditeur simple dans ce terminal ; les lancements avec des fichiers ou des options ne sont pas concernés.",
   "settings.field.self_update": "Mise à jour intégrée",
   "settings.field.self_update_desc": "Proposer la mise à jour depuis l'éditeur quand une nouvelle version est trouvée (par défaut : true). Désactivé, l'indicateur de la barre d'état signale seulement qu'une mise à jour existe. Nécessite `check_for_updates` et une méthode d'installation capable de se mettre à jour.",
   "settings.field.theme": "Thème",

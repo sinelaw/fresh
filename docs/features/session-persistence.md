@@ -7,22 +7,28 @@
 > alias, and this page keeps its `/features/session-persistence` URL so
 > existing links and bookmarks continue to work.
 
-> **Palette:** `Detach`. **CLI:** `fresh`, `fresh -a`, `fresh --cmd daemon list|new|kill`, `fresh --restore`, `fresh --no-restore`. **Config:** `orchestrator_mode`, `hot_exit`, `editor.restore_previous_session`, `editor.ephemeral_file_patterns`.
+> **Palette:** `Detach`. **CLI:** `fresh`, `fresh -a`, `fresh --cmd daemon list|new|kill`, `fresh --restore`, `fresh --no-restore`. **Config:** `orchestrator_mode`, `open_last_workspace`, `hot_exit`, `editor.restore_previous_session`, `editor.ephemeral_file_patterns`.
 
 Detach from Fresh and reattach later, similar to tmux. The Fresh daemon keeps running in the background, so your editor state survives even after you close the terminal.
 
 ## Orchestrator mode (a bare `fresh`)
 
-Typing `fresh` with nothing after it opens the workspace you were last in —
-whichever directory you typed it in — with the workspace dock on screen if
-you opened it yourself (View ▸ Orchestrator Dock). It runs as a daemon, so the session outlives the terminal, and a
-second bare `fresh` anywhere reattaches to that same editor instead of
-starting a second one.
+Typing `fresh` with nothing after it opens the workspace for the directory
+you typed it in, with the workspace dock on screen if you opened it yourself
+(View ▸ Orchestrator Dock). It runs as a daemon, so the session outlives the
+terminal, and a second bare `fresh` anywhere reattaches to that same editor
+instead of starting a second one — switched to the workspace for *that*
+directory. Your other workspaces stay open in the daemon; the dock lists them.
 
 ```bash
-fresh            # your last workspace, wherever you are
+fresh            # this directory's workspace, in the shared daemon
 fresh notes.md   # unaffected: an editor here, on this file
 ```
+
+To have a bare `fresh` reopen the workspace you used last instead, wherever
+you type it, turn on **Open Last Workspace** (`"open_last_workspace": true`).
+It works with Orchestrator mode on or off, and changes nothing for `fresh
+DIR`, `fresh FILE` or any other run with arguments.
 
 The rule is exactly "the command line is empty". A file, or any flag, means
 *just this, here*, and behaves as it always has. A first run — no saved
@@ -82,7 +88,7 @@ The `daemon` subcommand is an alias for the older `session` subcommand; both for
 |---------|------|-------------|
 | `fresh myfile.txt` | Direct | Just that file: no background process, no workspace restored or saved, no dock. See [Opening Files](#opening-files). |
 | `fresh --simple` | Direct | The same, with or without files: an empty buffer in this terminal. |
-| `fresh` | Daemon | Orchestrator mode: the shared `orchestrator` daemon, your last workspace, and the dock once you have opened it. Direct when `orchestrator_mode` is off. |
+| `fresh` | Daemon | Orchestrator mode: the shared `orchestrator` daemon, in this directory's workspace, and the dock once you have opened it. Direct when `orchestrator_mode` is off. |
 | `fresh -a` | Daemon | Background daemon for this directory. Supports detach/reattach. |
 | `fresh --web [ADDR]` | Daemon | Foreground daemon that also serves the browser UI. |
 

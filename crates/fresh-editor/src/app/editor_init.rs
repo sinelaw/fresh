@@ -1194,11 +1194,10 @@ impl Editor {
             data_dir = %dir_context.data_dir.display(),
             "editor_init: reading persisted windows env"
         );
-        // The workspace registry is read only as far as this launch uses it.
-        // Orchestrator mode reads all of it, to find the workspace used last
-        // (it builds windows for little more; see `boot_env` below); any other
-        // launch reads just its own directory's — the files named for it, so
-        // the cost does not grow with the registry. A file launch restores
+        // The workspace registry is read only as far as this launch uses it:
+        // every launch, Orchestrator mode included, reads just its own
+        // directory's — the files named for it, so the cost does not grow
+        // with the registry. A file launch restores
         // none of it, but its window still takes that workspace's identity,
         // so the dock never lists the directory twice. The rest is read the
         // first time something uses it (`Editor::ensure_all_workspaces_loaded`)
@@ -1209,11 +1208,7 @@ impl Editor {
             orchestrator_filesystem.as_ref(),
             &dir_context.data_dir,
             &working_dir,
-            if orchestrator_mode {
-                WorkspaceScope::All
-            } else {
-                WorkspaceScope::LaunchDir
-            },
+            WorkspaceScope::LaunchDir,
         );
         tracing::debug!("editor_init: reading persisted plugin state");
         let plugin_global_state = crate::app::orchestrator_persistence::read_persisted_plugin_state(
@@ -1234,21 +1229,14 @@ impl Editor {
         // / Open-Terminal default pointed at the launch cwd (issue
         // #2026).
         //
-        // Orchestrator mode overrides exactly this: a bare `fresh` is
-        // "put me back where I was", so the globally last-used session
-        // wins over the launch cwd. Every other launch keeps the
-        // cwd-scoped rule.
-        let picked_active = if orchestrator_mode {
-            crate::app::orchestrator_persistence::pick_active_window_globally(
-                persisted_env.as_ref(),
-                &working_dir,
-            )
-        } else {
-            crate::app::orchestrator_persistence::pick_active_window_for_cwd(
-                persisted_env.as_ref(),
-                &working_dir,
-            )
-        };
+        // Orchestrator mode follows the same rule: a bare `fresh` opens the
+        // directory you typed it in. It used to reopen the workspace used
+        // last wherever that was, which with the dock closed left nothing on
+        // screen to say you were somewhere else.
+        let picked_active = crate::app::orchestrator_persistence::pick_active_window_for_cwd(
+            persisted_env.as_ref(),
+            &working_dir,
+        );
         let (active_window_id, _active_window_root) = picked_active
             .map(|w| (fresh_core::WindowId(w.id), w.root.clone()))
             .unwrap_or((fresh_core::WindowId(1), working_dir.clone()));
@@ -1607,44 +1595,8 @@ impl Editor {
             ))),
             ..base_resources
         };
-        // Orchestrator mode reads the whole registry, but only to pick the
-        // last-used workspace. Building an inert shell for every other one is
-        // the part that grew with the registry, and nothing looks at them
-        // until the dock or the picker lists workspaces — which asks for them
-        // (`Editor::ensure_all_workspaces_loaded`), as on any other launch.
-        // So boot builds the picked workspace and the launch directory's, and
-        // leaves the rest to that first use. Window ids are still allocated
-        // past the whole registry (`next_window_id` below), so the ones loaded
-        // later never collide.
-        let boot_env = if orchestrator_mode {
-            persisted_env.as_ref().map(|env| {
-                let picked_id = picked_active.map(|w| w.id);
-                let launch_root = crate::app::orchestrator_persistence::canonical_key(&working_dir);
-                crate::app::orchestrator_persistence::PersistedWindows {
-                    version: env.version,
-                    active: env.active,
-                    next_id: env.next_id,
-                    windows: env
-                        .windows
-                        .iter()
-                        .filter(|w| {
-                            Some(w.id) == picked_id
-                                || crate::app::orchestrator_persistence::canonical_key(&w.root)
-                                    == launch_root
-                        })
-                        .cloned()
-                        .collect(),
-                }
-            })
-        } else {
-            None
-        };
-        let all_workspaces_loaded = match (&boot_env, &persisted_env) {
-            (Some(boot), Some(all)) => boot.windows.len() == all.windows.len(),
-            _ => orchestrator_mode,
-        };
         let (mut windows, dormant_remote) = build_persisted_window_shells(
-            boot_env.as_ref().or(persisted_env.as_ref()),
+            persisted_env.as_ref(),
             picked_active.is_some(),
             active_window_id,
             width,
@@ -1724,7 +1676,10 @@ impl Editor {
             event_broadcaster: event_broadcaster.clone(),
             orchestrator_mode,
             file_launch,
-            all_workspaces_loaded,
+            // Only the launch directory's workspaces were read; the rest are
+            // added the first time the dock or the picker lists workspaces
+            // (`Editor::ensure_all_workspaces_loaded`).
+            all_workspaces_loaded: false,
         };
 
         let mut editor = Editor::from_parts(parts);

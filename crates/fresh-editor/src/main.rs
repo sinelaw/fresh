@@ -1971,6 +1971,18 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
             }
         }
     }
+    // A bare `fresh` that did not go to the daemon opens where the daemon
+    // would have: see `bare_launch_dir`.
+    if remote_info.is_none() && is_bare_terminal_launch() {
+        let cwd = std::env::current_dir()?;
+        let dir = bare_launch_dir(
+            &fresh::config_io::DirectoryContext::from_system()?,
+            cwd.clone(),
+        );
+        if dir != cwd {
+            working_dir = Some(dir);
+        }
+    }
 
     // Load config using the layered config system
     // For remote editing, use current local dir for config (remote doesn't have our config)
@@ -3339,14 +3351,15 @@ fn run_server_command(args: &Args, web_addr: Option<String>) -> AnyhowResult<()>
     // daemon was spawned with an `--ssh-url`.  Config layering is
     // always keyed off the local cwd (the remote host doesn't have
     // our config layout), matching the standalone path.
+    let dir_context = fresh::config_io::DirectoryContext::from_system()?;
+    // A daemon started by a bare `fresh` opens where that `fresh` would.
     let working_dir = match &remote_info {
         Some(remote) => PathBuf::from(&remote.path),
+        None if args.orchestrator_mode => bare_launch_dir(&dir_context, std::env::current_dir()?),
         None => std::env::current_dir()?,
     };
     let config_dir = std::env::current_dir()?;
     boot!("[server] Working directory: {:?}", working_dir);
-
-    let dir_context = fresh::config_io::DirectoryContext::from_system()?;
 
     // Re-anchor trust to this project: its persisted level (if any) is
     // adopted, else the safe Restricted default. `store_for_workspace` keys a
@@ -3634,7 +3647,7 @@ fn run_open_files_command(
         // the files have been queued.
         drop(conn);
         if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-            return run_attach(session_name, &[], locale, config, false);
+            return run_attach(session_name, &[], locale, config, false, false);
         } else {
             eprintln!(
                 "Started a new daemon and opened {} file(s). Attach with: fresh -a{}",
@@ -3659,7 +3672,14 @@ fn run_open_files_command(
                             ServerControl::NoViewer => {
                                 drop(conn);
                                 if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-                                    return run_attach(session_name, &[], locale, config, false);
+                                    return run_attach(
+                                        session_name,
+                                        &[],
+                                        locale,
+                                        config,
+                                        false,
+                                        false,
+                                    );
                                 }
                                 anyhow::bail!(
                                     "the daemon has no terminal attached, so nobody can see {}; \
@@ -5388,6 +5408,7 @@ fn run_attach_command(args: &Args) -> AnyhowResult<()> {
         args.locale.as_deref(),
         args.config.as_deref(),
         false,
+        false,
     )
 }
 
@@ -5395,22 +5416,27 @@ fn run_attach_command(args: &Args) -> AnyhowResult<()> {
 /// `orchestrator_mode` left on.
 ///
 /// The whole launch is "attach to the shared daemon, starting it if it isn't
-/// up". That is deliberately the *entire* behaviour when the daemon already
-/// runs: no files to open, no working directory to impose, nothing to
-/// reconfigure — this terminal simply becomes another view onto the editor
-/// that is already there, showing whatever workspace it was left in.
+/// up, in this directory's workspace". When the daemon already runs, this
+/// terminal becomes another view onto the editor that is already there, and
+/// switches it to the workspace for the directory `fresh` was typed in
+/// (see `run_attach`); nothing else is reconfigured.
 ///
 /// The daemon it starts is told `--orchestrator-mode` because it is a
 /// separate process: the shape of *this* command line is the only evidence
 /// that orchestrator mode was chosen, and it does not survive the spawn on
 /// its own (see [`fresh::server::DaemonSpawn`]).
-fn run_orchestrator_launch() -> AnyhowResult<()> {
+///
+/// With `open_last_workspace` on, a running daemon is left on the workspace
+/// it shows (the one used last), and one started here opens the workspace
+/// used last itself (see `bare_launch_dir`).
+fn run_orchestrator_launch(config: &config::Config) -> AnyhowResult<()> {
     run_attach(
         Some(fresh::server::ORCHESTRATOR_DAEMON),
         &[],
         None,
         None,
         true,
+        !config.open_last_workspace,
     )
 }
 
@@ -5443,21 +5469,35 @@ fn run_orchestrator_launch() -> AnyhowResult<()> {
 /// this function has already answered `false` without reading anything. A
 /// config that cannot be read is not an error — it means the ordinary
 /// launch, which will report the problem properly.
-fn wants_orchestrator_launch() -> bool {
-    if std::env::args_os().count() != 1 {
-        return false;
-    }
-    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-        return false;
+///
+/// Returns the config it read when the answer is yes.
+fn wants_orchestrator_launch() -> Option<config::Config> {
+    if !is_bare_terminal_launch() {
+        return None;
     }
     if std::env::var("FRESH_SESSION").is_ok_and(|s| !s.trim().is_empty()) {
-        return false;
+        return None;
     }
-    let Ok(dir_context) = fresh::config_io::DirectoryContext::from_system() else {
-        return false;
-    };
+    let dir_context = fresh::config_io::DirectoryContext::from_system().ok()?;
     let working_dir = std::env::current_dir().unwrap_or_default();
-    config::Config::load_with_layers(&dir_context, &working_dir).orchestrator_mode
+    let config = config::Config::load_with_layers(&dir_context, &working_dir);
+    config.orchestrator_mode.then_some(config)
+}
+
+/// A bare `fresh`: nothing on the command line, and someone at a terminal.
+fn is_bare_terminal_launch() -> bool {
+    std::env::args_os().count() == 1 && std::io::IsTerminal::is_terminal(&std::io::stdin())
+}
+
+/// The directory a bare `fresh` opens: `cwd`, or with `open_last_workspace`
+/// on, the workspace used last, wherever it is
+/// (`Editor::last_used_workspace_root`). Still `cwd` when there is no such
+/// workspace.
+fn bare_launch_dir(dir_context: &fresh::config_io::DirectoryContext, cwd: PathBuf) -> PathBuf {
+    if !config::Config::load_with_layers(dir_context, &cwd).open_last_workspace {
+        return cwd;
+    }
+    Editor::last_used_workspace_root(dir_context).unwrap_or(cwd)
 }
 
 /// Whether this launch opens the files on its command line rather than a
@@ -5481,12 +5521,17 @@ fn is_file_launch(args: &Args, cfg: &config::Config, files: &[FileLocation]) -> 
 /// Attaching to an already-running daemon leaves both alone: it is someone
 /// else's session, already serving other terminals, the same way an
 /// existing daemon keeps its authority.
+///
+/// `orchestrator_mode` is a bare `fresh` (see `run_orchestrator_launch`):
+/// the daemon is started in that mode. `open_cwd` switches an already
+/// running daemon to the current directory's workspace.
 fn run_attach(
     session_name: Option<&str>,
     files: &[String],
     locale: Option<&str>,
     config: Option<&Path>,
     orchestrator_mode: bool,
+    open_cwd: bool,
 ) -> AnyhowResult<()> {
     use crossterm::terminal::enable_raw_mode;
     use fresh::server::protocol::{
@@ -5630,6 +5675,18 @@ fn run_attach(
             })?;
             conn.write_control(&msg)?;
         }
+    }
+
+    // A bare `fresh` opens the directory it was typed in, also when the
+    // daemon is already up and showing another one: switch it to this
+    // directory's workspace (created if there is none). A daemon started
+    // just now booted in this directory already, and is left alone so its
+    // startup does not read the whole workspace registry.
+    if open_cwd && !server_was_started {
+        let msg = serde_json::to_string(&ClientControl::OpenWindow {
+            path: working_dir.to_string_lossy().into_owned(),
+        })?;
+        conn.write_control(&msg)?;
     }
 
     // Continue to relay loop
@@ -6211,8 +6268,8 @@ fn real_main() -> AnyhowResult<()> {
     // whole launch to the shared daemon and relay it. Checked here, after
     // clap, so `--help` and `--version` still answer for themselves — both
     // put something on the command line, so neither reaches this.
-    if wants_orchestrator_launch() {
-        return run_orchestrator_launch();
+    if let Some(config) = wants_orchestrator_launch() {
+        return run_orchestrator_launch(&config);
     }
 
     // `--skill` is the shortcut an agent is told to run first: one short,
