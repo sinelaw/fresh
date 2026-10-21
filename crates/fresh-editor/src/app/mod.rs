@@ -1172,6 +1172,11 @@ pub struct Editor {
     /// started it when it waits on a plugin step; see `play_macro`.
     macro_replay: Option<crate::app::macro_actions::MacroReplay>,
 
+    /// Keys and plays that arrived while `macro_replay` was parked, run in
+    /// order once it ends (`resume_macro_replay`).
+    #[cfg(feature = "plugins")]
+    deferred_replay_input: std::collections::VecDeque<crate::app::macro_actions::DeferredInput>,
+
     /// True while dispatching actions that are a plugin's doing rather than
     /// the user's (a timer tick, an `executeActions` step), so
     /// `record_macro_action` leaves them out of an in-flight recording. Set

@@ -1773,6 +1773,15 @@ impl Editor {
                     }
                 }
             }
+            Action::PluginNextKey(ref chord) => {
+                // For macro playback: the key a plugin's `getNextKey` took.
+                if !self.deliver_next_key(crate::input::router::next_key_payload(chord)) {
+                    tracing::debug!(
+                        "plugin_next_key '{}': no plugin was waiting for a key",
+                        chord
+                    );
+                }
+            }
             Action::PromptConfirmWithText(ref text) => {
                 // For macro playback: set the prompt text before confirming
                 if let Some(ref mut prompt) = self.active_window_mut().prompt {

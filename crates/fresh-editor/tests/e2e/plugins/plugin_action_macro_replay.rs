@@ -34,8 +34,9 @@ fn binding(chord: &str, action: &str, char_arg: Option<&str>) -> Keybinding {
 
 /// A harness with `content` open and an init.ts that registers `handler` (a
 /// JS function expression) as the `probe` command. Alt+Y runs it, Alt+R
-/// toggles recording into register 0 and Alt+P plays register 0. The handler
-/// is wrapped to count its runs, reported as `PROBE_DONE=<n>` once it settles.
+/// toggles recording into register 0, Alt+P plays register 0, and Alt+Z runs
+/// a command that asks for register 0 to be played twice. The handler is
+/// wrapped to count its runs, reported as `PROBE_DONE=<n>` once it settles.
 fn harness(content: &str, handler: &str) -> (EditorTestHarness, tempfile::TempDir) {
     let temp = tempfile::TempDir::new().expect("tempdir");
     let dir_context = DirectoryContext::for_testing(temp.path());
@@ -59,6 +60,10 @@ fn harness(content: &str, handler: &str) -> (EditorTestHarness, tempfile::TempDi
                 editor.setStatus("PROBE_DONE=" + runs);
             }});
             editor.registerCommand("Probe", "test handler", "probe", null);
+            registerHandler("play_twice", function () {{
+                editor.executeActions([{{ action: "play_macro", args: {{ char: "0" }}, count: 2 }}]);
+            }});
+            editor.registerCommand("Play Twice", "play register 0 twice", "play_twice", null);
             editor.setStatus("PROBE_READY");
             "#
         ),
@@ -69,8 +74,9 @@ fn harness(content: &str, handler: &str) -> (EditorTestHarness, tempfile::TempDi
         active_keybinding_map: KeybindingMapName("default".to_string()),
         ..Default::default()
     };
-    // Alt+Y is one of the two Alt+letter keys the default keymap leaves free.
+    // Alt+Y and Alt+Z are the two Alt+letter keys the default keymap leaves free.
     config.keybindings.push(binding("M-y", "probe", None));
+    config.keybindings.push(binding("M-z", "play_twice", None));
     config
         .keybindings
         .push(binding("M-r", "toggle_macro_recording", Some("0")));
@@ -99,6 +105,30 @@ fn wait_for_status(harness: &mut EditorTestHarness, text: &str) {
         .unwrap_or_else(|e| panic!("status never showed {text:?}: {e}"));
 }
 
+/// Run the editor until `done` holds, for at most a few seconds, so a replay
+/// that is stuck or dropped fails here rather than at the harness's long
+/// deadline.
+fn settle_until(
+    harness: &mut EditorTestHarness,
+    what: &str,
+    done: impl Fn(&EditorTestHarness) -> bool,
+) {
+    for _ in 0..100 {
+        harness.advance_time(Duration::from_millis(50));
+        harness.tick_and_render().unwrap();
+        if done(harness) {
+            harness.wait_for_async_quiescence(10).unwrap();
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    panic!(
+        "{what} never happened; status = {:?}\n{}",
+        harness.get_status_bar(),
+        harness.screen_to_string()
+    );
+}
+
 /// Play register 0, which holds one run of the handler, then drain what is
 /// left. Returns the logical time until the replay first reported done.
 ///
@@ -108,15 +138,17 @@ fn wait_for_status(harness: &mut EditorTestHarness, text: &str) {
 fn replay(harness: &mut EditorTestHarness) -> Duration {
     let started = harness.time_source().now();
     alt(harness, 'p');
-    harness
-        .wait_until(|h| {
-            let status = h.get_status_bar();
-            status.contains("Played macro '0'") || status.contains("PROBE_DONE=2")
-        })
-        .expect("the replay should finish");
-    let elapsed = harness.time_source().now() - started;
-    harness.wait_for_async_quiescence(10).unwrap();
-    elapsed
+    settle_until(harness, "the replay finishing", |h| {
+        let status = h.get_status_bar();
+        status.contains("Played macro '0'") || status.contains("PROBE_DONE=2")
+    });
+    harness.time_source().now() - started
+}
+
+fn cursor_line(harness: &EditorTestHarness) -> Option<u32> {
+    let status = harness.get_status_bar();
+    let rest = status.split("Ln ").nth(1)?;
+    rest.split(',').next()?.trim().parse().ok()
 }
 
 const MOVE_DOWN: &str = r#"function () {
@@ -130,6 +162,13 @@ const MOVE_DOWN_AFTER_AWAIT: &str = r#"async function () {
     editor.executeActions([{ action: "move_down" }]);
 }"#;
 
+/// Slow enough that the replay is still waiting on it when the next key
+/// arrives.
+const MOVE_DOWN_AFTER_DELAY: &str = r#"async function () {
+    await editor.delay(300);
+    editor.executeActions([{ action: "move_down" }]);
+}"#;
+
 #[test]
 fn a_plugin_handler_step_replays_once() {
     let (mut harness, _tmp) = harness("1\n2\n3\n4\n5\n6\n", MOVE_DOWN);
@@ -140,15 +179,17 @@ fn a_plugin_handler_step_replays_once() {
     alt(&mut harness, 'r');
 
     replay(&mut harness);
-    let status = harness.get_status_bar();
-    assert!(
-        status.contains("Ln 3,"),
-        "replaying one Alt+Y should move down one line, to line 3; status = {status:?}"
+    assert_eq!(
+        cursor_line(&harness),
+        Some(3),
+        "replaying one Alt+Y should move down one line; status = {:?}",
+        harness.get_status_bar()
     );
 }
 
 /// Record Alt+Y then `x`, and replay it from after that `x` on line 2.
-fn record_move_then_type_and_replay(handler: &str) -> String {
+/// Returns the buffer and the line the cursor ends on.
+fn record_move_then_type_and_replay(handler: &str) -> (String, Option<u32>) {
     let (mut harness, _tmp) = harness("aaa\nbbb\nccc\nddd\n", handler);
 
     alt(&mut harness, 'r');
@@ -162,15 +203,15 @@ fn record_move_then_type_and_replay(handler: &str) -> String {
     );
 
     replay(&mut harness);
-    harness.get_buffer_content().unwrap()
+    (harness.get_buffer_content().unwrap(), cursor_line(&harness))
 }
 
 #[test]
 fn a_key_after_a_plugin_handler_step_replays_after_it() {
     assert_eq!(
         record_move_then_type_and_replay(MOVE_DOWN),
-        "aaa\nxbbb\ncxcc\nddd\n",
-        "replay should run the handler's move before typing the `x`"
+        ("aaa\nxbbb\ncxcc\nddd\n".to_string(), Some(3)),
+        "replay should run the handler's move once, before typing the `x`"
     );
 }
 
@@ -178,23 +219,26 @@ fn a_key_after_a_plugin_handler_step_replays_after_it() {
 fn replay_waits_for_an_async_handler_to_finish() {
     assert_eq!(
         record_move_then_type_and_replay(MOVE_DOWN_AFTER_AWAIT),
-        "aaa\nxbbb\ncxcc\nddd\n",
+        ("aaa\nxbbb\ncxcc\nddd\n".to_string(), Some(3)),
         "replay should wait out the handler's await before typing the `x`"
     );
 }
 
 /// A handler that opens a prompt settles only once the prompt is answered,
-/// and the answer is the next steps of the recording. Replay has to go on to
-/// them rather than wait for the handler, which would stall it until the
-/// per-step time limit.
+/// and the answer is the next steps of the recording. Replay goes on to them
+/// rather than wait for the handler (which would stall it until the per-step
+/// time limit), and then waits for the handler again before the step after
+/// the answer.
 #[test]
-fn replay_answers_a_prompt_the_handler_opened() {
+fn replay_answers_a_prompt_the_handler_opened_then_waits_for_it() {
     let (mut harness, _tmp) = harness(
         "body\n",
         r#"async function () {
             const answer = await editor.prompt("Probe:", "");
             if (answer !== null) {
-                editor.insertText(editor.getActiveBufferId(), 0, "[" + answer + "]");
+                editor.executeActions(Array.from("[" + answer + "]").map(function (c) {
+                    return { action: "insert_char", args: { char: c } };
+                }));
             }
         }"#,
     );
@@ -207,13 +251,102 @@ fn replay_answers_a_prompt_the_handler_opened() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     wait_for_status(&mut harness, "PROBE_DONE=1");
+    harness.type_text("z").unwrap();
     alt(&mut harness, 'r');
-    assert_eq!(harness.get_buffer_content().unwrap(), "[hi]body\n");
+    assert_eq!(harness.get_buffer_content().unwrap(), "[hi]zbody\n");
 
     let elapsed = replay(&mut harness);
-    assert_eq!(harness.get_buffer_content().unwrap(), "[hi][hi]body\n");
+    assert_eq!(
+        harness.get_buffer_content().unwrap(),
+        "[hi]z[hi]zbody\n",
+        "the `z` after the prompt's answer should land after the handler's insert"
+    );
     assert!(
         elapsed < Duration::from_secs(1),
         "replay should go on to the prompt's answer, not wait out the time limit; took {elapsed:?}"
+    );
+}
+
+/// vi's `f`/`t` read their target with `editor.getNextKey()`. That key never
+/// reaches `handle_action`, so it is recorded as a step of its own; without
+/// it, replay left the handler waiting and it took the user's next key.
+#[test]
+fn replay_feeds_a_plugin_the_key_it_waited_for() {
+    let (mut harness, _tmp) = harness(
+        "body\n",
+        r#"async function () {
+            editor.beginKeyCapture();
+            const ev = await editor.getNextKey();
+            editor.endKeyCapture();
+            editor.executeActions([{ action: "insert_char", args: { char: ev.key } }]);
+        }"#,
+    );
+
+    alt(&mut harness, 'r');
+    alt(&mut harness, 'y');
+    harness.type_text("x").unwrap();
+    wait_for_status(&mut harness, "PROBE_DONE=1");
+    harness.type_text("y").unwrap();
+    alt(&mut harness, 'r');
+    assert_eq!(harness.get_buffer_content().unwrap(), "xybody\n");
+
+    replay(&mut harness);
+    assert_eq!(
+        harness.get_buffer_content().unwrap(),
+        "xyxybody\n",
+        "replay should hand the handler its recorded key, then type the `y`"
+    );
+
+    // Nothing is left waiting for a key: the next one is typed as usual.
+    harness.type_text("q").unwrap();
+    settle_until(&mut harness, "the `q` being typed", |h| {
+        h.get_buffer_content().unwrap() == "xyxyqbody\n"
+    });
+}
+
+/// A key typed while a replay waits on a slow handler is held until the
+/// replay ends, instead of landing between its steps.
+#[test]
+fn a_key_typed_while_a_replay_waits_runs_after_it() {
+    let (mut harness, _tmp) = harness("aaa\nbbb\nccc\nddd\n", MOVE_DOWN_AFTER_DELAY);
+
+    alt(&mut harness, 'r');
+    alt(&mut harness, 'y');
+    wait_for_status(&mut harness, "PROBE_DONE=1");
+    harness.type_text("x").unwrap();
+    alt(&mut harness, 'r');
+
+    alt(&mut harness, 'p');
+    harness.type_text("q").unwrap();
+    settle_until(&mut harness, "the replay and the held `q`", |h| {
+        h.get_buffer_content().unwrap() != "aaa\nxbbb\nccc\nddd\n"
+            && h.get_status_bar().contains("Played macro '0'")
+    });
+    assert_eq!(
+        harness.get_buffer_content().unwrap(),
+        "aaa\nxbbb\ncxqcc\nddd\n",
+        "the `q` should be typed after the macro's `x`, not before its move"
+    );
+}
+
+/// A play asked for while another replay waits on a plugin step runs after
+/// it, rather than being dropped.
+#[test]
+fn a_play_requested_while_a_replay_waits_runs_after_it() {
+    let (mut harness, _tmp) = harness("1\n2\n3\n4\n5\n6\n", MOVE_DOWN_AFTER_DELAY);
+
+    alt(&mut harness, 'r');
+    alt(&mut harness, 'y');
+    wait_for_status(&mut harness, "PROBE_DONE=1");
+    alt(&mut harness, 'r');
+
+    alt(&mut harness, 'z');
+    settle_until(&mut harness, "both plays finishing", |h| {
+        cursor_line(h) == Some(4)
+    });
+    assert_eq!(
+        cursor_line(&harness),
+        Some(4),
+        "two plays of one Alt+Y should move down two more lines"
     );
 }

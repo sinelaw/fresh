@@ -57,6 +57,60 @@ pub fn key_event_to_payload(ev: &KeyEvent) -> fresh_core::api::KeyEventPayload {
     }
 }
 
+/// A `getNextKey` payload spelled as one chord string, `"x"`, `"ctrl+x"`,
+/// `"ctrl+alt+escape"`: the form a macro step stores it in. The inverse of
+/// [`next_key_payload`].
+pub fn next_key_chord(payload: &fresh_core::api::KeyEventPayload) -> String {
+    let mut chord = String::new();
+    for (held, name) in [
+        (payload.ctrl, "ctrl"),
+        (payload.alt, "alt"),
+        (payload.shift, "shift"),
+        (payload.meta, "meta"),
+    ] {
+        if held {
+            chord.push_str(name);
+            chord.push('+');
+        }
+    }
+    chord.push_str(&payload.key);
+    chord
+}
+
+/// Read a chord written by [`next_key_chord`] back into a payload. What is
+/// left once the modifier prefixes are taken off is the key, so a key that is
+/// itself `+` survives (`"ctrl++"`).
+pub fn next_key_payload(chord: &str) -> fresh_core::api::KeyEventPayload {
+    let mut payload = fresh_core::api::KeyEventPayload {
+        key: String::new(),
+        ctrl: false,
+        alt: false,
+        shift: false,
+        meta: false,
+    };
+    let mut rest = chord;
+    loop {
+        let flag = if let Some(r) = rest.strip_prefix("ctrl+") {
+            rest = r;
+            &mut payload.ctrl
+        } else if let Some(r) = rest.strip_prefix("alt+") {
+            rest = r;
+            &mut payload.alt
+        } else if let Some(r) = rest.strip_prefix("shift+") {
+            rest = r;
+            &mut payload.shift
+        } else if let Some(r) = rest.strip_prefix("meta+") {
+            rest = r;
+            &mut payload.meta
+        } else {
+            break;
+        };
+        *flag = true;
+    }
+    payload.key = rest.to_string();
+    payload
+}
+
 /// The chord built from what the key types on this layout, if the keymap
 /// binds it. `None` when there is no distinct layout character, or when
 /// nothing is bound to it and the physical chord should be used instead.
@@ -665,6 +719,28 @@ pub fn cancels_pending_lsp(action: &Action) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_next_key_chord_reads_back_as_the_same_payload() {
+        let cases = [
+            ("x", false, false, false, false),
+            ("ctrl+x", true, false, false, false),
+            ("ctrl+alt+shift+meta+escape", true, true, true, true),
+            ("ctrl++", true, false, false, false),
+            ("+", false, false, false, false),
+        ];
+        for (chord, ctrl, alt, shift, meta) in cases {
+            let payload = next_key_payload(chord);
+            assert_eq!(
+                (payload.ctrl, payload.alt, payload.shift, payload.meta),
+                (ctrl, alt, shift, meta),
+                "{chord}"
+            );
+            assert_eq!(next_key_chord(&payload), chord);
+        }
+        assert_eq!(next_key_payload("ctrl++").key, "+");
+    }
+
     use super::*;
     use crate::config::Config;
 

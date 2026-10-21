@@ -739,6 +739,8 @@ impl Editor {
             plugin_timers: Vec::new(),
             macro_replay: None,
             #[cfg(feature = "plugins")]
+            deferred_replay_input: std::collections::VecDeque::new(),
+            #[cfg(feature = "plugins")]
             suppress_macro_recording: false,
             #[cfg(feature = "plugins")]
             diff_baselines: crate::app::diff_baselines::BaselineStore::default(),

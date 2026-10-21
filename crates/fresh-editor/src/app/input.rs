@@ -78,10 +78,24 @@ impl Editor {
     /// fast typing/paste and the plugin re-arming `getNextKey`
     /// between iterations.
     fn try_resolve_next_key_callback(&mut self, key_event: &crossterm::event::KeyEvent) -> bool {
+        let payload = router::key_event_to_payload(key_event);
+        let chord = router::next_key_chord(&payload);
+        let claimed = self.deliver_next_key(payload);
+        if claimed {
+            // The key goes to the plugin, not through `handle_action`, so a
+            // macro being recorded would otherwise lose it, and replaying the
+            // handler would leave it waiting for a key that never comes.
+            self.record_macro_action(&Action::PluginNextKey(chord));
+        }
+        claimed
+    }
+
+    /// Hand `payload` to a plugin waiting on `editor.getNextKey()`, or buffer
+    /// it while the plugin holds key capture. Returns whether it was claimed.
+    pub(crate) fn deliver_next_key(&mut self, payload: fresh_core::api::KeyEventPayload) -> bool {
         use super::window::NextKeyClaim;
         // The queue/buffer state lives on the Window; the editor only
         // supplies the payload and performs the plugin resolution.
-        let payload = router::key_event_to_payload(key_event);
         match self.active_window_mut().claim_next_key(payload) {
             NextKeyClaim::Resolve(callback_id, payload) => {
                 let json = serde_json::to_string(&payload).unwrap_or_else(|_| "null".to_string());
@@ -151,6 +165,18 @@ impl Editor {
         code: crossterm::event::KeyCode,
         modifiers: crossterm::event::KeyModifiers,
     ) -> AnyhowResult<()> {
+        // A key that arrives while a macro replay waits on a plugin step is
+        // held until the replay ends: run now, it would land between the
+        // macro's steps (and inside its undo group).
+        #[cfg(feature = "plugins")]
+        if self.macro_replay_parked() {
+            self.deferred_replay_input
+                .push_back(crate::app::macro_actions::DeferredInput::Key(
+                    code, modifiers,
+                ));
+            return Ok(());
+        }
+
         // **Input is never routed over a tree older than the facts it routes
         // over.** Every read below that asks the tree where the keyboard is
         // — the PTY gate, the key context, the unfocused-popup guard — reads
