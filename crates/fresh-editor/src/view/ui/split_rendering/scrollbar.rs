@@ -5,6 +5,7 @@
 //! struct".
 
 use crate::state::EditorState;
+use crate::view::line_wrap_cache::CacheViewMode;
 use crate::view::scrollbar_marker::{self, MarkerBasis};
 use crate::view::theme::Theme;
 use crate::view::viewport::Viewport;
@@ -38,6 +39,7 @@ pub(crate) const MAX_WRAP_SCROLLBAR_BYTES: usize = 2 * 1024 * 1024;
 pub(crate) fn scrollbar_line_counts(
     state: &mut EditorState,
     viewport: &Viewport,
+    view_mode: CacheViewMode,
     large_file_threshold_bytes: u64,
     buffer_len: usize,
     fold_ranges: Vec<std::ops::Range<usize>>,
@@ -70,7 +72,7 @@ pub(crate) fn scrollbar_line_counts(
         && buffer_len <= MAX_WRAP_SCROLLBAR_BYTES
     {
         let (total_rows, top_row) =
-            scrollbar_visual_row_counts(state, viewport, buffer_len, fold_ranges);
+            scrollbar_visual_row_counts(state, viewport, view_mode, buffer_len, fold_ranges);
         return (
             total_rows,
             top_row,
@@ -250,11 +252,11 @@ pub(crate) fn resolve_scrollbar_marks(
 pub(super) fn scrollbar_visual_row_counts(
     state: &mut EditorState,
     viewport: &Viewport,
+    view_mode: CacheViewMode,
     buffer_len: usize,
     fold_ranges: Vec<std::ops::Range<usize>>,
 ) -> (usize, usize) {
     use crate::primitives::line_wrapping::WrapConfig;
-    use crate::view::line_wrap_cache::CacheViewMode;
     use crate::view::ui::split_rendering::MAX_SAFE_LINE_WIDTH;
     use crate::view::wrap_index::WrapIndexGeometry;
     use crate::view::wrap_machine::WrapRule;
@@ -305,7 +307,7 @@ pub(super) fn scrollbar_visual_row_counts(
                 chars: MAX_SAFE_LINE_WIDTH,
             }
         },
-        view_mode: CacheViewMode::Source,
+        view_mode,
         fold_signature: crate::view::wrap_index::fold_signature(&fold_ranges),
     };
 
@@ -440,6 +442,7 @@ mod tests {
         let (total, _, basis) = scrollbar_line_counts(
             &mut state,
             &vp,
+            CacheViewMode::Source,
             crate::config::LARGE_FILE_THRESHOLD_BYTES,
             buffer_len,
             Vec::new(),
@@ -475,6 +478,7 @@ mod tests {
         let (total, _, basis) = scrollbar_line_counts(
             &mut state,
             &vp,
+            CacheViewMode::Source,
             crate::config::LARGE_FILE_THRESHOLD_BYTES,
             buffer_len,
             Vec::new(),
@@ -504,6 +508,7 @@ mod tests {
         let (total, _, basis) = scrollbar_line_counts(
             &mut state,
             &vp,
+            CacheViewMode::Source,
             crate::config::LARGE_FILE_THRESHOLD_BYTES,
             len,
             Vec::new(),
@@ -522,6 +527,7 @@ mod tests {
         let (total, _, basis) = scrollbar_line_counts(
             &mut state,
             &vp,
+            CacheViewMode::Source,
             crate::config::LARGE_FILE_THRESHOLD_BYTES,
             len,
             Vec::new(),
@@ -537,7 +543,8 @@ mod tests {
         // guaranteed to exist. A tiny threshold stands in for a huge file.
         let mut state = state_with_wrapping_lines(100);
         let len = state.buffer.len();
-        let (total, top, basis) = scrollbar_line_counts(&mut state, &vp, 16, len, Vec::new());
+        let (total, top, basis) =
+            scrollbar_line_counts(&mut state, &vp, CacheViewMode::Source, 16, len, Vec::new());
         assert_eq!((total, top), (0, 0), "large files use the constant thumb");
         assert_eq!(basis, MarkerBasis::Bytes { total: len as u64 });
     }
@@ -651,6 +658,7 @@ mod tests {
         let (total, top, basis) = scrollbar_line_counts(
             &mut state,
             &vp,
+            CacheViewMode::Source,
             crate::config::LARGE_FILE_THRESHOLD_BYTES,
             0,
             Vec::new(),
@@ -695,6 +703,7 @@ mod tests {
         let (_, _, basis) = scrollbar_line_counts(
             &mut state,
             &vp,
+            CacheViewMode::Source,
             crate::config::LARGE_FILE_THRESHOLD_BYTES,
             0,
             Vec::new(),

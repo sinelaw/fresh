@@ -722,18 +722,12 @@ pub struct InlineHint {
 /// pure. `theme` is `Some` on the draw path (so hint colours resolve) and `None`
 /// wherever the output is measured but never drawn.
 ///
-/// `include_compose_only` is `false` only on the *draw* path of a Source-mode
-/// split, where markdown_compose's code-block side rails must be dropped the
-/// same way [`inject_virtual_lines`] drops its frame lines: the rails are
-/// emitted whenever any split composes the buffer, and a source pane has to
-/// show the code literally.
-///
-/// Every *measuring* caller passes `true`, rails included, because the row
-/// counts they feed are not per split. Scroll math asks for its index under a
-/// fixed `CacheViewMode::Source` label that says nothing about any split's
-/// actual mode (`scrollbar_math::scroll_geometry`), so gating on it there takes
-/// compose's own decorations out of the row count of a *composing* buffer and
-/// the scrollbar stops short of the end of the document.
+/// `include_compose_only` is whether the pane is in page view. markdown_compose
+/// emits its code-block side rails whenever any split composes the buffer, so a
+/// Source-mode pane drops them the same way [`inject_virtual_lines`] drops its
+/// frame lines and shows the code literally. Measuring callers pass the mode of
+/// the pane they measure (`EditorState::index_decorations`), so the rows they
+/// count are the rows that pane draws.
 pub fn resolve_inline_hints(
     state: &EditorState,
     theme: Option<&Theme>,

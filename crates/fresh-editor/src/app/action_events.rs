@@ -194,8 +194,8 @@ impl crate::app::window::Window {
             let buffer_id = self.buffer_for_leaf(split_id)?;
             self.buffers
                 .with_buffer_and_split(buffer_id, split_id, |state, vs| {
-                    let soft_breaks = state.collect_soft_break_positions();
-                    let virtual_lines = state.collect_virtual_line_positions();
+                    let soft_breaks = state.collect_soft_break_positions(vs.is_page_view());
+                    let virtual_lines = state.collect_virtual_line_positions(vs.is_page_view());
                     // The rows this walks are the rows the frame drew, so it
                     // has to skip the same collapsed folds the frame did.
                     let hidden_ranges: Vec<(usize, usize)> = vs
