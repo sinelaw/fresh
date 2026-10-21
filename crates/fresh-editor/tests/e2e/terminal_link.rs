@@ -11,7 +11,11 @@
 //! what the PTY read loop does, minus the timing nondeterminism. One wrinkle
 //! remains: on Windows, ConPTY itself paints the (empty) screen when the child
 //! spawns, racing with — and possibly wiping — the injected bytes, so the
-//! helpers re-feed the output until it is stably visible on screen.
+//! helpers re-feed the output until it is stably visible on screen. Because a
+//! late repaint can still wipe the grid *after* that (between locating the path
+//! and the gesture reaching it), gestures in the live terminal go through
+//! `until_gesture_lands`, which re-feeds and retries a gesture that hit a blank
+//! grid.
 //!
 //! NOTE: requires a working PTY (/dev/ptmx); skipped where unavailable.
 
@@ -156,6 +160,68 @@ fn ctrl_move(harness: &mut EditorTestHarness, col: u16, row: u16) {
         .unwrap();
 }
 
+/// Upper bound on gesture attempts in `until_gesture_lands`. The ConPTY spawn
+/// repaint burst is finite, so a few retries suffice; the bound keeps a
+/// genuinely broken feature failing fast instead of looping forever.
+const GESTURE_ATTEMPTS: usize = 20;
+
+/// Locate `needle` on screen, perform `gesture` `offset` cells into it, render,
+/// and check `landed` (given the needle's (col, row)). If it didn't land, the
+/// grid was most likely wiped by a racing ConPTY repaint (see the module docs)
+/// between locating the needle and the gesture arriving — so re-feed `output`,
+/// re-locate the needle and try again, up to `GESTURE_ATTEMPTS` times.
+///
+/// Returns the needle's last (col, row). It does not assert: the caller's own
+/// assertions still decide pass/fail, so a genuinely broken feature fails.
+fn until_gesture_lands(
+    harness: &mut EditorTestHarness,
+    terminal_id: TerminalId,
+    output: &[u8],
+    needle: &str,
+    offset: u16,
+    gesture: fn(&mut EditorTestHarness, u16, u16),
+    landed: impl Fn(&EditorTestHarness, u16, u16) -> bool,
+) -> (u16, u16) {
+    let mut pos = (0, 0);
+    for attempt in 0..GESTURE_ATTEMPTS {
+        if attempt > 0 {
+            feed_output_until_visible(harness, terminal_id, output, needle);
+        }
+        // Already wiped before we could locate it — re-feed on the next pass.
+        let Some((col, row)) = find_on_screen(harness, needle) else {
+            continue;
+        };
+        pos = (col, row);
+        gesture(harness, col + offset, row);
+        harness.render().unwrap();
+        if landed(harness, col, row) {
+            break;
+        }
+    }
+    pos
+}
+
+/// Ctrl+Click `offset` cells into `needle` until `opened` (content of the file
+/// the link should open) shows on screen. See `until_gesture_lands`.
+fn ctrl_click_until_opened(
+    harness: &mut EditorTestHarness,
+    terminal_id: TerminalId,
+    output: &[u8],
+    needle: &str,
+    offset: u16,
+    opened: &str,
+) {
+    until_gesture_lands(
+        harness,
+        terminal_id,
+        output,
+        needle,
+        offset,
+        ctrl_left_click,
+        |h, _, _| h.screen_to_string().contains(opened),
+    );
+}
+
 /// Whether the rendered cell at `(x, y)` is underlined — how the Ctrl+hover
 /// link highlight paints a clickable path (observe rendered output, not state).
 fn cell_underlined(harness: &EditorTestHarness, x: u16, y: u16) -> bool {
@@ -166,6 +232,24 @@ fn cell_underlined(harness: &EditorTestHarness, x: u16, y: u16) -> bool {
                 .contains(ratatui::style::Modifier::UNDERLINED)
         })
         .unwrap_or(false)
+}
+
+/// Ctrl+hover two cells into the `src/main.rs:2:6` path until its span renders
+/// underlined, returning the path's (col, row). See `until_gesture_lands`.
+fn hover_until_underlined(
+    harness: &mut EditorTestHarness,
+    terminal_id: TerminalId,
+    output: &[u8],
+) -> (u16, u16) {
+    until_gesture_lands(
+        harness,
+        terminal_id,
+        output,
+        "src/main.rs:2:6",
+        2,
+        ctrl_move,
+        |h, col, row| cell_underlined(h, col, row) && cell_underlined(h, col + 4, row),
+    )
 }
 
 /// Ctrl+Click on a `path:line:col` printed in the terminal opens the file
@@ -185,16 +269,19 @@ fn ctrl_click_opens_workdir_relative_path_at_line() {
         None => return,
     };
 
-    open_terminal_with_output(
-        &mut harness,
-        b"build error at src/main.rs:2:6 here\n",
-        "src/main.rs:2:6",
-    );
+    let output: &[u8] = b"build error at src/main.rs:2:6 here\n";
+    let (terminal_id, _buffer_id) =
+        open_terminal_with_output(&mut harness, output, "src/main.rs:2:6");
 
-    let (col, row) = find_on_screen(&harness, "src/main.rs:2:6").expect("path on screen");
     // Click a few cells into the path token.
-    ctrl_left_click(&mut harness, col + 4, row);
-    harness.render().unwrap();
+    ctrl_click_until_opened(
+        &mut harness,
+        terminal_id,
+        output,
+        "src/main.rs:2:6",
+        4,
+        "line two TARGET",
+    );
 
     // Observe rendered output: the file is now open (its line-2 content shows)
     // and the status bar reports the line-2 jump.
@@ -232,11 +319,17 @@ fn ctrl_click_resolves_path_via_osc7_cwd() {
         .trim_start_matches('/')
         .to_string();
     let osc7 = format!("\x1b]7;file://host/{uri_path}\x1b\\edit notes.txt now\n");
-    open_terminal_with_output(&mut harness, osc7.as_bytes(), "edit notes.txt now");
+    let (terminal_id, _buffer_id) =
+        open_terminal_with_output(&mut harness, osc7.as_bytes(), "edit notes.txt now");
 
-    let (col, row) = find_on_screen(&harness, "notes.txt").expect("path on screen");
-    ctrl_left_click(&mut harness, col + 1, row);
-    harness.render().unwrap();
+    ctrl_click_until_opened(
+        &mut harness,
+        terminal_id,
+        osc7.as_bytes(),
+        "notes.txt",
+        1,
+        "OSC7 RESOLVED CONTENT",
+    );
 
     // The file opened from the OSC 7 directory, not the workdir.
     harness.assert_screen_contains("OSC7 RESOLVED CONTENT");
@@ -335,16 +428,19 @@ fn ctrl_click_opens_parenthesized_tool_call_path_in_tui() {
 
     // Alt screen (1049) + all-motion tracking (1003) + SGR (1006), then a
     // tool-call line as Claude Code renders it.
-    open_terminal_with_output(
-        &mut harness,
-        b"\x1b[?1049h\x1b[?1003h\x1b[?1006h\x1b[H  Update(src/main.rs:2:6)\n",
-        "src/main.rs:2:6",
-    );
+    let output: &[u8] = b"\x1b[?1049h\x1b[?1003h\x1b[?1006h\x1b[H  Update(src/main.rs:2:6)\n";
+    let (terminal_id, _buffer_id) =
+        open_terminal_with_output(&mut harness, output, "src/main.rs:2:6");
 
     // Click inside the parenthesised path.
-    let (col, row) = find_on_screen(&harness, "src/main.rs:2:6").expect("path on screen");
-    ctrl_left_click(&mut harness, col + 2, row);
-    harness.render().unwrap();
+    ctrl_click_until_opened(
+        &mut harness,
+        terminal_id,
+        output,
+        "src/main.rs:2:6",
+        2,
+        "line two TARGET",
+    );
 
     harness.assert_screen_contains("line two TARGET");
     harness.assert_screen_contains("Ln 2");
@@ -373,15 +469,18 @@ fn ctrl_click_opens_path_under_mouse_reporting_program() {
 
     // Enable click + SGR mouse reporting (1000 + 1006), then print the path —
     // exactly what a mouse-driven program on the main screen does.
-    open_terminal_with_output(
-        &mut harness,
-        b"\x1b[?1000h\x1b[?1006hbuild error at src/main.rs:2:6 here\n",
-        "src/main.rs:2:6",
-    );
+    let output: &[u8] = b"\x1b[?1000h\x1b[?1006hbuild error at src/main.rs:2:6 here\n";
+    let (terminal_id, _buffer_id) =
+        open_terminal_with_output(&mut harness, output, "src/main.rs:2:6");
 
-    let (col, row) = find_on_screen(&harness, "src/main.rs:2:6").expect("path on screen");
-    ctrl_left_click(&mut harness, col + 4, row);
-    harness.render().unwrap();
+    ctrl_click_until_opened(
+        &mut harness,
+        terminal_id,
+        output,
+        "src/main.rs:2:6",
+        4,
+        "line two TARGET",
+    );
 
     harness.assert_screen_contains("line two TARGET");
     harness.assert_screen_contains("Ln 2");
@@ -407,15 +506,18 @@ fn ctrl_click_opens_path_in_alternate_screen() {
 
     // Enter the alternate screen (1049), home the cursor, then print the path
     // onto it — like a full-screen program showing a build error.
-    open_terminal_with_output(
-        &mut harness,
-        b"\x1b[?1049h\x1b[Hbuild error at src/main.rs:2:6 here\n",
-        "src/main.rs:2:6",
-    );
+    let output: &[u8] = b"\x1b[?1049h\x1b[Hbuild error at src/main.rs:2:6 here\n";
+    let (terminal_id, _buffer_id) =
+        open_terminal_with_output(&mut harness, output, "src/main.rs:2:6");
 
-    let (col, row) = find_on_screen(&harness, "src/main.rs:2:6").expect("path on screen");
-    ctrl_left_click(&mut harness, col + 4, row);
-    harness.render().unwrap();
+    ctrl_click_until_opened(
+        &mut harness,
+        terminal_id,
+        output,
+        "src/main.rs:2:6",
+        4,
+        "line two TARGET",
+    );
 
     harness.assert_screen_contains("line two TARGET");
     harness.assert_screen_contains("Ln 2");
@@ -435,11 +537,9 @@ fn ctrl_hover_highlights_path_in_alternate_screen() {
         None => return,
     };
 
-    open_terminal_with_output(
-        &mut harness,
-        b"\x1b[?1049h\x1b[Hopen src/main.rs:2:6 to jump\n",
-        "src/main.rs:2:6",
-    );
+    let output: &[u8] = b"\x1b[?1049h\x1b[Hopen src/main.rs:2:6 to jump\n";
+    let (terminal_id, _buffer_id) =
+        open_terminal_with_output(&mut harness, output, "src/main.rs:2:6");
 
     let (col, row) = find_on_screen(&harness, "src/main.rs:2:6").expect("path on screen");
     // Not underlined until we Ctrl+hover it.
@@ -448,8 +548,7 @@ fn ctrl_hover_highlights_path_in_alternate_screen() {
         "path should not be underlined before hovering"
     );
 
-    ctrl_move(&mut harness, col + 2, row);
-    harness.render().unwrap();
+    let (col, row) = hover_until_underlined(&mut harness, terminal_id, output);
 
     assert!(
         cell_underlined(&harness, col, row) && cell_underlined(&harness, col + 4, row),
@@ -474,15 +573,11 @@ fn ctrl_hover_highlights_path_under_all_motion_tracking() {
 
     // All-motion tracking (1003) + SGR (1006): the mode that legitimately
     // receives buttonless motion — yet Ctrl+move must still drive link hover.
-    open_terminal_with_output(
-        &mut harness,
-        b"\x1b[?1003h\x1b[?1006hopen src/main.rs:2:6 to jump\n",
-        "src/main.rs:2:6",
-    );
+    let output: &[u8] = b"\x1b[?1003h\x1b[?1006hopen src/main.rs:2:6 to jump\n";
+    let (terminal_id, _buffer_id) =
+        open_terminal_with_output(&mut harness, output, "src/main.rs:2:6");
 
-    let (col, row) = find_on_screen(&harness, "src/main.rs:2:6").expect("path on screen");
-    ctrl_move(&mut harness, col + 2, row);
-    harness.render().unwrap();
+    let (col, row) = hover_until_underlined(&mut harness, terminal_id, output);
 
     assert!(
         cell_underlined(&harness, col, row) && cell_underlined(&harness, col + 4, row),
