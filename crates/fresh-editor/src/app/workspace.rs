@@ -1885,6 +1885,10 @@ impl crate::app::window::Window {
                                 Some(highlight_occurrences);
                             state.reference_highlight_overlay.enabled = highlight_occurrences;
                         }
+                        if let Some(inline_diag) = file_state.diagnostics_inline_text {
+                            state.buffer_settings.diagnostics_inline_text_override =
+                                Some(inline_diag);
+                        }
                         buf_state.folds.clear(&mut state.marker_list);
                         for fold in &file_state.folds {
                             // Resolve the stored line numbers against the current
@@ -2350,6 +2354,7 @@ impl crate::app::window::Window {
             tab_indicators: None,
             highlight_current_line: None,
             highlight_occurrences: None,
+            diagnostics_inline_text: None,
             plugin_state: std::collections::HashMap::new(),
             folds: Vec::new(),
         };
@@ -3759,6 +3764,9 @@ fn serialize_split_view_state(
                 highlight_occurrences: buffers
                     .get(buffer_id)
                     .and_then(|state| state.buffer_settings.highlight_occurrences_override),
+                diagnostics_inline_text: buffers
+                    .get(buffer_id)
+                    .and_then(|state| state.buffer_settings.diagnostics_inline_text_override),
                 plugin_state: buf_state.plugin_state.clone(),
                 folds,
             },

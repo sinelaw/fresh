@@ -579,6 +579,7 @@ pub enum Action {
     ToggleLineWrap,
     ToggleCurrentLineHighlight,
     ToggleOccurrenceHighlight,
+    ToggleInlineDiagnostics,
     ToggleReadOnly,
     TogglePageView,
     SetPageWidth,
@@ -769,6 +770,9 @@ pub enum Action {
     /// Toggle occurrence highlighting for the current buffer only
     /// (per-buffer override that persists across restart).
     ToggleOccurrenceHighlightCurrentBuffer,
+    /// Toggle inline diagnostics for the current buffer only
+    /// (per-buffer override that persists across restart).
+    ToggleInlineDiagnosticsCurrentBuffer,
     /// Playful full-screen wave that bounces all painted content around.
     TriggerWaveAnimation,
     ToggleScrollSync,
@@ -1146,6 +1150,7 @@ impl Action {
             "toggle_line_wrap" => ToggleLineWrap,
             "toggle_current_line_highlight" => ToggleCurrentLineHighlight,
             "toggle_occurrence_highlight" => ToggleOccurrenceHighlight,
+            "toggle_inline_diagnostics" => ToggleInlineDiagnostics,
             "toggle_read_only" => ToggleReadOnly,
             "toggle_page_view" => TogglePageView,
             "set_page_width" => SetPageWidth,
@@ -1278,6 +1283,7 @@ impl Action {
             "toggle_fold_indicators_current_buffer" => ToggleFoldIndicatorsCurrentBuffer,
             "toggle_current_line_highlight_current_buffer" => ToggleCurrentLineHighlightCurrentBuffer,
             "toggle_occurrence_highlight_current_buffer" => ToggleOccurrenceHighlightCurrentBuffer,
+            "toggle_inline_diagnostics_current_buffer" => ToggleInlineDiagnosticsCurrentBuffer,
             "trigger_wave_animation" => TriggerWaveAnimation,
             "toggle_scroll_sync" => ToggleScrollSync,
             "toggle_mouse_capture" => ToggleMouseCapture,
@@ -3184,6 +3190,7 @@ impl KeybindingResolver {
             Action::ToggleLineWrap => t!("action.toggle_line_wrap"),
             Action::ToggleCurrentLineHighlight => t!("action.toggle_current_line_highlight"),
             Action::ToggleOccurrenceHighlight => t!("action.toggle_occurrence_highlight"),
+            Action::ToggleInlineDiagnostics => t!("action.toggle_inline_diagnostics"),
             Action::ToggleReadOnly => t!("action.toggle_read_only"),
             Action::TogglePageView => t!("action.toggle_page_view"),
             Action::SetPageWidth => t!("action.set_page_width"),
@@ -3321,6 +3328,9 @@ impl KeybindingResolver {
             }
             Action::ToggleOccurrenceHighlightCurrentBuffer => {
                 t!("action.toggle_occurrence_highlight_current_buffer")
+            }
+            Action::ToggleInlineDiagnosticsCurrentBuffer => {
+                t!("action.toggle_inline_diagnostics_current_buffer")
             }
             Action::TriggerWaveAnimation => t!("action.trigger_wave_animation"),
             Action::ToggleScrollSync => t!("action.toggle_scroll_sync"),

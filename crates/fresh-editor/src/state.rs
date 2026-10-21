@@ -168,6 +168,12 @@ pub struct BufferSettings {
     /// `editor.highlight_occurrences` setting. Persisted in the per-file
     /// workspace state.
     pub highlight_occurrences_override: Option<bool>,
+
+    /// Explicit per-buffer inline diagnostics override, set by "Toggle
+    /// Inline Diagnostics (Current Buffer)". `None` = follow the global
+    /// `editor.diagnostics_inline_text` setting. Persisted in the per-file
+    /// workspace state.
+    pub diagnostics_inline_text_override: Option<bool>,
 }
 
 impl Default for BufferSettings {
@@ -187,6 +193,7 @@ impl Default for BufferSettings {
             word_characters: String::new(),
             indentation_guide: true,
             highlight_occurrences_override: None,
+            diagnostics_inline_text_override: None,
         }
     }
 }
@@ -234,6 +241,7 @@ impl BufferSettings {
         self.whitespace_override = None;
         self.tab_indicators_override = None;
         self.highlight_occurrences_override = None;
+        self.diagnostics_inline_text_override = None;
     }
 
     /// Resolve `whitespace` from the buffer's configured visibility and the

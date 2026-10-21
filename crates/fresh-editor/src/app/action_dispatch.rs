@@ -757,6 +757,9 @@ impl Editor {
                     t!("view.occurrence_highlight_state", state = state).to_string(),
                 );
             }
+            Action::ToggleInlineDiagnostics => {
+                self.toggle_inline_diagnostics();
+            }
             Action::ToggleReadOnly => {
                 let buffer_id = self.active_buffer();
                 let is_now_read_only = self
@@ -1015,6 +1018,9 @@ impl Editor {
             }
             Action::ToggleOccurrenceHighlightCurrentBuffer => {
                 self.toggle_occurrence_highlight_current_buffer()
+            }
+            Action::ToggleInlineDiagnosticsCurrentBuffer => {
+                self.toggle_inline_diagnostics_current_buffer()
             }
             Action::TriggerWaveAnimation => self.trigger_wave_animation(),
             Action::ToggleScrollSync => self.active_window_mut().toggle_scroll_sync(),
