@@ -13,7 +13,12 @@ depends=("gcc-libs" "glibc")
 makedepends=("cargo" "clang")
 provides=("fresh-editor")
 conflicts=("fresh-editor-bin")
-options=('!debug')
+# `!lto`: makepkg's default `lto` option adds -flto=auto to CFLAGS, so clang
+# emits the C dependencies (QuickJS, ...) as LLVM bitcode. rustc then links
+# with its own bundled rust-lld, which cannot read bitcode from a newer system
+# clang ("Unknown attribute kind (105)"). Plain object files have no LLVM
+# version coupling; Rust's own LTO (profile.release) is unaffected.
+options=('!debug' '!lto')
 source=("fresh-editor-${pkgver}-source.tar.gz::https://github.com/sinelaw/fresh/releases/download/v${pkgver}/fresh-editor-${pkgver}-source.tar.gz")
 sha256sums=("SHA256_PLACEHOLDER")
 
