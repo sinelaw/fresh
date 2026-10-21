@@ -1,3 +1,7 @@
 # A sample file the syntax-highlighting tests open as CMake cache syntax, not
 # a leftover from a CMake build; nothing in the build reads it.
 fresh-editor source: source-contains-cmake-cache-file [crates/fresh-editor/tests/fixtures/syntax_highlighting/CMakeCache.txt]
+
+# The project's hand-written landing page, not a generated or minified file:
+# lintian guesses so from one long line (a row of feature names in the ticker).
+fresh-editor source: source-is-missing [homepage/index.html]

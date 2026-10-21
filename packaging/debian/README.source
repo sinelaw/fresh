@@ -54,6 +54,11 @@ To build from a checkout:
     sudo apt-get build-dep ./
     dpkg-buildpackage -us -uc
 
+To upload the source package to mentors.debian.net (orig tarball from the
+release tag, debian/ from HEAD), signed with the maintainer's key:
+
+    scripts/debian-mentors-upload.sh
+
 Copyright
 ---------
 
