@@ -110,7 +110,7 @@ fn completions() -> &'static Mutex<Vec<QueuedOutcome>> {
 
 /// Allocate the id that ties a running script to the caller waiting on it.
 /// Process-wide and monotonic; ids are never reused within a run.
-fn next_request_id() -> u64 {
+pub(crate) fn next_request_id() -> u64 {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(1);
     NEXT.fetch_add(1, Ordering::Relaxed)

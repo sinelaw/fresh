@@ -34,6 +34,7 @@ fn sample_value(arg_key: &str) -> &'static str {
         "name" => "File",
         "map" => "emacs",
         "text" => "hello",
+        "key" => "x",
         other => panic!(
             "no sample value for action arg `{other}` — add one to `sample_value` in \
              tests/action_name_docs.rs"

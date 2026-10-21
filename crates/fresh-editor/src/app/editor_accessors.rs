@@ -332,9 +332,13 @@ impl Editor {
         .into_iter()
         .flatten()
         .min();
+        // A macro replay parked on a plugin step resumes from the loop, so the
+        // loop has to come straight back rather than sleep its idle poll.
+        let macro_replay_deadline = self.macro_replay_parked().then(std::time::Instant::now);
         [
             lsp_progress_deadline,
             anim_deadline,
+            macro_replay_deadline,
             move_preview_deadline,
             paste_deadline,
             wheel_deadline,

@@ -623,6 +623,10 @@ pub enum Action {
     PromptConfirm,
     /// PromptConfirm with recorded text for macro playback
     PromptConfirmWithText(String),
+    /// A key handed to a plugin waiting on `editor.getNextKey()`. Such a key
+    /// never reaches `handle_action`, so it is recorded as this step for a
+    /// macro to replay it; the chord is spelled `"x"`, `"ctrl+x"`, ….
+    PluginNextKey(String),
     PromptCancel,
     PromptBackspace,
     PromptDelete,
@@ -1410,6 +1414,10 @@ impl Action {
                 let text = args.get("text")?.as_str()?;
                 Self::PromptConfirmWithText(text.to_string())
             },
+            "plugin_next_key" => PluginNextKey ["key"] : {
+                let key = args.get("key")?.as_str()?;
+                Self::PluginNextKey(key.to_string())
+            },
         }
     }
 
@@ -1489,6 +1497,9 @@ impl Action {
             }
             Self::PromptConfirmWithText(text) => {
                 args.insert("text".to_string(), Value::String(text.clone()));
+            }
+            Self::PluginNextKey(key) => {
+                args.insert("key".to_string(), Value::String(key.clone()));
             }
             // No-arg actions (motions, edits, commands): empty args.
             _ => {}
@@ -3208,6 +3219,7 @@ impl KeybindingResolver {
             Action::PromptConfirmWithText(ref text) => {
                 format!("{} ({})", t!("action.prompt_confirm"), text).into()
             }
+            Action::PluginNextKey(ref key) => format!("Key for a plugin ({})", key).into(),
             Action::PromptCancel => t!("action.prompt_cancel"),
             Action::PromptBackspace => t!("action.prompt_backspace"),
             Action::PromptDelete => t!("action.prompt_delete"),

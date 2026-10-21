@@ -645,6 +645,12 @@ impl Editor {
             self.process_pending_plugin_actions();
         }
 
+        // A macro replay parked on a plugin step resumes once it settles.
+        #[cfg(feature = "plugins")]
+        let macro_replay_moved = self.resume_macro_replay();
+        #[cfg(not(feature = "plugins"))]
+        let macro_replay_moved = false;
+
         // Process pending LSP server restarts (with exponential backoff)
         {
             let _s = tracing::trace_span!("process_pending_lsp_restarts").entered();
@@ -698,6 +704,7 @@ impl Editor {
             || file_changes
             || tree_changes
             || backlogged
+            || macro_replay_moved
     }
 
     /// Whether the plugin command frame budget left work for the next tick.

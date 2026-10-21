@@ -3825,6 +3825,7 @@ pub fn action_to_events(
         | Action::PromptJumpToBookmark
         | Action::PromptConfirm
         | Action::PromptConfirmWithText(_)
+        | Action::PluginNextKey(_)
         | Action::PromptCancel
         | Action::PromptBackspace
         | Action::PromptDelete

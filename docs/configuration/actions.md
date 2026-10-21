@@ -32,6 +32,7 @@ In `config.json`, a keybinding takes the same `args` object next to its `"action
 | `jump_to_bookmark` | `{ char: "x" }` | Jump to bookmark 'x' |
 | `menu_open` | `{ name: "File" }` | Open File menu |
 | `play_macro` | `{ char: "x" }` | Play macro 'x' |
+| `plugin_next_key` | `{ key: "x" }` | Key for a plugin (x) |
 | `prompt_confirm_with_text` | `{ text: "hello" }` | Confirm prompt (hello) |
 | `set_bookmark` | `{ char: "x" }` | Set bookmark 'x' |
 | `show_macro` | `{ char: "x" }` | Show macro 'x' in buffer |
@@ -211,6 +212,7 @@ In `config.json`, a keybinding takes the same `args` object next to its `"action
 | `paste` | Paste |
 | `play_last_macro` | Play last recorded macro |
 | `play_macro` | Play macro 'x' (args: `{ char: "x" }`) |
+| `plugin_next_key` | Key for a plugin (x) (args: `{ key: "x" }`) |
 | `popup_cancel` | Popup cancel |
 | `popup_confirm` | Popup confirm |
 | `popup_focus` | Focus popup |
