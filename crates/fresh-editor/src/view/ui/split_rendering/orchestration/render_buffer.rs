@@ -764,21 +764,6 @@ fn resolve_build_anchor(
         return None;
     }
     let top_line = buffer.get_line_number(viewport.top_byte());
-    // A line with virtual rows (compose's table borders and list spacers)
-    // builds from its start. The offset counts drawn rows, borders included,
-    // but a build resumed at one of the line's text rows starts at that row's
-    // byte: from the line's first text row that is the line start again, so
-    // the border above it is drawn back in and the offset past it shows what
-    // the offset before it did — a synced preview stalled a row, then jumped
-    // two. Built from the line start and skipping `offset` rows, the window
-    // starts where the offset says. Such lines are short (a table row, a list
-    // item), so building the whole line costs nothing.
-    if index
-        .line_wrap(top_line)
-        .is_some_and(|lw| lw.virtual_rows > 0)
-    {
-        return None;
-    }
     let line_start = buffer.line_start_offset(top_line).unwrap_or(0);
     let mut anchor_row = index.line_first_row(top_line) + viewport.top_view_line_offset() as u32;
     let mut stable_skip = 0u32;
@@ -832,10 +817,23 @@ fn resolve_build_anchor(
     if addr.is_virtual || addr.byte < line_start {
         return None;
     }
+    // Resuming at the line's first text row builds from the line start, and a
+    // build from the line start draws the line's `LineAbove` rows first (a
+    // table row's `├─┼─┤`). The anchor's row is already past them — the index
+    // orders a line's rows as drawn — so skip them again, or the window starts
+    // at the border the offset stepped over: a row the frame showed for two
+    // offsets, so a scroll through a table stalled a row and then jumped two.
+    let above = if addr.byte == line_start {
+        index
+            .line_wrap(top_line)
+            .map_or(0, |lw| lw.virtual_above as usize)
+    } else {
+        0
+    };
     Some(BuildAnchor {
         byte: addr.byte,
         carry: addr.carry,
-        skip: (walk_back + stable_skip) as usize,
+        skip: (walk_back + stable_skip) as usize + above,
     })
 }
 

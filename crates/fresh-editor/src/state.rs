@@ -808,6 +808,24 @@ impl EditorState {
         // pane it serves (`wrap_index_geometry_for`), so a composing pane
         // counts them and a source pane beside it does not.
         let virtual_lines = self.collect_virtual_line_positions(is_compose);
+        // Which of them are drawn above their line, so the index can order a
+        // line's rows as the renderer draws them (`inject_virtual_lines`).
+        let virtual_lines_above = if virtual_lines.is_empty() {
+            Vec::new()
+        } else {
+            let mut v: Vec<usize> = self
+                .virtual_texts
+                .query_lines_in_range(&self.marker_list, 0, end)
+                .into_iter()
+                .filter(|(_, vt)| {
+                    (is_compose || !vt.compose_only)
+                        && vt.position == crate::view::virtual_text::VirtualTextPosition::LineAbove
+                })
+                .map(|(pos, _)| pos)
+                .collect();
+            v.sort_unstable();
+            v
+        };
 
         crate::view::wrap_index::IndexDecorations {
             soft_breaks,
@@ -815,6 +833,7 @@ impl EditorState {
             inline_hints,
             folds,
             virtual_lines,
+            virtual_lines_above,
         }
     }
 

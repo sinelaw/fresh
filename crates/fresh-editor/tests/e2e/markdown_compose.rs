@@ -1053,13 +1053,25 @@ fn test_compose_mode_mouse_scroll_to_bottom() {
         })
         .unwrap();
 
-    // Scroll down aggressively with mouse wheel.
-    // README.md is ~359 lines; with compose wrapping at 80 cols it will be
-    // even more visual lines.  Each scroll event moves ~3 lines, so 200
-    // scroll events should be more than enough to reach the bottom.
+    // Scroll down with the mouse wheel until the end shows. README.md is
+    // ~400 lines; composed at 80 columns it is ~680 rows, and each wheel event
+    // moves 3, so it takes a little over 200 events. A fixed count of 200 was
+    // right at that edge (198 needed), and flipped as soon as the wheel counted
+    // rows a little differently; the bound below only catches a wheel that
+    // stops short of the end for good.
     let (content_start, content_end) = harness.content_area_rows();
     let mid_row = ((content_start + content_end) / 2) as u16;
-    for _ in 0..200 {
+    let mut events = 0;
+    while !harness
+        .screen_to_string()
+        .contains("SPDX-License-Identifier")
+    {
+        events += 1;
+        assert!(
+            events <= 400,
+            "400 wheel events never reached the end of the README.\nScreen:\n{}",
+            harness.screen_to_string()
+        );
         harness.mouse_scroll_down(40, mid_row).unwrap();
     }
 
