@@ -5792,6 +5792,11 @@ mod tests {
             // editor split while the tour panel stays docked below.
             "tour_next",
             "tour_prev",
+            // Compare Files difference navigation — handled by the
+            // compare_files plugin (`fresh --diff A B`).
+            "compare_next_difference",
+            "compare_prev_difference",
+            "compare_switch_side",
         ];
 
         let config = Config::default();

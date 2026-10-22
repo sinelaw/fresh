@@ -722,6 +722,7 @@ impl Editor {
             event_broadcaster: parts.event_broadcaster,
             orchestrator_mode: parts.orchestrator_mode,
             file_launch: parts.file_launch,
+            diff_launch: None,
             all_workspaces_loaded: parts.all_workspaces_loaded,
             #[cfg(feature = "plugins")]
             line_targets: std::collections::HashMap::new(),
@@ -1765,6 +1766,30 @@ impl Editor {
     /// positions work as in any launch.
     pub fn file_launch(&self) -> bool {
         self.file_launch
+    }
+
+    /// The two files of a `fresh --diff LEFT RIGHT` launch, if this is one.
+    ///
+    /// The editor itself only opens them, as it would `fresh LEFT RIGHT`;
+    /// showing them side by side is a plugin's job (`compare_files.ts`
+    /// reads this at `ready` through `editor.diffLaunch()`), so the view can
+    /// be replaced without touching the command line.
+    pub fn diff_launch(&self) -> Option<(&std::path::Path, &std::path::Path)> {
+        self.diff_launch
+            .as_ref()
+            .map(|(left, right)| (left.as_path(), right.as_path()))
+    }
+
+    /// Record the files of a `--diff` launch. Call before
+    /// [`Editor::fire_ready_hook`], which is when plugins look.
+    ///
+    /// Refreshes the plugin state snapshot so a `ready` handler reading
+    /// `editor.diffLaunch()` sees the pair: the hook runs on the plugin
+    /// thread and could otherwise beat the next frame's refresh.
+    pub fn set_diff_launch(&mut self, left: std::path::PathBuf, right: std::path::PathBuf) {
+        self.diff_launch = Some((left, right));
+        #[cfg(feature = "plugins")]
+        self.update_plugin_state_snapshot();
     }
 
     /// Spawn a background thread to build the full grammar registry

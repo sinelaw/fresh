@@ -2826,6 +2826,23 @@ impl JsEditorApi {
             .unwrap_or(false)
     }
 
+    /// The two files of a `fresh --diff LEFT RIGHT` launch, as absolute paths
+    /// `[left, right]`; empty for any other launch. The editor opens both
+    /// files as it would `fresh LEFT RIGHT` and leaves showing them side by
+    /// side to the plugin that reads this at `ready` (the bundled
+    /// `compare_files` plugin does).
+    pub fn diff_launch(&self) -> Vec<String> {
+        self.state_snapshot
+            .read()
+            .map(|s| {
+                s.diff_launch
+                    .iter()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Whether the left dock slot is open: a panel is in it, or the host is
     /// holding the column for one its manifest declared. The plugin that
     /// fills the dock mounts it at

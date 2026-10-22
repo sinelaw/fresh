@@ -1106,6 +1106,11 @@ pub struct Editor {
     /// construction.
     file_launch: bool,
 
+    /// The two files of a `fresh --diff LEFT RIGHT` launch, absolute. Read
+    /// through [`Editor::diff_launch`]; set once, before the `ready` hook,
+    /// by [`Editor::set_diff_launch`].
+    diff_launch: Option<(std::path::PathBuf, std::path::PathBuf)>,
+
     /// Every persisted workspace has been read into `windows`. False until
     /// something uses the registry; see
     /// [`Editor::ensure_all_workspaces_loaded`].

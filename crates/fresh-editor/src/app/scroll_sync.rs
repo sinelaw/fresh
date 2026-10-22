@@ -131,7 +131,11 @@ impl crate::app::window::Window {
             {
                 continue;
             }
-            self.scroll_split_viewport_to(buffer_id, other_leaf, target_line, false);
+            // `target_line` is 0-based, like the anchors and
+            // `get_line_number`; `Viewport::scroll_to` counts from 1.
+            // Passed as-is, the partner sat one line above the line the
+            // anchors name — a row out of step with the active pane.
+            self.scroll_split_viewport_to(buffer_id, other_leaf, target_line + 1, false);
         }
 
         let active_buffer_id = if self.same_buffer_scroll_sync {

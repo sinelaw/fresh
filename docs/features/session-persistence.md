@@ -100,6 +100,7 @@ The `daemon` subcommand is an alias for the older `session` subcommand; both for
 |---------|------|-------------|
 | `fresh myfile.txt` | Direct | Just that file: no background process, no workspace restored or saved, no dock. See [Opening Files](#opening-files). |
 | `fresh --simple` | Direct | The same, with or without files: an empty buffer in this terminal. |
+| `fresh --diff A B` | Direct | The two files side by side, both editable. See [Compare Files](./compare-files.md). |
 | `fresh` | Daemon | Auto Attach: the shared `orchestrator` daemon, in this directory's workspace, and the dock once you have opened it. Direct when `auto_attach` is off. |
 | `fresh -a` | Daemon | With Auto Attach on, a bare `fresh` *is* `fresh -a`: the one shared background editor (files given with `-a` open there too) — unless a per-directory daemon is already running in this directory, or the files name a remote host, which keep their own daemon. With it off, `fresh -a` is a background daemon for this directory. Supports detach/reattach. |
 | `fresh --web [ADDR]` | Daemon | Foreground daemon that also serves the browser UI. |

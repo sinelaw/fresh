@@ -16,6 +16,7 @@
   "cli.arg.restore": "Force restore of the previous workspace, overriding `editor.restore_previous_session = false` in the config. Cannot be combined with --no-restore.",
   "cli.arg.wait": "Accepted for $EDITOR and git's core.editor; Fresh already returns only once you quit",
   "cli.arg.simple": "Open just what is named, or an empty buffer, in this terminal: no session restored or saved, no dock, no daemon (what `fresh FILE` does, without needing a file)",
+  "cli.arg.diff": "Compare two files side by side, both editable, the differences aligned and highlighted (a diff tool for `git difftool`)",
   "cli.arg.no_upgrade_check": "Disable upgrade checking and anonymous telemetry",
   "cli.arg.locale": "Override the locale (e.g. 'en', 'ja', 'zh-CN')",
   "cli.arg.gui": "Launch in GUI mode (native window with GPU rendering)",

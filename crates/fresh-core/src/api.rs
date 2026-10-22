@@ -1672,6 +1672,10 @@ pub struct EditorStateSnapshot {
     /// `fresh --simple`) rather than a session. Read via `editor.fileLaunch()`.
     #[serde(default)]
     pub file_launch: bool,
+    /// The two files of a `fresh --diff LEFT RIGHT` launch, absolute; empty
+    /// for every other launch. Read via `editor.diffLaunch()`.
+    #[serde(default)]
+    pub diff_launch: Vec<PathBuf>,
     /// The left dock slot is open: a panel is in it, or the host is holding
     /// the column for one its manifest declared. The plugin mounts at
     /// `ready` iff this is set. Read via `editor.dockOpen()`.
@@ -1874,6 +1878,7 @@ impl EditorStateSnapshot {
             env_active: false,
             orchestrator_mode: false,
             file_launch: false,
+            diff_launch: Vec::new(),
             dock_open: false,
             dock_cols: 0,
             detected_env: String::new(),

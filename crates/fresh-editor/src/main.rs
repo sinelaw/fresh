@@ -124,6 +124,17 @@ struct Cli {
     #[arg(long, conflicts_with = "restore")]
     simple: bool,
 
+    /// Compare two files side by side, both editable. Opens them as `fresh
+    /// LEFT RIGHT` would and shows them in one tab, the differences aligned
+    /// and highlighted, as `git difftool` expects of a diff tool
+    #[arg(
+        long,
+        num_args = 2,
+        value_names = ["LEFT", "RIGHT"],
+        conflicts_with_all = ["files", "attach", "stdin", "web"]
+    )]
+    diff: Option<Vec<PathBuf>>,
+
     /// Force restore of previous workspace, overriding
     /// `editor.restore_previous_session = false` in the config.  Cannot be
     /// combined with `--no-restore`.
@@ -216,6 +227,9 @@ struct Args {
     no_session: bool,
     /// `--simple`: a file launch (see `is_file_launch`) whatever is named.
     simple: bool,
+    /// `--diff LEFT RIGHT`: a file launch of those two files, shown side by
+    /// side (see `Editor::diff_launch`).
+    diff: Option<(PathBuf, PathBuf)>,
     /// Force workspace restore even if `editor.restore_previous_session`
     /// is disabled in the config.
     force_restore: bool,
@@ -575,6 +589,10 @@ impl From<Cli> for Args {
             event_log: cli.event_log,
             no_session: cli.no_restore,
             simple: cli.simple,
+            diff: cli.diff.and_then(|pair| match pair.as_slice() {
+                [left, right] => Some((left.clone(), right.clone())),
+                _ => None,
+            }),
             force_restore: cli.restore,
             no_upgrade_check: cli.no_upgrade_check,
             dump_config,
@@ -1926,7 +1944,7 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
     };
 
     // Convert to FileLocation for downstream code
-    let file_locations: Vec<FileLocation> = parsed_locations
+    let mut file_locations: Vec<FileLocation> = parsed_locations
         .into_iter()
         .map(|loc| match loc {
             ParsedLocation::Local(fl) => fl,
@@ -1940,6 +1958,22 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
             },
         })
         .collect();
+
+    // `--diff LEFT RIGHT` opens both files as `fresh LEFT RIGHT` would, but
+    // taken as plain paths rather than `file:line` or `user@host:path`
+    // specs: a diff tool is handed whatever temp-file names its caller made.
+    if let Some((left, right)) = &args.diff {
+        for path in [left, right] {
+            file_locations.push(FileLocation {
+                path: path.clone(),
+                line: None,
+                column: None,
+                end_line: None,
+                end_column: None,
+                message: None,
+            });
+        }
+    }
 
     // Pick the startup authority. Per principle 6, this is `local()`
     // by default; SSH CLI form swaps in `Authority::ssh(...)` here.
@@ -3779,6 +3813,13 @@ where
 /// - `None` — not a nested launch, or the parent socket is unreachable; the
 ///   caller should launch inline as usual.
 fn try_forward_nested(args: &Args) -> Option<AnyhowResult<()>> {
+    // `--diff` runs here, in this terminal, the way a diff tool is expected
+    // to: `git difftool` deletes its temp files once the tool exits, so
+    // handing the pair to the enclosing editor and returning at once would
+    // pull them out from under the view.
+    if args.diff.is_some() {
+        return None;
+    }
     // Nothing starts a second editor nested in a Fresh terminal, whatever
     // Auto Attach says: every such terminal, a direct editor's included, is
     // inside an editor it can reach. Everything that reaches here without a
@@ -5740,6 +5781,45 @@ fn bare_launch_dir(dir_context: &fresh::config_io::DirectoryContext, cwd: PathBu
     Editor::last_used_workspace_root(dir_context).unwrap_or(cwd)
 }
 
+/// Check the two files of `--diff LEFT RIGHT` and return them absolute.
+///
+/// Both must be files that exist: a diff of a missing file, or of a
+/// directory, has nothing to show, and saying so here beats an editor that
+/// opens on one empty buffer. The side-by-side view is a plugin's, so a
+/// launch without plugins is refused rather than quietly showing two tabs.
+/// A refusal is a usage error, reported on stderr with exit status 2 like
+/// clap's own, not an error with a backtrace.
+fn check_diff_args(args: &Args, left: PathBuf, right: PathBuf) -> (PathBuf, PathBuf) {
+    let refuse = |msg: String| -> ! {
+        eprintln!("fresh: {msg}");
+        std::process::exit(2);
+    };
+    if args.no_plugins {
+        refuse(
+            "--diff shows the files with the bundled compare_files plugin, \
+             which --no-plugins and --safe turn off"
+                .to_string(),
+        );
+    }
+    #[cfg(feature = "gui")]
+    if args.gui {
+        refuse("--diff runs in the terminal; it can't be combined with --gui".to_string());
+    }
+    let resolve = |path: PathBuf| -> PathBuf {
+        if !path.exists() {
+            refuse(format!("--diff: {} does not exist", path.display()));
+        }
+        if path.is_dir() {
+            refuse(format!(
+                "--diff compares two files; {} is a directory",
+                path.display()
+            ));
+        }
+        std::fs::canonicalize(&path).unwrap_or(path)
+    };
+    (resolve(left), resolve(right))
+}
+
 /// Whether this launch opens the files on its command line rather than a
 /// session (see `Editor::file_launch`): `--simple` asked for it, or at least
 /// one file (not a directory) was named, `editor.skip_session_restore_when_files_passed`
@@ -5747,7 +5827,7 @@ fn bare_launch_dir(dir_context: &fresh::config_io::DirectoryContext, cwd: PathBu
 /// Decided by the invocation and that setting alone — never by which files
 /// they are.
 fn is_file_launch(args: &Args, cfg: &config::Config, files: &[FileLocation]) -> bool {
-    if args.simple {
+    if args.simple || args.diff.is_some() {
         return true;
     }
     files.iter().any(|loc| !loc.path.is_dir())
@@ -6465,6 +6545,7 @@ fn build_localized_cli_command() -> clap::Command {
         .mut_arg("restore", |a| a.help(t("cli.arg.restore")))
         .mut_arg("wait", |a| a.help(t("cli.arg.wait")))
         .mut_arg("simple", |a| a.help(t("cli.arg.simple")))
+        .mut_arg("diff", |a| a.help(t("cli.arg.diff")))
         .mut_arg("no_upgrade_check", |a| {
             a.help(t("cli.arg.no_upgrade_check"))
         })
@@ -6559,6 +6640,9 @@ fn real_main() -> AnyhowResult<()> {
     // consumer (TUI, GUI, web, attach, nested forward) sees it, so
     // `fresh +50 file.txt` == `fresh file.txt:50` everywhere (#1926).
     args.files = apply_plus_line_args(std::mem::take(&mut args.files))?;
+    if let Some((left, right)) = args.diff.take() {
+        args.diff = Some(check_diff_args(&args, left, right));
+    }
     let args = args;
 
     // Expose `FRESH_INTERACTIVE=1` on the editor's process env when Fresh
@@ -6773,6 +6857,10 @@ fn real_main() -> AnyhowResult<()> {
         }
         if let Some((rx, p)) = warning_log_slot {
             editor.set_warning_log(rx, p);
+        }
+
+        if let Some((left, right)) = &args.diff {
+            editor.set_diff_launch(left.clone(), right.clone());
         }
 
         tracing::info!("Running first-run setup...");
@@ -7515,6 +7603,37 @@ mod tests {
 
         let (shown, hit) = strip_sentinel("{\n  \"ready\": false\n}", SENTINEL_START_FAILED);
         assert_eq!((shown, hit), ("{\n  \"ready\": false\n}", false));
+    }
+
+    /// Parse `argv` the way `real_main` does: the localized command, then
+    /// `Cli`, then the internal `Args`.
+    fn parse_args(argv: &[&str]) -> Result<Args, clap::Error> {
+        let matches = build_localized_cli_command().try_get_matches_from(argv)?;
+        Ok(Cli::from_arg_matches(&matches)?.into())
+    }
+
+    /// `--diff LEFT RIGHT` takes exactly two paths, as plain paths: a name
+    /// with a colon is a file, not a `file:line` spec, and the launch is a
+    /// file launch whatever the session settings say.
+    #[test]
+    fn diff_takes_two_plain_paths_and_is_a_file_launch() {
+        let args = parse_args(&["fresh", "--diff", "a:3", "b.txt"]).expect("parses");
+        assert_eq!(
+            args.diff,
+            Some((PathBuf::from("a:3"), PathBuf::from("b.txt")))
+        );
+        assert!(args.files.is_empty(), "the pair is not a list of FILES");
+
+        let mut config = config::Config::default();
+        config.editor.skip_session_restore_when_files_passed = false;
+        assert!(is_file_launch(&args, &config, &[]));
+
+        assert!(parse_args(&["fresh", "--diff", "only-one"]).is_err());
+        assert!(
+            parse_args(&["fresh", "--diff", "a", "b", "c"]).is_err(),
+            "a third path is a FILES argument, which --diff refuses"
+        );
+        assert!(parse_args(&["fresh", "--diff", "a", "b", "--stdin"]).is_err());
     }
 
     /// The scripts the convenience verbs submit must parse, and must call

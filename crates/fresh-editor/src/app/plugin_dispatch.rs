@@ -404,6 +404,10 @@ impl Editor {
         snapshot.env_active = self.authority().env_provider.is_active();
         snapshot.orchestrator_mode = self.orchestrator_mode();
         snapshot.file_launch = self.file_launch();
+        snapshot.diff_launch = self
+            .diff_launch()
+            .map(|(left, right)| vec![left.to_path_buf(), right.to_path_buf()])
+            .unwrap_or_default();
         // The dock slot as the host sees it: the plugin mounts at `ready`
         // iff `dock_open`, and lays its content out to `dock_cols`.
         snapshot.dock_open = self.dock.is_some() || self.dock_slot_reserved();
