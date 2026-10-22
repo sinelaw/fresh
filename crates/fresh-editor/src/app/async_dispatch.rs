@@ -544,6 +544,14 @@ impl Editor {
                 } => {
                     self.handle_remote_attach_failed(error, request_id, reconnect_window);
                 }
+                AsyncMessage::PluginCallbackResult { request_id, result } => {
+                    let callback_id = fresh_core::api::JsCallbackId::from(request_id);
+                    let plugins = self.plugin_manager.read().unwrap();
+                    match result {
+                        Ok(json) => plugins.resolve_callback(callback_id, json),
+                        Err(e) => plugins.reject_callback(callback_id, e),
+                    }
+                }
                 AsyncMessage::PluginProcessOutput {
                     process_id,
                     stdout,

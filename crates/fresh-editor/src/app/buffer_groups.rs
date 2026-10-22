@@ -32,6 +32,10 @@ enum LayoutDesc {
         /// virtual one. See `BufferGroup::borrowed_buffers`.
         #[serde(rename = "bufferId")]
         buffer_id: Option<usize>,
+        /// A file for the panel to show: the buffer that has it open, else
+        /// the group opens it, without a tab. See
+        /// `BufferGroup::opened_buffers`.
+        path: Option<String>,
     },
     #[serde(rename = "fixed")]
     Fixed {
@@ -84,7 +88,9 @@ impl super::Editor {
         let mut panel_buffers: HashMap<String, BufferId> = HashMap::new();
         let mut panel_splits: HashMap<String, LeafId> = HashMap::new();
         let mut borrowed = std::collections::HashSet::new();
-        let layout = self.build_group_layout(&desc, &mode, &mut panel_buffers, &mut borrowed)?;
+        let mut opened = std::collections::HashSet::new();
+        let layout =
+            self.build_group_layout(&desc, &mode, &mut panel_buffers, &mut borrowed, &mut opened)?;
 
         // Build the inner split tree for the group
         let inner_tree = self.build_split_tree(&layout, &mut panel_splits)?;
@@ -201,6 +207,7 @@ impl super::Editor {
             panel_splits: panel_splits.clone(),
             hidden_panels: std::collections::HashSet::new(),
             borrowed_buffers: borrowed,
+            opened_buffers: opened,
             representative_split: Some(group_leaf_id),
         };
 
@@ -308,8 +315,24 @@ impl super::Editor {
         mode: &str,
         panel_buffers: &mut HashMap<String, BufferId>,
         borrowed: &mut std::collections::HashSet<BufferId>,
+        opened: &mut std::collections::HashSet<BufferId>,
     ) -> Result<GroupLayoutNode, String> {
         match desc {
+            LayoutDesc::Scrollable {
+                id,
+                path: Some(path),
+                buffer_id: None,
+                ..
+            } => {
+                let buffer_id = self.open_panel_file(id, path, opened)?;
+                panel_buffers.insert(id.clone(), buffer_id);
+                borrowed.insert(buffer_id);
+                Ok(GroupLayoutNode::Scrollable {
+                    id: id.clone(),
+                    buffer_id: Some(buffer_id),
+                    split_id: None,
+                })
+            }
             LayoutDesc::Scrollable {
                 id,
                 buffer_id: Some(existing),
@@ -340,6 +363,7 @@ impl super::Editor {
                 id,
                 scrollable,
                 buffer_id: None,
+                path: None,
             } => {
                 let scrollable = scrollable.unwrap_or(true);
                 let buffer_id = self.active_window_mut().create_virtual_buffer(
@@ -409,8 +433,10 @@ impl super::Editor {
                 } else {
                     SplitDirection::Horizontal
                 };
-                let first_node = self.build_group_layout(first, mode, panel_buffers, borrowed)?;
-                let second_node = self.build_group_layout(second, mode, panel_buffers, borrowed)?;
+                let first_node =
+                    self.build_group_layout(first, mode, panel_buffers, borrowed, opened)?;
+                let second_node =
+                    self.build_group_layout(second, mode, panel_buffers, borrowed, opened)?;
                 Ok(GroupLayoutNode::Split {
                     direction: dir,
                     ratio: *ratio,
@@ -437,6 +463,52 @@ impl super::Editor {
         }
         panel_buffers.insert(id.to_string(), buffer_id);
         borrowed.insert(buffer_id);
+        Ok(buffer_id)
+    }
+
+    /// The buffer a `path` leaf shows: the one that already has the file
+    /// open, which the group then borrows like a `bufferId` leaf, or one the
+    /// group opens itself, with no tab, recorded in `opened`.
+    #[cfg(feature = "plugins")]
+    fn open_panel_file(
+        &mut self,
+        id: &str,
+        path: &str,
+        opened: &mut std::collections::HashSet<BufferId>,
+    ) -> Result<BufferId, String> {
+        let path = std::path::PathBuf::from(path);
+        let path = if path.is_relative() {
+            self.working_dir().join(path)
+        } else {
+            path
+        };
+        let canonical = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        let already_open = self
+            .active_window()
+            .buffers
+            .iter()
+            .find(|(_, state)| {
+                state.buffer.file_path().is_some_and(|p| {
+                    p == path || std::fs::canonicalize(p).is_ok_and(|p| p == canonical)
+                })
+            })
+            .map(|(bid, _)| *bid);
+        if let Some(buffer_id) = already_open {
+            return Ok(buffer_id);
+        }
+        let buffer_id = self
+            .open_file_no_focus(&path)
+            .map_err(|e| format!("Panel '{id}': cannot open {}: {e}", path.display()))?;
+        // `open_file_no_focus` gives the buffer a tab in the preferred pane;
+        // the group's panel is the only place it is shown.
+        for view_state in self
+            .active_window_mut()
+            .split_view_states_mut()
+            .values_mut()
+        {
+            view_state.remove_buffer(buffer_id);
+        }
+        opened.insert(buffer_id);
         Ok(buffer_id)
     }
 
@@ -504,8 +576,28 @@ impl super::Editor {
     /// Close a buffer group — remove the Grouped subtree, close all panel
     /// buffers, and remove the group tab from any split's tab bar.
     pub(super) fn close_buffer_group(&mut self, group_id: usize) {
+        self.close_buffer_group_leaving(group_id, None);
+    }
+
+    /// [`Self::close_buffer_group`], leaving `leaving` alone: the buffer
+    /// whose own close (or move to another window) is closing the group,
+    /// which must not be closed or given a tab from inside that.
+    fn close_buffer_group_leaving(&mut self, group_id: usize, leaving: Option<BufferId>) {
         let bg_id = BufferGroupId(group_id);
         if let Some(group) = self.active_window_mut().buffer_groups.remove(&bg_id) {
+            // The pane showing the group's tab, where a buffer the group
+            // opened gets a tab of its own if it has unsaved changes.
+            let host = group.representative_split.and_then(|group_leaf| {
+                self.active_window()
+                    .split_view_states()
+                    .iter()
+                    .find(|(_, vs)| {
+                        vs.open_buffers.iter().any(
+                            |t| matches!(t, crate::view::split::TabTarget::Group(g) if *g == group_leaf),
+                        )
+                    })
+                    .map(|(leaf, _)| *leaf)
+            });
             // Remove reverse mappings — only the group's own buffers have one
             for buffer_id in group.panel_buffers.values() {
                 if !group.borrowed_buffers.contains(buffer_id) {
@@ -554,6 +646,65 @@ impl super::Editor {
                 }
             }
 
+            // The files the group opened: one with no changes goes with the
+            // group; one with unsaved changes stays, in a tab of the pane
+            // that showed the group, so its edits are where the user can see
+            // and save or discard them. (A file another pane has a tab of is
+            // left as it is.)
+            let mut opened: Vec<BufferId> = group
+                .opened_buffers
+                .iter()
+                .copied()
+                .filter(|b| Some(*b) != leaving)
+                .collect();
+            opened.sort_by_key(|b| b.0);
+            let (mut to_close, mut to_keep) = (Vec::new(), Vec::new());
+            for buffer_id in opened {
+                let has_tab = self
+                    .active_window()
+                    .split_view_states()
+                    .values()
+                    .any(|vs| vs.has_buffer(buffer_id));
+                let Some(modified) = self
+                    .active_window()
+                    .buffers
+                    .get(&buffer_id)
+                    .map(|state| state.buffer.is_modified())
+                else {
+                    continue;
+                };
+                if has_tab {
+                    continue;
+                }
+                if modified {
+                    to_keep.push(buffer_id);
+                } else {
+                    to_close.push(buffer_id);
+                }
+            }
+            for &buffer_id in &to_keep {
+                if let Some(vs) = host.and_then(|leaf| {
+                    self.active_window_mut()
+                        .split_view_states_mut()
+                        .get_mut(&leaf)
+                }) {
+                    vs.add_buffer(buffer_id);
+                    vs.show_buffer(buffer_id);
+                }
+            }
+            // Out of the running as the replacement a closing buffer's pane
+            // shows: otherwise closing one gives the next one a tab.
+            for &buffer_id in &to_close {
+                if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(&buffer_id) {
+                    meta.hidden_from_tabs = true;
+                }
+            }
+            for buffer_id in to_close {
+                if let Err(e) = self.close_buffer(buffer_id) {
+                    tracing::warn!("Failed to close file {:?} a group opened: {}", buffer_id, e);
+                }
+            }
+
             self.plugin_manager.read().unwrap().run_hook(
                 "buffer_group_closed",
                 fresh_core::hooks::HookArgs::BufferGroupClosed {
@@ -587,7 +738,7 @@ impl super::Editor {
             .map(|g| g.id.0)
             .collect();
         for group_id in groups {
-            self.close_buffer_group(group_id);
+            self.close_buffer_group_leaving(group_id, Some(buffer_id));
         }
     }
 

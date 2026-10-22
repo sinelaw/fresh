@@ -72,6 +72,13 @@ pub struct BufferGroup {
     /// in the tab bar, routed and keyed as usual — and closing the group
     /// leaves them open.
     pub borrowed_buffers: std::collections::HashSet<BufferId>,
+    /// The borrowed buffers the group opened itself, for a layout leaf that
+    /// named a file by `path` that no buffer had open. They are ordinary file
+    /// buffers — the quit prompt, hot exit and quick-switch see them — but
+    /// have no tab: the group is how they are shown. Closing the group closes
+    /// the unmodified ones and gives a modified one a tab, so unsaved edits
+    /// are never left in a buffer nothing shows.
+    pub opened_buffers: std::collections::HashSet<BufferId>,
     /// The "representative" split that owns the tab entry.
     /// This is typically the first scrollable panel.
     pub representative_split: Option<LeafId>,

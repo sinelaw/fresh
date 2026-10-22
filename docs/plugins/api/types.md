@@ -381,6 +381,100 @@ interface CommandResult {
 }
 ```
 
+### `CompareHunk`
+
+One hunk of a [`CompareResult`], with the geometry a side-by-side view
+paints from.
+
+```typescript
+type CompareHunk = {
+  /**
+  * The first (left, old) text's side.
+  */
+  left: CompareSide;
+  /**
+  * The second (right, new) text's side.
+  */
+  right: CompareSide;
+  /**
+  * The two sides have the same lines but for their terminators: a
+  * missing final newline, or `\r\n` against `\n`.
+  */
+  eolOnly: boolean;
+};
+```
+
+### `CompareResult`
+
+Result of `compareBuffers`: the line diff of two buffers, measured in
+their own bytes.
+
+```typescript
+type CompareResult = {
+  /**
+  * Hunks in increasing order; empty when the buffers are equal.
+  */
+  hunks: Array<CompareHunk>;
+  /**
+  * Lines in each buffer, a final unterminated line included.
+  */
+  leftLines: number;
+  rightLines: number;
+  /**
+  * Each buffer's length in bytes.
+  */
+  leftLen: number;
+  rightLen: number;
+  /**
+  * Each buffer's content version when it was read. An edit since bumps
+  * it, so a caller about to edit from these offsets can tell they are
+  * stale.
+  */
+  leftVersion: number;
+  rightVersion: number;
+};
+```
+
+### `CompareSide`
+
+One side of a [`CompareHunk`]: where the hunk's lines are, in lines and
+in the buffer's own bytes.
+
+```typescript
+type CompareSide = {
+  /**
+  * First line of the hunk on this side (0-based).
+  */
+  start: number;
+  /**
+  * Number of lines (0 when the other side alone has lines here).
+  */
+  count: number;
+  /**
+  * Byte offset of the hunk's first line — for an empty side, where the
+  * other side's lines would go.
+  */
+  from: number;
+  /**
+  * Byte offset just past the hunk's last line, terminator included.
+  * `from..to` is what replacing this side's lines of the hunk replaces.
+  */
+  to: number;
+  /**
+  * Each line's text without its line terminator, as `[start, end)`
+  * byte offsets.
+  */
+  lines: Array<[number, number]>;
+  /**
+  * For the lines that have a counterpart on the other side (the first
+  * `min(count, other.count)`): the part that differs from it, as
+  * `[start, end)` byte offsets, or `null` when only the line terminator
+  * differs.
+  */
+  spans: Array<[number, number] | null>;
+};
+```
+
 ### `CreatePreparingWindowOptions`
 
 Options for `createPreparingWindow` — a workspace opened before its

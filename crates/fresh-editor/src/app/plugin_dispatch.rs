@@ -2119,6 +2119,32 @@ impl Editor {
                 self.handle_diff_baseline_pair(old_baseline_id, new_baseline_id, callback_id);
             }
 
+            PluginCommand::CompareBuffers {
+                left_id,
+                right_id,
+                callback_id,
+            } => {
+                self.handle_compare_buffers(left_id, right_id, callback_id);
+            }
+
+            PluginCommand::ReplaceRange {
+                buffer_id,
+                start,
+                end,
+                text,
+                expected_version,
+                callback_id,
+            } => {
+                self.handle_replace_range(
+                    buffer_id,
+                    start,
+                    end,
+                    text,
+                    expected_version,
+                    callback_id,
+                );
+            }
+
             PluginCommand::GetBaselineLines {
                 baseline_id,
                 ranges,

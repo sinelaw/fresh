@@ -402,8 +402,209 @@ fn lcs_diff(old: &[u32], new: &[u32], old_base: u32, new_base: u32, out: &mut Ve
     }
 }
 
+/// Diff two texts line by line, in their own bytes, with what a
+/// side-by-side view paints from: each hunk's byte range on both sides, each
+/// changed line's text range, and the part of a changed line that differs
+/// from its counterpart.
+///
+/// Same line tokenization and hunks as [`compute_line_diff`] (a line keeps
+/// its `\n`; a final unterminated segment is a line), but over bytes, so the
+/// offsets are the buffer's own even where it isn't valid UTF-8 — a plugin
+/// that measured them from a lossily decoded string would land on the wrong
+/// bytes after the first invalid one.
+pub fn compare_texts(old: &[u8], new: &[u8]) -> Vec<crate::api::CompareHunk> {
+    let old_lines: Vec<&[u8]> = old.split_inclusive(|b| *b == b'\n').collect();
+    let new_lines: Vec<&[u8]> = new.split_inclusive(|b| *b == b'\n').collect();
+    let mut ids: HashMap<&[u8], u32> = HashMap::new();
+    let mut old_ids = Vec::with_capacity(old_lines.len());
+    let mut new_ids = Vec::with_capacity(new_lines.len());
+    for (lines, out) in [(&old_lines, &mut old_ids), (&new_lines, &mut new_ids)] {
+        for &line in lines.iter() {
+            let next = ids.len() as u32;
+            out.push(*ids.entry(line).or_insert(next));
+        }
+    }
+    let old_starts = byte_line_starts(&old_lines);
+    let new_starts = byte_line_starts(&new_lines);
+
+    diff_interned_lines(&old_ids, &new_ids)
+        .into_iter()
+        .map(|h| {
+            let (os, oc) = (h.old_start as usize, h.old_count as usize);
+            let (ns, nc) = (h.new_start as usize, h.new_count as usize);
+            let paired = oc.min(nc);
+            let mut left = compare_side(&old_starts, &old_lines, os, oc);
+            let mut right = compare_side(&new_starts, &new_lines, ns, nc);
+            let mut eol_only = oc == nc;
+            for i in 0..paired {
+                let (a, b) = (old_lines[os + i], new_lines[ns + i]);
+                let (a_body, b_body) = (line_body(a), line_body(b));
+                let (a0, b0) = (old_starts[os + i], new_starts[ns + i]);
+                match changed_span(a_body, b_body) {
+                    Some(((ls, le), (rs, re))) => {
+                        eol_only = false;
+                        left.spans.push(Some((a0 + ls, a0 + le)));
+                        right.spans.push(Some((b0 + rs, b0 + re)));
+                    }
+                    None => {
+                        left.spans.push(None);
+                        right.spans.push(None);
+                    }
+                }
+            }
+            crate::api::CompareHunk {
+                left,
+                right,
+                eol_only,
+            }
+        })
+        .collect()
+}
+
+/// Byte offset of each line's start, plus the text's length at the end.
+fn byte_line_starts(lines: &[&[u8]]) -> Vec<usize> {
+    let mut starts = Vec::with_capacity(lines.len() + 1);
+    let mut pos = 0;
+    starts.push(0);
+    for line in lines {
+        pos += line.len();
+        starts.push(pos);
+    }
+    starts
+}
+
+fn compare_side(
+    starts: &[usize],
+    lines: &[&[u8]],
+    start: usize,
+    count: usize,
+) -> crate::api::CompareSide {
+    let at = |i: usize| starts[i.min(starts.len() - 1)];
+    crate::api::CompareSide {
+        start: start as u32,
+        count: count as u32,
+        from: at(start),
+        to: at(start + count),
+        lines: (start..start + count)
+            .map(|i| (starts[i], starts[i] + line_body(lines[i]).len()))
+            .collect(),
+        spans: Vec::new(),
+    }
+}
+
+/// A line without its terminator (`\n` or `\r\n`).
+fn line_body(line: &[u8]) -> &[u8] {
+    let line = line.strip_suffix(b"\n").unwrap_or(line);
+    line.strip_suffix(b"\r").unwrap_or(line)
+}
+
+/// The parts of `a` and `b` left once their common prefix and suffix are
+/// taken off, as byte ranges into each, cut on UTF-8 character boundaries.
+/// `None` when they are equal.
+fn changed_span(a: &[u8], b: &[u8]) -> Option<((usize, usize), (usize, usize))> {
+    if a == b {
+        return None;
+    }
+    let max = a.len().min(b.len());
+    let mut pre = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+    // Back off to the start of the character the prefix stopped inside.
+    while pre > 0 && (is_continuation(a.get(pre)) || is_continuation(b.get(pre))) {
+        pre -= 1;
+    }
+    let mut suf = a
+        .iter()
+        .rev()
+        .zip(b.iter().rev())
+        .take(max - pre)
+        .take_while(|(x, y)| x == y)
+        .count();
+    // The suffix must start on a character boundary in both.
+    while suf > 0
+        && (is_continuation(a.get(a.len() - suf)) || is_continuation(b.get(b.len() - suf)))
+    {
+        suf -= 1;
+    }
+    Some(((pre, a.len() - suf), (pre, b.len() - suf)))
+}
+
+fn is_continuation(byte: Option<&u8>) -> bool {
+    byte.is_some_and(|b| b & 0xC0 == 0x80)
+}
+
 #[cfg(test)]
 mod tests {
+
+    /// The byte geometry `compare_texts` reports, checked against the texts.
+    mod compare {
+        use super::super::compare_texts;
+
+        #[test]
+        fn offsets_are_the_texts_own_bytes_even_past_invalid_utf8() {
+            let old = b"\xff\x00\nold\nz\n";
+            let new = b"\xff\x00\nnew\nz\n";
+            let hunks = compare_texts(old, new);
+            assert_eq!(hunks.len(), 1);
+            let h = &hunks[0];
+            assert_eq!((h.left.start, h.left.count), (1, 1));
+            assert_eq!(&old[h.left.from..h.left.to], b"old\n");
+            assert_eq!(&new[h.right.from..h.right.to], b"new\n");
+            assert_eq!(h.left.lines, vec![(3, 6)]);
+            assert_eq!(h.left.spans, vec![Some((3, 6))]);
+            assert!(!h.eol_only);
+        }
+
+        #[test]
+        fn a_changed_span_is_cut_on_character_boundaries() {
+            // "é" (c3 a9) against "É" (c3 89) share their first byte; the span
+            // must still take the whole character.
+            let old = "café au lait\n".as_bytes();
+            let new = "cafÉ au lait\n".as_bytes();
+            let h = &compare_texts(old, new)[0];
+            let (s, e) = h.left.spans[0].unwrap();
+            assert_eq!(std::str::from_utf8(&old[s..e]).unwrap(), "é");
+            let (s, e) = h.right.spans[0].unwrap();
+            assert_eq!(std::str::from_utf8(&new[s..e]).unwrap(), "É");
+        }
+
+        #[test]
+        fn a_difference_only_in_line_endings_is_marked_eol_only() {
+            let h = &compare_texts(b"a\nb", b"a\nb\n")[0];
+            assert!(h.eol_only);
+            assert_eq!(h.left.spans, vec![None]);
+            assert_eq!((h.left.from, h.left.to), (2, 3));
+            assert_eq!((h.right.from, h.right.to), (2, 4));
+
+            let h = &compare_texts(b"x\r\ny\r\n", b"x\ny\n")[0];
+            assert!(h.eol_only);
+            assert_eq!(h.left.lines, vec![(0, 1), (3, 4)]);
+        }
+
+        #[test]
+        fn an_empty_side_names_where_the_other_sides_lines_go() {
+            // Insertion in the middle, at the start, and past the end.
+            let h = &compare_texts(b"a\nc\n", b"a\nb\nc\n")[0];
+            assert_eq!((h.left.count, h.left.from, h.left.to), (0, 2, 2));
+            assert_eq!((h.right.from, h.right.to), (2, 4));
+
+            let h = &compare_texts(b"", b"x\n")[0];
+            assert_eq!(
+                (h.left.start, h.left.count, h.left.from, h.left.to),
+                (0, 0, 0, 0)
+            );
+            assert!(h.left.lines.is_empty() && h.left.spans.is_empty());
+
+            let h = &compare_texts(b"a\n", b"a\nb\n")[0];
+            assert_eq!((h.left.start, h.left.from, h.left.to), (1, 2, 2));
+        }
+
+        #[test]
+        fn only_paired_lines_get_spans() {
+            let h = &compare_texts(b"one\n", b"ONE\ntwo\nthree\n")[0];
+            assert_eq!(h.left.spans.len(), 1);
+            assert_eq!(h.right.spans.len(), 1);
+            assert_eq!(h.right.lines.len(), 3);
+        }
+    }
     use super::*;
 
     /// Split `text` the way `live_diff.ts`'s `splitLines` does: "a\nb\n"

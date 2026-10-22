@@ -8,16 +8,22 @@ const editor = getEditor();
  * differences aligned and highlighted — what `vimdiff A B` or a GUI diff
  * tool does, and what `fresh --diff A B` (and so `git difftool`) opens.
  *
- * The two panels are views of the files' own buffers (a buffer-group leaf
- * with `bufferId`), not read-only copies, so everything a file buffer does
- * works in them: typing, undo, save, LSP, search. What this plugin adds:
+ * The comparison is one tab: a buffer group whose two panels name the files
+ * by `path`. A file that is already open is shown from its own buffer; one
+ * that isn't is opened into its panel without a tab. Either way the panels
+ * are views of real file buffers, so everything a file buffer does works in
+ * them: typing, undo, save, LSP, search. What this plugin adds:
  *
  *   - a background on every changed line, and on the changed span of a
  *     line that was edited in place;
  *   - filler rows on the shorter side of a change, so the lines that match
  *     sit on the same screen row in both panels;
+ *   - a note where two lines differ only in their line ending;
  *   - scroll sync between the panels, anchored at every change;
  *   - a fresh diff after every edit to either side.
+ *
+ * The diff and every offset come from the host (`compareBuffers`): no file
+ * text is copied into the plugin, which is what kept large files slow.
  *
  * Commands:
  *   - Compare Files...                   — pick two files
@@ -30,9 +36,9 @@ const editor = getEditor();
  *   - Compare: Take Change from Other Side — the reverse (vimdiff's `do`)
  *   - Compare: Close
  *
- * The decorations belong to the buffers, so while a comparison is open
- * they also show in any other pane that has one of its files open; closing
- * the comparison removes them.
+ * A file that was already open keeps its tab, and while the comparison is
+ * open that tab shows the same highlights; closing the comparison removes
+ * them.
  */
 
 // =============================================================================
@@ -44,6 +50,7 @@ const NS_SPANS = "compare-files-spans";
 const NS_FILL = "compare-files-fill";
 const NS_GUTTER = "compare-files-gutter";
 const NS_SCROLL = "compare-files-scroll";
+const EOL_NOTE_PREFIX = "compare-files-eol-";
 
 // Above git_gutter (10) and live_diff (9): inside a comparison the gutter
 // says how this file differs from the other one, not from HEAD.
@@ -58,6 +65,7 @@ const THEME = {
   addedSpanBg: "editor.diff_add_highlight_bg",
   modifiedBg: "editor.diff_modify_bg",
   modifiedFg: "editor.diff_modify_collision_fg",
+  noteFg: "editor.line_number_fg",
 };
 
 // Gutter glyphs and scrollbar marks take RGB only; same palette as
@@ -71,18 +79,9 @@ const COLORS = {
 // Coalesce an edit burst (typing, a paste, an undo) into one diff.
 const DEBOUNCE_MS = 75;
 
-// The changed-span emphasis compares a pair of lines character by
-// character; past this many changed lines in one diff it is left out and
-// the whole-line backgrounds carry the change on their own.
-const MAX_SPAN_LINES = 5_000;
-
 // Per-line scroll-sync anchors across one-sided changes (see
 // `syncAnchors`), at most this many in all.
 const MAX_EDGE_ANCHORS = 20_000;
-
-// Scroll-sync group ids are per plugin; start high so they never meet an
-// id the plugin hands out for something else.
-let nextSyncGroupId = 7_000;
 
 // =============================================================================
 // Types
@@ -93,98 +92,21 @@ type Side = "left" | "right";
 interface Comparison {
   groupId: number;
   windowId: number;
+  /** The right panel's split id: unique while the panel lives. */
   syncGroupId: number;
   left: number;
   right: number;
-  /** Hunks of the last diff, in left/right line coordinates. */
-  hunks: LineDiffHunk[];
-  /** Line-start byte offsets of each side as of the last diff. */
-  starts: { left: number[]; right: number[] };
-  /** Each side's text as of the last diff, split after every `\n`. */
-  segments: { left: string[]; right: string[] };
+  /** The last diff, or null before the first one lands. */
+  result: CompareResult | null;
   /** Bumped on every scheduled diff; a stale timer sees a newer value. */
   token: number;
   running: boolean;
   rerun: boolean;
+  /** A diff was wanted while another window was active. */
+  deferred: boolean;
 }
 
 const comparisons: Comparison[] = [];
-
-// =============================================================================
-// Text helpers
-// =============================================================================
-
-function utf8Len(s: string): number {
-  let n = 0;
-  for (let i = 0; i < s.length; i++) {
-    const c = s.charCodeAt(i);
-    if (c < 0x80) n += 1;
-    else if (c < 0x800) n += 2;
-    else if (c >= 0xd800 && c <= 0xdbff) {
-      // A surrogate pair is one 4-byte code point.
-      n += 4;
-      i++;
-    } else n += 3;
-  }
-  return n;
-}
-
-/** Split `text` into lines the way `computeLineDiff` counts them: each
- * segment keeps its `\n`, and a final unterminated segment is a line too. */
-function splitSegments(text: string): string[] {
-  const out: string[] = [];
-  let from = 0;
-  for (;;) {
-    const nl = text.indexOf("\n", from);
-    if (nl < 0) break;
-    out.push(text.slice(from, nl + 1));
-    from = nl + 1;
-  }
-  if (from < text.length) out.push(text.slice(from));
-  return out;
-}
-
-/** Byte offset of every line start, plus one past the end. */
-function lineStarts(segments: string[]): number[] {
-  const starts = new Array<number>(segments.length + 1);
-  let pos = 0;
-  for (let i = 0; i < segments.length; i++) {
-    starts[i] = pos;
-    pos += utf8Len(segments[i]);
-  }
-  starts[segments.length] = pos;
-  return starts;
-}
-
-function stripNewline(segment: string): string {
-  if (segment.endsWith("\r\n")) return segment.slice(0, -2);
-  if (segment.endsWith("\n")) return segment.slice(0, -1);
-  return segment;
-}
-
-/** The part of `a` that differs from `b`, as UTF-8 byte offsets into `a`:
- * what is left once their common prefix and suffix are taken off. `null`
- * when the lines are equal. */
-function changedSpan(a: string, b: string): { start: number; end: number } | null {
-  let pre = 0;
-  const max = Math.min(a.length, b.length);
-  while (pre < max && a.charCodeAt(pre) === b.charCodeAt(pre)) pre++;
-  let suf = 0;
-  while (
-    suf < max - pre &&
-    a.charCodeAt(a.length - 1 - suf) === b.charCodeAt(b.length - 1 - suf)
-  ) suf++;
-  // Keep a surrogate pair whole on both ends.
-  if (pre > 0 && isHighSurrogate(a.charCodeAt(pre - 1))) pre--;
-  if (suf > 0 && isHighSurrogate(a.charCodeAt(a.length - suf - 1))) suf--;
-  if (pre + suf >= a.length) return null;
-  const start = utf8Len(a.slice(0, pre));
-  return { start, end: start + utf8Len(a.slice(pre, a.length - suf)) };
-}
-
-function isHighSurrogate(c: number): boolean {
-  return c >= 0xd800 && c <= 0xdbff;
-}
 
 // =============================================================================
 // Lookup
@@ -192,10 +114,6 @@ function isHighSurrogate(c: number): boolean {
 
 function comparisonOf(bufferId: number): Comparison | null {
   return comparisons.find((c) => c.left === bufferId || c.right === bufferId) ?? null;
-}
-
-function sideOf(c: Comparison, bufferId: number): Side {
-  return c.left === bufferId ? "left" : "right";
 }
 
 function other(side: Side): Side {
@@ -206,18 +124,16 @@ function bufferOf(c: Comparison, side: Side): number {
   return side === "left" ? c.left : c.right;
 }
 
-/** A hunk's first line and line count on one side. */
-function span(h: LineDiffHunk, side: Side): { start: number; count: number } {
-  return side === "left"
-    ? { start: h.oldStart, count: h.oldCount }
-    : { start: h.newStart, count: h.newCount };
-}
-
 /** The comparison the user is in: the one showing the focused buffer. */
 function activeComparison(): { c: Comparison; side: Side } | null {
   const bid = editor.getActiveBufferId();
   const c = comparisonOf(bid);
-  return c ? { c, side: sideOf(c, bid) } : null;
+  return c ? { c, side: c.left === bid ? "left" : "right" } : null;
+}
+
+/** A failure's message, without the `Error: ` its string form adds. */
+function reason(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
 }
 
 function baseName(path: string): string {
@@ -238,6 +154,15 @@ function tabLabels(leftPath: string, rightPath: string): { left: string; right: 
   return { left: withDir(leftPath, left), right: withDir(rightPath, right) };
 }
 
+/** Run plugin commands one at a time. A command reads the cursor, and a
+ * jump the previous one made is only visible once it is applied, so two
+ * quick presses of Next Difference must not both read the old position. */
+let serial: Promise<void> = Promise.resolve();
+function oneAtATime(task: () => Promise<void>): Promise<void> {
+  serial = serial.then(task).catch((e) => editor.error(`compare_files: ${e}`));
+  return serial;
+}
+
 // =============================================================================
 // Rendering
 // =============================================================================
@@ -246,111 +171,115 @@ function clearDecorations(bufferId: number): void {
   editor.clearNamespace(bufferId, NS_LINES);
   editor.clearNamespace(bufferId, NS_SPANS);
   editor.clearVirtualTextNamespace(bufferId, NS_FILL);
+  editor.removeVirtualTextsByPrefix(bufferId, EOL_NOTE_PREFIX);
   editor.clearLineIndicators(bufferId, NS_GUTTER);
   editor.clearScrollbarMarkers(bufferId, NS_SCROLL);
 }
 
-/** Paint one side: line backgrounds, changed spans, gutter glyphs,
- * scrollbar marks, and the filler rows that keep it level with the other
- * side. */
-function paintSide(c: Comparison, side: Side): void {
+/** How line `i` of a hunk side ends: the bytes between its text and the
+ * next line (or the hunk's end). */
+function terminator(s: CompareSide, i: number): number {
+  const next = i + 1 < s.count ? s.lines[i + 1][0] : s.to;
+  return next - s.lines[i][1];
+}
+
+function eolNote(bytes: number): string {
+  if (bytes === 0) return editor.t("eol.none");
+  return bytes === 2 ? editor.t("eol.crlf") : editor.t("eol.lf");
+}
+
+/** Paint one side: line backgrounds, changed spans, line-ending notes,
+ * gutter glyphs, scrollbar marks, and the filler rows that keep it level
+ * with the other side. */
+function paintSide(c: Comparison, r: CompareResult, side: Side): void {
   const bid = bufferOf(c, side);
-  const segs = c.segments[side];
-  const otherSegs = c.segments[other(side)];
-  const starts = c.starts[side];
-  const lineCount = segs.length;
-  const total = starts[lineCount];
+  const len = side === "left" ? r.leftLen : r.rightLen;
   const left = side === "left";
   clearDecorations(bid);
 
-  const pairedBg = THEME.modifiedBg;
-  const pairedFg = THEME.modifiedFg;
   const loneBg = left ? THEME.removedBg : THEME.addedBg;
   const loneFg = left ? THEME.removedFg : THEME.addedFg;
   const spanBg = left ? THEME.removedSpanBg : THEME.addedSpanBg;
   const loneColor = left ? COLORS.removed : COLORS.added;
-  const loneGlyph = left ? "-" : "+";
-
-  let changedLines = 0;
-  for (const h of c.hunks) changedLines += Math.max(h.oldCount, h.newCount);
-  const withSpans = changedLines <= MAX_SPAN_LINES;
+  // Filler rows stand for lines only the other side has: their colour.
+  const fillBg = left ? THEME.addedBg : THEME.removedBg;
 
   const pairedLines: number[] = [];
   const loneLines: number[] = [];
-  const markers: { position: number; end?: number; color: [number, number, number]; priority: number }[] = [];
+  const markers: ScrollbarMarker[] = [];
 
-  for (const h of c.hunks) {
-    const mine = span(h, side);
-    const theirs = span(h, other(side));
+  r.hunks.forEach((h, n) => {
+    const mine = h[side];
+    const theirs = h[other(side)];
     const paired = Math.min(mine.count, theirs.count);
 
     for (let i = 0; i < mine.count; i++) {
-      const line = mine.start + i;
-      if (line >= lineCount) break;
+      const [start, end] = mine.lines[i];
       const isPaired = i < paired;
-      (isPaired ? pairedLines : loneLines).push(line);
-      const start = starts[line];
-      const text = stripNewline(segs[line]);
+      (isPaired ? pairedLines : loneLines).push(mine.start + i);
       // An empty line still needs a byte under the overlay for the
-      // line-end fill to reach it (see live_diff.ts `renderHunks`).
-      const end = Math.max(start + utf8Len(text), start + 1);
-      editor.addOverlay(bid, NS_LINES, start, Math.min(end, Math.max(total, start + 1)), {
-        bg: isPaired ? pairedBg : loneBg,
-        fg: isPaired ? pairedFg : loneFg,
+      // line-end fill to reach it (see live_diff.ts `renderHunks`); its
+      // terminator is that byte.
+      editor.addOverlay(bid, NS_LINES, start, Math.max(end, Math.min(start + 1, len)), {
+        bg: isPaired ? THEME.modifiedBg : loneBg,
+        fg: isPaired ? THEME.modifiedFg : loneFg,
         fgOnCollisionOnly: true,
         extendToLineEnd: true,
       });
-      if (isPaired && withSpans) {
-        const otherLine = theirs.start + i;
-        const changed = changedSpan(text, stripNewline(otherSegs[otherLine] ?? ""));
-        if (changed && changed.end > changed.start) {
-          editor.addOverlay(bid, NS_SPANS, start + changed.start, start + changed.end, {
-            bg: spanBg,
-          });
-        }
+      const span = isPaired ? mine.spans[i] : null;
+      if (span && span[1] > span[0]) {
+        editor.addOverlay(bid, NS_SPANS, span[0], span[1], { bg: spanBg });
+      }
+      // A paired line with no changed span differs only in how it ends.
+      if (isPaired && !span) {
+        // Before the line's terminator; a last line with none has no byte
+        // there to hang the note on, so it goes after the line's last one.
+        const atEnd = end >= len && end > start;
+        editor.addVirtualTextStyled(
+          bid,
+          `${EOL_NOTE_PREFIX}${n}-${i}`,
+          atEnd ? end - 1 : end,
+          ` ${eolNote(terminator(mine, i))}`,
+          { fg: THEME.noteFg, italic: true },
+          !atEnd,
+        );
       }
     }
 
     // Filler rows for the lines the other side has here and this one
-    // doesn't. They go below the hunk's last line on this side — above the
-    // first line after it when the hunk is empty here — so they sit exactly
-    // where the other side's extra lines do.
+    // doesn't, placed right after the line before them: below the hunk's
+    // last line on this side, or below the line before the change when the
+    // hunk is empty here. Drawn after a line, they stay out of a pane whose
+    // top is the first line after the change, so scrolling past the change
+    // keeps the two panes level. Only at the very start of a file do they
+    // go above the first line.
     const fill = theirs.count - mine.count;
     if (fill > 0) {
-      let anchorLine: number;
-      let above: boolean;
+      let anchor: number;
+      let above = false;
       if (mine.count > 0) {
-        anchorLine = mine.start + mine.count - 1;
-        above = false;
-      } else if (mine.start < lineCount) {
-        anchorLine = mine.start;
-        above = true;
+        anchor = mine.lines[mine.count - 1][0];
+      } else if (mine.from > 0) {
+        anchor = mine.from - 1;
       } else {
-        anchorLine = Math.max(0, lineCount - 1);
-        above = lineCount === 0;
+        anchor = 0;
+        above = true;
       }
-      const anchor = starts[Math.min(anchorLine, lineCount)] ?? 0;
-      // The rows stand for lines only the other side has, so they take
-      // those lines' colour.
-      const fillBg = left ? THEME.addedBg : THEME.removedBg;
       for (let i = 0; i < fill; i++) {
         editor.addVirtualLine(bid, anchor, "", { bg: fillBg }, above, NS_FILL, i);
       }
     }
 
     // A scrollbar mark per change, on the seam when this side has no lines.
-    const markLine = Math.min(mine.start, Math.max(0, lineCount - 1));
-    const marker: { position: number; end?: number; color: [number, number, number]; priority: number } = {
-      position: starts[markLine] ?? 0,
+    const position = Math.min(mine.from, Math.max(0, len - 1));
+    const marker: ScrollbarMarker = {
+      position,
       color: mine.count === 0 ? (left ? COLORS.added : COLORS.removed) : paired > 0 ? COLORS.modified : loneColor,
       priority: PRIORITY,
     };
-    if (mine.count > 0) {
-      const last = Math.min(mine.start + mine.count, lineCount);
-      marker.end = Math.max(starts[last] - 1, marker.position);
-    }
+    if (mine.count > 0) marker.end = Math.max(mine.to - 1, position);
     markers.push(marker);
-  }
+  });
 
   if (pairedLines.length > 0) {
     editor.setLineIndicators(
@@ -360,7 +289,7 @@ function paintSide(c: Comparison, side: Side): void {
   }
   if (loneLines.length > 0) {
     editor.setLineIndicators(
-      bid, loneLines, NS_GUTTER, loneGlyph,
+      bid, loneLines, NS_GUTTER, left ? "-" : "+",
       loneColor[0], loneColor[1], loneColor[2], PRIORITY,
     );
   }
@@ -375,38 +304,49 @@ function paintSide(c: Comparison, side: Side): void {
  * stand for them. One anchor per such line pins the partner to the edge of
  * the change instead of carrying it on past, into lines that don't match.
  * Very large one-sided changes keep just the two edge anchors. */
-function syncAnchors(c: Comparison): number[][] {
+function syncAnchors(r: CompareResult): number[][] {
   const anchors: number[][] = [[0, 0]];
   let budget = MAX_EDGE_ANCHORS;
-  for (const h of c.hunks) {
-    anchors.push([h.oldStart, h.newStart]);
-    const oldEnd = h.oldStart + h.oldCount;
-    const newEnd = h.newStart + h.newCount;
-    const paired = Math.min(h.oldCount, h.newCount);
-    const extra = Math.abs(h.oldCount - h.newCount);
+  for (const { left, right } of r.hunks) {
+    anchors.push([left.start, right.start]);
+    const leftEnd = left.start + left.count;
+    const rightEnd = right.start + right.count;
+    const paired = Math.min(left.count, right.count);
+    const extra = Math.abs(left.count - right.count);
     if (extra > 0 && extra <= budget) {
       budget -= extra;
-      for (let i = paired; i < Math.max(h.oldCount, h.newCount); i++) {
-        anchors.push(h.oldCount > h.newCount ? [h.oldStart + i, newEnd] : [oldEnd, h.newStart + i]);
+      for (let i = paired; i < Math.max(left.count, right.count); i++) {
+        anchors.push(left.count > right.count ? [left.start + i, rightEnd] : [leftEnd, right.start + i]);
       }
     }
-    anchors.push([oldEnd, newEnd]);
+    anchors.push([leftEnd, rightEnd]);
   }
   return anchors;
 }
 
-function summary(c: Comparison): string {
-  const n = c.hunks.length;
-  return n === 0
-    ? editor.t("status.identical")
-    : editor.t("status.differences", { n: String(n) });
+function summary(r: CompareResult): string {
+  const n = r.hunks.length;
+  return n === 0 ? editor.t("status.identical") : editor.t("status.differences", { n: String(n) });
 }
 
 // =============================================================================
 // Diffing
 // =============================================================================
 
+function apply(c: Comparison, r: CompareResult): void {
+  c.result = r;
+  paintSide(c, r, "left");
+  paintSide(c, r, "right");
+  editor.setScrollSyncAnchors(c.syncGroupId, syncAnchors(r));
+}
+
 async function rediff(c: Comparison): Promise<void> {
+  // The host diffs and decorates the active window's buffers: a comparison
+  // in a window in the background waits for it to come back.
+  if (editor.activeWindow() !== c.windowId) {
+    c.deferred = true;
+    return;
+  }
   if (c.running) {
     c.rerun = true;
     return;
@@ -415,19 +355,13 @@ async function rediff(c: Comparison): Promise<void> {
   try {
     do {
       c.rerun = false;
-      const [leftText, rightText] = await Promise.all([
-        editor.getBufferText(c.left),
-        editor.getBufferText(c.right),
-      ]);
-      // Closed while the text was on its way.
+      const r = await editor.compareBuffers(c.left, c.right);
+      // Closed while the diff was on its way.
       if (!comparisons.includes(c)) return;
-      c.segments = { left: splitSegments(leftText), right: splitSegments(rightText) };
-      c.starts = { left: lineStarts(c.segments.left), right: lineStarts(c.segments.right) };
-      c.hunks = editor.computeLineDiff(leftText, rightText);
-      paintSide(c, "left");
-      paintSide(c, "right");
-      editor.setScrollSyncAnchors(c.syncGroupId, syncAnchors(c));
+      apply(c, r);
     } while (c.rerun);
+  } catch (e) {
+    editor.setStatus(editor.t("status.failed", { reason: reason(e) }));
   } finally {
     c.running = false;
   }
@@ -444,24 +378,6 @@ async function scheduleRediff(c: Comparison): Promise<void> {
 // Opening and closing
 // =============================================================================
 
-/** The id of the buffer holding `path`, opening the file (without taking
- * the focus) if no buffer does. 0 when it could not be opened. */
-async function bufferFor(path: string): Promise<number> {
-  const find = (): number => {
-    const direct = editor.findBufferByPath(path);
-    if (direct) return direct;
-    for (const info of editor.listBuffers()) {
-      if (info.path && info.path === path) return info.id;
-    }
-    return 0;
-  };
-  const open = find();
-  if (open) return open;
-  editor.openFileInBackground(path);
-  await editor.flush();
-  return find();
-}
-
 function absolute(path: string): string {
   return editor.pathIsAbsolute(path) ? path : editor.pathJoin(editor.getCwd(), path);
 }
@@ -476,75 +392,93 @@ async function compare(leftPath: string, rightPath: string): Promise<boolean> {
       return false;
     }
   }
-  const left = await bufferFor(leftAbs);
-  const right = await bufferFor(rightAbs);
-  if (!left || !right) {
-    editor.setStatus(editor.t("status.open_failed"));
-    return false;
-  }
-  if (left === right) {
+  if (leftAbs === rightAbs) {
     editor.setStatus(editor.t("status.same_file"));
     return false;
   }
   // A buffer is in one comparison at a time: its decorations are its own.
-  for (const bid of [left, right]) {
-    const existing = comparisonOf(bid);
+  for (const p of [leftAbs, rightAbs]) {
+    const existing = comparisonOf(editor.findBufferByPath(p));
     if (existing) closeComparison(existing);
   }
+  await editor.flush();
 
-  const name = editor.t("tab_name", tabLabels(leftAbs, rightAbs));
-  const panel = (id: string, bufferId: number) => ({ type: "scrollable", id, bufferId });
-  const group = await editor.createBufferGroup(
-    name,
-    "",
-    JSON.stringify({
-      type: "split",
-      direction: "h",
-      ratio: 0.5,
-      first: panel("left", left),
-      second: panel("right", right),
-    }),
-  );
-  const syncGroupId = nextSyncGroupId++;
+  const panel = (id: string, path: string) => ({ type: "scrollable", id, path });
+  let group: BufferGroupResult;
+  try {
+    group = await editor.createBufferGroup(
+      editor.t("tab_name", tabLabels(leftAbs, rightAbs)),
+      "",
+      JSON.stringify({
+        type: "split",
+        direction: "h",
+        ratio: 0.5,
+        first: panel("left", leftAbs),
+        second: panel("right", rightAbs),
+      }),
+    );
+  } catch (e) {
+    editor.setStatus(editor.t("status.failed", { reason: reason(e) }));
+    return false;
+  }
+  const left = group.panels.left;
+  const right = group.panels.right;
+  if (left === right) {
+    // Two paths to one file (a symlink, say).
+    editor.closeBufferGroup(group.groupId);
+    editor.setStatus(editor.t("status.same_file"));
+    return false;
+  }
+
   const c: Comparison = {
     groupId: group.groupId,
-    windowId: editor.getBufferInfo(left)?.window_id ?? 0,
-    syncGroupId,
+    windowId: editor.activeWindow(),
+    syncGroupId: group.panelSplits.right,
     left,
     right,
-    hunks: [],
-    starts: { left: [0], right: [0] },
-    segments: { left: [], right: [] },
+    result: null,
     token: 0,
     running: false,
     rerun: false,
+    deferred: false,
   };
+
+  let first: CompareResult;
+  try {
+    first = await editor.compareBuffers(left, right);
+  } catch (e) {
+    // A binary file, or one too large to diff: nothing to show.
+    editor.closeBufferGroup(group.groupId);
+    editor.setStatus(editor.t("status.failed", { reason: reason(e) }));
+    return false;
+  }
+
   comparisons.push(c);
   editor.setContext("compare-active", true);
-
   // Fillers keep rows level only while one buffer line is one screen row.
   editor.setLineWrap(left, group.panelSplits.left, false);
   editor.setLineWrap(right, group.panelSplits.right, false);
-  editor.createScrollSyncGroup(syncGroupId, group.panelSplits.left, group.panelSplits.right);
+  editor.createScrollSyncGroup(c.syncGroupId, group.panelSplits.left, group.panelSplits.right);
   editor.focusBufferGroupPanel(group.groupId, "left");
-
-  await rediff(c);
-  if (c.hunks.length > 0) jumpTo(c, "left", c.hunks[0]);
-  editor.setStatus(summary(c));
+  apply(c, first);
+  if (first.hunks.length > 0) jumpTo(c, first.hunks[0]);
+  editor.setStatus(summary(first));
   return true;
 }
 
+/** Drop `c` and its decorations. Its scroll-sync group goes with its
+ * panels, so a comparison whose tab already closed has none to remove. */
 function forget(c: Comparison): void {
   const i = comparisons.indexOf(c);
   if (i < 0) return;
   comparisons.splice(i, 1);
   for (const bid of [c.left, c.right]) clearDecorations(bid);
-  editor.removeScrollSyncGroup(c.syncGroupId);
   if (comparisons.length === 0) editor.setContext("compare-active", false);
 }
 
 function closeComparison(c: Comparison): void {
   forget(c);
+  editor.removeScrollSyncGroup(c.syncGroupId);
   editor.closeBufferGroup(c.groupId);
 }
 
@@ -552,26 +486,18 @@ function closeComparison(c: Comparison): void {
 // Navigation and merging
 // =============================================================================
 
-/** Put both cursors on the start of hunk `h`, `side` leading. */
-function jumpTo(c: Comparison, side: Side, h: LineDiffHunk): void {
-  for (const s of [other(side), side]) {
-    const { start } = span(h, s);
-    const starts = c.starts[s];
-    const line = Math.min(start, Math.max(0, starts.length - 2));
-    editor.setBufferCursor(bufferOf(c, s), starts[line] ?? 0);
-  }
-}
-
-function cursorLine(): number {
-  return editor.getPrimaryCursor()?.line ?? 0;
+/** Put both cursors on the start of hunk `h`. */
+function jumpTo(c: Comparison, h: CompareHunk): void {
+  editor.setBufferCursor(c.left, h.left.from);
+  editor.setBufferCursor(c.right, h.right.from);
 }
 
 /** The hunk the cursor is in on `side`: the one whose lines it is on, or,
  * for a hunk with no lines on that side, the one at its seam. */
-function hunkAtCursor(c: Comparison, side: Side): LineDiffHunk | null {
-  const line = cursorLine();
-  for (const h of c.hunks) {
-    const { start, count } = span(h, side);
+function hunkAtCursor(r: CompareResult, side: Side): CompareHunk | null {
+  const line = editor.getPrimaryCursor()?.line ?? 0;
+  for (const h of r.hunks) {
+    const { start, count } = h[side];
     if (count > 0 ? line >= start && line < start + count : line === start || line === start - 1) {
       return h;
     }
@@ -579,29 +505,30 @@ function hunkAtCursor(c: Comparison, side: Side): LineDiffHunk | null {
   return null;
 }
 
-function step(forward: boolean): void {
+async function step(forward: boolean): Promise<void> {
+  // The cursor as the last jump left it.
+  await editor.flush();
   const at = activeComparison();
   if (!at) {
     editor.setStatus(editor.t("status.not_comparing"));
     return;
   }
   const { c, side } = at;
-  if (c.hunks.length === 0) {
+  const r = c.result;
+  if (!r || r.hunks.length === 0) {
     editor.setStatus(editor.t("status.identical"));
     return;
   }
-  // Where each hunk puts the cursor on this side (see `jumpTo`): a hunk
-  // past this side's last line lands on that line.
-  const last = Math.max(0, c.segments[side].length - 1);
-  const pos = (h: LineDiffHunk) => Math.min(span(h, side).start, last);
-  const line = cursorLine();
-  const n = c.hunks.length;
+  // By byte, so a change past the end of one side (which can't hold a
+  // cursor line of its own) still has a place in the order.
+  const pos = editor.getPrimaryCursor()?.position ?? 0;
+  const n = r.hunks.length;
   let index = -1;
   if (forward) {
-    index = c.hunks.findIndex((h) => pos(h) > line);
+    index = r.hunks.findIndex((h) => h[side].from > pos);
   } else {
     for (let i = n - 1; i >= 0; i--) {
-      if (pos(c.hunks[i]) < line) {
+      if (r.hunks[i][side].from < pos) {
         index = i;
         break;
       }
@@ -609,7 +536,7 @@ function step(forward: boolean): void {
   }
   const wrapped = index < 0;
   if (wrapped) index = forward ? 0 : n - 1;
-  jumpTo(c, side, c.hunks[index]);
+  jumpTo(c, r.hunks[index]);
   editor.setStatus(
     editor.t(wrapped ? "status.difference_wrapped" : "status.difference", {
       n: String(index + 1),
@@ -618,51 +545,49 @@ function step(forward: boolean): void {
   );
 }
 
-/** Replace `to`'s lines of hunk `h` with `from`'s. */
-function copyChange(c: Comparison, from: Side, to: Side, h: LineDiffHunk): void {
-  const src = span(h, from);
-  const dst = span(h, to);
-  const srcSegs = c.segments[from];
-  const dstSegs = c.segments[to];
-  const dstStarts = c.starts[to];
-  const dstTotal = dstStarts[dstSegs.length];
-  let text = srcSegs.slice(src.start, src.start + src.count).join("");
-  const startByte = dstStarts[Math.min(dst.start, dstSegs.length)];
-  const endByte = dstStarts[Math.min(dst.start + dst.count, dstSegs.length)];
-  const dstEndsFile = endByte >= dstTotal;
-  const dstHasFinalNewline = dstSegs.length === 0 || dstSegs[dstSegs.length - 1].endsWith("\n");
-  if (dstEndsFile && !dstHasFinalNewline) {
-    // This side's file ends without a newline: keep it that way, and start
-    // lines appended after its last one on a row of their own.
-    if (text.endsWith("\n")) text = text.slice(0, -1);
-    if (startByte === dstTotal && startByte > 0 && text.length > 0) text = "\n" + text;
-  } else if (text.length > 0 && !text.endsWith("\n")) {
-    // The source's last line had no newline (the end of its file); here
-    // it is followed by more lines, which keep their own rows.
-    text += "\n";
-  }
-  const bid = bufferOf(c, to);
-  if (endByte > startByte) editor.deleteRange(bid, startByte, endByte);
-  if (text.length > 0) editor.insertText(bid, startByte, text);
-}
-
+/** Make `to`'s lines of the change under the cursor the same bytes as
+ * `from`'s — line endings and a missing final newline included, so the
+ * change is gone after. One edit, one undo step, and only if `to` hasn't
+ * changed since the diff it was measured from. */
 async function merge(direction: "copy" | "take"): Promise<void> {
+  await editor.flush();
   const at = activeComparison();
   if (!at) {
     editor.setStatus(editor.t("status.not_comparing"));
     return;
   }
   const { c, side } = at;
-  const h = hunkAtCursor(c, side);
+  // Offsets from a diff of the text as it is now, not as of the last
+  // debounced one.
+  c.token++;
+  let r: CompareResult;
+  try {
+    r = await editor.compareBuffers(c.left, c.right);
+  } catch (e) {
+    editor.setStatus(editor.t("status.failed", { reason: reason(e) }));
+    return;
+  }
+  apply(c, r);
+  const h = hunkAtCursor(r, side);
   if (!h) {
     editor.setStatus(editor.t("status.no_change_here"));
     return;
   }
-  if (direction === "copy") copyChange(c, side, other(side), h);
-  else copyChange(c, other(side), side, h);
+  const from = direction === "copy" ? side : other(side);
+  const to = other(from);
+  const src = h[from];
+  const dst = h[to];
+  const text = src.to > src.from ? await editor.getBufferText(bufferOf(c, from), src.from, src.to) : "";
+  const version = to === "left" ? r.leftVersion : r.rightVersion;
+  const applied = await editor.replaceRange(bufferOf(c, to), dst.from, dst.to, text, version);
   // A plugin's own edits fire no `buffer_modified`, so diff again here.
-  await editor.flush();
-  await scheduleRediff(c);
+  await rediff(c);
+  if (!applied) {
+    const path = editor.getBufferPath(bufferOf(c, to));
+    editor.setStatus(editor.t("status.not_applied", { name: baseName(path) }));
+  } else if (c.result) {
+    editor.setStatus(summary(c.result));
+  }
 }
 
 // =============================================================================
@@ -679,8 +604,7 @@ async function compare_files(): Promise<void> {
 registerHandler("compare_files", compare_files);
 
 async function compare_with_file(): Promise<void> {
-  const active = editor.getActiveBufferId();
-  const path = editor.getBufferPath(active);
+  const path = editor.getBufferPath(editor.getActiveBufferId());
   if (!path) {
     editor.setStatus(editor.t("status.no_file"));
     return;
@@ -691,23 +615,23 @@ async function compare_with_file(): Promise<void> {
 }
 registerHandler("compare_with_file", compare_with_file);
 
-function compare_next_difference(): void {
-  step(true);
+function compare_next_difference(): Promise<void> {
+  return oneAtATime(() => step(true));
 }
 registerHandler("compare_next_difference", compare_next_difference);
 
-function compare_prev_difference(): void {
-  step(false);
+function compare_prev_difference(): Promise<void> {
+  return oneAtATime(() => step(false));
 }
 registerHandler("compare_prev_difference", compare_prev_difference);
 
-async function compare_copy_change(): Promise<void> {
-  await merge("copy");
+function compare_copy_change(): Promise<void> {
+  return oneAtATime(() => merge("copy"));
 }
 registerHandler("compare_copy_change", compare_copy_change);
 
-async function compare_take_change(): Promise<void> {
-  await merge("take");
+function compare_take_change(): Promise<void> {
+  return oneAtATime(() => merge("take"));
 }
 registerHandler("compare_take_change", compare_take_change);
 
@@ -744,7 +668,7 @@ editor.registerCommand("%cmd.close", "%cmd.close_desc", "compare_close", "compar
 // Events
 // =============================================================================
 
-// `fresh --diff LEFT RIGHT`: the editor has opened both files by now.
+// `fresh --diff LEFT RIGHT`: the editor leaves opening the files to us.
 editor.on("ready", async () => {
   const pair = editor.diffLaunch();
   if (pair.length === 2) await compare(pair[0], pair[1]);
@@ -758,6 +682,15 @@ editor.on("buffer_modified", (args) => {
 editor.on("after_file_revert", (args) => {
   const c = comparisonOf(args.buffer_id);
   if (c) void scheduleRediff(c);
+});
+
+editor.on("active_window_changed", (args) => {
+  for (const c of comparisons) {
+    if (c.deferred && c.windowId === args.active_id) {
+      c.deferred = false;
+      void rediff(c);
+    }
+  }
 });
 
 editor.on("buffer_group_closed", (args) => {

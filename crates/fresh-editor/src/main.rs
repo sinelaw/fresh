@@ -124,14 +124,14 @@ struct Cli {
     #[arg(long, conflicts_with = "restore")]
     simple: bool,
 
-    /// Compare two files side by side, both editable. Opens them as `fresh
-    /// LEFT RIGHT` would and shows them in one tab, the differences aligned
-    /// and highlighted, as `git difftool` expects of a diff tool
+    /// Compare two files side by side, both editable, in one tab: the
+    /// differences aligned and highlighted, as `git difftool` expects of a
+    /// diff tool
     #[arg(
         long,
         num_args = 2,
         value_names = ["LEFT", "RIGHT"],
-        conflicts_with_all = ["files", "attach", "stdin", "web"]
+        conflicts_with_all = ["files", "attach", "stdin", "web", "cmd"]
     )]
     diff: Option<Vec<PathBuf>>,
 
@@ -1944,7 +1944,7 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
     };
 
     // Convert to FileLocation for downstream code
-    let mut file_locations: Vec<FileLocation> = parsed_locations
+    let file_locations: Vec<FileLocation> = parsed_locations
         .into_iter()
         .map(|loc| match loc {
             ParsedLocation::Local(fl) => fl,
@@ -1958,22 +1958,6 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
             },
         })
         .collect();
-
-    // `--diff LEFT RIGHT` opens both files as `fresh LEFT RIGHT` would, but
-    // taken as plain paths rather than `file:line` or `user@host:path`
-    // specs: a diff tool is handed whatever temp-file names its caller made.
-    if let Some((left, right)) = &args.diff {
-        for path in [left, right] {
-            file_locations.push(FileLocation {
-                path: path.clone(),
-                line: None,
-                column: None,
-                end_line: None,
-                end_column: None,
-                message: None,
-            });
-        }
-    }
 
     // Pick the startup authority. Per principle 6, this is `local()`
     // by default; SSH CLI form swaps in `Authority::ssh(...)` here.
@@ -5783,23 +5767,43 @@ fn bare_launch_dir(dir_context: &fresh::config_io::DirectoryContext, cwd: PathBu
 
 /// Check the two files of `--diff LEFT RIGHT` and return them absolute.
 ///
-/// Both must be files that exist: a diff of a missing file, or of a
-/// directory, has nothing to show, and saying so here beats an editor that
-/// opens on one empty buffer. The side-by-side view is a plugin's, so a
-/// launch without plugins is refused rather than quietly showing two tabs.
-/// A refusal is a usage error, reported on stderr with exit status 2 like
-/// clap's own, not an error with a backtrace.
+/// Both must be files that exist, and two different ones: a diff of a
+/// missing file, of a directory, or of a file with itself has nothing to
+/// show, and saying so here beats an editor that opens on nothing. The
+/// editor doesn't open the files itself — the side-by-side view is a
+/// plugin's, which opens them into its panels — so a launch whose plugin
+/// won't run is refused too, rather than opening an empty editor. A refusal
+/// is a usage error, reported on stderr with exit status 2 like clap's own,
+/// not an error with a backtrace.
 fn check_diff_args(args: &Args, left: PathBuf, right: PathBuf) -> (PathBuf, PathBuf) {
     let refuse = |msg: String| -> ! {
         eprintln!("fresh: {msg}");
         std::process::exit(2);
     };
-    if args.no_plugins {
-        refuse(
-            "--diff shows the files with the bundled compare_files plugin, \
-             which --no-plugins and --safe turn off"
-                .to_string(),
-        );
+    let plugin_off = || {
+        let config = match &args.config {
+            Some(path) => config::Config::load_from_file(path).ok()?,
+            None => {
+                let dir_context = fresh::config_io::DirectoryContext::from_system().ok()?;
+                let working_dir = std::env::current_dir().unwrap_or_default();
+                config::Config::load_with_layers(&dir_context, &working_dir)
+            }
+        };
+        config
+            .plugins
+            .get(DIFF_PLUGIN)
+            .map(|plugin| !plugin.enabled)
+    };
+    if args.no_plugins || plugin_off() == Some(true) {
+        refuse(format!(
+            "--diff shows the files with the bundled {DIFF_PLUGIN} plugin, which \
+             {}",
+            if args.no_plugins {
+                "--no-plugins and --safe turn off"
+            } else {
+                "your config turns off (plugins.compare_files.enabled)"
+            }
+        ));
     }
     #[cfg(feature = "gui")]
     if args.gui {
@@ -5817,8 +5821,18 @@ fn check_diff_args(args: &Args, left: PathBuf, right: PathBuf) -> (PathBuf, Path
         }
         std::fs::canonicalize(&path).unwrap_or(path)
     };
-    (resolve(left), resolve(right))
+    let (left, right) = (resolve(left), resolve(right));
+    if left == right {
+        refuse(format!(
+            "--diff compares two files; both name {}",
+            left.display()
+        ));
+    }
+    (left, right)
 }
+
+/// The bundled plugin that shows a `--diff` launch (`compare_files.ts`).
+const DIFF_PLUGIN: &str = "compare_files";
 
 /// Whether this launch opens the files on its command line rather than a
 /// session (see `Editor::file_launch`): `--simple` asked for it, or at least

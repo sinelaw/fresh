@@ -2827,10 +2827,10 @@ impl JsEditorApi {
     }
 
     /// The two files of a `fresh --diff LEFT RIGHT` launch, as absolute paths
-    /// `[left, right]`; empty for any other launch. The editor opens both
-    /// files as it would `fresh LEFT RIGHT` and leaves showing them side by
-    /// side to the plugin that reads this at `ready` (the bundled
-    /// `compare_files` plugin does).
+    /// `[left, right]`; empty for any other launch. The editor doesn't open
+    /// them: the plugin that reads this at `ready` does (the bundled
+    /// `compare_files` plugin, into the panels of one tab, with a
+    /// buffer-group `path` leaf).
     pub fn diff_launch(&self) -> Vec<String> {
         self.state_snapshot
             .read()
@@ -8910,6 +8910,66 @@ impl JsEditorApi {
         let _ = self.command_sender.send(PluginCommand::DiffBaselinePair {
             old_baseline_id,
             new_baseline_id,
+            callback_id: JsCallbackId::new(id),
+        });
+        id
+    }
+
+    /// Line diff of two live buffers, measured in their own bytes (async):
+    /// each hunk's byte range on both sides, each changed line's text
+    /// range, and the part of a paired line that differs from its
+    /// counterpart. The texts never cross into the plugin — use this
+    /// instead of `getBufferText` + `computeLineDiff` when the offsets will
+    /// be used to decorate or edit the buffers.
+    ///
+    /// Rejects when either buffer is binary or in large-file mode.
+    #[plugin_api(async_promise, js_name = "compareBuffers", ts_return = "CompareResult")]
+    #[qjs(rename = "_compareBuffersStart")]
+    pub fn compare_buffers_start(
+        &self,
+        _ctx: fresh_js::Ctx<'_>,
+        left_id: u32,
+        right_id: u32,
+    ) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::CompareBuffers {
+            left_id: BufferId(left_id as usize),
+            right_id: BufferId(right_id as usize),
+            callback_id: JsCallbackId::new(id),
+        });
+        id
+    }
+
+    /// Replace the bytes `start..end` of a buffer with `text`, as one edit
+    /// and one undo step (async). Resolves `true` once applied; `false`,
+    /// leaving the buffer as it was, when it is read-only or binary or the
+    /// range is outside it.
+    ///
+    /// `expectedVersion` (a `leftVersion` / `rightVersion` from
+    /// `compareBuffers`) makes the edit conditional: if the buffer has
+    /// changed since, the offsets may name other text, so nothing is done
+    /// and it resolves `false`.
+    ///
+    /// `deleteRange` followed by `insertText` is two edits, so undoing it
+    /// stops half way.
+    #[plugin_api(async_promise, js_name = "replaceRange", ts_return = "boolean")]
+    #[qjs(rename = "_replaceRangeStart")]
+    pub fn replace_range_start(
+        &self,
+        _ctx: fresh_js::Ctx<'_>,
+        buffer_id: u32,
+        start: u32,
+        end: u32,
+        text: String,
+        expected_version: fresh_js::function::Opt<u64>,
+    ) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::ReplaceRange {
+            buffer_id: BufferId(buffer_id as usize),
+            start: start as usize,
+            end: end as usize,
+            text,
+            expected_version: expected_version.0,
             callback_id: JsCallbackId::new(id),
         });
         id

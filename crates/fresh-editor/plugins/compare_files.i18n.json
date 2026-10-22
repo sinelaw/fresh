@@ -28,8 +28,12 @@
     "status.no_change_here": "Сравнение: курсорът не е върху разлика",
     "status.no_file": "Сравнение: активният буфер не е файл",
     "status.no_such_file": "Сравнение: %{path} не съществува",
-    "status.open_failed": "Сравнение: двата файла не можаха да се отворят",
-    "status.same_file": "Сравнение: това е един и същ файл два пъти"
+    "status.same_file": "Сравнение: това е един и същ файл два пъти",
+    "status.failed": "Сравнение: %{reason}",
+    "status.not_applied": "Сравнение: %{name} не е променен — само за четене е или се промени междувременно",
+    "eol.none": "няма нов ред в края на файла",
+    "eol.crlf": "край на ред CRLF",
+    "eol.lf": "край на ред LF"
   },
   "cs": {
     "cmd.compare_files": "Porovnat soubory...",
@@ -60,8 +64,12 @@
     "status.no_change_here": "Porovnání: kurzor není na rozdílu",
     "status.no_file": "Porovnání: aktivní buffer není soubor",
     "status.no_such_file": "Porovnání: %{path} neexistuje",
-    "status.open_failed": "Porovnání: nepodařilo se otevřít oba soubory",
-    "status.same_file": "Porovnání: to je dvakrát stejný soubor"
+    "status.same_file": "Porovnání: to je dvakrát stejný soubor",
+    "status.failed": "Porovnání: %{reason}",
+    "status.not_applied": "Porovnání: %{name} nebyl změněn — je jen pro čtení, nebo se mezitím změnil",
+    "eol.none": "chybí nový řádek na konci souboru",
+    "eol.crlf": "konec řádku CRLF",
+    "eol.lf": "konec řádku LF"
   },
   "de": {
     "cmd.compare_files": "Dateien vergleichen...",
@@ -92,8 +100,12 @@
     "status.no_change_here": "Vergleich: der Cursor steht auf keinem Unterschied",
     "status.no_file": "Vergleich: der aktive Puffer ist keine Datei",
     "status.no_such_file": "Vergleich: %{path} existiert nicht",
-    "status.open_failed": "Vergleich: die beiden Dateien ließen sich nicht öffnen",
-    "status.same_file": "Vergleich: das ist zweimal dieselbe Datei"
+    "status.same_file": "Vergleich: das ist zweimal dieselbe Datei",
+    "status.failed": "Vergleich: %{reason}",
+    "status.not_applied": "Vergleich: %{name} wurde nicht geändert — schreibgeschützt oder inzwischen geändert",
+    "eol.none": "kein Zeilenumbruch am Dateiende",
+    "eol.crlf": "Zeilenende CRLF",
+    "eol.lf": "Zeilenende LF"
   },
   "en": {
     "cmd.compare_files": "Compare Files...",
@@ -124,8 +136,12 @@
     "status.no_change_here": "Compare: the cursor is not on a difference",
     "status.no_file": "Compare: the active buffer is not a file",
     "status.no_such_file": "Compare: %{path} does not exist",
-    "status.open_failed": "Compare: could not open both files",
-    "status.same_file": "Compare: that is the same file twice"
+    "status.same_file": "Compare: that is the same file twice",
+    "status.failed": "Compare: %{reason}",
+    "status.not_applied": "Compare: %{name} was not changed — it is read-only, or it changed meanwhile",
+    "eol.none": "no newline at end of file",
+    "eol.crlf": "CRLF line ending",
+    "eol.lf": "LF line ending"
   },
   "es": {
     "cmd.compare_files": "Comparar archivos...",
@@ -156,8 +172,12 @@
     "status.no_change_here": "Comparar: el cursor no está sobre una diferencia",
     "status.no_file": "Comparar: el búfer activo no es un archivo",
     "status.no_such_file": "Comparar: %{path} no existe",
-    "status.open_failed": "Comparar: no se pudieron abrir ambos archivos",
-    "status.same_file": "Comparar: es el mismo archivo dos veces"
+    "status.same_file": "Comparar: es el mismo archivo dos veces",
+    "status.failed": "Comparar: %{reason}",
+    "status.not_applied": "Comparar: %{name} no se cambió — es de solo lectura o cambió entretanto",
+    "eol.none": "sin salto de línea al final del archivo",
+    "eol.crlf": "fin de línea CRLF",
+    "eol.lf": "fin de línea LF"
   },
   "fr": {
     "cmd.compare_files": "Comparer des fichiers...",
@@ -188,8 +208,12 @@
     "status.no_change_here": "Comparaison : le curseur n'est pas sur une différence",
     "status.no_file": "Comparaison : le tampon actif n'est pas un fichier",
     "status.no_such_file": "Comparaison : %{path} n'existe pas",
-    "status.open_failed": "Comparaison : impossible d'ouvrir les deux fichiers",
-    "status.same_file": "Comparaison : c'est deux fois le même fichier"
+    "status.same_file": "Comparaison : c'est deux fois le même fichier",
+    "status.failed": "Comparaison : %{reason}",
+    "status.not_applied": "Comparaison : %{name} n'a pas été modifié — en lecture seule, ou modifié entre-temps",
+    "eol.none": "pas de saut de ligne en fin de fichier",
+    "eol.crlf": "fin de ligne CRLF",
+    "eol.lf": "fin de ligne LF"
   },
   "it": {
     "cmd.compare_files": "Confronta file...",
@@ -220,8 +244,12 @@
     "status.no_change_here": "Confronto: il cursore non è su una differenza",
     "status.no_file": "Confronto: il buffer attivo non è un file",
     "status.no_such_file": "Confronto: %{path} non esiste",
-    "status.open_failed": "Confronto: impossibile aprire entrambi i file",
-    "status.same_file": "Confronto: è lo stesso file due volte"
+    "status.same_file": "Confronto: è lo stesso file due volte",
+    "status.failed": "Confronto: %{reason}",
+    "status.not_applied": "Confronto: %{name} non è stato modificato — è di sola lettura o è cambiato nel frattempo",
+    "eol.none": "nessun a capo alla fine del file",
+    "eol.crlf": "fine riga CRLF",
+    "eol.lf": "fine riga LF"
   },
   "ja": {
     "cmd.compare_files": "ファイルを比較...",
@@ -252,8 +280,12 @@
     "status.no_change_here": "比較: カーソルが差分の上にありません",
     "status.no_file": "比較: アクティブなバッファはファイルではありません",
     "status.no_such_file": "比較: %{path} は存在しません",
-    "status.open_failed": "比較: 両方のファイルを開けませんでした",
-    "status.same_file": "比較: 同じファイルが2回指定されています"
+    "status.same_file": "比較: 同じファイルが2回指定されています",
+    "status.failed": "比較: %{reason}",
+    "status.not_applied": "比較: %{name} は変更されませんでした — 読み取り専用か、その間に変更されました",
+    "eol.none": "ファイル末尾に改行がありません",
+    "eol.crlf": "改行コード CRLF",
+    "eol.lf": "改行コード LF"
   },
   "ko": {
     "cmd.compare_files": "파일 비교...",
@@ -284,8 +316,12 @@
     "status.no_change_here": "비교: 커서가 차이 위에 있지 않습니다",
     "status.no_file": "비교: 활성 버퍼가 파일이 아닙니다",
     "status.no_such_file": "비교: %{path}이(가) 없습니다",
-    "status.open_failed": "비교: 두 파일을 모두 열 수 없습니다",
-    "status.same_file": "비교: 같은 파일을 두 번 지정했습니다"
+    "status.same_file": "비교: 같은 파일을 두 번 지정했습니다",
+    "status.failed": "비교: %{reason}",
+    "status.not_applied": "비교: %{name}이(가) 변경되지 않았습니다 — 읽기 전용이거나 그사이 변경되었습니다",
+    "eol.none": "파일 끝에 줄바꿈 없음",
+    "eol.crlf": "CRLF 줄 끝",
+    "eol.lf": "LF 줄 끝"
   },
   "pt-BR": {
     "cmd.compare_files": "Comparar arquivos...",
@@ -316,8 +352,12 @@
     "status.no_change_here": "Comparar: o cursor não está sobre uma diferença",
     "status.no_file": "Comparar: o buffer ativo não é um arquivo",
     "status.no_such_file": "Comparar: %{path} não existe",
-    "status.open_failed": "Comparar: não foi possível abrir os dois arquivos",
-    "status.same_file": "Comparar: é o mesmo arquivo duas vezes"
+    "status.same_file": "Comparar: é o mesmo arquivo duas vezes",
+    "status.failed": "Comparar: %{reason}",
+    "status.not_applied": "Comparar: %{name} não foi alterado — é somente leitura ou mudou nesse meio-tempo",
+    "eol.none": "sem quebra de linha no fim do arquivo",
+    "eol.crlf": "fim de linha CRLF",
+    "eol.lf": "fim de linha LF"
   },
   "ru": {
     "cmd.compare_files": "Сравнить файлы...",
@@ -348,8 +388,12 @@
     "status.no_change_here": "Сравнение: курсор не на различии",
     "status.no_file": "Сравнение: активный буфер не является файлом",
     "status.no_such_file": "Сравнение: %{path} не существует",
-    "status.open_failed": "Сравнение: не удалось открыть оба файла",
-    "status.same_file": "Сравнение: это один и тот же файл дважды"
+    "status.same_file": "Сравнение: это один и тот же файл дважды",
+    "status.failed": "Сравнение: %{reason}",
+    "status.not_applied": "Сравнение: %{name} не изменён — только для чтения или изменился за это время",
+    "eol.none": "нет перевода строки в конце файла",
+    "eol.crlf": "конец строки CRLF",
+    "eol.lf": "конец строки LF"
   },
   "th": {
     "cmd.compare_files": "เปรียบเทียบไฟล์...",
@@ -380,8 +424,12 @@
     "status.no_change_here": "เปรียบเทียบ: เคอร์เซอร์ไม่ได้อยู่บนส่วนต่าง",
     "status.no_file": "เปรียบเทียบ: บัฟเฟอร์ที่ใช้งานอยู่ไม่ใช่ไฟล์",
     "status.no_such_file": "เปรียบเทียบ: ไม่มี %{path}",
-    "status.open_failed": "เปรียบเทียบ: เปิดทั้งสองไฟล์ไม่ได้",
-    "status.same_file": "เปรียบเทียบ: เป็นไฟล์เดียวกันสองครั้ง"
+    "status.same_file": "เปรียบเทียบ: เป็นไฟล์เดียวกันสองครั้ง",
+    "status.failed": "เปรียบเทียบ: %{reason}",
+    "status.not_applied": "เปรียบเทียบ: ไม่ได้เปลี่ยน %{name} — เป็นแบบอ่านอย่างเดียว หรือมีการเปลี่ยนแปลงระหว่างนั้น",
+    "eol.none": "ไม่มีขึ้นบรรทัดใหม่ท้ายไฟล์",
+    "eol.crlf": "ท้ายบรรทัดแบบ CRLF",
+    "eol.lf": "ท้ายบรรทัดแบบ LF"
   },
   "uk": {
     "cmd.compare_files": "Порівняти файли...",
@@ -412,8 +460,12 @@
     "status.no_change_here": "Порівняння: курсор не на відмінності",
     "status.no_file": "Порівняння: активний буфер не є файлом",
     "status.no_such_file": "Порівняння: %{path} не існує",
-    "status.open_failed": "Порівняння: не вдалося відкрити обидва файли",
-    "status.same_file": "Порівняння: це той самий файл двічі"
+    "status.same_file": "Порівняння: це той самий файл двічі",
+    "status.failed": "Порівняння: %{reason}",
+    "status.not_applied": "Порівняння: %{name} не змінено — лише для читання або змінився тим часом",
+    "eol.none": "немає нового рядка в кінці файлу",
+    "eol.crlf": "кінець рядка CRLF",
+    "eol.lf": "кінець рядка LF"
   },
   "vi": {
     "cmd.compare_files": "So sánh tệp...",
@@ -444,8 +496,12 @@
     "status.no_change_here": "So sánh: con trỏ không nằm trên khác biệt",
     "status.no_file": "So sánh: bộ đệm đang mở không phải là tệp",
     "status.no_such_file": "So sánh: %{path} không tồn tại",
-    "status.open_failed": "So sánh: không mở được cả hai tệp",
-    "status.same_file": "So sánh: đó là cùng một tệp hai lần"
+    "status.same_file": "So sánh: đó là cùng một tệp hai lần",
+    "status.failed": "So sánh: %{reason}",
+    "status.not_applied": "So sánh: %{name} không được thay đổi — tệp chỉ đọc hoặc đã thay đổi trong lúc đó",
+    "eol.none": "không có xuống dòng ở cuối tệp",
+    "eol.crlf": "kết thúc dòng CRLF",
+    "eol.lf": "kết thúc dòng LF"
   },
   "zh-CN": {
     "cmd.compare_files": "比较文件...",
@@ -476,7 +532,11 @@
     "status.no_change_here": "比较：光标不在差异上",
     "status.no_file": "比较：当前缓冲区不是文件",
     "status.no_such_file": "比较：%{path} 不存在",
-    "status.open_failed": "比较：无法同时打开两个文件",
-    "status.same_file": "比较：两次指定了同一个文件"
+    "status.same_file": "比较：两次指定了同一个文件",
+    "status.failed": "比较：%{reason}",
+    "status.not_applied": "比较：未更改 %{name}——它是只读的，或在此期间已被更改",
+    "eol.none": "文件末尾没有换行符",
+    "eol.crlf": "CRLF 行尾",
+    "eol.lf": "LF 行尾"
   }
 }

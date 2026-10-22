@@ -1770,10 +1770,10 @@ impl Editor {
 
     /// The two files of a `fresh --diff LEFT RIGHT` launch, if this is one.
     ///
-    /// The editor itself only opens them, as it would `fresh LEFT RIGHT`;
-    /// showing them side by side is a plugin's job (`compare_files.ts`
-    /// reads this at `ready` through `editor.diffLaunch()`), so the view can
-    /// be replaced without touching the command line.
+    /// The editor doesn't open them: showing them side by side is a plugin's
+    /// job (`compare_files.ts` reads this at `ready` through
+    /// `editor.diffLaunch()` and opens both into the panels of one tab), so
+    /// the view can be replaced without touching the command line.
     pub fn diff_launch(&self) -> Option<(&std::path::Path, &std::path::Path)> {
         self.diff_launch
             .as_ref()

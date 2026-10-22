@@ -247,10 +247,10 @@ fileLaunch(): boolean;
 ### `diffLaunch`
 
 The two files of a `fresh --diff LEFT RIGHT` launch, as absolute paths
-`[left, right]`; empty for any other launch. The editor opens both
-files as it would `fresh LEFT RIGHT` and leaves showing them side by
-side to the plugin that reads this at `ready` (the bundled
-`compare_files` plugin does).
+`[left, right]`; empty for any other launch. The editor doesn't open
+them: the plugin that reads this at `ready` does (the bundled
+`compare_files` plugin, into the panels of one tab, with a
+buffer-group `path` leaf).
 
 ```typescript
 diffLaunch(): string[];
