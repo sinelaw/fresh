@@ -952,8 +952,9 @@ impl Editor {
         // Find all matches first (before making any modifications)
         // Each match is (position, length, expanded_replacement)
         let matches: Vec<(usize, usize, String)> = if let Some(ref regex) = compiled_regex {
-            // Regex mode: load buffer content as bytes and find all matches
-            // with capture group expansion in the replacement template
+            // Regex mode, or plain text with case folding / whole word on:
+            // load buffer content as bytes and find all matches the way the
+            // search highlight does
             let buffer_bytes = {
                 let state = self.active_state_mut();
                 let total_bytes = state.buffer.len();
@@ -966,7 +967,14 @@ impl Editor {
                     }
                 }
             };
-            super::regex_replace::collect_regex_matches(regex, &buffer_bytes, replacement)
+            // Capture groups and escapes in the replacement only apply in
+            // regex mode; plain text inserts it as typed.
+            let found = if self.active_window().search_use_regex {
+                super::regex_replace::collect_regex_matches(regex, &buffer_bytes, replacement)
+            } else {
+                super::regex_replace::collect_literal_matches(regex, &buffer_bytes, replacement)
+            };
+            found
                 .into_iter()
                 .map(|m| (m.offset, m.len, m.replacement))
                 .collect()
@@ -1094,6 +1102,7 @@ impl Editor {
             has_wrapped: false,
             replacements_made: 0,
             regex: compiled_regex,
+            expand_captures: self.active_window().search_use_regex,
         });
 
         // Move cursor to first match and mark it as the one being asked about
@@ -1197,7 +1206,9 @@ impl Editor {
                             .active_state_mut()
                             .get_text_range(match_pos, match_pos + match_len);
                         // Expand capture group references if in regex mode
-                        let replacement_text = if let Some(ref regex) = ir_state.regex {
+                        let replacement_text = if let (Some(regex), true) =
+                            (&ir_state.regex, ir_state.expand_captures)
+                        {
                             self.expand_regex_replacement(
                                 regex,
                                 match_pos,
@@ -1342,11 +1353,12 @@ impl Editor {
         let range = match_pos..(match_pos + match_len);
 
         // Expand capture group references if in regex mode
-        let replacement_text = if let Some(ref regex) = ir_state.regex {
-            self.expand_regex_replacement(regex, match_pos, match_len, &ir_state.replacement)
-        } else {
-            ir_state.replacement.clone()
-        };
+        let replacement_text =
+            if let (Some(regex), true) = (&ir_state.regex, ir_state.expand_captures) {
+                self.expand_regex_replacement(regex, match_pos, match_len, &ir_state.replacement)
+            } else {
+                ir_state.replacement.clone()
+            };
 
         // Get the deleted text for the event
         let deleted_text = self

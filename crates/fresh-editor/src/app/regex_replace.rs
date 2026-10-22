@@ -42,21 +42,31 @@ pub fn build_search_regex(
 }
 
 /// Build a [`regex::bytes::Regex`] from user-supplied search settings.
-/// Returns `None` when `use_regex` is false.
+///
+/// When `use_regex` is false the query is `regex::escape`d, so the pattern
+/// still honours the case and whole-word toggles exactly like the search
+/// highlight does. Returns `None` when the plain exact-case substring scan
+/// already finds the same matches (no regex, case sensitive, not whole word),
+/// or when a regex-mode pattern does not compile.
 pub fn build_regex(
     search: &str,
     use_regex: bool,
     whole_word: bool,
     case_sensitive: bool,
 ) -> Option<regex::bytes::Regex> {
-    if !use_regex {
+    if !use_regex && case_sensitive && !whole_word {
         return None;
     }
 
-    let pattern = if whole_word {
-        format!(r"\b{}\b", search)
-    } else {
+    let query = if use_regex {
         search.to_string()
+    } else {
+        regex::escape(search)
+    };
+    let pattern = if whole_word {
+        format!(r"\b{}\b", query)
+    } else {
+        query
     };
 
     regex::bytes::RegexBuilder::new(&pattern)
@@ -174,6 +184,24 @@ pub fn collect_regex_matches(
         .collect()
 }
 
+/// Find every match of `regex` in `haystack`, pairing each with `replacement`
+/// inserted verbatim. Used when regex mode is off: `$1` and `\n` are ordinary
+/// text there.
+pub fn collect_literal_matches(
+    regex: &regex::bytes::Regex,
+    haystack: &[u8],
+    replacement: &str,
+) -> Vec<ReplaceMatch> {
+    regex
+        .find_iter(haystack)
+        .map(|m| ReplaceMatch {
+            offset: m.start(),
+            len: m.len(),
+            replacement: replacement.to_string(),
+        })
+        .collect()
+}
+
 /// Expand capture-group references in `replacement_template` against a single
 /// match. Returns the template unchanged when no captures are found.
 pub fn expand_replacement(
@@ -197,8 +225,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn build_regex_returns_none_when_disabled() {
+    fn build_regex_returns_none_for_plain_exact_case_search() {
         assert!(build_regex("foo", false, false, true).is_none());
+    }
+
+    #[test]
+    fn build_regex_plain_text_honours_case_and_whole_word_toggles() {
+        let folded = build_regex("a.b", false, false, false).unwrap();
+        assert!(folded.is_match(b"A.B"));
+        assert!(!folded.is_match(b"axb"));
+        let whole = build_regex("cat", false, true, true).unwrap();
+        assert_eq!(whole.find_iter(b"cat concat cat").count(), 2);
     }
 
     #[test]
