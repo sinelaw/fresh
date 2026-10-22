@@ -260,6 +260,7 @@ fn test_no_rulers_on_virtual_buffer() {
 fn test_ruler_uses_theme_color() {
     let mut config = Config::default();
     config.editor.rulers = vec![10];
+    config.locale = fresh::config::LocaleName(Some("en".to_string()));
 
     let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
     let _fixture = harness.load_buffer_from_text(&"X".repeat(60)).unwrap();

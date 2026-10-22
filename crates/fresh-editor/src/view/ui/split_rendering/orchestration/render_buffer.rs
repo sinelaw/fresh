@@ -677,6 +677,8 @@ pub(crate) fn draw_buffer_in_split(
             &ruler_columns,
             theme.ruler_bg,
             theme.editor_fg,
+            theme.current_line_bg,
+            true,
             height,
         );
     }
@@ -692,6 +694,8 @@ pub(crate) fn draw_buffer_in_split(
                     &[cx as usize],
                     theme.current_line_bg,
                     theme.editor_fg,
+                    theme.current_line_bg,
+                    false,
                     layout_output.render_output.content_lines_rendered,
                 );
             }

@@ -79,6 +79,8 @@ pub(super) fn tint_columns_in_lines(
     columns: &[usize],
     color: Color,
     default_fg: Color,
+    cursor_line_bg: Color,
+    is_ruler: bool,
     rows: usize,
 ) {
     use unicode_width::UnicodeWidthChar;
@@ -139,7 +141,10 @@ pub(super) fn tint_columns_in_lines(
                 for (_, style) in chars[first..=last].iter_mut() {
                     // Do not overwrite existing background highlights (e.g. search matches,
                     // selections, diffs) to preserve contrast and visual continuity.
-                    if style.bg.is_none() || style.bg == Some(color) {
+                    if style.bg.is_none()
+                        || style.bg == Some(color)
+                        || (is_ruler && style.bg == Some(cursor_line_bg))
+                    {
                         *style = style.bg(color);
                         if let Some(fg) = style.fg {
                             if let Some(repaired) =
@@ -334,14 +339,14 @@ mod tests {
 
         tint_columns_in_lines(
             &mut lines,
-            &[2], // column 2 is 'c' with Yellow bg
+            &[2],
             Color::Rgb(20, 20, 20),
             Color::White,
+            Color::Rgb(40, 40, 40),
+            true,
             1,
         );
 
-        // 'c' should preserve its Yellow bg and Black fg rather than being overwritten
-        // with black-on-black
         let mut col = 0;
         for span in &lines[0].spans {
             for ch in span.content.chars() {
@@ -356,23 +361,47 @@ mod tests {
     }
 
     #[test]
-    fn test_tint_columns_repairs_low_contrast_fg() {
+    fn tint_preserves_search_match_and_overlays_ruler_on_cursor_line() {
         let mut lines = vec![Line::from(vec![
-            Span::styled("a", Style::default().fg(Color::Rgb(10, 10, 10))), // dark fg
+            Span::styled("a", Style::default().fg(Color::Black).bg(Color::Yellow)),
+            Span::styled("b", Style::default().bg(Color::Rgb(40, 40, 40))),
+            Span::styled("c", Style::default()),
         ])];
 
         tint_columns_in_lines(
             &mut lines,
-            &[0],
-            Color::Rgb(20, 20, 20), // dark bg
+            &[0, 1],
+            Color::Rgb(50, 50, 50),
             Color::White,
+            Color::Rgb(40, 40, 40),
+            true,
+            1,
+        );
+
+        assert_eq!(lines[0].spans[0].style.bg, Some(Color::Yellow));
+        assert_eq!(lines[0].spans[0].style.fg, Some(Color::Black));
+        assert_eq!(lines[0].spans[1].style.bg, Some(Color::Rgb(50, 50, 50)));
+    }
+
+    #[test]
+    fn test_tint_columns_repairs_low_contrast_fg() {
+        let mut lines = vec![Line::from(vec![Span::styled(
+            "a",
+            Style::default().fg(Color::Rgb(10, 10, 10)),
+        )])];
+
+        tint_columns_in_lines(
+            &mut lines,
+            &[0],
+            Color::Rgb(20, 20, 20),
+            Color::White,
+            Color::Rgb(40, 40, 40),
+            false,
             1,
         );
 
         let span = &lines[0].spans[0];
         assert_eq!(span.style.bg, Some(Color::Rgb(20, 20, 20)));
-        // fg should have been repaired so it's readable against the dark background
         assert_ne!(span.style.fg, Some(Color::Rgb(10, 10, 10)));
     }
 }
-
