@@ -716,7 +716,12 @@ EOF
 
 do_install_nix() {
     log_info "Attempting Nix install..."
-    nix profile install "github:${REPO_OWNER}/${REPO_NAME}"
+    # nixpkgs ships fresh as fresh-editor, binary-cached via cache.nixos.org;
+    # the flake has no cache and would compile the whole toolchain from
+    # source. nixpkgs tracks releases rather than master; updates arrive
+    # via `nix profile upgrade`.
+    nix profile install nixpkgs#fresh-editor
+    log_info "Update later with: nix profile upgrade"
 }
 
 do_install_cargo() {
