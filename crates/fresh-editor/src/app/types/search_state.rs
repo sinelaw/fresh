@@ -56,6 +56,9 @@ pub struct InteractiveReplaceState {
     pub has_wrapped: bool,
     /// Number of replacements made so far
     pub replacements_made: usize,
-    /// Compiled regex for regex-mode replace (None when regex mode is off)
+    /// Compiled matcher (None when the plain exact-case substring scan applies)
     pub regex: Option<regex::bytes::Regex>,
+    /// Whether `$1` / `\n` in the replacement are expanded (regex mode only);
+    /// otherwise the replacement is inserted as typed
+    pub expand_captures: bool,
 }
