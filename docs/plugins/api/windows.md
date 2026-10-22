@@ -244,6 +244,18 @@ as startup pages.
 fileLaunch(): boolean;
 ```
 
+### `diffLaunch`
+
+The two files of a `fresh --diff LEFT RIGHT` launch, as absolute paths
+`[left, right]`; empty for any other launch. The editor doesn't open
+them: the plugin that reads this at `ready` does (the bundled
+`compare_files` plugin, into the panels of one tab, with a
+buffer-group `path` leaf).
+
+```typescript
+diffLaunch(): string[];
+```
+
 ### `dockOpen`
 
 Whether the left dock slot is open: a panel is in it, or the host is

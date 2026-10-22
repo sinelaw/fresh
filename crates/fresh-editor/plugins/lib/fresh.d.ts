@@ -247,6 +247,61 @@ type TsCompositeHunk = {
 	ops?: string;
 };
 /**
+* One side of a [`CompareHunk`]: where the hunk's lines are, in lines and
+* in the buffer's own bytes.
+*/
+type CompareSide = {
+	/**
+	* First line of the hunk on this side (0-based).
+	*/
+	start: number;
+	/**
+	* Number of lines (0 when the other side alone has lines here).
+	*/
+	count: number;
+	/**
+	* Byte offset of the hunk's first line — for an empty side, where the
+	* other side's lines would go.
+	*/
+	from: number;
+	/**
+	* Byte offset just past the hunk's last line, terminator included.
+	* `from..to` is what replacing this side's lines of the hunk replaces.
+	*/
+	to: number;
+	/**
+	* Each line's text without its line terminator, as `[start, end)`
+	* byte offsets.
+	*/
+	lines: Array<[number, number]>;
+	/**
+	* For the lines that have a counterpart on the other side (the first
+	* `min(count, other.count)`): the part that differs from it, as
+	* `[start, end)` byte offsets, or `null` when only the line terminator
+	* differs.
+	*/
+	spans: Array<[number, number] | null>;
+};
+/**
+* One hunk of a [`CompareResult`], with the geometry a side-by-side view
+* paints from.
+*/
+type CompareHunk = {
+	/**
+	* The first (left, old) text's side.
+	*/
+	left: CompareSide;
+	/**
+	* The second (right, new) text's side.
+	*/
+	right: CompareSide;
+	/**
+	* The two sides have the same lines but for their terminators: a
+	* missing final newline, or `\r\n` against `\n`.
+	*/
+	eolOnly: boolean;
+};
+/**
 * A run of rows in a plugin-composed buffer that carry code, for the
 * host's highlighter (`setSyntaxRegions`).
 *
@@ -3018,6 +3073,33 @@ type BufferSavedDiff = {
 	byte_ranges: Array<[number, number]>;
 };
 /**
+* Result of `compareBuffers`: the line diff of two buffers, measured in
+* their own bytes.
+*/
+type CompareResult = {
+	/**
+	* Hunks in increasing order; empty when the buffers are equal.
+	*/
+	hunks: Array<CompareHunk>;
+	/**
+	* Lines in each buffer, a final unterminated line included.
+	*/
+	leftLines: number;
+	rightLines: number;
+	/**
+	* Each buffer's length in bytes.
+	*/
+	leftLen: number;
+	rightLen: number;
+	/**
+	* Each buffer's content version when it was read. An edit since bumps
+	* it, so a caller about to edit from these offsets can tell they are
+	* stale.
+	*/
+	leftVersion: number;
+	rightVersion: number;
+};
+/**
 * Options for createVirtualBufferInExistingSplit
 */
 type CreateVirtualBufferInExistingSplitOptions = {
@@ -5715,6 +5797,14 @@ interface EditorAPI {
 	*/
 	fileLaunch(): boolean;
 	/**
+	* The two files of a `fresh --diff LEFT RIGHT` launch, as absolute paths
+	* `[left, right]`; empty for any other launch. The editor doesn't open
+	* them: the plugin that reads this at `ready` does (the bundled
+	* `compare_files` plugin, into the panels of one tab, with a
+	* buffer-group `path` leaf).
+	*/
+	diffLaunch(): string[];
+	/**
 	* Whether the left dock slot is open: a panel is in it, or the host is
 	* holding the column for one its manifest declared. The plugin that
 	* fills the dock mounts it at
@@ -8069,6 +8159,32 @@ interface EditorAPI {
 	*/
 	diffBaselinePair(oldBaselineId: number, newBaselineId: number): Promise<DiffBaselineResult>;
 	/**
+	* Line diff of two live buffers, measured in their own bytes (async):
+	* each hunk's byte range on both sides, each changed line's text
+	* range, and the part of a paired line that differs from its
+	* counterpart. The texts never cross into the plugin — use this
+	* instead of `getBufferText` + `computeLineDiff` when the offsets will
+	* be used to decorate or edit the buffers.
+	* 
+	* Rejects when either buffer is binary or in large-file mode.
+	*/
+	compareBuffers(leftId: number, rightId: number): Promise<CompareResult>;
+	/**
+	* Replace the bytes `start..end` of a buffer with `text`, as one edit
+	* and one undo step (async). Resolves `true` once applied; `false`,
+	* leaving the buffer as it was, when it is read-only or binary or the
+	* range is outside it.
+	* 
+	* `expectedVersion` (a `leftVersion` / `rightVersion` from
+	* `compareBuffers`) makes the edit conditional: if the buffer has
+	* changed since, the offsets may name other text, so nothing is done
+	* and it resolves `false`.
+	* 
+	* `deleteRange` followed by `insertText` is two edits, so undoing it
+	* stops half way.
+	*/
+	replaceRange(bufferId: number, start: number, end: number, text: string, expectedVersion?: number): Promise<boolean>;
+	/**
 	* Fetch baseline lines for `(startLine, count)` ranges in one
 	* batched call (async). Lines come back without trailing newlines,
 	* grouped per requested range — fetch only the old-side lines a
@@ -9089,6 +9205,12 @@ interface EditorAPI {
 	* buffer: editable, in its tabs, and left open when the group closes.
 	* Each panel has its own view of it, so two panels can show one file in
 	* different view modes. Closing the buffer closes the group.
+	*
+	* A scrollable leaf with `path` shows that file: the buffer that has it
+	* open, as for `bufferId`, or else one the group opens without a tab.
+	* Such a buffer is an ordinary file buffer otherwise (the quit prompt and
+	* hot exit cover it); closing the group closes it if it has no unsaved
+	* changes, and gives it a tab in the group's pane if it has.
 	*
 	* The result names each panel's buffer (`panels`) and split
 	* (`panelSplits`, for `createScrollSyncGroup`, `setLineWrap` and

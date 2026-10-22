@@ -467,6 +467,14 @@ pub enum AsyncMessage {
         result: Result<Value, String>,
     },
 
+    /// Host work a plugin is awaiting finished off the editor thread (a
+    /// `compareBuffers` diff, say): resolve its promise with the JSON
+    /// result, or reject it with the error.
+    PluginCallbackResult {
+        request_id: u64,
+        result: Result<String, String>,
+    },
+
     /// Plugin process completed with output
     PluginProcessOutput {
         /// Unique ID for this process (to match with callback)

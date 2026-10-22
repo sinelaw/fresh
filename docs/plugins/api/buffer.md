@@ -619,6 +619,40 @@ disk vs HEAD, the git-gutter comparison. Resolves with a
 diffBaselinePair(oldBaselineId: number, newBaselineId: number): Promise<DiffBaselineResult>;
 ```
 
+### `compareBuffers`
+
+Line diff of two live buffers, measured in their own bytes (async):
+each hunk's byte range on both sides, each changed line's text
+range, and the part of a paired line that differs from its
+counterpart. The texts never cross into the plugin — use this
+instead of `getBufferText` + `computeLineDiff` when the offsets will
+be used to decorate or edit the buffers.
+
+Rejects when either buffer is binary or in large-file mode.
+
+```typescript
+compareBuffers(leftId: number, rightId: number): Promise<CompareResult>;
+```
+
+### `replaceRange`
+
+Replace the bytes `start..end` of a buffer with `text`, as one edit
+and one undo step (async). Resolves `true` once applied; `false`,
+leaving the buffer as it was, when it is read-only or binary or the
+range is outside it.
+
+`expectedVersion` (a `leftVersion` / `rightVersion` from
+`compareBuffers`) makes the edit conditional: if the buffer has
+changed since, the offsets may name other text, so nothing is done
+and it resolves `false`.
+
+`deleteRange` followed by `insertText` is two edits, so undoing it
+stops half way.
+
+```typescript
+replaceRange(bufferId: number, start: number, end: number, text: string, expectedVersion?: number): Promise<boolean>;
+```
+
 ### `getBaselineLines`
 
 Fetch baseline lines for `(startLine, count)` ranges in one

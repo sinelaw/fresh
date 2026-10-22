@@ -920,6 +920,29 @@
       "when": "normal"
     },
     {
+      "comment": "Step through the differences of an open Compare Files view (fresh --diff A B) — handled by the compare_files plugin. Alt+F5 / Shift+Alt+F5 are the diff-editor keys VS Code users already know, and are free here. No-ops (with a status message) when no comparison is open.",
+      "key": "F5",
+      "modifiers": ["alt"],
+      "action": "compare_next_difference",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "F5",
+      "modifiers": ["shift", "alt"],
+      "action": "compare_prev_difference",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Move between the two panels of a Compare Files view. Next/Previous Split (Alt+]/Alt+[) step between the editor's splits, not between the panels inside one tab, and both panels are ordinary file buffers that keep every typing key. Ctrl+F6 is the long-standing 'next document pane' key, and free here.",
+      "key": "F6",
+      "modifiers": ["ctrl"],
+      "action": "compare_switch_side",
+      "args": {},
+      "when": "normal"
+    },
+    {
       "comment": "Normal context - Split navigation",
       "key": "]",
       "modifiers": ["alt"],

@@ -72,6 +72,7 @@ export default defineConfig({
           { text: "Language Support", link: "/features/languages" },
           { text: "LSP Integration", link: "/features/lsp" },
           { text: "Git", link: "/features/git" },
+          { text: "Compare Files", link: "/features/compare-files" },
           { text: "Themes", link: "/features/themes" },
           { text: "Encoding", link: "/features/encoding" },
           { text: "Workspace Trust", link: "/features/workspace-trust" },

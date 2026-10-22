@@ -9,6 +9,7 @@ Fresh has built-in tooling for reviewing diffs, navigating git history, and jump
 *   **Git Log** — magit-style log with a live-preview diff panel on the right, over the repo, one file, or a PR branch.
 *   **Git Blame** — magit-style blame for the current file.
 *   **Diff Chunk Navigation** — jump between hunks from git *or* saved diff files with the same commands.
+*   **Compare Files** — any two files side by side, both editable; `fresh --diff A B` is a `git difftool`. See [Compare Files](./compare-files.md).
 
 ## Review Diff
 

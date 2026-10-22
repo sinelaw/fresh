@@ -22,6 +22,7 @@
   "cli.arg.restore": "設定の `editor.restore_previous_session = false` を上書きして、前回のワークスペースの復元を強制します。--no-restore とは併用できません。",
   "cli.arg.wait": "$EDITOR や git の core.editor 用に受け付けます。Fresh は終了するまで戻らないので、待つ必要はありません",
   "cli.arg.simple": "指定したものだけ（なければ空のバッファ）をこの端末で開きます。セッションの復元・保存、ドック、デーモンはありません（ファイルなしで `fresh FILE` と同じ動作）",
+  "cli.arg.diff": "2つのファイルを左右に並べて比較します。両方とも編集でき、差分は揃えて強調表示されます（`git difftool` 用の差分ツール）",
   "cli.arg.no_upgrade_check": "アップデート確認と匿名のテレメトリを無効化します",
   "cli.arg.locale": "ロケールを上書きします（例: 'en'、'ja'、'zh-CN'）",
   "cli.arg.gui": "GUI モードで起動します（GPU レンダリングのネイティブウィンドウ）",

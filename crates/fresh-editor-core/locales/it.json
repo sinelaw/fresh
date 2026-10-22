@@ -22,6 +22,7 @@
   "cli.arg.restore": "Forza il ripristino dello spazio di lavoro precedente, sovrascrivendo `editor.restore_previous_session = false` nella configurazione. Non può essere combinato con --no-restore.",
   "cli.arg.wait": "Accettato per $EDITOR e core.editor di git; Fresh restituisce già il controllo solo quando esci",
   "cli.arg.simple": "Apre solo ciò che è indicato, o un buffer vuoto, in questo terminale: nessuna sessione ripristinata o salvata, nessun dock, nessun demone (come `fresh FILE`, senza bisogno di un file)",
+  "cli.arg.diff": "Confronta due file affiancati, entrambi modificabili, con le differenze allineate ed evidenziate (uno strumento per `git difftool`)",
   "cli.arg.no_upgrade_check": "Disabilita il controllo aggiornamenti e la telemetria anonima",
   "cli.arg.locale": "Imposta una lingua specifica (es. 'en', 'ja', 'zh-CN')",
   "cli.arg.gui": "Avvia in modalità GUI (finestra nativa con rendering GPU)",

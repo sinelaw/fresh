@@ -3111,6 +3111,226 @@ impl Editor {
         }
     }
 
+    /// Handle `compareBuffers`: diff two live buffers host-side, in their
+    /// own bytes, so neither text crosses the plugin bridge.
+    ///
+    /// Only the copy of the two texts happens here, on the editor thread
+    /// (~10 ms for two 9 MB files); the diff (~200 ms for the same pair)
+    /// runs on a blocking worker and comes back as a `PluginCallbackResult`,
+    /// so typing doesn't wait on it.
+    pub(super) fn handle_compare_buffers(
+        &mut self,
+        left_id: BufferId,
+        right_id: BufferId,
+        callback_id: JsCallbackId,
+    ) {
+        let window = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window present");
+        let mut read = |id: BufferId| -> Result<(Vec<u8>, u64), String> {
+            let meta = window.buffer_metadata.get(&id);
+            let binary = meta.is_some_and(|m| m.binary);
+            // The messages reach the user (a plugin shows them), so they
+            // name the file, not the buffer id.
+            let name = meta
+                .map(|m| m.display_name.clone())
+                .unwrap_or_else(|| format!("buffer {}", id.0));
+            let state = window
+                .buffer_state_mut(id)
+                .ok_or_else(|| format!("{name} is not open"))?;
+            if binary || state.buffer.is_binary() {
+                return Err(format!("{name} is a binary file"));
+            }
+            if state.buffer.is_large_file() {
+                return Err(format!("{name} is too large to compare"));
+            }
+            let len = state.buffer.len();
+            let bytes = state
+                .buffer
+                .get_text_range_mut(0, len)
+                .map_err(|e| format!("cannot read {name}: {e}"))?;
+            Ok((bytes, state.buffer.version()))
+        };
+        let ((left, left_version), (right, right_version)) =
+            match read(left_id).and_then(|left| Ok((left, read(right_id)?))) {
+                Ok(texts) => texts,
+                Err(e) => {
+                    self.plugin_manager
+                        .read()
+                        .unwrap()
+                        .reject_callback(callback_id, e);
+                    return;
+                }
+            };
+        let diff = move || {
+            let lines = |text: &[u8]| text.split_inclusive(|b| *b == b'\n').count() as u32;
+            let value = fresh_core::api::CompareResult {
+                hunks: fresh_core::diff::compare_texts(&left, &right),
+                left_lines: lines(&left),
+                right_lines: lines(&right),
+                left_len: left.len(),
+                right_len: right.len(),
+                left_version,
+                right_version,
+            };
+            serde_json::to_string(&value).map_err(|e| e.to_string())
+        };
+        match (&self.tokio_runtime, &self.async_bridge) {
+            (Some(runtime), Some(bridge)) => {
+                let sender = bridge.sender();
+                let request_id = callback_id.as_u64();
+                runtime.spawn_blocking(move || {
+                    #[allow(clippy::let_underscore_must_use)]
+                    let _ = sender.send(
+                        crate::services::async_bridge::AsyncMessage::PluginCallbackResult {
+                            request_id,
+                            result: diff(),
+                        },
+                    );
+                });
+            }
+            _ => {
+                let plugins = self.plugin_manager.read().unwrap();
+                match diff() {
+                    Ok(json) => plugins.resolve_callback(callback_id, json),
+                    Err(e) => plugins.reject_callback(callback_id, e),
+                }
+            }
+        }
+    }
+
+    /// Handle `replaceRange`: one edit, logged as one undo step.
+    pub(super) fn handle_replace_range(
+        &mut self,
+        buffer_id: BufferId,
+        start: usize,
+        end: usize,
+        text: String,
+        expected_version: Option<u64>,
+        callback_id: JsCallbackId,
+    ) {
+        let applied = self.replace_range_as_one_edit(buffer_id, start, end, text, expected_version);
+        self.plugin_manager
+            .read()
+            .unwrap()
+            .resolve_callback(callback_id, applied.to_string());
+    }
+
+    /// Replace `start..end` with `text` the way `handle_delete_range` and
+    /// `handle_insert_text` each edit, but logged as a single `Batch` so one
+    /// undo takes the whole replacement back. `false`, with nothing changed,
+    /// for a read-only or binary buffer, a range outside it, or a buffer that
+    /// is no longer at `expected_version`.
+    fn replace_range_as_one_edit(
+        &mut self,
+        buffer_id: BufferId,
+        start: usize,
+        end: usize,
+        text: String,
+        expected_version: Option<u64>,
+    ) -> bool {
+        let window = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window present");
+        if window
+            .buffer_metadata
+            .get(&buffer_id)
+            .is_some_and(|m| m.read_only || m.binary)
+        {
+            return false;
+        }
+        let Some(state) = window.buffer_state_mut(buffer_id) else {
+            return false;
+        };
+        if start > end
+            || end > state.buffer.len()
+            || state.buffer.is_binary()
+            || expected_version.is_some_and(|v| v != state.buffer.version())
+        {
+            return false;
+        }
+        let deleted_text = state.get_text_range(start, end);
+        let (removed, inserted) = (end - start, text.len());
+        let touches_newline = deleted_text.contains('\n') || text.contains('\n');
+        let delete = Event::Delete {
+            range: start..end,
+            deleted_text,
+            cursor_id: CursorId(0),
+        };
+        let insert = Event::Insert {
+            position: start,
+            text,
+            cursor_id: CursorId(0),
+        };
+
+        // Each half's LSP change is read against the text it applies to, so
+        // the insert's is taken after the delete is applied.
+        let lsp = self.active_window().lsp_change_could_be_sent(buffer_id);
+        let mut lsp_changes = Vec::new();
+        let mut events = Vec::new();
+        for event in [delete, insert] {
+            let empty = match &event {
+                Event::Delete { range, .. } => range.is_empty(),
+                Event::Insert { text, .. } => text.is_empty(),
+                _ => false,
+            };
+            if empty {
+                continue;
+            }
+            if lsp {
+                lsp_changes.extend(
+                    self.active_window()
+                        .collect_lsp_changes_for_buffer(buffer_id, &event),
+                );
+            }
+            if let Some(state) = self.active_window_mut().buffer_state_mut(buffer_id) {
+                state.apply(&mut Cursors::default(), &event);
+            }
+            events.push(event);
+        }
+        if events.is_empty() {
+            return true;
+        }
+        if let Some(log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
+            log.append(Event::Batch {
+                events,
+                description: "Replace range".to_string(),
+            });
+        }
+
+        for leaf_id in self
+            .active_window()
+            .split_manager()
+            .splits_for_buffer(buffer_id)
+        {
+            if let Some(view_state) = self
+                .active_window_mut()
+                .split_view_states_mut()
+                .get_mut(&leaf_id)
+            {
+                view_state
+                    .buffer_tab_state_mut()
+                    .cursors
+                    .adjust_for_edit(start, removed, inserted);
+            }
+        }
+        // As for the single edits: search highlights, plugin markers, the
+        // language server, and the plugin line set all follow the edit.
+        self.reevaluate_plugin_edit_search_overlays(buffer_id, start, inserted);
+        #[cfg(feature = "plugins")]
+        self.shift_plugin_markers_for_edit(buffer_id, start, removed, inserted);
+        self.active_window_mut()
+            .send_lsp_changes_for_buffer(buffer_id, lsp_changes);
+        if touches_newline {
+            self.handle_refresh_lines(buffer_id);
+        } else {
+            self.adjust_seen_byte_ranges_for_edit(buffer_id, start, removed, inserted);
+        }
+        true
+    }
+
     /// Batched baseline line fetch: `(start_line, count)` ranges in, lines
     /// (without trailing newlines) grouped per range out.
     pub(super) fn handle_get_baseline_lines(

@@ -10,6 +10,7 @@
 - [Guided Code Tours](./code-tours.md) - Play a JSON walkthrough of a codebase in a dock panel
 - [LSP Integration](./lsp.md) - Language server support for diagnostics and completion
 - [Git](./git.md) - Review diffs, browse log, navigate hunks
+- [Compare Files](./compare-files.md) - Two files side by side, both editable (`fresh --diff A B`, `git difftool`)
 - [Themes](./themes.md) - Customizable color themes
 - [Encoding](./encoding.md) - Text encoding detection and conversion
 - [Remote Editing (SSH)](./ssh.md) - Edit files on remote machines via SSH
