@@ -15,6 +15,7 @@ use crate::server::protocol::ClientControl;
 pub fn relay_loop(
     conn: &mut ClientConnection,
     resize_flag: Arc<AtomicBool>,
+    keyboard: crate::services::terminal_modes::KeyboardConfig,
 ) -> io::Result<ClientExitReason> {
     let mut stdin = io::stdin();
     let mut stdout = io::stdout();
@@ -201,7 +202,7 @@ pub fn relay_loop(
                             crate::services::terminal_title::write_terminal_title(&title);
                         }
                         crate::server::protocol::ServerControl::SuspendClient => {
-                            suspend_client(&mut stdout, conn)?;
+                            suspend_client(&mut stdout, conn, &keyboard)?;
                         }
                         crate::server::protocol::ServerControl::Pong => {
                             // Ignore pong responses
@@ -231,16 +232,25 @@ pub fn relay_loop(
 /// that has a real foreground shell to hand control back to. We emit the same
 /// teardown bytes the server would have sent had the client detached, drop
 /// raw mode, raise SIGTSTP, and on resume re-enable raw mode and nudge the
-/// server to repaint by echoing the current terminal size back.
-fn suspend_client(stdout: &mut io::Stdout, conn: &mut ClientConnection) -> io::Result<()> {
+/// server to restore terminal modes with an explicit Resumed notification.
+fn suspend_client(
+    stdout: &mut io::Stdout,
+    conn: &mut ClientConnection,
+    keyboard: &crate::services::terminal_modes::KeyboardConfig,
+) -> io::Result<()> {
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
     use nix::sys::signal::{raise, Signal};
 
     // Leave alternate screen, disable mouse + bracketed paste, etc. — mirrors
-    // what `TerminalModes::undo()` does in direct mode. The server already
-    // marked this client `needs_full_render`, so the bytes it queues next
-    // will include the matching setup sequences + a full paint.
-    let teardown = crate::server::capture_backend::terminal_teardown_sequences();
+    // what `TerminalModes::undo()` does in direct mode. The server withholds
+    // this client's output until it receives Resumed after SIGCONT, then sends
+    // the matching setup sequences and a full paint.
+    //
+    // The flags come from the server's `ServerHello`: it is the server that
+    // pushed them, and only it knows whether the settings ask for any. Popping
+    // when it pushed nothing (every flag off) would unbalance the terminal's
+    // stack, and not popping would leave the pushed flags on it.
+    let teardown = crate::server::capture_backend::terminal_teardown_sequences(keyboard);
     stdout.write_all(&teardown)?;
     stdout.flush()?;
 
@@ -258,15 +268,18 @@ fn suspend_client(stdout: &mut io::Stdout, conn: &mut ClientConnection) -> io::R
         return Err(io::Error::other(format!("raise(SIGTSTP) failed: {}", e)));
     }
 
-    // Resumed. Re-enable raw mode; the server will repaint on its next tick
-    // because `needs_full_render` was set before we left.
+    // Only acknowledge resume after raw mode is back. The daemon withholds
+    // output for this client until then, even if another client forces a paint.
     if let Err(e) = enable_raw_mode() {
         tracing::error!("Failed to re-enable raw mode after resume: {}", e);
         return Err(io::Error::other(format!("enable_raw_mode failed: {}", e)));
     }
 
-    // Echo our current size back so the server is guaranteed to tick a
-    // render (Resize always flips `needs_render`) without waiting on input.
+    let resumed = serde_json::to_string(&ClientControl::Resumed)?;
+    conn.write_control(&resumed)?;
+
+    // Send the current dimensions too. A Resize queued before suspension must
+    // never be mistaken for the explicit resume acknowledgement above.
     if let Ok(size) = super::get_terminal_size() {
         let resize_msg = serde_json::to_string(&ClientControl::Resize {
             cols: size.cols,

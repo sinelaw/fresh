@@ -2098,12 +2098,7 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
 
     // Enable terminal modes (raw mode, alternate screen, mouse capture, etc.)
     // This checks support for each mode and tracks what was enabled
-    let keyboard_config = KeyboardConfig {
-        disambiguate_escape_codes: config.editor.keyboard_disambiguate_escape_codes,
-        report_event_types: config.editor.keyboard_report_event_types,
-        report_alternate_keys: config.editor.keyboard_report_alternate_keys,
-        report_all_keys_as_escape_codes: config.editor.keyboard_report_all_keys_as_escape_codes,
-    };
+    let keyboard_config = KeyboardConfig::from_editor_config(&config.editor);
     tracing::info!("Enabling terminal modes...");
     let terminal_modes = TerminalModes::enable(Some(&keyboard_config))?;
     tracing::info!("Terminal modes enabled");
@@ -5971,6 +5966,11 @@ fn run_attach(
 
     let server_msg: ServerControl = serde_json::from_str(&response)?;
 
+    // What the server pushed on this terminal's kitty keyboard stack. Only it
+    // knows (the flags come from its settings), and the relay has to pop
+    // exactly that when the client suspends. Every other answer returns below.
+    let keyboard_flags: u8;
+
     match server_msg {
         ServerControl::Hello(server_hello) => {
             if server_hello.protocol_version != PROTOCOL_VERSION {
@@ -5981,6 +5981,7 @@ fn run_attach(
                 eprintln!("Please restart the daemon with the same version as the client.");
                 return Ok(());
             }
+            keyboard_flags = server_hello.keyboard_flags;
             tracing::info!(
                 "Connected to session '{}' (server {})",
                 server_hello.session_id,
@@ -6051,8 +6052,11 @@ fn run_attach(
     // but we need raw mode so key presses are forwarded immediately
     enable_raw_mode()?;
 
-    // Run the client relay loop (handshake already done)
-    let result = client::run_client_relay(conn);
+    // Run the client relay loop (handshake already done). The keyboard flags
+    // came from the server's `Hello`: they are what it pushed on this
+    // terminal, and what a suspend has to pop.
+    let keyboard = KeyboardConfig::from_flags(keyboard_flags);
+    let result = client::run_client_relay(conn, keyboard);
 
     // The server drove mouse reporting through us, so a click we quit on leaves
     // its release in our stdin. Take it before the modes below go away, or it
@@ -7009,15 +7013,7 @@ fn handle_suspend_request(
 ) -> AnyhowResult<()> {
     #[cfg(unix)]
     {
-        let keyboard_config = KeyboardConfig {
-            disambiguate_escape_codes: editor.config().editor.keyboard_disambiguate_escape_codes,
-            report_event_types: editor.config().editor.keyboard_report_event_types,
-            report_alternate_keys: editor.config().editor.keyboard_report_alternate_keys,
-            report_all_keys_as_escape_codes: editor
-                .config()
-                .editor
-                .keyboard_report_all_keys_as_escape_codes,
-        };
+        let keyboard_config = KeyboardConfig::from_editor_config(&editor.config().editor);
         terminal_modes::suspend_and_resume(terminal_modes, Some(&keyboard_config))
             .context("Failed to suspend process")?;
         editor.request_full_redraw();

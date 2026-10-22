@@ -87,6 +87,52 @@ impl Default for KeyboardConfig {
 }
 
 impl KeyboardConfig {
+    /// The `editor.keyboard_*` settings, shared by direct mode and the session
+    /// server so the two cannot ask the terminal for different flags.
+    pub fn from_editor_config(editor: &crate::config::EditorConfig) -> Self {
+        Self {
+            disambiguate_escape_codes: editor.keyboard_disambiguate_escape_codes,
+            report_event_types: editor.keyboard_report_event_types,
+            report_alternate_keys: editor.keyboard_report_alternate_keys,
+            report_all_keys_as_escape_codes: editor.keyboard_report_all_keys_as_escape_codes,
+        }
+    }
+
+    /// The config for flags a daemon reported it pushed
+    /// ([`ServerHello::keyboard_flags`](crate::server::protocol::ServerHello)),
+    /// so a client pops what is on the stack and nothing more. `0` means the
+    /// server pushed nothing, and [`pop_sequence`](Self::pop_sequence) is empty.
+    pub fn from_flags(bits: u8) -> Self {
+        let flags = KeyboardEnhancementFlags::from_bits_truncate(bits);
+        Self {
+            disambiguate_escape_codes: flags
+                .contains(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES),
+            report_event_types: flags.contains(KeyboardEnhancementFlags::REPORT_EVENT_TYPES),
+            report_alternate_keys: flags.contains(KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS),
+            report_all_keys_as_escape_codes: flags
+                .contains(KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES),
+        }
+    }
+
+    /// The kitty keyboard protocol push for these flags (`CSI > flags u`), or
+    /// nothing when every flag is off.
+    pub fn push_sequence(&self) -> Vec<u8> {
+        if !self.any_enabled() {
+            return Vec::new();
+        }
+        format!("\x1b[>{}u", self.to_flags().bits()).into_bytes()
+    }
+
+    /// The pop matching [`push_sequence`](Self::push_sequence) (`CSI < 1 u`),
+    /// or nothing when every flag is off and nothing was pushed.
+    pub fn pop_sequence(&self) -> &'static [u8] {
+        if self.any_enabled() {
+            b"\x1b[<1u"
+        } else {
+            b""
+        }
+    }
+
     /// Build crossterm KeyboardEnhancementFlags from this config.
     pub fn to_flags(&self) -> KeyboardEnhancementFlags {
         let mut flags = KeyboardEnhancementFlags::empty();
@@ -362,4 +408,80 @@ pub fn emergency_cleanup() {
 
     // Flush stdout
     let _ = stdout().flush();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The flags travel as the wire bits the server pushed, so a client can tell
+    /// "nothing pushed" (0) from "some flags" without the server's settings.
+    #[test]
+    fn keyboard_flags_round_trip_through_the_wire_bits() {
+        let all = KeyboardConfig {
+            disambiguate_escape_codes: true,
+            report_event_types: true,
+            report_alternate_keys: true,
+            report_all_keys_as_escape_codes: true,
+        };
+        let bits = all.to_flags().bits();
+        assert_eq!(KeyboardConfig::from_flags(bits).to_flags().bits(), bits);
+
+        let none = KeyboardConfig {
+            disambiguate_escape_codes: false,
+            report_event_types: false,
+            report_alternate_keys: false,
+            report_all_keys_as_escape_codes: false,
+        };
+        assert_eq!(KeyboardConfig::from_flags(0).to_flags().bits(), 0);
+        // Nothing was pushed, so there is nothing to pop. Popping anyway left
+        // the terminal's keyboard stack unbalanced for whoever ran next.
+        assert!(KeyboardConfig::from_flags(0).pop_sequence().is_empty());
+        assert!(!none.any_enabled());
+    }
+
+    #[test]
+    fn each_flag_is_read_back_from_its_own_bit() {
+        for (config, bit) in [
+            (
+                KeyboardConfig {
+                    disambiguate_escape_codes: true,
+                    report_event_types: false,
+                    report_alternate_keys: false,
+                    report_all_keys_as_escape_codes: false,
+                },
+                1u8,
+            ),
+            (
+                KeyboardConfig {
+                    disambiguate_escape_codes: false,
+                    report_event_types: true,
+                    report_alternate_keys: false,
+                    report_all_keys_as_escape_codes: false,
+                },
+                2,
+            ),
+            (
+                KeyboardConfig {
+                    disambiguate_escape_codes: false,
+                    report_event_types: false,
+                    report_alternate_keys: true,
+                    report_all_keys_as_escape_codes: false,
+                },
+                4,
+            ),
+            (
+                KeyboardConfig {
+                    disambiguate_escape_codes: false,
+                    report_event_types: false,
+                    report_alternate_keys: false,
+                    report_all_keys_as_escape_codes: true,
+                },
+                8,
+            ),
+        ] {
+            assert_eq!(config.to_flags().bits(), bit);
+            assert_eq!(KeyboardConfig::from_flags(bit).to_flags().bits(), bit);
+        }
+    }
 }

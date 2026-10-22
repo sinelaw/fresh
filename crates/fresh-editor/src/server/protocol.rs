@@ -21,7 +21,9 @@ use std::collections::HashMap;
 /// order they arrive in — `ClientHello::pair_token` on the control stream,
 /// and the same token at the start of the data stream (see
 /// `ipc::ServerListener::accept`).
-pub const PROTOCOL_VERSION: u32 = 5;
+/// v6: clients explicitly report returning from SIGTSTP before the daemon
+/// restores terminal modes; Resize alone is not a resume acknowledgement.
+pub const PROTOCOL_VERSION: u32 = 6;
 
 /// Terminal size in columns and rows
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -118,6 +120,18 @@ pub struct ServerHello {
     pub server_version: String,
     /// Daemon identifier (encoded working directory)
     pub session_id: String,
+    /// The kitty keyboard flags the server pushed on this client's terminal
+    /// (`CSI > <flags> u`, as the bits of crossterm's
+    /// `KeyboardEnhancementFlags`), or 0 when it pushed nothing.
+    ///
+    /// The client can only see its own settings, not the server's, so without
+    /// this it has to guess when suspending: pop unconditionally and it
+    /// unbalances the stack of a daemon whose flags are off, pop nothing and
+    /// the flags this client pushed are left behind. A daemon older than this
+    /// field sends none, which reads as 0 — it never pushed flags from this
+    /// client's connection either, so nothing needs popping.
+    #[serde(default)]
+    pub keyboard_flags: u8,
 }
 
 impl ServerHello {
@@ -126,7 +140,14 @@ impl ServerHello {
             protocol_version: PROTOCOL_VERSION,
             server_version: env!("CARGO_PKG_VERSION").to_string(),
             session_id,
+            keyboard_flags: 0,
         }
+    }
+
+    /// Report the keyboard flags this client's terminal was set up with.
+    pub fn with_keyboard_flags(mut self, keyboard_flags: u8) -> Self {
+        self.keyboard_flags = keyboard_flags;
+        self
     }
 }
 
@@ -165,6 +186,8 @@ impl VersionMismatch {
 pub enum ClientControl {
     /// Initial handshake
     Hello(ClientHello),
+    /// This client has returned from SIGTSTP and re-enabled raw mode.
+    Resumed,
     /// Terminal was resized
     Resize { cols: u16, rows: u16 },
     /// This terminal is a Linux console whose mouse the client forwards from
@@ -287,6 +310,26 @@ mod tests {
     fn test_client_hello_captures_protocol_version() {
         let hello = ClientHello::new(TermSize::new(80, 24));
         assert_eq!(hello.protocol_version, PROTOCOL_VERSION);
+    }
+
+    /// A daemon from before the field sends no `keyboard_flags`, and it has to
+    /// read as "pushed nothing": the client then pops nothing, which is what
+    /// that daemon needs, since it never pushed flags on this connection's
+    /// terminal either.
+    #[test]
+    fn a_hello_without_keyboard_flags_reads_as_nothing_pushed() {
+        let json = r#"{"protocol_version":1,"server_version":"0.5.3","session_id":"sess"}"#;
+        let hello: ServerHello = serde_json::from_str(json).unwrap();
+        assert_eq!(hello.keyboard_flags, 0);
+        assert_eq!(hello.protocol_version, 1);
+    }
+
+    #[test]
+    fn a_hello_carries_the_flags_the_server_pushed() {
+        let hello = ServerHello::new("sess".to_string()).with_keyboard_flags(0b1011);
+        let json = serde_json::to_string(&hello).unwrap();
+        let back: ServerHello = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.keyboard_flags, 0b1011);
     }
 
     #[test]

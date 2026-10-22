@@ -1884,4 +1884,212 @@ mod integration_tests {
         drop(socket_paths.cleanup());
         std::fs::remove_dir_all(&temp_dir).ok();
     }
+
+    /// An attaching client's terminal is set up with the kitty keyboard flags
+    /// direct mode pushes, inside the setup sequences (after entering the
+    /// alternate screen, before hiding the cursor). Without them the terminal
+    /// stays on the legacy encoding, where Ctrl+Shift+E is the same byte as
+    /// Ctrl+E.
+    #[test]
+    fn an_attaching_client_gets_the_kitty_keyboard_flags() {
+        use crate::server::editor_server::EditorServer;
+
+        let temp_dir = test_temp_dir("kitty-setup");
+        let name = unique_session_name("kitty-setup");
+        let config = editor_server_config(&temp_dir, &name, None);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handle = thread::spawn(move || {
+            let mut server = EditorServer::new(config).unwrap();
+            tx.send((server.socket_paths().clone(), server.shutdown_handle()))
+                .unwrap();
+            server.run()
+        });
+        let (paths, shutdown) = rx.recv().unwrap();
+        let conn = ClientConnection::connect(&paths).unwrap();
+        assert!(matches!(client_hello(&conn), ServerControl::Hello(_)));
+
+        // The setup sequences end by hiding the cursor.
+        let mut output = Vec::new();
+        read_until_contains(&conn, &mut output, "\x1b[?25l");
+        let output = String::from_utf8_lossy(&output).into_owned();
+        let (setup, _) = output.split_once("\x1b[?25l").unwrap();
+
+        shutdown.store(true, Ordering::SeqCst);
+        drop(handle.join());
+        drop(paths.cleanup());
+        assert!(setup.contains("\x1b[?1049h"), "{setup:?}");
+        // The default flags: DISAMBIGUATE_ESCAPE_CODES | REPORT_ALTERNATE_KEYS.
+        assert!(setup.contains("\x1b[>5u"), "kitty flags pushed: {setup:?}");
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    /// A suspended client's terminal is restored only after it says it has
+    /// resumed. A repaint another client causes, or a Resize the client queued
+    /// before it stopped, must not reach it first: its own teardown runs after
+    /// it gets SuspendClient and would undo a setup sent with such a frame.
+    /// Each resume restores the setup once, and a duplicate Resumed does not
+    /// push the kitty flags again.
+    #[test]
+    fn suspended_client_waits_for_explicit_resume() {
+        check_suspend_resume(false);
+    }
+
+    #[test]
+    fn suspended_client_with_keyboard_disabled_waits_for_explicit_resume() {
+        check_suspend_resume(true);
+    }
+
+    fn check_suspend_resume(keyboard_disabled: bool) {
+        use crate::server::editor_server::EditorServer;
+        use crate::server::ipc::ControlReader;
+        use crate::server::protocol::FileRequest;
+
+        const SETUP: &str = "\x1b[?1049h";
+        const PUSH: &str = "\x1b[>5u";
+
+        /// Wait, without a deadline, for the server to tell this client to
+        /// suspend. The read timeout only paces the loop.
+        fn wait_for_suspend(control: &mut ControlReader) {
+            loop {
+                match control.read_line_timeout(Duration::from_millis(100)) {
+                    Ok(Some(line)) => {
+                        if matches!(
+                            serde_json::from_str::<ServerControl>(&line),
+                            Ok(ServerControl::SuspendClient)
+                        ) {
+                            return;
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => panic!("control stream closed: {e}"),
+                }
+            }
+        }
+
+        let temp_dir = test_temp_dir("resume");
+        let name = unique_session_name("resume");
+        let mut config = editor_server_config(&temp_dir, &name, None);
+        config
+            .editor_config
+            .keybindings
+            .push(serde_json::from_str(r#"{"key":"F12","action":"suspend_process"}"#).unwrap());
+        if keyboard_disabled {
+            config
+                .editor_config
+                .editor
+                .keyboard_disambiguate_escape_codes = false;
+            config.editor_config.editor.keyboard_report_event_types = false;
+            config.editor_config.editor.keyboard_report_alternate_keys = false;
+            config
+                .editor_config
+                .editor
+                .keyboard_report_all_keys_as_escape_codes = false;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handle = thread::spawn(move || {
+            let mut server = EditorServer::new(config).unwrap();
+            tx.send((server.socket_paths().clone(), server.shutdown_handle()))
+                .unwrap();
+            server.run()
+        });
+        let (paths, shutdown) = rx.recv().unwrap();
+        let conn = ClientConnection::connect(&paths).unwrap();
+        assert!(matches!(client_hello(&conn), ServerControl::Hello(_)));
+        let mut output = Vec::new();
+        read_until_contains(&conn, &mut output, "\x1b[?25l");
+        let mut control = ControlReader::new(&conn.control);
+        let other = ClientConnection::connect(&paths).unwrap();
+        assert!(matches!(client_hello(&other), ServerControl::Hello(_)));
+        let mut other_output = Vec::new();
+
+        for round in 1..=2 {
+            // Suspend the first client (F12 is bound to suspend_process above).
+            conn.write_data(b"\x1b[24~").unwrap();
+            wait_for_suspend(&mut control);
+            let suspended_at = output.len();
+
+            // While it is suspended, the other client types two markers, and
+            // the suspended one queues a Resize in between. Each typed marker is
+            // read back from the other client, so the daemon has rendered and
+            // broadcast it before the next step. The daemon broadcasts one
+            // frame to everyone and each client's writer is first in, first
+            // out, so a frame leaked to the suspended client would arrive
+            // ahead of anything sent after Resumed.
+            let first = format!("kitty{round}first");
+            let second = format!("kitty{round}second");
+            other.write_data(first.as_bytes()).unwrap();
+            read_until_contains(&other, &mut other_output, &first);
+            conn.write_control(
+                &serde_json::to_string(&ClientControl::Resize { cols: 80, rows: 24 }).unwrap(),
+            )
+            .unwrap();
+            other.write_data(second.as_bytes()).unwrap();
+            read_until_contains(&other, &mut other_output, &second);
+
+            // Resumed: the setup and a full paint follow. That paint shows the
+            // two markers side by side; a leaked frame would have shown the
+            // first one on its own, earlier.
+            conn.write_control(&serde_json::to_string(&ClientControl::Resumed).unwrap())
+                .unwrap();
+            let both = format!("{first}{second}");
+            read_until_contains(&conn, &mut output, &both);
+            let restored = String::from_utf8_lossy(&output[suspended_at..]).into_owned();
+            let (before_paint, _) = restored.split_once(&both).unwrap();
+            assert!(
+                !before_paint.contains(&first),
+                "round {round}: a frame reached the client before Resumed: {restored:?}"
+            );
+            assert_eq!(
+                before_paint.matches(SETUP).count(),
+                1,
+                "round {round}: one setup per resume: {before_paint:?}"
+            );
+            assert_eq!(
+                before_paint.matches(PUSH).count(),
+                usize::from(!keyboard_disabled),
+                "round {round}: push only the configured flags: {before_paint:?}"
+            );
+
+            // A duplicate Resumed changes nothing. The OpenFiles after it is
+            // handled in order on the same control stream, so once its tab is
+            // painted, any setup the duplicate caused would already be here.
+            let opened_at = output.len();
+            let marker_file = format!("resumed-{round}.txt");
+            std::fs::write(temp_dir.join(&marker_file), "").unwrap();
+            conn.write_control(&serde_json::to_string(&ClientControl::Resumed).unwrap())
+                .unwrap();
+            conn.write_control(
+                &serde_json::to_string(&ClientControl::OpenFiles {
+                    files: vec![FileRequest {
+                        path: temp_dir.join(&marker_file).to_string_lossy().into_owned(),
+                        line: None,
+                        column: None,
+                        end_line: None,
+                        end_column: None,
+                        message: None,
+                    }],
+                    wait: false,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+            read_until_contains(&conn, &mut output, &marker_file);
+            let after = String::from_utf8_lossy(&output[opened_at..]).into_owned();
+            assert_eq!(
+                after.matches(SETUP).count(),
+                0,
+                "round {round}: a duplicate Resumed must not set up again: {after:?}"
+            );
+            assert_eq!(
+                after.matches(PUSH).count(),
+                0,
+                "round {round}: a duplicate Resumed must not push again: {after:?}"
+            );
+        }
+
+        shutdown.store(true, Ordering::SeqCst);
+        drop(handle.join());
+        drop(paths.cleanup());
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
 }
