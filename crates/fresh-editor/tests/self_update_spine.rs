@@ -211,9 +211,13 @@ fn serve(archive: Vec<u8>, asset: String, sha256_line: String) -> String {
 /// Run the installed binary exactly as a user would, pointed at the fake
 /// release. `extra` carries the mode flags under test.
 fn run_update(install: &Install, base: &str, extra: &[&str]) -> Output {
+    run_update_via(install, base, &["--cmd", "update"], extra)
+}
+
+/// [`run_update`], spelled with `entry` instead of `--cmd update`.
+fn run_update_via(install: &Install, base: &str, entry: &[&str], extra: &[&str]) -> Output {
     let mut cmd = Command::new(&install.exe);
-    cmd.arg("--cmd")
-        .arg("update")
+    cmd.args(entry)
         .arg("--releases-url")
         .arg(format!("{base}/releases/latest"))
         .arg("--download-base")
@@ -359,6 +363,16 @@ fn fresh_updates_itself_in_place() {
     assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "updated-ok");
 }
 
+/// `fresh --update` is `fresh --cmd update`, flags and all.
+#[test]
+fn the_update_flag_is_the_update_command() {
+    let (install, base) = ready(true);
+
+    let out = run_update_via(&install, &base, &["--update"], &["--yes"]);
+    assert!(out.status.success(), "{}", report("--update failed", &out));
+    assert_eq!(std::fs::read(&install.exe).unwrap(), NEW_BINARY);
+}
+
 /// The same update, resolved the way every real install resolves it: through
 /// the `releases/latest` redirect rather than the API feed.
 ///
@@ -488,6 +502,15 @@ fn without_yes_it_describes_the_swap_and_stops() {
         report("expected ActionRequired without --yes", &out)
     );
     assert_eq!(std::fs::read(&install.exe).unwrap(), before);
+    // With no terminal to prompt on, it must say that nothing happened and how
+    // to make it happen — the description alone read as a finished update.
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("NOT UPDATED"), "{}", report("no NOT UPDATED", &out));
+    assert!(
+        stdout.contains("--yes"),
+        "{}",
+        report("no hint to rerun with --yes", &out)
+    );
 }
 
 /// Fail-closed: a checksum that does not match must abort and leave the

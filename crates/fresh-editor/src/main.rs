@@ -56,6 +56,17 @@ struct Cli {
     #[arg(long, num_args = 1.., value_name = "COMMAND", allow_hyphen_values = true)]
     cmd: Vec<String>,
 
+    /// Update fresh to the latest release; same as `--cmd update`, and takes
+    /// the same flags (`fresh --update --yes`, `fresh --update --check`)
+    #[arg(
+        long,
+        num_args = 0..,
+        value_name = "FLAGS",
+        allow_hyphen_values = true,
+        conflicts_with_all = ["cmd", "files"]
+    )]
+    update: Option<Vec<String>>,
+
     /// Print the guide for driving this editor from a shell
     /// The one entry point an agent needs; defaults to the scripting guide.
     /// `require_equals` keeps a bare `--skill` from swallowing the argument
@@ -281,7 +292,12 @@ struct Args {
 }
 
 impl From<Cli> for Args {
-    fn from(cli: Cli) -> Self {
+    fn from(mut cli: Cli) -> Self {
+        // `--update [FLAGS]` is `--cmd update [FLAGS]`.
+        if let Some(flags) = cli.update.take() {
+            cli.cmd = std::iter::once("update".to_string()).chain(flags).collect();
+        }
+
         // Check for grammar list command before the main tuple parsing
         let list_grammars = if !cli.cmd.is_empty() {
             let cmd_args: Vec<&str> = cli.cmd.iter().map(|s| s.as_str()).collect();
@@ -294,6 +310,7 @@ impl From<Cli> for Args {
         };
 
         // `fresh --cmd update [--check] [--yes] [--allow-downgrade] [--force]
+        //  (or `fresh --update ...`)
         //                     [--print-command] [--skip-attestation]
         //                     [--releases-url U] [--download-base U]`
         let update = cli.cmd.first().map(String::as_str) == Some("update");
@@ -6966,7 +6983,7 @@ fn real_main() -> AnyhowResult<()> {
                 fresh::services::release_checker::UpdateKind::SelfContained
                     | fresh::services::release_checker::UpdateKind::DownloadPackage
             ) {
-                eprintln!("Update with: fresh --cmd update");
+                eprintln!("Update with: fresh --update");
             } else {
                 eprintln!(
                     "Download from: https://github.com/sinelaw/fresh/releases/tag/v{}",
