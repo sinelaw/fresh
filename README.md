@@ -65,7 +65,7 @@ Quick install:
 
 On Linux this installs the **universal build**: one statically linked binary
 that runs on every distro, unpacked under `~/.local`, owned by you. It needs no
-root, and it updates itself — `fresh --cmd update`, or the update prompt in the
+root, and it updates itself — `fresh --update`, or the update prompt in the
 editor. On macOS it uses Homebrew.
 
 Prefer your distro's package manager? Ask for it explicitly:
@@ -116,7 +116,7 @@ symlinks `~/.local/bin/fresh`; set `FRESH_INSTALL_DIR` / `FRESH_BIN_DIR` to put
 them elsewhere. Ensure `~/.local/bin` is in your `PATH`.
 
 Because nothing else owns these files, this is the one Linux install that can
-replace itself: `fresh --cmd update` downloads the next release, verifies it
+replace itself: `fresh --update` downloads the next release, verifies it
 against both its published checksum and GitHub's release attestation, and swaps
 the binary in place.
 
