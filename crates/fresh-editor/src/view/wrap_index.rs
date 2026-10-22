@@ -103,6 +103,11 @@ pub struct IndexDecorations {
     /// closure over a side list, which left the snapshot incomplete and the
     /// virtual half undiffable.
     pub virtual_lines: Vec<usize>,
+    /// The anchors in `virtual_lines` of lines drawn *above* their line (a
+    /// table row's `├─┼─┤`), sorted. The rest are drawn below it (a list
+    /// item's spacer), and the index orders a line's rows the way they are
+    /// drawn: rows above, the text, rows below.
+    pub virtual_lines_above: Vec<usize>,
 }
 
 impl IndexDecorations {
@@ -118,6 +123,13 @@ impl IndexDecorations {
     pub fn virtual_rows_in(&self, start: usize, end: usize) -> u32 {
         let lo = self.virtual_lines.partition_point(|p| *p < start);
         let hi = self.virtual_lines.partition_point(|p| *p < end);
+        (hi - lo) as u32
+    }
+
+    /// Virtual lines anchored in `start..end` that are drawn above their line.
+    pub fn virtual_rows_above_in(&self, start: usize, end: usize) -> u32 {
+        let lo = self.virtual_lines_above.partition_point(|p| *p < start);
+        let hi = self.virtual_lines_above.partition_point(|p| *p < end);
         (hi - lo) as u32
     }
 
@@ -183,6 +195,9 @@ impl IndexDecorations {
         for p in &mut self.virtual_lines {
             *p = shift(*p);
         }
+        for p in &mut self.virtual_lines_above {
+            *p = shift(*p);
+        }
         for h in &mut self.inline_hints {
             // A left-gravity hint anchored exactly at the insertion point
             // stays put, matching what the marker tree does to the live
@@ -246,6 +261,15 @@ impl IndexDecorations {
         diff_sorted(
             &self.virtual_lines,
             &new.virtual_lines,
+            |p| *p,
+            |a, b| a == b,
+            &mut |p: &usize| ranges.push(*p..*p + 1),
+        );
+        // A line moving from below its anchor to above it keeps its anchor,
+        // so the side is diffed on its own.
+        diff_sorted(
+            &self.virtual_lines_above,
+            &new.virtual_lines_above,
             |p| *p,
             |a, b| a == b,
             &mut |p: &usize| ranges.push(*p..*p + 1),
@@ -382,6 +406,9 @@ pub struct LineWrap {
     pub resumable: Vec<bool>,
     /// Plugin virtual lines anchored in this logical line.
     pub virtual_rows: u32,
+    /// How many of `virtual_rows` are drawn above the line's text; the rest
+    /// are drawn below it. Rows are ordered as drawn.
+    pub virtual_above: u32,
     /// Every byte of this line is inside a collapsed fold, so it draws nothing
     /// and occupies no visual row.
     pub hidden: bool,
@@ -394,6 +421,7 @@ impl Default for LineWrap {
             carries: vec![RowCarry::default()],
             resumable: vec![true],
             virtual_rows: 0,
+            virtual_above: 0,
             hidden: false,
         }
     }
@@ -752,7 +780,7 @@ impl WrapIndex {
             .row_starts
             .partition_point(|&s| s <= rel)
             .saturating_sub(1);
-        self.rows.prefix(line) + lw.virtual_rows + row_in_line as u32
+        self.rows.prefix(line) + lw.virtual_above + row_in_line as u32
     }
 
     /// Address of absolute visual row `row`. O(log lines).
@@ -774,7 +802,7 @@ impl WrapIndex {
         let lw = &self.lines[line];
         let line_start = buffer.line_start_offset(line).unwrap_or(0);
         let row_in_line = row.saturating_sub(base);
-        if row_in_line < lw.virtual_rows {
+        if row_in_line < lw.virtual_above {
             return RowAddr {
                 row,
                 byte: line_start,
@@ -784,13 +812,25 @@ impl WrapIndex {
                 is_virtual: true,
             };
         }
-        let idx = ((row_in_line - lw.virtual_rows) as usize).min(lw.row_starts.len() - 1);
+        let idx = (row_in_line - lw.virtual_above) as usize;
+        if idx >= lw.row_starts.len() {
+            // One of the rows drawn below the line's text.
+            let last = lw.row_starts.len() - 1;
+            return RowAddr {
+                row,
+                byte: line_start + lw.row_starts[last] as usize,
+                line,
+                row_in_line: row_in_line as usize,
+                carry: RowCarry::default(),
+                is_virtual: true,
+            };
+        }
         RowAddr {
             row,
             byte: line_start + lw.row_starts[idx] as usize,
             line,
             // Drawn-row offset, not `idx`: the virtual rows above are drawn too.
-            row_in_line: idx + lw.virtual_rows as usize,
+            row_in_line: row_in_line as usize,
             carry: lw.carries[idx],
             is_virtual: false,
         }
@@ -815,11 +855,11 @@ impl WrapIndex {
         // but `resumable` is indexed by wrap row. A non-virtual address is
         // always at or past the virtual block, so the subtraction is safe; the
         // walk-back distance is the same in both spaces.
-        let mut idx = addr.row_in_line.saturating_sub(lw.virtual_rows as usize);
+        let mut idx = addr.row_in_line.saturating_sub(lw.virtual_above as usize);
         while idx > 0 && !lw.resumable[idx] {
             idx -= 1;
         }
-        let skip = (addr.row_in_line.saturating_sub(lw.virtual_rows as usize) - idx) as u32;
+        let skip = (addr.row_in_line.saturating_sub(lw.virtual_above as usize) - idx) as u32;
         (row - skip, skip)
     }
 
@@ -1116,6 +1156,7 @@ impl WrapIndex {
         lw.carries = carries;
         lw.resumable = resumable;
         lw.virtual_rows = vrows;
+        lw.virtual_above = self.decorations.virtual_rows_above_in(line_start, line_end);
         lw.hidden = hidden;
         let new_total = lw.total_rows();
         self.rows.set(line, old_total, new_total);
@@ -1297,6 +1338,7 @@ fn try_build_line_flat(
         carries: vec![RowCarry::default()],
         resumable: vec![true],
         virtual_rows,
+        virtual_above: decorations.virtual_rows_above_in(line_start, line_end),
         hidden: false,
     })
 }
@@ -1322,6 +1364,7 @@ fn build_line(
         carries,
         resumable,
         virtual_rows,
+        virtual_above: decorations.virtual_rows_above_in(line_start, line_end),
         hidden: decorations.line_is_hidden(line_start, line_end),
     }
 }

@@ -9,6 +9,7 @@
 use anyhow::Result as AnyhowResult;
 
 use crate::model::event::{BufferId, LeafId};
+use crate::view::line_wrap_cache::CacheViewMode;
 
 impl crate::app::window::Window {
     /// Fire the `mouse_scroll` plugin hook — plugins can react to the
@@ -190,6 +191,13 @@ impl crate::app::window::Window {
             .get(&split_id)
             .map(|vs| vs.buffer_tab_state().viewport.line_wrap_enabled)
             .unwrap_or(false);
+        // The rows this pane draws: a composing pane counts compose's frame
+        // lines and soft breaks, a source pane beside it does not.
+        let view_mode = self
+            .split_view_states()
+            .get(&split_id)
+            .map(|vs| CacheViewMode::of(&vs.buffer_tab_state().view_mode))
+            .unwrap_or(CacheViewMode::Source);
 
         // Effective wrap width / gutter for scroll math.  Must match
         // what the renderer uses or `max_scroll_row` ends up wrong on
@@ -248,6 +256,7 @@ impl crate::app::window::Window {
                         grid_cols,
                         pipeline_inputs_ver,
                         fold_ranges.clone(),
+                        view_mode,
                     )
                 } else {
                     // Small file without line wrap: thumb follows mouse
@@ -354,6 +363,7 @@ impl crate::app::window::Window {
                 .viewport
                 .set_skip_ensure_visible();
         }
+        self.scroll_sync_driver = Some(split_id);
 
         Ok(())
     }
@@ -408,6 +418,13 @@ impl crate::app::window::Window {
             .get(&split_id)
             .map(|vs| vs.buffer_tab_state().viewport.line_wrap_enabled)
             .unwrap_or(false);
+        // The rows this pane draws: a composing pane counts compose's frame
+        // lines and soft breaks, a source pane beside it does not.
+        let view_mode = self
+            .split_view_states()
+            .get(&split_id)
+            .map(|vs| CacheViewMode::of(&vs.buffer_tab_state().view_mode))
+            .unwrap_or(CacheViewMode::Source);
 
         let gutter_width = self.buffers.get(&buffer_id).map_or(0, |state| {
             crate::view::viewport::gutter_width(&state.buffer)
@@ -455,6 +472,7 @@ impl crate::app::window::Window {
                         grid_cols,
                         pipeline_inputs_ver,
                         fold_ranges.clone(),
+                        view_mode,
                     )
                 } else {
                     // Small file without line wrap: use line-based calculation for precision
@@ -536,6 +554,7 @@ impl crate::app::window::Window {
                 .viewport
                 .set_skip_ensure_visible();
         }
+        self.scroll_sync_driver = Some(split_id);
 
         Ok(())
     }

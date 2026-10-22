@@ -379,6 +379,13 @@ impl BufferViewState {
         }
     }
 
+    /// Whether this view is in page view (compose mode), which is what decides
+    /// whether compose's decorations — soft breaks, `composeOnly` lines — are
+    /// drawn in it, and so whether its scroll math counts them.
+    pub fn is_page_view(&self) -> bool {
+        self.view_mode == ViewMode::PageView
+    }
+
     /// Whether this view takes part in horizontal scroll sync: gives its
     /// column to, and takes one from, the panes it is scroll-synced with.
     ///

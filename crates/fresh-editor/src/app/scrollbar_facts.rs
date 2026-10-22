@@ -84,6 +84,7 @@ impl Editor {
                     let (total_lines, top_line, basis) = scrollbar_line_counts(
                         state,
                         &bvs.viewport,
+                        crate::view::line_wrap_cache::CacheViewMode::of(&bvs.view_mode),
                         threshold,
                         buffer_len,
                         fold_ranges,
