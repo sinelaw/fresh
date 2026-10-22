@@ -237,6 +237,30 @@ else
     fail "offline path does not mention the network"
 fi
 
+# --- The nix method must install the nixpkgs package, not the flake: the flake
+# --- has no binary cache, so it compiles the whole toolchain from source, while
+# --- nixpkgs is served from cache.nixos.org. The shim is added only now so the
+# --- fallback runs above stay nix-free, as the header comment promises. ---
+cat > "$BINDIR/nix" <<EOF
+#!/bin/sh
+echo "\$*" >> "$WORK/nix.log"
+exit 0
+EOF
+chmod +x "$BINDIR/nix"
+: > "$WORK/nix.log"
+OUT="$(run_install nix-method --method=nix)"
+assert_ran "nix method" "$OUT"
+if grep -q 'profile install nixpkgs#fresh-editor' "$WORK/nix.log"; then
+    pass "nix method installs nixpkgs#fresh-editor"
+else
+    fail "nix method did not install nixpkgs#fresh-editor: $(cat "$WORK/nix.log")"
+fi
+if grep -q 'github:sinelaw/fresh' "$WORK/nix.log"; then
+    fail "nix method still installs the flake"
+else
+    pass "nix method does not build the flake"
+fi
+
 echo
 if [ "$FAILED" -eq 0 ]; then
     echo "all checks passed"
