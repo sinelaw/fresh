@@ -7078,6 +7078,9 @@ fn run_event_loop(
         fresh_winterm::MouseMode::CellMotion
     };
     fresh_winterm::enable_mouse_tracking(mouse_mode)?;
+    // Keys as KEY_EVENT records, so ConPTY's VT encoding cannot drop their
+    // modifiers (Ctrl+Tab arriving as Tab).
+    fresh_winterm::enable_win32_input_mode()?;
 
     // Spawn a dedicated reader thread to drain the console buffer as fast
     // as possible. This prevents the Windows console from dropping bytes
@@ -7148,7 +7151,8 @@ fn run_event_loop(
         },
     );
 
-    // Restore mouse tracking and console mode on exit
+    // Restore win32-input-mode, mouse tracking and console mode on exit
+    let _ = fresh_winterm::disable_win32_input_mode();
     let _ = fresh_winterm::disable_mouse_tracking();
     let _ = fresh_winterm::restore_console_mode(old_console_mode);
 
