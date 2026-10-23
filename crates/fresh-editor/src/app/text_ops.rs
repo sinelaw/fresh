@@ -166,12 +166,13 @@ impl Editor {
                 .visual_line_end(split_id, cursor_pos, false)
                 .unwrap_or(visual_start);
             let visual_len = visual_end.saturating_sub(visual_start);
+            // Byte offsets, as in the physical-line path: the visual row's
+            // length and the result are both byte positions.
             content
-                .chars()
-                .take(visual_len)
-                .take_while(|c| *c != '\n')
-                .position(|c| !c.is_whitespace())
-                .map(|offset| visual_start + offset)
+                .char_indices()
+                .take_while(|(offset, c)| *offset < visual_len && *c != '\n')
+                .find(|(_, c)| !c.is_whitespace())
+                .map(|(offset, _)| visual_start + offset)
                 .unwrap_or(visual_start)
         } else {
             visual_start
