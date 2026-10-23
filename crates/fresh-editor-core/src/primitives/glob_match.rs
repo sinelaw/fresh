@@ -92,6 +92,22 @@ pub fn matches_any_entry(patterns: &[String], path: &Path) -> bool {
         .any(|p| literal_entry_matches(p, &filename) || glob_entry_matches(p, &path_str, &filename))
 }
 
+/// Length in bytes of the UTF-8 character that starts with `lead`.
+///
+/// Globs are matched on the bytes of a `&str`, so `?` and the backtracking
+/// of `*` have to step over a whole character, not a single byte: `?` is one
+/// character, and a step that lands inside a multi-byte character would let
+/// `?` match a lone continuation byte.
+#[inline]
+fn utf8_char_len(lead: u8) -> usize {
+    match lead {
+        0xF0..=0xFF => 4,
+        0xE0..=0xEF => 3,
+        0xC0..=0xDF => 2,
+        _ => 1,
+    }
+}
+
 /// Iterative glob matching on byte slices using a backtracking algorithm.
 /// Used for filename matching where `*` matches any character.
 fn glob_match_bytes(pattern: &[u8], text: &[u8]) -> bool {
@@ -102,7 +118,10 @@ fn glob_match_bytes(pattern: &[u8], text: &[u8]) -> bool {
     let mut star_t = 0;
 
     while t < text.len() {
-        if p < pattern.len() && (pattern[p] == b'?' || pattern[p] == text[t]) {
+        if p < pattern.len() && pattern[p] == b'?' {
+            p += 1;
+            t += utf8_char_len(text[t]);
+        } else if p < pattern.len() && pattern[p] == text[t] {
             p += 1;
             t += 1;
         } else if p < pattern.len() && pattern[p] == b'*' {
@@ -112,7 +131,7 @@ fn glob_match_bytes(pattern: &[u8], text: &[u8]) -> bool {
         } else if star_p != usize::MAX {
             // Backtrack: consume one more char with the last `*`
             p = star_p + 1;
-            star_t += 1;
+            star_t += utf8_char_len(text[star_t]);
             t = star_t;
         } else {
             return false;
@@ -195,7 +214,7 @@ fn path_glob_match_bytes(pattern: &[u8], text: &[u8]) -> bool {
         // Check for `?` (matches one non-separator character)
         if p < pattern.len() && pattern[p] == b'?' && !is_path_sep(text[t]) {
             p += 1;
-            t += 1;
+            t += utf8_char_len(text[t]);
             continue;
         }
 
@@ -209,7 +228,7 @@ fn path_glob_match_bytes(pattern: &[u8], text: &[u8]) -> bool {
         // Mismatch — try backtracking to single `*` first (if it won't cross a separator)
         if let Some(sp) = star_p {
             if !is_path_sep(text[star_t]) {
-                star_t += 1;
+                star_t += utf8_char_len(text[star_t]);
                 t = star_t;
                 p = sp;
                 continue;
@@ -219,7 +238,7 @@ fn path_glob_match_bytes(pattern: &[u8], text: &[u8]) -> bool {
 
         // Backtrack to `**` (can cross anything including separators)
         if let Some(dp) = dstar_p {
-            dstar_t += 1;
+            dstar_t += utf8_char_len(text[dstar_t]);
             t = dstar_t;
             p = dp;
             star_p = None;
@@ -458,5 +477,29 @@ mod tests {
         // `?` should not match `\`
         assert!(path_glob_matches("C:\\etc\\rc.?", "C:\\etc\\rc.d"));
         assert!(!path_glob_matches("C:\\etc\\?", "C:\\etc\\ab"));
+    }
+
+    #[test]
+    fn test_question_mark_matches_one_multibyte_character() {
+        assert!(filename_glob_matches("caf?.txt", "café.txt"));
+        assert!(filename_glob_matches("?.md", "日.md"));
+        assert!(filename_glob_matches("a?c", "a😀c"));
+        assert!(!filename_glob_matches("caf?.txt", "caf.txt"));
+        // Two question marks are two characters, not the two bytes of one.
+        assert!(!filename_glob_matches("caf??.txt", "café.txt"));
+        assert!(filename_glob_matches("caf??.txt", "cafés.txt"));
+        // A star in front must not let `?` land inside a character either.
+        assert!(!filename_glob_matches("*??", "é"));
+        assert!(filename_glob_matches("*?", "é"));
+    }
+
+    #[test]
+    fn test_path_question_mark_matches_one_multibyte_character() {
+        assert!(path_glob_matches("/docs/caf?.md", "/docs/café.md"));
+        assert!(path_glob_matches("/docs/?/readme", "/docs/日/readme"));
+        assert!(!path_glob_matches("/docs/caf??.md", "/docs/café.md"));
+        assert!(!path_glob_matches("/docs/?", "/docs/é/x"));
+        assert!(!path_glob_matches("/docs/**/??", "/docs/a/é"));
+        assert!(path_glob_matches("/docs/**/?", "/docs/a/é"));
     }
 }
