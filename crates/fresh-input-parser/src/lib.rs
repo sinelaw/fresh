@@ -858,12 +858,14 @@ impl InputParser {
                     tracing::trace!("InputParser: unrecognised CSI {:?} M/m, dropping", params);
                 }
             }
-            // Shift+Tab. The event type still rides in the modifier field for
-            // emulators that send one here, so decode it the same way; the
-            // modifiers are fixed because the key *is* the shifted Tab.
+            // Shift+Tab. The key *is* the shifted Tab, so SHIFT is always set,
+            // but the modifier field still says what else was held: WezTerm
+            // sends Ctrl+Shift+Tab as `CSI 1 ; 5 Z` when the kitty protocol is
+            // off. Dropping that field made Ctrl+Shift+Tab plain Shift+Tab. The
+            // event type rides in the same field for emulators that send one.
             b'Z' => out.push(Event::key(KeyEvent::new_with_kind(
                 KeyCode::BackTab,
-                KeyModifiers::SHIFT,
+                modifiers_of(&params) | KeyModifiers::SHIFT,
                 kind_of(&params),
             ))),
             b'I' => out.push(Event::FocusGained),
