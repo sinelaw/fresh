@@ -293,9 +293,20 @@ pub(crate) fn place_pane(
             false
         }
     } else {
-        // Beyond the size ceilings with no index built: the byte-oriented
-        // pass is the only vertical authority there is.
-        viewport.row_pass_owns_placement = false;
+        // Beyond the size ceilings with no index built. An unwrapped pane's
+        // rows need no index: they are its lines and its virtual lines, so
+        // with virtual lines to count (a comparison's fillers) they are
+        // placed here, in rows. Otherwise the byte-oriented pass is
+        // the only vertical authority there is; it counts lines, and with a
+        // filler block under the cursor's line it scrolled the line it was
+        // bringing into view back off the screen.
+        viewport.row_pass_owns_placement = indexable
+            && !line_wrap
+            && folds.is_empty()
+            && crate::view::flat_rows::FlatRows::new(state, *view_mode == ViewMode::PageView)
+                .filter(|rows| rows.has_virtual_lines())
+                .map(|rows| viewport.ensure_visible_in_flat_rows(&rows, &state.buffer, cursor_byte))
+                .is_some();
         false
     };
 

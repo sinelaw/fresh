@@ -131,6 +131,9 @@ impl crate::app::window::Window {
             {
                 continue;
             }
+            if !same_buffer && self.sync_flat_rows(group_id, active_split, other_leaf) {
+                continue;
+            }
             // `target_line` is 0-based, like the anchors and
             // `get_line_number`; `Viewport::scroll_to` counts from 1.
             // Passed as-is, the partner sat one line above the line the
@@ -324,6 +327,101 @@ impl crate::app::window::Window {
         true
     }
 
+    /// Sync a group whose panes show two different buffers, both unwrapped
+    /// (a comparison), in screen rows. Returns `false` when either pane isn't
+    /// laid out that way (wrapping, folds, large-file mode), leaving the
+    /// caller's line mapping to do it.
+    ///
+    /// Lines are not enough: the filler rows that keep a comparison's matching
+    /// lines level are virtual lines, rows that belong to no line of their own.
+    /// Synced by line, a pane scrolled into the fillers left its partner
+    /// standing at the edge of the change, and a pane scrolled through a long
+    /// change carried its partner on past it, into lines that don't match.
+    ///
+    /// An anchor pairs the rows its two lines' text is drawn on; from the last
+    /// anchor at or above the active pane's top, the partner moves row for row
+    /// (with no anchor above, from the top of both). Fillers that keep the
+    /// panes level make that the same row in both.
+    fn sync_flat_rows(
+        &mut self,
+        group_id: crate::view::scroll_sync::ScrollSyncGroupId,
+        active: LeafId,
+        other: LeafId,
+    ) -> bool {
+        use crate::view::flat_rows::FlatRows;
+        let Some(group) = self.scroll_sync_manager.get_group_mut(group_id) else {
+            return false;
+        };
+        let left_is_active = group.is_left_split(active.into());
+        let anchors: Vec<(usize, usize)> = group
+            .anchors
+            .iter()
+            .map(|a| {
+                if left_is_active {
+                    (a.left_line, a.right_line)
+                } else {
+                    (a.right_line, a.left_line)
+                }
+            })
+            .collect();
+        // A pane's rows, its top row and its height.
+        let pane = |window: &mut Self, leaf: LeafId| -> Option<(FlatRows, usize, usize)> {
+            let buffer_id = window
+                .buffers
+                .split_view_states()?
+                .get(&leaf)?
+                .shown_buffer()?;
+            window
+                .buffers
+                .with_buffer_and_split(buffer_id, leaf, |state, vs| {
+                    if vs.viewport.line_wrap_enabled || !vs.folds.is_empty() {
+                        return None;
+                    }
+                    let rows = FlatRows::new(state, vs.is_page_view())?;
+                    let top_line = state.buffer.get_line_number(vs.viewport.top_byte());
+                    let top = rows.first_row(top_line) + vs.viewport.top_view_line_offset();
+                    Some((rows, top, vs.viewport.visible_line_count()))
+                })
+                .flatten()
+        };
+        let (Some((a_rows, a_top, _)), Some((o_rows, _, o_height))) =
+            (pane(self, active), pane(self, other))
+        else {
+            return false;
+        };
+        let (from, to) = anchors
+            .iter()
+            .map(|(a, o)| (a_rows.text_row(*a), o_rows.text_row(*o)))
+            .rfind(|(a, _)| *a <= a_top)
+            .unwrap_or((0, 0));
+        let target = (to + (a_top - from)).min(o_rows.max_top(o_height));
+        let (line, offset) = o_rows.locate(target);
+        let Some(buffer_id) = self
+            .buffers
+            .split_view_states()
+            .and_then(|vs_map| vs_map.get(&other))
+            .and_then(|vs| vs.shown_buffer())
+        else {
+            return false;
+        };
+        let line_start = self
+            .buffers
+            .get(&buffer_id)
+            .and_then(|state| state.buffer.line_start_offset(line))
+            .unwrap_or(0);
+        if let Some(vs) = self
+            .buffers
+            .split_view_states_mut()
+            .and_then(|vs_map| vs_map.get_mut(&other))
+        {
+            let viewport = &mut vs.buffer_tab_state_mut().viewport;
+            viewport.set_top_byte(line_start);
+            viewport.set_top_view_line_offset(offset);
+            viewport.set_skip_ensure_visible();
+        }
+        true
+    }
+
     /// `leaf`'s rows as the frame will lay them out: the wrap index for its
     /// geometry (built here if stale, as the frame's reconcile would), and its
     /// top row, height and furthest top row in that index. `None` beyond the
@@ -507,7 +605,33 @@ impl crate::app::window::Window {
                 .and_then(|vs_map| vs_map.get(&active_split))
                 .and_then(|vs| vs.shown_buffer());
             if let Some(buffer_id) = buffer_id {
-                self.ensure_cursor_visible_for_split(buffer_id, active_split);
+                // An unwrapped pane with virtual lines (a comparison's
+                // fillers) is placed in rows, as the frame will place it.
+                // Placed by line here and in rows by the frame, a pane with
+                // filler rows above the cursor came out short of where the
+                // frame then put it, and its partner, synced to the first
+                // answer, sat a row out of step.
+                let placed_in_rows = self
+                    .buffers
+                    .with_buffer_and_split(buffer_id, active_split, |state, vs| {
+                        if vs.viewport.line_wrap_enabled || !vs.folds.is_empty() {
+                            return false;
+                        }
+                        let Some(rows) =
+                            crate::view::flat_rows::FlatRows::new(state, vs.is_page_view())
+                                .filter(|rows| rows.has_virtual_lines())
+                        else {
+                            return false;
+                        };
+                        let cursor = vs.cursors.primary().position;
+                        vs.viewport
+                            .ensure_visible_in_flat_rows(&rows, &state.buffer, cursor);
+                        true
+                    })
+                    .unwrap_or(false);
+                if !placed_in_rows {
+                    self.ensure_cursor_visible_for_split(buffer_id, active_split);
+                }
             }
 
             let active_sid: SplitId = active_split.into();

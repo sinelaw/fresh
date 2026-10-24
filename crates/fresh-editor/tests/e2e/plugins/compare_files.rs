@@ -337,6 +337,153 @@ fn the_line_after_a_one_sided_change_is_level_at_the_top() {
         .unwrap();
 }
 
+/// `rows` lines `row 001`… on the left; the right has `inserted` extra lines
+/// after `row 050`. The left's filler rows for them hang below its `row 050`.
+fn with_inserted_block(rows: usize, inserted: usize) -> (String, String) {
+    with_inserted_block_after(rows, 50, inserted)
+}
+
+fn with_inserted_block_after(rows: usize, after: usize, inserted: usize) -> (String, String) {
+    let left: Vec<String> = (1..=rows).map(|i| format!("row {i:03}")).collect();
+    let mut right = left.clone();
+    for k in 0..inserted {
+        right.insert(after + k, format!("inserted {k}"));
+    }
+    (left.join("\n") + "\n", right.join("\n") + "\n")
+}
+
+/// Every `row NNN` line on screen is on the same row in both panels.
+fn all_rows_level(h: &EditorTestHarness) -> bool {
+    let screen = h.screen_to_string();
+    let mut labels: Vec<&str> = screen
+        .lines()
+        .flat_map(|line| {
+            line.match_indices("row ")
+                .filter_map(|(i, _)| line.get(i..i + 7))
+        })
+        .collect();
+    labels.sort_unstable();
+    labels.dedup();
+    labels.iter().all(|label| level(h, label))
+}
+
+/// The wheel over the side that has no lines for a change scrolls through
+/// the filler rows standing in for them, row by row, with the other side
+/// showing the change's lines beside them. It used to step over the whole
+/// filler block in one notch, the other side jumping past the change.
+#[test]
+fn the_wheel_scrolls_through_filler_rows() {
+    let (left, right) = with_inserted_block(120, 40);
+    let Compare { mut h, _tmp, .. } = compare_sized(left.as_bytes(), right.as_bytes(), 120, 24);
+    h.wait_until(|h| status_has(h, "Compare: 1 difference(s)"))
+        .unwrap();
+    h.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    h.wait_until(|h| row_of(h, "row 001") == Some(2)).unwrap();
+
+    let mut saw_middle_of_change = false;
+    while !(level(&h, "row 080") && row_of(&h, "row 080").is_some_and(|r| r < 10)) {
+        // Over the left panel.
+        h.mouse_scroll_down(10, 10).unwrap();
+        assert!(
+            all_rows_level(&h),
+            "panels out of step:\n{}",
+            h.screen_to_string()
+        );
+        saw_middle_of_change |= row_of(&h, "inserted 20").is_some();
+    }
+    assert!(
+        saw_middle_of_change,
+        "never showed the middle of the change"
+    );
+}
+
+/// The wheel over the side that has the change's lines keeps the other side
+/// level: its filler rows go by beside them, and the lines after the change
+/// arrive on the same row in both. The other side used to stop at the edge
+/// of the change, showing the lines after it beside lines that don't match.
+#[test]
+fn the_wheel_through_a_change_keeps_the_other_side_level() {
+    let (left, right) = with_inserted_block(120, 40);
+    let Compare { mut h, _tmp, .. } = compare_sized(left.as_bytes(), right.as_bytes(), 120, 24);
+    h.wait_until(|h| status_has(h, "Compare: 1 difference(s)"))
+        .unwrap();
+    h.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    h.wait_until(|h| row_of(h, "row 001") == Some(2)).unwrap();
+
+    while !(level(&h, "row 080") && row_of(&h, "row 080").is_some_and(|r| r < 10)) {
+        // Over the right panel.
+        h.mouse_scroll_down(90, 10).unwrap();
+        assert!(
+            all_rows_level(&h),
+            "panels out of step:\n{}",
+            h.screen_to_string()
+        );
+    }
+    while row_of(&h, "row 001").is_none() {
+        h.mouse_scroll_up(90, 10).unwrap();
+        assert!(
+            all_rows_level(&h),
+            "panels out of step:\n{}",
+            h.screen_to_string()
+        );
+    }
+}
+
+/// Moving the cursor past a block of filler rows scrolls the panels
+/// together: the line it lands on is level in both, in the frame the key
+/// draws. The pane with the cursor was first placed counting lines, then
+/// re-placed in rows after its partner had been synced to the first answer,
+/// leaving the two a row apart.
+#[test]
+fn the_cursor_past_filler_rows_keeps_the_panels_level() {
+    let (left, right) = with_inserted_block(120, 40);
+    let Compare { mut h, _tmp, .. } = compare_sized(left.as_bytes(), right.as_bytes(), 120, 24);
+    h.wait_until(|h| status_has(h, "Compare: 1 difference(s)"))
+        .unwrap();
+    h.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    h.wait_until(|h| row_of(h, "row 001") == Some(2)).unwrap();
+
+    for _ in 0..60 {
+        h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        assert!(
+            all_rows_level(&h),
+            "panels out of step:\n{}",
+            h.screen_to_string()
+        );
+    }
+    assert!(
+        level(&h, "row 061"),
+        "the cursor's line:\n{}",
+        h.screen_to_string()
+    );
+}
+
+/// The same past the size where the editor stops indexing a file's rows:
+/// the cursor's line, just past a block of filler rows, is on screen. Placed
+/// by counting lines, the pane scrolled it off the bottom again.
+#[test]
+fn the_cursor_past_filler_rows_stays_on_screen_in_a_long_file() {
+    let (left, right) = with_inserted_block_after(6_000, 5_950, 40);
+    let Compare { mut h, _tmp, .. } = compare_sized(left.as_bytes(), right.as_bytes(), 120, 24);
+    h.wait_until(|h| status_has(h, "Compare: 1 difference(s)"))
+        .unwrap();
+    h.send_key(KeyCode::Char('g'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.type_text("5948").unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| level(h, "row 5948")).unwrap();
+
+    for _ in 0..3 {
+        h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    h.wait_until(|h| status_has(h, "Ln 5951")).unwrap();
+    assert!(
+        level(&h, "row 5951"),
+        "the cursor's line:\n{}",
+        h.screen_to_string()
+    );
+}
+
 /// Closing the comparison closes its tab and the files it opened, as they
 /// had no changes: nothing of the comparison is left.
 #[test]

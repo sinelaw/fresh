@@ -945,6 +945,34 @@ impl Viewport {
         self.set_top_view_line_offset(addr.row_in_line);
     }
 
+    /// Scroll an unwrapped pane that draws plugin virtual lines by `delta`
+    /// rows, the virtual lines' rows included. Returns `false`, having done
+    /// nothing, when there are none to count: then a row is a line, and the
+    /// line walk in `scroll_up` / `scroll_down` is the same thing.
+    ///
+    /// Walking line starts steps over a line's virtual rows in one go: a
+    /// comparison's filler rows, dozens deep under one line, went by in a
+    /// single wheel notch, and the last page was clamped short of them.
+    fn scroll_flat_rows(&mut self, buffer: &Buffer, virtual_lines: &[usize], delta: isize) -> bool {
+        if virtual_lines.is_empty() {
+            return false;
+        }
+        let Some(rows) = crate::view::flat_rows::FlatRows::from_positions(buffer, virtual_lines)
+        else {
+            return false;
+        };
+        let top_line = buffer.get_line_number(self.top_byte());
+        let top = rows.first_row(top_line) + self.top_view_line_offset();
+        let max_top = rows
+            .max_top(self.visible_line_count())
+            .max(top.min(rows.total_rows()));
+        let new_top = top.saturating_add_signed(delta).min(max_top);
+        let (line, offset) = rows.locate(new_top);
+        self.set_top_byte(buffer.line_start_offset(line).unwrap_or(0));
+        self.set_top_view_line_offset(offset);
+        true
+    }
+
     /// Scroll up by N lines (byte-based)
     /// When line_wrap_enabled is true, scrolls by visual rows instead of logical lines
     ///
@@ -962,6 +990,12 @@ impl Viewport {
         hidden_ranges: &[(usize, usize)],
         lines: usize,
     ) {
+        if !self.line_wrap_enabled
+            && hidden_ranges.is_empty()
+            && self.scroll_flat_rows(buffer, virtual_lines, -(lines as isize))
+        {
+            return;
+        }
         if self.line_wrap_enabled {
             self.scroll_up_visual(buffer, soft_breaks, virtual_lines, hidden_ranges, lines);
         } else {
@@ -1070,6 +1104,12 @@ impl Viewport {
         hidden_ranges: &[(usize, usize)],
         lines: usize,
     ) {
+        if !self.line_wrap_enabled
+            && hidden_ranges.is_empty()
+            && self.scroll_flat_rows(buffer, virtual_lines, lines as isize)
+        {
+            return;
+        }
         if self.line_wrap_enabled {
             self.scroll_down_visual(buffer, soft_breaks, virtual_lines, hidden_ranges, lines);
         } else {
@@ -1639,6 +1679,49 @@ impl Viewport {
             self.set_top_view_line_offset(addr.row_in_line);
         }
         true
+    }
+
+    /// [`Self::ensure_visible_in_rows`] for an unwrapped pane, in the rows
+    /// [`FlatRows`](crate::view::flat_rows::FlatRows) counts: the same rule,
+    /// so the frame's own placement, run after it, finds nothing to move. For
+    /// the focused pane of a scroll-synced pair, placed before the sync reads
+    /// its top, and for a pane past the wrap index's size ceilings, which has
+    /// no index to place it by.
+    pub fn ensure_visible_in_flat_rows(
+        &mut self,
+        rows: &crate::view::flat_rows::FlatRows,
+        buffer: &Buffer,
+        cursor_byte: usize,
+    ) {
+        if self.skip_resize_sync || self.should_skip_ensure_visible() {
+            return;
+        }
+        self.spend_row_hold(cursor_byte);
+        let viewport_height = self.visible_line_count();
+        if viewport_height == 0 {
+            return;
+        }
+        let top_line = buffer.get_line_number(self.top_byte());
+        let top_row = rows.first_row(top_line) + self.top_view_line_offset();
+        let cursor_row = rows.text_row(buffer.get_line_number(cursor_byte));
+        let margin = if self.ensure_visible.holds_rows_at(cursor_byte) {
+            0
+        } else {
+            self.scroll_offset.min(viewport_height / 2)
+        };
+        let in_top_margin = cursor_row < top_row + margin;
+        let in_bottom_margin = cursor_row + margin + 1 > top_row + viewport_height;
+        if !in_top_margin && !in_bottom_margin {
+            return;
+        }
+        let target_top = if in_top_margin {
+            cursor_row.saturating_sub(margin)
+        } else {
+            (cursor_row + margin + 1).saturating_sub(viewport_height)
+        };
+        let (line, offset) = rows.locate(target_top.min(rows.max_top(viewport_height)));
+        self.set_top_byte(buffer.line_start_offset(line).unwrap_or(0));
+        self.set_top_view_line_offset(offset);
     }
 
     /// Horizontal placement only.

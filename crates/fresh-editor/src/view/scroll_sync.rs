@@ -90,12 +90,11 @@ impl ScrollSyncGroup {
 
     /// Convert a line number from left buffer space to right buffer space
     pub fn left_to_right_line(&self, left_line: usize) -> usize {
-        // Find the anchor just at or before left_line
-        let anchor = self
-            .anchors
-            .iter()
-            .rfind(|a| a.left_line <= left_line)
-            .unwrap_or(&self.anchors[0]);
+        // Find the anchor just at or before left_line; above the first one,
+        // the two tops line up.
+        let Some(anchor) = self.anchors.iter().rfind(|a| a.left_line <= left_line) else {
+            return left_line;
+        };
 
         // Calculate offset from anchor
         let offset = left_line.saturating_sub(anchor.left_line);
@@ -107,11 +106,9 @@ impl ScrollSyncGroup {
     /// Convert a line number from right buffer space to left buffer space
     pub fn right_to_left_line(&self, right_line: usize) -> usize {
         // Find the anchor just at or before right_line in right buffer space
-        let anchor = self
-            .anchors
-            .iter()
-            .rfind(|a| a.right_line <= right_line)
-            .unwrap_or(&self.anchors[0]);
+        let Some(anchor) = self.anchors.iter().rfind(|a| a.right_line <= right_line) else {
+            return right_line;
+        };
 
         // Calculate offset from anchor in right space
         let offset = right_line.saturating_sub(anchor.right_line);

@@ -79,10 +79,6 @@ const COLORS = {
 // Coalesce an edit burst (typing, a paste, an undo) into one diff.
 const DEBOUNCE_MS = 75;
 
-// Per-line scroll-sync anchors across one-sided changes (see
-// `syncAnchors`), at most this many in all.
-const MAX_EDGE_ANCHORS = 20_000;
-
 // =============================================================================
 // Types
 // =============================================================================
@@ -296,32 +292,17 @@ function paintSide(c: Comparison, r: CompareResult, side: Side): void {
   editor.setScrollbarMarkers(bid, NS_SCROLL, markers);
 }
 
-/** Scroll-sync anchors: the two sides line up at the start and the end of
- * every change, and move line for line in between.
+/** Scroll-sync anchors: the two sides line up at the end of every change.
  *
- * Sync works in whole lines, so a pane whose top is inside the lines only
- * it has here can't put its partner part-way through the filler rows that
- * stand for them. One anchor per such line pins the partner to the edge of
- * the change instead of carrying it on past, into lines that don't match.
- * Very large one-sided changes keep just the two edge anchors. */
+ * The panes sync in screen rows, filler rows included, and an anchor pairs
+ * the rows its two lines' text is on. With the fillers keeping the sides
+ * level, the rows between two changes' ends match one for one, so the ends
+ * are all the anchors need; they hold the panes together while an edit
+ * waits for its diff. The start of a change is no anchor: on the side with
+ * no lines there, its line is drawn after the fillers, a row the other side
+ * gives to the change's first line. */
 function syncAnchors(r: CompareResult): number[][] {
-  const anchors: number[][] = [[0, 0]];
-  let budget = MAX_EDGE_ANCHORS;
-  for (const { left, right } of r.hunks) {
-    anchors.push([left.start, right.start]);
-    const leftEnd = left.start + left.count;
-    const rightEnd = right.start + right.count;
-    const paired = Math.min(left.count, right.count);
-    const extra = Math.abs(left.count - right.count);
-    if (extra > 0 && extra <= budget) {
-      budget -= extra;
-      for (let i = paired; i < Math.max(left.count, right.count); i++) {
-        anchors.push(left.count > right.count ? [left.start + i, rightEnd] : [leftEnd, right.start + i]);
-      }
-    }
-    anchors.push([leftEnd, rightEnd]);
-  }
-  return anchors;
+  return r.hunks.map(({ left, right }) => [left.start + left.count, right.start + right.count]);
 }
 
 function summary(r: CompareResult): string {
