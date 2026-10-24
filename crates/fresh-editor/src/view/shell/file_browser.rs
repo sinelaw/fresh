@@ -667,7 +667,7 @@ fn entries(b: &Browser, rows: &Entries) -> Node<UiMsg> {
     let list = List::windowed_stateful(
         rows.len(),
         move |i| for_key.key(i),
-        move |i, st| match for_row.at(i) {
+        move |i, st, _| match for_row.at(i) {
             Some(e) => entry_row(&e, st),
             None => row().h(Sizing::Cells(1)),
         },

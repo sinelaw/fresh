@@ -1051,7 +1051,7 @@ fn list_rows(p: &ListRows) -> Node<UiMsg> {
         {
             let rows = rows.clone();
             let surface = p.surface.clone();
-            move |i, st| {
+            move |i, st, _| {
                 collection_stats::note_row();
                 entry_row(&rows[i], &row_surface(st, &surface))
             }
@@ -1325,7 +1325,10 @@ fn tree_rows_plain(p: &TreeRows) -> Node<UiMsg> {
     let row_at = {
         let (nodes, visible) = (nodes.clone(), visible.clone());
         let build_row = build_row.clone();
-        move |i: usize, row: fresh_ui::widgets::TreeRow, st: fresh_ui::widgets::RowState| {
+        move |i: usize,
+              row: fresh_ui::widgets::TreeRow,
+              st: fresh_ui::widgets::RowState,
+              _: bool| {
             let abs = visible[i];
             collection_stats::note_row();
             build_row(&nodes[abs], abs, row.open, st, width)
@@ -1460,7 +1463,7 @@ fn tree_rows_cards(p: &CardTreeRows) -> Node<UiMsg> {
         let surface = p.surface.clone();
         let hovered_item_key = Rc::new(p.hovered_item_key.clone());
         let tree_key = tree_key.clone();
-        move |i: usize, row: fresh_ui::widgets::TreeRow, _: fresh_ui::widgets::RowState| {
+        move |i: usize, row: fresh_ui::widgets::TreeRow, _: fresh_ui::widgets::RowState, _: bool| {
             let abs = visible[i];
             let hovered_item_key = &hovered_item_key;
             collection_stats::note_row();

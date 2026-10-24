@@ -677,7 +677,7 @@ pub fn suggestions(s: &Suggestions) -> Node<UiMsg> {
             let cols = Columns::of(&rows);
             Window { first, rows, cols }
         },
-        move |i, _, w: &Window| {
+        move |i, _, w: &Window, _| {
             let st = if selected == Some(i) {
                 RowState::Selected
             } else {
