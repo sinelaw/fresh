@@ -7237,6 +7237,7 @@ where
     use std::time::Instant;
 
     const FRAME_DURATION: Duration = Duration::from_millis(16); // 60fps
+    const LAUNCH_HOLD_POLL: Duration = Duration::from_millis(1);
     let mut last_render = Instant::now();
     let mut needs_render = true;
     let mut pending_event: Option<InputEvent> = None;
@@ -7310,6 +7311,7 @@ where
         if needs_render
             && last_render.elapsed() >= FRAME_DURATION
             && !editor.should_suppress_render()
+            && !editor.holds_launch_frames()
         {
             let r0 = Instant::now();
             let was_paste_pending = editor.is_paste_pending();
@@ -7343,6 +7345,15 @@ where
                 timeout = timeout.min(until_next_frame);
                 let until_deadline = deadline.saturating_duration_since(Instant::now());
                 timeout = timeout.min(until_deadline);
+            }
+            // A `--diff` launch draws nothing until its plugin has the view up,
+            // and the plugin gets there through a chain of calls the editor
+            // answers on its ticks. Nothing wakes this wait when one arrives,
+            // so at the idle 50 ms each link waited up to that long; and with
+            // a frame owed but held, the frame budget above is spent, which
+            // would spin. A short wait answers each call promptly instead.
+            if editor.holds_launch_frames() {
+                timeout = LAUNCH_HOLD_POLL;
             }
             poll_event(timeout)?
         };

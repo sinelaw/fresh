@@ -608,6 +608,11 @@ pub(super) fn build_persisted_window_shells(
     (windows, dormant_remote)
 }
 
+/// The longest a `--diff` launch holds back the editor's frames waiting for
+/// its view (see [`Editor::holds_launch_frames`]): past it, a plugin that
+/// failed without saying so leaves the editor usable rather than blank.
+pub const DIFF_LAUNCH_HOLD: std::time::Duration = std::time::Duration::from_secs(3);
+
 impl Editor {
     /// Lightweight constructor. Takes the non-trivial editor-global
     /// resources via [`EditorParts`] and fills in every other field
@@ -723,6 +728,7 @@ impl Editor {
             orchestrator_mode: parts.orchestrator_mode,
             file_launch: parts.file_launch,
             diff_launch: None,
+            diff_launch_hold: None,
             all_workspaces_loaded: parts.all_workspaces_loaded,
             #[cfg(feature = "plugins")]
             line_targets: std::collections::HashMap::new(),
@@ -1786,10 +1792,36 @@ impl Editor {
     /// Refreshes the plugin state snapshot so a `ready` handler reading
     /// `editor.diffLaunch()` sees the pair: the hook runs on the plugin
     /// thread and could otherwise beat the next frame's refresh.
+    ///
+    /// Also holds back the editor's frames until the plugin has the files on
+    /// screen ([`Editor::holds_launch_frames`]).
     pub fn set_diff_launch(&mut self, left: std::path::PathBuf, right: std::path::PathBuf) {
         self.diff_launch = Some((left, right));
+        self.diff_launch_hold = Some(std::time::Instant::now() + DIFF_LAUNCH_HOLD);
         #[cfg(feature = "plugins")]
         self.update_plugin_state_snapshot();
+    }
+
+    /// Whether the main loop should draw nothing yet: a `--diff` launch whose
+    /// view isn't on screen.
+    ///
+    /// The editor starts with an empty buffer and the comparison replaces it
+    /// once the plugins have loaded and the plugin showing it has opened and
+    /// diffed both files — over half a second in which the first frames
+    /// showed that empty buffer, then the files without their highlights.
+    /// Holding the frames until the plugin says the view is complete
+    /// (`editor.diffLaunchShown()`) makes the comparison the first thing
+    /// drawn. A plugin that never says so holds them for at most
+    /// [`DIFF_LAUNCH_HOLD`].
+    pub fn holds_launch_frames(&self) -> bool {
+        self.diff_launch_hold
+            .is_some_and(|until| std::time::Instant::now() < until)
+    }
+
+    /// The `--diff` launch's view is on screen, or won't be: stop holding
+    /// back frames.
+    pub(crate) fn diff_launch_shown(&mut self) {
+        self.diff_launch_hold = None;
     }
 
     /// Spawn a background thread to build the full grammar registry

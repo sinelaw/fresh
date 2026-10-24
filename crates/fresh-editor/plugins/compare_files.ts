@@ -649,10 +649,16 @@ editor.registerCommand("%cmd.close", "%cmd.close_desc", "compare_close", "compar
 // Events
 // =============================================================================
 
-// `fresh --diff LEFT RIGHT`: the editor leaves opening the files to us.
+// `fresh --diff LEFT RIGHT`: the editor leaves opening the files to us, and
+// draws nothing until we say the comparison is up (or failed).
 editor.on("ready", async () => {
   const pair = editor.diffLaunch();
-  if (pair.length === 2) await compare(pair[0], pair[1]);
+  if (pair.length !== 2) return;
+  try {
+    await compare(pair[0], pair[1]);
+  } finally {
+    editor.diffLaunchShown();
+  }
 });
 
 editor.on("buffer_modified", (args) => {

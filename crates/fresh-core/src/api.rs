@@ -5497,6 +5497,10 @@ pub enum PluginCommand {
     /// This deletes all selected text across all cursors
     DeleteSelection,
 
+    /// The view of a `fresh --diff` launch is on screen, or won't be: the
+    /// editor stops holding back its frames (see `Editor::diff_launch_shown`).
+    DiffLaunchShown,
+
     /// Set or unset a custom context
     /// Custom contexts are plugin-defined states that can be used to control command visibility
     /// For example, "config-editor" context could make config editor commands available

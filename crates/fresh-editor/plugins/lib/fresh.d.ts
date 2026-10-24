@@ -5805,6 +5805,14 @@ interface EditorAPI {
 	*/
 	diffLaunch(): string[];
 	/**
+	* Tell the editor the files of a `fresh --diff` launch are on screen, or
+	* that they won't be (the comparison failed). Until then, or for at most
+	* a few seconds, the editor draws nothing, so the launch doesn't flash
+	* the empty editor it starts with. Call it once the view is complete,
+	* decorations and all, from the plugin that read `diffLaunch()`.
+	*/
+	diffLaunchShown(): boolean;
+	/**
 	* Whether the left dock slot is open: a panel is in it, or the host is
 	* holding the column for one its manifest declared. The plugin that
 	* fills the dock mounts it at

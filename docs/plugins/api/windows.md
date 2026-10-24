@@ -256,6 +256,18 @@ buffer-group `path` leaf).
 diffLaunch(): string[];
 ```
 
+### `diffLaunchShown`
+
+Tell the editor the files of a `fresh --diff` launch are on screen, or
+that they won't be (the comparison failed). Until then, or for at most
+a few seconds, the editor draws nothing, so the launch doesn't flash
+the empty editor it starts with. Call it once the view is complete,
+decorations and all, from the plugin that read `diffLaunch()`.
+
+```typescript
+diffLaunchShown(): boolean;
+```
+
 ### `dockOpen`
 
 Whether the left dock slot is open: a panel is in it, or the host is

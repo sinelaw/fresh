@@ -1711,6 +1711,9 @@ impl Editor {
             PluginCommand::SetContext { name, active } => {
                 self.handle_set_context(name, active);
             }
+            PluginCommand::DiffLaunchShown => {
+                self.diff_launch_shown();
+            }
 
             // ==================== Review Diff Commands ====================
             PluginCommand::SetReviewDiffHunks { hunks } => {
