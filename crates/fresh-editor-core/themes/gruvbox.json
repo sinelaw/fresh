@@ -119,7 +119,8 @@
     "file_status_deleted_fg": [251, 73, 52],
     "file_status_renamed_fg": [142, 192, 124],
     "file_status_untracked_fg": [146, 131, 116],
-    "file_status_conflicted_fg": [211, 134, 155]
+    "file_status_conflicted_fg": [211, 134, 155],
+    "file_explorer_pinned_bg": [50, 49, 47]
   },
   "search": {
     "match_bg": [250, 189, 47],

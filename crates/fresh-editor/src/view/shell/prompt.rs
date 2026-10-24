@@ -376,7 +376,7 @@ fn theme(disabled: bool, st: RowState) -> String {
     match st {
         RowState::Selected | RowState::SelectedBlur => pair("ui.popup_selection_fg", bg),
         RowState::Hover => pair("ui.menu_hover_fg", bg),
-        RowState::Normal => pair("ui.popup_text_fg", bg),
+        RowState::Normal | RowState::Pinned => pair("ui.popup_text_fg", bg),
     }
 }
 
@@ -419,6 +419,7 @@ fn every_theme_name() -> Vec<String> {
         RowState::Hover,
         RowState::Selected,
         RowState::SelectedBlur,
+        RowState::Pinned,
     ];
     let mut out = Vec::new();
     for st in states {

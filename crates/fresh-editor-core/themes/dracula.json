@@ -84,7 +84,8 @@
     "settings_selected_fg": [248, 248, 242],
     "popup_selection_fg": [248, 248, 242],
     "status_lsp_actionable_fg": [0, 0, 0],
-    "status_lsp_actionable_bg": [181, 137, 0]
+    "status_lsp_actionable_bg": [181, 137, 0],
+    "file_explorer_pinned_bg": [44, 48, 62]
   },
   "search": {
     "match_bg": [241, 250, 140],

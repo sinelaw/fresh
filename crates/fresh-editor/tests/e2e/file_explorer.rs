@@ -1258,6 +1258,13 @@ fn test_scroll_allows_cursor_to_top() {
             .any(|line| line.starts_with('│') && line.contains("project_root")),
         "the project root should remain pinned while its children scroll"
     );
+    // The pinned root is shaded as the band, but it is not the selection:
+    // the highlight helper must not read it as one.
+    let highlighted = explorer_highlighted_rows(&harness);
+    assert!(
+        !highlighted.iter().any(|row| row.contains("project_root")),
+        "the pinned band is not the selection, got {highlighted:?}\n{screen_at_bottom}"
+    );
 
     // Now we're at the bottom and the view has scrolled down.
     // The test: when we press Up, the cursor should move WITHIN the viewport
@@ -4235,9 +4242,21 @@ fn explorer_panel_rect(harness: &EditorTestHarness) -> Option<(u16, u16, u16, u1
 /// naming a theme color, so it holds for either highlight the explorer uses
 /// (`selection_bg` when the tree has the keyboard, `current_line_bg` when it
 /// does not) and under any theme.
+///
+/// **The pinned band is off the plain ground too, but it is not a highlight.**
+/// Its rows are the sticky ancestors, so the vote leaves out whatever colour
+/// the theme names for `ui.file_explorer_pinned_bg`; otherwise a test that
+/// scrolls far enough to pin a folder would read the band as the selection.
 pub(crate) fn explorer_highlighted_rows(harness: &EditorTestHarness) -> Vec<String> {
     let Some((x0, x1, y0, y1)) = explorer_panel_rect(harness) else {
         return Vec::new();
+    };
+    let band_bg = {
+        let theme = harness.editor().theme();
+        format!(
+            "{:?}",
+            theme.resolve_theme_key("ui.file_explorer_pinned_bg")
+        )
     };
     let rows: Vec<(String, String)> = (y0..y1)
         .map(|y| {
@@ -4264,7 +4283,7 @@ pub(crate) fn explorer_highlighted_rows(harness: &EditorTestHarness) -> Vec<Stri
     };
 
     rows.iter()
-        .filter(|(_, bg)| *bg != plain_bg)
+        .filter(|(_, bg)| *bg != plain_bg && *bg != band_bg)
         .map(|(text, _)| text.trim().to_string())
         .collect()
 }
