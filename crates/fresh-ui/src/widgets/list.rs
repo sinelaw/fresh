@@ -206,7 +206,7 @@ impl RowHeight {
 }
 
 /// A row builder: the node for index `i` in state `st`.
-type RowOf<M> = Rc<dyn Fn(usize, RowState) -> Node<M>>;
+type RowOf<M> = Rc<dyn Fn(usize, RowState, bool) -> Node<M>>;
 
 /// Per-window work: handed the index range the window holds, it returns the
 /// row builder for that window. See [`List::windowed_cut`].
@@ -269,14 +269,14 @@ impl<M> Source<M> {
         (0..self.len()).find(|&i| self.key_of(i).as_ref() == Some(k))
     }
 
-    fn at(&self, i: usize, state: RowState) -> Option<(Key, Node<M>)> {
+    fn at(&self, i: usize, state: RowState, pinned: bool) -> Option<(Key, Node<M>)> {
         match self {
             // Eager rows are built before the list knows anything about them,
             // so their state cannot reach them. `row_theme` still names them.
             Source::Eager(v) => v.get(i).cloned(),
             Source::Windowed {
                 count, key, row, ..
-            } => (i < *count).then(|| (key(i), row(i, state))),
+            } => (i < *count).then(|| (key(i), row(i, state, pinned))),
         }
     }
 
@@ -397,7 +397,7 @@ impl<M: 'static> List<M> {
         List::from_source(Source::Windowed {
             count,
             key: Rc::new(key),
-            row: Rc::new(move |i, _| row(i)),
+            row: Rc::new(move |i, _, _| row(i)),
             cut: None,
         })
     }
@@ -417,11 +417,14 @@ impl<M: 'static> List<M> {
     /// The state machine stays the widget's — which is the whole point of
     /// [`RowState`] — and this hands it to the builder as well as to
     /// `row_theme`, so a host can build the row *from* its state instead of
-    /// having one painted behind it.
+    /// having one painted behind it. The third argument says the row is one
+    /// of the pinned rows held above the run (see
+    /// [`List::pinned_at`]), so a host can say that on screen instead of
+    /// leaving the band to look like part of the run.
     pub fn windowed_stateful(
         count: usize,
         key: impl Fn(usize) -> Key + 'static,
-        row: impl Fn(usize, RowState) -> Node<M> + 'static,
+        row: impl Fn(usize, RowState, bool) -> Node<M> + 'static,
     ) -> Self {
         List::from_source(Source::Windowed {
             count,
@@ -452,7 +455,7 @@ impl<M: 'static> List<M> {
         count: usize,
         key: impl Fn(usize) -> Key + 'static,
         cut: impl Fn(std::ops::Range<usize>) -> W + 'static,
-        row: impl Fn(usize, RowState, &W) -> Node<M> + 'static,
+        row: impl Fn(usize, RowState, &W, bool) -> Node<M> + 'static,
     ) -> Self {
         let cut = Rc::new(cut);
         let row = Rc::new(row);
@@ -461,12 +464,12 @@ impl<M: 'static> List<M> {
         let whole: RowOf<M> = {
             let (cut, row) = (cut.clone(), row.clone());
             let once: Rc<std::cell::OnceCell<W>> = Rc::default();
-            Rc::new(move |i, st| row(i, st, once.get_or_init(|| cut(0..count))))
+            Rc::new(move |i, st, pin| row(i, st, once.get_or_init(|| cut(0..count)), pin))
         };
         let per_window: CutOf<M> = Rc::new(move |window| {
             let w = Rc::new(cut(window));
             let row = row.clone();
-            let built: RowOf<M> = Rc::new(move |i, st| row(i, st, &w));
+            let built: RowOf<M> = Rc::new(move |i, st, pin| row(i, st, &w, pin));
             built
         });
         List::from_source(Source::Windowed {
@@ -627,9 +630,12 @@ impl<M: 'static> List<M> {
     /// room: the run starts under them and the ceiling accounts for them. See
     /// [`Node::pinned`](crate::Node::pinned).
     ///
-    /// A pinned row is built by the same builder, in the same state, with the
-    /// same handlers as it would be in the run: clicking it selects it, and
-    /// hovering it tints it.
+    /// A pinned row is built by the same builder, with the same handlers as
+    /// it would be in the run: clicking it selects it, and hovering it tints
+    /// it. It is built in the same state too — except that the builder is
+    /// told it is pinned (`windowed_stateful` and the tree's row builders
+    /// pass that on with the state), so what sits in the band does not have
+    /// to look like part of the run.
     pub fn pinned(mut self, indices: &[usize]) -> Self {
         self.pinned = Rc::from(indices);
         self
@@ -1074,7 +1080,9 @@ impl<M: 'static> Component<M> for List<M> {
                 } else {
                     RowState::Normal
                 };
-                let (_, row) = run.at(i, state).expect("index inside the source");
+                let (_, row) = run
+                    .at(i, state, pinned[..pins].contains(&i))
+                    .expect("index inside the source");
                 let theme: String = match &row_theme {
                     Some(f) => f(i, state),
                     None => state.theme().to_string(),
@@ -1135,7 +1143,7 @@ impl<M: 'static> Component<M> for List<M> {
             stack().children([
                 stack().align(Align::Start).children(match measuring {
                     true => (0..n)
-                        .filter_map(|i| source.at(i, RowState::Normal).map(|(_, row)| row))
+                        .filter_map(|i| source.at(i, RowState::Normal, false).map(|(_, row)| row))
                         .collect::<Vec<_>>(),
                     false => Vec::new(),
                 }),
@@ -1304,7 +1312,7 @@ pub struct TreeRow {
 
 /// One row's builder in a [`WindowedTree`]: the visible index, what the
 /// projection says about it, and the row's state.
-pub type TreeRowOf<M> = Rc<dyn Fn(usize, TreeRow, RowState) -> Node<M>>;
+pub type TreeRowOf<M> = Rc<dyn Fn(usize, TreeRow, RowState, bool) -> Node<M>>;
 
 /// A **windowed, controlled** tree over the owner's projection.
 ///
@@ -1344,7 +1352,9 @@ impl<M: 'static> WindowedTree<M> {
         self
     }
 
-    /// The tree as the list it windows.
+    /// The window as one list, with the run's slice pinned. The pin rides
+    /// along with the state: pinned rows answer the pointer like any other,
+    /// but the builder is told it is pinned.
     pub fn list(self) -> List<M> {
         let WindowedTree {
             count,
@@ -1355,7 +1365,7 @@ impl<M: 'static> WindowedTree<M> {
         } = self;
         let rows = {
             let node = node.clone();
-            move |i: usize, st: RowState| row(i, node(i), st)
+            move |i: usize, st: RowState, pin: bool| row(i, node(i), st, pin)
         };
         let list = List::windowed_stateful(count, move |i| key(i), rows);
         match sticky {
@@ -1395,7 +1405,7 @@ impl<M: 'static> Tree<M> {
         count: usize,
         key: impl Fn(usize) -> Key + 'static,
         node: impl Fn(usize) -> TreeRow + 'static,
-        row: impl Fn(usize, TreeRow, RowState) -> Node<M> + 'static,
+        row: impl Fn(usize, TreeRow, RowState, bool) -> Node<M> + 'static,
     ) -> WindowedTree<M> {
         WindowedTree {
             count,

@@ -446,7 +446,7 @@ pub fn categories(c: &Categories) -> Node<UiMsg> {
         {
             let rows = rows.clone();
             let selected = c.selected;
-            move |i, st| cat_row(&rows[i], selected == Some(i), focused, st)
+            move |i, st, _| cat_row(&rows[i], selected == Some(i), focused, st)
         },
     )
     .scrollbar()
