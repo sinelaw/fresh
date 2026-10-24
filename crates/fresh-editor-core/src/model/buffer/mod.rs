@@ -8,6 +8,7 @@ use crate::model::piece_tree::{
 };
 use crate::model::piece_tree_diff::PieceTreeDiff;
 use crate::primitives::grapheme;
+use crate::recovery_types::HotExitEntry;
 use anyhow::{Context, Result};
 use regex::bytes::Regex;
 use std::io;
@@ -849,8 +850,42 @@ impl TextBuffer {
                 .then(|| ContentDigest::of_chunks(chunks()))
         };
 
+        // This write is what turns the buffer's hot-exit entry from unsaved
+        // work into a stale copy, and deleting the entry can't be made atomic
+        // with it. So the entry is told first, and a crash on either side of
+        // the write leaves something the next start can settle with a `stat`
+        // (see `SaveIntent`). Local files only: the store is on this host,
+        // and so is the `stat` that settles it.
+        let journaled = local && self.begin_hot_exit_save(dest_path);
+        if let Err(e) = self.write_recipe(&fs, local, dest_path, &recipe, recovery_dir, read_from) {
+            if journaled {
+                self.abandon_hot_exit_save();
+            }
+            return Err(e);
+        }
+        // Spent: the entry is no one's unsaved work any more, and a later
+        // save that failed must not take it back as such.
+        if journaled {
+            self.persistence.set_hot_exit_entry(None);
+        }
+
+        self.finalize_save(dest_path)?;
+        self.persistence.set_saved_content(written);
+        Ok(())
+    }
+
+    /// The write itself, for [`Self::save_to_file`].
+    fn write_recipe(
+        &mut self,
+        fs: &Arc<dyn FileSystem + Send + Sync>,
+        local: bool,
+        dest_path: &Path,
+        recipe: &save::WriteRecipe,
+        recovery_dir: &Path,
+        read_from: Option<PathBuf>,
+    ) -> anyhow::Result<()> {
         if local {
-            if let Err(e) = save::save_local(&fs, dest_path, &recipe, recovery_dir) {
+            if let Err(e) = save::save_local(fs, dest_path, recipe, recovery_dir) {
                 if e.is::<save::TornWrite>() {
                     // The file's mtime moved by our own write: remember it,
                     // so the change isn't taken for someone else's
@@ -871,10 +906,43 @@ impl TextBuffer {
         } else {
             fs.write_file(dest_path, &recipe.flatten_inserts())?;
         }
-
-        self.finalize_save(dest_path)?;
-        self.persistence.set_saved_content(written);
         Ok(())
+    }
+
+    /// Record in the buffer's hot-exit entry that it is about to be written
+    /// to `dest_path`. Returns whether it was recorded. A store that can't be
+    /// written doesn't stop the save: it only leaves the entry as exposed to
+    /// a crash as it was before saves recorded themselves.
+    fn begin_hot_exit_save(&self, dest_path: &Path) -> bool {
+        let Some(entry) = self.persistence.hot_exit_entry() else {
+            return false;
+        };
+        match entry.begin_save(dest_path) {
+            Ok(recorded) => recorded,
+            Err(e) => {
+                tracing::warn!(
+                    "Could not record the save of {} in recovery entry {}: {}",
+                    dest_path.display(),
+                    entry.id(),
+                    e
+                );
+                false
+            }
+        }
+    }
+
+    /// The save failed: the hot-exit entry is the unsaved work again.
+    fn abandon_hot_exit_save(&self) {
+        let Some(entry) = self.persistence.hot_exit_entry() else {
+            return;
+        };
+        if let Err(e) = entry.abandon_save() {
+            tracing::warn!(
+                "Could not clear the failed save from recovery entry {}: {}",
+                entry.id(),
+                e
+            );
+        }
     }
 
     /// The file a save reads this buffer's unloaded parts back from, if it
@@ -1891,6 +1959,25 @@ impl TextBuffer {
     /// Mark buffer as needing recovery auto-save (call after edits)
     pub fn set_recovery_pending(&mut self, pending: bool) {
         self.persistence.set_recovery_pending(pending);
+    }
+
+    /// The buffer's content is what hot-exit `entry` holds: just written
+    /// there, or restored from it. Nothing is pending for the recovery
+    /// auto-save, and a save of the buffer records itself in the entry
+    /// before writing its file ([`Self::save_to_file`]).
+    pub fn set_backed_by(&mut self, entry: HotExitEntry) {
+        self.persistence.set_recovery_pending(false);
+        self.persistence.set_hot_exit_entry(Some(entry));
+    }
+
+    /// The hot-exit entry holding this buffer's unsaved content, if any.
+    pub fn hot_exit_entry(&self) -> Option<&HotExitEntry> {
+        self.persistence.hot_exit_entry()
+    }
+
+    /// Forget the hot-exit entry: it was deleted.
+    pub fn clear_hot_exit_entry(&mut self) {
+        self.persistence.set_hot_exit_entry(None);
     }
 
     /// Ensure the buffer chunk at the given byte offset is loaded.

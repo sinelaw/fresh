@@ -829,6 +829,23 @@ impl Editor {
             before_len
         );
 
+        // The recovery entry holding this buffer's unsaved content, named
+        // before the save gives the buffer a new path. Only one the buffer
+        // holds: the old path's id is shared with any other workspace that
+        // has that file open.
+        let active_buffer = self.active_buffer();
+        let recovery_id = self
+            .active_state()
+            .buffer
+            .hot_exit_entry()
+            .map(|entry| entry.id().to_string())
+            .or_else(|| {
+                self.active_window()
+                    .buffer_metadata
+                    .get(&active_buffer)
+                    .and_then(|meta| meta.recovery_id.clone())
+            });
+
         let recovery_dir = self.dir_context.recovery_dir();
         match self
             .active_state_mut()
@@ -836,6 +853,12 @@ impl Editor {
             .save_to_file(&full_path, &recovery_dir)
         {
             Ok(()) => {
+                // The content is in the file now. Left behind, the entry came
+                // back as an unsaved buffer at the next switch to this
+                // workspace (issue #3626).
+                if let Some(recovery_id) = recovery_id {
+                    self.delete_recovery_entry(recovery_id);
+                }
                 let after_save_idx = self.active_event_log().current_index();
                 let after_save_len = self.active_event_log().len();
                 tracing::debug!(

@@ -4,11 +4,11 @@
 //! to ensure data integrity even during crashes.
 
 use super::types::{
-    generate_buffer_id, path_hash, ChunkedRecoveryData, ChunkedRecoveryIndex, RecoveryChunk,
-    RecoveryEntry, RecoveryMetadata, SessionInfo,
+    generate_buffer_id, path_hash, ChunkedRecoveryData, ChunkedRecoveryIndex, HotExitEntry,
+    RecoveryChunk, RecoveryEntry, RecoveryMetadata, SessionInfo,
 };
-use std::fs::{self, File};
-use std::io::{self, Write};
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -212,6 +212,11 @@ impl RecoveryStorage {
         }
     }
 
+    /// The handle a buffer holding entry `id` keeps (see [`HotExitEntry`]).
+    pub fn entry_handle(&self, id: &str) -> HotExitEntry {
+        HotExitEntry::new(id, self.recovery_paths(id).0)
+    }
+
     /// Get paths for recovery files
     fn recovery_paths(&self, id: &str) -> (PathBuf, PathBuf) {
         let meta_path = self.recovery_dir.join(format!("{id}.{}", Self::META_EXT));
@@ -365,6 +370,9 @@ impl RecoveryStorage {
 
         // Update metadata fields
         metadata.original_file_size = original_file_size;
+        // This content is newer than anything a save recorded before it
+        // (see `SaveIntent`), so that save no longer says anything about it.
+        metadata.saving = None;
         // Re-stamped every save so an entry follows a buffer moved between
         // workspaces (Extract Tab to New Workspace). A caller with no
         // workspace context leaves the previous stamp rather than erasing it.
@@ -726,26 +734,7 @@ impl RecoveryStorage {
     /// page cache survives), but system crashes/power loss could leave corrupted recovery
     /// files. Async I/O would let us have both safety and performance.
     fn atomic_write(&self, target: &Path, content: &[u8]) -> io::Result<()> {
-        // A unique sibling name: `with_extension("tmp")` made `<id>.chunk.0` and
-        // `<id>.chunk.1` share `<id>.chunk.tmp` (which also matches the chunk
-        // listing prefix if left behind).
-        let temp_path = crate::model::filesystem::sibling_temp_path(target);
-
-        // Write to temp file (never an existing one)
-        let mut file = File::options()
-            .write(true)
-            .create_new(true)
-            .open(&temp_path)?;
-        let written = file.write_all(content);
-        drop(file);
-        // Atomic rename
-        let result = written.and_then(|()| fs::rename(&temp_path, target));
-        if result.is_err() {
-            // Best-effort cleanup; the write error is what matters
-            #[allow(clippy::let_underscore_must_use)]
-            let _ = fs::remove_file(&temp_path);
-        }
-        result
+        super::types::write_atomically(target, content)
     }
 }
 

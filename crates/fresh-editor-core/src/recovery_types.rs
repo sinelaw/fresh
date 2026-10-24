@@ -155,6 +155,12 @@ pub struct RecoveryMetadata {
     /// `None` predates the field; readers fall back to path-prefix matching.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
+
+    /// A save of this buffer that was under way when the entry was last
+    /// written: recorded just before the save writes its file, so a crash
+    /// on either side of that write can be told apart (see [`SaveIntent`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saving: Option<SaveIntent>,
 }
 
 impl RecoveryMetadata {
@@ -190,6 +196,7 @@ impl RecoveryMetadata {
             chunk_count,
             original_file_size,
             workspace_id,
+            saving: None,
         }
     }
 
@@ -295,6 +302,181 @@ impl RecoveryEntry {
         }
         false
     }
+
+    /// Whether a save of this buffer wrote its file after the entry was
+    /// last written, so the content is on disk and the entry no longer holds
+    /// unsaved work. The entry outlives the save only when deleting it was
+    /// cut short (a crash, or a delete still in flight); it must not come
+    /// back as an unsaved buffer. See [`SaveIntent`].
+    pub fn superseded_by_save(&self) -> bool {
+        self.metadata
+            .saving
+            .as_ref()
+            .is_some_and(|intent| intent.outcome() == SaveOutcome::Written)
+    }
+
+    /// The handle a buffer restored from this entry keeps.
+    pub fn handle(&self) -> HotExitEntry {
+        HotExitEntry::new(self.id.clone(), self.metadata_path.clone())
+    }
+}
+
+/// A file's state as one `stat` sees it: enough to notice that it was
+/// written, without reading it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileStamp {
+    pub size: u64,
+    /// Modification time, in nanoseconds since the Unix epoch.
+    pub mtime_nanos: u64,
+}
+
+impl FileStamp {
+    /// The stamp of the local file at `path`: `None` when there is no such
+    /// file, `Err` when whether there is cannot be told.
+    pub fn of(path: &Path) -> io::Result<Option<Self>> {
+        match std::fs::metadata(path) {
+            Ok(meta) => Ok(Some(Self {
+                size: meta.len(),
+                mtime_nanos: meta
+                    .modified()?
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .map(|d| d.as_nanos() as u64)
+                    .unwrap_or(0),
+            })),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+/// A save in progress, recorded in the buffer's hot-exit entry just before
+/// the save writes `path`.
+///
+/// The write is the one step that moves the buffer's content to safety, and
+/// it cannot be made atomic with deleting the entry, which is a separate
+/// file. So the entry says beforehand what the file looked like, and
+/// whichever side of the write a crash lands on can be read off the file
+/// itself: still as it was, the save never happened and the entry is the
+/// unsaved work; changed, the save wrote it and the entry is stale. One
+/// `stat`, never a comparison of content.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SaveIntent {
+    /// The file the save writes.
+    pub path: PathBuf,
+    /// Its stamp before the write; `None` when it did not exist yet.
+    pub before: Option<FileStamp>,
+}
+
+/// What became of a recorded save; see [`SaveIntent::outcome`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveOutcome {
+    /// The file changed since the save began: the save wrote it.
+    Written,
+    /// The file is as the save found it (or gone, which a save never
+    /// leaves): the save did not happen.
+    NotWritten,
+    /// The file cannot be looked at, so nothing can be concluded.
+    Unknown,
+}
+
+impl SaveIntent {
+    pub fn outcome(&self) -> SaveOutcome {
+        match FileStamp::of(&self.path) {
+            Ok(Some(now)) if Some(now) != self.before => SaveOutcome::Written,
+            Ok(_) => SaveOutcome::NotWritten,
+            Err(_) => SaveOutcome::Unknown,
+        }
+    }
+}
+
+/// Where a buffer's hot-exit entry lives, held by the buffer so its save
+/// can record a [`SaveIntent`] there however the save was started.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HotExitEntry {
+    id: String,
+    metadata_path: PathBuf,
+}
+
+impl HotExitEntry {
+    pub fn new(id: impl Into<String>, metadata_path: impl Into<PathBuf>) -> Self {
+        Self {
+            id: id.into(),
+            metadata_path: metadata_path.into(),
+        }
+    }
+
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Record that the buffer is about to be written to `path`. Returns
+    /// whether there was an entry to record it in.
+    pub fn begin_save(&self, path: &Path) -> io::Result<bool> {
+        let intent = SaveIntent {
+            path: path.to_path_buf(),
+            before: FileStamp::of(path)?,
+        };
+        self.set_saving(Some(&intent))
+    }
+
+    /// Take back [`Self::begin_save`]: the save failed, and the entry is the
+    /// unsaved work again.
+    pub fn abandon_save(&self) -> io::Result<bool> {
+        self.set_saving(None)
+    }
+
+    /// Rewrite the metadata with `saving` set or cleared, leaving the rest of
+    /// it — the chunk index among it — exactly as it was.
+    fn set_saving(&self, intent: Option<&SaveIntent>) -> io::Result<bool> {
+        let json = match std::fs::read(&self.metadata_path) {
+            Ok(json) => json,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(e),
+        };
+        let mut meta: serde_json::Value = serde_json::from_slice(&json)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let Some(fields) = meta.as_object_mut() else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "recovery metadata is not an object",
+            ));
+        };
+        match intent {
+            Some(intent) => {
+                let intent = serde_json::to_value(intent).map_err(io::Error::other)?;
+                fields.insert("saving".to_string(), intent);
+            }
+            None => {
+                if fields.remove("saving").is_none() {
+                    return Ok(true);
+                }
+            }
+        }
+        let json = serde_json::to_vec_pretty(&meta).map_err(io::Error::other)?;
+        write_atomically(&self.metadata_path, &json)?;
+        Ok(true)
+    }
+}
+
+/// Replace the local file `target` with `content` by writing a sibling temp
+/// file and renaming it over, so a crash leaves the old content or the new.
+pub fn write_atomically(target: &Path, content: &[u8]) -> io::Result<()> {
+    use std::io::Write;
+    // A unique sibling name, never an existing file
+    let temp_path = crate::model::filesystem::sibling_temp_path(target);
+    let mut file = std::fs::File::options()
+        .write(true)
+        .create_new(true)
+        .open(&temp_path)?;
+    let written = file.write_all(content);
+    drop(file);
+    let result = written.and_then(|()| std::fs::rename(&temp_path, target));
+    if result.is_err() {
+        // Best-effort cleanup; the write error is what matters
+        #[allow(clippy::let_underscore_must_use)]
+        let _ = std::fs::remove_file(&temp_path);
+    }
+    result
 }
 
 /// Result of a recovery operation
@@ -530,6 +712,135 @@ pub fn remove_orphaned_temp_files(fs: &dyn FileSystem, dir: &Path) -> io::Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A hot-exit entry's metadata file as the store writes it: the metadata
+    /// fields with the chunk index flattened in beside them.
+    fn write_entry(dir: &Path, id: &str) -> HotExitEntry {
+        let path = dir.join(format!("{id}.meta.json"));
+        let meta = serde_json::json!({
+            "original_path": null,
+            "buffer_name": null,
+            "created_at": 1,
+            "updated_at": 1,
+            "content_size": 5,
+            "line_count": 1,
+            "original_mtime": null,
+            "format_version": 2,
+            "chunk_count": 1,
+            "original_file_size": 0,
+            "workspace_id": "ws-1",
+            "chunked_index": {
+                "original_size": 0,
+                "final_size": 5,
+                "chunks": [{ "offset": 0, "original_len": 0, "size": 5 }]
+            }
+        });
+        std::fs::write(&path, serde_json::to_vec(&meta).unwrap()).unwrap();
+        HotExitEntry::new(id, path)
+    }
+
+    fn read_json(entry: &HotExitEntry) -> serde_json::Value {
+        serde_json::from_slice(&std::fs::read(&entry.metadata_path).unwrap()).unwrap()
+    }
+
+    fn read_intent(entry: &HotExitEntry) -> Option<SaveIntent> {
+        let meta: RecoveryMetadata = serde_json::from_value(read_json(entry)).unwrap();
+        meta.saving
+    }
+
+    /// Recording a save touches nothing else in the metadata: the chunk
+    /// index lives in the same file, and losing it loses the entry.
+    #[test]
+    fn begin_and_abandon_save_leave_the_rest_of_the_metadata_alone() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let entry = write_entry(dir.path(), "unsaved_1");
+        let before = read_json(&entry);
+        let target = dir.path().join("saved.txt");
+
+        assert!(entry.begin_save(&target).unwrap());
+        let mut during = read_json(&entry);
+        assert_eq!(
+            read_intent(&entry),
+            Some(SaveIntent {
+                path: target.clone(),
+                before: None,
+            })
+        );
+        during.as_object_mut().unwrap().remove("saving");
+        assert_eq!(during, before);
+
+        assert!(entry.abandon_save().unwrap());
+        assert_eq!(read_json(&entry), before);
+    }
+
+    /// No entry on disk, nothing to record: the save goes ahead as it
+    /// would without one.
+    #[test]
+    fn begin_save_without_an_entry_records_nothing() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let entry = HotExitEntry::new("gone", dir.path().join("gone.meta.json"));
+        assert!(!entry.begin_save(&dir.path().join("f.txt")).unwrap());
+        assert!(!dir.path().join("gone.meta.json").exists());
+    }
+
+    /// A crash before the write: the file is as the save found it, so the
+    /// save never happened and the entry is still the unsaved work. For a
+    /// file that exists, and for a new one (Save As).
+    #[test]
+    fn a_save_that_never_wrote_reads_as_not_written() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let existing = dir.path().join("existing.txt");
+        std::fs::write(&existing, "old").unwrap();
+        let new_file = dir.path().join("new.txt");
+
+        for path in [&existing, &new_file] {
+            let intent = SaveIntent {
+                path: path.clone(),
+                before: FileStamp::of(path).unwrap(),
+            };
+            assert_eq!(intent.outcome(), SaveOutcome::NotWritten, "{path:?}");
+        }
+    }
+
+    /// A crash after the write: the file changed since the save began, so
+    /// the save wrote it and the entry is a stale copy.
+    #[test]
+    fn a_save_that_wrote_reads_as_written() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let existing = dir.path().join("existing.txt");
+        std::fs::write(&existing, "old").unwrap();
+        let new_file = dir.path().join("new.txt");
+
+        let intents: Vec<SaveIntent> = [&existing, &new_file]
+            .into_iter()
+            .map(|path| SaveIntent {
+                path: path.clone(),
+                before: FileStamp::of(path).unwrap(),
+            })
+            .collect();
+        std::fs::write(&existing, "new content").unwrap();
+        std::fs::write(&new_file, "new content").unwrap();
+
+        for intent in intents {
+            assert_eq!(intent.outcome(), SaveOutcome::Written, "{:?}", intent.path);
+        }
+    }
+
+    /// A save never removes its file, so a file that is gone says the save
+    /// did not write it — the entry stays, rather than being taken for a
+    /// copy of a file that isn't there.
+    #[test]
+    fn a_file_removed_since_the_save_began_reads_as_not_written() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("f.txt");
+        std::fs::write(&path, "old").unwrap();
+        let intent = SaveIntent {
+            path: path.clone(),
+            before: FileStamp::of(&path).unwrap(),
+        };
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(intent.outcome(), SaveOutcome::NotWritten);
+    }
 
     #[test]
     fn test_path_hash() {

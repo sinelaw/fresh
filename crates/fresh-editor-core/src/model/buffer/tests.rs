@@ -3519,3 +3519,74 @@ fn typing_does_not_forget_where_the_line_breaks_are_not() {
         Some(viewport + 101)
     );
 }
+
+/// A buffer backed by a hot-exit entry records its save there before
+/// writing, so the entry reads as superseded the moment the file is written
+/// — before anything has had a chance to delete it (issue #3626). The
+/// entry is then spent, and the buffer lets go of it.
+#[test]
+fn test_save_records_itself_in_the_hot_exit_entry() {
+    use crate::recovery_types::{HotExitEntry, RecoveryEntry, RecoveryMetadata};
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let meta_path = temp_dir.path().join("unsaved_1.meta.json");
+    let metadata = RecoveryMetadata::new(None, None, 5, Some(1), None, 1, 0, None);
+    std::fs::write(&meta_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+    let file_path = temp_dir.path().join("saved.txt");
+
+    let mut buffer = TextBuffer::empty(test_fs());
+    buffer.insert(0, "hello");
+    buffer.set_backed_by(HotExitEntry::new("unsaved_1", &meta_path));
+
+    buffer
+        .save_to_file(&file_path, &temp_dir.path().join("recovery"))
+        .unwrap();
+
+    let entry = RecoveryEntry {
+        id: "unsaved_1".to_string(),
+        metadata: serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap(),
+        content_path: temp_dir.path().join("unsaved_1.content"),
+        metadata_path: meta_path,
+    };
+    assert_eq!(
+        entry.metadata.saving.as_ref().map(|s| s.path.as_path()),
+        Some(file_path.as_path())
+    );
+    assert!(entry.superseded_by_save());
+    assert!(buffer.hot_exit_entry().is_none());
+}
+
+/// A save that fails takes its record back: the entry is the unsaved work
+/// again, and stays the buffer's.
+#[test]
+fn test_failed_save_leaves_the_hot_exit_entry_as_unsaved_work() {
+    use crate::recovery_types::{HotExitEntry, RecoveryMetadata};
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let meta_path = temp_dir.path().join("unsaved_1.meta.json");
+    let metadata = RecoveryMetadata::new(None, None, 5, Some(1), None, 1, 0, None);
+    std::fs::write(&meta_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+    let before = std::fs::read(&meta_path).unwrap();
+    // No such directory, so the write fails
+    let file_path = temp_dir.path().join("missing").join("saved.txt");
+
+    let mut buffer = TextBuffer::empty(test_fs());
+    buffer.insert(0, "hello");
+    let entry = HotExitEntry::new("unsaved_1", &meta_path);
+    buffer.set_backed_by(entry.clone());
+
+    assert!(buffer
+        .save_to_file(&file_path, &temp_dir.path().join("recovery"))
+        .is_err());
+
+    let metadata: RecoveryMetadata =
+        serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
+    assert!(metadata.saving.is_none());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&std::fs::read(&meta_path).unwrap()).unwrap(),
+        serde_json::from_slice::<serde_json::Value>(&before).unwrap()
+    );
+    assert_eq!(buffer.hot_exit_entry(), Some(&entry));
+}
