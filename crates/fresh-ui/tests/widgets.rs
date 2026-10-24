@@ -836,7 +836,7 @@ fn the_cut_of_rows_of_stated_heights_is_the_rows_on_screen() {
         100,
         fresh_ui::Key::from,
         move |r| seen.borrow_mut().push(r),
-        |i, _, _: &()| fresh_ui::text(format!("row {i}")),
+        |i, _, _: &(), _| fresh_ui::text(format!("row {i}")),
     )
     .row_heights(|_| 3)
     .focusable(false)
@@ -868,7 +868,7 @@ fn a_windowed_tree_builds_its_window_and_pins_the_folder_it_is_in() {
                 has_children: i % 101 == 0,
                 open: true,
             },
-            move |i, row, _| {
+            move |i, row, _, _| {
                 built.set(built.get() + 1);
                 let name = match row.has_children {
                     true => format!("dir {}", i / 101),
@@ -926,7 +926,7 @@ fn a_reveal_lands_in_the_run_under_the_pins_it_brings() {
                 has_children: i < 3,
                 open: true,
             },
-            |i, _, _| fresh_ui::text(format!("row {i}")),
+            |i, _, _, _| fresh_ui::text(format!("row {i}")),
         )
         .sticky(7, |i| i.checked_sub(1).map(|p| p.min(2)))
         .list()
@@ -942,6 +942,68 @@ fn a_reveal_lands_in_the_run_under_the_pins_it_brings() {
     assert_eq!(
         rows[9], "row 32",
         "the selection is the run's last row: {screen}"
+    );
+}
+
+/// **What is in the band is built knowing it is.** The pin rides with the
+/// row state (`windowed_stateful`'s third argument): a row the window holds
+/// above the run is built with `pinned` set, in the very frame it is
+/// pinned, and the same row inside the run is not. A host can therefore
+/// draw the band differently from the tree without reading a previous
+/// frame's scroll offset back — computed anywhere earlier, it would be one
+/// frame late whenever the window moves.
+#[test]
+fn the_band_builds_its_rows_knowing_they_are_pinned() {
+    use fresh_ui::widgets::TreeRow;
+    use std::cell::RefCell;
+    use std::rc::Rc as StdRc;
+    // a/b/c, then 30 files in c: scrolling to the last row pins rows 0, 1, 2.
+    let seen: StdRc<RefCell<std::collections::HashMap<usize, bool>>> = StdRc::default();
+    let tree = |sel: usize| -> Node<Msg> {
+        seen.borrow_mut().clear();
+        fresh_ui::Tree::windowed(
+            33,
+            fresh_ui::Key::from,
+            |i| TreeRow {
+                depth: i.min(3),
+                has_children: i < 3,
+                open: true,
+            },
+            {
+                let seen = seen.clone();
+                move |i, _, _, pin| {
+                    seen.borrow_mut().insert(i, pin);
+                    fresh_ui::text(format!("row {i}"))
+                }
+            },
+        )
+        .sticky(7, |i| i.checked_sub(1).map(|p| p.min(2)))
+        .list()
+        .selected(sel)
+        .focusable(false)
+        .node()
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    // At the top nothing is pinned: rows the run builds say not pinned.
+    ui.frame(tree(0), FRAME);
+    {
+        let seen = seen.borrow();
+        assert!(
+            seen.values().all(|pinned| !pinned),
+            "nothing is pinned at the top, got {seen:?}"
+        );
+    }
+    // The offset at the last row pins the ancestors — and those rows are
+    // built `pinned` in this frame, not the frame after.
+    ui.frame(tree(32), FRAME);
+    let seen = seen.borrow();
+    for i in 0..=2 {
+        assert_eq!(seen.get(&i).copied(), Some(true), "pinned row {i}");
+    }
+    assert_eq!(
+        seen.get(&32).copied(),
+        Some(false),
+        "the run's own first row"
     );
 }
 
@@ -966,7 +1028,7 @@ fn a_windowed_tree_expands_and_collapses_through_its_owner() {
                 has_children: i == 0,
                 open,
             },
-            move |i, row, _| {
+            move |i, row, _, _| {
                 let mark = match (row.has_children, row.open) {
                     (false, _) => "  ",
                     (true, true) => "v ",
