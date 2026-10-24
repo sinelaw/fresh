@@ -939,7 +939,7 @@ impl Editor {
             .recovery_service
             .lock()
             .unwrap()
-            .entry_handle(recovery_id);
+            .entry_handle(recovery_id, path);
         let state = match self
             .windows
             .get_mut(&self.active_window)

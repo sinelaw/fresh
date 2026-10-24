@@ -317,7 +317,11 @@ impl RecoveryEntry {
 
     /// The handle a buffer restored from this entry keeps.
     pub fn handle(&self) -> HotExitEntry {
-        HotExitEntry::new(self.id.clone(), self.metadata_path.clone())
+        HotExitEntry::new(
+            self.id.clone(),
+            self.metadata_path.clone(),
+            self.metadata.original_path.clone(),
+        )
     }
 }
 
@@ -354,36 +358,44 @@ impl FileStamp {
 ///
 /// The write is the one step that moves the buffer's content to safety, and
 /// it cannot be made atomic with deleting the entry, which is a separate
-/// file. So the entry says beforehand what the file looked like, and
-/// whichever side of the write a crash lands on can be read off the file
-/// itself: still as it was, the save never happened and the entry is the
-/// unsaved work; changed, the save wrote it and the entry is stale. One
-/// `stat`, never a comparison of content.
+/// file. So the entry says beforehand what the file looked like and how big
+/// the save will make it, and whichever side of the write a crash lands on
+/// can be read off the file itself: still as it was, the save never
+/// happened and the entry is the unsaved work; changed to the size the save
+/// writes, the save wrote it and the entry is stale. One `stat`, never a
+/// comparison of content.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SaveIntent {
     /// The file the save writes.
     pub path: PathBuf,
     /// Its stamp before the write; `None` when it did not exist yet.
     pub before: Option<FileStamp>,
+    /// How many bytes the save writes.
+    pub size: u64,
 }
 
 /// What became of a recorded save; see [`SaveIntent::outcome`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SaveOutcome {
-    /// The file changed since the save began: the save wrote it.
+    /// The file changed since the save began, to the size the save writes:
+    /// the save wrote it.
     Written,
     /// The file is as the save found it (or gone, which a save never
     /// leaves): the save did not happen.
     NotWritten,
-    /// The file cannot be looked at, so nothing can be concluded.
+    /// The file changed to some other size — an in-place write cut short,
+    /// or someone else's change — or can't be looked at. Nothing can be
+    /// concluded, so the entry stays the unsaved work.
     Unknown,
 }
 
 impl SaveIntent {
     pub fn outcome(&self) -> SaveOutcome {
         match FileStamp::of(&self.path) {
-            Ok(Some(now)) if Some(now) != self.before => SaveOutcome::Written,
-            Ok(_) => SaveOutcome::NotWritten,
+            Ok(Some(now)) if Some(now) == self.before => SaveOutcome::NotWritten,
+            Ok(Some(now)) if now.size == self.size => SaveOutcome::Written,
+            Ok(Some(_)) => SaveOutcome::Unknown,
+            Ok(None) => SaveOutcome::NotWritten,
             Err(_) => SaveOutcome::Unknown,
         }
     }
@@ -395,13 +407,21 @@ impl SaveIntent {
 pub struct HotExitEntry {
     id: String,
     metadata_path: PathBuf,
+    /// The file the entry holds unsaved work for; `None` for a buffer that
+    /// was never named.
+    file: Option<PathBuf>,
 }
 
 impl HotExitEntry {
-    pub fn new(id: impl Into<String>, metadata_path: impl Into<PathBuf>) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        metadata_path: impl Into<PathBuf>,
+        file: Option<PathBuf>,
+    ) -> Self {
         Self {
             id: id.into(),
             metadata_path: metadata_path.into(),
+            file,
         }
     }
 
@@ -409,12 +429,19 @@ impl HotExitEntry {
         &self.id
     }
 
-    /// Record that the buffer is about to be written to `path`. Returns
-    /// whether there was an entry to record it in.
-    pub fn begin_save(&self, path: &Path) -> io::Result<bool> {
+    /// Record that the buffer is about to write `size` bytes to `path`.
+    /// Returns whether it was recorded: not when there is no entry, and not
+    /// when the entry is a file's other than `path` — a file's entry is
+    /// keyed by its path, so it holds the unsaved work of every workspace
+    /// with that file open, which a Save As elsewhere doesn't put anywhere.
+    pub fn begin_save(&self, path: &Path, size: u64) -> io::Result<bool> {
+        if self.file.as_deref().is_some_and(|file| file != path) {
+            return Ok(false);
+        }
         let intent = SaveIntent {
             path: path.to_path_buf(),
             before: FileStamp::of(path)?,
+            size,
         };
         self.set_saving(Some(&intent))
     }
@@ -736,7 +763,7 @@ mod tests {
             }
         });
         std::fs::write(&path, serde_json::to_vec(&meta).unwrap()).unwrap();
-        HotExitEntry::new(id, path)
+        HotExitEntry::new(id, path, None)
     }
 
     fn read_json(entry: &HotExitEntry) -> serde_json::Value {
@@ -757,13 +784,14 @@ mod tests {
         let before = read_json(&entry);
         let target = dir.path().join("saved.txt");
 
-        assert!(entry.begin_save(&target).unwrap());
+        assert!(entry.begin_save(&target, 5).unwrap());
         let mut during = read_json(&entry);
         assert_eq!(
             read_intent(&entry),
             Some(SaveIntent {
                 path: target.clone(),
                 before: None,
+                size: 5,
             })
         );
         during.as_object_mut().unwrap().remove("saving");
@@ -778,9 +806,30 @@ mod tests {
     #[test]
     fn begin_save_without_an_entry_records_nothing() {
         let dir = tempfile::TempDir::new().unwrap();
-        let entry = HotExitEntry::new("gone", dir.path().join("gone.meta.json"));
-        assert!(!entry.begin_save(&dir.path().join("f.txt")).unwrap());
+        let entry = HotExitEntry::new("gone", dir.path().join("gone.meta.json"), None);
+        assert!(!entry.begin_save(&dir.path().join("f.txt"), 1).unwrap());
         assert!(!dir.path().join("gone.meta.json").exists());
+    }
+
+    /// A file's entry is keyed by its path and holds the unsaved work of
+    /// every workspace with that file open. A save to another file (Save As)
+    /// puts none of that anywhere, so it records nothing in the entry, and
+    /// the entry stays unsaved work.
+    #[test]
+    fn a_save_to_another_file_records_nothing_in_a_files_entry() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let shared = dir.path().join("shared.txt");
+        let path = dir.path().join("shared.meta.json");
+        write_entry(dir.path(), "shared");
+        let entry = HotExitEntry::new("shared", &path, Some(shared.clone()));
+
+        assert!(!entry
+            .begin_save(&dir.path().join("renamed.txt"), 5)
+            .unwrap());
+        assert_eq!(read_intent(&entry), None);
+
+        assert!(entry.begin_save(&shared, 5).unwrap());
+        assert_eq!(read_intent(&entry).map(|i| i.path), Some(shared));
     }
 
     /// A crash before the write: the file is as the save found it, so the
@@ -797,6 +846,7 @@ mod tests {
             let intent = SaveIntent {
                 path: path.clone(),
                 before: FileStamp::of(path).unwrap(),
+                size: 11,
             };
             assert_eq!(intent.outcome(), SaveOutcome::NotWritten, "{path:?}");
         }
@@ -816,6 +866,7 @@ mod tests {
             .map(|path| SaveIntent {
                 path: path.clone(),
                 before: FileStamp::of(path).unwrap(),
+                size: "new content".len() as u64,
             })
             .collect();
         std::fs::write(&existing, "new content").unwrap();
@@ -837,9 +888,29 @@ mod tests {
         let intent = SaveIntent {
             path: path.clone(),
             before: FileStamp::of(&path).unwrap(),
+            size: 3,
         };
         std::fs::remove_file(&path).unwrap();
         assert_eq!(intent.outcome(), SaveOutcome::NotWritten);
+    }
+
+    /// A file changed to some size other than what the save writes was not
+    /// (wholly) written by it: an in-place write cut short leaves it torn,
+    /// and someone else may have changed it after a crash. Nothing can be
+    /// concluded, so the entry must not be taken for a stale copy.
+    #[test]
+    fn a_file_changed_to_another_size_reads_as_unknown() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("f.txt");
+        std::fs::write(&path, "old").unwrap();
+        let intent = SaveIntent {
+            path: path.clone(),
+            before: FileStamp::of(&path).unwrap(),
+            size: "the whole new content".len() as u64,
+        };
+        // Torn: the start of the new content, the rest never written
+        std::fs::write(&path, "the whole").unwrap();
+        assert_eq!(intent.outcome(), SaveOutcome::Unknown);
     }
 
     #[test]

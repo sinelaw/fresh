@@ -856,7 +856,7 @@ impl TextBuffer {
         // the write leaves something the next start can settle with a `stat`
         // (see `SaveIntent`). Local files only: the store is on this host,
         // and so is the `stat` that settles it.
-        let journaled = local && self.begin_hot_exit_save(dest_path);
+        let journaled = local && self.begin_hot_exit_save(dest_path, recipe.len());
         if let Err(e) = self.write_recipe(&fs, local, dest_path, &recipe, recovery_dir, read_from) {
             if journaled {
                 self.abandon_hot_exit_save();
@@ -909,15 +909,15 @@ impl TextBuffer {
         Ok(())
     }
 
-    /// Record in the buffer's hot-exit entry that it is about to be written
-    /// to `dest_path`. Returns whether it was recorded. A store that can't be
-    /// written doesn't stop the save: it only leaves the entry as exposed to
-    /// a crash as it was before saves recorded themselves.
-    fn begin_hot_exit_save(&self, dest_path: &Path) -> bool {
+    /// Record in the buffer's hot-exit entry that `size` bytes are about to
+    /// be written to `dest_path`. Returns whether it was recorded. A store
+    /// that can't be written doesn't stop the save: it only leaves the entry
+    /// as exposed to a crash as it was before saves recorded themselves.
+    fn begin_hot_exit_save(&self, dest_path: &Path, size: u64) -> bool {
         let Some(entry) = self.persistence.hot_exit_entry() else {
             return false;
         };
-        match entry.begin_save(dest_path) {
+        match entry.begin_save(dest_path, size) {
             Ok(recorded) => recorded,
             Err(e) => {
                 tracing::warn!(

@@ -212,9 +212,16 @@ impl RecoveryStorage {
         }
     }
 
-    /// The handle a buffer holding entry `id` keeps (see [`HotExitEntry`]).
-    pub fn entry_handle(&self, id: &str) -> HotExitEntry {
-        HotExitEntry::new(id, self.recovery_paths(id).0)
+    /// The handle a buffer holding entry `id`, for `file` if it has one,
+    /// keeps (see [`HotExitEntry`]).
+    pub fn entry_handle(&self, id: &str, file: Option<&Path>) -> HotExitEntry {
+        HotExitEntry::new(
+            id,
+            self.recovery_paths(id).0,
+            // An unnamed buffer's path, where it has one, is empty
+            file.filter(|f| !f.as_os_str().is_empty())
+                .map(Path::to_path_buf),
+        )
     }
 
     /// Get paths for recovery files

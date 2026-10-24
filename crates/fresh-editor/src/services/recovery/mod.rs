@@ -336,10 +336,11 @@ impl RecoveryService {
         self.storage.get_buffer_id(path)
     }
 
-    /// The handle a buffer holding entry `id` keeps, so that its save
-    /// records itself in the entry (see [`types::SaveIntent`]).
-    pub fn entry_handle(&self, id: &str) -> HotExitEntry {
-        self.storage.entry_handle(id)
+    /// The handle a buffer holding entry `id`, for `file` if it has one,
+    /// keeps, so that its save records itself in the entry (see
+    /// [`types::SaveIntent`]).
+    pub fn entry_handle(&self, id: &str, file: Option<&Path>) -> HotExitEntry {
+        self.storage.entry_handle(id, file)
     }
 
     /// Settle the saves this store's entries say were under way when their
@@ -720,7 +721,10 @@ mod tests {
         let id = {
             let mut service = service_for(&base, &scope);
             let id = save_unnamed(&mut service, b"footnotes");
-            assert!(service.entry_handle(&id).begin_save(&target).unwrap());
+            assert!(service
+                .entry_handle(&id, None)
+                .begin_save(&target, 9)
+                .unwrap());
             std::fs::write(&target, b"footnotes").unwrap();
             id
         };
@@ -745,7 +749,10 @@ mod tests {
             let mut service = service_for(&base, &scope);
             save_unsaved(&mut service, target.to_str().unwrap(), "ws", b"new text");
             let id = service.get_buffer_id(Some(&target));
-            assert!(service.entry_handle(&id).begin_save(&target).unwrap());
+            assert!(service
+                .entry_handle(&id, Some(&target))
+                .begin_save(&target, 8)
+                .unwrap());
             std::fs::write(&target, b"new text").unwrap();
         }
 
@@ -764,7 +771,10 @@ mod tests {
         let id = {
             let mut service = service_for(&base, &scope);
             let id = save_unnamed(&mut service, b"footnotes");
-            assert!(service.entry_handle(&id).begin_save(&target).unwrap());
+            assert!(service
+                .entry_handle(&id, None)
+                .begin_save(&target, 9)
+                .unwrap());
             id
         };
 
@@ -782,6 +792,41 @@ mod tests {
         assert_eq!(service.list_recoverable().unwrap().len(), 1);
     }
 
+    /// Crash during a save that writes the file in place (one owned by
+    /// someone else, or with hard links): the file is torn, holding only the
+    /// start of what the save was writing. It changed, but not to what the
+    /// save writes, so the entry is still the unsaved work — offered back,
+    /// and kept by the next session rather than taken for a stale copy.
+    #[test]
+    fn crash_during_an_in_place_write_keeps_the_unsaved_work() {
+        let (base, scope, _) = two_stores();
+        let target = base.path().join("notes.txt");
+        std::fs::write(&target, b"old content").unwrap();
+        let id = {
+            let mut service = service_for(&base, &scope);
+            save_unsaved(
+                &mut service,
+                target.to_str().unwrap(),
+                "ws",
+                b"new content!",
+            );
+            let id = service.get_buffer_id(Some(&target));
+            assert!(service
+                .entry_handle(&id, Some(&target))
+                .begin_save(&target, 12)
+                .unwrap());
+            // Truncated, then cut off part-way through the new content
+            std::fs::write(&target, b"new co").unwrap();
+            id
+        };
+
+        let mut service = service_for(&base, &scope);
+        assert_eq!(service.list_recoverable().unwrap().len(), 1);
+        service.start_session().unwrap();
+        assert!(service.storage.entry_recorded(&id).unwrap());
+        assert_eq!(service.list_recoverable().unwrap().len(), 1);
+    }
+
     /// A recovery write after a save was recorded is newer content than that
     /// save wrote, so it clears the record: the entry is unsaved work again,
     /// whatever the file does next.
@@ -791,7 +836,10 @@ mod tests {
         let target = base.path().join("input-23.txt");
         let mut service = service_for(&base, &scope);
         let id = save_unnamed(&mut service, b"first");
-        assert!(service.entry_handle(&id).begin_save(&target).unwrap());
+        assert!(service
+            .entry_handle(&id, None)
+            .begin_save(&target, 5)
+            .unwrap());
 
         let chunks = vec![RecoveryChunk::new(0, 0, b"second".to_vec())];
         service
@@ -816,12 +864,12 @@ mod tests {
             let written_id = save_unnamed(&mut daemon, b"saved");
             let kept_id = save_unnamed(&mut daemon, b"kept");
             assert!(daemon
-                .entry_handle(&written_id)
-                .begin_save(&written)
+                .entry_handle(&written_id, None)
+                .begin_save(&written, 5)
                 .unwrap());
             assert!(daemon
-                .entry_handle(&kept_id)
-                .begin_save(&not_written)
+                .entry_handle(&kept_id, None)
+                .begin_save(&not_written, 4)
                 .unwrap());
             std::fs::write(&written, b"saved").unwrap();
             (written_id, kept_id)
