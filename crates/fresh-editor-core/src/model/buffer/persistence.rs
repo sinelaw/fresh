@@ -14,6 +14,7 @@
 use crate::model::filesystem::{ContentDigest, FileSystem};
 use crate::model::piece_tree::{BufferLocation, LeafData, PieceTree, PieceTreeNode, StringBuffer};
 use crate::model::piece_tree_diff::PieceTreeDiff;
+use crate::recovery_types::HotExitEntry;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -34,6 +35,12 @@ pub struct Persistence {
     /// Separate from `modified` because recovery auto-save doesn't
     /// clear `modified` (buffer still differs from on-disk file).
     recovery_pending: bool,
+
+    /// The hot-exit entry holding this buffer's unsaved content, when there
+    /// is one: a save records itself there before writing the file, so the
+    /// entry can never outlive the save as unsaved work (see
+    /// `crate::recovery_types::SaveIntent`).
+    hot_exit_entry: Option<HotExitEntry>,
 
     /// Snapshot of the piece tree root at last save (shared via Arc).
     saved_root: Arc<PieceTreeNode>,
@@ -99,6 +106,7 @@ impl Persistence {
             file_path,
             modified: false,
             recovery_pending: false,
+            hot_exit_entry: None,
             saved_root,
             saved_file_size,
             source_torn: false,
@@ -155,6 +163,14 @@ impl Persistence {
 
     pub fn set_recovery_pending(&mut self, pending: bool) {
         self.recovery_pending = pending;
+    }
+
+    pub fn hot_exit_entry(&self) -> Option<&HotExitEntry> {
+        self.hot_exit_entry.as_ref()
+    }
+
+    pub fn set_hot_exit_entry(&mut self, entry: Option<HotExitEntry>) {
+        self.hot_exit_entry = entry;
     }
 
     /// The single choke-point for flipping the two dirty flags.

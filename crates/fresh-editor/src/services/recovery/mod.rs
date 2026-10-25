@@ -59,8 +59,8 @@ pub use fresh_editor_core::recovery_types as types;
 pub use storage::{RecoveryScope, RecoveryStorage};
 pub use types::{
     generate_buffer_id, path_hash, ChunkMeta, ChunkedRecoveryData, ChunkedRecoveryIndex,
-    InplaceWriteRecovery, RecoveryChunk, RecoveryEntry, RecoveryMetadata, RecoveryResult,
-    SessionInfo, MAX_CHUNK_SIZE,
+    HotExitEntry, InplaceWriteRecovery, RecoveryChunk, RecoveryEntry, RecoveryMetadata,
+    RecoveryResult, SaveOutcome, SessionInfo, MAX_CHUNK_SIZE,
 };
 
 use std::collections::HashMap;
@@ -189,6 +189,11 @@ impl RecoveryService {
                 moved += 1;
             }
         }
+        if moved > 0 {
+            // Its editor is gone, so a save one of these records was
+            // interrupted with it: settle it now that the entry is ours.
+            self.resolve_interrupted_saves();
+        }
         Ok(moved)
     }
 
@@ -210,7 +215,7 @@ impl RecoveryService {
         // Check for crash
         if self.storage.detect_crash()? {
             // Also check if there are any recovery files
-            let entries = self.storage.list_entries()?;
+            let entries = self.list_recoverable()?;
             return Ok(!entries.is_empty());
         }
 
@@ -229,6 +234,7 @@ impl RecoveryService {
             Ok(n) => tracing::info!("Removed {} stale recovery temp file(s)", n),
             Err(e) => tracing::warn!("Failed to clean up stale recovery temp files: {}", e),
         }
+        self.resolve_interrupted_saves();
         self.session_started = true;
         tracing::info!("Recovery session started");
         Ok(())
@@ -330,6 +336,55 @@ impl RecoveryService {
         self.storage.get_buffer_id(path)
     }
 
+    /// The handle a buffer holding entry `id`, for `file` if it has one,
+    /// keeps, so that its save records itself in the entry (see
+    /// [`types::SaveIntent`]).
+    pub fn entry_handle(&self, id: &str, file: Option<&Path>) -> HotExitEntry {
+        self.storage.entry_handle(id, file)
+    }
+
+    /// Settle the saves this store's entries say were under way when their
+    /// editor stopped (see [`types::SaveIntent`]): an entry whose save wrote
+    /// its file is deleted, and one whose save never happened is the unsaved
+    /// work again, with the record of that save cleared — left in place, a
+    /// later change to the file by anyone would read as that save having
+    /// written it. One whose file can't be looked at is left for a session
+    /// that can.
+    ///
+    /// Only for a store no running editor is saving into: at session start,
+    /// and for entries taken over from a store whose editor is gone.
+    pub fn resolve_interrupted_saves(&mut self) {
+        let entries = match self.storage.list_entries() {
+            Ok(entries) => entries,
+            Err(e) => {
+                tracing::warn!("Failed to list recovery entries to settle saves: {}", e);
+                return;
+            }
+        };
+        for entry in entries {
+            let Some(intent) = &entry.metadata.saving else {
+                continue;
+            };
+            let settled = match intent.outcome() {
+                SaveOutcome::Written => self.storage.delete_recovery(&entry.id),
+                SaveOutcome::NotWritten => entry.handle().abandon_save().map(|_| ()),
+                SaveOutcome::Unknown => continue,
+            };
+            match settled {
+                Ok(()) => tracing::info!(
+                    "Settled interrupted save of recovery entry {} to {}",
+                    entry.id,
+                    intent.path.display()
+                ),
+                Err(e) => tracing::warn!(
+                    "Failed to settle interrupted save of recovery entry {}: {}",
+                    entry.id,
+                    e
+                ),
+            }
+        }
+    }
+
     // ========================================================================
     // Recovery operations
     // ========================================================================
@@ -391,13 +446,28 @@ impl RecoveryService {
     /// [`RecoveryStorage::entry_recorded`]: only `Ok(false)` means the
     /// content is gone, which is the one answer that licenses dropping a
     /// workspace's reference to it.
+    ///
+    /// An entry a save superseded counts as gone: its content is in the file
+    /// now, and only deleting the entry was cut short.
     pub fn entry_recorded(&self, id: &str) -> io::Result<bool> {
-        self.storage.entry_recorded(id)
+        if !self.storage.entry_recorded(id)? {
+            return Ok(false);
+        }
+        let superseded = self
+            .storage
+            .load_entry(id)
+            .ok()
+            .flatten()
+            .is_some_and(|entry| entry.superseded_by_save());
+        Ok(!superseded)
     }
 
-    /// List all recoverable entries
+    /// List all recoverable entries: every entry but those a save
+    /// superseded, whose content is in their file already.
     pub fn list_recoverable(&self) -> io::Result<Vec<RecoveryEntry>> {
-        self.storage.list_entries()
+        let mut entries = self.storage.list_entries()?;
+        entries.retain(|entry| !entry.superseded_by_save());
+        Ok(entries)
     }
 
     /// Load recovery content for a specific entry
@@ -620,6 +690,199 @@ mod tests {
         assert_eq!(direct.adopt_from(&daemon_scope, |_| true).unwrap(), 0);
         assert_eq!(paths_in(&daemon), vec![Path::new("/project/a.txt")]);
         assert_eq!(paths_in(&direct), vec![Path::new("/project/a.txt")]);
+    }
+
+    /// Save unsaved, never-named `text`; returns its entry id.
+    fn save_unnamed(service: &mut RecoveryService, text: &[u8]) -> String {
+        let id = service.get_buffer_id(None);
+        let chunks = vec![RecoveryChunk::new(0, 0, text.to_vec())];
+        service
+            .save_buffer_owned(&id, chunks, None, None, Some(1), 0, text.len(), Some("ws"))
+            .unwrap();
+        id
+    }
+
+    fn intent_of(service: &RecoveryService, id: &str) -> Option<types::SaveIntent> {
+        service.storage.read_metadata(id).unwrap().unwrap().saving
+    }
+
+    // The crash tests below stop a save between its steps — record the save
+    // in the entry, write the file, delete the entry — and start a new
+    // session over the store, as the next launch after a crash would.
+
+    /// Crash after the write, before the delete (issue #3626's entry, left
+    /// by a crash instead of a missing delete): the content is in the file,
+    /// so the entry must not come back as an unsaved buffer, and the next
+    /// session clears it away.
+    #[test]
+    fn crash_after_the_save_wrote_leaves_nothing_to_recover() {
+        let (base, scope, _) = two_stores();
+        let target = base.path().join("input-23.txt");
+        let id = {
+            let mut service = service_for(&base, &scope);
+            let id = save_unnamed(&mut service, b"footnotes");
+            assert!(service
+                .entry_handle(&id, None)
+                .begin_save(&target, 9)
+                .unwrap());
+            std::fs::write(&target, b"footnotes").unwrap();
+            id
+        };
+
+        let mut service = service_for(&base, &scope);
+        assert!(service.list_recoverable().unwrap().is_empty());
+        assert!(!service.entry_recorded(&id).unwrap());
+        assert!(!service.should_offer_recovery().unwrap());
+
+        service.start_session().unwrap();
+        assert!(!service.storage.entry_recorded(&id).unwrap());
+    }
+
+    /// The same for a save over an existing file: it changed, so the save
+    /// wrote it.
+    #[test]
+    fn crash_after_saving_over_a_file_leaves_nothing_to_recover() {
+        let (base, scope, _) = two_stores();
+        let target = base.path().join("notes.txt");
+        std::fs::write(&target, b"old").unwrap();
+        {
+            let mut service = service_for(&base, &scope);
+            save_unsaved(&mut service, target.to_str().unwrap(), "ws", b"new text");
+            let id = service.get_buffer_id(Some(&target));
+            assert!(service
+                .entry_handle(&id, Some(&target))
+                .begin_save(&target, 8)
+                .unwrap());
+            std::fs::write(&target, b"new text").unwrap();
+        }
+
+        let service = service_for(&base, &scope);
+        assert!(service.list_recoverable().unwrap().is_empty());
+    }
+
+    /// Crash after recording the save, before the write: nothing reached the
+    /// file, so the entry is the only copy of the work and comes back. The
+    /// next session clears the record, so that a later change to the file —
+    /// by anyone — can't read as that save having happened.
+    #[test]
+    fn crash_before_the_save_wrote_keeps_the_unsaved_work() {
+        let (base, scope, _) = two_stores();
+        let target = base.path().join("input-23.txt");
+        let id = {
+            let mut service = service_for(&base, &scope);
+            let id = save_unnamed(&mut service, b"footnotes");
+            assert!(service
+                .entry_handle(&id, None)
+                .begin_save(&target, 9)
+                .unwrap());
+            id
+        };
+
+        let mut service = service_for(&base, &scope);
+        let entries = service.list_recoverable().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert!(matches!(
+            service.load_recovery(&entries[0]).unwrap(),
+            RecoveryResult::Recovered { content, .. } if content == b"footnotes"
+        ));
+
+        service.start_session().unwrap();
+        assert_eq!(intent_of(&service, &id), None);
+        std::fs::write(&target, b"someone else's").unwrap();
+        assert_eq!(service.list_recoverable().unwrap().len(), 1);
+    }
+
+    /// Crash during a save that writes the file in place (one owned by
+    /// someone else, or with hard links): the file is torn, holding only the
+    /// start of what the save was writing. It changed, but not to what the
+    /// save writes, so the entry is still the unsaved work — offered back,
+    /// and kept by the next session rather than taken for a stale copy.
+    #[test]
+    fn crash_during_an_in_place_write_keeps_the_unsaved_work() {
+        let (base, scope, _) = two_stores();
+        let target = base.path().join("notes.txt");
+        std::fs::write(&target, b"old content").unwrap();
+        let id = {
+            let mut service = service_for(&base, &scope);
+            save_unsaved(
+                &mut service,
+                target.to_str().unwrap(),
+                "ws",
+                b"new content!",
+            );
+            let id = service.get_buffer_id(Some(&target));
+            assert!(service
+                .entry_handle(&id, Some(&target))
+                .begin_save(&target, 12)
+                .unwrap());
+            // Truncated, then cut off part-way through the new content
+            std::fs::write(&target, b"new co").unwrap();
+            id
+        };
+
+        let mut service = service_for(&base, &scope);
+        assert_eq!(service.list_recoverable().unwrap().len(), 1);
+        service.start_session().unwrap();
+        assert!(service.storage.entry_recorded(&id).unwrap());
+        assert_eq!(service.list_recoverable().unwrap().len(), 1);
+    }
+
+    /// A recovery write after a save was recorded is newer content than that
+    /// save wrote, so it clears the record: the entry is unsaved work again,
+    /// whatever the file does next.
+    #[test]
+    fn a_recovery_write_clears_a_recorded_save() {
+        let (base, scope, _) = two_stores();
+        let target = base.path().join("input-23.txt");
+        let mut service = service_for(&base, &scope);
+        let id = save_unnamed(&mut service, b"first");
+        assert!(service
+            .entry_handle(&id, None)
+            .begin_save(&target, 5)
+            .unwrap());
+
+        let chunks = vec![RecoveryChunk::new(0, 0, b"second".to_vec())];
+        service
+            .save_buffer_owned(&id, chunks, None, None, Some(1), 0, 6, Some("ws"))
+            .unwrap();
+
+        assert_eq!(intent_of(&service, &id), None);
+        std::fs::write(&target, b"first").unwrap();
+        assert_eq!(service.list_recoverable().unwrap().len(), 1);
+    }
+
+    /// Entries taken over from a store whose editor is gone are settled on
+    /// arrival: one whose save wrote its file is dropped, one whose save
+    /// never happened is unsaved work with the record cleared.
+    #[test]
+    fn adopt_from_settles_interrupted_saves() {
+        let (base, daemon_scope, direct_scope) = two_stores();
+        let written = base.path().join("written.txt");
+        let not_written = base.path().join("not-written.txt");
+        let (written_id, kept_id) = {
+            let mut daemon = service_for(&base, &daemon_scope);
+            let written_id = save_unnamed(&mut daemon, b"saved");
+            let kept_id = save_unnamed(&mut daemon, b"kept");
+            assert!(daemon
+                .entry_handle(&written_id, None)
+                .begin_save(&written, 5)
+                .unwrap());
+            assert!(daemon
+                .entry_handle(&kept_id, None)
+                .begin_save(&not_written, 4)
+                .unwrap());
+            std::fs::write(&written, b"saved").unwrap();
+            (written_id, kept_id)
+        };
+
+        let mut direct = service_for(&base, &direct_scope);
+        assert_eq!(direct.adopt_from(&daemon_scope, |_| true).unwrap(), 2);
+
+        assert!(!direct.storage.entry_recorded(&written_id).unwrap());
+        let entries = direct.list_recoverable().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, kept_id);
+        assert_eq!(intent_of(&direct, &kept_id), None);
     }
 
     #[test]

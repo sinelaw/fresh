@@ -142,6 +142,17 @@ impl WriteRecipe {
         }
     }
 
+    /// How many bytes the recipe writes.
+    pub(crate) fn len(&self) -> u64 {
+        self.actions
+            .iter()
+            .map(|action| match action {
+                RecipeAction::Copy { len, .. } => *len,
+                RecipeAction::Insert { index } => self.insert_data[*index].len() as u64,
+            })
+            .sum()
+    }
+
     /// Convert the recipe to WriteOp slice for use with filesystem write_patched
     pub(crate) fn to_write_ops(&self) -> Vec<WriteOp<'_>> {
         self.actions

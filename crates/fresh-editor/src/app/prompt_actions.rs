@@ -829,6 +829,23 @@ impl Editor {
             before_len
         );
 
+        // The recovery entry holding an unnamed buffer's unsaved content,
+        // named before the save gives the buffer a path. Only an unnamed
+        // buffer's: a file's entry is keyed by its path, and holds the
+        // unsaved work of every workspace with that file open.
+        let active_buffer = self.active_buffer();
+        let unnamed = self
+            .active_state()
+            .buffer
+            .file_path()
+            .is_none_or(|p| p.as_os_str().is_empty());
+        let recovery_id = self
+            .active_window()
+            .buffer_metadata
+            .get(&active_buffer)
+            .and_then(|meta| meta.recovery_id.clone())
+            .filter(|_| unnamed);
+
         let recovery_dir = self.dir_context.recovery_dir();
         match self
             .active_state_mut()
@@ -836,6 +853,18 @@ impl Editor {
             .save_to_file(&full_path, &recovery_dir)
         {
             Ok(()) => {
+                // The content is in the file now. Left behind, the entry came
+                // back as an unsaved buffer at the next switch to this
+                // workspace (issue #3626).
+                if let Some(recovery_id) = recovery_id {
+                    self.delete_recovery_entry(recovery_id);
+                }
+                // Saved: nothing is left for the recovery auto-save, which
+                // would otherwise write an entry for the clean file, and no
+                // entry is this buffer's unsaved work any more.
+                let state = self.active_state_mut();
+                state.buffer.set_recovery_pending(false);
+                state.buffer.clear_hot_exit_entry();
                 let after_save_idx = self.active_event_log().current_index();
                 let after_save_len = self.active_event_log().len();
                 tracing::debug!(

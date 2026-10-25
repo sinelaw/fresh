@@ -410,7 +410,7 @@ impl Editor {
                             state.buffer.insert(chunk.offset, &text);
                         }
                         state.buffer.set_modified(true);
-                        state.buffer.set_recovery_pending(false);
+                        state.buffer.set_backed_by(entry.handle());
                         state.wrap_indices.damage_all();
                     }
                     self.active_event_log_mut().clear_saved_position();
@@ -453,7 +453,7 @@ impl Editor {
                 state.buffer.delete(0..total);
                 state.buffer.insert(0, &text);
                 state.buffer.set_modified(true);
-                state.buffer.set_recovery_pending(false);
+                state.buffer.set_backed_by(entry.handle());
                 // Wholesale replacement, never described as edit damage.
                 // See `WrapIndex::damage_all`.
                 state.wrap_indices.damage_all();
@@ -591,7 +591,7 @@ impl Editor {
                                     state.buffer.delete(0..total);
                                     state.buffer.insert(0, &text);
                                     state.buffer.set_modified(true);
-                                    state.buffer.set_recovery_pending(false);
+                                    state.buffer.set_backed_by(entry.handle());
                                     // Wholesale replacement, never described as
                                     // edit damage. See `WrapIndex::damage_all`.
                                     state.wrap_indices.damage_all();
@@ -627,7 +627,7 @@ impl Editor {
                             let state = self.active_state_mut();
                             state.buffer.insert(0, &text);
                             state.buffer.set_modified(true);
-                            state.buffer.set_recovery_pending(false);
+                            state.buffer.set_backed_by(entry.handle());
                         }
                         self.active_event_log_mut().clear_saved_position();
                         if let Some(meta) =
@@ -660,7 +660,7 @@ impl Editor {
                                 state.buffer.insert(chunk.offset, &text);
                             }
                             state.buffer.set_modified(true);
-                            state.buffer.set_recovery_pending(false);
+                            state.buffer.set_backed_by(entry.handle());
                         }
                         self.active_event_log_mut().clear_saved_position();
                         self.sync_lsp_after_recovery_replay(buffer_id);
@@ -858,29 +858,52 @@ impl Editor {
 
     /// Delete recovery for a buffer (call after saving or closing)
     pub fn delete_buffer_recovery(&mut self, buffer_id: BufferId) -> AnyhowResult<()> {
-        // Get recovery_id: use stored one for unnamed buffers, compute from path otherwise
-        let recovery_id = {
-            let meta = self.active_window().buffer_metadata.get(&buffer_id);
-            let state = self
-                .windows
-                .get(&self.active_window)
-                .map(|w| &w.buffers)
-                .expect("active window present")
-                .get(&buffer_id);
-
-            if let Some(stored_id) = meta.and_then(|m| m.recovery_id.clone()) {
-                stored_id
-            } else if let Some(state) = state {
-                let path = state.buffer.file_path().map(|p| p.to_path_buf());
-                self.recovery_service
-                    .lock()
-                    .unwrap()
-                    .get_buffer_id(path.as_deref())
-            } else {
-                return Ok(());
-            }
+        let Some(recovery_id) = self.recovery_id_of(buffer_id) else {
+            return Ok(());
         };
+        self.delete_recovery_entry(recovery_id);
 
+        // Clear recovery_pending since buffer is now saved
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
+            state.buffer.set_recovery_pending(false);
+            state.buffer.clear_hot_exit_entry();
+        }
+        Ok(())
+    }
+
+    /// The id of the recovery entry `buffer_id` writes to: the one it holds,
+    /// else the one stored for an unnamed buffer, else its path's.
+    pub(crate) fn recovery_id_of(&self, buffer_id: BufferId) -> Option<String> {
+        let state = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&buffer_id);
+        if let Some(entry) = state.and_then(|s| s.buffer.hot_exit_entry()) {
+            return Some(entry.id().to_string());
+        }
+        let meta = self.active_window().buffer_metadata.get(&buffer_id);
+        if let Some(stored_id) = meta.and_then(|m| m.recovery_id.clone()) {
+            return Some(stored_id);
+        }
+        let path = state?.buffer.file_path().map(|p| p.to_path_buf());
+        Some(
+            self.recovery_service
+                .lock()
+                .unwrap()
+                .get_buffer_id(path.as_deref()),
+        )
+    }
+
+    /// Delete recovery entry `recovery_id`.
+    pub(crate) fn delete_recovery_entry(&mut self, recovery_id: String) {
         // The deletes (exists + remove_file + a chunk-directory scan) are
         // disk I/O — off-loop. The recovery-service mutex is taken inside the
         // spawned effect so a slow disk stalls the runtime worker, not the
@@ -896,18 +919,6 @@ impl Editor {
                 tracing::warn!("off-loop recovery delete failed: {}", e);
             }
         });
-
-        // Clear recovery_pending since buffer is now saved
-        if let Some(state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&buffer_id)
-        {
-            state.buffer.set_recovery_pending(false);
-        }
-        Ok(())
     }
 
     /// Save a single buffer's content to recovery storage.
@@ -924,6 +935,11 @@ impl Editor {
         // Read before the mutable borrow of the buffer state below: the entry
         // is stamped with the workspace that owns it (issue #3189).
         let workspace_id = self.active_window().stable_id.clone();
+        let handle = self
+            .recovery_service
+            .lock()
+            .unwrap()
+            .entry_handle(recovery_id, path);
         let state = match self
             .windows
             .get_mut(&self.active_window)
@@ -984,7 +1000,7 @@ impl Editor {
             )?;
         }
 
-        state.buffer.set_recovery_pending(false);
+        state.buffer.set_backed_by(handle);
         Ok(true)
     }
 

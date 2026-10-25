@@ -388,7 +388,7 @@ impl Editor {
                                 state.buffer.delete(0..current_len);
                                 state.buffer.insert(0, &text);
                                 state.buffer.set_modified(true);
-                                state.buffer.set_recovery_pending(false);
+                                state.buffer.set_backed_by(entry.handle());
                                 // The document is a different document now, and
                                 // this path never described the change as edit
                                 // damage. See `WrapIndex::damage_all`.
@@ -434,7 +434,7 @@ impl Editor {
                                 state.buffer.insert(chunk.offset, &text);
                             }
                             state.buffer.set_modified(true);
-                            state.buffer.set_recovery_pending(false);
+                            state.buffer.set_backed_by(entry.handle());
                             // Invalidate saved position so undo can't
                             // incorrectly clear the modified flag
                             if let Some(log) =
@@ -2453,7 +2453,7 @@ impl crate::app::window::Window {
     pub(crate) fn create_unnamed_recovery_buffer(
         &mut self,
         text: &str,
-        recovery_id: String,
+        entry: &crate::services::recovery::RecoveryEntry,
         display_name: String,
     ) -> BufferId {
         let buffer_id = self.alloc_buffer_id();
@@ -2466,7 +2466,7 @@ impl crate::app::window::Window {
         state.apply_unnamed_buffer_config(&self.resources.config);
         state.buffer.insert(0, text);
         state.buffer.set_modified(true);
-        state.buffer.set_recovery_pending(false);
+        state.buffer.set_backed_by(entry.handle());
         self.buffers.insert(buffer_id, state);
 
         let mut log = crate::model::event::EventLog::new();
@@ -2474,7 +2474,7 @@ impl crate::app::window::Window {
         self.event_logs.insert(buffer_id, log);
 
         let mut meta = crate::app::types::BufferMetadata::new();
-        meta.recovery_id = Some(recovery_id);
+        meta.recovery_id = Some(entry.id.clone());
         meta.display_name = display_name;
         self.buffer_metadata.insert(buffer_id, meta);
 
@@ -2618,7 +2618,7 @@ impl crate::app::window::Window {
                     let text = String::from_utf8_lossy(&content).into_owned();
                     let buffer_id = self.create_unnamed_recovery_buffer(
                         &text,
-                        unnamed_ref.recovery_id.clone(),
+                        entry,
                         unnamed_ref.display_name.clone(),
                     );
                     unnamed_buffer_map.insert(unnamed_ref.recovery_id.clone(), buffer_id);
@@ -2641,7 +2641,7 @@ impl crate::app::window::Window {
                     let text = String::from_utf8_lossy(&content).into_owned();
                     let buffer_id = self.create_unnamed_recovery_buffer(
                         &text,
-                        unnamed_ref.recovery_id.clone(),
+                        entry,
                         unnamed_ref.display_name.clone(),
                     );
                     unnamed_buffer_map.insert(unnamed_ref.recovery_id.clone(), buffer_id);
@@ -2827,7 +2827,7 @@ impl crate::app::window::Window {
                             state.buffer.delete(0..current_len);
                             state.buffer.insert(0, &text);
                             state.buffer.set_modified(true);
-                            state.buffer.set_recovery_pending(false);
+                            state.buffer.set_backed_by(entry.handle());
                             // Wholesale replacement, never described as edit
                             // damage. See `WrapIndex::damage_all`.
                             state.wrap_indices.damage_all();
@@ -2860,7 +2860,7 @@ impl crate::app::window::Window {
                             state.buffer.insert(chunk.offset, &text);
                         }
                         state.buffer.set_modified(true);
-                        state.buffer.set_recovery_pending(false);
+                        state.buffer.set_backed_by(entry.handle());
                         mutated = true;
                         tracing::info!(
                             "Restored unsaved changes (chunked) for {:?} from hot exit recovery",
