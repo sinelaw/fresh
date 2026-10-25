@@ -63,10 +63,12 @@ pub(super) fn render_column_guides(
 /// `columns` are absolute display columns within the line, gutter included.
 /// `tint` is the column's background, with that theme key's text attributes;
 /// `default_fg` styles the padding cells of a short line.
-/// `overridable_bg` names a base background this tint may retake even when a
-/// cell already carries it: the ruler passes the current-line background so a
-/// ruler stays visible on the highlighted cursor row; the cursor column passes
-/// `None` — the line tint is its own and must not repaint a search match.
+/// `overridable_bgs` names base backgrounds this tint may retake even when a
+/// cell already carries them: the ruler passes the current-line and reference
+/// (semantic) highlight backgrounds, which are base surfaces rather than
+/// transient overlays, so a ruler stays visible on a highlighted cursor row
+/// and where the hovered symbol is highlighted; the cursor column passes an
+/// empty slice — the line tint is its own and must not repaint a search match.
 /// `rows` bounds how many lines are tinted — the cursor column stops at the
 /// rendered rows, while a ruler runs the pane's full height (#2631), which is
 /// why the caller hands this one a padded `lines`.
@@ -85,7 +87,7 @@ pub(super) fn tint_columns_in_lines(
     columns: &[usize],
     tint: Style,
     default_fg: Style,
-    overridable_bg: Option<Color>,
+    overridable_bgs: &[Color],
     rows: usize,
 ) {
     use unicode_width::UnicodeWidthChar;
@@ -146,12 +148,15 @@ pub(super) fn tint_columns_in_lines(
                 for (_, style) in chars[first..=last].iter_mut() {
                     // Do not overwrite existing background highlights (e.g. search matches,
                     // selections, diffs) to preserve contrast and visual continuity. A tint
-                    // may retake only its own colour, or the base tint `overridable_bg`
-                    // names for it — the ruler passes the current-line background so it
-                    // stays visible on the highlighted cursor row.
+                    // may retake only its own colour, or a base surface `overridable_bgs`
+                    // names for it — the ruler passes the current-line and reference
+                    // highlight backgrounds so it stays visible over those base surfaces.
                     if style.bg.is_none()
                         || style.bg == tint.bg
-                        || (overridable_bg.is_some() && style.bg == overridable_bg)
+                        || style
+                            .bg
+                            .map(|bg| overridable_bgs.contains(&bg))
+                            .unwrap_or(false)
                     {
                         *style = style.patch(tint);
                         if let Some(fg) = style.fg {
@@ -355,7 +360,7 @@ mod tests {
             &[2], // column 2 is 'c' with Yellow bg
             tint(Color::Rgb(20, 20, 20)),
             Style::default().fg(Color::White),
-            None,
+            &[],
             1,
         );
 
@@ -383,7 +388,7 @@ mod tests {
             &[0],
             tint(Color::Rgb(20, 20, 20)), // dark bg
             Style::default().fg(Color::White),
-            None,
+            &[Color::Rgb(40, 40, 40)],
             1,
         );
 
@@ -405,7 +410,7 @@ mod tests {
             &[0, 1],
             tint(Color::Rgb(50, 50, 50)),
             Style::default().fg(Color::White),
-            Some(Color::Rgb(40, 40, 40)),
+            &[Color::Rgb(40, 40, 40)],
             1,
         );
 
@@ -426,7 +431,7 @@ mod tests {
             &[0, 1],
             tint(Color::Rgb(40, 40, 40)),
             Style::default().fg(Color::White),
-            None,
+            &[],
             1,
         );
 

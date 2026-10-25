@@ -1040,3 +1040,48 @@ fn test_ruler_on_combining_sequence_needs_no_snap() {
         "column 2 holds the whole combining sequence in one cell"
     );
 }
+
+/// A committed search match sitting under a ruler column keeps its match
+/// highlight: the ruler tint retakes only base surfaces (current line,
+/// reference highlight), never a search match's background.
+#[test]
+fn test_ruler_does_not_repaint_search_match_under_its_column() {
+    let mut config = Config::default();
+    config.editor.rulers = vec![10];
+    config.locale = fresh::config::LocaleName(Some("en".to_string()));
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    // A single line long enough for the column-10 ruler, with a match whose
+    // last character sits exactly on the ruler column.
+    let _fixture = harness
+        .load_buffer_from_text(&format!("{}{}", "a".repeat(9), "bcd"))
+        .unwrap();
+    harness.render().unwrap();
+
+    let (content_first_row, _) = harness.content_area_rows();
+    let row = content_first_row as u16;
+    let ruler_screen_x = ruler_x(&harness, 10);
+
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("bcd").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+
+    // The match ends on the ruler column ("a"*9 then b=10, c=11, d=12): the
+    // cell the ruler marks is the 'd' carrying the search-match background.
+    let match_bg = harness
+        .get_cell_style(ruler_screen_x, row)
+        .and_then(|s| s.bg)
+        .expect("search match under the ruler column should have a background");
+    assert_ne!(
+        match_bg,
+        Color::Rgb(50, 50, 50),
+        "ruler must not repaint a search match sitting on its column"
+    );
+}
