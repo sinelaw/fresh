@@ -2894,9 +2894,14 @@ impl Editor {
                 .save_to_file(&path, &self.dir_context.recovery_dir())
             {
                 Ok(()) => {
-                    // save_to_file already updates file_path internally via finalize_save
-                    // Run on-save actions (formatting, etc.)
-                    if let Err(e) = self.finalize_save(Some(path)) {
+                    // Finalize the buffer that was saved, which need not be
+                    // the active one: finalizing the active buffer deleted
+                    // the hot-exit entry of a buffer still holding unsaved
+                    // work, and left the saved one marked for a backup. The
+                    // on-save actions work on the active buffer, so they
+                    // run only when that is the one saved.
+                    let background = buffer_id != self.active_buffer();
+                    if let Err(e) = self.finalize_save_buffer(buffer_id, Some(path), background) {
                         tracing::warn!("Failed to finalize save: {}", e);
                     }
                     tracing::debug!("Saved buffer {:?} to path", buffer_id);
