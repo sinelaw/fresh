@@ -781,12 +781,10 @@ fn test_flow_e_active_tab_preserved_across_restart() {
 // Flow F: File changed on disk since hot exit (mtime mismatch)
 // =========================================================================
 
-/// When a file is modified on disk between shutdown and restore, the recovery
-/// should be skipped and the user should be warned (not silently discarded).
-///
-/// Currently fails because recovery is applied regardless of mtime changes,
-/// silently overwriting external edits. Will pass after implementing mtime
-/// check with user warning (Phase 4, Task 4.2 of the plan).
+/// When a file is modified on disk between shutdown and restore, the unsaved
+/// version must neither overwrite the newer file nor be dropped: the file
+/// shows what is on disk, and the unsaved version comes back beside it as an
+/// unsaved copy.
 #[test]
 fn test_flow_f_mtime_mismatch_skips_recovery() {
     let temp_dir = TempDir::new().unwrap();
@@ -851,7 +849,13 @@ fn test_flow_f_mtime_mismatch_skips_recovery() {
         harness.startup(true, &[]).unwrap();
         harness.render().unwrap();
 
-        // The buffer should show the new on-disk content, not the stale recovery
+        // The unsaved version is back, as a copy beside the file
+        harness.assert_screen_contains("changing.txt (unsaved copy)");
+        harness.assert_screen_contains("original on disk UNSAVED_EDIT");
+
+        // The file itself shows the new on-disk content, not the stale recovery
+        harness.open_file(&file1).unwrap();
+        harness.render().unwrap();
         harness.assert_screen_contains("externally modified on disk");
         harness.assert_screen_not_contains("UNSAVED_EDIT");
     }

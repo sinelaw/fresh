@@ -1,14 +1,11 @@
 //! A session that cannot account for a workspace's unnamed buffers must not
-//! destroy their records.
+//! lose them.
 //!
-//! The record (the `unnamed_buffers` list in the workspace file) is the only
-//! pointer to content the recovery store holds. A save rebuilds that list from
-//! the buffers that are *live*, so any session that did not restore them
-//! writes the pointer away while the content stays on disk, unreachable.
-//!
-//! #3475 is one way into that state — the entry lives in a store this editor
-//! cannot see. These are the others, each measured against a live editor
-//! before being written down:
+//! The record (the `unnamed_buffers` list in the workspace file) only places
+//! their tabs: the recovery store finds a workspace's entries by their
+//! workspace stamp, so a session that writes the record away leaves the
+//! content reachable. These are the ways a session can fail to restore them,
+//! each measured against a live editor before being written down:
 //!
 //! 1. `hot_exit` was off for one session.
 //! 2. The recovery store could not be listed (a transient I/O failure).
@@ -77,67 +74,35 @@ fn seed_unsaved_buffer(project: &Path, dir_context: &DirectoryContext) -> String
     ids.into_iter().next().unwrap()
 }
 
-/// The one directory the standalone recovery store keeps `root`'s entries in.
-fn store_dir(dir_context: &DirectoryContext) -> std::path::PathBuf {
-    let default_dir = dir_context.recovery_dir().join("default");
-    let mut subdirs: Vec<_> = std::fs::read_dir(&default_dir)
-        .unwrap_or_else(|e| panic!("no recovery store under {}: {e}", default_dir.display()))
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.is_dir())
-        .collect();
-    assert_eq!(
-        subdirs.len(),
-        1,
-        "expected exactly one standalone store, found {subdirs:?}"
-    );
-    subdirs.pop().unwrap()
+/// The directory the recovery store keeps `root`'s entries in.
+fn store_dir(dir_context: &DirectoryContext, root: &Path) -> std::path::PathBuf {
+    fresh::services::recovery::partition_dir(&dir_context.recovery_dir(), root)
 }
 
-/// Turning `hot_exit` off for one session must not cost the record.
-///
-/// Restore returns early when the setting is off, so nothing reads the list —
-/// and the save writes it back from the live buffers, which is empty. One
-/// visit with the setting off and the pointer is gone for good, while the
-/// content sits in the store with nothing naming it.
+/// Turning `hot_exit` off for one session must not hide the buffer an
+/// earlier session kept: it is unsaved work no quit prompt has asked about,
+/// so it is shown, and this session's quit prompt covers it.
 #[test]
-fn a_session_with_hot_exit_off_keeps_the_record() {
+fn a_session_with_hot_exit_off_shows_the_kept_buffer() {
     let temp = TempDir::new().unwrap();
     let project = temp.path().join("project");
     std::fs::create_dir(&project).unwrap();
     let dir_context = DirectoryContext::for_testing(temp.path());
     std::fs::create_dir_all(dir_context.workspaces_dir()).unwrap();
 
-    let id = seed_unsaved_buffer(&project, &dir_context);
+    seed_unsaved_buffer(&project, &dir_context);
 
-    // One session with the setting off: open the project and leave.
-    {
-        let mut harness = harness_in(&project, &dir_context, false).unwrap();
-        harness.startup(true, &[]).unwrap();
-        harness.render().unwrap();
-        harness.shutdown(true).unwrap();
-    }
-
-    assert_eq!(
-        recorded_ids(&project),
-        vec![id],
-        "a session with hot_exit off did not read the unnamed-buffer record, \
-         so it must not rewrite it"
-    );
-
-    // And with the setting back on, the buffer must still come back.
-    let mut harness = harness_in(&project, &dir_context, true).unwrap();
+    let mut harness = harness_in(&project, &dir_context, false).unwrap();
     harness.startup(true, &[]).unwrap();
     harness.render().unwrap();
     harness.assert_screen_contains(MARK);
 }
 
-/// A store this session could not list must not be read as an empty store.
+/// A store this session could not list must not cost the buffer.
 ///
-/// `list_recoverable` failing is indistinguishable, today, from the entry not
-/// being there: both drop the reference. But a directory that cannot be read
-/// is a transient fault — the content is still in it — so the record has to
-/// survive until a session can actually look.
+/// A directory that cannot be read is a transient fault — the content is
+/// still in it — so the buffer has to come back once a session can look,
+/// whatever this session did to the workspace's record of it.
 #[test]
 fn a_session_that_cannot_list_the_store_keeps_the_record() {
     let temp = TempDir::new().unwrap();
@@ -146,11 +111,11 @@ fn a_session_that_cannot_list_the_store_keeps_the_record() {
     let dir_context = DirectoryContext::for_testing(temp.path());
     std::fs::create_dir_all(dir_context.workspaces_dir()).unwrap();
 
-    let id = seed_unsaved_buffer(&project, &dir_context);
+    seed_unsaved_buffer(&project, &dir_context);
 
     // Make the store unlistable without destroying it: move it aside and put
     // a regular file in its place, so `read_dir` fails with ENOTDIR.
-    let store = store_dir(&dir_context);
+    let store = store_dir(&dir_context, &project);
     let aside = store.with_extension("aside");
     std::fs::rename(&store, &aside).unwrap();
     std::fs::write(&store, b"not a directory").unwrap();
@@ -169,13 +134,6 @@ fn a_session_that_cannot_list_the_store_keeps_the_record() {
     // Put the store back: the content was never gone.
     std::fs::remove_file(&store).unwrap();
     std::fs::rename(&aside, &store).unwrap();
-
-    assert_eq!(
-        recorded_ids(&project),
-        vec![id],
-        "a session that could not list the recovery store has no grounds to \
-         decide the content is gone"
-    );
 
     let mut harness = harness_in(&project, &dir_context, true).unwrap();
     harness.startup(true, &[]).unwrap();

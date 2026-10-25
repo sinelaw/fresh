@@ -1136,6 +1136,48 @@ pub fn workspace_path_for(working_dir: &Path, stable_id: &str) -> io::Result<Pat
     Ok(get_workspaces_dir()?.join(filename))
 }
 
+/// The stable ids of the workspaces saved for `root`: read from the names
+/// of its `<encoded root>.<id>.json` files (an id never holds a dot, which
+/// keeps `/a`'s files apart from `/a.b`'s), plus the id recorded inside a
+/// pre-stable-id `<encoded root>.json`. Recovery uses it to leave an entry
+/// stamped for one of them to that workspace.
+pub fn workspace_ids_for_root(root: &Path) -> std::collections::HashSet<String> {
+    let mut ids = std::collections::HashSet::new();
+    let Ok(dir) = get_workspaces_dir() else {
+        return ids;
+    };
+    let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let encoded = encode_path_for_filename(&canonical);
+    let id_prefix = format!("{encoded}.");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return ids;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let Some(rest) = name
+            .strip_prefix(&id_prefix)
+            .and_then(|rest| rest.strip_suffix(".json"))
+        else {
+            continue;
+        };
+        if !rest.is_empty() && !rest.contains('.') {
+            ids.insert(rest.to_string());
+        }
+    }
+    let legacy = dir.join(format!("{encoded}.json"));
+    if let Some(id) = std::fs::read_to_string(legacy)
+        .ok()
+        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+        .and_then(|val| val.get("stable_id")?.as_str().map(str::to_string))
+    {
+        ids.insert(id);
+    }
+    ids
+}
+
 /// Identity fields of a candidate workspace file for one directory.
 struct WorkspaceFileIdentity {
     path: PathBuf,

@@ -3537,7 +3537,7 @@ fn test_save_records_itself_in_the_hot_exit_entry() {
 
     let mut buffer = TextBuffer::empty(test_fs());
     buffer.insert(0, "hello");
-    buffer.set_backed_by(HotExitEntry::new("unsaved_1", &meta_path, None));
+    buffer.set_backed_by(HotExitEntry::new("unsaved_1", &meta_path));
 
     buffer
         .save_to_file(&file_path, &temp_dir.path().join("recovery"))
@@ -3574,7 +3574,7 @@ fn test_failed_save_leaves_the_hot_exit_entry_as_unsaved_work() {
 
     let mut buffer = TextBuffer::empty(test_fs());
     buffer.insert(0, "hello");
-    let entry = HotExitEntry::new("unsaved_1", &meta_path, None);
+    let entry = HotExitEntry::new("unsaved_1", &meta_path);
     buffer.set_backed_by(entry.clone());
 
     assert!(buffer

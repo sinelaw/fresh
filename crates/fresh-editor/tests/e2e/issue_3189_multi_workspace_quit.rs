@@ -23,20 +23,27 @@ use fresh::config::Config;
 use fresh_core::WindowId;
 use std::path::{Path, PathBuf};
 
-/// Recovery entries (`<id>.meta.json`) sitting in `dir`.
+/// The ids of the recovery entries in project directory `dir` of the store.
 fn recovery_entry_ids(dir: &Path) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut ids: Vec<String> = entries
-        .flatten()
-        .filter_map(|e| {
-            let name = e.file_name().to_string_lossy().into_owned();
-            name.strip_suffix(".meta.json").map(|id| id.to_string())
-        })
+    let mut ids: Vec<String> = fresh::services::recovery::entries_under(dir)
+        .into_iter()
+        .map(|e| e.id)
         .collect();
     ids.sort();
     ids
+}
+
+/// The first content file of entry `id` in project directory `dir`.
+fn chunk_path(dir: &Path, id: &str) -> PathBuf {
+    let entry = fresh::services::recovery::entries_under(dir)
+        .into_iter()
+        .find(|e| e.id == id)
+        .expect("entry is in the store");
+    entry
+        .metadata_path
+        .parent()
+        .unwrap()
+        .join(format!("{id}.chunk.0"))
 }
 
 /// Harness with a dirty, file-backed buffer in the starting workspace and a
@@ -142,7 +149,7 @@ fn clean_exit_preserves_recovery_for_dirty_background_workspace() {
          after a clean exit; found {ids:?} in {}",
         recovery_dir.display()
     );
-    let chunk = recovery_dir.join(format!("{}.chunk.0", ids[0]));
+    let chunk = chunk_path(&recovery_dir, &ids[0]);
     assert!(
         chunk.exists(),
         "recovery content must survive too, not just the metadata"
@@ -283,7 +290,7 @@ fn periodic_recovery_save_covers_background_workspaces() {
         "the background workspace's dirty buffer must be swept into recovery \
          without waiting for a clean exit; found {ids:?}"
     );
-    let saved = std::fs::read_to_string(recovery_dir.join(format!("{}.chunk.0", ids[0]))).unwrap();
+    let saved = std::fs::read_to_string(chunk_path(&recovery_dir, &ids[0])).unwrap();
     assert!(
         saved.contains("DIRTY-EDIT"),
         "the swept chunk must hold the unsaved edit, got {saved:?}"
@@ -292,9 +299,9 @@ fn periodic_recovery_save_covers_background_workspaces() {
 
 /// Closing a workspace drops its buffers outright — nothing on that path asks
 /// the user about unsaved changes. The content must at least be flushed to
-/// recovery on the way out, and must then survive the exit that follows: with
-/// its buffers gone the entry is one no live buffer backs, which is exactly
-/// the case `end_session_accounting` refuses to clean up.
+/// recovery on the way out, and must then survive the exit that follows: the
+/// close leaves it as unsaved work no editor holds, which an exit never
+/// deletes.
 #[test]
 fn closing_a_workspace_preserves_its_unsaved_content() {
     let mut config = Config::default();
@@ -315,7 +322,7 @@ fn closing_a_workspace_preserves_its_unsaved_content() {
         1,
         "closing a workspace must flush its unsaved buffers to recovery; found {ids:?}"
     );
-    let chunk = recovery_dir.join(format!("{}.chunk.0", ids[0]));
+    let chunk = chunk_path(&recovery_dir, &ids[0]);
     assert!(
         std::fs::read_to_string(&chunk)
             .unwrap()
@@ -405,65 +412,71 @@ fn quit_prompt_stays_plain_when_all_unsaved_work_is_in_view() {
     );
 }
 
-/// Crash recovery puts each buffer back in the workspace it was edited in,
-/// and only when that workspace is activated. Restoring everything into
-/// whichever workspace happened to be in front reshuffled unsaved work
-/// between projects; worse, entries for a workspace the user never visited
-/// used to be consumed by the foreground one.
+/// Crash recovery puts each buffer back in the workspace it was edited in.
+/// Restoring everything into whichever workspace happened to be in front
+/// reshuffled unsaved work between projects.
 #[test]
 fn crash_recovery_restores_each_buffer_into_its_own_workspace() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let project = temp.path().join("project");
+    let other_root = temp.path().join("workspace_b");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::create_dir_all(&other_root).unwrap();
+    let dir_context = fresh::config_io::DirectoryContext::for_testing(temp.path());
     let mut config = Config::default();
     config.editor.hot_exit = true;
     config.editor.auto_recovery_save_interval_secs = 0;
-    let (mut harness, _file, recovery_dir, dirty_window) =
-        two_workspaces_with_dirty_background(config);
+    let launch = |dir: &Path| {
+        EditorTestHarness::create(
+            120,
+            24,
+            crate::common::harness::HarnessOptions::new()
+                .with_config(config.clone())
+                .with_working_dir(dir.to_path_buf())
+                .with_shared_dir_context(dir_context.clone())
+                .with_empty_plugins_dir(),
+        )
+        .unwrap()
+    };
 
-    // A dirty buffer in the second (active) workspace too, so there is
-    // something for each workspace to claim.
-    let project_dir = harness.project_dir().unwrap();
-    let other_file = project_dir.join("b.txt");
-    std::fs::write(&other_file, "beta original\n").unwrap();
-    harness.open_file(&other_file).unwrap();
-    harness.type_text("BETA-EDIT").unwrap();
+    {
+        let mut harness = launch(&project);
+        let a = project.join("a.txt");
+        std::fs::write(&a, "alpha original\n").unwrap();
+        harness.open_file(&a).unwrap();
+        harness.type_text("ALPHA-EDIT").unwrap();
 
-    // Simulate the crash: recovery data on disk, no clean shutdown.
-    harness
-        .editor_mut()
-        .auto_recovery_save_dirty_buffers()
-        .unwrap();
-    assert_eq!(
-        recovery_entry_ids(&recovery_dir).len(),
-        2,
-        "both workspaces' buffers must be on disk before the crash"
-    );
+        // A second workspace, on another root, with an edit of its own to a
+        // file of the first project's.
+        let other = harness
+            .editor_mut()
+            .create_window_at(other_root.clone(), "workspace_b".to_string());
+        harness.editor_mut().set_active_window(other);
+        let b = project.join("b.txt");
+        std::fs::write(&b, "beta original\n").unwrap();
+        harness.open_file(&b).unwrap();
+        harness.type_text("BETA-EDIT").unwrap();
+        harness
+            .editor_mut()
+            .auto_recovery_save_dirty_buffers()
+            .unwrap();
+        // Dropped without a shutdown: a crash.
+    }
 
-    // The foreground workspace claims only what it owns.
-    harness.editor_mut().recover_all_buffers().unwrap();
-    harness.render().unwrap();
+    let mut harness = launch(&project);
+    harness.startup(true, &[]).unwrap();
+    harness.assert_screen_contains("ALPHA-EDIT");
     let tabs = harness.screen_row_text(layout::TAB_BAR_ROW as u16);
     assert!(
-        !tabs.contains("a.txt"),
-        "the background workspace's file must NOT be pulled into the active \
-         workspace by crash recovery.\nTabs: {tabs}"
+        !tabs.contains("b.txt"),
+        "the other workspace's buffer must NOT be pulled into this one by \
+         crash recovery, though its file is in this project.\nTabs: {tabs}"
     );
+    drop(harness);
 
-    // Entries survive until their own workspace asks for them.
-    assert_eq!(
-        recovery_entry_ids(&recovery_dir).len(),
-        2,
-        "recovery entries are read, not consumed — the unvisited workspace's \
-         entry must still be on disk"
-    );
-
-    // Activating the owning workspace is what brings it back, there.
-    harness.editor_mut().set_active_window(dirty_window);
-    harness.render().unwrap();
-    let tabs = harness.screen_row_text(layout::TAB_BAR_ROW as u16);
-    assert!(
-        tabs.contains("a.txt"),
-        "activating the owning workspace must restore its buffer there.\n\
-         Tabs: {tabs}"
-    );
+    let mut harness = launch(&other_root);
+    harness.startup(true, &[]).unwrap();
+    harness.assert_screen_contains("BETA-EDIT");
 }
 
 /// Quitting after visiting only some workspaces must leave the unvisited

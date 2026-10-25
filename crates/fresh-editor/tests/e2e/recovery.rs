@@ -433,7 +433,7 @@ fn test_chunked_recovery_size_mismatch() {
 }
 
 /// Test the full recovery flow: open file, replace content, verify via get_all_text
-/// This reproduces the flow in Editor::recover_all_buffers to ensure content is
+/// This reproduces the flow in Editor's recovery adoption to ensure content is
 /// properly accessible after recovery replacement.
 #[test]
 fn test_recovery_content_replacement_flow() {
@@ -450,7 +450,7 @@ fn test_recovery_content_replacement_flow() {
         "File should load correctly"
     );
 
-    // Simulate recovery replacement (same flow as recover_all_buffers)
+    // Simulate recovery replacement (same flow as recovery adoption)
     let recovered_text = "RECOVERED CONTENT";
     {
         let state = harness.editor_mut().active_state_mut();
@@ -514,7 +514,7 @@ fn test_full_chunked_recovery_cycle() {
         "Hello, Universe! This is the original file content."
     );
 
-    // Now test applying this to a buffer (simulating recover_all_buffers flow)
+    // Now test applying this to a buffer (simulating the recovery adoption flow)
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Open the original file
@@ -723,7 +723,6 @@ fn test_huge_file_recovery_is_small() {
 /// Before the fix, this test would fail because recovery saved the entire file.
 #[test]
 fn test_large_file_auto_save_creates_small_recovery_file() {
-    use fresh::services::recovery::RecoveryStorage;
     use std::fs;
     use tempfile::TempDir;
 
@@ -767,8 +766,7 @@ fn test_large_file_auto_save_creates_small_recovery_file() {
     let recovery_dir = harness
         .recovery_dir()
         .expect("harness should have recovery dir");
-    let storage = RecoveryStorage::with_dir(recovery_dir);
-    let entries = storage.list_entries().unwrap();
+    let entries = fresh::services::recovery::entries_under(&recovery_dir);
 
     // Find our file's recovery entry
     let our_entry = entries.iter().find(|e| {
@@ -917,8 +915,7 @@ fn test_recovery_after_save_with_size_change() {
     drop(harness);
 
     // Manually trigger recovery for this file using harness's recovery directory
-    let storage = RecoveryStorage::with_dir(recovery_dir);
-    let entries = storage.list_entries().unwrap();
+    let entries = fresh::services::recovery::entries_under(&recovery_dir);
 
     let our_entry = entries.iter().find(|e| {
         e.metadata
@@ -930,7 +927,8 @@ fn test_recovery_after_save_with_size_change() {
 
     if let Some(entry) = our_entry {
         // Try to reconstruct content - this should NOT fail with size mismatch
-        let result = storage.reconstruct_from_chunks(&entry.id, &file_path);
+        let result = RecoveryStorage::with_dir(entry.metadata_path.parent().unwrap().to_path_buf())
+            .reconstruct_from_chunks(&entry.id, &file_path);
 
         match result {
             Ok(content) => {
@@ -1021,8 +1019,7 @@ fn test_unnamed_buffer_created_via_new_buffer_has_stable_recovery() {
 
     // Check recovery directory
     let recovery_dir = harness.recovery_dir().expect("should have recovery dir");
-    let storage = RecoveryStorage::with_dir(recovery_dir);
-    let entries = storage.list_entries().unwrap();
+    let entries = fresh::services::recovery::entries_under(&recovery_dir);
 
     let unsaved_entries: Vec<_> = entries
         .iter()
@@ -1040,10 +1037,16 @@ fn test_unnamed_buffer_created_via_new_buffer_has_stable_recovery() {
     );
 
     // Verify content is the latest version
-    let chunked = storage
-        .read_chunked_content(&unsaved_entries[0].id)
-        .unwrap()
-        .unwrap();
+    let chunked = RecoveryStorage::with_dir(
+        unsaved_entries[0]
+            .metadata_path
+            .parent()
+            .unwrap()
+            .to_path_buf(),
+    )
+    .read_chunked_content(&unsaved_entries[0].id)
+    .unwrap()
+    .unwrap();
     let content = String::from_utf8_lossy(&chunked.chunks[0].content);
     assert_eq!(content, "First content more");
 }
@@ -1118,8 +1121,7 @@ fn test_recovery_insert_at_end_of_large_file() {
     // Now simulate restart and recovery - this is where the crash happens
     drop(harness);
 
-    let storage = RecoveryStorage::with_dir(recovery_dir);
-    let entries = storage.list_entries().unwrap();
+    let entries = fresh::services::recovery::entries_under(&recovery_dir);
 
     let our_entry = entries.iter().find(|e| {
         e.metadata
@@ -1131,7 +1133,8 @@ fn test_recovery_insert_at_end_of_large_file() {
 
     if let Some(entry) = our_entry {
         // This should NOT panic with "range end index X out of range for slice of length Y"
-        let result = storage.reconstruct_from_chunks(&entry.id, &file_path);
+        let result = RecoveryStorage::with_dir(entry.metadata_path.parent().unwrap().to_path_buf())
+            .reconstruct_from_chunks(&entry.id, &file_path);
 
         match result {
             Ok(content) => {
