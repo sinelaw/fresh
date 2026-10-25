@@ -332,7 +332,6 @@ pub(super) fn apply_background_to_lines(
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,11 +373,9 @@ mod tests {
     }
 
     #[test]
-    fn tint_preserves_search_match_and_overlays_ruler_on_cursor_line() {
+    fn test_tint_columns_repairs_low_contrast_fg() {
         let mut lines = vec![Line::from(vec![
-            Span::styled("a", Style::default().fg(Color::Black).bg(Color::Yellow)),
-            Span::styled("b", Style::default().bg(Color::Rgb(40, 40, 40))),
-            Span::styled("c", Style::default()),
+            Span::styled("a", Style::default().fg(Color::Rgb(10, 10, 10))), // dark fg
         ])];
 
         tint_columns_in_lines(
