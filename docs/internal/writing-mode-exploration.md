@@ -185,7 +185,7 @@ and it is not interpreted.
 | | Feature | Notes |
 |---|---|---|
 | Must | **Offline by construction** in writing mode (see promise 1) | Fresh's update check is on by default today; writing mode must turn it off, not merely let the user do so |
-| Must | **Encrypted documents/projects with a passphrase**, in an existing, documented open format (age's passphrase mode is a strong candidate) so files can be decrypted *without Fresh* | Longevity: if you need Fresh to read your diary, the promise is broken |
+| Must | **Encrypted documents/projects**, in an existing, documented open format produced by a standard tool (age, gpg), so files can be decrypted *without Fresh* | Longevity: if you need Fresh to read your diary, the promise is broken. Mechanism: [file-codecs-design.md](file-codecs-design.md) |
 | Must | **No plaintext residue**: recovery/hot-exit data for encrypted buffers is encrypted or not written at all, and the user is told which | The single most important thing to get right; see §8 |
 | Must | **Lock**: idle timeout or a command that clears the decrypted text from memory and the screen | Journalers on shared computers |
 | Must | **Honest passphrase UX**: "If you forget this, nobody can recover your writing, including us." Optional recovery key the user can print | The usual failure mode of encrypted journals |
@@ -298,7 +298,8 @@ Only the implementation context needed to judge feasibility:
   buffers across sessions by default. That is right for code and exactly
   wrong for an encrypted journal (promise 4). Encrypted buffers need a
   recovery path that writes only ciphertext, or none, before encryption can
-  ship.
+  ship. [file-codecs-design.md](file-codecs-design.md) designs both the
+  encryption seam and that recovery rule.
 - **Also:** the update check and anonymous telemetry are on by default
   (see `docs/privacy.md`). Writing mode has to be offline without the user
   having to go looking for a setting.
