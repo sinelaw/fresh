@@ -134,6 +134,63 @@ fn enter_acts_on_the_explorer_after_clicking_back_into_it() {
     assert_enter_expands_nested(&mut harness);
 }
 
+/// Terminal output must not take the keyboard back from the explorer.
+///
+/// Clicking into the explorer leaves the terminal the active buffer, and the
+/// output handler's jump back to the live terminal used to re-enter terminal
+/// mode regardless of who owned focus. The shell here prints only after the
+/// click, standing in for a first prompt that lands late on a slow machine —
+/// which is how `enter_acts_on_the_explorer_after_clicking_back_into_it`
+/// failed intermittently in CI.
+#[test]
+#[cfg(not(windows))] // spawns a PTY-backed shell
+fn late_terminal_output_leaves_the_explorer_focused() {
+    if !pty_available() {
+        eprintln!("Skipping: PTY not available in this environment");
+        return;
+    }
+    let shell = "/bin/sh";
+    if !std::path::Path::new(shell).exists() {
+        eprintln!("Skipping: {shell} not available");
+        return;
+    }
+
+    let (_temp, root) = setup_project();
+    let mut config = fresh::config::Config::default();
+    config.terminal.shell = Some(fresh::config::TerminalShellConfig {
+        command: shell.to_string(),
+        args: vec![
+            "-c".to_string(),
+            "sleep 2; echo LATE_OUTPUT; exec cat".to_string(),
+        ],
+    });
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(140, 36, config, root.clone()).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('b'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_file_explorer_item("nested").unwrap();
+    harness
+        .run_palette_command("Open Terminal to the Right")
+        .unwrap();
+
+    // Empty space below the tree, so the click itself activates nothing.
+    harness.mouse_click(20, 12).unwrap();
+    harness.wait_until(explorer_has_focus).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("LATE_OUTPUT"))
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        explorer_has_focus(&harness),
+        "terminal output took the keyboard from the file explorer.\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+    assert_enter_expands_nested(&mut harness);
+}
+
 /// `/bin/cat` as the shell keeps this off the platform's line editor: with no
 /// readline in the way the tty echoes the control bytes as `^B` / `^E`, which
 /// is what proves they reached the PTY.

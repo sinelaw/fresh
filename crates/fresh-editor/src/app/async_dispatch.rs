@@ -1051,6 +1051,12 @@ impl Editor {
         // If the focused split is viewing this terminal in scrollback and
         // jump_to_end_on_output is enabled, snap it back to the live grid.
         //
+        // Only while the editor pane owns the keyboard. The file explorer, a
+        // prompt or a popup can hold focus with this terminal still the active
+        // buffer, and entering terminal mode takes the keyboard back — so a
+        // late shell prompt used to steal focus from an explorer the user had
+        // just clicked into.
+        //
         // ...but never yank the view away from a text selection: a drag that
         // just started on the live grid (`PointerDrag::TerminalPress`), an
         // in-progress selection drag, or a completed selection waiting to be
@@ -1073,7 +1079,7 @@ impl Editor {
             })
         };
         if self.config.terminal.jump_to_end_on_output
-            && !self.active_window().focused_terminal_live()
+            && self.active_window().key_context == crate::input::keybindings::KeyContext::Normal
             && !selection_active
         {
             // Check if active buffer is this terminal
