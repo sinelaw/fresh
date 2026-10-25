@@ -484,6 +484,46 @@ fn the_cursor_past_filler_rows_stays_on_screen_in_a_long_file() {
     );
 }
 
+/// A change only the right side has, taller than the panels, opens on its
+/// first lines, beside the line before it, and Next Difference comes back
+/// to it the same way. The cursor on the left went to the line after the
+/// filler rows, and the view, following it, showed the change's last lines.
+#[test]
+fn a_tall_change_opens_on_its_first_lines() {
+    let (left, mut right) = with_inserted_block(120, 40);
+    right = right.replace("row 100\n", "row 100 changed\n");
+    let Compare { mut h, _tmp, .. } = compare_sized(left.as_bytes(), right.as_bytes(), 120, 24);
+    h.wait_until(|h| {
+        status_has(h, "Compare: 2 difference(s)")
+            && level(h, "row 050")
+            && row_of(h, "inserted 0") == row_of(h, "row 050").map(|r| r + 1)
+    })
+    .unwrap();
+
+    h.send_key(KeyCode::F(5), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| status_has(h, "Difference 2/2") && row_of(h, "row 100 changed").is_some())
+        .unwrap();
+    h.send_key(KeyCode::F(5), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| {
+        status_has(h, "Difference 1/2")
+            && level(h, "row 050")
+            && row_of(h, "inserted 0") == row_of(h, "row 050").map(|r| r + 1)
+    })
+    .unwrap();
+}
+
+/// The same at the very top of the files, where the filler rows go above
+/// the first line: the comparison opens on the change's first line.
+#[test]
+fn a_tall_change_at_the_top_opens_on_its_first_line() {
+    let (left, right) = with_inserted_block_after(60, 0, 40);
+    let Compare { mut h, _tmp, .. } = compare_sized(left.as_bytes(), right.as_bytes(), 120, 24);
+    h.wait_until(|h| {
+        status_has(h, "Compare: 1 difference(s)") && row_of(h, "inserted 0") == Some(2)
+    })
+    .unwrap();
+}
+
 /// Closing the comparison closes its tab and the files it opened, as they
 /// had no changes: nothing of the comparison is left.
 #[test]

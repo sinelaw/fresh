@@ -697,6 +697,12 @@ pub struct CompareSide {
     /// Byte offset just past the hunk's last line, terminator included.
     /// `from..to` is what replacing this side's lines of the hunk replaces.
     pub to: usize,
+    /// Where a jump to the hunk puts this side's cursor: `from`, or, for an
+    /// empty side, the start of the line before the gap — the line a view's
+    /// filler rows for the other side's lines go under, so the cursor sits
+    /// at the change rather than past it. At the very top of the text, where
+    /// there is no line before, `from`.
+    pub jump: usize,
     /// Each line's text without its line terminator, as `[start, end)`
     /// byte offsets.
     #[ts(type = "Array<[number, number]>")]

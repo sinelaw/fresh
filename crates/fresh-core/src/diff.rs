@@ -485,6 +485,11 @@ fn compare_side(
         count: count as u32,
         from: at(start),
         to: at(start + count),
+        jump: if count == 0 && start > 0 {
+            at(start - 1)
+        } else {
+            at(start)
+        },
         lines: (start..start + count)
             .map(|i| (starts[i], starts[i] + line_body(lines[i]).len()))
             .collect(),
@@ -595,6 +600,19 @@ mod tests {
 
             let h = &compare_texts(b"a\n", b"a\nb\n")[0];
             assert_eq!((h.left.start, h.left.from, h.left.to), (1, 2, 2));
+        }
+
+        #[test]
+        fn a_jump_to_an_empty_side_lands_on_the_line_before_the_gap() {
+            // Insertion in the middle: the line before it, `a`, at 0.
+            let h = &compare_texts(b"a\nc\n", b"a\nb\nc\n")[0];
+            assert_eq!((h.left.jump, h.right.jump), (0, 2));
+            // Past the end, after a CRLF line: that line's start.
+            let h = &compare_texts(b"x\r\na\r\n", b"x\r\na\r\nb\r\n")[0];
+            assert_eq!((h.left.jump, h.right.jump), (3, 6));
+            // At the very top there is no line before: `from`.
+            let h = &compare_texts(b"c\n", b"b\nc\n")[0];
+            assert_eq!((h.left.jump, h.right.jump), (0, 0));
         }
 
         #[test]

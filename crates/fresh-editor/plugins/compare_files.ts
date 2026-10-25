@@ -90,6 +90,8 @@ interface Comparison {
   windowId: number;
   /** The right panel's split id: unique while the panel lives. */
   syncGroupId: number;
+  leftSplit: number;
+  rightSplit: number;
   left: number;
   right: number;
   /** The last diff, or null before the first one lands. */
@@ -415,6 +417,8 @@ async function compare(leftPath: string, rightPath: string): Promise<boolean> {
     groupId: group.groupId,
     windowId: editor.activeWindow(),
     syncGroupId: group.panelSplits.right,
+    leftSplit: group.panelSplits.left,
+    rightSplit: group.panelSplits.right,
     left,
     right,
     result: null,
@@ -442,7 +446,7 @@ async function compare(leftPath: string, rightPath: string): Promise<boolean> {
   editor.createScrollSyncGroup(c.syncGroupId, group.panelSplits.left, group.panelSplits.right);
   editor.focusBufferGroupPanel(group.groupId, "left");
   apply(c, first);
-  if (first.hunks.length > 0) jumpTo(c, first.hunks[0]);
+  if (first.hunks.length > 0) jumpTo(c, first.hunks[0], "left");
   editor.setStatus(summary(first));
   return true;
 }
@@ -467,10 +471,21 @@ function closeComparison(c: Comparison): void {
 // Navigation and merging
 // =============================================================================
 
-/** Put both cursors on the start of hunk `h`. */
-function jumpTo(c: Comparison, h: CompareHunk): void {
-  editor.setBufferCursor(c.left, h.left.from);
-  editor.setBufferCursor(c.right, h.right.from);
+/** Put both cursors at hunk `h`, and the hunk in the middle of the panel
+ * the user is in (`side`); its partner follows by scroll sync.
+ *
+ * On a side with no lines here the cursor goes on the line before the gap
+ * (`jump`), right above its filler rows. On the line after them, the
+ * cursor kept the view at the end of the change: a change taller than the
+ * panel opened on its last lines, its first ones scrolled away above. At
+ * the very top of a file the fillers are above the first line, and
+ * centering that line's first row shows them from the start. */
+function jumpTo(c: Comparison, h: CompareHunk, side: Side): void {
+  editor.setBufferCursor(c.left, h.left.jump);
+  editor.setBufferCursor(c.right, h.right.jump);
+  const s = h[side];
+  const line = s.count === 0 && s.start > 0 ? s.start - 1 : s.start;
+  editor.scrollToLineCenter(side === "left" ? c.leftSplit : c.rightSplit, bufferOf(c, side), line);
 }
 
 /** The hunk the cursor is in on `side`: the one whose lines it is on, or,
@@ -500,16 +515,16 @@ async function step(forward: boolean): Promise<void> {
     editor.setStatus(editor.t("status.identical"));
     return;
   }
-  // By byte, so a change past the end of one side (which can't hold a
-  // cursor line of its own) still has a place in the order.
+  // By where a jump to each puts the cursor, so a cursor a jump left above
+  // a change's filler rows is at that change, not before it.
   const pos = editor.getPrimaryCursor()?.position ?? 0;
   const n = r.hunks.length;
   let index = -1;
   if (forward) {
-    index = r.hunks.findIndex((h) => h[side].from > pos);
+    index = r.hunks.findIndex((h) => h[side].jump > pos);
   } else {
     for (let i = n - 1; i >= 0; i--) {
-      if (r.hunks[i][side].from < pos) {
+      if (r.hunks[i][side].jump < pos) {
         index = i;
         break;
       }
@@ -517,7 +532,7 @@ async function step(forward: boolean): Promise<void> {
   }
   const wrapped = index < 0;
   if (wrapped) index = forward ? 0 : n - 1;
-  jumpTo(c, r.hunks[index]);
+  jumpTo(c, r.hunks[index], side);
   editor.setStatus(
     editor.t(wrapped ? "status.difference_wrapped" : "status.difference", {
       n: String(index + 1),

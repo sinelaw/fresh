@@ -1904,6 +1904,47 @@ impl Window {
             });
     }
 
+    /// Put `line` (0-based) in the middle of an unwrapped pane that draws
+    /// plugin virtual lines, counting their rows, and hold the view there.
+    /// Returns `false`, having done nothing, for any other pane: there a row
+    /// is a line (or the wrap decides), and the caller centers by line.
+    ///
+    /// Counted in lines, a block of filler rows between the new top and
+    /// `line` pushed `line` down by as many rows, off the bottom when the
+    /// block was over half a screen. What goes in the middle is the line's
+    /// first row: the virtual lines drawn above it, if it has any, as a top
+    /// set to the line's start shows them.
+    pub fn center_line_in_flat_rows(
+        &mut self,
+        buffer_id: BufferId,
+        split_id: LeafId,
+        line: usize,
+    ) -> bool {
+        self.buffers
+            .with_buffer_and_split(buffer_id, split_id, |state, vs| {
+                if vs.viewport.line_wrap_enabled || !vs.folds.is_empty() {
+                    return false;
+                }
+                let Some(rows) = crate::view::flat_rows::FlatRows::new(state, vs.is_page_view())
+                    .filter(|rows| rows.has_virtual_lines())
+                else {
+                    return false;
+                };
+                let height = vs.viewport.visible_line_count();
+                let top = rows
+                    .first_row(line)
+                    .saturating_sub(height / 2)
+                    .min(rows.max_top(height));
+                let (top_line, offset) = rows.locate(top);
+                vs.viewport
+                    .set_top_byte(state.buffer.line_start_offset(top_line).unwrap_or(0));
+                vs.viewport.set_top_view_line_offset(offset);
+                vs.viewport.set_skip_ensure_visible();
+                true
+            })
+            .unwrap_or(false)
+    }
+
     /// Add a collapsed fold range on `buffer_id`'s marker list and on
     /// every view state hosting the buffer. Returns `true` when the
     /// buffer was found (so the caller knows to flag a render). No-op
