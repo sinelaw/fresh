@@ -22,68 +22,79 @@ use crate::view::virtual_text::{VirtualTextManager, VirtualTextPosition};
 ///
 /// A view of the buffer and its virtual lines as they are: it borrows them,
 /// so it cannot outlive an edit.
+///
+/// Only for a pane in source view. One in page view lays its lines out with
+/// what a composing plugin adds — soft breaks that split a line into rows,
+/// conceals that join lines into one — which this doesn't count; its rows are
+/// the wrap index's, or the line walk's.
 #[derive(Clone, Copy)]
 pub struct FlatRows<'a> {
     buffer: &'a Buffer,
     lines: &'a VirtualTextManager,
-    /// Whether the pane is in compose (page) view, which draws compose-only
-    /// lines too.
-    is_compose: bool,
     line_count: usize,
 }
 
 impl<'a> FlatRows<'a> {
-    /// The rows of `state`'s buffer as a pane in or out of page view
-    /// (`is_compose`) draws them unwrapped. `None` for a buffer without line
-    /// data (large-file mode).
-    pub fn new(state: &'a EditorState, is_compose: bool) -> Option<Self> {
-        Self::over(&state.buffer, &state.virtual_texts, is_compose)
+    /// The rows of `state`'s buffer as an unwrapped pane draws them. `None`
+    /// for a pane in page view (`page_view`; see the type) and for a buffer
+    /// without line data (large-file mode).
+    pub fn new(state: &'a EditorState, page_view: bool) -> Option<Self> {
+        if page_view {
+            return None;
+        }
+        Self::over(&state.buffer, &state.virtual_texts)
     }
 
-    fn over(buffer: &'a Buffer, lines: &'a VirtualTextManager, is_compose: bool) -> Option<Self> {
+    fn over(buffer: &'a Buffer, lines: &'a VirtualTextManager) -> Option<Self> {
         if buffer.is_large_file() {
             return None;
         }
         Some(Self {
             buffer,
             lines,
-            is_compose,
             line_count: buffer.line_count()?.max(1),
         })
     }
 
-    /// The byte `line`'s anchors start at; past the last line, past every
-    /// anchor (one at the very end of the buffer belongs to the last line).
+    /// The byte `line`'s anchors start at; past the last line, the end of the
+    /// buffer. A virtual line anchored there is drawn by no line — the
+    /// renderer takes a line's anchors from its own bytes, and the wrap index
+    /// likewise stops at the end — so it isn't counted either.
     fn start_of(&self, line: usize) -> usize {
+        let end = self.buffer.len();
         if line >= self.line_count {
-            return usize::MAX;
+            return end;
         }
-        self.buffer.line_start_offset(line).unwrap_or(usize::MAX)
+        self.buffer.line_start_offset(line).unwrap_or(end).min(end)
+    }
+
+    /// The virtual lines drawn before `position`: a source pane draws no
+    /// compose-only ones.
+    fn lines_before(&self, position: usize) -> usize {
+        self.lines.lines_before(position, false)
     }
 
     /// Whether any virtual line is drawn: without one, rows are lines.
     pub fn has_virtual_lines(&self) -> bool {
-        self.lines.lines_before(usize::MAX, self.is_compose) > 0
+        self.total_rows() > self.line_count
     }
 
     pub fn total_rows(&self) -> usize {
-        self.line_count + self.lines.lines_before(usize::MAX, self.is_compose)
+        self.line_count + self.lines_before(self.start_of(self.line_count))
     }
 
     /// The row `line`'s first row (its first virtual line above, or its text)
     /// is drawn on.
     pub fn first_row(&self, line: usize) -> usize {
         let line = line.min(self.line_count);
-        line + self
-            .lines
-            .lines_before(self.start_of(line), self.is_compose)
+        line + self.lines_before(self.start_of(line))
     }
 
     /// The row `line`'s text is drawn on.
     pub fn text_row(&self, line: usize) -> usize {
         let above = self.lines.lines_in(
             VirtualTextPosition::LineAbove,
-            self.is_compose,
+            false,
             self.start_of(line),
             self.start_of(line + 1),
         );
@@ -141,7 +152,7 @@ mod tests {
     fn rows_are_lines_without_virtual_lines() {
         let buffer = ten_lines();
         let lines = VirtualTextManager::new();
-        let r = FlatRows::over(&buffer, &lines, false).unwrap();
+        let r = FlatRows::over(&buffer, &lines).unwrap();
         // The text's final newline leaves an empty eleventh line.
         assert_eq!(r.total_rows(), 11);
         assert_eq!(r.first_row(4), 4);
@@ -157,7 +168,7 @@ mod tests {
         let mut lines = VirtualTextManager::new();
         // Three filler rows below line 2, anchored at its newline.
         add(&mut lines, 5, VirtualTextPosition::LineBelow, 3);
-        let r = FlatRows::over(&buffer, &lines, false).unwrap();
+        let r = FlatRows::over(&buffer, &lines).unwrap();
         assert_eq!(r.total_rows(), 14);
         assert_eq!(r.text_row(2), 2);
         assert_eq!(r.first_row(3), 6);
@@ -175,15 +186,17 @@ mod tests {
         let mut lines = VirtualTextManager::new();
         // Two rows above line 0 (a change at the very top of a file).
         add(&mut lines, 0, VirtualTextPosition::LineAbove, 2);
-        let r = FlatRows::over(&buffer, &lines, false).unwrap();
+        let r = FlatRows::over(&buffer, &lines).unwrap();
         assert_eq!(r.first_row(0), 0);
         assert_eq!(r.text_row(0), 2);
         assert_eq!(r.first_row(1), 3);
         assert_eq!(r.locate(1), (0, 1));
     }
 
+    /// A source pane doesn't draw a composing plugin's compose-only lines,
+    /// and a pane in page view isn't one this counts at all.
     #[test]
-    fn compose_only_lines_count_in_compose_view_only() {
+    fn compose_only_lines_are_not_counted() {
         let buffer = ten_lines();
         let mut lines = VirtualTextManager::new();
         lines.add_line_with_theme_keys(
@@ -200,10 +213,22 @@ mod tests {
             Vec::new(),
             true,
         );
-        let source = FlatRows::over(&buffer, &lines, false).unwrap();
-        let compose = FlatRows::over(&buffer, &lines, true).unwrap();
-        assert_eq!((source.text_row(1), compose.text_row(1)), (1, 2));
-        assert_eq!((source.total_rows(), compose.total_rows()), (11, 12));
+        let rows = FlatRows::over(&buffer, &lines).unwrap();
+        assert_eq!(rows.text_row(1), 1);
+        assert_eq!(rows.total_rows(), 11);
+        assert!(!rows.has_virtual_lines());
+    }
+
+    /// A virtual line anchored at the very end of the buffer is drawn by no
+    /// line, so it adds no row.
+    #[test]
+    fn an_anchor_at_the_end_of_the_buffer_adds_no_row() {
+        let buffer = ten_lines();
+        let mut lines = VirtualTextManager::new();
+        add(&mut lines, buffer.len(), VirtualTextPosition::LineBelow, 2);
+        let r = FlatRows::over(&buffer, &lines).unwrap();
+        assert_eq!(r.total_rows(), 11);
+        assert!(!r.has_virtual_lines());
     }
 
     /// Edits move the rows with the text: the count follows the anchors
@@ -216,7 +241,7 @@ mod tests {
         // Two new lines at the very top: the fillers now hang off line 4.
         lines.adjust_for_insert(0, 4);
         buffer.insert(0, "a\nb\n");
-        let r = FlatRows::over(&buffer, &lines, false).unwrap();
+        let r = FlatRows::over(&buffer, &lines).unwrap();
         assert_eq!(r.first_row(5), 8);
         assert_eq!(r.locate(6), (4, 2));
     }

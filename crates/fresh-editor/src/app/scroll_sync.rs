@@ -406,14 +406,22 @@ impl crate::app::window::Window {
                 else {
                     return false;
                 };
-                let (from, to) = a_anchors
+                // The anchors in rows, through the same mapping the line sync
+                // uses: row for row from the anchor above, never past the next.
+                let row_anchors: Vec<crate::view::scroll_sync::SyncAnchor> = a_anchors
                     .iter()
                     .zip(&anchors)
-                    .map(|(a, (_, o))| (*a, rows.text_row(*o)))
-                    .rfind(|(a, _)| *a <= a_top)
-                    .unwrap_or((0, 0));
+                    .map(|(a, (_, o))| crate::view::scroll_sync::SyncAnchor {
+                        left_line: *a,
+                        right_line: rows.text_row(*o),
+                    })
+                    .collect();
+                let mapped =
+                    crate::view::scroll_sync::map_through_anchors(&row_anchors, a_top, |a| {
+                        (a.left_line, a.right_line)
+                    });
                 let height = vs.viewport.visible_line_count();
-                let target = (to + (a_top - from)).min(rows.max_top(height));
+                let target = mapped.min(rows.max_top(height));
                 let (line, offset) = rows.locate(target);
                 let line_start = state.buffer.line_start_offset(line).unwrap_or(0);
                 vs.viewport.set_top_byte(line_start);

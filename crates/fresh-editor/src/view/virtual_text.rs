@@ -351,7 +351,9 @@ impl VirtualTextManager {
     /// to find where its placeholder ended up, so the pasted text lands there
     /// rather than where the cursor was at Ctrl+V time.
     pub fn position_of(&self, id: VirtualTextId) -> Option<usize> {
-        self.store(id.class).markers.get_position(id.marker)
+        let store = self.store(id.class);
+        store.texts.contains_key(&id.marker).then_some(())?;
+        store.markers.get_position(id.marker)
     }
 
     // ---- Following edits ----
@@ -371,9 +373,10 @@ impl VirtualTextManager {
 
     /// Put an entry back where it was before an edit moved it (undo).
     pub fn set_position(&mut self, id: VirtualTextId, position: usize) {
-        self.classes[id.class.index()]
-            .markers
-            .set_position(id.marker, position);
+        let store = &mut self.classes[id.class.index()];
+        if store.texts.contains_key(&id.marker) {
+            store.markers.set_position(id.marker, position);
+        }
     }
 
     /// Move every entry for text inserted at `position`.
@@ -384,9 +387,26 @@ impl VirtualTextManager {
     }
 
     /// Move every entry for text deleted at `position`.
+    ///
+    /// The deletion lands every entry anchored in `(position, position +
+    /// length]` on `position`, beside any already there, in the order they had
+    /// by position — not the priority order a list keeps same-position entries
+    /// in, and the one its queries hand back without sorting. So those entries
+    /// are put back by priority. (The editor drops the entries inside a deleted
+    /// range first, but a bulk edit from a plugin or LSP doesn't.)
     pub fn adjust_for_delete(&mut self, position: usize, length: usize) {
         for store in &mut self.classes {
+            let landing: Vec<MarkerId> = store
+                .markers
+                .in_range(position + 1, position + length + 1)
+                .into_iter()
+                .map(|(marker, _)| marker)
+                .collect();
             store.markers.adjust_for_delete(position, length);
+            for marker in landing {
+                // Out and back in at the same spot: the tree files it by key.
+                store.markers.set_position(marker, position);
+            }
         }
     }
 
@@ -693,12 +713,19 @@ impl VirtualTextManager {
     }
 
     /// Clear all virtual text entries
+    ///
+    /// The entries' markers are deleted from the lists rather than the lists
+    /// replaced: a fresh list would number its markers from 0 again, and an id
+    /// held from before the clear (an async paste's placeholder, an undo
+    /// step's displaced entry) would then name an entry added after it.
     pub fn clear(&mut self) {
         if self.is_empty() {
             return;
         }
         for store in &mut self.classes {
-            *store = ClassStore::default();
+            for (marker, _) in store.texts.drain() {
+                store.markers.delete(marker);
+            }
         }
         self.bump_version();
     }
@@ -1186,6 +1213,10 @@ mod tests {
             ClearInlineInRange(usize, usize),
             Insert(usize, usize),
             Delete(usize, usize),
+            /// A deletion that keeps the entries in the range, as a plugin's
+            /// or the LSP's bulk edit does: they land on its start.
+            DeleteKeeping(usize, usize),
+            Clear,
         }
 
         fn op() -> impl Strategy<Value = Op> {
@@ -1199,6 +1230,8 @@ mod tests {
                 1 => (0..60usize, 0..15usize).prop_map(|(s, l)| Op::ClearInlineInRange(s, s + l)),
                 2 => (0..60usize, 1..10usize).prop_map(|(p, l)| Op::Insert(p, l)),
                 2 => (0..60usize, 1..10usize).prop_map(|(p, l)| Op::Delete(p, l)),
+                2 => (0..60usize, 1..10usize).prop_map(|(p, l)| Op::DeleteKeeping(p, l)),
+                1 => Just(Op::Clear),
             ]
         }
 
@@ -1254,6 +1287,9 @@ mod tests {
             fn queries_match_a_list_of_the_entries(ops in prop::collection::vec(op(), 1..60)) {
                 let mut manager = VirtualTextManager::new();
                 let mut model: Vec<Entry> = Vec::new();
+                // Ids of entries that are gone: they must stay gone, whatever
+                // is added after.
+                let mut dead: Vec<VirtualTextId> = Vec::new();
                 let ns = VirtualTextNamespace::from_string("ns".to_string());
                 for (n, op) in ops.into_iter().enumerate() {
                     match op {
@@ -1284,16 +1320,20 @@ mod tests {
                                 let e = model.remove(i % model.len());
                                 prop_assert!(manager.remove(e.id));
                                 prop_assert!(!manager.remove(e.id), "removed twice");
+                                dead.push(e.id);
                             }
                         }
                         Op::RemoveInRange(s, e) => {
                             let before = model.len();
+                            dead.extend(model.iter().filter(|x| x.pos >= s && x.pos < e).map(|x| x.id));
                             model.retain(|x| !(x.pos >= s && x.pos < e));
                             prop_assert_eq!(manager.remove_in_range(s, e), before - model.len());
                         }
                         Op::ClearLinesInRange(s, e) => {
                             manager.clear_lines_in_range(&ns, s, e);
-                            model.retain(|x| !(x.position.is_line() && x.pos >= s && x.pos < e));
+                            let gone = |x: &Entry| x.position.is_line() && x.pos >= s && x.pos < e;
+                            dead.extend(model.iter().filter(|x| gone(x)).map(|x| x.id));
+                            model.retain(|x| !gone(x));
                         }
                         Op::ClearInlineInRange(s, e) => {
                             // Inline entries added here carry no string id.
@@ -1309,6 +1349,7 @@ mod tests {
                         }
                         Op::Delete(p, l) => {
                             manager.remove_in_range(p, p + l);
+                            dead.extend(model.iter().filter(|x| x.pos >= p && x.pos < p + l).map(|x| x.id));
                             model.retain(|x| !(x.pos >= p && x.pos < p + l));
                             manager.adjust_for_delete(p, l);
                             for x in &mut model {
@@ -1317,6 +1358,24 @@ mod tests {
                                 }
                             }
                         }
+                        Op::DeleteKeeping(p, l) => {
+                            manager.adjust_for_delete(p, l);
+                            for x in &mut model {
+                                if x.pos >= p + l {
+                                    x.pos -= l;
+                                } else if x.pos > p {
+                                    x.pos = p;
+                                }
+                            }
+                        }
+                        Op::Clear => {
+                            manager.clear();
+                            dead.extend(model.drain(..).map(|x| x.id));
+                        }
+                    }
+
+                    for id in &dead {
+                        prop_assert_eq!(manager.position_of(*id), None, "a gone entry's id came back");
                     }
 
                     prop_assert_eq!(manager.len(), model.len());
