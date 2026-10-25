@@ -18,7 +18,7 @@ if [ -z "${VERSION}" ]; then
 fi
 
 DATE="$(date -u -R)"
-MAINTAINER="${DEBFULLNAME:-Noam Lewis} <${DEBEMAIL:-i9uqoqj7k@mozmail.com}>"
+MAINTAINER="${DEBFULLNAME:-Noam Lewis} <${DEBEMAIL:-jones.noamle@gmail.com}>"
 
 cat > "${REPO_ROOT}/debian/changelog" <<EOF
 fresh-editor (${VERSION}-1) unstable; urgency=medium

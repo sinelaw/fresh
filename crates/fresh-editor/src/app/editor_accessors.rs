@@ -332,9 +332,13 @@ impl Editor {
         .into_iter()
         .flatten()
         .min();
+        // A macro replay parked on a plugin step resumes from the loop, so the
+        // loop has to come straight back rather than sleep its idle poll.
+        let macro_replay_deadline = self.macro_replay_parked().then(std::time::Instant::now);
         [
             lsp_progress_deadline,
             anim_deadline,
+            macro_replay_deadline,
             move_preview_deadline,
             paste_deadline,
             wheel_deadline,
@@ -773,6 +777,9 @@ impl Editor {
             )
         };
         self.quick_open_registry.set_file_backends(fs, sp);
+        // Every switch of active window comes through here, so this is where
+        // Quick Open picks up the incoming window's explorer visibility.
+        self.sync_quick_open_file_visibility();
         if label_changed {
             #[cfg(feature = "plugins")]
             {
@@ -1394,6 +1401,7 @@ impl Editor {
                 .is_some_and(|w| w.buffers.get(&buffer).is_some());
             if exists {
                 self.active_window = window;
+                self.sync_quick_open_file_visibility();
                 self.active_window_mut().set_active_buffer(buffer);
                 return;
             }

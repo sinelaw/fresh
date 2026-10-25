@@ -535,12 +535,23 @@ impl RecoveryStorage {
 
     /// Load a complete recovery entry
     pub fn load_entry(&self, id: &str) -> io::Result<Option<RecoveryEntry>> {
-        let (meta_path, content_path) = self.recovery_paths(id);
+        let (meta_path, _) = self.recovery_paths(id);
 
         if !meta_path.exists() {
             return Ok(None);
         }
 
+        let has_content = !self.list_chunk_paths(id)?.is_empty();
+        self.entry_from_metadata(id, has_content).map(Some)
+    }
+
+    /// Build the entry for `id`, whose metadata file exists, given whether
+    /// any of its content files do. Split out of [`Self::load_entry`] so
+    /// [`Self::list_entries`] can answer the content question from the one
+    /// directory listing it already made, rather than listing the whole
+    /// directory again for every entry in it.
+    fn entry_from_metadata(&self, id: &str, has_content: bool) -> io::Result<RecoveryEntry> {
+        let (meta_path, content_path) = self.recovery_paths(id);
         let metadata = self.read_metadata(id)?.ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
@@ -553,20 +564,19 @@ impl RecoveryStorage {
         // leaves exactly this. Reporting it as absent told callers the
         // content was gone, and one of them deletes the only reference to
         // it on that word.
-        let chunk_paths = self.list_chunk_paths(id)?;
-        if chunk_paths.is_empty() {
+        if !has_content {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("recovery entry {id} has metadata but no content files"),
             ));
         }
 
-        Ok(Some(RecoveryEntry {
+        Ok(RecoveryEntry {
             id: id.to_string(),
             metadata,
             content_path,
             metadata_path: meta_path,
-        }))
+        })
     }
 
     /// Whether an entry was ever recorded for `id`, usable or not.
@@ -608,27 +618,83 @@ impl RecoveryStorage {
         Ok(())
     }
 
+    /// Move entry `id` — its metadata, content and chunk files — from `from`
+    /// into this store. Returns whether it moved.
+    ///
+    /// An entry this store already holds under the same id is a conflict
+    /// between two unsaved versions; both are left where they are rather than
+    /// guessing which one to drop.
+    pub fn take_entry_from(&self, from: &RecoveryStorage, id: &str) -> io::Result<bool> {
+        if from.recovery_dir == self.recovery_dir {
+            return Ok(false);
+        }
+        if self.entry_recorded(id)? {
+            tracing::warn!(
+                "recovery: {id} is recorded in both {:?} and {:?}; leaving both",
+                from.recovery_dir,
+                self.recovery_dir
+            );
+            return Ok(false);
+        }
+        let meta = format!("{id}.{}", Self::META_EXT);
+        let content = format!("{id}.{}", Self::CONTENT_EXT);
+        let chunk_prefix = format!("{id}.chunk.");
+        let mut names = Vec::new();
+        for entry in fs::read_dir(&from.recovery_dir)? {
+            let name = entry?.file_name();
+            let Some(name) = name.to_str() else { continue };
+            let is_chunk = name
+                .strip_prefix(&chunk_prefix)
+                .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+            if is_chunk || name == content {
+                names.push(name.to_string());
+            }
+        }
+        if !from.recovery_dir.join(&meta).exists() {
+            return Ok(false);
+        }
+        // The metadata last: an entry is listed by its metadata, so a move cut
+        // short leaves no half-entry in this store.
+        names.push(meta);
+        self.ensure_dir()?;
+        for name in names {
+            move_file(
+                &from.recovery_dir.join(&name),
+                &self.recovery_dir.join(&name),
+            )?;
+        }
+        Ok(true)
+    }
+
     /// List all recovery entries
     pub fn list_entries(&self) -> io::Result<Vec<RecoveryEntry>> {
         if !self.recovery_dir.exists() {
             return Ok(Vec::new());
         }
 
-        let mut entries = Vec::new();
-
+        // One pass over the directory answers both questions: which entries
+        // have metadata, and which have content. Asking `load_entry` per
+        // entry listed the whole directory again each time, which made a
+        // daemon with hundreds of hot-exit buffers spend most of its first
+        // second before the first frame re-reading this one directory.
+        let meta_suffix = format!(".{}", Self::META_EXT);
+        let mut ids = Vec::new();
+        let mut with_content = std::collections::HashSet::new();
         for entry in fs::read_dir(&self.recovery_dir)? {
             let entry = entry?;
-            let path = entry.path();
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            if let Some(id) = name.strip_suffix(&meta_suffix) {
+                ids.push(id.to_string());
+            } else if let Some((id, _)) = name.rsplit_once(".chunk.") {
+                with_content.insert(id.to_string());
+            }
+        }
 
-            // Look for .meta.json files
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if name.ends_with(&format!(".{}", Self::META_EXT)) {
-                    // Extract the ID (everything before .meta.json)
-                    let id = name.trim_end_matches(&format!(".{}", Self::META_EXT));
-                    if let Ok(Some(entry)) = self.load_entry(id) {
-                        entries.push(entry);
-                    }
-                }
+        let mut entries = Vec::new();
+        for id in ids {
+            if let Ok(entry) = self.entry_from_metadata(&id, with_content.contains(&id)) {
+                entries.push(entry);
             }
         }
 
@@ -681,6 +747,16 @@ impl RecoveryStorage {
         }
         result
     }
+}
+
+/// `rename`, or copy-and-remove where the two paths are on different
+/// filesystems.
+fn move_file(from: &Path, to: &Path) -> io::Result<()> {
+    if fs::rename(from, to).is_ok() {
+        return Ok(());
+    }
+    fs::copy(from, to)?;
+    fs::remove_file(from)
 }
 
 #[cfg(test)]
@@ -761,6 +837,48 @@ mod tests {
 
         let entries = storage.list_entries().unwrap();
         assert_eq!(entries.len(), 2);
+    }
+
+    /// `list_entries` reads the directory once and pairs metadata with
+    /// content from that one listing. The pairing must agree with
+    /// `load_entry`'s: an id that is a prefix of another keeps only its own
+    /// chunks, metadata without content is a broken entry and is left out,
+    /// and a chunk with no metadata is not an entry.
+    #[test]
+    fn test_list_entries_pairs_metadata_with_content_in_one_pass() {
+        let (storage, temp) = create_test_storage();
+        let save = |id: &str| {
+            let chunks = vec![RecoveryChunk::new(0, 0, b"content".to_vec())];
+            storage
+                .save_recovery(id, chunks, None, Some(id), None, 0, 7)
+                .unwrap();
+        };
+        for i in 0..300 {
+            save(&format!("buf{i:03}"));
+        }
+        save("a");
+        save("ab");
+        save("broken");
+        for path in storage.list_chunk_paths("broken").unwrap() {
+            fs::remove_file(path).unwrap();
+        }
+        fs::write(temp.path().join("orphan.chunk.0"), b"no metadata").unwrap();
+
+        let mut ids: Vec<String> = storage
+            .list_entries()
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        ids.sort();
+        let mut want: Vec<String> = (0..300).map(|i| format!("buf{i:03}")).collect();
+        want.push("a".into());
+        want.push("ab".into());
+        want.sort();
+        assert_eq!(ids, want);
+        // the one-pass listing and the per-id lookup agree on the broken entry
+        assert!(storage.load_entry("broken").is_err());
+        assert!(storage.load_entry("a").unwrap().is_some());
     }
 
     #[test]

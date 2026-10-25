@@ -1,0 +1,11 @@
+# The package only Suggests esbuild: the bundled plugins are compiled when it
+# is built. bundled-plugins checks Fresh without esbuild (it skips when esbuild
+# is installed); typescript checks the user's own TypeScript with it.
+
+Tests: bundled-plugins
+Depends: @, tmux
+Restrictions: allow-stderr, skippable
+
+Tests: typescript
+Depends: @, esbuild
+Restrictions: allow-stderr

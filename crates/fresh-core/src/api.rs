@@ -416,7 +416,7 @@ pub struct ActionSpec {
     /// macro — which contains `InsertChar` and other payload actions —
     /// round-trip losslessly through `executeActions`.
     #[serde(default)]
-    #[ts(type = "Record<string, unknown>")]
+    #[ts(optional, type = "Record<string, unknown>")]
     pub args: std::collections::HashMap<String, serde_json::Value>,
 }
 
@@ -679,6 +679,72 @@ pub struct LineDiffHunk {
     pub new_start: u32,
     /// Number of new-side lines in the hunk (0 for pure deletion).
     pub new_count: u32,
+}
+
+/// One side of a [`CompareHunk`]: where the hunk's lines are, in lines and
+/// in the buffer's own bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct CompareSide {
+    /// First line of the hunk on this side (0-based).
+    pub start: u32,
+    /// Number of lines (0 when the other side alone has lines here).
+    pub count: u32,
+    /// Byte offset of the hunk's first line — for an empty side, where the
+    /// other side's lines would go.
+    pub from: usize,
+    /// Byte offset just past the hunk's last line, terminator included.
+    /// `from..to` is what replacing this side's lines of the hunk replaces.
+    pub to: usize,
+    /// Each line's text without its line terminator, as `[start, end)`
+    /// byte offsets.
+    #[ts(type = "Array<[number, number]>")]
+    pub lines: Vec<(usize, usize)>,
+    /// For the lines that have a counterpart on the other side (the first
+    /// `min(count, other.count)`): the part that differs from it, as
+    /// `[start, end)` byte offsets, or `null` when only the line terminator
+    /// differs.
+    #[ts(type = "Array<[number, number] | null>")]
+    pub spans: Vec<Option<(usize, usize)>>,
+}
+
+/// One hunk of a [`CompareResult`], with the geometry a side-by-side view
+/// paints from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct CompareHunk {
+    /// The first (left, old) text's side.
+    pub left: CompareSide,
+    /// The second (right, new) text's side.
+    pub right: CompareSide,
+    /// The two sides have the same lines but for their terminators: a
+    /// missing final newline, or `\r\n` against `\n`.
+    pub eol_only: bool,
+}
+
+/// Result of `compareBuffers`: the line diff of two buffers, measured in
+/// their own bytes.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct CompareResult {
+    /// Hunks in increasing order; empty when the buffers are equal.
+    pub hunks: Vec<CompareHunk>,
+    /// Lines in each buffer, a final unterminated line included.
+    pub left_lines: u32,
+    pub right_lines: u32,
+    /// Each buffer's length in bytes.
+    pub left_len: usize,
+    pub right_len: usize,
+    /// Each buffer's content version when it was read. An edit since bumps
+    /// it, so a caller about to edit from these offsets can tell they are
+    /// stale.
+    #[ts(type = "number")]
+    pub left_version: u64,
+    #[ts(type = "number")]
+    pub right_version: u64,
 }
 
 /// Information about the viewport
@@ -1663,14 +1729,19 @@ pub struct EditorStateSnapshot {
     /// after the restart that activation triggers.
     #[serde(default)]
     pub env_active: bool,
-    /// Launched by a bare `fresh` in Orchestrator mode. The launch, not the
-    /// `orchestrator_mode` preference, which stays on for `fresh FILE`.
+    /// Launched by a bare `fresh` with Auto Attach on (its daemon). The
+    /// launch, not the `auto_attach` preference, which stays on for
+    /// `fresh FILE`.
     #[serde(default)]
     pub orchestrator_mode: bool,
     /// Launched to open the files on its command line (`fresh FILE…`,
     /// `fresh --simple`) rather than a session. Read via `editor.fileLaunch()`.
     #[serde(default)]
     pub file_launch: bool,
+    /// The two files of a `fresh --diff LEFT RIGHT` launch, absolute; empty
+    /// for every other launch. Read via `editor.diffLaunch()`.
+    #[serde(default)]
+    pub diff_launch: Vec<PathBuf>,
     /// The left dock slot is open: a panel is in it, or the host is holding
     /// the column for one its manifest declared. The plugin mounts at
     /// `ready` iff this is set. Read via `editor.dockOpen()`.
@@ -1873,6 +1944,7 @@ impl EditorStateSnapshot {
             env_active: false,
             orchestrator_mode: false,
             file_launch: false,
+            diff_launch: Vec::new(),
             dock_open: false,
             dock_cols: 0,
             detected_env: String::new(),
@@ -5995,6 +6067,29 @@ pub enum PluginCommand {
         callback_id: JsCallbackId,
     },
 
+    /// Line diff of two live buffers, measured in their own bytes (async).
+    /// Resolves with a `CompareResult`; rejects for a binary buffer or one
+    /// in large-file mode. The texts never cross the plugin bridge — the
+    /// diff and every offset are computed host-side.
+    CompareBuffers {
+        left_id: BufferId,
+        right_id: BufferId,
+        callback_id: JsCallbackId,
+    },
+
+    /// Replace `start..end` of a buffer with `text` as one edit, one undo
+    /// step (async). Resolves `false` and leaves the buffer alone when it
+    /// is read-only or binary, the range is out of bounds, or the buffer's
+    /// content version is no longer `expected_version`.
+    ReplaceRange {
+        buffer_id: BufferId,
+        start: usize,
+        end: usize,
+        text: String,
+        expected_version: Option<u64>,
+        callback_id: JsCallbackId,
+    },
+
     /// Fetch baseline line contents for the given `(start_line, count)`
     /// ranges (async, one batched call). Lines are returned without their
     /// trailing newline, grouped per requested range — how a diff view
@@ -6084,7 +6179,10 @@ pub enum PluginCommand {
     },
 
     /// Project-wide grep search (async)
-    /// Searches all project files via FileSystem trait, respecting .gitignore.
+    /// Searches the project's files by Quick Open's rules with hidden and
+    /// gitignored files left out (`services::project_files`): `git ls-files`
+    /// in a git repository, so .gitignore is respected, else a walk; minus
+    /// `custom_ignore_patterns`.
     /// For open buffers with dirty edits, searches the buffer's piece tree.
     GrepProject {
         /// Which plugin asked. Coalescing is per plugin: a newer grep replaces

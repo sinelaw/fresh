@@ -2,6 +2,8 @@
 
 import { Finder, FilterSource, defaultFuzzyFilter, DisplayEntry } from "./lib/finder.ts";
 
+const editor = getEditor();
+
 interface SymbolItem {
   name: string;
   kind: number;

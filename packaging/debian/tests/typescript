@@ -1,0 +1,8 @@
+#!/bin/sh
+# With esbuild installed, the user's own TypeScript (init.ts) compiles.
+set -eu
+
+export HOME="$AUTOPKGTEST_TMP/home"
+mkdir -p "$HOME/.config/fresh"
+printf 'const answer: number = 42;\neditor.setStatus(`answer ${answer}`);\n' > "$HOME/.config/fresh/init.ts"
+fresh --cmd init check

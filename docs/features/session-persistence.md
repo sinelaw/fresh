@@ -7,30 +7,46 @@
 > alias, and this page keeps its `/features/session-persistence` URL so
 > existing links and bookmarks continue to work.
 
-> **Palette:** `Detach`. **CLI:** `fresh`, `fresh -a`, `fresh --cmd daemon list|new|kill`, `fresh --restore`, `fresh --no-restore`. **Config:** `orchestrator_mode`, `hot_exit`, `editor.restore_previous_session`, `editor.ephemeral_file_patterns`.
+> **Palette:** `Detach`. **CLI:** `fresh`, `fresh -a`, `fresh --cmd daemon list|new|kill`, `fresh --restore`, `fresh --no-restore`. **Config:** `auto_attach`, `open_last_workspace`, `hot_exit`, `editor.restore_previous_session`, `editor.ephemeral_file_patterns`.
 
 Detach from Fresh and reattach later, similar to tmux. The Fresh daemon keeps running in the background, so your editor state survives even after you close the terminal.
 
-## Orchestrator mode (a bare `fresh`)
+## Auto Attach (a bare `fresh`)
 
-Typing `fresh` with nothing after it opens the workspace you were last in —
-whichever directory you typed it in — with the workspace dock already on
-screen. It runs as a daemon, so the session outlives the terminal, and a
-second bare `fresh` anywhere reattaches to that same editor instead of
-starting a second one.
+Typing `fresh` with nothing after it opens the workspace for the directory
+you typed it in, with the workspace dock on screen if you opened it yourself
+(View ▸ Orchestrator Dock). It runs as a daemon, so the session outlives the
+terminal, and a second bare `fresh` anywhere reattaches to that same editor
+instead of starting a second one — switched to the workspace for *that*
+directory. Your other workspaces stay open in the daemon; the dock lists them.
 
 ```bash
-fresh            # your last workspace, wherever you are
+fresh            # this directory's workspace, in the shared daemon
 fresh notes.md   # unaffected: an editor here, on this file
 ```
+
+Typed in one of Fresh's own terminals — whether the editor around it is the
+daemon or a plain one, so whatever Auto Attach says — nothing starts a second
+editor inside that terminal: you are already in Fresh. A bare `fresh` or `fresh -a` says so and
+exits; `fresh --simple`, `fresh -a NAME` and piped input (`cmd | fresh`) are
+refused the same way, with an error. `fresh FILE` and `fresh DIR` still open
+files and workspaces in that editor. To start a separate editor in the terminal
+anyway, clear `FRESH_SESSION` for the command, as the message suggests:
+`FRESH_SESSION= fresh --simple`.
+
+To have a bare `fresh` reopen the workspace you used last instead, wherever
+you type it, turn on **Open Last Workspace** (`"open_last_workspace": true`).
+It works with Auto Attach on or off, and changes nothing for `fresh
+DIR`, `fresh FILE` or any other run with arguments.
 
 The rule is exactly "the command line is empty". A file, or any flag, means
 *just this, here*, and behaves as it always has. A first run — no saved
 workspaces — sets up a workspace for the current directory and opens the
-welcome screen; there is no untitled buffer in the way.
+welcome screen beside an empty buffer, as any launch does.
 
-Turn it off with **Orchestrator Mode** in the Settings UI, the checkbox at the
-top of the welcome screen, or `"orchestrator_mode": false` in `config.json`.
+Turn it off with **Auto Attach** in the Settings UI, the checkbox at the
+top of the welcome screen, or `"auto_attach": false` in `config.json` (the
+setting was called `orchestrator_mode` before; that name is still read).
 With it off, a bare `fresh` is a plain editor in this terminal, in this
 directory, with no daemon.
 
@@ -43,6 +59,8 @@ See also: [Remote Editing (SSH)](./ssh.md) for pairing daemon mode with remote b
 ## Hot Exit
 
 All buffers — including unnamed scratch buffers — persist automatically. When you quit Fresh, unsaved changes are preserved and restored on next startup. Configurable via the `hot_exit` setting (default: on).
+
+Unsaved changes follow the directory, not the way Fresh was launched: an edit left unsaved in a bare `fresh` (with Auto Attach) comes back in `fresh FILE`, `fresh DIR` or a bare `fresh` with Auto Attach off, and the other way round. While the editor that holds them is still running — a detached daemon, say — they stay with it.
 
 ## Workspace Storage
 
@@ -82,8 +100,9 @@ The `daemon` subcommand is an alias for the older `session` subcommand; both for
 |---------|------|-------------|
 | `fresh myfile.txt` | Direct | Just that file: no background process, no workspace restored or saved, no dock. See [Opening Files](#opening-files). |
 | `fresh --simple` | Direct | The same, with or without files: an empty buffer in this terminal. |
-| `fresh` | Daemon | Orchestrator mode: the shared `orchestrator` daemon, your last workspace, and the dock once you have opened it. Direct when `orchestrator_mode` is off. |
-| `fresh -a` | Daemon | Background daemon for this directory. Supports detach/reattach. |
+| `fresh --diff A B` | Direct | The two files side by side, both editable. See [Compare Files](./compare-files.md). |
+| `fresh` | Daemon | Auto Attach: the shared `orchestrator` daemon, in this directory's workspace, and the dock once you have opened it. Direct when `auto_attach` is off. |
+| `fresh -a` | Daemon | With Auto Attach on, a bare `fresh` *is* `fresh -a`: the one shared background editor (files given with `-a` open there too) — unless a per-directory daemon is already running in this directory, or the files name a remote host, which keep their own daemon. With it off, `fresh -a` is a background daemon for this directory. Supports detach/reattach. |
 | `fresh --web [ADDR]` | Daemon | Foreground daemon that also serves the browser UI. |
 
 Use daemon mode for long-running tasks or remote work where the connection may drop.
@@ -103,14 +122,14 @@ with `--session-name NAME`.
 
 - opens only the files you named — the project's workspace (tabs, splits, layout) is neither restored nor saved, so quitting leaves it as your last full session left it;
 - brings back those files' own unsaved changes (hot exit), but no other file's — those stay stashed for the next `fresh` in the project;
-- does not open the dock on its own (unless the dock is set to open always), and does not read the list of saved workspaces until you open the dock;
+- does not open the dock, even if you left it open last time, and does not read the list of saved workspaces until you open the dock;
 - runs in this terminal and returns when you quit — no daemon.
 
 Search history, crash recovery, remembered cursor positions and the Workspace Trust question work as in any launch.
 
-`fresh --simple` is the same launch without needing a file: with no arguments it opens an empty buffer in this terminal, with no session restored or saved, no dock and no daemon. The dock and the rest of the Orchestrator stay available — open the dock from the command palette and your workspaces load then.
+`fresh --simple` is the same launch without needing a file: with no arguments it opens an empty buffer in this terminal, with no session restored or saved, no dock, no file explorer (`fresh --simple DIR` included) and no daemon. The dock and the rest of the Orchestrator stay available — open the dock from the command palette and your workspaces load then.
 
-A bare `fresh`, `fresh DIR` and `fresh -a` are sessions: they restore and save the workspace. To make `fresh FILE` a session too, pass `--restore`, or turn off `editor.skip_session_restore_when_files_passed` to do it for every launch.
+A bare `fresh`, `fresh DIR` and `fresh -a` are sessions: they restore and save the workspace. `fresh DIR` also opens the file explorer, unless you closed it in that directory yourself. To make `fresh FILE` a session too, pass `--restore`, or turn off `editor.skip_session_restore_when_files_passed` to do it for every launch.
 
 ## How It Works
 
@@ -124,7 +143,7 @@ Terminal (Client)  ←→  Unix Socket  ←→  Fresh Daemon (Background)
                                         Running terminals
 ```
 
-Detaching exits only the client; the daemon keeps running.
+Detaching exits only the client; the daemon keeps running. It never shuts itself down: it runs until you quit it (Ctrl+Q ▸ Quit and Stop All, or `fresh --cmd daemon kill`), however long nothing is attached.
 
 ## Commands
 

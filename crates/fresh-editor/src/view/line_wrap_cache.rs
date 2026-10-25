@@ -25,6 +25,18 @@ pub enum CacheViewMode {
     Compose,
 }
 
+impl CacheViewMode {
+    /// The label for a pane in `mode`: page view composes, anything else is
+    /// source.
+    pub fn of(mode: &crate::state::ViewMode) -> Self {
+        if matches!(mode, crate::state::ViewMode::PageView) {
+            Self::Compose
+        } else {
+            Self::Source
+        }
+    }
+}
+
 /// Full set of inputs that determine a single logical line's wrapped
 /// layout.  Every mutable input must be represented here — if the
 /// caller forgets one, stale entries can be returned.

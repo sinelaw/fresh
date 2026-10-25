@@ -369,6 +369,9 @@ pub enum AsyncMessage {
         terminal: fresh_core::WindowTerminalId,
     },
 
+    /// A program in a terminal asked to set the clipboard via OSC 52.
+    TerminalClipboardStore { text: String },
+
     /// Result of an asynchronous system-clipboard read. The main loop
     /// blocks input dispatch while a paste is in flight; the matching
     /// `request_id` ensures a late result that arrived after the
@@ -464,6 +467,14 @@ pub enum AsyncMessage {
         result: Result<Value, String>,
     },
 
+    /// Host work a plugin is awaiting finished off the editor thread (a
+    /// `compareBuffers` diff, say): resolve its promise with the JSON
+    /// result, or reject it with the error.
+    PluginCallbackResult {
+        request_id: u64,
+        result: Result<String, String>,
+    },
+
     /// Plugin process completed with output
     PluginProcessOutput {
         /// Unique ID for this process (to match with callback)
@@ -501,6 +512,8 @@ pub enum AsyncMessage {
         /// the editor drop results that arrive after the user has
         /// switched windows/projects (the cache is keyed by cwd).
         cwd: String,
+        /// The load these files come from; only the latest is kept.
+        generation: u64,
         files: std::sync::Arc<Vec<crate::input::quick_open::providers::FileEntry>>,
         complete: bool,
     },

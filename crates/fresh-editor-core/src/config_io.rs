@@ -323,7 +323,7 @@ fn read_existing_json(path: &Path) -> Result<Value, ConfigError> {
 
 /// Current config schema version.
 /// Increment this when making breaking changes to config structure.
-pub const CURRENT_CONFIG_VERSION: u32 = 2;
+pub const CURRENT_CONFIG_VERSION: u32 = 3;
 
 /// Apply all necessary migrations to bring a config JSON to the current version.
 pub fn migrate_config(mut value: Value) -> Result<Value, ConfigError> {
@@ -336,6 +336,13 @@ pub fn migrate_config(mut value: Value) -> Result<Value, ConfigError> {
     if version < 2 {
         value = migrate_v1_to_v2(value)?;
     }
+    if version < 3 {
+        value = migrate_v2_to_v3(value)?;
+    }
+    // Whatever the version says: an old name can come back into a current
+    // file (pasted from older docs, or written by an older build sharing the
+    // dotfiles), and is read under its new name rather than ignored.
+    rename_legacy_keys(&mut value);
 
     Ok(value)
 }
@@ -390,6 +397,31 @@ fn migrate_v1_to_v2(mut value: Value) -> Result<Value, ConfigError> {
         }
     }
     Ok(value)
+}
+
+/// Migration from v2 to v3: `orchestrator_mode` is now `auto_attach`.
+fn migrate_v2_to_v3(mut value: Value) -> Result<Value, ConfigError> {
+    if let Value::Object(ref mut map) = value {
+        map.insert("version".to_string(), Value::Number(3.into()));
+    }
+    rename_legacy_keys(&mut value);
+    Ok(value)
+}
+
+/// Rename the top-level keys a later name replaced, keeping the new key's
+/// value when a file has both. Part of the v3 migration, and also applied to
+/// a file before it is written back, so a file still on an old name moves to
+/// the new one the first time any setting is saved — rather than holding the
+/// two side by side.
+pub fn rename_legacy_keys(value: &mut Value) {
+    const RENAMED: [(&str, &str); 1] = [("orchestrator_mode", "auto_attach")];
+    if let Value::Object(map) = value {
+        for (old, new) in RENAMED {
+            if let Some(v) = map.remove(old) {
+                map.entry(new).or_insert(v);
+            }
+        }
+    }
 }
 
 /// Represents a configuration layer in the 4-level hierarchy.
@@ -594,8 +626,9 @@ impl ConfigResolver {
             if content.trim().is_empty() {
                 PartialConfig::default()
             } else {
-                let value = crate::config::parse_config_jsonc(&content)
+                let mut value = crate::config::parse_config_jsonc(&content)
                     .map_err(|e| ConfigError::ParseError(format!("{}: {}", path.display(), e)))?;
+                rename_legacy_keys(&mut value);
                 serde_json::from_value(value)
                     .map_err(|e| ConfigError::ParseError(format!("{}: {}", path.display(), e)))?
             }
@@ -623,6 +656,7 @@ impl ConfigResolver {
         let path = self.layer_write_path(layer)?;
 
         let mut config_value = read_existing_json(&path)?;
+        rename_legacy_keys(&mut config_value);
 
         for pointer in deletions {
             remove_json_pointer(&mut config_value, pointer);
@@ -1903,7 +1937,10 @@ mod tests {
 
         let migrated = migrate_config(input).unwrap();
 
-        assert_eq!(migrated.get("version"), Some(&serde_json::json!(2)));
+        assert_eq!(
+            migrated.get("version"),
+            Some(&serde_json::json!(CURRENT_CONFIG_VERSION))
+        );
         let left = migrated
             .pointer("/editor/status_bar/left")
             .and_then(|v| v.as_array())
@@ -1955,7 +1992,10 @@ mod tests {
 
         let migrated = migrate_config(input).unwrap();
 
-        assert_eq!(migrated.get("version"), Some(&serde_json::json!(2)));
+        assert_eq!(
+            migrated.get("version"),
+            Some(&serde_json::json!(CURRENT_CONFIG_VERSION))
+        );
         assert!(
             migrated.pointer("/editor/status_bar").is_none(),
             "migration must not fabricate a status_bar object for users \
@@ -1993,6 +2033,54 @@ mod tests {
 
         let editor = migrated.get("editor").unwrap();
         assert_eq!(editor.get("tab_size"), Some(&serde_json::json!(4)));
+    }
+
+    /// `orchestrator_mode` is now `auto_attach`; when a file somehow holds
+    /// both, the new name wins — also in a file already at the current
+    /// version.
+    #[test]
+    fn migration_renames_orchestrator_mode_to_auto_attach() {
+        let current =
+            serde_json::json!({ "version": CURRENT_CONFIG_VERSION, "orchestrator_mode": false });
+        let migrated = migrate_config(current).unwrap();
+        assert_eq!(migrated.get("auto_attach"), Some(&serde_json::json!(false)));
+        assert!(migrated.get("orchestrator_mode").is_none());
+
+        let migrated = migrate_config(serde_json::json!({ "orchestrator_mode": false })).unwrap();
+        assert_eq!(migrated.get("auto_attach"), Some(&serde_json::json!(false)));
+        assert!(migrated.get("orchestrator_mode").is_none());
+
+        let both =
+            serde_json::json!({ "version": 2, "orchestrator_mode": false, "auto_attach": true });
+        let migrated = migrate_config(both).unwrap();
+        assert_eq!(migrated.get("auto_attach"), Some(&serde_json::json!(true)));
+        assert!(migrated.get("orchestrator_mode").is_none());
+    }
+
+    /// A user who turned the old `orchestrator_mode` off keeps it off, and
+    /// the first setting saved moves the file to the new name.
+    #[test]
+    fn a_legacy_orchestrator_mode_is_read_and_rewritten_as_auto_attach() {
+        let (temp, resolver) = create_test_resolver();
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        std::fs::write(&user_config_path, r#"{"orchestrator_mode": false}"#).unwrap();
+
+        assert!(!resolver.resolve().unwrap().auto_attach);
+
+        let changes = std::collections::HashMap::from([(
+            "/check_for_updates".to_string(),
+            serde_json::json!(false),
+        )]);
+        resolver
+            .save_changes_to_layer(&changes, &Default::default(), ConfigLayer::User)
+            .unwrap();
+        let written: Value =
+            serde_json::from_str(&std::fs::read_to_string(&user_config_path).unwrap()).unwrap();
+        assert_eq!(written.get("auto_attach"), Some(&serde_json::json!(false)));
+        assert!(written.get("orchestrator_mode").is_none());
+        assert!(!resolver.resolve().unwrap().auto_attach);
+        drop(temp);
     }
 
     #[test]

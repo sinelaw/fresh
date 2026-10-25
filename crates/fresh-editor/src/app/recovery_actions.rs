@@ -16,6 +16,83 @@ use std::path::PathBuf;
 use super::Editor;
 
 impl Editor {
+    /// Bring in the unsaved work the other launch mode left for window `id`'s
+    /// workspace, so it is restored whichever way the directory is opened.
+    ///
+    /// A bare `fresh` in Orchestrator mode keeps hot-exit and crash recovery
+    /// in one store for the whole `orchestrator` daemon; a direct launch keeps
+    /// a store per launch directory. Without this an edit left unsaved in one
+    /// mode never came back in the other. So a direct launch takes, from the
+    /// daemon's store, the entries stamped with its own directory's
+    /// workspaces; and the daemon, opening a workspace, takes everything a
+    /// direct launch in that directory left. Entries move rather than copy,
+    /// and nothing is taken from a store whose editor is still running.
+    ///
+    /// Called before a workspace's unsaved work is restored: from
+    /// `restore_workspace_for`, and at a direct launch's startup for the
+    /// launches that restore no workspace (`fresh FILE`, `--no-restore`).
+    ///
+    /// `only` limits it to entries for those files: a file launch restores
+    /// only the files it names, and an entry it took over but did not
+    /// restore would be dropped at its quit if the same file was opened
+    /// clean during the session (opening a file applies no hot-exit content;
+    /// see `end_session_accounting`). Left in the other store, it waits for
+    /// the next launch that restores the workspace.
+    pub fn adopt_other_mode_recovery(&mut self, id: WindowId, only: Option<&[PathBuf]>) {
+        use crate::services::recovery::RecoveryScope;
+        let orchestrator = crate::server::ORCHESTRATOR_DAEMON;
+        let Some(root) = self.windows.get(&id).map(|w| w.root.clone()) else {
+            return;
+        };
+        let named = |meta: &crate::services::recovery::RecoveryMetadata| {
+            only.is_none_or(|paths| {
+                meta.original_path
+                    .as_ref()
+                    .is_some_and(|path| paths.contains(path))
+            })
+        };
+        let mut service = self.recovery_service.lock().unwrap();
+        let adopted = if service.is_standalone() {
+            if !service.covers_root(&root) {
+                return;
+            }
+            let key = crate::app::orchestrator_persistence::canonical_key(&root);
+            let workspaces: std::collections::HashSet<String> = self
+                .windows
+                .values()
+                .filter(|w| crate::app::orchestrator_persistence::canonical_key(&w.root) == key)
+                .map(|w| w.stable_id.clone())
+                .collect();
+            service.adopt_from(
+                &RecoveryScope::Session {
+                    name: orchestrator.to_string(),
+                },
+                |meta| {
+                    named(meta)
+                        && match &meta.workspace_id {
+                            Some(workspace) => workspaces.contains(workspace),
+                            // Older entries carry no workspace; go by where the file is.
+                            None => meta
+                                .original_path
+                                .as_ref()
+                                .is_some_and(|path| path.starts_with(&root)),
+                        }
+                },
+            )
+        } else if self.session_name.as_deref() == Some(orchestrator) {
+            service.adopt_from(&RecoveryScope::Standalone { working_dir: root }, named)
+        } else {
+            return;
+        };
+        match adopted {
+            Ok(0) => {}
+            Ok(n) => {
+                tracing::info!("Adopted {n} recovery entr(y/ies) left by the other launch mode")
+            }
+            Err(e) => tracing::warn!("Failed to adopt recovery entries: {e}"),
+        }
+    }
+
     /// Push the buffer's full current content to LSP after an out-of-band
     /// mutation (hot-exit recovery replay / crash-recovery replay). The
     /// replay paths edit the buffer directly via `buffer.delete` and

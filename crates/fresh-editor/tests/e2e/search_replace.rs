@@ -1,5 +1,6 @@
 //! E2E tests for the Search & Replace plugin (multi-file project-wide search/replace)
 
+use crate::common::git_test_helper::GitTestRepo;
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -820,6 +821,94 @@ fn test_search_replace_current_file_hidden() {
 
     let content = fs::read_to_string(&hidden_file).unwrap();
     assert_eq!(content, "Line 1: done the search\nplain line\n");
+}
+
+/// The project search covers the files Quick Open lists, so what
+/// `file_explorer.custom_ignore_patterns` matches is not searched — whether
+/// the pattern names a directory or a glob over files.
+#[test]
+fn test_search_replace_skips_custom_ignored_files() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    create_test_files(&project_root);
+    fs::write(project_root.join("kept.txt"), "zebra_marker kept\n").unwrap();
+    fs::create_dir(project_root.join("generated")).unwrap();
+    fs::write(
+        project_root.join("generated").join("out.txt"),
+        "zebra_marker generated\n",
+    )
+    .unwrap();
+    fs::write(project_root.join("debug.log"), "zebra_marker log\n").unwrap();
+
+    let mut config = Config::default();
+    config.file_explorer.custom_ignore_patterns =
+        vec!["generated/".to_string(), "*.log".to_string()];
+
+    let start_file = project_root.join("alpha.txt");
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(160, 30, config, project_root).unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness.type_text("zebra_marker").unwrap();
+    wait_for_search_finished(&mut harness);
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Matches (1 in 1 files)") && screen.contains("kept.txt"),
+        "Only kept.txt should match; custom-ignored files must not be \
+         searched. Got:\n{}",
+        screen
+    );
+}
+
+/// In a git repository the project search lists files with `git ls-files`,
+/// as Quick Open does: `.gitignore`d files are not searched, while untracked
+/// files that are not ignored are.
+#[test]
+fn test_search_replace_respects_gitignore() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    let plugins_dir = repo.path.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "search_replace");
+
+    repo.create_file(".gitignore", "build/\n*.tmp\n");
+    let start_file = repo.create_file("tracked.txt", "zebra_marker tracked\n");
+    repo.create_file("untracked.txt", "zebra_marker untracked\n");
+    repo.create_file("build/out.txt", "zebra_marker built\n");
+    repo.create_file("scratch.tmp", "zebra_marker scratch\n");
+    repo.git_add(&[".gitignore", "tracked.txt"]);
+    repo.git_commit("initial");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        30,
+        Default::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness.type_text("zebra_marker").unwrap();
+    wait_for_search_finished(&mut harness);
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Matches (2 in 2 files)"),
+        "tracked.txt and untracked.txt should match; gitignored files must \
+         not be searched. Got:\n{}",
+        screen
+    );
+    assert!(
+        !screen.contains("out.txt") && !screen.contains("scratch.tmp"),
+        "gitignored files must not appear in the results. Got:\n{}",
+        screen
+    );
 }
 
 /// Searching for a pattern with no matches shows the "No matches" message.
@@ -3171,9 +3260,11 @@ fn test_search_results_grow_with_the_panel_on_resize() {
     open_search_replace_via_palette(&mut harness);
     harness.type_text("NEEDLE_MARKER").unwrap();
 
-    // The tree is windowing (40 matches, a panel that fits a handful).
+    // The tree is windowing (40 matches, a panel that fits a handful). Wait
+    // for the whole search: the open file is searched first, so its single
+    // match can be on screen while the other 39 are still streaming in.
     harness
-        .wait_until(|h| h.screen_to_string().matches("NEEDLE_MARKER here").count() >= 2)
+        .wait_until(|h| h.screen_to_string().contains("(40 matches"))
         .unwrap();
     let before = harness
         .screen_to_string()

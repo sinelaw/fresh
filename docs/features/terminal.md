@@ -45,6 +45,8 @@ A **running** terminal is never restarted — the indicator only appears once th
 
 The indicator is the `{terminal_restart}` status-bar element and can be moved or removed via `editor.status_bar.left` / `.right` like any other.
 
+To have a shell's tab close when you `exit` it (or press `Ctrl+D`) instead, set `terminal.close_on_exit = true`. A pane the terminal was the only tab of closes with it, like clicking the tab's ×. Terminals running a command — an agent, a plugin's build output — keep their scrollback either way, since reading it is the point.
+
 ## Terminal Modes
 
 The terminal has two modes, indicated in the status bar:

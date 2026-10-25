@@ -95,7 +95,7 @@ fn a_restored_terminal_comes_back_live() {
     // Session 2: cold reboot. Nothing is typed and no key is sent — exactly
     // what the user sees on relaunch.
     let mut e2 = editor_in(&project, &dir_context);
-    e2.restore_active_window_on_launch(false).unwrap();
+    e2.restore_active_window_on_launch(fresh::app::workspace::ExplorerOnEntry::Enter).unwrap();
 
     let buffer_id = e2.active_buffer();
     assert!(

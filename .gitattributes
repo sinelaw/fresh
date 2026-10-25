@@ -13,3 +13,4 @@ crates/fresh-ui/tests/golden/*.txt text eol=lf
 # LF. `key_name_docs` failed the whole Windows job on the line terminator
 # while reporting the tables as out of date, which they were not.
 docs/configuration/keyboard.md text eol=lf
+docs/configuration/actions.md text eol=lf

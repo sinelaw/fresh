@@ -1089,9 +1089,9 @@ pub struct Editor {
     /// Event broadcaster for control events (observable by external systems)
     event_broadcaster: crate::model::control_event::EventBroadcaster,
 
-    /// This editor was launched by a bare `fresh` with
-    /// [`Config::orchestrator_mode`](crate::config::Config::orchestrator_mode)
-    /// on, so it is a workspace switcher first and a file editor second.
+    /// This editor is the daemon a bare `fresh` with
+    /// [`Config::auto_attach`](crate::config::Config::auto_attach) on attaches
+    /// to (the launch is still called Orchestrator mode internally).
     ///
     /// Read through [`Editor::orchestrator_mode`]. Set once at
     /// construction and never mutated: it describes how the process was
@@ -1105,6 +1105,11 @@ pub struct Editor {
     /// `orchestrator_mode`, a property of the invocation fixed at
     /// construction.
     file_launch: bool,
+
+    /// The two files of a `fresh --diff LEFT RIGHT` launch, absolute. Read
+    /// through [`Editor::diff_launch`]; set once, before the `ready` hook,
+    /// by [`Editor::set_diff_launch`].
+    diff_launch: Option<(std::path::PathBuf, std::path::PathBuf)>,
 
     /// Every persisted workspace has been read into `windows`. False until
     /// something uses the registry; see
@@ -1167,6 +1172,22 @@ pub struct Editor {
     /// the same way regardless of where it was created.
     #[cfg(feature = "plugins")]
     plugin_timers: Vec<crate::app::plugin_timers::PluginTimer>,
+
+    /// The macro replay in progress, if any. A replay outlives the call that
+    /// started it when it waits on a plugin step; see `play_macro`.
+    macro_replay: Option<crate::app::macro_actions::MacroReplay>,
+
+    /// Keys and plays that arrived while `macro_replay` was parked, run in
+    /// order once it ends (`resume_macro_replay`).
+    #[cfg(feature = "plugins")]
+    deferred_replay_input: std::collections::VecDeque<crate::app::macro_actions::DeferredInput>,
+
+    /// True while dispatching actions that are a plugin's doing rather than
+    /// the user's (a timer tick, an `executeActions` step), so
+    /// `record_macro_action` leaves them out of an in-flight recording. Set
+    /// through `without_macro_recording`.
+    #[cfg(feature = "plugins")]
+    suppress_macro_recording: bool,
 
     /// Registered diff baselines (registerDiffBaseline plugin API family).
     /// Shared with off-loop loader tasks; see `app/diff_baselines.rs`.

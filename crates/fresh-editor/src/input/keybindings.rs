@@ -623,6 +623,10 @@ pub enum Action {
     PromptConfirm,
     /// PromptConfirm with recorded text for macro playback
     PromptConfirmWithText(String),
+    /// A key handed to a plugin waiting on `editor.getNextKey()`. Such a key
+    /// never reaches `handle_action`, so it is recorded as this step for a
+    /// macro to replay it; the chord is spelled `"x"`, `"ctrl+x"`, ….
+    PluginNextKey(String),
     PromptCancel,
     PromptBackspace,
     PromptDelete,
@@ -908,14 +912,15 @@ pub enum Action {
 /// - `simple`: `"name" => Variant` — no args needed
 /// - `alias`: `"name" => Variant` — like simple, but only for from_str (not to_action_str)
 /// - `with_char`: `"name" => Variant` — passes through `with_char(args, ...)` for char-arg actions
-/// - `custom`: `"name" => { body }` — arbitrary expression using `$args_name` for complex arg parsing
+/// - `custom`: `"name" => Variant ["arg", ...] : { body }` — arbitrary expression using
+///   `$args_name` for complex arg parsing; the bracketed list names the arg keys it reads
 macro_rules! define_action_str_mapping {
     (
         $args_name:ident;
         simple { $($s_name:literal => $s_variant:ident),* $(,)? }
         alias { $($a_name:literal => $a_variant:ident),* $(,)? }
         with_char { $($c_name:literal => $c_variant:ident),* $(,)? }
-        custom { $($x_name:literal => $x_variant:ident : $x_body:expr),* $(,)? }
+        custom { $($x_name:literal => $x_variant:ident [$($x_arg:literal),*] : $x_body:expr),* $(,)? }
     ) => {
         /// Parse action from string (used when loading from config)
         pub fn from_str(s: &str, $args_name: &HashMap<String, serde_json::Value>) -> Option<Self> {
@@ -952,6 +957,17 @@ macro_rules! define_action_str_mapping {
             ];
             names.sort();
             names
+        }
+
+        /// The arg-map keys an action reads (e.g. `["char"]` for `insert_char`).
+        /// Empty for actions that take no args, and for names that aren't
+        /// built-in actions.
+        pub fn action_arg_keys(s: &str) -> &'static [&'static str] {
+            match s {
+                $($c_name => &["char"],)*
+                $($x_name => &[$($x_arg),*],)*
+                _ => &[],
+            }
         }
     };
 }
@@ -1381,22 +1397,26 @@ impl Action {
             "show_macro" => ShowMacro,
         }
         custom {
-            "copy_with_theme" => CopyWithTheme : {
+            "copy_with_theme" => CopyWithTheme ["theme"] : {
                 // Empty theme = open theme picker prompt
                 let theme = args.get("theme").and_then(|v| v.as_str()).unwrap_or("");
                 Self::CopyWithTheme(theme.to_string())
             },
-            "menu_open" => MenuOpen : {
+            "menu_open" => MenuOpen ["name"] : {
                 let name = args.get("name")?.as_str()?;
                 Self::MenuOpen(name.to_string())
             },
-            "switch_keybinding_map" => SwitchKeybindingMap : {
+            "switch_keybinding_map" => SwitchKeybindingMap ["map"] : {
                 let map_name = args.get("map")?.as_str()?;
                 Self::SwitchKeybindingMap(map_name.to_string())
             },
-            "prompt_confirm_with_text" => PromptConfirmWithText : {
+            "prompt_confirm_with_text" => PromptConfirmWithText ["text"] : {
                 let text = args.get("text")?.as_str()?;
                 Self::PromptConfirmWithText(text.to_string())
+            },
+            "plugin_next_key" => PluginNextKey ["key"] : {
+                let key = args.get("key")?.as_str()?;
+                Self::PluginNextKey(key.to_string())
             },
         }
     }
@@ -1477,6 +1497,9 @@ impl Action {
             }
             Self::PromptConfirmWithText(text) => {
                 args.insert("text".to_string(), Value::String(text.clone()));
+            }
+            Self::PluginNextKey(key) => {
+                args.insert("key".to_string(), Value::String(key.clone()));
             }
             // No-arg actions (motions, edits, commands): empty args.
             _ => {}
@@ -3196,6 +3219,7 @@ impl KeybindingResolver {
             Action::PromptConfirmWithText(ref text) => {
                 format!("{} ({})", t!("action.prompt_confirm"), text).into()
             }
+            Action::PluginNextKey(ref key) => format!("Key for a plugin ({})", key).into(),
             Action::PromptCancel => t!("action.prompt_cancel"),
             Action::PromptBackspace => t!("action.prompt_backspace"),
             Action::PromptDelete => t!("action.prompt_delete"),
@@ -5768,6 +5792,11 @@ mod tests {
             // editor split while the tour panel stays docked below.
             "tour_next",
             "tour_prev",
+            // Compare Files difference navigation — handled by the
+            // compare_files plugin (`fresh --diff A B`).
+            "compare_next_difference",
+            "compare_prev_difference",
+            "compare_switch_side",
         ];
 
         let config = Config::default();

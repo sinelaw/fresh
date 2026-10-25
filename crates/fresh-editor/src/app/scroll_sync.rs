@@ -8,12 +8,23 @@
 
 use crate::model::event::{LeafId, SplitId};
 
+/// A pane's rows, as [`crate::app::window::Window::pane_rows`] reads them.
+struct PaneRows {
+    geometry: crate::view::wrap_index::WrapIndexGeometry,
+    top: u32,
+    height: u32,
+    max_top: u32,
+}
+
 impl crate::app::window::Window {
     /// Synchronize viewports for all scroll-sync groups in this window.
     ///
     /// For each registered group containing the active split, derive the
     /// active split's top line from its viewport and project it onto the
-    /// paired split via the group's mapping. (Horizontal scroll is copied
+    /// paired split via the group's mapping — or, for a group whose two panes
+    /// show the same buffer, in visual rows (`sync_same_buffer_rows`). The
+    /// active split is the focused one unless the pointer scrolled another
+    /// since the last sync (`scroll_sync_driver`). (Horizontal scroll is copied
     /// after layout instead, see `sync_left_column_from`.) Then, when same-buffer
     /// scroll sync is enabled, also mirror the active split's `top_byte`
     /// onto every other split that shows the same buffer (and isn't in
@@ -23,8 +34,18 @@ impl crate::app::window::Window {
     pub(super) fn sync_scroll_groups(&mut self) {
         // The pane the user is in: a shown group's focused panel, not the
         // pane showing the group. Panels are not in the split tree, so a
-        // pane's buffer is read off its view state (`shown_buffer`).
-        let active_split = self.effective_active_split();
+        // pane's buffer is read off its view state (`shown_buffer`). A pane
+        // the pointer scrolled since the last sync drives this one instead.
+        let focused = self.effective_active_split();
+        let active_split = self
+            .scroll_sync_driver
+            .take()
+            .filter(|leaf| {
+                self.buffers
+                    .split_view_states()
+                    .is_some_and(|vs_map| vs_map.contains_key(leaf))
+            })
+            .unwrap_or(focused);
         let vs_map = self
             .buffers
             .split_view_states()
@@ -87,20 +108,34 @@ impl crate::app::window::Window {
                     other_line
                 );
 
-                Some((other_split, other_line))
+                let same_buffer = vs_map
+                    .get(&LeafId(other_split))
+                    .and_then(|vs| vs.shown_buffer())
+                    == Some(active_buffer_id);
+                Some((group.id, other_split, other_line, same_buffer))
             })
             .collect();
 
-        for (other_split, target_line) in sync_info {
+        for (group_id, other_split, target_line, same_buffer) in sync_info {
             let other_leaf = LeafId(other_split);
             let buffer_id = self
                 .buffers
                 .split_view_states()
                 .and_then(|vs_map| vs_map.get(&other_leaf))
                 .and_then(|vs| vs.shown_buffer());
-            if let Some(buffer_id) = buffer_id {
-                self.scroll_split_viewport_to(buffer_id, other_leaf, target_line, false);
+            let Some(buffer_id) = buffer_id else {
+                continue;
+            };
+            if same_buffer
+                && self.sync_same_buffer_rows(group_id, buffer_id, active_split, other_leaf)
+            {
+                continue;
             }
+            // `target_line` is 0-based, like the anchors and
+            // `get_line_number`; `Viewport::scroll_to` counts from 1.
+            // Passed as-is, the partner sat one line above the line the
+            // anchors name — a row out of step with the active pane.
+            self.scroll_split_viewport_to(buffer_id, other_leaf, target_line + 1, false);
         }
 
         let active_buffer_id = if self.same_buffer_scroll_sync {
@@ -170,6 +205,181 @@ impl crate::app::window::Window {
                 }
             }
         }
+    }
+
+    /// Sync a group whose two panes show the same buffer — markdown's source
+    /// beside its rendered preview — in visual rows. Returns `false` when the
+    /// rows cannot be had (a buffer beyond the wrap index's size ceilings, a
+    /// pane not laid out yet), leaving the caller's line mapping to do it.
+    ///
+    /// The line mapping a diff's anchors call for is the identity here, and it
+    /// is not enough: the two panes lay the same lines out in different rows
+    /// (the preview frames tables, spaces list items, wraps paragraphs), so
+    /// "same top line" keeps only the top row together, lets everything below
+    /// drift apart, and moves the partner by whole lines of uneven height. Rows
+    /// carry the position inside a line too, so the partner moves smoothly, and
+    /// a row is lined up wherever the window is (`scroll_sync::synced_top`).
+    fn sync_same_buffer_rows(
+        &mut self,
+        group_id: crate::view::scroll_sync::ScrollSyncGroupId,
+        buffer_id: crate::model::event::BufferId,
+        active: LeafId,
+        other: LeafId,
+    ) -> bool {
+        use crate::view::scroll_sync::{inverse_synced_top, map_row, synced_top, RowSyncState};
+
+        let Some(left_is_active) = self
+            .scroll_sync_manager
+            .get_group_mut(group_id)
+            .map(|g| g.is_left_split(active.into()))
+        else {
+            return false;
+        };
+        let (Some(a), Some(o)) = (
+            self.pane_rows(buffer_id, active),
+            self.pane_rows(buffer_id, other),
+        ) else {
+            return false;
+        };
+        let last = self
+            .scroll_sync_manager
+            .get_group_mut(group_id)
+            .and_then(|g| g.row_sync);
+        let record = |mgr: &mut crate::view::scroll_sync::ScrollSyncManager, other_top: u32| {
+            if let Some(group) = mgr.get_group_mut(group_id) {
+                group.row_sync = Some(RowSyncState {
+                    active: active.into(),
+                    active_top: a.top,
+                    other_top,
+                });
+            }
+        };
+
+        // The focus moved to the other pane and nothing has scrolled since: the
+        // pair is where the last sync put it, and stays there.
+        if let Some(last) = last {
+            if last.active != SplitId::from(active) && a.top == last.other_top {
+                record(&mut self.scroll_sync_manager, o.top);
+                return true;
+            }
+        }
+
+        let Some(state) = self.buffers.get(&buffer_id) else {
+            return false;
+        };
+        let (Some(index_a), Some(index_o)) = (
+            state.wrap_indices.get(&a.geometry),
+            state.wrap_indices.get(&o.geometry),
+        ) else {
+            return false;
+        };
+        // One curve relates the pair, driven from the group's left pane (the
+        // source): the right pane's top for each left top. Scrolling the right
+        // pane inverts it, so the pair sits on the same curve whichever pane
+        // the user scrolls.
+        let (left, right, index_l, index_r) = if left_is_active {
+            (&a, &o, index_a, index_o)
+        } else {
+            (&o, &a, index_o, index_a)
+        };
+        let curve = |top: u32| {
+            synced_top(top, left.max_top, left.height, right.max_top, |row| {
+                map_row(index_l, index_r, &state.buffer, row)
+            })
+        };
+        let mut target = if left_is_active {
+            curve(a.top)
+        } else if a.top == 0 {
+            0
+        } else if a.top >= a.max_top {
+            o.max_top
+        } else {
+            inverse_synced_top(a.top, o.max_top, curve)
+        };
+        // Never against the scroll: the driver went down, so the partner does
+        // not go up, and the other way round. The curve is monotonic, but the
+        // aligned row slides with the window and a line laid out shorter in the
+        // partner could still pull it back a row.
+        if let Some(last) = last.filter(|l| l.active == SplitId::from(active)) {
+            if a.top > last.active_top {
+                target = target.max(last.other_top.min(o.max_top));
+            } else if a.top < last.active_top {
+                target = target.min(last.other_top);
+            }
+        }
+        let addr = index_o.byte_of_row(&state.buffer, target);
+        let line_start = state.buffer.line_start_offset(addr.line).unwrap_or(0);
+
+        if let Some(vs) = self
+            .buffers
+            .split_view_states_mut()
+            .and_then(|vs_map| vs_map.get_mut(&other))
+        {
+            let viewport = &mut vs.buffer_tab_state_mut().viewport;
+            viewport.set_top_byte(line_start);
+            viewport.set_top_view_line_offset(addr.row_in_line);
+            viewport.set_skip_ensure_visible();
+        }
+        record(&mut self.scroll_sync_manager, target);
+        true
+    }
+
+    /// `leaf`'s rows as the frame will lay them out: the wrap index for its
+    /// geometry (built here if stale, as the frame's reconcile would), and its
+    /// top row, height and furthest top row in that index. `None` beyond the
+    /// index's size ceilings, or for a pane not laid out yet.
+    fn pane_rows(
+        &mut self,
+        buffer_id: crate::model::event::BufferId,
+        leaf: LeafId,
+    ) -> Option<PaneRows> {
+        use crate::view::ui::split_rendering::scrollbar::{
+            MAX_WRAP_SCROLLBAR_BYTES, MAX_WRAP_SCROLLBAR_LINES,
+        };
+        self.buffers
+            .with_buffer_and_split(buffer_id, leaf, |state, vs| {
+                let within_bounds = !state.buffer.is_large_file()
+                    && state.buffer.len() <= MAX_WRAP_SCROLLBAR_BYTES
+                    && state
+                        .buffer
+                        .line_count()
+                        .is_some_and(|lc| lc <= MAX_WRAP_SCROLLBAR_LINES);
+                let height = vs.viewport.visible_line_count() as u32;
+                if !within_bounds || height == 0 {
+                    return None;
+                }
+                let fold_ranges = state.fold_ranges(&vs.folds);
+                let geometry = crate::view::ui::split_rendering::wrap_index_geometry_for(
+                    &vs.viewport,
+                    &state.buffer,
+                    vs.viewport.line_wrap_enabled,
+                    &vs.view_mode,
+                    crate::view::wrap_index::fold_signature(&fold_ranges),
+                );
+                let inputs = state.pipeline_inputs();
+                let line_ending = state.buffer.line_ending();
+                let decorations = state.index_decorations(geometry.view_mode, fold_ranges, &[]);
+                let index = state.wrap_indices.entry(geometry);
+                index.ensure_built(
+                    &mut state.buffer,
+                    geometry,
+                    inputs,
+                    line_ending,
+                    &decorations,
+                );
+                let top_line = state.buffer.get_line_number(vs.viewport.top_byte());
+                let max_top = index.total_rows().saturating_sub(height);
+                let top = (index.line_first_row(top_line)
+                    + vs.viewport.top_view_line_offset() as u32)
+                    .min(max_top);
+                Some(PaneRows {
+                    geometry,
+                    top,
+                    height,
+                    max_top,
+                })
+            })
+            .flatten()
     }
 
     /// Carry `source`'s horizontal scroll to its partner in every

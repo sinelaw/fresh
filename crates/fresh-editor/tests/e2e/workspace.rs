@@ -1364,6 +1364,83 @@ fn test_session_restores_file_explorer_hidden_and_gitignored_settings() {
     }
 }
 
+/// A workspace saved with Show Hidden Files turned off restores it off, even
+/// when the config default is on — for the explorer and for Quick Open.
+#[test]
+fn test_session_restores_show_hidden_off_over_config_default() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    std::fs::write(project_dir.join("restored_visible.txt"), "visible").unwrap();
+    std::fs::write(project_dir.join(".restored_dotfile"), "hidden").unwrap();
+
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+    let mut config = Config::default();
+    config.file_explorer.show_hidden = true;
+    let launch = || {
+        EditorTestHarness::create(
+            100,
+            30,
+            HarnessOptions::new()
+                .with_config(config.clone())
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap()
+    };
+
+    // First session: the explorer starts with hidden files shown (config),
+    // the user turns them off, and the workspace is saved.
+    {
+        let mut harness = launch();
+        harness.editor_mut().focus_file_explorer();
+        harness.wait_for_file_explorer().unwrap();
+        assert!(harness
+            .editor()
+            .file_explorer()
+            .unwrap()
+            .ignore_patterns()
+            .show_hidden());
+        harness.editor_mut().file_explorer_toggle_hidden();
+        harness.editor_mut().save_workspace().unwrap();
+    }
+
+    // Second session, same config: the saved "off" wins.
+    let mut harness = launch();
+    let restored = harness.editor_mut().try_restore_workspace().unwrap();
+    assert!(restored, "Session should have been restored");
+    harness.wait_for_file_explorer().unwrap();
+    harness
+        .wait_for_file_explorer_item("restored_visible.txt")
+        .unwrap();
+    assert!(
+        !harness
+            .editor()
+            .file_explorer()
+            .unwrap()
+            .ignore_patterns()
+            .show_hidden(),
+        "a saved Show Hidden Files off must override the config default"
+    );
+    harness.assert_screen_not_contains(".restored_dotfile");
+
+    // Hide the explorer so only Quick Open can put the dotfile on screen.
+    harness.editor_mut().toggle_file_explorer();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("restored_").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("restored_visible.txt"))
+        .unwrap();
+    harness.assert_screen_not_contains(".restored_dotfile");
+}
+
 /// Test that each split shows only its own file after restore, not all files in all splits.
 ///
 /// Regression test: the user reported that after workspace restore, all file-backed buffers

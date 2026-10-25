@@ -13,6 +13,7 @@
 
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
+use fresh::app::workspace::ExplorerOnEntry;
 use fresh::config_io::DirectoryContext;
 use std::fs;
 use tempfile::TempDir;
@@ -48,7 +49,7 @@ fn explorer_closed_state_survives_relaunch() {
         let mut harness = launch_harness(&project_dir, &dir_context);
         let restored = harness
             .editor_mut()
-            .restore_active_window_on_launch(false)
+            .restore_active_window_on_launch(ExplorerOnEntry::Enter)
             .unwrap();
         assert!(!restored, "no workspace exists yet on the first launch");
         harness
@@ -72,7 +73,7 @@ fn explorer_closed_state_survives_relaunch() {
         let mut harness = launch_harness(&project_dir, &dir_context);
         let restored = harness
             .editor_mut()
-            .restore_active_window_on_launch(false)
+            .restore_active_window_on_launch(ExplorerOnEntry::Enter)
             .unwrap();
         assert!(restored, "the saved workspace should restore");
         harness.render().unwrap();
@@ -116,7 +117,7 @@ fn explorer_open_state_survives_relaunch() {
         let mut harness = launch_harness(&project_dir, &dir_context);
         harness
             .editor_mut()
-            .restore_active_window_on_launch(false)
+            .restore_active_window_on_launch(ExplorerOnEntry::Enter)
             .unwrap();
         harness
             .wait_until(|h| h.screen_to_string().contains("File Explorer"))
@@ -129,7 +130,7 @@ fn explorer_open_state_survives_relaunch() {
         let mut harness = launch_harness(&project_dir, &dir_context);
         let restored = harness
             .editor_mut()
-            .restore_active_window_on_launch(false)
+            .restore_active_window_on_launch(ExplorerOnEntry::Enter)
             .unwrap();
         assert!(restored, "the saved workspace should restore");
         // The explorer initialises its tree asynchronously; wait for the
@@ -138,4 +139,142 @@ fn explorer_open_state_survives_relaunch() {
             .wait_until(|h| h.screen_to_string().contains("File Explorer"))
             .unwrap();
     }
+}
+
+/// Launch `project_dir` the way `entry` says, returning whether a workspace
+/// was restored.
+fn launch_as(
+    project_dir: &std::path::Path,
+    dir_context: &DirectoryContext,
+    entry: ExplorerOnEntry,
+) -> (EditorTestHarness, bool) {
+    let mut harness = launch_harness(project_dir, dir_context);
+    let restored = harness
+        .editor_mut()
+        .restore_active_window_on_launch(entry)
+        .unwrap();
+    harness.render().unwrap();
+    (harness, restored)
+}
+
+fn project() -> (TempDir, std::path::PathBuf, DirectoryContext) {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    fs::create_dir(&project_dir).unwrap();
+    fs::write(project_dir.join("a.txt"), "hello").unwrap();
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+    (temp_dir, project_dir, dir_context)
+}
+
+/// A bare `fresh` never opens the tree, and saves its workspace that way. A
+/// later `fresh DIR` there still opens it: closed is not the same as closed
+/// by the user.
+#[test]
+fn fresh_dir_opens_the_explorer_a_bare_launch_never_opened() {
+    let (_tmp, project_dir, dir_context) = project();
+    {
+        let (mut harness, _) = launch_as(&project_dir, &dir_context, ExplorerOnEntry::Keep);
+        assert!(!harness.editor().file_explorer_visible());
+        harness.shutdown(true).unwrap();
+    }
+    let (mut harness, restored) = launch_as(&project_dir, &dir_context, ExplorerOnEntry::Directory);
+    assert!(restored, "the bare launch's workspace should restore");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("File Explorer"))
+        .unwrap();
+}
+
+/// `fresh DIR` keeps the explorer closed where the user closed it, even
+/// after a bare `fresh` session in between saved the workspace again.
+#[test]
+fn fresh_dir_keeps_an_explorer_the_user_closed_closed() {
+    let (_tmp, project_dir, dir_context) = project();
+    {
+        let (mut harness, _) = launch_as(&project_dir, &dir_context, ExplorerOnEntry::Directory);
+        harness
+            .wait_until(|h| h.screen_to_string().contains("File Explorer"))
+            .unwrap();
+        harness
+            .send_key(KeyCode::Char('b'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness
+            .wait_until(|h| !h.screen_to_string().contains("File Explorer"))
+            .unwrap();
+        harness.shutdown(true).unwrap();
+    }
+    {
+        let (mut harness, _) = launch_as(&project_dir, &dir_context, ExplorerOnEntry::Keep);
+        assert!(!harness.editor().file_explorer_visible());
+        harness.shutdown(true).unwrap();
+    }
+    let (harness, restored) = launch_as(&project_dir, &dir_context, ExplorerOnEntry::Directory);
+    assert!(restored);
+    assert!(
+        !harness.editor().file_explorer_visible(),
+        "a user-closed explorer must stay closed for `fresh DIR`"
+    );
+}
+
+/// Reopening it clears the user's close: the next `fresh DIR` opens it again.
+#[test]
+fn reopening_the_explorer_forgets_the_close() {
+    let (_tmp, project_dir, dir_context) = project();
+    {
+        let (mut harness, _) = launch_as(&project_dir, &dir_context, ExplorerOnEntry::Directory);
+        harness
+            .wait_until(|h| h.screen_to_string().contains("File Explorer"))
+            .unwrap();
+        harness
+            .send_key(KeyCode::Char('b'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+        harness
+            .send_key(KeyCode::Char('b'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness
+            .wait_until(|h| h.screen_to_string().contains("File Explorer"))
+            .unwrap();
+        harness.shutdown(true).unwrap();
+    }
+    {
+        // A bare launch restores it open; the explorer was not closed by
+        // the user at quit.
+        let (mut harness, _) = launch_as(&project_dir, &dir_context, ExplorerOnEntry::Keep);
+        harness
+            .wait_until(|h| h.screen_to_string().contains("File Explorer"))
+            .unwrap();
+        harness.shutdown(true).unwrap();
+    }
+    let (mut harness, _) = launch_as(&project_dir, &dir_context, ExplorerOnEntry::Directory);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("File Explorer"))
+        .unwrap();
+}
+
+/// `--simple` closes the explorer even where it was left open, and that is
+/// not the user's close: the next `fresh DIR` opens it.
+#[test]
+fn simple_closes_the_explorer_without_counting_as_the_users_close() {
+    let (_tmp, project_dir, dir_context) = project();
+    {
+        let (mut harness, _) = launch_as(&project_dir, &dir_context, ExplorerOnEntry::Directory);
+        harness
+            .wait_until(|h| h.screen_to_string().contains("File Explorer"))
+            .unwrap();
+        harness.shutdown(true).unwrap();
+    }
+    {
+        let (mut harness, restored) =
+            launch_as(&project_dir, &dir_context, ExplorerOnEntry::Closed);
+        assert!(restored);
+        assert!(
+            !harness.editor().file_explorer_visible(),
+            "`--simple` must close the explorer"
+        );
+        harness.shutdown(true).unwrap();
+    }
+    let (mut harness, _) = launch_as(&project_dir, &dir_context, ExplorerOnEntry::Directory);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("File Explorer"))
+        .unwrap();
 }

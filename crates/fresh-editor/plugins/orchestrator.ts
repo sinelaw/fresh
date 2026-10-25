@@ -1011,7 +1011,7 @@ editor.defineConfigEnum("autoOpenDock", {
   values: ["auto", "always", "never"] as const,
   default: "auto",
   description:
-    "Whether the workspace dock opens when Fresh starts. Opening or closing the dock yourself (View ▸ Orchestrator Dock, Orchestrator: Toggle Dock, the dock's ×) sets this to 'always' or 'never', so Fresh starts the way you last asked; choosing 'always' or 'never' here also opens or closes the dock now. 'auto' (the default, until you first open or close the dock) brings it back the way it was at quit, and on a first run leaves it closed. Replaces the old true/false, which are still read as 'auto' and 'never'.",
+    "Whether the workspace dock opens when Fresh starts. Opening or closing the dock yourself (View ▸ Orchestrator Dock, Orchestrator: Toggle Dock, the dock's ×) sets this to 'always' or 'never', so Fresh starts the way you last asked; choosing 'always' or 'never' here also opens or closes the dock now. 'auto' (the default, until you first open or close the dock) starts with it closed. Replaces the old true/false, which are still read as 'auto' and 'never'.",
 });
 editor.defineConfigEnum("defaultView", {
   values: ["compact", "card"] as const,
@@ -6210,10 +6210,10 @@ function buildDockSpec(): WidgetSpec {
       // columns are already the ▼/▶ gutter and its state glyph, and a
       // folder's rows read as its own at one column in from its name.
       indentCols: 1,
-      // Focusable in the dock (unlike the modal, where Up/Down forward
-      // from the filter): the tree itself is the default focus so ↑↓
-      // drive live-switch, →← fold, and Enter dives / toggles a folder.
-      focusable: true,
+      // In the dock (unlike the modal, where Up/Down forward from the
+      // filter) the tree itself is the default focus — trees are always
+      // focusable — so ↑↓ drive live-switch, →← fold, and Enter dives /
+      // toggles a folder.
       key: "sessions",
     }),
     ...bottomPad,
@@ -15821,7 +15821,10 @@ async function runLocalCreate(id: number): Promise<void> {
       projectPath: effectiveProjectPath,
       sharedWorktree,
       terminalId: result.terminalId,
-      state: "running",
+      state: "idle",
+      // Quiet, not unheard-from (`null` would show `?`): the shell's first
+      // prompt arrives before this row exists, so it never stamps it.
+      lastOutputAt: 0,
       createdAt: Date.now(),
       branch: reportedBranch || undefined,
     });
@@ -16083,7 +16086,9 @@ function recoverPendingWorkspaces(): void {
     void startPendingWorkspace(spec, { restored: true, label });
     restored++;
   }
-  if (restored > 0) showDockUnfocused();
+  // A file launch (`fresh FILE`, `--simple`) keeps the dock closed; the rows
+  // are there when the user opens it.
+  if (restored > 0 && !editor.fileLaunch()) showDockUnfocused();
 }
 
 // `visit`: "Create & Visit" — focus follows into the workspace once it's real.
@@ -16235,7 +16240,10 @@ async function attachToWorktree(opts: {
       projectPath: opts.projectPath,
       sharedWorktree: false,
       terminalId: result.terminalId,
-      state: "running",
+      state: "idle",
+      // Quiet, not unheard-from (`null` would show `?`): the shell's first
+      // prompt arrives before this row exists, so it never stamps it.
+      lastOutputAt: 0,
       createdAt: Date.now(),
       branch: opts.branch,
     });
@@ -18559,7 +18567,7 @@ editor.on("widget_event", (e) => {
       if (dockMode && openPanel) {
         // Dock stays visible; Enter just hands keyboard focus to the
         // editor (the session is already active via live-switch).
-        editor.floatingPanelControl(openPanel.id(), "blur");
+        editor.floatingPanelControl(openPanel.id(), "blur", 0);
         dockBlurred = true;
         return;
       }
@@ -18833,8 +18841,8 @@ editor.on("ready", () => {
   void loadDetectionRules();
   recoverPendingWorkspaces();
   // Blurred, so the keyboard stays with the editor. Whether it opens is the
-  // host's call (`orchestrator.manifest.json` and what the user left); the
-  // column is already carved, and the mount fills it.
+  // host's call (`orchestrator.manifest.json`, what the user left, and never
+  // on a file launch); the column is already carved, and the mount fills it.
   if (editor.dockOpen()) {
     showDockUnfocused();
   }

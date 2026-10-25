@@ -317,3 +317,76 @@ fn panels_in_a_scroll_sync_group_scroll_together() {
     h.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
     h.wait_until(|h| count(h, "row 200") == 2).unwrap();
 }
+
+/// Two panes: the left one's only tab is the file, with the group open
+/// beside it and the file modified in it; the right one shows `b.txt`.
+fn pair_in_a_split_beside_another_file(h: &mut EditorTestHarness, tmp: &tempfile::TempDir) {
+    run(h, "split vert");
+    let other = tmp.path().join("work").join("b.txt");
+    fs::write(&other, "bee bee bee\n").unwrap();
+    h.open_file(&other).unwrap();
+    h.wait_for_screen_contains("bee bee bee").unwrap();
+    // Drop the file's tab from the new pane, so only the left one has it.
+    h.send_key(KeyCode::PageUp, KeyModifiers::CONTROL).unwrap();
+    h.wait_until(|h| count(h, "row 001") == 2).unwrap();
+    h.send_key(KeyCode::Char('w'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| count(h, "row 001") == 1 && count(h, "bee bee bee") == 1)
+        .unwrap();
+
+    // Focus the left pane, its caret at the start of the file.
+    let (col, row) = h.find_text_on_screen("alpha zebrafish").unwrap();
+    h.mouse_click(col, row).unwrap();
+    open_pair(h);
+    h.type_text("XYZ").unwrap();
+    h.wait_until(|h| count(h, "XYZalpha") == 2).unwrap();
+}
+
+/// Close the file's tab with its × and answer the unsaved-changes dialog
+/// with `key`.
+fn close_the_files_tab_answering(h: &mut EditorTestHarness, key: char) {
+    let tabs = h.screen_row_text(1);
+    let name = tabs.find("a.txt").unwrap();
+    let close = name + tabs[name..].find('×').unwrap();
+    h.mouse_click(tabs[..close].chars().count() as u16, 1)
+        .unwrap();
+    h.wait_for_screen_contains("Unsaved Changes").unwrap();
+    h.send_key(KeyCode::Char(key), KeyModifiers::NONE).unwrap();
+}
+
+/// The left pane, emptied by closing the file, is gone with the group: the
+/// right pane is alone on screen. Its tab bar has no separator through it.
+fn only_the_other_file_is_left(h: &EditorTestHarness) -> bool {
+    let tabs = h.screen_row_text(1);
+    !tabs.contains('│')
+        && !tabs.contains("PAIR")
+        && !tabs.contains("a.txt")
+        && count(h, "row 001") == 0
+        && count(h, "bee bee bee") == 1
+}
+
+/// Discarding the changes of a file whose only tab is in its pane closes
+/// the pane, as closing an unmodified file's last tab does. The group's
+/// panels showing the file are no tabs of it, so they do not keep the pane.
+#[test]
+fn discarding_the_files_changes_closes_its_emptied_pane() {
+    let (mut h, tmp) = setup();
+    pair_in_a_split_beside_another_file(&mut h, &tmp);
+
+    close_the_files_tab_answering(&mut h, 'd');
+    h.wait_until(only_the_other_file_is_left).unwrap();
+}
+
+/// Same with Save: the file is written, then its emptied pane closes.
+#[test]
+fn saving_the_file_on_close_closes_its_emptied_pane() {
+    let (mut h, tmp) = setup();
+    pair_in_a_split_beside_another_file(&mut h, &tmp);
+
+    close_the_files_tab_answering(&mut h, 's');
+    h.wait_until(only_the_other_file_is_left).unwrap();
+    let saved = fs::read_to_string(tmp.path().join("work").join("a.txt")).unwrap();
+    assert!(
+        saved.starts_with("XYZalpha zebrafish\n"),
+        "saved: {saved:?}"
+    );
+}

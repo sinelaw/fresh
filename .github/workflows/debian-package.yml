@@ -21,6 +21,9 @@ permissions:
 
 on:
   pull_request:
+    # As in ci.yml: pull requests build the package once auto-merge is on or
+    # they carry the `full-ci` label, not on every push. Not a required check.
+    types: [opened, synchronize, reopened, auto_merge_enabled]
   push:
     branches:
       - main
@@ -39,19 +42,27 @@ concurrency:
 
 jobs:
   debian-package:
-    name: Debian package (testing, ${{ matrix.arch }})
+    name: Debian package (${{ matrix.suite }}, ${{ matrix.arch }})
+    if: github.event_name != 'pull_request' || github.event.pull_request.auto_merge != null || contains(github.event.pull_request.labels.*.name, 'full-ci')
     strategy:
       fail-fast: false
       matrix:
         include:
-          - arch: amd64
+          - suite: testing
+            arch: amd64
             runner: ubuntu-latest
           # A native arm64 runner rather than emulation: the build compiles
           # several hundred crates and runs the package's tests.
-          - arch: arm64
+          - suite: testing
+            arch: arm64
             runner: ubuntu-24.04-arm
+          # Uploads go to unstable, whose librust-*-dev packages can be ahead
+          # of testing's. Built, not released.
+          - suite: unstable
+            arch: amd64
+            runner: ubuntu-latest
     runs-on: ${{ matrix.runner }}
-    container: debian:testing
+    container: debian:${{ matrix.suite }}
     timeout-minutes: 90
     env:
       DEBIAN_FRONTEND: noninteractive
@@ -99,25 +110,24 @@ jobs:
       - name: Lintian
         run: lintian --info --display-info --fail-on error /build/*.changes
 
-      # esbuild is only Suggested, for the user's own TypeScript: without it
-      # Fresh runs and says what to install; with it, init.ts checks out.
-      - name: Install and smoke-test
+      # The package's own autopkgtests (debian/tests), as ci.debian.net runs
+      # them, on this container: without esbuild, the bundled plugins load and
+      # init.ts gets the install hint; with it, init.ts checks out. esbuild is
+      # a build dependency, so it is removed first, as on a user's system.
+      - name: Install and run the autopkgtests
         run: |
           test "$(dpkg --print-architecture)" = "${{ matrix.arch }}"
-          apt-get purge -y esbuild
-          apt-get install -y --no-install-recommends /build/fresh-editor_*.deb
           dpkg-deb --field /build/fresh-editor_*.deb Depends Recommends Suggests Built-Using Static-Built-Using
-          if command -v esbuild; then echo "esbuild should not be installed"; exit 1; fi
-          fresh --version
-          mkdir -p "$HOME/.config/fresh"
-          printf 'const answer: number = 42;\neditor.setStatus(`answer ${answer}`);\n' > "$HOME/.config/fresh/init.ts"
-          if fresh --cmd init check > /tmp/check.txt 2>&1; then echo "init check passed without esbuild"; exit 1; fi
-          grep "apt install esbuild" /tmp/check.txt
-          apt-get install -y --no-install-recommends esbuild
-          fresh --cmd init check
+          apt-get install -y --no-install-recommends autopkgtest
+          apt-get purge -y esbuild
+          # The tests need only debian/; autopkgtest would copy the whole built
+          # tree, target/ included.
+          mkdir /autopkgtest-src
+          cp -r "$SRC/debian" /autopkgtest-src/
+          autopkgtest /build/fresh-editor_*.deb /autopkgtest-src -- null
 
       - name: Stage release assets
-        if: ${{ inputs.release }}
+        if: ${{ inputs.release && matrix.suite == 'testing' }}
         run: |
           version=$(dpkg-parsechangelog -l "$SRC/debian/changelog" -S Version)
           upstream=${version%-*}
@@ -136,7 +146,7 @@ jobs:
           ls -la
 
       - uses: actions/upload-artifact@v6
-        if: ${{ inputs.release }}
+        if: ${{ inputs.release && matrix.suite == 'testing' }}
         with:
           name: artifacts-debian-testing-${{ matrix.arch }}
           if-no-files-found: error
@@ -144,7 +154,7 @@ jobs:
 
       - uses: actions/upload-artifact@v6
         with:
-          name: fresh-editor-debian-testing-${{ matrix.arch }}
+          name: fresh-editor-debian-${{ matrix.suite }}-${{ matrix.arch }}
           if-no-files-found: error
           # Handy for trying a PR's package, not worth 90 days of storage.
           retention-days: ${{ github.event_name == 'pull_request' && 3 || 30 }}

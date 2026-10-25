@@ -95,7 +95,7 @@ fn a_plugin_section_mounts_drags_collapses_and_survives_a_restore() {
         let mut h = launch(&project, &dir_context);
         // A bare directory shows the explorer by default.
         h.editor_mut()
-            .restore_active_window_on_launch(false)
+            .restore_active_window_on_launch(fresh::app::workspace::ExplorerOnEntry::Enter)
             .unwrap();
         h.wait_until(|h| h.screen_to_string().contains("File Explorer"))
             .unwrap();
@@ -186,7 +186,7 @@ fn a_plugin_section_mounts_drags_collapses_and_survives_a_restore() {
         let mut h = launch(&project, &dir_context);
         let restored = h
             .editor_mut()
-            .restore_active_window_on_launch(false)
+            .restore_active_window_on_launch(fresh::app::workspace::ExplorerOnEntry::Enter)
             .unwrap();
         assert!(restored, "the saved workspace restores");
         h.wait_until(|h| h.screen_to_string().contains("▶ Outline"))
@@ -236,7 +236,7 @@ fn showing_the_explorer_opens_a_section_the_reader_collapsed() {
 
     let mut h = launch(&project, &dir_context);
     h.editor_mut()
-        .restore_active_window_on_launch(false)
+        .restore_active_window_on_launch(fresh::app::workspace::ExplorerOnEntry::Enter)
         .unwrap();
     h.wait_until(|h| h.screen_to_string().contains("File Explorer"))
         .unwrap();
@@ -335,7 +335,7 @@ fn focusing_a_plugin_section_opens_one_the_reader_collapsed() {
 
     let mut h = launch(&project, &dir_context);
     h.editor_mut()
-        .restore_active_window_on_launch(false)
+        .restore_active_window_on_launch(fresh::app::workspace::ExplorerOnEntry::Enter)
         .unwrap();
     h.wait_until(|h| h.screen_to_string().contains("File Explorer"))
         .unwrap();

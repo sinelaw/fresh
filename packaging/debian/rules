@@ -60,8 +60,10 @@ override_dh_auto_build:
 # the real esbuild, and the plugin runtime. The editor's own end-to-end suite
 # drives a virtual terminal for a long time and runs upstream instead.
 override_dh_auto_test:
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
 	cargo test --release $(CARGO_PROFILE) -p fresh-js -p fresh-parser-js -p fresh-plugin-runtime \
 		--no-default-features --features fresh-core/plugins
+endif
 
 override_dh_auto_install:
 	install -D -m 755 $(TARGET_DIR)/fresh debian/fresh-editor/usr/bin/fresh

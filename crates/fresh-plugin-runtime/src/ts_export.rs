@@ -16,17 +16,17 @@ use ts_rs::{Config as TsConfig, TS};
 
 use fresh_core::api::{
     ActionPopupAction, ActionPopupOptions, ActionSpec, AnimationRect, BackgroundProcessResult,
-    BufferGroupResult, BufferInfo, BufferSavedDiff, CompositeHunk, CompositeLayoutConfig,
-    CompositePaneStyle, CompositeSourceConfig, CreateCompositeBufferOptions, CreateTerminalOptions,
-    CreateVirtualBufferInExistingSplitOptions, CreateVirtualBufferInSplitOptions,
-    CreateVirtualBufferOptions, CursorInfo, DiffBaselineResult, DirEntry, FormatterPackConfig,
-    GrammarInfoSnapshot, GrepMatch, JsDiagnostic, JsPosition, JsRange, JsTextPropertyEntry,
-    KeyEventPayload, LanguagePackConfig, LayoutHints, LineDiffHunk, LspServerPackConfig,
-    OverlayColorSpec, OverlayOptions, PluginAnimationEdge, PluginAnimationKind,
-    ProcessLimitsPackConfig, RemoteBackendInfo, ReplaceResult, ScreenSize, ScrollbarMarker,
-    SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult, TextPropertiesAtCursor,
-    TokenColor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire, ViewTokenWireKind, ViewportInfo,
-    VirtualBufferResult, WindowInfo,
+    BufferGroupResult, BufferInfo, BufferSavedDiff, CompareHunk, CompareResult, CompareSide,
+    CompositeHunk, CompositeLayoutConfig, CompositePaneStyle, CompositeSourceConfig,
+    CreateCompositeBufferOptions, CreateTerminalOptions, CreateVirtualBufferInExistingSplitOptions,
+    CreateVirtualBufferInSplitOptions, CreateVirtualBufferOptions, CursorInfo, DiffBaselineResult,
+    DirEntry, FormatterPackConfig, GrammarInfoSnapshot, GrepMatch, JsDiagnostic, JsPosition,
+    JsRange, JsTextPropertyEntry, KeyEventPayload, LanguagePackConfig, LayoutHints, LineDiffHunk,
+    LspServerPackConfig, OverlayColorSpec, OverlayOptions, PluginAnimationEdge,
+    PluginAnimationKind, ProcessLimitsPackConfig, RemoteBackendInfo, ReplaceResult, ScreenSize,
+    ScrollbarMarker, SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult,
+    TextPropertiesAtCursor, TokenColor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire,
+    ViewTokenWireKind, ViewportInfo, VirtualBufferResult, WindowInfo,
 };
 use fresh_core::command::Suggestion;
 use fresh_core::file_explorer::{
@@ -74,6 +74,9 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "BufferSavedDiff" => Some(decl_with_docs::<BufferSavedDiff>(&cfg)),
         "LineDiffHunk" => Some(decl_with_docs::<LineDiffHunk>(&cfg)),
         "DiffBaselineResult" => Some(decl_with_docs::<DiffBaselineResult>(&cfg)),
+        "CompareSide" => Some(decl_with_docs::<CompareSide>(&cfg)),
+        "CompareHunk" => Some(decl_with_docs::<CompareHunk>(&cfg)),
+        "CompareResult" => Some(decl_with_docs::<CompareResult>(&cfg)),
         "LayoutHints" => Some(decl_with_docs::<LayoutHints>(&cfg)),
 
         // Process types
@@ -364,6 +367,8 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "TsCompositeSourceConfig",         // Used in createCompositeBuffer opts.sources
     "TsCompositePaneStyle",            // Used in TsCompositeSourceConfig.style
     "TsCompositeHunk",                 // Used in createCompositeBuffer opts.hunks
+    "CompareSide",                     // Used in CompareHunk (compareBuffers)
+    "CompareHunk",                     // Used in CompareResult.hunks
     "TsSyntaxRegion",                  // Used by setSyntaxRegions
     "TsCreateCompositeBufferOptions",  // Options for createCompositeBuffer
     "ViewportInfo",                    // Used by plugins for viewport queries
@@ -959,6 +964,19 @@ interface HookEventMap {
     missing_servers: string[];
     user_dismissed: boolean;
   };
+  /**
+   * An LSP navigation resolved to a URI whose scheme this plugin claimed
+   * with `registerLspUriScheme`. `line` and `character` are 0-indexed, as
+   * the server sent them.
+   */
+  lsp_open_external_uri: {
+    uri: string;
+    scheme: string;
+    line: number;
+    character: number;
+    language: string;
+    server_name: string;
+  };
 
   // ── UI events ────────────────────────────────────────────────────────────
   /** The user chose an action in a popup opened with `editor.showActionPopup`. */
@@ -983,7 +1001,17 @@ interface HookEventMap {
    * `window_id` is the window that owns the terminal, so a plugin can tell
    * which session the output belongs to.
    */
-  terminal_output: { terminal_id: number; window_id: number; last_line: string };
+  terminal_output: {
+    terminal_id: number;
+    window_id: number;
+    last_line: string;
+    /** The terminal's tab title; empty until it has a meaningful one. */
+    terminal_title: string;
+    /** The last OSC 133 / OSC 9;4 activity marker: `true` while a command
+     *  runs, `false` once it has finished, `null` if the program never
+     *  emitted one. */
+    osc_activity: boolean | null;
+  };
   /** A terminal's process exited. `exit_code` is `null` when a signal ended it. */
   terminal_exit: { terminal_id: number; window_id: number; exit_code: number | null };
 
@@ -1110,6 +1138,12 @@ interface EditorAPI {
    * buffer: editable, in its tabs, and left open when the group closes.
    * Each panel has its own view of it, so two panels can show one file in
    * different view modes. Closing the buffer closes the group.
+   *
+   * A scrollable leaf with `path` shows that file: the buffer that has it
+   * open, as for `bufferId`, or else one the group opens without a tab.
+   * Such a buffer is an ordinary file buffer otherwise (the quit prompt and
+   * hot exit cover it); closing the group closes it if it has no unsaved
+   * changes, and gives it a tab in the group's pane if it has.
    *
    * The result names each panel's buffer (`panels`) and split
    * (`panelSplits`, for `createScrollSyncGroup`, `setLineWrap` and
@@ -1283,6 +1317,9 @@ mod tests {
             "BufferSavedDiff",
             "LineDiffHunk",
             "DiffBaselineResult",
+            "CompareSide",
+            "CompareHunk",
+            "CompareResult",
             "LayoutHints",
             "SpawnResult",
             "BackgroundProcessResult",

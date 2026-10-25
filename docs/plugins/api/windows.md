@@ -222,8 +222,8 @@ getScreenSize(): ScreenSize;
 
 ### `orchestratorMode`
 
-Whether the editor was launched by a bare `fresh` in Orchestrator mode.
-This reflects the launch, not the `orchestrator_mode` preference,
+Whether the editor is the daemon a bare `fresh` with Auto Attach on
+attaches to. This reflects the launch, not the `auto_attach` preference,
 which stays on for `fresh FILE`. Plugins in the mode use it to
 override their own settings.
 
@@ -242,6 +242,18 @@ as startup pages.
 
 ```typescript
 fileLaunch(): boolean;
+```
+
+### `diffLaunch`
+
+The two files of a `fresh --diff LEFT RIGHT` launch, as absolute paths
+`[left, right]`; empty for any other launch. The editor doesn't open
+them: the plugin that reads this at `ready` does (the bundled
+`compare_files` plugin, into the panels of one tab, with a
+buffer-group `path` leaf).
+
+```typescript
+diffLaunch(): string[];
 ```
 
 ### `dockOpen`
@@ -388,9 +400,9 @@ setWindowCycleOrder(ids: number[]): boolean;
 
 Load every saved workspace into `listWindows()`, once.
 
-A launch starts with only the workspaces of its own directory (all of
-them in Orchestrator mode); the rest of the registry is read on first
-use rather than at startup. Call this before listing workspaces to a
+A launch starts with only the workspaces of its own directory (plus,
+in Orchestrator mode, the one last used); the rest of the registry is
+read on first use rather than at startup. Call this before listing workspaces to a
 user. Resolves once `listWindows()` includes them all; resolves at
 once when they already are.
 

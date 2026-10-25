@@ -469,12 +469,21 @@ pub struct Config {
     #[serde(default = "default_true")]
     pub self_update: bool,
 
-    /// When on (default), `fresh` with no arguments reattaches to a single background
-    /// editor with the workspace dock and your last workspace. When off, it opens a
-    /// plain editor in the current directory; runs with files or flags are unaffected.
+    /// When on (default), `fresh` with no arguments is `fresh -a`: it runs in a single
+    /// background editor that outlives the terminal, and every later bare `fresh`
+    /// reattaches to it. When off, it opens a plain editor in this terminal. Runs with
+    /// files or flags are unaffected. Formerly `orchestrator_mode`.
     #[serde(default = "default_true")]
     #[schemars(extend("x-order" = 1))]
-    pub orchestrator_mode: bool,
+    pub auto_attach: bool,
+
+    /// When on, `fresh` with no arguments reopens the workspace you used last,
+    /// wherever you type it. When off (default), it opens the current directory.
+    /// Works with Auto Attach on or off; runs with files or flags are
+    /// unaffected.
+    #[serde(default)]
+    #[schemars(extend("x-order" = 2))]
+    pub open_last_workspace: bool,
 
     /// Editor behavior settings (indentation, line numbers, wrapping, etc.)
     #[serde(default)]
@@ -1898,7 +1907,10 @@ pub struct FileExplorerConfig {
     #[serde(default = "default_false")]
     pub show_gitignored: bool,
 
-    /// Extra patterns to ignore, on top of `.gitignore`.
+    /// Extra patterns to ignore, on top of `.gitignore`, written as
+    /// `.gitignore` lines relative to the project root (`build/`, `/dist`,
+    /// `*.log`, `!keep.log`). The file explorer, Quick Open, project search
+    /// and Live Grep all leave out what they match.
     #[serde(default)]
     pub custom_ignore_patterns: Vec<String>,
 
@@ -2283,6 +2295,12 @@ pub struct TerminalConfig {
     /// Shift+drag still selects. `alt_screen`: every full-screen program gets all events.
     #[serde(default)]
     pub mouse_forwarding: TerminalMouseForwarding,
+
+    /// Close a shell's tab (and its pane, if it was the only tab) when the
+    /// shell exits (`exit`, Ctrl+D) instead of keeping it as read-only
+    /// scrollback. Terminals running a command (agents, plugins) are kept.
+    #[serde(default)]
+    pub close_on_exit: bool,
 }
 
 /// When programs in the terminal get mouse events.
@@ -2305,6 +2323,7 @@ impl Default for TerminalConfig {
             resume_agents: true,
             mouse_drag_selects: true,
             mouse_forwarding: TerminalMouseForwarding::default(),
+            close_on_exit: false,
         }
     }
 }
@@ -2966,7 +2985,8 @@ impl Default for Config {
             locale: LocaleName::default(),
             check_for_updates: true,
             self_update: true,
-            orchestrator_mode: true,
+            auto_attach: true,
+            open_last_workspace: false,
             editor: EditorConfig::default(),
             file_explorer: FileExplorerConfig::default(),
             sidebar: SidebarConfig::default(),
@@ -3911,7 +3931,10 @@ impl Config {
 
         // Parse as JSONC (comments/trailing commas tolerated), then deserialize
         // as PartialConfig and resolve with defaults.
-        let value = parse_config_jsonc(&contents)?;
+        // Only the key renames, not the layered migrations: this file is
+        // used as given.
+        let mut value = parse_config_jsonc(&contents)?;
+        crate::config_io::rename_legacy_keys(&mut value);
         let partial: crate::partial_config::PartialConfig =
             serde_json::from_value(value).map_err(|e| ConfigError::ParseError(e.to_string()))?;
 

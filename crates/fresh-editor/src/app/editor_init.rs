@@ -722,6 +722,7 @@ impl Editor {
             event_broadcaster: parts.event_broadcaster,
             orchestrator_mode: parts.orchestrator_mode,
             file_launch: parts.file_launch,
+            diff_launch: None,
             all_workspaces_loaded: parts.all_workspaces_loaded,
             #[cfg(feature = "plugins")]
             line_targets: std::collections::HashMap::new(),
@@ -737,6 +738,11 @@ impl Editor {
             grep_project_cancel: std::collections::HashMap::new(),
             #[cfg(feature = "plugins")]
             plugin_timers: Vec::new(),
+            macro_replay: None,
+            #[cfg(feature = "plugins")]
+            deferred_replay_input: std::collections::VecDeque::new(),
+            #[cfg(feature = "plugins")]
+            suppress_macro_recording: false,
             #[cfg(feature = "plugins")]
             diff_baselines: crate::app::diff_baselines::BaselineStore::default(),
             #[cfg(feature = "plugins")]
@@ -885,7 +891,7 @@ impl Editor {
     /// waiting on TS parse/transpile/register.
     ///
     /// `orchestrator_mode` says this editor is the one a bare `fresh`
-    /// launched into (see [`crate::config::Config::orchestrator_mode`]).
+    /// launched into (see [`crate::config::Config::auto_attach`]).
     /// It has to be a parameter rather than a read of `config`: the config
     /// field is the user's *preference*, while this is a property of the
     /// invocation — the preference can be on while the launch named a file,
@@ -1147,26 +1153,7 @@ impl Editor {
         // this lives on the base `Window`; we accumulate it locally and
         // hand it off when the window is constructed below.
         let mut buffer_metadata: HashMap<BufferId, BufferMetadata> = HashMap::new();
-        let mut seed_metadata = BufferMetadata::new();
-        if orchestrator_mode {
-            // The editor always needs at least one buffer, but in
-            // Orchestrator mode nobody asked for an untitled one: a bare
-            // `fresh` is "show me my workspaces", and a `[No Name]` tab in
-            // front of the welcome page (or of a restored workspace's own
-            // tabs) is exactly the thing the mode is meant to get out of
-            // the way. So the seed becomes the same hidden synthetic
-            // placeholder the close path already synthesizes for the
-            // blank-workspace settings — the pane paints its "Ctrl+P /
-            // Ctrl+O / Ctrl+E" hint instead of an empty document, and the
-            // tab bar shows nothing.
-            //
-            // Safe to mark once here: nothing reuses a placeholder. Opening
-            // a file — by hand, or by workspace restore — allocates its own
-            // buffer, so the flag cannot leak onto a real document.
-            seed_metadata.hidden_from_tabs = true;
-            seed_metadata.synthetic_placeholder = true;
-        }
-        buffer_metadata.insert(buffer_id, seed_metadata);
+        buffer_metadata.insert(buffer_id, BufferMetadata::new());
 
         // Read orchestrator persistence (`windows.json` and
         // `state/*.json` under `<data_dir>/orchestrator/`)
@@ -1194,10 +1181,10 @@ impl Editor {
             data_dir = %dir_context.data_dir.display(),
             "editor_init: reading persisted windows env"
         );
-        // The workspace registry is read only as far as this launch uses it.
-        // Orchestrator mode lists every workspace from the start; any other
-        // launch reads just its own directory's — the files named for it, so
-        // the cost does not grow with the registry. A file launch restores
+        // The workspace registry is read only as far as this launch uses it:
+        // every launch, Orchestrator mode included, reads just its own
+        // directory's — the files named for it, so the cost does not grow
+        // with the registry. A file launch restores
         // none of it, but its window still takes that workspace's identity,
         // so the dock never lists the directory twice. The rest is read the
         // first time something uses it (`Editor::ensure_all_workspaces_loaded`)
@@ -1208,11 +1195,7 @@ impl Editor {
             orchestrator_filesystem.as_ref(),
             &dir_context.data_dir,
             &working_dir,
-            if orchestrator_mode {
-                WorkspaceScope::All
-            } else {
-                WorkspaceScope::LaunchDir
-            },
+            WorkspaceScope::LaunchDir,
         );
         tracing::debug!("editor_init: reading persisted plugin state");
         let plugin_global_state = crate::app::orchestrator_persistence::read_persisted_plugin_state(
@@ -1233,21 +1216,14 @@ impl Editor {
         // / Open-Terminal default pointed at the launch cwd (issue
         // #2026).
         //
-        // Orchestrator mode overrides exactly this: a bare `fresh` is
-        // "put me back where I was", so the globally last-used session
-        // wins over the launch cwd. Every other launch keeps the
-        // cwd-scoped rule.
-        let picked_active = if orchestrator_mode {
-            crate::app::orchestrator_persistence::pick_active_window_globally(
-                persisted_env.as_ref(),
-                &working_dir,
-            )
-        } else {
-            crate::app::orchestrator_persistence::pick_active_window_for_cwd(
-                persisted_env.as_ref(),
-                &working_dir,
-            )
-        };
+        // Orchestrator mode follows the same rule: a bare `fresh` opens the
+        // directory you typed it in. It used to reopen the workspace used
+        // last wherever that was, which with the dock closed left nothing on
+        // screen to say you were somewhere else.
+        let picked_active = crate::app::orchestrator_persistence::pick_active_window_for_cwd(
+            persisted_env.as_ref(),
+            &working_dir,
+        );
         let (active_window_id, _active_window_root) = picked_active
             .map(|w| (fresh_core::WindowId(w.id), w.root.clone()))
             .unwrap_or((fresh_core::WindowId(1), working_dir.clone()));
@@ -1321,6 +1297,11 @@ impl Editor {
             tokio_runtime.clone(),
             Some(async_bridge.sender()),
         )));
+        quick_open_registry.set_file_visibility(config.file_explorer.show_hidden);
+        quick_open_registry.set_file_include_gitignored(
+            config.file_explorer.show_gitignored || !config.file_explorer.respect_gitignore,
+        );
+        quick_open_registry.set_file_ignore_patterns(&config.file_explorer.custom_ignore_patterns);
         quick_open_registry.register(Box::new(CommandProvider::new(
             Arc::clone(&command_registry),
             Arc::clone(&keybindings),
@@ -1682,7 +1663,10 @@ impl Editor {
             event_broadcaster: event_broadcaster.clone(),
             orchestrator_mode,
             file_launch,
-            all_workspaces_loaded: orchestrator_mode,
+            // Only the launch directory's workspaces were read; the rest are
+            // added the first time the dock or the picker lists workspaces
+            // (`Editor::ensure_all_workspaces_loaded`).
+            all_workspaces_loaded: false,
         };
 
         let mut editor = Editor::from_parts(parts);
@@ -1762,12 +1746,9 @@ impl Editor {
     /// Whether this editor was launched by a bare `fresh` in Orchestrator
     /// mode.
     ///
-    /// What it changes, all of it "the workspace is the thing, not the
-    /// file": the last-focused workspace is restored rather than the one
-    /// matching the launch directory, the dock opens, and the two
-    /// auto-open-something-on-an-empty-workspace behaviours are held off
-    /// (see [`Editor::fills_an_empty_workspace`]) so the welcome page — or
-    /// nothing at all — is what you land on.
+    /// Nothing in the editor depends on it: that launch is a daemon, and
+    /// the workspace, dock, file explorer and empty-workspace rules are the
+    /// same as for any launch. Kept for plugins (`editor.orchestratorMode()`).
     pub fn orchestrator_mode(&self) -> bool {
         self.orchestrator_mode
     }
@@ -1787,21 +1768,28 @@ impl Editor {
         self.file_launch
     }
 
-    /// Whether the editor should put *something* in front of the user when a
-    /// workspace has no buffers left: a fresh `[No Name]` buffer
-    /// (`editor.auto_create_empty_buffer_on_last_buffer_close`) and the file
-    /// explorer alongside it (`file_explorer.auto_open_on_last_buffer_close`).
+    /// The two files of a `fresh --diff LEFT RIGHT` launch, if this is one.
     ///
-    /// Both settings default on and both are overridden — not consulted — in
-    /// Orchestrator mode. An empty buffer is the answer to "you have nothing
-    /// open, here is somewhere to type", and in orchestrator mode that is the
-    /// wrong question: you have workspaces open, the dock is showing them, and
-    /// an untitled buffer in front of the welcome page is exactly the noise the
-    /// mode exists to remove. Overriding rather than reading them keeps the
-    /// mode's promise independent of whatever the user configured for ordinary
-    /// launches.
-    pub(crate) fn fills_an_empty_workspace(&self) -> bool {
-        !self.orchestrator_mode
+    /// The editor doesn't open them: showing them side by side is a plugin's
+    /// job (`compare_files.ts` reads this at `ready` through
+    /// `editor.diffLaunch()` and opens both into the panels of one tab), so
+    /// the view can be replaced without touching the command line.
+    pub fn diff_launch(&self) -> Option<(&std::path::Path, &std::path::Path)> {
+        self.diff_launch
+            .as_ref()
+            .map(|(left, right)| (left.as_path(), right.as_path()))
+    }
+
+    /// Record the files of a `--diff` launch. Call before
+    /// [`Editor::fire_ready_hook`], which is when plugins look.
+    ///
+    /// Refreshes the plugin state snapshot so a `ready` handler reading
+    /// `editor.diffLaunch()` sees the pair: the hook runs on the plugin
+    /// thread and could otherwise beat the next frame's refresh.
+    pub fn set_diff_launch(&mut self, left: std::path::PathBuf, right: std::path::PathBuf) {
+        self.diff_launch = Some((left, right));
+        #[cfg(feature = "plugins")]
+        self.update_plugin_state_snapshot();
     }
 
     /// Spawn a background thread to build the full grammar registry

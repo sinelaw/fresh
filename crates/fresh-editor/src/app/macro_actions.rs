@@ -15,6 +15,58 @@ use super::macro_codegen::{generate_define_block, generate_promote_block, upsert
 use super::types::{BufferKind, BufferMetadata};
 use super::Editor;
 
+/// How long replay waits for a plugin step's handler to settle before going
+/// on without it. A handler that is only slow still finishes; its effects
+/// then just land after the steps that follow it.
+#[cfg(feature = "plugins")]
+const MACRO_PLUGIN_STEP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// A macro replay in progress (`Editor::macro_replay`).
+pub(crate) struct MacroReplay {
+    /// The register being played, for the closing status message.
+    key: char,
+    /// The window whose macro state and undo group the replay holds.
+    window: fresh_core::WindowId,
+    /// The buffer whose undo group brackets the replay.
+    group_buffer: super::BufferId,
+    /// Steps not yet run.
+    steps: std::collections::VecDeque<Action>,
+    total: usize,
+    /// True while a step is being dispatched. Input that arrives then is the
+    /// step's own doing; only input that arrives while the replay is parked
+    /// is held back (`DeferredInput`).
+    pub(super) stepping: bool,
+    /// The answerable-call id the step being dispatched carries to the
+    /// plugin thread; cleared by `handle_action` once it is sent.
+    #[cfg(feature = "plugins")]
+    pub(super) dispatch_request: Option<u64>,
+    /// Plugin steps whose handlers have not settled yet.
+    #[cfg(feature = "plugins")]
+    waits: Vec<PluginStepWait>,
+}
+
+/// Input that arrived while a replay was parked on a plugin step, held until
+/// the replay ends so it lands after the macro instead of between its steps.
+#[cfg(feature = "plugins")]
+pub(crate) enum DeferredInput {
+    Key(crossterm::event::KeyCode, crossterm::event::KeyModifiers),
+    /// Another `play_macro` for this register.
+    Play(char),
+}
+
+#[cfg(feature = "plugins")]
+struct PluginStepWait {
+    /// The id the handler's settlement is reported under.
+    request_id: u64,
+    /// What the window looked like when the step ran, so that only a prompt
+    /// or a `getNextKey` the handler itself started counts as it asking the
+    /// user something.
+    prompt_open_at_start: bool,
+    next_keys_at_start: usize,
+    /// When the wait started, or last saw the handler asking the user.
+    since: std::time::Instant,
+}
+
 impl Editor {
     /// Toggle macro recording for the given register
     pub(super) fn toggle_macro_recording(&mut self, key: char) {
@@ -100,14 +152,32 @@ impl Editor {
 
         format!("{} → Play Macro", palette_key)
     }
-    /// Play back a recorded macro synchronously.
+    /// Play back a recorded macro.
     ///
-    /// All actions are executed in a tight loop. Between each action,
-    /// `recompute_layout` is called so that visual-line movements
-    /// (MoveLineEnd, etc.) see correct, up-to-date layout information.
-    /// Drawing is deferred until the next render cycle.
+    /// Steps run in order, with `recompute_layout` between each so that
+    /// visual-line movements (MoveLineEnd, etc.) see up-to-date layout. A step
+    /// that runs a plugin handler is dispatched as an answerable call and the
+    /// replay waits for the handler to settle before the next step: the
+    /// handler runs on the plugin thread, and the step after it in the
+    /// recording has to see its effect. While it waits the replay is parked in
+    /// `macro_replay` and resumed from the event loop
+    /// ([`Self::resume_macro_replay`]), and keys and further plays that arrive
+    /// meanwhile are held until it ends. A macro with no plugin steps finishes
+    /// inside this call. Drawing is deferred until the next render cycle.
     pub(super) fn play_macro(&mut self, key: char) {
-        // Prevent recursive macro playback
+        if let Some(replay) = &self.macro_replay {
+            // From inside a step it is the macro playing itself (or another
+            // macro) recursively; from anywhere else it is a play that has to
+            // wait its turn.
+            #[cfg(feature = "plugins")]
+            if !replay.stepping {
+                self.deferred_replay_input
+                    .push_back(DeferredInput::Play(key));
+            }
+            #[cfg(not(feature = "plugins"))]
+            let _ = replay;
+            return;
+        }
         if self.active_window_mut().macros.is_playing() {
             return;
         }
@@ -130,21 +200,191 @@ impl Editor {
         if let Some(log) = self.active_window_mut().event_logs.get_mut(&group_buffer) {
             log.begin_undo_group();
         }
-        let action_count = actions.len();
-        let width = self.active_chrome().last_frame.width;
-        let height = self.active_chrome().last_frame.height;
-        for action in actions {
+        self.macro_replay = Some(MacroReplay {
+            key,
+            window: self.active_window,
+            group_buffer,
+            total: actions.len(),
+            steps: actions.into(),
+            stepping: false,
+            #[cfg(feature = "plugins")]
+            dispatch_request: None,
+            #[cfg(feature = "plugins")]
+            waits: Vec::new(),
+        });
+        self.run_macro_replay();
+    }
+
+    /// Run replay steps until the macro ends or an unsettled plugin step
+    /// parks it.
+    fn run_macro_replay(&mut self) {
+        loop {
+            #[cfg(feature = "plugins")]
+            if self.macro_replay_blocked() {
+                return;
+            }
+            let Some(replay) = self.macro_replay.as_mut() else {
+                return;
+            };
+            let Some(action) = replay.steps.pop_front() else {
+                self.finish_macro_replay();
+                return;
+            };
+            replay.stepping = true;
+            // The `PluginAction` arm of `handle_action` dispatches with this id
+            // and clears it once the handler is on its way.
+            #[cfg(feature = "plugins")]
+            let request_id = matches!(action, Action::PluginAction(_)).then(|| {
+                let id = crate::server::command_access::next_request_id();
+                replay.dispatch_request = Some(id);
+                id
+            });
+            #[cfg(feature = "plugins")]
+            let prompt_open_at_start = self.active_window().prompt.is_some();
+            #[cfg(feature = "plugins")]
+            let next_keys_at_start = self.active_window().pending_next_key_callbacks.len();
+
             if let Err(e) = self.handle_action(action) {
                 tracing::warn!("Macro action failed: {}", e);
             }
+            let width = self.active_chrome().last_frame.width;
+            let height = self.active_chrome().last_frame.height;
             self.recompute_layout(width, height);
-        }
-        if let Some(log) = self.active_window_mut().event_logs.get_mut(&group_buffer) {
-            log.end_undo_group();
-        }
-        self.active_window_mut().macros.end_play();
 
-        self.set_status_message(t!("macro.played", key = key, count = action_count).to_string());
+            let since = self.time_source.now();
+            let Some(replay) = self.macro_replay.as_mut() else {
+                return;
+            };
+            replay.stepping = false;
+            // Still set means the step never reached the plugin thread (no
+            // plugin manager, or the dispatch failed): nothing to wait on.
+            #[cfg(feature = "plugins")]
+            if let Some(request_id) = request_id {
+                if replay.dispatch_request.take().is_none() {
+                    replay.waits.push(PluginStepWait {
+                        request_id,
+                        prompt_open_at_start,
+                        next_keys_at_start,
+                        since,
+                    });
+                }
+            }
+            #[cfg(not(feature = "plugins"))]
+            let _ = since;
+        }
+    }
+
+    /// Whether a plugin step the replay already ran still has to settle
+    /// before the next step may run, dropping the ones that have settled or
+    /// run out of time.
+    ///
+    /// A handler that is asking the user something (a prompt it opened is
+    /// open, or it is waiting on `getNextKey`) does not hold the replay up:
+    /// the answer is usually the next steps of the recording, so waiting for
+    /// the handler would stall the replay until the time limit. Once the
+    /// answer is in, the handler is waited for again like any other.
+    #[cfg(feature = "plugins")]
+    fn macro_replay_blocked(&mut self) -> bool {
+        let now = self.time_source.now();
+        let prompt_open = self.active_window().prompt.is_some();
+        let next_keys = self.active_window().pending_next_key_callbacks.len();
+        let Some(replay) = self.macro_replay.as_mut() else {
+            return false;
+        };
+        let mut blocked = false;
+        replay.waits.retain_mut(|wait| {
+            let outcomes =
+                crate::server::command_access::take_completed_where(|id| id == wait.request_id);
+            if !outcomes.is_empty() {
+                for failed in outcomes.iter().filter(|o| !o.ok) {
+                    tracing::warn!(
+                        "macro replay: plugin step failed: {}",
+                        failed.error.as_deref().unwrap_or("unknown error")
+                    );
+                }
+                return false;
+            }
+            let asks_user =
+                (prompt_open && !wait.prompt_open_at_start) || next_keys > wait.next_keys_at_start;
+            if asks_user {
+                wait.since = now;
+                return true;
+            }
+            if now.saturating_duration_since(wait.since) >= MACRO_PLUGIN_STEP_TIMEOUT {
+                tracing::warn!(
+                    "macro replay: plugin step did not settle within {:?}; continuing",
+                    MACRO_PLUGIN_STEP_TIMEOUT
+                );
+                return false;
+            }
+            blocked = true;
+            true
+        });
+        blocked
+    }
+
+    /// Advance a replay parked on a plugin step, then, once no replay is
+    /// running, the input held back while it was. Called once per event-loop
+    /// pass; returns whether a replay finished or held input ran.
+    #[cfg(feature = "plugins")]
+    pub(super) fn resume_macro_replay(&mut self) -> bool {
+        let was_replaying = self.macro_replay.is_some();
+        if was_replaying {
+            self.run_macro_replay();
+        }
+        let finished = was_replaying && self.macro_replay.is_none();
+        let mut ran_input = false;
+        while self.macro_replay.is_none() {
+            let Some(input) = self.deferred_replay_input.pop_front() else {
+                break;
+            };
+            ran_input = true;
+            match input {
+                DeferredInput::Key(code, modifiers) => {
+                    if let Err(e) = self.handle_key(code, modifiers) {
+                        tracing::warn!("key held during macro replay failed: {}", e);
+                    }
+                }
+                DeferredInput::Play(key) => self.play_macro(key),
+            }
+        }
+        finished || ran_input
+    }
+
+    /// Whether a replay is parked on a plugin step, for the event loop's
+    /// wake-up deadline: it has to come straight back to resume it.
+    pub(crate) fn macro_replay_parked(&self) -> bool {
+        self.macro_replay.as_ref().is_some_and(|r| !r.stepping)
+    }
+
+    /// Close the replay's undo group and report it played.
+    fn finish_macro_replay(&mut self) {
+        let Some(replay) = self.macro_replay.take() else {
+            return;
+        };
+        if let Some(window) = self.windows.get_mut(&replay.window) {
+            if let Some(log) = window.event_logs.get_mut(&replay.group_buffer) {
+                log.end_undo_group();
+            }
+            window.macros.end_play();
+        }
+        self.set_status_message(
+            t!("macro.played", key = replay.key, count = replay.total).to_string(),
+        );
+    }
+
+    /// Run `f` without recording what it dispatches into an in-flight macro.
+    ///
+    /// For actions that are a plugin's doing rather than the user's input: a
+    /// timer tick, or the actions a handler issues through
+    /// `editor.executeAction(s)`. The key that ran the handler is what gets
+    /// recorded, and replaying it issues those actions again.
+    #[cfg(feature = "plugins")]
+    pub(super) fn without_macro_recording<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let was_suppressed = std::mem::replace(&mut self.suppress_macro_recording, true);
+        let result = f(self);
+        self.suppress_macro_recording = was_suppressed;
+        result
     }
 
     /// Record an action to the current macro (if recording).
@@ -155,6 +395,10 @@ impl Editor {
     /// contain at replay time. Everything else is forwarded unchanged to the
     /// subsystem, which applies its own control-action filter.
     pub(super) fn record_macro_action(&mut self, action: &Action) {
+        #[cfg(feature = "plugins")]
+        if self.suppress_macro_recording {
+            return;
+        }
         if let Action::PromptConfirm = action {
             if let Some(prompt) = &self.active_window_mut().prompt {
                 let text = prompt.get_text().to_string();

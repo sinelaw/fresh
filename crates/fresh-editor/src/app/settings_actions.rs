@@ -210,24 +210,23 @@ impl Editor {
         // and width are shadows of config, not read live on each render).
         self.active_window_mut().file_explorer_width = self.config.file_explorer.width;
         self.active_window_mut().file_explorer_side = self.config.file_explorer.side;
+        self.quick_open_registry
+            .set_file_ignore_patterns(&self.config.file_explorer.custom_ignore_patterns);
         let active_id = self.active_window;
         if let Some(explorer) = self
             .windows
             .get_mut(&active_id)
             .and_then(|w| w.file_explorer.as_mut())
         {
+            let root = explorer.tree().root_path().to_path_buf();
             let patterns = explorer.ignore_patterns_mut();
             patterns.set_show_hidden(self.config.file_explorer.show_hidden);
             patterns.set_show_gitignored(self.config.file_explorer.show_gitignored);
             patterns.set_respect_gitignore(self.config.file_explorer.respect_gitignore);
-            // Apply configured custom ignore patterns (this wiring was missing, so the
-            // `custom_ignore_patterns` config field had no effect).
-            patterns.clear_custom_patterns();
-            for pattern in &self.config.file_explorer.custom_ignore_patterns {
-                patterns.add_custom_pattern(pattern.clone());
-            }
+            patterns.set_custom_patterns(&root, &self.config.file_explorer.custom_ignore_patterns);
             explorer.set_compact_directories(self.config.file_explorer.compact_directories);
         }
+        self.sync_quick_open_file_visibility();
 
         // On Windows, switch mouse tracking mode when mouse_hover_enabled changes.
         // Mode 1003 (all motion) is used for hover; mode 1002 (cell motion) otherwise.

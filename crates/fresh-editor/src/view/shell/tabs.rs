@@ -273,7 +273,13 @@ fn name_node(pane: LeafId, t: TabTarget, s: String, ink: String) -> Node<UiMsg> 
                             y,
                         }))
                     }
-                    _ => None,
+                    // Middle-click closes the tab — the browser muscle
+                    // memory (issue #3284). Same fact the `×` button emits,
+                    // so dirty-buffer confirmation and friends are inherited.
+                    MouseButton::Middle => {
+                        e.stop();
+                        Some(UiMsg::Ui(UiFact::PaneTabClose { pane, target: t }))
+                    }
                 }
             }),
         )
@@ -303,7 +309,8 @@ fn name_node(pane: LeafId, t: TabTarget, s: String, ink: String) -> Node<UiMsg> 
 }
 
 /// A tab's `×`. A right press here opens the tab's menu too, as the painter's
-/// hit test answered `CloseButton` for the menu the same as `TabName`.
+/// hit test answered `CloseButton` for the menu the same as `TabName`; a
+/// middle press closes, as it does on the name (issue #3284).
 fn close_node(pane: LeafId, t: TabTarget, s: String, ink: String) -> Node<UiMsg> {
     gesture(text(s).theme(ink))
         .key(close_tab_key(pane, t))
@@ -313,14 +320,15 @@ fn close_node(pane: LeafId, t: TabTarget, s: String, ink: String) -> Node<UiMsg>
                 let (x, y) = (e.pos.x.max(0) as u16, e.pos.y.max(0) as u16);
                 e.stop();
                 match e.button {
-                    MouseButton::Left => Some(UiMsg::Ui(UiFact::PaneTabClose { pane, target: t })),
+                    MouseButton::Left | MouseButton::Middle => {
+                        Some(UiMsg::Ui(UiFact::PaneTabClose { pane, target: t }))
+                    }
                     MouseButton::Right => Some(UiMsg::Ui(UiFact::PaneTabMenu {
                         pane,
                         target: t,
                         x,
                         y,
                     })),
-                    _ => None,
                 }
             }),
         )
@@ -783,7 +791,7 @@ mod tests {
 
     /// A press on a name names the tab and takes the pointer; a press on its
     /// `×` names the tab to close; a right press on either names the tab to
-    /// open a menu for.
+    /// open a menu for; a middle press on either closes it.
     #[test]
     fn the_tabs_answer_their_own_presses() {
         let mut ui = laid_out(strip_of(2), PaneControls::default(), 80);
@@ -837,6 +845,29 @@ mod tests {
                 target: buf(1),
                 x: at.x as u16,
                 y: at.y as u16
+            }]
+        );
+        // A middle press on the name emits the same close fact the `×` does
+        // (issue #3284).
+        let got = facts(ui.dispatch(Input::press(at, MouseButton::Middle, Mods::NONE)));
+        assert_eq!(
+            got,
+            vec![UiFact::PaneTabClose {
+                pane: pane(),
+                target: buf(1)
+            }]
+        );
+        // So does a middle press on the `×` itself.
+        let got = facts(ui.dispatch(Input::press(
+            Point::new(c1.x, c1.y),
+            MouseButton::Middle,
+            Mods::NONE,
+        )));
+        assert_eq!(
+            got,
+            vec![UiFact::PaneTabClose {
+                pane: pane(),
+                target: buf(1)
             }]
         );
         let plus = rect(&ui, new_tab_key(pane()));

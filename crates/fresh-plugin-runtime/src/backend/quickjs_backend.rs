@@ -2802,8 +2802,8 @@ impl JsEditorApi {
     }
 
     #[plugin_api(section = "Windows")]
-    /// Whether the editor was launched by a bare `fresh` in Orchestrator mode.
-    /// This reflects the launch, not the `orchestrator_mode` preference,
+    /// Whether the editor is the daemon a bare `fresh` with Auto Attach on
+    /// attaches to. This reflects the launch, not the `auto_attach` preference,
     /// which stays on for `fresh FILE`. Plugins in the mode use it to
     /// override their own settings.
     pub fn orchestrator_mode(&self) -> bool {
@@ -2824,6 +2824,23 @@ impl JsEditorApi {
             .read()
             .map(|s| s.file_launch)
             .unwrap_or(false)
+    }
+
+    /// The two files of a `fresh --diff LEFT RIGHT` launch, as absolute paths
+    /// `[left, right]`; empty for any other launch. The editor doesn't open
+    /// them: the plugin that reads this at `ready` does (the bundled
+    /// `compare_files` plugin, into the panels of one tab, with a
+    /// buffer-group `path` leaf).
+    pub fn diff_launch(&self) -> Vec<String> {
+        self.state_snapshot
+            .read()
+            .map(|s| {
+                s.diff_launch
+                    .iter()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Whether the left dock slot is open: a panel is in it, or the host is
@@ -3832,7 +3849,7 @@ impl JsEditorApi {
     /// rewrite) *and* applies the value immediately, so a checkbox a plugin
     /// draws can own a real setting.
     ///
-    /// `path` is dot-separated (e.g. `"orchestrator_mode"`,
+    /// `path` is dot-separated (e.g. `"auto_attach"`,
     /// `"editor.tab_size"`). The host refuses a path that is not a real
     /// config setting rather than writing a key that would be silently
     /// dropped on the next load, and says so in the status bar.
@@ -6353,9 +6370,9 @@ impl JsEditorApi {
 
     /// Load every saved workspace into `listWindows()`, once.
     ///
-    /// A launch starts with only the workspaces of its own directory (all of
-    /// them in Orchestrator mode); the rest of the registry is read on first
-    /// use rather than at startup. Call this before listing workspaces to a
+    /// A launch starts with only the workspaces of its own directory (plus,
+    /// in Orchestrator mode, the one last used); the rest of the registry is
+    /// read on first use rather than at startup. Call this before listing workspaces to a
     /// user. Resolves once `listWindows()` includes them all; resolves at
     /// once when they already are.
     #[plugin_api(async_promise, js_name = "loadWorkspaces", ts_return = "void")]
@@ -8898,6 +8915,66 @@ impl JsEditorApi {
         id
     }
 
+    /// Line diff of two live buffers, measured in their own bytes (async):
+    /// each hunk's byte range on both sides, each changed line's text
+    /// range, and the part of a paired line that differs from its
+    /// counterpart. The texts never cross into the plugin — use this
+    /// instead of `getBufferText` + `computeLineDiff` when the offsets will
+    /// be used to decorate or edit the buffers.
+    ///
+    /// Rejects when either buffer is binary or in large-file mode.
+    #[plugin_api(async_promise, js_name = "compareBuffers", ts_return = "CompareResult")]
+    #[qjs(rename = "_compareBuffersStart")]
+    pub fn compare_buffers_start(
+        &self,
+        _ctx: fresh_js::Ctx<'_>,
+        left_id: u32,
+        right_id: u32,
+    ) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::CompareBuffers {
+            left_id: BufferId(left_id as usize),
+            right_id: BufferId(right_id as usize),
+            callback_id: JsCallbackId::new(id),
+        });
+        id
+    }
+
+    /// Replace the bytes `start..end` of a buffer with `text`, as one edit
+    /// and one undo step (async). Resolves `true` once applied; `false`,
+    /// leaving the buffer as it was, when it is read-only or binary or the
+    /// range is outside it.
+    ///
+    /// `expectedVersion` (a `leftVersion` / `rightVersion` from
+    /// `compareBuffers`) makes the edit conditional: if the buffer has
+    /// changed since, the offsets may name other text, so nothing is done
+    /// and it resolves `false`.
+    ///
+    /// `deleteRange` followed by `insertText` is two edits, so undoing it
+    /// stops half way.
+    #[plugin_api(async_promise, js_name = "replaceRange", ts_return = "boolean")]
+    #[qjs(rename = "_replaceRangeStart")]
+    pub fn replace_range_start(
+        &self,
+        _ctx: fresh_js::Ctx<'_>,
+        buffer_id: u32,
+        start: u32,
+        end: u32,
+        text: String,
+        expected_version: fresh_js::function::Opt<u64>,
+    ) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::ReplaceRange {
+            buffer_id: BufferId(buffer_id as usize),
+            start: start as usize,
+            end: end as usize,
+            text,
+            expected_version: expected_version.0,
+            callback_id: JsCallbackId::new(id),
+        });
+        id
+    }
+
     /// Fetch baseline lines for `(startLine, count)` ranges in one
     /// batched call (async). Lines come back without trailing newlines,
     /// grouped per requested range — fetch only the old-side lines a
@@ -9119,7 +9196,13 @@ impl JsEditorApi {
 
     #[plugin_api(section = "Search & Replace")]
     /// Project-wide grep search (async)
-    /// Searches all files in the project, respecting .gitignore.
+    /// Searches the project's files by Quick Open's rules, with hidden and
+    /// gitignored files left out whatever the explorer shows: in a git
+    /// repository, what `git ls-files --cached --others --exclude-standard`
+    /// reports (so .gitignore is respected) plus the files of submodules and
+    /// nested repositories; otherwise every non-hidden file outside `.git`,
+    /// `node_modules`, `target` and similar directories. Either way, files
+    /// matched by `file_explorer.custom_ignore_patterns` are left out.
     /// Open buffers with dirty edits are searched in-memory.
     #[plugin_api(async_promise, js_name = "grepProject", ts_return = "GrepMatch[]")]
     #[qjs(rename = "_grepProjectStart")]
@@ -9148,7 +9231,7 @@ impl JsEditorApi {
     /// Begin a streaming project-wide search and return a `SearchHandle`.
     /// The producer (host) writes matches at full speed into shared state;
     /// the consumer drains via `handle.take()` at its own cadence. Call
-    /// `handle.cancel()` to abort.
+    /// `handle.cancel()` to abort. Searches the same files as `grepProject`.
     #[plugin_api(
         js_name = "beginSearch",
         ts_raw = "beginSearch(pattern: string, opts?: { fixedString?: boolean; caseSensitive?: boolean; maxResults?: number; wholeWords?: boolean; sourceBufferId?: number; fileGlob?: string }): SearchHandle"

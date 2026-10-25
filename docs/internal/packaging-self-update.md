@@ -719,8 +719,10 @@ predicted from the receipt. It is not separately elevated: `makepkg -si` invokes
 New user-facing surface, consistent with the existing clap `--cmd` subcommand
 convention (`daemon`, `config`, `grammar`, `init`):
 
-- `fresh --cmd update` — check + update via the resolved strategy (prompts
-  before doing anything).
+- `fresh --cmd update` (alias `fresh --update`, same flags) — check + update
+  via the resolved strategy. An in-place swap asks `[y/N]` on the terminal
+  first; with no terminal to ask on it prints `NOT UPDATED` and the command
+  to rerun with `--yes`, and exits with the ActionRequired code.
 - `fresh --cmd update --check` — report status only (current, latest, channel,
   what the update command would be); exit non-zero if outdated. Scriptable.
 - `fresh --cmd update --yes` — non-interactive (CI, dotfiles).

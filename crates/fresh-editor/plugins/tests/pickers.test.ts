@@ -47,6 +47,7 @@ function harness(files = false) {
     panel: () => ({
       setFocusKey: (k) => (calls.push(`focus:${k}`), true),
       setValue: (k, v) => (calls.push(`value:${k}=${v}`), true),
+      setSelectedIndex: (k, i) => (calls.push(`select:${k}=${i}`), true),
     }),
   });
   return { field, calls, picker };

@@ -203,20 +203,26 @@ depends on how the editor was launched.
 > reads, and `read_persisted_windows_env` synthesises it as `0` — there is no
 > on-disk "active session" index, only the set of workspace files (§3.1). So an
 > ordinary launch resolves by step 2 or 3. Kept as written because the intent
-> is right and `active` is still in the serialized shape; Orchestrator mode
+> is right and `active` is still in the serialized shape; `open_last_workspace`
 > below is what actually implements "where I was last", on a per-workspace
 > stamp rather than a single pointer.
 
-**Orchestrator mode** (`pick_active_window_globally`, used when the daemon was
-started by a bare `fresh` — see §4.5): the most recently *focused* workspace
-wins regardless of the launch cwd. Recency is each `Workspace`'s own
+**Auto Attach** (Orchestrator mode) follows the same cwd rule: a bare `fresh` opens the
+directory it was typed in. It used to reopen the most recently focused
+workspace wherever it was; with the dock closed by default nothing on screen
+said you were somewhere else.
+
+**`open_last_workspace`** (config, default off) is that old pick, for a bare
+`fresh` in either mode. It is resolved *before* the editor is built
+(`bare_launch_dir` in `main.rs`, via `Editor::last_used_workspace_root`): the
+launch directory becomes the root of the local workspace with the highest
 `last_focused_at` (epoch ms), stamped by `set_active_window` and at window
 creation, persisted by `capture_workspace` and re-adopted by
 `apply_workspace_layout`. A per-workspace stamp rather than a global pointer:
 it cannot dangle, and deleting the most recent workspace promotes the next one
-for free. Falls back to the cwd rule when no workspace carries a stamp (every
-file predates the field), and to a clean base window at cwd when there are no
-workspaces at all — which is the mode's first-run path.
+for free. With no stamped workspace the launch stays in the cwd. Only this
+lookup reads the whole registry; boot itself reads the launch directory's
+workspaces in every mode.
 
 Matching is on **`root`, not `project_path`** — a worktree session carries
 `project_path == <parent repo>` but `root == <worktree>`, and matching on
@@ -336,11 +342,14 @@ wrong badge is a bug report with evidence. The CLI verbs (`fresh --cmd
 workspace list`, `agent list|get|explain|wait|start`) are documented in
 agent-fresh-cli-exposure-plan.md.
 
-### 4.5 Orchestrator mode (the bare-`fresh` launch)
+### 4.5 Auto Attach (the bare-`fresh` launch, "Orchestrator mode" in the code)
 
-`config.orchestrator_mode` (top-level boolean, default **true**) makes a
-command line with *nothing on it* open the workspace switcher rather than an
-editor on the current directory. It is consulted for that one shape of
+`config.auto_attach` (top-level boolean, default **true**; `orchestrator_mode`
+before, which the v3 config migration renames) makes a command line with
+*nothing on it* attach to the shared background editor rather than open an
+editor in this terminal. Internally the launch is still called Orchestrator
+mode (`--orchestrator-mode`, `Editor::orchestrator_mode`, the `orchestrator`
+daemon name). It is consulted for that one shape of
 invocation and no other: `fresh FILE`, `fresh --cmd …`, `fresh -a …` all behave
 identically whether it is on or off. The gate is literally
 `std::env::args_os().count() == 1` plus "stdin is a terminal"
@@ -353,30 +362,44 @@ What the mode is, end to end:
   `ORCHESTRATOR_DAEMON` (`"orchestrator"`), starting it if it is not up. Named
   rather than keyed on the working directory, which is the whole point: `fresh`
   typed anywhere joins the editor you already have. When the daemon is already
-  running the launch does nothing else at all — no files, no cwd, no
-  reconfiguration; the terminal becomes another view onto the session as it
-  stands.
+  running the client sends `ClientControl::OpenWindow` for its cwd, so the
+  daemon switches to that directory's workspace (creating it if needed);
+  nothing else is reconfigured. With `open_last_workspace` on it sends nothing
+  and the daemon stays where it is.
+- **`fresh -a` with no name is the same launch** while the setting is on.
+- **Inside a Fresh terminal it plays no part.** Every such terminal sets
+  `FRESH_SESSION`, a direct editor's included, so a `fresh` there is already
+  inside an editor it can reach: files and directories are forwarded to it, and
+  anything that would nest a second editor (a bare `fresh`, `-a`, `--simple`,
+  `-a NAME`, piped input) is answered "Already in Fresh" instead
+  (`try_forward_nested` / `already_in_enclosing` in `main.rs`).
+- **It runs until it is told to quit.** No idle timeout: with nothing attached
+  it still holds the workspaces, terminals and agents.
 - **The mode crosses the spawn as a flag.** The daemon is a separate process
   and cannot see the client's command line, so `DaemonSpawn::orchestrator_mode`
   forwards `--orchestrator-mode`, which becomes
   `EditorServerConfig::orchestrator_mode` and then the `orchestrator_mode`
   parameter of `Editor::with_options`. It is a *parameter*, not a read of
-  `config.orchestrator_mode`: the config field is the user's preference, which
+  `config.auto_attach`: the config field is the user's preference, which
   can be on while this particular launch named a file.
-- **The last-focused workspace comes back**, regardless of cwd (§4.1).
-- **No empty buffer.** `Editor::fills_an_empty_workspace()` returns `false`,
-  which overrides — not consults — both
-  `editor.auto_create_empty_buffer_on_last_buffer_close` and
-  `file_explorer.auto_open_on_last_buffer_close`; and the boot seed buffer is
-  marked `hidden_from_tabs` + `synthetic_placeholder`, the same state the close
-  path already synthesizes for the blank-workspace settings. An untitled buffer
-  answers "you have nothing open, here is somewhere to type", which is the
-  wrong question when the dock is showing your workspaces.
-- **The dock starts closed on a first launch** — in every launch mode, a
-  bare `fresh` included: the manifest declares `"open": false`, and nothing
-  about the launch mode overrides it. Under `autoOpenDock: "auto"` the dock
-  then comes back as the user left it at quit.
-  `never` and `always` settle it outright — and the user's own open or close
+- **The cwd's workspace comes back**, as for any launch (§4.1).
+- **The editor itself is an ordinary one.** The empty-workspace settings
+  (`editor.auto_create_empty_buffer_on_last_buffer_close`,
+  `file_explorer.auto_open_on_last_buffer_close`) and the boot `[No Name]`
+  buffer behave as in a direct launch. They used to be overridden on the
+  grounds that the dock was showing your workspaces, which stopped being true
+  when the dock started closed.
+- **Unsaved work follows the directory.** The daemon keeps hot-exit and crash
+  recovery in one session store (`recovery/sessions/orchestrator/`), a direct
+  launch in one per directory; `Editor::adopt_recovery_for` moves the other
+  store's entries for a workspace in before it is restored, unless that
+  store's editor is still running.
+- **The dock starts closed** — in every launch mode, a bare `fresh`
+  included: the manifest declares `"open": false`, and nothing about the
+  launch mode overrides it. Under `autoOpenDock: "auto"` a dock remembered as
+  open at quit does not reopen (older builds opened it by default); only a
+  remembered close counts. A file launch (`fresh FILE`, `--simple`) never
+  opens it. `never` and `always` settle it outright — and the user's own open or close
   (View ▸ Orchestrator Dock, Toggle Dock, the dock's `×`) writes the matching
   one, so the next start follows the user's last instruction rather than a
   mode set long ago; a Settings edit to `always` / `never` applies at once. The
@@ -398,12 +421,10 @@ What the mode is, end to end:
   nothing mounted into is handed back when the hook's sentinel lands. See
   `docs/internal/plugins.md` §6.2a.
 - **First run** — no workspaces at all — boots a clean base window at the cwd
-  and lands on the welcome screen. Nothing special-cases the welcome screen to
-  get there: it opens itself as a background tab as always, and a background
-  buffer takes the pane when the pane holds a synthetic placeholder (there is
-  nothing to displace).
+  with its `[No Name]` buffer, and the welcome screen opens itself as a tab as
+  in any launch.
 
-The switch is user-visible in two places: **Orchestrator Mode** in Settings
+The switch is user-visible in two places: **Auto Attach** in Settings
 (schema-driven, no UI code), and the checkbox at the top of the welcome screen,
 which writes the core setting through the `saveSetting` plugin API.
 

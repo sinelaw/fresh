@@ -60,7 +60,7 @@ type ActionSpec = {
   * macro — which contains `InsertChar` and other payload actions —
   * round-trip losslessly through `executeActions`.
   */
-  args: Record<string, unknown>;
+  args?: Record<string, unknown>;
 };
 ```
 
@@ -379,6 +379,100 @@ interface CommandResult {
   stdout: string;
   stderr: string;
 }
+```
+
+### `CompareHunk`
+
+One hunk of a [`CompareResult`], with the geometry a side-by-side view
+paints from.
+
+```typescript
+type CompareHunk = {
+  /**
+  * The first (left, old) text's side.
+  */
+  left: CompareSide;
+  /**
+  * The second (right, new) text's side.
+  */
+  right: CompareSide;
+  /**
+  * The two sides have the same lines but for their terminators: a
+  * missing final newline, or `\r\n` against `\n`.
+  */
+  eolOnly: boolean;
+};
+```
+
+### `CompareResult`
+
+Result of `compareBuffers`: the line diff of two buffers, measured in
+their own bytes.
+
+```typescript
+type CompareResult = {
+  /**
+  * Hunks in increasing order; empty when the buffers are equal.
+  */
+  hunks: Array<CompareHunk>;
+  /**
+  * Lines in each buffer, a final unterminated line included.
+  */
+  leftLines: number;
+  rightLines: number;
+  /**
+  * Each buffer's length in bytes.
+  */
+  leftLen: number;
+  rightLen: number;
+  /**
+  * Each buffer's content version when it was read. An edit since bumps
+  * it, so a caller about to edit from these offsets can tell they are
+  * stale.
+  */
+  leftVersion: number;
+  rightVersion: number;
+};
+```
+
+### `CompareSide`
+
+One side of a [`CompareHunk`]: where the hunk's lines are, in lines and
+in the buffer's own bytes.
+
+```typescript
+type CompareSide = {
+  /**
+  * First line of the hunk on this side (0-based).
+  */
+  start: number;
+  /**
+  * Number of lines (0 when the other side alone has lines here).
+  */
+  count: number;
+  /**
+  * Byte offset of the hunk's first line — for an empty side, where the
+  * other side's lines would go.
+  */
+  from: number;
+  /**
+  * Byte offset just past the hunk's last line, terminator included.
+  * `from..to` is what replacing this side's lines of the hunk replaces.
+  */
+  to: number;
+  /**
+  * Each line's text without its line terminator, as `[start, end)`
+  * byte offsets.
+  */
+  lines: Array<[number, number]>;
+  /**
+  * For the lines that have a counterpart on the other side (the first
+  * `min(count, other.count)`): the part that differs from it, as
+  * `[start, end)` byte offsets, or `null` when only the line terminator
+  * differs.
+  */
+  spans: Array<[number, number] | null>;
+};
 ```
 
 ### `CreatePreparingWindowOptions`
@@ -1167,13 +1261,23 @@ interface FreshConfig {
   */
   self_update?: boolean;
   /**
-  * When on (default), `fresh` with no arguments reattaches to a single background
-  * editor with the workspace dock and your last workspace. When off, it opens a
-  * plain editor in the current directory; runs with files or flags are unaffected.
+  * When on (default), `fresh` with no arguments is `fresh -a`: it runs in a single
+  * background editor that outlives the terminal, and every later bare `fresh`
+  * reattaches to it. When off, it opens a plain editor in this terminal. Runs with
+  * files or flags are unaffected. Formerly `orchestrator_mode`.
   *
   * Default: `true`
   */
-  orchestrator_mode?: boolean;
+  auto_attach?: boolean;
+  /**
+  * When on, `fresh` with no arguments reopens the workspace you used last,
+  * wherever you type it. When off (default), it opens the current directory.
+  * Works with Auto Attach on or off; runs with files or flags are
+  * unaffected.
+  *
+  * Default: `false`
+  */
+  open_last_workspace?: boolean;
   /**
   * Editor behavior settings (indentation, line numbers, wrapping, etc.)
   */
@@ -2016,7 +2120,10 @@ interface FileExplorerConfig {
     */
     show_gitignored?: boolean;
     /**
-    * Extra patterns to ignore, on top of `.gitignore`.
+    * Extra patterns to ignore, on top of `.gitignore`, written as
+    * `.gitignore` lines relative to the project root (`build/`, `/dist`,
+    * `*.log`, `!keep.log`). The file explorer, Quick Open, project search
+    * and Live Grep all leave out what they match.
     */
     custom_ignore_patterns?: string[];
     /**
@@ -2700,6 +2807,14 @@ interface TerminalConfig {
     * Default: `"requested"`
     */
     mouse_forwarding?: TerminalMouseForwarding;
+    /**
+    * Close a shell's tab (and its pane, if it was the only tab) when the
+    * shell exits (`exit`, Ctrl+D) instead of keeping it as read-only
+    * scrollback. Terminals running a command (agents, plugins) are kept.
+    *
+    * Default: `false`
+    */
+    close_on_exit?: boolean;
   }
 ```
 

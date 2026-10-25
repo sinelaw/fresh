@@ -5,13 +5,19 @@
 
 use std::io::Write;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::Duration;
 
 use super::shell_command::shell_command;
 use super::Editor;
 use crate::config::{FormatterConfig, OnSaveAction};
 use crate::model::event::Event;
+// Formatter and on-save commands are probed the same way as LSP servers:
+// on PATH, or as an absolute/relative path (resolved against the process
+// working directory). Shelling out to Windows' `where` instead misparsed
+// drive-letter paths such as `D:\tools\ruff.exe` as its `path:pattern`
+// search syntax and reported installed binaries missing (#3281).
+use crate::services::lsp::command_exists;
 use crate::services::process_hidden::HideWindow;
 use fresh_i18n::t;
 
@@ -639,39 +645,6 @@ impl Editor {
     }
 }
 
-/// Check if a command exists in the system PATH.
-fn command_exists(command: &str) -> bool {
-    // Use 'which' on Unix or 'where' on Windows to check if command exists
-    #[cfg(unix)]
-    {
-        Command::new("which")
-            .arg(command)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-    }
-
-    #[cfg(windows)]
-    {
-        Command::new("where")
-            .arg(command)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .hide_window()
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-    }
-
-    #[cfg(not(any(unix, windows)))]
-    {
-        // On other platforms, assume command exists and let it fail at runtime
-        true
-    }
-}
-
 /// Detect the shell to use for executing commands.
 fn detect_shell() -> String {
     // Try SHELL environment variable first
@@ -702,4 +675,24 @@ fn detect_shell() -> String {
 
     // Last resort
     "sh".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_exists_accepts_an_absolute_path() {
+        // The test binary's own path. On Windows it is a drive-letter path
+        // (`C:\...\fresh-*.exe`), the shape `where.exe` used to reject (#3281).
+        let exe = std::env::current_exe().unwrap();
+        assert!(exe.is_absolute());
+        assert!(command_exists(exe.to_str().unwrap()));
+    }
+
+    #[test]
+    fn command_exists_rejects_missing_and_empty_commands() {
+        assert!(!command_exists("fresh-unlikely-formatter-name-q8v3z"));
+        assert!(!command_exists(""));
+    }
 }

@@ -3,6 +3,7 @@
 - [Overview](./) - Layered configuration system
 - [Startup Script (init.ts)](./init.md) - Run TypeScript at startup for environment-dependent setup
 - [Keyboard](./keyboard.md) - Keyboard shortcuts and keybinding configuration
+- [Actions](./actions.md) - Every built-in action name and the args it takes
 
 ---
 
@@ -255,6 +256,25 @@ The `grammar` field accepts a short name like `"bash"` or `"rust"` as well as th
 ```
 fresh --cmd grammar list
 ```
+
+### Use Your Own Grammar File
+
+You can give a language its own syntax highlighting by pointing `textmate_grammar` at a grammar file:
+
+```json
+{
+  "languages": {
+    "widget": {
+      "extensions": ["widget"],
+      "textmate_grammar": "/home/me/.config/fresh/grammars/Widget.sublime-syntax"
+    }
+  }
+}
+```
+
+The file must be a `.sublime-syntax` file; `.tmLanguage` is not supported. It
+highlights files with the language's `extensions`. Use `grammar` instead when
+you just want to reuse a grammar Fresh already knows (see `fresh --cmd grammar list`).
 
 ### Customize Auto-Indentation
 

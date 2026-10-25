@@ -236,6 +236,12 @@ buffer: editable, in its tabs, and left open when the group closes.
 Each panel has its own view of it, so two panels can show one file in
 different view modes. Closing the buffer closes the group.
 
+A scrollable leaf with `path` shows that file: the buffer that has it
+open, as for `bufferId`, or else one the group opens without a tab.
+Such a buffer is an ordinary file buffer otherwise (the quit prompt and
+hot exit cover it); closing the group closes it if it has no unsaved
+changes, and gives it a tab in the group's pane if it has.
+
 The result names each panel's buffer (`panels`) and split
 (`panelSplits`, for `createScrollSyncGroup`, `setLineWrap` and
 `setLayoutHints`). Group ids are per window.

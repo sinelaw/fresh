@@ -45,10 +45,9 @@ pub struct EditorServerConfig {
     pub plugins_enabled: bool,
     /// Whether to auto-load ~/.config/fresh/init.ts (requires `plugins_enabled`).
     pub init_enabled: bool,
-    /// Boot into Orchestrator mode: bring back the workspace that was last
-    /// focused rather than the one matching `working_dir`, and leave the
-    /// launch directory's empty buffer out of the way (see
-    /// `Config::orchestrator_mode`).
+    /// Boot as the daemon a bare `fresh` auto-attaches to (see
+    /// `Config::auto_attach`). Nothing in the editor changes for it; plugins
+    /// can read it (`editor.orchestratorMode()`).
     ///
     /// Set from the `--orchestrator-mode` flag the bare-`fresh` client
     /// forwards. The daemon cannot infer it: `working_dir` and the config
@@ -911,7 +910,9 @@ impl EditorServer {
 
         // Restore workspace and recovery data (mirrors the standalone startup
         // path in handle_first_run_setup in main.rs).
-        match editor.try_restore_workspace() {
+        let restored = editor.try_restore_workspace();
+        editor.mark_active_window_focused();
+        match restored {
             Ok(true) => {
                 tracing::info!("Session workspace restored successfully");
             }

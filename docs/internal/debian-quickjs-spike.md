@@ -377,9 +377,12 @@ handled:
 
 The resulting package depends on `libc6`, `libgcc-s1` and `libonig5` only
 (recommending `git` and suggesting `esbuild`), lists QuickJS in
-`Static-Built-Using`, installs, runs its precompiled bundled plugins without
-esbuild, and checks an `init.ts` once esbuild is installed; lintian reports only
-`initial-upload-closes-no-bugs`, until there is an ITP bug.
+`Static-Built-Using`, and passes its autopkgtests (`debian/tests`): without
+esbuild it loads all its precompiled bundled plugins and gives `init.ts` the
+install hint, and with esbuild it checks `init.ts`. The changelog closes the
+ITP, [#1124035](https://bugs.debian.org/1124035), and `debian/watch` follows
+upstream's GitHub tags. CI builds it against testing (amd64, arm64) and
+unstable (amd64), where uploads go.
 
 What the first offline build found that the archive check could not: Debian's
 `lsp-types` 0.97.0 is patched to use `fluent-uri` 0.4 instead of the 0.1
@@ -400,8 +403,10 @@ cache: 73 ms preparing).
   workspace crates (`fresh-core`, `fresh-js`, …) from its own tree, rather
   than packaging each as a `librust-*-dev`; this needs agreeing with the
   Debian Rust team.
-- **Process:** an upstream release with this work, an ITP bug, a sponsor, and
-  an upload to unstable, from where it migrates to testing.
+- **Process.** Upstream releases ship this build (from 0.5.4), and the ITP is
+  [#1124035](https://bugs.debian.org/1124035). Still to come: the Debian Rust
+  team's agreement on the source package (above), the packaging on salsa, a
+  sponsor, and an upload to unstable, from where it migrates to testing.
 
 A sketch of the packaging (not in the upstream `debian/` directory, which
 builds the upstream `.deb` with the default features):

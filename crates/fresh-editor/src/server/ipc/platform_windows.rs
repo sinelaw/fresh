@@ -19,6 +19,12 @@ pub fn get_socket_dir() -> io::Result<PathBuf> {
     Ok(socket_dir)
 }
 
+/// Named pipes are not bound to a filesystem path, so there is no
+/// `sun_path`-style limit to fold socket names under.
+pub fn max_socket_path_len() -> Option<usize> {
+    None
+}
+
 /// Convert a socket path to an interprocess socket name on Windows
 ///
 /// On Windows, convert the path to a namespaced name for named pipes.

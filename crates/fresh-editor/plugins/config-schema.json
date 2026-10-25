@@ -31,11 +31,17 @@
       "type": "boolean",
       "default": true
     },
-    "orchestrator_mode": {
-      "description": "When on (default), `fresh` with no arguments reattaches to a single background\neditor with the workspace dock and your last workspace. When off, it opens a\nplain editor in the current directory; runs with files or flags are unaffected.",
+    "auto_attach": {
+      "description": "When on (default), `fresh` with no arguments is `fresh -a`: it runs in a single\nbackground editor that outlives the terminal, and every later bare `fresh`\nreattaches to it. When off, it opens a plain editor in this terminal. Runs with\nfiles or flags are unaffected. Formerly `orchestrator_mode`.",
       "type": "boolean",
       "default": true,
       "x-order": 1
+    },
+    "open_last_workspace": {
+      "description": "When on, `fresh` with no arguments reopens the workspace you used last,\nwherever you type it. When off (default), it opens the current directory.\nWorks with Auto Attach on or off; runs with files or flags are\nunaffected.",
+      "type": "boolean",
+      "default": false,
+      "x-order": 2
     },
     "editor": {
       "description": "Editor behavior settings (indentation, line numbers, wrapping, etc.)",
@@ -211,7 +217,8 @@
         "skip_app_execution_alias": true,
         "resume_agents": true,
         "mouse_drag_selects": true,
-        "mouse_forwarding": "requested"
+        "mouse_forwarding": "requested",
+        "close_on_exit": false
       }
     },
     "keybindings": {
@@ -1271,7 +1278,7 @@
           "default": false
         },
         "custom_ignore_patterns": {
-          "description": "Extra patterns to ignore, on top of `.gitignore`.",
+          "description": "Extra patterns to ignore, on top of `.gitignore`, written as\n`.gitignore` lines relative to the project root (`build/`, `/dist`,\n`*.log`, `!keep.log`). The file explorer, Quick Open, project search\nand Live Grep all leave out what they match.",
           "type": "array",
           "items": {
             "type": "string"
@@ -1426,6 +1433,11 @@
           "description": "When programs in the terminal get mouse events. `requested` (default):\nonly programs that ask for the mouse (plus wheel for full-screen apps);\nShift+drag still selects. `alt_screen`: every full-screen program gets all events.",
           "$ref": "#/$defs/TerminalMouseForwarding",
           "default": "requested"
+        },
+        "close_on_exit": {
+          "description": "Close a shell's tab (and its pane, if it was the only tab) when the\nshell exits (`exit`, Ctrl+D) instead of keeping it as read-only\nscrollback. Terminals running a command (agents, plugins) are kept.",
+          "type": "boolean",
+          "default": false
         }
       }
     },

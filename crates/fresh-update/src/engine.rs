@@ -204,29 +204,49 @@ pub fn run(current_version: &str, opts: &UpdateOptions) -> Result<UpdateStatus, 
     match plan.kind {
         UpdateKind::SelfContained => {
             if opts.check_only {
-                println!(
-                    "An update is available. Run `fresh --cmd update` to install it in place."
-                );
+                println!("An update is available. Run `fresh --update` to install it in place.");
                 return Ok(UpdateStatus::Done);
             }
             if !opts.execution.may_install() || !opts.yes {
                 // There is no command to hand over — the swap is ours to do —
-                // so the honest answer is to say what would happen and stop,
-                // rather than replacing the running binary for someone who
-                // asked to see it first.
-                println!("This copy updates in place: fresh would download the");
+                // so say what would happen before doing it.
+                println!();
+                println!("This copy updates in place: fresh will download the");
                 println!("{latest} release archive, verify it, and replace");
                 match std::env::current_exe() {
                     Ok(p) => println!("{}.", p.display()),
                     Err(_) => println!("the running binary."),
                 }
-                return Ok(UpdateStatus::ActionRequired);
+                // Someone who asked to see the plan first gets only the plan.
+                if !opts.execution.may_install() {
+                    return Ok(UpdateStatus::ActionRequired);
+                }
+                // Without `--yes`, ask — and when there is nobody to ask, say
+                // in so many words that nothing happened. Exiting on the
+                // description alone read as a successful update.
+                println!();
+                match confirm("Install the update now?") {
+                    Confirmation::Yes => {}
+                    Confirmation::No => {
+                        println!("Update cancelled. Nothing was changed.");
+                        return Ok(UpdateStatus::ActionRequired);
+                    }
+                    Confirmation::NoTerminal => {
+                        println!(
+                            "NOT UPDATED: no terminal to confirm on, and --yes was not given."
+                        );
+                        println!("To install it, run:");
+                        println!();
+                        println!("    {}", rerun_with_yes());
+                        return Ok(UpdateStatus::ActionRequired);
+                    }
+                }
             }
             self_contained(&prov, &latest, &transport, opts).map(|()| UpdateStatus::Done)
         }
         UpdateKind::DownloadPackage => {
             if opts.check_only {
-                println!("An update is available. Run `fresh --cmd update` to fetch it.");
+                println!("An update is available. Run `fresh --update` to fetch it.");
                 return Ok(UpdateStatus::Done);
             }
             package(&prov, &fetched, &transport, opts)
@@ -648,6 +668,54 @@ fn attestation_failure(e: &crate::attestation::AttestationError) -> String {
 }
 
 /// Print a command for the user to run, rather than running it.
+/// The answer to a [`confirm`] prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Confirmation {
+    Yes,
+    No,
+    /// Stdin is not a terminal (a pipe, CI, a script), so nobody was asked.
+    NoTerminal,
+}
+
+/// Ask a y/N question on the terminal. Anything but `y`/`yes` — including an
+/// empty line or end of input — is a no.
+fn confirm(question: &str) -> Confirmation {
+    use std::io::{BufRead, IsTerminal, Write};
+    let stdin = std::io::stdin();
+    if !stdin.is_terminal() {
+        return Confirmation::NoTerminal;
+    }
+    print!("{question} [y/N] ");
+    let _ = std::io::stdout().flush();
+    let mut answer = String::new();
+    if stdin.lock().read_line(&mut answer).is_err() {
+        return Confirmation::No;
+    }
+    parse_confirmation(&answer)
+}
+
+fn parse_confirmation(answer: &str) -> Confirmation {
+    match answer.trim().to_ascii_lowercase().as_str() {
+        "y" | "yes" => Confirmation::Yes,
+        _ => Confirmation::No,
+    }
+}
+
+/// This invocation as the user typed it, with `--yes` added — so the flags
+/// they already gave (`--pre`, `--force`, a mirror) carry over.
+fn rerun_with_yes() -> String {
+    let mut words = vec!["fresh".to_string()];
+    words.extend(std::env::args().skip(1).map(|a| {
+        if a.is_empty() || a.contains(char::is_whitespace) {
+            format!("'{a}'")
+        } else {
+            a
+        }
+    }));
+    words.push("--yes".to_string());
+    words.join(" ")
+}
+
 fn show_command(cmd: &[String]) {
     println!("Install it with:");
     println!();
@@ -935,6 +1003,16 @@ mod tests {
                     .contains(&UpdateChoice::DownloadOnly),
                 "{channel} offers a download-only rung with nothing to download"
             );
+        }
+    }
+
+    #[test]
+    fn only_an_explicit_yes_confirms() {
+        for yes in ["y", "Y", "yes", "YES", " y\n", "yes\r\n"] {
+            assert_eq!(parse_confirmation(yes), Confirmation::Yes, "{yes:?}");
+        }
+        for no in ["", "\n", "n", "no", "nope", "yess", "ok"] {
+            assert_eq!(parse_confirmation(no), Confirmation::No, "{no:?}");
         }
     }
 

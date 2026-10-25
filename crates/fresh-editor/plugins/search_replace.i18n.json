@@ -1,7 +1,7 @@
 {
   "bg": {
     "cmd.search_replace": "Търсене и замяна в проекта",
-    "cmd.search_replace_desc": "Търсене и замяна на текст във всички файлове, проследявани от git",
+    "cmd.search_replace_desc": "Търсене и замяна на текст във всички файлове на проекта",
     "status.ready": "Плъгинът за Търсене и Замяна е гтов",
     "status.enter_pattern": "Задай образец за Търсене...",
     "status.no_matches": "Няма намерени съответствия за \"%{pattern}\"",
@@ -61,7 +61,7 @@
   },
   "cs": {
     "cmd.search_replace": "Hledat a nahradit v projektu",
-    "cmd.search_replace_desc": "Hledat a nahradit text ve vsech souborech sledovanych gitem",
+    "cmd.search_replace_desc": "Hledat a nahradit text ve vsech souborech projektu",
     "status.ready": "Plugin Hledat a nahradit pripraven",
     "status.enter_pattern": "Zadejte vyhledavaci vzor...",
     "status.no_matches": "Zadne shody pro \"%{pattern}\"",
@@ -121,7 +121,7 @@
   },
   "de": {
     "cmd.search_replace": "Suchen und Ersetzen im Projekt",
-    "cmd.search_replace_desc": "Text in allen von Git verfolgten Dateien suchen und ersetzen",
+    "cmd.search_replace_desc": "Text in allen Projektdateien suchen und ersetzen",
     "status.ready": "Suchen & Ersetzen Plugin bereit",
     "status.enter_pattern": "Suchmuster eingeben...",
     "status.no_matches": "Keine Treffer fuer \"%{pattern}\" gefunden",
@@ -181,7 +181,7 @@
   },
   "en": {
     "cmd.search_replace": "Search and Replace in Project",
-    "cmd.search_replace_desc": "Search and replace text across all git-tracked files",
+    "cmd.search_replace_desc": "Search and replace text across all project files",
     "status.ready": "Search & Replace plugin ready",
     "status.enter_pattern": "Enter search pattern...",
     "status.no_matches": "No matches found for \"%{pattern}\"",
@@ -241,7 +241,7 @@
   },
   "es": {
     "cmd.search_replace": "Buscar y Reemplazar en Proyecto",
-    "cmd.search_replace_desc": "Buscar y reemplazar texto en todos los archivos rastreados por git",
+    "cmd.search_replace_desc": "Buscar y reemplazar texto en todos los archivos del proyecto",
     "status.ready": "Plugin de Buscar y Reemplazar listo",
     "status.enter_pattern": "Ingresa el patron de busqueda...",
     "status.no_matches": "No se encontraron coincidencias para \"%{pattern}\"",
@@ -301,7 +301,7 @@
   },
   "fr": {
     "cmd.search_replace": "Rechercher et Remplacer dans le Projet",
-    "cmd.search_replace_desc": "Rechercher et remplacer du texte dans tous les fichiers suivis par git",
+    "cmd.search_replace_desc": "Rechercher et remplacer du texte dans tous les fichiers du projet",
     "status.ready": "Plugin Rechercher et Remplacer pret",
     "status.enter_pattern": "Entrez le motif de recherche...",
     "status.no_matches": "Aucune correspondance trouvee pour \"%{pattern}\"",
@@ -361,7 +361,7 @@
   },
   "it": {
     "cmd.search_replace": "Cerca e sostituisci nel progetto",
-    "cmd.search_replace_desc": "Cerca e sostituisci testo in tutti i file tracciati da git",
+    "cmd.search_replace_desc": "Cerca e sostituisci testo in tutti i file del progetto",
     "status.ready": "Plugin Cerca e Sostituisci pronto",
     "status.enter_pattern": "Inserisci il modello di ricerca...",
     "status.no_matches": "Nessuna corrispondenza trovata per \"%{pattern}\"",
@@ -421,7 +421,7 @@
   },
   "ja": {
     "cmd.search_replace": "プロジェクト内で検索と置換",
-    "cmd.search_replace_desc": "git追跡されているすべてのファイルでテキストを検索して置換",
+    "cmd.search_replace_desc": "プロジェクト内のすべてのファイルでテキストを検索して置換",
     "status.ready": "検索と置換プラグイン準備完了",
     "status.enter_pattern": "検索パターンを入力...",
     "status.no_matches": "\"%{pattern}\" に一致するものが見つかりません",
@@ -481,7 +481,7 @@
   },
   "ko": {
     "cmd.search_replace": "프로젝트에서 검색 및 바꾸기",
-    "cmd.search_replace_desc": "git 추적 파일에서 텍스트 검색 및 바꾸기",
+    "cmd.search_replace_desc": "프로젝트의 모든 파일에서 텍스트 검색 및 바꾸기",
     "status.ready": "검색 및 바꾸기 플러그인 준비 완료",
     "status.enter_pattern": "검색 패턴 입력...",
     "status.no_matches": "\"%{pattern}\"에 대한 일치 항목 없음",
@@ -541,7 +541,7 @@
   },
   "pt-BR": {
     "cmd.search_replace": "Pesquisar e Substituir no Projeto",
-    "cmd.search_replace_desc": "Pesquisar e substituir texto em todos os arquivos rastreados pelo git",
+    "cmd.search_replace_desc": "Pesquisar e substituir texto em todos os arquivos do projeto",
     "status.ready": "Plugin Pesquisar e Substituir pronto",
     "status.enter_pattern": "Digite o padrao de pesquisa...",
     "status.no_matches": "Nenhuma correspondencia encontrada para \"%{pattern}\"",
@@ -601,7 +601,7 @@
   },
   "ru": {
     "cmd.search_replace": "Поиск и замена в проекте",
-    "cmd.search_replace_desc": "Поиск и замена текста во всех файлах, отслеживаемых git",
+    "cmd.search_replace_desc": "Поиск и замена текста во всех файлах проекта",
     "status.ready": "Плагин поиска и замены готов",
     "status.enter_pattern": "Введите шаблон поиска...",
     "status.no_matches": "Совпадений для \"%{pattern}\" не найдено",
@@ -661,7 +661,7 @@
   },
   "th": {
     "cmd.search_replace": "ค้นหาและแทนที่ในโปรเจกต์",
-    "cmd.search_replace_desc": "ค้นหาและแทนที่ข้อความในไฟล์ทั้งหมดที่ git ติดตาม",
+    "cmd.search_replace_desc": "ค้นหาและแทนที่ข้อความในไฟล์ทั้งหมดของโปรเจกต์",
     "status.ready": "ปลั๊กอินค้นหาและแทนที่พร้อมใช้งาน",
     "status.enter_pattern": "ป้อนรูปแบบการค้นหา...",
     "status.no_matches": "ไม่พบรายการที่ตรงกับ \"%{pattern}\"",
@@ -721,7 +721,7 @@
   },
   "uk": {
     "cmd.search_replace": "Пошук та заміна в проекті",
-    "cmd.search_replace_desc": "Пошук та заміна тексту в усіх файлах, відстежуваних git",
+    "cmd.search_replace_desc": "Пошук та заміна тексту в усіх файлах проєкту",
     "status.ready": "Плагін пошуку та заміни готовий",
     "status.enter_pattern": "Введіть шаблон пошуку...",
     "status.no_matches": "Збігів для \"%{pattern}\" не знайдено",
@@ -781,7 +781,7 @@
   },
   "vi": {
     "cmd.search_replace": "Tìm và Thay thế trong Dự án",
-    "cmd.search_replace_desc": "Tìm và thay thế văn bản trong tất cả các tệp được git theo dõi",
+    "cmd.search_replace_desc": "Tìm và thay thế văn bản trong tất cả các tệp của dự án",
     "status.ready": "Plugin Tìm và Thay thế sẵn sàng",
     "status.enter_pattern": "Nhập mẫu tìm kiếm...",
     "status.no_matches": "Không tìm thấy kết quả cho \"%{pattern}\"",
@@ -841,7 +841,7 @@
   },
   "zh-CN": {
     "cmd.search_replace": "在项目中搜索和替换",
-    "cmd.search_replace_desc": "在所有 git 跟踪的文件中搜索和替换文本",
+    "cmd.search_replace_desc": "在项目的所有文件中搜索和替换文本",
     "status.ready": "搜索和替换插件已就绪",
     "status.enter_pattern": "输入搜索模式...",
     "status.no_matches": "未找到 \"%{pattern}\" 的匹配项",

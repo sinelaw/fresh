@@ -247,6 +247,61 @@ type TsCompositeHunk = {
 	ops?: string;
 };
 /**
+* One side of a [`CompareHunk`]: where the hunk's lines are, in lines and
+* in the buffer's own bytes.
+*/
+type CompareSide = {
+	/**
+	* First line of the hunk on this side (0-based).
+	*/
+	start: number;
+	/**
+	* Number of lines (0 when the other side alone has lines here).
+	*/
+	count: number;
+	/**
+	* Byte offset of the hunk's first line — for an empty side, where the
+	* other side's lines would go.
+	*/
+	from: number;
+	/**
+	* Byte offset just past the hunk's last line, terminator included.
+	* `from..to` is what replacing this side's lines of the hunk replaces.
+	*/
+	to: number;
+	/**
+	* Each line's text without its line terminator, as `[start, end)`
+	* byte offsets.
+	*/
+	lines: Array<[number, number]>;
+	/**
+	* For the lines that have a counterpart on the other side (the first
+	* `min(count, other.count)`): the part that differs from it, as
+	* `[start, end)` byte offsets, or `null` when only the line terminator
+	* differs.
+	*/
+	spans: Array<[number, number] | null>;
+};
+/**
+* One hunk of a [`CompareResult`], with the geometry a side-by-side view
+* paints from.
+*/
+type CompareHunk = {
+	/**
+	* The first (left, old) text's side.
+	*/
+	left: CompareSide;
+	/**
+	* The second (right, new) text's side.
+	*/
+	right: CompareSide;
+	/**
+	* The two sides have the same lines but for their terminators: a
+	* missing final newline, or `\r\n` against `\n`.
+	*/
+	eolOnly: boolean;
+};
+/**
 * A run of rows in a plugin-composed buffer that carry code, for the
 * host's highlighter (`setSyntaxRegions`).
 *
@@ -1020,7 +1075,7 @@ type ActionSpec = {
 	* macro — which contains `InsertChar` and other payload actions —
 	* round-trip losslessly through `executeActions`.
 	*/
-	args: Record<string, unknown>;
+	args?: Record<string, unknown>;
 };
 /**
 * Action button for action popups
@@ -3018,6 +3073,33 @@ type BufferSavedDiff = {
 	byte_ranges: Array<[number, number]>;
 };
 /**
+* Result of `compareBuffers`: the line diff of two buffers, measured in
+* their own bytes.
+*/
+type CompareResult = {
+	/**
+	* Hunks in increasing order; empty when the buffers are equal.
+	*/
+	hunks: Array<CompareHunk>;
+	/**
+	* Lines in each buffer, a final unterminated line included.
+	*/
+	leftLines: number;
+	rightLines: number;
+	/**
+	* Each buffer's length in bytes.
+	*/
+	leftLen: number;
+	rightLen: number;
+	/**
+	* Each buffer's content version when it was read. An edit since bumps
+	* it, so a caller about to edit from these offsets can tell they are
+	* stale.
+	*/
+	leftVersion: number;
+	rightVersion: number;
+};
+/**
 * Options for createVirtualBufferInExistingSplit
 */
 type CreateVirtualBufferInExistingSplitOptions = {
@@ -3645,13 +3727,23 @@ interface FreshConfig {
 	*/
 	self_update?: boolean;
 	/**
-	* When on (default), `fresh` with no arguments reattaches to a single background
-	* editor with the workspace dock and your last workspace. When off, it opens a
-	* plain editor in the current directory; runs with files or flags are unaffected.
+	* When on (default), `fresh` with no arguments is `fresh -a`: it runs in a single
+	* background editor that outlives the terminal, and every later bare `fresh`
+	* reattaches to it. When off, it opens a plain editor in this terminal. Runs with
+	* files or flags are unaffected. Formerly `orchestrator_mode`.
 	*
 	* Default: `true`
 	*/
-	orchestrator_mode?: boolean;
+	auto_attach?: boolean;
+	/**
+	* When on, `fresh` with no arguments reopens the workspace you used last,
+	* wherever you type it. When off (default), it opens the current directory.
+	* Works with Auto Attach on or off; runs with files or flags are
+	* unaffected.
+	*
+	* Default: `false`
+	*/
+	open_last_workspace?: boolean;
 	/**
 	* Editor behavior settings (indentation, line numbers, wrapping, etc.)
 	*/
@@ -4459,7 +4551,10 @@ interface FileExplorerConfig {
 		*/
 		show_gitignored?: boolean;
 		/**
-		* Extra patterns to ignore, on top of `.gitignore`.
+		* Extra patterns to ignore, on top of `.gitignore`, written as
+		* `.gitignore` lines relative to the project root (`build/`, `/dist`,
+		* `*.log`, `!keep.log`). The file explorer, Quick Open, project search
+		* and Live Grep all leave out what they match.
 		*/
 		custom_ignore_patterns?: string[];
 		/**
@@ -5046,6 +5141,14 @@ interface TerminalConfig {
 		* Default: `"requested"`
 		*/
 		mouse_forwarding?: TerminalMouseForwarding;
+		/**
+		* Close a shell's tab (and its pane, if it was the only tab) when the
+		* shell exits (`exit`, Ctrl+D) instead of keeping it as read-only
+		* scrollback. Terminals running a command (agents, plugins) are kept.
+		*
+		* Default: `false`
+		*/
+		close_on_exit?: boolean;
 	}
 	/**
 	* When programs in the terminal get mouse events.
@@ -5678,8 +5781,8 @@ interface EditorAPI {
 	*/
 	envActive(): boolean;
 	/**
-	* Whether the editor was launched by a bare `fresh` in Orchestrator mode.
-	* This reflects the launch, not the `orchestrator_mode` preference,
+	* Whether the editor is the daemon a bare `fresh` with Auto Attach on
+	* attaches to. This reflects the launch, not the `auto_attach` preference,
 	* which stays on for `fresh FILE`. Plugins in the mode use it to
 	* override their own settings.
 	*/
@@ -5693,6 +5796,14 @@ interface EditorAPI {
 	* as startup pages.
 	*/
 	fileLaunch(): boolean;
+	/**
+	* The two files of a `fresh --diff LEFT RIGHT` launch, as absolute paths
+	* `[left, right]`; empty for any other launch. The editor doesn't open
+	* them: the plugin that reads this at `ready` does (the bundled
+	* `compare_files` plugin, into the panels of one tab, with a
+	* buffer-group `path` leaf).
+	*/
+	diffLaunch(): string[];
 	/**
 	* Whether the left dock slot is open: a panel is in it, or the host is
 	* holding the column for one its manifest declared. The plugin that
@@ -6097,7 +6208,7 @@ interface EditorAPI {
 	* rewrite) *and* applies the value immediately, so a checkbox a plugin
 	* draws can own a real setting.
 	* 
-	* `path` is dot-separated (e.g. `"orchestrator_mode"`,
+	* `path` is dot-separated (e.g. `"auto_attach"`,
 	* `"editor.tab_size"`). The host refuses a path that is not a real
 	* config setting rather than writing a key that would be silently
 	* dropped on the next load, and says so in the status bar.
@@ -7099,9 +7210,9 @@ interface EditorAPI {
 	/**
 	* Load every saved workspace into `listWindows()`, once.
 	* 
-	* A launch starts with only the workspaces of its own directory (all of
-	* them in Orchestrator mode); the rest of the registry is read on first
-	* use rather than at startup. Call this before listing workspaces to a
+	* A launch starts with only the workspaces of its own directory (plus,
+	* in Orchestrator mode, the one last used); the rest of the registry is
+	* read on first use rather than at startup. Call this before listing workspaces to a
 	* user. Resolves once `listWindows()` includes them all; resolves at
 	* once when they already are.
 	*/
@@ -8048,6 +8159,32 @@ interface EditorAPI {
 	*/
 	diffBaselinePair(oldBaselineId: number, newBaselineId: number): Promise<DiffBaselineResult>;
 	/**
+	* Line diff of two live buffers, measured in their own bytes (async):
+	* each hunk's byte range on both sides, each changed line's text
+	* range, and the part of a paired line that differs from its
+	* counterpart. The texts never cross into the plugin — use this
+	* instead of `getBufferText` + `computeLineDiff` when the offsets will
+	* be used to decorate or edit the buffers.
+	* 
+	* Rejects when either buffer is binary or in large-file mode.
+	*/
+	compareBuffers(leftId: number, rightId: number): Promise<CompareResult>;
+	/**
+	* Replace the bytes `start..end` of a buffer with `text`, as one edit
+	* and one undo step (async). Resolves `true` once applied; `false`,
+	* leaving the buffer as it was, when it is read-only or binary or the
+	* range is outside it.
+	* 
+	* `expectedVersion` (a `leftVersion` / `rightVersion` from
+	* `compareBuffers`) makes the edit conditional: if the buffer has
+	* changed since, the offsets may name other text, so nothing is done
+	* and it resolves `false`.
+	* 
+	* `deleteRange` followed by `insertText` is two edits, so undoing it
+	* stops half way.
+	*/
+	replaceRange(bufferId: number, start: number, end: number, text: string, expectedVersion?: number): Promise<boolean>;
+	/**
 	* Fetch baseline lines for `(startLine, count)` ranges in one
 	* batched call (async). Lines come back without trailing newlines,
 	* grouped per requested range — fetch only the old-side lines a
@@ -8169,7 +8306,13 @@ interface EditorAPI {
 	delay(durationMs: number): Promise<void>;
 	/**
 	* Project-wide grep search (async)
-	* Searches all files in the project, respecting .gitignore.
+	* Searches the project's files by Quick Open's rules, with hidden and
+	* gitignored files left out whatever the explorer shows: in a git
+	* repository, what `git ls-files --cached --others --exclude-standard`
+	* reports (so .gitignore is respected) plus the files of submodules and
+	* nested repositories; otherwise every non-hidden file outside `.git`,
+	* `node_modules`, `target` and similar directories. Either way, files
+	* matched by `file_explorer.custom_ignore_patterns` are left out.
 	* Open buffers with dirty edits are searched in-memory.
 	*/
 	grepProject(pattern: string, fixedString: boolean | null, caseSensitive: boolean | null, maxResults: number | null, wholeWords: boolean | null): Promise<GrepMatch[]>;
@@ -8177,7 +8320,7 @@ interface EditorAPI {
 	* Begin a streaming project-wide search and return a `SearchHandle`.
 	* The producer (host) writes matches at full speed into shared state;
 	* the consumer drains via `handle.take()` at its own cadence. Call
-	* `handle.cancel()` to abort.
+	* `handle.cancel()` to abort. Searches the same files as `grepProject`.
 	*/
 	beginSearch(pattern: string, opts?: {
 		fixedString?: boolean;
@@ -8864,6 +9007,19 @@ interface HookEventMap {
 		missing_servers: string[];
 		user_dismissed: boolean;
 	};
+	/**
+	* An LSP navigation resolved to a URI whose scheme this plugin claimed
+	* with `registerLspUriScheme`. `line` and `character` are 0-indexed, as
+	* the server sent them.
+	*/
+	lsp_open_external_uri: {
+		uri: string;
+		scheme: string;
+		line: number;
+		character: number;
+		language: string;
+		server_name: string;
+	};
 	// ── UI events ────────────────────────────────────────────────────────────
 	/** The user chose an action in a popup opened with `editor.showActionPopup`. */
 	action_popup_result: {
@@ -8910,6 +9066,12 @@ interface HookEventMap {
 		terminal_id: number;
 		window_id: number;
 		last_line: string;
+		/** The terminal's tab title; empty until it has a meaningful one. */
+		terminal_title: string;
+		/** The last OSC 133 / OSC 9;4 activity marker: `true` while a command
+		*  runs, `false` once it has finished, `null` if the program never
+		*  emitted one. */
+		osc_activity: boolean | null;
 	};
 	/** A terminal's process exited. `exit_code` is `null` when a signal ended it. */
 	terminal_exit: {
@@ -9043,6 +9205,12 @@ interface EditorAPI {
 	* buffer: editable, in its tabs, and left open when the group closes.
 	* Each panel has its own view of it, so two panels can show one file in
 	* different view modes. Closing the buffer closes the group.
+	*
+	* A scrollable leaf with `path` shows that file: the buffer that has it
+	* open, as for `bufferId`, or else one the group opens without a tab.
+	* Such a buffer is an ordinary file buffer otherwise (the quit prompt and
+	* hot exit cover it); closing the group closes it if it has no unsaved
+	* changes, and gives it a tab in the group's pane if it has.
 	*
 	* The result names each panel's buffer (`panels`) and split
 	* (`panelSplits`, for `createScrollSyncGroup`, `setLineWrap` and

@@ -86,7 +86,7 @@ fn alt_shift_n_and_p_cycle_the_sidebar_from_any_context() {
     .unwrap();
     // A bare directory shows the explorer by default.
     h.editor_mut()
-        .restore_active_window_on_launch(false)
+        .restore_active_window_on_launch(fresh::app::workspace::ExplorerOnEntry::Enter)
         .unwrap();
     wait_for(&mut h, "the explorer", |h| screen_has(h, "File Explorer"));
 

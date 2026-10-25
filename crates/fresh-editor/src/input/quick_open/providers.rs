@@ -11,6 +11,8 @@ use super::{
 };
 use crate::input::commands::Suggestion;
 use crate::input::fuzzy::FuzzyMatcher;
+use crate::services::project_files;
+use crate::view::file_tree::ignore::CustomIgnore;
 use fresh_i18n::t;
 
 // ============================================================================
@@ -299,17 +301,6 @@ impl QuickOpenProvider for GotoLineProvider {
 // File Provider (default, no prefix)
 // ============================================================================
 
-/// Directory names to skip during file walking (shared with plugin_commands.rs pattern).
-const IGNORED_DIRS: &[&str] = &[
-    ".git",
-    "node_modules",
-    "target",
-    "__pycache__",
-    ".hg",
-    ".svn",
-    ".DS_Store",
-];
-
 const MAX_FILES: usize = 50_000;
 
 /// A single file entry in the Quick Open file list.
@@ -339,13 +330,24 @@ struct FileCache {
     /// the first project's files. Late-arriving results for a stale
     /// cwd are dropped on the same check.
     loaded_cwd: Option<String>,
+    /// Counts loads started: each load's results carry the number it was
+    /// started under, and only the latest load's are kept. A visibility or
+    /// pattern change reloads the same cwd, so the cwd alone can't tell a
+    /// stale load's late results from the current one's.
+    generation: u64,
+    /// The latest load's cancel flag. Each load gets its own, so starting a
+    /// new one can't revive one that was told to stop.
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Provider for finding files in the project.
 ///
-/// Uses `git ls-files` via [`ProcessSpawner`] as the fast path (respects
-/// `.gitignore`, works on remote hosts), then falls back to recursive
-/// directory walking via the [`FileSystem`] trait.
+/// Lists the files [`project_files`] defines: `git ls-files` via
+/// [`ProcessSpawner`] as the fast path (respects `.gitignore` unless the
+/// explorer shows gitignored files, works on remote hosts), then a recursive
+/// directory walk via the [`FileSystem`] trait.
+///
+/// [`project_files`]: crate::services::project_files
 ///
 /// File enumeration runs on a background thread to avoid blocking the UI.
 /// When the cache is empty, `suggestions()` returns a "Loading…" placeholder
@@ -360,8 +362,11 @@ pub struct FileProvider {
     process_spawner: std::sync::Arc<dyn crate::services::remote::ProcessSpawner>,
     runtime: Option<crate::services::runtime::LiveRuntime>,
     async_sender: Option<std::sync::mpsc::Sender<crate::services::async_bridge::AsyncMessage>>,
-    /// Cancel flag shared with the background walk task.
-    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    show_hidden: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// List files `.gitignore` leaves out too (Git repos only).
+    include_gitignored: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// `file_explorer.custom_ignore_patterns`, as `.gitignore` lines.
+    custom_ignore_patterns: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 impl FileProvider {
@@ -376,14 +381,62 @@ impl FileProvider {
                 files: None,
                 loading: false,
                 loaded_cwd: None,
+                generation: 0,
+                cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             })),
             frecency: std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
             filesystem,
             process_spawner,
             runtime,
             async_sender,
-            cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            show_hidden: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            include_gitignored: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            custom_ignore_patterns: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         }
+    }
+
+    /// Match the project explorer's hidden-file setting for non-Git walks.
+    /// A change makes the existing file list stale.
+    pub fn set_visibility(&self, show_hidden: bool) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let hidden_changed = self.show_hidden.swap(show_hidden, Relaxed) != show_hidden;
+        if hidden_changed {
+            self.clear_cache();
+        }
+    }
+
+    /// Match the project explorer showing gitignored files (Show Gitignored
+    /// Files on, or `respect_gitignore` off) in Git repos. A change makes the
+    /// existing file list stale.
+    pub fn set_include_gitignored(&self, include_gitignored: bool) {
+        use std::sync::atomic::Ordering::Relaxed;
+        if self.include_gitignored.swap(include_gitignored, Relaxed) != include_gitignored {
+            self.clear_cache();
+        }
+    }
+
+    /// Leave out what `file_explorer.custom_ignore_patterns` ignores. A change
+    /// makes the existing file list stale.
+    pub fn set_custom_ignore_patterns(&self, patterns: &[String]) {
+        let changed = match self.custom_ignore_patterns.lock() {
+            Ok(mut current) if current.as_slice() != patterns => {
+                *current = patterns.to_vec();
+                true
+            }
+            _ => false,
+        };
+        if changed {
+            self.clear_cache();
+        }
+    }
+
+    fn custom_ignore(&self, cwd: &str) -> CustomIgnore {
+        let patterns = self
+            .custom_ignore_patterns
+            .lock()
+            .map(|p| p.clone())
+            .unwrap_or_default();
+        CustomIgnore::new(std::path::Path::new(cwd), &patterns)
     }
 
     /// Re-point this provider at a new authority's filesystem + process
@@ -405,9 +458,9 @@ impl FileProvider {
 
     /// Clear the file cache (e.g., after file system changes).
     pub fn clear_cache(&self) {
-        self.cancel
-            .store(true, std::sync::atomic::Ordering::Relaxed);
         if let Ok(mut c) = self.cache.lock() {
+            c.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            c.generation += 1;
             c.files = None;
             c.loading = false;
             c.loaded_cwd = None;
@@ -417,20 +470,19 @@ impl FileProvider {
     /// Cancel any in-progress background file load.
     /// Called when the user closes Quick Open so we don't keep walking.
     pub fn cancel_loading(&self) {
-        self.cancel
-            .store(true, std::sync::atomic::Ordering::Relaxed);
         if let Ok(mut c) = self.cache.lock() {
+            c.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
             c.loading = false;
         }
     }
 
     /// Update the file cache with final results from a completed
-    /// background load. Dropped if `cwd` no longer matches the cache's
-    /// in-flight cwd — i.e. the user switched projects mid-load, so
-    /// these results are stale.
-    pub fn set_cache(&self, cwd: &str, files: std::sync::Arc<Vec<FileEntry>>) {
+    /// background load. Dropped unless they come from the latest load
+    /// (`generation`) for the cache's cwd — otherwise the user switched
+    /// projects, or a setting changed, mid-load and they are stale.
+    pub fn set_cache(&self, cwd: &str, generation: u64, files: std::sync::Arc<Vec<FileEntry>>) {
         if let Ok(mut c) = self.cache.lock() {
-            if c.loaded_cwd.as_deref() != Some(cwd) {
+            if c.loaded_cwd.as_deref() != Some(cwd) || c.generation != generation {
                 return;
             }
             c.files = Some(files);
@@ -440,9 +492,14 @@ impl FileProvider {
 
     /// Update the file cache with partial results while the background scan
     /// is still running.  Unlike [`set_cache`], this keeps `loading = true`.
-    pub fn set_partial_cache(&self, cwd: &str, files: std::sync::Arc<Vec<FileEntry>>) {
+    pub fn set_partial_cache(
+        &self,
+        cwd: &str,
+        generation: u64,
+        files: std::sync::Arc<Vec<FileEntry>>,
+    ) {
         if let Ok(mut c) = self.cache.lock() {
-            if c.loaded_cwd.as_deref() != Some(cwd) {
+            if c.loaded_cwd.as_deref() != Some(cwd) || c.generation != generation {
                 return;
             }
             c.files = Some(files);
@@ -482,6 +539,12 @@ impl FileProvider {
     /// For example, if `cwd` is `/` and `query` is `etc/hosts`, this will
     /// list `/etc/` and return every file whose name starts with `hosts`
     /// (e.g. `etc/hosts`, `etc/hosts.allow`, `etc/hosts.deny`).
+    ///
+    /// Dot files follow Show Hidden Files, except that a typed name starting
+    /// with `.` matches dot files regardless, as shell completion does.
+    /// Likewise, what `custom_ignore_patterns` leave out stays out unless the
+    /// typed path goes into an ignored directory (`build/`), which is an
+    /// explicit request for it. `.gitignore` is not consulted here.
     fn probe_prefix(&self, cwd: &str, query: &str) -> Vec<FileEntry> {
         use std::path::Path;
 
@@ -489,6 +552,12 @@ impl FileProvider {
             return vec![];
         }
 
+        let show_hidden = self.show_hidden.load(std::sync::atomic::Ordering::Relaxed);
+        let custom_ignore = self.custom_ignore(cwd);
+        let left_out = |dir: &str, rel: &str| {
+            let typed_into_ignored = !dir.is_empty() && custom_ignore.matches(Path::new(dir), true);
+            !typed_into_ignored && custom_ignore.matches(Path::new(rel), false)
+        };
         let abs_path = Path::new(cwd).join(query);
         let mut results = Vec::new();
 
@@ -496,8 +565,11 @@ impl FileProvider {
         if let Ok(entries) = self.filesystem.read_dir(&abs_path) {
             let query_trimmed = query.trim_end_matches('/');
             for entry in entries {
-                if entry.is_file() && !entry.name.starts_with('.') {
+                if entry.is_file() && (show_hidden || !entry.name.starts_with('.')) {
                     let rel = format!("{}/{}", query_trimmed, entry.name);
+                    if left_out(query_trimmed, &rel) {
+                        continue;
+                    }
                     results.push(FileEntry {
                         frecency_score: self.get_frecency_score(&rel),
                         relative_path: rel,
@@ -527,9 +599,10 @@ impl FileProvider {
             Err(_) => return results,
         };
 
+        let include_hidden = show_hidden || basename.starts_with('.');
         if let Ok(entries) = self.filesystem.read_dir(parent) {
             for entry in entries {
-                if entry.name.starts_with('.') {
+                if !include_hidden && entry.name.starts_with('.') {
                     continue;
                 }
                 if !entry.name.starts_with(basename) {
@@ -541,6 +614,9 @@ impl FileProvider {
                     } else {
                         format!("{}/{}", rel_parent, entry.name)
                     };
+                    if left_out(&rel_parent, &rel) {
+                        continue;
+                    }
                     results.push(FileEntry {
                         frecency_score: self.get_frecency_score(&rel),
                         relative_path: rel,
@@ -575,7 +651,8 @@ impl FileProvider {
         } else {
             // Stale cwd: cancel any in-flight load for the old cwd and
             // reset so the load below starts fresh for `cwd`.
-            self.cancel
+            cache
+                .cancel
                 .store(true, std::sync::atomic::Ordering::Relaxed);
             cache.files = None;
             cache.loading = false;
@@ -583,6 +660,8 @@ impl FileProvider {
 
         // No cache for this cwd, not loading — kick off background load
         cache.loaded_cwd = Some(cwd.to_string());
+        cache.generation += 1;
+        let generation = cache.generation;
         let (sender, runtime) = match (&self.async_sender, &self.runtime) {
             (Some(s), Some(rt)) => (s.clone(), rt.clone()),
             _ => {
@@ -593,18 +672,36 @@ impl FileProvider {
         };
 
         cache.loading = true;
-        // Reset cancel flag for this new load
-        self.cancel
-            .store(false, std::sync::atomic::Ordering::Relaxed);
-        let cancel = std::sync::Arc::clone(&self.cancel);
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        cache.cancel = std::sync::Arc::clone(&cancel);
         let frecency = std::sync::Arc::clone(&self.frecency);
         let filesystem = std::sync::Arc::clone(&self.filesystem);
         let process_spawner = std::sync::Arc::clone(&self.process_spawner);
+        let show_hidden = self.show_hidden.load(std::sync::atomic::Ordering::Relaxed);
+        let include_gitignored = self
+            .include_gitignored
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let custom_ignore = self.custom_ignore(cwd);
         let cwd = cwd.to_string();
 
         runtime.spawn_blocking(move || {
             // Fast path: git ls-files returns everything at once.
-            if let Some(files) = try_git_files_blocking(&process_spawner, &cwd) {
+            let listing = project_files::Listing {
+                include_hidden: show_hidden,
+                include_gitignored,
+                custom_ignore: &custom_ignore,
+            };
+            if let Some(files) = project_files::git_files_blocking(
+                &process_spawner,
+                &*filesystem,
+                std::path::Path::new(&cwd),
+                listing,
+                &cancel,
+                MAX_FILES,
+            ) {
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                }
                 let frecency_map = frecency.read().ok();
                 let entries: Vec<FileEntry> = files
                     .into_iter()
@@ -625,6 +722,7 @@ impl FileProvider {
                 drop(sender.send(
                     crate::services::async_bridge::AsyncMessage::QuickOpenFilesLoaded {
                         cwd: cwd.clone(),
+                        generation,
                         files: std::sync::Arc::new(entries),
                         complete: true,
                     },
@@ -634,7 +732,16 @@ impl FileProvider {
 
             // Slow path: directory walk with periodic incremental updates so
             // the UI can show partial results while the scan continues.
-            walk_dir_with_updates(&*filesystem, &cwd, &cancel, &frecency, &sender);
+            walk_dir_with_updates(
+                &*filesystem,
+                &cwd,
+                generation,
+                &cancel,
+                &frecency,
+                &sender,
+                show_hidden,
+                &custom_ignore,
+            );
         });
 
         None
@@ -642,11 +749,12 @@ impl FileProvider {
 
     /// Synchronous fallback when no tokio runtime is available (e.g., tests).
     fn load_files_sync(&self, cwd: &str) -> Option<std::sync::Arc<Vec<FileEntry>>> {
+        let generation = self.cache.lock().map(|c| c.generation).unwrap_or(0);
+        let custom_ignore = self.custom_ignore(cwd);
         let files = self
-            .try_git_files(cwd)
-            .or_else(|| self.try_walk_dir(cwd))
+            .try_git_files(cwd, &custom_ignore)
+            .or_else(|| self.try_walk_dir(cwd, &custom_ignore))
             .unwrap_or_default();
-
         let entries: Vec<FileEntry> = files
             .into_iter()
             .map(|path| FileEntry {
@@ -656,20 +764,41 @@ impl FileProvider {
             .collect();
 
         let files = std::sync::Arc::new(entries);
-        self.set_cache(cwd, std::sync::Arc::clone(&files));
+        self.set_cache(cwd, generation, std::sync::Arc::clone(&files));
         Some(files)
     }
 
     /// Synchronous `try_git_files` — used by the sync fallback path.
-    fn try_git_files(&self, cwd: &str) -> Option<Vec<String>> {
+    fn try_git_files(&self, cwd: &str, custom_ignore: &CustomIgnore) -> Option<Vec<String>> {
         let runtime = self.runtime.as_ref()?;
-        try_git_files_with_handle(&self.process_spawner, cwd, runtime.handle())
+        let listing = project_files::Listing {
+            include_hidden: self.show_hidden.load(std::sync::atomic::Ordering::Relaxed),
+            include_gitignored: self
+                .include_gitignored
+                .load(std::sync::atomic::Ordering::Relaxed),
+            custom_ignore,
+        };
+        project_files::git_files_with_handle(
+            &self.process_spawner,
+            runtime.handle(),
+            &*self.filesystem,
+            std::path::Path::new(cwd),
+            listing,
+            &std::sync::atomic::AtomicBool::new(false),
+            MAX_FILES,
+        )
     }
 
     /// Synchronous `try_walk_dir` — used by the sync fallback path.
-    fn try_walk_dir(&self, cwd: &str) -> Option<Vec<String>> {
+    fn try_walk_dir(&self, cwd: &str, custom_ignore: &CustomIgnore) -> Option<Vec<String>> {
         let cancel = std::sync::atomic::AtomicBool::new(false);
-        try_walk_dir_blocking(&*self.filesystem, cwd, &cancel)
+        try_walk_dir_blocking(
+            &*self.filesystem,
+            cwd,
+            &cancel,
+            self.show_hidden.load(std::sync::atomic::Ordering::Relaxed),
+            custom_ignore,
+        )
     }
 }
 
@@ -677,66 +806,13 @@ impl FileProvider {
 // Free functions used by both the sync path and the background task
 // ---------------------------------------------------------------------------
 
-/// List files via `git ls-files` using a `ProcessSpawner` (blocking).
-///
-/// Called from `spawn_blocking`, which is already running on the runtime's
-/// blocking pool — so the runtime provably exists for the duration, and
-/// `Handle::current` is sound here in a way that storing one never is.
-fn try_git_files_blocking(
-    spawner: &std::sync::Arc<dyn crate::services::remote::ProcessSpawner>,
-    cwd: &str,
-) -> Option<Vec<String>> {
-    // Running on the runtime's own blocking pool, so the runtime provably
-    // exists for as long as this closure does — the liveness a `Handle` cannot
-    // carry on its own is established by where we are, not by the handle.
-    #[allow(clippy::disallowed_types)]
-    let handle = tokio::runtime::Handle::try_current().ok()?;
-    try_git_files_with_handle(spawner, cwd, &handle)
-}
-
-/// `handle` must belong to a runtime the caller has already established is
-/// alive — either by holding a `LiveRuntime` or by running on that runtime's
-/// blocking pool. A `Handle` carries no such guarantee on its own, which is
-/// why nothing stores one; see `services::runtime::LiveRuntime`.
-#[allow(clippy::disallowed_types)] // liveness established by both callers, above
-fn try_git_files_with_handle(
-    spawner: &std::sync::Arc<dyn crate::services::remote::ProcessSpawner>,
-    cwd: &str,
-    handle: &tokio::runtime::Handle,
-) -> Option<Vec<String>> {
-    #[allow(clippy::disallowed_methods)] // liveness established by the caller, above
-    let result = handle
-        .block_on(spawner.spawn(
-            "git".to_string(),
-            vec![
-                "ls-files".to_string(),
-                "--cached".to_string(),
-                "--others".to_string(),
-                "--exclude-standard".to_string(),
-            ],
-            Some(cwd.to_string()),
-        ))
-        .ok()?;
-
-    if result.exit_code != 0 {
-        return None;
-    }
-
-    let files: Vec<String> = result
-        .stdout
-        .lines()
-        .filter(|line| !line.is_empty() && !line.starts_with(".git/"))
-        .map(|s| s.to_string())
-        .collect();
-
-    Some(files)
-}
-
-/// Walk the directory tree via `FileSystem::walk_files` (blocking).
+/// Walk the directory tree via `FileSystem::walk` (blocking).
 fn try_walk_dir_blocking(
     fs: &dyn crate::model::filesystem::FileSystem,
     cwd: &str,
     cancel: &std::sync::atomic::AtomicBool,
+    show_hidden: bool,
+    custom_ignore: &CustomIgnore,
 ) -> Option<Vec<String>> {
     use std::path::Path;
 
@@ -744,12 +820,17 @@ fn try_walk_dir_blocking(
     let mut files = Vec::new();
 
     // Errors (e.g., root doesn't exist) are treated as "no files found".
-    drop(
-        fs.walk_files(base, IGNORED_DIRS, cancel, &mut |_path, rel| {
+    drop(project_files::walk_files(
+        fs,
+        base,
+        show_hidden,
+        custom_ignore,
+        cancel,
+        &mut |_, rel| {
             files.push(rel.to_string());
             files.len() < MAX_FILES
-        }),
-    );
+        },
+    ));
 
     if files.is_empty() {
         None
@@ -767,9 +848,12 @@ const WALK_UPDATE_INTERVAL: std::time::Duration = std::time::Duration::from_mill
 fn walk_dir_with_updates(
     fs: &dyn crate::model::filesystem::FileSystem,
     cwd: &str,
+    generation: u64,
     cancel: &std::sync::atomic::AtomicBool,
     frecency: &std::sync::RwLock<std::collections::HashMap<String, FrecencyData>>,
     sender: &std::sync::mpsc::Sender<crate::services::async_bridge::AsyncMessage>,
+    show_hidden: bool,
+    custom_ignore: &CustomIgnore,
 ) {
     use std::path::Path;
 
@@ -778,45 +862,53 @@ fn walk_dir_with_updates(
     let mut last_send = std::time::Instant::now();
     let mut receiver_gone = false;
 
-    // `walk_files` errors (e.g. root doesn't exist, permission denied at the
+    // `walk` errors (e.g. root doesn't exist, permission denied at the
     // top level) are treated as "no files found" — any paths already
     // collected in `paths` are still surfaced via the final send below.
-    if let Err(e) = fs.walk_files(base, IGNORED_DIRS, cancel, &mut |_path, rel| {
-        paths.push(rel.to_string());
+    if let Err(e) = project_files::walk_files(
+        fs,
+        base,
+        show_hidden,
+        custom_ignore,
+        cancel,
+        &mut |_, rel| {
+            paths.push(rel.to_string());
 
-        // Send a partial snapshot at regular intervals.
-        if last_send.elapsed() >= WALK_UPDATE_INTERVAL {
-            let frecency_map = frecency.read().ok();
-            let entries: Vec<FileEntry> = paths
-                .iter()
-                .map(|p| FileEntry {
-                    frecency_score: frecency_map
-                        .as_ref()
-                        .and_then(|m| m.get(p).map(frecency_score))
-                        .unwrap_or(0.0),
-                    relative_path: p.clone(),
-                })
-                .collect();
-            if sender
-                .send(
-                    crate::services::async_bridge::AsyncMessage::QuickOpenFilesLoaded {
-                        cwd: cwd.to_string(),
-                        files: std::sync::Arc::new(entries),
-                        complete: false,
-                    },
-                )
-                .is_err()
-            {
-                // Receiver dropped (editor shutting down) — stop walking
-                // so we don't waste CPU on results nobody will see.
-                receiver_gone = true;
-                return false;
+            // Send a partial snapshot at regular intervals.
+            if last_send.elapsed() >= WALK_UPDATE_INTERVAL {
+                let frecency_map = frecency.read().ok();
+                let entries: Vec<FileEntry> = paths
+                    .iter()
+                    .map(|p| FileEntry {
+                        frecency_score: frecency_map
+                            .as_ref()
+                            .and_then(|m| m.get(p).map(frecency_score))
+                            .unwrap_or(0.0),
+                        relative_path: p.clone(),
+                    })
+                    .collect();
+                if sender
+                    .send(
+                        crate::services::async_bridge::AsyncMessage::QuickOpenFilesLoaded {
+                            cwd: cwd.to_string(),
+                            generation,
+                            files: std::sync::Arc::new(entries),
+                            complete: false,
+                        },
+                    )
+                    .is_err()
+                {
+                    // Receiver dropped (editor shutting down) — stop walking
+                    // so we don't waste CPU on results nobody will see.
+                    receiver_gone = true;
+                    return false;
+                }
+                last_send = std::time::Instant::now();
             }
-            last_send = std::time::Instant::now();
-        }
 
-        paths.len() < MAX_FILES
-    }) {
+            paths.len() < MAX_FILES
+        },
+    ) {
         tracing::debug!("Quick Open walk_files failed: {}", e);
     }
 
@@ -843,6 +935,7 @@ fn walk_dir_with_updates(
     drop(sender.send(
         crate::services::async_bridge::AsyncMessage::QuickOpenFilesLoaded {
             cwd: cwd.to_string(),
+            generation,
             files: std::sync::Arc::new(entries),
             complete: true,
         },
@@ -1451,6 +1544,96 @@ mod tests {
         assert_eq!(suggestions[0].value.as_deref(), Some("visible.txt"));
     }
 
+    fn file_values(provider: &FileProvider, base: &std::path::Path) -> Vec<String> {
+        let context = make_test_context(&base.display().to_string());
+        provider
+            .suggestions("", &context)
+            .into_iter()
+            .filter_map(|s| s.value)
+            .collect()
+    }
+
+    /// `custom_ignore_patterns` leave files out of Quick Open whether or not
+    /// hidden files are shown, read with `.gitignore` syntax.
+    #[test]
+    fn test_file_provider_leaves_out_custom_ignore_patterns() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        std::fs::create_dir_all(base.join(".cache/pip")).unwrap();
+        std::fs::write(base.join(".cache/pip/wheel.bin"), b"").unwrap();
+        std::fs::create_dir_all(base.join("src/build")).unwrap();
+        std::fs::write(base.join("src/build/out.o"), b"").unwrap();
+        std::fs::write(base.join("src/main.rs"), b"").unwrap();
+        std::fs::write(base.join("debug.log"), b"").unwrap();
+        std::fs::write(base.join("keep.log"), b"").unwrap();
+        std::fs::write(base.join(".env"), b"").unwrap();
+
+        let provider = make_file_provider();
+        provider.set_custom_ignore_patterns(&[
+            ".cache/".to_string(),
+            "build/".to_string(),
+            "*.log".to_string(),
+            "!keep.log".to_string(),
+        ]);
+        for show_hidden in [false, true] {
+            provider.set_visibility(show_hidden);
+            let values = file_values(&provider, base);
+            assert!(values.contains(&"src/main.rs".to_string()), "{values:?}");
+            assert!(values.contains(&"keep.log".to_string()), "{values:?}");
+            for ignored in [".cache/pip/wheel.bin", "src/build/out.o", "debug.log"] {
+                assert!(
+                    !values.contains(&ignored.to_string()),
+                    "{ignored}: {values:?}"
+                );
+            }
+            assert_eq!(
+                values.contains(&".env".to_string()),
+                show_hidden,
+                "{values:?}"
+            );
+        }
+
+        // Dropping the patterns brings the files back.
+        provider.set_custom_ignore_patterns(&[]);
+        provider.set_visibility(true);
+        let values = file_values(&provider, base);
+        assert!(
+            values.contains(&".cache/pip/wheel.bin".to_string()),
+            "{values:?}"
+        );
+        assert!(values.contains(&"debug.log".to_string()), "{values:?}");
+    }
+
+    #[test]
+    fn test_file_provider_shows_hidden_files_in_non_git_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        std::fs::write(base.join("visible.txt"), b"").unwrap();
+        std::fs::write(base.join(".hidden"), b"").unwrap();
+        std::fs::create_dir(base.join(".config")).unwrap();
+        std::fs::write(base.join(".config/settings.json"), b"").unwrap();
+
+        let provider = make_file_provider();
+        let context = make_test_context(&base.display().to_string());
+        provider.set_visibility(true);
+        let suggestions = provider.suggestions("", &context);
+        let values: Vec<_> = suggestions
+            .iter()
+            .filter_map(|s| s.value.as_deref())
+            .collect();
+        assert!(values.contains(&".hidden"));
+        assert!(values.contains(&".config/settings.json"));
+
+        provider.set_visibility(false);
+        let suggestions = provider.suggestions("", &context);
+        let values: Vec<_> = suggestions
+            .iter()
+            .filter_map(|s| s.value.as_deref())
+            .collect();
+        assert!(!values.contains(&".hidden"));
+        assert!(!values.contains(&".config/settings.json"));
+    }
+
     #[test]
     fn test_file_provider_fuzzy_filter() {
         let dir = tempfile::tempdir().unwrap();
@@ -1569,6 +1752,108 @@ mod tests {
         );
     }
 
+    /// Dot files in a typed directory follow Show Hidden Files; a typed name
+    /// that itself starts with `.` finds dot files either way.
+    #[test]
+    fn test_probe_prefix_follows_show_hidden() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        std::fs::write(base.join(".env"), b"").unwrap();
+        std::fs::write(base.join(".envrc"), b"").unwrap();
+        std::fs::write(base.join("env.rs"), b"").unwrap();
+        std::fs::create_dir(base.join("conf")).unwrap();
+        std::fs::write(base.join("conf").join(".secret"), b"").unwrap();
+        std::fs::write(base.join("conf").join("app.toml"), b"").unwrap();
+
+        let provider = make_file_provider();
+        let cwd = base.display().to_string();
+        let probe = |query: &str| -> Vec<String> {
+            let mut paths: Vec<String> = provider
+                .probe_prefix(&cwd, query)
+                .into_iter()
+                .map(|e| e.relative_path)
+                .collect();
+            paths.sort();
+            paths
+        };
+
+        for show_hidden in [false, true] {
+            provider.set_visibility(show_hidden);
+            // A typed leading `.` asks for dot files, whatever the setting.
+            assert_eq!(probe(".env"), vec![".env", ".envrc"], "{show_hidden}");
+            assert_eq!(probe("conf/.s"), vec!["conf/.secret"], "{show_hidden}");
+        }
+
+        provider.set_visibility(false);
+        assert_eq!(probe("conf"), vec!["conf/app.toml"]);
+        assert_eq!(probe("e"), vec!["env.rs"]);
+
+        provider.set_visibility(true);
+        assert_eq!(probe("conf"), vec!["conf/.secret", "conf/app.toml"]);
+        assert_eq!(probe("conf/"), vec!["conf/.secret", "conf/app.toml"]);
+        assert_eq!(probe("e"), vec!["env.rs"]);
+    }
+
+    /// Typing the start of a name doesn't bring back what
+    /// `custom_ignore_patterns` leave out; typing a path into an ignored
+    /// directory does.
+    #[test]
+    fn test_probe_prefix_follows_custom_ignore_patterns() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        std::fs::write(base.join("debug.log"), b"").unwrap();
+        std::fs::write(base.join("debug.rs"), b"").unwrap();
+        std::fs::create_dir(base.join("src")).unwrap();
+        std::fs::write(base.join("src").join("trace.log"), b"").unwrap();
+        std::fs::write(base.join("src").join("trace.rs"), b"").unwrap();
+        std::fs::create_dir(base.join("build")).unwrap();
+        std::fs::write(base.join("build").join("out.txt"), b"").unwrap();
+
+        let provider = make_file_provider();
+        provider.set_custom_ignore_patterns(&["*.log".to_string(), "build/".to_string()]);
+        let cwd = base.display().to_string();
+        let probe = |query: &str| -> Vec<String> {
+            let mut paths: Vec<String> = provider
+                .probe_prefix(&cwd, query)
+                .into_iter()
+                .map(|e| e.relative_path)
+                .collect();
+            paths.sort();
+            paths
+        };
+
+        assert_eq!(probe("debug"), vec!["debug.rs"]);
+        assert_eq!(probe("src/"), vec!["src/trace.rs"]);
+        assert_eq!(probe("src/tr"), vec!["src/trace.rs"]);
+        assert_eq!(probe("build/"), vec!["build/out.txt"]);
+        assert_eq!(probe("build/o"), vec!["build/out.txt"]);
+    }
+
+    /// Changing whether gitignored files are listed drops the cached list.
+    #[test]
+    fn test_set_include_gitignored_clears_cache_on_change() {
+        let provider = make_file_provider();
+        let seed = |provider: &FileProvider| {
+            let mut c = provider.cache.lock().unwrap();
+            c.loaded_cwd = Some("/proj".to_string());
+            c.files = Some(std::sync::Arc::new(vec![]));
+        };
+        let cached = |provider: &FileProvider| provider.cache.lock().unwrap().files.is_some();
+
+        seed(&provider);
+        provider.set_include_gitignored(false);
+        assert!(cached(&provider), "an unchanged setting keeps the cache");
+
+        provider.set_include_gitignored(true);
+        assert!(!cached(&provider), "turning it on must reload");
+
+        seed(&provider);
+        provider.set_include_gitignored(true);
+        assert!(cached(&provider), "an unchanged setting keeps the cache");
+        provider.set_include_gitignored(false);
+        assert!(!cached(&provider), "turning it off must reload");
+    }
+
     // ====================================================================
     // Prefix scoring boost tests
     // ====================================================================
@@ -1612,7 +1897,7 @@ mod tests {
             relative_path: "foo.rs".to_string(),
             frecency_score: 0.0,
         }]);
-        provider.set_partial_cache("/proj", partial);
+        provider.set_partial_cache("/proj", 0, partial);
 
         assert!(provider.is_loading());
         assert!(provider.cache.lock().unwrap().files.is_some());
@@ -1622,7 +1907,7 @@ mod tests {
             relative_path: "foo.rs".to_string(),
             frecency_score: 0.0,
         }]);
-        provider.set_cache("/proj", final_files);
+        provider.set_cache("/proj", 0, final_files);
 
         assert!(!provider.is_loading());
 
@@ -1631,11 +1916,36 @@ mod tests {
             relative_path: "other.rs".to_string(),
             frecency_score: 0.0,
         }]);
-        provider.set_cache("/different", stale);
+        provider.set_cache("/different", 0, stale);
         assert_eq!(
             provider.cache.lock().unwrap().files.as_ref().unwrap()[0].relative_path,
             "foo.rs",
             "results for a different cwd must not overwrite the current cache"
         );
+
+        // A load started before a setting change (an older generation) is
+        // stale too, even for the same cwd.
+        provider.clear_cache();
+        {
+            let mut cache = provider.cache.lock().unwrap();
+            cache.loading = true;
+            cache.loaded_cwd = Some("/proj".to_string());
+        }
+        let generation = provider.cache.lock().unwrap().generation;
+        let old = std::sync::Arc::new(vec![FileEntry {
+            relative_path: ".hidden".to_string(),
+            frecency_score: 0.0,
+        }]);
+        provider.set_cache("/proj", generation - 1, old);
+        assert!(
+            provider.cache.lock().unwrap().files.is_none(),
+            "an older load's results must not land in the cache"
+        );
+        let current = std::sync::Arc::new(vec![FileEntry {
+            relative_path: "foo.rs".to_string(),
+            frecency_score: 0.0,
+        }]);
+        provider.set_cache("/proj", generation, current);
+        assert!(provider.cache.lock().unwrap().files.is_some());
     }
 }

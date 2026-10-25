@@ -80,6 +80,11 @@ pub fn run_gui(
         files.iter().map(|f| parse_file_location(f)).collect();
 
     let show_file_explorer = file_locations.is_empty();
+    let explorer = if show_file_explorer {
+        crate::app::workspace::ExplorerOnEntry::Enter
+    } else {
+        crate::app::workspace::ExplorerOnEntry::Keep
+    };
     let no_session_flag = no_session;
 
     // Configure wgpu reset colors and ANSI color table based on theme.
@@ -155,7 +160,7 @@ pub fn run_gui(
             // persisted explorer visibility, and only a brand-new
             // directory defaults to the tree — so a closed explorer is
             // not re-opened on every relaunch.
-            match editor.restore_active_window_on_launch(!show_file_explorer) {
+            match editor.restore_active_window_on_launch(explorer) {
                 Ok(true) => tracing::info!("Workspace restored"),
                 Ok(false) => tracing::debug!("No previous workspace"),
                 Err(e) => tracing::warn!("Failed to restore workspace: {}", e),
@@ -163,7 +168,7 @@ pub fn run_gui(
         } else if show_file_explorer {
             // No session restore (e.g. --no-session) but a bare directory:
             // still default to showing the tree.
-            editor.apply_active_window_explorer_default(!show_file_explorer, false);
+            editor.apply_active_window_explorer_default(explorer, false);
         }
 
         if let Err(e) = editor.start_recovery_session() {

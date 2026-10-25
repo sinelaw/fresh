@@ -134,6 +134,39 @@ mod integration_tests {
         std::fs::remove_dir_all(&temp_dir).ok();
     }
 
+    /// `fresh -a` in a directory too deep for its socket path to fit
+    /// `sun_path`: the daemon used to die in `bind(2)`. It now binds under a
+    /// folded name and a client finds it from the same directory.
+    #[cfg(unix)]
+    #[test]
+    fn a_working_dir_daemon_starts_in_a_long_directory() {
+        use crate::server::editor_server::EditorServer;
+
+        let temp_dir = test_temp_dir("longdir");
+        let deep = temp_dir.join("x".repeat(120)).join("proj");
+        std::fs::create_dir_all(&deep).unwrap();
+        let mut config = editor_server_config(&deep, "unused", None);
+        config.session_name = None;
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handle = thread::spawn(move || {
+            let mut server = EditorServer::new(config).unwrap();
+            tx.send(server.shutdown_handle()).unwrap();
+            server.run()
+        });
+        let shutdown = rx.recv().unwrap();
+
+        let paths = SocketPaths::for_working_dir(&deep).unwrap();
+        let conn = ClientConnection::connect(&paths).unwrap();
+        let reply = client_hello(&conn);
+        assert!(matches!(reply, ServerControl::Hello(_)), "{reply:?}");
+
+        shutdown.store(true, Ordering::SeqCst);
+        drop(handle.join());
+        drop(paths.cleanup());
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
     /// A liveness probe — a connection to the control socket that hangs up at
     /// once — leaves the daemon serving: the next client's handshake is
     /// answered. The daemon used to wait for a data stream to go with the

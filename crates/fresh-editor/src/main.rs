@@ -56,6 +56,17 @@ struct Cli {
     #[arg(long, num_args = 1.., value_name = "COMMAND", allow_hyphen_values = true)]
     cmd: Vec<String>,
 
+    /// Update fresh to the latest release; same as `--cmd update`, and takes
+    /// the same flags (`fresh --update --yes`, `fresh --update --check`)
+    #[arg(
+        long,
+        num_args = 0..,
+        value_name = "FLAGS",
+        allow_hyphen_values = true,
+        conflicts_with_all = ["cmd", "files"]
+    )]
+    update: Option<Vec<String>>,
+
     /// Print the guide for driving this editor from a shell
     /// The one entry point an agent needs; defaults to the scripting guide.
     /// `require_equals` keeps a bare `--skill` from swallowing the argument
@@ -124,6 +135,17 @@ struct Cli {
     #[arg(long, conflicts_with = "restore")]
     simple: bool,
 
+    /// Compare two files side by side, both editable, in one tab: the
+    /// differences aligned and highlighted, as `git difftool` expects of a
+    /// diff tool
+    #[arg(
+        long,
+        num_args = 2,
+        value_names = ["LEFT", "RIGHT"],
+        conflicts_with_all = ["files", "attach", "stdin", "web", "cmd"]
+    )]
+    diff: Option<Vec<PathBuf>>,
+
     /// Force restore of previous workspace, overriding
     /// `editor.restore_previous_session = false` in the config.  Cannot be
     /// combined with `--no-restore`.
@@ -147,8 +169,8 @@ struct Cli {
     #[arg(long, hide = true, value_name = "NAME")]
     session_name: Option<String>,
 
-    /// Boot the daemon in Orchestrator mode (internal, used by
-    /// spawn_server_detached). The client knows the launch was a bare
+    /// Boot the daemon as the one a bare `fresh` auto-attaches to (internal,
+    /// used by spawn_server_detached). The client knows the launch was a bare
     /// `fresh`; the daemon is a different process and cannot see that.
     #[arg(long, hide = true)]
     orchestrator_mode: bool,
@@ -216,6 +238,9 @@ struct Args {
     no_session: bool,
     /// `--simple`: a file launch (see `is_file_launch`) whatever is named.
     simple: bool,
+    /// `--diff LEFT RIGHT`: a file launch of those two files, shown side by
+    /// side (see `Editor::diff_launch`).
+    diff: Option<(PathBuf, PathBuf)>,
     /// Force workspace restore even if `editor.restore_previous_session`
     /// is disabled in the config.
     force_restore: bool,
@@ -244,7 +269,7 @@ struct Args {
     /// `files`.  Populated only for the daemon side.
     ssh_url: Option<String>,
     /// Forwarded to the detached daemon by `spawn_server_detached` when the
-    /// client was a bare `fresh` and `orchestrator_mode` was on.  Populated
+    /// client was a bare `fresh` and `auto_attach` was on.  Populated
     /// only for the daemon side.
     orchestrator_mode: bool,
     // Daemon-related fields (set via subcommands or -a shortcut)
@@ -267,7 +292,12 @@ struct Args {
 }
 
 impl From<Cli> for Args {
-    fn from(cli: Cli) -> Self {
+    fn from(mut cli: Cli) -> Self {
+        // `--update [FLAGS]` is `--cmd update [FLAGS]`.
+        if let Some(flags) = cli.update.take() {
+            cli.cmd = std::iter::once("update".to_string()).chain(flags).collect();
+        }
+
         // Check for grammar list command before the main tuple parsing
         let list_grammars = if !cli.cmd.is_empty() {
             let cmd_args: Vec<&str> = cli.cmd.iter().map(|s| s.as_str()).collect();
@@ -280,6 +310,7 @@ impl From<Cli> for Args {
         };
 
         // `fresh --cmd update [--check] [--yes] [--allow-downgrade] [--force]
+        //  (or `fresh --update ...`)
         //                     [--print-command] [--skip-attestation]
         //                     [--releases-url U] [--download-base U]`
         let update = cli.cmd.first().map(String::as_str) == Some("update");
@@ -575,6 +606,10 @@ impl From<Cli> for Args {
             event_log: cli.event_log,
             no_session: cli.no_restore,
             simple: cli.simple,
+            diff: cli.diff.and_then(|pair| match pair.as_slice() {
+                [left, right] => Some((left.clone(), right.clone())),
+                _ => None,
+            }),
             force_restore: cli.restore,
             no_upgrade_check: cli.no_upgrade_check,
             dump_config,
@@ -949,12 +984,26 @@ fn handle_first_run_setup(
     }
     // The warning-log channel and status-log path are wired up in main.
 
+    // Unsaved work a bare `fresh` (Auto Attach's daemon) left for this
+    // directory, so every launch below can restore it — including the ones
+    // that restore no workspace (`--no-restore`). A file launch restores
+    // only the files it names, so it takes over only theirs.
+    let named_files: Vec<PathBuf> = file_locations
+        .iter()
+        .filter(|loc| !loc.path.is_dir())
+        .map(|loc| loc.path.canonicalize().unwrap_or_else(|_| loc.path.clone()))
+        .collect();
+    let only = editor.file_launch().then_some(named_files.as_slice());
+    editor.adopt_other_mode_recovery(editor.active_window_id(), only);
+
     // If the user passed any file argument on the command line and the
     // `skip_session_restore_when_files_passed` option is on (default), the
     // launch is a focused "open these files" invocation (`Editor::file_launch`):
     // skip the session restore and recover only those files' hot-exit
     // content. `--restore` (force) is a deliberate user override that wins.
     let cli_overrides_restore = editor.file_launch();
+    let explorer =
+        fresh::app::workspace::ExplorerOnEntry::for_launch(args.simple, show_file_explorer);
 
     let restore_full_session = workspace_enabled
         && !cli_overrides_restore
@@ -963,12 +1012,13 @@ fn handle_first_run_setup(
     if restore_full_session {
         // Shared window-restore flow — the same `restore_window` the
         // orchestrator dock's `materialize_window` uses — so the
-        // foreground directory applies its persisted explorer visibility,
-        // or the fresh-session default, exactly as a dock switch would. A
-        // bare single-directory launch (`show_file_explorer`) defaults to
-        // the tree only when nothing was restored, which keeps a
-        // deliberately-closed explorer closed across relaunches.
-        match editor.restore_active_window_on_launch(!show_file_explorer) {
+        // foreground directory applies its persisted explorer visibility.
+        // A bare single-directory launch (`show_file_explorer`) then shows
+        // the tree unless the user closed it in that directory, which keeps
+        // a deliberately-closed explorer closed across relaunches.
+        let restored = editor.restore_active_window_on_launch(explorer);
+        editor.mark_active_window_focused();
+        match restored {
             Ok(true) => {
                 tracing::info!("Workspace restored successfully");
             }
@@ -1024,9 +1074,10 @@ fn handle_first_run_setup(
             }
         }
         // No workspace was restored, so the persisted explorer visibility
-        // never loaded — apply the same fresh-session default the restore
-        // flow would, so a bare directory launch still opens the tree.
-        editor.apply_active_window_explorer_default(!show_file_explorer, false);
+        // never loaded — apply the same default the restore flow would, so
+        // a bare directory launch still opens the tree (and `--simple`
+        // keeps it closed).
+        editor.apply_active_window_explorer_default(explorer, false);
     }
 
     // Handle stdin streaming (takes priority over files)
@@ -1967,6 +2018,18 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
                 working_dir = Some(first_loc.path.clone());
                 show_file_explorer = true;
             }
+        }
+    }
+    // A bare `fresh` that did not go to the daemon opens where the daemon
+    // would have: see `bare_launch_dir`.
+    if remote_info.is_none() && is_bare_terminal_launch() {
+        let cwd = std::env::current_dir()?;
+        let dir = bare_launch_dir(
+            &fresh::config_io::DirectoryContext::from_system()?,
+            cwd.clone(),
+        );
+        if dir != cwd {
+            working_dir = Some(dir);
         }
     }
 
@@ -3337,14 +3400,15 @@ fn run_server_command(args: &Args, web_addr: Option<String>) -> AnyhowResult<()>
     // daemon was spawned with an `--ssh-url`.  Config layering is
     // always keyed off the local cwd (the remote host doesn't have
     // our config layout), matching the standalone path.
+    let dir_context = fresh::config_io::DirectoryContext::from_system()?;
+    // A daemon started by a bare `fresh` opens where that `fresh` would.
     let working_dir = match &remote_info {
         Some(remote) => PathBuf::from(&remote.path),
+        None if args.orchestrator_mode => bare_launch_dir(&dir_context, std::env::current_dir()?),
         None => std::env::current_dir()?,
     };
     let config_dir = std::env::current_dir()?;
     boot!("[server] Working directory: {:?}", working_dir);
-
-    let dir_context = fresh::config_io::DirectoryContext::from_system()?;
 
     // Re-anchor trust to this project: its persisted level (if any) is
     // adopted, else the safe Restricted default. `store_for_workspace` keys a
@@ -3415,7 +3479,9 @@ fn run_server_command(args: &Args, web_addr: Option<String>) -> AnyhowResult<()>
     let config = EditorServerConfig {
         working_dir: working_dir.clone(),
         session_name: args.session_name.clone(),
-        idle_timeout: Some(std::time::Duration::from_secs(3600)), // 1 hour default
+        // A daemon runs until it is told to quit: with nothing attached it is
+        // still holding your workspaces, terminals and agents.
+        idle_timeout: None,
         editor_config,
         dir_context,
         plugins_enabled: !args.no_plugins,
@@ -3632,7 +3698,7 @@ fn run_open_files_command(
         // the files have been queued.
         drop(conn);
         if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-            return run_attach(session_name, &[], locale, config, false);
+            return run_attach(session_name, &[], locale, config, false, false);
         } else {
             eprintln!(
                 "Started a new daemon and opened {} file(s). Attach with: fresh -a{}",
@@ -3657,7 +3723,14 @@ fn run_open_files_command(
                             ServerControl::NoViewer => {
                                 drop(conn);
                                 if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-                                    return run_attach(session_name, &[], locale, config, false);
+                                    return run_attach(
+                                        session_name,
+                                        &[],
+                                        locale,
+                                        config,
+                                        false,
+                                        false,
+                                    );
                                 }
                                 anyhow::bail!(
                                     "the daemon has no terminal attached, so nobody can see {}; \
@@ -3732,13 +3805,48 @@ where
 
 /// When launched from inside Fresh's own embedded terminal, forward the
 /// file/dir arguments to the parent editor (identified by `FRESH_SESSION`)
-/// instead of starting a second editor in the terminal.
+/// instead of starting a second editor in the terminal; with nothing to
+/// forward, answer "Already in Fresh" (see `already_in_enclosing`).
 ///
 /// Returns:
-/// - `Some(Ok(()))` — forwarded; the caller should exit.
-/// - `None` — not a nested launch, nothing to forward, or the parent
-///   socket is unreachable; the caller should launch inline as usual.
+/// - `Some(Ok(()))` — forwarded, or answered; the caller should exit. A
+///   refused launch exits the process with status 1 instead.
+/// - `None` — not a nested launch, or the parent socket is unreachable; the
+///   caller should launch inline as usual.
 fn try_forward_nested(args: &Args) -> Option<AnyhowResult<()>> {
+    // `--diff` runs here, in this terminal, the way a diff tool is expected
+    // to: `git difftool` deletes its temp files once the tool exits, so
+    // handing the pair to the enclosing editor and returning at once would
+    // pull them out from under the view.
+    if args.diff.is_some() {
+        return None;
+    }
+    // Nothing starts a second editor nested in a Fresh terminal, whatever
+    // Auto Attach says: every such terminal, a direct editor's included, is
+    // inside an editor it can reach. Everything that reaches here without a
+    // file to forward is such a launch: subcommands, `--server`, `-a`,
+    // `--web` and `--gui` have all returned before this.
+    if args.files.iter().all(|f| f == "-") {
+        let session = enclosing_session()?;
+        let asked_for_stdin = args.stdin || args.files.iter().any(|f| f == "-");
+        if asked_for_stdin && stdin_is_terminal() {
+            // Asked for stdin with nothing piped: the ordinary launch reports it.
+            return None;
+        }
+        let nested = if !stdin_is_terminal() {
+            // Not supported yet: the input would have to travel to the
+            // enclosing editor as a new buffer.
+            NestedLaunch::refused("piped input can't be opened in it from here yet")
+        } else if args.simple {
+            NestedLaunch::refused(
+                "`fresh --simple` would start a second editor inside this terminal",
+            )
+        } else {
+            NestedLaunch::Bare
+        };
+        return already_in_enclosing(&session, nested);
+    }
+
     // Only plain interactive file/dir opens are forwarded. Subcommands,
     // --server and --attach are already handled before we get here;
     // --stdin pipes content into a real editor and can't be forwarded.
@@ -3759,6 +3867,119 @@ fn try_forward_nested(args: &Args) -> Option<AnyhowResult<()>> {
             // opening inline, which is exactly the pre-feature behavior.
             tracing::warn!("Nested forward failed ({}); opening inline", e);
             None
+        }
+    }
+}
+
+/// The Fresh editor whose embedded terminal this process runs in, from the
+/// `FRESH_SESSION` every such terminal advertises (see `server::local_control`).
+fn enclosing_session() -> Option<String> {
+    std::env::var("FRESH_SESSION")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+}
+
+/// A launch typed in a Fresh terminal that would start a second editor
+/// inside it (see `already_in_enclosing`).
+enum NestedLaunch {
+    /// A bare `fresh`, `fresh -a`, or flags without a file: a request to be
+    /// in Fresh, which you already are. Succeeds.
+    Bare,
+    /// A request for a separate editor (`--simple`, piped input,
+    /// `fresh -a NAME`) that cannot be met without nesting one: why. Fails.
+    /// The hint repeats the command line with `FRESH_SESSION` cleared, unless
+    /// `simple_hint` says that would loop (see `NestedLaunch::with_simple_hint`).
+    Refused {
+        why: &'static str,
+        simple_hint: bool,
+    },
+}
+
+impl NestedLaunch {
+    fn refused(why: &'static str) -> Self {
+        Self::Refused {
+            why,
+            simple_hint: false,
+        }
+    }
+
+    /// Hint `FRESH_SESSION= fresh --simple` instead of the command line: for
+    /// a command that, outside Fresh's reach, would attach the enclosing
+    /// daemon to itself.
+    fn with_simple_hint(self) -> Self {
+        match self {
+            Self::Refused { why, .. } => Self::Refused {
+                why,
+                simple_hint: true,
+            },
+            other => other,
+        }
+    }
+}
+
+/// This command line, as the user would retype it to run it outside the
+/// enclosing editor's reach: with `FRESH_SESSION` cleared, which is how a
+/// `fresh` decides it is inside Fresh.
+fn bypass_command() -> String {
+    let args: Vec<String> = std::env::args()
+        .skip(1)
+        .map(|arg| {
+            if !arg.is_empty()
+                && arg
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "-_./=:@%+,".contains(c))
+            {
+                arg
+            } else {
+                format!("'{}'", arg.replace('\'', "'\\''"))
+            }
+        })
+        .collect();
+    let command = format!("FRESH_SESSION= fresh {}", args.join(" "));
+    if stdin_is_terminal() {
+        command.trim_end().to_string()
+    } else {
+        format!("… | {}", command.trim_end())
+    }
+}
+
+/// A launch typed in a Fresh terminal — the daemon's or a direct editor's —
+/// that would start a second editor inside that terminal (see
+/// [`NestedLaunch`]). Rather than
+/// nest one, or move the enclosing editor to another workspace under the
+/// prompt you typed at, it leaves the editor exactly as it is and says how to
+/// act on it: `fresh FILE` and `fresh DIR` still do.
+///
+/// `None` when the enclosing editor cannot be reached: the caller launches as
+/// it would have before.
+fn already_in_enclosing(session: &str, nested: NestedLaunch) -> Option<AnyhowResult<()>> {
+    let socket_paths = resolve_session(Some(session)).ok()?;
+    socket_paths.cleanup_if_stale();
+    if !socket_paths.is_server_alive() {
+        return None;
+    }
+    const HOW: &str = "`fresh FILE` opens a file here, `fresh DIR` opens a workspace.";
+    match nested {
+        NestedLaunch::Bare => {
+            // Not `FRESH_SESSION= fresh` itself: inside the daemon's own
+            // terminal that would auto-attach the daemon to itself.
+            eprintln!("Already in Fresh. {HOW}");
+            eprintln!("To start a separate editor in this terminal: FRESH_SESSION= fresh --simple");
+            Some(Ok(()))
+        }
+        NestedLaunch::Refused { why, simple_hint } => {
+            eprintln!("Already in Fresh: {why}. {HOW}");
+            if simple_hint {
+                eprintln!(
+                    "To start a separate editor in this terminal: FRESH_SESSION= fresh --simple"
+                );
+            } else {
+                eprintln!(
+                    "To run it in a separate editor in this terminal: {}",
+                    bypass_command()
+                );
+            }
+            std::process::exit(1);
         }
     }
 }
@@ -5379,40 +5600,123 @@ fn read_script_source(from: &[&str]) -> AnyhowResult<String> {
 }
 
 /// Attach to an existing daemon, starting one if needed
+///
+/// Inside a Fresh terminal — whatever Auto Attach says — `fresh -a` acts on
+/// the editor around it: with files it forwards them, without it does
+/// nothing (see `already_in_enclosing`), and `fresh -a NAME` is refused
+/// rather than nested.
+///
+/// Elsewhere, with Auto Attach on, `fresh -a` with no name is a bare `fresh`:
+/// the one shared daemon, in this directory's workspace (with any files
+/// opened there). `fresh -a NAME`, and `-a` with Auto Attach off, keep their
+/// own daemons.
 fn run_attach_command(args: &Args) -> AnyhowResult<()> {
+    if let Some(session) = enclosing_session() {
+        // An unreachable enclosing editor (a stale `FRESH_SESSION`) falls
+        // through to the launch below, as if outside Fresh.
+        if let Some(name) = &args.session_name {
+            let refused = NestedLaunch::refused(
+                "`fresh -a NAME` would attach a second editor inside this terminal",
+            );
+            // Attaching to the enclosing daemon itself is the feedback loop
+            // `already_in_enclosing`'s bare hint steers around.
+            let refused = if *name == session || name == fresh::server::ORCHESTRATOR_DAEMON {
+                refused.with_simple_hint()
+            } else {
+                refused
+            };
+            if let Some(result) = already_in_enclosing(&session, refused) {
+                return result;
+            }
+        } else if args.files.is_empty() {
+            if let Some(result) = already_in_enclosing(&session, NestedLaunch::Bare) {
+                return result;
+            }
+        } else {
+            match forward_to_session(&session, &args.files) {
+                Ok(true) => return Ok(()),
+                Ok(false) => {}
+                Err(e) => tracing::warn!("Nested forward failed ({}); attaching instead", e),
+            }
+        }
+    }
+    if args.session_name.is_none() && !attaches_elsewhere(&args.files) {
+        if let Some(config) = auto_attach_config() {
+            return run_orchestrator_launch(
+                &config,
+                &args.files,
+                args.locale.as_deref(),
+                args.config.as_deref(),
+            );
+        }
+    }
     run_attach(
         args.session_name.as_deref(),
         &args.files,
         args.locale.as_deref(),
         args.config.as_deref(),
         false,
+        false,
     )
 }
 
-/// A bare `fresh` — no files, no flags, nothing — with
-/// `orchestrator_mode` left on.
+/// Whether a `fresh -a` (no name) keeps the daemon it reached before Auto
+/// Attach, rather than taking the shared one:
+///
+///   * a remote spec (`user@host:path`, `ssh://…`) starts a daemon whose
+///     authority is that host — turning the shared daemon, which every later
+///     bare `fresh` joins, into a remote one would be wrong for all of them;
+///   * a per-directory daemon already running for this directory (started by
+///     `fresh -a` before Auto Attach, or with it off) keeps being the one
+///     `fresh -a` here reaches, with its terminals and agents, rather than
+///     being stranded.
+fn attaches_elsewhere(files: &[String]) -> bool {
+    if extract_ssh_url_from_files(files).ok().flatten().is_some() {
+        return true;
+    }
+    std::env::current_dir()
+        .ok()
+        .and_then(|cwd| fresh::server::ipc::SocketPaths::for_working_dir(&cwd).ok())
+        .is_some_and(|paths| paths.is_server_alive())
+}
+
+/// A bare `fresh` — no files, no flags, nothing — with `auto_attach` left
+/// on.
 ///
 /// The whole launch is "attach to the shared daemon, starting it if it isn't
-/// up". That is deliberately the *entire* behaviour when the daemon already
-/// runs: no files to open, no working directory to impose, nothing to
-/// reconfigure — this terminal simply becomes another view onto the editor
-/// that is already there, showing whatever workspace it was left in.
+/// up, in this directory's workspace". When the daemon already runs, this
+/// terminal becomes another view onto the editor that is already there, and
+/// switches it to the workspace for the directory `fresh` was typed in
+/// (see `run_attach`); nothing else is reconfigured.
 ///
 /// The daemon it starts is told `--orchestrator-mode` because it is a
 /// separate process: the shape of *this* command line is the only evidence
-/// that orchestrator mode was chosen, and it does not survive the spawn on
+/// that auto-attach was chosen, and it does not survive the spawn on
 /// its own (see [`fresh::server::DaemonSpawn`]).
-fn run_orchestrator_launch() -> AnyhowResult<()> {
+///
+/// With `open_last_workspace` on, a running daemon is left on the workspace
+/// it shows (the one used last), and one started here opens the workspace
+/// used last itself (see `bare_launch_dir`).
+///
+/// `files`, `locale` and `config_path` are a `fresh -a`'s (see
+/// `run_attach_command`); a bare `fresh` has none.
+fn run_orchestrator_launch(
+    config: &config::Config,
+    files: &[String],
+    locale: Option<&str>,
+    config_path: Option<&Path>,
+) -> AnyhowResult<()> {
     run_attach(
         Some(fresh::server::ORCHESTRATOR_DAEMON),
-        &[],
-        None,
-        None,
+        files,
+        locale,
+        config_path,
         true,
+        !config.open_last_workspace,
     )
 }
 
-/// Whether a bare `fresh` should launch into Orchestrator mode.
+/// Whether a bare `fresh` should auto-attach to the shared daemon.
 ///
 /// Three conditions, and all of them are about *this* invocation rather than
 /// about the editor:
@@ -5423,15 +5727,14 @@ fn run_orchestrator_launch() -> AnyhowResult<()> {
 ///     a subprocess is not someone sitting down to work; and
 ///   * we are not already *inside* a Fresh editor's embedded terminal.
 ///
-/// That last one is not a nicety. Orchestrator mode attaches to the shared
+/// That last one is not a nicety. Auto-attach attaches to the shared
 /// daemon, and a terminal buffer inside that very daemon is exactly where
 /// this can be typed: the daemon then renders one shared screen into a
 /// client that lives inside its own output, which is not a second editor
 /// but a feedback loop — the pane fills with shredded frames. Falling
-/// through here launches an ordinary inline editor in the terminal, which
-/// is what a nested `fresh` did before Orchestrator mode existed and which
-/// renders perfectly well. `FRESH_SESSION` is the signal because it is what
-/// every local embedded terminal advertises (see
+/// through here reaches `try_forward_nested`, which answers "Already in
+/// Fresh" instead of starting anything. `FRESH_SESSION` is the signal because
+/// it is what every local embedded terminal advertises (see
 /// `server::local_control`); a stale or unreachable value costs nothing,
 /// since the fallback is the ordinary launch either way.
 ///
@@ -5441,22 +5744,112 @@ fn run_orchestrator_launch() -> AnyhowResult<()> {
 /// this function has already answered `false` without reading anything. A
 /// config that cannot be read is not an error — it means the ordinary
 /// launch, which will report the problem properly.
-fn wants_orchestrator_launch() -> bool {
-    if std::env::args_os().count() != 1 {
-        return false;
+///
+/// Returns the config it read when the answer is yes.
+fn wants_orchestrator_launch() -> Option<config::Config> {
+    if !is_bare_terminal_launch() {
+        return None;
     }
-    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-        return false;
+    if enclosing_session().is_some() {
+        return None;
     }
-    if std::env::var("FRESH_SESSION").is_ok_and(|s| !s.trim().is_empty()) {
-        return false;
-    }
-    let Ok(dir_context) = fresh::config_io::DirectoryContext::from_system() else {
-        return false;
-    };
-    let working_dir = std::env::current_dir().unwrap_or_default();
-    config::Config::load_with_layers(&dir_context, &working_dir).orchestrator_mode
+    auto_attach_config()
 }
+
+/// The config for this directory, when it has Auto Attach on. A config that
+/// cannot be read is not an error here — it means the ordinary launch, which
+/// will report the problem properly.
+fn auto_attach_config() -> Option<config::Config> {
+    let dir_context = fresh::config_io::DirectoryContext::from_system().ok()?;
+    let working_dir = std::env::current_dir().unwrap_or_default();
+    let config = config::Config::load_with_layers(&dir_context, &working_dir);
+    config.auto_attach.then_some(config)
+}
+
+/// A bare `fresh`: nothing on the command line, and someone at a terminal.
+fn is_bare_terminal_launch() -> bool {
+    std::env::args_os().count() == 1 && std::io::IsTerminal::is_terminal(&std::io::stdin())
+}
+
+/// The directory a bare `fresh` opens: `cwd`, or with `open_last_workspace`
+/// on, the workspace used last, wherever it is
+/// (`Editor::last_used_workspace_root`). Still `cwd` when there is no such
+/// workspace.
+fn bare_launch_dir(dir_context: &fresh::config_io::DirectoryContext, cwd: PathBuf) -> PathBuf {
+    if !config::Config::load_with_layers(dir_context, &cwd).open_last_workspace {
+        return cwd;
+    }
+    Editor::last_used_workspace_root(dir_context).unwrap_or(cwd)
+}
+
+/// Check the two files of `--diff LEFT RIGHT` and return them absolute.
+///
+/// Both must be files that exist, and two different ones: a diff of a
+/// missing file, of a directory, or of a file with itself has nothing to
+/// show, and saying so here beats an editor that opens on nothing. The
+/// editor doesn't open the files itself — the side-by-side view is a
+/// plugin's, which opens them into its panels — so a launch whose plugin
+/// won't run is refused too, rather than opening an empty editor. A refusal
+/// is a usage error, reported on stderr with exit status 2 like clap's own,
+/// not an error with a backtrace.
+fn check_diff_args(args: &Args, left: PathBuf, right: PathBuf) -> (PathBuf, PathBuf) {
+    let refuse = |msg: String| -> ! {
+        eprintln!("fresh: {msg}");
+        std::process::exit(2);
+    };
+    let plugin_off = || {
+        let config = match &args.config {
+            Some(path) => config::Config::load_from_file(path).ok()?,
+            None => {
+                let dir_context = fresh::config_io::DirectoryContext::from_system().ok()?;
+                let working_dir = std::env::current_dir().unwrap_or_default();
+                config::Config::load_with_layers(&dir_context, &working_dir)
+            }
+        };
+        config
+            .plugins
+            .get(DIFF_PLUGIN)
+            .map(|plugin| !plugin.enabled)
+    };
+    if args.no_plugins || plugin_off() == Some(true) {
+        refuse(format!(
+            "--diff shows the files with the bundled {DIFF_PLUGIN} plugin, which \
+             {}",
+            if args.no_plugins {
+                "--no-plugins and --safe turn off"
+            } else {
+                "your config turns off (plugins.compare_files.enabled)"
+            }
+        ));
+    }
+    #[cfg(feature = "gui")]
+    if args.gui {
+        refuse("--diff runs in the terminal; it can't be combined with --gui".to_string());
+    }
+    let resolve = |path: PathBuf| -> PathBuf {
+        if !path.exists() {
+            refuse(format!("--diff: {} does not exist", path.display()));
+        }
+        if path.is_dir() {
+            refuse(format!(
+                "--diff compares two files; {} is a directory",
+                path.display()
+            ));
+        }
+        std::fs::canonicalize(&path).unwrap_or(path)
+    };
+    let (left, right) = (resolve(left), resolve(right));
+    if left == right {
+        refuse(format!(
+            "--diff compares two files; both name {}",
+            left.display()
+        ));
+    }
+    (left, right)
+}
+
+/// The bundled plugin that shows a `--diff` launch (`compare_files.ts`).
+const DIFF_PLUGIN: &str = "compare_files";
 
 /// Whether this launch opens the files on its command line rather than a
 /// session (see `Editor::file_launch`): `--simple` asked for it, or at least
@@ -5465,7 +5858,7 @@ fn wants_orchestrator_launch() -> bool {
 /// Decided by the invocation and that setting alone — never by which files
 /// they are.
 fn is_file_launch(args: &Args, cfg: &config::Config, files: &[FileLocation]) -> bool {
-    if args.simple {
+    if args.simple || args.diff.is_some() {
         return true;
     }
     files.iter().any(|loc| !loc.path.is_dir())
@@ -5479,12 +5872,17 @@ fn is_file_launch(args: &Args, cfg: &config::Config, files: &[FileLocation]) -> 
 /// Attaching to an already-running daemon leaves both alone: it is someone
 /// else's session, already serving other terminals, the same way an
 /// existing daemon keeps its authority.
+///
+/// `orchestrator_mode` is a bare `fresh` (see `run_orchestrator_launch`):
+/// the daemon is started in that mode. `open_cwd` switches an already
+/// running daemon to the current directory's workspace.
 fn run_attach(
     session_name: Option<&str>,
     files: &[String],
     locale: Option<&str>,
     config: Option<&Path>,
     orchestrator_mode: bool,
+    open_cwd: bool,
 ) -> AnyhowResult<()> {
     use crossterm::terminal::enable_raw_mode;
     use fresh::server::protocol::{
@@ -5600,6 +5998,19 @@ fn run_attach(
         _ => {
             return Err(anyhow::anyhow!("Unexpected server response"));
         }
+    }
+
+    // A bare `fresh` opens the directory it was typed in, also when the
+    // daemon is already up and showing another one: switch it to this
+    // directory's workspace (created if there is none). A daemon started
+    // just now booted in this directory already, and is left alone so its
+    // startup does not read the whole workspace registry. Before any files:
+    // they open in whatever workspace is active when they arrive.
+    if open_cwd && !server_was_started {
+        let msg = serde_json::to_string(&ClientControl::OpenWindow {
+            path: working_dir.to_string_lossy().into_owned(),
+        })?;
+        conn.write_control(&msg)?;
     }
 
     // Send file open requests if any files were specified on the
@@ -6165,6 +6576,7 @@ fn build_localized_cli_command() -> clap::Command {
         .mut_arg("restore", |a| a.help(t("cli.arg.restore")))
         .mut_arg("wait", |a| a.help(t("cli.arg.wait")))
         .mut_arg("simple", |a| a.help(t("cli.arg.simple")))
+        .mut_arg("diff", |a| a.help(t("cli.arg.diff")))
         .mut_arg("no_upgrade_check", |a| {
             a.help(t("cli.arg.no_upgrade_check"))
         })
@@ -6205,12 +6617,12 @@ fn real_main() -> AnyhowResult<()> {
     // Print deprecation warnings for old flags
     print_deprecation_warnings(&cli);
 
-    // A bare `fresh` on a terminal, with `orchestrator_mode` on: hand the
+    // A bare `fresh` on a terminal, with `auto_attach` on: hand the
     // whole launch to the shared daemon and relay it. Checked here, after
     // clap, so `--help` and `--version` still answer for themselves — both
     // put something on the command line, so neither reaches this.
-    if wants_orchestrator_launch() {
-        return run_orchestrator_launch();
+    if let Some(config) = wants_orchestrator_launch() {
+        return run_orchestrator_launch(&config, &[], None, None);
     }
 
     // `--skill` is the shortcut an agent is told to run first: one short,
@@ -6259,6 +6671,9 @@ fn real_main() -> AnyhowResult<()> {
     // consumer (TUI, GUI, web, attach, nested forward) sees it, so
     // `fresh +50 file.txt` == `fresh file.txt:50` everywhere (#1926).
     args.files = apply_plus_line_args(std::mem::take(&mut args.files))?;
+    if let Some((left, right)) = args.diff.take() {
+        args.diff = Some(check_diff_args(&args, left, right));
+    }
     let args = args;
 
     // Expose `FRESH_INTERACTIVE=1` on the editor's process env when Fresh
@@ -6414,7 +6829,7 @@ fn real_main() -> AnyhowResult<()> {
             true, // defer_plugin_load: TUI startup; plugin loads run on the
             // plugin thread and arrive via AsyncBridge each tick.
             //
-            // Never orchestrator mode: a bare `fresh` with the setting on
+            // Never the auto-attach daemon: a bare `fresh` with the setting on
             // hands off to the daemon long before this loop, so an editor
             // built here is by construction an ordinary in-terminal launch.
             false,
@@ -6473,6 +6888,10 @@ fn real_main() -> AnyhowResult<()> {
         }
         if let Some((rx, p)) = warning_log_slot {
             editor.set_warning_log(rx, p);
+        }
+
+        if let Some((left, right)) = &args.diff {
+            editor.set_diff_launch(left.clone(), right.clone());
         }
 
         tracing::info!("Running first-run setup...");
@@ -6564,7 +6983,7 @@ fn real_main() -> AnyhowResult<()> {
                 fresh::services::release_checker::UpdateKind::SelfContained
                     | fresh::services::release_checker::UpdateKind::DownloadPackage
             ) {
-                eprintln!("Update with: fresh --cmd update");
+                eprintln!("Update with: fresh --update");
             } else {
                 eprintln!(
                     "Download from: https://github.com/sinelaw/fresh/releases/tag/v{}",
@@ -7215,6 +7634,37 @@ mod tests {
 
         let (shown, hit) = strip_sentinel("{\n  \"ready\": false\n}", SENTINEL_START_FAILED);
         assert_eq!((shown, hit), ("{\n  \"ready\": false\n}", false));
+    }
+
+    /// Parse `argv` the way `real_main` does: the localized command, then
+    /// `Cli`, then the internal `Args`.
+    fn parse_args(argv: &[&str]) -> Result<Args, clap::Error> {
+        let matches = build_localized_cli_command().try_get_matches_from(argv)?;
+        Ok(Cli::from_arg_matches(&matches)?.into())
+    }
+
+    /// `--diff LEFT RIGHT` takes exactly two paths, as plain paths: a name
+    /// with a colon is a file, not a `file:line` spec, and the launch is a
+    /// file launch whatever the session settings say.
+    #[test]
+    fn diff_takes_two_plain_paths_and_is_a_file_launch() {
+        let args = parse_args(&["fresh", "--diff", "a:3", "b.txt"]).expect("parses");
+        assert_eq!(
+            args.diff,
+            Some((PathBuf::from("a:3"), PathBuf::from("b.txt")))
+        );
+        assert!(args.files.is_empty(), "the pair is not a list of FILES");
+
+        let mut config = config::Config::default();
+        config.editor.skip_session_restore_when_files_passed = false;
+        assert!(is_file_launch(&args, &config, &[]));
+
+        assert!(parse_args(&["fresh", "--diff", "only-one"]).is_err());
+        assert!(
+            parse_args(&["fresh", "--diff", "a", "b", "c"]).is_err(),
+            "a third path is a FILES argument, which --diff refuses"
+        );
+        assert!(parse_args(&["fresh", "--diff", "a", "b", "--stdin"]).is_err());
     }
 
     /// The scripts the convenience verbs submit must parse, and must call

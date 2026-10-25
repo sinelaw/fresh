@@ -19,10 +19,10 @@
 //!   not its end; resume from `tail_state` and parse only the uncovered
 //!   tail bytes. Steady-state scroll path.
 //! - **Partial update** — there's a pending edit; resume from the nearest
-//!   checkpoint before the dirty point and parse forward looking for
-//!   convergence (state matches an existing checkpoint), bounded by a
-//!   per-pass byte budget so pathological edits can't degenerate into
-//!   whole-file reparses.
+//!   line-start checkpoint before the dirty point and parse forward looking
+//!   for convergence (state matches an existing checkpoint at a line end past
+//!   the last edit), bounded by a per-pass byte budget so pathological edits
+//!   can't degenerate into whole-file reparses.
 //! - **Cold start / fallback** — no cache, or none of the above applies;
 //!   parse the appropriate range from a fresh state or nearest checkpoint.
 //!
@@ -32,8 +32,9 @@
 //! use a viewport-centred window of `±context_bytes`.
 //!
 //! Edits go through `notify_insert` / `notify_delete`, which shift cached
-//! span byte offsets in place, set `dirty_from`, and invalidate `tail_state`
-//! when the edit lies inside the cached range.
+//! span byte offsets in place, widen the dirty range (`dirty_from` ..
+//! `dirty_end`), and invalidate `tail_state` when the edit lies inside the
+//! cached range.
 
 use crate::model::buffer::Buffer;
 use crate::model::marker::{MarkerId, MarkerList};
@@ -292,6 +293,12 @@ pub struct TextMateEngine {
     checkpoint_markers: MarkerList,
     checkpoint_states: HashMap<MarkerId, ParseSnapshot>,
     dirty_from: Option<usize>,
+    // Furthest end of any edit since the cache was last clean (the largest
+    // edit end, in current buffer offsets: later edits before it shift it);
+    // only meaningful while `dirty_from` is set. A bulk edit touches many sites,
+    // and a stored state matching past the first one says nothing about the
+    // spans of the later ones, so convergence must not be accepted before it.
+    dirty_end: usize,
     cache: Option<TextMateCache>,
     last_buffer_len: usize,
     ts_language: Option<Language>,
@@ -677,6 +684,22 @@ const CHECKPOINT_INTERVAL: usize = 256;
 /// pathological edits whose effect doesn't converge.
 const CONVERGENCE_BUDGET: usize = 64 * 1024;
 
+/// Whether `pos` starts a line under `find_line_end`'s rules: after `\n`,
+/// or after a `\r` that no `\n` follows.
+fn is_line_start(buffer: &Buffer, pos: usize) -> bool {
+    if pos == 0 {
+        return true;
+    }
+    match buffer
+        .slice_bytes(pos - 1..(pos + 1).min(buffer.len()))
+        .as_slice()
+    {
+        [b'\n', ..] => true,
+        [b'\r', next @ ..] => next.first() != Some(&b'\n'),
+        _ => false,
+    }
+}
+
 /// Byte position one past the end of the line that starts at `pos`.
 /// Accepts `\n` and `\r\n` terminators; returns `content_bytes.len()`
 /// when the buffer ends without a terminator (the streaming tail).
@@ -1000,6 +1023,7 @@ impl TextMateEngine {
             checkpoint_markers: MarkerList::new(),
             checkpoint_states: HashMap::new(),
             dirty_from: None,
+            dirty_end: 0,
             cache: None,
             last_buffer_len: 0,
             ts_language,
@@ -1156,6 +1180,12 @@ impl TextMateEngine {
         self.checkpoint_markers.adjust_for_insert(position, length);
         self.region_markers.adjust_for_insert(position, length);
         self.active_region = None;
+        self.dirty_end = match self.dirty_from {
+            Some(_) if self.dirty_end >= position => self.dirty_end + length,
+            Some(_) => self.dirty_end,
+            None => 0,
+        }
+        .max(position + length);
         self.dirty_from = Some(self.dirty_from.map_or(position, |d| d.min(position)));
         if let Some(cache) = &mut self.cache {
             for span in &mut cache.spans {
@@ -1180,9 +1210,15 @@ impl TextMateEngine {
         self.checkpoint_markers.adjust_for_delete(position, length);
         self.region_markers.adjust_for_delete(position, length);
         self.active_region = None;
+        let delete_end = position + length;
+        self.dirty_end = match self.dirty_from {
+            Some(_) if self.dirty_end >= delete_end => self.dirty_end - length,
+            Some(_) => self.dirty_end.min(position),
+            None => 0,
+        }
+        .max(position);
         self.dirty_from = Some(self.dirty_from.map_or(position, |d| d.min(position)));
         if let Some(cache) = &mut self.cache {
-            let delete_end = position + length;
             cache.spans.retain_mut(|span| {
                 if span.range.start >= delete_end {
                     span.range.start -= length;
@@ -1864,11 +1900,19 @@ impl TextMateEngine {
     ) -> Option<Vec<HighlightSpan>> {
         let syntax = &self.syntax_set.syntaxes()[self.syntax_index];
 
-        // Find checkpoint before the dirty point (bounded search)
+        // Resume from the nearest checkpoint before the dirty point (bounded
+        // search). It must lie strictly before the dirty point — a delete
+        // collapses the checkpoints it covered onto its position, each still
+        // holding the state of text that is gone — and on a line start: an
+        // insert at a checkpoint's position pushes it into the middle of that
+        // line while its state still belongs to the line start.
         let (actual_start, mut snapshot) = {
             let search_start = dirty_pos.saturating_sub(MAX_PARSE_BYTES);
-            let markers = self.checkpoint_markers.query_range(search_start, dirty_pos);
-            let nearest = markers.into_iter().max_by_key(|(_, start, _)| *start);
+            let mut markers = self.checkpoint_markers.query_range(search_start, dirty_pos);
+            markers.sort_by_key(|(_, start, _)| std::cmp::Reverse(*start));
+            let nearest = markers
+                .into_iter()
+                .find(|(_, start, _)| *start < dirty_pos && is_line_start(buffer, *start));
             if let Some((id, cp_pos, _)) = nearest {
                 if let Some(snap) = self.checkpoint_states.get(&id) {
                     (cp_pos, snap.clone())
@@ -1882,15 +1926,18 @@ impl TextMateEngine {
             }
         };
 
-        // Get markers from dirty point forward for convergence checking
+        // Every checkpoint the walk passes, for convergence checking and
+        // repair. Any between the resume point and the dirty point is a
+        // displaced one the search above skipped; the walk drops it.
         let mut markers_ahead: Vec<(MarkerId, usize)> = self
             .checkpoint_markers
-            .query_range(dirty_pos, parse_end)
+            .query_range(actual_start, parse_end)
             .into_iter()
             .map(|(id, start, _)| (id, start))
             .collect();
         markers_ahead.sort_by_key(|(_, pos)| *pos);
         let mut marker_idx = 0;
+        let dirty_end = self.dirty_end;
 
         // Parse from actual_start to parse_end, looking for convergence
         let content_end = parse_end.min(buffer.len());
@@ -1954,12 +2001,17 @@ impl TextMateEngine {
 
             // Check convergence at checkpoint markers. `snapshot` is now the
             // state *after* this line, which is the state *before* the next
-            // one — so it is the right state for a checkpoint at any position
-            // up to and including this line's end, and the wrong one for a
-            // checkpoint sitting on this line's start. That checkpoint was
-            // already settled by the previous line's pass with the state that
-            // belongs to it (see `full_parse` for the same rule); walk past it
-            // rather than comparing — or storing — a state one line late.
+            // one — so it is the right state for a checkpoint on this line's
+            // end only. A checkpoint sitting on this line's start was already
+            // settled by the previous line's pass with the state that belongs
+            // to it (see `full_parse` for the same rule); walk past it rather
+            // than comparing — or storing — a state one line late. A
+            // checkpoint strictly inside this line was pushed there by an
+            // insert at its line start, and no state belongs to a mid-line
+            // position: drop it rather than compare or store it, so no later
+            // pass resumes mid-line. Only a checkpoint past the last edit may
+            // end the walk: before it, a matching state says nothing about the
+            // cached spans of the edits still ahead.
             let line_start = current_offset - line_byte_len;
             while marker_idx < markers_ahead.len() && markers_ahead[marker_idx].1 <= current_offset
             {
@@ -1968,12 +2020,17 @@ impl TextMateEngine {
                 if marker_pos <= line_start {
                     continue;
                 }
-                if let Some(stored) = self.checkpoint_states.get(&marker_id) {
-                    if *stored == snapshot {
-                        self.stats.convergences += 1;
-                        converged_at = Some(current_offset);
-                        break;
-                    }
+                if marker_pos < current_offset {
+                    self.checkpoint_markers.delete(marker_id);
+                    self.checkpoint_states.remove(&marker_id);
+                    continue;
+                }
+                if current_offset > dirty_end
+                    && self.checkpoint_states.get(&marker_id) == Some(&snapshot)
+                {
+                    self.stats.convergences += 1;
+                    converged_at = Some(current_offset);
+                    break;
                 }
                 self.stats.checkpoints_updated += 1;
                 self.checkpoint_states.insert(marker_id, snapshot.clone());
@@ -2398,7 +2455,9 @@ impl TextMateEngine {
             // Markdown that inverts fence parity at a delimiter line, so every
             // prose line below a code block reads as fence body until the next
             // delimiter (issue: prose framed as code after scrolling into a
-            // file mid-document).
+            // file mid-document). A checkpoint strictly inside this line was
+            // displaced there by an insert at its line start; no state belongs
+            // to it, so drop it (see `try_partial_update`).
             let markers_here: Vec<(MarkerId, usize)> = self
                 .checkpoint_markers
                 .query_range(
@@ -2410,8 +2469,13 @@ impl TextMateEngine {
                 .into_iter()
                 .map(|(id, start, _)| (id, start))
                 .collect();
-            for (marker_id, _) in markers_here {
-                self.checkpoint_states.insert(marker_id, snapshot.clone());
+            for (marker_id, marker_pos) in markers_here {
+                if marker_pos < current_offset {
+                    self.checkpoint_markers.delete(marker_id);
+                    self.checkpoint_states.remove(&marker_id);
+                } else {
+                    self.checkpoint_states.insert(marker_id, snapshot.clone());
+                }
             }
         }
 
@@ -4061,8 +4125,10 @@ diff --git a/tools/check.py b/tools/check.py
         let _ = tm.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
         let bytes_before = tm.stats().bytes_parsed;
 
-        // Simulate typing one character in the middle of the fence.
+        // Type one character in the middle of the fence.
         let edit_pos = fence_end / 2;
+        content.insert(edit_pos, 'x');
+        let buffer = Buffer::from_str(&content, 0, test_fs());
         tm.notify_insert(edit_pos, 1);
         let _ = tm.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
 
@@ -4990,6 +5056,207 @@ diff --git a/tools/check.py b/tools/check.py
             "bulk edit must not trigger a whole-file reparse \
              (parsed {parsed}, file {buf_len})"
         );
+    }
+
+    /// A bulk edit that touches many lines (comment toggle: `# ` at each
+    /// line start) must re-highlight every edited line, not stop at the first
+    /// checkpoint whose stored state happens to match before the last edit.
+    /// Each insert also pushes the checkpoint sitting on its line start into
+    /// mid-line, where its state belongs to no parse position, so the partial
+    /// update must not converge on it either. The result is checked against a
+    /// fresh full parse, after the inserts and again after the inverse deletes.
+    #[test]
+    fn test_bulk_line_start_comment_edits_match_full_parse() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let path = Path::new("config.yaml");
+
+        // 32-byte lines alternating the two halves of a quoted string that
+        // spans them, so the parse state differs from line to line and
+        // checkpoints land on every eighth line start (an opening half).
+        let lines: Vec<String> = (0..48)
+            .map(|i| {
+                if i % 2 == 0 {
+                    format!("key_{i:02}: \"one long quoted string\n")
+                } else {
+                    format!("  spans two lines; no {i:02} pads.\"\n")
+                }
+            })
+            .collect();
+        assert!(lines.iter().all(|line| line.len() == 32));
+        let original: String = lines.concat();
+        assert!(original.len() >= 3 * CHECKPOINT_INTERVAL);
+        let line_starts: Vec<usize> = (0..lines.len()).map(|i| 32 * i).collect();
+        // Ten openers: a run through the line-8 checkpoint, then, past the
+        // untouched line-16 checkpoint, a run ending on the line-24 one.
+        let edited = [2, 4, 6, 8, 10, 12, 18, 20, 22, 24];
+
+        let spans_of = |engine: &mut HighlightEngine, text: &str| {
+            let buffer = Buffer::from_str(text, 0, test_fs());
+            engine
+                .highlight_viewport(&buffer, 0, text.len(), &theme, text.len())
+                .into_iter()
+                .map(|span| (span.range, span.category))
+                .collect::<Vec<_>>()
+        };
+        let full_parse = |text: &str| {
+            let mut fresh = HighlightEngine::for_file(path, None, &registry);
+            spans_of(&mut fresh, text)
+        };
+
+        let mut engine = HighlightEngine::for_file(path, None, &registry);
+        assert_eq!(engine.backend_name(), "textmate");
+        let _ = spans_of(&mut engine, &original);
+
+        // Comment: insert `# ` at each line start, descending like a bulk edit.
+        let commented: String = lines
+            .iter()
+            .enumerate()
+            .map(|(i, line)| {
+                if edited.contains(&i) {
+                    format!("# {line}")
+                } else {
+                    line.clone()
+                }
+            })
+            .collect();
+        let inserts: Vec<(usize, usize, usize)> = edited
+            .iter()
+            .rev()
+            .map(|&i| (line_starts[i], 0, 2))
+            .collect();
+        engine.notify_edits(&inserts);
+        assert_eq!(
+            spans_of(&mut engine, &commented),
+            full_parse(&commented),
+            "partial re-highlight after commenting must match a full parse"
+        );
+
+        // Uncomment: delete each `# ` again, at its post-insert position.
+        let deletes: Vec<(usize, usize, usize)> = edited
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(n, &i)| (line_starts[i] + 2 * n, 2, 0))
+            .collect();
+        engine.notify_edits(&deletes);
+        assert_eq!(
+            spans_of(&mut engine, &original),
+            full_parse(&original),
+            "partial re-highlight after uncommenting must match a full parse"
+        );
+    }
+
+    /// `notify_edits` applies a batch in order, each position in the text as
+    /// the edits before it left it, so the end of the dirty range must follow
+    /// every later shift — whatever order the sites come in. An insert near
+    /// the top that is longer than a checkpoint interval moves an earlier,
+    /// lower edit past the checkpoint between them; a dirty end left behind
+    /// lets the walk converge on that checkpoint before it re-parses the
+    /// lower edit. Also covers ascending batches, a newline replaced by a
+    /// space (which pulls a checkpoint off its line start) and its inverse,
+    /// each on LF and CRLF text, against a fresh full parse after every batch.
+    #[test]
+    fn test_bulk_edits_in_any_order_match_full_parse() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let path = Path::new("config.yaml");
+
+        // Apply `(position, deleted bytes, inserted text)` edits in order and
+        // return them in the form `notify_edits` takes.
+        fn apply(
+            text: &mut String,
+            batch: &[(usize, usize, String)],
+        ) -> Vec<(usize, usize, usize)> {
+            batch
+                .iter()
+                .map(|(pos, del, ins)| {
+                    text.replace_range(*pos..*pos + *del, ins);
+                    (*pos, *del, ins.len())
+                })
+                .collect()
+        }
+        let spans_of = |engine: &mut HighlightEngine, text: &str| {
+            let buffer = Buffer::from_str(text, 0, test_fs());
+            engine
+                .highlight_viewport(&buffer, 0, text.len(), &theme, text.len())
+                .into_iter()
+                .map(|span| (span.range, span.category))
+                .collect::<Vec<_>>()
+        };
+        let full_parse = |text: &str| {
+            let mut fresh = HighlightEngine::for_file(path, None, &registry);
+            spans_of(&mut fresh, text)
+        };
+
+        for nl in ["\n", "\r\n"] {
+            // Same shape as `test_bulk_line_start_comment_edits_match_full_parse`:
+            // a quoted string opened on every even line and closed on the
+            // next, so the state differs from line to line.
+            let lines: Vec<String> = (0..48)
+                .map(|i| {
+                    if i % 2 == 0 {
+                        format!("key_{i:02}: \"one long quoted string{nl}")
+                    } else {
+                        format!("  spans two lines; no {i:02} pads.\"{nl}")
+                    }
+                })
+                .collect();
+            let line_len = lines[0].len();
+            assert!(lines.iter().all(|line| line.len() == line_len));
+            let original: String = lines.concat();
+            let line_start = |i: usize| i * line_len;
+            // Complete top-level lines, so the state after them is the state
+            // before them, and more than a checkpoint interval of them.
+            let pad: String = (0..30).map(|k| format!("pad_{k:02}: 1{nl}")).collect();
+            assert!(pad.len() > CHECKPOINT_INTERVAL + line_len);
+            let edited = [2, 4, 6, 8, 10, 12, 18, 20, 22, 24];
+            let s = |text: &str| text.to_string();
+
+            let batches: Vec<Vec<(usize, usize, String)>> = vec![
+                // Comment, ascending: each site past the earlier inserts.
+                edited
+                    .iter()
+                    .enumerate()
+                    .map(|(n, &i)| (line_start(i) + 2 * n, 0, s("# ")))
+                    .collect(),
+                // Uncomment, ascending: each site past the earlier deletes.
+                edited
+                    .iter()
+                    .map(|&i| (line_start(i), 2, String::new()))
+                    .collect(),
+                // A lower edit, then a long insert above it.
+                vec![
+                    (line_start(24), 0, s("# ")),
+                    (line_start(2), 0, pad.clone()),
+                ],
+                // The inverse, lower site first.
+                vec![
+                    (line_start(24) + pad.len(), 2, String::new()),
+                    (line_start(2), pad.len(), String::new()),
+                ],
+                // Join line 15 to the checkpointed line 16, then split it again.
+                vec![(line_start(16) - nl.len(), nl.len(), s(" "))],
+                vec![(line_start(16) - nl.len(), 1, s(nl))],
+            ];
+
+            let mut engine = HighlightEngine::for_file(path, None, &registry);
+            assert_eq!(engine.backend_name(), "textmate");
+            let mut text = original.clone();
+            let _ = spans_of(&mut engine, &text);
+            for (n, batch) in batches.iter().enumerate() {
+                let edits = apply(&mut text, batch);
+                engine.notify_edits(&edits);
+                assert_eq!(
+                    spans_of(&mut engine, &text),
+                    full_parse(&text),
+                    "partial re-highlight after batch {n} ({nl:?} lines) must match a full parse"
+                );
+            }
+            assert_eq!(text, original, "the batches undo each other");
+        }
     }
 
     /// Bulk edits whose positions are all outside the cached viewport must

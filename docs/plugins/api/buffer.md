@@ -533,7 +533,13 @@ hasActiveSearch(): boolean;
 ### `grepProject`
 
 Project-wide grep search (async)
-Searches all files in the project, respecting .gitignore.
+Searches the project's files by Quick Open's rules, with hidden and
+gitignored files left out whatever the explorer shows: in a git
+repository, what `git ls-files --cached --others --exclude-standard`
+reports (so .gitignore is respected) plus the files of submodules and
+nested repositories; otherwise every non-hidden file outside `.git`,
+`node_modules`, `target` and similar directories. Either way, files
+matched by `file_explorer.custom_ignore_patterns` are left out.
 Open buffers with dirty edits are searched in-memory.
 
 ```typescript
@@ -545,7 +551,7 @@ grepProject(pattern: string, fixedString: boolean | null, caseSensitive: boolean
 Begin a streaming project-wide search and return a `SearchHandle`.
 The producer (host) writes matches at full speed into shared state;
 the consumer drains via `handle.take()` at its own cadence. Call
-`handle.cancel()` to abort.
+`handle.cancel()` to abort. Searches the same files as `grepProject`.
 
 ```typescript
 beginSearch(pattern: string, opts?: {
@@ -611,6 +617,40 @@ disk vs HEAD, the git-gutter comparison. Resolves with a
 
 ```typescript
 diffBaselinePair(oldBaselineId: number, newBaselineId: number): Promise<DiffBaselineResult>;
+```
+
+### `compareBuffers`
+
+Line diff of two live buffers, measured in their own bytes (async):
+each hunk's byte range on both sides, each changed line's text
+range, and the part of a paired line that differs from its
+counterpart. The texts never cross into the plugin — use this
+instead of `getBufferText` + `computeLineDiff` when the offsets will
+be used to decorate or edit the buffers.
+
+Rejects when either buffer is binary or in large-file mode.
+
+```typescript
+compareBuffers(leftId: number, rightId: number): Promise<CompareResult>;
+```
+
+### `replaceRange`
+
+Replace the bytes `start..end` of a buffer with `text`, as one edit
+and one undo step (async). Resolves `true` once applied; `false`,
+leaving the buffer as it was, when it is read-only or binary or the
+range is outside it.
+
+`expectedVersion` (a `leftVersion` / `rightVersion` from
+`compareBuffers`) makes the edit conditional: if the buffer has
+changed since, the offsets may name other text, so nothing is done
+and it resolves `false`.
+
+`deleteRange` followed by `insertText` is two edits, so undoing it
+stops half way.
+
+```typescript
+replaceRange(bufferId: number, start: number, end: number, text: string, expectedVersion?: number): Promise<boolean>;
 ```
 
 ### `getBaselineLines`

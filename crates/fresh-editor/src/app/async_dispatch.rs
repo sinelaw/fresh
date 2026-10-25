@@ -481,6 +481,9 @@ impl Editor {
                 AsyncMessage::TerminalOutput { terminal } => {
                     self.handle_terminal_output(terminal);
                 }
+                AsyncMessage::TerminalClipboardStore { text } => {
+                    self.clipboard.copy(text);
+                }
                 AsyncMessage::PathChanged { handle, path, kind } => {
                     self.handle_path_changed(handle, path, kind);
                 }
@@ -541,6 +544,14 @@ impl Editor {
                 } => {
                     self.handle_remote_attach_failed(error, request_id, reconnect_window);
                 }
+                AsyncMessage::PluginCallbackResult { request_id, result } => {
+                    let callback_id = fresh_core::api::JsCallbackId::from(request_id);
+                    let plugins = self.plugin_manager.read().unwrap();
+                    match result {
+                        Ok(json) => plugins.resolve_callback(callback_id, json),
+                        Err(e) => plugins.reject_callback(callback_id, e),
+                    }
+                }
                 AsyncMessage::PluginProcessOutput {
                     process_id,
                     stdout,
@@ -570,10 +581,11 @@ impl Editor {
                 }
                 AsyncMessage::QuickOpenFilesLoaded {
                     cwd,
+                    generation,
                     files,
                     complete,
                 } => {
-                    self.handle_quick_open_files_loaded(cwd, files, complete);
+                    self.handle_quick_open_files_loaded(cwd, generation, files, complete);
                 }
                 AsyncMessage::PluginsDirLoaded {
                     dir,
@@ -641,6 +653,12 @@ impl Editor {
             self.process_pending_plugin_actions();
         }
 
+        // A macro replay parked on a plugin step resumes once it settles.
+        #[cfg(feature = "plugins")]
+        let macro_replay_moved = self.resume_macro_replay();
+        #[cfg(not(feature = "plugins"))]
+        let macro_replay_moved = false;
+
         // Process pending LSP server restarts (with exponential backoff)
         {
             let _s = tracing::trace_span!("process_pending_lsp_restarts").entered();
@@ -694,6 +712,7 @@ impl Editor {
             || file_changes
             || tree_changes
             || backlogged
+            || macro_replay_moved
     }
 
     /// Whether the plugin command frame budget left work for the next tick.
@@ -1538,9 +1557,19 @@ impl Editor {
         // The owning window may already be gone (closed while its PTY was
         // winding down); then there is nothing left to tear down, but the
         // plugin hook below still fires.
+        let mut close_buffer = None;
         if let Some(window) = self.windows.get_mut(&exited_window_id) {
+            let buffer_id = window
+                .terminal_buffers
+                .iter()
+                .find(|(_, tb)| tb.terminal_id == terminal_id)
+                .map(|(&id, _)| id);
             Self::teardown_exited_terminal(window, terminal_id, exit_code);
+            close_buffer = buffer_id.filter(|&id| Self::closes_on_exit(window, id, terminal_id));
         }
+        // The self-update terminal is where its outcome is read.
+        let close_buffer =
+            close_buffer.filter(|&id| self.self_update_output != Some((exited_window_id, id)));
 
         // Notify plugins after the editor's own exit handling
         // is complete. Orchestrator's state machine reads this
@@ -1555,6 +1584,52 @@ impl Editor {
                 exit_code,
             },
         );
+
+        if let Some(buffer_id) = close_buffer {
+            self.with_window_retargeted(exited_window_id, |editor| {
+                editor.close_exited_terminal_tabs(buffer_id, terminal_id);
+            });
+        }
+    }
+
+    /// Whether `terminal.close_on_exit` applies to the just-exited terminal
+    /// behind `buffer_id`: only a shell the user opened. A plugin's terminal —
+    /// an agent, a build — keeps its scrollback, since that output is what the
+    /// user is there to read; every one of them is either ephemeral or has a
+    /// `terminal_commands` entry (empty for a plugin-run shell). A terminal
+    /// held for a remote reconnect has no exit record, so it stays too.
+    fn closes_on_exit(
+        window: &crate::app::window::Window,
+        buffer_id: crate::model::event::BufferId,
+        terminal_id: crate::services::terminal::TerminalId,
+    ) -> bool {
+        window.resources.config.terminal.close_on_exit
+            && !window.terminal_commands.contains_key(&terminal_id)
+            && window
+                .exited_terminals
+                .get(&buffer_id)
+                .is_some_and(|exited| !exited.ephemeral && !exited.script_access)
+    }
+
+    /// Close every tab showing the exited terminal's buffer in the active
+    /// window, collapsing a pane it was the only tab of — the same path as
+    /// the tab's × button.
+    fn close_exited_terminal_tabs(
+        &mut self,
+        buffer_id: crate::model::event::BufferId,
+        terminal_id: crate::services::terminal::TerminalId,
+    ) {
+        let splits: Vec<crate::model::event::LeafId> = self
+            .active_window()
+            .split_view_states()
+            .iter()
+            .filter(|(_, vs)| vs.has_buffer(buffer_id))
+            .map(|(&leaf, _)| leaf)
+            .collect();
+        for split in splits {
+            self.close_tab_in_split(buffer_id, split);
+        }
+        self.set_status_message(t!("terminal.closed", id = terminal_id.0).to_string());
     }
 
     /// Editor-side teardown of an exited terminal, applied to the window that
@@ -1991,6 +2066,7 @@ impl Editor {
     fn handle_quick_open_files_loaded(
         &mut self,
         cwd: String,
+        generation: u64,
         files: std::sync::Arc<Vec<crate::input::quick_open::providers::FileEntry>>,
         complete: bool,
     ) {
@@ -2002,9 +2078,9 @@ impl Editor {
                 .downcast_ref::<crate::input::quick_open::providers::FileProvider>()
             {
                 if complete {
-                    fp.set_cache(&cwd, files);
+                    fp.set_cache(&cwd, generation, files);
                 } else {
-                    fp.set_partial_cache(&cwd, files);
+                    fp.set_partial_cache(&cwd, generation, files);
                 }
             }
         }

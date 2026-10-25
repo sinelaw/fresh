@@ -1019,7 +1019,7 @@ async function recompute(bufferId: number): Promise<void> {
           }
         }
       }
-      await onePass();
+      await onePass(state);
     } while (state.rerunRequested);
   } finally {
     state.updating = false;
@@ -1027,7 +1027,9 @@ async function recompute(bufferId: number): Promise<void> {
 
   // A single diff pass. Early `return`s end this pass only; the wrapper's
   // `do…while` still honors any `rerunRequested` recorded meanwhile.
-  async function onePass(): Promise<void> {
+  // `state` is passed in because a hoisted function doesn't keep the
+  // narrowing above.
+  async function onePass(state: BufferDiffState): Promise<void> {
     const baselineId = await ensureBaseline(state);
     if (baselineId === null) {
       // No reference exists (file untracked, no repo, etc.).

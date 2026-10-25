@@ -654,6 +654,23 @@ lsp_status_clicked: {
 };
 ```
 
+#### `lsp_open_external_uri`
+
+An LSP navigation resolved to a URI whose scheme this plugin claimed
+with `registerLspUriScheme`. `line` and `character` are 0-indexed, as
+the server sent them.
+
+```typescript
+lsp_open_external_uri: {
+  uri: string;
+  scheme: string;
+  line: number;
+  character: number;
+  language: string;
+  server_name: string;
+};
+```
+
 ### UI events
 
 #### `action_popup_result`
@@ -733,6 +750,12 @@ terminal_output: {
   terminal_id: number;
   window_id: number;
   last_line: string;
+  /** The terminal's tab title; empty until it has a meaningful one. */
+  terminal_title: string;
+  /** The last OSC 133 / OSC 9;4 activity marker: `true` while a command
+  *  runs, `false` once it has finished, `null` if the program never
+  *  emitted one. */
+  osc_activity: boolean | null;
 };
 ```
 

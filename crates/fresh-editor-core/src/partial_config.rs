@@ -78,7 +78,8 @@ pub struct PartialConfig {
     pub locale: Option<String>,
     pub check_for_updates: Option<bool>,
     pub self_update: Option<bool>,
-    pub orchestrator_mode: Option<bool>,
+    pub auto_attach: Option<bool>,
+    pub open_last_workspace: Option<bool>,
     pub editor: Option<PartialEditorConfig>,
     pub file_explorer: Option<PartialFileExplorerConfig>,
     pub file_browser: Option<PartialFileBrowserConfig>,
@@ -108,7 +109,9 @@ impl Merge for PartialConfig {
         self.locale.merge_from(&other.locale);
         self.check_for_updates.merge_from(&other.check_for_updates);
         self.self_update.merge_from(&other.self_update);
-        self.orchestrator_mode.merge_from(&other.orchestrator_mode);
+        self.auto_attach.merge_from(&other.auto_attach);
+        self.open_last_workspace
+            .merge_from(&other.open_last_workspace);
 
         // Nested structs: merge recursively
         merge_partial(&mut self.editor, &other.editor);
@@ -501,6 +504,7 @@ pub struct PartialTerminalConfig {
     pub resume_agents: Option<bool>,
     pub mouse_drag_selects: Option<bool>,
     pub mouse_forwarding: Option<crate::config::TerminalMouseForwarding>,
+    pub close_on_exit: Option<bool>,
 }
 
 impl Merge for PartialTerminalConfig {
@@ -514,6 +518,7 @@ impl Merge for PartialTerminalConfig {
         self.mouse_drag_selects
             .merge_from(&other.mouse_drag_selects);
         self.mouse_forwarding.merge_from(&other.mouse_forwarding);
+        self.close_on_exit.merge_from(&other.close_on_exit);
     }
 }
 
@@ -1072,6 +1077,7 @@ impl From<&TerminalConfig> for PartialTerminalConfig {
             resume_agents: Some(cfg.resume_agents),
             mouse_drag_selects: Some(cfg.mouse_drag_selects),
             mouse_forwarding: Some(cfg.mouse_forwarding),
+            close_on_exit: Some(cfg.close_on_exit),
         }
     }
 }
@@ -1091,6 +1097,7 @@ impl PartialTerminalConfig {
                 .mouse_drag_selects
                 .unwrap_or(defaults.mouse_drag_selects),
             mouse_forwarding: self.mouse_forwarding.unwrap_or(defaults.mouse_forwarding),
+            close_on_exit: self.close_on_exit.unwrap_or(defaults.close_on_exit),
         }
     }
 }
@@ -1252,7 +1259,8 @@ impl From<&crate::config::Config> for PartialConfig {
             locale: cfg.locale.0.clone(),
             check_for_updates: Some(cfg.check_for_updates),
             self_update: Some(cfg.self_update),
-            orchestrator_mode: Some(cfg.orchestrator_mode),
+            auto_attach: Some(cfg.auto_attach),
+            open_last_workspace: Some(cfg.open_last_workspace),
             editor: Some(PartialEditorConfig::from(&cfg.editor)),
             file_explorer: Some(PartialFileExplorerConfig::from(&cfg.file_explorer)),
             file_browser: Some(PartialFileBrowserConfig::from(&cfg.file_browser)),
@@ -1450,7 +1458,10 @@ impl PartialConfig {
             ),
             check_for_updates: self.check_for_updates.unwrap_or(defaults.check_for_updates),
             self_update: self.self_update.unwrap_or(defaults.self_update),
-            orchestrator_mode: self.orchestrator_mode.unwrap_or(defaults.orchestrator_mode),
+            auto_attach: self.auto_attach.unwrap_or(defaults.auto_attach),
+            open_last_workspace: self
+                .open_last_workspace
+                .unwrap_or(defaults.open_last_workspace),
             editor: self
                 .editor
                 .map(|e| e.resolve(&defaults.editor))

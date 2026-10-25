@@ -817,10 +817,23 @@ fn resolve_build_anchor(
     if addr.is_virtual || addr.byte < line_start {
         return None;
     }
+    // Resuming at the line's first text row builds from the line start, and a
+    // build from the line start draws the line's `LineAbove` rows first (a
+    // table row's `├─┼─┤`). The anchor's row is already past them — the index
+    // orders a line's rows as drawn — so skip them again, or the window starts
+    // at the border the offset stepped over: a row the frame showed for two
+    // offsets, so a scroll through a table stalled a row and then jumped two.
+    let above = if addr.byte == line_start {
+        index
+            .line_wrap(top_line)
+            .map_or(0, |lw| lw.virtual_above as usize)
+    } else {
+        0
+    };
     Some(BuildAnchor {
         byte: addr.byte,
         carry: addr.carry,
-        skip: (walk_back + stable_skip) as usize,
+        skip: (walk_back + stable_skip) as usize + above,
     })
 }
 
@@ -866,11 +879,7 @@ pub(crate) fn wrap_index_geometry_for(
     };
     crate::view::wrap_index::WrapIndexGeometry {
         rule,
-        view_mode: if matches!(view_mode, ViewMode::PageView) {
-            CacheViewMode::Compose
-        } else {
-            CacheViewMode::Source
-        },
+        view_mode: CacheViewMode::of(view_mode),
         fold_signature,
     }
 }

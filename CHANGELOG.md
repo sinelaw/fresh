@@ -9,24 +9,52 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 ### Features
 
 * **Simple launch by default** - based on your feedback, some defaults are dialed back so launching is simple. Nothing was removed (#3555, #3556, #3568, reported by @zipproth)
-    * `fresh FILE` opens just that file, with no restored session, dock or Welcome tab. This makes Fresh a better `$EDITOR` / git `core.editor`; `fresh --simple` does the same without a file
-    * The Orchestrator dock starts closed on a first run; open it from View ▸ Orchestrator Dock and it stays open from then on
-    * `fresh`, `fresh DIR` and `fresh -a` behave as before, and `--restore` brings the full session back to a file launch
+    * `fresh FILE` opens just that file, with no restored session, dock or Welcome tab (even if you left the dock open). This makes Fresh a better `$EDITOR` / git `core.editor`; `fresh --simple` does the same without a file
+    * With Auto Attach on, a bare `fresh` is `fresh -a` (no name): the one shared background editor (a `fresh -a` that names a remote host, or finds a per-directory daemon already running in its directory, still goes to that one). Typed in a Fresh terminal, with Auto Attach on or off, either one now leaves that editor as it is and says you are already in it, instead of starting a second editor inside the terminal; `fresh --simple`, `fresh -a NAME` and piped input are refused there with an error. The message says how to start a separate editor anyway (`FRESH_SESSION= fresh --simple`)
+    * **Orchestrator mode is now Auto Attach** (`auto_attach`): what the setting does is attach a bare `fresh` to the shared background editor, so it is named for that. `orchestrator_mode` in an existing config is still read, and moves to the new name the next time a setting is saved
+    * The Orchestrator dock starts closed, for a bare `fresh` too and for existing users whose dock was open at their last quit; open it from View ▸ Orchestrator Dock and it stays open from then on
+    * A bare `fresh` opens the directory you typed it in, also when it reattaches to a running daemon, instead of the workspace you used last. The new **Open Last Workspace** setting (`open_last_workspace`, off by default) brings back the old behaviour, with Auto Attach on or off
+    * An empty workspace behaves the same for a bare `fresh` as in any launch: a `[No Name]` buffer on a first run, and closing the last tab follows `auto_create_empty_buffer_on_last_buffer_close` and `file_explorer.auto_open_on_last_buffer_close` instead of always leaving a blank pane
+    * `fresh DIR` still restores that directory's previous workspace (open files, layout) and shows the Welcome tab; `fresh --restore FILE` does the same for a file launch
+    * `fresh DIR` opens the file explorer unless you closed it in that directory yourself; `fresh --simple` (with or without a directory) starts with it closed
     * Startup is faster with many workspaces, which now load on first use
 * **Markdown Source / Rendered / Source+Compose modes** - new commands switch a Markdown pane between the raw text and the composed view, and a dual mode shows both side by side in one scroll-synced tab (edit on the source side; closing the tab leaves your file and panes as they were). "Cycle View Mode" steps through all three (#3562, by @PilotLeoYan)
 * **Debian testing/unstable package** - each release also attaches a `.debian-testing.deb` built from Debian's own packaged crates (#3519)
+* **New config option: close a shell's tab when the shell exits** - with it on, `exit` or Ctrl+D in an integrated terminal closes its tab (and the pane, if it was the only tab). Off by default; enable it in the Settings UI (#3537, by @cychitivav)
+* **Middle-click closes a tab** (#3284, #3286, requested by @CnsMaple)
+* **Clickable "Palette: Ctrl+P" status hint** opens the command palette (#3250, #3576, requested by @Korkman, by @peyton-durand)
+* **Duplicate Line Above command**, and duplicated lines keep carets and selections on the copy (#3244, by @kimprap)
+* **Terminal programs can set your clipboard** - OSC 52 writes from the integrated terminal reach the host clipboard (#3572, #3573, reported by @mycloa)
 
 ### Bug Fixes
 
+* **Unsaved changes carry over between the background daemon and a direct launch** - an edit left unsaved in a bare `fresh` now comes back in `fresh FILE` or with Auto Attach off, and the other way round; each mode used to keep its own recovery store
+* **A detached daemon no longer shuts itself down** - it used to exit after an hour with no terminal attached, taking running agents with it; it now runs until you quit it
 * **Markdown compose layout with emoji and CJK text** - code-block frames keep their edges and wrapped table cells no longer start with a stray space or break early (#3562)
 * **Clear error in mintty / Git Bash** - Fresh now explains it needs a real console instead of failing with `os error 6` (#3547, #3549, reported by @netoffice-zz)
 * **git no longer hangs on a detached daemon** - `--wait` against a daemon with nothing attached no longer waits on an invisible editor (#3555)
 * **Plugin bundling uses a private temp directory**, closing a local-user file-overwrite risk (#3557)
 * **macOS honors `XDG_CONFIG_HOME` and `XDG_DATA_HOME`** - an absolute `XDG_CONFIG_HOME` now selects `$XDG_CONFIG_HOME/fresh` instead of `~/.config/fresh`, and an absolute `XDG_DATA_HOME` does the same for sessions, workspace trust and crash recovery. An existing install stays on its old directory until the new one exists, so an upgrade does not look like a fresh start (#3497 by @LuisAlejandro)
+* **`fresh -a` works in deeply nested directories** - the daemon no longer dies at startup when the directory path is too long for a Unix socket name; such directories get a shortened, hashed socket name, and every other directory keeps the name it had
+* **macOS file-descriptor leak** - the daemon no longer runs out of fds after files change in the project root (#3523, #3584, reported by @IconRunner05)
+* **Windows fixes** (#3281, #3289, #3296, #3545, reported by @CnsMaple)
+    * formatters given as absolute paths (`D:\...`) are found again
+    * Copy Path no longer pastes `\\?\` prefixed paths
+    * removing an Orchestrator worktree no longer fails with "Permission denied"
+* **Stale syntax colors after commenting a block of lines** (#3551, by @kimprap)
+* **Closing a discarded or saved last tab now closes its empty split** (#3552, by @kimprap)
+* **Rename works with servers lacking prepareRename**, such as pylsp (#3540, by @cychitivav)
+* **Regex replace keeps non-ASCII text** in the replacement intact (#3571, by @neatsorg)
+* **Unnamed buffers honor editor settings** such as auto-close and occurrence highlight after restore (#3570, by @neatsorg)
+* **A half-open client connection can't stall the daemon** (#3542)
+* **Hidden/ignored files are treated consistently** across Quick Open, the explorer and project search (#3580)
+* **Bundled grammars load before bundle plugins** (#3544)
+* **Docs clarify `textmate_grammar` only supports `.sublime-syntax`** (#3115, #3583, reported by @sgon00, by @peyton-durand)
 
 ### Internals
 
 * Plugin buffer groups can show a file the user has open as an editable panel, with a new `buffer_group_closed` hook (#3560, #3562)
+* Virtual text always invalidates the wrap cache (#3311, #3485); CI artifact usage reduced (#3577)
 
 ## 0.5.3
 
