@@ -569,16 +569,17 @@ pub struct WrapIndex {
 /// whose snapshot turned out identical is free and is not counted, so the
 /// number means "batches that changed something", not "batches seen".
 ///
-/// `tails_read` counts text-edit repairs that read the line from the resume
-/// row to its end without the layout resyncing: on a long line that is the
-/// O(line) cost the repair's windowed read exists to avoid.
+/// `repair_bytes_read` counts the source bytes text-edit repairs tokenised.
+/// A repair that reads from its resume row to the line's end pays for the
+/// whole tail, which on a long line is the O(line) cost the windowed read
+/// exists to avoid; one that resyncs inside its windows pays for a few rows.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct WrapIndexStats {
     pub rebuilds: u64,
     pub lines_built: u64,
     pub decoration_repairs: u64,
     pub lines_repaired: u64,
-    pub tails_read: u64,
+    pub repair_bytes_read: u64,
 }
 
 impl WrapIndexStats {
@@ -588,7 +589,7 @@ impl WrapIndexStats {
             lines_built: self.lines_built + other.lines_built,
             decoration_repairs: self.decoration_repairs + other.decoration_repairs,
             lines_repaired: self.lines_repaired + other.lines_repaired,
-            tails_read: self.tails_read + other.tails_read,
+            repair_bytes_read: self.repair_bytes_read + other.repair_bytes_read,
         }
     }
 }
@@ -1061,13 +1062,20 @@ impl WrapIndex {
                 line_ending,
                 &self.decorations.folds,
             )),
-            None => line_token_stream(
-                buffer,
-                line,
-                line_ending,
-                &self.decorations,
-                Some(resume_byte),
-            ),
+            None => {
+                let line_end = buffer
+                    .line_start_offset(line + 1)
+                    .unwrap_or_else(|| buffer.len())
+                    .min(buffer.len());
+                self.stats.repair_bytes_read += line_end.saturating_sub(resume_byte) as u64;
+                line_token_stream(
+                    buffer,
+                    line,
+                    line_ending,
+                    &self.decorations,
+                    Some(resume_byte),
+                )
+            }
         };
 
         // The *new* stream may not be resumable at this byte at all — it can
@@ -1120,8 +1128,10 @@ impl WrapIndex {
                 None => break,
             }
         }
+        if let Some(reader) = &reader {
+            self.stats.repair_bytes_read += reader.bytes_read() as u64;
+        }
         if resync_at.is_none() {
-            self.stats.tails_read += 1;
             let finished = machine.finish();
             absorb_finished(
                 &finished,
@@ -1215,7 +1225,9 @@ impl WrapIndex {
 /// An edit that leaves every break where it was resyncs on the next row; one
 /// that moves a word across a break shifts the rows after it until both
 /// layouts happen to break at the same word, which on prose takes a few
-/// dozen. Later windows double, so this only sets where the doubling starts.
+/// dozen. Later windows double, so this only sets where the doubling starts —
+/// and `build_base_tokens` never reads fewer than 1024 characters, so on a
+/// pane narrower than about 128 columns the first window is that floor.
 const REPAIR_WINDOW_ROWS: usize = 8;
 
 /// A buffer mutation, as the damage contract sees it.
@@ -1321,19 +1333,30 @@ fn line_token_stream(
 /// window starts at its first byte. Fed one after another, the windows are
 /// exactly the stream a single read would have produced.
 ///
+/// A window holding nothing but its cut token — a line with no spaces in it
+/// (minified JSON, base64, CJK prose) is a single token from end to end —
+/// gives up on windows and reads the rest in one go. Doubling instead would
+/// read such a token about three times over to find its end; this reads it
+/// once, as the whole-tail read did.
+///
 /// Decorated lines are not read this way: soft breaks, conceals and hints
 /// reach across a cut, and a conceal half inside a window would substitute
-/// differently from the whole one.
+/// differently from the whole one. Nor are lines a fold starts inside of:
+/// the tokenizer applies a fold only at the boundaries of what it reads, so
+/// a window restarting inside one would skip bytes the full read draws.
+/// Folds start at line starts once resolved, so this is the transient state
+/// a line join leaves behind.
 struct TailReader {
     line: usize,
     line_end: usize,
     next: usize,
     chars: usize,
     done: bool,
+    bytes_read: usize,
 }
 
 impl TailReader {
-    /// `None` when `line` carries decorations.
+    /// `None` when `line` carries decorations, or a fold starts inside it.
     fn new(
         buffer: &mut Buffer,
         line: usize,
@@ -1351,6 +1374,13 @@ impl TailReader {
             if !breaks.is_empty() || !conceals.is_empty() || !hints.is_empty() {
                 return None;
             }
+            if decorations
+                .folds
+                .iter()
+                .any(|f| f.start > line_start && f.start < line_end)
+            {
+                return None;
+            }
         }
         Some(Self {
             line,
@@ -1358,11 +1388,17 @@ impl TailReader {
             next: from_byte,
             chars: chars.max(1),
             done: false,
+            bytes_read: 0,
         })
     }
 
     fn is_done(&self) -> bool {
         self.done
+    }
+
+    /// Source bytes tokenised so far, re-reads included.
+    fn bytes_read(&self) -> usize {
+        self.bytes_read
     }
 
     /// The next window, continuing exactly where the previous one stopped.
@@ -1386,9 +1422,15 @@ impl TailReader {
                 budget,
             );
             if complete {
+                self.bytes_read += self.line_end.saturating_sub(self.next);
                 self.done = true;
                 return tokens;
             }
+            let read_to = tokens
+                .last()
+                .and_then(token_source_end)
+                .unwrap_or(self.next);
+            self.bytes_read += read_to.saturating_sub(self.next);
             self.chars = self.chars.saturating_mul(2);
             let held_back = tokens.pop().and_then(|t| t.source_offset);
             match held_back {
@@ -1396,11 +1438,21 @@ impl TailReader {
                     self.next = at;
                     return tokens;
                 }
-                // One token wider than the whole window: read it again, wider.
-                _ => {}
+                // One token wider than the whole window: its end is unknown
+                // until it is read whole, so read everything left.
+                _ => self.chars = usize::MAX,
             }
         }
     }
+}
+
+/// The byte just past what `token` stands for in the source.
+fn token_source_end(token: &ViewTokenWire) -> Option<usize> {
+    let start = token.source_offset?;
+    Some(match &token.kind {
+        ViewTokenWireKind::Text(text) => start + text.len(),
+        _ => start + 1,
+    })
 }
 
 /// Wrap one logical line from scratch.
@@ -2796,7 +2848,7 @@ mod tests {
             "the", "quick", "brown", "fox", "jumps", "over", "a", "lazy", "dog,",
         ];
         let mut seed = 7u32;
-        let text = (0..5000)
+        let text = (0..20_000)
             .map(|_| {
                 seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
                 words[(seed >> 16) as usize % words.len()]
@@ -2815,16 +2867,45 @@ mod tests {
             (len / 6, 0, "quick "),
         ];
         for &(start, removed, insert) in edits {
-            let before = index.stats().tails_read;
+            let before = index.stats().repair_bytes_read;
             edit(&mut buffer, &mut index, start, removed, insert);
             let fresh = built(&mut buffer, 80);
             assert_eq!(structure(&index), structure(&fresh));
-            assert_eq!(
-                index.stats().tails_read,
-                before,
-                "edit ({start}, {removed}, {insert:?}) read the line's tail"
+            // The tail from any of these edits is several thousand bytes; the
+            // rows to resync in are a few dozen of 80 columns.
+            let read = index.stats().repair_bytes_read - before;
+            let tail = (buffer.len() - start) as u64;
+            assert!(
+                read * 4 < tail,
+                "edit ({start}, {removed}, {insert:?}) read {read} of a {tail}-byte tail"
             );
         }
+    }
+
+    /// A line with no spaces is one token from end to end, so no window can
+    /// hold a whole token of it. The repair has to notice and read the rest
+    /// once — doubling windows to find the token's end read it about three
+    /// times over, which made such lines slower than the whole-tail read.
+    #[test]
+    fn a_line_without_spaces_is_read_once() {
+        let text = (0..8000)
+            .map(|i| format!("\"k{i}\":{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let mut buffer = Buffer::from_bytes(text.as_bytes().to_vec(), test_fs());
+        let mut index = built(&mut buffer, 80);
+        let start = buffer.len() / 2;
+        let before = index.stats().repair_bytes_read;
+        edit(&mut buffer, &mut index, start, 0, "q");
+        let read = index.stats().repair_bytes_read - before;
+        let fresh = built(&mut buffer, 80);
+        assert_eq!(structure(&index), structure(&fresh));
+        let resume_row_ahead = 80 * 4;
+        let tail = (buffer.len() - start + resume_row_ahead) as u64;
+        assert!(
+            read < tail * 3 / 2,
+            "read {read} bytes for a {tail}-byte tail"
+        );
     }
 
     /// Editing at the *start* of a huge line resyncs: the boundaries after the

@@ -117,7 +117,10 @@ impl ReferenceHighlightOverlay {
     /// until the cursor moves for some other reason (VSCode's rule). Typing
     /// changes the word under the cursor on every key, so re-highlighting
     /// after typing meant a second frame per keystroke a debounce later,
-    /// restyling every visible match (issue #3631).
+    /// restyling every visible match (issue #3631). Any change of the buffer's
+    /// version counts as an edit, which takes in a line-ending or encoding
+    /// change and text streamed into the buffer as well — VSCode, too, drops
+    /// the highlight on every content change.
     ///
     /// Returns true if overlays were updated
     #[allow(clippy::too_many_arguments)]
