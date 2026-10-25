@@ -328,7 +328,9 @@ fn save_as_keeps_another_workspaces_unsaved_work_on_the_same_file() {
         .auto_recovery_save_dirty_buffers()
         .unwrap();
 
-    let shared_id = fresh::services::recovery::path_hash(&shared);
+    // The editor keys a file's entry by its canonical path: on macOS the
+    // temp directory is reached through a symlink (/var -> /private/var).
+    let shared_id = fresh::services::recovery::path_hash(&shared.canonicalize().unwrap());
     assert_eq!(entry_ids(&store), vec![shared_id.clone()]);
 
     harness.editor_mut().set_active_window(home);
