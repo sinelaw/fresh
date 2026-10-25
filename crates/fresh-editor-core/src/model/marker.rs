@@ -105,6 +105,56 @@ impl MarkerList {
         id
     }
 
+    /// Create a point marker placed among the markers at its position by
+    /// `order` (then by creation): [`nth`](Self::nth) and
+    /// [`in_range`](Self::in_range) hand back same-position markers by
+    /// ascending `order`. `left_gravity` as for
+    /// [`create_left_gravity`](Self::create_left_gravity).
+    pub fn create_ordered(&mut self, position: usize, order: i64, left_gravity: bool) -> MarkerId {
+        let pos = position as u64;
+        let id = MarkerId(self.tree.insert_ordered(pos, pos, order, !left_gravity));
+        self._affinity_map.insert(id, left_gravity);
+        id
+    }
+
+    /// How many markers the list holds.
+    pub fn len(&self) -> usize {
+        self.tree.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.tree.is_empty()
+    }
+
+    /// How many markers start before `position`. O(log n)
+    pub fn count_before(&self, position: usize) -> usize {
+        self.tree.count_before(position as u64)
+    }
+
+    /// How many markers start in `[start, end)`. O(log n)
+    pub fn count_in(&self, start: usize, end: usize) -> usize {
+        self.count_before(end)
+            .saturating_sub(self.count_before(start))
+    }
+
+    /// The marker `k`th in position order (0-based), and where it starts.
+    /// O(log n)
+    pub fn nth(&self, k: usize) -> Option<(MarkerId, usize)> {
+        self.tree
+            .nth(k)
+            .map(|m| (MarkerId(m.id), m.interval.start as usize))
+    }
+
+    /// The markers starting in `[start, end)`, in position order (same-position
+    /// markers by their `order`), with where each starts. O(log n + k)
+    pub fn in_range(&self, start: usize, end: usize) -> Vec<(MarkerId, usize)> {
+        self.tree
+            .in_range(start as u64, end as u64)
+            .into_iter()
+            .map(|m| (MarkerId(m.id), m.interval.start as usize))
+            .collect()
+    }
+
     /// Create a marker covering a whole range, rather than a point.
     ///
     /// The tree's `query` is an ordinary max-end interval-overlap query, so a

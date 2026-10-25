@@ -797,7 +797,7 @@ impl Editor {
                 .map(|w| &mut w.buffers)
                 .expect("active window present")
             {
-                state.virtual_texts.clear(&mut state.marker_list);
+                state.virtual_texts.clear();
             }
             self.set_status_message(t!("toggle.inlay_hints_disabled").to_string());
         }

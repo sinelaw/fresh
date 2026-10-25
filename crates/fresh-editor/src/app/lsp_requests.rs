@@ -1494,7 +1494,7 @@ impl Editor {
         use ratatui::style::{Color, Style};
 
         // Clear existing inlay hints
-        state.virtual_texts.clear(&mut state.marker_list);
+        state.virtual_texts.clear();
 
         if hints.is_empty() {
             return;
@@ -1579,7 +1579,6 @@ impl Editor {
                 _ => crate::view::virtual_text::MarkerGravity::Right,
             };
             state.virtual_texts.add_with_theme_keys(
-                &mut state.marker_list,
                 byte_offset,
                 display_text,
                 hint_style,
@@ -3317,26 +3316,14 @@ impl Editor {
                 for &(pos, del_len, ins_len) in &edit_lengths {
                     if del_len > 0 && ins_len > 0 {
                         if ins_len > del_len {
-                            state.marker_list.adjust_for_insert(pos, ins_len - del_len);
-                            state.margins.adjust_for_insert(pos, ins_len - del_len);
-                            state
-                                .scrollbar_markers
-                                .adjust_for_insert(pos, ins_len - del_len);
+                            state.adjust_markers_for_insert(pos, ins_len - del_len);
                         } else if del_len > ins_len {
-                            state.marker_list.adjust_for_delete(pos, del_len - ins_len);
-                            state.margins.adjust_for_delete(pos, del_len - ins_len);
-                            state
-                                .scrollbar_markers
-                                .adjust_for_delete(pos, del_len - ins_len);
+                            state.adjust_markers_for_delete(pos, del_len - ins_len);
                         }
                     } else if del_len > 0 {
-                        state.marker_list.adjust_for_delete(pos, del_len);
-                        state.margins.adjust_for_delete(pos, del_len);
-                        state.scrollbar_markers.adjust_for_delete(pos, del_len);
+                        state.adjust_markers_for_delete(pos, del_len);
                     } else if ins_len > 0 {
-                        state.marker_list.adjust_for_insert(pos, ins_len);
-                        state.margins.adjust_for_insert(pos, ins_len);
-                        state.scrollbar_markers.adjust_for_insert(pos, ins_len);
+                        state.adjust_markers_for_insert(pos, ins_len);
                     }
                 }
 
@@ -4246,9 +4233,7 @@ mod tests {
         let hints = vec![make_hint(0, 1, ": i32", Some(InlayHintKind::TYPE))];
         Editor::apply_inlay_hints_to_state(&mut state, &hints);
 
-        let lookup = state
-            .virtual_texts
-            .build_lookup(&state.marker_list, 0, state.buffer.len());
+        let lookup = state.virtual_texts.build_lookup(0, state.buffer.len());
         let vtexts = lookup.get(&1).expect("expected hint at byte offset 1");
         assert_eq!(vtexts.len(), 1);
         assert_eq!(vtexts[0].text, ": i32");
@@ -4272,9 +4257,7 @@ mod tests {
         let hints = vec![make_hint(0, 2, ": i32", Some(InlayHintKind::TYPE))];
         Editor::apply_inlay_hints_to_state(&mut state, &hints);
 
-        let lookup = state
-            .virtual_texts
-            .build_lookup(&state.marker_list, 0, state.buffer.len());
+        let lookup = state.virtual_texts.build_lookup(0, state.buffer.len());
         let vtexts = lookup.get(&1).expect("expected hint anchored to last byte");
         assert_eq!(vtexts.len(), 1);
         assert_eq!(vtexts[0].text, ": i32");
@@ -4316,9 +4299,7 @@ mod tests {
         let hints = vec![make_hint(0, 1, ": i32", Some(InlayHintKind::TYPE))];
         Editor::apply_inlay_hints_to_state(&mut state, &hints);
 
-        let lookup = state
-            .virtual_texts
-            .build_lookup(&state.marker_list, 0, state.buffer.len());
+        let lookup = state.virtual_texts.build_lookup(0, state.buffer.len());
         let vtexts = lookup.get(&1).expect("expected hint at byte offset 1");
         assert_eq!(
             vtexts[0].fg_theme_key.as_deref(),
@@ -4351,9 +4332,7 @@ mod tests {
 
         // Simulate user deleting "x = 42" (bytes 4..10, half-open) — the
         // hint anchor at byte 5 is inside this range.
-        let removed = state
-            .virtual_texts
-            .remove_in_range(&mut state.marker_list, 4, 10);
+        let removed = state.virtual_texts.remove_in_range(4, 10);
         assert_eq!(removed, 1, "hint inside deleted range must be removed");
         assert!(state.virtual_texts.is_empty());
     }
@@ -4365,18 +4344,15 @@ mod tests {
         // recreate markers at fresh positions. After a few rounds,
         // delete one marker and adjust for a deletion and check the
         // remaining markers' positions.
-        use crate::model::marker::MarkerList;
         use crate::view::virtual_text::{VirtualTextManager, VirtualTextPosition};
         use ratatui::style::Style;
 
-        let mut markers = MarkerList::new();
         let mut vtexts = VirtualTextManager::new();
 
         // Initial marker layout at six positions (same as the e2e test).
         let positions = [200usize, 401, 602, 803, 1205, 1406];
         for &p in &positions {
             vtexts.add(
-                &mut markers,
                 p,
                 format!("hint-at-{p}"),
                 Style::default(),
@@ -4388,10 +4364,9 @@ mod tests {
         // Simulate a couple of clear/recreate cycles (each LSP refresh
         // goes through this exact path via apply_inlay_hints_to_state).
         for _ in 0..3 {
-            vtexts.clear(&mut markers);
+            vtexts.clear();
             for &p in &positions {
                 vtexts.add(
-                    &mut markers,
                     p,
                     format!("hint-at-{p}"),
                     Style::default(),
@@ -4402,14 +4377,14 @@ mod tests {
         }
 
         // remove_in_range + adjust_for_delete equivalent to apply_delete.
-        let removed = vtexts.remove_in_range(&mut markers, 1005, 1206);
+        let removed = vtexts.remove_in_range(1005, 1206);
         assert_eq!(
             removed, 1,
             "exactly one marker inside [1005, 1206) should be removed"
         );
-        markers.adjust_for_delete(1005, 201);
+        vtexts.adjust_for_delete(1005, 201);
 
-        let lookup = vtexts.build_lookup(&markers, 0, 10_000);
+        let lookup = vtexts.build_lookup(0, 10_000);
         let mut positions: Vec<usize> = lookup.keys().copied().collect();
         positions.sort();
         assert_eq!(
@@ -4482,9 +4457,7 @@ mod tests {
         Editor::apply_inlay_hints_to_state(&mut state, &hints);
         assert_eq!(state.virtual_texts.len(), 2);
 
-        let removed = state
-            .virtual_texts
-            .remove_in_range(&mut state.marker_list, 4, 10);
+        let removed = state.virtual_texts.remove_in_range(4, 10);
         assert_eq!(removed, 1);
         assert_eq!(state.virtual_texts.len(), 1);
     }

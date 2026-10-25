@@ -951,7 +951,7 @@ impl Viewport {
     /// may have none.
     pub fn scroll_flat_rows(
         &mut self,
-        rows: &crate::view::flat_rows::FlatRows,
+        rows: &crate::view::flat_rows::FlatRows<'_>,
         buffer: &Buffer,
         delta: isize,
     ) {
@@ -1670,7 +1670,7 @@ impl Viewport {
     /// no index to place it by.
     pub fn ensure_visible_in_flat_rows(
         &mut self,
-        rows: &crate::view::flat_rows::FlatRows,
+        rows: &crate::view::flat_rows::FlatRows<'_>,
         buffer: &Buffer,
         cursor_byte: usize,
     ) {

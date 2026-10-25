@@ -363,68 +363,65 @@ impl crate::app::window::Window {
                 }
             })
             .collect();
-        // A pane's rows, its top row and its height.
-        let pane = |window: &mut Self,
-                    leaf: LeafId|
-         -> Option<(
-            std::sync::Arc<crate::view::flat_rows::FlatRows>,
-            usize,
-            usize,
-        )> {
-            let buffer_id = window
+        // The rows below are read straight off each buffer's virtual-line
+        // trees, so they are worked out inside the call that reaches the
+        // buffer: first the active pane's top and its side of the anchors,
+        // then the partner's side and where that puts it.
+        let flat = |vs: &crate::view::split::BufferViewState| {
+            !vs.viewport.line_wrap_enabled && vs.folds.is_empty()
+        };
+        let shown = |window: &Self, leaf: LeafId| {
+            window
                 .buffers
                 .split_view_states()?
                 .get(&leaf)?
-                .shown_buffer()?;
-            window
-                .buffers
-                .with_buffer_and_split(buffer_id, leaf, |state, vs| {
-                    if vs.viewport.line_wrap_enabled || !vs.folds.is_empty() {
-                        return None;
-                    }
-                    let rows = state.flat_rows(vs.is_page_view())?;
-                    let top_line = state.buffer.get_line_number(vs.viewport.top_byte());
-                    let top = rows.first_row(top_line) + vs.viewport.top_view_line_offset();
-                    Some((rows, top, vs.viewport.visible_line_count()))
-                })
-                .flatten()
+                .shown_buffer()
         };
-        let (Some((a_rows, a_top, _)), Some((o_rows, _, o_height))) =
-            (pane(self, active), pane(self, other))
+        let (Some(active_buffer), Some(other_buffer)) = (shown(self, active), shown(self, other))
         else {
             return false;
         };
-        let (from, to) = anchors
-            .iter()
-            .map(|(a, o)| (a_rows.text_row(*a), o_rows.text_row(*o)))
-            .rfind(|(a, _)| *a <= a_top)
-            .unwrap_or((0, 0));
-        let target = (to + (a_top - from)).min(o_rows.max_top(o_height));
-        let (line, offset) = o_rows.locate(target);
-        let Some(buffer_id) = self
+        let Some((a_top, a_anchors)) = self
             .buffers
-            .split_view_states()
-            .and_then(|vs_map| vs_map.get(&other))
-            .and_then(|vs| vs.shown_buffer())
+            .with_buffer_and_split(active_buffer, active, |state, vs| {
+                if !flat(vs) {
+                    return None;
+                }
+                let rows = crate::view::flat_rows::FlatRows::new(state, vs.is_page_view())?;
+                let top_line = state.buffer.get_line_number(vs.viewport.top_byte());
+                let top = rows.first_row(top_line) + vs.viewport.top_view_line_offset();
+                let anchors: Vec<usize> = anchors.iter().map(|(a, _)| rows.text_row(*a)).collect();
+                Some((top, anchors))
+            })
+            .flatten()
         else {
             return false;
         };
-        let line_start = self
-            .buffers
-            .get(&buffer_id)
-            .and_then(|state| state.buffer.line_start_offset(line))
-            .unwrap_or(0);
-        if let Some(vs) = self
-            .buffers
-            .split_view_states_mut()
-            .and_then(|vs_map| vs_map.get_mut(&other))
-        {
-            let viewport = &mut vs.buffer_tab_state_mut().viewport;
-            viewport.set_top_byte(line_start);
-            viewport.set_top_view_line_offset(offset);
-            viewport.set_skip_ensure_visible();
-        }
-        true
+        self.buffers
+            .with_buffer_and_split(other_buffer, other, |state, vs| {
+                if !flat(vs) {
+                    return false;
+                }
+                let Some(rows) = crate::view::flat_rows::FlatRows::new(state, vs.is_page_view())
+                else {
+                    return false;
+                };
+                let (from, to) = a_anchors
+                    .iter()
+                    .zip(&anchors)
+                    .map(|(a, (_, o))| (*a, rows.text_row(*o)))
+                    .rfind(|(a, _)| *a <= a_top)
+                    .unwrap_or((0, 0));
+                let height = vs.viewport.visible_line_count();
+                let target = (to + (a_top - from)).min(rows.max_top(height));
+                let (line, offset) = rows.locate(target);
+                let line_start = state.buffer.line_start_offset(line).unwrap_or(0);
+                vs.viewport.set_top_byte(line_start);
+                vs.viewport.set_top_view_line_offset(offset);
+                vs.viewport.set_skip_ensure_visible();
+                true
+            })
+            .unwrap_or(false)
     }
 
     /// `leaf`'s rows as the frame will lay them out: the wrap index for its
@@ -622,9 +619,9 @@ impl crate::app::window::Window {
                         if vs.viewport.line_wrap_enabled || !vs.folds.is_empty() {
                             return false;
                         }
-                        let Some(rows) = state
-                            .flat_rows(vs.is_page_view())
-                            .filter(|rows| rows.has_virtual_lines())
+                        let Some(rows) =
+                            crate::view::flat_rows::FlatRows::new(state, vs.is_page_view())
+                                .filter(|rows| rows.has_virtual_lines())
                         else {
                             return false;
                         };

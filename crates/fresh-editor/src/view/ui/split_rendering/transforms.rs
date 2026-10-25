@@ -518,85 +518,72 @@ pub(super) fn inject_virtual_lines(
     is_compose: bool,
     window: Option<RowWindow>,
 ) -> (Vec<ViewLine>, usize) {
-    // Get viewport byte range from source lines.
-    // Use the last line that has source bytes (not a trailing empty line
-    // which the iterator may emit at the buffer end).
-    let viewport_start = source_lines
-        .first()
-        .and_then(|l| l.char_source_bytes.iter().find_map(|m| *m))
-        .unwrap_or(0);
-    let viewport_end = source_lines
-        .iter()
-        .rev()
-        .find_map(|l| l.char_source_bytes.iter().rev().find_map(|m| *m))
-        .map(|b| b + 1)
-        .unwrap_or(viewport_start);
-
-    let mut virtual_lines =
-        state
-            .virtual_texts
-            .query_lines_in_range(&state.marker_list, viewport_start, viewport_end);
-
-    // Lines a plugin added as `composeOnly` (markdown_compose's table borders
-    // and list spacing) belong only to a Compose-mode split. Virtual lines live
-    // on the buffer, so in a Source-mode split sharing a buffer with a
-    // composing sibling they would otherwise draw a frame around the raw
-    // source. Drop them here — as `view_data.rs` does for conceals and
-    // `overlays.rs` for overlays. Every other virtual line (git blame, diff,
-    // …) renders in both modes.
-    if !is_compose {
-        virtual_lines.retain(|(_, vt)| !vt.compose_only);
-    }
-
-    if virtual_lines.is_empty() {
+    // Compose-only lines (markdown_compose's table borders and list spacing)
+    // belong only to a Compose-mode split: virtual lines live on the buffer,
+    // so a Source-mode split sharing it with a composing sibling would
+    // otherwise draw a frame around the raw source. The virtual-text manager
+    // keeps them apart and counts and hands them out by `is_compose`.
+    let lines = &state.virtual_texts;
+    if lines.lines_before(usize::MAX, is_compose) == 0 {
         return (source_lines, 0);
     }
 
     // Rows built or left out so far, and where the build can stop.
+    let mut result = Vec::with_capacity(source_lines.len());
     let mut skipped = 0usize;
     let full_at = window.map(|w| w.before.saturating_add(w.rows));
-    let mut result = Vec::with_capacity(
-        source_lines.len() + full_at.map_or(virtual_lines.len(), |n| n.min(virtual_lines.len())),
-    );
-    // Add one virtual line's rows, or leave them out: above the window,
-    // unwrapped (one row, so it can be counted without being built); past
-    // it, everything. Returns `false` once the window is full.
-    let emit = |result: &mut Vec<ViewLine>,
-                skipped: &mut usize,
-                vtext: &crate::view::virtual_text::VirtualText|
+
+    // Add the `placement` lines anchored in `[start, end)`: only those the
+    // window shows. Each line's count comes from the manager's trees, so the
+    // ones above the window — one row each, unwrapped — are left out by
+    // count, and those past it never fetched; the rest are fetched by rank.
+    // Returns `false` once the window is full.
+    let add = |result: &mut Vec<ViewLine>,
+               skipped: &mut usize,
+               placement: VirtualTextPosition,
+               start: usize,
+               end: usize|
      -> bool {
-        if let Some(window) = window {
-            let built = result.len() + *skipped;
-            if full_at.is_some_and(|n| built >= n) {
+        let count = lines.lines_in(placement, is_compose, start, end);
+        if count == 0 {
+            return true;
+        }
+        let built = result.len() + *skipped;
+        let (skip, limit) = match window {
+            Some(w) => {
+                let room = full_at.map_or(usize::MAX, |n| n.saturating_sub(built));
+                if room == 0 {
+                    return false;
+                }
+                let above = if wrap_width.is_none() {
+                    count.min(w.before.saturating_sub(built))
+                } else {
+                    0
+                };
+                (above, room)
+            }
+            None => (0, usize::MAX),
+        };
+        *skipped += skip;
+        for (_, vtext) in lines.lines_window(placement, is_compose, start, end, skip, limit) {
+            if full_at.is_some_and(|n| result.len() + *skipped >= n) {
                 return false;
             }
-            if wrap_width.is_none() && built < window.before {
-                *skipped += 1;
-                return true;
-            }
+            let glyph = vtext.gutter_glyph.as_ref().map(|g| {
+                (
+                    g.clone(),
+                    vtext.gutter_color.unwrap_or(theme.line_number_fg),
+                )
+            });
+            result.extend(create_wrapped_virtual_lines(
+                &vtext.text,
+                vtext.resolved_style(theme),
+                wrap_width,
+                glyph,
+                &vtext.text_overlays,
+            ));
         }
-        let glyph = vtext.gutter_glyph.as_ref().map(|g| {
-            (
-                g.clone(),
-                vtext.gutter_color.unwrap_or(theme.line_number_fg),
-            )
-        });
-        result.extend(create_wrapped_virtual_lines(
-            &vtext.text,
-            vtext.resolved_style(theme),
-            wrap_width,
-            glyph,
-            &vtext.text_overlays,
-        ));
         true
-    };
-    // The virtual lines anchored in `[start, end)`: sorted by anchor, so a
-    // line finds its own without looking at every other line's.
-    let anchored_in = |start: usize, end: usize| {
-        let from = virtual_lines.partition_point(|(pos, _)| *pos < start);
-        virtual_lines[from..]
-            .iter()
-            .take_while(move |(pos, _)| *pos < end)
     };
 
     // `source_lines` are *visual* rows: a wrapped source line arrives as a
@@ -640,12 +627,14 @@ pub(super) fn inject_virtual_lines(
 
         if is_first_row {
             if let (Some(start), Some(end)) = (logical_start, logical_end(&source_lines, idx)) {
-                for (_, vtext) in anchored_in(start, end) {
-                    if vtext.position == VirtualTextPosition::LineAbove
-                        && !emit(&mut result, &mut skipped, vtext)
-                    {
-                        return (result, skipped);
-                    }
+                if !add(
+                    &mut result,
+                    &mut skipped,
+                    VirtualTextPosition::LineAbove,
+                    start,
+                    end,
+                ) {
+                    return (result, skipped);
                 }
             }
         }
@@ -657,12 +646,14 @@ pub(super) fn inject_virtual_lines(
 
         if is_last_row {
             if let (Some(start), Some(end)) = (logical_start, line_end_byte) {
-                for (_, vtext) in anchored_in(start, end) {
-                    if vtext.position == VirtualTextPosition::LineBelow
-                        && !emit(&mut result, &mut skipped, vtext)
-                    {
-                        return (result, skipped);
-                    }
+                if !add(
+                    &mut result,
+                    &mut skipped,
+                    VirtualTextPosition::LineBelow,
+                    start,
+                    end,
+                ) {
+                    return (result, skipped);
                 }
             }
         }
@@ -777,7 +768,7 @@ pub fn resolve_inline_hints(
 ) -> Vec<InlineHint> {
     state
         .virtual_texts
-        .query_inline_in_range(&state.marker_list, start, end)
+        .query_inline_in_range(start, end)
         .into_iter()
         .filter(|(_, vtext)| include_compose_only || !vtext.compose_only)
         .map(|(anchor, vtext)| InlineHint {

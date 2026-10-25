@@ -230,7 +230,6 @@ fn overlay_extend_to_line_end_covers_inlay_hints() {
         let state = harness.editor_mut().active_state_mut();
         let hint_style = Style::default().fg(Color::Rgb(128, 128, 128));
         state.virtual_texts.add(
-            &mut state.marker_list,
             5,
             ": i32".to_string(),
             hint_style,
@@ -238,7 +237,6 @@ fn overlay_extend_to_line_end_covers_inlay_hints() {
             0,
         );
         state.virtual_texts.add(
-            &mut state.marker_list,
             8,
             "n:".to_string(),
             hint_style,
@@ -310,7 +308,6 @@ fn overlay_extend_to_line_end_leaves_the_next_line_s_hints_alone() {
     {
         let state = harness.editor_mut().active_state_mut();
         state.virtual_texts.add(
-            &mut state.marker_list,
             11,
             "call:".to_string(),
             Style::default().fg(Color::Rgb(128, 128, 128)),

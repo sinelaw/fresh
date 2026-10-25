@@ -378,9 +378,7 @@ impl Editor {
             };
 
             // Remove any existing virtual text with this ID first
-            state
-                .virtual_texts
-                .remove_by_id(&mut state.marker_list, &virtual_text_id);
+            state.virtual_texts.remove_by_id(&virtual_text_id);
 
             let position = match state.map_plugin_coord(position, epoch) {
                 Some(p) => p,
@@ -389,7 +387,6 @@ impl Editor {
 
             // Add the new virtual text
             state.virtual_texts.add_with_id(
-                &mut state.marker_list,
                 position,
                 text,
                 style,
@@ -467,9 +464,7 @@ impl Editor {
             }
 
             // Replace any existing virtual text with this ID.
-            state
-                .virtual_texts
-                .remove_by_id(&mut state.marker_list, &virtual_text_id);
+            state.virtual_texts.remove_by_id(&virtual_text_id);
 
             // After the removal: an unmappable epoch drops the hint rather than
             // guessing a byte, and returning earlier would strand the stale one
@@ -480,7 +475,6 @@ impl Editor {
             };
 
             state.virtual_texts.add_with_id_and_theme_keys(
-                &mut state.marker_list,
                 position,
                 text,
                 fallback,
@@ -507,9 +501,7 @@ impl Editor {
             .expect("active window present")
             .buffer_state_mut(buffer_id)
         {
-            state
-                .virtual_texts
-                .remove_by_id(&mut state.marker_list, &virtual_text_id);
+            state.virtual_texts.remove_by_id(&virtual_text_id);
         }
     }
 
@@ -525,9 +517,7 @@ impl Editor {
             .expect("active window present")
             .buffer_state_mut(buffer_id)
         {
-            state
-                .virtual_texts
-                .remove_by_prefix(&mut state.marker_list, &prefix);
+            state.virtual_texts.remove_by_prefix(&prefix);
         }
     }
 
@@ -539,7 +529,7 @@ impl Editor {
             .expect("active window present")
             .buffer_state_mut(buffer_id)
         {
-            state.virtual_texts.clear(&mut state.marker_list);
+            state.virtual_texts.clear();
         }
     }
 
@@ -632,7 +622,6 @@ impl Editor {
             let ns = VirtualTextNamespace::from_string(namespace);
 
             state.virtual_texts.add_line_with_theme_keys(
-                &mut state.marker_list,
                 position,
                 text,
                 style,
@@ -663,9 +652,7 @@ impl Editor {
         {
             use crate::view::virtual_text::VirtualTextNamespace;
             let ns = VirtualTextNamespace::from_string(namespace);
-            state
-                .virtual_texts
-                .clear_namespace(&mut state.marker_list, &ns);
+            state.virtual_texts.clear_namespace(&ns);
         }
     }
 
@@ -694,9 +681,7 @@ impl Editor {
                 None => return,
             };
             let ns = VirtualTextNamespace::from_string(namespace);
-            state
-                .virtual_texts
-                .clear_lines_in_range(&mut state.marker_list, &ns, start, end);
+            state.virtual_texts.clear_lines_in_range(&ns, start, end);
         }
     }
 
@@ -721,12 +706,9 @@ impl Editor {
                 Some(r) => r,
                 None => return,
             };
-            state.virtual_texts.clear_inline_in_range(
-                &mut state.marker_list,
-                &id_prefix,
-                start,
-                end,
-            );
+            state
+                .virtual_texts
+                .clear_inline_in_range(&id_prefix, start, end);
         }
     }
 
@@ -4546,26 +4528,14 @@ impl Editor {
             for &(pos, del_len, ins_len) in &edit_lengths {
                 if del_len > 0 && ins_len > 0 {
                     if ins_len > del_len {
-                        state.marker_list.adjust_for_insert(pos, ins_len - del_len);
-                        state.margins.adjust_for_insert(pos, ins_len - del_len);
-                        state
-                            .scrollbar_markers
-                            .adjust_for_insert(pos, ins_len - del_len);
+                        state.adjust_markers_for_insert(pos, ins_len - del_len);
                     } else if del_len > ins_len {
-                        state.marker_list.adjust_for_delete(pos, del_len - ins_len);
-                        state.margins.adjust_for_delete(pos, del_len - ins_len);
-                        state
-                            .scrollbar_markers
-                            .adjust_for_delete(pos, del_len - ins_len);
+                        state.adjust_markers_for_delete(pos, del_len - ins_len);
                     }
                 } else if del_len > 0 {
-                    state.marker_list.adjust_for_delete(pos, del_len);
-                    state.margins.adjust_for_delete(pos, del_len);
-                    state.scrollbar_markers.adjust_for_delete(pos, del_len);
+                    state.adjust_markers_for_delete(pos, del_len);
                 } else if ins_len > 0 {
-                    state.marker_list.adjust_for_insert(pos, ins_len);
-                    state.margins.adjust_for_insert(pos, ins_len);
-                    state.scrollbar_markers.adjust_for_insert(pos, ins_len);
+                    state.adjust_markers_for_insert(pos, ins_len);
                 }
             }
 

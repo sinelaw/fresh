@@ -1925,8 +1925,7 @@ impl Window {
                 if vs.viewport.line_wrap_enabled || !vs.folds.is_empty() {
                     return false;
                 }
-                let Some(rows) = state
-                    .flat_rows(vs.is_page_view())
+                let Some(rows) = crate::view::flat_rows::FlatRows::new(state, vs.is_page_view())
                     .filter(|rows| rows.has_virtual_lines())
                 else {
                     return false;
@@ -2371,7 +2370,7 @@ impl Window {
                 state
                     .overlays
                     .clear_namespace(diagnostic_namespace, &mut state.marker_list);
-                state.virtual_texts.clear(&mut state.marker_list);
+                state.virtual_texts.clear();
                 state.folding_ranges.clear(&mut state.marker_list);
                 for view_state in vs_map.values_mut() {
                     if let Some(buf_state) = view_state.buffer_state_mut(buffer_id) {
@@ -5197,11 +5196,9 @@ impl Window {
             self.buffers
                 .with_buffer_and_split(buffer_id, split_id, |state, view_state| {
                     if let Some(rows) = flat_scroll_rows(view_state, state) {
-                        view_state.viewport.scroll_flat_rows(
-                            &rows,
-                            &state.buffer,
-                            line_offset,
-                        );
+                        view_state
+                            .viewport
+                            .scroll_flat_rows(&rows, &state.buffer, line_offset);
                         view_state.viewport.set_skip_ensure_visible();
                         return;
                     }
@@ -5320,29 +5317,28 @@ fn collapsed_hidden_ranges(
         .collect()
 }
 
-/// The wrap-index geometry for a split, when one is already built for it.
-///
-/// `None` means the byte-walking scroll path must be used — before the first
-/// render there is nothing to read row positions from, and building an index
-/// here would trade a cheap walk for an O(buffer) pass.
 /// The rows to scroll `view_state`'s pane by when it is unwrapped, unfolded
 /// and draws virtual lines: a comparison's filler rows. Walking line starts
 /// (`Viewport::scroll_up` / `scroll_down`) steps over a line's virtual rows in
 /// one go, so a block of fillers dozens deep went by in a single wheel notch,
 /// and the last page was clamped short of them. `None` for any other pane,
 /// whose rows the line walk or the wrap index count.
-fn flat_scroll_rows(
+fn flat_scroll_rows<'a>(
     view_state: &crate::view::split::BufferViewState,
-    state: &mut crate::state::EditorState,
-) -> Option<std::sync::Arc<crate::view::flat_rows::FlatRows>> {
+    state: &'a crate::state::EditorState,
+) -> Option<crate::view::flat_rows::FlatRows<'a>> {
     if view_state.viewport.line_wrap_enabled || !view_state.folds.is_empty() {
         return None;
     }
-    state
-        .flat_rows(view_state.is_page_view())
+    crate::view::flat_rows::FlatRows::new(state, view_state.is_page_view())
         .filter(|rows| rows.has_virtual_lines())
 }
 
+/// The wrap-index geometry for a split, when one is already built for it.
+///
+/// `None` means the byte-walking scroll path must be used — before the first
+/// render there is nothing to read row positions from, and building an index
+/// here would trade a cheap walk for an O(buffer) pass.
 fn wrap_scroll_geometry(
     view_state: &crate::view::split::BufferViewState,
     state: &crate::state::EditorState,

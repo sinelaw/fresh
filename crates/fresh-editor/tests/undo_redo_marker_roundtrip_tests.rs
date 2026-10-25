@@ -56,9 +56,7 @@ fn add_margin_indicator(state: &mut EditorState, byte_offset: usize) -> MarkerId
 
 /// Add a virtual text marker at a byte offset. Returns the MarkerId for later queries.
 fn add_virtual_text(state: &mut EditorState, byte_offset: usize) -> MarkerId {
-    let _vtext_id = state.virtual_texts.add(
-        &mut state.marker_list,
-        byte_offset,
+    let _vtext_id = state.virtual_texts.add(byte_offset,
         "hint".to_string(),
         Style::default().fg(Color::Gray),
         VirtualTextPosition::AfterChar,
@@ -68,7 +66,7 @@ fn add_virtual_text(state: &mut EditorState, byte_offset: usize) -> MarkerId {
     // We need to query it back since add() returns VirtualTextId not MarkerId
     let results = state
         .virtual_texts
-        .query_range(&state.marker_list, 0, state.buffer.len().max(1));
+        .query_range(0, state.buffer.len().max(1));
     // Find the one at our position
     for (pos, vtext) in &results {
         if *pos == byte_offset {
@@ -83,7 +81,7 @@ fn get_vtext_positions(state: &EditorState) -> Vec<usize> {
     let buf_len = state.buffer.len().max(1);
     state
         .virtual_texts
-        .query_range(&state.marker_list, 0, buf_len)
+        .query_range(0, buf_len)
         .into_iter()
         .map(|(pos, _)| pos)
         .collect()

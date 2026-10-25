@@ -846,15 +846,9 @@ impl EditorTestApi for crate::app::Editor {
         }
         let ns = VirtualTextNamespace::from_string(namespace.to_string());
         let state = self.active_state_mut();
-        state.virtual_texts.add_line(
-            &mut state.marker_list,
-            byte_offset,
-            text.to_string(),
-            style,
-            pos,
-            ns,
-            priority,
-        );
+        state
+            .virtual_texts
+            .add_line(byte_offset, text.to_string(), style, pos, ns, priority);
     }
 
     fn virtual_text_count(&self) -> usize {
@@ -865,9 +859,7 @@ impl EditorTestApi for crate::app::Editor {
         use crate::view::virtual_text::VirtualTextNamespace;
         let ns = VirtualTextNamespace::from_string(namespace.to_string());
         let state = self.active_state_mut();
-        state
-            .virtual_texts
-            .clear_namespace(&mut state.marker_list, &ns);
+        state.virtual_texts.clear_namespace(&ns);
     }
 
     fn add_margin_annotation(

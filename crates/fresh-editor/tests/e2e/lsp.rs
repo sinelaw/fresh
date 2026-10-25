@@ -3771,7 +3771,6 @@ fn test_inlay_hints_render_on_screen() -> anyhow::Result<()> {
 
     // Add type hint after 'x' at position 5
     state.virtual_texts.add(
-        &mut state.marker_list,
         5,
         ": i32".to_string(),
         hint_style,
@@ -3781,7 +3780,6 @@ fn test_inlay_hints_render_on_screen() -> anyhow::Result<()> {
 
     // Add parameter hint before '10' at position 15 (after "let x = 5;\nfoo(")
     state.virtual_texts.add(
-        &mut state.marker_list,
         15,
         "count:".to_string(),
         hint_style,
@@ -3844,7 +3842,6 @@ fn test_inlay_hints_position_tracking() -> anyhow::Result<()> {
 
     let hint_style = Style::default().fg(Color::Rgb(128, 128, 128));
     state.virtual_texts.add(
-        &mut state.marker_list,
         5,
         ": i32".to_string(),
         hint_style,
@@ -3912,7 +3909,6 @@ fn test_inlay_hint_cleared_when_range_deleted() -> anyhow::Result<()> {
     }
     let hint_style = Style::default().fg(Color::Rgb(128, 128, 128));
     state.virtual_texts.add(
-        &mut state.marker_list,
         5,
         ": i32".to_string(),
         hint_style,
