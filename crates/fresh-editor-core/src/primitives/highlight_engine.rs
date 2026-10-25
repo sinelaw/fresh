@@ -370,6 +370,10 @@ pub const MAX_REGION_STREAMS: usize = 4;
 pub struct HighlightStats {
     /// Number of bytes parsed by syntect (total across all highlight_viewport calls).
     pub bytes_parsed: usize,
+    /// Bytes of line text actually handed to syntect. Unlike `bytes_parsed`,
+    /// which counts the range a pass walked, a long line contributes only its
+    /// highlighted prefix here.
+    pub bytes_tokenized: usize,
     /// Number of highlight_viewport calls that hit the span cache.
     pub cache_hits: usize,
     /// Number of highlight_viewport calls that missed the cache and re-parsed.
@@ -781,103 +785,35 @@ fn prepare_unified_diff_content(
     prepare_row_content(prepared, 1)
 }
 
-/// Longest logical line highlighted in full. Beyond this, only the
-/// window of the line around the viewport is parsed (see
-/// [`prepare_line_window`]).
+/// How much of a line is highlighted: the rest of a longer one is plain text.
 ///
-/// Syntect parses a line in one shot, so a pathological line (minified
-/// JS/JSON one-liners are routinely hundreds of KB) costs O(line length)
-/// per parse. Worse, such a line is usually the *whole file* and carries
-/// no trailing newline, so the cache can never commit a safe tail state
-/// (see `extend_cache_forward`) and every render re-parses all of it —
-/// which is what pinned a CPU core on a 441 KB single-line JSON.
-/// Set to `MAX_PARSE_BYTES` deliberately: at or below that size the
-/// parse range is the whole file, so a huge line is parsed once and
-/// committed at EOF (exact colours, cached, no per-frame cost). Only
-/// past it — where the parse range is already a viewport window and the
-/// EOF commit cannot apply — is windowing the lesser evil.
-const MAX_HIGHLIGHT_LINE_BYTES: usize = MAX_PARSE_BYTES;
-
-/// Extra bytes parsed either side of the viewport inside an over-long
-/// line, so small scrolls stay inside the parsed window and spans that
-/// start just off-screen still reach it.
-const HUGE_LINE_WINDOW_PAD: usize = 4 * 1024;
-
-/// Prepare only the viewport-overlapping window of an over-long line.
+/// Syntect parses a line in one shot, and an edit re-parses the line it lands
+/// in, so without a bound an edit in a long line costs the whole line up to
+/// the viewport. On a file that is one long line (minified JSON or JS,
+/// routinely hundreds of KB to tens of MB) that was every keystroke: ~270 ms
+/// near the end of the first megabyte of a 50 MB array (issue #3631).
 ///
-/// Returns `None` when the line is short enough to parse whole (the
-/// normal path) or the window isn't valid UTF-8. On `Some`, the caller
-/// parses the window at the returned ABSOLUTE offset using a *clone* of
-/// the parse state: the skipped bytes never reach syntect, so the state
-/// after the line is taken to be the state before it. That is an
-/// approximation (a huge line that opens a string or block comment would
-/// mis-colour what follows), and it is the same trade every editor makes
-/// for pathological lines — bounded, predictable work beats correct
-/// colours nobody can read.
-fn prepare_line_window(
-    content_bytes: &[u8],
-    pos: usize,
-    line_end: usize,
-    line_abs_start: usize,
-    viewport_start: usize,
-    viewport_end: usize,
-) -> Option<(usize, PreparedLine)> {
-    let line_bytes = &content_bytes[pos..line_end];
-    // Content length excludes the terminator, which must never land
-    // inside the window (syntect treats `\n` as the line end).
-    let content_len = line_bytes.len() - {
-        let mut n = 0;
-        if line_bytes.last() == Some(&b'\n') {
-            n += 1;
-            if line_bytes.len() >= 2 && line_bytes[line_bytes.len() - 2] == b'\r' {
-                n += 1;
-            }
-        }
-        n
-    };
-    if content_len <= MAX_HIGHLIGHT_LINE_BYTES {
-        return None;
-    }
+/// Only the line's first this-many bytes reach syntect. The parse after the
+/// line carries on from the state those bytes leave, as if the line ended
+/// there. Because the cut is at a fixed distance into the line, it falls in
+/// the same place however much of the line a pass has in hand — the colours
+/// do not depend on where the viewport is, there is nothing about a long line
+/// for the cache to track, and no scan for the line's end is needed. VS Code
+/// makes the same call at the same size (`editor.maxTokenizationLineLength`),
+/// leaving such lines untokenized altogether.
+const MAX_HIGHLIGHT_LINE_BYTES: usize = 20_000;
 
-    // Desired window in absolute bytes, clamped to the line's content
-    // and to the per-parse budget.
-    let line_abs_end = line_abs_start + content_len;
-    let mut start = viewport_start
-        .saturating_sub(HUGE_LINE_WINDOW_PAD)
-        .max(line_abs_start)
-        .min(line_abs_end);
-    let mut end = viewport_end
-        .saturating_add(HUGE_LINE_WINDOW_PAD)
-        .min(line_abs_end)
-        .max(start);
-    if end - start > MAX_HIGHLIGHT_LINE_BYTES {
-        end = start + MAX_HIGHLIGHT_LINE_BYTES;
+/// The part of a line's content that is highlighted: all of it, or its first
+/// [`MAX_HIGHLIGHT_LINE_BYTES`] cut back to a character boundary.
+fn highlighted_prefix(line: &str) -> &str {
+    if line.len() <= MAX_HIGHLIGHT_LINE_BYTES {
+        return line;
     }
-
-    // Snap to UTF-8 char boundaries (widening start, narrowing end) so
-    // the slice decodes.
-    let rel = |abs: usize| pos + (abs - line_abs_start);
-    while start > line_abs_start && (content_bytes[rel(start)] & 0xC0) == 0x80 {
-        start -= 1;
+    let mut cut = MAX_HIGHLIGHT_LINE_BYTES;
+    while !line.is_char_boundary(cut) {
+        cut -= 1;
     }
-    while end > start && end < line_abs_end && (content_bytes[rel(end)] & 0xC0) == 0x80 {
-        end -= 1;
-    }
-    if end <= start {
-        return None;
-    }
-
-    let slice = std::str::from_utf8(&content_bytes[rel(start)..rel(end)]).ok()?;
-    Some((
-        start,
-        PreparedLine {
-            // No trailing `\n`: the window is a line fragment, so
-            // syntect must not see it as a completed line.
-            line_for_syntect: slice.to_string(),
-            line_content_len: slice.len(),
-            ends_with_newline: false,
-        },
-    ))
+    &line[..cut]
 }
 
 /// Slice the line starting at `pos` from `content_bytes` and prepare
@@ -889,9 +825,13 @@ fn prepare_line_at(content_bytes: &[u8], pos: usize) -> (usize, usize, Option<Pr
     let line_bytes = &content_bytes[pos..line_end];
     let line_byte_len = line_bytes.len();
     let prepared = std::str::from_utf8(line_bytes).ok().map(|line_str| {
-        let line_content = line_str.trim_end_matches(&['\r', '\n'][..]);
+        let whole = line_str.trim_end_matches(&['\r', '\n'][..]);
+        let line_content = highlighted_prefix(whole);
         let ends_with_newline = line_str.ends_with('\n');
-        let is_streaming_tail = line_end == content_bytes.len() && !ends_with_newline;
+        // A cut line is parsed as ending at the cut, whether or not this
+        // pass holds the rest of it — the same parse either way.
+        let cut = line_content.len() < whole.len();
+        let is_streaming_tail = !cut && line_end == content_bytes.len() && !ends_with_newline;
         let line_for_syntect = if is_streaming_tail {
             line_content.to_string()
         } else {
@@ -1381,6 +1321,7 @@ impl TextMateEngine {
         current_offset: usize,
         on_span: impl FnMut(usize, usize, HighlightCategory, Option<HighlightCategory>),
     ) -> bool {
+        self.stats.bytes_tokenized += prepared.line_content_len;
         let mut wash = RowWash::new(
             current_offset,
             current_offset + prepared.line_content_len,
@@ -2208,34 +2149,7 @@ impl TextMateEngine {
 
             let (line_end, line_byte_len, prepared) = prepare_line_at(content_bytes, pos);
             let mut newline_terminated = false;
-            // Over-long line: parse only the viewport window, from a
-            // clone of the state, so the per-frame cost is bounded by
-            // the window rather than the line (see prepare_line_window).
-            if let Some((window_offset, window)) = prepare_line_window(
-                content_bytes,
-                pos,
-                line_end,
-                current_offset,
-                viewport_start,
-                viewport_end,
-            ) {
-                let mut windowed = snapshot.clone();
-                self.parse_snapshot_line(
-                    &mut windowed,
-                    &window,
-                    window_offset,
-                    |byte_start, byte_end, category, background_category| {
-                        new_spans.push(CachedSpan {
-                            range: byte_start..byte_end,
-                            category,
-                            background_category,
-                        });
-                    },
-                );
-                // `snapshot` is deliberately untouched: the state after
-                // the line is taken to be the state before it.
-                newline_terminated = prepared.is_some_and(|p| p.ends_with_newline);
-            } else if let Some(prepared) = prepared {
+            if let Some(prepared) = prepared {
                 let parse_ok = self.parse_snapshot_line(
                     &mut snapshot,
                     &prepared,
@@ -2375,37 +2289,7 @@ impl TextMateEngine {
             // state continuity, but their spans wouldn't be returned anyway.
             let collect_spans = current_offset + line_byte_len > desired_parse_start;
             let mut newline_terminated = false;
-            // Over-long line: parse only the viewport window, from a
-            // clone of the state (see prepare_line_window).
-            if let Some((window_offset, window)) = prepare_line_window(
-                content_bytes,
-                pos,
-                line_end,
-                current_offset,
-                viewport_start,
-                viewport_end,
-            ) {
-                let mut windowed = snapshot.clone();
-                self.parse_snapshot_line(
-                    &mut windowed,
-                    &window,
-                    window_offset,
-                    |byte_start, byte_end, category, background_category| {
-                        if !collect_spans {
-                            return;
-                        }
-                        let clamped_start = byte_start.max(desired_parse_start);
-                        if clamped_start < byte_end {
-                            spans.push(CachedSpan {
-                                range: clamped_start..byte_end,
-                                category,
-                                background_category,
-                            });
-                        }
-                    },
-                );
-                newline_terminated = prepared.is_some_and(|p| p.ends_with_newline);
-            } else if let Some(prepared) = prepared {
+            if let Some(prepared) = prepared {
                 let parse_ok = self.parse_snapshot_line(
                     &mut snapshot,
                     &prepared,
@@ -5819,5 +5703,119 @@ diff --git a/has space.py b/has space.py
             Some(HighlightCategory::Keyword),
             "the second file must not be parsed by the first file's Rust parser"
         );
+    }
+
+    /// A JSON array of numbers on one line, `len` bytes long (issue #3631's
+    /// reproduction: a minified data file is one enormous line).
+    fn one_line_number_array(len: usize) -> String {
+        let mut content = String::with_capacity(len + 16);
+        content.push('[');
+        let mut n = 1u64;
+        while content.len() < len {
+            content.push_str(&n.to_string());
+            content.push(',');
+            n += 1;
+        }
+        content.push_str("0]");
+        content
+    }
+
+    /// Typing deep inside a long line re-parses its highlighted prefix, not
+    /// the line up to the cursor. Before the cut, each keystroke re-parsed
+    /// from the line's start: ~270 ms near the end of the first megabyte of a
+    /// 50 MB array. Both parse modes: a file small enough to parse whole, and
+    /// one parsed a viewport window at a time.
+    #[test]
+    fn typing_deep_in_a_long_line_parses_only_its_highlighted_prefix() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
+        for len in [900_000, 3 * MAX_PARSE_BYTES] {
+            let mut engine = HighlightEngine::for_file(Path::new("data.json"), None, &registry);
+            let HighlightEngine::TextMate(ref mut tm) = engine else {
+                panic!("expected TextMate engine for .json");
+            };
+            let at = 600_000;
+            let mut content = one_line_number_array(len);
+            let viewport = at..at + 3_000;
+            let buffer = Buffer::from_str(&content, 0, test_fs());
+            let _ = tm.highlight_viewport(&buffer, viewport.start, viewport.end, &theme, 10_000);
+
+            for i in 0..3 {
+                let before = tm.stats().bytes_tokenized;
+                content.insert(at + i, '7');
+                let buffer = Buffer::from_str(&content, 0, test_fs());
+                tm.notify_insert(at + i, 1);
+                let _ =
+                    tm.highlight_viewport(&buffer, viewport.start, viewport.end, &theme, 10_000);
+                let tokenized = tm.stats().bytes_tokenized - before;
+                assert!(
+                    tokenized <= MAX_HIGHLIGHT_LINE_BYTES + 1,
+                    "a keystroke {at} bytes into a {len}-byte line tokenized {tokenized} bytes"
+                );
+            }
+        }
+    }
+
+    /// A long line is highlighted up to the cut and plain after it, whichever
+    /// part of it a pass happened to read: the cut is a fixed distance into
+    /// the line, so neither the viewport nor what the cache holds moves it.
+    #[test]
+    fn a_long_line_is_highlighted_up_to_the_cut_wherever_it_is_viewed() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
+        let long = one_line_number_array(10 * MAX_HIGHLIGHT_LINE_BYTES);
+        let content = format!("[\n{},\n2\n]\n", &long[1..long.len() - 1]);
+        let line_start = 2;
+        let cut = line_start + MAX_HIGHLIGHT_LINE_BYTES;
+        let number_at = |spans: &[HighlightSpan], pos: usize| {
+            spans.iter().any(|s| {
+                s.range.start <= pos
+                    && s.range.end > pos
+                    && s.category == Some(HighlightCategory::Number)
+            })
+        };
+        let digit_near =
+            |pos: usize| pos + content[pos..].find(|c: char| c.is_ascii_digit()).unwrap();
+        let before_cut = digit_near(cut - 100);
+        let after_cut = digit_near(cut + 100);
+        let deep = digit_near(line_start + 9 * MAX_HIGHLIGHT_LINE_BYTES);
+        let last = content.rfind('2').unwrap();
+
+        // Read three ways: a viewport at the cut, with only part of the line
+        // in hand; the whole file in one pass; and from the cache after it.
+        for (label, whole_file) in [("partial", false), ("whole", true), ("cached", true)] {
+            let mut engine = HighlightEngine::for_file(Path::new("data.json"), None, &registry);
+            let HighlightEngine::TextMate(ref mut tm) = engine else {
+                panic!("expected TextMate engine for .json");
+            };
+            let buffer = Buffer::from_str(&content, 0, test_fs());
+            let context = if whole_file { buffer.len() } else { 500 };
+            let mut spans =
+                tm.highlight_viewport(&buffer, cut - 1_000, cut + 1_000, &theme, context);
+            if label == "cached" {
+                spans = tm.highlight_viewport(&buffer, cut - 1_000, cut + 1_000, &theme, context);
+            }
+            assert!(
+                number_at(&spans, before_cut),
+                "{label}: a number before the cut is plain"
+            );
+            assert!(
+                !number_at(&spans, after_cut),
+                "{label}: a number past the cut is highlighted"
+            );
+            if whole_file {
+                let spans = tm.highlight_viewport(&buffer, deep - 50, last + 1, &theme, 0);
+                assert!(
+                    !number_at(&spans, deep),
+                    "{label}: deep in the line is highlighted"
+                );
+                assert!(
+                    number_at(&spans, last),
+                    "{label}: the line after the long one is plain"
+                );
+            }
+        }
     }
 }
