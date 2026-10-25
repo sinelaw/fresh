@@ -2264,6 +2264,18 @@ impl TextMateEngine {
             Err(_) => return Vec::new(),
         };
 
+        // A fresh start inside a line — a large file with no anchor near the
+        // viewport — does not know how far into the line it is. With a line
+        // start within the highlighted prefix's length behind it, the line is
+        // highlighted from here (from a fresh state, so approximately); with
+        // none, this is past the line's cut, and the line is left plain like
+        // the rest of every long line. A bounded look back, not a scan.
+        let starts_line = is_line_start(buffer, actual_start);
+        let mut past_cut = !starts_line
+            && !buffer
+                .slice_bytes(actual_start.saturating_sub(MAX_HIGHLIGHT_LINE_BYTES)..actual_start)
+                .contains(&b'\n');
+
         let mut spans = Vec::new();
         let content_bytes = content_str.as_bytes();
         let mut pos = 0;
@@ -2276,6 +2288,10 @@ impl TextMateEngine {
         // refresh re-parses it from scratch.
         let mut safe_offset = actual_start;
         let mut safe_snapshot = snapshot.clone();
+        // Whether `safe_snapshot` is a state the parse can resume from: one at
+        // a line start. A fresh start inside a line is not — its state is a
+        // guess for that point, and resuming from it skips the look back above.
+        let mut safe_resumable = starts_line;
 
         while pos < content_bytes.len() {
             if create_checkpoints && bytes_since_checkpoint >= CHECKPOINT_INTERVAL {
@@ -2289,7 +2305,9 @@ impl TextMateEngine {
             // state continuity, but their spans wouldn't be returned anyway.
             let collect_spans = current_offset + line_byte_len > desired_parse_start;
             let mut newline_terminated = false;
-            if let Some(prepared) = prepared {
+            if std::mem::take(&mut past_cut) {
+                newline_terminated = prepared.is_some_and(|p| p.ends_with_newline);
+            } else if let Some(prepared) = prepared {
                 let parse_ok = self.parse_snapshot_line(
                     &mut snapshot,
                     &prepared,
@@ -2320,6 +2338,7 @@ impl TextMateEngine {
             if newline_terminated {
                 safe_offset = current_offset;
                 safe_snapshot = snapshot.clone();
+                safe_resumable = true;
             }
 
             // Update checkpoint states as we pass them. A checkpoint at
@@ -2369,6 +2388,7 @@ impl TextMateEngine {
         if parse_end >= buffer.len() {
             safe_offset = current_offset;
             safe_snapshot = snapshot.clone();
+            safe_resumable = true;
         }
 
         self.stats.bytes_parsed += parse_end.saturating_sub(actual_start);
@@ -2390,7 +2410,12 @@ impl TextMateEngine {
         self.cache = Some(TextMateCache {
             range: desired_parse_start..cache_range_end,
             spans: cached_spans,
-            tail_state: Some(safe_snapshot),
+            // The state belongs to `safe_offset`. A pass that ended inside a
+            // line has none for the cache's end, and one that started inside a
+            // line has only a guess: extending from either would resume the
+            // line mid-way and count its cut from the wrong place.
+            tail_state: (safe_resumable && safe_offset >= desired_parse_start)
+                .then_some(safe_snapshot),
         });
         self.last_buffer_len = buffer.len();
 
@@ -5816,6 +5841,75 @@ diff --git a/has space.py b/has space.py
                     "{label}: the line after the long one is plain"
                 );
             }
+        }
+    }
+
+    /// Wherever a long line is shown — scrolled to, typed in, viewed again —
+    /// it is highlighted up to the cut and plain after it. Replays an editor
+    /// session: opened at the top, scrolled down, a key typed.
+    ///
+    /// Two passes used to disagree. A pass ending inside a long line cached its
+    /// end at the viewport with the state of the line's start, and the next
+    /// frame extended from there, counting the cut from the viewport: the
+    /// screen was coloured while scrolling, went plain on a keystroke (which
+    /// re-parses from the line's start) and came back on the next scroll. And
+    /// past the first megabyte, where a pass starts fresh above the viewport,
+    /// everything was coloured, cut or no cut.
+    #[test]
+    fn a_long_line_is_plain_past_the_cut_however_it_is_reached() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
+        let mut engine = HighlightEngine::for_file(Path::new("data.json"), None, &registry);
+        let HighlightEngine::TextMate(ref mut tm) = engine else {
+            panic!("expected TextMate engine for .json");
+        };
+        let content = one_line_number_array(3 * MAX_PARSE_BYTES);
+        let buffer = Buffer::from_str(&content, 0, test_fs());
+        let rows = 2_400;
+        // As the editor asks: the viewport, a viewport's worth either side.
+        let view = |tm: &mut TextMateEngine, buffer: &Buffer, top: usize| {
+            let spans = tm.highlight_viewport(
+                buffer,
+                top.saturating_sub(rows),
+                top + 2 * rows,
+                &theme,
+                10_000,
+            );
+            spans
+                .iter()
+                .filter(|s| {
+                    s.category == Some(HighlightCategory::Number)
+                        && s.range.start < top + rows
+                        && s.range.end > top
+                })
+                .count()
+        };
+
+        for top in (0..MAX_HIGHLIGHT_LINE_BYTES - rows).step_by(rows) {
+            assert!(
+                view(tm, &buffer, top) > 0,
+                "{top}: inside the prefix, plain"
+            );
+        }
+        for top in [MAX_HIGHLIGHT_LINE_BYTES + 900, 600_000, 2 * MAX_PARSE_BYTES] {
+            assert_eq!(
+                view(tm, &buffer, top),
+                0,
+                "{top}: scrolled past the cut, highlighted"
+            );
+            let mut typed = content.clone();
+            typed.insert(top + 10, '9');
+            let typed = Buffer::from_str(&typed, 0, test_fs());
+            tm.notify_insert(top + 10, 1);
+            assert_eq!(
+                view(tm, &typed, top),
+                0,
+                "{top}: typed past the cut, highlighted"
+            );
+            assert_eq!(view(tm, &typed, top), 0, "{top}: viewed again, highlighted");
+            tm.notify_delete(top + 10, 1);
+            assert_eq!(view(tm, &buffer, top), 0, "{top}: after undo, highlighted");
         }
     }
 }
