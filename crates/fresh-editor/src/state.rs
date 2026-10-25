@@ -262,6 +262,13 @@ impl BufferSettings {
     }
 }
 
+/// A cached [`crate::view::flat_rows::FlatRows`] and the
+/// `(buffer version, virtual-text version)` it was built at.
+struct FlatRowsEntry {
+    versions: (u64, u32),
+    rows: std::sync::Arc<crate::view::flat_rows::FlatRows>,
+}
+
 /// The complete editor state - everything needed to represent the current editing session
 ///
 /// NOTE: Viewport is NOT stored here - it lives in SplitViewState.
@@ -413,6 +420,11 @@ pub struct EditorState {
     /// repaired independently. See `crate::view::wrap_index`.
     pub wrap_indices: crate::view::wrap_index::WrapIndexSet,
 
+    /// The rows of this buffer as an unwrapped pane draws them, out of and in
+    /// page view, each with the buffer and virtual-text versions it was built
+    /// at. See [`EditorState::flat_rows`].
+    flat_rows: [Option<FlatRowsEntry>; 2],
+
     /// Forward coordinate mapper: remaps a byte coordinate captured at an older
     /// buffer `version()` to the current version. Fed at the marker-adjustment
     /// chokepoint (`apply_insert` / `apply_delete` / `replay_bulk_marker_adjustments`)
@@ -563,6 +575,7 @@ impl EditorState {
             language: "text".to_string(),
             display_name: "Text".to_string(),
             wrap_indices: crate::view::wrap_index::WrapIndexSet::default(),
+            flat_rows: [None, None],
             coord_map: crate::model::coord_map::CoordMap::default(),
             scrollbar_markers: crate::view::scrollbar_marker::ScrollbarMarkerManager::default(),
             scrollbar_marker_buckets:
@@ -815,7 +828,7 @@ impl EditorState {
         } else {
             let mut v: Vec<usize> = self
                 .virtual_texts
-                .query_lines_in_range(&self.marker_list, 0, end)
+                .all_lines(&self.marker_list)
                 .into_iter()
                 .filter(|(_, vt)| {
                     (is_compose || !vt.compose_only)
@@ -839,6 +852,32 @@ impl EditorState {
 
     /// The versions of everything that feeds line layout, as one value — the
     /// currency `WrapIndex` and its callers trade in.
+    /// The rows of this buffer as an unwrapped pane, in page view or not
+    /// (`is_compose`), draws them. `None` in large-file mode.
+    ///
+    /// Built from every virtual line in the buffer, so it is kept until the
+    /// text or the virtual lines change: a comparison's panes read it several
+    /// times a frame (placement, scroll sync, scrolling), and with tens of
+    /// thousands of filler rows each build took ~17 ms.
+    pub fn flat_rows(
+        &mut self,
+        is_compose: bool,
+    ) -> Option<std::sync::Arc<crate::view::flat_rows::FlatRows>> {
+        let versions = (self.buffer.version(), self.virtual_texts.version());
+        let slot = usize::from(is_compose);
+        if let Some(entry) = &self.flat_rows[slot] {
+            if entry.versions == versions {
+                return Some(std::sync::Arc::clone(&entry.rows));
+            }
+        }
+        let rows = std::sync::Arc::new(crate::view::flat_rows::FlatRows::new(self, is_compose)?);
+        self.flat_rows[slot] = Some(FlatRowsEntry {
+            versions,
+            rows: std::sync::Arc::clone(&rows),
+        });
+        Some(rows)
+    }
+
     pub fn pipeline_inputs(&self) -> crate::view::line_wrap_cache::PipelineInputs {
         crate::view::line_wrap_cache::PipelineInputs {
             buffer: self.buffer.version(),
@@ -1845,7 +1884,7 @@ impl EditorState {
         }
         let mut v: Vec<usize> = self
             .virtual_texts
-            .query_lines_in_range(&self.marker_list, 0, self.buffer.len() + 1)
+            .all_lines(&self.marker_list)
             .into_iter()
             .filter(|(_, vt)| is_compose || !vt.compose_only)
             .map(|(pos, _vt)| pos)

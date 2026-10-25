@@ -303,7 +303,8 @@ pub(crate) fn place_pane(
         viewport.row_pass_owns_placement = indexable
             && !line_wrap
             && folds.is_empty()
-            && crate::view::flat_rows::FlatRows::new(state, *view_mode == ViewMode::PageView)
+            && state
+                .flat_rows(*view_mode == ViewMode::PageView)
                 .filter(|rows| rows.has_virtual_lines())
                 .map(|rows| viewport.ensure_visible_in_flat_rows(&rows, &state.buffer, cursor_byte))
                 .is_some();

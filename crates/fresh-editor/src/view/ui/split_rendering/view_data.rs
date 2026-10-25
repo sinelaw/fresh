@@ -11,7 +11,7 @@ use super::style::fold_placeholder_style;
 use super::transforms::{
     apply_conceal_ranges, apply_grid_wrapping_transform, apply_soft_breaks,
     apply_wrapping_transform_from, inject_virtual_lines, join_adjusted_visible_count,
-    resolve_inline_hints, splice_inline_virtual_text,
+    resolve_inline_hints, splice_inline_virtual_text, RowWindow,
 };
 use super::MAX_SAFE_LINE_WIDTH;
 use crate::state::{EditorState, ViewMode};
@@ -491,13 +491,20 @@ pub(super) fn build_view_data(
     } else {
         None
     };
-    let lines = inject_virtual_lines(
+    // Folding below can remove rows, so a folded pane builds them all.
+    let window = folds.is_empty().then_some(RowWindow {
+        before: rows_before_window,
+        rows: adjusted_visible_count.saturating_add(4),
+    });
+    let (lines, left_out) = inject_virtual_lines(
         source_lines,
         state,
         theme,
         virtual_line_wrap_width,
         is_compose,
+        window,
     );
+    let rows_before_window = rows_before_window - left_out;
     let placeholder_style = fold_placeholder_style(theme);
     let lines = apply_folding(
         lines,

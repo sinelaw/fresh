@@ -487,19 +487,37 @@ fn logical_end(source_lines: &[ViewLine], idx: usize) -> Option<usize> {
     end
 }
 
+/// The rows of a build that [`inject_virtual_lines`] has to produce: the
+/// first `before` of them lie above the window, which `rows` more fill.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct RowWindow {
+    pub before: usize,
+    pub rows: usize,
+}
+
 /// Inject `LineAbove` / `LineBelow` virtual lines into the view line stream.
 ///
 /// `wrap_width` is the viewport's effective content width when soft-wrap is
 /// enabled, allowing a virtual line whose text exceeds the row width to be
 /// split across multiple visual rows (matching how source lines behave under
 /// `line_wrap = true`). Pass `None` to keep virtual lines on a single row.
+///
+/// With a `window`, only the virtual rows it can show are built: a virtual
+/// row above it is left out, and the stream ends once it is full. Returns the
+/// stream and how many rows above the window were left out, which the caller
+/// takes off its count of rows above the window. A line can carry a great
+/// many virtual lines (a comparison hangs every filler row for a change off
+/// one line); building them all to draw a screenful took ~60 ms a frame with
+/// 50 000. Without a window (the stream is folded after this, which can
+/// remove rows) every one is built, as before.
 pub(super) fn inject_virtual_lines(
     source_lines: Vec<ViewLine>,
     state: &EditorState,
     theme: &Theme,
     wrap_width: Option<usize>,
     is_compose: bool,
-) -> Vec<ViewLine> {
+    window: Option<RowWindow>,
+) -> (Vec<ViewLine>, usize) {
     // Get viewport byte range from source lines.
     // Use the last line that has source bytes (not a trailing empty line
     // which the iterator may emit at the buffer end).
@@ -531,10 +549,55 @@ pub(super) fn inject_virtual_lines(
     }
 
     if virtual_lines.is_empty() {
-        return source_lines;
+        return (source_lines, 0);
     }
 
-    let mut result = Vec::with_capacity(source_lines.len() + virtual_lines.len());
+    // Rows built or left out so far, and where the build can stop.
+    let mut skipped = 0usize;
+    let full_at = window.map(|w| w.before.saturating_add(w.rows));
+    let mut result = Vec::with_capacity(
+        source_lines.len() + full_at.map_or(virtual_lines.len(), |n| n.min(virtual_lines.len())),
+    );
+    // Add one virtual line's rows, or leave them out: above the window,
+    // unwrapped (one row, so it can be counted without being built); past
+    // it, everything. Returns `false` once the window is full.
+    let emit = |result: &mut Vec<ViewLine>,
+                skipped: &mut usize,
+                vtext: &crate::view::virtual_text::VirtualText|
+     -> bool {
+        if let Some(window) = window {
+            let built = result.len() + *skipped;
+            if full_at.is_some_and(|n| built >= n) {
+                return false;
+            }
+            if wrap_width.is_none() && built < window.before {
+                *skipped += 1;
+                return true;
+            }
+        }
+        let glyph = vtext.gutter_glyph.as_ref().map(|g| {
+            (
+                g.clone(),
+                vtext.gutter_color.unwrap_or(theme.line_number_fg),
+            )
+        });
+        result.extend(create_wrapped_virtual_lines(
+            &vtext.text,
+            vtext.resolved_style(theme),
+            wrap_width,
+            glyph,
+            &vtext.text_overlays,
+        ));
+        true
+    };
+    // The virtual lines anchored in `[start, end)`: sorted by anchor, so a
+    // line finds its own without looking at every other line's.
+    let anchored_in = |start: usize, end: usize| {
+        let from = virtual_lines.partition_point(|(pos, _)| *pos < start);
+        virtual_lines[from..]
+            .iter()
+            .take_while(move |(pos, _)| *pos < end)
+    };
 
     // `source_lines` are *visual* rows: a wrapped source line arrives as a
     // first row plus one `AfterBreak` continuation per fold. A virtual line
@@ -577,58 +640,35 @@ pub(super) fn inject_virtual_lines(
 
         if is_first_row {
             if let (Some(start), Some(end)) = (logical_start, logical_end(&source_lines, idx)) {
-                for (anchor_pos, vtext) in &virtual_lines {
-                    if *anchor_pos >= start
-                        && *anchor_pos < end
-                        && vtext.position == VirtualTextPosition::LineAbove
+                for (_, vtext) in anchored_in(start, end) {
+                    if vtext.position == VirtualTextPosition::LineAbove
+                        && !emit(&mut result, &mut skipped, vtext)
                     {
-                        let glyph = vtext.gutter_glyph.as_ref().map(|g| {
-                            (
-                                g.clone(),
-                                vtext.gutter_color.unwrap_or(theme.line_number_fg),
-                            )
-                        });
-                        result.extend(create_wrapped_virtual_lines(
-                            &vtext.text,
-                            vtext.resolved_style(theme),
-                            wrap_width,
-                            glyph,
-                            &vtext.text_overlays,
-                        ));
+                        return (result, skipped);
                     }
                 }
             }
         }
 
+        if full_at.is_some_and(|n| result.len() + skipped >= n) {
+            return (result, skipped);
+        }
         result.push(source_line.clone());
 
         if is_last_row {
             if let (Some(start), Some(end)) = (logical_start, line_end_byte) {
-                for (anchor_pos, vtext) in &virtual_lines {
-                    if *anchor_pos >= start
-                        && *anchor_pos < end
-                        && vtext.position == VirtualTextPosition::LineBelow
+                for (_, vtext) in anchored_in(start, end) {
+                    if vtext.position == VirtualTextPosition::LineBelow
+                        && !emit(&mut result, &mut skipped, vtext)
                     {
-                        let glyph = vtext.gutter_glyph.as_ref().map(|g| {
-                            (
-                                g.clone(),
-                                vtext.gutter_color.unwrap_or(theme.line_number_fg),
-                            )
-                        });
-                        result.extend(create_wrapped_virtual_lines(
-                            &vtext.text,
-                            vtext.resolved_style(theme),
-                            wrap_width,
-                            glyph,
-                            &vtext.text_overlays,
-                        ));
+                        return (result, skipped);
                     }
                 }
             }
         }
     }
 
-    result
+    (result, skipped)
 }
 
 /// One inline inlay-hint cell to splice into the token stream, already

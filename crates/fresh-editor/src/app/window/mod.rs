@@ -1925,7 +1925,8 @@ impl Window {
                 if vs.viewport.line_wrap_enabled || !vs.folds.is_empty() {
                     return false;
                 }
-                let Some(rows) = crate::view::flat_rows::FlatRows::new(state, vs.is_page_view())
+                let Some(rows) = state
+                    .flat_rows(vs.is_page_view())
                     .filter(|rows| rows.has_virtual_lines())
                 else {
                     return false;
@@ -2226,13 +2227,20 @@ impl Window {
     pub fn scroll_split_by_lines(&mut self, buffer_id: BufferId, leaf_id: LeafId, delta: i32) {
         self.buffers
             .with_buffer_and_split(buffer_id, leaf_id, |state, view_state| {
+                let top_byte_before = view_state.viewport.top_byte();
+                if let Some(rows) = flat_scroll_rows(view_state, state) {
+                    view_state
+                        .viewport
+                        .scroll_flat_rows(&rows, &state.buffer, delta as isize);
+                    view_state.viewport.set_skip_ensure_visible();
+                    return;
+                }
                 let soft_breaks = state.collect_soft_break_positions(view_state.is_page_view());
                 let virtual_lines = state.collect_virtual_line_positions(view_state.is_page_view());
                 // Resolved before the mutable buffer borrow below: the
                 // row-space path needs only `&Buffer`.
                 let scroll_geometry = wrap_scroll_geometry(view_state, state);
                 let hidden_ranges = collapsed_hidden_ranges(view_state, state);
-                let top_byte_before = view_state.viewport.top_byte();
                 if let Some(geometry) = scroll_geometry {
                     // Row arithmetic off the wrap index: no text is read, so a
                     // wheel event on a file that is one enormous line costs the
@@ -5188,6 +5196,15 @@ impl Window {
 
             self.buffers
                 .with_buffer_and_split(buffer_id, split_id, |state, view_state| {
+                    if let Some(rows) = flat_scroll_rows(view_state, state) {
+                        view_state.viewport.scroll_flat_rows(
+                            &rows,
+                            &state.buffer,
+                            line_offset,
+                        );
+                        view_state.viewport.set_skip_ensure_visible();
+                        return;
+                    }
                     let compose = view_state.is_page_view();
                     let soft_breaks = state.collect_soft_break_positions(compose);
                     let virtual_lines = state.collect_virtual_line_positions(compose);
@@ -5308,6 +5325,24 @@ fn collapsed_hidden_ranges(
 /// `None` means the byte-walking scroll path must be used — before the first
 /// render there is nothing to read row positions from, and building an index
 /// here would trade a cheap walk for an O(buffer) pass.
+/// The rows to scroll `view_state`'s pane by when it is unwrapped, unfolded
+/// and draws virtual lines: a comparison's filler rows. Walking line starts
+/// (`Viewport::scroll_up` / `scroll_down`) steps over a line's virtual rows in
+/// one go, so a block of fillers dozens deep went by in a single wheel notch,
+/// and the last page was clamped short of them. `None` for any other pane,
+/// whose rows the line walk or the wrap index count.
+fn flat_scroll_rows(
+    view_state: &crate::view::split::BufferViewState,
+    state: &mut crate::state::EditorState,
+) -> Option<std::sync::Arc<crate::view::flat_rows::FlatRows>> {
+    if view_state.viewport.line_wrap_enabled || !view_state.folds.is_empty() {
+        return None;
+    }
+    state
+        .flat_rows(view_state.is_page_view())
+        .filter(|rows| rows.has_virtual_lines())
+}
+
 fn wrap_scroll_geometry(
     view_state: &crate::view::split::BufferViewState,
     state: &crate::state::EditorState,

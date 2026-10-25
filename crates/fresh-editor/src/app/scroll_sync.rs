@@ -348,7 +348,6 @@ impl crate::app::window::Window {
         active: LeafId,
         other: LeafId,
     ) -> bool {
-        use crate::view::flat_rows::FlatRows;
         let Some(group) = self.scroll_sync_manager.get_group_mut(group_id) else {
             return false;
         };
@@ -365,7 +364,13 @@ impl crate::app::window::Window {
             })
             .collect();
         // A pane's rows, its top row and its height.
-        let pane = |window: &mut Self, leaf: LeafId| -> Option<(FlatRows, usize, usize)> {
+        let pane = |window: &mut Self,
+                    leaf: LeafId|
+         -> Option<(
+            std::sync::Arc<crate::view::flat_rows::FlatRows>,
+            usize,
+            usize,
+        )> {
             let buffer_id = window
                 .buffers
                 .split_view_states()?
@@ -377,7 +382,7 @@ impl crate::app::window::Window {
                     if vs.viewport.line_wrap_enabled || !vs.folds.is_empty() {
                         return None;
                     }
-                    let rows = FlatRows::new(state, vs.is_page_view())?;
+                    let rows = state.flat_rows(vs.is_page_view())?;
                     let top_line = state.buffer.get_line_number(vs.viewport.top_byte());
                     let top = rows.first_row(top_line) + vs.viewport.top_view_line_offset();
                     Some((rows, top, vs.viewport.visible_line_count()))
@@ -617,9 +622,9 @@ impl crate::app::window::Window {
                         if vs.viewport.line_wrap_enabled || !vs.folds.is_empty() {
                             return false;
                         }
-                        let Some(rows) =
-                            crate::view::flat_rows::FlatRows::new(state, vs.is_page_view())
-                                .filter(|rows| rows.has_virtual_lines())
+                        let Some(rows) = state
+                            .flat_rows(vs.is_page_view())
+                            .filter(|rows| rows.has_virtual_lines())
                         else {
                             return false;
                         };

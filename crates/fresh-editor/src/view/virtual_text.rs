@@ -204,6 +204,18 @@ pub struct VirtualTextId(pub u64);
 pub struct VirtualTextManager {
     /// Map from virtual text ID to virtual text entry
     texts: HashMap<VirtualTextId, VirtualText>,
+    /// The entry each marker backs, so a range query can ask the marker
+    /// list's interval tree which markers fall in the range (O(log n + k))
+    /// and keep the ones that are virtual texts, rather than looking up the
+    /// position of every entry in the buffer. The marker list also holds
+    /// overlays, cursors and the like; their markers are not in here.
+    by_marker: HashMap<MarkerId, VirtualTextId>,
+    /// How many entries are inline (`BeforeChar` / `AfterChar`). The marker
+    /// list's range query returns every marker in the range, so with none
+    /// inline an inline query is answered without asking it: a comparison's
+    /// thousands of filler lines, all anchored at one byte, otherwise come
+    /// back from every inline query over that byte only to be dropped.
+    inline_count: usize,
     /// Next ID to assign
     next_id: u64,
     /// Monotonic version, bumped on every mutation.  Folded into
@@ -219,6 +231,8 @@ impl VirtualTextManager {
     pub fn new() -> Self {
         Self {
             texts: HashMap::new(),
+            by_marker: HashMap::new(),
+            inline_count: 0,
             next_id: 0,
             version: 0,
         }
@@ -252,9 +266,44 @@ impl VirtualTextManager {
     fn insert(&mut self, vtext: VirtualText) -> VirtualTextId {
         let id = VirtualTextId(self.next_id);
         self.next_id += 1;
+        self.by_marker.insert(vtext.marker_id, id);
+        self.inline_count += usize::from(vtext.position.is_inline());
         self.texts.insert(id, vtext);
         self.bump_version();
         id
+    }
+
+    /// The one way an entry leaves the manager (but for `clear`), keeping
+    /// `by_marker` in step with `texts`. Deleting the marker is the caller's.
+    fn take(&mut self, id: VirtualTextId) -> Option<VirtualText> {
+        let vtext = self.texts.remove(&id)?;
+        self.by_marker.remove(&vtext.marker_id);
+        self.inline_count -= usize::from(vtext.position.is_inline());
+        Some(vtext)
+    }
+
+    /// The entries anchored in `[start, end)`, with their positions, unsorted:
+    /// the markers the interval tree has in the range, less those that aren't
+    /// virtual texts. The tree's overlap test is inclusive at both ends, so
+    /// the range is checked exactly here.
+    fn in_range<'a>(
+        &'a self,
+        marker_list: &MarkerList,
+        start: usize,
+        end: usize,
+    ) -> impl Iterator<Item = (VirtualTextId, usize, &'a VirtualText)> + 'a {
+        let hits = if start < end {
+            marker_list.query_range(start, end)
+        } else {
+            Vec::new()
+        };
+        hits.into_iter().filter_map(move |(marker_id, pos, _)| {
+            if pos < start || pos >= end {
+                return None;
+            }
+            let id = *self.by_marker.get(&marker_id)?;
+            Some((id, pos, self.texts.get(&id)?))
+        })
     }
 
     /// Add a virtual text entry
@@ -538,7 +587,7 @@ impl VirtualTextManager {
 
         let mut removed = false;
         for id in to_remove {
-            if let Some(vtext) = self.texts.remove(&id) {
+            if let Some(vtext) = self.take(id) {
                 marker_list.delete(vtext.marker_id);
                 removed = true;
             }
@@ -569,7 +618,7 @@ impl VirtualTextManager {
         let removed = !markers_to_delete.is_empty();
         for (id, marker_id) in markers_to_delete {
             marker_list.delete(marker_id);
-            self.texts.remove(&id);
+            self.take(id);
         }
         if removed {
             self.bump_version();
@@ -578,7 +627,7 @@ impl VirtualTextManager {
 
     /// Remove a virtual text entry
     pub fn remove(&mut self, marker_list: &mut MarkerList, id: VirtualTextId) -> bool {
-        if let Some(vtext) = self.texts.remove(&id) {
+        if let Some(vtext) = self.take(id) {
             marker_list.delete(vtext.marker_id);
             self.bump_version();
             true
@@ -594,6 +643,8 @@ impl VirtualTextManager {
             marker_list.delete(vtext.marker_id);
         }
         self.texts.clear();
+        self.by_marker.clear();
+        self.inline_count = 0;
         if was_non_empty {
             self.bump_version();
         }
@@ -621,21 +672,13 @@ impl VirtualTextManager {
         }
 
         let to_remove: Vec<VirtualTextId> = self
-            .texts
-            .iter()
-            .filter_map(|(id, vtext)| {
-                let pos = marker_list.get_position(vtext.marker_id)?;
-                if pos >= start && pos < end {
-                    Some(*id)
-                } else {
-                    None
-                }
-            })
+            .in_range(marker_list, start, end)
+            .map(|(id, _, _)| id)
             .collect();
 
         let count = to_remove.len();
         for id in to_remove {
-            if let Some(vtext) = self.texts.remove(&id) {
+            if let Some(vtext) = self.take(id) {
                 marker_list.delete(vtext.marker_id);
             }
         }
@@ -672,16 +715,8 @@ impl VirtualTextManager {
         end: usize,
     ) -> Vec<(usize, &VirtualText)> {
         let mut results: Vec<(usize, &VirtualText)> = self
-            .texts
-            .values()
-            .filter_map(|vtext| {
-                let pos = marker_list.get_position(vtext.marker_id)?;
-                if pos >= start && pos < end {
-                    Some((pos, vtext))
-                } else {
-                    None
-                }
-            })
+            .in_range(marker_list, start, end)
+            .map(|(_, pos, vtext)| (pos, vtext))
             .collect();
 
         // Sort by position, then by priority
@@ -702,12 +737,8 @@ impl VirtualTextManager {
     ) -> HashMap<usize, Vec<&VirtualText>> {
         let mut lookup: HashMap<usize, Vec<&VirtualText>> = HashMap::new();
 
-        for vtext in self.texts.values() {
-            if let Some(pos) = marker_list.get_position(vtext.marker_id) {
-                if pos >= start && pos < end {
-                    lookup.entry(pos).or_default().push(vtext);
-                }
-            }
+        for (_, pos, vtext) in self.in_range(marker_list, start, end) {
+            lookup.entry(pos).or_default().push(vtext);
         }
 
         // Sort each position's texts by priority
@@ -740,7 +771,7 @@ impl VirtualTextManager {
 
         let removed = !to_remove.is_empty();
         for id in to_remove {
-            if let Some(vtext) = self.texts.remove(&id) {
+            if let Some(vtext) = self.take(id) {
                 marker_list.delete(vtext.marker_id);
             }
         }
@@ -762,24 +793,16 @@ impl VirtualTextManager {
         end: usize,
     ) {
         let to_remove: Vec<VirtualTextId> = self
-            .texts
-            .iter()
-            .filter_map(|(id, vtext)| {
-                if !vtext.position.is_line() || vtext.namespace.as_ref() != Some(namespace) {
-                    return None;
-                }
-                let pos = marker_list.get_position(vtext.marker_id)?;
-                if pos >= start && pos < end {
-                    Some(*id)
-                } else {
-                    None
-                }
+            .in_range(marker_list, start, end)
+            .filter(|(_, _, vtext)| {
+                vtext.position.is_line() && vtext.namespace.as_ref() == Some(namespace)
             })
+            .map(|(id, _, _)| id)
             .collect();
 
         let removed = !to_remove.is_empty();
         for id in to_remove {
-            if let Some(vtext) = self.texts.remove(&id) {
+            if let Some(vtext) = self.take(id) {
                 marker_list.delete(vtext.marker_id);
             }
         }
@@ -815,31 +838,27 @@ impl VirtualTextManager {
         start: usize,
         end: usize,
     ) {
+        if self.inline_count == 0 {
+            return;
+        }
         if start >= end {
             return;
         }
         let to_remove: Vec<VirtualTextId> = self
-            .texts
-            .iter()
-            .filter_map(|(id, vtext)| {
-                if !vtext.position.is_inline() {
-                    return None;
-                }
-                if !vtext
-                    .string_id
-                    .as_ref()
-                    .is_some_and(|s| s.starts_with(id_prefix))
-                {
-                    return None;
-                }
-                let pos = marker_list.get_position(vtext.marker_id)?;
-                (pos >= start && pos < end).then_some(*id)
+            .in_range(marker_list, start, end)
+            .filter(|(_, _, vtext)| {
+                vtext.position.is_inline()
+                    && vtext
+                        .string_id
+                        .as_ref()
+                        .is_some_and(|s| s.starts_with(id_prefix))
             })
+            .map(|(id, _, _)| id)
             .collect();
 
         let removed = !to_remove.is_empty();
         for id in to_remove {
-            if let Some(vtext) = self.texts.remove(&id) {
+            if let Some(vtext) = self.take(id) {
                 marker_list.delete(vtext.marker_id);
             }
         }
@@ -859,22 +878,32 @@ impl VirtualTextManager {
         end: usize,
     ) -> Vec<(usize, &VirtualText)> {
         let mut results: Vec<(usize, &VirtualText)> = self
-            .texts
-            .values()
-            .filter(|vtext| vtext.position.is_line())
-            .filter_map(|vtext| {
-                let pos = marker_list.get_position(vtext.marker_id)?;
-                if pos >= start && pos < end {
-                    Some((pos, vtext))
-                } else {
-                    None
-                }
-            })
+            .in_range(marker_list, start, end)
+            .filter(|(_, _, vtext)| vtext.position.is_line())
+            .map(|(_, pos, vtext)| (pos, vtext))
             .collect();
 
         // Sort by position, then by priority
         results.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.priority.cmp(&b.1.priority)));
 
+        results
+    }
+
+    /// Every virtual LINE (LineAbove/LineBelow) in the buffer, as
+    /// [`Self::query_lines_in_range`] returns them over the whole of it.
+    ///
+    /// For the callers that need them all (the wrap index's decorations, the
+    /// rows of an unwrapped pane): over the whole buffer the interval tree
+    /// would visit every marker in it, overlays and all, so this looks up the
+    /// virtual texts' own markers instead.
+    pub fn all_lines(&self, marker_list: &MarkerList) -> Vec<(usize, &VirtualText)> {
+        let mut results: Vec<(usize, &VirtualText)> = self
+            .texts
+            .values()
+            .filter(|vtext| vtext.position.is_line())
+            .filter_map(|vtext| Some((marker_list.get_position(vtext.marker_id)?, vtext)))
+            .collect();
+        results.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.priority.cmp(&b.1.priority)));
         results
     }
 
@@ -887,18 +916,13 @@ impl VirtualTextManager {
         start: usize,
         end: usize,
     ) -> Vec<(usize, &VirtualText)> {
+        if self.inline_count == 0 {
+            return Vec::new();
+        }
         let mut results: Vec<(usize, &VirtualText)> = self
-            .texts
-            .values()
-            .filter(|vtext| vtext.position.is_inline())
-            .filter_map(|vtext| {
-                let pos = marker_list.get_position(vtext.marker_id)?;
-                if pos >= start && pos < end {
-                    Some((pos, vtext))
-                } else {
-                    None
-                }
-            })
+            .in_range(marker_list, start, end)
+            .filter(|(_, _, vtext)| vtext.position.is_inline())
+            .map(|(_, pos, vtext)| (pos, vtext))
             .collect();
 
         // Sort by position, then by priority
@@ -1160,6 +1184,138 @@ mod tests {
 
         assert_eq!(manager.len(), 0);
         assert_eq!(marker_list.marker_count(), 0);
+    }
+
+    /// The range queries ask the marker list's interval tree and keep the
+    /// markers that are virtual texts. They answer exactly what checking every
+    /// entry's position against the range does — with other markers in the
+    /// list (overlays, cursors), many entries at one byte, entries removed
+    /// every way there is, and edits that move them.
+    #[test]
+    fn range_queries_match_a_scan_of_every_entry() {
+        let mut marker_list = MarkerList::new();
+        let mut manager = VirtualTextManager::new();
+        let ns = VirtualTextNamespace::from_string("ns".to_string());
+        // Markers that are not virtual texts, around and on the entries.
+        for pos in [0, 5, 10, 33, 60] {
+            marker_list.create(pos);
+        }
+        marker_list.create_span(8, 40);
+        for i in 0..30usize {
+            let pos = (i * 7) % 50;
+            if i % 3 == 0 {
+                manager.add(
+                    &mut marker_list,
+                    pos,
+                    format!("hint {i}"),
+                    hint_style(),
+                    VirtualTextPosition::AfterChar,
+                    i as i32,
+                );
+            } else {
+                let placement = if i % 2 == 0 {
+                    VirtualTextPosition::LineAbove
+                } else {
+                    VirtualTextPosition::LineBelow
+                };
+                manager.add_line(
+                    &mut marker_list,
+                    pos,
+                    format!("line {i}"),
+                    hint_style(),
+                    placement,
+                    ns.clone(),
+                    i as i32,
+                );
+            }
+        }
+        // A comparison's fillers: many lines on one byte.
+        for i in 0..20 {
+            manager.add_line(
+                &mut marker_list,
+                21,
+                String::new(),
+                hint_style(),
+                VirtualTextPosition::LineBelow,
+                ns.clone(),
+                100 + i,
+            );
+        }
+        let removed = manager.query_range(&marker_list, 14, 15);
+        let removed_texts: Vec<String> = removed.iter().map(|(_, v)| v.text.clone()).collect();
+        manager.remove_in_range(&mut marker_list, 14, 15);
+        manager.clear_lines_in_range(&mut marker_list, &ns, 35, 36);
+        marker_list.adjust_for_insert(12, 9);
+        marker_list.adjust_for_delete(40, 6);
+
+        let scan = |manager: &VirtualTextManager, start: usize, end: usize| {
+            let mut all: Vec<(usize, String)> = manager
+                .texts
+                .values()
+                .filter_map(|vt| {
+                    let pos = marker_list.get_position(vt.marker_id)?;
+                    (pos >= start && pos < end).then(|| (pos, vt.text.clone()))
+                })
+                .collect();
+            all.sort();
+            all
+        };
+        let texts = |results: Vec<(usize, &VirtualText)>| {
+            let mut v: Vec<(usize, String)> = results
+                .into_iter()
+                .map(|(p, vt)| (p, vt.text.clone()))
+                .collect();
+            v.sort();
+            v
+        };
+        for (start, end) in [
+            (0, 100),
+            (0, 1),
+            (10, 30),
+            (30, 31),
+            (29, 29),
+            (44, 80),
+            (21, 22),
+        ] {
+            let expected = scan(&manager, start, end);
+            assert_eq!(
+                texts(manager.query_range(&marker_list, start, end)),
+                expected,
+                "query_range({start}, {end})"
+            );
+            let lines: Vec<_> = expected
+                .iter()
+                .filter(|(_, t)| !t.starts_with("hint"))
+                .cloned()
+                .collect();
+            assert_eq!(
+                texts(manager.query_lines_in_range(&marker_list, start, end)),
+                lines,
+                "query_lines_in_range({start}, {end})"
+            );
+            let inline: Vec<_> = expected
+                .iter()
+                .filter(|(_, t)| t.starts_with("hint"))
+                .cloned()
+                .collect();
+            assert_eq!(
+                texts(manager.query_inline_in_range(&marker_list, start, end)),
+                inline,
+                "query_inline_in_range({start}, {end})"
+            );
+        }
+        assert!(
+            !removed_texts.is_empty(),
+            "the removal had something to remove"
+        );
+        let all_lines = texts(manager.all_lines(&marker_list));
+        assert_eq!(
+            all_lines.len(),
+            manager.query_lines_in_range(&marker_list, 0, 1000).len()
+        );
+        manager.clear(&mut marker_list);
+        assert!(manager.query_range(&marker_list, 0, 1000).is_empty());
+        assert!(manager.by_marker.is_empty() && manager.inline_count == 0);
     }
 
     #[test]

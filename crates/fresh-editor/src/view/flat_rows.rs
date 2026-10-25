@@ -28,15 +28,16 @@ pub struct FlatRows {
 impl FlatRows {
     /// The rows of `state`'s buffer as a pane in or out of page view
     /// (`is_compose`) draws them unwrapped. `None` for a buffer without line
-    /// data (large-file mode).
-    pub fn new(state: &EditorState, is_compose: bool) -> Option<Self> {
+    /// data (large-file mode). Read them through `EditorState::flat_rows`,
+    /// which keeps them until the buffer or its virtual lines change.
+    pub(crate) fn new(state: &EditorState, is_compose: bool) -> Option<Self> {
         let buffer = &state.buffer;
         let lines = if state.virtual_texts.is_empty() {
             Vec::new()
         } else {
             state
                 .virtual_texts
-                .query_lines_in_range(&state.marker_list, 0, buffer.len() + 1)
+                .all_lines(&state.marker_list)
                 .into_iter()
                 .filter(|(_, vt)| is_compose || !vt.compose_only)
                 .map(|(pos, vt)| {
@@ -47,15 +48,6 @@ impl FlatRows {
                 .collect()
         };
         Self::from_anchors(buffer, lines)
-    }
-
-    /// The rows of `buffer` with virtual lines anchored at the byte positions
-    /// `virtual_lines` (ascending), as the scroll paths collect them
-    /// (`EditorState::collect_virtual_line_positions`). Which side of its line
-    /// each is drawn on doesn't change which line a row is in, so this is
-    /// enough to scroll by; only [`Self::text_row`] needs [`Self::new`].
-    pub fn from_positions(buffer: &Buffer, virtual_lines: &[usize]) -> Option<Self> {
-        Self::from_anchors(buffer, virtual_lines.iter().map(|p| (*p, false)).collect())
     }
 
     /// `anchors`: each virtual line's byte position, ascending, and whether

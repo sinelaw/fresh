@@ -945,22 +945,16 @@ impl Viewport {
         self.set_top_view_line_offset(addr.row_in_line);
     }
 
-    /// Scroll an unwrapped pane that draws plugin virtual lines by `delta`
-    /// rows, the virtual lines' rows included. Returns `false`, having done
-    /// nothing, when there are none to count: then a row is a line, and the
-    /// line walk in `scroll_up` / `scroll_down` is the same thing.
-    ///
-    /// Walking line starts steps over a line's virtual rows in one go: a
-    /// comparison's filler rows, dozens deep under one line, went by in a
-    /// single wheel notch, and the last page was clamped short of them.
-    fn scroll_flat_rows(&mut self, buffer: &Buffer, virtual_lines: &[usize], delta: isize) -> bool {
-        if virtual_lines.is_empty() {
-            return false;
-        }
-        let Some(rows) = crate::view::flat_rows::FlatRows::from_positions(buffer, virtual_lines)
-        else {
-            return false;
-        };
+    /// Scroll an unwrapped pane by `delta` of the rows `rows` counts, its
+    /// virtual lines' rows included — the arithmetic
+    /// [`Self::scroll_visual_rows`] does off the wrap index, for a pane that
+    /// may have none.
+    pub fn scroll_flat_rows(
+        &mut self,
+        rows: &crate::view::flat_rows::FlatRows,
+        buffer: &Buffer,
+        delta: isize,
+    ) {
         let top_line = buffer.get_line_number(self.top_byte());
         let top = rows.first_row(top_line) + self.top_view_line_offset();
         let max_top = rows
@@ -970,7 +964,6 @@ impl Viewport {
         let (line, offset) = rows.locate(new_top);
         self.set_top_byte(buffer.line_start_offset(line).unwrap_or(0));
         self.set_top_view_line_offset(offset);
-        true
     }
 
     /// Scroll up by N lines (byte-based)
@@ -990,12 +983,6 @@ impl Viewport {
         hidden_ranges: &[(usize, usize)],
         lines: usize,
     ) {
-        if !self.line_wrap_enabled
-            && hidden_ranges.is_empty()
-            && self.scroll_flat_rows(buffer, virtual_lines, -(lines as isize))
-        {
-            return;
-        }
         if self.line_wrap_enabled {
             self.scroll_up_visual(buffer, soft_breaks, virtual_lines, hidden_ranges, lines);
         } else {
@@ -1104,12 +1091,6 @@ impl Viewport {
         hidden_ranges: &[(usize, usize)],
         lines: usize,
     ) {
-        if !self.line_wrap_enabled
-            && hidden_ranges.is_empty()
-            && self.scroll_flat_rows(buffer, virtual_lines, lines as isize)
-        {
-            return;
-        }
         if self.line_wrap_enabled {
             self.scroll_down_visual(buffer, soft_breaks, virtual_lines, hidden_ranges, lines);
         } else {
