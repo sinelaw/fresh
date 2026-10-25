@@ -158,7 +158,7 @@ Methods:
   rpm       Fedora/RHEL/openSUSE .rpm from the latest release (needs root)
   aur       Arch Linux, via the AUR
   brew      Homebrew
-  nix       Nix profile
+  nix       Nix profile (fresh-editor from nixpkgs)
   cargo     cargo install / cargo binstall
   npm       npm install -g
   appimage  AppImage, extracted under ~/.local
@@ -716,7 +716,21 @@ EOF
 
 do_install_nix() {
     log_info "Attempting Nix install..."
-    nix profile install "github:${REPO_OWNER}/${REPO_NAME}"
+    # nixpkgs ships fresh as fresh-editor, binary-cached via cache.nixos.org;
+    # the flake has no cache and would compile the whole toolchain from
+    # source. nixpkgs tracks releases rather than master; updates arrive
+    # via `nix profile upgrade fresh`.
+    # The extra features make the command work on any nix >= 2.4 without
+    # relying on the user's experimental-features config: nix-command for
+    # `nix profile` itself, flakes for the nixpkgs# installable syntax.
+    nix --extra-experimental-features 'nix-command flakes' profile install nixpkgs#fresh-editor
+    log_info "Update later with: nix profile upgrade fresh"
+    # Imperative profile installs are fine for trying fresh out, but a Nix
+    # system stays healthy when its packages are declared in its config.
+    log_info "Installed 'fresh' into your nix profile. On a Nix system, declaring it in your config is the more robust path:"
+    log_info "  NixOS:        environment.systemPackages  https://nixos.org/manual/nixos/stable/#sec-declarative-package-mgmt"
+    log_info "  home-manager: https://nix-community.github.io/home-manager/"
+    log_info "  nix-darwin:   https://github.com/LnL/nix-darwin"
 }
 
 do_install_cargo() {
