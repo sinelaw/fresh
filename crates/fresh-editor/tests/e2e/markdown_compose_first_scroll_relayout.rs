@@ -116,6 +116,7 @@ fn delta(before: WrapIndexStats, after: WrapIndexStats) -> WrapIndexStats {
         lines_built: after.lines_built - before.lines_built,
         decoration_repairs: after.decoration_repairs - before.decoration_repairs,
         lines_repaired: after.lines_repaired - before.lines_repaired,
+        tails_read: after.tails_read - before.tails_read,
     }
 }
 

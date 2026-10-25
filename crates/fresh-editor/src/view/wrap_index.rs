@@ -568,12 +568,17 @@ pub struct WrapIndex {
 /// `decoration_repairs` counts diffs that found real work; a version bump
 /// whose snapshot turned out identical is free and is not counted, so the
 /// number means "batches that changed something", not "batches seen".
+///
+/// `tails_read` counts text-edit repairs that read the line from the resume
+/// row to its end without the layout resyncing: on a long line that is the
+/// O(line) cost the repair's windowed read exists to avoid.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct WrapIndexStats {
     pub rebuilds: u64,
     pub lines_built: u64,
     pub decoration_repairs: u64,
     pub lines_repaired: u64,
+    pub tails_read: u64,
 }
 
 impl WrapIndexStats {
@@ -583,6 +588,7 @@ impl WrapIndexStats {
             lines_built: self.lines_built + other.lines_built,
             decoration_repairs: self.decoration_repairs + other.decoration_repairs,
             lines_repaired: self.lines_repaired + other.lines_repaired,
+            tails_read: self.tails_read + other.tails_read,
         }
     }
 }
@@ -1031,29 +1037,6 @@ impl WrapIndex {
         let resume_rel = self.lines[line].row_starts[resume_idx];
         let resume_carry = self.lines[line].carries[resume_idx];
         let resume_byte = line_start + resume_rel as usize;
-        // Decoration-aware, and read from the resume row rather than the line's
-        // start: repair is meant to cost rows, not the line.
-        let stream = line_token_stream(
-            buffer,
-            line,
-            line_ending,
-            &self.decorations,
-            Some(resume_byte),
-        );
-
-        // The *new* stream may not be resumable at this byte at all — it can
-        // open the row with injected content the carry cannot reconstruct, or
-        // reach into it with a conceal's replacement — and the resume byte may
-        // no longer address anything while the line still has content. Either
-        // way the line is laid out from its start instead.
-        let Some(tail) = stream.resume_at(resume_byte) else {
-            self.rebuild_one(buffer, line, rule, line_ending);
-            return;
-        };
-        if tail.is_empty() && !stream.is_empty() {
-            self.rebuild_one(buffer, line, rule, line_ending);
-            return;
-        }
 
         // Resync also requires the tail to be pure shifted source: past the last
         // decoration in the line. Beyond such a point the overlay reattaches to
@@ -1061,6 +1044,45 @@ impl WrapIndex {
         // continuation". With decorations applied by later passes rather than
         // here, that floor is just the edit's end.
         let resync_floor = rel_end_old;
+
+        // Read from the resume row rather than the line's start, and only as
+        // far as the layout takes to resync: repair is meant to cost rows, not
+        // the line. A decorated line is read whole, since its decorations
+        // reach across any cut; a plain one in windows that grow until the
+        // rows realign, which is usually well before the line ends.
+        let edit_end = (edit.start + edit.inserted).max(resume_byte);
+        let window_chars =
+            edit_end - resume_byte + REPAIR_WINDOW_ROWS * rule.available_width().max(1);
+        let mut reader =
+            TailReader::new(buffer, line, &self.decorations, resume_byte, window_chars);
+        let stream = match &mut reader {
+            Some(reader) => LineStream::verbatim(reader.next_chunk(
+                buffer,
+                line_ending,
+                &self.decorations.folds,
+            )),
+            None => line_token_stream(
+                buffer,
+                line,
+                line_ending,
+                &self.decorations,
+                Some(resume_byte),
+            ),
+        };
+
+        // The *new* stream may not be resumable at this byte at all — it can
+        // open the row with injected content the carry cannot reconstruct, or
+        // reach into it with a conceal's replacement — and the resume byte may
+        // no longer address anything while the line still has content. Either
+        // way the line is laid out from its start instead.
+        let Some(mut tail) = stream.resume_at(resume_byte) else {
+            self.rebuild_one(buffer, line, rule, line_ending);
+            return;
+        };
+        if tail.is_empty() && !stream.is_empty() {
+            self.rebuild_one(buffer, line, rule, line_ending);
+            return;
+        }
 
         let mut machine = WrapMachine::resume(rule, resume_carry);
         let mut new_starts: Vec<u32> = Vec::new();
@@ -1070,27 +1092,36 @@ impl WrapIndex {
         let mut prev_rel = resume_rel;
         let mut resync_at: Option<usize> = None;
 
-        for token in tail {
-            machine.feed(token);
-            if let Some(hit) = absorb_rows(
-                &machine,
-                line_start,
-                resume_rel,
-                &mut sealed,
-                &mut prev_rel,
-                &mut new_starts,
-                &mut new_carries,
-                &mut new_resumable,
-                &self.lines[line],
-                resume_idx,
-                resync_floor,
-                delta,
-            ) {
-                resync_at = Some(hit);
-                break;
+        'read: loop {
+            for token in tail {
+                machine.feed(token);
+                if let Some(hit) = absorb_rows(
+                    &machine,
+                    line_start,
+                    resume_rel,
+                    &mut sealed,
+                    &mut prev_rel,
+                    &mut new_starts,
+                    &mut new_carries,
+                    &mut new_resumable,
+                    &self.lines[line],
+                    resume_idx,
+                    resync_floor,
+                    delta,
+                ) {
+                    resync_at = Some(hit);
+                    break 'read;
+                }
+            }
+            match reader.as_mut().filter(|r| !r.is_done()) {
+                Some(reader) => {
+                    tail = reader.next_chunk(buffer, line_ending, &self.decorations.folds);
+                }
+                None => break,
             }
         }
         if resync_at.is_none() {
+            self.stats.tails_read += 1;
             let finished = machine.finish();
             absorb_finished(
                 &finished,
@@ -1179,6 +1210,14 @@ impl WrapIndex {
     }
 }
 
+/// Rows past the edit a repair's first window reaches.
+///
+/// An edit that leaves every break where it was resyncs on the next row; one
+/// that moves a word across a break shifts the rows after it until both
+/// layouts happen to break at the same word, which on prose takes a few
+/// dozen. Later windows double, so this only sets where the doubling starts.
+const REPAIR_WINDOW_ROWS: usize = 8;
+
 /// A buffer mutation, as the damage contract sees it.
 #[derive(Debug, Clone, Copy)]
 pub struct EditDamage {
@@ -1235,8 +1274,14 @@ fn line_token_stream(
         apply_conceal_ranges, apply_soft_breaks, splice_inline_virtual_text,
     };
 
-    let mut tokens =
-        build_line_tokens_from(buffer, line, line_ending, &decorations.folds, from_byte);
+    let mut tokens = build_line_tokens_from(
+        buffer,
+        line,
+        line_ending,
+        &decorations.folds,
+        from_byte,
+        None,
+    );
     if decorations.is_empty() {
         return LineStream::verbatim(tokens);
     }
@@ -1259,6 +1304,103 @@ fn line_token_stream(
     // inline hints inject tokens with no anchor at all, and both split source
     // text without disturbing the bytes it stands for.
     LineStream::new(tokens, &conceals)
+}
+
+/// A plain line's tail, read in windows that grow until the caller has
+/// enough of it.
+///
+/// A repair stops reading at the row where the new layout lands back on the
+/// old one, which is usually a few rows past the edit and sometimes a few
+/// dozen; reading the line's whole tail to get there made every keystroke on
+/// a long soft-wrapped line O(line) again (issue #3631).
+///
+/// Each window's tokens are the full tail's, in order: text merges across the
+/// reader's pieces, so a window cut short differs from a full read only in
+/// its last token, which may be a word cut in two. A cut word wraps
+/// differently from the whole one, so that token is held back and the next
+/// window starts at its first byte. Fed one after another, the windows are
+/// exactly the stream a single read would have produced.
+///
+/// Decorated lines are not read this way: soft breaks, conceals and hints
+/// reach across a cut, and a conceal half inside a window would substitute
+/// differently from the whole one.
+struct TailReader {
+    line: usize,
+    line_end: usize,
+    next: usize,
+    chars: usize,
+    done: bool,
+}
+
+impl TailReader {
+    /// `None` when `line` carries decorations.
+    fn new(
+        buffer: &mut Buffer,
+        line: usize,
+        decorations: &IndexDecorations,
+        from_byte: usize,
+        chars: usize,
+    ) -> Option<Self> {
+        let line_start = buffer.line_start_offset(line).unwrap_or(0);
+        let line_end = buffer
+            .line_start_offset(line + 1)
+            .unwrap_or_else(|| buffer.len())
+            .min(buffer.len());
+        if !decorations.is_empty() {
+            let (breaks, conceals, hints) = decorations.for_line(line_start, line_end);
+            if !breaks.is_empty() || !conceals.is_empty() || !hints.is_empty() {
+                return None;
+            }
+        }
+        Some(Self {
+            line,
+            line_end,
+            next: from_byte,
+            chars: chars.max(1),
+            done: false,
+        })
+    }
+
+    fn is_done(&self) -> bool {
+        self.done
+    }
+
+    /// The next window, continuing exactly where the previous one stopped.
+    fn next_chunk(
+        &mut self,
+        buffer: &mut Buffer,
+        line_ending: LineEnding,
+        folds: &[std::ops::Range<usize>],
+    ) -> Vec<ViewTokenWire> {
+        loop {
+            // Characters never outnumber bytes, so a tail this short cannot be
+            // cut: read it unbounded and finish.
+            let complete = self.line_end.saturating_sub(self.next) <= self.chars;
+            let budget = (!complete).then_some(self.chars);
+            let mut tokens = build_line_tokens_from(
+                buffer,
+                self.line,
+                line_ending,
+                folds,
+                Some(self.next),
+                budget,
+            );
+            if complete {
+                self.done = true;
+                return tokens;
+            }
+            self.chars = self.chars.saturating_mul(2);
+            let held_back = tokens.pop().and_then(|t| t.source_offset);
+            match held_back {
+                Some(at) if at > self.next && !tokens.is_empty() => {
+                    self.next = at;
+                    return tokens;
+                }
+                // One token wider than the whole window: read it again, wider.
+                _ => {}
+            }
+        }
+    }
 }
 
 /// Wrap one logical line from scratch.
@@ -2583,6 +2725,106 @@ mod tests {
         let fresh = built(&mut buffer, 20);
         assert_eq!(structure(&index), structure(&fresh));
         assert_eq!(index.total_rows(), fresh.total_rows());
+    }
+
+    /// A repair inside a long line that starts from a window around the edit
+    /// lands where a full rebuild would, wherever in the line the edit is and
+    /// whatever it does to the rows around it — including when the window runs
+    /// out before the layout resyncs and the repair falls back to the tail. The
+    /// line mixes words longer than a row (split by grapheme) with ordinary
+    /// ones and wide characters, so edits inside and next to a split word are
+    /// both covered.
+    #[test]
+    fn repair_inside_a_long_line_equals_rebuild() {
+        let word = |i: usize| match i % 7 {
+            0 => "x".repeat(37),
+            3 => "\u{4e2d}\u{6587}".to_string(),
+            _ => format!("w{i}"),
+        };
+        let text = (0..600).map(word).collect::<Vec<_>>().join(" ");
+        let long_insert = "y".repeat(90);
+        for width in [13usize, 20, 41] {
+            let mut mirror = text.clone();
+            let mut buffer = Buffer::from_bytes(text.as_bytes().to_vec(), test_fs());
+            let mut index = built(&mut buffer, width);
+            let len = mirror.len();
+            let edits: &[(usize, usize, &str)] = &[
+                (len / 2, 0, "Z"),
+                (len / 3, 4, ""),
+                (len / 4, 0, " "),
+                (len / 5, 1, "a much longer insertion that spans rows"),
+                (len / 7, 0, &long_insert),
+                (10, 0, "Q"),
+            ];
+            for &(at, removed, insert) in edits {
+                // Land on character boundaries of the current text.
+                let mut start = at.min(mirror.len());
+                while !mirror.is_char_boundary(start) {
+                    start -= 1;
+                }
+                let mut end = (start + removed).min(mirror.len());
+                while !mirror.is_char_boundary(end) {
+                    end += 1;
+                }
+                mirror.replace_range(start..end, insert);
+                edit(&mut buffer, &mut index, start, end - start, insert);
+                let fresh = built(&mut buffer, width);
+                assert_eq!(
+                    structure(&index),
+                    structure(&fresh),
+                    "repair diverged at width {width} after edit ({start}, {}, {insert:?})",
+                    end - start
+                );
+            }
+        }
+    }
+
+    /// Typing into the middle of a long line of prose must not read the rest
+    /// of the line: the layout resyncs within a few dozen rows of the edit, so
+    /// the tail past that is spliced without being tokenised (issue #3631).
+    ///
+    /// Not every edit resyncs — a long insertion can shift the rows after it
+    /// out of phase for hundreds of rows — so this covers the edits typing
+    /// makes, and the rebuild comparison above covers the rest.
+    #[test]
+    fn typing_mid_line_reads_only_a_window() {
+        // Words of varied length, as prose has. A line of identical words wraps
+        // periodically, and an insertion that shifts it out of phase never
+        // lands on an old row boundary again — every repair of such a line
+        // reads its tail, window or not.
+        let words = [
+            "the", "quick", "brown", "fox", "jumps", "over", "a", "lazy", "dog,",
+        ];
+        let mut seed = 7u32;
+        let text = (0..5000)
+            .map(|_| {
+                seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                words[(seed >> 16) as usize % words.len()]
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut buffer = Buffer::from_bytes(text.as_bytes().to_vec(), test_fs());
+        let mut index = built(&mut buffer, 80);
+        let len = buffer.len();
+        let edits: &[(usize, usize, &str)] = &[
+            (len / 2, 0, "Z"),
+            (len / 2, 1, ""),
+            (len / 3, 0, " "),
+            (len / 4, 3, ""),
+            (len / 5, 0, "xy"),
+            (len / 6, 0, "quick "),
+        ];
+        for &(start, removed, insert) in edits {
+            let before = index.stats().tails_read;
+            edit(&mut buffer, &mut index, start, removed, insert);
+            let fresh = built(&mut buffer, 80);
+            assert_eq!(structure(&index), structure(&fresh));
+            assert_eq!(
+                index.stats().tails_read,
+                before,
+                "edit ({start}, {removed}, {insert:?}) read the line's tail"
+            );
+        }
     }
 
     /// Editing at the *start* of a huge line resyncs: the boundaries after the
