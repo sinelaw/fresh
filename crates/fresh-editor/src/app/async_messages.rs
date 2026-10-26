@@ -1686,34 +1686,7 @@ impl Editor {
         // debounce tick — e.g. live_diff's 75ms `editor.delay()` recompute
         // repainted the screen twice per keystroke with no change. Invisible
         // on a fast terminal, but real lag over a serial console (#2100).
-        use fresh_core::api::PluginCommand as Pc;
-        let has_visual_commands = commands.iter().any(|c| match c {
-            Pc::HookCompleted { .. }
-            | Pc::Delay { .. }
-            | Pc::SpawnProcess { .. }
-            | Pc::SpawnBackgroundProcess { .. }
-            | Pc::KillBackgroundProcess { .. }
-            | Pc::SpawnProcessWait { .. }
-            | Pc::HttpFetch { .. }
-            | Pc::WatchPath { .. }
-            | Pc::UnwatchPath { .. }
-            | Pc::SetGlobalState { .. }
-            | Pc::SetWindowState { .. }
-            | Pc::SetViewState { .. }
-            // Arming or cancelling a timer paints nothing; what the handler
-            // eventually draws arrives as its own command and is counted then.
-            | Pc::SetPluginTimer { .. }
-            | Pc::ClearPluginTimer { .. } => false,
-            Pc::SetStatusBarValue {
-                buffer_id,
-                key,
-                value,
-            } => {
-                self.current_status_bar_value(fresh_core::BufferId(*buffer_id as usize), key)
-                    != Some(value.as_str())
-            }
-            _ => true,
-        });
+        let has_visual_commands = commands.iter().any(|c| self.plugin_command_is_visual(c));
 
         for command in &commands {
             match command {
@@ -1774,6 +1747,41 @@ impl Editor {
         self.flush_pending_grammars();
 
         has_visual_commands
+    }
+
+    /// Whether dispatching `command` can change the screen (see
+    /// `process_plugin_commands`). A batch does when one of its commands does.
+    #[cfg(feature = "plugins")]
+    fn plugin_command_is_visual(&self, command: &fresh_core::api::PluginCommand) -> bool {
+        use fresh_core::api::PluginCommand as Pc;
+        match command {
+            Pc::Batch { commands } => commands.iter().any(|c| self.plugin_command_is_visual(c)),
+            Pc::HookCompleted { .. }
+            | Pc::Delay { .. }
+            | Pc::SpawnProcess { .. }
+            | Pc::SpawnBackgroundProcess { .. }
+            | Pc::KillBackgroundProcess { .. }
+            | Pc::SpawnProcessWait { .. }
+            | Pc::HttpFetch { .. }
+            | Pc::WatchPath { .. }
+            | Pc::UnwatchPath { .. }
+            | Pc::SetGlobalState { .. }
+            | Pc::SetWindowState { .. }
+            | Pc::SetViewState { .. }
+            // Arming or cancelling a timer paints nothing; what the handler
+            // eventually draws arrives as its own command and is counted then.
+            | Pc::SetPluginTimer { .. }
+            | Pc::ClearPluginTimer { .. } => false,
+            Pc::SetStatusBarValue {
+                buffer_id,
+                key,
+                value,
+            } => {
+                self.current_status_bar_value(fresh_core::BufferId(*buffer_id as usize), key)
+                    != Some(value.as_str())
+            }
+            _ => true,
+        }
     }
 
     /// Process pending plugin action completions
@@ -2181,5 +2189,42 @@ mod tests {
         let updated = apply_semantic_token_edits(base, &[edit]).expect("edit should apply");
         assert_eq!(updated.len(), 10);
         assert_eq!(&updated[5..10], &[0, 5, 1, 2, 0]);
+    }
+
+    /// A batch repaints when one of its commands would: a hook that only
+    /// re-publishes what is already shown must not start a render loop.
+    #[cfg(feature = "plugins")]
+    #[test]
+    fn a_batch_is_visual_when_one_of_its_commands_is() {
+        use fresh_core::api::PluginCommand as Pc;
+        let temp = tempfile::tempdir().unwrap();
+        let editor = crate::app::Editor::for_test(
+            crate::config::Config::default(),
+            80,
+            24,
+            None,
+            crate::config_io::DirectoryContext::for_testing(temp.path()),
+            crate::view::color_support::ColorCapability::TrueColor,
+            std::sync::Arc::new(crate::model::filesystem::StdFileSystem),
+            None,
+            None,
+            false,
+            false,
+            false,
+        )
+        .unwrap();
+        let ack = || Pc::HookCompleted {
+            hook_name: "render_start".into(),
+        };
+        let decoration = || Pc::ClearNamespace {
+            buffer_id: fresh_core::BufferId(1),
+            namespace: fresh_core::overlay::OverlayNamespace::new(),
+        };
+        assert!(!editor.plugin_command_is_visual(&Pc::Batch {
+            commands: vec![ack(), ack()],
+        }));
+        assert!(editor.plugin_command_is_visual(&Pc::Batch {
+            commands: vec![ack(), decoration()],
+        }));
     }
 }

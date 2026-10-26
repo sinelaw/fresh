@@ -559,6 +559,13 @@ impl Editor {
     /// test is where a regression actually fails the build; this is how you
     /// find out which handler caused it.
     pub(crate) fn dispatch_plugin_command_measured(&mut self, command: PluginCommand) {
+        // A batch is its commands, each on its own budget.
+        if let PluginCommand::Batch { commands } = command {
+            for command in commands {
+                self.dispatch_plugin_command_measured(command);
+            }
+            return;
+        }
         let label = VariantNameSink::of(&command);
         let label = label.as_str();
         let started = std::time::Instant::now();
@@ -1007,6 +1014,11 @@ impl Editor {
             }
             PluginCommand::RefreshAllLines => {
                 self.handle_refresh_all_lines();
+            }
+            PluginCommand::Batch { commands } => {
+                for command in commands {
+                    self.dispatch_plugin_command_measured(command);
+                }
             }
             PluginCommand::HookCompleted { hook_name } => {
                 // Sentinel processed in render loop; no-op if encountered

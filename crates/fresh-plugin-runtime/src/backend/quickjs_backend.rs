@@ -812,6 +812,52 @@ fn parse_animation_kind(
     }
 }
 
+/// The plugin thread's end of the command channel. While a hook's handlers
+/// run (`QuickJsBackend::emit_to`) what they send is gathered, and goes to the
+/// editor as one `PluginCommand::Batch` when they return.
+#[derive(Clone)]
+struct CommandSender {
+    channel: mpsc::Sender<PluginCommand>,
+    batch: Rc<RefCell<Option<Vec<PluginCommand>>>>,
+}
+
+impl CommandSender {
+    // `mpsc::Sender::send`'s signature, which the callers are written against.
+    #[allow(clippy::result_large_err)]
+    fn send(&self, command: PluginCommand) -> Result<(), mpsc::SendError<PluginCommand>> {
+        match self.batch.borrow_mut().as_mut() {
+            Some(batch) => {
+                batch.push(command);
+                Ok(())
+            }
+            None => self.channel.send(command),
+        }
+    }
+
+    /// Gather what is sent from here on, unless an outer call already does.
+    /// `true` when this call opened the batch, and so closes it.
+    fn open_batch(&self) -> bool {
+        let mut batch = self.batch.borrow_mut();
+        if batch.is_some() {
+            return false;
+        }
+        *batch = Some(Vec::new());
+        true
+    }
+
+    /// Send what was gathered since `open_batch`, as one command.
+    fn close_batch(&self) {
+        let Some(mut commands) = self.batch.borrow_mut().take() else {
+            return;
+        };
+        let _ = match commands.len() {
+            0 => Ok(()),
+            1 => self.channel.send(commands.remove(0)),
+            _ => self.channel.send(PluginCommand::Batch { commands }),
+        };
+    }
+}
+
 /// JavaScript-exposed Editor API using rquickjs class system
 /// This allows proper lifetime handling for methods returning JS values
 #[derive(fresh_js::class::Trace, fresh_js::JsLifetime)]
@@ -820,7 +866,7 @@ pub struct JsEditorApi {
     #[qjs(skip_trace)]
     state_snapshot: Arc<RwLock<EditorStateSnapshot>>,
     #[qjs(skip_trace)]
-    command_sender: mpsc::Sender<PluginCommand>,
+    command_sender: CommandSender,
     #[qjs(skip_trace)]
     registered_actions: Rc<RefCell<HashMap<String, PluginHandler>>>,
     #[qjs(skip_trace)]
@@ -9889,7 +9935,7 @@ pub struct QuickJsBackend {
     /// Editor state snapshot (read-only access)
     state_snapshot: Arc<RwLock<EditorStateSnapshot>>,
     /// Command sender for write operations
-    command_sender: mpsc::Sender<PluginCommand>,
+    command_sender: CommandSender,
     /// Pending response senders for async operations (held to keep Arc alive)
     #[allow(dead_code)]
     pending_responses: PendingResponses,
@@ -10507,7 +10553,10 @@ impl QuickJsBackend {
             event_handlers,
             registered_actions,
             state_snapshot,
-            command_sender,
+            command_sender: CommandSender {
+                channel: command_sender,
+                batch: Rc::new(RefCell::new(None)),
+            },
             pending_responses,
             next_request_id,
             callback_contexts,
@@ -11002,6 +11051,11 @@ impl QuickJsBackend {
             .expect("event_handlers poisoned")
             .get(event_name)
             .cloned();
+        // The handlers' commands go to the editor together, so no frame is
+        // drawn from half of them (see `PluginCommand::Batch`). Only what they
+        // send while they run: a handler cannot block on the editor, and what
+        // runs after an `await` is sent as it comes.
+        let opened = self.command_sender.open_batch();
         if let Some(handler_pairs) = handlers {
             let plugin_contexts = self.plugin_contexts.borrow();
             for handler in &handler_pairs {
@@ -11015,6 +11069,10 @@ impl QuickJsBackend {
                     call_handler(&ctx, &handler.handler_name, event_data);
                 });
             }
+        }
+
+        if opened {
+            self.command_sender.close_batch();
         }
 
         self.current_hook_epoch.set(prev_epoch);
@@ -12243,12 +12301,65 @@ mod tests {
             .unwrap();
         let mut got: Vec<String> = Vec::new();
         while let Ok(cmd) = rx.try_recv() {
-            if let PluginCommand::SetStatus { message } = cmd {
-                got.push(message);
+            let cmds = match cmd {
+                PluginCommand::Batch { commands } => commands,
+                cmd => vec![cmd],
+            };
+            for cmd in cmds {
+                if let PluginCommand::SetStatus { message } = cmd {
+                    got.push(message);
+                }
             }
         }
         got.sort();
         assert_eq!(got, vec!["alpha got 7", "beta got 7"]);
+    }
+
+    /// What a hook's handlers send while they run reaches the editor as one
+    /// batch, so it is applied whole. A handler awaiting the editor does not
+    /// hold it up: the batch goes out when the handler returns, its request
+    /// in it, and what comes after the `await` is sent on its own.
+    #[tokio::test]
+    async fn test_emit_sends_the_handlers_commands_as_one_batch() {
+        let (mut backend, rx) = create_test_backend();
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            globalThis.onLines = function(data) {
+                editor.setStatus("first");
+                editor.setStatus("second");
+            };
+            globalThis.onLater = async function(data) {
+                editor.setStatus("before");
+                await editor.delay(10);
+                editor.setStatus("after");
+            };
+            editor.on("lines_changed", "onLines");
+            editor.on("lines_changed", "onLater");
+        "#,
+                "batch.js",
+            )
+            .unwrap();
+        while rx.try_recv().is_ok() {}
+
+        backend
+            .emit_to("lines_changed", &serde_json::json!({}), None)
+            .await
+            .unwrap();
+        let name = |cmd: &PluginCommand| match cmd {
+            PluginCommand::SetStatus { message } => message.clone(),
+            PluginCommand::Delay { .. } => "delay".to_string(),
+            cmd => panic!("Unexpected {:?}", cmd),
+        };
+        match rx.try_recv().unwrap() {
+            PluginCommand::Batch { commands } => assert_eq!(
+                commands.iter().map(name).collect::<Vec<_>>(),
+                ["first", "second", "before", "delay"]
+            ),
+            cmd => panic!("Expected a batch, got {:?}", cmd),
+        }
+        assert!(rx.try_recv().is_err());
     }
 
     #[tokio::test]
