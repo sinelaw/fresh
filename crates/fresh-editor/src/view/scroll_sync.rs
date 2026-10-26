@@ -90,34 +90,12 @@ impl ScrollSyncGroup {
 
     /// Convert a line number from left buffer space to right buffer space
     pub fn left_to_right_line(&self, left_line: usize) -> usize {
-        // Find the anchor just at or before left_line
-        let anchor = self
-            .anchors
-            .iter()
-            .rfind(|a| a.left_line <= left_line)
-            .unwrap_or(&self.anchors[0]);
-
-        // Calculate offset from anchor
-        let offset = left_line.saturating_sub(anchor.left_line);
-
-        // Apply offset to right side
-        anchor.right_line.saturating_add(offset)
+        map_through_anchors(&self.anchors, left_line, |a| (a.left_line, a.right_line))
     }
 
     /// Convert a line number from right buffer space to left buffer space
     pub fn right_to_left_line(&self, right_line: usize) -> usize {
-        // Find the anchor just at or before right_line in right buffer space
-        let anchor = self
-            .anchors
-            .iter()
-            .rfind(|a| a.right_line <= right_line)
-            .unwrap_or(&self.anchors[0]);
-
-        // Calculate offset from anchor in right space
-        let offset = right_line.saturating_sub(anchor.right_line);
-
-        // Apply offset to left side
-        anchor.left_line.saturating_add(offset)
+        map_through_anchors(&self.anchors, right_line, |a| (a.right_line, a.left_line))
     }
 
     /// Update scroll position from a scroll delta on the given split
@@ -154,6 +132,30 @@ impl ScrollSyncGroup {
     #[cfg(test)]
     pub fn right_scroll_line(&self) -> usize {
         self.left_to_right_line(self.scroll_line)
+    }
+}
+
+/// `line` on one side mapped to the other through `anchors`, read as
+/// `(this side, other side)` by `sides`: from the last anchor at or above it
+/// (with none, from the top of both), line for line — but never past the next
+/// anchor's line on the other side. Between two anchors the other side may
+/// have fewer lines (a change only this side has): it holds at the edge of
+/// the change until this side reaches the anchor after it, rather than
+/// running on into lines that don't match.
+pub fn map_through_anchors(
+    anchors: &[SyncAnchor],
+    line: usize,
+    sides: impl Fn(&SyncAnchor) -> (usize, usize),
+) -> usize {
+    let (from, to) = anchors
+        .iter()
+        .map(&sides)
+        .rfind(|(this, _)| *this <= line)
+        .unwrap_or((0, 0));
+    let mapped = to.saturating_add(line - from);
+    match anchors.iter().map(&sides).find(|(this, _)| *this > line) {
+        Some((_, next)) => mapped.min(next.max(to)),
+        None => mapped,
     }
 }
 
@@ -398,6 +400,36 @@ mod tests {
         // After third anchor (offset by 5)
         assert_eq!(group.left_to_right_line(20), 25);
         assert_eq!(group.left_to_right_line(25), 30);
+    }
+
+    /// With one anchor per change, at its end, a side scrolled through a
+    /// change only it has holds the other side at the change's edge; past it,
+    /// the two move together again.
+    #[test]
+    fn a_one_sided_change_holds_the_other_side_at_its_edge() {
+        let mut group = ScrollSyncGroup::new(1, SplitId(1), SplitId(2));
+        // The left has 100 lines at line 10 the right doesn't.
+        group.set_anchors(vec![SyncAnchor {
+            left_line: 110,
+            right_line: 10,
+        }]);
+        assert_eq!(group.left_to_right_line(5), 5);
+        assert_eq!(group.left_to_right_line(10), 10);
+        assert_eq!(group.left_to_right_line(60), 10);
+        assert_eq!(group.left_to_right_line(110), 10);
+        assert_eq!(group.left_to_right_line(115), 15);
+        assert_eq!(group.right_to_left_line(5), 5);
+        assert_eq!(group.right_to_left_line(10), 110);
+        assert_eq!(group.right_to_left_line(15), 115);
+
+        // And the mirror: the right has the extra lines.
+        group.set_anchors(vec![SyncAnchor {
+            left_line: 10,
+            right_line: 110,
+        }]);
+        assert_eq!(group.right_to_left_line(60), 10);
+        assert_eq!(group.right_to_left_line(115), 15);
+        assert_eq!(group.left_to_right_line(10), 110);
     }
 
     #[test]

@@ -1111,6 +1111,11 @@ pub struct Editor {
     /// by [`Editor::set_diff_launch`].
     diff_launch: Option<(std::path::PathBuf, std::path::PathBuf)>,
 
+    /// Until when a `--diff` launch holds back the editor's frames: set with
+    /// the pair, cleared once the plugin showing it says it is on screen
+    /// (see [`Editor::holds_launch_frames`]).
+    diff_launch_hold: Option<std::time::Instant>,
+
     /// Every persisted workspace has been read into `windows`. False until
     /// something uses the registry; see
     /// [`Editor::ensure_all_workspaces_loaded`].
@@ -4482,6 +4487,32 @@ mod tests {
             .unwrap();
         assert_eq!(stats::take().shell, 1, "one layout for one key");
         assert_eq!(editor.active_state().buffer.to_string().unwrap(), "ab");
+    }
+
+    /// A `--diff` launch draws nothing until the plugin showing it says the
+    /// comparison is up: the main loop asks `holds_launch_frames` before each
+    /// frame, so the empty editor the launch starts with is never drawn.
+    #[cfg(feature = "plugins")]
+    #[test]
+    fn a_diff_launch_holds_frames_until_its_view_is_shown() {
+        let config = Config::default();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(
+            config,
+            80,
+            24,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            test_filesystem(),
+        )
+        .unwrap();
+        assert!(!editor.holds_launch_frames(), "an ordinary launch draws");
+        editor.set_diff_launch("/a/left.txt".into(), "/a/right.txt".into());
+        assert!(editor.holds_launch_frames(), "held until the view is up");
+        editor
+            .handle_plugin_command(fresh_core::api::PluginCommand::DiffLaunchShown)
+            .unwrap();
+        assert!(!editor.holds_launch_frames(), "drawn once it is");
     }
 
     /// **A key before the first frame is routed by the tree, not dropped.**

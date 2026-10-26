@@ -697,6 +697,12 @@ pub struct CompareSide {
     /// Byte offset just past the hunk's last line, terminator included.
     /// `from..to` is what replacing this side's lines of the hunk replaces.
     pub to: usize,
+    /// Where a jump to the hunk puts this side's cursor: `from`, or, for an
+    /// empty side, the start of the line before the gap — the line a view's
+    /// filler rows for the other side's lines go under, so the cursor sits
+    /// at the change rather than past it. At the very top of the text, where
+    /// there is no line before, `from`.
+    pub jump: usize,
     /// Each line's text without its line terminator, as `[start, end)`
     /// byte offsets.
     #[ts(type = "Array<[number, number]>")]
@@ -5496,6 +5502,10 @@ pub enum PluginCommand {
     /// Delete the current selection in the active buffer
     /// This deletes all selected text across all cursors
     DeleteSelection,
+
+    /// The view of a `fresh --diff` launch is on screen, or won't be: the
+    /// editor stops holding back its frames (see `Editor::diff_launch_shown`).
+    DiffLaunchShown,
 
     /// Set or unset a custom context
     /// Custom contexts are plugin-defined states that can be used to control command visibility

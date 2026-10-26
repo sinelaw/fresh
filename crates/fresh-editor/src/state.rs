@@ -39,26 +39,51 @@ use std::sync::Arc;
 /// On undo, the marker is restored to its exact original position.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DisplacedMarker {
-    /// Marker from the main marker_list (virtual text, overlays)
+    /// Marker from the main marker_list (overlays and the like)
     Main { id: u64, position: usize },
     /// Marker from margins.indicator_markers (breakpoints, line indicators)
     Margin { id: u64, position: usize },
+    /// A virtual text's marker, in the virtual-text manager's own lists:
+    /// `class` names the list, as `VirtualTextId::to_parts` numbers it.
+    VirtualText { class: u8, id: u64, position: usize },
 }
+
+/// [`DisplacedMarker::encode`]'s tags: the margin bit (63), the virtual-text
+/// bit (62) and, under it, the virtual-text class (bits 59..62). Marker ids
+/// stay below bit 59.
+const DISPLACED_MARGIN: u64 = 1 << 63;
+const DISPLACED_VIRTUAL_TEXT: u64 = 1 << 62;
+const DISPLACED_CLASS_SHIFT: u32 = 59;
+const DISPLACED_ID_MASK: u64 = (1 << DISPLACED_CLASS_SHIFT) - 1;
 
 impl DisplacedMarker {
     /// Encode as (u64, usize) for compact storage. Uses high bit to tag source.
     pub fn encode(&self) -> (u64, usize) {
         match self {
             Self::Main { id, position } => (*id, *position),
-            Self::Margin { id, position } => (*id | (1u64 << 63), *position),
+            Self::Margin { id, position } => (*id | DISPLACED_MARGIN, *position),
+            Self::VirtualText {
+                class,
+                id,
+                position,
+            } => (
+                *id | DISPLACED_VIRTUAL_TEXT | (u64::from(*class) << DISPLACED_CLASS_SHIFT),
+                *position,
+            ),
         }
     }
 
     /// Decode from (u64, usize) compact representation.
     pub fn decode(tagged_id: u64, position: usize) -> Self {
-        if (tagged_id >> 63) == 1 {
+        if tagged_id & DISPLACED_MARGIN != 0 {
             Self::Margin {
-                id: tagged_id & !(1u64 << 63),
+                id: tagged_id & !DISPLACED_MARGIN,
+                position,
+            }
+        } else if tagged_id & DISPLACED_VIRTUAL_TEXT != 0 {
+            Self::VirtualText {
+                class: ((tagged_id & !DISPLACED_VIRTUAL_TEXT) >> DISPLACED_CLASS_SHIFT) as u8,
+                id: tagged_id & DISPLACED_ID_MASK,
                 position,
             }
         } else {
@@ -813,18 +838,14 @@ impl EditorState {
         let virtual_lines_above = if virtual_lines.is_empty() {
             Vec::new()
         } else {
-            let mut v: Vec<usize> = self
-                .virtual_texts
-                .query_lines_in_range(&self.marker_list, 0, end)
+            self.virtual_texts
+                .all_lines(is_compose)
                 .into_iter()
                 .filter(|(_, vt)| {
-                    (is_compose || !vt.compose_only)
-                        && vt.position == crate::view::virtual_text::VirtualTextPosition::LineAbove
+                    vt.position == crate::view::virtual_text::VirtualTextPosition::LineAbove
                 })
                 .map(|(pos, _)| pos)
-                .collect();
-            v.sort_unstable();
-            v
+                .collect()
         };
 
         crate::view::wrap_index::IndexDecorations {
@@ -892,10 +913,7 @@ impl EditorState {
             self.wrap_damage_coords(position, 0);
 
         // CRITICAL: Adjust markers BEFORE modifying buffer
-        self.marker_list.adjust_for_insert(position, text.len());
-        self.margins.adjust_for_insert(position, text.len());
-        self.scrollbar_markers
-            .adjust_for_insert(position, text.len());
+        self.adjust_markers_for_insert(position, text.len());
 
         // Insert text into buffer
         self.buffer.insert(position, text);
@@ -954,13 +972,10 @@ impl EditorState {
         // them is deleted; without this the marker would just clamp to
         // range.start and the hint would linger at the wrong position until
         // the next LSP refresh.
-        self.virtual_texts
-            .remove_in_range(&mut self.marker_list, range.start, range.end);
+        self.virtual_texts.remove_in_range(range.start, range.end);
 
         // CRITICAL: Adjust markers BEFORE modifying buffer
-        self.marker_list.adjust_for_delete(range.start, len);
-        self.margins.adjust_for_delete(range.start, len);
-        self.scrollbar_markers.adjust_for_delete(range.start, len);
+        self.adjust_markers_for_delete(range.start, len);
 
         // Delete from buffer
         self.buffer.delete(range.clone());
@@ -1439,7 +1454,7 @@ impl EditorState {
 
         // Clear ephemeral decorations — their source systems will re-push
         // correct positions after the edit notification.
-        self.virtual_texts.clear(&mut self.marker_list);
+        self.virtual_texts.clear();
 
         use crate::view::overlay::OverlayNamespace;
         let namespaces = ["lsp-diagnostic", "reference-highlight", "bracket-highlight"];
@@ -1486,6 +1501,28 @@ impl EditorState {
         self.marker_list.adjust_for_bulk_edits(edits);
         self.margins.adjust_for_bulk_edits(edits);
         self.scrollbar_markers.adjust_for_bulk_edits(edits);
+        self.virtual_texts.adjust_for_bulk_edits(edits);
+    }
+
+    /// Move every marker the buffer's decorations hold for `length` bytes
+    /// inserted at `position`: the shared list (overlays and the like), the
+    /// gutter indicators', the scrollbar's and the virtual texts' own. The
+    /// one place an edit reaches them all, so an owner can't be left behind
+    /// at its old positions by an edit path that forgot it.
+    pub(crate) fn adjust_markers_for_insert(&mut self, position: usize, length: usize) {
+        self.marker_list.adjust_for_insert(position, length);
+        self.margins.adjust_for_insert(position, length);
+        self.scrollbar_markers.adjust_for_insert(position, length);
+        self.virtual_texts.adjust_for_insert(position, length);
+    }
+
+    /// [`Self::adjust_markers_for_insert`] for `length` bytes deleted at
+    /// `position`.
+    pub(crate) fn adjust_markers_for_delete(&mut self, position: usize, length: usize) {
+        self.marker_list.adjust_for_delete(position, length);
+        self.margins.adjust_for_delete(position, length);
+        self.scrollbar_markers.adjust_for_delete(position, length);
+        self.virtual_texts.adjust_for_delete(position, length);
     }
 
     /// Capture positions of markers strictly inside a deleted range.
@@ -1516,6 +1553,17 @@ impl EditorState {
                     .encode(),
                 );
             }
+        }
+        for (vt, position) in self.virtual_texts.strictly_inside(range.start, range.end) {
+            let (class, id) = vt.to_parts();
+            displaced.push(
+                DisplacedMarker::VirtualText {
+                    class,
+                    id,
+                    position,
+                }
+                .encode(),
+            );
         }
         displaced
     }
@@ -1556,6 +1604,17 @@ impl EditorState {
                 }
                 DisplacedMarker::Margin { id, position } => {
                     self.margins.set_indicator_position(MarkerId(id), position);
+                }
+                DisplacedMarker::VirtualText {
+                    class,
+                    id,
+                    position,
+                } => {
+                    if let Some(vt) =
+                        crate::view::virtual_text::VirtualTextId::from_parts(class, id)
+                    {
+                        self.virtual_texts.set_position(vt, position);
+                    }
                 }
             }
         }
@@ -1843,15 +1902,11 @@ impl EditorState {
         if self.virtual_texts.is_empty() {
             return Vec::new();
         }
-        let mut v: Vec<usize> = self
-            .virtual_texts
-            .query_lines_in_range(&self.marker_list, 0, self.buffer.len() + 1)
+        self.virtual_texts
+            .all_lines(is_compose)
             .into_iter()
-            .filter(|(_, vt)| is_compose || !vt.compose_only)
             .map(|(pos, _vt)| pos)
-            .collect();
-        v.sort_unstable();
-        v
+            .collect()
     }
 
     /// Resolve all plugin-injected soft-break `(byte_position, indent)`
@@ -2730,6 +2785,56 @@ mod tests {
         use crate::view::virtual_text::VirtualTextPosition;
         use ratatui::style::Style;
 
+        /// A virtual text a deletion clamps (a bulk edit doesn't drop the
+        /// entries in its ranges) is recorded as displaced, under its own
+        /// tag and class, and undoing puts it back where it was. Virtual
+        /// texts keep their markers in lists of their own, so the main
+        /// list's record would not find them.
+        #[test]
+        fn undo_restores_a_virtual_text_a_deletion_displaced() {
+            let mut state = EditorState::new(
+                80,
+                24,
+                crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+                test_fs(),
+            );
+            state.buffer = Buffer::from_str_test("hello world");
+            let hint = state.virtual_texts.add(
+                7,
+                "h".to_string(),
+                Style::default(),
+                VirtualTextPosition::AfterChar,
+                0,
+            );
+            let line = state.virtual_texts.add_line(
+                8,
+                "l".to_string(),
+                Style::default(),
+                VirtualTextPosition::LineBelow,
+                crate::view::virtual_text::VirtualTextNamespace::from_string("t".into()),
+                0,
+            );
+
+            let displaced = state.capture_displaced_markers(&(5..10));
+            for &(tag, pos) in &displaced {
+                assert_eq!(DisplacedMarker::decode(tag, pos).encode(), (tag, pos));
+            }
+            assert_eq!(
+                displaced.len(),
+                2,
+                "both entries inside the range: {displaced:?}"
+            );
+
+            state.replay_bulk_marker_adjustments(&[(5, 5, 0)]);
+            assert_eq!(state.virtual_texts.position_of(hint), Some(5));
+            assert_eq!(state.virtual_texts.position_of(line), Some(5));
+
+            state.replay_bulk_marker_adjustments(&[(5, 0, 5)]);
+            state.restore_displaced_markers(&displaced);
+            assert_eq!(state.virtual_texts.position_of(hint), Some(7));
+            assert_eq!(state.virtual_texts.position_of(line), Some(8));
+        }
+
         #[test]
         fn test_virtual_text_add_and_query() {
             let mut state = EditorState::new(
@@ -2747,7 +2852,6 @@ mod tests {
 
             // Add virtual text at position 5 (after 'hello')
             let vtext_id = state.virtual_texts.add(
-                &mut state.marker_list,
                 5,
                 ": string".to_string(),
                 Style::default(),
@@ -2756,19 +2860,19 @@ mod tests {
             );
 
             // Query should return the virtual text
-            let results = state.virtual_texts.query_range(&state.marker_list, 0, 11);
+            let results = state.virtual_texts.query_range(0, 11);
             assert_eq!(results.len(), 1);
             assert_eq!(results[0].0, 5); // Position
             assert_eq!(results[0].1.text, ": string");
 
             // Build lookup should work
-            let lookup = state.virtual_texts.build_lookup(&state.marker_list, 0, 11);
+            let lookup = state.virtual_texts.build_lookup(0, 11);
             assert!(lookup.contains_key(&5));
             assert_eq!(lookup[&5].len(), 1);
             assert_eq!(lookup[&5][0].text, ": string");
 
             // Clean up
-            state.virtual_texts.remove(&mut state.marker_list, vtext_id);
+            state.virtual_texts.remove(vtext_id);
             assert!(state.virtual_texts.is_empty());
         }
 
@@ -2789,7 +2893,6 @@ mod tests {
 
             // Add virtual text at position 6 (the 'w' in 'world')
             let _vtext_id = state.virtual_texts.add(
-                &mut state.marker_list,
                 6,
                 "/*param*/".to_string(),
                 Style::default(),
@@ -2810,7 +2913,7 @@ mod tests {
             );
 
             // Virtual text should now be at position 16 (6 + 10)
-            let results = state.virtual_texts.query_range(&state.marker_list, 0, 30);
+            let results = state.virtual_texts.query_range(0, 30);
             assert_eq!(results.len(), 1);
             assert_eq!(results[0].0, 16); // Position should have moved
             assert_eq!(results[0].1.text, "/*param*/");
@@ -2838,7 +2941,6 @@ mod tests {
             }
 
             let _vtext_id = state.virtual_texts.add(
-                &mut state.marker_list,
                 6,
                 ": string".to_string(),
                 Style::default(),
@@ -2857,7 +2959,7 @@ mod tests {
                 },
             );
 
-            let results = state.virtual_texts.query_range(&state.marker_list, 0, 30);
+            let results = state.virtual_texts.query_range(0, 30);
             assert_eq!(results.len(), 1);
             assert_eq!(results[0].0, 16);
             assert_eq!(results[0].1.text, ": string");
@@ -2880,7 +2982,6 @@ mod tests {
 
             // Add virtual text at position 16 (the 'w' in 'world')
             let _vtext_id = state.virtual_texts.add(
-                &mut state.marker_list,
                 16,
                 ": string".to_string(),
                 Style::default(),
@@ -2901,7 +3002,7 @@ mod tests {
             );
 
             // Virtual text should now be at position 6
-            let results = state.virtual_texts.query_range(&state.marker_list, 0, 20);
+            let results = state.virtual_texts.query_range(0, 20);
             assert_eq!(results.len(), 1);
             assert_eq!(results[0].0, 6); // Position should have moved back
             assert_eq!(results[0].1.text, ": string");
@@ -2924,7 +3025,6 @@ mod tests {
 
             // Add type hint after 'x' (position 5)
             state.virtual_texts.add(
-                &mut state.marker_list,
                 5,
                 ": i32".to_string(),
                 Style::default(),
@@ -2934,7 +3034,6 @@ mod tests {
 
             // Add another hint at same position with higher priority
             state.virtual_texts.add(
-                &mut state.marker_list,
                 5,
                 " /* inferred */".to_string(),
                 Style::default(),
@@ -2943,7 +3042,7 @@ mod tests {
             );
 
             // Build lookup - should have both, sorted by priority (lower first)
-            let lookup = state.virtual_texts.build_lookup(&state.marker_list, 0, 10);
+            let lookup = state.virtual_texts.build_lookup(0, 10);
             assert!(lookup.contains_key(&5));
             let vtexts = &lookup[&5];
             assert_eq!(vtexts.len(), 2);
@@ -2969,7 +3068,6 @@ mod tests {
 
             // Add multiple virtual texts
             state.virtual_texts.add(
-                &mut state.marker_list,
                 0,
                 "hint1".to_string(),
                 Style::default(),
@@ -2977,7 +3075,6 @@ mod tests {
                 0,
             );
             state.virtual_texts.add(
-                &mut state.marker_list,
                 2,
                 "hint2".to_string(),
                 Style::default(),
@@ -2988,11 +3085,11 @@ mod tests {
             assert_eq!(state.virtual_texts.len(), 2);
 
             // Clear all
-            state.virtual_texts.clear(&mut state.marker_list);
+            state.virtual_texts.clear();
             assert!(state.virtual_texts.is_empty());
 
             // Query should return nothing
-            let results = state.virtual_texts.query_range(&state.marker_list, 0, 10);
+            let results = state.virtual_texts.query_range(0, 10);
             assert!(results.is_empty());
         }
     }

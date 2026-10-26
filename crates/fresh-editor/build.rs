@@ -121,13 +121,14 @@ fn main() {
 /// `fresh_parser_js::precompiled::Entry` that `services::plugins::embedded`
 /// registers once the plugins are extracted.
 ///
-/// Compiling needs the `esbuild` executable. Without it the table is empty and
-/// the plugins compile at run time as before, with a cargo warning, so that
-/// `--all-features` builds on machines without esbuild still work. A packager
-/// sets `FRESH_REQUIRE_PRECOMPILED_PLUGINS=1` (debian/rules does) to make a
-/// missing esbuild, or any plugin that fails to compile, fail the build
-/// instead. When the plugins were compiled, the build sets
-/// `cfg(fresh_plugins_precompiled)`.
+/// With the `oxc` feature the plugins compile in-process with oxc, the
+/// compiler the runtime of such a build uses. Without it (Debian's build),
+/// compiling needs the `esbuild` executable; without that the table is empty
+/// and the plugins compile at run time as before, with a cargo warning, so
+/// that such builds on machines without esbuild still work. A packager sets
+/// `FRESH_REQUIRE_PRECOMPILED_PLUGINS=1` (debian/rules does) to make a missing
+/// esbuild, or any plugin that fails to compile, fail the build instead. When
+/// the plugins were compiled, the build sets `cfg(fresh_plugins_precompiled)`.
 #[cfg(feature = "precompiled-plugins")]
 fn precompile_plugins() {
     use fresh_parser_js as parser;
@@ -158,14 +159,17 @@ fn precompile_plugins() {
         )
         .expect("write table");
     };
-    let esbuild = std::env::var_os("FRESH_ESBUILD").unwrap_or_else(|| "esbuild".into());
-    let esbuild_runs = std::process::Command::new(&esbuild)
-        .arg("--version")
-        .output()
-        .is_ok_and(|o| o.status.success());
-    if !esbuild_runs {
-        give_up(format!("{} cannot be run", esbuild.to_string_lossy()));
-        return;
+    // `oxc` turns on the build-dependency's oxc too: no executable needed.
+    if !cfg!(feature = "oxc") {
+        let esbuild = std::env::var_os("FRESH_ESBUILD").unwrap_or_else(|| "esbuild".into());
+        let esbuild_runs = std::process::Command::new(&esbuild)
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success());
+        if !esbuild_runs {
+            give_up(format!("{} cannot be run", esbuild.to_string_lossy()));
+            return;
+        }
     }
 
     let mut plugins: Vec<_> = fs::read_dir("plugins")

@@ -461,6 +461,14 @@ type CompareSide = {
   */
   to: number;
   /**
+  * Where a jump to the hunk puts this side's cursor: `from`, or, for an
+  * empty side, the start of the line before the gap — the line a view's
+  * filler rows for the other side's lines go under, so the cursor sits
+  * at the change rather than past it. At the very top of the text, where
+  * there is no line before, `from`.
+  */
+  jump: number;
+  /**
   * Each line's text without its line terminator, as `[start, end)`
   * byte offsets.
   */

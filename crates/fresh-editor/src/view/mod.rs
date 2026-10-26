@@ -28,6 +28,8 @@ pub mod conceal;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod dimming;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
+pub mod flat_rows;
+#[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod folding;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod line_wrap_cache;

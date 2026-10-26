@@ -1711,6 +1711,9 @@ impl Editor {
             PluginCommand::SetContext { name, active } => {
                 self.handle_set_context(name, active);
             }
+            PluginCommand::DiffLaunchShown => {
+                self.diff_launch_shown();
+            }
 
             // ==================== Review Diff Commands ====================
             PluginCommand::SetReviewDiffHunks { hunks } => {
@@ -3641,6 +3644,13 @@ impl Editor {
             LeafId(split_id)
         };
         let actual_buffer_id = self.resolve_buffer_id(buffer_id);
+        if self.active_window_mut().center_line_in_flat_rows(
+            actual_buffer_id,
+            actual_split_id,
+            line,
+        ) {
+            return;
+        }
 
         // Get viewport height
         let viewport_height = if let Some(view_state) = self

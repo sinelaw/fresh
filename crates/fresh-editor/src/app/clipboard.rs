@@ -885,7 +885,6 @@ impl Editor {
                 .iter()
                 .map(|&pos| {
                     let id = state.virtual_texts.add(
-                        &mut state.marker_list,
                         pos,
                         "▍".to_string(),
                         placeholder_style,
@@ -1012,8 +1011,7 @@ impl Editor {
                 .iter()
                 .enumerate()
                 .filter_map(|(i, a)| {
-                    let mid = state.virtual_texts.marker_id_of(a.virtual_text_id)?;
-                    let pos = state.marker_list.get_position(mid)?;
+                    let pos = state.virtual_texts.position_of(a.virtual_text_id)?;
                     Some((i, pos))
                 })
                 .collect()
@@ -1089,9 +1087,7 @@ impl Editor {
             return;
         };
         for anchor in pending.anchors {
-            state
-                .virtual_texts
-                .remove(&mut state.marker_list, anchor.virtual_text_id);
+            state.virtual_texts.remove(anchor.virtual_text_id);
         }
     }
 

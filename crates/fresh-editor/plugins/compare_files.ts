@@ -79,10 +79,6 @@ const COLORS = {
 // Coalesce an edit burst (typing, a paste, an undo) into one diff.
 const DEBOUNCE_MS = 75;
 
-// Per-line scroll-sync anchors across one-sided changes (see
-// `syncAnchors`), at most this many in all.
-const MAX_EDGE_ANCHORS = 20_000;
-
 // =============================================================================
 // Types
 // =============================================================================
@@ -94,6 +90,8 @@ interface Comparison {
   windowId: number;
   /** The right panel's split id: unique while the panel lives. */
   syncGroupId: number;
+  leftSplit: number;
+  rightSplit: number;
   left: number;
   right: number;
   /** The last diff, or null before the first one lands. */
@@ -296,32 +294,17 @@ function paintSide(c: Comparison, r: CompareResult, side: Side): void {
   editor.setScrollbarMarkers(bid, NS_SCROLL, markers);
 }
 
-/** Scroll-sync anchors: the two sides line up at the start and the end of
- * every change, and move line for line in between.
+/** Scroll-sync anchors: the two sides line up at the end of every change.
  *
- * Sync works in whole lines, so a pane whose top is inside the lines only
- * it has here can't put its partner part-way through the filler rows that
- * stand for them. One anchor per such line pins the partner to the edge of
- * the change instead of carrying it on past, into lines that don't match.
- * Very large one-sided changes keep just the two edge anchors. */
+ * The panes sync in screen rows, filler rows included, and an anchor pairs
+ * the rows its two lines' text is on. With the fillers keeping the sides
+ * level, the rows between two changes' ends match one for one, so the ends
+ * are all the anchors need; they hold the panes together while an edit
+ * waits for its diff. The start of a change is no anchor: on the side with
+ * no lines there, its line is drawn after the fillers, a row the other side
+ * gives to the change's first line. */
 function syncAnchors(r: CompareResult): number[][] {
-  const anchors: number[][] = [[0, 0]];
-  let budget = MAX_EDGE_ANCHORS;
-  for (const { left, right } of r.hunks) {
-    anchors.push([left.start, right.start]);
-    const leftEnd = left.start + left.count;
-    const rightEnd = right.start + right.count;
-    const paired = Math.min(left.count, right.count);
-    const extra = Math.abs(left.count - right.count);
-    if (extra > 0 && extra <= budget) {
-      budget -= extra;
-      for (let i = paired; i < Math.max(left.count, right.count); i++) {
-        anchors.push(left.count > right.count ? [left.start + i, rightEnd] : [leftEnd, right.start + i]);
-      }
-    }
-    anchors.push([leftEnd, rightEnd]);
-  }
-  return anchors;
+  return r.hunks.map(({ left, right }) => [left.start + left.count, right.start + right.count]);
 }
 
 function summary(r: CompareResult): string {
@@ -434,6 +417,8 @@ async function compare(leftPath: string, rightPath: string): Promise<boolean> {
     groupId: group.groupId,
     windowId: editor.activeWindow(),
     syncGroupId: group.panelSplits.right,
+    leftSplit: group.panelSplits.left,
+    rightSplit: group.panelSplits.right,
     left,
     right,
     result: null,
@@ -461,7 +446,7 @@ async function compare(leftPath: string, rightPath: string): Promise<boolean> {
   editor.createScrollSyncGroup(c.syncGroupId, group.panelSplits.left, group.panelSplits.right);
   editor.focusBufferGroupPanel(group.groupId, "left");
   apply(c, first);
-  if (first.hunks.length > 0) jumpTo(c, first.hunks[0]);
+  if (first.hunks.length > 0) jumpTo(c, first.hunks[0], "left");
   editor.setStatus(summary(first));
   return true;
 }
@@ -486,10 +471,21 @@ function closeComparison(c: Comparison): void {
 // Navigation and merging
 // =============================================================================
 
-/** Put both cursors on the start of hunk `h`. */
-function jumpTo(c: Comparison, h: CompareHunk): void {
-  editor.setBufferCursor(c.left, h.left.from);
-  editor.setBufferCursor(c.right, h.right.from);
+/** Put both cursors at hunk `h`, and the hunk in the middle of the panel
+ * the user is in (`side`); its partner follows by scroll sync.
+ *
+ * On a side with no lines here the cursor goes on the line before the gap
+ * (`jump`), right above its filler rows. On the line after them, the
+ * cursor kept the view at the end of the change: a change taller than the
+ * panel opened on its last lines, its first ones scrolled away above. At
+ * the very top of a file the fillers are above the first line, and
+ * centering that line's first row shows them from the start. */
+function jumpTo(c: Comparison, h: CompareHunk, side: Side): void {
+  editor.setBufferCursor(c.left, h.left.jump);
+  editor.setBufferCursor(c.right, h.right.jump);
+  const s = h[side];
+  const line = s.count === 0 && s.start > 0 ? s.start - 1 : s.start;
+  editor.scrollToLineCenter(side === "left" ? c.leftSplit : c.rightSplit, bufferOf(c, side), line);
 }
 
 /** The hunk the cursor is in on `side`: the one whose lines it is on, or,
@@ -519,16 +515,16 @@ async function step(forward: boolean): Promise<void> {
     editor.setStatus(editor.t("status.identical"));
     return;
   }
-  // By byte, so a change past the end of one side (which can't hold a
-  // cursor line of its own) still has a place in the order.
+  // By where a jump to each puts the cursor, so a cursor a jump left above
+  // a change's filler rows is at that change, not before it.
   const pos = editor.getPrimaryCursor()?.position ?? 0;
   const n = r.hunks.length;
   let index = -1;
   if (forward) {
-    index = r.hunks.findIndex((h) => h[side].from > pos);
+    index = r.hunks.findIndex((h) => h[side].jump > pos);
   } else {
     for (let i = n - 1; i >= 0; i--) {
-      if (r.hunks[i][side].from < pos) {
+      if (r.hunks[i][side].jump < pos) {
         index = i;
         break;
       }
@@ -536,7 +532,7 @@ async function step(forward: boolean): Promise<void> {
   }
   const wrapped = index < 0;
   if (wrapped) index = forward ? 0 : n - 1;
-  jumpTo(c, r.hunks[index]);
+  jumpTo(c, r.hunks[index], side);
   editor.setStatus(
     editor.t(wrapped ? "status.difference_wrapped" : "status.difference", {
       n: String(index + 1),
@@ -668,10 +664,16 @@ editor.registerCommand("%cmd.close", "%cmd.close_desc", "compare_close", "compar
 // Events
 // =============================================================================
 
-// `fresh --diff LEFT RIGHT`: the editor leaves opening the files to us.
+// `fresh --diff LEFT RIGHT`: the editor leaves opening the files to us, and
+// draws nothing until we say the comparison is up (or failed).
 editor.on("ready", async () => {
   const pair = editor.diffLaunch();
-  if (pair.length === 2) await compare(pair[0], pair[1]);
+  if (pair.length !== 2) return;
+  try {
+    await compare(pair[0], pair[1]);
+  } finally {
+    editor.diffLaunchShown();
+  }
 });
 
 editor.on("buffer_modified", (args) => {
