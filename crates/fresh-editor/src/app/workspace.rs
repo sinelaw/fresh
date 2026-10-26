@@ -2149,7 +2149,6 @@ impl crate::app::window::Window {
     fn open_workspace_files(
         &mut self,
         split_states: &HashMap<usize, SerializedSplitViewState>,
-        unopened: &HashMap<PathBuf, u32>,
     ) -> HashMap<PathBuf, BufferId> {
         // Remote sessions: never *read* persisted file buffers here. These reads
         // run synchronously on the single-threaded editor loop, so over a slow /
@@ -2199,8 +2198,7 @@ impl crate::app::window::Window {
                         let state = split_states
                             .values()
                             .find_map(|s| s.file_states.get(&rel_path).cloned());
-                        let failed_before = unopened.get(&rel_path).copied().unwrap_or(0);
-                        self.hold_unopened_file(rel_path, true, state, failed_before, &e);
+                        self.hold_unopened_file(rel_path, true, state, &e);
                     }
                 }
             } else {
@@ -2215,7 +2213,6 @@ impl crate::app::window::Window {
     fn restore_external_files(
         &mut self,
         external_files: &[PathBuf],
-        unopened: &HashMap<PathBuf, u32>,
         path_to_buffer: &mut HashMap<PathBuf, BufferId>,
     ) {
         if external_files.is_empty() {
@@ -2257,8 +2254,7 @@ impl crate::app::window::Window {
                 }
                 Err(e) => {
                     tracing::warn!("Failed to restore external file {:?}: {}", abs_path, e);
-                    let failed_before = unopened.get(abs_path).copied().unwrap_or(0);
-                    self.hold_unopened_file(abs_path.clone(), false, None, failed_before, &e);
+                    self.hold_unopened_file(abs_path.clone(), false, None, &e);
                 }
             }
         }
@@ -2268,15 +2264,12 @@ impl crate::app::window::Window {
     /// workspace (#3532), and tell the user. Its contents are safe on disk;
     /// only its place in the layout was at stake. `in_tabs` says whether it
     /// was a split's tab (else it is an `external_files` entry); a file that is
-    /// both is held once. After [`MAX_FAILED_LAUNCHES`] launches in a row could
-    /// not open it, it is let go, so a path that will never open again does
-    /// not stay in the workspace — and in its warnings — for good.
+    /// both is held, and reported, once.
     fn hold_unopened_file(
         &mut self,
         path: PathBuf,
         in_tabs: bool,
         state: Option<SerializedFileState>,
-        failed_before: u32,
         error: &dyn std::fmt::Display,
     ) {
         if let Some(held) = self.unopened_files.iter_mut().find(|f| f.path == path) {
@@ -2284,31 +2277,17 @@ impl crate::app::window::Window {
             held.external |= !in_tabs;
             return;
         }
-        let failed_launches = failed_before + 1;
-        self.recovery_notices
-            .push(if failed_launches >= MAX_FAILED_LAUNCHES {
-                format!(
-                    "Could not open {}: {}. Removed from this workspace after \
-                     {failed_launches} launches that could not open it.",
-                    path.display(),
-                    error
-                )
-            } else {
-                format!(
-                    "Could not open {}: {}. It stays in this workspace and will be \
-                     reopened once it can be read.",
-                    path.display(),
-                    error
-                )
-            });
-        // Recorded even when let go, so its other listing is not reported
-        // again; `apply_workspace_layout` drops it once restore is done.
+        self.recovery_notices.push(format!(
+            "Could not open {}: {}. It stays in this workspace and will be \
+             reopened once it can be read.",
+            path.display(),
+            error
+        ));
         self.unopened_files.push(crate::app::window::UnopenedFile {
             path,
             in_tabs,
             external: !in_tabs,
             state,
-            failed_launches,
         });
     }
 
@@ -3040,15 +3019,8 @@ impl crate::app::window::Window {
         // references those buffers).
         let unnamed_buffer_map = self.restore_unnamed_buffers(&workspace.unnamed_buffers);
 
-        let mut path_to_buffer =
-            self.open_workspace_files(&workspace.split_states, &workspace.unopened_files);
-        self.restore_external_files(
-            &workspace.external_files,
-            &workspace.unopened_files,
-            &mut path_to_buffer,
-        );
-        self.unopened_files
-            .retain(|f| f.failed_launches < MAX_FAILED_LAUNCHES);
+        let mut path_to_buffer = self.open_workspace_files(&workspace.split_states);
+        self.restore_external_files(&workspace.external_files, &mut path_to_buffer);
         self.apply_read_only_flags(&workspace.read_only_files, &path_to_buffer);
 
         let terminal_buffer_map = self.restore_terminals_from_workspace(&workspace.terminals);
@@ -3465,11 +3437,6 @@ impl crate::app::window::Window {
             bookmarks,
             terminals,
             external_files,
-            unopened_files: self
-                .unopened_files
-                .iter()
-                .map(|f| (f.path.clone(), f.failed_launches))
-                .collect(),
             read_only_files,
             unnamed_buffers,
             plugin_global_state: HashMap::new(),
@@ -3890,10 +3857,6 @@ fn serialize_bookmarks(
         })
         .collect()
 }
-
-/// Launches in a row that may fail to open a workspace file before it is
-/// dropped from the workspace (#3532).
-const MAX_FAILED_LAUNCHES: u32 = 3;
 
 /// Write the files a restore could not open back into the captured split
 /// states (#3532), each as a tab at the end of the active split — its exact

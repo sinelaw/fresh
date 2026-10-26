@@ -2971,21 +2971,38 @@ impl TextBuffer {
         range: Option<Range<usize>>,
     ) -> Option<usize> {
         if let Some(search_range) = range {
-            let search_start = start_pos.max(search_range.start);
-            let search_end = search_range.end.min(self.len());
-
-            if search_start < search_end {
-                self.find_regex(search_start, search_end, regex)
-            } else {
-                None
-            }
+            self.find_regex_match_in_range(regex, start_pos, search_range)
+                .map(|(pos, _)| pos)
         } else {
             self.find_next_regex(regex, start_pos)
         }
     }
 
+    /// The next match of `regex` from `start_pos` within `range`, as
+    /// `(start, len)`: the length the search found, which is the whole match
+    /// for one that fits in a search chunk (any match of a literal does).
+    pub fn find_regex_match_in_range(
+        &self,
+        regex: &Regex,
+        start_pos: usize,
+        range: Range<usize>,
+    ) -> Option<(usize, usize)> {
+        let search_start = start_pos.max(range.start);
+        let search_end = range.end.min(self.len());
+        if search_start < search_end {
+            self.find_regex_match(search_start, search_end, regex)
+        } else {
+            None
+        }
+    }
+
     /// Find regex pattern in a byte range using overlapping chunks
     fn find_regex(&self, start: usize, end: usize, regex: &Regex) -> Option<usize> {
+        self.find_regex_match(start, end, regex).map(|(pos, _)| pos)
+    }
+
+    /// `find_regex`, also giving the match's length.
+    fn find_regex_match(&self, start: usize, end: usize, regex: &Regex) -> Option<(usize, usize)> {
         if start >= end {
             return None;
         }
@@ -3008,7 +3025,7 @@ impl TextBuffer {
                     // Verify the match doesn't extend beyond our search range
                     let match_len = mat.end() - mat.start();
                     if absolute_pos + match_len <= end {
-                        return Some(absolute_pos);
+                        return Some((absolute_pos, match_len));
                     }
                 }
             }

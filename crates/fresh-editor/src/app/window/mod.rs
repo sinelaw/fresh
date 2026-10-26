@@ -308,8 +308,6 @@ pub struct UnopenedFile {
     pub external: bool,
     /// Its saved cursor and scroll state, carried through unchanged.
     pub state: Option<crate::workspace::SerializedFileState>,
-    /// Launches in a row, this one included, that could not open it.
-    pub failed_launches: u32,
 }
 
 pub struct Window {
@@ -380,8 +378,7 @@ pub struct Window {
     /// buffers, so without these a save would write each file's place away
     /// for good (#3532); `capture_workspace` writes them back instead. A
     /// file that is gone from disk is not listed: dropping it is right. One
-    /// leaves the list when the window opens it, and is dropped for good
-    /// after `MAX_FAILED_LAUNCHES` launches in a row could not.
+    /// leaves the list when the window opens it.
     pub unopened_files: Vec<UnopenedFile>,
 
     /// Things the user needs told about this window's restore, queued by

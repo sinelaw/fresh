@@ -2725,12 +2725,12 @@ fn test_session_keeps_a_file_that_could_not_be_opened() {
     }
 }
 
-/// Issue #3532: a file that keeps failing to open is let go after a few
-/// launches, rather than staying in the workspace and its warnings for good.
-/// An external file — listed both as a tab and under `external_files` — is
-/// held, and reported, once.
+/// Issue #3532: a file that keeps failing to open stays in the workspace for
+/// as many launches as it fails, and is back once it opens. An external file
+/// — listed both as a tab and under `external_files` — is held, and reported,
+/// once.
 #[test]
-fn test_session_lets_go_of_a_file_that_never_opens() {
+fn test_session_keeps_a_file_that_fails_on_every_launch() {
     let temp_dir = TempDir::new().unwrap();
     let project_dir = temp_dir.path().join("project");
     std::fs::create_dir(&project_dir).unwrap();
@@ -2754,25 +2754,19 @@ fn test_session_lets_go_of_a_file_that_never_opens() {
     std::fs::remove_file(&outside).unwrap();
     std::fs::create_dir(&outside).unwrap();
 
-    for launch_no in 1..=3 {
+    for launch_no in 1..=5 {
         let mut harness = launch();
         harness.editor_mut().try_restore_workspace().unwrap();
         harness.render().unwrap();
         let screen = harness.screen_to_string();
         assert!(
-            screen.contains("Could not open"),
+            screen.contains("Could not open") && screen.contains("It stays in this workspace"),
             "launch {launch_no} should say so. Screen:\n{screen}"
         );
         assert!(
             !screen.contains("more recovery warning"),
             "one file, one warning. Screen:\n{screen}"
         );
-        if launch_no == 3 {
-            assert!(
-                screen.contains("Removed from this workspace"),
-                "Screen:\n{screen}"
-            );
-        }
         harness.editor_mut().save_workspace().unwrap();
     }
 
@@ -2783,7 +2777,7 @@ fn test_session_lets_go_of_a_file_that_never_opens() {
     harness.render().unwrap();
     let screen = harness.screen_to_string();
     assert!(
-        !screen.contains("outside.txt"),
-        "dropped for good. Screen:\n{screen}"
+        screen.contains("outside.txt"),
+        "back once it opens. Screen:\n{screen}"
     );
 }

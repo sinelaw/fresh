@@ -145,13 +145,6 @@ pub struct Workspace {
     #[serde(default)]
     pub external_files: Vec<PathBuf>,
 
-    /// Files listed above that exist but could not be opened, with how many
-    /// launches in a row could not open them (#3532). They stay listed so a
-    /// momentary failure does not cost a file its place; after a few
-    /// launches they are dropped.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub unopened_files: HashMap<PathBuf, u32>,
-
     /// Files that were read-only at save time; re-applied on restore.
     /// Relative to `working_dir` when possible, otherwise absolute.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1596,7 +1589,6 @@ impl Workspace {
             bookmarks: HashMap::new(),
             terminals: Vec::new(),
             external_files: Vec::new(),
-            unopened_files: HashMap::new(),
             read_only_files: Vec::new(),
             unnamed_buffers: Vec::new(),
             plugin_global_state: HashMap::new(),
