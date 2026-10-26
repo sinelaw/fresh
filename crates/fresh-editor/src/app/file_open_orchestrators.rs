@@ -901,7 +901,9 @@ impl crate::app::window::Window {
     /// flip. If the file doesn't exist, creates an unsaved buffer with
     /// that filename.
     pub fn open_file_no_focus(&mut self, path: &Path) -> anyhow::Result<BufferId> {
-        self.open_file_no_focus_inner(path, true, OpenKind::Commit)
+        let buffer_id = self.open_file_no_focus_inner(path, true, OpenKind::Commit)?;
+        self.forget_unopened_file(path);
+        Ok(buffer_id)
     }
 
     /// `open_file_no_focus` with an explicit [`OpenKind`], so the Editor-side
@@ -912,7 +914,22 @@ impl crate::app::window::Window {
         path: &Path,
         kind: OpenKind,
     ) -> anyhow::Result<BufferId> {
-        self.open_file_no_focus_inner(path, true, kind)
+        let buffer_id = self.open_file_no_focus_inner(path, true, kind)?;
+        self.forget_unopened_file(path);
+        Ok(buffer_id)
+    }
+
+    /// A file the restore could not open has now opened, so it no longer needs
+    /// holding: from here its tab is the record, and closing that tab drops
+    /// it from the workspace as for any other file.
+    fn forget_unopened_file(&mut self, path: &Path) {
+        if self.unopened_files.is_empty() {
+            return;
+        }
+        let root = &self.root;
+        let resolve = |p: &Path| root.join(p);
+        let opened = resolve(path);
+        self.unopened_files.retain(|f| resolve(&f.path) != opened);
     }
 
     /// Open a file without switching focus AND without ever

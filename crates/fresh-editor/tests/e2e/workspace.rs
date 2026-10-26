@@ -2724,3 +2724,66 @@ fn test_session_keeps_a_file_that_could_not_be_opened() {
         );
     }
 }
+
+/// Issue #3532: a file that keeps failing to open is let go after a few
+/// launches, rather than staying in the workspace and its warnings for good.
+/// An external file — listed both as a tab and under `external_files` — is
+/// held, and reported, once.
+#[test]
+fn test_session_lets_go_of_a_file_that_never_opens() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    let outside = temp_dir.path().join("outside.txt");
+    std::fs::write(&outside, "OUTSIDE").unwrap();
+
+    let launch = || {
+        EditorTestHarness::with_config_and_working_dir(
+            300,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap()
+    };
+    {
+        let mut harness = launch();
+        harness.open_file(&outside).unwrap();
+        harness.editor_mut().save_workspace().unwrap();
+    }
+    std::fs::remove_file(&outside).unwrap();
+    std::fs::create_dir(&outside).unwrap();
+
+    for launch_no in 1..=3 {
+        let mut harness = launch();
+        harness.editor_mut().try_restore_workspace().unwrap();
+        harness.render().unwrap();
+        let screen = harness.screen_to_string();
+        assert!(
+            screen.contains("Could not open"),
+            "launch {launch_no} should say so. Screen:\n{screen}"
+        );
+        assert!(
+            !screen.contains("more recovery warning"),
+            "one file, one warning. Screen:\n{screen}"
+        );
+        if launch_no == 3 {
+            assert!(
+                screen.contains("Removed from this workspace"),
+                "Screen:\n{screen}"
+            );
+        }
+        harness.editor_mut().save_workspace().unwrap();
+    }
+
+    std::fs::remove_dir(&outside).unwrap();
+    std::fs::write(&outside, "OUTSIDE").unwrap();
+    let mut harness = launch();
+    harness.editor_mut().try_restore_workspace().unwrap();
+    harness.render().unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("outside.txt"),
+        "dropped for good. Screen:\n{screen}"
+    );
+}

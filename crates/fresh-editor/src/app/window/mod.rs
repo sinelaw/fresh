@@ -302,10 +302,14 @@ pub struct UnopenedFile {
     /// The path as the workspace recorded it: relative to the window's root
     /// for a file under it, absolute for an external file.
     pub path: PathBuf,
+    /// Whether a split listed it as a tab.
+    pub in_tabs: bool,
     /// Whether the workspace listed it under `external_files`.
     pub external: bool,
     /// Its saved cursor and scroll state, carried through unchanged.
     pub state: Option<crate::workspace::SerializedFileState>,
+    /// Launches in a row, this one included, that could not open it.
+    pub failed_launches: u32,
 }
 
 pub struct Window {
@@ -375,7 +379,9 @@ pub struct Window {
     /// shadowed by a directory). The snapshot is built from the live
     /// buffers, so without these a save would write each file's place away
     /// for good (#3532); `capture_workspace` writes them back instead. A
-    /// file that is gone from disk is not listed: dropping it is right.
+    /// file that is gone from disk is not listed: dropping it is right. One
+    /// leaves the list when the window opens it, and is dropped for good
+    /// after `MAX_FAILED_LAUNCHES` launches in a row could not.
     pub unopened_files: Vec<UnopenedFile>,
 
     /// Things the user needs told about this window's restore, queued by
