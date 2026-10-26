@@ -162,6 +162,7 @@ pub mod issue_3475_unnamed_buffers_across_workspaces;
 pub mod issue_3486_3495_selection_keys;
 pub mod issue_3626_save_as_resurrects_unnamed_buffer;
 pub mod issue_3633_recovery_gaps;
+pub mod issue_3633_shared_file_variants;
 pub mod issue_623_prompt_dropdown_scrollbar;
 pub mod issue_722_inlay_hint_split_drift;
 pub mod issue_779_after_eof_shade;
