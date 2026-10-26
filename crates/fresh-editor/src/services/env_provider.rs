@@ -297,10 +297,10 @@ impl EnvProvider {
     }
 }
 
-/// Build the shell script the capture runs: `cd <dir>; <snippet>; command env`.
+/// Build the shell script the capture runs: `cd <dir>; <snippet>; <env dump>`.
 /// The caller's `run` closure wraps this in the host's shell (`$SHELL -lc …`
-/// locally, `ssh … sh -lc …` remotely, etc.). `command env` prints the
-/// resulting environment, one `KEY=VALUE` per line.
+/// locally, `ssh … sh -lc …` remotely, etc.). The dump is [`ENV_DUMP`]:
+/// NUL-separated `KEY=VALUE` records, so a value may hold newlines.
 fn build_capture_script(snippet: &str, dir: Option<&Path>) -> String {
     let mut script = String::new();
     if let Some(d) = dir {
@@ -313,10 +313,18 @@ fn build_capture_script(snippet: &str, dir: Option<&Path>) -> String {
         script.push_str(snippet);
         script.push_str("; ");
     }
-    // `command env` bypasses any `env` function/alias.
-    script.push_str("command env");
+    script.push_str(ENV_DUMP);
     script
 }
+
+/// The env dump every capture runs. `env -0` ends each `KEY=VALUE` record with
+/// NUL instead of a newline, so multi-line values (exported Bash functions,
+/// `$'a\nb'` strings) survive intact; an `env` without `-0` falls back to the
+/// line-per-record form, which [`parse_env`] also reads. `command` bypasses
+/// any `env` function/alias. `pub(crate)` so the SSH remote launcher
+/// ([`crate::services::remote::spawner::ssh_remote_env_launcher`]) dumps the
+/// same way.
+pub(crate) const ENV_DUMP: &str = "command env -0 2>/dev/null || command env";
 
 /// Marker printed between the baseline and activated env dumps in the delta
 /// capture. A fixed, unlikely token — env values never legitimately contain it,
@@ -338,7 +346,8 @@ fn build_delta_capture_script(snippet: &str, dir: Option<&Path>) -> String {
         script.push_str(&shell_quote(&d.to_string_lossy()));
         script.push_str("; ");
     }
-    script.push_str("command env; printf '%s\\n' ");
+    script.push_str(ENV_DUMP);
+    script.push_str("; printf '%s\\n' ");
     script.push_str(&shell_quote(DELTA_SENTINEL));
     script.push_str("; ");
     let snippet = snippet.trim();
@@ -346,7 +355,7 @@ fn build_delta_capture_script(snippet: &str, dir: Option<&Path>) -> String {
         script.push_str(snippet);
         script.push_str("; ");
     }
-    script.push_str("command env");
+    script.push_str(ENV_DUMP);
     script
 }
 
@@ -387,18 +396,29 @@ fn parse_delta(stdout: &str) -> EnvDelta {
     EnvDelta { set, unset }
 }
 
-/// Parse `env` output (`KEY=VALUE` lines) into pairs. Lines without `=` or with
-/// an empty key are skipped. A value may itself contain `=`; only the first is
-/// the separator. (Values with embedded newlines — rare — are not handled.)
+/// Parse an [`ENV_DUMP`] into pairs. Records are NUL-separated when the
+/// host's `env` has `-0`, so a value keeps its newlines; otherwise they are
+/// lines, as before. A value may itself contain `=`; only the first is the
+/// separator. A key never holds a newline, so anything up to the last newline
+/// before it is output that preceded the record (the recipe's own stdout, the
+/// delta sentinel's line end) and is dropped. Records without `=` or with an
+/// empty key are skipped.
 fn parse_env(stdout: &str) -> Vec<(String, String)> {
+    let records: Box<dyn Iterator<Item = &str>> = if stdout.contains('\0') {
+        Box::new(stdout.split('\0'))
+    } else {
+        Box::new(stdout.lines())
+    };
     let mut out = Vec::new();
-    for line in stdout.lines() {
-        if let Some(eq) = line.find('=') {
-            if eq == 0 {
-                continue;
-            }
-            out.push((line[..eq].to_string(), line[eq + 1..].to_string()));
+    for record in records {
+        let Some(eq) = record.find('=') else {
+            continue;
+        };
+        let key = record[..eq].rsplit('\n').next().unwrap_or_default();
+        if key.is_empty() {
+            continue;
         }
+        out.push((key.to_string(), record[eq + 1..].to_string()));
     }
     out
 }
@@ -542,12 +562,12 @@ mod tests {
     fn build_capture_script_shapes() {
         assert_eq!(
             build_capture_script("source .venv/bin/activate", Some(Path::new("/a b"))),
-            "cd '/a b'; source .venv/bin/activate; command env"
+            format!("cd '/a b'; source .venv/bin/activate; {ENV_DUMP}")
         );
-        assert_eq!(build_capture_script("", None), "command env");
+        assert_eq!(build_capture_script("", None), ENV_DUMP);
         assert_eq!(
             build_capture_script(r#"eval "$(direnv export bash)""#, None),
-            r#"eval "$(direnv export bash)"; command env"#
+            format!(r#"eval "$(direnv export bash)"; {ENV_DUMP}"#)
         );
     }
 
@@ -557,8 +577,8 @@ mod tests {
         assert_eq!(
             s,
             format!(
-                "cd '/p'; command env; printf '%s\\n' '{DELTA_SENTINEL}'; \
-                 source .venv/bin/activate; command env"
+                "cd '/p'; {ENV_DUMP}; printf '%s\\n' '{DELTA_SENTINEL}'; \
+                 source .venv/bin/activate; {ENV_DUMP}"
             )
         );
     }
@@ -575,6 +595,88 @@ mod tests {
                 ("WEIRD".to_string(), "a=b=c".to_string()),
             ]
         );
+    }
+
+    /// Issue #3586: with `env -0` records, a value keeps its newlines (an
+    /// exported Bash function's body) and a continuation line is never read
+    /// as a variable of its own.
+    #[test]
+    fn parse_env_nul_records_keep_multiline_values() {
+        let out = "BASH_FUNC_f%%=() {  if true; then\n echo hi\n fi\n}\0\
+                   MULTI=line1\nINJECTED=evil\0PATH=/a:/b\0";
+        assert_eq!(
+            parse_env(out),
+            vec![
+                (
+                    "BASH_FUNC_f%%".to_string(),
+                    "() {  if true; then\n echo hi\n fi\n}".to_string()
+                ),
+                ("MULTI".to_string(), "line1\nINJECTED=evil".to_string()),
+                ("PATH".to_string(), "/a:/b".to_string()),
+            ]
+        );
+    }
+
+    /// Output the recipe printed before the dump runs into the first record;
+    /// a key holds no newline, so it is cut off there.
+    #[test]
+    fn parse_env_nul_records_drop_preceding_output() {
+        let out = "activating...\nFOO=1\0BAR=2\0";
+        assert_eq!(
+            parse_env(out),
+            vec![("FOO".into(), "1".into()), ("BAR".into(), "2".into())]
+        );
+    }
+
+    #[test]
+    fn parse_delta_with_nul_records() {
+        let out = format!(
+            "PATH=/a\0KEEP=1\0GONE=x\0{DELTA_SENTINEL}\n\
+             PATH=/v/bin:/a\0KEEP=1\0F=a\nb=c\0"
+        );
+        let d = parse_delta(&out);
+        assert_eq!(
+            d.set,
+            vec![
+                ("PATH".to_string(), "/v/bin:/a".to_string()),
+                ("F".to_string(), "a\nb=c".to_string()),
+            ]
+        );
+        assert_eq!(d.unset, vec!["GONE".to_string()]);
+    }
+
+    /// End to end through a real shell: an exported Bash function captured
+    /// by the script comes back whole, and a child Bash given it runs it.
+    #[cfg(unix)]
+    #[test]
+    fn exported_bash_function_survives_capture() {
+        if std::process::Command::new("bash")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let snippet = "demo_function() { if true; then echo hello; fi; }; \
+                       export -f demo_function; export MULTI=$'line1\\nINJECTED=evil'";
+        let script = build_capture_script(snippet, None);
+        let out = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(&script)
+            .output()
+            .unwrap();
+        let vars = parse_env(&String::from_utf8_lossy(&out.stdout));
+        assert!(vars.iter().all(|(k, _)| k != "INJECTED"));
+        assert!(vars.contains(&("MULTI".to_string(), "line1\nINJECTED=evil".to_string())));
+
+        let child = std::process::Command::new("bash")
+            .arg("-c")
+            .arg("demo_function")
+            .env_clear()
+            .envs(vars)
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&child.stdout), "hello\n");
     }
 
     #[tokio::test]

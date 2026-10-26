@@ -901,9 +901,7 @@ fn build_remote_exec(
     if !env.is_empty() {
         s.push_str("env ");
         for (k, v) in env {
-            s.push_str(k);
-            s.push('=');
-            s.push_str(&shell_quote(v));
+            s.push_str(&shell_quote(&format!("{k}={v}")));
             s.push(' ');
         }
     }
@@ -920,7 +918,10 @@ fn build_remote_exec(
 /// rather than the `env` binary.
 fn build_remote_command_exists(env: &[(String, String)], command: &str) -> String {
     let mut s = String::new();
-    for (k, v) in env {
+    // `export` takes only shell identifiers; a key such as
+    // `BASH_FUNC_f%%` (an exported Bash function) would abort the probe.
+    // Such keys can't change what `command -v` finds, so they are skipped.
+    for (k, v) in env.iter().filter(|(k, _)| is_shell_identifier(k)) {
         s.push_str("export ");
         s.push_str(k);
         s.push('=');
@@ -931,6 +932,13 @@ fn build_remote_command_exists(env: &[(String, String)], command: &str) -> Strin
     s.push_str(&shell_quote(command));
     s.push_str(" >/dev/null 2>&1");
     s
+}
+
+/// Whether `k` is a POSIX shell variable name: `[A-Za-z_][A-Za-z0-9_]*`.
+fn is_shell_identifier(k: &str) -> bool {
+    let mut chars = k.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// Assemble the `ssh` argv: connection options, `user@host`, then the single
@@ -1116,16 +1124,19 @@ pub fn ssh_remote_env_launcher(recipe: &str) -> String {
         r#"import os,subprocess
 _r={recipe_json}
 _S="{sentinel}"
-_script="command env; printf '%s\\n' '"+_S+"'; "+_r+"; command env"
+_D="{dump}"
+_script=_D+"; printf '%s\\n' '"+_S+"'; "+_r+"; "+_D
 try:
     _o=subprocess.run(["bash","-lc",_script],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL).stdout.decode("utf-8","replace")
 except Exception:
     _o=""
 def _p(t):
     d={{}}
-    for ln in t.splitlines():
-        i=ln.find("=")
-        if i>0: d[ln[:i]]=ln[i+1:]
+    for r in (t.split("\0") if "\0" in t else t.splitlines()):
+        i=r.find("=")
+        if i<0: continue
+        k=r[:i].rsplit("\n",1)[-1]
+        if k: d[k]=r[i+1:]
     return d
 if _S in _o:
     _b,_a=_o.split(_S,1)
@@ -1138,6 +1149,7 @@ _sh=os.environ.get("SHELL") or "/bin/sh"
 os.execvp(_sh,[_sh,"-l"])
 "#,
         sentinel = crate::services::env_provider::DELTA_SENTINEL,
+        dump = crate::services::env_provider::ENV_DUMP,
     );
 
     let b64 = BASE64.encode(launcher_src.as_bytes());
@@ -1550,7 +1562,33 @@ mod tests {
         let s = build_remote_exec(&env, Some("/proj dir"), "python", &["x.py".to_string()]);
         assert_eq!(
             s,
-            "cd '/proj dir' && exec env VIRTUAL_ENV='/proj/.venv' 'python' 'x.py'"
+            "cd '/proj dir' && exec env 'VIRTUAL_ENV=/proj/.venv' 'python' 'x.py'"
+        );
+    }
+
+    /// Issue #3586: a key that isn't a shell identifier and a value with a
+    /// newline reach the remote `env` as one quoted word each.
+    #[test]
+    fn build_remote_exec_quotes_whole_assignments() {
+        let env = vec![(
+            "BASH_FUNC_f%%".to_string(),
+            "() {  local x=1\n}".to_string(),
+        )];
+        assert_eq!(
+            build_remote_exec(&env, None, "tsc", &[]),
+            "exec env 'BASH_FUNC_f%%=() {  local x=1\n}' 'tsc'"
+        );
+    }
+
+    #[test]
+    fn build_remote_command_exists_skips_non_identifier_keys() {
+        let env = vec![
+            ("BASH_FUNC_f%%".to_string(), "() { :; }".to_string()),
+            ("PATH".to_string(), "/v/bin".to_string()),
+        ];
+        assert_eq!(
+            build_remote_command_exists(&env, "tsc"),
+            "export PATH='/v/bin'; command -v 'tsc' >/dev/null 2>&1"
         );
     }
 
@@ -1694,6 +1732,53 @@ mod tests {
         );
         assert!(src.contains(crate::services::env_provider::DELTA_SENTINEL));
         assert!(src.contains("os.execvp"));
+    }
+
+    /// Issue #3586: run the real launcher on this host. An exported Bash
+    /// function from the recipe reaches the shell it execs whole, and a value
+    /// with a newline is not split into a second variable.
+    #[cfg(unix)]
+    #[test]
+    fn ssh_launcher_carries_multiline_values_to_the_shell() {
+        let have = |p: &str| {
+            std::process::Command::new(p)
+                .arg("--version")
+                .output()
+                .is_ok()
+        };
+        if !have("python3") || !have("bash") {
+            eprintln!("skipping: python3 or bash not installed");
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let shell = tmp.path().join("shell.sh");
+        std::fs::write(
+            &shell,
+            // A Bash login shell, as `$SHELL` usually is. (dash would drop
+            // `BASH_FUNC_demo_function%%` itself: it keeps no variable whose
+            // name isn't a shell identifier.)
+            "#!/usr/bin/env bash\ndemo_function; printf \"[%s][%s]\" \"$MULTI\" \"${INJECTED-unset}\"\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let launcher = ssh_remote_env_launcher(
+            "demo_function() { if true; then echo hello; fi; }; export -f demo_function; \
+             export MULTI=$'line1\\nINJECTED=evil'",
+        );
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&launcher)
+            .env("SHELL", &shell)
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "hello\n[line1\nINJECTED=evil][unset]",
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
 
     #[test]
