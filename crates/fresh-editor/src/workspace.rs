@@ -1178,6 +1178,30 @@ pub fn workspace_ids_for_root(root: &Path) -> std::collections::HashSet<String> 
     ids
 }
 
+/// The stable ids of every saved workspace, whatever its root, read from
+/// the names of the `<encoded root>.<id>.json` files: an id never holds a
+/// dot, and an encoded root never ends in one. Recovery uses it to tell an
+/// entry stamped for some other project's workspace from one whose
+/// workspace was never saved.
+pub fn all_workspace_ids() -> std::collections::HashSet<String> {
+    let mut ids = std::collections::HashSet::new();
+    let Ok(entries) = get_workspaces_dir().and_then(std::fs::read_dir) else {
+        return ids;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(stem) = name.to_str().and_then(|n| n.strip_suffix(".json")) else {
+            continue;
+        };
+        if let Some((_, id)) = stem.rsplit_once('.') {
+            if !id.is_empty() {
+                ids.insert(id.to_string());
+            }
+        }
+    }
+    ids
+}
+
 /// Identity fields of a candidate workspace file for one directory.
 struct WorkspaceFileIdentity {
     path: PathBuf,

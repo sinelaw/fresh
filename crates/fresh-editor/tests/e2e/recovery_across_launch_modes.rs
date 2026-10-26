@@ -23,11 +23,15 @@ fn hot_exit_config() -> Config {
 
 /// A launch in `dir` sharing `dir_context`: the same user and installation.
 fn launch_in(dir: &Path, dir_context: &DirectoryContext) -> EditorTestHarness {
+    launch_with(dir, dir_context, hot_exit_config())
+}
+
+fn launch_with(dir: &Path, dir_context: &DirectoryContext, config: Config) -> EditorTestHarness {
     EditorTestHarness::create(
         120,
         24,
         HarnessOptions::new()
-            .with_config(hot_exit_config())
+            .with_config(config)
             .with_working_dir(dir.to_path_buf())
             .with_shared_dir_context(dir_context.clone())
             .with_empty_plugins_dir(),
@@ -196,7 +200,83 @@ fn undoing_back_to_the_saved_state_leaves_nothing_to_recover() {
         .editor_mut()
         .auto_recovery_save_dirty_buffers()
         .unwrap();
-    // The delete runs off the main loop
-    harness.render().unwrap();
+    // The delete runs off the main loop: wait for it
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while entries_for(&dir_context, &project) != 0 && std::time::Instant::now() < deadline {
+        harness.render().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
     assert_eq!(entries_for(&dir_context, &project), 0);
+}
+
+fn hot_exit_off() -> Config {
+    let mut config = hot_exit_config();
+    config.editor.hot_exit = false;
+    config
+}
+
+/// With `hot_exit` off, closing a workspace window still leaves its unsaved
+/// work in the store: nothing asked about it, and holding it would have
+/// this editor's exit delete it.
+#[test]
+fn with_hot_exit_off_a_closed_windows_work_survives_the_exit() {
+    let (temp, project, dir_context) = project();
+    let other_root = temp.path().join("other");
+    std::fs::create_dir(&other_root).unwrap();
+    let mut harness = launch_with(&project, &dir_context, hot_exit_off());
+    harness.startup(true, &[]).unwrap();
+    let home = harness.editor().active_window_id();
+    let other = harness
+        .editor_mut()
+        .create_window_at(other_root.clone(), "other".to_string());
+    harness.editor_mut().set_active_window(other);
+    harness.render().unwrap();
+    harness.new_buffer().unwrap();
+    harness.type_text("CLOSED-WINDOW-WORK").unwrap();
+    harness
+        .editor_mut()
+        .auto_recovery_save_dirty_buffers()
+        .unwrap();
+    assert_eq!(entries_for(&dir_context, &other_root), 1);
+
+    harness.editor_mut().set_active_window(home);
+    harness.render().unwrap();
+    assert!(harness.editor_mut().close_window(other));
+    harness.shutdown(true).unwrap();
+    drop(harness);
+    assert_eq!(
+        entries_for(&dir_context, &other_root),
+        1,
+        "the closed window's unsaved work was deleted at exit"
+    );
+}
+
+/// With `hot_exit` off, a buffer an earlier session kept is shown — and an
+/// exit that asked nothing about it (a daemon shutting down, Force Quit)
+/// leaves it in the store, since this session never resolved it.
+#[test]
+fn with_hot_exit_off_work_taken_over_survives_an_exit_that_asked_nothing() {
+    let (_temp, project, dir_context) = project();
+    {
+        let mut seed = launch_in(&project, &dir_context);
+        seed.startup(true, &[]).unwrap();
+        seed.new_buffer().unwrap();
+        seed.type_text("KEPT-BY-HOT-EXIT").unwrap();
+        seed.render().unwrap();
+        seed.shutdown(true).unwrap();
+    }
+
+    {
+        let mut off = launch_with(&project, &dir_context, hot_exit_off());
+        off.startup(true, &[]).unwrap();
+        off.render().unwrap();
+        off.assert_screen_contains("KEPT-BY-HOT-EXIT");
+        // The exit with no quit prompt in front of it
+        off.shutdown(true).unwrap();
+    }
+
+    let mut on = launch_in(&project, &dir_context);
+    on.startup(true, &[]).unwrap();
+    on.render().unwrap();
+    on.assert_screen_contains("KEPT-BY-HOT-EXIT");
 }

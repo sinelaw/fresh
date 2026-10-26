@@ -965,8 +965,7 @@ fn test_recovery_after_save_with_size_change() {
             }
         }
     } else {
-        // Check if it's using full content format instead of chunked
-        println!("No chunked recovery entry found - file might be using full content format");
+        panic!("Expected a recovery entry for large_file.txt");
     }
 }
 
@@ -1166,7 +1165,7 @@ fn test_recovery_insert_at_end_of_large_file() {
             }
         }
     } else {
-        println!("No chunked recovery entry found");
+        panic!("Expected a recovery entry for large_file.txt");
     }
 }
 

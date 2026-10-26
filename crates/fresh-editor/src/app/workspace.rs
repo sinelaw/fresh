@@ -330,7 +330,11 @@ impl Editor {
             .filter_map(|(_, state)| state.buffer.file_path().map(Path::to_path_buf))
             .filter(|path| !path.as_os_str().is_empty())
             .collect();
-        Ok(self.adopt_recovery_for_window(self.active_window, Some(&files)))
+        Ok(self.adopt_recovery_for_window(
+            self.active_window,
+            Some(&files),
+            super::recovery_actions::AdoptScope::Root,
+        ))
     }
 
     /// Apply only the **editor-global** config overrides from a
@@ -489,7 +493,11 @@ impl Editor {
             // No workspace record for this directory: either none was ever
             // saved, or its file could not be parsed and was moved aside.
             // Its unsaved work is still the directory's.
-            self.adopt_recovery_for_window(id, None);
+            self.adopt_recovery_for_window(
+                id,
+                None,
+                super::recovery_actions::AdoptScope::Workspace,
+            );
             return Ok(false);
         };
 
@@ -579,7 +587,7 @@ impl Editor {
         // whatever else is this workspace's in the store — left by a crash,
         // or by an editor launched another way. Before the focus
         // announcement, so a buffer this opens is the one announced.
-        self.adopt_recovery_for_window(id, None);
+        self.adopt_recovery_for_window(id, None, super::recovery_actions::AdoptScope::Workspace);
 
         // Active-window only: refresh the plugin snapshot and fire
         // buffer_activated for the restored active buffer. Background
@@ -2404,7 +2412,10 @@ impl crate::app::window::Window {
                 );
                 continue;
             };
-            let claimed = service.lock().unwrap().claim(&root, entry, &workspace);
+            let claimed = service
+                .lock()
+                .unwrap()
+                .claim(&root, entry, &workspace, true);
             let entry = match claimed {
                 Ok(Some(entry)) => entry,
                 Ok(None) => continue,
@@ -2449,7 +2460,7 @@ impl crate::app::window::Window {
                         unnamed_ref.recovery_id,
                         other
                     );
-                    if let Err(e) = service.lock().unwrap().release(&root, &entry.id) {
+                    if let Err(e) = service.lock().unwrap().give_back(&root, &entry.id) {
                         tracing::warn!("Failed to put back recovery entry {}: {e}", entry.id);
                     }
                     self.recovery_notices.push(format!(

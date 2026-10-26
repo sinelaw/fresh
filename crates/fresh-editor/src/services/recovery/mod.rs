@@ -122,6 +122,9 @@ impl RecoveryService {
         let Some(store) = self.store.as_mut() else {
             return Ok(None);
         };
+        // An entry taken for a window that stands in for every workspace on
+        // its root stays the workspace's it names
+        let stamp = (!store.keeps_stamp(id)).then_some(workspace_id);
         store.own_entry(root, id).save_recovery_owned(
             id,
             chunks,
@@ -130,7 +133,7 @@ impl RecoveryService {
             line_count,
             original_file_size,
             final_size,
-            Some(workspace_id),
+            stamp,
             remote,
         )?;
         Ok(Some(store.own_handle(root, id)))
@@ -153,11 +156,26 @@ impl RecoveryService {
     /// Let go of entry `id`: it stays as unsaved work, held by no editor,
     /// for whoever shows its workspace next. For a workspace closed with
     /// unsaved work.
-    pub fn release(&self, root: &Path, id: &str) -> io::Result<()> {
-        match &self.store {
+    pub fn release(&mut self, root: &Path, id: &str) -> io::Result<()> {
+        match &mut self.store {
             Some(store) => store.release(root, id),
             None => Ok(()),
         }
+    }
+
+    /// Let go of entry `id`, taken but not restored, and don't offer it
+    /// again this session.
+    pub fn give_back(&mut self, root: &Path, id: &str) -> io::Result<()> {
+        match &mut self.store {
+            Some(store) => store.give_back(root, id),
+            None => Ok(()),
+        }
+    }
+
+    /// Whether this editor took entry `id` over from the store (a hot exit,
+    /// a crash, another launch), rather than writing it first itself.
+    pub fn took_over(&self, id: &str) -> bool {
+        self.store.as_ref().is_some_and(|store| store.took_over(id))
     }
 
     /// The ids of the workspaces on `root`: those with a workspace file,
@@ -206,15 +224,18 @@ impl RecoveryService {
 
     /// Take `entry` (from [`Self::list_recoverable`] for `root`) over for a
     /// buffer in workspace `workspace_id`. Returns it as it now is, or
-    /// `None` if another editor took it first.
+    /// `None` if another editor took it first. `restamp` makes it that
+    /// workspace's from now on; a window with no saved identity of its own
+    /// passes `false`, so the entry stays the workspace's it names.
     pub fn claim(
         &mut self,
         root: &Path,
         entry: &RecoveryEntry,
         workspace_id: &str,
+        restamp: bool,
     ) -> io::Result<Option<RecoveryEntry>> {
         match self.store.as_mut() {
-            Some(store) => store.claim(root, entry, workspace_id),
+            Some(store) => store.claim(root, entry, workspace_id, restamp),
             None => Ok(None),
         }
     }

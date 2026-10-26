@@ -178,23 +178,26 @@ fn a_plugin_save_of_another_buffer_leaves_the_active_ones_unsaved_work() {
             harness.editor().is_active_buffer_recovery_dirty(),
             "the active buffer's pending backup was cleared by another buffer's save"
         );
-        assert_eq!(
-            backups_holding(&dir_context, "Y-EDIT").len(),
-            1,
-            "the active buffer's recovery entry was deleted by another buffer's save"
-        );
         assert!(
             harness.get_buffer_content().unwrap().contains("Y-MORE   "),
             "an on-save action for x ran on y"
         );
         assert!(tab_bar(&harness).contains("y.txt*"));
 
-        // The pending backup goes out, with the edits since the last one
+        // The pending backup goes out, with the edits since the last one.
+        // Checked here rather than straight after the plugin save: a delete
+        // of y's entry would run off the main loop, so its absence then
+        // proves nothing. A cleared pending flag means no backup is written
+        // now, and a deleted entry means there is none to find either way.
         harness
             .editor_mut()
             .auto_recovery_save_dirty_buffers()
             .unwrap();
-        assert_eq!(backups_holding(&dir_context, "Y-MORE").len(), 1);
+        assert_eq!(
+            backups_holding(&dir_context, "Y-MORE").len(),
+            1,
+            "the active buffer's backup was deleted, or stopped, by another buffer's save"
+        );
 
         // x was the one marked saved: an edit undone takes it back to clean.
         // Its buffer holds what the trim wrote, not the untrimmed text.

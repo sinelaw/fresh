@@ -21,11 +21,15 @@ fn hot_exit_config() -> Config {
 }
 
 fn launch(dir: &Path, dir_context: &DirectoryContext) -> EditorTestHarness {
+    launch_with(dir, dir_context, hot_exit_config())
+}
+
+fn launch_with(dir: &Path, dir_context: &DirectoryContext, config: Config) -> EditorTestHarness {
     EditorTestHarness::create(
         120,
         24,
         HarnessOptions::new()
-            .with_config(hot_exit_config())
+            .with_config(config)
             .with_working_dir(dir.to_path_buf())
             .with_shared_dir_context(dir_context.clone())
             .with_empty_plugins_dir(),
@@ -311,4 +315,94 @@ fn a_plain_save_in_one_workspace_leaves_the_others_work() {
     // copy beside it; either way, once
     let tabs = b.screen_row_text(layout::TAB_BAR_ROW as u16);
     assert_eq!(tabs.matches('*').count(), 1, "{tabs}");
+}
+
+/// Workspace B on a root has a saved workspace file and unsaved work it left
+/// in the store when its window closed. A new window on the same root — a
+/// co-tenant from Extract Tab to New Workspace — must leave that work for B,
+/// not take it and stamp it as its own. A `--no-restore` launch on the root,
+/// which stands in for every workspace there, does bring it back, but leaves
+/// it B's.
+#[test]
+#[cfg(target_os = "linux")] // the pinned data dir; see `isolated_dir_context`
+fn a_new_window_leaves_a_saved_co_tenants_work_to_it() {
+    let sandbox = TempDir::new().unwrap();
+    let (dir_context, _pin) = isolated_dir_context(sandbox.path());
+    let root = sandbox.path().join("project");
+    std::fs::create_dir(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    for name in ["d.txt", "e.txt"] {
+        std::fs::write(root.join(name), "x\n").unwrap();
+    }
+    let free_entry_of_b = |stamp: &str| {
+        let entries = entries_holding(&dir_context, &root, "B-UNSAVED");
+        assert_eq!(entries.len(), 1, "B's work is in the store, once");
+        assert!(
+            !entries[0]
+                .metadata_path
+                .to_string_lossy()
+                .contains("/held/"),
+            "B's work is held by an editor: {:?}",
+            entries[0].metadata_path
+        );
+        assert_eq!(entries[0].metadata.workspace_id.as_deref(), Some(stamp));
+    };
+
+    let b_id = {
+        let mut h = launch(&root, &dir_context);
+        h.startup(true, &[]).unwrap();
+        let a = h.editor().active_window_id();
+        let co_tenant = |h: &EditorTestHarness, but: &[fresh_core::WindowId]| {
+            (1..=64)
+                .map(fresh_core::WindowId)
+                .find(|id| {
+                    !but.contains(id) && h.editor().session(*id).is_some_and(|w| w.root == root)
+                })
+                .expect("the co-tenant")
+        };
+
+        // Workspace B, with unsaved work, saved and then closed
+        h.open_file(&root.join("d.txt")).unwrap();
+        let d = h.editor().active_buffer();
+        h.editor_mut().extract_tab_to_new_workspace(d);
+        let b = co_tenant(&h, &[a]);
+        h.editor_mut().set_active_window(b);
+        h.render().unwrap();
+        h.new_buffer().unwrap();
+        h.type_text("B-UNSAVED").unwrap();
+        tick(&mut h);
+        h.editor_mut().save_all_windows_workspaces().unwrap();
+        let b_id = h.editor().session(b).unwrap().stable_id.clone();
+        h.editor_mut().set_active_window(a);
+        h.render().unwrap();
+        assert!(h.editor_mut().close_window(b));
+        free_entry_of_b(&b_id);
+
+        // A new co-tenant D, switched to, and A switched back to
+        h.open_file(&root.join("e.txt")).unwrap();
+        let e = h.editor().active_buffer();
+        h.editor_mut().extract_tab_to_new_workspace(e);
+        let new = co_tenant(&h, &[a, b]);
+        h.editor_mut().set_active_window(new);
+        h.render().unwrap();
+        h.assert_screen_not_contains("B-UNSAVED");
+        h.editor_mut().set_active_window(a);
+        h.render().unwrap();
+        h.assert_screen_not_contains("B-UNSAVED");
+        free_entry_of_b(&b_id);
+        h.shutdown(true).unwrap();
+        b_id
+    };
+    free_entry_of_b(&b_id);
+
+    // `--no-restore`: brings it back, still B's
+    let mut config = hot_exit_config();
+    config.editor.restore_previous_session = false;
+    let mut h = launch_with(&root, &dir_context, config);
+    h.startup(true, &[]).unwrap();
+    h.render().unwrap();
+    h.assert_screen_contains("B-UNSAVED");
+    h.shutdown(true).unwrap();
+    drop(h);
+    free_entry_of_b(&b_id);
 }

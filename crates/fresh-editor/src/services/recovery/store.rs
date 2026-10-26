@@ -82,18 +82,15 @@ impl Lease {
             .open(&staging)?;
         // The pid is for a filesystem that cannot lock (see `editor_is_live`)
         write!(file, "{}", std::process::id())?;
-        let locked = match file.try_lock() {
-            Ok(()) => Ok(()),
-            Err(fs::TryLockError::Error(e)) if e.kind() == io::ErrorKind::Unsupported => {
-                tracing::warn!(
-                    "Cannot lock {} ({e}); other editors will go by its pid",
-                    path.display()
-                );
-                Ok(())
-            }
-            Err(e) => Err(io::Error::other(e.to_string())),
-        };
-        if let Err(e) = locked.and_then(|()| fs::rename(&staging, &path)) {
+        // A filesystem that cannot lock (one without lock support, or NFS
+        // with no lock daemon) leaves the pid to go by: recovery stays on.
+        if let Err(e) = file.try_lock() {
+            tracing::warn!(
+                "Cannot lock {} ({e}); other editors will go by its pid",
+                path.display()
+            );
+        }
+        if let Err(e) = fs::rename(&staging, &path) {
             // Best-effort cleanup; the lock error is what matters
             #[allow(clippy::let_underscore_must_use)]
             let _ = fs::remove_file(&staging);
@@ -133,7 +130,8 @@ fn editor_is_live(base: &Path, id: &str) -> bool {
         // Nothing holds it: the editor is gone. Released as `file` drops.
         Ok(()) => false,
         Err(fs::TryLockError::WouldBlock) => true,
-        Err(fs::TryLockError::Error(e)) if e.kind() == io::ErrorKind::Unsupported => {
+        // This filesystem can't lock: go by the pid the lease records.
+        Err(fs::TryLockError::Error(_)) => {
             let pid = fs::read_to_string(&path)
                 .ok()
                 .and_then(|pid| pid.trim().parse::<u32>().ok());
@@ -141,7 +139,6 @@ fn editor_is_live(base: &Path, id: &str) -> bool {
             // dropped one, so it counts as running.
             pid.is_none_or(|pid| pid == std::process::id() || super::types::is_process_running(pid))
         }
-        Err(_) => true,
     }
 }
 
@@ -175,6 +172,18 @@ pub struct Store {
     lease: Lease,
     /// Partitions this editor holds entries in, for the exit to settle.
     touched: HashSet<PathBuf>,
+    /// Entries this editor holds only because putting them back failed:
+    /// they are not its buffers' work, so the exit keeps them, never deletes.
+    must_keep: HashSet<String>,
+    /// Entries this editor took and gave back unrestored (unreadable, or
+    /// changed on disk under a large file's deltas): not offered again this
+    /// session, where every workspace switch would take them back once more.
+    given_back: HashSet<String>,
+    /// Entries this editor took over from the store, rather than wrote first.
+    taken_over: HashSet<String>,
+    /// Entries taken without re-stamping (see [`Self::claim`]): they stay
+    /// the workspace's they name through every later write.
+    keep_stamp: HashSet<String>,
 }
 
 impl Store {
@@ -183,6 +192,10 @@ impl Store {
             base: base.to_path_buf(),
             lease: Lease::acquire(base)?,
             touched: HashSet::new(),
+            must_keep: HashSet::new(),
+            given_back: HashSet::new(),
+            taken_over: HashSet::new(),
+            keep_stamp: HashSet::new(),
         })
     }
 
@@ -214,14 +227,34 @@ impl Store {
     }
 
     /// Put entry `id` back as unsaved work no editor holds, for whoever shows
-    /// its workspace next.
-    pub fn release(&self, root: &Path, id: &str) -> io::Result<()> {
+    /// its workspace next. If that fails it stays held, and the exit keeps it.
+    pub fn release(&mut self, root: &Path, id: &str) -> io::Result<()> {
         let from = self.own_entry_dir(root, id);
         if !from.exists() {
             return Ok(());
         }
         let to = partition_dir(&self.base, root).join(id);
-        fs::rename(&from, &to)
+        fs::rename(&from, &to).inspect_err(|_| {
+            self.must_keep.insert(id.to_string());
+        })
+    }
+
+    /// Whether writes of entry `id` keep the workspace it names (it was
+    /// taken without re-stamping) rather than stamp the writer's.
+    pub fn keeps_stamp(&self, id: &str) -> bool {
+        self.keep_stamp.contains(id)
+    }
+
+    /// Whether this editor took entry `id` over rather than wrote it first.
+    pub fn took_over(&self, id: &str) -> bool {
+        self.taken_over.contains(id)
+    }
+
+    /// [`Self::release`] an entry this editor took but could not restore,
+    /// and stop offering it for the rest of the session.
+    pub fn give_back(&mut self, root: &Path, id: &str) -> io::Result<()> {
+        self.given_back.insert(id.to_string());
+        self.release(root, id)
     }
 
     /// Every entry for `root` that no running editor holds: free ones, ones
@@ -246,6 +279,7 @@ impl Store {
             }
         }
         entries.extend(self.legacy_entries(root, known_ids));
+        entries.retain(|entry| !self.given_back.contains(&entry.id));
         entries.retain_mut(settle_interrupted_save);
         entries.sort_by_key(|e| std::cmp::Reverse(e.metadata.updated_at));
         entries
@@ -284,8 +318,9 @@ impl Store {
     }
 
     /// The entries earlier versions' stores hold for `root`:
-    /// * everything in the store of a direct launch in `root`
-    ///   (`default/<encoded root>/`), all of it done in a workspace on it;
+    /// * from the store of a launch in `root` (`default/<encoded root>/`),
+    ///   everything but what is stamped for a saved workspace on another
+    ///   root: an unnamed `fresh -a` kept every window's work there;
     /// * from a daemon's store (`sessions/<name>/`) and the flat layout before
     ///   those, the entries stamped with one of `known_ids`, and unstamped
     ///   ones for a file under `root`.
@@ -309,7 +344,9 @@ impl Store {
         }
 
         let mut entries = Vec::new();
-        for (dir, whole) in own
+        // Read only if a launch store has a stamped entry to place
+        let mut saved_anywhere: Option<HashSet<String>> = None;
+        for (dir, launch_store) in own
             .into_iter()
             .map(|d| (d, true))
             .chain(shared.into_iter().map(|d| (d, false)))
@@ -327,26 +364,38 @@ impl Store {
                 continue;
             };
             entries.extend(listed.into_iter().filter(|entry| {
-                whole
-                    || match &entry.metadata.workspace_id {
-                        Some(workspace) => known_ids.contains(workspace),
-                        None => entry.metadata.original_path.as_ref().is_some_and(|path| {
+                match (&entry.metadata.workspace_id, launch_store) {
+                    (Some(workspace), _) if known_ids.contains(workspace) => true,
+                    (Some(workspace), true) => !saved_anywhere
+                        .get_or_insert_with(crate::workspace::all_workspace_ids)
+                        .contains(workspace),
+                    (Some(_), false) => false,
+                    (None, true) => true,
+                    (None, false) => {
+                        entry.metadata.original_path.as_ref().is_some_and(|path| {
                             path.starts_with(&canonical) || path.starts_with(root)
-                        }),
+                        })
                     }
+                }
             }));
         }
         entries
     }
 
     /// Take `entry` (one [`Self::recoverable`] listed for `root`) over for a
-    /// buffer of this editor in workspace `workspace_id`, and return it as it
-    /// now is. `None` when another editor took it first.
+    /// buffer of this editor, and return it as it now is. `None` when another
+    /// editor took it first. `restamp` makes it workspace `workspace_id`'s
+    /// from now on; without it the entry keeps the workspace it names.
+    ///
+    /// Anything that fails once the entry is taken puts it back, so an entry
+    /// is never left held by an editor with no buffer for it — the exit
+    /// would delete it.
     pub fn claim(
         &mut self,
         root: &Path,
         entry: &RecoveryEntry,
         workspace_id: &str,
+        restamp: bool,
     ) -> io::Result<Option<RecoveryEntry>> {
         let partition = partition_dir(&self.base, root);
         let held = self.held_dir(&partition);
@@ -374,15 +423,39 @@ impl Store {
         {
             tracing::debug!("Could not tidy {}: {}", dir.display(), e);
         }
-        let storage = RecoveryStorage::with_dir(dir);
-        let Some(mut claimed) = storage.load_entry(&id)? else {
-            return Ok(None);
-        };
-        if claimed.metadata.workspace_id.as_deref() != Some(workspace_id) {
-            claimed.handle().stamp_workspace(workspace_id)?;
-            claimed.metadata.workspace_id = Some(workspace_id.to_string());
+        let taken = RecoveryStorage::with_dir(dir.clone())
+            .load_entry(&id)
+            .and_then(|loaded| {
+                let mut claimed = loaded.ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::NotFound, "the entry vanished once taken")
+                })?;
+                if restamp && claimed.metadata.workspace_id.as_deref() != Some(workspace_id) {
+                    claimed.handle().stamp_workspace(workspace_id)?;
+                    claimed.metadata.workspace_id = Some(workspace_id.to_string());
+                }
+                Ok(claimed)
+            });
+        match taken {
+            Ok(claimed) => {
+                self.taken_over.insert(claimed.id.clone());
+                if !restamp {
+                    self.keep_stamp.insert(claimed.id.clone());
+                }
+                Ok(Some(claimed))
+            }
+            Err(e) => {
+                let back = partition.join(&id);
+                if let Err(back_e) = fs::rename(&dir, &back) {
+                    tracing::warn!(
+                        "Could not put recovery entry {id} back after failing to take it \
+                         ({e}): {back_e}"
+                    );
+                    self.must_keep.insert(id.clone());
+                }
+                self.given_back.insert(id);
+                Err(e)
+            }
         }
-        Ok(Some(claimed))
     }
 
     /// At a clean exit: of the entries this editor holds, put those in
@@ -400,7 +473,7 @@ impl Store {
                 let Some(id) = item.file_name().to_str().map(str::to_string) else {
                     continue;
                 };
-                let result = if keep.contains(&id) {
+                let result = if keep.contains(&id) || self.must_keep.contains(&id) {
                     kept += 1;
                     fs::rename(item.path(), partition.join(&id))
                 } else {
@@ -631,8 +704,8 @@ mod tests {
         let listed = one.recoverable(&root, &HashSet::new());
         assert_eq!(listed.len(), 1);
         let entry = &listed[0];
-        assert!(one.claim(&root, entry, "ws").unwrap().is_some());
-        assert!(two.claim(&root, entry, "ws").unwrap().is_none());
+        assert!(one.claim(&root, entry, "ws", true).unwrap().is_some());
+        assert!(two.claim(&root, entry, "ws", true).unwrap().is_none());
         assert!(two.recoverable(&root, &HashSet::new()).is_empty());
     }
 
@@ -685,7 +758,7 @@ mod tests {
         let mut store = Store::open(base.path()).unwrap();
         let listed = store.recoverable(&root, &HashSet::new());
         assert_eq!(ids(&listed), ["abc"]);
-        let claimed = store.claim(&root, &listed[0], "ws").unwrap().unwrap();
+        let claimed = store.claim(&root, &listed[0], "ws", true).unwrap().unwrap();
         assert_ne!(claimed.id, "abc");
         assert_eq!(claimed.metadata.workspace_id.as_deref(), Some("ws"));
         assert!(old.list_entries().unwrap().is_empty());
@@ -762,5 +835,81 @@ mod tests {
             ids(&store.recoverable(&root, &HashSet::new())),
             ["not-written"]
         );
+    }
+
+    /// A claim that fails once the entry is taken — here its metadata turns
+    /// out unreadable — puts it back where it was, so the exit, which deletes
+    /// what this editor holds but did not keep, can't take it with it. And it
+    /// isn't offered again this session.
+    #[test]
+    fn a_claim_that_fails_puts_the_entry_back() {
+        let base = TempDir::new().unwrap();
+        let root = root(&base);
+        let mut gone = Store::open(base.path()).unwrap();
+        write(&mut gone, &root, "a", None, "ws");
+        drop(gone);
+
+        let mut store = Store::open(base.path()).unwrap();
+        let listed = store.recoverable(&root, &HashSet::new());
+        assert_eq!(ids(&listed), ["a"]);
+        fs::write(&listed[0].metadata_path, b"torn").unwrap();
+
+        assert!(store.claim(&root, &listed[0], "ws", true).is_err());
+        let partition = partition_dir(base.path(), &root);
+        assert!(partition.join("a").join("a.meta.json").exists());
+        assert!(!store.own_entry_dir(&root, "a").exists());
+        assert!(store.recoverable(&root, &HashSet::new()).is_empty());
+
+        store.end(&HashSet::new());
+        assert!(partition.join("a").join("a.meta.json").exists());
+    }
+
+    /// From an old launch store, everything is this project's but what is
+    /// stamped for a saved workspace on another root: an unnamed `fresh -a`
+    /// kept every window's work in its launch directory's store.
+    #[test]
+    fn an_old_launch_store_keeps_other_projects_work_for_them() {
+        let base = TempDir::new().unwrap();
+        let root = root(&base);
+        let data_dir = base.path().join("data");
+        fs::create_dir_all(data_dir.join("workspaces")).unwrap();
+        fs::write(
+            data_dir.join("workspaces").join("elsewhere.ws-other.json"),
+            "{}",
+        )
+        .unwrap();
+        let previous = fresh_editor_core::data_dir::set_data_dir_override(Some(data_dir));
+
+        let canonical = root.canonicalize().unwrap();
+        let old = RecoveryStorage::with_dir(
+            base.path()
+                .join("default")
+                .join(crate::workspace::encode_path_for_filename(&canonical)),
+        );
+        for (id, stamp) in [
+            ("here", Some("ws-here")),
+            ("unsaved-window", Some("ws-never-saved")),
+            ("other-project", Some("ws-other")),
+            ("unstamped", None),
+        ] {
+            old.save_recovery_owned(
+                id,
+                vec![RecoveryChunk::new(0, 0, b"x".to_vec())],
+                None,
+                None,
+                Some(1),
+                0,
+                1,
+                stamp,
+                false,
+            )
+            .unwrap();
+        }
+
+        let store = Store::open(base.path()).unwrap();
+        let known = HashSet::from(["ws-here".to_string()]);
+        let listed = ids(&store.recoverable(&root, &known));
+        fresh_editor_core::data_dir::set_data_dir_override(previous);
+        assert_eq!(listed, ["here", "unsaved-window", "unstamped"]);
     }
 }

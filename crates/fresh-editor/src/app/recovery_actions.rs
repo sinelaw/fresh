@@ -93,27 +93,31 @@ impl Editor {
     /// plugin calls once the user has decided. This layer's job is only to
     /// leave the content somewhere recoverable (issue #3189).
     ///
-    /// Gated on `hot_exit` to match [`Editor::end_recovery_session`]: with it
-    /// off, recovery is a crash net a clean exit clears, so the entries stay
-    /// this editor's and go with its exit.
+    /// The flush is gated on `hot_exit` to match
+    /// [`Editor::end_recovery_session`], but what the buffers already have in
+    /// the store is let go either way: with them gone, nothing will resolve
+    /// it, and holding it would have the exit delete it.
     pub(crate) fn flush_window_recovery(&mut self, window_id: WindowId) -> AnyhowResult<usize> {
-        if !self.config.editor.hot_exit || !self.windows.contains_key(&window_id) {
+        if !self.windows.contains_key(&window_id) {
             return Ok(0);
         }
-        if let Some(window) = self.windows.get_mut(&window_id) {
-            for (_, state) in &mut window.buffers {
-                if state.buffer.is_modified() {
-                    state.buffer.set_recovery_pending(true);
+        let flushed = if self.config.editor.hot_exit {
+            if let Some(window) = self.windows.get_mut(&window_id) {
+                for (_, state) in &mut window.buffers {
+                    if state.buffer.is_modified() {
+                        state.buffer.set_recovery_pending(true);
+                    }
                 }
             }
-        }
-        let flushed = self
-            .with_window_retargeted(window_id, |editor| editor.save_pending_recovery_buffers())?;
+            self.with_window_retargeted(window_id, |editor| editor.save_pending_recovery_buffers())?
+        } else {
+            0
+        };
         let Some(window) = self.windows.get(&window_id) else {
             return Ok(flushed);
         };
         let root = window.root.clone();
-        let service = self.recovery_service.lock().unwrap();
+        let mut service = self.recovery_service.lock().unwrap();
         for (buffer_id, meta) in window.buffer_metadata.iter() {
             let Some(id) = &meta.recovery_id else {
                 continue;
@@ -137,11 +141,15 @@ impl Editor {
 
     /// The recovery ids of the buffers still holding unsaved work, across
     /// every open workspace: what a clean exit keeps for hot exit.
+    ///
+    /// With `hot_exit` off, only those this editor took over from the store
+    /// (an earlier session's, a crash's): they were never this session's to
+    /// drop, and an exit that asked nothing (a daemon shutting down, Force
+    /// Quit) would otherwise delete them.
     fn recovery_ids_to_preserve(&self) -> std::collections::HashSet<String> {
         let mut out = std::collections::HashSet::new();
-        if !self.config.editor.hot_exit {
-            return out;
-        }
+        let hot_exit = self.config.editor.hot_exit;
+        let service = self.recovery_service.lock().unwrap();
         for window in self.windows.values() {
             for (buffer_id, meta) in window.buffer_metadata.iter() {
                 if meta.hidden_from_tabs || meta.is_virtual() {
@@ -158,7 +166,9 @@ impl Editor {
                     continue;
                 }
                 if let Some(id) = &meta.recovery_id {
-                    out.insert(id.clone());
+                    if hot_exit || service.took_over(id) {
+                        out.insert(id.clone());
+                    }
                 }
             }
         }
@@ -174,27 +184,15 @@ impl Editor {
             .is_some_and(|w| w.authority().filesystem.remote_connection_info().is_some())
     }
 
-    /// The workspace ids known on the active window's root, whose entries
-    /// are theirs and not the active window's: this editor's other windows
-    /// on it, and — when the active window continues a saved workspace —
-    /// the root's other saved workspaces. A window that restored none
-    /// (`--no-restore`, a new directory) is no particular one of them, so
-    /// only what an open window on the root is showing is kept from it.
-    fn known_workspace_ids_for_active(&self) -> std::collections::HashSet<String> {
+    /// The ids of this editor's windows on the active window's root.
+    fn open_workspace_ids_for_active(&self) -> std::collections::HashSet<String> {
         use crate::app::orchestrator_persistence::canonical_key;
-        let active = self.active_window();
-        let root = &active.root;
-        let key = canonical_key(root);
-        let open = self
-            .windows
+        let key = canonical_key(&self.active_window().root);
+        self.windows
             .values()
             .filter(|w| canonical_key(&w.root) == key)
-            .map(|w| w.stable_id.clone());
-        if active.workspace_restored {
-            crate::services::recovery::RecoveryService::known_workspace_ids(root, open)
-        } else {
-            open.collect()
-        }
+            .map(|w| w.stable_id.clone())
+            .collect()
     }
 
     /// Restore into window `id` the unsaved work in the store that is its
@@ -217,10 +215,11 @@ impl Editor {
         &mut self,
         id: WindowId,
         only: Option<&[PathBuf]>,
+        scope: AdoptScope,
     ) -> usize {
         let foreground = id == self.active_window;
         self.with_window_retargeted(id, |editor| {
-            editor.adopt_recovery_for_active_window(only, foreground)
+            editor.adopt_recovery_for_active_window(only, foreground, scope)
         })
     }
 
@@ -228,6 +227,7 @@ impl Editor {
         &mut self,
         only: Option<&[PathBuf]>,
         open_tabs: bool,
+        scope: AdoptScope,
     ) -> usize {
         use crate::services::recovery::RecoveryService;
 
@@ -239,14 +239,20 @@ impl Editor {
             (window.root.clone(), window.stable_id.clone())
         };
         let remote = self.window_is_remote(self.active_window);
-        let known = self.known_workspace_ids_for_active();
+        let open = self.open_workspace_ids_for_active();
+        let saved_and_open = RecoveryService::known_workspace_ids(&root, open.iter().cloned());
+        // Whose work this window leaves alone: see `AdoptScope`
+        let others = match scope {
+            AdoptScope::Workspace => &saved_and_open,
+            AdoptScope::Root => &open,
+        };
         let entries: Vec<_> = self
             .recovery_service
             .lock()
             .unwrap()
-            .list_recoverable(&root, &known, Some(remote))
+            .list_recoverable(&root, &saved_and_open, Some(remote))
             .into_iter()
-            .filter(|entry| RecoveryService::belongs_to(entry, &workspace, &known))
+            .filter(|entry| RecoveryService::belongs_to(entry, &workspace, others))
             .filter(|entry| {
                 only.is_none_or(|paths| {
                     entry
@@ -259,8 +265,9 @@ impl Editor {
             .collect();
 
         let mut adopted = 0;
+        let restamp = scope == AdoptScope::Workspace;
         for entry in entries {
-            if self.adopt_recovery_entry(&root, &workspace, entry, open_tabs) {
+            if self.adopt_recovery_entry(&root, &workspace, entry, open_tabs, restamp) {
                 adopted += 1;
             }
         }
@@ -286,6 +293,7 @@ impl Editor {
         workspace: &str,
         entry: crate::services::recovery::RecoveryEntry,
         open_tabs: bool,
+        restamp: bool,
     ) -> bool {
         use crate::services::recovery::RecoveryResult;
 
@@ -307,7 +315,7 @@ impl Editor {
             .recovery_service
             .lock()
             .unwrap()
-            .claim(root, &entry, workspace);
+            .claim(root, &entry, workspace, restamp);
         let entry = match claimed {
             Ok(Some(entry)) => entry,
             Ok(None) => return false,
@@ -483,7 +491,7 @@ impl Editor {
             .recovery_service
             .lock()
             .unwrap()
-            .release(root, &entry.id)
+            .give_back(root, &entry.id)
         {
             tracing::warn!("Failed to put back recovery entry {}: {}", entry.id, e);
         }
@@ -555,7 +563,7 @@ impl Editor {
     /// in-progress work just because they asked to skip restoring the
     /// workspace layout. Returns the number of buffers restored.
     pub fn try_restore_hot_exit_buffers(&mut self) -> AnyhowResult<usize> {
-        Ok(self.adopt_recovery_for_window(self.active_window, None))
+        Ok(self.adopt_recovery_for_window(self.active_window, None, AdoptScope::Root))
     }
 
     /// Perform auto-recovery-save for all modified buffers if needed.
@@ -1100,6 +1108,20 @@ impl Editor {
         }
         self.switch_buffer(composite_id);
     }
+}
+
+/// Whose unsaved work on its root a window takes when it restores.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AdoptScope {
+    /// Its own workspace's, and work no workspace on the root is known to
+    /// own — never what is stamped for another saved or open workspace on
+    /// it, which waits for that one. What it takes becomes its own.
+    Workspace,
+    /// Everything on the root but what an open window is showing: for the
+    /// startup of a launch that restores no workspace (`--no-restore`, a file
+    /// launch), which stands in for all of them. What it takes keeps the
+    /// workspace it names, so it goes back there at the next exit.
+    Root,
 }
 
 /// Where an entry being restored goes.

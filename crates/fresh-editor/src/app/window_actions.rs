@@ -756,7 +756,7 @@ impl crate::app::Editor {
         // store — crash leftovers the workspace snapshot doesn't cover. Per
         // workspace, on activation, so each buffer returns to where it was
         // edited; a workspace never visited is never touched (issue #3189).
-        self.adopt_recovery_for_window(id, None);
+        self.adopt_recovery_for_window(id, None, super::recovery_actions::AdoptScope::Workspace);
 
         // If we just switched to a remote session that came back from disk
         // dormant (backend spec known, live authority still the local
