@@ -2902,6 +2902,78 @@ impl TextBuffer {
         matches
     }
 
+    /// Find up to `limit` non-overlapping matches of `regex` within a byte
+    /// range, as `(start, len)`, in one streaming pass over the piece tree.
+    ///
+    /// For patterns whose matches are short — `max_match_len` bounds them and
+    /// sizes the chunk overlap — such as an escaped literal matched case-
+    /// insensitively. A regex whose matches can be longer must not use it.
+    /// The bytes just outside `range` are read too, so `\b` judges a match at
+    /// either end of the range by the text around it (a whole-word search
+    /// started mid-word must not match the rest of that word).
+    pub fn find_regex_matches_in_range(
+        &self,
+        regex: &Regex,
+        range: Range<usize>,
+        max_match_len: usize,
+        limit: usize,
+    ) -> Vec<(usize, usize)> {
+        const CHUNK_SIZE: usize = 65536;
+        // One UTF-8 character on either side, for `\b`.
+        const CONTEXT: usize = 4;
+
+        let mut matches = Vec::new();
+        let end = range.end.min(self.len());
+        if range.start >= end || limit == 0 {
+            return matches;
+        }
+        let read_from = range.start.saturating_sub(CONTEXT);
+        let read_to = (end + CONTEXT).min(self.len());
+        let overlap = max_match_len + 2 * CONTEXT;
+
+        // Absolute position the search resumes from.
+        let mut pos = range.start;
+        for chunk in OverlappingChunks::new(self, read_from, read_to, CHUNK_SIZE, overlap) {
+            let chunk_start = chunk.absolute_pos;
+            let chunk_end = chunk_start + chunk.buffer.len();
+            // A match must leave CONTEXT bytes after it in this chunk, so `\b`
+            // sees what follows — unless nothing follows. A match past this
+            // limit is found again, whole, by the next chunk.
+            let accept_limit = if chunk_end >= read_to {
+                chunk_end
+            } else {
+                chunk_end.saturating_sub(CONTEXT)
+            };
+            while pos < accept_limit {
+                let Some(m) = regex.find_at(&chunk.buffer, pos.saturating_sub(chunk_start)) else {
+                    break;
+                };
+                let (match_start, match_end) = (chunk_start + m.start(), chunk_start + m.end());
+                if match_end > end {
+                    return matches;
+                }
+                if match_end > accept_limit {
+                    break;
+                }
+                if match_start == match_end {
+                    pos = match_start + 1;
+                    continue;
+                }
+                matches.push((match_start, match_end - match_start));
+                if matches.len() >= limit {
+                    return matches;
+                }
+                pos = match_end;
+            }
+            // Every match ending by `accept_limit` has been seen, so one not yet
+            // seen starts after `accept_limit - max_match_len` — inside the
+            // overlap the next chunk keeps, with CONTEXT bytes before it.
+            pos = pos.max(accept_limit.saturating_sub(max_match_len));
+        }
+
+        matches
+    }
+
     /// Find pattern in a byte range using overlapping chunks
     fn find_pattern(&self, start: usize, end: usize, pattern: &[u8]) -> Option<usize> {
         if pattern.is_empty() || start >= end {

@@ -3356,6 +3356,65 @@ fn find_all_in_range_matches_repeated_find_next() {
     assert_eq!(in_range, &expected[2..5]);
 }
 
+/// `find_regex_matches_in_range` streams like `find_all_in_range`: across
+/// several 64KB chunks it finds exactly the matches one regex pass over the
+/// whole text finds, including ones straddling a chunk boundary.
+#[test]
+fn find_regex_matches_in_range_matches_a_whole_text_scan() {
+    let mut text = String::new();
+    let mut i = 0;
+    while text.len() < 200_000 {
+        // Vary the case so a case-insensitive pattern has work to do, and the
+        // line length so matches land on every offset around the boundaries.
+        text.push_str(if i % 2 == 0 { "Source" } else { "sOURCE" });
+        text.push_str(&" filler".repeat(i % 7));
+        text.push('\n');
+        i += 1;
+    }
+    let re = regex::bytes::RegexBuilder::new("source")
+        .case_insensitive(true)
+        .build()
+        .unwrap();
+    let expected: Vec<(usize, usize)> = re
+        .find_iter(text.as_bytes())
+        .map(|m| (m.start(), m.len()))
+        .collect();
+    let buffer = Buffer::from_bytes(text.into_bytes(), test_fs());
+
+    assert_eq!(
+        buffer.find_regex_matches_in_range(&re, 0..buffer.len(), 24, usize::MAX),
+        expected
+    );
+    assert_eq!(
+        buffer.find_regex_matches_in_range(&re, 0..buffer.len(), 24, 3),
+        expected[..3]
+    );
+    let (from, to) = (expected[10].0, expected[20].0);
+    assert_eq!(
+        buffer.find_regex_matches_in_range(&re, from..to, 24, usize::MAX),
+        expected[10..20]
+    );
+}
+
+/// `\b` at either end of the range sees the text outside it: a whole-word
+/// search started mid-word does not match the rest of that word, and one
+/// whose range ends mid-word does not match the start of it.
+#[test]
+fn find_regex_matches_in_range_judges_word_boundaries_by_the_surrounding_text() {
+    let buffer = Buffer::from_bytes(b"concat cat cats".to_vec(), test_fs());
+    let re = regex::bytes::Regex::new(r"\bcat\b").unwrap();
+    // From inside "concat": the next whole word is the lone "cat" at 7.
+    assert_eq!(
+        buffer.find_regex_matches_in_range(&re, 3..buffer.len(), 12, usize::MAX),
+        vec![(7, 3)]
+    );
+    // Ending inside "cats": its "cat" is not a whole word.
+    assert_eq!(
+        buffer.find_regex_matches_in_range(&re, 0..14, 12, usize::MAX),
+        vec![(7, 3)]
+    );
+}
+
 /// Overlapping candidates are skipped the same way the sequential search
 /// skipped them: each match resumes the scan after the previous one.
 #[test]

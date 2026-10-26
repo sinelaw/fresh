@@ -49,7 +49,7 @@ pub fn build_search_regex(
 /// search with case folding or whole-word matching gets a regex over the
 /// escaped text, so replace matches exactly what the search highlights
 /// (#3575). Its replacement is still literal: only regex mode expands `$1`
-/// or `\n` (see [`collect_literal_matches`]).
+/// or `\n`; the caller inserts a plain-text replacement as typed.
 pub fn build_regex(
     search: &str,
     use_regex: bool,
@@ -161,24 +161,6 @@ pub struct ReplaceMatch {
     pub replacement: String,
 }
 
-/// Find every match of `regex` in `haystack` and pair each with
-/// `replacement` taken literally — plain-text replace, where `$1` and `\n`
-/// are just text.
-pub fn collect_literal_matches(
-    regex: &regex::bytes::Regex,
-    haystack: &[u8],
-    replacement: &str,
-) -> Vec<ReplaceMatch> {
-    regex
-        .find_iter(haystack)
-        .map(|m| ReplaceMatch {
-            offset: m.start(),
-            len: m.len(),
-            replacement: replacement.to_string(),
-        })
-        .collect()
-}
-
 /// Find every match of `regex` in `haystack` and expand `replacement_template`
 /// for each one (honouring `$1`, `${name}`, etc.).
 pub fn collect_regex_matches(
@@ -263,19 +245,6 @@ mod tests {
         let re = build_regex("cat", false, true, true).unwrap();
         assert!(re.is_match(b"a cat."));
         assert!(!re.is_match(b"concat"));
-    }
-
-    #[test]
-    fn collect_literal_matches_does_not_expand_the_replacement() {
-        let re = build_regex("x", false, false, false).unwrap();
-        let found = collect_literal_matches(&re, b"x X", "$1\\n");
-        assert_eq!(
-            found
-                .iter()
-                .map(|m| (m.offset, m.replacement.as_str()))
-                .collect::<Vec<_>>(),
-            vec![(0, "$1\\n"), (2, "$1\\n")]
-        );
     }
 
     #[test]

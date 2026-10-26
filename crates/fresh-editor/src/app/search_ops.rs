@@ -910,6 +910,24 @@ impl Editor {
         )
     }
 
+    /// First match of a plain-text replace's `regex` (the escaped query, see
+    /// `build_regex`) within `range`, as `(start, len)`. Streams the buffer
+    /// like the byte-exact path rather than reading it to the end, and reads
+    /// just past the range so a whole-word match is judged by the text
+    /// around it.
+    fn find_plain_match(
+        &self,
+        regex: &regex::bytes::Regex,
+        search: &str,
+        range: std::ops::Range<usize>,
+    ) -> Option<(usize, usize)> {
+        self.active_state()
+            .buffer
+            .find_regex_matches_in_range(regex, range, plain_match_len_bound(search), 1)
+            .into_iter()
+            .next()
+    }
+
     /// Get the length of a regex match at a given position in the buffer.
     fn get_regex_match_len(&mut self, regex: &regex::bytes::Regex, pos: usize) -> Option<usize> {
         let state = self.active_state_mut();
@@ -951,9 +969,27 @@ impl Editor {
 
         // Find all matches first (before making any modifications)
         // Each match is (position, length, expanded_replacement)
-        let matches: Vec<(usize, usize, String)> = if let Some(ref regex) = compiled_regex {
-            // Regex, or plain text with case folding / whole word: load the
-            // buffer content as bytes and find all matches
+        let matches: Vec<(usize, usize, String)> = if let Some(regex) = compiled_regex
+            .as_ref()
+            .filter(|_| !self.active_window().search_use_regex)
+        {
+            // Plain text with case folding or whole word: one streaming pass,
+            // like the byte-exact path below; the replacement is literal.
+            let state = self.active_state();
+            let buffer_len = state.buffer.len();
+            state
+                .buffer
+                .find_regex_matches_in_range(
+                    regex,
+                    0..buffer_len,
+                    plain_match_len_bound(search),
+                    usize::MAX,
+                )
+                .into_iter()
+                .map(|(offset, len)| (offset, len, replacement.to_string()))
+                .collect()
+        } else if let Some(ref regex) = compiled_regex {
+            // Regex mode: load buffer content as bytes and find all matches
             // with capture group expansion in the replacement template
             let buffer_bytes = {
                 let state = self.active_state_mut();
@@ -967,12 +1003,7 @@ impl Editor {
                     }
                 }
             };
-            let found = if self.active_window().search_use_regex {
-                super::regex_replace::collect_regex_matches(regex, &buffer_bytes, replacement)
-            } else {
-                super::regex_replace::collect_literal_matches(regex, &buffer_bytes, replacement)
-            };
-            found
+            super::regex_replace::collect_regex_matches(regex, &buffer_bytes, replacement)
                 .into_iter()
                 .map(|m| (m.offset, m.len, m.replacement))
                 .collect()
@@ -1058,7 +1089,20 @@ impl Editor {
 
         // Find the first match lazily (don't find all matches upfront)
         let start_pos = self.active_cursors().primary().position;
-        let (first_match_pos, first_match_len) = if let Some(ref regex) = compiled_regex {
+        let plain_regex = compiled_regex
+            .as_ref()
+            .filter(|_| !self.active_window().search_use_regex);
+        let (first_match_pos, first_match_len) = if let Some(regex) = plain_regex {
+            let buffer_len = self.active_state().buffer.len();
+            let found = self
+                .find_plain_match(regex, search, start_pos..buffer_len)
+                .or_else(|| self.find_plain_match(regex, search, 0..start_pos));
+            let Some(found) = found else {
+                self.set_status_message(t!("search.no_occurrences", search = search).to_string());
+                return;
+            };
+            found
+        } else if let Some(ref regex) = compiled_regex {
             let state = self.active_state();
             let buffer_len = state.buffer.len();
             // Try from cursor to end, then wrap from beginning
@@ -1259,7 +1303,26 @@ impl Editor {
         ir_state: &InteractiveReplaceState,
         start_pos: usize,
     ) -> Option<(usize, usize, bool)> {
-        if let Some(ref regex) = ir_state.regex {
+        if let Some(regex) = ir_state
+            .regex
+            .as_ref()
+            .filter(|_| !ir_state.expand_replacement)
+        {
+            // Plain text with case folding or whole word
+            let search = &ir_state.search;
+            if ir_state.has_wrapped {
+                return self
+                    .find_plain_match(regex, search, start_pos..ir_state.start_pos)
+                    .map(|(pos, len)| (pos, len, true));
+            }
+            let buffer_len = self.active_state().buffer.len();
+            self.find_plain_match(regex, search, start_pos..buffer_len)
+                .map(|(pos, len)| (pos, len, false))
+                .or_else(|| {
+                    self.find_plain_match(regex, search, 0..ir_state.start_pos)
+                        .map(|(pos, len)| (pos, len, true))
+                })
+        } else if let Some(ref regex) = ir_state.regex {
             // Regex mode
             let regex = regex.clone();
             let state = self.active_state();
@@ -1437,4 +1500,11 @@ impl Editor {
 
         self.set_status_message(t!("search.replaced_count", count = replacements_made).to_string());
     }
+}
+
+/// The longest a match of a plain-text query can be, in bytes: case folding
+/// can change a character's UTF-8 length (`k` is 1 byte, the Kelvin sign `K`
+/// it folds with is 3), and no character is longer than 4.
+fn plain_match_len_bound(search: &str) -> usize {
+    search.chars().count() * 4
 }
