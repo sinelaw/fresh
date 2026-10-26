@@ -118,6 +118,30 @@ impl<'a> FlatRows<'a> {
         (lo, (row - first).min(rows_in_line.saturating_sub(1)))
     }
 
+    /// The line a caret put on `row` lands on: the row's own line when the
+    /// row is that line's text or one of the virtual lines above it, the next
+    /// line when the row is one drawn below it (a caret can't stand on a
+    /// virtual line, so it goes to the first text at or after it).
+    pub fn line_at_or_after(&self, row: usize) -> usize {
+        let (line, into) = self.locate(row);
+        if line + 1 < self.line_count && self.first_row(line) + into > self.text_row(line) {
+            line + 1
+        } else {
+            line
+        }
+    }
+
+    /// The line whose text is drawn on `row` or the nearest row above it:
+    /// the counterpart of [`Self::line_at_or_after`].
+    pub fn line_at_or_before(&self, row: usize) -> usize {
+        let (line, into) = self.locate(row);
+        if line > 0 && self.first_row(line) + into < self.text_row(line) {
+            line - 1
+        } else {
+            line
+        }
+    }
+
     /// The furthest a pane `height` rows tall scrolls: its last page.
     pub fn max_top(&self, height: usize) -> usize {
         self.total_rows().saturating_sub(height)
@@ -176,6 +200,13 @@ mod tests {
         assert_eq!(r.locate(4), (2, 2));
         assert_eq!(r.locate(5), (2, 3));
         assert_eq!(r.locate(6), (3, 0));
+        // A caret on a filler row goes on to the next line's text.
+        assert_eq!(r.line_at_or_after(2), 2);
+        assert_eq!(r.line_at_or_after(3), 3);
+        assert_eq!(r.line_at_or_after(5), 3);
+        assert_eq!(r.line_at_or_after(6), 3);
+        assert_eq!(r.line_at_or_before(5), 2);
+        assert_eq!(r.line_at_or_before(6), 3);
         // Past the end: the last line's last row.
         assert_eq!(r.locate(100), (10, 0));
     }
@@ -191,6 +222,11 @@ mod tests {
         assert_eq!(r.text_row(0), 2);
         assert_eq!(r.first_row(1), 3);
         assert_eq!(r.locate(1), (0, 1));
+        // Above a line, a caret goes down to that line's text.
+        assert_eq!(r.line_at_or_after(0), 0);
+        assert_eq!(r.line_at_or_after(3), 1);
+        // Above the first line there is nothing before: its own text.
+        assert_eq!(r.line_at_or_before(1), 0);
     }
 
     /// A source pane doesn't draw a composing plugin's compose-only lines,

@@ -420,8 +420,13 @@ impl crate::app::window::Window {
                     crate::view::scroll_sync::map_through_anchors(&row_anchors, a_top, |a| {
                         (a.left_line, a.right_line)
                     });
-                let height = vs.viewport.visible_line_count();
-                let target = mapped.min(rows.max_top(height));
+                // The two sides can end a row apart — one file ends with a
+                // newline, so it has an empty last line the other lacks —
+                // and both at their last page would then stand a row out of
+                // step. The partner goes where the rows say, past its own
+                // last page if it must (blank rows below its end), so long
+                // as a row of it stays in view.
+                let target = mapped.min(rows.total_rows().saturating_sub(1));
                 let (line, offset) = rows.locate(target);
                 let line_start = state.buffer.line_start_offset(line).unwrap_or(0);
                 vs.viewport.set_top_byte(line_start);

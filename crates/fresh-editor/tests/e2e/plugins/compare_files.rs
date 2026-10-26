@@ -484,6 +484,72 @@ fn the_cursor_past_filler_rows_stays_on_screen_in_a_long_file() {
     );
 }
 
+/// The cursor's line number, from the status bar.
+fn cursor_line(h: &EditorTestHarness) -> usize {
+    let status = h.get_status_bar();
+    let at = status.find("Ln ").expect("status shows the cursor's line") + 3;
+    status[at..]
+        .split(|c: char| !c.is_ascii_digit())
+        .next()
+        .and_then(|n| n.parse().ok())
+        .expect("a line number")
+}
+
+/// Page Down and Page Up through a block of filler rows keep the cursor on
+/// the page: on the text nearest the row it keeps, whenever the page shows
+/// any. Counting lines instead of rows, a page landed the cursor as many
+/// lines below the filler rows as it had rows to go, off the bottom.
+#[test]
+fn paging_through_filler_rows_keeps_the_cursor_on_the_page() {
+    let (left, right) = with_inserted_block(120, 40);
+    let Compare { mut h, _tmp, .. } = compare_sized(left.as_bytes(), right.as_bytes(), 120, 24);
+    h.wait_until(|h| status_has(h, "Compare: 1 difference(s)"))
+        .unwrap();
+    h.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    h.wait_until(|h| row_of(h, "row 001") == Some(2)).unwrap();
+
+    // Line 121 is the empty one after the last newline.
+    let on_page = |h: &EditorTestHarness| {
+        let screen = h.screen_to_string();
+        let label = match cursor_line(h) {
+            121 => " 121 │".to_string(),
+            line => format!("row {line:03}"),
+        };
+        !screen.contains("row ") || screen.contains(&label)
+    };
+    for key in [KeyCode::PageDown, KeyCode::PageUp] {
+        for _ in 0..12 {
+            h.send_key(key, KeyModifiers::NONE).unwrap();
+            assert!(
+                on_page(&h) && all_rows_level(&h),
+                "the cursor (line {}) off the page:\n{}",
+                cursor_line(&h),
+                h.screen_to_string()
+            );
+        }
+    }
+    assert_eq!(cursor_line(&h), 1);
+}
+
+/// When one file ends with a newline and the other doesn't, the first has an
+/// empty last line the other lacks. At the end of the files the panels stay
+/// level: both at their last page, they stood a row out of step.
+#[test]
+fn the_panels_stay_level_at_the_end_when_one_file_lacks_a_final_newline() {
+    let left: String = (1..=60).map(|i| format!("row {i:03}\n")).collect();
+    let right = format!("{left}added one\nadded two");
+    let Compare { mut h, _tmp, .. } = compare_sized(left.as_bytes(), right.as_bytes(), 120, 24);
+    h.wait_until(|h| status_has(h, "difference(s)")).unwrap();
+
+    h.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
+    h.wait_until(|h| row_of(h, "added two").is_some()).unwrap();
+    assert!(
+        level(&h, "row 060") && all_rows_level(&h),
+        "panels out of step:\n{}",
+        h.screen_to_string()
+    );
+}
+
 /// A change only the right side has, taller than the panels, opens on its
 /// first lines, beside the line before it, and Next Difference comes back
 /// to it the same way. The cursor on the left went to the line after the

@@ -215,6 +215,42 @@ impl crate::app::window::Window {
                     let row = caret_row
                         .unwrap_or(margin)
                         .clamp(margin, height - 1 - margin);
+                    // An unwrapped pane with virtual lines (a comparison's
+                    // fillers) counts them as rows, which the walk below
+                    // doesn't see: there the row is found among the pane's
+                    // rows. A caret can't stand on a virtual line, so on one
+                    // it goes to the nearest text on the page — the next
+                    // line's, else the previous line's — and only when the
+                    // page is nothing but virtual lines does it wait off it,
+                    // on the side the page is heading.
+                    if !vs.viewport.line_wrap_enabled && hidden_ranges.is_empty() {
+                        if let Some(rows) =
+                            crate::view::flat_rows::FlatRows::new(state, vs.is_page_view())
+                                .filter(|rows| rows.has_virtual_lines())
+                        {
+                            let top_line = state.buffer.get_line_number(vs.viewport.top_byte());
+                            let top = rows.first_row(top_line) + vs.viewport.top_view_line_offset();
+                            let on_page =
+                                |line: usize| (top..top + height).contains(&rows.text_row(line));
+                            let after = rows.line_at_or_after(top + row);
+                            let before = rows.line_at_or_before(top + row);
+                            let line = if on_page(after) {
+                                after
+                            } else if on_page(before) || direction < 0 {
+                                before
+                            } else {
+                                after
+                            };
+                            let start = state.buffer.line_start_offset(line).unwrap_or(0);
+                            return vs.viewport.byte_at_row_below(
+                                &mut state.buffer,
+                                start,
+                                0,
+                                goal_col,
+                                &hidden_ranges,
+                            );
+                        }
+                    }
                     vs.viewport.byte_at_row_below(
                         &mut state.buffer,
                         top_row_byte,
