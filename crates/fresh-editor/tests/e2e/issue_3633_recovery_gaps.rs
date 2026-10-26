@@ -115,6 +115,7 @@ fn save_as(harness: &mut EditorTestHarness, path: &Path) {
 /// y keeps its entry and its pending backup, and after a crash comes back
 /// with every edit; x is the saved, clean one.
 #[test]
+#[cfg(feature = "plugins")] // the plugin command dispatcher
 fn a_plugin_save_of_another_buffer_leaves_the_active_ones_unsaved_work() {
     let temp = TempDir::new().unwrap();
     let project = temp.path().join("project");
