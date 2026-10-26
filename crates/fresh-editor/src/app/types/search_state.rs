@@ -56,6 +56,10 @@ pub struct InteractiveReplaceState {
     pub has_wrapped: bool,
     /// Number of replacements made so far
     pub replacements_made: usize,
-    /// Compiled regex for regex-mode replace (None when regex mode is off)
+    /// Compiled regex the matches are found with. `None` for a plain-text,
+    /// case-sensitive, non-whole-word search, which uses byte-exact search.
     pub regex: Option<regex::bytes::Regex>,
+    /// Whether the replacement is a template (`$1`, `\n`) expanded per
+    /// match: regex mode only. Plain-text replacement is literal.
+    pub expand_replacement: bool,
 }

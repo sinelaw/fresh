@@ -41,22 +41,33 @@ pub fn build_search_regex(
         .map_err(|e| e.to_string())
 }
 
-/// Build a [`regex::bytes::Regex`] from user-supplied search settings.
-/// Returns `None` when `use_regex` is false.
+/// Build a [`regex::bytes::Regex`] from user-supplied search settings, for
+/// the replace path.
+///
+/// Returns `None` only for a plain-text, case-sensitive, non-whole-word
+/// search, which the buffer's byte-exact search matches as is. A plain-text
+/// search with case folding or whole-word matching gets a regex over the
+/// escaped text, so replace matches exactly what the search highlights
+/// (#3575). Its replacement is still literal: only regex mode expands `$1`
+/// or `\n` (see [`collect_literal_matches`]).
 pub fn build_regex(
     search: &str,
     use_regex: bool,
     whole_word: bool,
     case_sensitive: bool,
 ) -> Option<regex::bytes::Regex> {
-    if !use_regex {
+    let query = if use_regex {
+        search.to_string()
+    } else if case_sensitive && !whole_word {
         return None;
-    }
+    } else {
+        regex::escape(search)
+    };
 
     let pattern = if whole_word {
-        format!(r"\b{}\b", search)
+        format!(r"\b{}\b", query)
     } else {
-        search.to_string()
+        query
     };
 
     regex::bytes::RegexBuilder::new(&pattern)
@@ -150,6 +161,24 @@ pub struct ReplaceMatch {
     pub replacement: String,
 }
 
+/// Find every match of `regex` in `haystack` and pair each with
+/// `replacement` taken literally — plain-text replace, where `$1` and `\n`
+/// are just text.
+pub fn collect_literal_matches(
+    regex: &regex::bytes::Regex,
+    haystack: &[u8],
+    replacement: &str,
+) -> Vec<ReplaceMatch> {
+    regex
+        .find_iter(haystack)
+        .map(|m| ReplaceMatch {
+            offset: m.start(),
+            len: m.len(),
+            replacement: replacement.to_string(),
+        })
+        .collect()
+}
+
 /// Find every match of `regex` in `haystack` and expand `replacement_template`
 /// for each one (honouring `$1`, `${name}`, etc.).
 pub fn collect_regex_matches(
@@ -221,6 +250,32 @@ mod tests {
         let re = build_search_regex("foo", false, true, true).unwrap();
         assert!(re.is_match("foo bar"));
         assert!(!re.is_match("foobar"));
+    }
+
+    /// Issue #3575: plain text with case folding or whole word gets a regex
+    /// over the escaped text, so replace matches what search highlights.
+    #[test]
+    fn build_regex_plain_text_honors_case_and_whole_word() {
+        let re = build_regex("a.b", false, false, false).unwrap();
+        assert!(re.is_match(b"A.B"));
+        assert!(!re.is_match(b"axb"), "plain text must stay literal");
+
+        let re = build_regex("cat", false, true, true).unwrap();
+        assert!(re.is_match(b"a cat."));
+        assert!(!re.is_match(b"concat"));
+    }
+
+    #[test]
+    fn collect_literal_matches_does_not_expand_the_replacement() {
+        let re = build_regex("x", false, false, false).unwrap();
+        let found = collect_literal_matches(&re, b"x X", "$1\\n");
+        assert_eq!(
+            found
+                .iter()
+                .map(|m| (m.offset, m.replacement.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(0, "$1\\n"), (2, "$1\\n")]
+        );
     }
 
     #[test]

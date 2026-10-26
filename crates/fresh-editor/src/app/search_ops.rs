@@ -898,9 +898,9 @@ impl Editor {
         }
     }
 
-    /// Perform a replace-all operation
-    /// Build a compiled byte-regex for replace operations using current search settings.
-    /// Returns None when regex mode is off (plain text matching should be used).
+    /// Build a compiled byte-regex for replace operations using current search
+    /// settings. Returns None for a plain-text, case-sensitive, non-whole-word
+    /// search, which byte-exact matching handles.
     fn build_replace_regex(&self, search: &str) -> Option<regex::bytes::Regex> {
         super::regex_replace::build_regex(
             search,
@@ -952,7 +952,8 @@ impl Editor {
         // Find all matches first (before making any modifications)
         // Each match is (position, length, expanded_replacement)
         let matches: Vec<(usize, usize, String)> = if let Some(ref regex) = compiled_regex {
-            // Regex mode: load buffer content as bytes and find all matches
+            // Regex, or plain text with case folding / whole word: load the
+            // buffer content as bytes and find all matches
             // with capture group expansion in the replacement template
             let buffer_bytes = {
                 let state = self.active_state_mut();
@@ -966,7 +967,12 @@ impl Editor {
                     }
                 }
             };
-            super::regex_replace::collect_regex_matches(regex, &buffer_bytes, replacement)
+            let found = if self.active_window().search_use_regex {
+                super::regex_replace::collect_regex_matches(regex, &buffer_bytes, replacement)
+            } else {
+                super::regex_replace::collect_literal_matches(regex, &buffer_bytes, replacement)
+            };
+            found
                 .into_iter()
                 .map(|m| (m.offset, m.len, m.replacement))
                 .collect()
@@ -1094,6 +1100,7 @@ impl Editor {
             has_wrapped: false,
             replacements_made: 0,
             regex: compiled_regex,
+            expand_replacement: self.active_window().search_use_regex,
         });
 
         // Move cursor to first match and mark it as the one being asked about
@@ -1197,15 +1204,15 @@ impl Editor {
                             .active_state_mut()
                             .get_text_range(match_pos, match_pos + match_len);
                         // Expand capture group references if in regex mode
-                        let replacement_text = if let Some(ref regex) = ir_state.regex {
-                            self.expand_regex_replacement(
-                                regex,
-                                match_pos,
-                                match_len,
-                                &ir_state.replacement,
-                            )
-                        } else {
-                            ir_state.replacement.clone()
+                        let replacement_text = match ir_state.regex {
+                            Some(ref regex) if ir_state.expand_replacement => self
+                                .expand_regex_replacement(
+                                    regex,
+                                    match_pos,
+                                    match_len,
+                                    &ir_state.replacement,
+                                ),
+                            _ => ir_state.replacement.clone(),
                         };
                         events.push(Event::Delete {
                             range: match_pos..match_pos + match_len,
@@ -1342,10 +1349,11 @@ impl Editor {
         let range = match_pos..(match_pos + match_len);
 
         // Expand capture group references if in regex mode
-        let replacement_text = if let Some(ref regex) = ir_state.regex {
-            self.expand_regex_replacement(regex, match_pos, match_len, &ir_state.replacement)
-        } else {
-            ir_state.replacement.clone()
+        let replacement_text = match ir_state.regex {
+            Some(ref regex) if ir_state.expand_replacement => {
+                self.expand_regex_replacement(regex, match_pos, match_len, &ir_state.replacement)
+            }
+            _ => ir_state.replacement.clone(),
         };
 
         // Get the deleted text for the event
