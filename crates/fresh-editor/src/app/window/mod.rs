@@ -295,6 +295,19 @@ impl LspCompletionCandidate {
     }
 }
 
+/// A file a workspace listed that exists but failed to open on restore —
+/// see [`Window::unopened_files`].
+#[derive(Debug, Clone)]
+pub struct UnopenedFile {
+    /// The path as the workspace recorded it: relative to the window's root
+    /// for a file under it, absolute for an external file.
+    pub path: PathBuf,
+    /// Whether the workspace listed it under `external_files`.
+    pub external: bool,
+    /// Its saved cursor and scroll state, carried through unchanged.
+    pub state: Option<crate::workspace::SerializedFileState>,
+}
+
 pub struct Window {
     /// Stable identifier. The base window is always `WindowId(1)`.
     pub id: WindowId,
@@ -356,6 +369,14 @@ pub struct Window {
     /// Only *absent* entries count: one that is present but unusable will
     /// never resolve, and would stop the file being saved for good.
     pub unresolved_unnamed_buffers: Vec<crate::workspace::UnnamedBufferRef>,
+
+    /// Files this window's workspace listed that exist but could not be
+    /// opened this session (a permission blip, an I/O error, a path briefly
+    /// shadowed by a directory). The snapshot is built from the live
+    /// buffers, so without these a save would write each file's place away
+    /// for good (#3532); `capture_workspace` writes them back instead. A
+    /// file that is gone from disk is not listed: dropping it is right.
+    pub unopened_files: Vec<UnopenedFile>,
 
     /// Things the user needs told about this window's restore, queued by
     /// `restore_unnamed_buffers` and shown by `log_restore_summary`.
@@ -2480,6 +2501,7 @@ impl Window {
             workspace_restored: false,
             root,
             unresolved_unnamed_buffers: Vec::new(),
+            unopened_files: Vec::new(),
             recovery_notices: Vec::new(),
             connection,
             file_explorer: None,
