@@ -395,12 +395,21 @@ fn a_new_window_leaves_a_saved_co_tenants_work_to_it() {
     };
     free_entry_of_b(&b_id);
 
-    // `--no-restore`: brings it back, still B's
+    // `--no-restore`: brings it back, still B's. Where B's window is open
+    // again in this launch, the work is left to it and shows there.
     let mut config = hot_exit_config();
     config.editor.restore_previous_session = false;
     let mut h = launch_with(&root, &dir_context, config);
     h.startup(true, &[]).unwrap();
     h.render().unwrap();
+    if !h.screen_to_string().contains("B-UNSAVED") {
+        let b = (1..=64)
+            .map(fresh_core::WindowId)
+            .find(|id| h.editor().session(*id).is_some_and(|w| w.stable_id == b_id))
+            .expect("B's work is on screen, or B's window is open to take it");
+        h.editor_mut().set_active_window(b);
+        h.render().unwrap();
+    }
     h.assert_screen_contains("B-UNSAVED");
     h.shutdown(true).unwrap();
     drop(h);

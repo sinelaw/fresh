@@ -974,7 +974,7 @@ fn test_hot_exit_disabled_no_recovery() {
         )
         .unwrap();
 
-        harness.editor_mut().set_session_mode(true);
+        // Not a daemon session: there Ctrl+Q first asks Detach or Quit
         harness.open_file(&file1).unwrap();
         harness.render().unwrap();
 
