@@ -53,6 +53,10 @@ pub struct ReferenceHighlightOverlay {
     target_changed_at: Option<Instant>,
     /// Debounce delay before updating highlights
     debounce_delay: Duration,
+    /// Buffer version the last update saw, to tell an edit from a cursor move
+    seen_buffer_version: Option<u64>,
+    /// Cursor position an edit left the highlight switched off at
+    suppressed_at: Option<usize>,
     /// Whether highlighting is enabled
     pub enabled: bool,
 }
@@ -65,6 +69,8 @@ impl ReferenceHighlightOverlay {
             pending_target: None,
             target_changed_at: None,
             debounce_delay: Duration::from_millis(DEFAULT_DEBOUNCE_MS),
+            seen_buffer_version: None,
+            suppressed_at: None,
             enabled: true,
         }
     }
@@ -107,6 +113,15 @@ impl ReferenceHighlightOverlay {
     /// highlight next to a selection makes the extent of the selection
     /// impossible to read (issue #3011).
     ///
+    /// An edit drops the highlight in the edit's own frame, and it stays off
+    /// until the cursor moves for some other reason (VSCode's rule). Typing
+    /// changes the word under the cursor on every key, so re-highlighting
+    /// after typing meant a second frame per keystroke a debounce later,
+    /// restyling every visible match (issue #3631). Any change of the buffer's
+    /// version counts as an edit, which takes in a line-ending or encoding
+    /// change and text streamed into the buffer as well — VSCode, too, drops
+    /// the highlight on every content change.
+    ///
     /// Returns true if overlays were updated
     #[allow(clippy::too_many_arguments)]
     pub fn update(
@@ -122,11 +137,34 @@ impl ReferenceHighlightOverlay {
         context_bytes: usize,
         highlight_color: Color,
     ) -> bool {
+        // Tracked while disabled too, so turning the highlight on is not
+        // mistaken for an edit.
+        let version = buffer.version();
+        let edited = self.seen_buffer_version.is_some_and(|seen| seen != version);
+        self.seen_buffer_version = Some(version);
+
         if !self.enabled {
             return false;
         }
 
         let now = Instant::now();
+
+        if edited {
+            self.suppressed_at = Some(cursor_position);
+            let had_target = self.current_target.is_some();
+            if had_target {
+                overlays.clear_namespace(&reference_highlight_namespace(), marker_list);
+            }
+            self.current_target = None;
+            self.pending_target = None;
+            self.target_changed_at = None;
+            return had_target;
+        }
+        let has_selection = selection.as_ref().is_some_and(|range| !range.is_empty());
+        if self.suppressed_at == Some(cursor_position) && !has_selection {
+            return false;
+        }
+        self.suppressed_at = None;
 
         let target = match selection {
             Some(range) if !range.is_empty() => {
@@ -260,6 +298,7 @@ impl ReferenceHighlightOverlay {
         self.current_target = None;
         self.pending_target = None;
         self.target_changed_at = None;
+        self.suppressed_at = None;
     }
 
     /// Get the debounce delay
@@ -539,6 +578,71 @@ mod tests {
             Some(selection),
         );
         assert!(ranges.is_empty(), "got {ranges:?}");
+    }
+
+    /// Issue #3631: typing changes the word under the cursor on every key, and
+    /// re-highlighting it a debounce later was a second frame per keystroke.
+    /// An edit drops the highlight in its own frame instead, and it stays off
+    /// — asking for no frames — until the cursor moves for another reason.
+    #[test]
+    fn an_edit_drops_the_highlight_until_the_cursor_moves() {
+        let mut buffer = Buffer::from_str_test(SAMPLE);
+        let mut overlays = OverlayManager::new();
+        let mut markers = MarkerList::new();
+        let mut highlighter = ReferenceHighlighter::new();
+        let mut manager = ReferenceHighlightOverlay::with_debounce(0);
+
+        let before = highlighted_ranges(
+            &mut manager,
+            &buffer,
+            &mut overlays,
+            &mut markers,
+            &mut highlighter,
+            7,
+            None,
+        );
+        assert_eq!(before, vec![6..10, 23..27, 40..44]);
+
+        // Type inside "beta": the edit's own frame clears every match.
+        buffer.insert(8, "x");
+        let changed = manager.update(
+            &buffer,
+            &mut overlays,
+            &mut markers,
+            &mut highlighter,
+            9,
+            None,
+            0,
+            buffer.len(),
+            100_000,
+            Color::Rgb(60, 60, 80),
+        );
+        assert!(changed, "clearing the highlight has to repaint");
+        assert!(manager.next_deadline().is_none(), "nothing is left armed");
+
+        // Later frames at the same cursor leave it off.
+        let held = highlighted_ranges(
+            &mut manager,
+            &buffer,
+            &mut overlays,
+            &mut markers,
+            &mut highlighter,
+            9,
+            None,
+        );
+        assert!(held.is_empty(), "got {held:?}");
+
+        // Moving the cursor brings it back: "alpha" is under it now.
+        let moved = highlighted_ranges(
+            &mut manager,
+            &buffer,
+            &mut overlays,
+            &mut markers,
+            &mut highlighter,
+            1,
+            None,
+        );
+        assert_eq!(moved.len(), 3, "got {moved:?}");
     }
 
     #[test]

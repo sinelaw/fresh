@@ -638,6 +638,7 @@ pub(crate) fn build_line_tokens_from(
     line_ending: LineEnding,
     fold_skip: &[std::ops::Range<usize>],
     from_byte: Option<usize>,
+    char_budget: Option<usize>,
 ) -> Vec<ViewTokenWire> {
     use crate::primitives::line_iterator::MAX_LINE_BYTES;
 
@@ -658,6 +659,11 @@ pub(crate) fn build_line_tokens_from(
     // is left over from a forced break the character loop used to inject every
     // `MAX_SAFE_LINE_WIDTH` characters; it stays because over-asking is free
     // here and under-asking truncates a line the index is about to measure.
+    //
+    // `char_budget` is the exception: a repair that only needs the rows next
+    // to an edit asks for a window instead, and stops reading there. Text
+    // merges across the reader's pieces, so the window's tokens are the full
+    // read's tokens up to the cut — only the last one may be cut short.
     let start = from_byte.filter(|b| *b > line_start && *b < line_end);
     let read_from = start.unwrap_or(line_start);
     let line_bytes = line_end.saturating_sub(read_from);
@@ -670,7 +676,7 @@ pub(crate) fn build_line_tokens_from(
         false,
         line_ending,
         fold_skip,
-        None,
+        char_budget,
         None,
         start.is_some(),
     );
