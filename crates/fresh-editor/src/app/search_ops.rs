@@ -910,28 +910,16 @@ impl Editor {
         )
     }
 
-    /// First match of a plain-text replace's `regex` (the escaped query, see
-    /// `build_regex`) within `range`, as `(start, len)`. Streams the buffer
-    /// like the byte-exact path rather than reading it to the end, and reads
-    /// just past the range so a whole-word match is judged by the text
-    /// around it.
-    fn find_plain_match(
-        &self,
+    /// Get the length of a regex match at a given position in the buffer,
+    /// reading at most `max_len` bytes from it.
+    fn get_regex_match_len(
+        &mut self,
         regex: &regex::bytes::Regex,
-        search: &str,
-        range: std::ops::Range<usize>,
-    ) -> Option<(usize, usize)> {
-        self.active_state()
-            .buffer
-            .find_regex_matches_in_range(regex, range, plain_match_len_bound(search), 1)
-            .into_iter()
-            .next()
-    }
-
-    /// Get the length of a regex match at a given position in the buffer.
-    fn get_regex_match_len(&mut self, regex: &regex::bytes::Regex, pos: usize) -> Option<usize> {
+        pos: usize,
+        max_len: usize,
+    ) -> Option<usize> {
         let state = self.active_state_mut();
-        let remaining = state.buffer.len().saturating_sub(pos);
+        let remaining = state.buffer.len().saturating_sub(pos).min(max_len);
         if remaining == 0 {
             return None;
         }
@@ -973,21 +961,26 @@ impl Editor {
             .as_ref()
             .filter(|_| !self.active_window().search_use_regex)
         {
-            // Plain text with case folding or whole word: one streaming pass,
-            // like the byte-exact path below; the replacement is literal.
-            let state = self.active_state();
-            let buffer_len = state.buffer.len();
-            state
-                .buffer
-                .find_regex_matches_in_range(
-                    regex,
-                    0..buffer_len,
-                    plain_match_len_bound(search),
-                    usize::MAX,
-                )
-                .into_iter()
-                .map(|(offset, len)| (offset, len, replacement.to_string()))
-                .collect()
+            // Plain text with case folding or whole word: the chunked scan
+            // Ctrl+F runs on large files, so a lazily loaded file is not read
+            // in whole. The replacement is literal.
+            let scan = self.active_state_mut().buffer.search_scan_all(
+                regex.clone(),
+                usize::MAX,
+                plain_match_len_bound(search),
+            );
+            match scan {
+                Ok(scan) => scan
+                    .matches
+                    .into_iter()
+                    .map(|m| (m.byte_offset, m.length, replacement.to_string()))
+                    .collect(),
+                Err(e) => {
+                    tracing::warn!("Failed to scan buffer for replace: {}", e);
+                    self.set_status_message(t!("error.buffer_not_loaded").to_string());
+                    return;
+                }
+            }
         } else if let Some(ref regex) = compiled_regex {
             // Regex mode: load buffer content as bytes and find all matches
             // with capture group expansion in the replacement template
@@ -1089,20 +1082,7 @@ impl Editor {
 
         // Find the first match lazily (don't find all matches upfront)
         let start_pos = self.active_cursors().primary().position;
-        let plain_regex = compiled_regex
-            .as_ref()
-            .filter(|_| !self.active_window().search_use_regex);
-        let (first_match_pos, first_match_len) = if let Some(regex) = plain_regex {
-            let buffer_len = self.active_state().buffer.len();
-            let found = self
-                .find_plain_match(regex, search, start_pos..buffer_len)
-                .or_else(|| self.find_plain_match(regex, search, 0..start_pos));
-            let Some(found) = found else {
-                self.set_status_message(t!("search.no_occurrences", search = search).to_string());
-                return;
-            };
-            found
-        } else if let Some(ref regex) = compiled_regex {
+        let (first_match_pos, first_match_len) = if let Some(ref regex) = compiled_regex {
             let state = self.active_state();
             let buffer_len = state.buffer.len();
             // Try from cursor to end, then wrap from beginning
@@ -1123,7 +1103,10 @@ impl Editor {
                 return;
             };
             // Determine the match length by re-matching at the found position
-            let match_len = self.get_regex_match_len(regex, pos).unwrap_or(search.len());
+            let max_len = replace_match_len_bound(self.active_window().search_use_regex, search);
+            let match_len = self
+                .get_regex_match_len(regex, pos, max_len)
+                .unwrap_or(search.len());
             (pos, match_len)
         } else {
             let state = self.active_state();
@@ -1303,28 +1286,10 @@ impl Editor {
         ir_state: &InteractiveReplaceState,
         start_pos: usize,
     ) -> Option<(usize, usize, bool)> {
-        if let Some(regex) = ir_state
-            .regex
-            .as_ref()
-            .filter(|_| !ir_state.expand_replacement)
-        {
-            // Plain text with case folding or whole word
-            let search = &ir_state.search;
-            if ir_state.has_wrapped {
-                return self
-                    .find_plain_match(regex, search, start_pos..ir_state.start_pos)
-                    .map(|(pos, len)| (pos, len, true));
-            }
-            let buffer_len = self.active_state().buffer.len();
-            self.find_plain_match(regex, search, start_pos..buffer_len)
-                .map(|(pos, len)| (pos, len, false))
-                .or_else(|| {
-                    self.find_plain_match(regex, search, 0..ir_state.start_pos)
-                        .map(|(pos, len)| (pos, len, true))
-                })
-        } else if let Some(ref regex) = ir_state.regex {
-            // Regex mode
+        if let Some(ref regex) = ir_state.regex {
+            // Regex mode, or plain text with case folding / whole word
             let regex = regex.clone();
+            let max_len = replace_match_len_bound(ir_state.expand_replacement, &ir_state.search);
             let state = self.active_state();
             let buffer_len = state.buffer.len();
 
@@ -1335,7 +1300,9 @@ impl Editor {
                         .buffer
                         .find_next_regex_in_range(&regex, start_pos, search_range)
                 {
-                    let match_len = self.get_regex_match_len(&regex, match_pos).unwrap_or(0);
+                    let match_len = self
+                        .get_regex_match_len(&regex, match_pos, max_len)
+                        .unwrap_or(0);
                     return Some((match_pos, match_len, true));
                 }
                 None
@@ -1346,7 +1313,9 @@ impl Editor {
                         .buffer
                         .find_next_regex_in_range(&regex, start_pos, search_range)
                 {
-                    let match_len = self.get_regex_match_len(&regex, match_pos).unwrap_or(0);
+                    let match_len = self
+                        .get_regex_match_len(&regex, match_pos, max_len)
+                        .unwrap_or(0);
                     return Some((match_pos, match_len, false));
                 }
 
@@ -1356,7 +1325,9 @@ impl Editor {
                 if let Some(match_pos) =
                     state.buffer.find_next_regex_in_range(&regex, 0, wrap_range)
                 {
-                    let match_len = self.get_regex_match_len(&regex, match_pos).unwrap_or(0);
+                    let match_len = self
+                        .get_regex_match_len(&regex, match_pos, max_len)
+                        .unwrap_or(0);
                     return Some((match_pos, match_len, true));
                 }
 
@@ -1507,4 +1478,16 @@ impl Editor {
 /// it folds with is 3), and no character is longer than 4.
 fn plain_match_len_bound(search: &str) -> usize {
     search.chars().count() * 4
+}
+
+/// How far to read from a replace match to measure it: to the end of the
+/// buffer for a regex, whose match can be any length, but only a match's
+/// worth (plus a character for `\b`) for plain text — re-reading the rest
+/// of the buffer per match made confirm-each quadratic.
+fn replace_match_len_bound(use_regex: bool, search: &str) -> usize {
+    if use_regex {
+        usize::MAX
+    } else {
+        plain_match_len_bound(search) + 4
+    }
 }

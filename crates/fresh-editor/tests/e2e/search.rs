@@ -3364,3 +3364,130 @@ fn test_interactive_plain_replace_honors_case_insensitive_search() {
     }
     assert_eq!(harness.get_buffer_content().unwrap(), "x x\nx x\n");
 }
+
+/// Issue #3575 on a lazily loaded large file: plain-text replace with case
+/// folding (the default) goes through the chunked scan, so it reaches every
+/// occurrence in parts of the file not yet loaded, in either case.
+#[test]
+fn test_plain_replace_case_insensitive_in_a_large_file() {
+    const LINES: usize = 20_000;
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("big.txt");
+    let content: String = (0..LINES)
+        .map(|i| {
+            let word = if i % 2 == 0 { "Source" } else { "sOURCE" };
+            format!("line {i:05}: some {word} code here\n")
+        })
+        .collect();
+    std::fs::write(&file_path, &content).unwrap();
+
+    let config = Config {
+        editor: fresh::config::EditorConfig {
+            large_file_threshold_bytes: 1000,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut harness = EditorTestHarness::with_config(100, 24, config).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('r'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_screen_contains("Replace: ").unwrap();
+    harness.type_text("source").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_for_screen_contains("Replace 'source' with: ")
+        .unwrap();
+    harness.type_text("SRC").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_for_screen_contains(&format!("Replaced {LINES} occurrence"))
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|_| {
+            std::fs::read_to_string(&file_path).is_ok_and(|s| s.matches("SRC").count() == LINES)
+        })
+        .unwrap();
+    let saved = std::fs::read_to_string(&file_path).unwrap();
+    assert_eq!(saved.to_lowercase().matches("source").count(), 0);
+}
+
+/// Confirm-each replace on a lazily loaded large file prompts for every
+/// occurrence, including those in parts of the file not loaded yet, and
+/// never stops early.
+#[test]
+fn test_interactive_replace_prompts_for_every_match_in_a_large_file() {
+    const MATCHES: usize = 40;
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("big.txt");
+    // Matches spread through ~4MB, so most of them sit in chunks that are
+    // not loaded when the replace starts.
+    let filler = "x".repeat(100_000);
+    let content: String = (0..MATCHES)
+        .map(|i| {
+            let word = if i % 2 == 0 { "Source" } else { "sOURCE" };
+            format!("{filler}\n{word}\n")
+        })
+        .collect();
+    std::fs::write(&file_path, &content).unwrap();
+
+    let config = Config {
+        editor: fresh::config::EditorConfig {
+            large_file_threshold_bytes: 1000,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut harness = EditorTestHarness::with_config(100, 24, config).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('r'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_screen_contains("Replace: ").unwrap();
+    harness
+        .send_key(KeyCode::Char('i'), KeyModifiers::ALT)
+        .unwrap();
+    harness.type_text("source").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_for_screen_contains("Replace 'source' with: ")
+        .unwrap();
+    harness.type_text("SRC").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    for n in 0..MATCHES {
+        harness
+            .wait_for_screen_contains("Replace? ")
+            .unwrap_or_else(|_| panic!("prompt for match {n} of {MATCHES}"));
+        harness
+            .send_key(KeyCode::Char('y'), KeyModifiers::NONE)
+            .unwrap();
+        harness.render().unwrap();
+    }
+    harness
+        .wait_for_screen_contains(&format!("{MATCHES}"))
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|_| {
+            std::fs::read_to_string(&file_path).is_ok_and(|s| s.matches("SRC").count() == MATCHES)
+        })
+        .unwrap();
+}
