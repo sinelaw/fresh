@@ -179,8 +179,6 @@ pub struct Store {
     /// changed on disk under a large file's deltas): not offered again this
     /// session, where every workspace switch would take them back once more.
     given_back: HashSet<String>,
-    /// Entries this editor took over from the store, rather than wrote first.
-    taken_over: HashSet<String>,
     /// Entries taken without re-stamping (see [`Self::claim`]): they stay
     /// the workspace's they name through every later write.
     keep_stamp: HashSet<String>,
@@ -194,7 +192,6 @@ impl Store {
             touched: HashSet::new(),
             must_keep: HashSet::new(),
             given_back: HashSet::new(),
-            taken_over: HashSet::new(),
             keep_stamp: HashSet::new(),
         })
     }
@@ -243,11 +240,6 @@ impl Store {
     /// taken without re-stamping) rather than stamp the writer's.
     pub fn keeps_stamp(&self, id: &str) -> bool {
         self.keep_stamp.contains(id)
-    }
-
-    /// Whether this editor took entry `id` over rather than wrote it first.
-    pub fn took_over(&self, id: &str) -> bool {
-        self.taken_over.contains(id)
     }
 
     /// [`Self::release`] an entry this editor took but could not restore,
@@ -437,7 +429,6 @@ impl Store {
             });
         match taken {
             Ok(claimed) => {
-                self.taken_over.insert(claimed.id.clone());
                 if !restamp {
                     self.keep_stamp.insert(claimed.id.clone());
                 }

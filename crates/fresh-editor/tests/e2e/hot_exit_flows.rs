@@ -943,7 +943,9 @@ fn test_multiple_unnamed_buffers_preserved() {
     }
 }
 
-/// Hot exit disabled: modified buffers should NOT be recovered.
+/// Hot exit disabled: modified buffers the user discards at the quit prompt
+/// are not recovered. Discarding is the user's choice to make; an exit that
+/// asks nothing keeps the work (see `recovery_across_launch_modes`).
 #[test]
 fn test_hot_exit_disabled_no_recovery() {
     let temp_dir = TempDir::new().unwrap();
@@ -980,10 +982,20 @@ fn test_hot_exit_disabled_no_recovery() {
         harness.type_text(" SHOULD_NOT_RECOVER").unwrap();
         harness.render().unwrap();
 
+        harness
+            .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+        harness
+            .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
+            .unwrap();
+        harness.render().unwrap();
+        assert!(harness.should_quit(), "Discard and Quit quits");
+
         harness.shutdown(true).unwrap();
     }
 
-    // Session 2: restore — with hot_exit off, no recovery data should exist
+    // Session 2: restore — the discarded edit left no recovery data
     {
         let mut config = Config::default();
         config.editor.hot_exit = false;

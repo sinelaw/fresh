@@ -56,29 +56,28 @@ impl Editor {
     /// active one is what let a quit from a clean workspace delete another's
     /// unsaved work (issue #3189).
     pub fn end_recovery_session(&mut self) -> AnyhowResult<()> {
-        let hot_exit = self.config.editor.hot_exit;
-
-        if hot_exit {
-            // Matters most for background workspaces: a buffer edited and
-            // switched away from inside the auto-save interval has nothing on
-            // disk at all until this runs.
-            for window in self.windows.values_mut() {
-                for (_, state) in &mut window.buffers {
-                    if state.buffer.is_modified() {
-                        state.buffer.set_recovery_pending(true);
-                    }
+        // Matters most for background workspaces: a buffer edited and
+        // switched away from inside the auto-save interval has nothing on
+        // disk at all until this runs.
+        for window in self.windows.values_mut() {
+            for (_, state) in &mut window.buffers {
+                if state.buffer.is_modified() {
+                    state.buffer.set_recovery_pending(true);
                 }
             }
-            for window_id in self.window_ids_sorted() {
-                self.with_window_retargeted(window_id, |editor| {
-                    editor.save_pending_recovery_buffers()
-                })?;
-            }
+        }
+        for window_id in self.window_ids_sorted() {
+            self.with_window_retargeted(window_id, |editor| {
+                editor.save_pending_recovery_buffers()
+            })?;
         }
 
-        // With `hot_exit` off nothing is kept — the quit prompt has already
-        // forced every live buffer to be saved or discarded — and what this
-        // editor held goes. Nothing it did not hold is touched either way.
+        // Whatever is still modified now, the user never chose to discard:
+        // the quit prompt's Discard clears the flags, so it is an exit that
+        // asked nothing (Force Quit, a daemon shutting down, the GUI window
+        // closing) or one hot exit let through. It is kept, `hot_exit` on or
+        // off; what this editor held otherwise goes, and nothing it did not
+        // hold is touched.
         let keep = self.recovery_ids_to_preserve();
         self.recovery_service.lock().unwrap().end_session(&keep);
         Ok(())
@@ -93,26 +92,19 @@ impl Editor {
     /// plugin calls once the user has decided. This layer's job is only to
     /// leave the content somewhere recoverable (issue #3189).
     ///
-    /// The flush is gated on `hot_exit` to match
-    /// [`Editor::end_recovery_session`], but what the buffers already have in
-    /// the store is let go either way: with them gone, nothing will resolve
-    /// it, and holding it would have the exit delete it.
+    /// Done whatever `hot_exit` says: nobody chose to discard this work, and
+    /// holding it would have the exit delete it.
     pub(crate) fn flush_window_recovery(&mut self, window_id: WindowId) -> AnyhowResult<usize> {
-        if !self.windows.contains_key(&window_id) {
+        let Some(window) = self.windows.get_mut(&window_id) else {
             return Ok(0);
-        }
-        let flushed = if self.config.editor.hot_exit {
-            if let Some(window) = self.windows.get_mut(&window_id) {
-                for (_, state) in &mut window.buffers {
-                    if state.buffer.is_modified() {
-                        state.buffer.set_recovery_pending(true);
-                    }
-                }
-            }
-            self.with_window_retargeted(window_id, |editor| editor.save_pending_recovery_buffers())?
-        } else {
-            0
         };
+        for (_, state) in &mut window.buffers {
+            if state.buffer.is_modified() {
+                state.buffer.set_recovery_pending(true);
+            }
+        }
+        let flushed = self
+            .with_window_retargeted(window_id, |editor| editor.save_pending_recovery_buffers())?;
         let Some(window) = self.windows.get(&window_id) else {
             return Ok(flushed);
         };
@@ -140,16 +132,9 @@ impl Editor {
     }
 
     /// The recovery ids of the buffers still holding unsaved work, across
-    /// every open workspace: what a clean exit keeps for hot exit.
-    ///
-    /// With `hot_exit` off, only those this editor took over from the store
-    /// (an earlier session's, a crash's): they were never this session's to
-    /// drop, and an exit that asked nothing (a daemon shutting down, Force
-    /// Quit) would otherwise delete them.
+    /// every open workspace: what a clean exit keeps.
     fn recovery_ids_to_preserve(&self) -> std::collections::HashSet<String> {
         let mut out = std::collections::HashSet::new();
-        let hot_exit = self.config.editor.hot_exit;
-        let service = self.recovery_service.lock().unwrap();
         for window in self.windows.values() {
             for (buffer_id, meta) in window.buffer_metadata.iter() {
                 if meta.hidden_from_tabs || meta.is_virtual() {
@@ -166,9 +151,7 @@ impl Editor {
                     continue;
                 }
                 if let Some(id) = &meta.recovery_id {
-                    if hot_exit || service.took_over(id) {
-                        out.insert(id.clone());
-                    }
+                    out.insert(id.clone());
                 }
             }
         }

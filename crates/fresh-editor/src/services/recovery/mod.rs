@@ -172,12 +172,6 @@ impl RecoveryService {
         }
     }
 
-    /// Whether this editor took entry `id` over from the store (a hot exit,
-    /// a crash, another launch), rather than writing it first itself.
-    pub fn took_over(&self, id: &str) -> bool {
-        self.store.as_ref().is_some_and(|store| store.took_over(id))
-    }
-
     /// The ids of the workspaces on `root`: those with a workspace file,
     /// and `open` — this editor's windows on it, some of which may never
     /// have been saved.

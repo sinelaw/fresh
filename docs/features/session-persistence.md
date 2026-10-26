@@ -60,6 +60,8 @@ See also: [Remote Editing (SSH)](./ssh.md) for pairing daemon mode with remote b
 
 All buffers — including unnamed scratch buffers — persist automatically. When you quit Fresh, unsaved changes are preserved and restored on next startup. Configurable via the `hot_exit` setting (default: on).
 
+With `hot_exit` off, quitting asks you to save or discard every unsaved buffer, unnamed ones included, and offers no way to keep them for later. Fresh only drops unsaved work you chose to discard: work left by a crash, by an exit that asked nothing (Force Quit, a daemon shutting down, the GUI window closing) or by a workspace window closed from the Orchestrator is kept and comes back the next time that project is opened.
+
 Unsaved changes follow the directory, not the way Fresh was launched: an edit left unsaved in a bare `fresh` (with Auto Attach) comes back in `fresh FILE`, `fresh DIR` or a bare `fresh` with Auto Attach off, and the other way round. While the editor that holds them is still running — a detached daemon, say — they stay with it.
 
 ## Workspace Storage

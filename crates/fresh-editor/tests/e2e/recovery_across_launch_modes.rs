@@ -216,8 +216,8 @@ fn hot_exit_off() -> Config {
 }
 
 /// With `hot_exit` off, closing a workspace window still leaves its unsaved
-/// work in the store: nothing asked about it, and holding it would have
-/// this editor's exit delete it.
+/// work in the store, up to the last keystroke: nothing asked about it, and
+/// holding it would have this editor's exit delete it.
 #[test]
 fn with_hot_exit_off_a_closed_windows_work_survives_the_exit() {
     let (temp, project, dir_context) = project();
@@ -233,11 +233,8 @@ fn with_hot_exit_off_a_closed_windows_work_survives_the_exit() {
     harness.render().unwrap();
     harness.new_buffer().unwrap();
     harness.type_text("CLOSED-WINDOW-WORK").unwrap();
-    harness
-        .editor_mut()
-        .auto_recovery_save_dirty_buffers()
-        .unwrap();
-    assert_eq!(entries_for(&dir_context, &other_root), 1);
+    // No backup tick yet: the close itself writes it
+    assert_eq!(entries_for(&dir_context, &other_root), 0);
 
     harness.editor_mut().set_active_window(home);
     harness.render().unwrap();
@@ -249,11 +246,65 @@ fn with_hot_exit_off_a_closed_windows_work_survives_the_exit() {
         1,
         "the closed window's unsaved work was deleted at exit"
     );
+
+    let mut next = launch_with(&other_root, &dir_context, hot_exit_off());
+    next.startup(true, &[]).unwrap();
+    next.render().unwrap();
+    next.assert_screen_contains("CLOSED-WINDOW-WORK");
+}
+
+/// With `hot_exit` off, an exit that asked nothing (a daemon shutting down,
+/// Force Quit, the GUI window closing) keeps this session's unsaved work, up
+/// to the last keystroke: only the user discards it, at the quit prompt.
+#[test]
+fn with_hot_exit_off_an_exit_that_asked_nothing_keeps_unsaved_work() {
+    let (_temp, project, dir_context) = project();
+    {
+        let mut off = launch_with(&project, &dir_context, hot_exit_off());
+        off.startup(true, &[]).unwrap();
+        off.open_file(&project.join("a.txt")).unwrap();
+        off.type_text("FILE-EDIT ").unwrap();
+        off.new_buffer().unwrap();
+        off.type_text("SCRATCH-WORK").unwrap();
+        off.render().unwrap();
+        // No backup tick, no quit prompt
+        off.shutdown(true).unwrap();
+    }
+    assert_eq!(
+        entries_for(&dir_context, &project),
+        2,
+        "both buffers' work is kept"
+    );
+
+    let mut next = launch_with(&project, &dir_context, hot_exit_off());
+    next.startup(true, &[]).unwrap();
+    next.render().unwrap();
+    next.assert_screen_contains("SCRATCH-WORK");
+}
+
+/// With `hot_exit` off, `fresh FILE` brings back that file's unsaved work
+/// from an exit that asked nothing: kept, it has to be findable too.
+#[test]
+fn with_hot_exit_off_a_file_launch_brings_back_its_files_work() {
+    let (_temp, project, dir_context) = project();
+    let file = project.join("a.txt");
+    {
+        let mut off = launch_with(&project, &dir_context, hot_exit_off());
+        off.startup(true, &[]).unwrap();
+        off.open_file(&file).unwrap();
+        off.type_text("KEPT-FILE-EDIT ").unwrap();
+        off.render().unwrap();
+        off.shutdown(true).unwrap();
+    }
+
+    let mut next = launch_with(&project, &dir_context, hot_exit_off());
+    next.startup(true, std::slice::from_ref(&file)).unwrap();
+    next.render().unwrap();
+    next.assert_screen_contains("KEPT-FILE-EDIT");
 }
 
 /// With `hot_exit` off, a buffer an earlier session kept is shown — and an
-/// exit that asked nothing about it (a daemon shutting down, Force Quit)
-/// leaves it in the store, since this session never resolved it.
+/// exit that asked nothing about it leaves it in the store.
 #[test]
 fn with_hot_exit_off_work_taken_over_survives_an_exit_that_asked_nothing() {
     let (_temp, project, dir_context) = project();
@@ -279,4 +330,29 @@ fn with_hot_exit_off_work_taken_over_survives_an_exit_that_asked_nothing() {
     on.startup(true, &[]).unwrap();
     on.render().unwrap();
     on.assert_screen_contains("KEPT-BY-HOT-EXIT");
+}
+
+/// With `hot_exit` off, Discard and Quit at the quit prompt is the user's
+/// choice to drop the work: nothing of it is left in the store.
+#[test]
+fn with_hot_exit_off_discard_at_the_quit_prompt_leaves_nothing() {
+    let (_temp, project, dir_context) = project();
+    let mut off = launch_with(&project, &dir_context, hot_exit_off());
+    off.startup(true, &[]).unwrap();
+    off.new_buffer().unwrap();
+    off.type_text("THROW-AWAY").unwrap();
+    off.render().unwrap();
+    off.editor_mut().auto_recovery_save_dirty_buffers().unwrap();
+    assert_eq!(entries_for(&dir_context, &project), 1);
+
+    off.send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+        .unwrap();
+    off.render().unwrap();
+    off.send_key(KeyCode::Char('d'), KeyModifiers::NONE)
+        .unwrap();
+    off.render().unwrap();
+    assert!(off.should_quit());
+    off.shutdown(true).unwrap();
+    drop(off);
+    assert_eq!(entries_for(&dir_context, &project), 0);
 }
