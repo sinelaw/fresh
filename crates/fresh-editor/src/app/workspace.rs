@@ -3356,7 +3356,7 @@ impl crate::app::window::Window {
 
         let bookmarks = serialize_bookmarks(&self.bookmarks, &self.buffer_metadata, &self.root);
 
-        let external_files: Vec<PathBuf> = self
+        let mut external_files: Vec<PathBuf> = self
             .buffer_metadata
             .values()
             .filter(|meta| !meta.hidden_from_tabs && !meta.is_virtual())
@@ -3365,18 +3365,13 @@ impl crate::app::window::Window {
             .filter(|abs_path| !abs_path.as_os_str().is_empty())
             .filter(|abs_path| abs_path.strip_prefix(&self.root).is_err())
             .cloned()
-            .chain(
-                self.unopened_files
-                    .iter()
-                    .filter(|f| f.external)
-                    .map(|f| f.path.clone()),
-            )
-            .fold(Vec::new(), |mut acc, p| {
-                if !acc.contains(&p) {
-                    acc.push(p);
-                }
-                acc
-            });
+            .collect();
+        // Files the restore could not open keep their place (#3532).
+        for held in self.unopened_files.iter().filter(|f| f.external) {
+            if !external_files.contains(&held.path) {
+                external_files.push(held.path.clone());
+            }
+        }
 
         let read_only_files: Vec<PathBuf> = self
             .buffer_metadata

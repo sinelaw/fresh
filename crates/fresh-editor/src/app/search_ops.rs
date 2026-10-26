@@ -921,6 +921,24 @@ impl Editor {
         regex.find(&bytes).map(|m| m.len())
     }
 
+    /// Read the whole active buffer, loading whatever parts of a lazily loaded
+    /// file are not in memory yet. A replace must reach every occurrence, and
+    /// the per-match searches read only loaded data, so they would otherwise
+    /// stop short where the unloaded part begins. Reports a failure and
+    /// returns `None`.
+    fn load_whole_buffer_for_replace(&mut self) -> Option<Vec<u8>> {
+        let state = self.active_state_mut();
+        let total_bytes = state.buffer.len();
+        match state.buffer.get_text_range_mut(0, total_bytes) {
+            Ok(bytes) => Some(bytes),
+            Err(e) => {
+                tracing::warn!("Failed to load buffer for replace: {}", e);
+                self.set_status_message(t!("error.buffer_not_loaded").to_string());
+                None
+            }
+        }
+    }
+
     /// The next match of a replace's `regex` from `start` within `range`, as
     /// `(start, len)`. A regex match is measured again to the end of the
     /// buffer, since it can run past the chunk the search found it in; a
@@ -971,52 +989,27 @@ impl Editor {
         }
 
         let compiled_regex = self.build_replace_regex(search);
+        let Some(buffer_bytes) = self.load_whole_buffer_for_replace() else {
+            return;
+        };
 
         // Find all matches first (before making any modifications)
         // Each match is (position, length, expanded_replacement)
-        let matches: Vec<(usize, usize, String)> = if let Some(regex) = compiled_regex
-            .as_ref()
-            .filter(|_| !self.active_window().search_use_regex)
-        {
-            // Plain text with case folding or whole word: the chunked scan
-            // Ctrl+F runs on large files, so a lazily loaded file is not read
-            // in whole. The replacement is literal.
-            let scan = self.active_state_mut().buffer.search_scan_all(
-                regex.clone(),
-                usize::MAX,
-                plain_match_len_bound(search),
-            );
-            match scan {
-                Ok(scan) => scan
-                    .matches
+        let matches: Vec<(usize, usize, String)> = if let Some(ref regex) = compiled_regex {
+            if self.active_window().search_use_regex {
+                // Regex mode: capture group expansion in the replacement template
+                super::regex_replace::collect_regex_matches(regex, &buffer_bytes, replacement)
                     .into_iter()
-                    .map(|m| (m.byte_offset, m.length, replacement.to_string()))
-                    .collect(),
-                Err(e) => {
-                    tracing::warn!("Failed to scan buffer for replace: {}", e);
-                    self.set_status_message(t!("error.buffer_not_loaded").to_string());
-                    return;
-                }
+                    .map(|m| (m.offset, m.len, m.replacement))
+                    .collect()
+            } else {
+                // Plain text with case folding or whole word: the replacement
+                // is literal
+                regex
+                    .find_iter(&buffer_bytes)
+                    .map(|m| (m.start(), m.len(), replacement.to_string()))
+                    .collect()
             }
-        } else if let Some(ref regex) = compiled_regex {
-            // Regex mode: load buffer content as bytes and find all matches
-            // with capture group expansion in the replacement template
-            let buffer_bytes = {
-                let state = self.active_state_mut();
-                let total_bytes = state.buffer.len();
-                match state.buffer.get_text_range_mut(0, total_bytes) {
-                    Ok(bytes) => bytes,
-                    Err(e) => {
-                        tracing::warn!("Failed to load buffer for replace: {}", e);
-                        self.set_status_message(t!("error.buffer_not_loaded").to_string());
-                        return;
-                    }
-                }
-            };
-            super::regex_replace::collect_regex_matches(regex, &buffer_bytes, replacement)
-                .into_iter()
-                .map(|m| (m.offset, m.len, m.replacement))
-                .collect()
         } else {
             // Plain text mode - replacement is used literally.
             // One streaming pass over the buffer: asking for the next match
@@ -1096,6 +1089,9 @@ impl Editor {
         }
 
         let compiled_regex = self.build_replace_regex(search);
+        if self.load_whole_buffer_for_replace().is_none() {
+            return;
+        }
 
         // Find the first match lazily (don't find all matches upfront)
         let start_pos = self.active_cursors().primary().position;
@@ -1444,13 +1440,4 @@ impl Editor {
 
         self.set_status_message(t!("search.replaced_count", count = replacements_made).to_string());
     }
-}
-
-/// The longest a match of a plain-text query can be, in bytes — what the
-/// chunked scan must carry across a chunk boundary so no match straddling one
-/// is missed. Case folding can change a character's UTF-8 length (`k` is 1
-/// byte, the Kelvin sign `K` it folds with is 3), and no character is longer
-/// than 4.
-fn plain_match_len_bound(search: &str) -> usize {
-    search.chars().count() * 4
 }

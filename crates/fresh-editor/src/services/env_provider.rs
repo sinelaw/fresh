@@ -319,7 +319,8 @@ fn build_capture_script(snippet: &str, dir: Option<&Path>) -> String {
 
 /// The marker line [`ENV_DUMP`] prints before the env records. Whatever the
 /// login shell or the recipe wrote to stdout comes before it and is dropped,
-/// so their output can never be read as (or merged into) a variable.
+/// so their output can never be read as (or merged into) a variable. The
+/// plugins' copy is in `plugins/lib/env_dump.ts`.
 macro_rules! env_dump_marker {
     () => {
         "__FRESH_ENV_DUMP_5d0b7a__"

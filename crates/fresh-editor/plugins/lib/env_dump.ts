@@ -5,15 +5,18 @@
 
 /** The line `ENV_DUMP` prints before the env records. Whatever the login
  *  shell's rc files wrote to stdout comes before it and is dropped, so their
- *  output is never read as, or merged into, a variable. */
+ *  output is never read as, or merged into, a variable. The same marker is
+ *  `ENV_DUMP_MARKER` in services/env_provider.rs, and the fake docker in
+ *  scripts/fake-devcontainer matches it. */
 const ENV_DUMP_MARKER = "__FRESH_ENV_DUMP_5d0b7a__";
 
 /** Shell command that prints the marker line, then the environment.
  *  `env -0` ends each `KEY=VALUE` record with NUL instead of a newline, so a
  *  multi-line value (an exported Bash function) is not cut short and its
  *  continuation lines are not read as variables of their own (#3586). An
- *  `env` without `-0` falls back to one record per line. */
-export const ENV_DUMP = `printf '\\n%s\\n' ${ENV_DUMP_MARKER}; env -0 2>/dev/null || env`;
+ *  `env` without `-0` falls back to one record per line. `command` bypasses
+ *  an `env` alias or function an interactive rc file may define. */
+export const ENV_DUMP = `printf '\\n%s\\n' ${ENV_DUMP_MARKER}; command env -0 2>/dev/null || command env`;
 
 /** Parse an `ENV_DUMP` into `[key, value]` pairs: everything up to the
  *  marker line is dropped (output with no marker is read whole), then the
