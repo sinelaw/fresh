@@ -501,6 +501,21 @@ impl<A: GuiApplication + 'static> ApplicationHandler for WgpuRunner<A> {
                 state.needs_render = false;
             }
 
+            // A redraw the editor did not ask for comes from the window
+            // system: on X11, an Expose when the window is shown again
+            // (workspace switch, un-minimize, Alt+Tab) and its old contents
+            // are gone. ratatui sends only changed cells and the wgpu backend
+            // presents only when a cell changed, so an idle editor would
+            // present nothing and leave another window's pixels in the frame.
+            // Reset ratatui's buffers so the next draw repaints and presents
+            // every row.
+            WindowEvent::RedrawRequested if !state.needs_render => {
+                if let Err(e) = state.terminal.clear() {
+                    tracing::error!("Clear error: {}", e);
+                }
+                state.needs_render = true;
+            }
+
             _ => {}
         }
     }
