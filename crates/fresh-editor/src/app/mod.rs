@@ -4337,6 +4337,7 @@ mod tests {
     /// window retains where the panes are, so the neighbour query — which
     /// pane is beside this one, by geometry — answers off the grid as it is.
     #[cfg(feature = "plugins")]
+    #[cfg(debug_assertions)]
     #[test]
     fn a_new_pane_is_beside_its_source_before_any_frame() {
         use crate::view::shell::geometry::stats;
@@ -4464,6 +4465,7 @@ mod tests {
     /// fact the key produced is applied over the tree that produced it, and
     /// its context read does not lay it out again. Two layouts per key made
     /// typing a long text on CI time out.
+    #[cfg(debug_assertions)]
     #[test]
     fn a_typed_key_lays_the_tree_out_once() {
         use crate::view::shell::geometry::stats;
@@ -4547,6 +4549,7 @@ mod tests {
     /// Every window's panes are placed by the layout funnel, not only the
     /// active window's: the active window's off the frame, another window's
     /// off one offscreen layout of its own grid at its own body.
+    #[cfg(debug_assertions)]
     #[test]
     fn the_funnel_places_every_windows_panes() {
         use crate::view::shell::geometry::stats;
