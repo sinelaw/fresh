@@ -1,4 +1,5 @@
 /// <reference path="./lib/fresh.d.ts" />
+import { ENV_DUMP, parseEnvDump } from "./lib/env_dump.ts";
 const editor = getEditor();
 
 /**
@@ -959,29 +960,6 @@ async function captureContainerLoginEnv(
   const out: Array<[string, string]> = [];
   for (const [key, value] of parseEnvDump(probeResult.stdout)) {
     if (wanted.has(key)) out.push([key, value]);
-  }
-  return out;
-}
-
-/// The env dump the userEnvProbe runs. `env -0` ends each `KEY=VALUE`
-/// record with NUL instead of a newline, so a multi-line value (an
-/// exported Bash function) is not cut short and its continuation lines
-/// are not read as variables of their own (#3586). An `env` without `-0`
-/// falls back to one record per line.
-const ENV_DUMP = "env -0 2>/dev/null || env";
-
-/// Parse an `ENV_DUMP` into `[key, value]` pairs: NUL-separated records
-/// when present, else lines. A key never holds a newline, so anything up
-/// to the last newline before it is output that preceded the dump (e.g.
-/// an rc file's echo) and is dropped.
-function parseEnvDump(stdout: string): Array<[string, string]> {
-  const records = stdout.includes("\0") ? stdout.split("\0") : stdout.split("\n");
-  const out: Array<[string, string]> = [];
-  for (const record of records) {
-    const eq = record.indexOf("=");
-    if (eq < 0) continue;
-    const key = record.slice(0, eq).split("\n").pop() ?? "";
-    if (key) out.push([key, record.slice(eq + 1)]);
   }
   return out;
 }

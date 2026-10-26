@@ -1,4 +1,5 @@
 /// <reference path="./lib/fresh.d.ts" />
+import { ENV_DUMP, parseEnvDump } from "./lib/env_dump.ts";
 const editor = getEditor();
 
 /**
@@ -168,18 +169,10 @@ async function canExec(context: string | undefined, namespace: string): Promise<
 async function probeEnv(coords: PodCoords): Promise<[string, string][]> {
   const args = [...scopeArgs(coords.context, coords.namespace), "exec"];
   if (coords.container) args.push("-c", coords.container);
-  args.push(coords.pod, "--", "sh", "-lc", "env");
+  args.push(coords.pod, "--", "sh", "-lc", ENV_DUMP);
   const res = await kubectl(args);
   if (res.exit_code !== 0) return [];
-  const out: [string, string][] = [];
-  for (const line of res.stdout.split("\n")) {
-    const eq = line.indexOf("=");
-    if (eq <= 0) continue;
-    const key = line.slice(0, eq);
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
-    out.push([key, line.slice(eq + 1)]);
-  }
-  return out;
+  return parseEnvDump(res.stdout).filter(([key]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(key));
 }
 
 async function waitReady(

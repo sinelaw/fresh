@@ -1124,19 +1124,22 @@ pub fn ssh_remote_env_launcher(recipe: &str) -> String {
         r#"import os,subprocess
 _r={recipe_json}
 _S="{sentinel}"
-_D="{dump}"
+_D={dump_json}
 _script=_D+"; printf '%s\\n' '"+_S+"'; "+_r+"; "+_D
 try:
     _o=subprocess.run(["bash","-lc",_script],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL).stdout.decode("utf-8","replace")
 except Exception:
     _o=""
+_M="{marker}"
 def _p(t):
     d={{}}
+    i=t.find(_M)
+    if i>=0:
+        t=t[i+len(_M):]
+        if t.startswith("\n"): t=t[1:]
     for r in (t.split("\0") if "\0" in t else t.splitlines()):
         i=r.find("=")
-        if i<0: continue
-        k=r[:i].rsplit("\n",1)[-1]
-        if k: d[k]=r[i+1:]
+        if i>0: d[r[:i]]=r[i+1:]
     return d
 if _S in _o:
     _b,_a=_o.split(_S,1)
@@ -1149,7 +1152,9 @@ _sh=os.environ.get("SHELL") or "/bin/sh"
 os.execvp(_sh,[_sh,"-l"])
 "#,
         sentinel = crate::services::env_provider::DELTA_SENTINEL,
-        dump = crate::services::env_provider::ENV_DUMP,
+        dump_json = serde_json::to_string(crate::services::env_provider::ENV_DUMP)
+            .unwrap_or_else(|_| "\"\"".to_string()),
+        marker = crate::services::env_provider::ENV_DUMP_MARKER,
     );
 
     let b64 = BASE64.encode(launcher_src.as_bytes());
@@ -1764,7 +1769,8 @@ mod tests {
         std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
 
         let launcher = ssh_remote_env_launcher(
-            "demo_function() { if true; then echo hello; fi; }; export -f demo_function; \
+            "echo 'Using python=3.11'; \
+             demo_function() { if true; then echo hello; fi; }; export -f demo_function; \
              export MULTI=$'line1\\nINJECTED=evil'",
         );
         let out = std::process::Command::new("sh")

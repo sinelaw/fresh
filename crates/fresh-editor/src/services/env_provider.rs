@@ -317,14 +317,29 @@ fn build_capture_script(snippet: &str, dir: Option<&Path>) -> String {
     script
 }
 
-/// The env dump every capture runs. `env -0` ends each `KEY=VALUE` record with
-/// NUL instead of a newline, so multi-line values (exported Bash functions,
-/// `$'a\nb'` strings) survive intact; an `env` without `-0` falls back to the
-/// line-per-record form, which [`parse_env`] also reads. `command` bypasses
-/// any `env` function/alias. `pub(crate)` so the SSH remote launcher
+/// The marker line [`ENV_DUMP`] prints before the env records. Whatever the
+/// login shell or the recipe wrote to stdout comes before it and is dropped,
+/// so their output can never be read as (or merged into) a variable.
+macro_rules! env_dump_marker {
+    () => {
+        "__FRESH_ENV_DUMP_5d0b7a__"
+    };
+}
+pub(crate) const ENV_DUMP_MARKER: &str = env_dump_marker!();
+
+/// The env dump every capture runs: the [`ENV_DUMP_MARKER`] line, then the
+/// environment. `env -0` ends each `KEY=VALUE` record with NUL instead of a
+/// newline, so multi-line values (exported Bash functions, `$'a\nb'` strings)
+/// survive intact; an `env` without `-0` falls back to the line-per-record
+/// form, which [`parse_env`] also reads. `command` bypasses any `env`
+/// function/alias. `pub(crate)` so the SSH remote launcher
 /// ([`crate::services::remote::spawner::ssh_remote_env_launcher`]) dumps the
 /// same way.
-pub(crate) const ENV_DUMP: &str = "command env -0 2>/dev/null || command env";
+pub(crate) const ENV_DUMP: &str = concat!(
+    "printf '\\n%s\\n' ",
+    env_dump_marker!(),
+    "; command env -0 2>/dev/null || command env"
+);
 
 /// Marker printed between the baseline and activated env dumps in the delta
 /// capture. A fixed, unlikely token — env values never legitimately contain it,
@@ -396,29 +411,33 @@ fn parse_delta(stdout: &str) -> EnvDelta {
     EnvDelta { set, unset }
 }
 
-/// Parse an [`ENV_DUMP`] into pairs. Records are NUL-separated when the
+/// Parse an [`ENV_DUMP`] into pairs. Everything up to the
+/// [`ENV_DUMP_MARKER`] line is output that preceded the dump and is dropped
+/// (output with no marker is read whole). Records are NUL-separated when the
 /// host's `env` has `-0`, so a value keeps its newlines; otherwise they are
 /// lines, as before. A value may itself contain `=`; only the first is the
-/// separator. A key never holds a newline, so anything up to the last newline
-/// before it is output that preceded the record (the recipe's own stdout, the
-/// delta sentinel's line end) and is dropped. Records without `=` or with an
-/// empty key are skipped.
+/// separator. Records without `=` or with an empty key are skipped.
 fn parse_env(stdout: &str) -> Vec<(String, String)> {
-    let records: Box<dyn Iterator<Item = &str>> = if stdout.contains('\0') {
-        Box::new(stdout.split('\0'))
+    let dump = match stdout.find(ENV_DUMP_MARKER) {
+        Some(at) => {
+            let rest = &stdout[at + ENV_DUMP_MARKER.len()..];
+            rest.strip_prefix('\n').unwrap_or(rest)
+        }
+        None => stdout,
+    };
+    let records: Box<dyn Iterator<Item = &str>> = if dump.contains('\0') {
+        Box::new(dump.split('\0'))
     } else {
-        Box::new(stdout.lines())
+        Box::new(dump.lines())
     };
     let mut out = Vec::new();
     for record in records {
-        let Some(eq) = record.find('=') else {
-            continue;
-        };
-        let key = record[..eq].rsplit('\n').next().unwrap_or_default();
-        if key.is_empty() {
-            continue;
+        if let Some(eq) = record.find('=') {
+            if eq == 0 {
+                continue;
+            }
+            out.push((record[..eq].to_string(), record[eq + 1..].to_string()));
         }
-        out.push((key.to_string(), record[eq + 1..].to_string()));
     }
     out
 }
@@ -617,22 +636,29 @@ mod tests {
         );
     }
 
-    /// Output the recipe printed before the dump runs into the first record;
-    /// a key holds no newline, so it is cut off there.
+    /// What the login shell or the recipe printed before the dump — even a
+    /// line holding `=` — is dropped at the marker; it is neither read as a
+    /// variable nor merged into the first real one.
     #[test]
-    fn parse_env_nul_records_drop_preceding_output() {
-        let out = "activating...\nFOO=1\0BAR=2\0";
+    fn parse_env_drops_output_before_the_marker() {
+        let out = format!("Using python=3.11\nactivating...\n{ENV_DUMP_MARKER}\nPATH=/v\0BAR=2\0");
         assert_eq!(
-            parse_env(out),
-            vec![("FOO".into(), "1".into()), ("BAR".into(), "2".into())]
+            parse_env(&out),
+            vec![("PATH".into(), "/v".into()), ("BAR".into(), "2".into())]
+        );
+        // Without `env -0` the records are lines, after the marker all the same.
+        let out = format!("Using python=3.11\n{ENV_DUMP_MARKER}\nPATH=/v\nBAR=2\n");
+        assert_eq!(
+            parse_env(&out),
+            vec![("PATH".into(), "/v".into()), ("BAR".into(), "2".into())]
         );
     }
 
     #[test]
     fn parse_delta_with_nul_records() {
         let out = format!(
-            "PATH=/a\0KEEP=1\0GONE=x\0{DELTA_SENTINEL}\n\
-             PATH=/v/bin:/a\0KEEP=1\0F=a\nb=c\0"
+            "\n{ENV_DUMP_MARKER}\nPATH=/a\0KEEP=1\0GONE=x\0{DELTA_SENTINEL}\n\
+             activating, python=3.11\n{ENV_DUMP_MARKER}\nPATH=/v/bin:/a\0KEEP=1\0F=a\nb=c\0"
         );
         let d = parse_delta(&out);
         assert_eq!(
@@ -657,7 +683,9 @@ mod tests {
         {
             return;
         }
-        let snippet = "demo_function() { if true; then echo hello; fi; }; \
+        // The recipe also prints to stdout, as chatty ones do, `=` and all.
+        let snippet = "echo 'Using python=3.11'; \
+                       demo_function() { if true; then echo hello; fi; }; \
                        export -f demo_function; export MULTI=$'line1\\nINJECTED=evil'";
         let script = build_capture_script(snippet, None);
         let out = std::process::Command::new("bash")
@@ -666,7 +694,9 @@ mod tests {
             .output()
             .unwrap();
         let vars = parse_env(&String::from_utf8_lossy(&out.stdout));
-        assert!(vars.iter().all(|(k, _)| k != "INJECTED"));
+        assert!(vars
+            .iter()
+            .all(|(k, _)| k != "INJECTED" && !k.contains("python")));
         assert!(vars.contains(&("MULTI".to_string(), "line1\nINJECTED=evil".to_string())));
 
         let child = std::process::Command::new("bash")
