@@ -386,13 +386,10 @@ impl Editor {
             );
         }
 
-        // Run on-save actions (formatters, linters, etc.)
-        // Note: run_on_save_actions also assumes active_buffer internally.
-        // We might need to refactor it too if we want auto-save to trigger formatters.
-        // For now, let's just do it for active buffer or skip for silent auto-saves.
-
+        // Run on-save actions (formatters, linters, etc.) on the buffer that
+        // was saved. Silent saves (auto-save, Save All) skip them.
         if !silent {
-            match self.run_on_save_actions() {
+            match self.run_on_save_actions_for(buffer_id) {
                 Ok(true) => {
                     // Actions ran successfully - if status_message was set by run_on_save_actions
                     // (e.g., for missing optional formatters), keep it. Otherwise update status.

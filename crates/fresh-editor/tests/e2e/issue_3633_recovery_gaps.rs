@@ -112,8 +112,9 @@ fn save_as(harness: &mut EditorTestHarness, path: &Path) {
 /// `fresh x.txt y.txt`, both edited and backed up; y is active and has more
 /// unsaved edits since its last backup. A plugin saves x
 /// (`editor.saveBufferToPath(xId, xPath)`). That finishes x's save, not y's:
-/// y keeps its entry and its pending backup, and after a crash comes back
-/// with every edit; x is the saved, clean one.
+/// x is the one marked saved and the one its on-save actions run on; y keeps
+/// its entry, its pending backup and its text, and after a crash comes back
+/// with every edit.
 #[test]
 #[cfg(feature = "plugins")] // the plugin command dispatcher
 fn a_plugin_save_of_another_buffer_leaves_the_active_ones_unsaved_work() {
@@ -136,6 +137,9 @@ fn a_plugin_save_of_another_buffer_leaves_the_active_ones_unsaved_work() {
         harness.open_file(&x).unwrap();
         let x_id = harness.editor().active_buffer();
         harness.type_text("X-EDIT ").unwrap();
+        // Whitespace x's on-save trim should remove
+        harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+        harness.type_text(" X-TAIL   ").unwrap();
         harness.open_file(&y).unwrap();
         harness.type_text("Y-EDIT ").unwrap();
         harness.render().unwrap();
@@ -161,7 +165,12 @@ fn a_plugin_save_of_another_buffer_leaves_the_active_ones_unsaved_work() {
             })
             .unwrap();
         harness.render().unwrap();
-        assert!(std::fs::read_to_string(&x).unwrap().contains("X-EDIT"));
+        // x's on-save actions ran on x: its file was rewritten trimmed
+        assert_eq!(
+            std::fs::read_to_string(&x).unwrap(),
+            "X-EDIT x original X-TAIL\n",
+            "the saved buffer's on-save actions did not run on it"
+        );
 
         // y — still active — keeps its unsaved work, on screen and on disk
         assert!(harness.editor().active_state().buffer.is_modified());
@@ -187,9 +196,14 @@ fn a_plugin_save_of_another_buffer_leaves_the_active_ones_unsaved_work() {
             .unwrap();
         assert_eq!(backups_holding(&dir_context, "Y-MORE").len(), 1);
 
-        // x was the one marked saved: an edit undone takes it back to clean
+        // x was the one marked saved: an edit undone takes it back to clean.
+        // Its buffer holds what the trim wrote, not the untrimmed text.
         harness.open_file(&x).unwrap();
         assert!(!harness.editor().active_state().buffer.is_modified());
+        assert_eq!(
+            harness.get_buffer_content().unwrap(),
+            "X-EDIT x original X-TAIL\n"
+        );
         harness.type_text("Z").unwrap();
         harness
             .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
