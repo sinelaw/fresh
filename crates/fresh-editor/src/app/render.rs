@@ -587,7 +587,6 @@ impl Editor {
                 let plugin_manager = &self.plugin_manager;
                 let estimated_line_length = self.config.editor.estimated_line_length;
                 let mut hooks_deferred = false;
-                let mut passes_fired = 0usize;
                 let added = __win
                     .buffers
                     .with_buffer_and_view_states(buffer_id, |state, _vs_map| {
@@ -861,7 +860,6 @@ impl Editor {
                                     is_composing_in_any_split: composing_in_any_split,
                                 },
                             );
-                            passes_fired += 1;
                             for range in fresh_ranges {
                                 seen_byte_ranges.insert(range);
                             }
@@ -872,12 +870,6 @@ impl Editor {
                 if hooks_deferred {
                     self.request_plugin_render();
                 }
-                #[cfg(feature = "plugins")]
-                {
-                    self.lines_changed_in_flight += passes_fired;
-                }
-                #[cfg(not(feature = "plugins"))]
-                let _ = passes_fired;
                 total_new_lines += added;
             }
             let hooks_elapsed = hooks_start.elapsed();

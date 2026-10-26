@@ -1664,7 +1664,6 @@ impl Editor {
         // order, then whatever the plugin thread has produced since.
         let mut commands: Vec<_> = self.plugin_command_backlog.drain(..).collect();
         commands.extend(self.plugin_manager.write().unwrap().process_commands());
-        self.hold_partial_lines_changed(&mut commands);
         if commands.is_empty() {
             return false;
         }
@@ -1687,34 +1686,7 @@ impl Editor {
         // debounce tick — e.g. live_diff's 75ms `editor.delay()` recompute
         // repainted the screen twice per keystroke with no change. Invisible
         // on a fast terminal, but real lag over a serial console (#2100).
-        use fresh_core::api::PluginCommand as Pc;
-        let has_visual_commands = commands.iter().any(|c| match c {
-            Pc::HookCompleted { .. }
-            | Pc::Delay { .. }
-            | Pc::SpawnProcess { .. }
-            | Pc::SpawnBackgroundProcess { .. }
-            | Pc::KillBackgroundProcess { .. }
-            | Pc::SpawnProcessWait { .. }
-            | Pc::HttpFetch { .. }
-            | Pc::WatchPath { .. }
-            | Pc::UnwatchPath { .. }
-            | Pc::SetGlobalState { .. }
-            | Pc::SetWindowState { .. }
-            | Pc::SetViewState { .. }
-            // Arming or cancelling a timer paints nothing; what the handler
-            // eventually draws arrives as its own command and is counted then.
-            | Pc::SetPluginTimer { .. }
-            | Pc::ClearPluginTimer { .. } => false,
-            Pc::SetStatusBarValue {
-                buffer_id,
-                key,
-                value,
-            } => {
-                self.current_status_bar_value(fresh_core::BufferId(*buffer_id as usize), key)
-                    != Some(value.as_str())
-            }
-            _ => true,
-        });
+        let has_visual_commands = commands.iter().any(|c| self.plugin_command_is_visual(c));
 
         for command in &commands {
             match command {
@@ -1777,77 +1749,39 @@ impl Editor {
         has_visual_commands
     }
 
-    /// Keep the drain from splitting a `lines_changed` pass across frames.
-    ///
-    /// A per-line decoration plugin answers the hook by clearing each line's
-    /// decorations and adding them again (markdown_compose's list spacers,
-    /// table frames, code rails), and its commands reach the channel one at a
-    /// time while the handler runs. A drain that lands mid-pass applied the
-    /// clears without the adds that follow them: the frame drew the lines
-    /// undecorated, one row short per list item, and the next frame put the
-    /// rows back. The preview flickered, and a scroll synced off its rows took
-    /// the vanished rows for a scroll.
-    ///
-    /// So while a pass is out, what came after the last `HookCompleted` (the
-    /// part of the pass sent so far) waits in the backlog for the rest. Only a
-    /// tail of decoration commands is held: none of them waits on a reply, so
-    /// holding them cannot keep the pass from finishing. Anything else in the
-    /// tail is let through as before.
+    /// Whether dispatching `command` can change the screen (see
+    /// `process_plugin_commands`). A batch does when one of its commands does.
     #[cfg(feature = "plugins")]
-    fn hold_partial_lines_changed(&mut self, commands: &mut Vec<fresh_core::api::PluginCommand>) {
+    fn plugin_command_is_visual(&self, command: &fresh_core::api::PluginCommand) -> bool {
         use fresh_core::api::PluginCommand as Pc;
-        let completed = commands
-            .iter()
-            .filter(
-                |c| matches!(c, Pc::HookCompleted { hook_name } if hook_name == "lines_changed"),
-            )
-            .count();
-        let pending = self.lines_changed_in_flight.saturating_sub(completed);
-        let tail_start = commands
-            .iter()
-            .rposition(|c| matches!(c, Pc::HookCompleted { .. }))
-            .map_or(0, |i| i + 1);
-        let tail = &commands[tail_start..];
-        let decorations_only = tail.iter().all(|c| {
-            matches!(
-                c,
-                Pc::AddOverlay { .. }
-                    | Pc::RemoveOverlay { .. }
-                    | Pc::ClearNamespace { .. }
-                    | Pc::ClearOverlaysInRange { .. }
-                    | Pc::ClearOverlaysInRangeForNamespace { .. }
-                    | Pc::AddVirtualText { .. }
-                    | Pc::AddVirtualTextStyled { .. }
-                    | Pc::RemoveVirtualText { .. }
-                    | Pc::RemoveVirtualTextsByPrefix { .. }
-                    | Pc::AddVirtualLine { .. }
-                    | Pc::ClearVirtualTextNamespace { .. }
-                    | Pc::ClearVirtualLinesInRange { .. }
-                    | Pc::ClearVirtualTextsInRange { .. }
-                    | Pc::AddConceal { .. }
-                    | Pc::ClearConcealNamespace { .. }
-                    | Pc::ClearConcealsInRange { .. }
-                    | Pc::ClearConcealsInRangeForNamespace { .. }
-                    | Pc::AddSoftBreak { .. }
-                    | Pc::ClearSoftBreakNamespace { .. }
-                    | Pc::ClearSoftBreaksInRange { .. }
-            )
-        });
-        if pending > 0 && !tail.is_empty() && decorations_only {
-            let since = *self
-                .plugin_hold_since
-                .get_or_insert_with(std::time::Instant::now);
-            if since.elapsed() < super::PARTIAL_PASS_HOLD_LIMIT {
-                for command in commands.drain(tail_start..).rev() {
-                    self.plugin_command_backlog.push_front(command);
-                }
-                return;
+        match command {
+            Pc::Batch { commands } => commands.iter().any(|c| self.plugin_command_is_visual(c)),
+            Pc::HookCompleted { .. }
+            | Pc::Delay { .. }
+            | Pc::SpawnProcess { .. }
+            | Pc::SpawnBackgroundProcess { .. }
+            | Pc::KillBackgroundProcess { .. }
+            | Pc::SpawnProcessWait { .. }
+            | Pc::HttpFetch { .. }
+            | Pc::WatchPath { .. }
+            | Pc::UnwatchPath { .. }
+            | Pc::SetGlobalState { .. }
+            | Pc::SetWindowState { .. }
+            | Pc::SetViewState { .. }
+            // Arming or cancelling a timer paints nothing; what the handler
+            // eventually draws arrives as its own command and is counted then.
+            | Pc::SetPluginTimer { .. }
+            | Pc::ClearPluginTimer { .. } => false,
+            Pc::SetStatusBarValue {
+                buffer_id,
+                key,
+                value,
+            } => {
+                self.current_status_bar_value(fresh_core::BufferId(*buffer_id as usize), key)
+                    != Some(value.as_str())
             }
-            // Overdue: the count is not to be trusted. Let everything through
-            // and start it over once this batch's completions are dispatched.
-            self.lines_changed_in_flight = completed;
+            _ => true,
         }
-        self.plugin_hold_since = None;
     }
 
     /// Process pending plugin action completions
@@ -2257,113 +2191,40 @@ mod tests {
         assert_eq!(&updated[5..10], &[0, 5, 1, 2, 0]);
     }
 
+    /// A batch repaints when one of its commands would: a hook that only
+    /// re-publishes what is already shown must not start a render loop.
     #[cfg(feature = "plugins")]
-    mod partial_lines_changed {
-        use crate::app::Editor;
+    #[test]
+    fn a_batch_is_visual_when_one_of_its_commands_is() {
         use fresh_core::api::PluginCommand as Pc;
-
-        fn editor() -> Editor {
-            let temp = tempfile::tempdir().unwrap();
-            let dir_context = crate::config_io::DirectoryContext::for_testing(temp.path());
-            std::mem::forget(temp);
-            Editor::for_test(
-                crate::config::Config::default(),
-                80,
-                24,
-                None,
-                dir_context,
-                crate::view::color_support::ColorCapability::TrueColor,
-                std::sync::Arc::new(crate::model::filesystem::StdFileSystem),
-                None,
-                None,
-                false,
-                false,
-                false,
-            )
-            .unwrap()
-        }
-
-        fn decoration() -> Pc {
-            Pc::ClearNamespace {
-                buffer_id: fresh_core::BufferId(1),
-                namespace: fresh_core::overlay::OverlayNamespace::new(),
-            }
-        }
-
-        fn completed(hook_name: &str) -> Pc {
-            Pc::HookCompleted {
-                hook_name: hook_name.into(),
-            }
-        }
-
-        /// What a drain lets through to dispatch, as `d` (decoration),
-        /// `[hook]` (a completion) or `.` (anything else).
-        fn drain(e: &mut Editor, arrived: Vec<Pc>) -> String {
-            let mut commands: Vec<_> = e.plugin_command_backlog.drain(..).collect();
-            commands.extend(arrived);
-            e.hold_partial_lines_changed(&mut commands);
-            let mut through = String::new();
-            for c in commands {
-                match &c {
-                    Pc::HookCompleted { hook_name } => through.push_str(&format!("[{hook_name}]")),
-                    Pc::ClearNamespace { .. } => through.push('d'),
-                    _ => through.push('.'),
-                }
-                e.handle_plugin_command(c).unwrap();
-            }
-            through
-        }
-
-        /// A pass that has reached the channel only in part waits for the
-        /// rest, then goes through whole — what came before it does not wait.
-        #[test]
-        fn a_pass_goes_through_whole() {
-            let mut e = editor();
-            e.lines_changed_in_flight = 1;
-            assert_eq!(
-                drain(
-                    &mut e,
-                    vec![decoration(), completed("render_start"), decoration()]
-                ),
-                "d[render_start]"
-            );
-            assert_eq!(drain(&mut e, vec![decoration()]), "");
-            assert_eq!(
-                drain(
-                    &mut e,
-                    vec![decoration(), completed("lines_changed"), decoration()]
-                ),
-                "ddd[lines_changed]d",
-                "nothing is out: the decoration after the pass is not held either"
-            );
-            assert_eq!(e.lines_changed_in_flight, 0);
-        }
-
-        /// Nothing is held with no pass out, or behind a command that is not a
-        /// decoration — one may be what the pass waits on.
-        #[test]
-        fn only_a_pass_of_decorations_is_held() {
-            let mut e = editor();
-            assert_eq!(drain(&mut e, vec![decoration()]), "d");
-            e.lines_changed_in_flight = 1;
-            let status = Pc::SetStatus {
-                message: "x".into(),
-            };
-            assert_eq!(drain(&mut e, vec![decoration(), status]), "d.");
-        }
-
-        /// A completion that never comes holds the pass back for a while, not
-        /// for good, and the count starts over.
-        #[test]
-        fn a_pass_that_never_finishes_is_let_through() {
-            let mut e = editor();
-            e.lines_changed_in_flight = 1;
-            assert_eq!(drain(&mut e, vec![decoration()]), "");
-            e.plugin_hold_since =
-                Some(std::time::Instant::now() - crate::app::PARTIAL_PASS_HOLD_LIMIT);
-            assert_eq!(drain(&mut e, vec![decoration()]), "dd");
-            assert_eq!(e.lines_changed_in_flight, 0);
-            assert_eq!(drain(&mut e, vec![decoration()]), "d");
-        }
+        let temp = tempfile::tempdir().unwrap();
+        let editor = crate::app::Editor::for_test(
+            crate::config::Config::default(),
+            80,
+            24,
+            None,
+            crate::config_io::DirectoryContext::for_testing(temp.path()),
+            crate::view::color_support::ColorCapability::TrueColor,
+            std::sync::Arc::new(crate::model::filesystem::StdFileSystem),
+            None,
+            None,
+            false,
+            false,
+            false,
+        )
+        .unwrap();
+        let ack = || Pc::HookCompleted {
+            hook_name: "render_start".into(),
+        };
+        let decoration = || Pc::ClearNamespace {
+            buffer_id: fresh_core::BufferId(1),
+            namespace: fresh_core::overlay::OverlayNamespace::new(),
+        };
+        assert!(!editor.plugin_command_is_visual(&Pc::Batch {
+            commands: vec![ack(), ack()],
+        }));
+        assert!(editor.plugin_command_is_visual(&Pc::Batch {
+            commands: vec![ack(), decoration()],
+        }));
     }
 }

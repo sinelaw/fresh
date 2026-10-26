@@ -559,6 +559,13 @@ impl Editor {
     /// test is where a regression actually fails the build; this is how you
     /// find out which handler caused it.
     pub(crate) fn dispatch_plugin_command_measured(&mut self, command: PluginCommand) {
+        // A batch is its commands, each on its own budget.
+        if let PluginCommand::Batch { commands } = command {
+            for command in commands {
+                self.dispatch_plugin_command_measured(command);
+            }
+            return;
+        }
         let label = VariantNameSink::of(&command);
         let label = label.as_str();
         let started = std::time::Instant::now();
@@ -1008,13 +1015,12 @@ impl Editor {
             PluginCommand::RefreshAllLines => {
                 self.handle_refresh_all_lines();
             }
-            PluginCommand::HookCompleted { hook_name } => {
-                // The pass is all in: the drain stops holding it back
-                // (`hold_partial_lines_changed`).
-                #[cfg(feature = "plugins")]
-                if hook_name == "lines_changed" {
-                    self.lines_changed_in_flight = self.lines_changed_in_flight.saturating_sub(1);
+            PluginCommand::Batch { commands } => {
+                for command in commands {
+                    self.dispatch_plugin_command_measured(command);
                 }
+            }
+            PluginCommand::HookCompleted { hook_name } => {
                 // Sentinel processed in render loop; no-op if encountered
                 // elsewhere — except `ready`'s, which releases the dock
                 // column held open at startup if nothing mounted into it

@@ -4701,6 +4701,13 @@ pub enum PluginCommand {
     /// (e.g., conceal commands from `lines_changed`) instead of polling.
     HookCompleted { hook_name: String },
 
+    /// What a hook's handlers sent while they ran, to be applied together: the
+    /// editor draws no frame between them. A per-line decoration pass clears
+    /// each line's decorations and adds them back, and a frame drawn in between
+    /// showed the lines undecorated. Sent by the plugin thread, never by a
+    /// plugin.
+    Batch { commands: Vec<PluginCommand> },
+
     /// Set a line indicator in the gutter's indicator column
     /// Used for git gutter, breakpoints, bookmarks, etc.
     SetLineIndicator {

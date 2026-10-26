@@ -741,10 +741,6 @@ impl Editor {
             #[cfg(feature = "plugins")]
             plugin_command_backlog: std::collections::VecDeque::new(),
             #[cfg(feature = "plugins")]
-            lines_changed_in_flight: 0,
-            #[cfg(feature = "plugins")]
-            plugin_hold_since: None,
-            #[cfg(feature = "plugins")]
             grep_project_cancel: std::collections::HashMap::new(),
             #[cfg(feature = "plugins")]
             plugin_timers: Vec::new(),
