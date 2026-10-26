@@ -430,6 +430,14 @@ pub(crate) const PLUGIN_COMMAND_FRAME_BUDGET: std::time::Duration =
 /// watchdog keeps honest.
 pub(crate) const DRAIN_MIN_PER_PASS: usize = 8;
 
+/// The longest the drain holds back a `lines_changed` pass waiting for the
+/// rest of it (see `hold_partial_lines_changed`). A pass is a few milliseconds
+/// of plugin work; this only bounds the wait should a `HookCompleted` never
+/// come, so decorations are late at worst, never lost.
+#[cfg(feature = "plugins")]
+pub(crate) const PARTIAL_PASS_HOLD_LIMIT: std::time::Duration =
+    std::time::Duration::from_millis(100);
+
 /// A single plugin command handler taking longer than this on the editor
 /// thread is over budget: the work belongs in `plugin_offloop`. Logged at
 /// DEBUG naming the offending variant — a handler can cross 50ms on a loaded
@@ -1164,6 +1172,16 @@ pub struct Editor {
     /// across frames without reordering.
     #[cfg(feature = "plugins")]
     plugin_command_backlog: std::collections::VecDeque<fresh_core::api::PluginCommand>,
+
+    /// `lines_changed` passes the frames handed the plugin thread whose
+    /// `HookCompleted` has not come back yet. While one is out, the drain
+    /// holds back the part of it already sent (`hold_partial_lines_changed`).
+    #[cfg(feature = "plugins")]
+    lines_changed_in_flight: usize,
+
+    /// Since when the drain has been holding a pass back, for its time cap.
+    #[cfg(feature = "plugins")]
+    plugin_hold_since: Option<std::time::Instant>,
 
     /// Cancellation flag for the in-flight `grepProject`, if any. A new
     /// request supersedes the old one rather than queueing behind it.

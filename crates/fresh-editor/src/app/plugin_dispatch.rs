@@ -1009,6 +1009,12 @@ impl Editor {
                 self.handle_refresh_all_lines();
             }
             PluginCommand::HookCompleted { hook_name } => {
+                // The pass is all in: the drain stops holding it back
+                // (`hold_partial_lines_changed`).
+                #[cfg(feature = "plugins")]
+                if hook_name == "lines_changed" {
+                    self.lines_changed_in_flight = self.lines_changed_in_flight.saturating_sub(1);
+                }
                 // Sentinel processed in render loop; no-op if encountered
                 // elsewhere — except `ready`'s, which releases the dock
                 // column held open at startup if nothing mounted into it
