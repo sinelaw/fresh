@@ -3657,6 +3657,7 @@ mod tests {
             capped: true, // Capped early — this is the key condition
             query_len: 4,
             running_line: 1,
+            with_context: true,
         };
 
         editor.active_window_mut().search_scan.start(

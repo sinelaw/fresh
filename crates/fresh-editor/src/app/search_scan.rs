@@ -186,6 +186,7 @@ mod tests {
             capped: false,
             query_len: 1,
             running_line: 0,
+            with_context: true,
         }
     }
 

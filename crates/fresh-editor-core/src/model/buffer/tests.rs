@@ -2859,6 +2859,57 @@ mod chunked_search {
         regex::bytes::Regex::new(pattern).unwrap()
     }
 
+    /// A buffer typed key by key: each insert is a piece-tree leaf of its
+    /// own, so the scan's chunks are shorter than its overlap.
+    fn typed_buffer(text: &str) -> TextBuffer {
+        let mut buf = make_buffer(b"");
+        for (i, c) in text.char_indices() {
+            buf.insert(i, &c.to_string());
+        }
+        buf
+    }
+
+    fn offsets(state: &ChunkedSearchState) -> Vec<(usize, usize)> {
+        state
+            .matches
+            .iter()
+            .map(|m| (m.byte_offset, m.length))
+            .collect()
+    }
+
+    /// The carried-over tail reaches back across short leaves, so a match
+    /// spanning several of them is found — once each, never overlapping.
+    #[test]
+    fn matches_spanning_short_leaves_are_found_once() {
+        let mut buf = typed_buffer("concat cat cats");
+        let state = buf.search_scan_all(make_regex("(?i)cat"), 100, 3).unwrap();
+        assert_eq!(offsets(&state), vec![(3, 3), (7, 3), (11, 3)]);
+
+        let mut buf = typed_buffer("xaaaaa");
+        let state = buf.search_scan_all(make_regex("aa"), 100, 2).unwrap();
+        assert_eq!(offsets(&state), vec![(1, 2), (3, 2)]);
+    }
+
+    /// A match at the end of a leaf waits for the next one, so `\b` sees
+    /// the byte after it: "cat" followed by a typed "s" is no whole word.
+    #[test]
+    fn word_boundary_at_a_leaf_end_sees_the_next_leaf() {
+        let mut buf = make_buffer(b"a cat");
+        buf.insert(5, "s");
+        let state = buf.search_scan_all(make_regex(r"\bcat\b"), 100, 3).unwrap();
+        assert!(state.matches.is_empty(), "got {:?}", offsets(&state));
+    }
+
+    #[test]
+    fn without_context_matches_carry_no_line_text() {
+        let mut buf = make_buffer(b"one target here\n");
+        let mut state = buf.search_scan_init(make_regex("target"), 100, 6);
+        state.with_context = false;
+        while buf.search_scan_next_chunk(&mut state).unwrap() {}
+        assert_eq!(offsets(&state), vec![(4, 6)]);
+        assert!(state.matches[0].context.is_empty());
+    }
+
     #[test]
     fn single_chunk_line_col_context() {
         let mut buf = make_buffer(b"hello world\nfoo bar\nbaz quux\n");
@@ -3589,4 +3640,46 @@ fn test_failed_save_leaves_the_hot_exit_entry_as_unsaved_work() {
         serde_json::from_slice::<serde_json::Value>(&before).unwrap()
     );
     assert_eq!(buffer.hot_exit_entry(), Some(&entry));
+}
+
+/// `find_regex_match_loading` reads forward a window at a time: it finds a
+/// match straddling a window boundary, reads a match running past the end
+/// of a window again whole, and judges `\b` by the text outside its range.
+#[test]
+fn find_regex_match_loading_reads_forward_only_as_needed() {
+    let window = LOAD_CHUNK_SIZE;
+
+    // A match straddling the first window's end.
+    let mut text = vec![b'x'; window - 2];
+    text.extend_from_slice(b" needle ");
+    text.extend(std::iter::repeat_n(b'x', 1000));
+    let mut buf = TextBuffer::from_bytes(text, test_fs());
+    let re = regex::bytes::Regex::new("needle").unwrap();
+    let len = buf.len();
+    assert_eq!(
+        buf.find_regex_match_loading(&re, 0..len, 24).unwrap(),
+        Some((window - 1, 6))
+    );
+
+    // A match longer than a window comes back whole.
+    let mut text = b"start ".to_vec();
+    text.extend(std::iter::repeat_n(b'a', window * 2 + 10));
+    text.extend_from_slice(b" end");
+    let mut buf = TextBuffer::from_bytes(text, test_fs());
+    let re = regex::bytes::Regex::new("a+").unwrap();
+    let len = buf.len();
+    assert_eq!(
+        buf.find_regex_match_loading(&re, 0..len, 4096).unwrap(),
+        Some((6, window * 2 + 10))
+    );
+
+    // Started inside "concat", whole-word "cat" is the lone one at 7; ended
+    // inside "cats", there is none.
+    let mut buf = TextBuffer::from_bytes(b"concat cat cats".to_vec(), test_fs());
+    let re = regex::bytes::Regex::new(r"\bcat\b").unwrap();
+    assert_eq!(
+        buf.find_regex_match_loading(&re, 3..15, 12).unwrap(),
+        Some((7, 3))
+    );
+    assert_eq!(buf.find_regex_match_loading(&re, 8..14, 12).unwrap(), None);
 }
