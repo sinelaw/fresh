@@ -3491,3 +3491,46 @@ fn test_interactive_replace_prompts_for_every_match_in_a_large_file() {
         })
         .unwrap();
 }
+
+/// Confirm-each with a pattern that matches empty text (`^`): `n` moves on to
+/// the next line instead of finding the same empty match again, and `a`
+/// replaces the rest without looping.
+#[test]
+fn test_interactive_regex_replace_of_empty_matches() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    std::fs::write(&file_path, "one\ntwo\nthree\nfour\n").unwrap();
+
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('r'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_screen_contains("Replace: ").unwrap();
+    for t in ['r', 'i'] {
+        harness
+            .send_key(KeyCode::Char(t), KeyModifiers::ALT)
+            .unwrap();
+    }
+    harness.type_text("^").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("// ").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_screen_contains("Replace? ").unwrap();
+    // Replace on "one", skip "two", then all the rest.
+    for key in ['y', 'n', 'a'] {
+        harness
+            .send_key(KeyCode::Char(key), KeyModifiers::NONE)
+            .unwrap();
+        harness.render().unwrap();
+    }
+    assert_eq!(
+        harness.get_buffer_content().unwrap(),
+        "// one\ntwo\n// three\n// four\n// "
+    );
+}

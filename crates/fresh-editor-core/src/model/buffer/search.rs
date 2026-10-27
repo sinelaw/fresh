@@ -56,10 +56,6 @@ pub struct ChunkedSearchState {
     /// 1-based line number at the start of the next non-overlap data.
     /// Advanced incrementally as chunks are processed.
     pub running_line: usize,
-    /// Whether each match records its line as `context`. A caller that needs
-    /// only offsets (replace) turns it off: on a long line, every match would
-    /// otherwise copy the whole line.
-    pub with_context: bool,
 }
 
 impl ChunkedSearchState {

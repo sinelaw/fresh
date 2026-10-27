@@ -150,41 +150,6 @@ fn normalize_replacement(template: &str) -> String {
     out
 }
 
-/// A single match found in a buffer, together with its expanded replacement.
-#[derive(Debug, Clone)]
-pub struct ReplaceMatch {
-    /// Byte offset of the match start.
-    pub offset: usize,
-    /// Length of the matched text in bytes.
-    pub len: usize,
-    /// The replacement text after capture-group expansion.
-    pub replacement: String,
-}
-
-/// Find every match of `regex` in `haystack` and expand `replacement_template`
-/// for each one (honouring `$1`, `${name}`, etc.).
-pub fn collect_regex_matches(
-    regex: &regex::bytes::Regex,
-    haystack: &[u8],
-    replacement_template: &str,
-) -> Vec<ReplaceMatch> {
-    let escaped = interpret_escapes(replacement_template);
-    let normalized = normalize_replacement(&escaped);
-    regex
-        .captures_iter(haystack)
-        .map(|caps| {
-            let m = caps.get(0).unwrap();
-            let mut expanded = Vec::new();
-            caps.expand(normalized.as_bytes(), &mut expanded);
-            ReplaceMatch {
-                offset: m.start(),
-                len: m.len(),
-                replacement: String::from_utf8_lossy(&expanded).into_owned(),
-            }
-        })
-        .collect()
-}
-
 /// Expand capture-group references in `replacement_template` against a single
 /// match. Returns the template unchanged when no captures are found.
 pub fn expand_replacement(
@@ -333,30 +298,6 @@ mod tests {
     }
 
     #[test]
-    fn collect_regex_matches_literal_replacement() {
-        let re = build_regex("Sig:.*", true, false, true).unwrap();
-        let input = b"AAAAAA\nSig: hello\nBBBBBB\nSig: world\nCCCCCC";
-        let matches = collect_regex_matches(&re, input, "");
-
-        assert_eq!(matches.len(), 2);
-        assert_eq!(matches[0].offset, 7);
-        assert_eq!(matches[0].replacement, "");
-        assert_eq!(matches[1].offset, 25);
-        assert_eq!(matches[1].replacement, "");
-    }
-
-    #[test]
-    fn collect_regex_matches_with_capture_groups() {
-        let re = build_regex(r"(\w+)@(\w+)", true, false, true).unwrap();
-        let input = b"alice@example bob@test";
-        let matches = collect_regex_matches(&re, input, "$2=$1");
-
-        assert_eq!(matches.len(), 2);
-        assert_eq!(matches[0].replacement, "example=alice");
-        assert_eq!(matches[1].replacement, "test=bob");
-    }
-
-    #[test]
     fn expand_replacement_with_groups() {
         let re = build_regex(r"(\d+)-(\d+)", true, false, true).unwrap();
         let matched = b"123-456";
@@ -393,16 +334,6 @@ mod tests {
         assert_eq!(normalize_replacement("、"), "、");
         assert_eq!(normalize_replacement("ほげ$1ふが"), "ほげ${1}ふが");
         assert_eq!(normalize_replacement("café $1 🎉"), "café ${1} 🎉");
-    }
-
-    #[test]
-    fn collect_regex_matches_non_ascii_replacement() {
-        let re = build_regex(r"\n", true, false, true).unwrap();
-        let input = "1\n2\n3".as_bytes();
-        let matches = collect_regex_matches(&re, input, "、");
-
-        assert_eq!(matches.len(), 2);
-        assert!(matches.iter().all(|m| m.replacement == "、"));
     }
 
     #[test]
@@ -453,42 +384,9 @@ mod tests {
     }
 
     #[test]
-    fn collect_regex_matches_expands_newline_escape() {
-        let re = build_regex(" +", true, false, true).unwrap();
-        let input = b"foo   bar";
-        let matches = collect_regex_matches(&re, input, r"\n");
-
-        assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].replacement, "\n");
-    }
-
-    #[test]
-    fn collect_regex_matches_combines_escapes_and_capture_groups() {
-        let re = build_regex(r"(\w+)=(\w+)", true, false, true).unwrap();
-        let input = b"key=value";
-        let matches = collect_regex_matches(&re, input, r"$1\n$2");
-
-        assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].replacement, "key\nvalue");
-    }
-
-    #[test]
     fn expand_replacement_interprets_escapes() {
         let re = build_regex(r"(\w+)", true, false, true).unwrap();
         let result = expand_replacement(&re, b"hello", r"$1\tend");
         assert_eq!(result, "hello\tend");
-    }
-
-    /// Matches Python: re.sub(r'bla(bla)', r'oo\1oo', 'blablabla') == 'ooblaoobla'
-    #[test]
-    fn collect_regex_matches_capture_group_blabla() {
-        let re = build_regex(r"bla(bla)", true, false, true).unwrap();
-        let input = b"blablabla";
-        let matches = collect_regex_matches(&re, input, "oo$1oo");
-
-        assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].offset, 0);
-        assert_eq!(matches[0].len, 6);
-        assert_eq!(matches[0].replacement, "ooblaoo");
     }
 }

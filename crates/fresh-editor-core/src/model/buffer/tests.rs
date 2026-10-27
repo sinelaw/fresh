@@ -2187,7 +2187,10 @@ mod rebuild_pristine_saved_root_tests {
 
     /// Create a large-file-mode TextBuffer backed by an actual file on disk
     /// (Unloaded buffer), matching the real `load_from_file` code path.
-    fn large_file_buffer_unloaded(path: &std::path::Path, file_size: usize) -> TextBuffer {
+    pub(super) fn large_file_buffer_unloaded(
+        path: &std::path::Path,
+        file_size: usize,
+    ) -> TextBuffer {
         let fs: Arc<dyn crate::model::filesystem::FileSystem + Send + Sync> =
             Arc::new(crate::model::filesystem::StdFileSystem);
         let buffer = crate::model::piece_tree::StringBuffer::new_unloaded(
@@ -2857,57 +2860,6 @@ mod chunked_search {
 
     fn make_regex(pattern: &str) -> regex::bytes::Regex {
         regex::bytes::Regex::new(pattern).unwrap()
-    }
-
-    /// A buffer typed key by key: each insert is a piece-tree leaf of its
-    /// own, so the scan's chunks are shorter than its overlap.
-    fn typed_buffer(text: &str) -> TextBuffer {
-        let mut buf = make_buffer(b"");
-        for (i, c) in text.char_indices() {
-            buf.insert(i, &c.to_string());
-        }
-        buf
-    }
-
-    fn offsets(state: &ChunkedSearchState) -> Vec<(usize, usize)> {
-        state
-            .matches
-            .iter()
-            .map(|m| (m.byte_offset, m.length))
-            .collect()
-    }
-
-    /// The carried-over tail reaches back across short leaves, so a match
-    /// spanning several of them is found — once each, never overlapping.
-    #[test]
-    fn matches_spanning_short_leaves_are_found_once() {
-        let mut buf = typed_buffer("concat cat cats");
-        let state = buf.search_scan_all(make_regex("(?i)cat"), 100, 3).unwrap();
-        assert_eq!(offsets(&state), vec![(3, 3), (7, 3), (11, 3)]);
-
-        let mut buf = typed_buffer("xaaaaa");
-        let state = buf.search_scan_all(make_regex("aa"), 100, 2).unwrap();
-        assert_eq!(offsets(&state), vec![(1, 2), (3, 2)]);
-    }
-
-    /// A match at the end of a leaf waits for the next one, so `\b` sees
-    /// the byte after it: "cat" followed by a typed "s" is no whole word.
-    #[test]
-    fn word_boundary_at_a_leaf_end_sees_the_next_leaf() {
-        let mut buf = make_buffer(b"a cat");
-        buf.insert(5, "s");
-        let state = buf.search_scan_all(make_regex(r"\bcat\b"), 100, 3).unwrap();
-        assert!(state.matches.is_empty(), "got {:?}", offsets(&state));
-    }
-
-    #[test]
-    fn without_context_matches_carry_no_line_text() {
-        let mut buf = make_buffer(b"one target here\n");
-        let mut state = buf.search_scan_init(make_regex("target"), 100, 6);
-        state.with_context = false;
-        while buf.search_scan_next_chunk(&mut state).unwrap() {}
-        assert_eq!(offsets(&state), vec![(4, 6)]);
-        assert!(state.matches[0].context.is_empty());
     }
 
     #[test]
@@ -3642,44 +3594,292 @@ fn test_failed_save_leaves_the_hot_exit_entry_as_unsaved_work() {
     assert_eq!(buffer.hot_exit_entry(), Some(&entry));
 }
 
-/// `find_regex_match_loading` reads forward a window at a time: it finds a
-/// match straddling a window boundary, reads a match running past the end
-/// of a window again whole, and judges `\b` by the text outside its range.
+/// `find_regex_matches_loading` gives exactly what `find_iter` over the
+/// whole text gives, on an edited buffer (many piece-tree leaves) larger than
+/// several windows: matches spanning leaves and window edges, case folding,
+/// whole words, overlapping candidates, empty matches, and a match longer
+/// than a window.
 #[test]
-fn find_regex_match_loading_reads_forward_only_as_needed() {
-    let window = LOAD_CHUNK_SIZE;
-
-    // A match straddling the first window's end.
-    let mut text = vec![b'x'; window - 2];
-    text.extend_from_slice(b" needle ");
-    text.extend(std::iter::repeat_n(b'x', 1000));
-    let mut buf = TextBuffer::from_bytes(text, test_fs());
-    let re = regex::bytes::Regex::new("needle").unwrap();
+fn find_regex_matches_loading_agrees_with_find_iter() {
+    let mut text = String::new();
+    let mut i = 0;
+    while text.len() < LOAD_CHUNK_SIZE * 2 {
+        let word = if i % 2 == 0 { "Source" } else { "sOURCE" };
+        text.push_str(&format!("line {i}: {word} concat cat cats xaaaaa\n"));
+        i += 1;
+    }
+    text.push_str(&"b".repeat(LOAD_CHUNK_SIZE + LOAD_CHUNK_SIZE / 2));
+    text.push_str("\nend cat\n");
+    let mut buf = TextBuffer::from_bytes(text.into_bytes(), test_fs());
+    // Edit it, so the piece tree has short leaves throughout.
+    for at in [5, 300, 70_000, LOAD_CHUNK_SIZE - 1, LOAD_CHUNK_SIZE + 3] {
+        buf.insert(at, "cat ");
+    }
     let len = buf.len();
-    assert_eq!(
-        buf.find_regex_match_loading(&re, 0..len, 24).unwrap(),
-        Some((window - 1, 6))
-    );
+    let whole = buf.get_text_range_mut(0, len).unwrap();
 
-    // A match longer than a window comes back whole.
-    let mut text = b"begin ".to_vec();
-    text.extend(std::iter::repeat_n(b'a', window * 2 + 10));
-    text.extend_from_slice(b" end");
-    let mut buf = TextBuffer::from_bytes(text, test_fs());
-    let re = regex::bytes::Regex::new("a+").unwrap();
-    let len = buf.len();
-    assert_eq!(
-        buf.find_regex_match_loading(&re, 0..len, 4096).unwrap(),
-        Some((6, window * 2 + 10))
-    );
+    for pattern in ["(?i)source", r"\bcat\b", "aa", "b+", "(?m)^", "(?m)$", "x?"] {
+        let re = regex::bytes::Regex::new(pattern).unwrap();
+        let expected: Vec<(usize, usize)> =
+            re.find_iter(&whole).map(|m| (m.start(), m.len())).collect();
+        let found = buf
+            .find_regex_matches_loading(&re, 0..len, 4096, usize::MAX)
+            .unwrap();
+        assert_eq!(found.len(), expected.len(), "pattern {pattern}");
+        assert!(found == expected, "pattern {pattern}: matches differ");
+        assert_eq!(
+            buf.find_regex_matches_loading(&re, 0..len, 4096, 3)
+                .unwrap(),
+            expected[..3.min(expected.len())],
+            "pattern {pattern} with a limit"
+        );
+    }
+}
 
-    // Started inside "concat", whole-word "cat" is the lone one at 7; ended
-    // inside "cats", there is none.
-    let mut buf = TextBuffer::from_bytes(b"concat cat cats".to_vec(), test_fs());
-    let re = regex::bytes::Regex::new(r"\bcat\b").unwrap();
+/// A match that runs past the end of the range is not one of its matches,
+/// and the search ends rather than re-reading for it.
+#[test]
+fn find_regex_matches_loading_stops_at_the_range_end() {
+    let mut buf = TextBuffer::from_bytes(b"xx hello yy".to_vec(), test_fs());
+    let re = regex::bytes::Regex::new("hello").unwrap();
+    assert!(buf
+        .find_regex_matches_loading(&re, 0..5, 20, usize::MAX)
+        .unwrap()
+        .is_empty());
+    let re = regex::bytes::Regex::new("aa").unwrap();
+    let mut buf = TextBuffer::from_bytes(b"aaaaa".to_vec(), test_fs());
     assert_eq!(
-        buf.find_regex_match_loading(&re, 3..15, 12).unwrap(),
-        Some((7, 3))
+        buf.find_regex_matches_loading(&re, 0..3, 8, usize::MAX)
+            .unwrap(),
+        vec![(0, 2)]
     );
-    assert_eq!(buf.find_regex_match_loading(&re, 8..14, 12).unwrap(), None);
+}
+
+/// Property tests for `find_regex_matches_loading`: whatever the text, the
+/// piece-tree layout, the window size and the pattern, it finds exactly what a
+/// regex over the whole text finds.
+mod regex_matches_loading {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Patterns covering literals, case folding, whole words, alternation,
+    /// greedy runs, multi-byte text and empty matches.
+    const PATTERNS: &[&str] = &[
+        "a", "ab", "(?i)ab", r"\bab\b", "ab|b", "a+", r"\s+", "é", "(?i)É", "(?m)^", "(?m)$",
+        "(?m)^a", "b?",
+    ];
+
+    /// The reference: the regex run over the whole text with full context,
+    /// from `range.start`, taking matches inside `range` by the same rules.
+    fn reference(
+        re: &regex::bytes::Regex,
+        text: &[u8],
+        range: Range<usize>,
+    ) -> Vec<(usize, usize)> {
+        let end = range.end.min(text.len());
+        let at_text_end = end == text.len();
+        let mut out: Vec<(usize, usize)> = Vec::new();
+        let mut at = range.start;
+        while at <= text.len() {
+            let Some(m) = re.find_at(text, at) else { break };
+            if m.start() > end || m.end() > end || (m.start() == end && !at_text_end) {
+                break;
+            }
+            if m.is_empty() && out.last().is_some_and(|&(s, l)| s + l == m.start()) {
+                at = m.start() + 1;
+                continue;
+            }
+            out.push((m.start(), m.len()));
+            at = if m.is_empty() { m.end() + 1 } else { m.end() };
+        }
+        out
+    }
+
+    fn text_strategy() -> impl Strategy<Value = String> {
+        prop::collection::vec(
+            prop::sample::select(vec!["a", "b", "A", "B", " ", "\n", "é", "É"]),
+            0..300,
+        )
+        .prop_map(|parts| parts.concat())
+    }
+
+    /// Inserts at fractional positions, snapped to char boundaries, so the
+    /// piece tree is split into many short leaves.
+    fn edits_strategy() -> impl Strategy<Value = Vec<(u16, String)>> {
+        prop::collection::vec(
+            (
+                any::<u16>(),
+                text_strategy().prop_map(|s| s.chars().take(6).collect()),
+            ),
+            0..12,
+        )
+    }
+
+    fn edited_buffer(text: &str, edits: &[(u16, String)]) -> (TextBuffer, Vec<u8>) {
+        let mut buf = TextBuffer::from_bytes(text.as_bytes().to_vec(), test_fs());
+        let mut model = text.to_string();
+        for (frac, ins) in edits {
+            let mut at = model.len() * (*frac as usize) / (u16::MAX as usize);
+            while !model.is_char_boundary(at) {
+                at -= 1;
+            }
+            buf.insert(at, ins);
+            model.insert_str(at, ins);
+        }
+        (buf, model.into_bytes())
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+
+        #[test]
+        fn prop_whole_range_matches_find_iter(
+            text in text_strategy(),
+            edits in edits_strategy(),
+            pattern in prop::sample::select(PATTERNS),
+            window in 1usize..48,
+        ) {
+            let (mut buf, model) = edited_buffer(&text, &edits);
+            prop_assert_eq!(buf.get_text_range_mut(0, buf.len()).unwrap(), model.clone());
+            let re = regex::bytes::Regex::new(pattern).unwrap();
+            let expected: Vec<(usize, usize)> =
+                re.find_iter(&model).map(|m| (m.start(), m.len())).collect();
+            let len = buf.len();
+            let found = buf.find_regex_matches_in_windows(&re, 0..len, 8, usize::MAX, window).unwrap();
+            prop_assert_eq!(found, expected);
+        }
+
+        #[test]
+        fn prop_sub_range_and_limit_match_the_reference(
+            text in text_strategy(),
+            edits in edits_strategy(),
+            pattern in prop::sample::select(PATTERNS),
+            window in 1usize..48,
+            from in any::<u16>(),
+            to in any::<u16>(),
+            limit in 0usize..6,
+        ) {
+            let (mut buf, model) = edited_buffer(&text, &edits);
+            let len = model.len();
+            let (a, b) = (len * from as usize / 65535, len * to as usize / 65535);
+            let range = a.min(b)..a.max(b);
+            let re = regex::bytes::Regex::new(pattern).unwrap();
+            let expected = reference(&re, &model, range.clone());
+            let found = buf
+                .find_regex_matches_in_windows(&re, range.clone(), 8, usize::MAX, window)
+                .unwrap();
+            prop_assert_eq!(&found, &expected);
+            let limited = buf
+                .find_regex_matches_in_windows(&re, range, 8, limit, window)
+                .unwrap();
+            prop_assert_eq!(&limited[..], &expected[..limit.min(expected.len())]);
+        }
+    }
+
+    proptest! {
+        // A lazily loaded file on disk, MB scale: keep the case count modest.
+        #![proptest_config(ProptestConfig::with_cases(12))]
+
+        /// With the real window, on a file whose pieces are not loaded yet:
+        /// the same matches as over the whole text, read from disk only as
+        /// the search goes, and the text is unchanged afterwards.
+        #[test]
+        fn prop_lazily_loaded_file_matches_find_iter(
+            extra in 0usize..(2 * LOAD_CHUNK_SIZE),
+            stride in 7usize..4000,
+            pattern in prop::sample::select(&["(?i)cat", r"\bcat\b", "(?m)^c", "t+"][..]),
+        ) {
+            let size = LOAD_CHUNK_SIZE + extra;
+            let mut content = Vec::with_capacity(size + 8);
+            let mut i = 0usize;
+            while content.len() < size {
+                content.extend_from_slice(match i % 4 { 0 => b"Cat", 1 => b"cats", 2 => b"\n", _ => b" cat " });
+                content.extend(std::iter::repeat_n(b'x', i % stride));
+                i += 1;
+            }
+            let tmp = tempfile::NamedTempFile::new().unwrap();
+            std::fs::write(tmp.path(), &content).unwrap();
+            let mut buf = super::rebuild_pristine_saved_root_tests::large_file_buffer_unloaded(
+                tmp.path(),
+                content.len(),
+            );
+            let re = regex::bytes::Regex::new(pattern).unwrap();
+            let expected: Vec<(usize, usize)> =
+                re.find_iter(&content).map(|m| (m.start(), m.len())).collect();
+            let len = buf.len();
+            let found = buf.find_regex_matches_loading(&re, 0..len, 4096, usize::MAX).unwrap();
+            prop_assert_eq!(found, expected);
+            prop_assert_eq!(buf.get_text_range_mut(0, len).unwrap(), content);
+        }
+    }
+
+    #[test]
+    fn edge_cases() {
+        let re = regex::bytes::Regex::new("ab").unwrap();
+        let empty = regex::bytes::Regex::new("(?m)^").unwrap();
+
+        // An empty buffer, an empty range, a range past the end, a zero limit.
+        let mut buf = TextBuffer::from_bytes(Vec::new(), test_fs());
+        assert!(buf
+            .find_regex_matches_loading(&re, 0..0, 8, usize::MAX)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            buf.find_regex_matches_loading(&empty, 0..0, 8, usize::MAX)
+                .unwrap(),
+            vec![(0, 0)],
+            "an empty buffer has one line start"
+        );
+        let mut buf = TextBuffer::from_bytes(b"ab ab".to_vec(), test_fs());
+        assert!(buf
+            .find_regex_matches_loading(&re, 2..2, 8, usize::MAX)
+            .unwrap()
+            .is_empty());
+        assert!(buf
+            .find_regex_matches_loading(&re, 9..20, 8, usize::MAX)
+            .unwrap()
+            .is_empty());
+        assert!(buf
+            .find_regex_matches_loading(&re, 0..5, 8, 0)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            buf.find_regex_matches_loading(&re, 0..5, 8, 1).unwrap(),
+            vec![(0, 2)]
+        );
+
+        // A match must lie wholly inside the range.
+        assert_eq!(
+            buf.find_regex_matches_loading(&re, 0..4, 8, usize::MAX)
+                .unwrap(),
+            vec![(0, 2)]
+        );
+        assert_eq!(
+            buf.find_regex_matches_loading(&re, 1..5, 8, usize::MAX)
+                .unwrap(),
+            vec![(3, 2)]
+        );
+
+        // An empty match at the end of the range counts only at the buffer's end.
+        let mut buf = TextBuffer::from_bytes(b"x\ny\n".to_vec(), test_fs());
+        assert_eq!(
+            buf.find_regex_matches_loading(&empty, 0..4, 8, usize::MAX)
+                .unwrap(),
+            vec![(0, 0), (2, 0), (4, 0)]
+        );
+        assert_eq!(
+            buf.find_regex_matches_loading(&empty, 0..2, 8, usize::MAX)
+                .unwrap(),
+            vec![(0, 0)]
+        );
+
+        // An overlap longer than the window still moves forward.
+        let mut buf = TextBuffer::from_bytes(b"xxxxxxxxab".to_vec(), test_fs());
+        let len = buf.len();
+        assert_eq!(
+            buf.find_regex_matches_in_windows(&re, 0..len, 64, usize::MAX, 1)
+                .unwrap(),
+            vec![(8, 2)]
+        );
+    }
 }

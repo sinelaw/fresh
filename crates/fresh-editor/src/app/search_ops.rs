@@ -913,17 +913,50 @@ impl Editor {
     /// `build_replace_regex`, or for a plain-text, case-sensitive,
     /// non-whole-word search the escaped query — for the replace paths that
     /// search with a regex in every mode.
-    fn replace_regex(&self, search: &str) -> regex::bytes::Regex {
-        self.build_replace_regex(search).unwrap_or_else(|| {
-            regex::bytes::Regex::new(&regex::escape(search))
-                .expect("an escaped literal is a valid regex")
-        })
+    fn replace_regex(&mut self, search: &str) -> Option<regex::bytes::Regex> {
+        if let Some(regex) = self.build_replace_regex(search) {
+            return Some(regex);
+        }
+        match regex::bytes::Regex::new(&regex::escape(search)) {
+            Ok(regex) => Some(regex),
+            // Only a query too long for the regex engine gets here.
+            Err(e) => {
+                self.set_status_message(t!("error.invalid_regex", error = e).to_string());
+                None
+            }
+        }
     }
 
-    /// The next match of a replace's `regex` within `range`, as `(start, len)`.
-    /// Reads forward only as far as that match, loading the parts of a lazily
-    /// loaded file it reaches, so a replace reaches every occurrence without
-    /// reading the file up front. Reports a read failure and returns `None`.
+    /// Up to `limit` matches of a replace's `regex` within `range`, as
+    /// `(start, len)`. Reads forward only as far as it needs, loading the
+    /// parts of a lazily loaded file it reaches, so a replace reaches every
+    /// occurrence without reading the file up front. Reports a read failure
+    /// and returns `None`.
+    fn find_replace_matches(
+        &mut self,
+        regex: &regex::bytes::Regex,
+        use_regex: bool,
+        search: &str,
+        range: std::ops::Range<usize>,
+        limit: usize,
+    ) -> Option<Vec<(usize, usize)>> {
+        let overlap = replace_match_overlap(use_regex, search);
+        match self
+            .active_state_mut()
+            .buffer
+            .find_regex_matches_loading(regex, range, overlap, limit)
+        {
+            Ok(found) => Some(found),
+            Err(e) => {
+                tracing::warn!("Failed to read buffer for replace: {}", e);
+                self.set_status_message(t!("error.buffer_not_loaded").to_string());
+                None
+            }
+        }
+    }
+
+    /// The next match of a replace's `regex` within `range`: see
+    /// `find_replace_matches`.
     fn find_replace_match(
         &mut self,
         regex: &regex::bytes::Regex,
@@ -931,19 +964,9 @@ impl Editor {
         search: &str,
         range: std::ops::Range<usize>,
     ) -> Option<(usize, usize)> {
-        let overlap = replace_match_overlap(use_regex, search);
-        match self
-            .active_state_mut()
-            .buffer
-            .find_regex_match_loading(regex, range, overlap)
-        {
-            Ok(found) => found,
-            Err(e) => {
-                tracing::warn!("Failed to read buffer for replace: {}", e);
-                self.set_status_message(t!("error.buffer_not_loaded").to_string());
-                None
-            }
-        }
+        self.find_replace_matches(regex, use_regex, search, range, 1)?
+            .into_iter()
+            .next()
     }
 
     /// Expand capture group references (e.g. $1, $2, ${name}) in the replacement string
@@ -972,91 +995,31 @@ impl Editor {
             return;
         }
 
-        let compiled_regex = self.build_replace_regex(search);
+        let Some(regex) = self.replace_regex(search) else {
+            return;
+        };
         let use_regex = self.active_window().search_use_regex;
 
-        // Find all matches first (before making any modifications)
-        // Each match is (position, length, expanded_replacement)
-        let matches: Vec<(usize, usize, String)> = if self.active_state().buffer.is_large_file() {
-            // A lazily loaded file: the chunked scan Ctrl+F uses on large
-            // files, which loads each chunk only as it reaches it.
-            let regex = self.replace_regex(search);
-            let state = self.active_state_mut();
-            let mut scan = state.buffer.search_scan_init(
-                regex.clone(),
-                usize::MAX,
-                replace_match_overlap(use_regex, search),
-            );
-            scan.with_context = false;
-            loop {
-                match state.buffer.search_scan_next_chunk(&mut scan) {
-                    Ok(true) => {}
-                    Ok(false) => break,
-                    Err(e) => {
-                        tracing::warn!("Failed to scan buffer for replace: {}", e);
-                        self.set_status_message(t!("error.buffer_not_loaded").to_string());
-                        return;
-                    }
-                }
-            }
-            let found: Vec<(usize, usize)> = scan
-                .matches
-                .iter()
-                .map(|m| (m.byte_offset, m.length))
-                .collect();
-            found
-                .into_iter()
-                .map(|(pos, len)| {
-                    let text = if use_regex {
-                        self.expand_regex_replacement(&regex, pos, len, replacement)
-                    } else {
-                        replacement.to_string()
-                    };
-                    (pos, len, text)
-                })
-                .collect()
-        } else if let Some(ref regex) = compiled_regex {
-            // In memory: load buffer content as bytes and find all matches
-            let buffer_bytes = {
-                let state = self.active_state_mut();
-                let total_bytes = state.buffer.len();
-                match state.buffer.get_text_range_mut(0, total_bytes) {
-                    Ok(bytes) => bytes,
-                    Err(e) => {
-                        tracing::warn!("Failed to load buffer for replace: {}", e);
-                        self.set_status_message(t!("error.buffer_not_loaded").to_string());
-                        return;
-                    }
-                }
-            };
-            if use_regex {
-                // Regex mode: capture group expansion in the replacement template
-                super::regex_replace::collect_regex_matches(regex, &buffer_bytes, replacement)
-                    .into_iter()
-                    .map(|m| (m.offset, m.len, m.replacement))
-                    .collect()
-            } else {
-                // Plain text with case folding or whole word: the replacement
-                // is literal
-                regex
-                    .find_iter(&buffer_bytes)
-                    .map(|m| (m.start(), m.len(), replacement.to_string()))
-                    .collect()
-            }
-        } else {
-            // Plain text mode - replacement is used literally.
-            // One streaming pass over the buffer: asking for the next match
-            // from scratch per occurrence re-reads a chunk each time, which
-            // dominated the whole replace on files with many matches.
-            let state = self.active_state();
-            let buffer_len = state.buffer.len();
-            state
-                .buffer
-                .find_all_in_range(search, 0..buffer_len, usize::MAX)
-                .into_iter()
-                .map(|offset| (offset, search.len(), replacement.to_string()))
-                .collect()
+        // Find all matches first (before making any modifications), loading
+        // a lazily loaded file only as the search reaches each part.
+        let buffer_len = self.active_state().buffer.len();
+        let Some(found) =
+            self.find_replace_matches(&regex, use_regex, search, 0..buffer_len, usize::MAX)
+        else {
+            return;
         };
+        // Each match is (position, length, expanded_replacement)
+        let matches: Vec<(usize, usize, String)> = found
+            .into_iter()
+            .map(|(pos, len)| {
+                let text = if use_regex {
+                    self.expand_regex_replacement(&regex, pos, len, replacement)
+                } else {
+                    replacement.to_string()
+                };
+                (pos, len, text)
+            })
+            .collect();
 
         let count = matches.len();
 
@@ -1121,7 +1084,9 @@ impl Editor {
             return;
         }
 
-        let regex = self.replace_regex(search);
+        let Some(regex) = self.replace_regex(search) else {
+            return;
+        };
         let use_regex = self.active_window().search_use_regex;
 
         // Find the first match lazily (don't find all matches upfront)
@@ -1173,8 +1138,11 @@ impl Editor {
                 self.replace_current_match(&ir_state)?;
                 ir_state.replacements_made += 1;
 
-                // Find next match lazily (after the replacement)
-                let search_pos = ir_state.current_match_pos + ir_state.replacement.len();
+                // Find next match lazily (after the replacement, and past an
+                // empty match so it is not found again)
+                let search_pos = ir_state.current_match_pos
+                    + ir_state.replacement.len()
+                    + usize::from(ir_state.current_match_len == 0);
                 if let Some((next_match, match_len, wrapped)) =
                     self.find_next_match_for_replace(&ir_state, search_pos)
                 {
@@ -1190,8 +1158,8 @@ impl Editor {
                 }
             }
             'n' | 'N' => {
-                // Skip current match and find next
-                let search_pos = ir_state.current_match_pos + ir_state.current_match_len;
+                // Skip current match and find next (past it, even if empty)
+                let search_pos = ir_state.current_match_pos + ir_state.current_match_len.max(1);
                 if let Some((next_match, match_len, wrapped)) =
                     self.find_next_match_for_replace(&ir_state, search_pos)
                 {
@@ -1213,29 +1181,28 @@ impl Editor {
                 // OPTIMIZATION: Uses BulkEdit for O(n) tree operations instead of O(n²)
                 // This directly edits the piece tree without loading the entire buffer
 
-                // Collect ALL match positions and lengths including the current match
-                // Start from the current match position
-                let all_matches: Vec<(usize, usize)> = {
-                    let mut matches = Vec::new();
-                    let mut temp_state = ir_state.clone();
-                    temp_state.has_wrapped = false; // Reset wrap state to find current match
-
-                    // First, include the current match
-                    matches.push((ir_state.current_match_pos, ir_state.current_match_len));
-                    let mut current_pos = ir_state.current_match_pos + ir_state.current_match_len;
-
-                    // Find all remaining matches
-                    while let Some((next_match, match_len, wrapped)) =
-                        self.find_next_match_for_replace(&temp_state, current_pos)
-                    {
-                        matches.push((next_match, match_len));
-                        current_pos = next_match + match_len;
-                        if wrapped {
-                            temp_state.has_wrapped = true;
-                        }
-                    }
-                    matches
+                // Collect ALL remaining matches in one pass, from the current
+                // match to where the replace started, wrapping at the end
+                let (regex, use_regex) = (ir_state.regex.clone(), ir_state.expand_replacement);
+                let search = ir_state.search.clone();
+                let buffer_len = self.active_state().buffer.len();
+                let (to_end, wrapped_part) = if ir_state.has_wrapped {
+                    (ir_state.current_match_pos..ir_state.start_pos, None)
+                } else {
+                    (
+                        ir_state.current_match_pos..buffer_len,
+                        Some(0..ir_state.start_pos),
+                    )
                 };
+                let mut all_matches: Vec<(usize, usize)> = Vec::new();
+                for range in std::iter::once(to_end).chain(wrapped_part) {
+                    let Some(found) =
+                        self.find_replace_matches(&regex, use_regex, &search, range, usize::MAX)
+                    else {
+                        return Ok(());
+                    };
+                    all_matches.extend(found);
+                }
 
                 let total_count = all_matches.len();
 

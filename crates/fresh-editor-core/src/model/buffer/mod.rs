@@ -2074,7 +2074,6 @@ impl TextBuffer {
             capped: false,
             query_len,
             running_line: 1,
-            with_context: true,
         }
     }
 
@@ -2137,28 +2136,11 @@ impl TextBuffer {
         let mut line_at = state.running_line - newlines_in_overlap;
         let mut counted_to = 0usize;
 
-        // A match ending this close to the end of a chunk is held for the
-        // next one, so `\b` and look-ahead see the byte that follows. The
-        // carried-over tail keeps it whole if it fits.
-        const HOLD: usize = 4;
-        let is_last_chunk = state.next_chunk >= state.chunks.len();
-        let max_overlap = state.query_len.max(256);
-        // Matches are reported once and never overlap: one starting before
-        // the end of the last reported match was already covered.
-        let mut reported_end = state
-            .matches
-            .last()
-            .map(|m| m.byte_offset + m.length)
-            .unwrap_or(0);
-
         // Run regex on the combined buffer
         for m in state.regex.find_iter(&search_buf) {
-            if buf_doc_offset + m.start() < reported_end {
+            // Skip matches entirely within the overlap (already found)
+            if overlap_len > 0 && m.end() <= overlap_len {
                 continue;
-            }
-            if !is_last_chunk && m.end() + HOLD > search_buf.len() && m.len() + HOLD <= max_overlap
-            {
-                break;
             }
 
             if state.matches.len() >= state.max_matches {
@@ -2173,29 +2155,22 @@ impl TextBuffer {
                 .count();
             counted_to = m.start();
 
+            // Find line boundaries in search_buf for context
+            let line_start = search_buf[..m.start()]
+                .iter()
+                .rposition(|&b| b == b'\n')
+                .map(|p| p + 1)
+                .unwrap_or(0);
+            let line_end = search_buf[m.start()..]
+                .iter()
+                .position(|&b| b == b'\n')
+                .map(|p| m.start() + p)
+                .unwrap_or(search_buf.len());
+
             let match_doc_offset = buf_doc_offset + m.start();
             let match_len = m.end() - m.start();
-            reported_end = match_doc_offset + match_len;
-
-            // Find line boundaries in search_buf for context
-            let (column, context) = if state.with_context {
-                let line_start = search_buf[..m.start()]
-                    .iter()
-                    .rposition(|&b| b == b'\n')
-                    .map(|p| p + 1)
-                    .unwrap_or(0);
-                let line_end = search_buf[m.start()..]
-                    .iter()
-                    .position(|&b| b == b'\n')
-                    .map(|p| m.start() + p)
-                    .unwrap_or(search_buf.len());
-                (
-                    m.start() - line_start + 1,
-                    String::from_utf8_lossy(&search_buf[line_start..line_end]).into_owned(),
-                )
-            } else {
-                (0, String::new())
-            };
+            let column = m.start() - line_start + 1;
+            let context = String::from_utf8_lossy(&search_buf[line_start..line_end]).into_owned();
 
             state.matches.push(SearchMatch {
                 byte_offset: match_doc_offset,
@@ -2210,12 +2185,11 @@ impl TextBuffer {
         let newlines_in_chunk = chunk_bytes.iter().filter(|&&b| b == b'\n').count();
         state.running_line += newlines_in_chunk;
 
-        // Save the overlap tail for the next chunk from everything searched so
-        // far, not just this chunk: chunks are piece-tree leaves, and an
-        // edited buffer has leaves shorter than the overlap.
-        let tail_start = search_buf.len().saturating_sub(max_overlap);
-        state.overlap_tail = search_buf[tail_start..].to_vec();
-        state.overlap_doc_offset = buf_doc_offset + tail_start;
+        // Save overlap tail for next chunk
+        let max_overlap = state.query_len.max(256).min(chunk_bytes.len());
+        let tail_start = chunk_bytes.len().saturating_sub(max_overlap);
+        state.overlap_tail = chunk_bytes[tail_start..].to_vec();
+        state.overlap_doc_offset = doc_offset + tail_start;
 
         Ok(!state.is_done())
     }
@@ -2989,52 +2963,6 @@ impl TextBuffer {
         None
     }
 
-    /// The next match of `regex` within `range`, as `(start, len)`, reading
-    /// forward a window at a time and loading the parts of a lazily loaded
-    /// file it reaches (they stay loaded, as for any read): it reads only as
-    /// far as the next match. The bytes just outside each window are read too,
-    /// so `\b` and look-around judge a match by the text around it. A match
-    /// that runs to the end of a window is read again whole, however long.
-    /// `overlap` is how far back each window reaches into the previous one,
-    /// so a match straddling the boundary is found: at least the longest
-    /// match the pattern is expected to make.
-    pub fn find_regex_match_loading(
-        &mut self,
-        regex: &Regex,
-        range: Range<usize>,
-        overlap: usize,
-    ) -> Result<Option<(usize, usize)>> {
-        const CONTEXT: usize = 4;
-        let end = range.end.min(self.len());
-        let mut pos = range.start;
-        let mut window = LOAD_CHUNK_SIZE;
-        while pos < end {
-            let read_from = pos.saturating_sub(CONTEXT);
-            let window_end = pos.saturating_add(window).min(end);
-            let read_to = (window_end + CONTEXT).min(self.len());
-            let bytes = self.get_text_range_mut(read_from, read_to - read_from)?;
-            if let Some(m) = regex.find_at(&bytes, pos - read_from) {
-                let (start, match_end) = (read_from + m.start(), read_from + m.end());
-                if match_end + CONTEXT > read_to && read_to < self.len() {
-                    // It may go on past what was read: read again from it,
-                    // with more room if it already starts the window.
-                    if start == pos {
-                        window = window.saturating_mul(2);
-                    }
-                    pos = start;
-                    continue;
-                }
-                return Ok((match_end <= end).then_some((start, match_end - start)));
-            }
-            if window_end >= end {
-                break;
-            }
-            pos = window_end.saturating_sub(overlap).max(pos + 1);
-            window = LOAD_CHUNK_SIZE;
-        }
-        Ok(None)
-    }
-
     /// Find the next occurrence of a regex pattern within an optional range
     pub fn find_next_regex_in_range(
         &self,
@@ -3054,6 +2982,97 @@ impl TextBuffer {
         } else {
             self.find_next_regex(regex, start_pos)
         }
+    }
+
+    /// Up to `limit` matches of `regex` within `range`, as `(start, len)`, in
+    /// order and never overlapping — as `find_iter` over the text would give.
+    /// An empty match at the end of the range counts only where the range
+    /// ends the buffer (so a search up to an earlier match does not find it).
+    ///
+    /// Reads forward a `LOAD_CHUNK_SIZE` window at a time with
+    /// `get_text_range_mut`, so the parts of a lazily loaded file are loaded
+    /// as the search reaches them and no further: with `limit` 1 it reads
+    /// only up to the next match. Every match in a window is taken before the
+    /// next window is read. The bytes just outside each window are read too,
+    /// so `\b` and look-around judge a match by the text around it. A match
+    /// running to a window's end is read again with a bigger window.
+    /// `overlap` is how far each window reaches back into the last, so a
+    /// match straddling the boundary is found: at least the longest match
+    /// the pattern is expected to make.
+    pub fn find_regex_matches_loading(
+        &mut self,
+        regex: &Regex,
+        range: Range<usize>,
+        overlap: usize,
+        limit: usize,
+    ) -> Result<Vec<(usize, usize)>> {
+        self.find_regex_matches_in_windows(regex, range, overlap, limit, LOAD_CHUNK_SIZE)
+    }
+
+    /// `find_regex_matches_loading` reading `base_window` bytes at a time.
+    fn find_regex_matches_in_windows(
+        &mut self,
+        regex: &Regex,
+        range: Range<usize>,
+        overlap: usize,
+        limit: usize,
+        base_window: usize,
+    ) -> Result<Vec<(usize, usize)>> {
+        const CONTEXT: usize = 4;
+        let mut found: Vec<(usize, usize)> = Vec::new();
+        let end = range.end.min(self.len());
+        let at_buffer_end = end == self.len();
+        // Where the next match may start.
+        let mut pos = range.start;
+        let base_window = base_window.max(1);
+        let mut window = base_window;
+        'windows: while (pos < end || (at_buffer_end && pos == end)) && found.len() < limit {
+            let read_from = pos.saturating_sub(CONTEXT);
+            let window_end = pos.saturating_add(window).min(end);
+            let read_to = (window_end + CONTEXT).min(self.len());
+            let bytes = self.get_text_range_mut(read_from, read_to - read_from)?;
+            let mut at = pos;
+            while at <= read_to {
+                let Some(m) = regex.find_at(&bytes, at - read_from) else {
+                    break;
+                };
+                let (start, match_end) = (read_from + m.start(), read_from + m.end());
+                if start > end || match_end > end || (start == end && !at_buffer_end) {
+                    break 'windows;
+                }
+                if window_end < end && match_end + CONTEXT > read_to {
+                    // It may go on past this window: read again from it,
+                    // with more room if it already starts the window.
+                    if start == pos {
+                        window = window.saturating_mul(2);
+                    }
+                    pos = start;
+                    continue 'windows;
+                }
+                // As `find_iter`: no empty match where the last match ended.
+                if start == match_end && found.last().is_some_and(|&(s, l)| s + l == start) {
+                    at = start + 1;
+                    continue;
+                }
+                found.push((start, match_end - start));
+                if found.len() >= limit {
+                    break 'windows;
+                }
+                at = if start == match_end {
+                    match_end + 1
+                } else {
+                    match_end
+                };
+                pos = at;
+            }
+            if window_end >= end {
+                break;
+            }
+            // Always forward, even for an `overlap` as long as a window.
+            pos = pos.max(window_end.saturating_sub(overlap).max(pos + 1));
+            window = base_window;
+        }
+        Ok(found)
     }
 
     /// Find regex pattern in a byte range using overlapping chunks
