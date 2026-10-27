@@ -2881,6 +2881,12 @@ impl Editor {
 
     /// Save a buffer to a specific file path (for :w filename)
     fn handle_save_buffer_to_path(&mut self, buffer_id: BufferId, path: std::path::PathBuf) {
+        // Never over a file whose one buffer is elsewhere
+        if let Some(refusal) = self.save_target_refusal(&path, buffer_id) {
+            self.handle_set_status(format!("Not saved: {refusal}"));
+            tracing::warn!("SaveBufferToPath: refused {}: {refusal}", path.display());
+            return;
+        }
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)

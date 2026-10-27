@@ -88,6 +88,38 @@ impl Editor {
         self.window_with_file(&canonical, self.active_window)
     }
 
+    /// Why the active window's buffer `own` must not be saved as `path`, if
+    /// it must not: the file's one buffer is in another workspace, or another
+    /// running Fresh has it open. Writing it from here would make a second
+    /// version of the file and save it over the one being edited there.
+    pub(crate) fn save_target_refusal(&mut self, path: &Path, own: BufferId) -> Option<String> {
+        if let Some(elsewhere) = self.file_open_in_other_window(path) {
+            return Some(elsewhere.to_string());
+        }
+        let window = self.windows.get(&self.active_window)?;
+        let canonical = window.resolve_open_path(path).canonical_path;
+        let already_own = window
+            .buffers
+            .get(&own)
+            .and_then(|state| state.buffer.file_path())
+            .is_some_and(|file| file == canonical.as_path());
+        // Locks cover local files only
+        if already_own || window.host_key().is_some() {
+            return None;
+        }
+        match self.recovery_service.lock().unwrap().lock_file(&canonical) {
+            crate::services::recovery::FileLock::Elsewhere { pid } => {
+                let file = canonical
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let pid = pid.map_or_else(|| "?".to_string(), |pid| pid.to_string());
+                Some(t!("buffer.open_in_other_editor", file = file, pid = pid).to_string())
+            }
+            crate::services::recovery::FileLock::Ours => None,
+        }
+    }
+
     /// The first window other than `except`, on the same authority, with a
     /// tab on the file at canonical `path`.
     fn window_with_file(

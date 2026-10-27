@@ -767,10 +767,11 @@ impl Editor {
             .active_window()
             .resolve_open_path(&full_path)
             .canonical_path;
-        // A file has one buffer across workspaces: saving this one over a file
-        // another workspace has open would make two
-        if let Some(elsewhere) = self.file_open_in_other_window(&full_path) {
-            self.set_status_message(elsewhere.to_string());
+        // A file has one buffer, across workspaces and editors: saving this
+        // one over a file open in another would make two
+        let own = self.active_buffer();
+        if let Some(refusal) = self.save_target_refusal(&full_path, own) {
+            self.set_status_message(refusal);
             return;
         }
 
@@ -2027,6 +2028,43 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::parse_path_line_col;
+
+    /// Save As onto a file another running editor has open is refused: the
+    /// file isn't written, and this buffer stays what it was.
+    #[test]
+    fn save_as_onto_a_file_another_editor_has_open_is_refused() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let editor = || {
+            crate::app::Editor::new(
+                crate::config::Config::default(),
+                80,
+                24,
+                crate::config_io::DirectoryContext::for_testing(temp.path()),
+                crate::view::color_support::ColorCapability::TrueColor,
+                std::sync::Arc::new(crate::model::filesystem::StdFileSystem),
+            )
+            .unwrap()
+        };
+        let file = temp.path().join("f.txt");
+        std::fs::write(&file, "theirs\n").unwrap();
+        let mut first = editor();
+        first.open_file(&file).unwrap();
+
+        let mut second = editor();
+        second.new_buffer();
+        second.active_state_mut().buffer.insert(0, "mine\n");
+        second.save_file_as_with_checks(file.clone());
+
+        let status = second
+            .active_window()
+            .status_message
+            .clone()
+            .unwrap_or_default();
+        assert!(status.contains("another Fresh"), "not refused: {status:?}");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "theirs\n");
+        assert!(second.active_state().buffer.file_path().is_none());
+        drop(first);
+    }
 
     #[test]
     fn test_parse_path_line_col_empty() {
