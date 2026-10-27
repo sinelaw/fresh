@@ -161,6 +161,8 @@ pub mod issue_3466_wrap_indent_occurrence_highlight;
 pub mod issue_3475_unnamed_buffers_across_workspaces;
 pub mod issue_3486_3495_selection_keys;
 pub mod issue_3626_save_as_resurrects_unnamed_buffer;
+pub mod issue_3633_recovery_gaps;
+pub mod issue_3633_shared_file_variants;
 pub mod issue_623_prompt_dropdown_scrollbar;
 pub mod issue_722_inlay_hint_split_drift;
 pub mod issue_779_after_eof_shade;
@@ -171,9 +173,11 @@ pub mod language_dialog_tab_size;
 pub mod language_textmate_grammar;
 pub mod mouse_session_input;
 pub mod odin_language;
+pub mod one_buffer_per_file;
 pub mod pascal_indent;
 #[cfg(feature = "plugins")]
 pub mod placeholder_window_embed;
+pub mod recovery_across_launch_modes;
 pub mod settings_localized_labels;
 pub mod suspend_process;
 

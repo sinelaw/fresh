@@ -710,6 +710,8 @@ impl Editor {
             workspace_trust_prompt_cancellable: false,
             workspace_trust_markers: Vec::new(),
             should_detach: false,
+            adopting_recovery: false,
+            last_lock_sync: None,
             session_mode: false,
             software_cursor_only: false,
             session_name: None,
@@ -1440,20 +1442,11 @@ impl Editor {
             let recovery_config = RecoveryConfig {
                 enabled: recovery_enabled,
             };
-            // Default to a CWD-scoped recovery directory so each working
-            // directory keeps its own hot-exit recovery files. If this
-            // editor is later promoted to session mode, `set_session_name`
-            // re-creates the service with `RecoveryScope::Session`.
-            // Issue #1550: without per-CWD scoping, opening Fresh in a
-            // second folder would clobber the first folder's unsaved
-            // unnamed buffers on shutdown.
-            let scope = crate::services::recovery::RecoveryScope::Standalone {
-                working_dir: working_dir.clone(),
-            };
-            std::sync::Arc::new(std::sync::Mutex::new(RecoveryService::with_scope(
+            // One store whatever the launch mode, filed by each workspace's
+            // root (see `services::recovery::store`).
+            std::sync::Arc::new(std::sync::Mutex::new(RecoveryService::new(
                 recovery_config,
                 &dir_context.recovery_dir(),
-                &scope,
             )))
         };
 

@@ -58,24 +58,9 @@ impl Editor {
     /// For the status-bar label — which every daemon has, named or not — see
     /// [`Self::set_session_display_name`].
     ///
-    /// When a name is set, the recovery service is reinitialized to use a
-    /// session-scoped recovery directory so each named daemon's recovery data is
-    /// isolated.
+    /// Recovery data is not scoped by it: unsaved work is filed by workspace,
+    /// whatever launched the editor (see `services::recovery::store`).
     pub fn set_session_name(&mut self, name: Option<String>) {
-        if let Some(ref session_name) = name {
-            let base_recovery_dir = self.dir_context.recovery_dir();
-            let scope = crate::services::recovery::RecoveryScope::Session {
-                name: session_name.clone(),
-            };
-            let recovery_config = RecoveryConfig {
-                enabled: self.recovery_service.lock().unwrap().is_enabled(),
-            };
-            // Replace the shared service's contents in place — the
-            // `Arc<Mutex>` is cloned into every window, so we must not
-            // swap the `Arc` itself (that would desync the windows).
-            *self.recovery_service.lock().unwrap() =
-                RecoveryService::with_scope(recovery_config, &base_recovery_dir, &scope);
-        }
         self.session_name = name;
     }
 

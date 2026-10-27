@@ -2881,6 +2881,12 @@ impl Editor {
 
     /// Save a buffer to a specific file path (for :w filename)
     fn handle_save_buffer_to_path(&mut self, buffer_id: BufferId, path: std::path::PathBuf) {
+        // Never over a file whose one buffer is elsewhere
+        if let Some(refusal) = self.save_target_refusal(&path, buffer_id) {
+            self.handle_set_status(format!("Not saved: {refusal}"));
+            tracing::warn!("SaveBufferToPath: refused {}: {refusal}", path.display());
+            return;
+        }
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
@@ -2894,9 +2900,12 @@ impl Editor {
                 .save_to_file(&path, &self.dir_context.recovery_dir())
             {
                 Ok(()) => {
-                    // save_to_file already updates file_path internally via finalize_save
-                    // Run on-save actions (formatting, etc.)
-                    if let Err(e) = self.finalize_save(Some(path)) {
+                    // Finalize the buffer that was saved, which need not be
+                    // the active one: finalizing the active buffer deleted
+                    // the hot-exit entry of a buffer still holding unsaved
+                    // work, left the saved one marked for a backup, and ran
+                    // the saved buffer's on-save actions on the active one.
+                    if let Err(e) = self.finalize_save_buffer(buffer_id, Some(path), false) {
                         tracing::warn!("Failed to finalize save: {}", e);
                     }
                     tracing::debug!("Saved buffer {:?} to path", buffer_id);

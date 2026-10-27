@@ -4350,6 +4350,18 @@ impl Editor {
         let explicit_buffer = (buffer_id != 0)
             .then_some(BufferId(buffer_id))
             .filter(|bid| self.buffers().contains_key(bid));
+        // The file's one buffer is in another workspace: refused. The matches
+        // were found here, possibly in the file on disk, and nothing here can
+        // tell whether they still hold in that buffer.
+        if explicit_buffer.is_none() {
+            if let Some(elsewhere) = self.file_open_in_other_window(&file_path) {
+                self.plugin_manager.read().unwrap().reject_callback(
+                    callback_id,
+                    format!("{}: {}", file_path.display(), elsewhere),
+                );
+                return;
+            }
+        }
         let buffer_id = if let Some(bid) = explicit_buffer {
             bid
         } else if let Some((&bid, _)) = self
@@ -4393,6 +4405,34 @@ impl Editor {
                 }
             }
         };
+
+        // Another running editor has the file open: it is read-only here, and
+        // a replace saved from here would write over that editor's version
+        if self
+            .active_window()
+            .buffer_metadata
+            .get(&buffer_id)
+            .is_some_and(|meta| meta.open_elsewhere.is_some())
+        {
+            let hidden = self
+                .active_window()
+                .buffer_metadata
+                .get(&buffer_id)
+                .is_some_and(|meta| meta.hidden_from_tabs);
+            if hidden {
+                if let Err(e) = self.force_close_buffer(buffer_id) {
+                    tracing::debug!("Failed to close the replace buffer of {file_path:?}: {e}");
+                }
+            }
+            self.plugin_manager.read().unwrap().reject_callback(
+                callback_id,
+                format!(
+                    "{} is open in another Fresh; it is read-only here",
+                    file_path.display()
+                ),
+            );
+            return;
+        }
 
         // Sort matches by byte offset descending — editing from end backwards
         // prevents earlier edits from shifting later offsets
@@ -4840,6 +4880,48 @@ mod tests {
         )
         .unwrap();
         (editor, temp_dir)
+    }
+
+    /// A replace in a file whose one buffer is in another workspace is
+    /// refused: nothing here can tell whether the matches still hold in that
+    /// buffer, and the save would write it out. Neither the buffer nor the
+    /// file changes, and no second buffer is opened here.
+    #[test]
+    fn a_replace_in_a_file_another_workspace_has_open_is_refused() {
+        let (mut editor, temp) = make_editor();
+        let file = temp.path().join("f.txt");
+        std::fs::write(&file, "hello world\n").unwrap();
+        let file = file.canonicalize().unwrap();
+        let home = editor.active_window_id();
+        let other_root = temp.path().join("other");
+        std::fs::create_dir(&other_root).unwrap();
+        let other = editor.create_window_at(other_root, "other".to_string());
+        editor.set_active_window(other);
+        let buffer = editor.open_file(&file).unwrap();
+        editor.set_active_window(home);
+
+        editor.handle_replace_in_buffer(
+            file.clone(),
+            0,
+            vec![(0, 5)],
+            "HOWDY".to_string(),
+            None,
+            fresh_core::api::JsCallbackId::new(1),
+        );
+
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "hello world\n");
+        let text = editor.windows[&other]
+            .buffers
+            .get(&buffer)
+            .and_then(|s| s.buffer.to_string());
+        assert_eq!(text.as_deref(), Some("hello world\n"));
+        assert!(
+            editor.windows[&home]
+                .buffers
+                .iter()
+                .all(|(_, s)| s.buffer.file_path() != Some(file.as_path())),
+            "a second buffer for the file was opened"
+        );
     }
 
     /// A Live Diff baseline loads through the window that owns it, whichever

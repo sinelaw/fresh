@@ -991,6 +991,9 @@ fn handle_http(
             (*cols, *rows) = DEFAULT_SIZE;
             // No `ready`: a reset hands the harness a known editor, and the
             // hook's effects would arrive asynchronously after it returned.
+            // The old editor's files are let go first, or the new one would
+            // find them open in another editor and get them read-only.
+            editor.release_file_locks();
             match build_editor(*cols, *rows, files, false) {
                 Ok(e) => *editor = e,
                 Err(err) => eprintln!("reset failed: {err}"),
@@ -2519,6 +2522,9 @@ mod tests {
             &mut clean, "quit", &quit, &mut cols, &mut rows
         ));
         assert!(clean.should_quit(), "a clean editor quits at once");
+        // Gone, as it would be: while it runs, the file is read-only to any
+        // other editor
+        drop(clean);
 
         let mut dirty = super::build_editor(cols, rows, std::slice::from_ref(&file), false)
             .expect("build editor");

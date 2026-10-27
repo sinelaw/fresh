@@ -75,6 +75,12 @@ pub struct BufferMetadata {
     /// For file-backed buffers, recovery ID is computed from the path hash.
     /// For unnamed buffers, this is generated once and reused across auto-saves.
     pub recovery_id: Option<String>,
+
+    /// Read-only only because another running editor has the file open
+    /// (see `Editor::sync_file_locks`): `Some` with whether it was read-only
+    /// before, which is what it goes back to once that editor lets go. Not a
+    /// read-only the layout keeps.
+    pub open_elsewhere: Option<bool>,
 }
 
 impl BufferMetadata {
@@ -146,6 +152,7 @@ impl BufferMetadata {
             auto_revert_enabled: true,
             synthetic_placeholder: false,
             recovery_id: None,
+            open_elsewhere: None,
         }
     }
 
@@ -167,6 +174,7 @@ impl BufferMetadata {
             hidden_from_tabs: false,
             synthetic_placeholder: false,
             recovery_id: None,
+            open_elsewhere: None,
         }
     }
 
@@ -227,6 +235,7 @@ impl BufferMetadata {
             hidden_from_tabs: false,
             synthetic_placeholder: false,
             recovery_id: None,
+            open_elsewhere: None,
         }
     }
 
@@ -266,6 +275,7 @@ impl BufferMetadata {
             hidden_from_tabs: false,
             synthetic_placeholder: false,
             recovery_id: None,
+            open_elsewhere: None,
         }
     }
 
@@ -364,6 +374,7 @@ impl BufferMetadata {
             hidden_from_tabs: false,
             synthetic_placeholder: false,
             recovery_id: None,
+            open_elsewhere: None,
         }
     }
 

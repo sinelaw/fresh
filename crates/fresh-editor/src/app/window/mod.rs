@@ -363,15 +363,6 @@ pub struct Window {
     /// way to "rename" the root.
     pub root: PathBuf,
 
-    /// Unnamed buffers this window's workspace listed that this session could
-    /// not find in the recovery store it can see.
-    ///
-    /// Non-empty means the window knows less than its workspace file does, so
-    /// it must not overwrite that file — see `Editor::save_workspace_for`.
-    /// Only *absent* entries count: one that is present but unusable will
-    /// never resolve, and would stop the file being saved for good.
-    pub unresolved_unnamed_buffers: Vec<crate::workspace::UnnamedBufferRef>,
-
     /// Files this window's workspace listed that exist but could not be
     /// opened this session (a permission blip, an I/O error, a path briefly
     /// shadowed by a directory). The snapshot is built from the live
@@ -2502,7 +2493,6 @@ impl Window {
             last_focused_at: crate::workspace::now_millis(),
             workspace_restored: false,
             root,
-            unresolved_unnamed_buffers: Vec::new(),
             unopened_files: Vec::new(),
             recovery_notices: Vec::new(),
             connection,

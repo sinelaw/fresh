@@ -497,6 +497,7 @@ impl Editor {
             auto_revert_enabled: true,
             synthetic_placeholder: false,
             recovery_id: None,
+            open_elsewhere: None,
         };
         self.active_window_mut()
             .buffer_metadata
@@ -582,6 +583,7 @@ impl Editor {
             auto_revert_enabled: true,
             synthetic_placeholder: false,
             recovery_id: None,
+            open_elsewhere: None,
         };
         self.active_window_mut()
             .buffer_metadata
