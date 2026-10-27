@@ -41,6 +41,11 @@ const editor = getEditor();
 
 interface SearchResult {
   match: GrepMatch;
+  /** The match's byte offset and length in `match.context`, as the search
+   *  found it. `match.column` can't say: `resolveMatchTarget` moves it with
+   *  the live marker, and `context` stays as it was. */
+  contextAt: number;
+  contextLen: number;
   selected: boolean;
   // Interval-marker anchor (issue #2583). For a match whose file is open we
   // register a marker at its byte range; the editor keeps it shifted across
@@ -310,102 +315,19 @@ function truncate(s: string, maxLen: number): string {
   return result + "...";
 }
 
-/** UTF-16 index of the `pattern` hit in `line` nearest to (at or before)
- *  `byteHint`, or -1 when the pattern is empty, invalid, or absent.
- *
- *  This is how a row learns where its own match sits, and it deliberately
- *  does NOT convert `match.column` to a UTF-16 index. Three reasons:
- *
- *  1. A conversion has to walk the line codepoint by codepoint, and on the
- *     very files `CONTEXT_HARD_CAP` was written for — 5 000-50 000 char
- *     minified bundles — that walk is tens of thousands of QuickJS
- *     iterations per row, per re-render. One `©` anywhere on the line puts
- *     every row on it onto that path. Native string search is two to three
- *     orders of magnitude cheaper and is all this needs.
- *  2. `column` and `context` are not guaranteed to describe the same
- *     string: `resolveMatchTarget` rewrites `line`/`column` from the live
- *     interval marker after a jump or replace and leaves `context` at its
- *     grep-time value. Searching `context` itself cannot drift from it.
- *  3. A byte offset is never smaller than the UTF-16 index of the same
- *     position, so `column` is a soundupper bound to search back from —
- *     which is what makes it useful as a hint without being trusted as a
- *     position. Picking the hit at or before it is what keeps several
- *     matches on one line anchored to their own rows.
- *
- *  Returns -1 rather than guessing when the pattern isn't on the line at
- *  all — the stale-row case, where the tree renders the previous search's
- *  results against the pattern currently being typed. The caller reads
- *  that as "no anchor" and falls back to the head of the line. */
-function matchIndexNearByteColumn(
-  line: string,
-  pattern: string,
-  isRegex: boolean,
-  caseSensitive: boolean,
-  byteHint: number,
-): number {
-  if (!pattern) return -1;
-  // The hint is a byte offset; clamping to the UTF-16 length keeps it a
-  // valid search position and costs nothing when they coincide.
-  const hint = Math.max(0, Math.min(byteHint, line.length));
-  try {
-    if (!isRegex) {
-      const hay = caseSensitive ? line : line.toLowerCase();
-      const needle = caseSensitive ? pattern : pattern.toLowerCase();
-      const before = hay.lastIndexOf(needle, hint);
-      // Nothing at or before the hint: the byte column overstated the
-      // position past the last hit (a heavily multibyte prefix), so take
-      // the first hit on the line instead of reporting none.
-      return before >= 0 ? before : hay.indexOf(needle);
-    }
-    const re = new RegExp(pattern, caseSensitive ? "g" : "gi");
-    let best = -1;
-    let first = -1;
-    let m;
-    while ((m = re.exec(line)) !== null) {
-      if (m[0].length === 0) {
-        re.lastIndex++;
-        continue;
-      }
-      if (first < 0) first = m.index;
-      if (m.index > hint) break;
-      best = m.index;
-    }
-    return best >= 0 ? best : first;
-  } catch (_e) {
-    // Invalid regex mid-typing: no anchor, same as no hit.
-    return -1;
+/** The UTF-16 index in `text` of its UTF-8 byte offset `byte` (clamped to
+ *  the text). A binary search over native byte counts, so a long line —
+ *  a minified bundle's 50 000 characters — costs a few calls rather than
+ *  a walk through it codepoint by codepoint. */
+function utf16IndexOfByte(text: string, byte: number): number {
+  let lo = 0;
+  let hi = text.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (editor.utf8ByteLength(text.slice(0, mid)) < byte) lo = mid + 1;
+    else hi = mid;
   }
-}
-
-/** Codepoint index and length of the `pattern` hit in `text` nearest to
- *  `preferAt`, or `null` when the pattern is empty, invalid, or doesn't
- *  occur. A line with several matches yields one row per match, so the
- *  row anchors on *its own* match rather than always on the first —
- *  otherwise every row on that line would window to the same place.
- *
- *  `highlightMatches` reports UTF-16 indices; those are converted here
- *  so callers can slice codepoint arrays without splitting a surrogate
- *  pair. Only ever called on an already-capped window, so the
- *  conversion walk is bounded. */
-function matchSpanNear(
-  text: string,
-  pattern: string,
-  isRegex: boolean,
-  caseSensitive: boolean,
-  preferAt: number,
-): { start: number; length: number } | null {
-  if (!pattern) return null;
-  const overlays: InlineOverlay[] = [];
-  highlightMatches(text, pattern, isRegex, caseSensitive, overlays);
-  if (overlays.length === 0) return null;
-  let o = overlays[0];
-  for (const cand of overlays) {
-    if (Math.abs(cand.start - preferAt) < Math.abs(o.start - preferAt)) o = cand;
-  }
-  return {
-    start: charLen(text.slice(0, o.start)),
-    length: charLen(text.slice(o.start, o.end)),
-  };
+  return lo;
 }
 
 // Get the active field's text
@@ -863,21 +785,12 @@ function renderFlatItemEntry(item: FlatItem, W: number): RenderedRow {
   // of a 290-char line rendered as `start xxxx…`, with the matched
   // text nowhere on screen).
   //
-  // The anchor is a hit located in `rawCtx` itself, not arithmetic on
-  // `match.column` — see `matchIndexNearByteColumn` for why (bounded
-  // work, and immune to `column` drifting out of step with `context`).
-  // -1 means the pattern is not on this line at all, which happens
-  // routinely: the tree renders the previous search's rows against the
-  // pattern currently being typed. Anchor at 0 then, so the row shows
-  // the head of the line exactly as it did before this feature existed.
-  const anchor = matchIndexNearByteColumn(
-    rawCtx,
-    panel.searchPattern,
-    panel.useRegex,
-    panel.caseSensitive,
-    Math.max(0, (result.match.column || 1) - 1),
-  );
-  const capStart = anchor >= 0 && rawCtx.length > CONTEXT_HARD_CAP
+  // Where the match is: from the search that found it (`contextAt`), in
+  // UTF-16 units of `rawCtx`, its end clamped to the line — a multi-line
+  // match runs past it.
+  const anchor = utf16IndexOfByte(rawCtx, result.contextAt);
+  const anchorEnd = Math.max(anchor, utf16IndexOfByte(rawCtx, result.contextAt + result.contextLen));
+  const capStart = rawCtx.length > CONTEXT_HARD_CAP
     ? Math.max(0, Math.min(anchor - CONTEXT_HARD_CAP / 2, rawCtx.length - CONTEXT_HARD_CAP))
     : 0;
   const capped = rawCtx.slice(capStart, capStart + CONTEXT_HARD_CAP);
@@ -893,10 +806,15 @@ function renderFlatItemEntry(item: FlatItem, W: number): RenderedRow {
   const innerWidth = Math.max(0, W - 8);
 
   // Where this row's match sits in `context`, after the cap slice and
-  // the leading trim above — used to pick between several hits on the
-  // same line. Exact, since `anchor` is an index into `rawCtx`.
+  // the leading trim above, in codepoints.
   const trimmedLead = capStart === 0 ? capped.length - capped.trimStart().length : 0;
-  const matchAt = Math.max(0, anchor) - capStart - trimmedLead;
+  const clampToContext = (i: number) => Math.max(0, Math.min(i - capStart - trimmedLead, context.length));
+  const matchStart = clampToContext(anchor);
+  const matchEnd = clampToContext(anchorEnd);
+  const span = {
+    start: charLen(context.slice(0, matchStart)),
+    length: charLen(context.slice(matchStart, matchEnd)),
+  };
   // **The whole capped context goes to the host, not a slice of it.**
   //
   // Fitting a row to the panel used to happen here, which meant the row the
@@ -908,18 +826,13 @@ function renderFlatItemEntry(item: FlatItem, W: number): RenderedRow {
   //
   // The cap is unchanged: `CONTEXT_HARD_CAP` still bounds every per-codepoint
   // walk below, and it is what bounds how far a pan can travel.
-  const span = panel.searchPattern
-    ? matchSpanNear(context, panel.searchPattern, panel.useRegex, panel.caseSensitive, matchAt)
-    : null;
-
-  // Pattern-match highlights inside the context substring. Emitted
-  // in segment-local char units; the host shifts them by the
-  // context segment's char start during entry concatenation, and
-  // clips them to the drawn slice.
-  const ctxOverlays: InlineOverlay[] = [];
-  if (panel.searchPattern) {
-    highlightMatches(context, panel.searchPattern, panel.useRegex, panel.caseSensitive, ctxOverlays);
-  }
+  //
+  // The row's own match is highlighted: what the search matched, whole
+  // words and regex alike, rather than a JS re-match of the pattern. Other
+  // matches on the line have rows of their own.
+  const ctxOverlays: InlineOverlay[] = span.length > 0
+    ? [{ start: span.start, end: span.start + span.length, style: { bg: C.matchBg, fg: C.matchFg }, unit: "char" }]
+    : [];
 
   const segments: StyledSegment[] = [
     { text: location, style: { fg: C.lineNum } },
@@ -945,8 +858,8 @@ function renderFlatItemEntry(item: FlatItem, W: number): RenderedRow {
     entry,
     anchor: {
       pinned,
-      start: pinned + (span ? span.start : 0),
-      len: span ? span.length : 0,
+      start: pinned + span.start,
+      len: span.length,
     },
   };
 }
@@ -1179,35 +1092,6 @@ function addCursorOverlay(value: string, cursorPos: number, fieldByteStart: numb
 // indices and Unicode codepoint indices coincide, so `indexOf` /
 // `RegExp.exec` indices map directly to char offsets without a
 // per-overlay codepoint walk.
-function highlightMatches(text: string, pattern: string, isRegex: boolean, caseSensitive: boolean, overlays: InlineOverlay[]): void {
-  if (!pattern) return;
-  try {
-    if (!isRegex) {
-      let searchText = text;
-      let searchPat = pattern;
-      if (!caseSensitive) {
-        searchText = text.toLowerCase();
-        searchPat = pattern.toLowerCase();
-      }
-      let pos = 0;
-      while (pos < searchText.length) {
-        const idx = searchText.indexOf(searchPat, pos);
-        if (idx < 0) break;
-        overlays.push({ start: idx, end: idx + pattern.length, style: { bg: C.matchBg, fg: C.matchFg }, unit: "char" });
-        pos = idx + pattern.length;
-      }
-    } else {
-      const flags = caseSensitive ? "g" : "gi";
-      const re = new RegExp(pattern, flags);
-      let m;
-      while ((m = re.exec(text)) !== null) {
-        if (m[0].length === 0) { re.lastIndex++; continue; }
-        overlays.push({ start: m.index, end: m.index + m[0].length, style: { bg: C.matchBg, fg: C.matchFg }, unit: "char" });
-      }
-    }
-  } catch (_e) { /* invalid regex */ }
-}
-
 // =============================================================================
 // Panel update
 // =============================================================================
@@ -1329,6 +1213,47 @@ const UI_FLUSH_MAX_DELTA = 100;
  * per-chunk callbacks crossing the FFI boundary, so the host's main
  * thread is free to process input and render between pumps.
  */
+/** A `SearchHandle` over `searchBuffer`: one buffer's matches, all at once
+ *  when its search is done, so the panel drains it as it drains a project
+ *  search. */
+function bufferSearchHandle(
+  bufferId: number,
+  pattern: string,
+  opts: { fixedString: boolean; caseSensitive: boolean; maxResults: number; wholeWords: boolean },
+): SearchHandle {
+  let found: GrepMatch[] | null = null;
+  let error: string | null = null;
+  let taken = false;
+  let cancelled = false;
+  // One more than is kept, to tell a capped search from one that found
+  // exactly `maxResults`.
+  let truncated = false;
+  editor.searchBuffer(bufferId, pattern, { ...opts, maxResults: opts.maxResults + 1 }).then(
+    (matches) => {
+      truncated = matches.length > opts.maxResults;
+      found = matches.slice(0, opts.maxResults);
+    },
+    (e) => { error = e instanceof Error ? e.message : String(e); },
+  );
+  return {
+    searchId: 0,
+    take(): SearchTakeResult {
+      const settled = cancelled || found !== null || error !== null;
+      const matches = settled && !taken && !cancelled ? found ?? [] : [];
+      if (settled) taken = true;
+      const total = found?.length ?? 0;
+      return {
+        matches,
+        done: settled,
+        totalSeen: total,
+        truncated,
+        error: error ?? undefined,
+      };
+    },
+    cancel(): void { cancelled = true; },
+  };
+}
+
 async function performSearch(pattern: string, silent?: boolean): Promise<SearchResult[]> {
   if (!panel) return [];
 
@@ -1369,17 +1294,24 @@ async function performSearch(pattern: string, silent?: boolean): Promise<SearchR
     const fixedString = !panel.useRegex;
     const allResults: SearchResult[] = [];
 
-    // Whole-word filtering is done Rust-side so maxResults is respected correctly
-    const handle = editor.beginSearch(pattern, {
+    // Whole-word filtering is done Rust-side so maxResults is respected
+    // correctly. "Current file only" searches just that buffer, as it is;
+    // all files walks the project.
+    const searchOpts = {
       fixedString,
       caseSensitive: panel.caseSensitive,
       maxResults: MAX_RESULTS,
       wholeWords: panel.wholeWords,
-      fileGlob: panel.fileGlob,
-      // Lets the host search an unnamed/unsaved source buffer in-memory;
-      // it has no on-disk file the project walk could otherwise reach.
-      sourceBufferId: panel.sourceBufferId,
-    });
+    };
+    const handle = !panel.allFiles
+      ? bufferSearchHandle(panel.sourceBufferId, pattern, searchOpts)
+      : editor.beginSearch(pattern, {
+        ...searchOpts,
+        fileGlob: panel.fileGlob,
+        // Lets the host search an unnamed/unsaved source buffer in-memory;
+        // it has no on-disk file the project walk could otherwise reach.
+        sourceBufferId: panel.sourceBufferId,
+      });
     activeSearchHandle = handle;
 
     let truncated = false;
@@ -1426,17 +1358,12 @@ async function performSearch(pattern: string, silent?: boolean): Promise<SearchR
       const deltaItems: FlatItem[] = [];
       const newExpandedKeys: string[] = []; // file rows added this batch
       for (const m of chunk) {
-        // §1 scope filter: when scope is "current file only", drop
-        // matches from any other source. Done client-side because the
-        // host grep API is project-wide. A named buffer matches by path;
-        // an unnamed/unsaved buffer (empty sourceBufferPath) matches by
-        // buffer id instead — the host tags its in-memory matches with it.
-        if (!panel.allFiles) {
-          const sameFile = !!panel.sourceBufferPath && m.file === panel.sourceBufferPath;
-          const sameBuffer = !!panel.sourceBufferId && m.bufferId === panel.sourceBufferId;
-          if (!sameFile && !sameBuffer) continue;
-        }
-        const result: SearchResult = { match: m, selected: true };
+        const result: SearchResult = {
+          match: m,
+          contextAt: Math.max(0, m.column - 1),
+          contextLen: m.length,
+          selected: true,
+        };
         // Anchor the match to its buffer if the file is already open, so
         // edits made while stepping keep it in sync (#2583). Files opened
         // later are handled by the after_file_open hook.

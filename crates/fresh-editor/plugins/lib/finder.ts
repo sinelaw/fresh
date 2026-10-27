@@ -71,12 +71,42 @@ export interface DisplayEntry {
 }
 
 /**
+ * Told when a search is no longer wanted — a newer query superseded it, or
+ * the prompt closed — so a source can kill the processes it spawned.
+ */
+export interface SearchCancellation {
+  readonly cancelled: boolean;
+  /** Run `kill` when the search is cancelled (at once, if it already is). */
+  onCancel(kill: () => unknown): void;
+}
+
+class Cancellation implements SearchCancellation {
+  cancelled = false;
+  private kills: Array<() => unknown> = [];
+
+  onCancel(kill: () => unknown): void {
+    if (this.cancelled) void kill();
+    else this.kills.push(kill);
+  }
+
+  /** Cancel, settling once every kill has. */
+  cancel(): Promise<unknown> {
+    this.cancelled = true;
+    const kills = this.kills;
+    this.kills = [];
+    return Promise.all(kills.map((kill) => kill()));
+  }
+}
+
+/**
  * Data source for search mode (external command per query)
  */
 export interface SearchSource<T> {
   mode: "search";
-  /** Function that returns a ProcessHandle or Promise of results */
-  search: (query: string) => ProcessHandle<SpawnResult> | Promise<T[]>;
+  /** Function that returns a ProcessHandle or Promise of results. A
+   *  ProcessHandle is killed when the search is cancelled; a source that
+   *  returns a Promise kills what it spawned through `cancellation`. */
+  search: (query: string, cancellation: SearchCancellation) => ProcessHandle<SpawnResult> | Promise<T[]>;
   /** Debounce delay in ms (default: 150) */
   debounceMs?: number;
   /** Minimum query length to trigger search (default: 2) */
@@ -368,13 +398,21 @@ export function defaultFuzzyFilter<T>(
  * Accepts both `file:line:column:content` (ripgrep, ag, git-grep with
  * `--column`, GNU grep with `--column`) and `file:line:content`
  * (POSIX grep, BSD grep, plenty of custom wrappers that omit the
- * column). When the column is missing it defaults to 1.
+ * column). When the column is missing it defaults to 1. A tool known to
+ * print no column passes `withColumn: false`, so content that starts with
+ * digits and a colon (`42: x`) isn't read as one.
+ *
+ * The file may be a Windows path (`C:\src\a.rs`): its drive's colon is
+ * not a separator.
  *
  * Returns null only if the line lacks even a `file:line:` prefix —
  * pure header lines (ripgrep without `--no-heading`, blank lines)
  * are filtered upstream by the caller's `if (!line.trim()) continue`.
  */
-export function parseGrepLine(line: string): {
+const GREP_FOUR_FIELDS = /^((?:[A-Za-z]:[\\/])?[^:]+):(\d+):(\d+):(.*)$/;
+const GREP_THREE_FIELDS = /^((?:[A-Za-z]:[\\/])?[^:]+):(\d+):(.*)$/;
+
+export function parseGrepLine(line: string, withColumn: boolean = true): {
   file: string;
   line: number;
   column: number;
@@ -383,7 +421,7 @@ export function parseGrepLine(line: string): {
   // Try the four-field shape first so a content payload that
   // happens to start with digits (e.g. `42 = solve(...)`) doesn't
   // get mistaken for a column number under the three-field path.
-  const four = line.match(/^([^:]+):(\d+):(\d+):(.*)$/);
+  const four = withColumn ? line.match(GREP_FOUR_FIELDS) : null;
   if (four) {
     return {
       file: four[1],
@@ -392,7 +430,7 @@ export function parseGrepLine(line: string): {
       content: four[4],
     };
   }
-  const three = line.match(/^([^:]+):(\d+):(.*)$/);
+  const three = line.match(GREP_THREE_FIELDS);
   if (three) {
     return {
       file: three[1],
@@ -410,7 +448,8 @@ export function parseGrepLine(line: string): {
 export function parseGrepOutput(
   stdout: string,
   maxResults: number = 100,
-  debug?: (msg: string) => void
+  debug?: (msg: string) => void,
+  withColumn: boolean = true,
 ): Array<{ file: string; line: number; column: number; content: string }> {
   const results: Array<{
     file: string;
@@ -421,7 +460,7 @@ export function parseGrepOutput(
 
   for (const line of stdout.split(/\r?\n/)) {
     if (!line) continue;
-    const match = parseGrepLine(line);
+    const match = parseGrepLine(line, withColumn);
     if (match) {
       results.push(match);
       if (results.length >= maxResults) {
@@ -444,8 +483,8 @@ interface PromptState<T> {
   entries: DisplayEntry[];
   lastQuery: string;
   searchVersion: number;
-  currentSearch: ProcessHandle<SpawnResult> | null;
-  pendingKill: Promise<boolean> | null;
+  currentSearch: Cancellation | null;
+  pendingKill: Promise<unknown> | null;
   originalSplitId: number | null;
 }
 
@@ -846,7 +885,7 @@ export class Finder<T> {
 
     // Kill any existing search
     if (this.promptState.currentSearch) {
-      this.promptState.pendingKill = this.promptState.currentSearch.kill();
+      this.promptState.pendingKill = this.promptState.currentSearch.cancel();
       this.promptState.currentSearch = null;
     }
 
@@ -887,20 +926,27 @@ export class Finder<T> {
     // user sees the re-scan in progress rather than a stale result count.
     this.setSearchStatus("Searching…");
 
+    const cancellation = new Cancellation();
+    this.promptState.currentSearch = cancellation;
+    const finished = () => {
+      if (this.promptState.currentSearch === cancellation) {
+        this.promptState.currentSearch = null;
+      }
+    };
     try {
-      const searchResult = source.search(query);
+      const searchResult = source.search(query, cancellation);
 
       // Check if it's a ProcessHandle or a Promise
       if ("kill" in searchResult) {
         // ProcessHandle
-        this.promptState.currentSearch = searchResult;
+        cancellation.onCancel(() => searchResult.kill());
         const result = await searchResult;
+        finished();
 
         // Check if cancelled
         if (this.promptState.searchVersion !== thisVersion) {
           return;
         }
-        this.promptState.currentSearch = null;
 
         if (result.exit_code === 0) {
           // Parse as grep output by default
@@ -931,6 +977,7 @@ export class Finder<T> {
       } else {
         // Promise<T[]>
         const results = await searchResult;
+        finished();
 
         // Check if cancelled
         if (this.promptState.searchVersion !== thisVersion) {
@@ -949,6 +996,7 @@ export class Finder<T> {
         }
       }
     } catch (e) {
+      finished();
       const errorMsg = String(e);
       // "killed" / "not found" come from the cancellation path (a
       // newer search aborted this one). Suppress those entirely —
@@ -1041,7 +1089,7 @@ export class Finder<T> {
   private onPromptConfirmed(selectedIndex: number | null): void {
     // Kill any running search
     if (this.promptState.currentSearch) {
-      this.promptState.currentSearch.kill();
+      void this.promptState.currentSearch.cancel();
       this.promptState.currentSearch = null;
     }
 
@@ -1085,7 +1133,7 @@ export class Finder<T> {
   private onPromptCancelled(): void {
     // Kill any running search
     if (this.promptState.currentSearch) {
-      this.promptState.currentSearch.kill();
+      void this.promptState.currentSearch.cancel();
       this.promptState.currentSearch = null;
     }
 

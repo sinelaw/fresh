@@ -48,6 +48,12 @@ export interface GrepArgOpts {
   caseSensitive?: boolean;
   /** `.gitignore` lines, relative to the directory searched. */
   ignorePatterns?: readonly string[];
+  /** Search every file as text, binary-looking ones too (rg, grep). */
+  text?: boolean;
+  /** Search only files whose name matches this glob (rg, grep). */
+  include?: string;
+  /** What to search instead of the working directory (rg, grep). */
+  paths?: readonly string[];
 }
 
 /** One `.gitignore` line, taken apart the way `.gitignore` reads it. */
@@ -134,7 +140,9 @@ export function rgArgs(query: string, o: GrepArgOpts): string[] {
   for (const rule of parseIgnoreLines(o.ignorePatterns ?? [])) {
     if (!rule.negated) args.push("-g", `!${rule.line}`);
   }
-  args.push("--", query);
+  if (o.text) args.push("--text");
+  if (o.include) args.push("-g", o.include);
+  args.push("--", query, ...(o.paths ?? []));
   return args;
 }
 
@@ -291,7 +299,7 @@ export function nameGlobRegexSource(glob: string): string {
 const hasWildcard = (glob: string) => /[*?[\\]/.test(glob);
 
 export function grepArgs(query: string, o: GrepArgOpts): string[] {
-  const args = ["-rn", "-I", "--exclude-dir=.git"];
+  const args = ["-rn", o.text ? "-a" : "-I", "--exclude-dir=.git"];
   if (!o.includeIgnored) {
     // Plain grep can't read `.gitignore`, so these build/vendor trees would
     // otherwise bury real hits and make this last-resort fallback crawl.
@@ -311,7 +319,8 @@ export function grepArgs(query: string, o: GrepArgOpts): string[] {
       args.push(`--exclude-dir=${name.glob}`);
     }
   }
-  args.push("--", query, ".");
+  if (o.include) args.push(`--include=${o.include}`);
+  args.push("--", query, ...(o.paths ?? ["."]));
   return args;
 }
 

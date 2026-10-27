@@ -7,8 +7,9 @@
  * and preview panel. Uses the Finder abstraction for unified search UX.
  */
 
-import { Finder, parseGrepOutput } from "./lib/finder.ts";
+import { Finder, parseGrepOutput, type SearchCancellation } from "./lib/finder.ts";
 import { git, resolveGitRepo, toAbsInRepo } from "./lib/git_repo.ts";
+import { gitGrepArgs } from "./lib/grep_args.ts";
 import { raw, row, spacer, styledRow, toggle } from "./lib/widgets.ts";
 
 const editor = getEditor();
@@ -75,6 +76,8 @@ interface GrepMatch {
   content: string;
 }
 
+const MAX_RESULTS = 100;
+
 // Create the finder instance
 const finder = new Finder<GrepMatch>(editor, {
   id: "git-grep",
@@ -98,7 +101,7 @@ const finder = new Finder<GrepMatch>(editor, {
   // the split *behind* the overlay, churning that split's tab bar and
   // loading every file twice (two LSP didOpen/didClose per result).
   preview: false,
-  maxResults: 100,
+  maxResults: MAX_RESULTS,
   onClose: () => {
     promptActive = false;
   },
@@ -106,20 +109,21 @@ const finder = new Finder<GrepMatch>(editor, {
 
 // Search function using git grep. Resolves the repo from the active buffer
 // (so it works from a sub-project buffer even when the workspace root isn't a
-// repo) and runs git inside it via the shared gateway.
-async function searchWithGitGrep(query: string): Promise<GrepMatch[]> {
+// repo) and runs git inside it via the shared gateway, with Live Grep's
+// git-grep command line: extended regex, untracked files too, `.gitignore`
+// and the usual build directories left out.
+async function searchWithGitGrep(query: string, cancellation: SearchCancellation): Promise<GrepMatch[]> {
   const repo = await resolveGitRepo(editor);
   if (!repo) {
     editor.setStatus(editor.t("status.not_in_git"));
     return [];
   }
 
-  // `core.quotePath=false` prints non-ASCII names as they are rather than as
-  // quoted octal escapes, which would not open.
-  const args = ["-c", "core.quotePath=false", "grep", "-n", "--column", "-I"];
-  if (!caseSensitive) args.push("-i");
-  args.push("--", query);
-  const result = await git(editor, repo, args);
+  const args = gitGrepArgs(query, { maxResults: MAX_RESULTS, caseSensitive, regex: true }, null);
+  const process = git(editor, repo, args);
+  // A newer query, or closing the prompt, kills this one.
+  cancellation.onCancel(() => process.kill());
+  const result = await process;
 
   // git grep's exit codes: 0 = matches found, 1 = no matches (a normal,
   // successful search — NOT a failure), >=2 = a real error (bad pattern,
@@ -131,7 +135,7 @@ async function searchWithGitGrep(query: string): Promise<GrepMatch[]> {
   if (result.exit_code === 0 || result.exit_code === 1) {
     const matches = parseGrepOutput(
       result.stdout,
-      100,
+      MAX_RESULTS,
       (msg) => editor.debug(msg),
     ) as GrepMatch[];
     // `git grep` prints repo-relative paths; join each onto the repo root so
@@ -139,7 +143,7 @@ async function searchWithGitGrep(query: string): Promise<GrepMatch[]> {
     return matches.map((m) => ({ ...m, abs: toAbsInRepo(editor, repo, m.file) }));
   }
   // A negative exit code means the search was superseded/killed as the user
-  // kept typing (the Finder cancels the in-flight git) — stay quiet for that.
+  // kept typing (`cancellation` above) — stay quiet for that.
   if (result.exit_code > 1) {
     editor.error(`[git_grep] process exited with code ${result.exit_code}: ${result.stderr}`);
     editor.setStatus(`git grep failed (exit ${result.exit_code})`);
