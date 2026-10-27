@@ -2519,6 +2519,9 @@ mod tests {
             &mut clean, "quit", &quit, &mut cols, &mut rows
         ));
         assert!(clean.should_quit(), "a clean editor quits at once");
+        // Gone, as it would be: while it runs, the file is read-only to any
+        // other editor
+        drop(clean);
 
         let mut dirty = super::build_editor(cols, rows, std::slice::from_ref(&file), false)
             .expect("build editor");

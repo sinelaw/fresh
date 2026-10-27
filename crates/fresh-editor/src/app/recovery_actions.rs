@@ -187,58 +187,45 @@ impl Editor {
                 })
             })
             .collect();
-        let paths: std::collections::HashSet<PathBuf> =
-            open.iter().map(|(_, _, path, _)| path.clone()).collect();
         let locks: Vec<FileLock> = {
             let mut service = self.recovery_service.lock().unwrap();
             if !service.is_enabled() {
                 return;
             }
+            let paths: std::collections::HashSet<PathBuf> =
+                open.iter().map(|(_, _, path, _)| path.clone()).collect();
             service.keep_file_locks(&paths);
             open.iter()
                 .map(|(_, _, path, _)| service.lock_file(path))
                 .collect()
         };
-        self.files_open_elsewhere
-            .retain(|path, _| paths.contains(path));
         for ((window_id, buffer_id, path, modified), lock) in open.into_iter().zip(locks) {
+            let Some(window) = self.windows.get_mut(&window_id) else {
+                continue;
+            };
+            let Some(meta) = window.buffer_metadata.get_mut(&buffer_id) else {
+                continue;
+            };
             let name = path
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            match lock {
+            let message = match (lock, meta.open_elsewhere) {
                 // This editor's own unsaved work is never locked away from it
-                FileLock::Elsewhere { pid }
-                    if !modified && !self.files_open_elsewhere.contains_key(&path) =>
-                {
-                    let Some(window) = self.windows.get_mut(&window_id) else {
-                        continue;
-                    };
-                    let was_read_only = window
-                        .buffer_metadata
-                        .get(&buffer_id)
-                        .is_some_and(|meta| meta.read_only);
+                (FileLock::Elsewhere { pid }, None) if !modified => {
+                    meta.open_elsewhere = Some(meta.read_only);
                     window.mark_buffer_read_only(buffer_id, true);
-                    self.files_open_elsewhere.insert(path, was_read_only);
                     let pid = pid.map_or_else(|| "?".to_string(), |pid| pid.to_string());
-                    self.set_status_message(
-                        t!("buffer.open_in_other_editor", file = name, pid = pid).to_string(),
-                    );
+                    t!("buffer.open_in_other_editor", file = name, pid = pid)
                 }
-                FileLock::Elsewhere { .. } => {}
-                FileLock::Ours => {
-                    if let Some(was_read_only) = self.files_open_elsewhere.remove(&path) {
-                        if !was_read_only {
-                            if let Some(window) = self.windows.get_mut(&window_id) {
-                                window.mark_buffer_read_only(buffer_id, false);
-                            }
-                        }
-                        self.set_status_message(
-                            t!("buffer.open_in_other_editor_released", file = name).to_string(),
-                        );
-                    }
+                (FileLock::Ours, Some(was_read_only)) => {
+                    meta.open_elsewhere = None;
+                    window.mark_buffer_read_only(buffer_id, was_read_only);
+                    t!("buffer.open_in_other_editor_released", file = name)
                 }
-            }
+                _ => continue,
+            };
+            self.set_status_message(message.to_string());
         }
     }
 
@@ -300,8 +287,13 @@ impl Editor {
         // A file another editor has open is that editor's to restore into
         let open_here: HashSet<PathBuf> = window
             .tab_file_buffers()
+            .filter(|(buffer_id, _)| {
+                window
+                    .buffer_metadata
+                    .get(buffer_id)
+                    .is_none_or(|meta| meta.open_elsewhere.is_none())
+            })
             .map(|(_, file)| file.to_path_buf())
-            .filter(|file| !self.files_open_elsewhere.contains_key(file))
             .collect();
         let host = window.host_key();
         let open_elsewhere: HashSet<PathBuf> = self

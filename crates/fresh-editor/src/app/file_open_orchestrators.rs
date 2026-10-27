@@ -364,10 +364,10 @@ impl Editor {
 
         // Another editor having it is the news, not that it opened
         let open_elsewhere = self
-            .buffers()
+            .active_window()
+            .buffer_metadata
             .get(&buffer_id)
-            .and_then(|s| s.buffer.file_path())
-            .is_some_and(|file| self.files_open_elsewhere.contains_key(file));
+            .is_some_and(|meta| meta.open_elsewhere.is_some());
 
         // Show appropriate status message for binary vs regular files
         if !open_elsewhere {

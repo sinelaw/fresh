@@ -2908,7 +2908,9 @@ impl crate::app::window::Window {
             .buffer_metadata
             .values()
             .filter(|meta| !meta.hidden_from_tabs && !meta.is_virtual())
-            .filter(|meta| meta.read_only)
+            // Read-only because another editor has it open is not a lock
+            // the user put on it
+            .filter(|meta| meta.open_elsewhere.unwrap_or(meta.read_only))
             .filter_map(|meta| meta.file_path().cloned())
             .filter(|p| !p.as_os_str().is_empty())
             .map(|p| {

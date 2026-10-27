@@ -717,11 +717,6 @@ pub struct Editor {
     /// an entry it already holds must not look for that file's work again.
     adopting_recovery: bool,
 
-    /// Local files another running editor has open, read-only here until it
-    /// lets them go (see [`Editor::sync_file_locks`]), each with whether it
-    /// was read-only already — what letting go returns it to.
-    files_open_elsewhere: std::collections::HashMap<std::path::PathBuf, bool>,
-
     /// Running in session/server mode (use hardware cursor only, no REVERSED style)
     session_mode: bool,
 

@@ -711,7 +711,6 @@ impl Editor {
             workspace_trust_markers: Vec::new(),
             should_detach: false,
             adopting_recovery: false,
-            files_open_elsewhere: std::collections::HashMap::new(),
             session_mode: false,
             software_cursor_only: false,
             session_name: None,
