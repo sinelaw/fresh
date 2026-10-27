@@ -333,7 +333,14 @@ impl RecoveryStorage {
         let contents = if index.packed {
             let all = read(0)?;
             let total: usize = index.chunks.iter().map(|c| c.size).sum();
-            if total != all.len() {
+            // A lone chunk cut short is handed back as it is, as a chunk
+            // file of its own was: the caller weighs it against the size
+            // the metadata recorded (`RecoveryResult::RecoveredPartial`).
+            // Cut short across several, which chunk lost bytes can't be
+            // told, and more than the index accounts for is not this
+            // entry's content.
+            let short_single = index.chunks.len() == 1 && all.len() < total;
+            if total != all.len() && !short_single {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!(
@@ -347,7 +354,7 @@ impl RecoveryStorage {
                 .chunks
                 .iter()
                 .map(|c| {
-                    let (content, after) = rest.split_at(c.size);
+                    let (content, after) = rest.split_at(c.size.min(rest.len()));
                     rest = after;
                     content.to_vec()
                 })
@@ -977,8 +984,10 @@ mod tests {
         assert_eq!(read.chunks[0].content, b"x");
     }
 
-    /// Content that doesn't add up to what the index says is a broken
-    /// entry, never chunks cut at the wrong places.
+    /// Content that doesn't add up to what the index says, across several
+    /// chunks, is a broken entry, never chunks cut at the wrong places. A
+    /// lone chunk cut short comes back short, for the caller to weigh
+    /// against the recorded size.
     #[test]
     fn test_content_shorter_or_longer_than_its_index_is_an_error() {
         let (storage, _temp) = create_test_storage();
@@ -995,6 +1004,18 @@ mod tests {
             let err = storage.read_chunked_content(id).unwrap_err();
             assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         }
+
+        let id = "torn-single";
+        let chunks = vec![RecoveryChunk::new(0, 0, b"whole".to_vec())];
+        storage
+            .save_recovery(id, chunks, None, None, None, 0, 5)
+            .unwrap();
+        fs::write(storage.chunk_path(id, 0), b"who").unwrap();
+        let read = storage.read_chunked_content(id).unwrap().unwrap();
+        assert_eq!(read.chunks[0].content, b"who");
+        fs::write(storage.chunk_path(id, 0), b"whole and more").unwrap();
+        let err = storage.read_chunked_content(id).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 
     #[test]
