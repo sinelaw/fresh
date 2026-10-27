@@ -54,6 +54,8 @@ export interface GrepArgOpts {
   include?: string;
   /** What to search instead of the working directory (rg, grep). */
   paths?: readonly string[];
+  /** Search files git doesn't track too (git grep; default true). */
+  untracked?: boolean;
 }
 
 /** One `.gitignore` line, taken apart the way `.gitignore` reads it. */
@@ -216,10 +218,12 @@ export function gitExcludePathspecs(rules: readonly IgnoreRule[], prefix: string
 
 export function gitGrepArgs(query: string, o: GrepArgOpts, prefix: string | null): string[] {
   // `core.quotePath=false` prints non-ASCII names as they are rather than as
-  // quoted octal escapes, which would not open. `--untracked` searches new
-  // files too, as the other tools and Quick Open do; `.gitignore` still
-  // applies unless the "Ignored & hidden" scope is on.
-  const args = ["-c", "core.quotePath=false", "grep", "-n", "--column", "-I", "--untracked"];
+  // quoted octal escapes, which would not open. `--untracked` (unless
+  // `untracked: false`) searches new files too, as the other tools and Quick
+  // Open do; `.gitignore` still applies unless the "Ignored & hidden" scope
+  // is on.
+  const args = ["-c", "core.quotePath=false", "grep", "-n", "--column", "-I"];
+  if (o.untracked !== false) args.push("--untracked");
   if (!o.caseSensitive) args.push("-i");
   // Default git-grep is basic regex; use extended when regex is on, or
   // fixed-strings when it's off so the query is matched literally.
