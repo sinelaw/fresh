@@ -682,10 +682,10 @@ fn test_huge_file_recovery_is_small() {
     buffer.insert_bytes(0, edit_text.to_vec());
 
     // Get recovery chunks - should be small!
-    let chunks = buffer.get_recovery_chunks();
+    let chunks = buffer.get_recovery_chunks().unwrap();
 
     // Calculate total recovery data size
-    let recovery_data_size: usize = chunks.iter().map(|(_, data)| data.len()).sum();
+    let recovery_data_size: usize = chunks.iter().map(|c| c.content.len()).sum();
 
     // Verify recovery data is MUCH smaller than original file
     assert!(
@@ -703,7 +703,7 @@ fn test_huge_file_recovery_is_small() {
     );
 
     // The chunk should contain our edit text
-    let all_chunk_data: Vec<u8> = chunks.into_iter().flat_map(|(_, data)| data).collect();
+    let all_chunk_data: Vec<u8> = chunks.into_iter().flat_map(|c| c.content).collect();
     assert!(
         all_chunk_data.starts_with(edit_text),
         "Recovery chunks should contain our edit"

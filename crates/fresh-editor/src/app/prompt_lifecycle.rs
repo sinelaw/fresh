@@ -58,6 +58,20 @@ impl Editor {
         self.shell_description_stale = true;
     }
 
+    /// Whether the primary selection spans more than one line. Replace
+    /// confines itself to such a selection, as Find in Selection does to any;
+    /// a selection within a line is instead what to replace (it pre-fills
+    /// the search), and confining the replace to it would leave nothing else
+    /// to replace.
+    pub(super) fn selection_spans_lines(&mut self) -> bool {
+        let Some(range) = self.active_cursors().primary().selection_range() else {
+            return false;
+        };
+        self.active_state_mut()
+            .get_text_range(range.start, range.end)
+            .contains('\n')
+    }
+
     /// Start a search prompt with an optional selection scope
     ///
     /// When `use_selection_range` is true and a single-line selection is present,

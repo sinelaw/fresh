@@ -21,11 +21,13 @@ pub use encoding::Encoding;
 pub mod file_kind;
 pub mod format;
 pub mod persistence;
+mod recovery_chunks;
 pub mod save;
 pub mod search;
 pub use file_kind::BufferFileKind;
 pub use format::{BufferFormat, LineEnding};
 pub use persistence::Persistence;
+pub use recovery_chunks::RECOVERY_MERGE_GAP;
 pub use save::SudoSaveRequired;
 #[cfg(test)]
 pub(crate) use save::{RecipeAction, WriteRecipe};
@@ -2286,77 +2288,6 @@ impl TextBuffer {
         // Return the tracked saved file size - this is updated when the file is
         // loaded or saved, so it always reflects the current file on disk.
         self.persistence.saved_file_size()
-    }
-
-    /// Get recovery chunks for this buffer (only modified portions)
-    ///
-    /// For large files, this returns only the pieces that come from Added buffers
-    /// (i.e., the modifications), not the original file content. This allows
-    /// efficient incremental recovery without reading/writing the entire file.
-    ///
-    /// Returns: Vec of (original_file_offset, data) for each modified chunk
-    /// The offset is the position in the ORIGINAL file where this chunk should be inserted.
-    pub fn get_recovery_chunks(&self) -> Vec<(usize, Vec<u8>)> {
-        use crate::model::piece_tree::BufferLocation;
-
-        let mut chunks = Vec::new();
-        let total = self.total_bytes();
-
-        // Track cumulative bytes from Stored pieces as we iterate.
-        // This gives us the original file offset for Added pieces.
-        // The key insight: Added pieces should be inserted at the position
-        // corresponding to where they appear relative to Stored content,
-        // not their position in the current document.
-        let mut stored_bytes_before = 0;
-
-        for piece in self.piece_tree.iter_pieces_in_range(0, total) {
-            match piece.location {
-                BufferLocation::Stored(_) => {
-                    // Accumulate stored bytes to track position in original file
-                    stored_bytes_before += piece.bytes;
-                }
-                BufferLocation::Added(buffer_id) => {
-                    // Indexed by id, as every read does: a search per piece
-                    // made a replace-all of many matches quadratic here.
-                    if let Some(buffer) = self.buffers.get(buffer_id) {
-                        // Skip buffers that originate from the original file
-                        // (loaded by chunk_split_and_load for viewport display).
-                        // These have stored_file_offset set and are not user edits.
-                        //
-                        // Why Added and not Stored? The piece tree only has two
-                        // variants: Stored and Added. chunk_split_and_load marks
-                        // loaded chunks as Added(new_id) because
-                        // rebuild_with_pristine_saved_root interprets Stored
-                        // pieces' buffer_offset as a position in the original
-                        // file — but a chunk buffer starts at offset 0, so using
-                        // Stored would corrupt the rebuild logic. We rely on
-                        // stored_file_offset instead to distinguish "loaded from
-                        // disk" from "user edit". A third BufferLocation variant
-                        // (e.g. LoadedChunk) would make this distinction explicit
-                        // in the type system rather than requiring this runtime
-                        // check.
-                        if buffer.stored_file_offset.is_some() {
-                            stored_bytes_before += piece.bytes;
-                            continue;
-                        }
-                        // Get the data from the buffer if loaded
-                        if let Some(data) = buffer.get_data() {
-                            // Extract just the portion this piece references
-                            let start = piece.buffer_offset;
-                            let end = start + piece.bytes;
-                            if end <= data.len() {
-                                // Use stored_bytes_before as the original file offset.
-                                // This is where this insertion should go relative to
-                                // the original file content.
-                                chunks.push((stored_bytes_before, data[start..end].to_vec()));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        chunks
     }
 
     /// Check if this buffer contains binary content

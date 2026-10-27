@@ -801,6 +801,37 @@ impl Editor {
         }
     }
 
+    /// The search prompt of a replace was confirmed: search for `query`, as
+    /// a search would, and keep the selection the search was confined to
+    /// (see `start_search_prompt`) for the replace that follows.
+    pub(super) fn search_for_replace(&mut self, query: &str) {
+        let scope = self.active_window().pending_search_range.clone();
+        self.perform_search(query);
+        self.active_window_mut().pending_search_range = scope;
+    }
+
+    /// The part of the buffer a replace confirmed now works in: the
+    /// selection its search prompt was confined to, else all of it.
+    fn take_replace_scope(&mut self) -> std::ops::Range<usize> {
+        let buffer_len = self.active_state().buffer.len();
+        match self.active_window_mut().pending_search_range.take() {
+            Some(range) => range.start.min(buffer_len)..range.end.min(buffer_len),
+            None => 0..buffer_len,
+        }
+    }
+
+    /// Where an interactive replace looks for matches: its selection, else
+    /// the whole buffer.
+    fn interactive_replace_scope(
+        &self,
+        ir_state: &InteractiveReplaceState,
+    ) -> std::ops::Range<usize> {
+        ir_state
+            .scope
+            .clone()
+            .unwrap_or(0..self.active_state().buffer.len())
+    }
+
     /// The next match of a replace's `query` within `range`: see
     /// `find_replace_matches`.
     fn find_replace_match(
@@ -837,6 +868,7 @@ impl Editor {
         // a large file; the replace's edits would restart it, and when it
         // finished it would move the cursor in the middle of the replace.
         self.active_window_mut().search_scan.take();
+        let scope = self.take_replace_scope();
         if search.is_empty() {
             self.set_status_message(t!("replace.empty_query").to_string());
             return;
@@ -849,8 +881,7 @@ impl Editor {
 
         // Find all matches first (before making any modifications), loading
         // a lazily loaded file only as the search reaches each part.
-        let buffer_len = self.active_state().buffer.len();
-        let Some(found) = self.find_replace_matches(&query, 0..buffer_len, usize::MAX) else {
+        let Some(found) = self.find_replace_matches(&query, scope, usize::MAX) else {
             return;
         };
         // Each match is (position, length, expanded_replacement)
@@ -929,6 +960,7 @@ impl Editor {
         // a large file; the replace's edits would restart it, and when it
         // finished it would move the cursor in the middle of the replace.
         self.active_window_mut().search_scan.take();
+        let scope = self.take_replace_scope();
         if search.is_empty() {
             self.set_status_message(t!("replace.query_empty").to_string());
             return;
@@ -939,17 +971,24 @@ impl Editor {
         };
         let use_regex = self.active_window().search_use_regex;
 
-        // Find the first match lazily (don't find all matches upfront)
-        let start_pos = self.active_cursors().primary().position;
-        let buffer_len = self.active_state().buffer.len();
-        // Try from cursor to end, then wrap from beginning
+        // Find the first match lazily (don't find all matches upfront): from
+        // the cursor to the end of the scope, then wrapping to its start
+        let cursor = self.active_cursors().primary().position;
+        let start_pos = if scope.contains(&cursor) {
+            cursor
+        } else {
+            scope.start
+        };
         let found = self
-            .find_replace_match(&query, start_pos..buffer_len)
-            .or_else(|| self.find_replace_match(&query, 0..start_pos));
+            .find_replace_match(&query, start_pos..scope.end)
+            .or_else(|| self.find_replace_match(&query, scope.start..start_pos));
         let Some((first_match_pos, first_match_len)) = found else {
             self.set_status_message(t!("search.no_occurrences", search = search).to_string());
             return;
         };
+
+        let whole_buffer = 0..self.active_state().buffer.len();
+        let scope = (scope != whole_buffer).then_some(scope);
 
         // Initialize interactive replace state with just the current match
         self.active_window_mut().interactive_replace_state = Some(InteractiveReplaceState {
@@ -962,6 +1001,7 @@ impl Editor {
             replacements_made: 0,
             query,
             expand_replacement: use_regex,
+            scope,
         });
 
         // Move cursor to first match and mark it as the one being asked about
@@ -992,6 +1032,10 @@ impl Editor {
                 if ir_state.has_wrapped {
                     ir_state.start_pos =
                         ir_state.start_pos + inserted_len - ir_state.current_match_len;
+                }
+                // And the end of the selection it is confined to
+                if let Some(scope) = ir_state.scope.as_mut() {
+                    scope.end = scope.end + inserted_len - ir_state.current_match_len;
                 }
 
                 // Find next match lazily (after the text put in, and past an
@@ -1040,13 +1084,13 @@ impl Editor {
                 // Collect ALL remaining matches in one pass, from the current
                 // match to where the replace started, wrapping at the end
                 let query = ir_state.query.clone();
-                let buffer_len = self.active_state().buffer.len();
+                let scope = self.interactive_replace_scope(&ir_state);
                 let (to_end, wrapped_part) = if ir_state.has_wrapped {
                     (ir_state.current_match_pos..ir_state.start_pos, None)
                 } else {
                     (
-                        ir_state.current_match_pos..buffer_len,
-                        Some(0..ir_state.start_pos),
+                        ir_state.current_match_pos..scope.end,
+                        Some(scope.start..ir_state.start_pos),
                     )
                 };
                 let mut all_matches: Vec<(usize, usize)> = Vec::new();
@@ -1131,12 +1175,12 @@ impl Editor {
                 .find_replace_match(&query, start_pos..ir_state.start_pos)
                 .map(|(pos, len)| (pos, len, true));
         }
-        let buffer_len = self.active_state().buffer.len();
-        self.find_replace_match(&query, start_pos..buffer_len)
+        let scope = self.interactive_replace_scope(ir_state);
+        self.find_replace_match(&query, start_pos..scope.end)
             .map(|(pos, len)| (pos, len, false))
-            // Wrap to beginning
+            // Wrap to the beginning (of the selection)
             .or_else(|| {
-                self.find_replace_match(&query, 0..ir_state.start_pos)
+                self.find_replace_match(&query, scope.start..ir_state.start_pos)
                     .map(|(pos, len)| (pos, len, true))
             })
     }

@@ -20,6 +20,32 @@ fn get_grapheme_class(g: &str) -> CharClass {
     }
 }
 
+/// Whether `c` is a word character as the regex `\w` (and so `\b`) counts
+/// them: any Unicode letter, mark, digit or connector punctuation.
+pub fn is_unicode_word_char(c: char) -> bool {
+    regex_syntax::is_word_character(c)
+}
+
+/// Whether the character starting at byte `pos` of `buffer` is a word
+/// character (see [`is_unicode_word_char`]).
+pub fn is_word_char_at(buffer: &Buffer, pos: usize) -> bool {
+    let bytes = buffer.slice_bytes(pos..(pos + 4).min(buffer.len()));
+    String::from_utf8_lossy(&bytes)
+        .chars()
+        .next()
+        .is_some_and(is_unicode_word_char)
+}
+
+/// Whether the character ending at byte `pos` of `buffer` is a word
+/// character (see [`is_unicode_word_char`]).
+pub fn is_word_char_before(buffer: &Buffer, pos: usize) -> bool {
+    let bytes = buffer.slice_bytes(pos.saturating_sub(4)..pos);
+    String::from_utf8_lossy(&bytes)
+        .chars()
+        .next_back()
+        .is_some_and(is_unicode_word_char)
+}
+
 /// Check if a byte is a word character (alphanumeric or underscore)
 pub fn is_word_char(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
@@ -574,6 +600,21 @@ pub fn find_word_start_right(buffer: &Buffer, pos: usize) -> usize {
 mod tests {
     use super::*;
     use crate::model::buffer::Buffer;
+
+    #[test]
+    fn word_char_neighbours_decode_multibyte_characters() {
+        let text = "aé日 -";
+        let buffer = Buffer::from_str_test(text);
+        let e = text.find('é').unwrap();
+        let cjk = text.find('日').unwrap();
+        assert!(is_word_char_at(&buffer, e));
+        assert!(is_word_char_before(&buffer, cjk));
+        assert!(is_word_char_before(&buffer, cjk + '日'.len_utf8()));
+        assert!(!is_word_char_at(&buffer, text.find(' ').unwrap()));
+        assert!(!is_word_char_at(&buffer, text.find('-').unwrap()));
+        assert!(!is_word_char_before(&buffer, 0));
+        assert!(!is_word_char_at(&buffer, text.len()));
+    }
 
     #[test]
     fn test_is_word_char() {

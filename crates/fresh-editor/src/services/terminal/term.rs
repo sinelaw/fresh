@@ -16,7 +16,8 @@
 //! - `process_output`: Feed PTY bytes into the terminal emulator
 //! - `flush_new_scrollback`: Stream new scrollback lines to backing file
 //! - `append_visible_screen`: Append visible screen on mode exit
-//! - `backing_file_history_end`: Get truncation point for mode re-entry
+//! - `write_backing_file_tail` / `cut_backing_file_tail`: Write the visible
+//!   screen as the file's temporary tail, and take it back out
 //!
 //! ## State Tracking
 //!
@@ -36,6 +37,7 @@
 //! `backing_file_history_end` tracks the byte offset where scrollback ends in the
 //! backing file, used for truncation when re-entering terminal mode.
 
+use crate::model::filesystem::FileSystem;
 use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::Scroll;
 use alacritty_terminal::index::{Column, Line};
@@ -43,7 +45,7 @@ use alacritty_terminal::term::test::TermSize;
 use alacritty_terminal::term::{Config as TermConfig, Term, TermMode};
 use alacritty_terminal::vte::ansi::Processor;
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 // Keep a generous scrollback so sync-to-buffer can include deep history.
@@ -479,26 +481,18 @@ pub struct TerminalState {
     pending_reflow_resync: bool,
     /// Byte offset in backing file where scrollback ends (for truncation)
     backing_file_history_end: u64,
-    /// A temporary visible-screen tail (written by `append_visible_screen`)
-    /// currently sits in the backing file past `backing_file_history_end`.
+    /// Where the temporary visible-screen tail (written by
+    /// [`Self::write_backing_file_tail`]) ends in the backing file, while
+    /// one is there; it starts at `backing_file_history_end`.
     ///
-    /// The tail is not scrollback: it is the exit frame the scroll-back view
-    /// anchors to, and it is rewritten on every visit. Anything appended
-    /// *after* it is therefore living on borrowed time — the truncation that
-    /// ends the visit cuts the file back to `backing_file_history_end` and
-    /// takes it along (fresh#3151).
-    ///
-    /// The two writers handle that differently, so read the flag as "a tail is
-    /// there *unless the PTY read loop got there first*":
-    ///
-    /// * The UI-thread paths (scroll-back entry, session checkpoint) rewrite
-    ///   the tail, so they truncate the old one off first.
-    /// * The read loop cannot truncate — a scroll-back view may be reading the
-    ///   file — so when it streams scrollback while the flag is set it instead
-    ///   *adopts* the tail as scrollback and clears the flag, leaving nothing
-    ///   for a later truncation to cut at. That costs one duplicated screen
-    ///   per overlap, permanently; losing the lines would be worse.
-    backing_file_has_tail: bool,
+    /// The tail is not scrollback: it is the screen as it was, the exit frame
+    /// the scroll-back view anchors to and what a checkpoint saves. The read
+    /// loop can't remove it (a scroll-back view may be reading those bytes),
+    /// so scrollback it streams meanwhile goes after it; whoever next deals
+    /// with the tail cuts it out from between the two
+    /// ([`Self::cut_backing_file_tail`]), so the file never keeps a screen
+    /// that later scrolled into history as well (fresh#3151, #3645).
+    backing_file_tail_end: Option<u64>,
     /// Queue of data to write back to the PTY (for DSR responses, etc.)
     pty_write_queue: Arc<Mutex<Vec<String>>>,
     /// Pending title set by the program via OSC 0/1/2 (shared with the
@@ -529,6 +523,69 @@ pub struct TerminalState {
 pub struct PrependedHead {
     pub rows: usize,
     pub bytes: usize,
+}
+
+/// A terminal's backing file, as the tail's writers use it under the
+/// terminal's lock (see [`TerminalState::write_backing_file_tail`]).
+pub trait BackingFile {
+    /// How many bytes the file holds.
+    fn size(&mut self) -> io::Result<u64>;
+    /// The bytes from `offset` to the end (none past the end).
+    fn read_from(&mut self, offset: u64) -> io::Result<Vec<u8>>;
+    fn truncate(&mut self, len: u64) -> io::Result<()>;
+    fn append(&mut self, bytes: &[u8]) -> io::Result<()>;
+}
+
+/// The backing file at `path` on `fs`.
+pub struct BackingFileAt<'a> {
+    pub fs: &'a (dyn FileSystem + Send + Sync),
+    pub path: &'a Path,
+}
+
+impl BackingFile for BackingFileAt<'_> {
+    fn size(&mut self) -> io::Result<u64> {
+        Ok(self.fs.metadata(self.path)?.size)
+    }
+
+    fn read_from(&mut self, offset: u64) -> io::Result<Vec<u8>> {
+        let len = self.size()?;
+        if offset >= len {
+            return Ok(Vec::new());
+        }
+        self.fs
+            .read_range(self.path, offset, (len - offset) as usize)
+    }
+
+    fn truncate(&mut self, len: u64) -> io::Result<()> {
+        self.fs.set_file_length(self.path, len)
+    }
+
+    fn append(&mut self, bytes: &[u8]) -> io::Result<()> {
+        let mut file = self.fs.open_file_for_append(self.path)?;
+        file.write_all(bytes)?;
+        file.flush()
+    }
+}
+
+/// A backing file in memory, for tests.
+impl BackingFile for Vec<u8> {
+    fn size(&mut self) -> io::Result<u64> {
+        Ok(self.len() as u64)
+    }
+
+    fn read_from(&mut self, offset: u64) -> io::Result<Vec<u8>> {
+        Ok(self.get(offset as usize..).unwrap_or_default().to_vec())
+    }
+
+    fn truncate(&mut self, len: u64) -> io::Result<()> {
+        Vec::truncate(self, len as usize);
+        Ok(())
+    }
+
+    fn append(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.extend_from_slice(bytes);
+        Ok(())
+    }
 }
 
 impl TerminalState {
@@ -576,7 +633,7 @@ impl TerminalState {
             history_overrun: false,
             pending_reflow_resync: false,
             backing_file_history_end: 0,
-            backing_file_has_tail: false,
+            backing_file_tail_end: None,
             pty_write_queue,
             pending_title,
             pending_clipboard,
@@ -1396,22 +1453,52 @@ impl TerminalState {
         self.backing_file_history_end = offset;
     }
 
-    /// Whether the backing file currently carries a temporary visible-screen
-    /// tail past [`Self::backing_file_history_end`].
-    ///
-    /// A writer that appends scrollback must clear the tail first (truncate
-    /// the file back to the history end), or its lines land past the
-    /// truncation point and are lost when the scroll-back visit ends.
-    pub fn backing_file_has_tail(&self) -> bool {
-        self.backing_file_has_tail
+    /// The read loop streamed scrollback to the backing file, which is now
+    /// `file_len` long. With no tail there, that is where history ends;
+    /// with one, the lines wait after it until it is cut out.
+    pub fn scrollback_streamed(&mut self, file_len: u64) {
+        if self.backing_file_tail_end.is_none() {
+            self.backing_file_history_end = file_len;
+        }
     }
 
-    /// Record whether a temporary visible-screen tail is present in the
-    /// backing file: `true` right after [`Self::append_visible_screen`] was
-    /// written to it, `false` right after it was truncated back to
-    /// [`Self::backing_file_history_end`].
-    pub fn set_backing_file_has_tail(&mut self, present: bool) {
-        self.backing_file_has_tail = present;
+    /// Take the visible-screen tail out of the backing file, if one is there,
+    /// keeping whatever scrollback the read loop streamed in after it: the
+    /// file is cut back to the history end and those lines appended again.
+    /// Costs what was streamed since the tail was written.
+    pub fn cut_backing_file_tail(&mut self, file: &mut impl BackingFile) -> io::Result<()> {
+        let Some(tail_end) = self.backing_file_tail_end else {
+            return Ok(());
+        };
+        let after = file.read_from(tail_end)?;
+        file.truncate(self.backing_file_history_end)?;
+        self.backing_file_tail_end = None;
+        file.append(&after)?;
+        self.backing_file_history_end += after.len() as u64;
+        Ok(())
+    }
+
+    /// Bring the backing file up to date with the screen as it is now: the
+    /// old tail cut out, every line that has scrolled off written, and the
+    /// visible screen after them as the new tail. For scroll-back entry and
+    /// workspace checkpoints. Returns what [`Self::append_visible_screen`]
+    /// returns.
+    pub fn write_backing_file_tail(
+        &mut self,
+        file: &mut impl BackingFile,
+    ) -> io::Result<PrependedHead> {
+        self.cut_backing_file_tail(file)?;
+        let mut scrollback = Vec::new();
+        self.flush_new_scrollback(&mut scrollback)?;
+        file.append(&scrollback)?;
+        self.backing_file_history_end = file.size()?;
+        let mut screen = Vec::new();
+        let head = self.append_visible_screen(&mut screen)?;
+        // Claimed before it is written: a part-written tail is cut off too
+        self.backing_file_tail_end = Some(u64::MAX);
+        file.append(&screen)?;
+        self.backing_file_tail_end = Some(file.size()?);
+        Ok(head)
     }
 
     /// Get the number of scrollback lines that have been synced to the backing file.
@@ -1426,7 +1513,7 @@ impl TerminalState {
         self.synced_logical_lines = 0;
         self.pending_reflow_resync = false;
         self.backing_file_history_end = 0;
-        self.backing_file_has_tail = false;
+        self.backing_file_tail_end = None;
     }
 }
 
@@ -2595,5 +2682,94 @@ mod tests {
         state.process_output(b"\x1b]7;relative/path\x07");
         // The relative payload is ignored; the previous valid cwd is kept.
         assert_eq!(state.cwd(), Some(std::path::Path::new("/good")));
+    }
+
+    /// The backing file under every interleaving of its writers, modelled
+    /// on a byte vector: what it holds is what the terminal printed, every
+    /// line once and in order — the scrollback, then (when a tail is there)
+    /// the screen.
+    mod backing_file_model {
+        use super::*;
+        use proptest::prelude::*;
+
+        #[derive(Debug, Clone)]
+        enum Op {
+            /// The program prints this many lines; the read loop streams
+            /// what scrolled off (`manager.rs`, the PTY read loop).
+            Output(usize),
+            /// A checkpoint or scroll-back entry writes the screen as the tail
+            /// (`Window::sync_terminal_backing_files`,
+            /// `sync_terminal_to_buffer`).
+            Sync,
+            /// A scroll-back visit ends: the tail is cut back off
+            /// (`enter_terminal_mode`).
+            EndVisit,
+        }
+
+        /// What the PTY read loop does with output (`manager.rs`).
+        fn read_loop(state: &mut TerminalState, file: &mut Vec<u8>) {
+            if state.flush_new_scrollback(file).unwrap() > 0 {
+                state.scrollback_streamed(file.len() as u64);
+            }
+        }
+
+        /// The printed lines the file holds, in order.
+        fn printed_lines(file: &[u8]) -> Vec<String> {
+            String::from_utf8_lossy(file)
+                .lines()
+                .map(|l| l.trim_end().to_string())
+                .filter(|l| l.starts_with('L'))
+                .collect()
+        }
+
+        fn op() -> impl Strategy<Value = Op> {
+            prop_oneof![
+                (1usize..12).prop_map(Op::Output),
+                Just(Op::Sync),
+                Just(Op::EndVisit),
+            ]
+        }
+
+        proptest! {
+            #[test]
+            fn backing_file_holds_each_printed_line_once(
+                ops in prop::collection::vec(op(), 0..40)
+            ) {
+                let mut state = TerminalState::new(80, 5);
+                let mut file = Vec::new();
+                let mut printed = Vec::new();
+                for op in &ops {
+                    match op {
+                        Op::Output(n) => {
+                            for _ in 0..*n {
+                                let line = format!("L{:04}", printed.len());
+                                state.process_output(format!("{line}\r\n").as_bytes());
+                                printed.push(line);
+                            }
+                            // A scroll-back view may be reading up to the
+                            // tail's end: the read loop leaves that alone
+                            let viewed = state
+                                .backing_file_tail_end
+                                .map(|end| file[..end as usize].to_vec());
+                            read_loop(&mut state, &mut file);
+                            if let Some(viewed) = viewed {
+                                prop_assert_eq!(&file[..viewed.len()], &viewed[..]);
+                            }
+                        }
+                        Op::Sync => {
+                            state.write_backing_file_tail(&mut file).unwrap();
+                        }
+                        Op::EndVisit => state.cut_backing_file_tail(&mut file).unwrap(),
+                    }
+                    // The history is lines printed, in order, none twice
+                    let history = printed_lines(&file[..state.backing_file_history_end as usize]);
+                    prop_assert_eq!(&history[..], &printed[..history.len()]);
+                }
+                // Read as a restored session reads it: with the screen as it
+                // is now on the end
+                state.write_backing_file_tail(&mut file).unwrap();
+                prop_assert_eq!(printed_lines(&file), printed);
+            }
+        }
     }
 }

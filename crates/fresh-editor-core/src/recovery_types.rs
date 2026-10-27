@@ -6,7 +6,9 @@
 //!
 //! All recovery data uses a chunked format:
 //! - `{id}.meta.json` - Metadata with chunk index
-//! - `{id}.chunk.0`, `{id}.chunk.1`, ... - Binary chunk content
+//! - `{id}.chunk.0` - Every chunk's content, one after another (an entry
+//!   written before this layout has one `{id}.chunk.N` file per chunk; see
+//!   [`ChunkedRecoveryIndex::packed`])
 //!
 //! For small files or new buffers, there's typically a single chunk containing
 //! the full content. For large files, only modified regions are stored as chunks.
@@ -74,8 +76,13 @@ pub struct ChunkedRecoveryIndex {
     pub original_size: usize,
     /// Total size after applying all chunks
     pub final_size: usize,
-    /// Metadata for each chunk (content stored in separate .chunk.N files)
+    /// Metadata for each chunk
     pub chunks: Vec<ChunkMeta>,
+    /// Whether every chunk's content is in the one `.chunk.0` file, in
+    /// order. Earlier versions wrote one `.chunk.N` file per chunk, which a
+    /// replace-all in a large file made hundreds of thousands of.
+    #[serde(default)]
+    pub packed: bool,
 }
 
 /// Chunked recovery data with full content (used in memory)
@@ -105,6 +112,7 @@ impl ChunkedRecoveryData {
             original_size: self.original_size,
             final_size: self.final_size,
             chunks: self.chunks.iter().map(|c| c.to_meta()).collect(),
+            packed: true,
         }
     }
 }

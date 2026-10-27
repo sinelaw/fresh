@@ -6030,6 +6030,12 @@ pub enum PluginCommand {
         request_id: u64,
     },
 
+    /// Write every open terminal's visible screen to its backing file, as a
+    /// workspace checkpoint does, so a search of the backing files finds
+    /// what is on screen and not only what has scrolled off. Resolves the
+    /// callback when done.
+    SyncTerminals { callback_id: JsCallbackId },
+
     /// Send input data to a terminal by its terminal ID
     SendTerminalInput {
         /// The terminal ID (from TerminalResult)

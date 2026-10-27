@@ -1003,26 +1003,18 @@ impl ReaderLoop {
                         // lines `flush_new_scrollback` has already counted as
                         // persisted), and a failed `metadata()` is not a write
                         // failure at all. Both just leave the recorded end
-                        // where it was — stale-low, which the tail flag below
-                        // keeps harmless, since nothing truncates to it unless
-                        // a tail is known to be there.
+                        // where it was — stale-low, which is harmless: the
+                        // file is only cut back to it while a tail is there,
+                        // and writing a tail measures it afresh.
                         match writer.flush().and_then(|()| writer.get_ref().metadata()) {
                             Ok(pos) => {
-                                state.set_backing_file_history_end(pos.len());
-                                // Scrollback now sits *after* whatever
-                                // temporary visible-screen tail was in the
-                                // file, so that tail can no longer be
-                                // truncated off without taking these lines
-                                // with it. Adopt it as scrollback instead: a
-                                // duplicated screen is bounded per event,
-                                // losing the lines is not — the same trade
-                                // `flush_new_scrollback` makes when the grid
-                                // overruns. The cost is real and worth
-                                // knowing: every visit-or-checkpoint that
-                                // overlaps output splices one more screen's
-                                // worth of already-seen rows into the
-                                // transcript, and nothing removes them.
-                                state.set_backing_file_has_tail(false);
+                                // With a visible-screen tail in the file
+                                // these lines went in after it; they stay
+                                // there until the tail is cut out from
+                                // between (`cut_backing_file_tail`), which a
+                                // scroll-back view reading the tail allows
+                                // and truncating here would not.
+                                state.scrollback_streamed(pos.len());
                             }
                             Err(e) => tracing::warn!(
                                 "Terminal backing file sync error (scrollback kept, \

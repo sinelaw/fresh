@@ -332,40 +332,14 @@ fn selection_target(buffer: &Buffer, range: Range<usize>, min_len: usize) -> Hig
     HighlightTarget::Selection { text, range }
 }
 
-/// Get the word at the given position in the buffer
+/// The word under the cursor at `position`: the one the highlighter then
+/// finds the occurrences of ([`reference_highlight_text::word_at`]), so a
+/// cursor on a letter past ASCII (the `é` of `café`) has one too.
+///
+/// [`reference_highlight_text::word_at`]: crate::primitives::reference_highlight_text::word_at
 fn get_word_at_position(buffer: &crate::model::buffer::Buffer, position: usize) -> Option<String> {
-    use crate::primitives::word_navigation::{find_word_end, find_word_start, is_word_char};
-
-    let buf_len = buffer.len();
-    if position > buf_len {
-        return None;
-    }
-
-    // Check if cursor is on a word character
-    let is_on_word = if position < buf_len {
-        let byte_at_pos = buffer.slice_bytes(position..position + 1);
-        byte_at_pos
-            .first()
-            .map(|&b| is_word_char(b))
-            .unwrap_or(false)
-    } else {
-        false
-    };
-
-    if !is_on_word {
-        return None;
-    }
-
-    // Find word boundaries
-    let start = find_word_start(buffer, position);
-    let end = find_word_end(buffer, position);
-
-    if start < end {
-        let word_bytes = buffer.slice_bytes(start..end);
-        std::str::from_utf8(&word_bytes).ok().map(|s| s.to_string())
-    } else {
-        None
-    }
+    let range = crate::primitives::reference_highlight_text::word_at(buffer, position)?;
+    String::from_utf8(buffer.slice_bytes(range)).ok()
 }
 
 #[cfg(test)]
@@ -660,5 +634,12 @@ mod tests {
         // Start of "world"
         let word = get_word_at_position(&buffer, 6);
         assert_eq!(word, Some("world".to_string()));
+
+        // On a letter past ASCII, and on the ASCII letters of the same word
+        let buffer = Buffer::from_str_test("x café");
+        for position in [2, 5] {
+            let word = get_word_at_position(&buffer, position);
+            assert_eq!(word, Some("café".to_string()), "at {position}");
+        }
     }
 }

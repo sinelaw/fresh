@@ -9746,6 +9746,20 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Write every open terminal's visible screen to its backing file (in
+    /// `getTerminalDir()`), as a workspace checkpoint does. The backing files
+    /// otherwise hold only lines that have scrolled off the screen, so
+    /// await this before searching them.
+    #[plugin_api(async_promise, js_name = "syncTerminals", ts_return = "void")]
+    #[qjs(rename = "_syncTerminalsStart")]
+    pub fn sync_terminals_start(&self) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::SyncTerminals {
+            callback_id: fresh_core::api::JsCallbackId::new(id),
+        });
+        id
+    }
+
     /// Send input data to a terminal
     ///
     /// @param terminalId - The terminal ID (from `TerminalResult`)

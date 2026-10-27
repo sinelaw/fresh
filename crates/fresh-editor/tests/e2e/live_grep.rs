@@ -1726,3 +1726,62 @@ fn test_live_grep_results_window_follows_selection_and_keeps_the_wheel() {
         harness.screen_to_string()
     );
 }
+
+/// The Terminals scope finds text still on a terminal's screen, not only
+/// lines that have scrolled into its history: the terminal stays in terminal
+/// mode, so nothing but the search itself writes its screen to the backing
+/// file (issue #3645).
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // `printf` in a Unix shell
+fn live_grep_finds_text_still_on_a_terminal_screen() {
+    use portable_pty::{native_pty_system, PtySize};
+    let pty = native_pty_system().openpty(PtySize {
+        rows: 1,
+        cols: 1,
+        pixel_width: 0,
+        pixel_height: 0,
+    });
+    if pty.is_err() {
+        eprintln!("Skipping test: PTY not available in this environment");
+        return;
+    }
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().canonicalize().unwrap().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "live_grep");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        140,
+        30,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.editor_mut().open_terminal();
+    // `\x5a` is `Z`: the marker is only ever on screen as output, never as
+    // the typed command
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(b"printf '\\x5aEBRA_3645\\n'\n");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("ZEBRA_3645"))
+        .unwrap();
+
+    harness
+        .run_palette_command("Live Grep (Find in Files)")
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Scope "))
+        .unwrap();
+    harness.type_text("ZEBRA_3645").unwrap();
+
+    // A Terminals result row names the terminal's backing file
+    harness
+        .wait_until(|h| h.screen_to_string().contains("fresh-terminal-"))
+        .unwrap();
+}

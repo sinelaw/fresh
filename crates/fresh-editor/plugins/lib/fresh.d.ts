@@ -8466,6 +8466,13 @@ interface EditorAPI {
 	*/
 	setWindowPreparing(id: number, message: string, label: string | null, failed: boolean, done: boolean): boolean;
 	/**
+	* Write every open terminal's visible screen to its backing file (in
+	* `getTerminalDir()`), as a workspace checkpoint does. The backing files
+	* otherwise hold only lines that have scrolled off the screen, so
+	* await this before searching them.
+	*/
+	syncTerminals(): Promise<void>;
+	/**
 	* Send input data to a terminal
 	* 
 	* @param terminalId - The terminal ID (from `TerminalResult`)

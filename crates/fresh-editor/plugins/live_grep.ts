@@ -602,7 +602,9 @@ registerProvider({
     const { cwd, maxResults } = opts;
     const args = rgArgs(query, opts);
     const r = await spawnSearch("rg", args, cwd, opts);
-    if (r.exit_code === 0) {
+    // 1 is "no matches", not a failure: throwing on it aborted the whole
+    // search before buffers and terminals were searched
+    if (r.exit_code === 0 || r.exit_code === 1) {
       return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg)) as GrepMatch[];
     }
     throw new Error(`rg exited with code ${r.exit_code}: ${r.stderr}`);
@@ -938,8 +940,10 @@ function stripAnsi(s: string): string {
  *  (`getTerminalDir()` → `<data_dir>/terminals/<encoded-cwd>/`) — open
  *  terminals stream their scrollback there live, and closed terminals
  *  are retained there too (renamed `*-closed-*.txt`). Scoping to that
- *  subdir keeps the search to *this* project / worktree. We grep it
- *  with rg (falling back to grep), then strip ANSI for display.
+ *  subdir keeps the search to *this* project / worktree. Open terminals
+ *  first write their visible screen there (`syncTerminals`), since only
+ *  lines that have scrolled off are streamed. We grep it with rg
+ *  (falling back to grep), then strip ANSI for display.
  *  Opening a hit opens the backing file at the matched line. */
 async function searchTerminals(
   query: string,
@@ -965,6 +969,7 @@ async function searchTerminals(
   };
   const spawnOpts = { cwd, maxResults: limit, cancellation };
   try {
+    await editor.syncTerminals();
     const r = await spawnSearch("rg", rgArgs(query, opts), cwd, spawnOpts);
     if (r.exit_code === 0) {
       raw = parseGrepOutput(r.stdout, limit, (m) => editor.debug(m)) as GrepMatch[];

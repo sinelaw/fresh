@@ -2101,6 +2101,16 @@ impl Editor {
                 self.handle_send_terminal_input(terminal_id, data);
             }
 
+            PluginCommand::SyncTerminals { callback_id } => {
+                for window in self.windows.values() {
+                    window.sync_terminal_backing_files();
+                }
+                self.plugin_manager
+                    .read()
+                    .unwrap()
+                    .resolve_callback(callback_id, "null".to_string());
+            }
+
             PluginCommand::CloseTerminal { terminal_id } => {
                 self.handle_close_terminal(terminal_id);
             }

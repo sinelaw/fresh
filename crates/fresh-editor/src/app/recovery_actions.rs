@@ -865,17 +865,17 @@ impl Editor {
         let line_count = state.buffer.line_count();
 
         let (chunks, original_size, final_size) = if state.buffer.is_large_file() {
-            let chunks = state.buffer.get_recovery_chunks();
+            let chunks = match state.buffer.get_recovery_chunks() {
+                Ok(chunks) => chunks,
+                Err(e) => {
+                    tracing::warn!("Failed to read the changes for a recovery save: {}", e);
+                    return Ok(false);
+                }
+            };
             if chunks.is_empty() {
                 state.buffer.set_recovery_pending(false);
                 return Ok(false);
             }
-            let chunks: Vec<_> = chunks
-                .into_iter()
-                .map(|(offset, content)| {
-                    crate::services::recovery::types::RecoveryChunk::new(offset, 0, content)
-                })
-                .collect();
             let original_size = state.buffer.original_file_size().unwrap_or(0);
             (chunks, original_size, state.buffer.total_bytes())
         } else {

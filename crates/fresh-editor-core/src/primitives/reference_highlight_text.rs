@@ -12,7 +12,9 @@
 
 use crate::model::buffer::Buffer;
 use crate::primitives::highlight_types::HighlightSpan;
-use crate::primitives::word_navigation::{find_word_end, find_word_start, is_word_char};
+use crate::primitives::word_navigation::{
+    is_unicode_word_char, is_word_char_at, is_word_char_before,
+};
 use ratatui::style::Color;
 use std::ops::Range;
 
@@ -109,68 +111,40 @@ pub fn word_occurrences(
 }
 
 /// The word under the cursor at `position` (or just before it at the end
-/// of the buffer); `None` when the cursor is not on a word character.
+/// of the buffer); `None` when the cursor is not on a word character. A word
+/// is a run of Unicode word characters, as the regex `\w` counts them
+/// ([`is_unicode_word_char`]), so `caf` is not a word inside `café`.
 pub fn word_at(buffer: &Buffer, position: usize) -> Option<Range<usize>> {
-    let buf_len = buffer.len();
-    if position > buf_len {
-        return None;
-    }
-
-    // Check if cursor is on a word character
-    // Need to handle cursor at end of buffer
-    let is_on_word = if position < buf_len {
-        let byte_at_pos = buffer.slice_bytes(position..position + 1);
-        byte_at_pos
-            .first()
-            .map(|&b| is_word_char(b))
-            .unwrap_or(false)
-    } else if position > 0 {
-        // Cursor at end of buffer - check previous character
-        let byte_before = buffer.slice_bytes(position - 1..position);
-        byte_before
-            .first()
-            .map(|&b| is_word_char(b))
-            .unwrap_or(false)
+    let len = buffer.len();
+    let on_word = if position < len {
+        is_word_char_at(buffer, position)
     } else {
-        false
+        position == len && is_word_char_before(buffer, position)
     };
-
-    if !is_on_word && position > 0 {
-        // Check if we're just after a word AND the cursor is at end of buffer
-        // or the character before was a word char but current is not
-        // This handles cursor positioned right after a word (e.g., at end of "foo|")
-        let byte_before = buffer.slice_bytes(position.saturating_sub(1)..position);
-        let is_after_word = byte_before
-            .first()
-            .map(|&b| is_word_char(b))
-            .unwrap_or(false);
-
-        // Only use "word before cursor" if we're at end of buffer
-        // Otherwise, cursor on whitespace/punctuation should not highlight
-        if is_after_word && position >= buf_len {
-            // Use the word before cursor
-            let start = find_word_start(buffer, position.saturating_sub(1));
-            let end = position;
-            if start < end {
-                return Some(start..end);
-            }
-        }
+    if !on_word {
         return None;
     }
-
-    if !is_on_word {
+    // A window around `position`, on character boundaries so it decodes
+    const WINDOW: usize = 1000;
+    let start = buffer.snap_to_char_boundary(position.saturating_sub(WINDOW));
+    let end = buffer.snap_to_char_boundary((position + WINDOW).min(len));
+    let bytes = buffer.slice_bytes(start..end);
+    let text = std::str::from_utf8(&bytes).ok()?;
+    let rel = position - start;
+    if !text.is_char_boundary(rel) {
         return None;
     }
-
-    // Find word boundaries
-    let start = find_word_start(buffer, position);
-    let end = find_word_end(buffer, position);
-
-    if start < end {
-        Some(start..end)
-    } else {
-        None
-    }
+    let word_start = text[..rel]
+        .char_indices()
+        .rev()
+        .take_while(|&(_, c)| is_unicode_word_char(c))
+        .last()
+        .map_or(rel, |(i, _)| i);
+    let word_end = text[rel..]
+        .char_indices()
+        .find(|&(_, c)| !is_unicode_word_char(c))
+        .map_or(text.len(), |(i, _)| rel + i);
+    (word_start < word_end).then(|| start + word_start..start + word_end)
 }
 
 /// The most text a match search covers: beyond it (a huge single-line
@@ -222,15 +196,9 @@ pub fn find_matches_in_range(
         let abs_end = abs_start + needle.len();
 
         // Check if this is a whole word match (not part of a larger word)
-        let is_word_start = !whole_word || abs_start == 0 || {
-            let prev_byte = buffer.slice_bytes(abs_start - 1..abs_start);
-            prev_byte.first().map(|&b| !is_word_char(b)).unwrap_or(true)
-        };
+        let is_word_start = !whole_word || !is_word_char_before(buffer, abs_start);
 
-        let is_word_end = !whole_word || abs_end >= buffer.len() || {
-            let next_byte = buffer.slice_bytes(abs_end..abs_end + 1);
-            next_byte.first().map(|&b| !is_word_char(b)).unwrap_or(true)
-        };
+        let is_word_end = !whole_word || !is_word_char_at(buffer, abs_end);
 
         if is_word_start && is_word_end {
             // Only include if it overlaps with the actual viewport
@@ -254,6 +222,87 @@ mod tests {
         let mut buf = Buffer::empty(fs);
         buf.insert(0, content);
         buf
+    }
+
+    #[test]
+    fn word_at_takes_whole_unicode_words() {
+        let text = "x café, naïve_1 日本語 e\u{301}t";
+        let buffer = Buffer::from_str_test(text);
+        let word = |pos: usize| word_at(&buffer, pos).map(|r| &text[r]);
+        // Anywhere in a word, its start, its end, on the accented letter
+        for (needle, word_text) in [
+            ("café", "café"),
+            ("é", "café"),
+            ("naïve", "naïve_1"),
+            ("ïve", "naïve_1"),
+            ("_1", "naïve_1"),
+            ("本", "日本語"),
+            ("e\u{301}", "e\u{301}t"),
+            ("\u{301}", "e\u{301}t"),
+        ] {
+            assert_eq!(
+                word(text.find(needle).unwrap()),
+                Some(word_text),
+                "{needle:?}"
+            );
+        }
+        // Off any word: punctuation, space; at the end, the word before it
+        assert_eq!(word(text.find(',').unwrap()), None);
+        assert_eq!(word(1), None);
+        assert_eq!(word(text.len()), Some("e\u{301}t"));
+        assert_eq!(word(text.len() + 1), None);
+        let empty = Buffer::from_str_test("");
+        assert_eq!(word_at(&empty, 0), None);
+        let trailing_space = Buffer::from_str_test("ab ");
+        assert_eq!(word_at(&trailing_space, 3), None);
+    }
+
+    /// The text of each whole-word occurrence of the word at `cursor`.
+    fn occurrences(text: &str, cursor: usize) -> Vec<&str> {
+        let buffer = Buffer::from_str_test(text);
+        word_occurrences(&buffer, cursor, 0..buffer.len(), 2)
+            .into_iter()
+            .map(|range| &text[range])
+            .collect()
+    }
+
+    /// Letters past ASCII are word characters, as for the regex `\b`: a
+    /// word is never matched inside a longer one that goes on with one
+    /// (issue #3645).
+    #[test]
+    fn non_ascii_letters_are_word_characters() {
+        let text = "café caf cafe";
+        let caf = text.find(" caf ").unwrap() + 1;
+        assert_eq!(occurrences(text, caf), vec!["caf"]);
+        // On the `é` itself, and on the letters before it: the whole word
+        assert_eq!(occurrences(text, text.find('é').unwrap()), vec!["café"]);
+        assert_eq!(occurrences(text, 0), vec!["café"]);
+    }
+
+    #[test]
+    fn non_ascii_words_match_whole() {
+        // (text, cursor, the word under it, how many times it occurs whole):
+        // Cyrillic, a decomposed accent (`e` + U+0301, a mark, which `\w`
+        // includes), and CJK
+        let decomposed = "cafe\u{301} cafe cafe\u{301}";
+        for (text, cursor, word, expected) in [
+            ("при привет при", 0, "при", 2),
+            (decomposed, 0, "cafe\u{301}", 2),
+            (
+                decomposed,
+                decomposed.find(" cafe ").unwrap() + 1,
+                "cafe",
+                1,
+            ),
+            ("日本 日本語 日本", 0, "日本", 2),
+            ("naïve x naïve", "naïve x naïve".len(), "naïve", 2),
+        ] {
+            assert_eq!(
+                occurrences(text, cursor),
+                vec![word; expected],
+                "{text:?}, cursor at {cursor}"
+            );
+        }
     }
 
     #[test]

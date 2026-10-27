@@ -1928,6 +1928,7 @@ mod tests {
             "spawnBackgroundProcess",
             "killBackgroundProcess",
             "createTerminal",
+            "syncTerminals",
             "sendTerminalInput",
             "closeTerminal",
             "signalWindow",
