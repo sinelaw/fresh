@@ -44,9 +44,7 @@ export interface GrepArgOpts {
   maxResults: number;
   includeIgnored?: boolean;
   wholeWord?: boolean;
-  /** Regex (the default), fixed string (`false`), or for git grep, git's
-   *  basic regex (`"basic"`), where `(`, `+` and `|` are literal. */
-  regex?: boolean | "basic";
+  regex?: boolean;
   caseSensitive?: boolean;
   /** `.gitignore` lines, relative to the directory searched. */
   ignorePatterns?: readonly string[];
@@ -56,8 +54,6 @@ export interface GrepArgOpts {
   include?: string;
   /** What to search instead of the working directory (rg, grep). */
   paths?: readonly string[];
-  /** Search files git doesn't track too (git grep; default true). */
-  untracked?: boolean;
 }
 
 /** One `.gitignore` line, taken apart the way `.gitignore` reads it. */
@@ -220,21 +216,18 @@ export function gitExcludePathspecs(rules: readonly IgnoreRule[], prefix: string
 
 export function gitGrepArgs(query: string, o: GrepArgOpts, prefix: string | null): string[] {
   // `core.quotePath=false` prints non-ASCII names as they are rather than as
-  // quoted octal escapes, which would not open. `--untracked` (unless
-  // `untracked: false`) searches new files too, as the other tools and Quick
-  // Open do; `.gitignore` still applies unless the "Ignored & hidden" scope
-  // is on.
-  const args = ["-c", "core.quotePath=false", "grep", "-n", "--column", "-I"];
-  if (o.untracked !== false) args.push("--untracked");
+  // quoted octal escapes, which would not open. `--untracked` searches new
+  // files too, as the other tools and Quick Open do; `.gitignore` still
+  // applies unless the "Ignored & hidden" scope is on.
+  const args = ["-c", "core.quotePath=false", "grep", "-n", "--column", "-I", "--untracked"];
   if (!o.caseSensitive) args.push("-i");
   // Default git-grep is basic regex; use extended when regex is on, or
   // fixed-strings when it's off so the query is matched literally.
-  if (o.regex !== "basic") args.push(o.regex === false ? "-F" : "-E");
+  args.push(o.regex === false ? "-F" : "-E");
   if (o.wholeWord) args.push("-w");
-  // Stop honouring the standard ignore files so `.gitignore`d untracked
-  // content is searched too (git refuses the flag for tracked files alone,
-  // which ignore files never hide).
-  if (o.includeIgnored && o.untracked !== false) args.push("--no-exclude-standard");
+  // Stop honouring the standard ignore files so `.gitignore`d content is
+  // searched too.
+  if (o.includeIgnored) args.push("--no-exclude-standard");
   args.push("-e", query);
   // Exclude-only pathspecs search what no pathspec would (git 2.13+).
   const specs = gitExcludePathspecs(parseIgnoreLines(o.ignorePatterns ?? []), prefix);

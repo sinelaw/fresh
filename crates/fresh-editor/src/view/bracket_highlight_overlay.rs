@@ -113,7 +113,9 @@ fn pos_in_ranges(ranges: &[Range<usize>], pos: usize) -> bool {
 /// [`MAX_BRACKET_SEARCH_BYTES`]. Brackets inside `skip_ranges` (comments and
 /// strings) are ignored, so the match is structural punctuation (#2405).
 ///
-/// `pub(crate)` so go-to-matching-bracket jumps where the highlight is.
+/// `pub(crate)` for go-to-matching-bracket, which scans the same way but
+/// has no comment and string ranges to skip (they come from the
+/// highlighting of the frame being drawn), so it counts their brackets too.
 pub(crate) fn find_matching_bracket(
     buffer: &Buffer,
     position: usize,

@@ -270,7 +270,7 @@ impl Editor {
             let pct = scan.progress_percent(state.buffer.len());
             let progress = fresh_i18n::tn!("search.progress", scan.match_count(), percent = pct);
             self.set_status_message(progress.to_string());
-            self.active_window_mut().search_scan.start(scan);
+            self.active_window_mut().search_scan = Some(scan);
         }
     }
 

@@ -56,6 +56,8 @@ pub(super) struct BeginSearchArgs {
     pub whole_words: bool,
     pub file_glob: String,
     pub source_buffer_id: usize,
+    /// Search only this buffer, as it is (not 0), instead of the project.
+    pub buffer_id: usize,
     pub handle_id: u64,
 }
 
@@ -3824,15 +3826,17 @@ impl Editor {
                 None if is_source => "[No Name]".to_string(),
                 None => continue,
             };
-            let job_handle = Arc::clone(handle);
-            let (job, receiver) = super::open_buffer_search::OpenBufferSearch::new(
+            let (reply, receiver) = tokio::sync::oneshot::channel();
+            let job = super::open_buffer_search::OpenBufferSearch::new(
                 window,
                 *bid,
                 file,
                 query.clone(),
                 max_results,
                 &state.buffer,
-                Box::new(move || job_handle.cancel.load(std::sync::atomic::Ordering::Relaxed)),
+                Arc::clone(handle),
+                // The search's task may have stopped waiting; nothing to do then.
+                Box::new(move |found| drop(reply.send(found))),
             );
             jobs.push(job);
             if is_source {
@@ -3868,72 +3872,56 @@ impl Editor {
         })
     }
 
-    /// Handle SearchBuffer: search one buffer of the active window as it is,
-    /// a slice per tick like an open buffer in a project search, and settle
-    /// the plugin's promise with the matches.
-    pub(super) fn handle_search_buffer(
+    /// Search one buffer of the active window as it is — a slice per tick,
+    /// like an open buffer in a project search — into `handle`: a
+    /// `beginSearch` (or `searchBuffer`) of just that buffer.
+    fn search_one_buffer(
         &mut self,
-        buffer_id: usize,
-        pattern: String,
+        buffer_id: BufferId,
+        pattern: &str,
         opts: crate::model::filesystem::FileSearchOptions,
-        callback_id: JsCallbackId,
-    ) {
-        let reject = |editor: &Self, message: String| {
-            editor
-                .plugin_manager
-                .read()
-                .unwrap()
-                .reject_callback(callback_id, message);
-        };
-        let buffer_id = match buffer_id {
-            0 => self.active_buffer(),
-            id => BufferId(id),
-        };
-        let Some(state) = self.active_window().buffers.get(&buffer_id) else {
-            return reject(self, format!("Buffer {} not found", buffer_id.0));
-        };
-        if pattern.is_empty() {
-            self.plugin_manager
-                .read()
-                .unwrap()
-                .resolve_callback(callback_id, "[]".to_string());
-            return;
-        }
-        let query = match opts.query(&pattern) {
-            Ok(query) => query,
-            Err(e) => return reject(self, format!("Invalid regex: {}", e)),
-        };
-        let Some(sender) = self.async_bridge.as_ref().map(|b| b.sender()) else {
-            return reject(self, "No async bridge available".to_string());
-        };
+        handle: &Arc<fresh_core::api::SearchHandleState>,
+    ) -> Result<(), String> {
+        let query = opts
+            .query(pattern)
+            .map_err(|e| format!("Invalid regex: {}", e))?;
+        let state = self
+            .active_window()
+            .buffers
+            .get(&buffer_id)
+            .ok_or_else(|| format!("Buffer {} not found", buffer_id.0))?;
         let file = state
             .buffer
             .file_path()
             .map_or("[No Name]".to_string(), |p| {
                 p.to_string_lossy().into_owned()
             });
-        let job = super::open_buffer_search::OpenBufferSearch::reporting_to(
+        let max = opts.max_matches;
+        let reply_to = Arc::clone(handle);
+        // One more than is kept, to tell a capped search from one that found
+        // exactly `max`.
+        let job = super::open_buffer_search::OpenBufferSearch::new(
             self.active_window,
             buffer_id,
             file,
             query,
-            opts.max_matches,
+            max.saturating_add(1),
             &state.buffer,
-            Box::new(|| false),
-            Box::new(move |found| {
-                let json = serde_json::to_string(&found).unwrap_or_else(|_| "[]".to_string());
-                // A send error means the editor is shutting down.
-                drop(
-                    sender.send(crate::services::async_bridge::AsyncMessage::Plugin(
-                        fresh_core::api::PluginAsyncMessage::OffLoopSettled {
-                            callback_id: callback_id.as_u64(),
-                            result: Ok(json),
-                        },
-                    )),
-                );
+            Arc::clone(handle),
+            Box::new(move |mut found| {
+                let mut state = match reply_to.state.lock() {
+                    Ok(s) => s,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                state.truncated = found.len() > max;
+                found.truncate(max);
+                state.total_seen += found.len();
+                state.pending.extend(found);
+                state.done = true;
             }),
         );
         self.start_open_buffer_search(job);
+        Ok(())
     }
 
     /// Handle GrepProject: a project search (see `prepare_project_search` and
@@ -4028,6 +4016,7 @@ impl Editor {
             whole_words,
             file_glob,
             source_buffer_id,
+            buffer_id,
             handle_id,
         } = args;
         // Look up the handle the plugin pre-registered. If it's missing
@@ -4061,11 +4050,23 @@ impl Editor {
         if pattern.is_empty() {
             return finish_with(None);
         }
+        // 0 finds them all.
+        let max_results = if max_results == 0 {
+            usize::MAX
+        } else {
+            max_results
+        };
+        let opts = make_search_opts(fixed_string, case_sensitive, whole_words, max_results);
+        if buffer_id != 0 {
+            if let Err(e) = self.search_one_buffer(BufferId(buffer_id), &pattern, opts, &handle) {
+                finish_with(Some(e));
+            }
+            return;
+        }
         let Some(runtime) = self.tokio_runtime.clone() else {
             return finish_with(Some("No tokio runtime available".to_string()));
         };
 
-        let opts = make_search_opts(fixed_string, case_sensitive, whole_words, max_results);
         let search = match self.prepare_project_search(
             pattern,
             opts,

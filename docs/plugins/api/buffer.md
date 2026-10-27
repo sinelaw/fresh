@@ -551,7 +551,8 @@ grepProject(pattern: string, fixedString: boolean | null, caseSensitive: boolean
 Begin a streaming project-wide search and return a `SearchHandle`.
 The producer (host) writes matches at full speed into shared state;
 the consumer drains via `handle.take()` at its own cadence. Call
-`handle.cancel()` to abort. Searches the same files as `grepProject`.
+`handle.cancel()` to abort. Searches the same files as `grepProject`,
+or with `bufferId` only that buffer, as it is.
 
 ```typescript
 beginSearch(pattern: string, opts?: {
@@ -561,6 +562,7 @@ beginSearch(pattern: string, opts?: {
   wholeWords?: boolean;
   sourceBufferId?: number;
   fileGlob?: string;
+  bufferId?: number;
 }): SearchHandle;
 ```
 
@@ -571,7 +573,8 @@ editor's own search — the one Ctrl+F and `beginSearch` use. Resolves
 with its matches in order: each with its byte offset and length, its
 1-based line and byte column, and the text of its line. `bufferId` 0
 is the active buffer. Every match is found unless `maxResults` is
-given; `fixedString` and `caseSensitive` default to true.
+given; `fixedString` and `caseSensitive` default to true. `cancel()`
+stops it, resolving with no matches.
 
 ```typescript
 searchBuffer(bufferId: number, pattern: string, opts?: {
@@ -579,7 +582,9 @@ searchBuffer(bufferId: number, pattern: string, opts?: {
   caseSensitive?: boolean;
   wholeWords?: boolean;
   maxResults?: number;
-}): Promise<GrepMatch[]>;
+}): Promise<GrepMatch[]> & {
+  cancel(): void;
+};
 ```
 
 ### `replaceInFile`

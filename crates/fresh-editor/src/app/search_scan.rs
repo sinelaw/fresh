@@ -38,6 +38,7 @@ impl ActiveSearchScan {
         let search = BufferSearch::new(
             search_query.clone(),
             search_range.clone(),
+            false,
             SearchState::MAX_MATCHES + 1,
             buffer,
         );
@@ -82,24 +83,6 @@ impl ActiveSearchScan {
     }
 }
 
-/// Owner of the optional in-flight search scan.
-#[derive(Default)]
-pub(crate) struct SearchScan {
-    active: Option<ActiveSearchScan>,
-}
-
-impl SearchScan {
-    /// Begin a scan, replacing any in flight.
-    pub(crate) fn start(&mut self, scan: ActiveSearchScan) {
-        self.active = Some(scan);
-    }
-
-    /// Take the scan out to run it against its buffer; `start` puts it back.
-    pub(crate) fn take(&mut self) -> Option<ActiveSearchScan> {
-        self.active.take()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,16 +97,6 @@ mod tests {
     fn scan(query: &str, range: Option<Range<usize>>, buffer: &TextBuffer) -> ActiveSearchScan {
         let search_query = SearchQuery::new(query, false, false, true).unwrap();
         ActiveSearchScan::new(BufferId(1), query.to_string(), search_query, range, buffer)
-    }
-
-    #[test]
-    fn start_and_take() {
-        let buf = buffer("abc");
-        let mut s = SearchScan::default();
-        assert!(s.take().is_none());
-        s.start(scan("b", None, &buf));
-        assert_eq!(s.take().map(|a| a.buffer_id), Some(BufferId(1)));
-        assert!(s.take().is_none());
     }
 
     #[test]

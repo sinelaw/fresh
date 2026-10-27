@@ -3000,11 +3000,14 @@ type GrepMatch = {
   */
   column: number;
   /**
-  * The matched line, for display: from its start, or on a long line from
-  * 4096 bytes before the match — so the match is `min(column - 1, 4096)`
-  * bytes into it.
+  * The matched line, for display — on a long line only up to 4096 bytes
+  * of it on each side of the match
   */
   context: string;
+  /**
+  * Where the match starts in `context`, in bytes
+  */
+  contextOffset: number;
 };
 ```
 

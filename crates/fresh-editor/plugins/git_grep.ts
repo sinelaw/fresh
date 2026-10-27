@@ -9,7 +9,6 @@
 
 import { Finder, parseGrepOutput, type SearchCancellation } from "./lib/finder.ts";
 import { git, resolveGitRepo, toAbsInRepo } from "./lib/git_repo.ts";
-import { gitGrepArgs } from "./lib/grep_args.ts";
 import { raw, row, spacer, styledRow, toggle } from "./lib/widgets.ts";
 
 const editor = getEditor();
@@ -109,10 +108,8 @@ const finder = new Finder<GrepMatch>(editor, {
 
 // Search function using git grep. Resolves the repo from the active buffer
 // (so it works from a sub-project buffer even when the workspace root isn't a
-// repo) and runs git inside it via the shared gateway, with Live Grep's
-// git-grep command line, but as `git grep` itself searches: git's basic
-// regex, so `foo(` is literal, and every tracked file, `target/` and
-// `node_modules/` too — and nothing untracked.
+// repo) and runs git inside it via the shared gateway, as `git grep` itself
+// searches: git's basic regex, so `foo(` is literal, over every tracked file.
 async function searchWithGitGrep(query: string, cancellation: SearchCancellation): Promise<GrepMatch[]> {
   const repo = await resolveGitRepo(editor);
   if (!repo) {
@@ -120,11 +117,11 @@ async function searchWithGitGrep(query: string, cancellation: SearchCancellation
     return [];
   }
 
-  const args = gitGrepArgs(
-    query,
-    { maxResults: MAX_RESULTS, caseSensitive, regex: "basic", includeIgnored: true, untracked: false },
-    null,
-  );
+  // `core.quotePath=false` prints non-ASCII names as they are rather than as
+  // quoted octal escapes, which would not open.
+  const args = ["-c", "core.quotePath=false", "grep", "-n", "--column", "-I"];
+  if (!caseSensitive) args.push("-i");
+  args.push("-e", query);
   const process = git(editor, repo, args);
   // A newer query, or closing the prompt, kills this one.
   cancellation.onCancel(() => process.kill());

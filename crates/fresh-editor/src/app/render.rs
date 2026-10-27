@@ -5197,20 +5197,15 @@ impl Editor {
                     .overlays
                     .clear_namespace(&preview_ns, &mut state.marker_list);
                 if let Some(preview_query) = &preview_query {
-                    let visible_start = pstate.view_state.buffer_tab_state().viewport.top_byte();
-                    let visible_rows =
-                        pstate.view_state.buffer_tab_state().viewport.height as usize;
-                    let visible_end = state
-                        .buffer
-                        .advance_lines_within(
-                            visible_start,
-                            visible_rows,
-                            super::window::VISIBLE_WINDOW_SCAN_BYTES,
-                        )
-                        .min(state.buffer.len());
+                    let viewport = &pstate.view_state.buffer_tab_state().viewport;
+                    let visible = super::window::visible_range(
+                        &mut state.buffer,
+                        viewport.top_byte(),
+                        viewport.height as usize,
+                    );
                     let found = state
                         .buffer
-                        .find_regex_matches(preview_query, visible_start..visible_end, usize::MAX)
+                        .find_regex_matches(preview_query, visible, usize::MAX)
                         .unwrap_or_default();
                     for (pos, len) in found {
                         if len == 0 {

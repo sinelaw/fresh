@@ -7,11 +7,12 @@
 //! large file — and the matches go back to the search's task over a channel,
 //! or to whatever else asked (a plugin's `searchBuffer`).
 
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Instant;
 
-use fresh_core::api::GrepMatch;
+use fresh_core::api::{GrepMatch, SearchHandleState};
 use fresh_core::{BufferId, WindowId};
-use tokio::sync::oneshot;
 
 use super::search_scan::SEARCH_SCAN_SLICE;
 use super::Editor;
@@ -32,24 +33,26 @@ pub(crate) fn grep_match(
         line: m.line,
         column: m.column,
         context: m.context,
+        context_offset: m.context_offset,
     }
 }
 
-/// A search of one open buffer for a project search.
+/// A search of one open buffer, for a project search or a plugin's
+/// `searchBuffer`.
 pub(crate) struct OpenBufferSearch {
     window: WindowId,
     buffer_id: BufferId,
     /// The file name the matches are reported under.
     file: String,
     search: BufferSearch,
-    cancelled: Box<dyn Fn() -> bool + Send>,
+    /// The search this is part of; its cancel flag stops this one.
+    handle: Arc<SearchHandleState>,
     reply: Box<dyn FnOnce(Vec<GrepMatch>) + Send>,
 }
 
 impl OpenBufferSearch {
-    /// A search of `buffer_id` in `window` for up to `limit` matches; they
-    /// arrive on the returned receiver once it is done, or empty if it is
-    /// `cancelled` first.
+    /// A search of `buffer_id` in `window` for up to `limit` matches, handed
+    /// to `reply` once it is done, or none if `handle` is cancelled first.
     #[allow(clippy::too_many_arguments)]
     #[cfg_attr(not(feature = "plugins"), allow(dead_code))]
     pub(crate) fn new(
@@ -59,38 +62,21 @@ impl OpenBufferSearch {
         query: SearchQuery,
         limit: usize,
         buffer: &TextBuffer,
-        cancelled: Box<dyn Fn() -> bool + Send>,
-    ) -> (Self, oneshot::Receiver<Vec<GrepMatch>>) {
-        let (reply, receiver) = oneshot::channel();
-        // The search's task may have stopped waiting; nothing to do then.
-        let reply = Box::new(move |found| drop(reply.send(found)));
-        let job = Self::reporting_to(
-            window, buffer_id, file, query, limit, buffer, cancelled, reply,
-        );
-        (job, receiver)
-    }
-
-    /// As [`new`](Self::new), with the matches handed to `reply` instead.
-    #[allow(clippy::too_many_arguments)]
-    #[cfg_attr(not(feature = "plugins"), allow(dead_code))]
-    pub(crate) fn reporting_to(
-        window: WindowId,
-        buffer_id: BufferId,
-        file: String,
-        query: SearchQuery,
-        limit: usize,
-        buffer: &TextBuffer,
-        cancelled: Box<dyn Fn() -> bool + Send>,
+        handle: Arc<SearchHandleState>,
         reply: Box<dyn FnOnce(Vec<GrepMatch>) + Send>,
     ) -> Self {
         Self {
             window,
             buffer_id,
             file,
-            search: BufferSearch::new(query, None, limit, buffer).with_lines(buffer),
-            cancelled,
+            search: BufferSearch::new(query, None, true, limit, buffer),
+            handle,
             reply,
         }
+    }
+
+    fn cancelled(&self) -> bool {
+        self.handle.cancel.load(Ordering::Relaxed)
     }
 
     /// Search on until `deadline`; true once there is nothing more to do.
@@ -104,7 +90,7 @@ impl OpenBufferSearch {
 
     /// Send what was found, or nothing if the search was cancelled.
     fn finish(self) {
-        let found = if (self.cancelled)() {
+        let found = if self.cancelled() {
             Vec::new()
         } else {
             let (file, id) = (self.file, self.buffer_id.0);
@@ -135,7 +121,7 @@ impl Editor {
                 .get_mut(&job.window)
                 .and_then(|w| w.buffers.get_mut(&job.buffer_id));
             let done = match buffer {
-                _ if (job.cancelled)() => true,
+                _ if job.cancelled() => true,
                 // The buffer was closed: report what was found.
                 None => true,
                 Some(_) if Instant::now() >= deadline => false,
@@ -146,6 +132,11 @@ impl Editor {
             } else {
                 self.open_buffer_searches.push(job);
             }
+        }
+        // The next tick starts with the next job, so one large buffer can't
+        // keep the rest from their turn.
+        if !self.open_buffer_searches.is_empty() {
+            self.open_buffer_searches.rotate_left(1);
         }
         !self.open_buffer_searches.is_empty()
     }

@@ -66,7 +66,20 @@ use std::sync::Arc;
 /// megabytes away. Overshooting merely widens a window that is compared
 /// against the cursor's byte, so a generous bound costs nothing but is still a
 /// bound.
-pub(crate) const VISIBLE_WINDOW_SCAN_BYTES: usize = 256 * 1024;
+const VISIBLE_WINDOW_SCAN_BYTES: usize = 256 * 1024;
+
+/// The bytes `rows` lines from `top_byte` take in `buffer` — the visible
+/// text, for search highlights — reading at most `VISIBLE_WINDOW_SCAN_BYTES`.
+pub(crate) fn visible_range(
+    buffer: &mut crate::model::buffer::TextBuffer,
+    top_byte: usize,
+    rows: usize,
+) -> std::ops::Range<usize> {
+    let end = buffer
+        .advance_lines_within(top_byte, rows, VISIBLE_WINDOW_SCAN_BYTES)
+        .min(buffer.len());
+    top_byte..end
+}
 
 /// A project-rooted unit of editor state.
 ///
@@ -1263,7 +1276,7 @@ pub struct Window {
     pub(crate) line_scan: crate::app::line_scan::LineScan,
 
     /// Background search-scan state for this window.
-    pub(crate) search_scan: crate::app::search_scan::SearchScan,
+    pub(crate) search_scan: Option<crate::app::search_scan::ActiveSearchScan>,
 
     /// Anchor for the search-result overlay in this window.
     pub search_overlay_top_byte: Option<usize>,
@@ -1698,10 +1711,10 @@ impl Window {
             })
             .unwrap_or((0, 20));
         let buffer = &mut self.active_state_mut().buffer;
-        let end = buffer
-            .advance_lines_within(top_byte, visible_height as usize, VISIBLE_WINDOW_SCAN_BYTES)
-            .min(buffer.len());
-        (top_byte, top_byte..end)
+        (
+            top_byte,
+            visible_range(buffer, top_byte, visible_height as usize),
+        )
     }
 
     /// True iff editing should be disabled for the active buffer
@@ -2710,7 +2723,7 @@ impl Window {
             wait_tracking: HashMap::new(),
             completed_waits: Vec::new(),
             line_scan: crate::app::line_scan::LineScan::default(),
-            search_scan: crate::app::search_scan::SearchScan::default(),
+            search_scan: None,
             search_overlay_top_byte: None,
             animations: crate::view::animation::AnimationRunner::default(),
             plugin_errors: Vec::new(),

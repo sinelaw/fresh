@@ -996,6 +996,7 @@ async function searchOpenBuffers(
   query: string,
   limit: number,
   includeUnmodified: boolean,
+  cancellation?: SearchCancellation,
 ): Promise<GrepMatch[]> {
   if (limit <= 0) return [];
   const out: GrepMatch[] = [];
@@ -1009,14 +1010,18 @@ async function searchOpenBuffers(
     // actually finds matches.
     if (b.is_virtual || !b.path) continue;
     if (!includeUnmodified && !b.modified) continue;
-    let matches: Awaited<ReturnType<typeof editor.searchBuffer>>;
+    if (cancellation?.cancelled) break;
+    const search = editor.searchBuffer(b.id, query, {
+      fixedString: !searchModes.regex,
+      caseSensitive: searchModes.case,
+      wholeWords: searchModes.word,
+      maxResults: limit - out.length,
+    });
+    // A newer query (or closing the overlay) stops it.
+    cancellation?.onCancel(() => search.cancel());
+    let matches: Awaited<typeof search>;
     try {
-      matches = await editor.searchBuffer(b.id, query, {
-        fixedString: !searchModes.regex,
-        caseSensitive: searchModes.case,
-        wholeWords: searchModes.word,
-        maxResults: limit - out.length,
-      });
+      matches = await search;
     } catch {
       // An invalid regex matches nothing here; the provider scopes
       // surface the error.
@@ -1122,7 +1127,7 @@ async function search(query: string, cancellation?: SearchCancellation): Promise
 
   if (scopeEnabled.buffers && remaining() > 0) {
     const filesActive = scopeEnabled.files || scopeEnabled.ignored;
-    results.push(...await searchOpenBuffers(query, remaining(), !filesActive));
+    results.push(...await searchOpenBuffers(query, remaining(), !filesActive, cancellation));
   }
 
   if (scopeEnabled.terminals && remaining() > 0) {

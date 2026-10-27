@@ -71,37 +71,40 @@ impl TextReferenceHighlighter {
             return Vec::new();
         }
 
-        // Find the word under the cursor
-        let word_range = match word_at(buffer, cursor_position) {
-            Some(range) => range,
-            None => return Vec::new(),
-        };
+        word_occurrences(
+            buffer,
+            cursor_position,
+            viewport_start..viewport_end,
+            self.min_word_length,
+        )
+        .into_iter()
+        .map(|range| HighlightSpan {
+            range,
+            color: self.highlight_color,
+            bg: None,
+            category: None,
+        })
+        .collect()
+    }
+}
 
-        // Get the word text
-        let word_bytes = buffer.slice_bytes(word_range.clone());
-        let word = match std::str::from_utf8(&word_bytes) {
-            Ok(s) => s.to_string(),
-            Err(_) => return Vec::new(),
-        };
-
-        // Check minimum length
-        if word.len() < self.min_word_length {
-            return Vec::new();
+/// Each whole-word occurrence, overlapping `range`, of the word at
+/// `cursor_position` — if it is at least `min_word_length` bytes long.
+pub fn word_occurrences(
+    buffer: &Buffer,
+    cursor_position: usize,
+    range: Range<usize>,
+    min_word_length: usize,
+) -> Vec<Range<usize>> {
+    let Some(word_range) = word_at(buffer, cursor_position) else {
+        return Vec::new();
+    };
+    let word_bytes = buffer.slice_bytes(word_range);
+    match std::str::from_utf8(&word_bytes) {
+        Ok(word) if word.len() >= min_word_length => {
+            find_matches_in_range(buffer, word, range.start, range.end, true)
         }
-
-        // Find all occurrences in the viewport
-        let occurrences = find_matches_in_range(buffer, &word, viewport_start, viewport_end, true);
-
-        // Convert to highlight spans
-        occurrences
-            .into_iter()
-            .map(|range| HighlightSpan {
-                range,
-                color: self.highlight_color,
-                bg: None,
-                category: None,
-            })
-            .collect()
+        _ => Vec::new(),
     }
 }
 

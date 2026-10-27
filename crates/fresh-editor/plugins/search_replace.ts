@@ -41,11 +41,6 @@ const editor = getEditor();
 
 interface SearchResult {
   match: GrepMatch;
-  /** The match's byte offset and length in `match.context`, as the search
-   *  found it. `match.column` can't say: `resolveMatchTarget` moves it with
-   *  the live marker, and `context` stays as it was. */
-  contextAt: number;
-  contextLen: number;
   selected: boolean;
   // Interval-marker anchor (issue #2583). For a match whose file is open we
   // register a marker at its byte range; the editor keeps it shifted across
@@ -785,11 +780,12 @@ function renderFlatItemEntry(item: FlatItem, W: number): RenderedRow {
   // of a 290-char line rendered as `start xxxx…`, with the matched
   // text nowhere on screen).
   //
-  // Where the match is: from the search that found it (`contextAt`), in
-  // UTF-16 units of `rawCtx`, its end clamped to the line — a multi-line
+  // Where the match is, from the search that found it (`contextOffset`),
+  // in UTF-16 units of `rawCtx`; its end clamped to the line — a multi-line
   // match runs past it.
-  const anchor = utf16IndexOfByte(rawCtx, result.contextAt);
-  const anchorEnd = Math.max(anchor, utf16IndexOfByte(rawCtx, result.contextAt + result.contextLen));
+  const { contextOffset, length } = result.match;
+  const anchor = utf16IndexOfByte(rawCtx, contextOffset);
+  const anchorEnd = Math.max(anchor, utf16IndexOfByte(rawCtx, contextOffset + length));
   const capStart = rawCtx.length > CONTEXT_HARD_CAP
     ? Math.max(0, Math.min(anchor - CONTEXT_HARD_CAP / 2, rawCtx.length - CONTEXT_HARD_CAP))
     : 0;
@@ -1213,47 +1209,6 @@ const UI_FLUSH_MAX_DELTA = 100;
  * per-chunk callbacks crossing the FFI boundary, so the host's main
  * thread is free to process input and render between pumps.
  */
-/** A `SearchHandle` over `searchBuffer`: one buffer's matches, all at once
- *  when its search is done, so the panel drains it as it drains a project
- *  search. */
-function bufferSearchHandle(
-  bufferId: number,
-  pattern: string,
-  opts: { fixedString: boolean; caseSensitive: boolean; maxResults: number; wholeWords: boolean },
-): SearchHandle {
-  let found: GrepMatch[] | null = null;
-  let error: string | null = null;
-  let taken = false;
-  let cancelled = false;
-  // One more than is kept, to tell a capped search from one that found
-  // exactly `maxResults`.
-  let truncated = false;
-  editor.searchBuffer(bufferId, pattern, { ...opts, maxResults: opts.maxResults + 1 }).then(
-    (matches) => {
-      truncated = matches.length > opts.maxResults;
-      found = matches.slice(0, opts.maxResults);
-    },
-    (e) => { error = e instanceof Error ? e.message : String(e); },
-  );
-  return {
-    searchId: 0,
-    take(): SearchTakeResult {
-      const settled = cancelled || found !== null || error !== null;
-      const matches = settled && !taken && !cancelled ? found ?? [] : [];
-      if (settled) taken = true;
-      const total = found?.length ?? 0;
-      return {
-        matches,
-        done: settled,
-        totalSeen: total,
-        truncated,
-        error: error ?? undefined,
-      };
-    },
-    cancel(): void { cancelled = true; },
-  };
-}
-
 async function performSearch(pattern: string, silent?: boolean): Promise<SearchResult[]> {
   if (!panel) return [];
 
@@ -1297,21 +1252,21 @@ async function performSearch(pattern: string, silent?: boolean): Promise<SearchR
     // Whole-word filtering is done Rust-side so maxResults is respected
     // correctly. "Current file only" searches just that buffer, as it is;
     // all files walks the project.
-    const searchOpts = {
+    const handle = editor.beginSearch(pattern, {
       fixedString,
       caseSensitive: panel.caseSensitive,
       maxResults: MAX_RESULTS,
       wholeWords: panel.wholeWords,
-    };
-    const handle = !panel.allFiles
-      ? bufferSearchHandle(panel.sourceBufferId, pattern, searchOpts)
-      : editor.beginSearch(pattern, {
-        ...searchOpts,
-        fileGlob: panel.fileGlob,
-        // Lets the host search an unnamed/unsaved source buffer in-memory;
-        // it has no on-disk file the project walk could otherwise reach.
-        sourceBufferId: panel.sourceBufferId,
-      });
+      ...(panel.allFiles
+        ? {
+          fileGlob: panel.fileGlob,
+          // Lets the host search an unnamed/unsaved source buffer in-memory;
+          // it has no on-disk file the project walk could otherwise reach.
+          sourceBufferId: panel.sourceBufferId,
+        }
+        // "Current file only": just that buffer, as it is.
+        : { bufferId: panel.sourceBufferId || editor.getActiveBufferId() }),
+    });
     activeSearchHandle = handle;
 
     let truncated = false;
@@ -1358,13 +1313,7 @@ async function performSearch(pattern: string, silent?: boolean): Promise<SearchR
       const deltaItems: FlatItem[] = [];
       const newExpandedKeys: string[] = []; // file rows added this batch
       for (const m of chunk) {
-        const result: SearchResult = {
-          match: m,
-          // `context` starts at most 4096 bytes before the match.
-          contextAt: Math.min(Math.max(0, m.column - 1), 4096),
-          contextLen: m.length,
-          selected: true,
-        };
+        const result: SearchResult = { match: m, selected: true };
         // Anchor the match to its buffer if the file is already open, so
         // edits made while stepping keep it in sync (#2583). Files opened
         // later are handled by the after_file_open hook.

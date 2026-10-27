@@ -9288,10 +9288,11 @@ impl JsEditorApi {
     /// Begin a streaming project-wide search and return a `SearchHandle`.
     /// The producer (host) writes matches at full speed into shared state;
     /// the consumer drains via `handle.take()` at its own cadence. Call
-    /// `handle.cancel()` to abort. Searches the same files as `grepProject`.
+    /// `handle.cancel()` to abort. Searches the same files as `grepProject`,
+    /// or with `bufferId` only that buffer, as it is.
     #[plugin_api(
         js_name = "beginSearch",
-        ts_raw = "beginSearch(pattern: string, opts?: { fixedString?: boolean; caseSensitive?: boolean; maxResults?: number; wholeWords?: boolean; sourceBufferId?: number; fileGlob?: string }): SearchHandle"
+        ts_raw = "beginSearch(pattern: string, opts?: { fixedString?: boolean; caseSensitive?: boolean; maxResults?: number; wholeWords?: boolean; sourceBufferId?: number; fileGlob?: string; bufferId?: number }): SearchHandle"
     )]
     // The argument list is the JS-facing binding (see the `ts_raw`
     // signature above): rquickjs maps each parameter positionally to the
@@ -9309,6 +9310,7 @@ impl JsEditorApi {
         whole_words: bool,
         source_buffer_id: u32,
         file_glob: String,
+        buffer_id: u32,
     ) -> u64 {
         let id = self.alloc_request_id();
         // Register the shared state before sending the command so the
@@ -9325,6 +9327,7 @@ impl JsEditorApi {
             whole_words,
             file_glob,
             source_buffer_id: source_buffer_id as usize,
+            buffer_id: buffer_id as usize,
             handle_id: id,
         });
         id
@@ -9335,19 +9338,19 @@ impl JsEditorApi {
     /// with its matches in order: each with its byte offset and length, its
     /// 1-based line and byte column, and the text of its line. `bufferId` 0
     /// is the active buffer. Every match is found unless `maxResults` is
-    /// given; `fixedString` and `caseSensitive` default to true.
+    /// given; `fixedString` and `caseSensitive` default to true. `cancel()`
+    /// stops it, resolving with no matches.
     #[plugin_api(
-        async_promise,
         js_name = "searchBuffer",
-        ts_raw = "searchBuffer(bufferId: number, pattern: string, opts?: { fixedString?: boolean; caseSensitive?: boolean; wholeWords?: boolean; maxResults?: number }): Promise<GrepMatch[]>"
+        ts_raw = "searchBuffer(bufferId: number, pattern: string, opts?: { fixedString?: boolean; caseSensitive?: boolean; wholeWords?: boolean; maxResults?: number }): Promise<GrepMatch[]> & { cancel(): void }"
     )]
-    // Positional: the JS wrapper unpacks `opts` (see `editor.searchBuffer`
-    // below).
+    // A `beginSearch` of one buffer; the JS wrapper (`editor.searchBuffer`
+    // below) drains its handle into the promise.
     #[allow(clippy::too_many_arguments)]
-    #[qjs(rename = "_searchBufferStart")]
-    pub fn search_buffer_start(
+    #[qjs(rename = "_searchBuffer")]
+    pub fn search_buffer(
         &self,
-        _ctx: fresh_js::Ctx<'_>,
+        ctx: fresh_js::Ctx<'_>,
         buffer_id: u32,
         pattern: String,
         fixed_string: bool,
@@ -9355,17 +9358,17 @@ impl JsEditorApi {
         whole_words: bool,
         max_results: u32,
     ) -> u64 {
-        let id = self.alloc_request_id();
-        let _ = self.command_sender.send(PluginCommand::SearchBuffer {
-            buffer_id: buffer_id as usize,
+        self.begin_search(
+            ctx,
             pattern,
             fixed_string,
             case_sensitive,
+            max_results,
             whole_words,
-            max_results: max_results as usize,
-            callback_id: JsCallbackId::new(id),
-        });
-        id
+            0,
+            String::new(),
+            buffer_id,
+        )
     }
 
     /// Drain pending matches for a search handle. Returns the matches that
@@ -10381,21 +10384,6 @@ const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
                         return start(...args);
                     };
                 })(_wrapAsync("_replaceInFileStart", "replaceInFile"));
-                // Unpack `opts` into the positional arguments
-                // `_searchBufferStart` takes.
-                editor.searchBuffer = (function(start) {
-                    return function(bufferId, pattern, opts) {
-                        opts = opts || {};
-                        return start(
-                            bufferId || 0,
-                            pattern,
-                            opts.fixedString !== undefined ? !!opts.fixedString : true,
-                            opts.caseSensitive !== undefined ? !!opts.caseSensitive : true,
-                            !!opts.wholeWords,
-                            opts.maxResults || 0
-                        );
-                    };
-                })(_wrapAsync("_searchBufferStart", "searchBuffer"));
                 editor.openFileStreaming = _wrapAsync("_openFileStreamingStart", "openFileStreaming");
                 editor.refreshBufferFromDisk = _wrapAsync("_refreshBufferFromDiskStart", "refreshBufferFromDisk");
                 editor.setBufferGroupPanelBuffer = _wrapAsync("_setBufferGroupPanelBufferStart", "setBufferGroupPanelBuffer");
@@ -10412,14 +10400,42 @@ const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
                     const wholeWords = opts.wholeWords || false;
                     const sourceBufferId = opts.sourceBufferId || 0;
                     const fileGlob = opts.fileGlob || "";
+                    const bufferId = opts.bufferId || 0;
                     const handleId = editor._beginSearch(
-                        pattern, fixedString, caseSensitive, maxResults, wholeWords, sourceBufferId, fileGlob
+                        pattern, fixedString, caseSensitive, maxResults, wholeWords, sourceBufferId, fileGlob, bufferId
                     );
                     return {
                         searchId: handleId,
                         take: function() { return editor._searchHandleTake(handleId); },
                         cancel: function() { editor._searchHandleCancel(handleId); }
                     };
+                };
+
+                // One buffer's search, its handle drained into a promise;
+                // `cancel()` stops it (the promise resolves with nothing).
+                editor.searchBuffer = function(bufferId, pattern, opts) {
+                    opts = opts || {};
+                    const handleId = editor._searchBuffer(
+                        bufferId || editor.getActiveBufferId(),
+                        pattern,
+                        opts.fixedString !== undefined ? !!opts.fixedString : true,
+                        opts.caseSensitive !== undefined ? !!opts.caseSensitive : true,
+                        !!opts.wholeWords,
+                        opts.maxResults || 0
+                    );
+                    const found = [];
+                    const promise = new Promise(function(resolve, reject) {
+                        const pump = function() {
+                            const batch = editor._searchHandleTake(handleId);
+                            for (const m of batch.matches) found.push(m);
+                            if (batch.error) reject(new Error(batch.error));
+                            else if (batch.done) resolve(found);
+                            else editor.delay(5).then(pump, reject);
+                        };
+                        pump();
+                    });
+                    promise.cancel = function() { editor._searchHandleCancel(handleId); };
+                    return promise;
                 };
 
                 // Wrapper for deleteTheme - wraps sync function in Promise

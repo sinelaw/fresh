@@ -21,17 +21,22 @@ pub struct SearchMatch {
     pub line: usize,
     /// 1-based byte column within the line.
     pub column: usize,
-    /// The line holding the match, without its line break: from its start,
-    /// or from [`CONTEXT_BEFORE_MATCH`] bytes before the match on a longer
-    /// line — so the match is `min(column - 1, CONTEXT_BEFORE_MATCH)` bytes
-    /// into it — to its end, or to the end of the window read for a line
-    /// running on past it.
+    /// The line holding the match, without its line break — on a long
+    /// line, only up to [`MATCH_CONTEXT`] bytes of it on each side of the
+    /// match, cut at character boundaries.
     pub context: String,
+    /// Where the match starts in `context`, in bytes.
+    pub context_offset: usize,
 }
 
-/// How far into a long line before its match a [`SearchMatch::context`]
-/// reaches.
-pub const CONTEXT_BEFORE_MATCH: usize = 4096;
+/// How much of a long line a [`SearchMatch::context`] keeps on each side of
+/// its match.
+pub const MATCH_CONTEXT: usize = 4096;
+
+/// Whether `b` continues a UTF-8 character rather than starting one.
+fn is_continuation(b: u8) -> bool {
+    b & 0xC0 == 0x80
+}
 
 /// A query compiled for searching: the regex every search builds for it,
 /// and how far each window of a search must reach back into the last so a
@@ -161,7 +166,7 @@ impl RegexSearch {
     }
 
     /// Read `window` bytes at a time instead of `LOAD_CHUNK_SIZE`.
-    pub fn with_window(mut self, window: usize) -> Self {
+    pub(super) fn with_window(mut self, window: usize) -> Self {
         self.base_window = window.max(1);
         self.window = self.base_window;
         self
@@ -200,18 +205,20 @@ impl RegexSearch {
                 break;
             }
             let window_start = self.pos;
-            // With lines, from the line's start (or as far back as a match's
-            // context reaches), so each match's context is its line.
-            let read_from = match &self.lines {
-                Some(lines) => self.pos.saturating_sub(CONTEXT).min(
-                    lines
-                        .line_start
-                        .max(self.pos.saturating_sub(CONTEXT_BEFORE_MATCH)),
-                ),
-                None => self.pos.saturating_sub(CONTEXT),
-            };
             let window_end = self.pos.saturating_add(self.window).min(end);
-            let read_to = (window_end + CONTEXT).min(len);
+            // A match is judged by the CONTEXT bytes around it; with lines,
+            // the window is read with as much of the line on each side as a
+            // match's context takes.
+            let match_limit = (window_end + CONTEXT).min(len);
+            let (read_from, read_to) = match &self.lines {
+                Some(lines) => (
+                    self.pos
+                        .saturating_sub(CONTEXT)
+                        .min(lines.line_start.max(self.pos.saturating_sub(MATCH_CONTEXT))),
+                    (window_end + MATCH_CONTEXT).min(len),
+                ),
+                None => (self.pos.saturating_sub(CONTEXT), match_limit),
+            };
             let bytes = buffer.get_text_range_mut(read_from, read_to - read_from)?;
             read += bytes.len();
             let mut at = self.pos;
@@ -224,7 +231,7 @@ impl RegexSearch {
                     self.done = true;
                     break 'windows;
                 }
-                if window_end < end && match_end + CONTEXT > read_to {
+                if window_end < end && match_end + CONTEXT > match_limit {
                     // It may go on past this window: read again from it,
                     // with more room if it already starts the window.
                     if start == self.pos {
@@ -312,30 +319,42 @@ impl RegexSearch {
             line: 0,
             column: 0,
             context: String::new(),
+            context_offset: 0,
         };
         self.count_lines(bytes, read_from, start);
         if let Some(lines) = &self.lines {
             found.line = lines.line;
             found.column = start - lines.line_start + 1;
-            let from = lines
-                .line_start
-                .max(start.saturating_sub(CONTEXT_BEFORE_MATCH))
-                - read_from;
-            let to = bytes[start - read_from..]
+            // The line around the match, MATCH_CONTEXT bytes at most on each
+            // side, cut where a character starts. (`read_from..read_to`
+            // holds that much of it; see `step`.)
+            let (start, end) = (start - read_from, end - read_from);
+            let mut from = (lines.line_start.max(read_from) - read_from)
+                .max(start.saturating_sub(MATCH_CONTEXT));
+            while from < start && is_continuation(bytes[from]) {
+                from += 1;
+            }
+            let limit = bytes.len().min(end + MATCH_CONTEXT);
+            let mut to = bytes[start..limit]
                 .iter()
                 .position(|&b| b == b'\n')
-                .map_or(bytes.len(), |p| start - read_from + p);
+                .map_or(limit, |p| start + p);
+            while to > end && to < bytes.len() && is_continuation(bytes[to]) {
+                to -= 1;
+            }
             let line = &bytes[from..to];
             found.context =
                 String::from_utf8_lossy(line.strip_suffix(b"\r").unwrap_or(line)).into_owned();
+            found.context_offset = start - from;
         }
         found
     }
 }
 
 /// A [`RegexSearch`] for up to `limit` matches, run a time slice at a time
-/// on a buffer that may be edited between slices: an edit starts it over,
-/// so its matches are always for the buffer as it is.
+/// on a buffer that may be edited between slices: an edit starts a search
+/// of the whole buffer over, so its matches are always for the buffer as it
+/// is, and fails a search of a range, whose bounds the edit may have moved.
 #[derive(Debug)]
 pub struct BufferSearch {
     query: SearchQuery,
@@ -347,30 +366,25 @@ pub struct BufferSearch {
 }
 
 impl BufferSearch {
-    /// A search of `range` of `buffer` (all of it if `None`).
+    /// A search of `range` of `buffer` (all of it if `None`), giving each
+    /// match its line, column and line text if `lines` (see
+    /// [`RegexSearch::with_lines`]; for a search of the whole buffer).
     pub fn new(
         query: SearchQuery,
         range: Option<Range<usize>>,
+        lines: bool,
         limit: usize,
         buffer: &TextBuffer,
     ) -> Self {
-        let search = Self::search(&query, &range, false, buffer);
+        let search = Self::search(&query, &range, lines, buffer);
         Self {
             query,
             range,
-            lines: false,
+            lines,
             limit,
             search,
             found: Vec::new(),
         }
-    }
-
-    /// Give each match its line, column and line text (see
-    /// [`RegexSearch::with_lines`]); for a search of the whole buffer.
-    pub fn with_lines(mut self, buffer: &TextBuffer) -> Self {
-        self.lines = true;
-        self.search = Self::search(&self.query, &self.range, true, buffer);
-        self
     }
 
     fn search(
@@ -395,6 +409,10 @@ impl BufferSearch {
         deadline: Option<Instant>,
     ) -> anyhow::Result<()> {
         if buffer.version() != self.search.version {
+            anyhow::ensure!(
+                self.range.is_none(),
+                "the text searched was edited during the search"
+            );
             self.found.clear();
             self.search = Self::search(&self.query, &self.range, self.lines, buffer);
         }
@@ -433,13 +451,63 @@ impl BufferSearch {
     }
 }
 
+impl TextBuffer {
+    /// Up to `limit` matches of `query` within `range`, as `(start, len)`:
+    /// a whole [`RegexSearch`] run at once.
+    pub fn find_regex_matches(
+        &mut self,
+        query: &SearchQuery,
+        range: Range<usize>,
+        limit: usize,
+    ) -> anyhow::Result<Vec<(usize, usize)>> {
+        self.find_regex_matches_in_windows(query, range, limit, LOAD_CHUNK_SIZE)
+    }
+
+    /// `find_regex_matches` reading `window` bytes at a time.
+    pub(super) fn find_regex_matches_in_windows(
+        &mut self,
+        query: &SearchQuery,
+        range: Range<usize>,
+        limit: usize,
+        window: usize,
+    ) -> anyhow::Result<Vec<(usize, usize)>> {
+        let found = RegexSearch::new(query, range, self)
+            .with_window(window)
+            .run(self, limit)?;
+        Ok(found
+            .into_iter()
+            .map(|m| (m.byte_offset, m.length))
+            .collect())
+    }
+
+    /// The replacement for the match of `regex` at `start..start + len`:
+    /// [`expand_replacement`] over the match and the bytes around it.
+    pub fn expand_replacement(
+        &mut self,
+        regex: &Regex,
+        start: usize,
+        len: usize,
+        template: &str,
+    ) -> anyhow::Result<String> {
+        let from = start.saturating_sub(CONTEXT);
+        let bytes = self.get_text_range_mut(from, start + len + CONTEXT - from)?;
+        Ok(expand_replacement(
+            regex,
+            &bytes,
+            start - from,
+            len,
+            template,
+        ))
+    }
+}
+
 /// The replacement for the match of `regex` at `start..start + len` of
 /// `haystack`, a template with `$1`, `${name}` and, unlike the regex
 /// crate's own expansion, `\n`, `\t`, `\r` and `\\`. The groups are found
 /// by matching again at `start` with the bytes around it, so `\b`, `^` and
 /// look-around judge the match as the search did; a match it cannot find
 /// again leaves the template's group references unexpanded.
-pub fn expand_replacement(
+fn expand_replacement(
     regex: &Regex,
     haystack: &[u8],
     start: usize,

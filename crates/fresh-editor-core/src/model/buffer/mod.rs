@@ -9,7 +9,6 @@ use crate::model::piece_tree_diff::PieceTreeDiff;
 use crate::primitives::grapheme;
 use crate::recovery_types::HotExitEntry;
 use anyhow::{Context, Result};
-use regex::bytes::Regex;
 use std::io;
 
 use std::ops::Range;
@@ -30,9 +29,7 @@ pub use persistence::Persistence;
 pub use save::SudoSaveRequired;
 #[cfg(test)]
 pub(crate) use save::{RecipeAction, WriteRecipe};
-pub use search::{
-    expand_replacement, BufferSearch, RegexSearch, SearchMatch, SearchQuery, CONTEXT_BEFORE_MATCH,
-};
+pub use search::{BufferSearch, RegexSearch, SearchMatch, SearchQuery, MATCH_CONTEXT};
 
 /// Error returned when a large file has a non-resynchronizable encoding
 /// and requires user confirmation before loading the entire file into memory.
@@ -1457,8 +1454,7 @@ impl TextBuffer {
     /// loaded. PRIVATE: external code uses `get_text_range_mut`, which
     /// loads what it reads.
     fn get_text_range(&self, offset: usize, bytes: usize) -> Option<Vec<u8>> {
-        let result =
-            persistence::loaded_text_range(&self.piece_tree, &self.buffers, offset, bytes)?;
+        let result = self.piece_tree.read_range(&self.buffers, offset, bytes)?;
         crate::counters::work::add_buffer_bytes_read(result.len() as u64);
         Some(result)
     }
@@ -2443,57 +2439,6 @@ impl TextBuffer {
     /// Get tree statistics for debugging
     pub fn stats(&self) -> TreeStats {
         self.piece_tree.stats()
-    }
-
-    // Search and Replace Operations
-
-    /// Up to `limit` matches of `query` within `range`, as `(start, len)`:
-    /// a whole [`RegexSearch`] run at once.
-    pub fn find_regex_matches(
-        &mut self,
-        query: &SearchQuery,
-        range: Range<usize>,
-        limit: usize,
-    ) -> Result<Vec<(usize, usize)>> {
-        self.find_regex_matches_in_windows(query, range, limit, LOAD_CHUNK_SIZE)
-    }
-
-    /// `find_regex_matches` reading `window` bytes at a time.
-    fn find_regex_matches_in_windows(
-        &mut self,
-        query: &SearchQuery,
-        range: Range<usize>,
-        limit: usize,
-        window: usize,
-    ) -> Result<Vec<(usize, usize)>> {
-        let found = RegexSearch::new(query, range, self)
-            .with_window(window)
-            .run(self, limit)?;
-        Ok(found
-            .into_iter()
-            .map(|m| (m.byte_offset, m.length))
-            .collect())
-    }
-
-    /// The replacement for the match of `regex` at `start..start + len`:
-    /// [`expand_replacement`] over the match and the bytes around it.
-    pub fn expand_replacement(
-        &mut self,
-        regex: &Regex,
-        start: usize,
-        len: usize,
-        template: &str,
-    ) -> Result<String> {
-        const AROUND: usize = 4;
-        let from = start.saturating_sub(AROUND);
-        let bytes = self.get_text_range_mut(from, start + len + AROUND - from)?;
-        Ok(expand_replacement(
-            regex,
-            &bytes,
-            start - from,
-            len,
-            template,
-        ))
     }
 
     /// Replace a range with replacement text

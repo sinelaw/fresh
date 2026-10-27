@@ -346,12 +346,8 @@ impl Persistence {
         end: usize,
         buffers: &[StringBuffer],
     ) -> Option<Vec<u8>> {
-        loaded_text_range(
-            &self.saved_tree(),
-            buffers,
-            start,
-            end.saturating_sub(start),
-        )
+        self.saved_tree()
+            .read_range(buffers, start, end.saturating_sub(start))
     }
 
     /// Diff the current piece tree against the last saved snapshot.
@@ -479,8 +475,8 @@ impl Persistence {
                 continue;
             }
 
-            let saved_slice = loaded_text_range(&saved_tree, buffers, range.start, range.len());
-            let current_slice = loaded_text_range(piece_tree, buffers, range.start, range.len());
+            let saved_slice = saved_tree.read_range(buffers, range.start, range.len());
+            let current_slice = piece_tree.read_range(buffers, range.start, range.len());
 
             match (saved_slice, current_slice) {
                 (Some(saved), Some(current)) => {
@@ -497,37 +493,6 @@ impl Persistence {
 
         false
     }
-}
-
-// ---------- private free-fn helpers over borrowed storage ----------
-
-/// The bytes at `offset..offset + bytes` of the document `piece_tree` and
-/// `buffers` make, or None if any of them aren't loaded. `TextBuffer`'s
-/// read-only range reader, here so `verify_content_differs_in_ranges` can
-/// use it without a `TextBuffer`.
-pub(super) fn loaded_text_range(
-    piece_tree: &PieceTree,
-    buffers: &[StringBuffer],
-    offset: usize,
-    bytes: usize,
-) -> Option<Vec<u8>> {
-    if bytes == 0 {
-        return Some(Vec::new());
-    }
-
-    let mut result = Vec::with_capacity(bytes);
-    let end_offset = offset + bytes;
-    for piece in piece_tree.iter_pieces_in_range(offset, end_offset) {
-        let read_start = offset.max(piece.doc_offset);
-        let read_end = end_offset.min(piece.doc_offset + piece.bytes);
-        if read_end <= read_start {
-            continue;
-        }
-        let start = piece.buffer_offset + (read_start - piece.doc_offset);
-        let data = buffers.get(piece.location.buffer_id())?.get_data()?;
-        result.extend_from_slice(data.get(start..start + (read_end - read_start))?);
-    }
-    Some(result)
 }
 
 #[cfg(test)]

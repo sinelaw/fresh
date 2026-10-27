@@ -352,8 +352,8 @@ pub(crate) struct ProjectSearch {
     pub source_file: Option<PathBuf>,
     /// Open, modified buffers, searched as they are on the editor thread
     /// (`OpenBufferSearch`); the walk skips their files. The source buffer's
-    /// matches are taken first, so `max_results` can't cut them off; the
-    /// others' at the end.
+    /// matches go in as soon as they are found, past `max_results` if need
+    /// be; the others' at the end.
     pub open_paths: HashSet<PathBuf>,
     pub source_result: Option<oneshot::Receiver<Vec<GrepMatch>>>,
     pub open_results: Vec<oneshot::Receiver<Vec<GrepMatch>>>,
@@ -382,6 +382,11 @@ fn push_capped(
     if matches.is_empty() {
         return;
     }
+    push_matches(handle, matches);
+}
+
+/// Add `matches` to a search's pending results.
+fn push_matches(handle: &SearchHandleState, matches: Vec<GrepMatch>) {
     let mut state = match handle.state.lock() {
         Ok(s) => s,
         Err(poisoned) => poisoned.into_inner(),
@@ -423,10 +428,17 @@ pub(crate) fn project_search(
         } = search;
         let cancelled = |handle: &SearchHandleState| handle.cancel.load(Ordering::Relaxed);
         let match_count = Arc::new(AtomicUsize::new(0));
-        if let Some(receiver) = source_result {
-            let matches = receiver.await.unwrap_or_default();
-            push_capped(&handle, &match_count, max_results, matches);
-        }
+        // The source buffer's matches go in when its search (on the editor
+        // thread) is done, while the walk goes on, and past the cap if need
+        // be: they are the file the search was started from.
+        let source_task = source_result.map(|receiver| {
+            let (handle, match_count) = (Arc::clone(&handle), Arc::clone(&match_count));
+            tokio::spawn(async move {
+                let matches = receiver.await.unwrap_or_default();
+                match_count.fetch_add(matches.len(), Ordering::Relaxed);
+                push_matches(&handle, matches);
+            })
+        });
 
         let (path_tx, mut path_rx) = tokio::sync::mpsc::channel::<PathBuf>(256);
         if let Some(path) = source_file.clone() {
@@ -473,6 +485,9 @@ pub(crate) fn project_search(
             let Ok(permit) = Arc::clone(&semaphore).acquire_owned().await else {
                 break;
             };
+            if joins.len() >= 64 {
+                joins.retain(|join| !join.is_finished());
+            }
             let fs = Arc::clone(&filesystem);
             let (pattern, opts) = (pattern.clone(), opts.clone());
             let (handle, match_count) = (Arc::clone(&handle), Arc::clone(&match_count));
@@ -494,6 +509,9 @@ pub(crate) fn project_search(
         }
         for join in joins {
             drop(join.await);
+        }
+        if let Some(task) = source_task {
+            drop(task.await);
         }
         for receiver in open_results {
             let matches = receiver.await.unwrap_or_default();

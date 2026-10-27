@@ -6246,27 +6246,11 @@ pub enum PluginCommand {
         /// such a buffer, so the host searches its piece-tree content directly
         /// and emits matches carrying this buffer id. 0 means "no such buffer".
         source_buffer_id: usize,
+        /// Search only this buffer, as it is, instead of the project: the
+        /// buffer's id, or 0 for a project search.
+        buffer_id: usize,
         /// Handle ID — key into the shared `SearchHandleRegistry`
         handle_id: u64,
-    },
-
-    /// Search one buffer as it is now, unsaved edits included, with the
-    /// editor's search (async). Resolves with its matches as `GrepMatch`es.
-    SearchBuffer {
-        /// The buffer to search; 0 is the active buffer
-        buffer_id: usize,
-        /// Search pattern
-        pattern: String,
-        /// Whether the pattern is a fixed string (true) or regex (false)
-        fixed_string: bool,
-        /// Whether the search is case-sensitive
-        case_sensitive: bool,
-        /// Whether to match whole words only
-        whole_words: bool,
-        /// Stop after this many matches; 0 finds them all
-        max_results: usize,
-        /// Callback ID for async response
-        callback_id: JsCallbackId,
     },
 
     /// Replace matches in a buffer (async)
@@ -6933,10 +6917,12 @@ pub struct GrepMatch {
     /// 1-indexed byte column within the line
     #[ts(type = "number")]
     pub column: usize,
-    /// The matched line, for display: from its start, or on a long line from
-    /// 4096 bytes before the match — so the match is `min(column - 1, 4096)`
-    /// bytes into it.
+    /// The matched line, for display — on a long line only up to 4096 bytes
+    /// of it on each side of the match
     pub context: String,
+    /// Where the match starts in `context`, in bytes
+    #[ts(type = "number")]
+    pub context_offset: usize,
 }
 
 /// Per-call result from `SearchHandle.take()` — the matches accumulated since
@@ -9630,6 +9616,7 @@ mod tests {
             line,
             column: 1,
             context: "match".to_string(),
+            context_offset: 0,
         }
     }
 

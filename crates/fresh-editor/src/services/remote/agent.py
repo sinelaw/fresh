@@ -435,13 +435,12 @@ def cmd_info(id, p):
 # offsets are where the editor will jump; `^`/`$` at every line break, whole
 # words around the whole pattern, Unicode case folding and `\b`; matches in
 # order and non-overlapping as Rust's find_iter gives them; line and column
-# from the line's real start; and the match's line (without `\r`) as
-# context. What still differs: the regex dialect itself (Python `re`: its
+# from the line's real start; and the match's line around it (without
+# `\r`, and cut as the local search cuts a long one) as context. What still
+# differs: the regex dialect itself (Python `re`: its
 # syntax, and `.` matching, and `$` not matching before, the `\r` of a
 # `\r\n`), and a file in a legacy code page other than Windows-1252 (the
 # editor guesses which; this reads them all as Windows-1252).
-MAX_SEARCH_FILE_SIZE = 10 * 1024 * 1024
-CONTEXT_BEFORE_MATCH = 4096
 DETECT_SAMPLE = 8 * 1024
 # Control bytes no text holds (all but tab, LF, VT, FF, CR and ESC; and DEL).
 BINARY_CONTROL = re.compile(b"[\x00-\x08\x0e-\x1a\x1c-\x1f\x7f]")
@@ -484,10 +483,13 @@ def cmd_search_file(id, p):
     case_sensitive = p.get("case_sensitive", True)
     whole_word = p.get("whole_word", False)
     max_matches = p.get("max_matches", 100)
+    # The local search's own limits, sent with each request.
+    max_file_size = p["max_file_size"]
+    context_bytes = p["context_bytes"]
 
     size = os.path.getsize(path)
     text = None
-    if 0 < size <= MAX_SEARCH_FILE_SIZE:
+    if max_matches > 0 and 0 < size <= max_file_size:
         with open(path, "rb") as f:
             text = editor_text(f.read())
     if text is None:
@@ -503,13 +505,16 @@ def cmd_search_file(id, p):
         flags |= re.DOTALL
     regex = re.compile(pat, flags)
 
-    def byte_len(s):
-        return len(s.encode("utf-8", errors="surrogateescape"))
+    def encode(s):
+        return s.encode("utf-8", errors="surrogateescape")
+
+    def continues(b):
+        return b & 0xC0 == 0x80
 
     matches = []
     last_end = None
     char_pos, byte_pos = 0, 0  # a character offset and its byte offset
-    line, line_start = 1, 0  # the line at char_pos, and where it starts
+    line, line_start, line_start_byte = 1, 0, 0  # the line at char_pos
     for m in regex.finditer(text):
         start, end = m.start(), m.end()
         # As Rust's find_iter: no empty match where the last match ended.
@@ -517,28 +522,42 @@ def cmd_search_file(id, p):
             continue
         last_end = end
         between = text[char_pos:start]
-        newlines = between.count("\n")
-        if newlines:
-            line += newlines
-            line_start = char_pos + between.rindex("\n") + 1
-        byte_pos += byte_len(between)
+        last_newline = between.rfind("\n")
+        if last_newline != -1:
+            line += between.count("\n")
+            line_start = char_pos + last_newline + 1
+            line_start_byte = byte_pos + len(encode(between[:last_newline + 1]))
+        byte_pos += len(encode(between))
         char_pos = start
-        line_end = text.find("\n", start)
-        if line_end == -1:
-            line_end = len(text)
-        # From the line's start, or CONTEXT_BEFORE_MATCH bytes before the
-        # match on a longer line, as the local search gives it.
-        head = text[line_start:start].encode("utf-8", errors="surrogateescape")
-        head = head[-CONTEXT_BEFORE_MATCH:].decode("utf-8", errors="surrogateescape")
-        context = head + text[start:line_end]
-        if context.endswith("\r"):
+        # The line around the match, context_bytes at most on each side, cut
+        # where a character starts — as the local search gives it.
+        head = encode(text[max(line_start, start - context_bytes):start])
+        if len(head) > context_bytes:
+            cut = len(head) - context_bytes
+            while cut < len(head) and continues(head[cut]):
+                cut += 1
+            head = head[cut:]
+        newline = text.find("\n", start, end + context_bytes)
+        if start <= newline < end:
+            body, tail = encode(text[start:newline]), b""
+        else:
+            body = encode(text[start:end])
+            tail = encode(text[end:newline if newline != -1 else end + context_bytes])
+            if len(tail) > context_bytes:
+                cut = context_bytes
+                while cut > 0 and continues(tail[cut]):
+                    cut -= 1
+                tail = tail[:cut]
+        context = head + body + tail
+        if context.endswith(b"\r"):
             context = context[:-1]
         matches.append({
             "byte_offset": byte_pos,
-            "length": byte_len(text[start:end]),
+            "length": len(encode(text[start:end])),
             "line": line,
-            "column": byte_len(text[line_start:start]) + 1,
-            "context": context.encode("utf-8", errors="surrogateescape").decode("utf-8", errors="replace"),
+            "column": byte_pos - line_start_byte + 1,
+            "context": context.decode("utf-8", errors="replace"),
+            "context_offset": len(head),
         })
         if len(matches) >= max_matches:
             break

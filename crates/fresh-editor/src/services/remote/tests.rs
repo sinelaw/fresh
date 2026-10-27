@@ -522,7 +522,23 @@ mod agent_integration {
         stdout.read_line(&mut line).unwrap();
 
         let dir = tempfile::tempdir().unwrap();
+        // Lines longer than a match's context on each side, of multi-byte
+        // text, and one crossing the local search's 1 MB window.
+        let long_lines = format!(
+            "{}foo{}foo{}\n{}foo",
+            "x".repeat(5000),
+            "\u{20ac}".repeat(3000),
+            "y".repeat(10),
+            "\u{e9}".repeat(2500)
+        );
+        let past_a_window = format!(
+            "{}foo{}\nfoo\n",
+            "x".repeat((1 << 20) - 2),
+            "z".repeat(5000)
+        );
         let files: &[(&str, &[u8])] = &[
+            ("long_lines.txt", long_lines.as_bytes()),
+            ("past_a_window.txt", past_a_window.as_bytes()),
             ("plain.txt", b"foo bar\nfoobar foo\n  foo\nbar"),
             ("crlf.txt", b"foo\r\nbar foo\r\n\r\nfoo"),
             (
@@ -585,6 +601,8 @@ mod agent_integration {
                                     "case_sensitive": case_sensitive,
                                     "whole_word": whole_word,
                                     "max_matches": max_matches,
+                                    "max_file_size": crate::model::filesystem::MAX_PROJECT_SEARCH_FILE_SIZE,
+                                    "context_bytes": crate::model::buffer::MATCH_CONTEXT,
                                 }),
                             )
                             .unwrap();
@@ -601,6 +619,7 @@ mod agent_integration {
                                     line: m["line"].as_u64().unwrap() as usize,
                                     column: m["column"].as_u64().unwrap() as usize,
                                     context: m["context"].as_str().unwrap().to_string(),
+                                    context_offset: m["context_offset"].as_u64().unwrap() as usize,
                                 })
                                 .collect();
                             assert_eq!(

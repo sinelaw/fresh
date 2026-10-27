@@ -3633,10 +3633,10 @@ mod regex_matches_loading {
             for m in &found {
                 let (line, column, context) = line_info(&model, m.byte_offset);
                 prop_assert_eq!((m.line, m.column), (line, column));
-                // The context holds the line from its start, wherever the
-                // windows fell (its tail may stop at a window's end).
-                let head = m.column - 1;
-                prop_assert_eq!(&m.context.as_bytes()[..head], &context.as_bytes()[..head]);
+                // The context is the whole line (each is shorter than
+                // MATCH_CONTEXT), wherever the windows fell.
+                prop_assert_eq!(&m.context, &context);
+                prop_assert_eq!(m.context_offset, m.column - 1);
             }
         }
 
@@ -3716,40 +3716,45 @@ mod regex_matches_loading {
         );
     }
 
-    /// A match's context is its line even where the line began in an
-    /// earlier window; on a line longer than `CONTEXT_BEFORE_MATCH` before
-    /// the match, it starts that far before it.
+    /// A match's context is its line, wherever the windows fell; on a long
+    /// line, `MATCH_CONTEXT` bytes of it on each side of the match, cut
+    /// where a character starts, with `context_offset` saying where the
+    /// match is.
     #[test]
-    fn context_reaches_back_into_earlier_windows() {
+    fn context_is_the_line_around_the_match() {
         let re = regex::bytes::Regex::new("needle").unwrap();
+        let search = |text: &str, window: usize| {
+            let mut buf = TextBuffer::from_bytes(text.as_bytes().to_vec(), test_fs());
+            let len = buf.len();
+            RegexSearch::new(&q(&re, 8), 0..len, &buf)
+                .with_lines(1)
+                .with_window(window)
+                .run(&mut buf, usize::MAX)
+                .unwrap()
+        };
+
+        // The line began in an earlier window and runs on past this one.
         let line = format!("{}needle{}", "x".repeat(90), "y".repeat(10));
-        let mut buf = TextBuffer::from_bytes(format!("top\n{line}\n").into_bytes(), test_fs());
-        let len = buf.len();
-        let found = RegexSearch::new(&q(&re, 8), 0..len, &buf)
-            .with_lines(1)
-            .with_window(40)
-            .run(&mut buf, usize::MAX)
-            .unwrap();
+        let found = search(&format!("top\n{line}\nend"), 40);
         assert_eq!(found.len(), 1);
         assert_eq!((found[0].line, found[0].column), (2, 91));
-        // The line from its start through the match; its tail may stop at
-        // the end of the window the match was read in.
-        assert!(
-            found[0].context.len() >= 96 && line.starts_with(&found[0].context),
-            "context {:?}",
-            found[0].context
-        );
+        assert_eq!(found[0].context, line);
+        assert_eq!(found[0].context_offset, 90);
 
-        let long = format!("{}needle", "x".repeat(CONTEXT_BEFORE_MATCH + 100));
-        let mut buf = TextBuffer::from_bytes(long.clone().into_bytes(), test_fs());
-        let len = buf.len();
-        let found = RegexSearch::new(&q(&re, 8), 0..len, &buf)
-            .with_lines(1)
-            .with_window(64)
-            .run(&mut buf, usize::MAX)
-            .unwrap();
-        assert_eq!(found[0].column, CONTEXT_BEFORE_MATCH + 101);
-        assert_eq!(found[0].context, long[100..]);
+        // A long line of 3-byte characters: cut short on both sides, at
+        // character boundaries.
+        let euro = "\u{20ac}";
+        let found = search(
+            &format!("{}needle{}", euro.repeat(2000), euro.repeat(2000)),
+            64,
+        );
+        assert_eq!(found[0].column, 6001);
+        assert_eq!(
+            found[0].context,
+            format!("{}needle{}", euro.repeat(1365), euro.repeat(1365))
+        );
+        assert_eq!(found[0].context_offset, 1365 * 3);
+        assert!(found[0].context_offset <= MATCH_CONTEXT);
     }
 
     #[test]

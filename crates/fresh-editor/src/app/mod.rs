@@ -3632,7 +3632,7 @@ mod tests {
             None,
             &editor.active_state().buffer,
         );
-        editor.active_window_mut().search_scan.start(scan);
+        editor.active_window_mut().search_scan = Some(scan);
 
         // Run slices until no scan is left; it must finish, and soon.
         let mut ticks = 0;

@@ -1923,26 +1923,34 @@ function findLineEndIndex(text: string, index: number): number {
   return end;
 }
 
+/** A character the editor's search counts as part of a word (its `\w`
+ *  and `\b`): Unicode letters, marks, digits and connectors. `*` and `#`
+ *  pick their word by it, so it is the word the whole-word search finds —
+ *  `caf` in `café caf` is not a word, and `café` is. */
+function isSearchWordChar(char: string | undefined): boolean {
+  return char !== undefined && /[\p{Alphabetic}\p{M}\p{Nd}\p{Pc}]/u.test(char);
+}
+
 function findSearchTargetUnderCursor(text: string, cursorIndex: number, scanForwardOnMiss: boolean = false): WordSearchTarget | null {
   const originalIndex = Math.min(cursorIndex, Math.max(0, text.length - 1));
   const lineEnd = findLineEndIndex(text, originalIndex);
   let index = originalIndex;
 
-  if (!scanForwardOnMiss && !isWordChar(text[index]) && index > 0 && isWordChar(text[index - 1])) {
+  if (!scanForwardOnMiss && !isSearchWordChar(text[index]) && index > 0 && isSearchWordChar(text[index - 1])) {
     index--;
   }
-  if (scanForwardOnMiss && !isWordChar(text[index])) {
-    while (index < lineEnd && !isWordChar(text[index])) {
+  if (scanForwardOnMiss && !isSearchWordChar(text[index])) {
+    while (index < lineEnd && !isSearchWordChar(text[index])) {
       index = nextStringIndex(text, index);
     }
   }
-  if (isWordChar(text[index])) {
+  if (isSearchWordChar(text[index])) {
     let start = index;
     let end = index + 1;
-    while (start > 0 && isWordChar(text[start - 1])) {
+    while (start > 0 && isSearchWordChar(text[start - 1])) {
       start--;
     }
-    while (end < text.length && isWordChar(text[end])) {
+    while (end < text.length && isSearchWordChar(text[end])) {
       end++;
     }
 

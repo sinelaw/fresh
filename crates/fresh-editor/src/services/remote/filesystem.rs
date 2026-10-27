@@ -706,6 +706,8 @@ impl FileSystem for RemoteFileSystem {
             "case_sensitive": opts.case_sensitive,
             "whole_word": opts.whole_word,
             "max_matches": opts.max_matches,
+            "max_file_size": crate::model::filesystem::MAX_PROJECT_SEARCH_FILE_SIZE,
+            "context_bytes": crate::model::buffer::MATCH_CONTEXT,
         });
 
         let result = self
@@ -725,6 +727,7 @@ impl FileSystem for RemoteFileSystem {
                             line: m.get("line")?.as_u64()? as usize,
                             column: m.get("column")?.as_u64()? as usize,
                             context: m.get("context")?.as_str()?.to_string(),
+                            context_offset: m.get("context_offset")?.as_u64()? as usize,
                         })
                     })
                     .collect()

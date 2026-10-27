@@ -393,13 +393,7 @@ impl ReferenceHighlighter {
         }
 
         // Fallback to text-matching mode
-        self.highlight_with_text_matching(
-            buffer,
-            cursor_position,
-            viewport_start,
-            viewport_end,
-            context_bytes,
-        )
+        self.highlight_with_text_matching(buffer, cursor_position, viewport_start, viewport_end)
     }
 
     /// Get highlights for every occurrence of the selected text in the viewport
@@ -428,16 +422,22 @@ impl ReferenceHighlighter {
             return Vec::new();
         }
 
-        self.find_matches_in_range(buffer, selected_text, viewport_start, viewport_end, false)
-            .into_iter()
-            .filter(|range| range != selection)
-            .map(|range| HighlightSpan {
-                range,
-                color: self.highlight_color,
-                bg: None,
-                category: None,
-            })
-            .collect()
+        reference_highlight_text::find_matches_in_range(
+            buffer,
+            selected_text,
+            viewport_start,
+            viewport_end,
+            false,
+        )
+        .into_iter()
+        .filter(|range| range != selection)
+        .map(|range| HighlightSpan {
+            range,
+            color: self.highlight_color,
+            bg: None,
+            category: None,
+        })
+        .collect()
     }
 
     /// Locals-based highlighting that respects variable scoping
@@ -692,7 +692,6 @@ impl ReferenceHighlighter {
                     cursor_position,
                     viewport_start,
                     viewport_end,
-                    context_bytes,
                 );
             }
         };
@@ -755,79 +754,32 @@ impl ReferenceHighlighter {
             })
             .collect()
     }
+}
 
-    /// Text-matching based highlighting (fallback)
-    #[allow(unused_variables)] // context_bytes not used in text matching but needed for API consistency
+impl ReferenceHighlighter {
+    /// Text-matching based highlighting (fallback): every whole-word
+    /// occurrence of the word under the cursor.
     fn highlight_with_text_matching(
         &self,
         buffer: &Buffer,
         cursor_position: usize,
         viewport_start: usize,
         viewport_end: usize,
-        context_bytes: usize,
     ) -> Vec<HighlightSpan> {
-        // Find the word under the cursor
-        let word_range = match self.get_word_at_position(buffer, cursor_position) {
-            Some(range) => range,
-            None => return Vec::new(),
-        };
-
-        // Get the word text
-        let word_bytes = buffer.slice_bytes(word_range.clone());
-        let word = match std::str::from_utf8(&word_bytes) {
-            Ok(s) => s.to_string(),
-            Err(_) => return Vec::new(),
-        };
-
-        // Check minimum length
-        if word.len() < self.min_word_length {
-            return Vec::new();
-        }
-
-        // Find all occurrences in the viewport
-        let occurrences =
-            self.find_occurrences_in_range(buffer, &word, viewport_start, viewport_end);
-
-        // Convert to highlight spans
-        occurrences
-            .into_iter()
-            .map(|range| HighlightSpan {
-                range,
-                color: self.highlight_color,
-                bg: None,
-                category: None,
-            })
-            .collect()
-    }
-
-    /// Get the word range at the given position: see
-    /// [`reference_highlight_text::word_at`].
-    fn get_word_at_position(&self, buffer: &Buffer, position: usize) -> Option<Range<usize>> {
-        reference_highlight_text::word_at(buffer, position)
-    }
-
-    /// Find all whole-word occurrences of a word in a byte range
-    fn find_occurrences_in_range(
-        &self,
-        buffer: &Buffer,
-        word: &str,
-        start: usize,
-        end: usize,
-    ) -> Vec<Range<usize>> {
-        reference_highlight_text::find_matches_in_range(buffer, word, start, end, true)
-    }
-
-    /// Find all matches of `needle` overlapping the `start..end` byte range:
-    /// see [`reference_highlight_text::find_matches_in_range`].
-    fn find_matches_in_range(
-        &self,
-        buffer: &Buffer,
-        needle: &str,
-        start: usize,
-        end: usize,
-        whole_word: bool,
-    ) -> Vec<Range<usize>> {
-        reference_highlight_text::find_matches_in_range(buffer, needle, start, end, whole_word)
+        reference_highlight_text::word_occurrences(
+            buffer,
+            cursor_position,
+            viewport_start..viewport_end,
+            self.min_word_length,
+        )
+        .into_iter()
+        .map(|range| HighlightSpan {
+            range,
+            color: self.highlight_color,
+            bg: None,
+            category: None,
+        })
+        .collect()
     }
 }
 
@@ -844,27 +796,26 @@ mod tests {
     #[test]
     fn test_get_word_at_position() {
         let buffer = Buffer::from_str_test("hello world test");
-        let highlighter = ReferenceHighlighter::new();
+        let word_at = reference_highlight_text::word_at;
 
         // Middle of "hello"
-        let range = highlighter.get_word_at_position(&buffer, 2).unwrap();
+        let range = word_at(&buffer, 2).unwrap();
         assert_eq!(range, 0..5);
 
         // Start of "world"
-        let range = highlighter.get_word_at_position(&buffer, 6).unwrap();
+        let range = word_at(&buffer, 6).unwrap();
         assert_eq!(range, 6..11);
 
         // On space (not a word)
-        let range = highlighter.get_word_at_position(&buffer, 5);
+        let range = word_at(&buffer, 5);
         assert!(range.is_none());
     }
 
     #[test]
     fn test_find_occurrences() {
         let buffer = Buffer::from_str_test("foo bar foo baz foo");
-        let highlighter = ReferenceHighlighter::new();
-
-        let occurrences = highlighter.find_occurrences_in_range(&buffer, "foo", 0, buffer.len());
+        let occurrences =
+            reference_highlight_text::find_matches_in_range(&buffer, "foo", 0, buffer.len(), true);
         assert_eq!(occurrences.len(), 3);
         assert_eq!(occurrences[0], 0..3);
         assert_eq!(occurrences[1], 8..11);
@@ -874,9 +825,8 @@ mod tests {
     #[test]
     fn test_whole_word_only() {
         let buffer = Buffer::from_str_test("foobar foo foobaz");
-        let highlighter = ReferenceHighlighter::new();
-
-        let occurrences = highlighter.find_occurrences_in_range(&buffer, "foo", 0, buffer.len());
+        let occurrences =
+            reference_highlight_text::find_matches_in_range(&buffer, "foo", 0, buffer.len(), true);
         // Should only find the standalone "foo", not "foobar" or "foobaz"
         assert_eq!(occurrences.len(), 1);
         assert_eq!(occurrences[0], 7..10);

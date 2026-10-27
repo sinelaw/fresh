@@ -410,7 +410,9 @@ impl Editor {
             crate::view::bracket_highlight_overlay::get_bracket_pair(ch, angle_brackets);
 
         // On a bracket, its match; elsewhere, the match of the bracket
-        // enclosing the cursor. Found as the highlight finds it.
+        // enclosing the cursor. Found with the highlight's scan, though
+        // without its comment and string ranges, which only a drawn frame
+        // has.
         use crate::view::bracket_highlight_overlay::{
             find_enclosing_bracket, find_matching_bracket,
         };
