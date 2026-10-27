@@ -3410,11 +3410,13 @@ type GrepMatch = {
 	*/
 	line: number;
 	/**
-	* 1-indexed column number
+	* 1-indexed byte column within the line
 	*/
 	column: number;
 	/**
-	* The matched line content (for display)
+	* The matched line, for display: from its start, or on a long line from
+	* 4096 bytes before the match — so the match is `min(column - 1, 4096)`
+	* bytes into it.
 	*/
 	context: string;
 };
