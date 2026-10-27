@@ -14,11 +14,15 @@ use tokio::sync::oneshot;
 
 use super::search_scan::SEARCH_SCAN_SLICE;
 use super::Editor;
-use crate::model::buffer::{BufferSearch, SearchMatch, SearchQuery, TextBuffer};
+use crate::model::buffer::{BufferSearch, SearchQuery, TextBuffer};
 
 /// A match as a project search reports it: in `file`, attributed to
 /// `buffer_id` (0 when the file isn't open).
-pub(crate) fn grep_match(file: &str, buffer_id: usize, m: SearchMatch) -> GrepMatch {
+pub(crate) fn grep_match(
+    file: &str,
+    buffer_id: usize,
+    m: crate::model::buffer::SearchMatch,
+) -> GrepMatch {
     GrepMatch {
         file: file.to_string(),
         buffer_id,

@@ -1177,7 +1177,7 @@ pub struct Editor {
     /// Cancellation flag for the in-flight `grepProject`, if any. A new
     /// request supersedes the old one rather than queueing behind it.
     #[cfg(feature = "plugins")]
-    grep_project_cancel: std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>,
+    grep_project_cancel: std::collections::HashMap<String, Arc<fresh_core::api::SearchHandleState>>,
 
     /// Open buffers being searched for project searches, a slice per tick.
     open_buffer_searches: Vec<open_buffer_search::OpenBufferSearch>,
