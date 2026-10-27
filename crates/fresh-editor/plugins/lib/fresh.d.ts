@@ -8347,6 +8347,20 @@ interface EditorAPI {
 		fileGlob?: string;
 	}): SearchHandle;
 	/**
+	* Search one buffer as it is now, unsaved edits included, with the
+	* editor's own search — the one Ctrl+F and `beginSearch` use. Resolves
+	* with its matches in order: each with its byte offset and length, its
+	* 1-based line and byte column, and the text of its line. `bufferId` 0
+	* is the active buffer. Every match is found unless `maxResults` is
+	* given; `fixedString` and `caseSensitive` default to true.
+	*/
+	searchBuffer(bufferId: number, pattern: string, opts?: {
+		fixedString?: boolean;
+		caseSensitive?: boolean;
+		wholeWords?: boolean;
+		maxResults?: number;
+	}): Promise<GrepMatch[]>;
+	/**
 	* Replace matches in a file's buffer (async)
 	* Opens the file if not already in a buffer, applies edits via the buffer model,
 	* and saves. All edits are grouped as a single undo action.

@@ -3868,6 +3868,74 @@ impl Editor {
         })
     }
 
+    /// Handle SearchBuffer: search one buffer of the active window as it is,
+    /// a slice per tick like an open buffer in a project search, and settle
+    /// the plugin's promise with the matches.
+    pub(super) fn handle_search_buffer(
+        &mut self,
+        buffer_id: usize,
+        pattern: String,
+        opts: crate::model::filesystem::FileSearchOptions,
+        callback_id: JsCallbackId,
+    ) {
+        let reject = |editor: &Self, message: String| {
+            editor
+                .plugin_manager
+                .read()
+                .unwrap()
+                .reject_callback(callback_id, message);
+        };
+        let buffer_id = match buffer_id {
+            0 => self.active_buffer(),
+            id => BufferId(id),
+        };
+        let Some(state) = self.active_window().buffers.get(&buffer_id) else {
+            return reject(self, format!("Buffer {} not found", buffer_id.0));
+        };
+        if pattern.is_empty() {
+            self.plugin_manager
+                .read()
+                .unwrap()
+                .resolve_callback(callback_id, "[]".to_string());
+            return;
+        }
+        let query = match opts.query(&pattern) {
+            Ok(query) => query,
+            Err(e) => return reject(self, format!("Invalid regex: {}", e)),
+        };
+        let Some(sender) = self.async_bridge.as_ref().map(|b| b.sender()) else {
+            return reject(self, "No async bridge available".to_string());
+        };
+        let file = state
+            .buffer
+            .file_path()
+            .map_or("[No Name]".to_string(), |p| {
+                p.to_string_lossy().into_owned()
+            });
+        let job = super::open_buffer_search::OpenBufferSearch::reporting_to(
+            self.active_window,
+            buffer_id,
+            file,
+            query,
+            opts.max_matches,
+            &state.buffer,
+            Box::new(|| false),
+            Box::new(move |found| {
+                let json = serde_json::to_string(&found).unwrap_or_else(|_| "[]".to_string());
+                // A send error means the editor is shutting down.
+                drop(
+                    sender.send(crate::services::async_bridge::AsyncMessage::Plugin(
+                        fresh_core::api::PluginAsyncMessage::OffLoopSettled {
+                            callback_id: callback_id.as_u64(),
+                            result: Ok(json),
+                        },
+                    )),
+                );
+            }),
+        );
+        self.start_open_buffer_search(job);
+    }
+
     /// Handle GrepProject: a project search (see `prepare_project_search` and
     /// [`plugin_offloop::project_search`]) whose matches settle the callback
     /// when it is done.

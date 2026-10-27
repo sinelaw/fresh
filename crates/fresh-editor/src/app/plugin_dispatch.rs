@@ -2283,6 +2283,28 @@ impl Editor {
                 });
             }
 
+            PluginCommand::SearchBuffer {
+                buffer_id,
+                pattern,
+                fixed_string,
+                case_sensitive,
+                whole_words,
+                max_results,
+                callback_id,
+            } => {
+                let opts = crate::model::filesystem::FileSearchOptions {
+                    fixed_string,
+                    case_sensitive,
+                    whole_word: whole_words,
+                    max_matches: if max_results == 0 {
+                        usize::MAX
+                    } else {
+                        max_results
+                    },
+                };
+                self.handle_search_buffer(buffer_id, pattern, opts, callback_id);
+            }
+
             PluginCommand::ReplaceInBuffer {
                 file_path,
                 buffer_id,

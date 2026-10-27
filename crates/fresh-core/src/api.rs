@@ -6250,6 +6250,25 @@ pub enum PluginCommand {
         handle_id: u64,
     },
 
+    /// Search one buffer as it is now, unsaved edits included, with the
+    /// editor's search (async). Resolves with its matches as `GrepMatch`es.
+    SearchBuffer {
+        /// The buffer to search; 0 is the active buffer
+        buffer_id: usize,
+        /// Search pattern
+        pattern: String,
+        /// Whether the pattern is a fixed string (true) or regex (false)
+        fixed_string: bool,
+        /// Whether the search is case-sensitive
+        case_sensitive: bool,
+        /// Whether to match whole words only
+        whole_words: bool,
+        /// Stop after this many matches; 0 finds them all
+        max_results: usize,
+        /// Callback ID for async response
+        callback_id: JsCallbackId,
+    },
+
     /// Replace matches in a buffer (async)
     /// Opens the file if not already open, applies edits through the buffer model,
     /// groups as a single undo action, and saves via FileSystem trait.

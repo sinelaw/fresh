@@ -9330,6 +9330,44 @@ impl JsEditorApi {
         id
     }
 
+    /// Search one buffer as it is now, unsaved edits included, with the
+    /// editor's own search — the one Ctrl+F and `beginSearch` use. Resolves
+    /// with its matches in order: each with its byte offset and length, its
+    /// 1-based line and byte column, and the text of its line. `bufferId` 0
+    /// is the active buffer. Every match is found unless `maxResults` is
+    /// given; `fixedString` and `caseSensitive` default to true.
+    #[plugin_api(
+        async_promise,
+        js_name = "searchBuffer",
+        ts_raw = "searchBuffer(bufferId: number, pattern: string, opts?: { fixedString?: boolean; caseSensitive?: boolean; wholeWords?: boolean; maxResults?: number }): Promise<GrepMatch[]>"
+    )]
+    // Positional: the JS wrapper unpacks `opts` (see `editor.searchBuffer`
+    // below).
+    #[allow(clippy::too_many_arguments)]
+    #[qjs(rename = "_searchBufferStart")]
+    pub fn search_buffer_start(
+        &self,
+        _ctx: fresh_js::Ctx<'_>,
+        buffer_id: u32,
+        pattern: String,
+        fixed_string: bool,
+        case_sensitive: bool,
+        whole_words: bool,
+        max_results: u32,
+    ) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::SearchBuffer {
+            buffer_id: buffer_id as usize,
+            pattern,
+            fixed_string,
+            case_sensitive,
+            whole_words,
+            max_results: max_results as usize,
+            callback_id: JsCallbackId::new(id),
+        });
+        id
+    }
+
     /// Drain pending matches for a search handle. Returns the matches that
     /// have arrived since the previous call plus terminal-state flags.
     /// After `done` is observed, the handle entry is removed from the
@@ -10343,6 +10381,21 @@ const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
                         return start(...args);
                     };
                 })(_wrapAsync("_replaceInFileStart", "replaceInFile"));
+                // Unpack `opts` into the positional arguments
+                // `_searchBufferStart` takes.
+                editor.searchBuffer = (function(start) {
+                    return function(bufferId, pattern, opts) {
+                        opts = opts || {};
+                        return start(
+                            bufferId || 0,
+                            pattern,
+                            opts.fixedString !== undefined ? !!opts.fixedString : true,
+                            opts.caseSensitive !== undefined ? !!opts.caseSensitive : true,
+                            !!opts.wholeWords,
+                            opts.maxResults || 0
+                        );
+                    };
+                })(_wrapAsync("_searchBufferStart", "searchBuffer"));
                 editor.openFileStreaming = _wrapAsync("_openFileStreamingStart", "openFileStreaming");
                 editor.refreshBufferFromDisk = _wrapAsync("_refreshBufferFromDiskStart", "refreshBufferFromDisk");
                 editor.setBufferGroupPanelBuffer = _wrapAsync("_setBufferGroupPanelBufferStart", "setBufferGroupPanelBuffer");

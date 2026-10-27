@@ -4,7 +4,8 @@
 //! editor thread. An open buffer with unsaved edits has to be searched as
 //! it is, so it is searched here instead, through its live `TextBuffer` — a
 //! [`BufferSearch`] run a slice per editor tick, like a Ctrl+F search of a
-//! large file — and the matches go back to the search's task over a channel.
+//! large file — and the matches go back to the search's task over a channel,
+//! or to whatever else asked (a plugin's `searchBuffer`).
 
 use std::time::Instant;
 
@@ -42,7 +43,7 @@ pub(crate) struct OpenBufferSearch {
     file: String,
     search: BufferSearch,
     cancelled: Box<dyn Fn() -> bool + Send>,
-    reply: oneshot::Sender<Vec<GrepMatch>>,
+    reply: Box<dyn FnOnce(Vec<GrepMatch>) + Send>,
 }
 
 impl OpenBufferSearch {
@@ -61,15 +62,35 @@ impl OpenBufferSearch {
         cancelled: Box<dyn Fn() -> bool + Send>,
     ) -> (Self, oneshot::Receiver<Vec<GrepMatch>>) {
         let (reply, receiver) = oneshot::channel();
-        let job = Self {
+        // The search's task may have stopped waiting; nothing to do then.
+        let reply = Box::new(move |found| drop(reply.send(found)));
+        let job = Self::reporting_to(
+            window, buffer_id, file, query, limit, buffer, cancelled, reply,
+        );
+        (job, receiver)
+    }
+
+    /// As [`new`](Self::new), with the matches handed to `reply` instead.
+    #[allow(clippy::too_many_arguments)]
+    #[cfg_attr(not(feature = "plugins"), allow(dead_code))]
+    pub(crate) fn reporting_to(
+        window: WindowId,
+        buffer_id: BufferId,
+        file: String,
+        query: SearchQuery,
+        limit: usize,
+        buffer: &TextBuffer,
+        cancelled: Box<dyn Fn() -> bool + Send>,
+        reply: Box<dyn FnOnce(Vec<GrepMatch>) + Send>,
+    ) -> Self {
+        Self {
             window,
             buffer_id,
             file,
             search: BufferSearch::new(query, None, limit, buffer).with_lines(buffer),
             cancelled,
             reply,
-        };
-        (job, receiver)
+        }
     }
 
     /// Search on until `deadline`; true once there is nothing more to do.
@@ -90,8 +111,7 @@ impl OpenBufferSearch {
             let found = self.search.into_found().into_iter();
             found.map(|m| grep_match(&file, id, m)).collect()
         };
-        // The search's task may have stopped waiting; nothing to do then.
-        self.reply.send(found).ok();
+        (self.reply)(found);
     }
 }
 
