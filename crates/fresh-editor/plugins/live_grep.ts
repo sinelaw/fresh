@@ -32,8 +32,8 @@ import { gitCwdCandidate } from "./lib/git_repo.ts";
  * cached for the duration of the prompt.
  */
 
-import { Finder, parseGrepOutput } from "./lib/finder.ts";
-import { ackArgs, agArgs, gitGrepArgs, grepArgs, relativeUnder, rgArgs } from "./lib/grep_args.ts";
+import { Finder, parseGrepOutput, type SearchCancellation } from "./lib/finder.ts";
+import { ackArgs, agArgs, gitGrepArgs, grepArgs, relativeUnder, rgArgs, type GrepArgOpts } from "./lib/grep_args.ts";
 import { col, dropdown, raw, row, spacer, styledRow, toggle, wrappingRow } from "./lib/widgets.ts";
 
 const editor = getEditor();
@@ -91,6 +91,17 @@ export interface SearchOpts {
    *  and disagree with the Case toggle on the toolbar. Built-ins pass
    *  rg `--case-sensitive`/`--ignore-case`, git-grep/grep/ack `-i`. */
   caseSensitive?: boolean;
+  /** Fires when the search is superseded by a newer query or the overlay
+   *  closes: kill what you spawned (`spawnSearch` does it for you). */
+  cancellation?: SearchCancellation;
+}
+
+/** Spawn a search process that is killed when `opts`' search is
+ *  cancelled, rather than running on to completion unread. */
+function spawnSearch(cmd: string, args: string[], cwd: string, opts: SearchOpts): ProcessHandle<SpawnResult> {
+  const process = editor.spawnProcess(cmd, args, cwd);
+  opts.cancellation?.onCancel(() => process.kill());
+  return process;
 }
 
 /** A registered Live Grep backend. */
@@ -249,15 +260,15 @@ const searchModes: Record<ModeId, boolean> = {
   regex: true,
 };
 
-/** A compiled matcher for the JS-side scopes (buffers, diagnostics).
+/** A compiled matcher for the diagnostics scope (message text).
  *  Returns the 1-based column of the first match on a line, or -1. */
 type LineMatcher = (line: string) => number;
 
 /** Build a line matcher honouring the current `searchModes` — including
- *  `case`, so the JS-side scopes (buffers, diagnostics) match exactly
+ *  `case`, so the diagnostics scope matches exactly
  *  what the toolbar says and exactly what the grep backends are told.
  *  An invalid regex matches nothing (the provider scopes surface the
- *  rg/grep error; the JS scopes just contribute no rows). */
+ *  rg/grep error; this scope just contributes no rows). */
 function buildLineMatcher(query: string): LineMatcher {
   const foldCase = !searchModes.case;
   if (searchModes.regex) {
@@ -590,7 +601,7 @@ registerProvider({
   search: async (query, opts) => {
     const { cwd, maxResults } = opts;
     const args = rgArgs(query, opts);
-    const r = await editor.spawnProcess("rg", args, cwd);
+    const r = await spawnSearch("rg", args, cwd, opts);
     if (r.exit_code === 0) {
       return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg)) as GrepMatch[];
     }
@@ -612,7 +623,7 @@ registerProvider({
   search: async (query, opts) => {
     const { cwd, maxResults } = opts;
     const args = agArgs(query, opts);
-    const r = await editor.spawnProcess("ag", args, cwd);
+    const r = await spawnSearch("ag", args, cwd, opts);
     if (r.exit_code === 0 || r.exit_code === 1) {
       return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg)) as GrepMatch[];
     }
@@ -667,7 +678,7 @@ registerProvider({
     // The ignore patterns are relative to `cwd`; tell the builder where
     // the repo cwd sits below it so rooted ones can be rebased.
     const args = gitGrepArgs(query, opts, relativeUnder(cwd, gitCwd));
-    const r = await editor.spawnProcess("git", args, gitCwd);
+    const r = await spawnSearch("git", args, gitCwd, opts);
     // git grep exits 1 when no matches — treat as empty, not error.
     if (r.exit_code === 0 || r.exit_code === 1) {
       return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg)) as GrepMatch[];
@@ -693,7 +704,7 @@ registerProvider({
   search: async (query, opts) => {
     const { cwd, maxResults } = opts;
     const args = ackArgs(query, opts);
-    const r = await editor.spawnProcess("ack", args, cwd);
+    const r = await spawnSearch("ack", args, cwd, opts);
     if (r.exit_code === 0 || r.exit_code === 1) {
       return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg)) as GrepMatch[];
     }
@@ -725,11 +736,10 @@ registerProvider({
   search: async (query, opts) => {
     const { cwd, maxResults } = opts;
     const args = grepArgs(query, opts);
-    const r = await editor.spawnProcess("grep", args, cwd);
+    const r = await spawnSearch("grep", args, cwd, opts);
     if (r.exit_code === 0 || r.exit_code === 1) {
-      // grep emits `path:line:content` (no column). parseGrepOutput's
-      // 3-field fallback handles the missing column (defaults to 1).
-      return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg)) as GrepMatch[];
+      // grep emits `path:line:content` (no column; it defaults to 1).
+      return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg), false) as GrepMatch[];
     }
     throw new Error(`grep exited with code ${r.exit_code}: ${r.stderr}`);
   },
@@ -911,10 +921,6 @@ editor.registerCommand(
   null
 );
 
-// Don't pull whole multi-MB buffers across the FFI boundary to grep
-// them line-by-line in JS — cap at a sane size and skip the rest.
-const MAX_BUFFER_SCAN_BYTES = 2_000_000;
-
 // Strip ANSI escape sequences so terminal scrollback (stored with
 // colour codes in the backing file) shows as plain text in results.
 function stripAnsi(s: string): string {
@@ -935,37 +941,38 @@ function stripAnsi(s: string): string {
  *  subdir keeps the search to *this* project / worktree. We grep it
  *  with rg (falling back to grep), then strip ANSI for display.
  *  Opening a hit opens the backing file at the matched line. */
-async function searchTerminals(query: string, limit: number): Promise<GrepMatch[]> {
+async function searchTerminals(
+  query: string,
+  limit: number,
+  cancellation?: SearchCancellation,
+): Promise<GrepMatch[]> {
   if (limit <= 0) return [];
   const dir = editor.getTerminalDir();
   const cwd = editor.getCwd();
   let raw: GrepMatch[] = [];
+  // The backing files as text (they hold ANSI escapes), only the rendered
+  // `.txt` ones — not the raw `.log` replay logs, which would double every
+  // hit — and nothing left out as ignored.
+  const opts: GrepArgOpts = {
+    maxResults: limit,
+    includeIgnored: true,
+    wholeWord: searchModes.word,
+    regex: searchModes.regex,
+    caseSensitive: searchModes.case,
+    text: true,
+    include: "*.txt",
+    paths: [dir],
+  };
+  const spawnOpts = { cwd, maxResults: limit, cancellation };
   try {
-    const rgArgs = [
-      "--line-number", "--column", "--no-heading", "--color=never",
-      searchModes.case ? "--case-sensitive" : "--ignore-case",
-      "--text", `--max-count=${limit}`,
-      // Only the rendered `.txt` backing files — not the raw `.log`
-      // replay logs, which would double every hit.
-      "-g", "*.txt",
-    ];
-    if (searchModes.regex === false) rgArgs.push("--fixed-strings");
-    if (searchModes.word) rgArgs.push("--word-regexp");
-    rgArgs.push("--", query, dir);
-    const r = await editor.spawnProcess("rg", rgArgs, cwd);
+    const r = await spawnSearch("rg", rgArgs(query, opts), cwd, spawnOpts);
     if (r.exit_code === 0) {
       raw = parseGrepOutput(r.stdout, limit, (m) => editor.debug(m)) as GrepMatch[];
     } else if (r.exit_code !== 1) {
-      // rg missing or path error → fall back to grep (-a: treat the
-      // ANSI-laden logs as text rather than skipping them as binary).
-      const gArgs = ["-rn", "-a", "--include=*.txt"];
-      if (!searchModes.case) gArgs.push("-i");
-      gArgs.push(searchModes.regex === false ? "-F" : "-E");
-      if (searchModes.word) gArgs.push("-w");
-      gArgs.push("--", query, dir);
-      const g = await editor.spawnProcess("grep", gArgs, cwd);
+      // rg missing or path error → fall back to grep.
+      const g = await spawnSearch("grep", grepArgs(query, opts), cwd, spawnOpts);
       if (g.exit_code === 0) {
-        raw = parseGrepOutput(g.stdout, limit, (m) => editor.debug(m)) as GrepMatch[];
+        raw = parseGrepOutput(g.stdout, limit, (m) => editor.debug(m), false) as GrepMatch[];
       }
     }
   } catch (e) {
@@ -981,15 +988,18 @@ async function searchTerminals(query: string, limit: number): Promise<GrepMatch[
 /** Search the text of currently-open, modified file buffers.
  *  Scoped to *modified* buffers on purpose: unmodified buffers are
  *  already covered by the on-disk file scan, so this surfaces exactly
- *  the unsaved edits a disk grep would miss, without double-reporting. */
+ *  the unsaved edits a disk grep would miss, without double-reporting.
+ *  The editor searches each buffer as it is (`searchBuffer`), however
+ *  large, with the same query language as its own search; a row per
+ *  match, at its byte column. */
 async function searchOpenBuffers(
   query: string,
   limit: number,
   includeUnmodified: boolean,
+  cancellation?: SearchCancellation,
 ): Promise<GrepMatch[]> {
   if (limit <= 0) return [];
   const out: GrepMatch[] = [];
-  const matchCol = buildLineMatcher(query);
   for (const b of editor.listBuffers()) {
     if (out.length >= limit) break;
     // Virtual buffers (terminals, panels) and bufferless/unnamed buffers
@@ -1000,19 +1010,27 @@ async function searchOpenBuffers(
     // actually finds matches.
     if (b.is_virtual || !b.path) continue;
     if (!includeUnmodified && !b.modified) continue;
-    if (b.length > MAX_BUFFER_SCAN_BYTES) continue;
-    let text: string;
+    if (cancellation?.cancelled) break;
+    const search = editor.searchBuffer(b.id, query, {
+      fixedString: !searchModes.regex,
+      caseSensitive: searchModes.case,
+      wholeWords: searchModes.word,
+      maxResults: limit - out.length,
+    });
+    // A newer query (or closing the overlay) stops it.
+    cancellation?.onCancel(() => search.cancel());
+    let matches: Awaited<typeof search>;
     try {
-      text = await editor.getBufferText(b.id, 0, b.length);
+      matches = await search;
     } catch {
+      // An invalid regex matches nothing here; the provider scopes
+      // surface the error.
       continue;
     }
-    const lines = text.split("\n");
-    for (let i = 0; i < lines.length && out.length < limit; i++) {
-      const col = matchCol(lines[i]);
-      if (col > 0) {
-        out.push({ file: b.path, line: i + 1, column: col, content: lines[i], source: "buffers" });
-      }
+    // Named like the file scan's rows: relative to the cwd when under it.
+    const file = relativeUnder(editor.getCwd(), b.path) || b.path;
+    for (const m of matches) {
+      out.push({ file, line: m.line, column: m.column, content: m.context, source: "buffers" });
     }
   }
   return out;
@@ -1060,11 +1078,12 @@ function customIgnorePatterns(): string[] {
 // (`files` / `ignored`). Returns null when no provider is available so
 // the caller can decide whether that's fatal (no other scope on) or
 // merely a skipped source.
-async function searchFiles(query: string): Promise<GrepMatch[] | null> {
+async function searchFiles(query: string, cancellation?: SearchCancellation): Promise<GrepMatch[] | null> {
   const provider = await selectProvider();
   if (!provider) return null;
   try {
     const results = await provider.search(query, {
+      cancellation,
       cwd: editor.getCwd(),
       maxResults: MAX_RESULTS,
       includeIgnored: scopeEnabled.ignored,
@@ -1075,6 +1094,8 @@ async function searchFiles(query: string): Promise<GrepMatch[] | null> {
     });
     return results.map((m) => ({ ...m, source: "files" as const }));
   } catch (e) {
+    // A killed search fails with exit -1; it was superseded, not broken.
+    if (cancellation?.cancelled) return [];
     editor.error(`[live_grep:${provider.name}] ${e}`);
     throw new Error(`${provider.name}: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -1083,14 +1104,14 @@ async function searchFiles(query: string): Promise<GrepMatch[] | null> {
 // Fan the query out across every enabled scope and merge into one
 // capped, tagged result list. Order is files → buffers → diagnostics
 // so the most common hits lead.
-async function search(query: string): Promise<GrepMatch[]> {
+async function search(query: string, cancellation?: SearchCancellation): Promise<GrepMatch[]> {
   lastQuery = query;
   const wasTruncated = lastSearchTruncated;
   const results: GrepMatch[] = [];
   const remaining = () => MAX_RESULTS - results.length;
 
   if (scopeEnabled.files || scopeEnabled.ignored) {
-    const fileMatches = await searchFiles(query);
+    const fileMatches = await searchFiles(query, cancellation);
     if (fileMatches === null) {
       // No grep backend. Only fatal if there's nothing else to search.
       if (!scopeEnabled.buffers && !scopeEnabled.diagnostics) {
@@ -1099,8 +1120,17 @@ async function search(query: string): Promise<GrepMatch[]> {
         );
       }
     } else {
+      // A file open with unsaved edits is searched as its buffer below;
+      // the disk's rows for it point at lines that are no longer there.
+      const cwd = editor.getCwd();
+      const unsaved = new Set(
+        scopeEnabled.buffers
+          ? editor.listBuffers().filter((b) => b.modified && !b.is_virtual && b.path).map((b) => b.path)
+          : [],
+      );
       for (const m of fileMatches) {
         if (results.length >= MAX_RESULTS) break;
+        if (unsaved.has(editor.pathJoin(cwd, m.file))) continue;
         results.push(m);
       }
     }
@@ -1108,11 +1138,11 @@ async function search(query: string): Promise<GrepMatch[]> {
 
   if (scopeEnabled.buffers && remaining() > 0) {
     const filesActive = scopeEnabled.files || scopeEnabled.ignored;
-    results.push(...await searchOpenBuffers(query, remaining(), !filesActive));
+    results.push(...await searchOpenBuffers(query, remaining(), !filesActive, cancellation));
   }
 
   if (scopeEnabled.terminals && remaining() > 0) {
-    results.push(...await searchTerminals(query, remaining()));
+    results.push(...await searchTerminals(query, remaining(), cancellation));
   }
 
   if (scopeEnabled.diagnostics && remaining() > 0) {

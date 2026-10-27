@@ -35,6 +35,7 @@ export type { VirtualBufferOptions, SplitBufferOptions } from "./virtual-buffer-
 export { Finder, defaultFuzzyFilter, parseGrepLine, parseGrepOutput, getRelativePath, createLiveProvider } from "./finder.ts";
 export type {
   DisplayEntry,
+  SearchCancellation,
   SearchSource,
   FilterSource,
   PreviewConfig,

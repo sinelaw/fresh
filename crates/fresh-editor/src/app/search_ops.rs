@@ -2,7 +2,8 @@
 //!
 //! This file consolidates the search-and-replace method cluster that
 //! previously lived in `render.rs`. The pure pieces — regex construction,
-//! replacement expansion — continue to live in `super::regex_replace` and
+//! replacement expansion — live with the buffer's search
+//! (`crate::model::buffer::SearchQuery`, `expand_replacement`) and
 //! are called through; these methods handle the cross-cutting effects
 //! (cursor movement, overlay creation, status messages, interactive
 //! replace state machine).
@@ -14,6 +15,7 @@
 use anyhow::Result as AnyhowResult;
 use fresh_i18n::t;
 
+use crate::model::buffer::SearchQuery;
 use crate::model::event::Event;
 use crate::view::prompt::{Prompt, PromptType};
 
@@ -40,14 +42,6 @@ impl Editor {
             .update_search_highlights(query, search_fg, search_bg);
     }
 
-    /// Perform a search and update search state.
-    ///
-    /// For large files (lazy-loaded buffers), this starts an incremental
-    /// chunked search that runs a few pieces per render frame so the UI
-    /// stays responsive.  For normal-sized files the search runs inline.
-    ///
-    /// Matches are capped at `MAX_SEARCH_MATCHES` to bound memory usage,
-    /// and overlays are only created for the visible viewport.
     /// Move the primary cursor to `position`, clear its selection anchor,
     /// update the cached line number (used by the status bar), and scroll
     /// the active split so the cursor is visible.
@@ -99,7 +93,16 @@ impl Editor {
         self.mark_current_match(position, len);
     }
 
+    /// Perform a search and update search state.
+    ///
+    /// A small file is searched to the end in this call; a large one a time
+    /// slice per editor tick (`process_search_scan`) so the UI stays
+    /// responsive. Matches are capped at `SearchState::MAX_MATCHES` to bound
+    /// memory use.
     pub(super) fn perform_search(&mut self, query: &str) {
+        // A new search replaces any still running, which would otherwise
+        // finish later over its results.
+        self.active_window_mut().search_scan.take();
         if query.is_empty() {
             self.active_window_mut().search_state = None;
             self.set_status_message(t!("search.cancelled").to_string());
@@ -109,8 +112,8 @@ impl Editor {
         let search_range = self.active_window_mut().pending_search_range.take();
 
         // Build the regex early so we can bail on invalid patterns
-        let regex = match self.active_window().build_search_regex(query) {
-            Ok(r) => r,
+        let search_query = match self.active_window().search_query(query) {
+            Ok(q) => q,
             Err(e) => {
                 self.active_window_mut().search_state = None;
                 self.set_status_message(t!("error.invalid_regex", error = e).to_string());
@@ -118,59 +121,25 @@ impl Editor {
             }
         };
 
-        // For large files, start an incremental (non-blocking) search scan
+        // A small file is searched to the end here: everything that searches
+        // and then steps through the matches relies on that. A large one is
+        // searched a slice per tick so the editor stays responsive.
         let is_large = self.active_state().buffer.is_large_file();
-        if is_large && search_range.is_none() {
-            self.start_search_scan(query, regex);
-            return;
+        let scan = super::search_scan::ActiveSearchScan::new(
+            self.active_buffer(),
+            query.to_string(),
+            search_query,
+            search_range,
+            &self.active_state().buffer,
+        );
+        if is_large {
+            let progress = fresh_i18n::tn!("search.progress", 0, percent = 0);
+            self.set_status_message(progress.to_string());
         }
-
-        // --- Normal (small-file) path: search inline with match cap ---
-
-        let buffer_content = {
-            let state = self.active_state_mut();
-            let total_bytes = state.buffer.len();
-            match state.buffer.get_text_range_mut(0, total_bytes) {
-                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-                Err(e) => {
-                    tracing::warn!("Failed to load buffer for search: {}", e);
-                    self.set_status_message(t!("error.buffer_not_loaded").to_string());
-                    return;
-                }
-            }
-        };
-
-        let (search_start, search_end) = if let Some(ref range) = search_range {
-            (range.start, range.end)
-        } else {
-            (0, buffer_content.len())
-        };
-
-        let search_slice = &buffer_content[search_start..search_end];
-
-        // Collect matches with a cap to bound memory
-        let mut match_ranges: Vec<(usize, usize)> = Vec::new();
-        let mut capped = false;
-        for m in regex.find_iter(search_slice) {
-            if match_ranges.len() >= SearchState::MAX_MATCHES {
-                capped = true;
-                break;
-            }
-            match_ranges.push((search_start + m.start(), m.end() - m.start()));
-        }
-
-        if match_ranges.is_empty() {
-            self.active_window_mut().search_state = None;
-            let msg = if search_range.is_some() {
-                format!("No matches found for '{}' in selection", query)
-            } else {
-                format!("No matches found for '{}'", query)
-            };
-            self.set_status_message(msg);
-            return;
-        }
-
-        self.finalize_search(query, match_ranges, capped, search_range);
+        self.advance_search_scan(
+            scan,
+            is_large.then_some(super::search_scan::SEARCH_SCAN_SLICE),
+        );
     }
 
     /// Common finalization after all matches have been collected (inline or
@@ -184,6 +153,7 @@ impl Editor {
     pub(super) fn finalize_search(
         &mut self,
         query: &str,
+        search_query: SearchQuery,
         match_ranges: Vec<(usize, usize)>,
         capped: bool,
         search_range: Option<std::ops::Range<usize>>,
@@ -215,6 +185,7 @@ impl Editor {
             wrap_search: search_range.is_none(),
             search_range,
             capped,
+            search_query,
         });
 
         if is_large {
@@ -233,47 +204,30 @@ impl Editor {
                 .map(|(p, _)| p)
                 .zip(match_lengths.iter())
             {
-                let search_style = ratatui::style::Style::default().fg(search_fg).bg(search_bg);
-                let overlay = crate::view::overlay::Overlay::with_namespace_fixed_end(
+                let overlay = crate::view::overlay::Overlay::search_match(
                     &mut state.marker_list,
-                    pos..(pos + len),
-                    crate::view::overlay::OverlayFace::themed(
-                        "search.match_fg",
-                        "search.match_bg",
-                        search_style,
-                    ),
+                    pos..pos + len,
                     ns.clone(),
-                )
-                .with_priority_value(10);
+                    search_fg,
+                    search_bg,
+                );
                 state.overlays.add(overlay);
             }
         }
 
-        let cap_suffix = if capped { "+" } else { "" };
-        let msg = if self
-            .active_window_mut()
+        // "N+" when the search stopped at its match limit with more to find.
+        let more = if capped { "+" } else { "" };
+        let in_selection = self
+            .active_window()
             .search_state
             .as_ref()
-            .unwrap()
-            .search_range
-            .is_some()
-        {
-            format!(
-                "Found {}{} match{} for '{}' in selection",
-                num_matches,
-                cap_suffix,
-                if num_matches == 1 { "" } else { "es" },
-                query
-            )
+            .is_some_and(|ss| ss.search_range.is_some());
+        let key = if in_selection {
+            "search.found_in_selection"
         } else {
-            format!(
-                "Found {}{} match{} for '{}'",
-                num_matches,
-                cap_suffix,
-                if num_matches == 1 { "" } else { "es" },
-                query
-            )
+            "search.found"
         };
+        let msg = fresh_i18n::tn!(key, num_matches, more = more, search = query).to_string();
         self.set_status_message(msg);
     }
 
@@ -286,48 +240,14 @@ impl Editor {
         let search_fg = self.theme.read().unwrap().search_match_fg;
         let ns = self.active_window().search_namespace.clone();
 
-        // Determine the visible byte range from the active viewport
-        let active_split = self.effective_active_split();
-        let (top_byte, visible_height) = self
-            .active_window()
-            .split_view_states()
-            .get(&active_split)
-            .map(|vs| {
-                (
-                    vs.buffer_tab_state().viewport.top_byte(),
-                    vs.buffer_tab_state().viewport.height.saturating_sub(2),
-                )
-            })
-            .unwrap_or((0, 20));
-
         // Remember the viewport we computed overlays for so we can detect
         // scrolling in check_search_overlay_refresh().
+        let (top_byte, visible) = self.active_window_mut().visible_search_range();
         self.active_window_mut().search_overlay_top_byte = Some(top_byte);
+        let (visible_start, visible_end) = (visible.start, visible.end);
 
         let state = self.active_state_mut();
-
-        // Clear existing search overlays
         state.overlays.clear_namespace(&ns, &mut state.marker_list);
-
-        // Walk visible lines to find the visible byte range
-        let visible_start = top_byte;
-        let mut visible_end = top_byte;
-        {
-            let mut line_iter = state.buffer.line_iterator(top_byte, 80);
-            for _ in 0..visible_height {
-                if let Some((line_start, line_content)) = line_iter.next_line() {
-                    visible_end = line_start + line_content.len();
-                } else {
-                    break;
-                }
-            }
-        }
-        visible_end = visible_end.min(state.buffer.len());
-
-        // Collect viewport matches into a local vec to avoid holding an
-        // immutable borrow on self.active_window().search_state while we need &mut self for
-        // the buffer state.
-        let _ = state;
 
         let viewport_matches: Vec<(usize, usize)> = match &self.active_window().search_state {
             Some(ss) => {
@@ -344,19 +264,14 @@ impl Editor {
 
         let state = self.active_state_mut();
 
-        for (pos, len) in &viewport_matches {
-            let search_style = ratatui::style::Style::default().fg(search_fg).bg(search_bg);
-            let overlay = crate::view::overlay::Overlay::with_namespace_fixed_end(
+        for &(pos, len) in &viewport_matches {
+            let overlay = crate::view::overlay::Overlay::search_match(
                 &mut state.marker_list,
-                *pos..(*pos + *len),
-                crate::view::overlay::OverlayFace::themed(
-                    "search.match_fg",
-                    "search.match_bg",
-                    search_style,
-                ),
+                pos..pos + len,
                 ns.clone(),
-            )
-            .with_priority_value(10);
+                search_fg,
+                search_bg,
+            );
             state.overlays.add(overlay);
         }
     }
@@ -387,55 +302,6 @@ impl Editor {
             true
         } else {
             false
-        }
-    }
-
-    /// Start an incremental search scan for a large file.
-    /// Splits the piece tree into ≤1 MB chunks and sets up the scan state
-    /// that `process_search_scan()` (called from `editor_tick()`) will
-    /// consume a few chunks per frame.
-    fn start_search_scan(&mut self, query: &str, regex: regex::Regex) {
-        let buffer_id = self.active_buffer();
-        // Pre-snapshot per-window search settings before taking the &mut
-        // borrow on self.windows below.
-        let case_sensitive = self.active_window().search_case_sensitive;
-        if let Some(state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&buffer_id)
-        {
-            let leaves = state.buffer.piece_tree_leaves();
-            // Build a bytes::Regex from the same pattern for the chunked scanner
-            // `as_str()` carries only the pattern, not the builder flags, so
-            // re-apply line-anchoring here to keep `^`/`$` matching every
-            // line boundary in the chunked scan (matches the inline path).
-            let bytes_regex = regex::bytes::RegexBuilder::new(regex.as_str())
-                .case_insensitive(!case_sensitive)
-                .multi_line(true)
-                .crlf(true)
-                .build()
-                .expect("regex already validated");
-            let scan = state.buffer.search_scan_init(
-                bytes_regex,
-                super::SearchState::MAX_MATCHES,
-                query.len(),
-            );
-            let cs = self.active_window().search_case_sensitive;
-            let ww = self.active_window().search_whole_word;
-            let ur = self.active_window().search_use_regex;
-            self.active_window_mut().search_scan.start(
-                buffer_id,
-                leaves,
-                scan,
-                query.to_string(),
-                None,
-                cs,
-                ww,
-                ur,
-            );
-            self.set_status_message(t!("goto.scanning_progress", percent = 0).to_string());
         }
     }
 
@@ -667,17 +533,17 @@ impl Editor {
             search_state.current_match_index = Some(target_index);
             let match_pos = match_positions[target_index];
             let match_len = match_lengths.get(target_index).copied().unwrap_or(0);
-            let matches_len = match_positions.len();
+            // "N+" when the search stopped at its match limit with more to find.
+            let total = format!(
+                "{}{}",
+                match_positions.len(),
+                if search_state.capped { "+" } else { "" }
+            );
 
             self.select_match(match_pos, match_len);
 
             self.set_status_message(
-                t!(
-                    "search.match_of",
-                    current = target_index + 1,
-                    total = matches_len
-                )
-                .to_string(),
+                t!("search.match_of", current = target_index + 1, total = total).to_string(),
             );
 
             if is_large {
@@ -898,31 +764,57 @@ impl Editor {
         }
     }
 
-    /// Perform a replace-all operation
-    /// Build a compiled byte-regex for replace operations using current search settings.
-    /// Returns None when regex mode is off (plain text matching should be used).
-    fn build_replace_regex(&self, search: &str) -> Option<regex::bytes::Regex> {
-        super::regex_replace::build_regex(
-            search,
-            self.active_window().search_use_regex,
-            self.active_window().search_whole_word,
-            self.active_window().search_case_sensitive,
-        )
-    }
-
-    /// Get the length of a regex match at a given position in the buffer.
-    fn get_regex_match_len(&mut self, regex: &regex::bytes::Regex, pos: usize) -> Option<usize> {
-        let state = self.active_state_mut();
-        let remaining = state.buffer.len().saturating_sub(pos);
-        if remaining == 0 {
-            return None;
+    /// The query for a replace of `search` under the current search
+    /// settings, or `None` after reporting an invalid regex.
+    fn replace_query(&mut self, search: &str) -> Option<SearchQuery> {
+        match self.active_window().search_query(search) {
+            Ok(query) => Some(query),
+            Err(e) => {
+                self.set_status_message(t!("error.invalid_regex", error = e).to_string());
+                None
+            }
         }
-        let bytes = state.buffer.get_text_range_mut(pos, remaining).ok()?;
-        regex.find(&bytes).map(|m| m.len())
     }
 
-    /// Expand capture group references (e.g. $1, $2, ${name}) in the replacement string
-    /// for a regex match at the given buffer position. Returns the expanded replacement.
+    /// Up to `limit` matches of a replace's `query` within `range`, as
+    /// `(start, len)`. Reads forward only as far as it needs, loading the
+    /// parts of a lazily loaded file it reaches, so a replace reaches every
+    /// occurrence without reading the file up front. Reports a read failure
+    /// and returns `None`.
+    fn find_replace_matches(
+        &mut self,
+        query: &SearchQuery,
+        range: std::ops::Range<usize>,
+        limit: usize,
+    ) -> Option<Vec<(usize, usize)>> {
+        match self
+            .active_state_mut()
+            .buffer
+            .find_regex_matches(query, range, limit)
+        {
+            Ok(found) => Some(found),
+            Err(e) => {
+                tracing::warn!("Failed to read buffer for replace: {}", e);
+                self.set_status_message(t!("error.buffer_not_loaded").to_string());
+                None
+            }
+        }
+    }
+
+    /// The next match of a replace's `query` within `range`: see
+    /// `find_replace_matches`.
+    fn find_replace_match(
+        &mut self,
+        query: &SearchQuery,
+        range: std::ops::Range<usize>,
+    ) -> Option<(usize, usize)> {
+        self.find_replace_matches(query, range, 1)?
+            .into_iter()
+            .next()
+    }
+
+    /// The replacement for the match of `regex` at `pos`, with its capture
+    /// groups (`$1`, `${name}`) and escapes expanded.
     fn expand_regex_replacement(
         &mut self,
         regex: &regex::bytes::Regex,
@@ -930,11 +822,10 @@ impl Editor {
         match_len: usize,
         replacement: &str,
     ) -> String {
-        let state = self.active_state_mut();
-        if let Ok(bytes) = state.buffer.get_text_range_mut(pos, match_len) {
-            return super::regex_replace::expand_replacement(regex, &bytes, replacement);
-        }
-        replacement.to_string()
+        self.active_state_mut()
+            .buffer
+            .expand_replacement(regex, pos, match_len, replacement)
+            .unwrap_or_else(|_| replacement.to_string())
     }
 
     /// Replaces all occurrences of the search query with the replacement text
@@ -942,48 +833,38 @@ impl Editor {
     /// OPTIMIZATION: Uses BulkEdit for O(n) tree operations instead of O(n²)
     /// This directly edits the piece tree without loading the entire buffer into memory
     pub(super) fn perform_replace(&mut self, search: &str, replacement: &str) {
+        // The search that found the matches to replace may still be running on
+        // a large file; the replace's edits would restart it, and when it
+        // finished it would move the cursor in the middle of the replace.
+        self.active_window_mut().search_scan.take();
         if search.is_empty() {
             self.set_status_message(t!("replace.empty_query").to_string());
             return;
         }
 
-        let compiled_regex = self.build_replace_regex(search);
-
-        // Find all matches first (before making any modifications)
-        // Each match is (position, length, expanded_replacement)
-        let matches: Vec<(usize, usize, String)> = if let Some(ref regex) = compiled_regex {
-            // Regex mode: load buffer content as bytes and find all matches
-            // with capture group expansion in the replacement template
-            let buffer_bytes = {
-                let state = self.active_state_mut();
-                let total_bytes = state.buffer.len();
-                match state.buffer.get_text_range_mut(0, total_bytes) {
-                    Ok(bytes) => bytes,
-                    Err(e) => {
-                        tracing::warn!("Failed to load buffer for replace: {}", e);
-                        self.set_status_message(t!("error.buffer_not_loaded").to_string());
-                        return;
-                    }
-                }
-            };
-            super::regex_replace::collect_regex_matches(regex, &buffer_bytes, replacement)
-                .into_iter()
-                .map(|m| (m.offset, m.len, m.replacement))
-                .collect()
-        } else {
-            // Plain text mode - replacement is used literally.
-            // One streaming pass over the buffer: asking for the next match
-            // from scratch per occurrence re-reads a chunk each time, which
-            // dominated the whole replace on files with many matches.
-            let state = self.active_state();
-            let buffer_len = state.buffer.len();
-            state
-                .buffer
-                .find_all_in_range(search, 0..buffer_len, usize::MAX)
-                .into_iter()
-                .map(|offset| (offset, search.len(), replacement.to_string()))
-                .collect()
+        let Some(query) = self.replace_query(search) else {
+            return;
         };
+        let use_regex = self.active_window().search_use_regex;
+
+        // Find all matches first (before making any modifications), loading
+        // a lazily loaded file only as the search reaches each part.
+        let buffer_len = self.active_state().buffer.len();
+        let Some(found) = self.find_replace_matches(&query, 0..buffer_len, usize::MAX) else {
+            return;
+        };
+        // Each match is (position, length, expanded_replacement)
+        let matches: Vec<(usize, usize, String)> = found
+            .into_iter()
+            .map(|(pos, len)| {
+                let text = if use_regex {
+                    self.expand_regex_replacement(&query.regex, pos, len, replacement)
+                } else {
+                    replacement.to_string()
+                };
+                (pos, len, text)
+            })
+            .collect();
 
         let count = matches.len();
 
@@ -1017,14 +898,15 @@ impl Editor {
             });
         }
 
+        // The search's positions are for the text before the replace. Drop
+        // them first, so the edit doesn't re-highlight them.
+        self.active_window_mut().search_state = None;
+
         // Apply all replacements using BulkEdit for O(n) performance
         let description = format!("Replace all '{}' with '{}'", search, replacement);
         if let Some(applied) = self.apply_events_as_bulk_edit(events, description) {
             self.active_event_log_mut().append(applied);
         }
-
-        // Clear search state since positions are now invalid
-        self.active_window_mut().search_state = None;
 
         // Clear any search highlight overlays
         self.active_window_mut().clear_search_overlays();
@@ -1043,45 +925,30 @@ impl Editor {
 
     /// Start interactive replace mode (query-replace)
     pub(super) fn start_interactive_replace(&mut self, search: &str, replacement: &str) {
+        // The search that found the matches to replace may still be running on
+        // a large file; the replace's edits would restart it, and when it
+        // finished it would move the cursor in the middle of the replace.
+        self.active_window_mut().search_scan.take();
         if search.is_empty() {
             self.set_status_message(t!("replace.query_empty").to_string());
             return;
         }
 
-        let compiled_regex = self.build_replace_regex(search);
+        let Some(query) = self.replace_query(search) else {
+            return;
+        };
+        let use_regex = self.active_window().search_use_regex;
 
         // Find the first match lazily (don't find all matches upfront)
         let start_pos = self.active_cursors().primary().position;
-        let (first_match_pos, first_match_len) = if let Some(ref regex) = compiled_regex {
-            let state = self.active_state();
-            let buffer_len = state.buffer.len();
-            // Try from cursor to end, then wrap from beginning
-            let found = state
-                .buffer
-                .find_next_regex_in_range(regex, start_pos, Some(start_pos..buffer_len))
-                .or_else(|| {
-                    if start_pos > 0 {
-                        state
-                            .buffer
-                            .find_next_regex_in_range(regex, 0, Some(0..start_pos))
-                    } else {
-                        None
-                    }
-                });
-            let Some(pos) = found else {
-                self.set_status_message(t!("search.no_occurrences", search = search).to_string());
-                return;
-            };
-            // Determine the match length by re-matching at the found position
-            let match_len = self.get_regex_match_len(regex, pos).unwrap_or(search.len());
-            (pos, match_len)
-        } else {
-            let state = self.active_state();
-            let Some(pos) = state.buffer.find_next(search, start_pos) else {
-                self.set_status_message(t!("search.no_occurrences", search = search).to_string());
-                return;
-            };
-            (pos, search.len())
+        let buffer_len = self.active_state().buffer.len();
+        // Try from cursor to end, then wrap from beginning
+        let found = self
+            .find_replace_match(&query, start_pos..buffer_len)
+            .or_else(|| self.find_replace_match(&query, 0..start_pos));
+        let Some((first_match_pos, first_match_len)) = found else {
+            self.set_status_message(t!("search.no_occurrences", search = search).to_string());
+            return;
         };
 
         // Initialize interactive replace state with just the current match
@@ -1093,7 +960,8 @@ impl Editor {
             start_pos: first_match_pos,
             has_wrapped: false,
             replacements_made: 0,
-            regex: compiled_regex,
+            query,
+            expand_replacement: use_regex,
         });
 
         // Move cursor to first match and mark it as the one being asked about
@@ -1117,11 +985,20 @@ impl Editor {
         match c {
             'y' | 'Y' => {
                 // Replace current match
-                self.replace_current_match(&ir_state)?;
+                let inserted_len = self.replace_current_match(&ir_state)?;
                 ir_state.replacements_made += 1;
+                // Past the start (after wrapping), the replacement moves the
+                // point where the replace stops.
+                if ir_state.has_wrapped {
+                    ir_state.start_pos =
+                        ir_state.start_pos + inserted_len - ir_state.current_match_len;
+                }
 
-                // Find next match lazily (after the replacement)
-                let search_pos = ir_state.current_match_pos + ir_state.replacement.len();
+                // Find next match lazily (after the text put in, and past an
+                // empty match so it is not found again)
+                let search_pos = ir_state.current_match_pos
+                    + inserted_len
+                    + usize::from(ir_state.current_match_len == 0);
                 if let Some((next_match, match_len, wrapped)) =
                     self.find_next_match_for_replace(&ir_state, search_pos)
                 {
@@ -1137,8 +1014,8 @@ impl Editor {
                 }
             }
             'n' | 'N' => {
-                // Skip current match and find next
-                let search_pos = ir_state.current_match_pos + ir_state.current_match_len;
+                // Skip current match and find next (past it, even if empty)
+                let search_pos = ir_state.current_match_pos + ir_state.current_match_len.max(1);
                 if let Some((next_match, match_len, wrapped)) =
                     self.find_next_match_for_replace(&ir_state, search_pos)
                 {
@@ -1160,29 +1037,25 @@ impl Editor {
                 // OPTIMIZATION: Uses BulkEdit for O(n) tree operations instead of O(n²)
                 // This directly edits the piece tree without loading the entire buffer
 
-                // Collect ALL match positions and lengths including the current match
-                // Start from the current match position
-                let all_matches: Vec<(usize, usize)> = {
-                    let mut matches = Vec::new();
-                    let mut temp_state = ir_state.clone();
-                    temp_state.has_wrapped = false; // Reset wrap state to find current match
-
-                    // First, include the current match
-                    matches.push((ir_state.current_match_pos, ir_state.current_match_len));
-                    let mut current_pos = ir_state.current_match_pos + ir_state.current_match_len;
-
-                    // Find all remaining matches
-                    while let Some((next_match, match_len, wrapped)) =
-                        self.find_next_match_for_replace(&temp_state, current_pos)
-                    {
-                        matches.push((next_match, match_len));
-                        current_pos = next_match + match_len;
-                        if wrapped {
-                            temp_state.has_wrapped = true;
-                        }
-                    }
-                    matches
+                // Collect ALL remaining matches in one pass, from the current
+                // match to where the replace started, wrapping at the end
+                let query = ir_state.query.clone();
+                let buffer_len = self.active_state().buffer.len();
+                let (to_end, wrapped_part) = if ir_state.has_wrapped {
+                    (ir_state.current_match_pos..ir_state.start_pos, None)
+                } else {
+                    (
+                        ir_state.current_match_pos..buffer_len,
+                        Some(0..ir_state.start_pos),
+                    )
                 };
+                let mut all_matches: Vec<(usize, usize)> = Vec::new();
+                for range in std::iter::once(to_end).chain(wrapped_part) {
+                    let Some(found) = self.find_replace_matches(&query, range, usize::MAX) else {
+                        return Ok(());
+                    };
+                    all_matches.extend(found);
+                }
 
                 let total_count = all_matches.len();
 
@@ -1197,9 +1070,9 @@ impl Editor {
                             .active_state_mut()
                             .get_text_range(match_pos, match_pos + match_len);
                         // Expand capture group references if in regex mode
-                        let replacement_text = if let Some(ref regex) = ir_state.regex {
+                        let replacement_text = if ir_state.expand_replacement {
                             self.expand_regex_replacement(
-                                regex,
+                                &ir_state.query.regex,
                                 match_pos,
                                 match_len,
                                 &ir_state.replacement,
@@ -1252,98 +1125,40 @@ impl Editor {
         ir_state: &InteractiveReplaceState,
         start_pos: usize,
     ) -> Option<(usize, usize, bool)> {
-        if let Some(ref regex) = ir_state.regex {
-            // Regex mode
-            let regex = regex.clone();
-            let state = self.active_state();
-            let buffer_len = state.buffer.len();
-
-            if ir_state.has_wrapped {
-                let search_range = Some(start_pos..ir_state.start_pos);
-                if let Some(match_pos) =
-                    state
-                        .buffer
-                        .find_next_regex_in_range(&regex, start_pos, search_range)
-                {
-                    let match_len = self.get_regex_match_len(&regex, match_pos).unwrap_or(0);
-                    return Some((match_pos, match_len, true));
-                }
-                None
-            } else {
-                let search_range = Some(start_pos..buffer_len);
-                if let Some(match_pos) =
-                    state
-                        .buffer
-                        .find_next_regex_in_range(&regex, start_pos, search_range)
-                {
-                    let match_len = self.get_regex_match_len(&regex, match_pos).unwrap_or(0);
-                    return Some((match_pos, match_len, false));
-                }
-
-                // Wrap to beginning
-                let wrap_range = Some(0..ir_state.start_pos);
-                let state = self.active_state();
-                if let Some(match_pos) =
-                    state.buffer.find_next_regex_in_range(&regex, 0, wrap_range)
-                {
-                    let match_len = self.get_regex_match_len(&regex, match_pos).unwrap_or(0);
-                    return Some((match_pos, match_len, true));
-                }
-
-                None
-            }
-        } else {
-            // Plain text mode
-            let search_len = ir_state.search.len();
-            let state = self.active_state();
-
-            if ir_state.has_wrapped {
-                let search_range = Some(start_pos..ir_state.start_pos);
-                if let Some(match_pos) =
-                    state
-                        .buffer
-                        .find_next_in_range(&ir_state.search, start_pos, search_range)
-                {
-                    return Some((match_pos, search_len, true));
-                }
-                None
-            } else {
-                let buffer_len = state.buffer.len();
-                let search_range = Some(start_pos..buffer_len);
-                if let Some(match_pos) =
-                    state
-                        .buffer
-                        .find_next_in_range(&ir_state.search, start_pos, search_range)
-                {
-                    return Some((match_pos, search_len, false));
-                }
-
-                let wrap_range = Some(0..ir_state.start_pos);
-                if let Some(match_pos) =
-                    state
-                        .buffer
-                        .find_next_in_range(&ir_state.search, 0, wrap_range)
-                {
-                    return Some((match_pos, search_len, true));
-                }
-
-                None
-            }
+        let query = ir_state.query.clone();
+        if ir_state.has_wrapped {
+            return self
+                .find_replace_match(&query, start_pos..ir_state.start_pos)
+                .map(|(pos, len)| (pos, len, true));
         }
+        let buffer_len = self.active_state().buffer.len();
+        self.find_replace_match(&query, start_pos..buffer_len)
+            .map(|(pos, len)| (pos, len, false))
+            // Wrap to beginning
+            .or_else(|| {
+                self.find_replace_match(&query, 0..ir_state.start_pos)
+                    .map(|(pos, len)| (pos, len, true))
+            })
     }
 
     /// Replace the current match in interactive replace mode
+    /// Returns the length of the text put in its place.
     pub(super) fn replace_current_match(
         &mut self,
         ir_state: &InteractiveReplaceState,
-    ) -> AnyhowResult<()> {
+    ) -> AnyhowResult<usize> {
         let match_pos = ir_state.current_match_pos;
         let match_len = ir_state.current_match_len;
         let range = match_pos..(match_pos + match_len);
 
         // Expand capture group references if in regex mode
-        let replacement_text = if let Some(ref regex) = ir_state.regex {
-            self.expand_regex_replacement(regex, match_pos, match_len, &ir_state.replacement)
+        let replacement_text = if ir_state.expand_replacement {
+            self.expand_regex_replacement(
+                &ir_state.query.regex,
+                match_pos,
+                match_len,
+                &ir_state.replacement,
+            )
         } else {
             ir_state.replacement.clone()
         };
@@ -1383,6 +1198,10 @@ impl Editor {
                 cursor_id,
             },
         ];
+        let inserted_len = match &events[2] {
+            Event::Insert { text, .. } => text.len(),
+            _ => unreachable!(),
+        };
 
         // Wrap in batch for atomic undo
         let batch = Event::Batch {
@@ -1397,7 +1216,7 @@ impl Editor {
         self.active_event_log_mut().append(batch.clone());
         self.apply_event_to_active_buffer(&batch);
 
-        Ok(())
+        Ok(inserted_len)
     }
 
     /// Move cursor to the current match in interactive replace

@@ -4895,7 +4895,8 @@ mod tests {
     }
 
     /// A tree of `groups` folders, each holding `per` leaves, keyed `tr`.
-    #[cfg(feature = "plugins")]
+    /// Its only user reads debug-only counters, so it is gated the same way.
+    #[cfg(all(feature = "plugins", debug_assertions))]
     fn big_tree(groups: usize, per: usize, cards: bool) -> WidgetSpec {
         let node = |t: String, depth: u32, has_children: bool| fresh_core::api::TreeNode {
             text: fresh_core::text_property::TextPropertyEntry::text(t),

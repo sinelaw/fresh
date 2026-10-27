@@ -927,10 +927,14 @@ impl crate::app::window::Window {
                 n - 1
             )),
         };
-        let restored_count = self.buffers.count_where(|id, _| {
-            self.buffer_metadata
-                .get(&id)
-                .is_some_and(|m| !m.hidden_from_tabs && !m.is_virtual())
+        // An empty unnamed buffer is the placeholder a window gets when
+        // nothing else came back, not something restored.
+        let restored_count = self.buffers.count_where(|id, state| {
+            self.buffer_metadata.get(&id).is_some_and(|m| {
+                let placeholder = m.file_path().is_some_and(|p| p.as_os_str().is_empty())
+                    && state.buffer.total_bytes() == 0;
+                !m.hidden_from_tabs && !m.is_virtual() && !placeholder
+            })
         });
         if let Some(notice) = notice {
             self.set_status_message(notice);
@@ -1997,6 +2001,7 @@ impl crate::app::window::Window {
             }
             return path_to_buffer;
         }
+        self.unopened_files.clear();
         let file_paths = collect_file_paths_from_states(split_states);
         tracing::debug!(
             "Workspace has {} files to restore: {:?}",
@@ -2017,7 +2022,13 @@ impl crate::app::window::Window {
                         tracing::debug!("Opened file {:?} as buffer {:?}", rel_path, buffer_id);
                         path_to_buffer.insert(rel_path, buffer_id);
                     }
-                    Err(e) => tracing::warn!("Failed to open file {:?}: {}", abs_path, e),
+                    Err(e) => {
+                        tracing::warn!("Failed to open file {:?}: {}", abs_path, e);
+                        let state = split_states
+                            .values()
+                            .find_map(|s| s.file_states.get(&rel_path).cloned());
+                        self.hold_unopened_file(rel_path, true, state, &e);
+                    }
                 }
             } else {
                 tracing::debug!("Skipping non-existent file: {:?}", abs_path);
@@ -2070,9 +2081,43 @@ impl crate::app::window::Window {
                         buffer_id
                     );
                 }
-                Err(e) => tracing::warn!("Failed to restore external file {:?}: {}", abs_path, e),
+                Err(e) => {
+                    tracing::warn!("Failed to restore external file {:?}: {}", abs_path, e);
+                    self.hold_unopened_file(abs_path.clone(), false, None, &e);
+                }
             }
         }
+    }
+
+    /// Keep a file that exists but could not be opened in this window's
+    /// workspace (#3532), and tell the user. Its contents are safe on disk;
+    /// only its place in the layout was at stake. `in_tabs` says whether it
+    /// was a split's tab (else it is an `external_files` entry); a file that is
+    /// both is held, and reported, once.
+    fn hold_unopened_file(
+        &mut self,
+        path: PathBuf,
+        in_tabs: bool,
+        state: Option<SerializedFileState>,
+        error: &dyn std::fmt::Display,
+    ) {
+        if let Some(held) = self.unopened_files.iter_mut().find(|f| f.path == path) {
+            held.in_tabs |= in_tabs;
+            held.external |= !in_tabs;
+            return;
+        }
+        self.recovery_notices.push(format!(
+            "Could not open {}: {}. It stays in this workspace and will be \
+             reopened once it can be read.",
+            path.display(),
+            error
+        ));
+        self.unopened_files.push(crate::app::window::UnopenedFile {
+            path,
+            in_tabs,
+            external: !in_tabs,
+            state,
+        });
     }
 
     /// Re-apply read-only flags for files that were locked in the saved workspace.
@@ -2793,6 +2838,8 @@ impl crate::app::window::Window {
             );
             split_states.insert(leaf_id.0 .0, serialized);
         }
+        let active_split = SplitId::from(mgr.active_split()).0;
+        hold_unopened_files_in_states(&self.unopened_files, &mut split_states, active_split);
 
         let file_explorer = if let Some(explorer) = self.file_explorer.as_ref() {
             let expanded_dirs = get_expanded_dirs(explorer, &self.root);
@@ -2893,7 +2940,7 @@ impl crate::app::window::Window {
 
         let bookmarks = serialize_bookmarks(&self.bookmarks, &self.buffer_metadata, &self.root);
 
-        let external_files: Vec<PathBuf> = self
+        let mut external_files: Vec<PathBuf> = self
             .buffer_metadata
             .values()
             .filter(|meta| !meta.hidden_from_tabs && !meta.is_virtual())
@@ -2903,6 +2950,12 @@ impl crate::app::window::Window {
             .filter(|abs_path| abs_path.strip_prefix(&self.root).is_err())
             .cloned()
             .collect();
+        // Files the restore could not open keep their place (#3532).
+        for held in self.unopened_files.iter().filter(|f| f.external) {
+            if !external_files.contains(&held.path) {
+                external_files.push(held.path.clone());
+            }
+        }
 
         let read_only_files: Vec<PathBuf> = self
             .buffer_metadata
@@ -3384,6 +3437,38 @@ fn serialize_bookmarks(
                 })
         })
         .collect()
+}
+
+/// Write the files a restore could not open back into the captured split
+/// states (#3532), each as a tab at the end of the active split — its exact
+/// split may be gone — with its saved cursor state. A file the window has
+/// since opened is already in some split and is left where it is.
+fn hold_unopened_files_in_states(
+    unopened: &[crate::app::window::UnopenedFile],
+    split_states: &mut HashMap<usize, SerializedSplitViewState>,
+    active_split: usize,
+) {
+    for file in unopened.iter().filter(|f| f.in_tabs) {
+        let already_listed = split_states.values().any(|s| {
+            s.open_tabs
+                .iter()
+                .any(|t| matches!(t, SerializedTabRef::File(p) if *p == file.path))
+        });
+        if already_listed {
+            continue;
+        }
+        let Some(state) = split_states.get_mut(&active_split) else {
+            continue;
+        };
+        state
+            .open_tabs
+            .push(SerializedTabRef::File(file.path.clone()));
+        if let Some(file_state) = &file.state {
+            state
+                .file_states
+                .insert(file.path.clone(), file_state.clone());
+        }
+    }
 }
 
 /// Collect all unique file paths from split_states

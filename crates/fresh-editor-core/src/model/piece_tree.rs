@@ -910,6 +910,12 @@ impl PieceTree {
         }
     }
 
+    /// The tree under `root` — a snapshot taken with [`root`](Self::root).
+    pub fn from_root(root: Arc<PieceTreeNode>) -> Self {
+        let total_bytes = root.total_bytes();
+        PieceTree { root, total_bytes }
+    }
+
     /// Build a `PieceTree` from an explicit list of leaves.
     pub fn from_leaves(leaves: &[LeafData]) -> Self {
         let total_bytes: usize = leaves.iter().map(|l| l.bytes).sum();
@@ -1945,6 +1951,30 @@ impl PieceTree {
             None
         };
         Some((start, end))
+    }
+
+    /// The bytes at `offset..offset + bytes` of the document this tree and
+    /// `buffers` make, or None if any of them aren't loaded (or a piece
+    /// points outside its buffer).
+    pub fn read_range(
+        &self,
+        buffers: &[StringBuffer],
+        offset: usize,
+        bytes: usize,
+    ) -> Option<Vec<u8>> {
+        let mut result = Vec::with_capacity(bytes);
+        let end_offset = offset + bytes;
+        for piece in self.iter_pieces_in_range(offset, end_offset) {
+            let read_start = offset.max(piece.doc_offset);
+            let read_end = end_offset.min(piece.doc_offset + piece.bytes);
+            if read_end <= read_start {
+                continue;
+            }
+            let start = piece.buffer_offset + (read_start - piece.doc_offset);
+            let data = buffers.get(piece.location.buffer_id())?.get_data()?;
+            result.extend_from_slice(data.get(start..start + (read_end - read_start))?);
+        }
+        Some(result)
     }
 
     /// Iterate through pieces overlapping a byte range

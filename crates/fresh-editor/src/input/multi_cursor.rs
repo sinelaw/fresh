@@ -63,6 +63,20 @@ fn adjust_position_for_newline(state: &mut EditorState, position: usize) -> usiz
     position
 }
 
+/// Where the next match of `query` starts at or after `from`, wrapping to
+/// the start of the buffer.
+fn next_match(
+    buffer: &mut crate::model::buffer::TextBuffer,
+    query: &crate::model::buffer::SearchQuery,
+    from: usize,
+) -> Option<usize> {
+    let len = buffer.len();
+    [from.min(len)..len, 0..len].into_iter().find_map(|range| {
+        let found = buffer.find_regex_matches(query, range, 1).ok()?;
+        found.first().map(|&(pos, _)| pos)
+    })
+}
+
 /// Add a cursor at the next occurrence of the selected text
 /// If no selection, selects the entire word at cursor position first
 pub fn add_cursor_at_next_match(state: &mut EditorState, cursors: &Cursors) -> AddCursorResult {
@@ -126,76 +140,44 @@ pub fn add_cursor_at_next_match(state: &mut EditorState, cursors: &Cursors) -> A
     // Extract the selected text
     let pattern = state.get_text_range(selection_range.start, selection_range.end);
     let pattern_len = pattern.len();
-
-    // Start searching from the end of the current selection
-    let mut search_start = selection_range.end;
-    let _ign = search_start; // To prevent infinite loops (unused now)
-
-    // Loop until we find a match that isn't already occupied by a cursor
-    loop {
-        let match_pos = match state.buffer.find_next(&pattern, search_start) {
-            Some(pos) => pos,
-            None => {
-                // If finding next failed even with wrap-around (implied by buffer.find_next usually),
-                // then truly no matches exist.
-                return AddCursorResult::Failed {
-                    message: "No more matches".to_string(),
-                };
-            }
+    let Ok(query) = crate::model::buffer::SearchQuery::new(&pattern, false, false, true) else {
+        return AddCursorResult::Failed {
+            message: "No more matches".to_string(),
         };
+    };
 
-        // Calculate the range of the found match
-        let match_range = match_pos..(match_pos + pattern_len);
-
-        // Check if any existing cursor overlaps with this match
-        let is_occupied = cursors.iter().any(|(_, c)| {
-            if let Some(r) = c.selection_range() {
-                r == match_range
-            } else {
-                false
-            }
-        });
-
-        if !is_occupied {
-            // Found a free match!
-            let match_start = match_pos;
-            let match_end = match_pos + pattern_len;
-            let new_cursor = if cursor_at_start {
-                let mut cursor = Cursor::new(match_start);
-                cursor.set_anchor(match_end);
-                cursor
-            } else {
-                Cursor::with_selection(match_start, match_end)
+    // Step through the matches after the selection, wrapping at the end,
+    // until one no cursor holds. Every match position seen is remembered, so
+    // when they are all held the search stops once it comes round again.
+    let mut search_start = selection_range.end;
+    let mut seen = std::collections::HashSet::new();
+    loop {
+        let Some(match_pos) = next_match(&mut state.buffer, &query, search_start) else {
+            return AddCursorResult::Failed {
+                message: "No more matches".to_string(),
             };
-            return success_result(new_cursor, cursors);
-        }
-
-        // If we wrapped around and came back to where we started searching (or past it), stop to avoid infinite loop
-        // We need to handle the case where find_next wraps around.
-        // Assuming buffer.find_next does wrap around:
-        // If match_pos <= search_start and we haven't wrapped explicitly, it means we wrapped.
-
-        // Let's refine the search start. We want to search *after* this occupied match.
-        // If match_pos is behind us, we wrapped.
-
-        let next_start = match_pos + pattern_len;
-
-        // Simple cycle detection: if we are stuck on the same spot or have cycled through the whole buffer
-        // Ideally we check if we've visited this match_pos before, but checking if we passed initial_start again is a decent proxy
-        // provided we handle the wrap-around logic correctly.
-
-        // If find_next scans the whole buffer, it might return the same spot if it's the only match.
-        // If it's occupied, we are done.
-
-        // To be safe against infinite loops if all matches are occupied:
-        if match_pos == selection_range.start {
-            // We wrapped all the way back to the primary cursor without finding a free spot
+        };
+        if !seen.insert(match_pos) {
             return AddCursorResult::Failed {
                 message: "All matches are already selected".to_string(),
             };
         }
 
-        search_start = next_start;
+        let match_range = match_pos..(match_pos + pattern_len);
+        let is_occupied = cursors
+            .iter()
+            .any(|(_, c)| c.selection_range() == Some(match_range.clone()));
+        if !is_occupied {
+            let new_cursor = if cursor_at_start {
+                let mut cursor = Cursor::new(match_range.start);
+                cursor.set_anchor(match_range.end);
+                cursor
+            } else {
+                Cursor::with_selection(match_range.start, match_range.end)
+            };
+            return success_result(new_cursor, cursors);
+        }
+        search_start = match_range.end;
     }
 }
 

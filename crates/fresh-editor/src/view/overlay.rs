@@ -343,6 +343,24 @@ impl Overlay {
         }
     }
 
+    /// A search-match highlight over `range`: the theme's
+    /// `search.match_*` colours (`fg` on `bg` where the theme has none),
+    /// anchored as [`with_namespace_fixed_end`] so it stays on the matched
+    /// text, and drawn over syntax highlighting.
+    ///
+    /// [`with_namespace_fixed_end`]: Overlay::with_namespace_fixed_end
+    pub fn search_match(
+        marker_list: &mut MarkerList,
+        range: Range<usize>,
+        namespace: OverlayNamespace,
+        fg: ratatui::style::Color,
+        bg: ratatui::style::Color,
+    ) -> Self {
+        let style = ratatui::style::Style::default().fg(fg).bg(bg);
+        let face = OverlayFace::themed("search.match_fg", "search.match_bg", style);
+        Self::with_namespace_fixed_end(marker_list, range, face, namespace).with_priority_value(10)
+    }
+
     /// Create an overlay with a specific priority
     pub fn with_priority(
         marker_list: &mut MarkerList,

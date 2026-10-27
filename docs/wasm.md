@@ -55,7 +55,6 @@ All model files are pure Rust. Already compilable to WASM.
 | marker_tree.rs | ✅ Ready | Interval tree |
 | event.rs | ✅ Ready | Streaming gated behind runtime |
 | edit.rs | ✅ Ready | Edit operations |
-| document_model.rs | ✅ Ready | Document abstraction |
 | control_event.rs | ✅ Ready | Control events |
 | line_diff.rs | ✅ Ready | Line diffing |
 | composite_buffer.rs | ✅ Ready | Composite buffer |

@@ -3278,3 +3278,259 @@ fn test_clear_search_action() {
         .wait_until(|h| h.count_search_highlights() == 0)
         .expect("Search should be cleared");
 }
+
+/// Run Ctrl+R replace of `search` with `replacement` on a buffer holding
+/// `text`, after pressing each of `toggles` (Alt+letter search options) in the
+/// prompt. Returns the harness for further keys.
+fn replace_in_buffer(
+    text: &str,
+    toggles: &[char],
+    search: &str,
+    replacement: &str,
+) -> (TempDir, EditorTestHarness) {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    std::fs::write(&file_path, text).unwrap();
+
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('r'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Replace: ");
+    for &t in toggles {
+        harness
+            .send_key(KeyCode::Char(t), KeyModifiers::ALT)
+            .unwrap();
+    }
+    harness.type_text(search).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text(replacement).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    (temp_dir, harness)
+}
+
+/// Issue #3575: with case sensitivity off (the default), plain-text replace
+/// replaces every occurrence the search highlights, in either case — not only
+/// the byte-exact ones.
+#[test]
+fn test_plain_replace_honors_case_insensitive_search() {
+    let (_tmp, harness) = replace_in_buffer("BBB bbb Bbb\nBBB bbb\n", &[], "BBB", "x");
+    assert_eq!(harness.get_buffer_content().unwrap(), "x x x\nx x\n");
+}
+
+/// Issue #3575: with case sensitivity on (Alt+C), only the exact case is
+/// replaced — the byte-exact path still applies.
+#[test]
+fn test_plain_replace_case_sensitive_replaces_exact_case_only() {
+    let (_tmp, harness) = replace_in_buffer("BBB bbb Bbb\n", &['c'], "BBB", "x");
+    assert_eq!(harness.get_buffer_content().unwrap(), "x bbb Bbb\n");
+}
+
+/// Plain-text replace that goes through a case-folding regex still treats the
+/// search and the replacement literally: regex metacharacters match as text,
+/// and `$1` / `\n` are inserted as typed.
+#[test]
+fn test_plain_replace_case_insensitive_stays_literal() {
+    let (_tmp, harness) = replace_in_buffer("a.B a.b axb\n", &[], "A.B", "$1\\n");
+    assert_eq!(harness.get_buffer_content().unwrap(), "$1\\n $1\\n axb\n");
+}
+
+/// Issue #3575: whole-word (Alt+W) applies to plain-text replace too.
+#[test]
+fn test_plain_replace_honors_whole_word() {
+    let (_tmp, harness) = replace_in_buffer("cat concat cat\n", &['w'], "cat", "dog");
+    assert_eq!(harness.get_buffer_content().unwrap(), "dog concat dog\n");
+}
+
+/// Issue #3575: confirm-each replace (Alt+I) walks every case-insensitive
+/// match, not only the byte-exact ones.
+#[test]
+fn test_interactive_plain_replace_honors_case_insensitive_search() {
+    let (_tmp, mut harness) = replace_in_buffer("BBB bbb\nBBB bbb\n", &['i'], "bbb", "x");
+    for _ in 0..4 {
+        harness.assert_screen_contains("Replace? ");
+        harness
+            .send_key(KeyCode::Char('y'), KeyModifiers::NONE)
+            .unwrap();
+        harness.render().unwrap();
+    }
+    assert_eq!(harness.get_buffer_content().unwrap(), "x x\nx x\n");
+}
+
+/// Issue #3575 on a lazily loaded large file: plain-text replace with case
+/// folding (the default) goes through the windowed search, so it reaches every
+/// occurrence in parts of the file not yet loaded, in either case.
+#[test]
+fn test_plain_replace_case_insensitive_in_a_large_file() {
+    const LINES: usize = 20_000;
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("big.txt");
+    let content: String = (0..LINES)
+        .map(|i| {
+            let word = if i % 2 == 0 { "Source" } else { "sOURCE" };
+            format!("line {i:05}: some {word} code here\n")
+        })
+        .collect();
+    std::fs::write(&file_path, &content).unwrap();
+
+    let config = Config {
+        editor: fresh::config::EditorConfig {
+            large_file_threshold_bytes: 1000,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut harness = EditorTestHarness::with_config(100, 24, config).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('r'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_screen_contains("Replace: ").unwrap();
+    harness.type_text("source").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_for_screen_contains("Replace 'source' with: ")
+        .unwrap();
+    harness.type_text("SRC").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_for_screen_contains(&format!("Replaced {LINES} occurrence"))
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|_| {
+            std::fs::read_to_string(&file_path).is_ok_and(|s| s.matches("SRC").count() == LINES)
+        })
+        .unwrap();
+    let saved = std::fs::read_to_string(&file_path).unwrap();
+    assert_eq!(saved.to_lowercase().matches("source").count(), 0);
+}
+
+/// Confirm-each replace on a lazily loaded large file prompts for every
+/// occurrence, including those in parts of the file not loaded yet, and
+/// never stops early.
+#[test]
+fn test_interactive_replace_prompts_for_every_match_in_a_large_file() {
+    const MATCHES: usize = 40;
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("big.txt");
+    // Matches spread through ~4MB, so most of them sit in chunks that are
+    // not loaded when the replace starts.
+    let filler = "x".repeat(100_000);
+    let content: String = (0..MATCHES)
+        .map(|i| {
+            let word = if i % 2 == 0 { "Source" } else { "sOURCE" };
+            format!("{filler}\n{word}\n")
+        })
+        .collect();
+    std::fs::write(&file_path, &content).unwrap();
+
+    let config = Config {
+        editor: fresh::config::EditorConfig {
+            large_file_threshold_bytes: 1000,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut harness = EditorTestHarness::with_config(100, 24, config).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('r'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_screen_contains("Replace: ").unwrap();
+    harness
+        .send_key(KeyCode::Char('i'), KeyModifiers::ALT)
+        .unwrap();
+    harness.type_text("source").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_for_screen_contains("Replace 'source' with: ")
+        .unwrap();
+    harness.type_text("SRC").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    for n in 0..MATCHES {
+        harness
+            .wait_for_screen_contains("Replace? ")
+            .unwrap_or_else(|_| panic!("prompt for match {n} of {MATCHES}"));
+        harness
+            .send_key(KeyCode::Char('y'), KeyModifiers::NONE)
+            .unwrap();
+        harness.render().unwrap();
+    }
+    harness
+        .wait_for_screen_contains(&format!("{MATCHES}"))
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|_| {
+            std::fs::read_to_string(&file_path).is_ok_and(|s| s.matches("SRC").count() == MATCHES)
+        })
+        .unwrap();
+}
+
+/// Confirm-each with a pattern that matches empty text (`^`): `n` moves on to
+/// the next line instead of finding the same empty match again, and `a`
+/// replaces the rest without looping.
+#[test]
+fn test_interactive_regex_replace_of_empty_matches() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    std::fs::write(&file_path, "one\ntwo\nthree\nfour\n").unwrap();
+
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('r'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_screen_contains("Replace: ").unwrap();
+    for t in ['r', 'i'] {
+        harness
+            .send_key(KeyCode::Char(t), KeyModifiers::ALT)
+            .unwrap();
+    }
+    harness.type_text("^").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("// ").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_screen_contains("Replace? ").unwrap();
+    // Replace on "one", skip "two", then all the rest.
+    for key in ['y', 'n', 'a'] {
+        harness
+            .send_key(KeyCode::Char(key), KeyModifiers::NONE)
+            .unwrap();
+        harness.render().unwrap();
+    }
+    assert_eq!(
+        harness.get_buffer_content().unwrap(),
+        "// one\ntwo\n// three\n// four\n// "
+    );
+}

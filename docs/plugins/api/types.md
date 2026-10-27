@@ -2996,13 +2996,18 @@ type GrepMatch = {
   */
   line: number;
   /**
-  * 1-indexed column number
+  * 1-indexed byte column within the line
   */
   column: number;
   /**
-  * The matched line content (for display)
+  * The matched line, for display — on a long line only up to 4096 bytes
+  * of it on each side of the match
   */
   context: string;
+  /**
+  * Where the match starts in `context`, in bytes
+  */
+  contextOffset: number;
 };
 ```
 

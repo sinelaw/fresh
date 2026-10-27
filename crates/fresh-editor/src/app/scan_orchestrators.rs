@@ -1,10 +1,9 @@
 //! Line-scan and search-scan orchestrators on `Editor`.
 //!
-//! Drive the chunked-scan subsystems extracted in phase 2 (LineScan,
-//! SearchScan) one batch per render frame. Coordinate with
-//! self.buffers (to read leaves and apply scan results), the tokio
-//! runtime (for concurrent filesystem I/O), and the status message
-//! (for progress reporting).
+//! Drive the line-feed scan one batch per render frame, and the Ctrl+F
+//! search a time slice per frame. Coordinate with self.buffers (to read
+//! leaves and apply scan results), the tokio runtime (for concurrent
+//! filesystem I/O), and the status message (for progress reporting).
 
 use fresh_i18n::t;
 
@@ -232,112 +231,85 @@ impl Editor {
         }
     }
 
-    // === Incremental Search Scan (for large files) ===
+    // === Incremental Search Scan ===
 
-    /// Process chunks for the incremental search scan.
+    /// Run the in-flight search scan for this tick's slice.
     /// Returns `true` if the UI should re-render (progress updated or scan finished).
     pub fn process_search_scan(&mut self) -> bool {
-        let Some(buffer_id) = self.active_window_mut().search_scan.buffer_id() else {
+        let Some(scan) = self.active_window_mut().search_scan.take() else {
             return false;
         };
-
-        if let Err(e) = self.process_search_scan_batch(buffer_id) {
-            tracing::warn!("Search scan error: {e}");
-            self.active_window_mut().search_scan.abandon();
-            self.set_status_message(format!("Search failed: {e}"));
-            return true;
-        }
-
-        if self.active_window_mut().search_scan.is_done() {
-            self.finish_search_scan();
-        } else {
-            let pct = self.active_window_mut().search_scan.progress_percent();
-            let match_count = self.active_window_mut().search_scan.match_count();
-            self.set_status_message(format!(
-                "Searching... {}% ({} matches so far)",
-                pct, match_count
-            ));
-        }
+        self.advance_search_scan(scan, Some(super::search_scan::SEARCH_SCAN_SLICE));
         true
     }
 
-    /// Process a batch of search chunks by delegating to
-    /// `TextBuffer::search_scan_next_chunk`.
-    fn process_search_scan_batch(
+    /// Run `scan` for `budget` (or to the end without one), then finish it
+    /// or put it back to go on next tick.
+    pub(super) fn advance_search_scan(
         &mut self,
-        buffer_id: crate::model::event::BufferId,
-    ) -> std::io::Result<()> {
-        let concurrency = self.config.editor.read_concurrency.max(1);
-
-        for _ in 0..concurrency {
-            if self.active_window_mut().search_scan.is_done() {
-                break;
-            }
-
-            // Extract the ChunkedSearchState, run one chunk on the buffer,
-            // then put it back. This is the same take/restore dance the
-            // previous `Option<SearchScanState>` code did, now wrapped in
-            // the subsystem's API so we're not poking its internals.
-            let Some(mut chunked) = self.active_window_mut().search_scan.take_chunked() else {
-                return Ok(());
-            };
-            let result = if let Some(state) = self
-                .windows
-                .get_mut(&self.active_window)
-                .map(|w| &mut w.buffers)
-                .expect("active window present")
-                .get_mut(&buffer_id)
-            {
-                state.buffer.search_scan_next_chunk(&mut chunked)
-            } else {
-                Ok(false)
-            };
-            self.active_window_mut()
-                .search_scan
-                .restore_chunked(chunked);
-
-            match result {
-                Ok(false) => break, // scan complete
-                Ok(true) => {}      // more chunks
-                Err(e) => return Err(e),
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Finalize the incremental search scan: take the accumulated matches
-    /// and hand them to `finalize_search()` which sets search_state, moves
-    /// the cursor, and creates viewport overlays.
-    fn finish_search_scan(&mut self) {
-        let Some(finished) = self.active_window_mut().search_scan.take_finished() else {
-            return;
-        };
-
-        // The search scan loaded chunks via chunk_split_and_load, which
-        // restructures the piece tree.  Refresh saved_root so that
-        // diff_since_saved() can take the fast Arc::ptr_eq path.
-        if let Some(state) = self
+        mut scan: super::search_scan::ActiveSearchScan,
+        budget: Option<std::time::Duration>,
+    ) {
+        let Some(state) = self
             .windows
             .get_mut(&self.active_window)
             .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get_mut(&finished.buffer_id)
-        {
-            state.buffer.refresh_saved_root_if_unmodified();
+            .get_mut(&scan.buffer_id)
+        else {
+            return; // The buffer is gone.
+        };
+        if let Err(e) = scan.run(&mut state.buffer, budget) {
+            tracing::warn!("Search scan error: {e}");
+            self.set_status_message(t!("search.failed", error = e).to_string());
+            return;
         }
+        if scan.is_done() {
+            self.finish_search_scan(scan);
+        } else {
+            let pct = scan.progress_percent(state.buffer.len());
+            let progress = fresh_i18n::tn!("search.progress", scan.match_count(), percent = pct);
+            self.set_status_message(progress.to_string());
+            self.active_window_mut().search_scan = Some(scan);
+        }
+    }
 
-        if finished.match_ranges.is_empty() {
-            self.active_window_mut().search_state = None;
-            self.set_status_message(format!("No matches found for '{}'", finished.query));
+    /// Hand a finished scan's matches to `finalize_search()`, which sets
+    /// search_state, moves the cursor, and creates overlays.
+    fn finish_search_scan(&mut self, scan: super::search_scan::ActiveSearchScan) {
+        // The matches are for that buffer: if another is active now, they
+        // would be shown and selected in the wrong one.
+        if self.active_buffer() != scan.buffer_id {
+            // Nor leave "Searching… N%" standing for a search that is gone.
+            self.set_status_message(t!("search.cancelled").to_string());
             return;
         }
 
-        self.finalize_search(
-            &finished.query,
-            finished.match_ranges,
-            finished.capped,
-            None,
+        // Reading a lazily loaded file loads chunks via
+        // chunk_split_and_load, which restructures the piece tree.  Refresh
+        // saved_root so that diff_since_saved() can take the fast
+        // Arc::ptr_eq path.
+        self.active_state_mut()
+            .buffer
+            .refresh_saved_root_if_unmodified();
+
+        let (query, search_query, search_range) = (
+            scan.query.clone(),
+            scan.search_query.clone(),
+            scan.search_range.clone(),
         );
+        let (matches, capped) = scan.into_matches();
+        if matches.is_empty() {
+            self.active_window_mut().search_state = None;
+            let key = if search_range.is_some() {
+                "search.none_in_selection"
+            } else {
+                "search.none"
+            };
+            self.set_status_message(t!(key, search = query).to_string());
+            return;
+        }
+
+        self.finalize_search(&query, search_query, matches, capped, search_range);
     }
 }

@@ -1923,26 +1923,34 @@ function findLineEndIndex(text: string, index: number): number {
   return end;
 }
 
+/** A character the editor's search counts as part of a word (its `\w`
+ *  and `\b`): Unicode letters, marks, digits and connectors. `*` and `#`
+ *  pick their word by it, so it is the word the whole-word search finds —
+ *  `caf` in `café caf` is not a word, and `café` is. */
+function isSearchWordChar(char: string | undefined): boolean {
+  return char !== undefined && /[\p{Alphabetic}\p{M}\p{Nd}\p{Pc}]/u.test(char);
+}
+
 function findSearchTargetUnderCursor(text: string, cursorIndex: number, scanForwardOnMiss: boolean = false): WordSearchTarget | null {
   const originalIndex = Math.min(cursorIndex, Math.max(0, text.length - 1));
   const lineEnd = findLineEndIndex(text, originalIndex);
   let index = originalIndex;
 
-  if (!scanForwardOnMiss && !isWordChar(text[index]) && index > 0 && isWordChar(text[index - 1])) {
+  if (!scanForwardOnMiss && !isSearchWordChar(text[index]) && index > 0 && isSearchWordChar(text[index - 1])) {
     index--;
   }
-  if (scanForwardOnMiss && !isWordChar(text[index])) {
-    while (index < lineEnd && !isWordChar(text[index])) {
+  if (scanForwardOnMiss && !isSearchWordChar(text[index])) {
+    while (index < lineEnd && !isSearchWordChar(text[index])) {
       index = nextStringIndex(text, index);
     }
   }
-  if (isWordChar(text[index])) {
+  if (isSearchWordChar(text[index])) {
     let start = index;
     let end = index + 1;
-    while (start > 0 && isWordChar(text[start - 1])) {
+    while (start > 0 && isSearchWordChar(text[start - 1])) {
       start--;
     }
-    while (end < text.length && isWordChar(text[end])) {
+    while (end < text.length && isSearchWordChar(text[end])) {
       end++;
     }
 
@@ -1966,51 +1974,35 @@ function findSearchTargetUnderCursor(text: string, cursorIndex: number, scanForw
   return { start, end, text: text.slice(start, end), wholeWord: false };
 }
 
-function isWholeWordMatch(text: string, start: number, end: number): boolean {
-  return !isWordChar(text[start - 1]) && !isWordChar(text[end]);
+/** The line the cursor is on: where it starts, its text with its line
+ * break, and the cursor's index in that text. */
+async function readCursorLine(bufferId: number, cursorPos: number): Promise<{ start: number; text: string; cursorIndex: number }> {
+  const start = await findLineStartAtPosition(bufferId, cursorPos);
+  const end = await findLinewiseEndFromStart(bufferId, start, 1);
+  const text = await editor.getBufferText(bufferId, start, end);
+  return { start, text, cursorIndex: byteOffsetToStringIndex(text, cursorPos - start) };
 }
 
-function isSearchMatch(text: string, start: number, end: number, wholeWord: boolean): boolean {
-  return !wholeWord || isWholeWordMatch(text, start, end);
+/** Where `target` (found in the line starting at `lineStart`) is in the
+ * buffer, in bytes. */
+function targetByteRange(lineStart: number, lineText: string, target: WordSearchTarget): { start: number; end: number } {
+  return {
+    start: lineStart + stringIndexToByteOffset(lineText, target.start),
+    end: lineStart + stringIndexToByteOffset(lineText, target.end),
+  };
 }
 
-function findNextSearchMatch(text: string, target: string, wholeWord: boolean, from: number, until: number): number | null {
-  let index = text.indexOf(target, from);
-  while (index !== -1 && index < until) {
-    const end = index + target.length;
-    if (isSearchMatch(text, index, end, wholeWord)) {
-      return index;
-    }
-    index = text.indexOf(target, index + 1);
-  }
-  return null;
-}
-
-function findPreviousSearchMatch(text: string, target: string, wholeWord: boolean, before: number, min: number): number | null {
-  if (before <= min) {
-    return null;
-  }
-
-  let index = text.lastIndexOf(target, before - 1);
-  while (index !== -1 && index >= min) {
-    const end = index + target.length;
-    if (isSearchMatch(text, index, end, wholeWord)) {
-      return index;
-    }
-    if (index === 0) {
-      return null;
-    }
-    index = text.lastIndexOf(target, index - 1);
-  }
-  return null;
-}
-
+// `*`, `#`, `n` and `N` after them: the next (or previous) match of `target`,
+// wrapping around, found with the editor's search, so only the cursor's line
+// is read rather than the whole buffer. `currentTarget` is the occurrence the
+// search starts from, in bytes; without it, the one under the cursor if that
+// is `target`.
 async function executeStoredWordSearch(
   target: string,
   direction: WordSearchDirection,
   count: number,
   wholeWord: boolean,
-  currentTarget?: WordSearchTarget,
+  currentTarget?: { start: number; end: number },
 ): Promise<void> {
   const bufferId = editor.getActiveBufferId();
   const cursorPos = editor.getCursorPosition();
@@ -2018,35 +2010,43 @@ async function executeStoredWordSearch(
     return;
   }
 
-  const text = await editor.getBufferText(bufferId, 0, editor.getBufferLength(bufferId));
-  const cursorIndex = byteOffsetToStringIndex(text, cursorPos);
-  const targetAtCursor = currentTarget ?? findSearchTargetUnderCursor(text, cursorIndex);
-  const onSameTarget = targetAtCursor?.text === target && targetAtCursor.wholeWord === wholeWord;
-  const searchStart = onSameTarget && targetAtCursor !== null ? targetAtCursor.start : cursorIndex;
-  const searchEnd = onSameTarget && targetAtCursor !== null ? targetAtCursor.end : nextStringIndex(text, cursorIndex);
+  let at = currentTarget;
+  if (at === undefined) {
+    const line = await readCursorLine(bufferId, cursorPos);
+    const underCursor = findSearchTargetUnderCursor(line.text, line.cursorIndex);
+    if (underCursor !== null && underCursor.text === target && underCursor.wholeWord === wholeWord) {
+      at = targetByteRange(line.start, line.text, underCursor);
+    }
+  }
+  // Matches start on character boundaries, so the byte after the cursor
+  // stands for the character after it.
+  let fromStart = at?.start ?? cursorPos;
+  let fromEnd = at?.end ?? cursorPos + 1;
 
-  let match: number | null = null;
-  let fromStart = searchStart;
-  let fromEnd = searchEnd;
+  const matches = await editor.searchBuffer(bufferId, target, { wholeWords: wholeWord });
+  let match: GrepMatch | undefined;
   for (let i = 0; i < count; i++) {
     if (direction === "forward") {
-      match = findNextSearchMatch(text, target, wholeWord, fromEnd, text.length)
-        ?? findNextSearchMatch(text, target, wholeWord, 0, fromStart);
+      match = matches.find((m) => m.byteOffset >= fromEnd)
+        ?? (matches.length > 0 && matches[0].byteOffset < fromStart ? matches[0] : undefined);
     } else {
-      match = findPreviousSearchMatch(text, target, wholeWord, fromStart, 0)
-        ?? findPreviousSearchMatch(text, target, wholeWord, text.length, fromEnd);
+      const before = matches.filter((m) => m.byteOffset < fromStart);
+      const last = matches.length > 0 ? matches[matches.length - 1] : undefined;
+      match = before.length > 0
+        ? before[before.length - 1]
+        : (last !== undefined && last.byteOffset >= fromEnd ? last : undefined);
     }
 
-    if (match === null) {
+    if (match === undefined) {
       return;
     }
 
-    fromStart = match;
-    fromEnd = match + target.length;
+    fromStart = match.byteOffset;
+    fromEnd = match.byteOffset + match.length;
   }
 
-  if (match !== null) {
-    editor.setBufferCursor(bufferId, stringIndexToByteOffset(text, match));
+  if (match !== undefined) {
+    editor.setBufferCursor(bufferId, match.byteOffset);
   }
 }
 
@@ -2057,16 +2057,16 @@ async function executeWordUnderCursorSearch(direction: WordSearchDirection, coun
     return;
   }
 
-  const text = await editor.getBufferText(bufferId, 0, editor.getBufferLength(bufferId));
-  const cursorIndex = byteOffsetToStringIndex(text, cursorPos);
-  const currentTarget = findSearchTargetUnderCursor(text, cursorIndex, true);
+  const line = await readCursorLine(bufferId, cursorPos);
+  const currentTarget = findSearchTargetUnderCursor(line.text, line.cursorIndex, true);
   if (currentTarget === null) {
     return;
   }
 
   memory.lastWordSearch = { text: currentTarget.text, direction, wholeWord: currentTarget.wholeWord };
-  editor.setBufferCursor(bufferId, stringIndexToByteOffset(text, currentTarget.start));
-  await executeStoredWordSearch(currentTarget.text, direction, count, currentTarget.wholeWord, currentTarget);
+  const at = targetByteRange(line.start, line.text, currentTarget);
+  editor.setBufferCursor(bufferId, at.start);
+  await executeStoredWordSearch(currentTarget.text, direction, count, currentTarget.wholeWord, at);
 }
 
 async function vi_search_word_forward() : Promise<void> {

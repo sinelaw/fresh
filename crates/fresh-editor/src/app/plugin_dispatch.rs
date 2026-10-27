@@ -2269,6 +2269,7 @@ impl Editor {
                 whole_words,
                 file_glob,
                 source_buffer_id,
+                buffer_id,
                 handle_id,
             } => {
                 self.handle_begin_search(crate::app::plugin_commands::BeginSearchArgs {
@@ -2279,6 +2280,7 @@ impl Editor {
                     whole_words,
                     file_glob,
                     source_buffer_id,
+                    buffer_id,
                     handle_id,
                 });
             }

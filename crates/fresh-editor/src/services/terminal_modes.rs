@@ -60,6 +60,15 @@ pub mod sequences {
 
     // Attributes
     pub const RESET_ATTRIBUTES: &[u8] = b"\x1b[0m";
+
+    // Kitty keyboard protocol: pop one entry off the current screen's stack.
+    pub const POP_KEYBOARD_ENHANCEMENT: &[u8] = b"\x1b[<1u";
+
+    /// Kitty keyboard protocol: push `flags` onto the current screen's
+    /// stack — the bytes crossterm's `PushKeyboardEnhancementFlags` writes.
+    pub fn push_keyboard_enhancement(flags: crossterm::event::KeyboardEnhancementFlags) -> Vec<u8> {
+        format!("\x1b[>{}u", flags.bits()).into_bytes()
+    }
 }
 
 /// Configuration for keyboard enhancement flags.
@@ -87,6 +96,16 @@ impl Default for KeyboardConfig {
 }
 
 impl KeyboardConfig {
+    /// The `editor.keyboard_*` settings of `editor`.
+    pub fn from_editor_config(editor: &crate::config::EditorConfig) -> Self {
+        Self {
+            disambiguate_escape_codes: editor.keyboard_disambiguate_escape_codes,
+            report_event_types: editor.keyboard_report_event_types,
+            report_alternate_keys: editor.keyboard_report_alternate_keys,
+            report_all_keys_as_escape_codes: editor.keyboard_report_all_keys_as_escape_codes,
+        }
+    }
+
     /// Build crossterm KeyboardEnhancementFlags from this config.
     pub fn to_flags(&self) -> KeyboardEnhancementFlags {
         let mut flags = KeyboardEnhancementFlags::empty();

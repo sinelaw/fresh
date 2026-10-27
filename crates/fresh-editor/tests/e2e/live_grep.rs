@@ -203,7 +203,7 @@ fn test_live_grep_leaves_out_custom_ignore_patterns() {
 /// covers saved ones) — but with Files off, that restriction left a
 /// buffers-only search finding nothing for content plainly in an open
 /// buffer. This drives the real plugin path (no subprocess: the buffer
-/// scan is pure JS over `listBuffers`/`getBufferText`).
+/// scan is `listBuffers` and the editor's `searchBuffer`).
 #[test]
 fn test_live_grep_buffers_scope_finds_unmodified_open_buffer() {
     let temp_dir = tempfile::TempDir::new().unwrap();
@@ -275,8 +275,8 @@ fn test_live_grep_buffers_scope_finds_unmodified_open_buffer() {
 /// the query carried an uppercase letter — which is an unreachable setting:
 /// searching `Foo` could never find `foo`. Here the query is capitalised and
 /// the file spells the token in lower case, so the old rule would have found
-/// nothing. Drives the Buffers scope, which is pure JS (no rg/grep
-/// subprocess) and so deterministic on any host.
+/// nothing. Drives the Buffers scope, which the editor searches (no rg/grep
+/// subprocess) and so is deterministic on any host.
 #[test]
 fn live_grep_folds_case_until_the_case_toggle_says_otherwise() {
     let temp_dir = tempfile::TempDir::new().unwrap();

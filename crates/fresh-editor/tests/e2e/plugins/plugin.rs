@@ -1586,3 +1586,70 @@ editor.registerCommand(
         .wait_until(|h| h.screen_to_string().contains("[SearchActive=false]"))
         .expect("Command 3");
 }
+
+/// `searchBuffer` searches a buffer as it is, unsaved edits included, with
+/// the editor's search: its flags, every match unless capped, and byte
+/// offsets with 1-based lines and byte columns.
+#[test]
+fn test_search_buffer_sees_unsaved_edits() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+
+    let test_plugin = r#"/// <reference path="./lib/fresh.d.ts" />
+const editor = getEditor();
+const show = (ms: GrepMatch[]) => ms.map((m) => `${m.byteOffset}@${m.line}:${m.column}`).join(" ");
+globalThis.search_buffer_test = async function(): Promise<void> {
+    const words = await editor.searchBuffer(0, "foo", { wholeWords: true });
+    const capped = await editor.searchBuffer(editor.getActiveBufferId(), "f.o", {
+        fixedString: false,
+        caseSensitive: false,
+        maxResults: 2,
+    });
+    editor.setStatus(`WORDS[${show(words)}] CAPPED[${show(capped)}]`);
+};
+editor.registerCommand("Test: Search Buffer", "searchBuffer test", "search_buffer_test", null);
+editor.setStatus("searchBuffer plugin loaded");
+"#;
+    fs::write(plugins_dir.join("test_search_buffer.ts"), test_plugin).unwrap();
+
+    let file = project_root.join("search.txt");
+    fs::write(&file, "foo bar\nFoo food\n").unwrap();
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(160, 30, Default::default(), project_root)
+            .unwrap();
+    harness.open_file(&file).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("searchBuffer plugin loaded"))
+        .unwrap();
+
+    // An edit the file on disk doesn't have.
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("foo").unwrap();
+    harness
+        .wait_for_buffer_content("foo bar\nFoo food\nfoo")
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("Test: Search Buffer").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("searchBuffer test"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("WORDS[0@1:1 17@3:1] CAPPED[0@1:1 8@2:1]")
+        })
+        .unwrap();
+}

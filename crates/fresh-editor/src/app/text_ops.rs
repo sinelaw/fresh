@@ -409,105 +409,26 @@ impl Editor {
         let bracket_info =
             crate::view::bracket_highlight_overlay::get_bracket_pair(ch, angle_brackets);
 
-        // Limit searches to avoid O(n) scans on huge files.
-        use crate::view::bracket_highlight_overlay::MAX_BRACKET_SEARCH_BYTES;
-
-        // If cursor is not on a bracket, search backward for the nearest
-        // enclosing opening bracket, then jump to its matching close.
-        let (opening, closing, search_start, forward) =
-            if let Some((opening, closing, forward)) = bracket_info {
-                (opening, closing, pos, forward)
-            } else {
-                // Search backward from cursor to find enclosing opening bracket.
-                // Track depth per bracket type to handle nesting correctly.
-                let mut depths: Vec<i32> = vec![0; bracket_pairs.len()];
-                let mut found = None;
-                let search_limit = pos.saturating_sub(MAX_BRACKET_SEARCH_BYTES);
-                let mut search_pos = pos.saturating_sub(1);
-                loop {
-                    let b = state.buffer.slice_bytes(search_pos..search_pos + 1);
-                    if !b.is_empty() {
-                        let c = b[0] as char;
-                        for (i, &(open, close)) in bracket_pairs.iter().enumerate() {
-                            if c == close {
-                                depths[i] += 1;
-                            } else if c == open {
-                                if depths[i] > 0 {
-                                    depths[i] -= 1;
-                                } else {
-                                    // Found an unmatched opening bracket — this encloses us
-                                    found = Some((open, close, search_pos));
-                                    break;
-                                }
-                            }
-                        }
-                        if found.is_some() {
-                            break;
-                        }
-                    }
-                    if search_pos <= search_limit {
-                        break;
-                    }
-                    search_pos -= 1;
-                }
-
-                if let Some((opening, closing, bracket_pos)) = found {
-                    // Jump forward from the enclosing opening bracket to its match
-                    (opening, closing, bracket_pos, true)
-                } else {
+        // On a bracket, its match; elsewhere, the match of the bracket
+        // enclosing the cursor. Found with the highlight's scan, though
+        // without its comment and string ranges, which only a drawn frame
+        // has.
+        use crate::view::bracket_highlight_overlay::{
+            find_enclosing_bracket, find_matching_bracket,
+        };
+        let (opening, closing, start, forward) = match bracket_info {
+            Some((opening, closing, forward)) => (opening, closing, pos, forward),
+            None => match find_enclosing_bracket(&state.buffer, pos, bracket_pairs, &[]) {
+                Some((opening, closing, at)) => (opening, closing, at, true),
+                None => {
                     self.set_status_message(t!("diagnostics.bracket_none").to_string());
                     return;
                 }
-            };
-
-        // Find matching bracket (bounded to MAX_BRACKET_SEARCH_BYTES)
-        let buffer_len = state.buffer.len();
-        let mut depth = 1;
-        let matching_pos = if forward {
-            let search_limit = (search_start + 1 + MAX_BRACKET_SEARCH_BYTES).min(buffer_len);
-            let mut search_pos = search_start + 1;
-            let mut found = None;
-            while search_pos < search_limit && depth > 0 {
-                let b = state.buffer.slice_bytes(search_pos..search_pos + 1);
-                if !b.is_empty() {
-                    let c = b[0] as char;
-                    if c == opening {
-                        depth += 1;
-                    } else if c == closing {
-                        depth -= 1;
-                        if depth == 0 {
-                            found = Some(search_pos);
-                        }
-                    }
-                }
-                search_pos += 1;
-            }
-            found
-        } else {
-            let search_limit = search_start.saturating_sub(MAX_BRACKET_SEARCH_BYTES);
-            let mut search_pos = search_start.saturating_sub(1);
-            let mut found = None;
-            loop {
-                let b = state.buffer.slice_bytes(search_pos..search_pos + 1);
-                if !b.is_empty() {
-                    let c = b[0] as char;
-                    if c == closing {
-                        depth += 1;
-                    } else if c == opening {
-                        depth -= 1;
-                        if depth == 0 {
-                            found = Some(search_pos);
-                            break;
-                        }
-                    }
-                }
-                if search_pos <= search_limit {
-                    break;
-                }
-                search_pos -= 1;
-            }
-            found
+            },
         };
+        let bound = if forward { usize::MAX } else { 0 };
+        let matching_pos =
+            find_matching_bracket(&state.buffer, start, opening, closing, forward, &[], bound);
 
         if let Some(new_pos) = matching_pos {
             // Respect Emacs-style mark mode: when movement should preserve the

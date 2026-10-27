@@ -6246,6 +6246,9 @@ pub enum PluginCommand {
         /// such a buffer, so the host searches its piece-tree content directly
         /// and emits matches carrying this buffer id. 0 means "no such buffer".
         source_buffer_id: usize,
+        /// Search only this buffer, as it is, instead of the project: the
+        /// buffer's id, or 0 for a project search.
+        buffer_id: usize,
         /// Handle ID — key into the shared `SearchHandleRegistry`
         handle_id: u64,
     },
@@ -6911,11 +6914,15 @@ pub struct GrepMatch {
     /// 1-indexed line number
     #[ts(type = "number")]
     pub line: usize,
-    /// 1-indexed column number
+    /// 1-indexed byte column within the line
     #[ts(type = "number")]
     pub column: usize,
-    /// The matched line content (for display)
+    /// The matched line, for display — on a long line only up to 4096 bytes
+    /// of it on each side of the match
     pub context: String,
+    /// Where the match starts in `context`, in bytes
+    #[ts(type = "number")]
+    pub context_offset: usize,
 }
 
 /// Per-call result from `SearchHandle.take()` — the matches accumulated since
@@ -9609,6 +9616,7 @@ mod tests {
             line,
             column: 1,
             context: "match".to_string(),
+            context_offset: 0,
         }
     }
 

@@ -3588,25 +3588,16 @@ fn test_search_replace_multibyte_prefix_match_is_visible() {
     }
 }
 
-/// A row whose pattern the renderer cannot locate must show the HEAD of
-/// the line, not a slice from the middle of it dressed up as the head.
+/// A row shows its own match even when the pattern is regex syntax only
+/// the editor's engine accepts.
 ///
-/// The window is anchored on a hit found in the line itself, and when
-/// there is no such hit the anchor collapses to 0. Without that, the
-/// anchor came from `match.column` arithmetic, which is happy to point
-/// into a line the renderer can't confirm — so the row rendered
-/// characters from the middle of a long line with a trailing `...`
-/// implying nothing had been cut on the left. It reads as the start of
-/// the line when it isn't.
-///
-/// Driven with a regex Rust's engine accepts and JavaScript's rejects:
-/// the search finds the matches, the plugin's `new RegExp` throws, and
-/// the renderer is left with no locatable hit. That is the same state
-/// the panel is in whenever it renders the previous search's rows
-/// against a pattern that is still being typed, but reached
-/// deterministically instead of through a race.
+/// The row used to find its match again with JavaScript's `RegExp`, which
+/// throws on Rust-only syntax such as an inline `(?i)`; with no hit to
+/// anchor on, a match far along a long line was cut out of the row. The
+/// row now carries where the search found it, so the window rests on the
+/// match and marks the text cut on its left.
 #[test]
-fn test_search_replace_unlocatable_pattern_renders_line_head() {
+fn test_search_replace_rust_only_regex_row_shows_its_match() {
     init_tracing_from_env();
     let (_temp_dir, project_root) = setup_search_replace_project();
 
@@ -3653,14 +3644,14 @@ fn test_search_replace_unlocatable_pattern_renders_line_head() {
         .to_string();
     let body = row.split(" - ").nth(1).unwrap_or("").trim();
     assert!(
-        body.starts_with("HEAD_MARKER"),
-        "with no locatable hit the row must fall back to the head of the \
-         line; it rendered a slice from elsewhere in it. Row:\n{row}"
+        body.contains("NEEDLE_MARKER"),
+        "the row must show its match, found by a regex JavaScript can't \
+         parse. Row:\n{row}"
     );
     assert!(
-        !body.starts_with('\u{2026}'),
-        "a row that starts at the head of the line must not claim a \
-         left-hand elision. Row:\n{row}"
+        body.starts_with('\u{2026}') && !body.contains("HEAD_MARKER"),
+        "a window resting on a match far along the line must mark the \
+         text cut on its left. Row:\n{row}"
     );
 }
 

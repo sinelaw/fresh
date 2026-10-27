@@ -14,17 +14,17 @@ The search/replace method cluster was extracted from the render layer in the edi
 
 The search state holds the query, a sorted vector of match byte offsets, parallel match lengths, the current index, a wrap-search flag, an optional search range (search-in-selection), and a "capped" flag. Matches are bounded at a fixed maximum to bound memory on pathological patterns.
 
-Search branches on file size:
-- **Small files / search-in-selection** run inline: the whole buffer (or the selection slice) is loaded as a UTF-8 string and all matches are collected up to the cap.
-- **Large (lazy-loaded) files** with no selection start a non-blocking **incremental chunked scan** that processes a few chunks per render frame so the UI stays responsive.
+Every search in a buffer — Ctrl+F, the as-you-type and after-edit highlights, replace, confirm-each, add-cursor-at-next-match, and open buffers in project search — uses one search: a `RegexSearch` (`buffer/search.rs`). It reads the buffer through `get_text_range_mut`, a window (1 MB) at a time, so a lazily loaded file is loaded as the search reaches each part and kept like any other read of it; no search keeps a second copy of the text. It finds what `find_iter` over the whole text would: the bytes just outside each window are read so `\b`, `^`, `$` and look-around judge a match by its surroundings, a match running to a window's end is read again with a bigger window, and each window reaches back far enough (`match_overlap`) for a match straddling the boundary. It can stop after any number of matches or bytes and go on later, and can report each match's line, column and line text.
 
-Both paths converge in a single finalize step: it sets the search state, moves the cursor to the first match at/after the cursor, and creates overlays. The overlay strategy differs deliberately:
+A search of a small file runs to the end in the call that starts it. A large (lazy-loaded) file is searched a time slice per editor tick so the UI stays responsive; an edit of the buffer meanwhile starts the search over, and a search finished after the user switched buffers is dropped.
+
+Both converge in a single finalize step: it sets the search state, moves the cursor to the first match at/after the cursor, and creates overlays. The overlay strategy differs deliberately:
 - **Small files**: overlays for **all** matches, using markers — so positions auto-track buffer edits and Find-Next stays correct after edits.
 - **Large files**: **viewport-only** overlays, to avoid multi-GB overlay allocations. The overlay refresh uses a binary search (`partition_point`) on the sorted match vector, so it is O(log N + visible). Overlays re-paint on scroll, but only for large files (small files already cover everything).
 
 ### 1.2 Regex construction & line anchoring
 
-The search-regex builder always returns a regex: in plain-text mode the query is regex-escaped, so one code path serves both literal and regex search. Whole-word wraps with `\b…\b`. The key decision: the regex crate defaults to single-line mode where `^`/`$` bind to the haystack boundary — the opposite of what every editor's find does. Both the Unicode search builder and the bytes-regex replace builder enable multi-line and CRLF-aware modes so anchors match every line boundary on LF and CRLF buffers. The chunked-scan path re-applies these flags because the serialized pattern string carries only the pattern, not builder flags. Tests lock in per-line anchoring and that `.` does not cross newlines.
+One builder, `build_search_regex` (`buffer/search.rs`), makes the regex for every search, in the buffer and across the project: in plain-text mode the query is regex-escaped, so one code path serves both literal and regex search. Whole-word wraps the whole pattern as `\b(?:…)\b`. The key decision: the regex crate defaults to single-line mode where `^`/`$` bind to the haystack boundary — the opposite of what every editor's find does — so the builder enables multi-line and CRLF-aware modes and anchors match every line boundary on LF and CRLF buffers. Tests lock in per-line anchoring and that `.` does not cross newlines.
 
 ### 1.3 Find-next / find-previous & quick-find
 
@@ -48,22 +48,20 @@ Interactive **query-replace** is lazy: it finds only the current match, prompts 
 
 ## 2. Project-wide search/replace & live grep
 
-Two plugins, both on the Rust chunked-scan primitives and a shared finder library:
+Two plugins, both on the Rust project-search primitives and a shared finder library:
 - the persistent search-and-replace panel,
 - the floating live-grep overlay,
 - plus a git-grep helper and others that reuse the shared finder.
 
-### 2.1 The chunked project-search primitive (IMPLEMENTED)
+### 2.1 The project-search primitive (IMPLEMENTED)
 
 Four design principles: everything goes through the editor's real abstractions (the filesystem trait plus the piece-tree text buffer), search what the user *sees* (dirty buffers via piece tree, unopened files via the filesystem), no special-casing of large files, plugin is UI-only.
 
-The streaming project grep snapshots dirty buffers on the main thread, spawns an async task that walks the tree respecting `.gitignore`, and processes several files in parallel via a semaphore; each file is wrapped in a text buffer and run through the chunked scanner. Results stream back as JSON match records over the async bridge.
+A project grep spawns an async task that walks the tree respecting `.gitignore` and searches several files in parallel via a semaphore; results go back as JSON match records over the async bridge. A file that is not open is searched by `FileSystem::search_file`: locally that loads it into a `TextBuffer`, as opening it would, and runs the same `RegexSearch` with line, column and context; over SSH the remote agent searches it where it lives, so only matches cross the network. The agent mirrors the local search — the same files skipped, the text decoded as the editor opens it, the same flags, empty-match rule, lines, columns and context, checked by a test that runs both on the same files — except for its Python `re` dialect and its reading every legacy code page as Windows-1252. An open buffer with unsaved edits is searched as it is, through its live `TextBuffer`, a time slice per editor tick on the editor thread (the piece tree is not `Send`); the walk skips its file and its matches go to the task over a channel.
 
-The chunked scanner pre-splits the tree so every leaf is at most one load-chunk in size and builds a chunked-search state; each step processes one chunk, tracking line/column/context incrementally via a running-line cursor (O(chunk), not O(buffer)); a synchronous variant runs on a blocking thread pool. Cross-chunk matches are handled by an overlap-tail window sized to the larger of the query length and a small floor.
+Deliberate trade-offs: context is the match's line, cut on a long line to `MATCH_CONTEXT` (4 KB) on each side of the match at character boundaries, with the match's offset in it given (`context_offset`); the remote agent is sent that limit and the file-size cap with each request rather than keeping copies. A plugin searches one buffer with `beginSearch({ bufferId })` or `searchBuffer`, which drains such a search into a promise. The source buffer's matches join a project search when its slices finish, past the cap if need be, without holding up the walk. A **soft** match cap — the parallel searchers check the running count with relaxed atomics, so the total can slightly exceed the requested maximum (a UI-responsiveness limit, not a contract).
 
-Deliberate trade-offs: context truncation on lines longer than the overlap window (affects a tiny fraction of code); a **soft** match cap — the parallel searchers check the running count with relaxed atomics, so the total can slightly exceed the requested maximum (a UI-responsiveness limit, not a contract); `\b` whole-word matching is ASCII-centric.
-
-The scan wrapper carries session metadata and a take/restore dance that lets the orchestrator pass the chunked-search state by mutable reference into the buffer without fighting the borrow checker. The orchestrator drives both the search scan and the line-feed scan one batch per frame, bounded by a configurable read-concurrency. The line scan additionally fans unloaded leaves out to the blocking thread pool for concurrent line-feed counting, which remote filesystems override to count server-side without transferring data.
+The line-feed scan runs one batch per frame, bounded by a configurable read-concurrency, and fans unloaded leaves out to the blocking thread pool for concurrent line-feed counting, which remote filesystems override to count server-side without transferring data.
 
 ### 2.2 Replace in project & known bugs
 
@@ -177,7 +175,7 @@ Both emit a `// types:` comment coalescing runs of char inserts for readability.
 
 ## Summary + superseded docs
 
-This document consolidates Fresh's search/replace, diff/review, git-log, and macro subsystems. The unifying patterns are: a thin Rust host providing incremental chunked scans (load-chunk-sized leaves, soft-capped match counts, one batch per render frame), a pointer-equality structural piece-tree diff that costs O(changed-path), `BulkEdit`-based replace for O(n) single-undo edits, and feature UIs delivered as QuickJS plugins on a shared finder/widget runtime. Search is regex-built with per-line `^`/`$` anchoring; small files track matches via edit-following overlay markers while large files use viewport-only overlays and an incremental scan. Macros are now persistable and promotable to arbitrary code by reusing init.ts as the store, enabled by adding `args` to the action-spec shape so recorded keystrokes replay faithfully.
+This document consolidates Fresh's search/replace, diff/review, git-log, and macro subsystems. The unifying patterns are: a thin Rust host providing one search over the piece tree for every search (`RegexSearch`: windowed reads through the buffer's lazy loading, a time slice per render frame on large files, soft-capped match counts), a pointer-equality structural piece-tree diff that costs O(changed-path), `BulkEdit`-based replace for O(n) single-undo edits, and feature UIs delivered as QuickJS plugins on a shared finder/widget runtime. Search is regex-built with per-line `^`/`$` anchoring; small files track matches via edit-following overlay markers while large files use viewport-only overlays and an incremental scan. Macros are now persistable and promotable to arbitrary code by reusing init.ts as the store, enabled by adding `args` to the action-spec shape so recorded keystrokes replay faithfully.
 
 The most load-bearing *planned-vs-shipped* distinctions: in-buffer search/replace, the chunked project-search primitive, live-grep Resume, per-cwd/closed-terminal scope retention, the pure diff algorithms, composite side-by-side drill-down, real git staging in audit mode, the shipped git-log streaming path, and the full macro save/promote pipeline are **shipped**; the universal-search scope popover/header-band, rebindable composite hunk-nav Actions, the v2 hunk-parity reader (layouts/sidebar/agent CLI), unified-pane syntax highlighting, the further git-log streaming step plus fold/highlight scaling, and the review picker are **planned**. Two shipped limitations are documented as real (not design intent): project replace bypasses undo, and it reuses stale offsets on a second apply.
 

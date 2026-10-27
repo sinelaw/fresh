@@ -72,7 +72,8 @@ cmd_exec() {
   # Special-case the `userEnvProbe` exec so tests don't depend on
   # whatever bash exists on the host (a real `bash -lic env` against
   # the host can take seconds and emit terminal-mode warnings).
-  # Triggered when the *plain* `bash <flags> -c env` shape arrives —
+  # Triggered when the *plain* `bash <flags> -c <env dump>` shape arrives
+  # (`env`, or the plugin's marker + `env -0` dump, lib/env_dump.ts) —
   # i.e. the captureContainerLoginEnv probe with no env wrapping.
   #
   # Lifecycle-style probes that go through `wrapWithEnv` arrive as
@@ -82,7 +83,8 @@ cmd_exec() {
   # else (notably `env`) falls through.
   if [ $# -ge 2 ] && [ "$1" = "bash" ]; then
     last_two="${@: -2}"
-    if [ "$last_two" = "-c env" ]; then
+    last="${@: -1}"
+    if [ "$last_two" = "-c env" ] || { [ "${@: -2:1}" = "-c" ] && [[ "$last" == *__FRESH_ENV_DUMP_* ]]; }; then
       if [ -f "$state/probe_response" ]; then
         cat "$state/probe_response"
       else

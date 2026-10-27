@@ -1,4 +1,5 @@
 /// <reference path="./lib/fresh.d.ts" />
+import { ENV_DUMP, parseEnvDump } from "./lib/env_dump.ts";
 const editor = getEditor();
 
 /**
@@ -861,7 +862,7 @@ async function getOrComputeProbedEnv(): Promise<Record<string, string>> {
   // semantics (`BASH_ENV` sourcing) wouldn't see the user's
   // configured rc file.
   const baseEnv: Record<string, string> = config?.remoteEnv ?? {};
-  const [bin, probeArgs] = wrapWithEnv(baseEnv, "bash", [...flags, "-c", "env"]);
+  const [bin, probeArgs] = wrapWithEnv(baseEnv, "bash", [...flags, "-c", ENV_DUMP]);
   const result = await editor.spawnProcess(bin, probeArgs, cwd);
   if (result.exit_code !== 0) {
     editor.debug(
@@ -871,11 +872,8 @@ async function getOrComputeProbedEnv(): Promise<Record<string, string>> {
     return {};
   }
   const env: Record<string, string> = {};
-  for (const line of result.stdout.split("\n")) {
-    const eq = line.indexOf("=");
-    if (eq > 0) {
-      env[line.slice(0, eq)] = line.slice(eq + 1);
-    }
+  for (const [key, value] of parseEnvDump(result.stdout)) {
+    env[key] = value;
   }
   writeCachedProbedEnv(env);
   return env;
@@ -943,7 +941,7 @@ async function captureContainerLoginEnv(
   if (result.remoteWorkspaceFolder) {
     dockerArgs.push("-w", result.remoteWorkspaceFolder);
   }
-  dockerArgs.push(result.containerId, "bash", ...flags, "-c", "env");
+  dockerArgs.push(result.containerId, "bash", ...flags, "-c", ENV_DUMP);
 
   const probeResult = await editor.spawnHostProcess("docker", dockerArgs);
   if (probeResult.exit_code !== 0) {
@@ -960,12 +958,8 @@ async function captureContainerLoginEnv(
   // setup the user's shell exports and a non-shell exec wouldn't.
   const wanted = new Set(["PATH", "HOME", "LANG", "LC_ALL", "SHELL", "USER", "LOGNAME"]);
   const out: Array<[string, string]> = [];
-  for (const line of probeResult.stdout.split("\n")) {
-    const eq = line.indexOf("=");
-    if (eq <= 0) continue;
-    const key = line.slice(0, eq);
-    if (!wanted.has(key)) continue;
-    out.push([key, line.slice(eq + 1)]);
+  for (const [key, value] of parseEnvDump(probeResult.stdout)) {
+    if (wanted.has(key)) out.push([key, value]);
   }
   return out;
 }

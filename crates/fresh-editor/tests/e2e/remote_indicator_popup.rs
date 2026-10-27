@@ -15,8 +15,8 @@
 
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use fresh::model::filesystem::{
-    DirEntry, FileMetadata, FilePermissions, FileReader, FileSearchCursor, FileSearchOptions,
-    FileSystem, FileWriter, SearchMatch, StdFileSystem,
+    DirEntry, FileMetadata, FilePermissions, FileReader, FileSearchOptions, FileSystem, FileWriter,
+    SearchMatch, StdFileSystem,
 };
 use fresh::services::authority::{
     Authority, AuthorityPayload, FilesystemSpec, RemoteAgentSpec, RemoteTransportSpec,
@@ -123,9 +123,8 @@ impl FileSystem for DisconnectedRemoteFs {
         path: &Path,
         pattern: &str,
         opts: &FileSearchOptions,
-        cursor: &mut FileSearchCursor,
     ) -> io::Result<Vec<SearchMatch>> {
-        self.inner.search_file(path, pattern, opts, cursor)
+        self.inner.search_file(path, pattern, opts)
     }
     fn sudo_write(
         &self,

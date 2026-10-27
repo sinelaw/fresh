@@ -486,9 +486,8 @@ impl FileSystem for WriteDeniedFileSystem {
         path: &Path,
         pattern: &str,
         opts: &fresh::model::filesystem::FileSearchOptions,
-        cursor: &mut fresh::model::filesystem::FileSearchCursor,
     ) -> io::Result<Vec<fresh::model::filesystem::SearchMatch>> {
-        fresh::model::filesystem::default_search_file(&*self.inner, path, pattern, opts, cursor)
+        fresh::model::filesystem::default_search_file(&*self.inner, path, pattern, opts)
     }
 
     fn walk(

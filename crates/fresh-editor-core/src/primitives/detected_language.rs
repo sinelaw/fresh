@@ -264,9 +264,8 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::model::filesystem::{
-        DirEntry, EntryType, FileMetadata, FilePermissions, FileReader, FileSearchCursor,
-        FileSearchOptions, FileSystem, FileWriter, NoopFileSystem, SearchMatch, StdFileSystem,
-        WalkEntry, WalkOptions,
+        DirEntry, EntryType, FileMetadata, FilePermissions, FileReader, FileSearchOptions,
+        FileSystem, FileWriter, NoopFileSystem, SearchMatch, StdFileSystem, WalkEntry, WalkOptions,
     };
     use std::io;
     use std::path::PathBuf;
@@ -471,9 +470,8 @@ mod tests {
             path: &Path,
             pattern: &str,
             opts: &FileSearchOptions,
-            cursor: &mut FileSearchCursor,
         ) -> io::Result<Vec<SearchMatch>> {
-            NoopFileSystem.search_file(path, pattern, opts, cursor)
+            NoopFileSystem.search_file(path, pattern, opts)
         }
         fn sudo_write(
             &self,
