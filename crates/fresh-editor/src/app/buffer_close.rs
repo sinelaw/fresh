@@ -281,6 +281,10 @@ impl Editor {
         // The sidebar sections scoped to this buffer go with it.
         self.drop_sidebar_sections_for_buffer(id);
 
+        // Its file lock, if no other buffer here holds the file: an editor
+        // waiting on the file gets it now
+        self.sync_file_locks();
+
         Ok(())
     }
 

@@ -153,14 +153,40 @@ pub struct RecoveryMetadata {
     /// worktree, which makes the root ambiguous.
     ///
     /// `None` predates the field; readers fall back to path-prefix matching.
+    ///
+    /// Read from earlier versions' stores only: entries are now filed by
+    /// nothing but their content, and placed by the file they name or the
+    /// workspace layout that refers to them (see [`Self::root`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
+
+    /// The project root of the window the buffer was last edited in. Not
+    /// what finds the entry — its file does, or the layout that refers to
+    /// it — but where it is offered when neither does: work whose file no
+    /// window has open, or an unnamed buffer no saved layout refers to,
+    /// comes back in a window on this root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<PathBuf>,
 
     /// A save of this buffer that was under way when the entry was last
     /// written: recorded just before the save writes its file, so a crash
     /// on either side of that write can be told apart (see [`SaveIntent`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub saving: Option<SaveIntent>,
+
+    /// Whether the buffer is a file on another host (a remote authority's
+    /// filesystem). The store is always on this one, so for these the
+    /// file's path names nothing here: its mtime is not recorded, and a
+    /// local file at the same path is never consulted. Restored only into
+    /// a window on a remote authority.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub remote: bool,
+
+    /// For a remote file, which host it is on (the authority's connection,
+    /// e.g. `user@host`): the same path on two hosts is two files, and a
+    /// file's unsaved work is restored only into a window on its own host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
 }
 
 impl RecoveryMetadata {
@@ -196,7 +222,10 @@ impl RecoveryMetadata {
             chunk_count,
             original_file_size,
             workspace_id,
+            root: None,
+            host: None,
             saving: None,
+            remote: false,
         }
     }
 
@@ -287,6 +316,9 @@ impl RecoveryEntry {
     /// Returns true if the file was modified (recovery may be invalid).
     /// Returns false if the file is unchanged or doesn't exist.
     pub fn original_file_modified(&self) -> bool {
+        if self.metadata.remote {
+            return false;
+        }
         if let Some(ref path) = self.metadata.original_path {
             if let Some(saved_mtime) = self.metadata.original_mtime {
                 if let Ok(metadata) = std::fs::metadata(path) {
@@ -317,11 +349,7 @@ impl RecoveryEntry {
 
     /// The handle a buffer restored from this entry keeps.
     pub fn handle(&self) -> HotExitEntry {
-        HotExitEntry::new(
-            self.id.clone(),
-            self.metadata_path.clone(),
-            self.metadata.original_path.clone(),
-        )
+        HotExitEntry::new(self.id.clone(), self.metadata_path.clone())
     }
 }
 
@@ -403,25 +431,21 @@ impl SaveIntent {
 
 /// Where a buffer's hot-exit entry lives, held by the buffer so its save
 /// can record a [`SaveIntent`] there however the save was started.
+///
+/// An entry backs exactly one buffer (its id is the buffer's, never derived
+/// from a path), so whatever the buffer does to its content — a save to its
+/// own file or to another one — is that entry's business alone.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HotExitEntry {
     id: String,
     metadata_path: PathBuf,
-    /// The file the entry holds unsaved work for; `None` for a buffer that
-    /// was never named.
-    file: Option<PathBuf>,
 }
 
 impl HotExitEntry {
-    pub fn new(
-        id: impl Into<String>,
-        metadata_path: impl Into<PathBuf>,
-        file: Option<PathBuf>,
-    ) -> Self {
+    pub fn new(id: impl Into<String>, metadata_path: impl Into<PathBuf>) -> Self {
         Self {
             id: id.into(),
             metadata_path: metadata_path.into(),
-            file,
         }
     }
 
@@ -429,32 +453,41 @@ impl HotExitEntry {
         &self.id
     }
 
+    /// The store directory the entry is in.
+    pub fn store_dir(&self) -> Option<&Path> {
+        self.metadata_path.parent()
+    }
+
     /// Record that the buffer is about to write `size` bytes to `path`.
-    /// Returns whether it was recorded: not when there is no entry, and not
-    /// when the entry is a file's other than `path` — a file's entry is
-    /// keyed by its path, so it holds the unsaved work of every workspace
-    /// with that file open, which a Save As elsewhere doesn't put anywhere.
+    /// Returns whether it was recorded: not when there is no entry.
     pub fn begin_save(&self, path: &Path, size: u64) -> io::Result<bool> {
-        if self.file.as_deref().is_some_and(|file| file != path) {
-            return Ok(false);
-        }
         let intent = SaveIntent {
             path: path.to_path_buf(),
             before: FileStamp::of(path)?,
             size,
         };
-        self.set_saving(Some(&intent))
+        let intent = serde_json::to_value(&intent).map_err(io::Error::other)?;
+        self.set_fields(&[("saving", Some(intent))])
+    }
+
+    /// Record the project root the buffer was last edited under (see
+    /// [`RecoveryMetadata::root`]), for an entry that has none: one moved
+    /// out of an earlier version's store.
+    pub fn set_root(&self, root: &Path) -> io::Result<bool> {
+        let root = serde_json::to_value(root).map_err(io::Error::other)?;
+        self.set_fields(&[("root", Some(root))])
     }
 
     /// Take back [`Self::begin_save`]: the save failed, and the entry is the
     /// unsaved work again.
     pub fn abandon_save(&self) -> io::Result<bool> {
-        self.set_saving(None)
+        self.set_fields(&[("saving", None)])
     }
 
-    /// Rewrite the metadata with `saving` set or cleared, leaving the rest of
-    /// it — the chunk index among it — exactly as it was.
-    fn set_saving(&self, intent: Option<&SaveIntent>) -> io::Result<bool> {
+    /// Rewrite the metadata with each named field set (or removed, for
+    /// `None`), leaving the rest of it — the chunk index among it — exactly
+    /// as it was. Returns whether the entry exists.
+    fn set_fields(&self, changes: &[(&str, Option<serde_json::Value>)]) -> io::Result<bool> {
         let json = match std::fs::read(&self.metadata_path) {
             Ok(json) => json,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
@@ -468,16 +501,21 @@ impl HotExitEntry {
                 "recovery metadata is not an object",
             ));
         };
-        match intent {
-            Some(intent) => {
-                let intent = serde_json::to_value(intent).map_err(io::Error::other)?;
-                fields.insert("saving".to_string(), intent);
-            }
-            None => {
-                if fields.remove("saving").is_none() {
-                    return Ok(true);
+        let mut changed = false;
+        for (name, value) in changes {
+            let before = fields.get(*name).cloned();
+            match value {
+                Some(value) => {
+                    fields.insert(name.to_string(), value.clone());
+                }
+                None => {
+                    fields.remove(*name);
                 }
             }
+            changed |= fields.get(*name) != before.as_ref();
+        }
+        if !changed {
+            return Ok(true);
         }
         let json = serde_json::to_vec_pretty(&meta).map_err(io::Error::other)?;
         write_atomically(&self.metadata_path, &json)?;
@@ -593,14 +631,24 @@ pub fn path_hash(path: &std::path::Path) -> String {
     format!("{:x}", hasher.finalize())[..16].to_string()
 }
 
-/// Generate a unique ID for an unsaved buffer
+/// Generate a unique id for a buffer's recovery entry.
+///
+/// Every buffer gets its own, named or not, and the file it is for is
+/// recorded inside the entry. An id derived from the path was shared by
+/// every buffer with that file open, so one's save or exit could supersede
+/// or delete another's unsaved work.
 pub fn generate_buffer_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::SystemTime;
+    // Unique within a process even on a clock too coarse to tell two
+    // buffers apart; the pid keeps two editors started together apart.
+    static SEQ: AtomicU64 = AtomicU64::new(0);
     let now = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    format!("unsaved_{:x}", now)
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    format!("unsaved_{:x}_{:x}_{:x}", now, std::process::id(), seq)
 }
 
 /// Metadata for an in-place write operation that can be recovered after a crash.
@@ -763,7 +811,7 @@ mod tests {
             }
         });
         std::fs::write(&path, serde_json::to_vec(&meta).unwrap()).unwrap();
-        HotExitEntry::new(id, path, None)
+        HotExitEntry::new(id, path)
     }
 
     fn read_json(entry: &HotExitEntry) -> serde_json::Value {
@@ -806,30 +854,29 @@ mod tests {
     #[test]
     fn begin_save_without_an_entry_records_nothing() {
         let dir = tempfile::TempDir::new().unwrap();
-        let entry = HotExitEntry::new("gone", dir.path().join("gone.meta.json"), None);
+        let entry = HotExitEntry::new("gone", dir.path().join("gone.meta.json"));
         assert!(!entry.begin_save(&dir.path().join("f.txt"), 1).unwrap());
         assert!(!dir.path().join("gone.meta.json").exists());
     }
 
-    /// A file's entry is keyed by its path and holds the unsaved work of
-    /// every workspace with that file open. A save to another file (Save As)
-    /// puts none of that anywhere, so it records nothing in the entry, and
-    /// the entry stays unsaved work.
+    /// An entry is its one buffer's, so a save to another file (Save As)
+    /// records into it like any other save.
     #[test]
-    fn a_save_to_another_file_records_nothing_in_a_files_entry() {
+    fn a_save_to_another_file_records_in_the_buffers_entry() {
         let dir = tempfile::TempDir::new().unwrap();
-        let shared = dir.path().join("shared.txt");
-        let path = dir.path().join("shared.meta.json");
-        write_entry(dir.path(), "shared");
-        let entry = HotExitEntry::new("shared", &path, Some(shared.clone()));
+        let entry = write_entry(dir.path(), "unsaved_1");
+        let renamed = dir.path().join("renamed.txt");
 
-        assert!(!entry
-            .begin_save(&dir.path().join("renamed.txt"), 5)
-            .unwrap());
-        assert_eq!(read_intent(&entry), None);
+        assert!(entry.begin_save(&renamed, 5).unwrap());
+        assert_eq!(read_intent(&entry).map(|i| i.path), Some(renamed));
+    }
 
-        assert!(entry.begin_save(&shared, 5).unwrap());
-        assert_eq!(read_intent(&entry).map(|i| i.path), Some(shared));
+    /// Ids are unique even when minted back to back.
+    #[test]
+    fn buffer_ids_are_unique() {
+        let ids: std::collections::HashSet<String> =
+            (0..1000).map(|_| generate_buffer_id()).collect();
+        assert_eq!(ids.len(), 1000);
     }
 
     /// A crash before the write: the file is as the save found it, so the

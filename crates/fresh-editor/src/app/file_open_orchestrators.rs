@@ -39,7 +39,178 @@ pub(crate) enum OpenKind {
     Preview,
 }
 
+/// Where opening a path in a window lands: see
+/// [`Window::resolve_open_path`](crate::app::window::Window::resolve_open_path).
+pub(crate) struct ResolvedOpenPath {
+    /// The path as the user named it, made absolute: what language
+    /// detection matches its globs against.
+    pub display_path: std::path::PathBuf,
+    /// The path the buffer is keyed by.
+    pub canonical_path: std::path::PathBuf,
+    pub file_exists: bool,
+}
+
+/// A file opened without focus is open in another workspace: a file has one
+/// buffer in the editor, never two, and it lives where it was opened first.
+/// An open that focuses switches to it there instead.
+#[derive(Debug)]
+pub(crate) struct OpenInAnotherWorkspace {
+    pub window: fresh_core::WindowId,
+    pub buffer: BufferId,
+    /// The workspace's label, for the message.
+    pub label: String,
+}
+
+impl std::fmt::Display for OpenInAnotherWorkspace {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            t!("buffer.open_in_other_workspace", workspace = self.label)
+        )
+    }
+}
+
+impl std::error::Error for OpenInAnotherWorkspace {}
+
 impl Editor {
+    /// The workspace other than the active one that has `path` open, and the
+    /// buffer it has it in. A file is one buffer across all workspaces: a
+    /// second workspace opening it goes to the first's (see
+    /// [`OpenInAnotherWorkspace`]).
+    ///
+    /// The same path through another authority (a remote host) is another
+    /// file. Only buffers with a tab count: a plugin's hidden or virtual
+    /// buffer is no place to send the user.
+    pub(crate) fn file_open_in_other_window(&self, path: &Path) -> Option<OpenInAnotherWorkspace> {
+        let active = self.windows.get(&self.active_window)?;
+        let canonical = active.resolve_open_path(path).canonical_path;
+        self.window_with_file(&canonical, self.active_window)
+    }
+
+    /// Why the active window's buffer `own` must not be saved as `path`, if
+    /// it must not: the file's one buffer is in another workspace, or another
+    /// running Fresh has it open. Writing it from here would make a second
+    /// version of the file and save it over the one being edited there.
+    pub(crate) fn save_target_refusal(&mut self, path: &Path, own: BufferId) -> Option<String> {
+        if let Some(elsewhere) = self.file_open_in_other_window(path) {
+            return Some(elsewhere.to_string());
+        }
+        let window = self.windows.get(&self.active_window)?;
+        let canonical = window.resolve_open_path(path).canonical_path;
+        let already_own = window
+            .buffers
+            .get(&own)
+            .and_then(|state| state.buffer.file_path())
+            .is_some_and(|file| file == canonical.as_path());
+        // Locks cover local files only
+        if already_own || window.host_key().is_some() {
+            return None;
+        }
+        match self.recovery_service.lock().unwrap().lock_file(&canonical) {
+            crate::services::recovery::FileLock::Elsewhere { pid } => {
+                let file = canonical
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let pid = pid.map_or_else(|| "?".to_string(), |pid| pid.to_string());
+                Some(t!("buffer.open_in_other_editor", file = file, pid = pid).to_string())
+            }
+            crate::services::recovery::FileLock::Ours => None,
+        }
+    }
+
+    /// The first window other than `except`, on the same authority, with a
+    /// tab on the file at canonical `path`.
+    fn window_with_file(
+        &self,
+        path: &Path,
+        except: fresh_core::WindowId,
+    ) -> Option<OpenInAnotherWorkspace> {
+        let host = self.windows.get(&except).map(|w| w.host_key());
+        let mut others: Vec<_> = self
+            .windows
+            .iter()
+            .filter(|(id, w)| **id != except && Some(w.host_key()) == host)
+            .collect();
+        // The same answer every time a file is open in more than one
+        others.sort_by_key(|(id, _)| id.0);
+        others.into_iter().find_map(|(id, w)| {
+            w.tab_file_buffers()
+                .find(|(_, file)| *file == path)
+                .map(|(buffer_id, _)| OpenInAnotherWorkspace {
+                    window: *id,
+                    buffer: buffer_id,
+                    label: w.label.clone(),
+                })
+        })
+    }
+
+    /// Close the clean hidden buffers other windows have for `path` (a
+    /// plugin's, left by a replace across files): the file is about to have
+    /// its one buffer here. One with unsaved changes is left alone.
+    fn close_hidden_copies_elsewhere(&mut self, path: &Path) {
+        let Some(active) = self.windows.get(&self.active_window) else {
+            return;
+        };
+        let canonical = active.resolve_open_path(path).canonical_path;
+        let host = active.host_key();
+        let copies: Vec<(fresh_core::WindowId, BufferId)> = self
+            .windows
+            .iter()
+            .filter(|(id, w)| **id != self.active_window && w.host_key() == host)
+            .flat_map(|(id, w)| {
+                w.file_buffers(true)
+                    .filter(|(buffer_id, file)| {
+                        *file == canonical.as_path()
+                            && w.buffer_metadata
+                                .get(buffer_id)
+                                .is_some_and(|meta| meta.hidden_from_tabs)
+                            && w.buffers
+                                .get(buffer_id)
+                                .is_some_and(|state| !state.buffer.is_modified())
+                    })
+                    .map(|(buffer_id, _)| (*id, buffer_id))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        for (window, buffer_id) in copies {
+            let closed =
+                self.with_window_retargeted(window, |editor| editor.force_close_buffer(buffer_id));
+            if let Err(e) = closed {
+                tracing::debug!("Failed to close a hidden copy of {}: {e}", path.display());
+            }
+        }
+    }
+
+    /// Close in window `id` the clean tabs of files another workspace has
+    /// open: a workspace restored after another took the file comes back
+    /// without its own copy. Before any recovery runs, so nothing here has
+    /// unsaved work; a modified one is left alone all the same.
+    pub(crate) fn close_files_open_elsewhere(&mut self, id: fresh_core::WindowId) {
+        let Some(window) = self.windows.get(&id) else {
+            return;
+        };
+        let duplicates: Vec<BufferId> = window
+            .tab_file_buffers()
+            .filter(|(buffer_id, _)| {
+                window
+                    .buffers
+                    .get(buffer_id)
+                    .is_some_and(|state| !state.buffer.is_modified())
+            })
+            .filter(|(_, file)| self.window_with_file(file, id).is_some())
+            .map(|(buffer_id, _)| buffer_id)
+            .collect();
+        for buffer_id in duplicates {
+            let closed =
+                self.with_window_retargeted(id, |editor| editor.force_close_buffer(buffer_id));
+            if let Err(e) = closed {
+                tracing::warn!("Failed to close a file open in another workspace: {e}");
+            }
+        }
+    }
+
     /// Helper to jump to a line/column position in the active buffer.
     ///
     /// Lives here (not in the plugin-gated command module) so non-plugin
@@ -132,6 +303,20 @@ impl Editor {
         // `preferred_split_for_file` (which adds the new buffer as a
         // tab) and `set_active_buffer` (which makes it the active
         // buffer) — see a non-dock active leaf and route consistently.
+        // Open in another workspace: go there. A preview is only a look, and
+        // switching workspaces under one would be a jump nobody asked for.
+        if let Some(elsewhere) = self.file_open_in_other_window(path) {
+            if kind == OpenKind::Preview {
+                return Err(elsewhere.into());
+            }
+            let buffer_id = elsewhere.buffer;
+            self.set_active_window(elsewhere.window);
+            self.set_active_buffer(buffer_id);
+            self.reveal_active_split_if_hidden_by_maximize();
+            return Ok(buffer_id);
+        }
+
+        self.close_hidden_copies_elsewhere(path);
         self.active_window_mut()
             .redirect_active_split_away_from_dock_if_needed();
 
@@ -170,6 +355,26 @@ impl Editor {
         }
 
         self.set_active_buffer(buffer_id);
+
+        // Read-only if another editor has it open
+        self.sync_file_locks();
+
+        // Its unsaved work, wherever it was left: the file's entry finds it
+        // from any project. A preview is only a look, and shows the file.
+        if kind == OpenKind::Commit && !self.adopting_recovery {
+            if let Some(file) = self
+                .buffers()
+                .get(&buffer_id)
+                .and_then(|state| state.buffer.file_path())
+                .map(Path::to_path_buf)
+            {
+                self.adopt_recovery_for_window(
+                    self.active_window,
+                    Some(std::slice::from_ref(&file)),
+                    super::recovery_actions::AdoptScope::OpenFiles,
+                );
+            }
+        }
 
         // Deliberately opening the file that is currently being previewed is
         // the commitment the preview was waiting for, so the tab stops being
@@ -227,13 +432,21 @@ impl Editor {
             .map(|s| s.buffer.is_binary())
             .unwrap_or(false);
 
+        // Another editor having it is the news, not that it opened
+        let open_elsewhere = self
+            .active_window()
+            .buffer_metadata
+            .get(&buffer_id)
+            .is_some_and(|meta| meta.open_elsewhere.is_some());
+
         // Show appropriate status message for binary vs regular files
-        if is_binary {
-            self.active_window_mut().status_message =
-                Some(t!("buffer.opened_binary", name = display_name).to_string());
-        } else {
-            self.active_window_mut().status_message =
-                Some(t!("buffer.opened", name = display_name).to_string());
+        if !open_elsewhere {
+            let message = if is_binary {
+                t!("buffer.opened_binary", name = display_name)
+            } else {
+                t!("buffer.opened", name = display_name)
+            };
+            self.active_window_mut().status_message = Some(message.to_string());
         }
 
         Ok(buffer_id)
@@ -290,14 +503,27 @@ impl Editor {
     /// Thin delegator: the open-file core lives on `impl Window` (rooted
     /// at the window's own `root` / `resources`). The editor forwards to
     /// the active window.
+    ///
+    /// A file open in another workspace stays there: this fails with
+    /// [`OpenInAnotherWorkspace`], since nothing here moves focus to it.
     pub fn open_file_no_focus(&mut self, path: &Path) -> anyhow::Result<BufferId> {
-        self.active_window_mut().open_file_no_focus(path)
+        if let Some(elsewhere) = self.file_open_in_other_window(path) {
+            return Err(elsewhere.into());
+        }
+        self.close_hidden_copies_elsewhere(path);
+        let buffer_id = self.active_window_mut().open_file_no_focus(path)?;
+        // Read-only if another editor has it open
+        self.sync_file_locks();
+        Ok(buffer_id)
     }
 
     /// Open a file without switching focus AND without ever
     /// repurposing the active "no name" buffer. Thin delegator to the
     /// active window's `Window::open_file_for_preview`.
     pub(super) fn open_file_for_preview(&mut self, path: &Path) -> anyhow::Result<BufferId> {
+        if let Some(elsewhere) = self.file_open_in_other_window(path) {
+            return Err(elsewhere.into());
+        }
         self.active_window_mut().open_file_for_preview(path)
     }
 
@@ -1062,24 +1288,52 @@ impl crate::app::window::Window {
         self.buffer_metadata.insert(buffer_id, metadata);
     }
 
-    fn open_file_no_focus_inner(
-        &mut self,
-        path: &Path,
-        allow_replace_empty: bool,
-        kind: OpenKind,
-    ) -> anyhow::Result<BufferId> {
-        // Fail fast if the remote connection is down — don't attempt I/O that
-        // would either timeout or return confusing errors.
-        if !self.authority().filesystem.is_remote_connected() {
-            anyhow::bail!(
-                "Cannot open file: remote connection lost ({})",
-                self.authority()
-                    .filesystem
-                    .remote_connection_info()
-                    .unwrap_or("unknown host")
-            );
+    /// Which authority this window's files are on: `None` for this machine,
+    /// the host for a remote one. The same path under two is two files.
+    ///
+    /// A remote workspace not connected yet runs on a local placeholder; its
+    /// files are still the remote host's, so it is keyed by the backend it
+    /// will reconnect to — never as this machine.
+    pub(crate) fn host_key(&self) -> Option<String> {
+        if let Some(host) = self.authority().filesystem.remote_connection_info() {
+            return Some(host.to_owned());
         }
+        self.authority_spec.is_remote().then(|| {
+            format!(
+                "unconnected:{}",
+                serde_json::to_string(&self.authority_spec).unwrap_or_default()
+            )
+        })
+    }
 
+    /// This window's file buffers that have a tab, with their files: what a
+    /// file being "open" here means. A plugin's hidden or virtual buffer,
+    /// and a composite view, are not.
+    pub(crate) fn tab_file_buffers(&self) -> impl Iterator<Item = (BufferId, &Path)> {
+        self.file_buffers(false)
+    }
+
+    /// This window's file buffers, with their files: those with a tab, and
+    /// with `hidden` also a plugin's hidden ones (a replace across files
+    /// opens them) — every buffer that can write its file.
+    pub(crate) fn file_buffers(&self, hidden: bool) -> impl Iterator<Item = (BufferId, &Path)> {
+        self.buffers.iter().filter_map(move |(buffer_id, state)| {
+            let meta = self.buffer_metadata.get(buffer_id)?;
+            if state.is_composite_buffer || (meta.hidden_from_tabs && !hidden) || meta.is_virtual()
+            {
+                return None;
+            }
+            let file = state.buffer.file_path()?;
+            (!file.as_os_str().is_empty()).then_some((*buffer_id, file))
+        })
+    }
+
+    /// Where opening `path` in this window lands: relative paths resolved
+    /// against the window's base (the remote home, or its root), then
+    /// canonicalized — a missing file through its parent — so the same file
+    /// is one path however it was named. The key both this window's own
+    /// already-open check and the editor's across-workspace one compare.
+    pub(crate) fn resolve_open_path(&self, path: &Path) -> ResolvedOpenPath {
         // Resolve relative paths against appropriate base directory.
         // For remote mode, use the remote home directory; for local, use
         // this window's root.
@@ -1141,6 +1395,36 @@ impl crate::app::window::Window {
                 resolved_path
             }
         };
+        ResolvedOpenPath {
+            display_path,
+            canonical_path,
+            file_exists,
+        }
+    }
+
+    fn open_file_no_focus_inner(
+        &mut self,
+        path: &Path,
+        allow_replace_empty: bool,
+        kind: OpenKind,
+    ) -> anyhow::Result<BufferId> {
+        // Fail fast if the remote connection is down — don't attempt I/O that
+        // would either timeout or return confusing errors.
+        if !self.authority().filesystem.is_remote_connected() {
+            anyhow::bail!(
+                "Cannot open file: remote connection lost ({})",
+                self.authority()
+                    .filesystem
+                    .remote_connection_info()
+                    .unwrap_or("unknown host")
+            );
+        }
+
+        let ResolvedOpenPath {
+            display_path,
+            canonical_path,
+            file_exists,
+        } = self.resolve_open_path(path);
         let path = canonical_path.as_path();
 
         // Check if the path is a directory (after following symlinks via canonicalize)
