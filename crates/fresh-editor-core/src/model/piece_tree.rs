@@ -910,6 +910,12 @@ impl PieceTree {
         }
     }
 
+    /// The tree under `root` — a snapshot taken with [`root`](Self::root).
+    pub fn from_root(root: Arc<PieceTreeNode>) -> Self {
+        let total_bytes = root.total_bytes();
+        PieceTree { root, total_bytes }
+    }
+
     /// Build a `PieceTree` from an explicit list of leaves.
     pub fn from_leaves(leaves: &[LeafData]) -> Self {
         let total_bytes: usize = leaves.iter().map(|l| l.bytes).sum();

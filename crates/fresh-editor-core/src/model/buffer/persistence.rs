@@ -328,9 +328,14 @@ impl Persistence {
         }
     }
 
+    /// The saved snapshot as a tree.
+    fn saved_tree(&self) -> PieceTree {
+        PieceTree::from_root(Arc::clone(&self.saved_root))
+    }
+
     /// Total bytes of the saved snapshot tree.
     pub fn saved_total_bytes(&self) -> usize {
-        tree_total_bytes(&self.saved_root)
+        self.saved_tree().total_bytes()
     }
 
     /// Read a byte range out of the saved snapshot tree. `None` when any
@@ -341,7 +346,12 @@ impl Persistence {
         end: usize,
         buffers: &[StringBuffer],
     ) -> Option<Vec<u8>> {
-        extract_range_from_tree(&self.saved_root, start, end, buffers)
+        loaded_text_range(
+            &self.saved_tree(),
+            buffers,
+            start,
+            end.saturating_sub(start),
+        )
     }
 
     /// Diff the current piece tree against the last saved snapshot.
@@ -455,7 +465,8 @@ impl Persistence {
         piece_tree: &PieceTree,
         buffers: &[StringBuffer],
     ) -> bool {
-        let saved_bytes = tree_total_bytes(&self.saved_root);
+        let saved_tree = self.saved_tree();
+        let saved_bytes = saved_tree.total_bytes();
         let current_bytes = piece_tree.total_bytes();
 
         // Different total sizes → content definitely differs.
@@ -468,9 +479,8 @@ impl Persistence {
                 continue;
             }
 
-            let saved_slice =
-                extract_range_from_tree(&self.saved_root, range.start, range.end, buffers);
-            let current_slice = get_text_range(piece_tree, buffers, range.start, range.len());
+            let saved_slice = loaded_text_range(&saved_tree, buffers, range.start, range.len());
+            let current_slice = loaded_text_range(piece_tree, buffers, range.start, range.len());
 
             match (saved_slice, current_slice) {
                 (Some(saved), Some(current)) => {
@@ -491,89 +501,11 @@ impl Persistence {
 
 // ---------- private free-fn helpers over borrowed storage ----------
 
-/// Total bytes in a tree rooted at `root`.
-fn tree_total_bytes(root: &Arc<PieceTreeNode>) -> usize {
-    match root.as_ref() {
-        PieceTreeNode::Internal {
-            left_bytes, right, ..
-        } => left_bytes + tree_total_bytes(right),
-        PieceTreeNode::Leaf { bytes, .. } => *bytes,
-    }
-}
-
-/// Extract a byte range from an arbitrary tree root.
-fn extract_range_from_tree(
-    root: &Arc<PieceTreeNode>,
-    start: usize,
-    end: usize,
-    buffers: &[StringBuffer],
-) -> Option<Vec<u8>> {
-    let mut result = Vec::with_capacity(end.saturating_sub(start));
-    collect_range_from_node(root, start, end, 0, buffers, &mut result)?;
-    Some(result)
-}
-
-fn collect_range_from_node(
-    node: &Arc<PieceTreeNode>,
-    range_start: usize,
-    range_end: usize,
-    node_offset: usize,
-    buffers: &[StringBuffer],
-    result: &mut Vec<u8>,
-) -> Option<()> {
-    match node.as_ref() {
-        PieceTreeNode::Internal {
-            left_bytes,
-            left,
-            right,
-            ..
-        } => {
-            let left_end = node_offset + left_bytes;
-
-            if range_start < left_end {
-                collect_range_from_node(
-                    left,
-                    range_start,
-                    range_end,
-                    node_offset,
-                    buffers,
-                    result,
-                )?;
-            }
-
-            if range_end > left_end {
-                collect_range_from_node(right, range_start, range_end, left_end, buffers, result)?;
-            }
-        }
-        PieceTreeNode::Leaf {
-            location,
-            offset,
-            bytes,
-            ..
-        } => {
-            let node_end = node_offset + bytes;
-
-            if range_start < node_end && range_end > node_offset {
-                let buf = buffers.get(location.buffer_id())?;
-                let data = buf.get_data()?;
-
-                let leaf_start = range_start.saturating_sub(node_offset);
-                let leaf_end = (range_end - node_offset).min(*bytes);
-
-                if leaf_start < leaf_end {
-                    let slice = data.get(*offset + leaf_start..*offset + leaf_end)?;
-                    result.extend_from_slice(slice);
-                }
-            }
-        }
-    }
-    Some(())
-}
-
-/// Read-only equivalent of `TextBuffer::get_text_range`, duplicated
-/// here so `verify_content_differs_in_ranges` doesn't need access to
-/// `TextBuffer`.  Returns `None` if any required buffer is unloaded.
-fn get_text_range(
+/// The bytes at `offset..offset + bytes` of the document `piece_tree` and
+/// `buffers` make, or None if any of them aren't loaded. `TextBuffer`'s
+/// read-only range reader, here so `verify_content_differs_in_ranges` can
+/// use it without a `TextBuffer`.
+pub(super) fn loaded_text_range(
     piece_tree: &PieceTree,
     buffers: &[StringBuffer],
     offset: usize,
@@ -585,38 +517,16 @@ fn get_text_range(
 
     let mut result = Vec::with_capacity(bytes);
     let end_offset = offset + bytes;
-    let mut collected = 0;
-
-    for piece_view in piece_tree.iter_pieces_in_range(offset, end_offset) {
-        let buffer_id = piece_view.location.buffer_id();
-        if let Some(buffer) = buffers.get(buffer_id) {
-            let piece_start_in_doc = piece_view.doc_offset;
-            let piece_end_in_doc = piece_view.doc_offset + piece_view.bytes;
-
-            let read_start = offset.max(piece_start_in_doc);
-            let read_end = end_offset.min(piece_end_in_doc);
-
-            if read_end > read_start {
-                let offset_in_piece = read_start - piece_start_in_doc;
-                let bytes_to_read = read_end - read_start;
-
-                let buffer_start = piece_view.buffer_offset + offset_in_piece;
-                let buffer_end = buffer_start + bytes_to_read;
-
-                let data = buffer.get_data()?;
-
-                if buffer_end <= data.len() {
-                    result.extend_from_slice(&data[buffer_start..buffer_end]);
-                    collected += bytes_to_read;
-
-                    if collected >= bytes {
-                        break;
-                    }
-                }
-            }
+    for piece in piece_tree.iter_pieces_in_range(offset, end_offset) {
+        let read_start = offset.max(piece.doc_offset);
+        let read_end = end_offset.min(piece.doc_offset + piece.bytes);
+        if read_end <= read_start {
+            continue;
         }
+        let start = piece.buffer_offset + (read_start - piece.doc_offset);
+        let data = buffers.get(piece.location.buffer_id())?.get_data()?;
+        result.extend_from_slice(data.get(start..start + (read_end - read_start))?);
     }
-
     Some(result)
 }
 

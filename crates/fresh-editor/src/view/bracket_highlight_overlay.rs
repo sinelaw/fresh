@@ -107,6 +107,114 @@ fn pos_in_ranges(ranges: &[Range<usize>], pos: usize) -> bool {
         .is_ok()
 }
 
+/// The bracket matching the one at `position` — `opening`/`closing` its
+/// pair, searched ahead of it when `forward` and behind it otherwise — no
+/// further than `search_bound` (an absolute byte) nor
+/// [`MAX_BRACKET_SEARCH_BYTES`]. Brackets inside `skip_ranges` (comments and
+/// strings) are ignored, so the match is structural punctuation (#2405).
+///
+/// `pub(crate)` so go-to-matching-bracket jumps where the highlight is.
+pub(crate) fn find_matching_bracket(
+    buffer: &Buffer,
+    position: usize,
+    opening: char,
+    closing: char,
+    forward: bool,
+    skip_ranges: &[Range<usize>],
+    search_bound: usize,
+) -> Option<usize> {
+    let buffer_len = buffer.len();
+    let open = opening as u8;
+    let close = closing as u8;
+    let mut depth: i32 = 1;
+
+    if forward {
+        let search_limit = (position + 1 + MAX_BRACKET_SEARCH_BYTES)
+            .min(buffer_len)
+            .min(search_bound.max(position + 1));
+        let mut pos = position + 1;
+        while pos < search_limit {
+            let chunk_end = (pos + BRACKET_SCAN_CHUNK).min(search_limit);
+            let chunk = buffer.slice_bytes(pos..chunk_end);
+            for (i, &b) in chunk.iter().enumerate() {
+                if pos_in_ranges(skip_ranges, pos + i) {
+                    continue;
+                }
+                if b == open {
+                    depth += 1;
+                } else if b == close {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(pos + i);
+                    }
+                }
+            }
+            pos = chunk_end;
+        }
+    } else {
+        let search_limit = position
+            .saturating_sub(MAX_BRACKET_SEARCH_BYTES)
+            .max(search_bound.min(position));
+        let mut pos = position;
+        while pos > search_limit {
+            let chunk_start = pos.saturating_sub(BRACKET_SCAN_CHUNK).max(search_limit);
+            let chunk = buffer.slice_bytes(chunk_start..pos);
+            for (i, &b) in chunk.iter().enumerate().rev() {
+                if pos_in_ranges(skip_ranges, chunk_start + i) {
+                    continue;
+                }
+                if b == close {
+                    depth += 1;
+                } else if b == open {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(chunk_start + i);
+                    }
+                }
+            }
+            pos = chunk_start;
+        }
+    }
+
+    None
+}
+
+/// The nearest opening bracket before `position` that its closing bracket
+/// doesn't close before `position` — the bracket enclosing it — with its
+/// pair: `(opening, closing, at)`. Searched no further back than
+/// [`MAX_BRACKET_SEARCH_BYTES`], each of `pairs` nesting on its own.
+pub(crate) fn find_enclosing_bracket(
+    buffer: &Buffer,
+    position: usize,
+    pairs: &[(char, char)],
+    skip_ranges: &[Range<usize>],
+) -> Option<(char, char, usize)> {
+    let search_limit = position.saturating_sub(MAX_BRACKET_SEARCH_BYTES);
+    let mut depths = vec![0usize; pairs.len()];
+    let mut pos = position.min(buffer.len());
+    while pos > search_limit {
+        let chunk_start = pos.saturating_sub(BRACKET_SCAN_CHUNK).max(search_limit);
+        let chunk = buffer.slice_bytes(chunk_start..pos);
+        for (i, &b) in chunk.iter().enumerate().rev() {
+            if pos_in_ranges(skip_ranges, chunk_start + i) {
+                continue;
+            }
+            for (depth, &(open, close)) in depths.iter_mut().zip(pairs) {
+                if b == close as u8 {
+                    *depth += 1;
+                } else if b == open as u8 {
+                    if *depth == 0 {
+                        return Some((open, close, chunk_start + i));
+                    }
+                    *depth -= 1;
+                }
+            }
+        }
+        pos = chunk_start;
+    }
+    None
+}
+
 /// Get the matching bracket pair for a character
 pub(crate) fn get_bracket_pair(ch: char, angle_brackets: bool) -> Option<(char, char, bool)> {
     for &(open, close) in bracket_pairs(angle_brackets) {
@@ -365,7 +473,7 @@ impl BracketHighlightOverlay {
         };
 
         // Find matching bracket
-        let matching_pos = self.find_matching_bracket(
+        let matching_pos = find_matching_bracket(
             buffer,
             cursor_position,
             opening,
@@ -424,80 +532,6 @@ impl BracketHighlightOverlay {
         }
 
         updated
-    }
-
-    /// Find the matching bracket (bounded to MAX_BRACKET_SEARCH_BYTES).
-    ///
-    /// Brackets inside `skip_ranges` (comments/strings) are ignored so the
-    /// match reflects only structural punctuation (issue #2405).
-    /// The match for the bracket at `position`, searched for no further than
-    /// `search_bound` (an absolute byte, ahead of `position` when `forward` and
-    /// behind it otherwise).
-    #[allow(clippy::too_many_arguments)]
-    fn find_matching_bracket(
-        &self,
-        buffer: &Buffer,
-        position: usize,
-        opening: char,
-        closing: char,
-        forward: bool,
-        skip_ranges: &[Range<usize>],
-        search_bound: usize,
-    ) -> Option<usize> {
-        let buffer_len = buffer.len();
-        let open = opening as u8;
-        let close = closing as u8;
-        let mut depth: i32 = 1;
-
-        if forward {
-            let search_limit = (position + 1 + MAX_BRACKET_SEARCH_BYTES)
-                .min(buffer_len)
-                .min(search_bound.max(position + 1));
-            let mut pos = position + 1;
-            while pos < search_limit {
-                let chunk_end = (pos + BRACKET_SCAN_CHUNK).min(search_limit);
-                let chunk = buffer.slice_bytes(pos..chunk_end);
-                for (i, &b) in chunk.iter().enumerate() {
-                    if pos_in_ranges(skip_ranges, pos + i) {
-                        continue;
-                    }
-                    if b == open {
-                        depth += 1;
-                    } else if b == close {
-                        depth -= 1;
-                        if depth == 0 {
-                            return Some(pos + i);
-                        }
-                    }
-                }
-                pos = chunk_end;
-            }
-        } else {
-            let search_limit = position
-                .saturating_sub(MAX_BRACKET_SEARCH_BYTES)
-                .max(search_bound.min(position));
-            let mut pos = position;
-            while pos > search_limit {
-                let chunk_start = pos.saturating_sub(BRACKET_SCAN_CHUNK).max(search_limit);
-                let chunk = buffer.slice_bytes(chunk_start..pos);
-                for (i, &b) in chunk.iter().enumerate().rev() {
-                    if pos_in_ranges(skip_ranges, chunk_start + i) {
-                        continue;
-                    }
-                    if b == close {
-                        depth += 1;
-                    } else if b == open {
-                        depth -= 1;
-                        if depth == 0 {
-                            return Some(chunk_start + i);
-                        }
-                    }
-                }
-                pos = chunk_start;
-            }
-        }
-
-        None
     }
 
     /// Force clear all highlights (e.g., when switching buffers)
@@ -962,32 +996,29 @@ mod tests {
     #[test]
     fn test_find_matching_bracket_forward() {
         let buffer = Buffer::from_str_test("(hello)");
-        let overlay = BracketHighlightOverlay::new();
 
-        let result = overlay.find_matching_bracket(&buffer, 0, '(', ')', true, &[], usize::MAX);
+        let result = find_matching_bracket(&buffer, 0, '(', ')', true, &[], usize::MAX);
         assert_eq!(result, Some(6));
     }
 
     #[test]
     fn test_find_matching_bracket_backward() {
         let buffer = Buffer::from_str_test("(hello)");
-        let overlay = BracketHighlightOverlay::new();
 
-        let result = overlay.find_matching_bracket(&buffer, 6, '(', ')', false, &[], 0);
+        let result = find_matching_bracket(&buffer, 6, '(', ')', false, &[], 0);
         assert_eq!(result, Some(0));
     }
 
     #[test]
     fn test_find_matching_bracket_nested() {
         let buffer = Buffer::from_str_test("((inner))");
-        let overlay = BracketHighlightOverlay::new();
 
         // Outer opening bracket should match outer closing
-        let result = overlay.find_matching_bracket(&buffer, 0, '(', ')', true, &[], usize::MAX);
+        let result = find_matching_bracket(&buffer, 0, '(', ')', true, &[], usize::MAX);
         assert_eq!(result, Some(8));
 
         // Inner opening bracket should match inner closing
-        let result = overlay.find_matching_bracket(&buffer, 1, '(', ')', true, &[], usize::MAX);
+        let result = find_matching_bracket(&buffer, 1, '(', ')', true, &[], usize::MAX);
         assert_eq!(result, Some(7));
     }
 
@@ -1011,19 +1042,105 @@ mod tests {
         // `( # ) )` — the first `)` sits inside a "comment" range and must be
         // ignored, so the opening `(` matches the second `)`.
         let buffer = Buffer::from_str_test("(a)b)");
-        let overlay = BracketHighlightOverlay::new();
 
         // Without skipping, `(` at 0 matches the `)` at 2.
         assert_eq!(
-            overlay.find_matching_bracket(&buffer, 0, '(', ')', true, &[], usize::MAX),
+            find_matching_bracket(&buffer, 0, '(', ')', true, &[], usize::MAX),
             Some(2)
         );
 
         // Treat byte 2 (the first `)`) as inside a comment: it should be
         // skipped, so the match becomes the `)` at 4.
         assert_eq!(
-            overlay.find_matching_bracket(&buffer, 0, '(', ')', true, &[2..3], usize::MAX),
+            find_matching_bracket(&buffer, 0, '(', ')', true, &[2..3], usize::MAX),
             Some(4)
         );
+    }
+
+    #[test]
+    // A slice of byte ranges is the argument, not a range of values.
+    #[allow(clippy::single_range_in_vec_init)]
+    fn test_find_enclosing_bracket() {
+        let pairs = bracket_pairs(false);
+        let buffer = Buffer::from_str_test("f(a, [b], {c}) x");
+        // Inside the parens, past closed `[...]` and `{...}`.
+        assert_eq!(
+            find_enclosing_bracket(&buffer, 13, pairs, &[]),
+            Some(('(', ')', 1))
+        );
+        // Inside the brackets.
+        assert_eq!(
+            find_enclosing_bracket(&buffer, 6, pairs, &[]),
+            Some(('[', ']', 5))
+        );
+        // Outside everything.
+        assert_eq!(find_enclosing_bracket(&buffer, 15, pairs, &[]), None);
+        assert_eq!(find_enclosing_bracket(&buffer, 0, pairs, &[]), None);
+        // A `(` in a comment encloses nothing.
+        let buffer = Buffer::from_str_test("{ // (\n x");
+        assert_eq!(
+            find_enclosing_bracket(&buffer, 9, pairs, &[2..6]),
+            Some(('{', '}', 0))
+        );
+    }
+
+    /// Across the scan's chunk boundaries, both finders give what a naive
+    /// byte-at-a-time scan gives.
+    #[test]
+    fn test_bracket_finders_across_chunks() {
+        let mut text = "(".to_string();
+        text.push_str(&"[x]".repeat(BRACKET_SCAN_CHUNK));
+        text.push_str(" here ");
+        text.push_str(&"{y}".repeat(BRACKET_SCAN_CHUNK));
+        text.push(')');
+        let buffer = Buffer::from_str_test(&text);
+        let here = text.find("here").unwrap();
+        let pairs = bracket_pairs(false);
+        assert_eq!(
+            find_enclosing_bracket(&buffer, here, pairs, &[]),
+            Some(('(', ')', 0))
+        );
+        let last = text.len() - 1;
+        assert_eq!(
+            find_matching_bracket(&buffer, 0, '(', ')', true, &[], usize::MAX),
+            Some(last)
+        );
+        assert_eq!(
+            find_matching_bracket(&buffer, last, '(', ')', false, &[], 0),
+            Some(0)
+        );
+    }
+
+    fn naive_enclosing(text: &[u8], position: usize) -> Option<(char, char, usize)> {
+        let pairs = bracket_pairs(false);
+        let mut depths = vec![0usize; pairs.len()];
+        for at in (0..position).rev() {
+            for (depth, &(open, close)) in depths.iter_mut().zip(pairs) {
+                if text[at] == close as u8 {
+                    *depth += 1;
+                } else if text[at] == open as u8 {
+                    if *depth == 0 {
+                        return Some((open, close, at));
+                    }
+                    *depth -= 1;
+                }
+            }
+        }
+        None
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn prop_find_enclosing_bracket_is_the_naive_scan(
+            text in "[()\\[\\]{}a]{0,64}",
+            position in 0usize..70,
+        ) {
+            let buffer = Buffer::from_str_test(&text);
+            let position = position.min(text.len());
+            proptest::prop_assert_eq!(
+                find_enclosing_bracket(&buffer, position, bracket_pairs(false), &[]),
+                naive_enclosing(text.as_bytes(), position)
+            );
+        }
     }
 }

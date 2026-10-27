@@ -1451,54 +1451,12 @@ impl TextBuffer {
         delta
     }
 
-    /// Get text from a byte offset range
-    /// This now uses the optimized piece_tree.iter_pieces_in_range() for a single traversal
-    /// Get text from a byte offset range (read-only)
-    /// Returns None if any buffer in the range is unloaded
-    /// PRIVATE: External code should use get_text_range_mut() which handles lazy loading
+    /// The bytes at `offset..offset + bytes`, or None if any of them aren't
+    /// loaded. PRIVATE: external code uses `get_text_range_mut`, which
+    /// loads what it reads.
     fn get_text_range(&self, offset: usize, bytes: usize) -> Option<Vec<u8>> {
-        if bytes == 0 {
-            return Some(Vec::new());
-        }
-
-        let mut result = Vec::with_capacity(bytes);
-        let end_offset = offset + bytes;
-        let mut collected = 0;
-
-        // Use the efficient piece iterator (single O(log n) traversal + O(N) iteration)
-        for piece_view in self.piece_tree.iter_pieces_in_range(offset, end_offset) {
-            let buffer_id = piece_view.location.buffer_id();
-            if let Some(buffer) = self.buffers.get(buffer_id) {
-                // Calculate the range to read from this piece
-                let piece_start_in_doc = piece_view.doc_offset;
-                let piece_end_in_doc = piece_view.doc_offset + piece_view.bytes;
-
-                // Clip to the requested range
-                let read_start = offset.max(piece_start_in_doc);
-                let read_end = end_offset.min(piece_end_in_doc);
-
-                if read_end > read_start {
-                    let offset_in_piece = read_start - piece_start_in_doc;
-                    let bytes_to_read = read_end - read_start;
-
-                    let buffer_start = piece_view.buffer_offset + offset_in_piece;
-                    let buffer_end = buffer_start + bytes_to_read;
-
-                    // Return None if buffer is unloaded (type-safe)
-                    let data = buffer.get_data()?;
-
-                    if buffer_end <= data.len() {
-                        result.extend_from_slice(&data[buffer_start..buffer_end]);
-                        collected += bytes_to_read;
-
-                        if collected >= bytes {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
+        let result =
+            persistence::loaded_text_range(&self.piece_tree, &self.buffers, offset, bytes)?;
         crate::counters::work::add_buffer_bytes_read(result.len() as u64);
         Some(result)
     }
@@ -1508,8 +1466,9 @@ impl TextBuffer {
     ///
     /// Returns an error if loading fails or if data cannot be read for any reason.
     ///
-    /// NOTE: Currently loads entire buffers on-demand. Future optimization would split
-    /// large pieces and load only LOAD_CHUNK_SIZE chunks at a time.
+    /// An unloaded piece is split so only the `LOAD_CHUNK_SIZE` chunk around
+    /// the read is loaded (`chunk_split_and_load`); it stays loaded, so a
+    /// later read of it costs nothing.
     pub fn get_text_range_mut(&mut self, offset: usize, bytes: usize) -> Result<Vec<u8>> {
         // `trace`, not `info`: this fires once per chunk of every line read, so
         // on a long-line file an enabled span formats its fields thousands of
@@ -1818,14 +1777,6 @@ impl TextBuffer {
         self.get_text_range(0, self.total_bytes())
     }
 
-    /// Get all text as a String
-    /// Returns None if any buffers are unloaded (lazy loading)
-    /// CRATE-PRIVATE: External code should use get_text_range_mut()
-    pub(crate) fn get_all_text_string(&self) -> Option<String> {
-        self.get_all_text()
-            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
-    }
-
     /// Get text from a byte range as bytes
     /// CRATE-PRIVATE: Returns empty vector if any buffers are unloaded (silently fails!)
     /// Only use this when you KNOW the data is loaded (e.g., for syntax highlighting small regions)
@@ -1838,7 +1789,8 @@ impl TextBuffer {
     /// Get all text as a String
     /// Returns None if any buffers are unloaded (lazy loading)
     pub fn to_string(&self) -> Option<String> {
-        self.get_all_text_string()
+        self.get_all_text()
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
     }
 
     /// Get the total number of bytes
