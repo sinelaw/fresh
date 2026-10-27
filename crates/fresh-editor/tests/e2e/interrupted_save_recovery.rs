@@ -32,16 +32,8 @@ fn start_after_interrupted_save() -> Scene {
     let file = harness.project_dir().unwrap().join("notes.txt");
     std::fs::write(&file, TORN).unwrap();
 
-    // The top-level recovery directory, where in-place saves stage — not
-    // the session-scoped one below it.
-    let recovery_dir = harness
-        .recovery_dir()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf();
+    // The recovery directory, where in-place saves stage
+    let recovery_dir = harness.recovery_dir().unwrap();
     std::fs::create_dir_all(&recovery_dir).unwrap();
     let copy = recovery_dir.join(format!(".inplace-notes.txt-{DEAD_PID}-1.tmp"));
     std::fs::write(&copy, KEPT).unwrap();
@@ -158,14 +150,7 @@ fn interrupted_save_decided_later_is_kept() {
 /// Plant the copy a save of `file` kept, written by `pid`, in the harness's
 /// top-level recovery directory. Returns the copy's path.
 fn plant_kept_copy(harness: &EditorTestHarness, file: &std::path::Path, pid: u32) -> PathBuf {
-    let recovery_dir = harness
-        .recovery_dir()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf();
+    let recovery_dir = harness.recovery_dir().unwrap();
     std::fs::create_dir_all(&recovery_dir).unwrap();
     let copy = recovery_dir.join(format!(".inplace-notes.txt-{pid}-1.tmp"));
     std::fs::write(&copy, KEPT).unwrap();

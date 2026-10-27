@@ -1178,6 +1178,26 @@ pub fn workspace_ids_for_root(root: &Path) -> std::collections::HashSet<String> 
     ids
 }
 
+/// The unnamed buffers the saved workspaces on `root` other than `except`
+/// place in their layouts, by recovery id: the unsaved work those
+/// workspaces come back with, which another window on the root leaves to
+/// them.
+pub fn unnamed_refs_for_root(root: &Path, except: &str) -> std::collections::HashSet<String> {
+    let mut refs = std::collections::HashSet::new();
+    for id in workspace_ids_for_root(root) {
+        if id == except {
+            continue;
+        }
+        let Ok(path) = workspace_path_for(root, &id) else {
+            continue;
+        };
+        if let Ok(Some(workspace)) = Workspace::load_from_path(&path, root) {
+            refs.extend(workspace.unnamed_buffers.into_iter().map(|r| r.recovery_id));
+        }
+    }
+    refs
+}
+
 /// The stable ids of every saved workspace, whatever its root, read from
 /// the names of the `<encoded root>.<id>.json` files: an id never holds a
 /// dot, and an encoded root never ends in one. Recovery uses it to tell an

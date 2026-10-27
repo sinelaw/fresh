@@ -4378,6 +4378,23 @@ impl Editor {
         let explicit_buffer = (buffer_id != 0)
             .then_some(BufferId(buffer_id))
             .filter(|bid| self.buffers().contains_key(bid));
+        // The file's buffer is in another workspace: replace there, in the
+        // one buffer it has, rather than in a second copy opened here.
+        if explicit_buffer.is_none() {
+            if let Some(elsewhere) = self.file_open_in_other_window(&file_path) {
+                let buffer = elsewhere.buffer.0;
+                return self.with_window_retargeted(elsewhere.window, |editor| {
+                    editor.handle_replace_in_buffer(
+                        file_path,
+                        buffer,
+                        matches,
+                        replacement,
+                        regex,
+                        callback_id,
+                    )
+                });
+            }
+        }
         let buffer_id = if let Some(bid) = explicit_buffer {
             bid
         } else if let Some((&bid, _)) = self

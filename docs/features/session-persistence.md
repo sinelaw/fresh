@@ -62,7 +62,9 @@ All buffers — including unnamed scratch buffers — persist automatically. Whe
 
 With `hot_exit` off, quitting asks you to save or discard every unsaved buffer, unnamed ones included, and offers no way to keep them for later. Fresh only drops unsaved work you chose to discard: work left by a crash, by an exit that asked nothing (Force Quit, a daemon shutting down, the GUI window closing) or by a workspace window closed from the Orchestrator is kept and comes back the next time that project is opened.
 
-Unsaved changes follow the directory, not the way Fresh was launched: an edit left unsaved in a bare `fresh` (with Auto Attach) comes back in `fresh FILE`, `fresh DIR` or a bare `fresh` with Auto Attach off, and the other way round. While the editor that holds them is still running — a detached daemon, say — they stay with it.
+Unsaved changes are kept per buffer, not per workspace, and come back however Fresh is launched. A file's unsaved changes come back wherever the file is opened, from any project. An unnamed buffer's come back in the workspace whose layout places it, or else in the project it was last edited in. While the editor that holds them is still running — a detached daemon, say — they stay with it.
+
+A file has one buffer across all of an editor's workspaces. Opening a file that another workspace already has open takes you to it there, and a workspace restored after another took the file comes back without its own tab for it. A second Fresh opening a file the first has open gets it read-only until the first closes it, so a file never has two unsaved versions.
 
 ## Workspace Storage
 

@@ -1157,19 +1157,14 @@ impl EditorTestHarness {
             .map(|h| h.state_path.as_path())
     }
 
-    /// Get the recovery directory path for this test harness: the store's
-    /// directory for the working directory's project, which holds the
-    /// unsaved work of every workspace on it, whichever editor wrote it
-    /// (list it with `fresh::services::recovery::entries_under`).
+    /// Get the recovery directory path for this test harness: the one store
+    /// every editor writes, whatever its project (list it with
+    /// `fresh::services::recovery::all_entries`, or one project's with
+    /// `entries_for_root`).
     pub fn recovery_dir(&self) -> Option<PathBuf> {
-        let base = self
-            ._temp_dir
+        self._temp_dir
             .as_ref()
-            .map(|d| d.path().join("data").join("recovery"))?;
-        Some(fresh::services::recovery::partition_dir(
-            &base,
-            self.editor.working_dir(),
-        ))
+            .map(|d| d.path().join("data").join("recovery"))
     }
 
     /// Take ownership of the temp directory, preventing it from being cleaned up

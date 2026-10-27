@@ -23,9 +23,9 @@ use fresh::config::Config;
 use fresh_core::WindowId;
 use std::path::{Path, PathBuf};
 
-/// The ids of the recovery entries in project directory `dir` of the store.
+/// The ids of the recovery entries in store `dir`.
 fn recovery_entry_ids(dir: &Path) -> Vec<String> {
-    let mut ids: Vec<String> = fresh::services::recovery::entries_under(dir)
+    let mut ids: Vec<String> = fresh::services::recovery::all_entries(dir)
         .into_iter()
         .map(|e| e.id)
         .collect();
@@ -33,9 +33,9 @@ fn recovery_entry_ids(dir: &Path) -> Vec<String> {
     ids
 }
 
-/// The first content file of entry `id` in project directory `dir`.
+/// The first content file of entry `id` in store `dir`.
 fn chunk_path(dir: &Path, id: &str) -> PathBuf {
-    let entry = fresh::services::recovery::entries_under(dir)
+    let entry = fresh::services::recovery::all_entries(dir)
         .into_iter()
         .find(|e| e.id == id)
         .expect("entry is in the store");

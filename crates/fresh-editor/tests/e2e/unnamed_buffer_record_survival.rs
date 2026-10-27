@@ -74,9 +74,9 @@ fn seed_unsaved_buffer(project: &Path, dir_context: &DirectoryContext) -> String
     ids.into_iter().next().unwrap()
 }
 
-/// The directory the recovery store keeps `root`'s entries in.
-fn store_dir(dir_context: &DirectoryContext, root: &Path) -> std::path::PathBuf {
-    fresh::services::recovery::partition_dir(&dir_context.recovery_dir(), root)
+/// The directory the recovery store keeps its entries in.
+fn store_dir(dir_context: &DirectoryContext, _root: &Path) -> std::path::PathBuf {
+    fresh::services::recovery::entries_dir(&dir_context.recovery_dir())
 }
 
 /// Turning `hot_exit` off for one session must not hide the buffer an

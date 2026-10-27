@@ -155,13 +155,15 @@ impl RecoveryStorage {
             original_file_size,
             final_size,
             None,
+            None,
             false,
         )
     }
 
-    /// [`Self::save_recovery`], stamping the owning workspace — workspaces
-    /// sharing a project root share its store (issue #3189) — and whether
-    /// the file is on another host (see [`RecoveryMetadata::remote`]).
+    /// [`Self::save_recovery`], recording the project root the buffer is
+    /// edited in (see [`RecoveryMetadata::root`]) and whether the file is on
+    /// another host (see [`RecoveryMetadata::remote`]). `workspace_id` writes
+    /// the stamp earlier versions filed entries by, for their tests.
     #[allow(clippy::too_many_arguments)]
     pub fn save_recovery_owned(
         &self,
@@ -173,6 +175,7 @@ impl RecoveryStorage {
         original_file_size: usize,
         final_size: usize,
         workspace_id: Option<&str>,
+        root: Option<&Path>,
         remote: bool,
     ) -> io::Result<RecoveryMetadata> {
         self.ensure_dir()?;
@@ -243,11 +246,13 @@ impl RecoveryStorage {
         // This content is newer than anything a save recorded before it
         // (see `SaveIntent`), so that save no longer says anything about it.
         metadata.saving = None;
-        // Re-stamped every save so an entry follows a buffer moved between
-        // workspaces (Extract Tab to New Workspace). A caller with no
-        // workspace context leaves the previous stamp rather than erasing it.
         if let Some(workspace_id) = workspace_id {
             metadata.workspace_id = Some(workspace_id.to_string());
+        }
+        // Rewritten every save, so it follows a buffer moved to a window on
+        // another root (Extract Tab to New Workspace)
+        if let Some(root) = root {
+            metadata.root = Some(root.to_path_buf());
         }
         metadata.update(total_chunk_bytes, line_count, chunked_data.chunks.len());
 
@@ -1817,6 +1822,7 @@ mod tests {
                 Some(1),
                 0,
                 12,
+                None,
                 None,
                 false,
             )

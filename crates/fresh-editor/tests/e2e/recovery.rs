@@ -766,7 +766,7 @@ fn test_large_file_auto_save_creates_small_recovery_file() {
     let recovery_dir = harness
         .recovery_dir()
         .expect("harness should have recovery dir");
-    let entries = fresh::services::recovery::entries_under(&recovery_dir);
+    let entries = fresh::services::recovery::all_entries(&recovery_dir);
 
     // Find our file's recovery entry
     let our_entry = entries.iter().find(|e| {
@@ -915,7 +915,7 @@ fn test_recovery_after_save_with_size_change() {
     drop(harness);
 
     // Manually trigger recovery for this file using harness's recovery directory
-    let entries = fresh::services::recovery::entries_under(&recovery_dir);
+    let entries = fresh::services::recovery::all_entries(&recovery_dir);
 
     let our_entry = entries.iter().find(|e| {
         e.metadata
@@ -1018,7 +1018,7 @@ fn test_unnamed_buffer_created_via_new_buffer_has_stable_recovery() {
 
     // Check recovery directory
     let recovery_dir = harness.recovery_dir().expect("should have recovery dir");
-    let entries = fresh::services::recovery::entries_under(&recovery_dir);
+    let entries = fresh::services::recovery::all_entries(&recovery_dir);
 
     let unsaved_entries: Vec<_> = entries
         .iter()
@@ -1120,7 +1120,7 @@ fn test_recovery_insert_at_end_of_large_file() {
     // Now simulate restart and recovery - this is where the crash happens
     drop(harness);
 
-    let entries = fresh::services::recovery::entries_under(&recovery_dir);
+    let entries = fresh::services::recovery::all_entries(&recovery_dir);
 
     let our_entry = entries.iter().find(|e| {
         e.metadata

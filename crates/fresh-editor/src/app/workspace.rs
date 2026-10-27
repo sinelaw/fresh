@@ -324,16 +324,10 @@ impl Editor {
     /// launch is about the files it names. Returns the number of buffers
     /// recovered.
     pub fn apply_hot_exit_recovery(&mut self) -> anyhow::Result<usize> {
-        let files: Vec<PathBuf> = self
-            .buffers()
-            .iter()
-            .filter_map(|(_, state)| state.buffer.file_path().map(Path::to_path_buf))
-            .filter(|path| !path.as_os_str().is_empty())
-            .collect();
         Ok(self.adopt_recovery_for_window(
             self.active_window,
-            Some(&files),
-            super::recovery_actions::AdoptScope::Root,
+            None,
+            super::recovery_actions::AdoptScope::OpenFiles,
         ))
     }
 
@@ -582,6 +576,12 @@ impl Editor {
             // Quick Open follows a restored Show Hidden Files even before the explorer opens.
             self.sync_quick_open_file_visibility();
         }
+
+        // A file has one buffer across workspaces: one another workspace has
+        // open stays there, and this one comes back without its tab.
+        self.close_files_open_elsewhere(id);
+        // ... and one another editor has open is read-only here
+        self.sync_file_locks();
 
         // Its unsaved work: the changes to the files its layout opened, and
         // whatever else is this workspace's in the store — left by a crash,
@@ -2390,16 +2390,16 @@ impl crate::app::window::Window {
             unnamed_buffers.len()
         );
         let root = self.root.clone();
-        let workspace = self.stable_id.clone();
         let service = std::sync::Arc::clone(&self.resources.recovery_service);
-        let known = RecoveryService::known_workspace_ids(&root, [workspace.clone()]);
+        // Which of an earlier version's shared store's entries are this root's
+        let known = RecoveryService::known_workspace_ids(&root, [self.stable_id.clone()]);
         // Local or remote alike: a reference names its entry, and a remote
         // workspace restored before its connection is back still has the
         // local placeholder authority.
         let entries = service
             .lock()
             .unwrap()
-            .list_recoverable(&root, &known, None);
+            .list_recoverable(Some((&root, &known)), None);
 
         for unnamed_ref in unnamed_buffers {
             if unnamed_buffer_map.contains_key(&unnamed_ref.recovery_id) {
@@ -2412,10 +2412,7 @@ impl crate::app::window::Window {
                 );
                 continue;
             };
-            let claimed = service
-                .lock()
-                .unwrap()
-                .claim(&root, entry, &workspace, true);
+            let claimed = service.lock().unwrap().claim(entry);
             let entry = match claimed {
                 Ok(Some(entry)) => entry,
                 Ok(None) => continue,
@@ -2460,7 +2457,7 @@ impl crate::app::window::Window {
                         unnamed_ref.recovery_id,
                         other
                     );
-                    if let Err(e) = service.lock().unwrap().give_back(&root, &entry.id) {
+                    if let Err(e) = service.lock().unwrap().give_back(&entry.id) {
                         tracing::warn!("Failed to put back recovery entry {}: {e}", entry.id);
                     }
                     self.recovery_notices.push(format!(
@@ -2921,31 +2918,31 @@ impl crate::app::window::Window {
             })
             .collect();
 
-        let mut unnamed_buffers: Vec<UnnamedBufferRef> = if self.resources.config.editor.hot_exit {
-            self.buffer_metadata
-                .iter()
-                .filter_map(|(buffer_id, meta)| {
-                    let path = meta.file_path()?;
-                    if !path.as_os_str().is_empty() {
-                        return None;
-                    }
-                    if meta.hidden_from_tabs || meta.is_virtual() {
-                        return None;
-                    }
-                    let state = self.buffers.get(buffer_id)?;
-                    if state.buffer.total_bytes() == 0 {
-                        return None;
-                    }
-                    let recovery_id = meta.recovery_id.clone()?;
-                    Some(UnnamedBufferRef {
-                        recovery_id,
-                        display_name: meta.display_name.clone(),
-                    })
+        // Layout only, whatever `hot_exit` says: where the tab goes. Whether
+        // there is content for it is the recovery store's to say, and a
+        // reference to work that was saved or discarded is dropped on restore.
+        let mut unnamed_buffers: Vec<UnnamedBufferRef> = self
+            .buffer_metadata
+            .iter()
+            .filter_map(|(buffer_id, meta)| {
+                let path = meta.file_path()?;
+                if !path.as_os_str().is_empty() {
+                    return None;
+                }
+                if meta.hidden_from_tabs || meta.is_virtual() {
+                    return None;
+                }
+                let state = self.buffers.get(buffer_id)?;
+                if state.buffer.total_bytes() == 0 {
+                    return None;
+                }
+                let recovery_id = meta.recovery_id.clone()?;
+                Some(UnnamedBufferRef {
+                    recovery_id,
+                    display_name: meta.display_name.clone(),
                 })
-                .collect()
-        } else {
-            Vec::new()
-        };
+            })
+            .collect();
         // One record per recovery entry. A buffer adopted twice was saved
         // twice, and the list grew by one on every switch back to this
         // workspace (issue #3476). A list already duplicated heals here.

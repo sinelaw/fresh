@@ -198,21 +198,24 @@ fn a_crash_after_save_as_wrote_brings_nothing_back() {
     assert!(entries.is_empty(), "left in the store: {entries:?}");
 }
 
-/// The recovery store's directory for the project of `harness`'s launch.
-fn store_of(harness: &EditorTestHarness, dir_context: &DirectoryContext) -> PathBuf {
-    fresh::services::recovery::partition_dir(
-        &dir_context.recovery_dir(),
-        harness.editor().working_dir(),
+/// A project's part of the recovery store: the store, and the root.
+type Store = (PathBuf, PathBuf);
+
+/// The recovery store's part for the project of `harness`'s launch.
+fn store_of(harness: &EditorTestHarness, dir_context: &DirectoryContext) -> Store {
+    (
+        dir_context.recovery_dir(),
+        harness.editor().working_dir().to_path_buf(),
     )
 }
 
-/// The recovery entries in project directory `store`.
-fn entries(store: &Path) -> Vec<fresh::services::recovery::RecoveryEntry> {
-    fresh::services::recovery::entries_under(store)
+/// The recovery entries last edited in project `store`.
+fn entries(store: &Store) -> Vec<fresh::services::recovery::RecoveryEntry> {
+    fresh::services::recovery::entries_for_root(&store.0, &store.1)
 }
 
-/// The ids of the recovery entries in project directory `store`.
-fn entry_ids(store: &Path) -> Vec<String> {
+/// The ids of the recovery entries last edited in project `store`.
+fn entry_ids(store: &Store) -> Vec<String> {
     entries(store).into_iter().map(|e| e.id).collect()
 }
 
@@ -269,70 +272,4 @@ fn save_as_leaves_nothing_for_the_next_recovery_save() {
 
     let entries = entry_ids(&store_of(&harness, &dir_context));
     assert!(entries.is_empty(), "left in the store: {entries:?}");
-}
-
-/// Two workspaces with the same file open and edited each keep their own
-/// entry for it. Save As to a new name in one of them resolves that one's
-/// work only: the other's entry stays its unsaved work, untouched.
-#[test]
-fn save_as_keeps_another_workspaces_unsaved_work_on_the_same_file() {
-    let temp_dir = TempDir::new().unwrap();
-    let project = temp_dir.path().join("project");
-    std::fs::create_dir(&project).unwrap();
-    let shared = project.join("shared.txt");
-    std::fs::write(&shared, "base\n").unwrap();
-    let dir_context = DirectoryContext::for_testing(temp_dir.path());
-    let mut harness = launch_in(&project, &dir_context);
-    harness.startup(true, &[]).unwrap();
-    let store = store_of(&harness, &dir_context);
-    let home = harness.editor().active_window_id();
-
-    harness.open_file(&shared).unwrap();
-    harness.type_text("A-EDIT ").unwrap();
-    harness.render().unwrap();
-    harness
-        .editor_mut()
-        .auto_recovery_save_dirty_buffers()
-        .unwrap();
-
-    let other_root = temp_dir.path().join("workspace_b");
-    std::fs::create_dir_all(&other_root).unwrap();
-    let other_store =
-        fresh::services::recovery::partition_dir(&dir_context.recovery_dir(), &other_root);
-    let other = harness
-        .editor_mut()
-        .create_window_at(other_root, "workspace_b".to_string());
-    harness.editor_mut().set_active_window(other);
-    harness.render().unwrap();
-    harness.editor_mut().open_file(&shared).unwrap();
-    harness.render().unwrap();
-    harness.type_text("B-EDIT ").unwrap();
-    harness.render().unwrap();
-    harness
-        .editor_mut()
-        .auto_recovery_save_dirty_buffers()
-        .unwrap();
-    assert_eq!(entry_ids(&store).len(), 1);
-    let theirs = entry_ids(&other_store);
-    assert_eq!(theirs.len(), 1);
-
-    harness.editor_mut().set_active_window(home);
-    harness.render().unwrap();
-    save_as(&mut harness, &project.join("renamed.txt"));
-    assert!(project.join("renamed.txt").exists());
-
-    assert!(
-        entry_ids(&store).is_empty(),
-        "the saved buffer's own entry is resolved"
-    );
-    let left = entries(&other_store);
-    assert_eq!(
-        left.iter().map(|e| e.id.clone()).collect::<Vec<_>>(),
-        theirs,
-        "the other workspace's unsaved edits to shared.txt lost their entry"
-    );
-    assert!(
-        left[0].metadata.saving.is_none(),
-        "the other workspace's entry was marked as saved"
-    );
 }

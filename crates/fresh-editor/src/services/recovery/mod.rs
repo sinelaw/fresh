@@ -24,14 +24,16 @@
 //! - For small files/new buffers: single chunk containing full content
 //! - For large files: only modified regions stored as chunks
 
+mod file_locks;
 mod storage;
 mod store;
 // The on-disk record types live in `fresh-editor-core`: `model::buffer::save`
 // writes them for in-place-write recovery and cannot depend on `services`.
 pub use fresh_editor_core::recovery_types as types;
 
+pub use file_locks::FileLock;
 pub use storage::RecoveryStorage;
-pub use store::{entries_under, partition_dir};
+pub use store::{all_entries, entries_dir, entries_for_root};
 pub use types::{
     generate_buffer_id, path_hash, ChunkMeta, ChunkedRecoveryData, ChunkedRecoveryIndex,
     HotExitEntry, InplaceWriteRecovery, RecoveryChunk, RecoveryEntry, RecoveryMetadata,
@@ -103,8 +105,8 @@ impl RecoveryService {
         generate_buffer_id()
     }
 
-    /// Write buffer content to entry `id`, for a buffer in workspace
-    /// `workspace_id` on `root`, and return the handle the buffer keeps.
+    /// Write buffer content to entry `id`, for a buffer in a window on
+    /// `root`, and return the handle the buffer keeps.
     #[allow(clippy::too_many_arguments)]
     pub fn save_buffer(
         &mut self,
@@ -116,16 +118,14 @@ impl RecoveryService {
         line_count: Option<usize>,
         original_file_size: usize,
         final_size: usize,
-        workspace_id: &str,
         remote: bool,
     ) -> io::Result<Option<HotExitEntry>> {
         let Some(store) = self.store.as_mut() else {
             return Ok(None);
         };
-        // An entry taken for a window that stands in for every workspace on
-        // its root stays the workspace's it names
-        let stamp = (!store.keeps_stamp(id)).then_some(workspace_id);
-        store.own_entry(root, id).save_recovery_owned(
+        // Canonicalized as workspace files are, so one root is one hint
+        let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        store.own_entry(id).save_recovery_owned(
             id,
             chunks,
             original_path,
@@ -133,16 +133,17 @@ impl RecoveryService {
             line_count,
             original_file_size,
             final_size,
-            stamp,
+            None,
+            Some(&root),
             remote,
         )?;
-        Ok(Some(store.own_handle(root, id)))
+        Ok(Some(store.own_handle(id)))
     }
 
-    /// Where this editor keeps entry `id` for a buffer on `root`, so it can
-    /// be deleted off the main loop ([`Self::delete_entry_dir`]).
-    pub fn entry_dir(&self, root: &Path, id: &str) -> Option<PathBuf> {
-        self.store.as_ref().map(|s| s.own_entry_dir(root, id))
+    /// Where this editor keeps entry `id`, so it can be deleted off the main
+    /// loop ([`Self::delete_entry_dir`]).
+    pub fn entry_dir(&self, id: &str) -> Option<PathBuf> {
+        self.store.as_ref().map(|s| s.own_entry_dir(id))
     }
 
     /// Delete an entry this editor holds, given [`Self::entry_dir`].
@@ -154,27 +155,27 @@ impl RecoveryService {
     }
 
     /// Let go of entry `id`: it stays as unsaved work, held by no editor,
-    /// for whoever shows its workspace next. For a workspace closed with
+    /// for whoever opens its buffer next. For a workspace closed with
     /// unsaved work.
-    pub fn release(&mut self, root: &Path, id: &str) -> io::Result<()> {
+    pub fn release(&mut self, id: &str) -> io::Result<()> {
         match &mut self.store {
-            Some(store) => store.release(root, id),
+            Some(store) => store.release(id),
             None => Ok(()),
         }
     }
 
     /// Let go of entry `id`, taken but not restored, and don't offer it
     /// again this session.
-    pub fn give_back(&mut self, root: &Path, id: &str) -> io::Result<()> {
+    pub fn give_back(&mut self, id: &str) -> io::Result<()> {
         match &mut self.store {
-            Some(store) => store.give_back(root, id),
+            Some(store) => store.give_back(id),
             None => Ok(()),
         }
     }
 
     /// The ids of the workspaces on `root`: those with a workspace file,
-    /// and `open` — this editor's windows on it, some of which may never
-    /// have been saved.
+    /// and `open` — this editor's windows on it. What decides which of an
+    /// earlier version's shared store's entries are that project's.
     pub fn known_workspace_ids(
         root: &Path,
         open: impl IntoIterator<Item = String>,
@@ -184,53 +185,48 @@ impl RecoveryService {
         ids
     }
 
-    /// The unsaved work for `root` no running editor holds, newest first:
-    /// for a window on a remote authority (`Some(true)`), a local one
-    /// (`Some(false)`), or either (`None`). `known_ids` is
-    /// [`Self::known_workspace_ids`].
+    /// The unsaved work no running editor holds, newest first: for a window
+    /// on a remote authority (`Some(true)`), a local one (`Some(false)`), or
+    /// either (`None`). With `legacy` — a root and its
+    /// [`Self::known_workspace_ids`] — also earlier versions' entries for it.
     pub fn list_recoverable(
         &self,
-        root: &Path,
-        known_ids: &HashSet<String>,
+        legacy: Option<(&Path, &HashSet<String>)>,
         remote: Option<bool>,
     ) -> Vec<RecoveryEntry> {
         let Some(store) = &self.store else {
             return Vec::new();
         };
-        let mut entries = store.recoverable(root, known_ids);
+        let mut entries = store.recoverable(legacy);
         if let Some(remote) = remote {
             entries.retain(|entry| entry.metadata.remote == remote);
         }
         entries
     }
 
-    /// Whether `entry` is workspace `workspace_id`'s to restore: stamped
-    /// with it, or with no workspace that is known on its root
-    /// ([`Self::known_workspace_ids`]) — an unstamped entry, or one from a
-    /// launch that kept no workspace (`fresh FILE`). An entry stamped for
-    /// another known workspace on the same root waits for that one.
-    pub fn belongs_to(entry: &RecoveryEntry, workspace_id: &str, known: &HashSet<String>) -> bool {
-        match entry.metadata.workspace_id.as_deref() {
-            Some(stamp) => stamp == workspace_id || !known.contains(stamp),
-            None => true,
+    /// Take `entry` (from [`Self::list_recoverable`]) over for a buffer of
+    /// this editor. Returns it as it now is, or `None` if another editor
+    /// took it first.
+    pub fn claim(&mut self, entry: &RecoveryEntry) -> io::Result<Option<RecoveryEntry>> {
+        match self.store.as_mut() {
+            Some(store) => store.claim(entry),
+            None => Ok(None),
         }
     }
 
-    /// Take `entry` (from [`Self::list_recoverable`] for `root`) over for a
-    /// buffer in workspace `workspace_id`. Returns it as it now is, or
-    /// `None` if another editor took it first. `restamp` makes it that
-    /// workspace's from now on; a window with no saved identity of its own
-    /// passes `false`, so the entry stays the workspace's it names.
-    pub fn claim(
-        &mut self,
-        root: &Path,
-        entry: &RecoveryEntry,
-        workspace_id: &str,
-        restamp: bool,
-    ) -> io::Result<Option<RecoveryEntry>> {
+    /// Take this editor's lock on local file `path` (canonical), which it
+    /// has open, or say which editor has it: one there may change it.
+    pub fn lock_file(&mut self, path: &Path) -> FileLock {
         match self.store.as_mut() {
-            Some(store) => store.claim(root, entry, workspace_id, restamp),
-            None => Ok(None),
+            Some(store) => store.files.acquire(path),
+            None => FileLock::Ours,
+        }
+    }
+
+    /// Let go of the locks on the files this editor no longer has open.
+    pub fn keep_file_locks(&mut self, open: &HashSet<PathBuf>) {
+        if let Some(store) = self.store.as_mut() {
+            store.files.keep_only(open);
         }
     }
 
@@ -357,7 +353,7 @@ mod tests {
         root
     }
 
-    /// Back up `text` for a buffer in workspace "ws"; returns its handle.
+    /// Back up `text` for a buffer in a window on `root`; returns its handle.
     fn back_up(
         service: &mut RecoveryService,
         root: &Path,
@@ -367,24 +363,14 @@ mod tests {
         let id = RecoveryService::new_entry_id();
         let chunks = vec![RecoveryChunk::new(0, 0, text.to_vec())];
         service
-            .save_buffer(
-                root,
-                &id,
-                chunks,
-                path,
-                None,
-                Some(1),
-                0,
-                text.len(),
-                "ws",
-                false,
-            )
+            .save_buffer(root, &id, chunks, path, None, Some(1), 0, text.len(), false)
             .unwrap()
             .unwrap()
     }
 
     fn recoverable(service: &RecoveryService, root: &Path) -> Vec<RecoveryEntry> {
-        service.list_recoverable(root, &HashSet::new(), Some(false))
+        let _ = root;
+        service.list_recoverable(None, Some(false))
     }
 
     // The crash tests below stop a save between its steps — record the save
@@ -495,18 +481,7 @@ mod tests {
             assert!(entry.begin_save(&target, 5).unwrap());
             let chunks = vec![RecoveryChunk::new(0, 0, b"second".to_vec())];
             crashed
-                .save_buffer(
-                    &root,
-                    entry.id(),
-                    chunks,
-                    None,
-                    None,
-                    Some(1),
-                    0,
-                    6,
-                    "ws",
-                    false,
-                )
+                .save_buffer(&root, entry.id(), chunks, None, None, Some(1), 0, 6, false)
                 .unwrap();
         }
 
@@ -550,26 +525,18 @@ mod tests {
         assert_eq!(recoverable(&service(&base), &root).len(), 3);
     }
 
-    /// An entry is its workspace's, or — stamped with no workspace known on
-    /// the root — anyone's on that root; one stamped for another known
-    /// workspace waits for it.
+    /// An entry records the root it was last edited under, canonicalized:
+    /// where its work is offered when no open file or layout claims it.
     #[test]
-    fn an_entry_belongs_to_its_workspace_or_to_none_known() {
+    fn an_entry_records_the_root_it_was_edited_under() {
         let base = TempDir::new().unwrap();
         let root = project(&base);
         let mut crashed = service(&base);
         back_up(&mut crashed, &root, None, b"x");
         drop(crashed);
         let entry = recoverable(&service(&base), &root).remove(0);
-
-        let known = HashSet::from(["ws".to_string(), "ws-other".to_string()]);
-        assert!(RecoveryService::belongs_to(&entry, "ws", &known));
-        assert!(!RecoveryService::belongs_to(&entry, "ws-other", &known));
-        assert!(RecoveryService::belongs_to(
-            &entry,
-            "ws-other",
-            &HashSet::from(["ws-other".to_string()])
-        ));
+        assert_eq!(entry.metadata.root, Some(root.canonicalize().unwrap()));
+        assert_eq!(entry.metadata.workspace_id, None);
     }
 
     /// A remote buffer's entry is restored only into a remote window, and
@@ -590,17 +557,14 @@ mod tests {
                 Some(1),
                 0,
                 6,
-                "ws",
                 true,
             )
             .unwrap();
         drop(crashed);
 
         let next = service(&base);
-        assert!(next
-            .list_recoverable(&root, &HashSet::new(), Some(false))
-            .is_empty());
-        let remote = next.list_recoverable(&root, &HashSet::new(), Some(true));
+        assert!(next.list_recoverable(None, Some(false)).is_empty());
+        let remote = next.list_recoverable(None, Some(true));
         assert_eq!(remote.len(), 1);
         assert_eq!(remote[0].metadata.original_mtime, None);
     }
@@ -613,10 +577,10 @@ mod tests {
         assert!(!service.is_enabled());
         let chunks = vec![RecoveryChunk::new(0, 0, b"content".to_vec())];
         assert!(service
-            .save_buffer(&root, "test", chunks, None, None, None, 0, 7, "ws", false)
+            .save_buffer(&root, "test", chunks, None, None, None, 0, 7, false)
             .unwrap()
             .is_none());
-        assert!(!base.path().join("ws").exists());
+        assert!(!base.path().join("entries").exists());
     }
 
     #[test]
@@ -640,7 +604,6 @@ mod tests {
                     Some(1),
                     original_content.len(), // original_file_size > 0
                     original_content.len() + 8,
-                    "ws",
                     false,
                 )
                 .unwrap();
@@ -683,7 +646,7 @@ mod tests {
             let entry = back_up(&mut crashed, &root, None, &content);
             // Truncate the chunk on disk, leaving the metadata's sizes intact.
             let chunk_path = crashed
-                .entry_dir(&root, entry.id())
+                .entry_dir(entry.id())
                 .unwrap()
                 .join(format!("{}.chunk.0", entry.id()));
             let whole = std::fs::read(&chunk_path).unwrap();

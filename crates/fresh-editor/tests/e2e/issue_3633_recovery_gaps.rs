@@ -4,10 +4,11 @@
 //!   off the *active* buffer instead: it deleted that buffer's recovery
 //!   entry while its tab still showed unsaved changes, and cleared the flag
 //!   that would have written it again, so a crash lost the edit.
-//! * **A3**: a file's recovery entry was keyed by the file's path, so two
-//!   workspaces editing one file shared a single entry. The last one backed
+//! * **A3**: two workspaces editing one file each had a buffer for it, and
+//!   shared a single recovery entry keyed by its path. The last one backed
 //!   up overwrote the other's work, and after a crash the wrong workspace got
-//!   it.
+//!   it. A file now has one buffer across workspaces, so there is one
+//!   version of it to keep.
 //!
 //! These tests look for backups by walking the recovery directory for the
 //! content files of entries, wherever they sit, so they read the same way
@@ -75,34 +76,8 @@ fn backups_holding(dir_context: &DirectoryContext, needle: &str) -> Vec<PathBuf>
         .collect()
 }
 
-/// The metadata file of the entry `chunk` belongs to.
-fn metadata_of(chunk: &Path) -> String {
-    let name = chunk.file_name().unwrap().to_str().unwrap();
-    let id = &name[..name.find(".chunk.").unwrap()];
-    std::fs::read_to_string(chunk.with_file_name(format!("{id}.meta.json"))).unwrap()
-}
-
 fn tab_bar(harness: &EditorTestHarness) -> String {
     harness.screen_row_text(layout::TAB_BAR_ROW as u16)
-}
-
-/// Save As the active buffer to `path`.
-fn save_as(harness: &mut EditorTestHarness, path: &Path) {
-    harness
-        .editor_mut()
-        .dispatch_action_for_tests(fresh::input::keybindings::Action::SaveAs);
-    harness.render().unwrap();
-    harness
-        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness
-        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
-        .unwrap();
-    harness.type_text(path.to_str().unwrap()).unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
 }
 
 // =========================================================================
@@ -244,7 +219,7 @@ fn a_plugin_save_of_another_buffer_leaves_the_active_ones_unsaved_work() {
 // =========================================================================
 
 /// Two workspaces in one Orchestrator daemon, `wsA` and `wsB`, both
-/// editing `shared/F.txt`.
+/// opening `shared/F.txt`.
 struct TwoWorkspaces {
     _temp: TempDir,
     ws_a: PathBuf,
@@ -284,112 +259,63 @@ impl TwoWorkspaces {
         harness.startup(true, &[]).unwrap();
         harness
     }
-
-    /// Steps 1-2 of the report: A types into F, then B does. Returns the
-    /// daemon and the two workspaces' window ids.
-    fn edit_in_both(
-        &self,
-    ) -> (
-        EditorTestHarness,
-        fresh_core::WindowId,
-        fresh_core::WindowId,
-    ) {
-        let mut daemon = self.daemon_in(&self.ws_a);
-        let a = daemon.editor().active_window_id();
-        daemon.open_file(&self.file).unwrap();
-        daemon.type_text("A-EDIT ").unwrap();
-        daemon.render().unwrap();
-        daemon
-            .editor_mut()
-            .auto_recovery_save_dirty_buffers()
-            .unwrap();
-
-        let b = daemon
-            .editor_mut()
-            .create_window_at(self.ws_b.clone(), "wsB".to_string());
-        daemon.editor_mut().set_active_window(b);
-        daemon.render().unwrap();
-        daemon.open_file(&self.file).unwrap();
-        daemon.type_text("B-EDIT ").unwrap();
-        daemon.render().unwrap();
-        daemon
-            .editor_mut()
-            .auto_recovery_save_dirty_buffers()
-            .unwrap();
-        (daemon, a, b)
-    }
-
-    fn backups_holding(&self, needle: &str) -> Vec<PathBuf> {
-        backups_holding(&self.dir_context, needle)
-    }
 }
 
-/// The report's steps: A and B both edit F, A saves its F as G, the daemon
-/// is killed, and each workspace is opened again. Each workspace's backup
-/// of F is its own throughout; after the crash A never shows B's content, B
-/// gets its own back, and nothing is restored twice.
+/// The report's steps, under one buffer per file: A edits F; B opens F and
+/// is taken to A's, where its edit lands in the same buffer; the daemon is
+/// killed. There is one version of F and one backup of it throughout, and
+/// it comes back once, with both edits, in the workspace that has F open.
 #[test]
 fn a_file_edited_in_two_workspaces_keeps_each_ones_work() {
     let setup = TwoWorkspaces::new();
     {
-        let (mut daemon, a, _b) = setup.edit_in_both();
-
-        let a_backups = setup.backups_holding("A-EDIT");
-        let b_backups = setup.backups_holding("B-EDIT");
-        assert_eq!(
-            a_backups.len(),
-            1,
-            "workspace A's backup of F was overwritten by B's"
-        );
-        assert_eq!(b_backups.len(), 1);
-        assert_ne!(a_backups, b_backups, "one backup for two workspaces' edits");
-
-        // Step 3: back in A, Save As F -> wsA/G.txt
-        daemon.editor_mut().set_active_window(a);
+        let mut daemon = setup.daemon_in(&setup.ws_a);
+        let a = daemon.editor().active_window_id();
+        daemon.open_file(&setup.file).unwrap();
+        daemon.type_text("A-EDIT ").unwrap();
         daemon.render().unwrap();
-        save_as(&mut daemon, &setup.ws_a.join("G.txt"));
-        assert!(std::fs::read_to_string(setup.ws_a.join("G.txt"))
-            .unwrap()
-            .contains("A-EDIT"));
+
+        let b = daemon
+            .editor_mut()
+            .create_window_at(setup.ws_b.clone(), "wsB".to_string());
+        daemon.editor_mut().set_active_window(b);
+        daemon.render().unwrap();
+        daemon.open_file(&setup.file).unwrap();
+        assert_eq!(
+            daemon.editor().active_window_id(),
+            a,
+            "opening F in B goes to A, where F is open"
+        );
+        daemon.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+        daemon.type_text(" B-EDIT").unwrap();
+        daemon.render().unwrap();
         daemon
             .editor_mut()
             .auto_recovery_save_dirty_buffers()
             .unwrap();
-        assert!(
-            setup.backups_holding("A-EDIT").is_empty(),
-            "A's work is saved, so its backup goes"
-        );
-        let b_backups = setup.backups_holding("B-EDIT");
-        assert_eq!(b_backups.len(), 1, "A's Save As took B's backup with it");
-        assert!(
-            !metadata_of(&b_backups[0]).contains("\"saving\""),
-            "A's Save As was recorded in B's backup"
-        );
-        // Step 4: killed
+
+        let backups = backups_holding(&setup.dir_context, "A-EDIT");
+        assert_eq!(backups.len(), 1, "one backup of F");
+        assert_eq!(backups, backups_holding(&setup.dir_context, "B-EDIT"));
+        // Killed
     }
 
-    // Step 5: a bare `fresh` in wsA
-    {
-        let mut a = setup.daemon_in(&setup.ws_a);
-        a.render().unwrap();
-        a.assert_screen_not_contains("B-EDIT");
-        a.shutdown(true).unwrap();
-    }
-
-    // ... and in wsB, which gets its own work back, once
-    let mut b = setup.daemon_in(&setup.ws_b);
-    b.render().unwrap();
-    b.assert_screen_contains("B-EDIT");
-    b.assert_screen_not_contains("A-EDIT");
-    assert_eq!(tab_bar(&b).matches("F.txt").count(), 1, "{}", tab_bar(&b));
-    // Switching away and back restores nothing a second time
-    let home = b.editor().active_window_id();
-    let other = b
+    // A bare `fresh` in wsA: F comes back, once, with both edits
+    let mut a = setup.daemon_in(&setup.ws_a);
+    a.render().unwrap();
+    a.assert_screen_contains("A-EDIT");
+    a.assert_screen_contains("B-EDIT");
+    assert_eq!(tab_bar(&a).matches("F.txt").count(), 1, "{}", tab_bar(&a));
+    // Switching to B and back restores nothing a second time, and B has no
+    // copy of F of its own
+    let home = a.editor().active_window_id();
+    let other = a
         .editor_mut()
-        .create_window_at(setup.ws_a.clone(), "wsA".to_string());
-    b.editor_mut().set_active_window(other);
-    b.render().unwrap();
-    b.editor_mut().set_active_window(home);
-    b.render().unwrap();
-    assert_eq!(tab_bar(&b).matches("F.txt").count(), 1, "{}", tab_bar(&b));
+        .create_window_at(setup.ws_b.clone(), "wsB".to_string());
+    a.editor_mut().set_active_window(other);
+    a.render().unwrap();
+    a.assert_screen_not_contains("B-EDIT");
+    a.editor_mut().set_active_window(home);
+    a.render().unwrap();
+    assert_eq!(tab_bar(&a).matches("F.txt").count(), 1, "{}", tab_bar(&a));
 }

@@ -11,6 +11,7 @@ use anyhow::Result as AnyhowResult;
 
 use crate::model::event::BufferId;
 use fresh_core::WindowId;
+use fresh_i18n::t;
 use std::path::PathBuf;
 
 use super::Editor;
@@ -108,7 +109,6 @@ impl Editor {
         let Some(window) = self.windows.get(&window_id) else {
             return Ok(flushed);
         };
-        let root = window.root.clone();
         let mut service = self.recovery_service.lock().unwrap();
         for (buffer_id, meta) in window.buffer_metadata.iter() {
             let Some(id) = &meta.recovery_id else {
@@ -119,10 +119,10 @@ impl Editor {
                 .get(buffer_id)
                 .is_some_and(|state| state.buffer.is_modified());
             if modified {
-                if let Err(e) = service.release(&root, id) {
+                if let Err(e) = service.release(id) {
                     tracing::warn!("Failed to keep recovery entry {id} of a closed workspace: {e}");
                 }
-            } else if let Some(dir) = service.entry_dir(&root, id) {
+            } else if let Some(dir) = service.entry_dir(id) {
                 if let Err(e) = crate::services::recovery::RecoveryService::delete_entry_dir(&dir) {
                     tracing::warn!("Failed to delete recovery entry {id}: {e}");
                 }
@@ -167,6 +167,81 @@ impl Editor {
             .is_some_and(|w| w.authority().filesystem.remote_connection_info().is_some())
     }
 
+    /// Hold this editor's lock on every local file it has a tab on, and let
+    /// go of those it has closed. A file another running editor has open is
+    /// read-only here until that one lets it go, so no file ever has a
+    /// second version to keep or to save over the first.
+    pub(crate) fn sync_file_locks(&mut self) {
+        use crate::services::recovery::FileLock;
+        let open: Vec<(WindowId, BufferId, PathBuf, bool)> = self
+            .windows
+            .iter()
+            .filter(|(_, w)| w.host_key().is_none())
+            .flat_map(|(id, w)| {
+                w.tab_file_buffers().map(move |(buffer_id, file)| {
+                    let modified = w
+                        .buffers
+                        .get(&buffer_id)
+                        .is_some_and(|state| state.buffer.is_modified());
+                    (*id, buffer_id, file.to_path_buf(), modified)
+                })
+            })
+            .collect();
+        let paths: std::collections::HashSet<PathBuf> =
+            open.iter().map(|(_, _, path, _)| path.clone()).collect();
+        let locks: Vec<FileLock> = {
+            let mut service = self.recovery_service.lock().unwrap();
+            if !service.is_enabled() {
+                return;
+            }
+            service.keep_file_locks(&paths);
+            open.iter()
+                .map(|(_, _, path, _)| service.lock_file(path))
+                .collect()
+        };
+        self.files_open_elsewhere
+            .retain(|path, _| paths.contains(path));
+        for ((window_id, buffer_id, path, modified), lock) in open.into_iter().zip(locks) {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            match lock {
+                // This editor's own unsaved work is never locked away from it
+                FileLock::Elsewhere { pid }
+                    if !modified && !self.files_open_elsewhere.contains_key(&path) =>
+                {
+                    let Some(window) = self.windows.get_mut(&window_id) else {
+                        continue;
+                    };
+                    let was_read_only = window
+                        .buffer_metadata
+                        .get(&buffer_id)
+                        .is_some_and(|meta| meta.read_only);
+                    window.mark_buffer_read_only(buffer_id, true);
+                    self.files_open_elsewhere.insert(path, was_read_only);
+                    let pid = pid.map_or_else(|| "?".to_string(), |pid| pid.to_string());
+                    self.set_status_message(
+                        t!("buffer.open_in_other_editor", file = name, pid = pid).to_string(),
+                    );
+                }
+                FileLock::Elsewhere { .. } => {}
+                FileLock::Ours => {
+                    if let Some(was_read_only) = self.files_open_elsewhere.remove(&path) {
+                        if !was_read_only {
+                            if let Some(window) = self.windows.get_mut(&window_id) {
+                                window.mark_buffer_read_only(buffer_id, false);
+                            }
+                        }
+                        self.set_status_message(
+                            t!("buffer.open_in_other_editor_released", file = name).to_string(),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     /// The ids of this editor's windows on the active window's root.
     fn open_workspace_ids_for_active(&self) -> std::collections::HashSet<String> {
         use crate::app::orchestrator_persistence::canonical_key;
@@ -178,22 +253,23 @@ impl Editor {
             .collect()
     }
 
-    /// Restore into window `id` the unsaved work in the store that is its
-    /// workspace's ([`RecoveryService::belongs_to`]) and that no running
-    /// editor holds: what a clean exit kept (hot exit), what a crash left,
-    /// what a launch in another mode or a file launch left. Called after a
-    /// workspace is restored and whenever one is switched to, so any editor
-    /// showing a workspace shows its unsaved work, however it was launched.
+    /// Restore into window `id` the unsaved work in the store no running
+    /// editor holds that is its to show (see [`AdoptScope`]): what a clean
+    /// exit kept, what a crash left, what a launch of any kind left.
     ///
-    /// `only` limits it to entries for those files: a file launch (`fresh
-    /// FILE`, git's `core.editor`) is about the files it names, and the rest
-    /// waits for an editor that shows the workspace.
+    /// An entry is its buffer's content and nothing about a layout. A file's
+    /// goes to whichever window has the file open — one at most, as a file
+    /// has one buffer — and an unnamed buffer's to the workspace whose layout
+    /// places it ([`Window::restore_unnamed_buffers`]). What neither claims
+    /// is offered in a window on the root it was last edited under.
+    ///
+    /// `only` limits it to entries for those files.
     ///
     /// A window in the background gets its content only into the file
     /// buffers it already has; the rest waits for it to be switched to,
     /// since opening tabs there would have nowhere to show them.
     ///
-    /// [`RecoveryService::belongs_to`]: crate::services::recovery::RecoveryService::belongs_to
+    /// [`Window::restore_unnamed_buffers`]: crate::app::window::Window
     pub(crate) fn adopt_recovery_for_window(
         &mut self,
         id: WindowId,
@@ -213,47 +289,78 @@ impl Editor {
         scope: AdoptScope,
     ) -> usize {
         use crate::services::recovery::RecoveryService;
+        use std::collections::HashSet;
 
         if !self.recovery_service.lock().unwrap().is_enabled() {
             return 0;
         }
-        let (root, workspace) = {
-            let window = self.active_window();
-            (window.root.clone(), window.stable_id.clone())
+        let window = self.active_window();
+        let root = window.root.clone();
+        let canonical_root = root.canonicalize().unwrap_or_else(|_| root.clone());
+        // A file another editor has open is that editor's to restore into
+        let open_here: HashSet<PathBuf> = window
+            .tab_file_buffers()
+            .map(|(_, file)| file.to_path_buf())
+            .filter(|file| !self.files_open_elsewhere.contains_key(file))
+            .collect();
+        let host = window.host_key();
+        let open_elsewhere: HashSet<PathBuf> = self
+            .windows
+            .iter()
+            .filter(|(wid, w)| **wid != self.active_window && w.host_key() == host)
+            .flat_map(|(_, w)| w.tab_file_buffers().map(|(_, file)| file.to_path_buf()))
+            .collect();
+        // The unnamed buffers other saved workspaces on this root place:
+        // theirs to come back with
+        let placed_elsewhere = match scope {
+            AdoptScope::Workspace => {
+                crate::workspace::unnamed_refs_for_root(&root, &window.stable_id)
+            }
+            AdoptScope::Root | AdoptScope::OpenFiles => HashSet::new(),
         };
         let remote = self.window_is_remote(self.active_window);
-        let open = self.open_workspace_ids_for_active();
-        let saved_and_open = RecoveryService::known_workspace_ids(&root, open.iter().cloned());
-        // Whose work this window leaves alone: see `AdoptScope`
-        let others = match scope {
-            AdoptScope::Workspace => &saved_and_open,
-            AdoptScope::Root => &open,
-        };
+        let known =
+            RecoveryService::known_workspace_ids(&root, self.open_workspace_ids_for_active());
         let entries: Vec<_> = self
             .recovery_service
             .lock()
             .unwrap()
-            .list_recoverable(&root, &saved_and_open, Some(remote))
+            .list_recoverable(Some((&root, &known)), Some(remote))
             .into_iter()
-            .filter(|entry| RecoveryService::belongs_to(entry, &workspace, others))
             .filter(|entry| {
-                only.is_none_or(|paths| {
-                    entry
-                        .metadata
-                        .original_path
-                        .as_ref()
-                        .is_some_and(|path| paths.contains(path))
-                })
+                let on_this_root = entry.metadata.root.as_deref() == Some(canonical_root.as_path());
+                match entry.metadata.original_path.as_deref() {
+                    Some(path) => {
+                        if !only.is_none_or(|paths| paths.iter().any(|p| p == path)) {
+                            false
+                        } else if open_here.contains(path) {
+                            true
+                        } else if open_elsewhere.contains(path) {
+                            // That window's to take: switching to it does
+                            false
+                        } else {
+                            scope != AdoptScope::OpenFiles && on_this_root
+                        }
+                    }
+                    None => match scope {
+                        AdoptScope::OpenFiles => false,
+                        AdoptScope::Root => on_this_root,
+                        AdoptScope::Workspace => {
+                            on_this_root && !placed_elsewhere.contains(&entry.id)
+                        }
+                    },
+                }
             })
             .collect();
 
         let mut adopted = 0;
-        let restamp = scope == AdoptScope::Workspace;
+        let nested = std::mem::replace(&mut self.adopting_recovery, true);
         for entry in entries {
-            if self.adopt_recovery_entry(&root, &workspace, entry, open_tabs, restamp) {
+            if self.adopt_recovery_entry(entry, open_tabs) {
                 adopted += 1;
             }
         }
+        self.adopting_recovery = nested;
         if adopted > 0 {
             tracing::info!(
                 "Restored {adopted} unsaved buffer(s) into workspace {}",
@@ -272,11 +379,8 @@ impl Editor {
     /// comes back as an unsaved copy beside it rather than over anything.
     fn adopt_recovery_entry(
         &mut self,
-        root: &std::path::Path,
-        workspace: &str,
         entry: crate::services::recovery::RecoveryEntry,
         open_tabs: bool,
-        restamp: bool,
     ) -> bool {
         use crate::services::recovery::RecoveryResult;
 
@@ -294,11 +398,7 @@ impl Editor {
             return false;
         }
 
-        let claimed = self
-            .recovery_service
-            .lock()
-            .unwrap()
-            .claim(root, &entry, workspace, restamp);
+        let claimed = self.recovery_service.lock().unwrap().claim(&entry);
         let entry = match claimed {
             Ok(Some(entry)) => entry,
             Ok(None) => return false,
@@ -333,7 +433,7 @@ impl Editor {
                          file on disk is the better copy",
                         entry.id
                     );
-                    self.give_back_recovery_entry(root, &entry);
+                    self.give_back_recovery_entry(&entry);
                     return false;
                 }
                 self.set_status_message(format!(
@@ -356,7 +456,7 @@ impl Editor {
                     .unwrap()
                     .load_recovery(&unpinned);
                 let Ok(RecoveryResult::Recovered { content, .. }) = loaded else {
-                    self.give_back_recovery_entry(root, &entry);
+                    self.give_back_recovery_entry(&entry);
                     return false;
                 };
                 tracing::info!(
@@ -380,12 +480,12 @@ impl Editor {
                         original_path.display()
                     ));
                 }
-                self.give_back_recovery_entry(root, &entry);
+                self.give_back_recovery_entry(&entry);
                 return false;
             }
             (Err(e), _) => {
                 tracing::warn!("Failed to load recovery entry {}: {}", entry.id, e);
-                self.give_back_recovery_entry(root, &entry);
+                self.give_back_recovery_entry(&entry);
                 return false;
             }
         };
@@ -408,7 +508,7 @@ impl Editor {
                                 e
                             );
                         }
-                        self.give_back_recovery_entry(root, &entry);
+                        self.give_back_recovery_entry(&entry);
                         return false;
                     }
                 }
@@ -465,17 +565,8 @@ impl Editor {
 
     /// Put an entry this editor took but did not restore back as unsaved
     /// work no editor holds.
-    fn give_back_recovery_entry(
-        &mut self,
-        root: &std::path::Path,
-        entry: &crate::services::recovery::RecoveryEntry,
-    ) {
-        if let Err(e) = self
-            .recovery_service
-            .lock()
-            .unwrap()
-            .give_back(root, &entry.id)
-        {
+    fn give_back_recovery_entry(&mut self, entry: &crate::services::recovery::RecoveryEntry) {
+        if let Err(e) = self.recovery_service.lock().unwrap().give_back(&entry.id) {
             tracing::warn!("Failed to put back recovery entry {}: {}", entry.id, e);
         }
     }
@@ -580,6 +671,10 @@ impl Editor {
             return Ok(0);
         }
 
+        // Files closed since let go of, and ones another editor let go of
+        // made editable here
+        self.sync_file_locks();
+
         let mut saved = 0;
         for window_id in self.window_ids_sorted() {
             saved += self.with_window_retargeted(window_id, |editor| {
@@ -664,7 +759,6 @@ impl Editor {
     /// retire its id: the next backup of this buffer starts a new entry, so
     /// the delete — which runs off the main loop — can never land on it.
     pub fn delete_buffer_recovery(&mut self, buffer_id: BufferId) -> AnyhowResult<()> {
-        let root = self.active_window().root.clone();
         let window = self.active_window_mut();
         let recovery_id = window
             .buffer_metadata
@@ -681,7 +775,7 @@ impl Editor {
             .recovery_service
             .lock()
             .unwrap()
-            .entry_dir(&root, &recovery_id);
+            .entry_dir(&recovery_id);
         if let Some(dir) = dir {
             self.delete_recovery_entry_dir(dir);
         }
@@ -710,13 +804,9 @@ impl Editor {
         buffer_id: &BufferId,
         recovery_id: &str,
     ) -> AnyhowResult<bool> {
-        // Read before the mutable borrow of the buffer state below: the entry
-        // is filed under the workspace's root and stamped with the workspace
-        // (issue #3189).
-        let (root, workspace_id) = {
-            let window = self.active_window();
-            (window.root.clone(), window.stable_id.clone())
-        };
+        // Read before the mutable borrow of the buffer state below: the root
+        // the buffer is last edited under (see `RecoveryMetadata::root`)
+        let root = self.active_window().root.clone();
         let recovery_service = std::sync::Arc::clone(&self.recovery_service);
         let state = match self.buffers_mut().get_mut(buffer_id) {
             Some(s) => s,
@@ -767,7 +857,6 @@ impl Editor {
             line_count,
             original_size,
             final_size,
-            &workspace_id,
             remote,
         )?;
         match handle {
@@ -1093,18 +1182,21 @@ impl Editor {
     }
 }
 
-/// Whose unsaved work on its root a window takes when it restores.
+/// Which unsaved work in the store a window takes. Whatever the scope, it
+/// takes the work for the files it has open, and never for a file another
+/// window here has open (that window's, on a switch to it).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AdoptScope {
-    /// Its own workspace's, and work no workspace on the root is known to
-    /// own — never what is stamped for another saved or open workspace on
-    /// it, which waits for that one. What it takes becomes its own.
+    /// A workspace restored or switched to: also the work last edited on its
+    /// root that nothing else claims — files no window has open, and unnamed
+    /// buffers no other saved workspace's layout places.
     Workspace,
-    /// Everything on the root but what an open window is showing: for the
-    /// startup of a launch that restores no workspace (`--no-restore`, a file
-    /// launch), which stands in for all of them. What it takes keeps the
-    /// workspace it names, so it goes back there at the next exit.
+    /// The startup of a launch that restores no workspace (`--no-restore`),
+    /// which stands in for all of them: all the work last edited on its root.
     Root,
+    /// Only the files it has open: a file launch (`fresh FILE`) is about the
+    /// files it names, and a file opened during a session takes its own.
+    OpenFiles,
 }
 
 /// Where an entry being restored goes.

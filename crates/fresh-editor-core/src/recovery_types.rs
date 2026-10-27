@@ -153,8 +153,20 @@ pub struct RecoveryMetadata {
     /// worktree, which makes the root ambiguous.
     ///
     /// `None` predates the field; readers fall back to path-prefix matching.
+    ///
+    /// Read from earlier versions' stores only: entries are now filed by
+    /// nothing but their content, and placed by the file they name or the
+    /// workspace layout that refers to them (see [`Self::root`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
+
+    /// The project root of the window the buffer was last edited in. Not
+    /// what finds the entry — its file does, or the layout that refers to
+    /// it — but where it is offered when neither does: work whose file no
+    /// window has open, or an unnamed buffer no saved layout refers to,
+    /// comes back in a window on this root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<PathBuf>,
 
     /// A save of this buffer that was under way when the entry was last
     /// written: recorded just before the save writes its file, so a crash
@@ -204,6 +216,7 @@ impl RecoveryMetadata {
             chunk_count,
             original_file_size,
             workspace_id,
+            root: None,
             saving: None,
             remote: false,
         }
@@ -454,11 +467,6 @@ impl HotExitEntry {
     /// unsaved work again.
     pub fn abandon_save(&self) -> io::Result<bool> {
         self.set_fields(&[("saving", None)])
-    }
-
-    /// Stamp the entry with the workspace whose buffer it now backs.
-    pub fn stamp_workspace(&self, workspace_id: &str) -> io::Result<bool> {
-        self.set_fields(&[("workspace_id", Some(workspace_id.into()))])
     }
 
     /// Rewrite the metadata with each named field set (or removed, for
@@ -846,19 +854,6 @@ mod tests {
 
         assert!(entry.begin_save(&renamed, 5).unwrap());
         assert_eq!(read_intent(&entry).map(|i| i.path), Some(renamed));
-    }
-
-    /// Re-stamping an entry changes its workspace and nothing else, and
-    /// leaves the chunk index alone.
-    #[test]
-    fn stamp_workspace_changes_only_the_workspace() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let entry = write_entry(dir.path(), "unsaved_1");
-        let mut want = read_json(&entry);
-        want["workspace_id"] = "ws-2".into();
-
-        assert!(entry.stamp_workspace("ws-2").unwrap());
-        assert_eq!(read_json(&entry), want);
     }
 
     /// Ids are unique even when minted back to back.

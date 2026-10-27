@@ -49,13 +49,9 @@ fn project() -> (TempDir, PathBuf, DirectoryContext) {
     (temp, project, dir_context)
 }
 
-/// How many entries the store holds for `root`, held or not.
+/// How many entries the store holds last edited on `root`, held or not.
 fn entries_for(dir_context: &DirectoryContext, root: &Path) -> usize {
-    fresh::services::recovery::entries_under(&fresh::services::recovery::partition_dir(
-        &dir_context.recovery_dir(),
-        root,
-    ))
-    .len()
+    fresh::services::recovery::entries_for_root(&dir_context.recovery_dir(), root).len()
 }
 
 /// Work a named daemon (`fresh -a NAME`) kept at a clean exit comes back in
@@ -92,6 +88,7 @@ fn plant_legacy_entry(store: &Path, id: &str, path: Option<&Path>, text: &str) {
             Some(1),
             0,
             text.len(),
+            None,
             None,
             false,
         )
