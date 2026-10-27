@@ -3662,7 +3662,7 @@ fn find_regex_match_loading_reads_forward_only_as_needed() {
     );
 
     // A match longer than a window comes back whole.
-    let mut text = b"start ".to_vec();
+    let mut text = b"begin ".to_vec();
     text.extend(std::iter::repeat_n(b'a', window * 2 + 10));
     text.extend_from_slice(b" end");
     let mut buf = TextBuffer::from_bytes(text, test_fs());
