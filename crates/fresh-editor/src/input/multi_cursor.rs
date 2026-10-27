@@ -63,6 +63,21 @@ fn adjust_position_for_newline(state: &mut EditorState, position: usize) -> usiz
     position
 }
 
+/// Where the next match of `regex` starts at or after `from`, wrapping to
+/// the start of the buffer.
+fn next_match(
+    buffer: &mut crate::model::buffer::TextBuffer,
+    regex: &regex::bytes::Regex,
+    overlap: usize,
+    from: usize,
+) -> Option<usize> {
+    let len = buffer.len();
+    [from.min(len)..len, 0..len].into_iter().find_map(|range| {
+        let found = buffer.find_regex_matches(regex, range, overlap, 1).ok()?;
+        found.first().map(|&(pos, _)| pos)
+    })
+}
+
 /// Add a cursor at the next occurrence of the selected text
 /// If no selection, selects the entire word at cursor position first
 pub fn add_cursor_at_next_match(state: &mut EditorState, cursors: &Cursors) -> AddCursorResult {
@@ -126,6 +141,12 @@ pub fn add_cursor_at_next_match(state: &mut EditorState, cursors: &Cursors) -> A
     // Extract the selected text
     let pattern = state.get_text_range(selection_range.start, selection_range.end);
     let pattern_len = pattern.len();
+    let Ok(regex) = crate::model::buffer::build_search_regex(&pattern, false, false, true) else {
+        return AddCursorResult::Failed {
+            message: "No more matches".to_string(),
+        };
+    };
+    let overlap = crate::model::buffer::match_overlap(&pattern, false);
 
     // Start searching from the end of the current selection
     let mut search_start = selection_range.end;
@@ -133,7 +154,7 @@ pub fn add_cursor_at_next_match(state: &mut EditorState, cursors: &Cursors) -> A
 
     // Loop until we find a match that isn't already occupied by a cursor
     loop {
-        let match_pos = match state.buffer.find_next(&pattern, search_start) {
+        let match_pos = match next_match(&mut state.buffer, &regex, overlap, search_start) {
             Some(pos) => pos,
             None => {
                 // If finding next failed even with wrap-around (implied by buffer.find_next usually),

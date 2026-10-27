@@ -100,6 +100,9 @@ impl Editor {
     }
 
     pub(super) fn perform_search(&mut self, query: &str) {
+        // A new search replaces any still running, which would otherwise
+        // finish later over its results.
+        self.active_window_mut().search_scan.take();
         if query.is_empty() {
             self.active_window_mut().search_state = None;
             self.set_status_message(t!("search.cancelled").to_string());
@@ -118,59 +121,27 @@ impl Editor {
             }
         };
 
-        // For large files, start an incremental (non-blocking) search scan
+        // A small file is searched to the end here: everything that searches
+        // and then steps through the matches relies on that. A large one is
+        // searched a slice per tick so the editor stays responsive.
         let is_large = self.active_state().buffer.is_large_file();
-        if is_large && search_range.is_none() {
-            self.start_search_scan(query, regex);
-            return;
+        let overlap =
+            crate::model::buffer::match_overlap(query, self.active_window().search_use_regex);
+        let scan = super::search_scan::ActiveSearchScan::new(
+            self.active_buffer(),
+            query.to_string(),
+            regex,
+            overlap,
+            search_range,
+            &self.active_state().buffer,
+        );
+        if is_large {
+            self.set_status_message(t!("goto.scanning_progress", percent = 0).to_string());
         }
-
-        // --- Normal (small-file) path: search inline with match cap ---
-
-        let buffer_content = {
-            let state = self.active_state_mut();
-            let total_bytes = state.buffer.len();
-            match state.buffer.get_text_range_mut(0, total_bytes) {
-                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-                Err(e) => {
-                    tracing::warn!("Failed to load buffer for search: {}", e);
-                    self.set_status_message(t!("error.buffer_not_loaded").to_string());
-                    return;
-                }
-            }
-        };
-
-        let (search_start, search_end) = if let Some(ref range) = search_range {
-            (range.start, range.end)
-        } else {
-            (0, buffer_content.len())
-        };
-
-        let search_slice = &buffer_content[search_start..search_end];
-
-        // Collect matches with a cap to bound memory
-        let mut match_ranges: Vec<(usize, usize)> = Vec::new();
-        let mut capped = false;
-        for m in regex.find_iter(search_slice) {
-            if match_ranges.len() >= SearchState::MAX_MATCHES {
-                capped = true;
-                break;
-            }
-            match_ranges.push((search_start + m.start(), m.end() - m.start()));
-        }
-
-        if match_ranges.is_empty() {
-            self.active_window_mut().search_state = None;
-            let msg = if search_range.is_some() {
-                format!("No matches found for '{}' in selection", query)
-            } else {
-                format!("No matches found for '{}'", query)
-            };
-            self.set_status_message(msg);
-            return;
-        }
-
-        self.finalize_search(query, match_ranges, capped, search_range);
+        self.advance_search_scan(
+            scan,
+            is_large.then_some(super::search_scan::SEARCH_SCAN_SLICE),
+        );
     }
 
     /// Common finalization after all matches have been collected (inline or
@@ -387,55 +358,6 @@ impl Editor {
             true
         } else {
             false
-        }
-    }
-
-    /// Start an incremental search scan for a large file.
-    /// Splits the piece tree into ≤1 MB chunks and sets up the scan state
-    /// that `process_search_scan()` (called from `editor_tick()`) will
-    /// consume a few chunks per frame.
-    fn start_search_scan(&mut self, query: &str, regex: regex::Regex) {
-        let buffer_id = self.active_buffer();
-        // Pre-snapshot per-window search settings before taking the &mut
-        // borrow on self.windows below.
-        let case_sensitive = self.active_window().search_case_sensitive;
-        if let Some(state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&buffer_id)
-        {
-            let leaves = state.buffer.piece_tree_leaves();
-            // Build a bytes::Regex from the same pattern for the chunked scanner
-            // `as_str()` carries only the pattern, not the builder flags, so
-            // re-apply line-anchoring here to keep `^`/`$` matching every
-            // line boundary in the chunked scan (matches the inline path).
-            let bytes_regex = regex::bytes::RegexBuilder::new(regex.as_str())
-                .case_insensitive(!case_sensitive)
-                .multi_line(true)
-                .crlf(true)
-                .build()
-                .expect("regex already validated");
-            let scan = state.buffer.search_scan_init(
-                bytes_regex,
-                super::SearchState::MAX_MATCHES,
-                query.len(),
-            );
-            let cs = self.active_window().search_case_sensitive;
-            let ww = self.active_window().search_whole_word;
-            let ur = self.active_window().search_use_regex;
-            self.active_window_mut().search_scan.start(
-                buffer_id,
-                leaves,
-                scan,
-                query.to_string(),
-                None,
-                cs,
-                ww,
-                ur,
-            );
-            self.set_status_message(t!("goto.scanning_progress", percent = 0).to_string());
         }
     }
 
@@ -898,28 +820,11 @@ impl Editor {
         }
     }
 
-    /// Build a compiled byte-regex for replace operations using current search
-    /// settings. Returns None for a plain-text, case-sensitive, non-whole-word
-    /// search, which byte-exact matching handles.
-    fn build_replace_regex(&self, search: &str) -> Option<regex::bytes::Regex> {
-        super::regex_replace::build_regex(
-            search,
-            self.active_window().search_use_regex,
-            self.active_window().search_whole_word,
-            self.active_window().search_case_sensitive,
-        )
-    }
-
-    /// `build_replace_regex`, or for a plain-text, case-sensitive,
-    /// non-whole-word search the escaped query — for the replace paths that
-    /// search with a regex in every mode.
+    /// The regex for a replace of `search` under the current search
+    /// settings, or `None` after reporting an invalid regex.
     fn replace_regex(&mut self, search: &str) -> Option<regex::bytes::Regex> {
-        if let Some(regex) = self.build_replace_regex(search) {
-            return Some(regex);
-        }
-        match regex::bytes::Regex::new(&regex::escape(search)) {
+        match self.active_window().build_search_regex(search) {
             Ok(regex) => Some(regex),
-            // Only a query too long for the regex engine gets here.
             Err(e) => {
                 self.set_status_message(t!("error.invalid_regex", error = e).to_string());
                 None
@@ -940,11 +845,11 @@ impl Editor {
         range: std::ops::Range<usize>,
         limit: usize,
     ) -> Option<Vec<(usize, usize)>> {
-        let overlap = replace_match_overlap(use_regex, search);
+        let overlap = crate::model::buffer::match_overlap(search, use_regex);
         match self
             .active_state_mut()
             .buffer
-            .find_regex_matches_loading(regex, range, overlap, limit)
+            .find_regex_matches(regex, range, overlap, limit)
         {
             Ok(found) => Some(found),
             Err(e) => {
@@ -1390,18 +1295,5 @@ impl Editor {
         self.active_window_mut().clear_search_overlays();
 
         self.set_status_message(t!("search.replaced_count", count = replacements_made).to_string());
-    }
-}
-
-/// How far each window of a replace's search reaches back into the previous
-/// one, so a match straddling the boundary is found: a plain-text match is at
-/// most 4 bytes per query character (case folding can change a character's
-/// UTF-8 length, `k` and the Kelvin sign `K` are 1 and 3 bytes), and a regex
-/// gets the same 4KB the buffer's other chunked regex searches use.
-fn replace_match_overlap(use_regex: bool, search: &str) -> usize {
-    if use_regex {
-        4096
-    } else {
-        search.chars().count() * 4
     }
 }

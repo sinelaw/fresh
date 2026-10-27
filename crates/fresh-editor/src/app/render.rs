@@ -5129,16 +5129,17 @@ impl Editor {
             let case_insensitive = !["mode_case", "git_grep_case"]
                 .iter()
                 .any(|k| self.prompt_toolbar_toggle_checked(k));
-            regex::RegexBuilder::new(&query)
-                .case_insensitive(case_insensitive)
-                .build()
-                .or_else(|_| {
-                    regex::RegexBuilder::new(&regex::escape(&query))
-                        .case_insensitive(case_insensitive)
-                        .build()
-                })
-                .ok()
+            let build = |use_regex| {
+                crate::model::buffer::build_search_regex(
+                    &query,
+                    use_regex,
+                    false,
+                    !case_insensitive,
+                )
+            };
+            build(true).or_else(|_| build(false)).ok()
         };
+        let preview_overlap = crate::model::buffer::match_overlap(&query, true);
         let preview_ns = crate::view::overlay::OverlayNamespace::from_string(
             "overlay-preview-search".to_string(),
         );
@@ -5205,25 +5206,27 @@ impl Editor {
                     let visible_start = pstate.view_state.buffer_tab_state().viewport.top_byte();
                     let visible_rows =
                         pstate.view_state.buffer_tab_state().viewport.height as usize;
-                    let mut visible_end = visible_start;
-                    {
-                        let mut iter = state.buffer.line_iterator(visible_start, 80);
-                        for _ in 0..visible_rows {
-                            if let Some((line_start, line_content)) = iter.next_line() {
-                                visible_end = line_start + line_content.len();
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-                    visible_end = visible_end.min(state.buffer.len());
-                    let visible_text = state.get_text_range(visible_start, visible_end);
-                    for mat in re.find_iter(&visible_text) {
-                        if mat.start() == mat.end() {
+                    let visible_end = state
+                        .buffer
+                        .advance_lines_within(
+                            visible_start,
+                            visible_rows,
+                            super::window::VISIBLE_WINDOW_SCAN_BYTES,
+                        )
+                        .min(state.buffer.len());
+                    let found = state
+                        .buffer
+                        .find_regex_matches(
+                            re,
+                            visible_start..visible_end,
+                            preview_overlap,
+                            usize::MAX,
+                        )
+                        .unwrap_or_default();
+                    for (absolute_pos, match_len) in found {
+                        if match_len == 0 {
                             continue;
                         }
-                        let absolute_pos = visible_start + mat.start();
-                        let match_len = mat.end() - mat.start();
                         let style = ratatui::style::Style::default().fg(search_fg).bg(search_bg);
                         let overlay = crate::view::overlay::Overlay::with_namespace(
                             &mut state.marker_list,

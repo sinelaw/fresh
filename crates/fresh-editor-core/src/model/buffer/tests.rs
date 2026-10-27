@@ -2862,10 +2862,28 @@ mod chunked_search {
         regex::bytes::Regex::new(pattern).unwrap()
     }
 
+    struct Scan {
+        matches: Vec<SearchMatch>,
+        capped: bool,
+    }
+
+    /// Up to `max_matches` matches with their lines, read in small windows so
+    /// even short texts cross window boundaries.
+    fn scan_all(buf: &mut TextBuffer, regex: regex::bytes::Regex, max_matches: usize) -> Scan {
+        let mut search = RegexSearch::new(regex, 0..buf.len(), 32, buf)
+            .with_lines(1)
+            .with_window(100);
+        let matches = search.run(buf, max_matches).unwrap();
+        Scan {
+            capped: !search.is_done(),
+            matches,
+        }
+    }
+
     #[test]
     fn single_chunk_line_col_context() {
         let mut buf = make_buffer(b"hello world\nfoo bar\nbaz quux\n");
-        let state = buf.search_scan_all(make_regex("bar"), 100, 3).unwrap();
+        let state = scan_all(&mut buf, make_regex("bar"), 100);
         assert_eq!(state.matches.len(), 1);
         let m = &state.matches[0];
         assert_eq!(m.line, 2);
@@ -2878,7 +2896,7 @@ mod chunked_search {
     #[test]
     fn multiple_matches_correct_lines() {
         let mut buf = make_buffer(b"aaa\nbbb\nccc\naaa\n");
-        let state = buf.search_scan_all(make_regex("aaa"), 100, 3).unwrap();
+        let state = scan_all(&mut buf, make_regex("aaa"), 100);
         assert_eq!(state.matches.len(), 2);
         assert_eq!(state.matches[0].line, 1);
         assert_eq!(state.matches[0].context, "aaa");
@@ -2889,7 +2907,7 @@ mod chunked_search {
     #[test]
     fn match_on_last_line_no_trailing_newline() {
         let mut buf = make_buffer(b"line1\nline2\ntarget");
-        let state = buf.search_scan_all(make_regex("target"), 100, 6).unwrap();
+        let state = scan_all(&mut buf, make_regex("target"), 100);
         assert_eq!(state.matches.len(), 1);
         let m = &state.matches[0];
         assert_eq!(m.line, 3);
@@ -2900,7 +2918,7 @@ mod chunked_search {
     #[test]
     fn match_at_first_byte() {
         let mut buf = make_buffer(b"target\nother\n");
-        let state = buf.search_scan_all(make_regex("target"), 100, 6).unwrap();
+        let state = scan_all(&mut buf, make_regex("target"), 100);
         assert_eq!(state.matches.len(), 1);
         let m = &state.matches[0];
         assert_eq!(m.line, 1);
@@ -2911,7 +2929,7 @@ mod chunked_search {
     #[test]
     fn max_matches_caps() {
         let mut buf = make_buffer(b"a\na\na\na\na\n");
-        let state = buf.search_scan_all(make_regex("a"), 3, 1).unwrap();
+        let state = scan_all(&mut buf, make_regex("a"), 3);
         assert_eq!(state.matches.len(), 3);
         assert!(state.capped);
     }
@@ -2919,9 +2937,7 @@ mod chunked_search {
     #[test]
     fn case_insensitive_regex() {
         let mut buf = make_buffer(b"Hello\nhello\nHELLO\n");
-        let state = buf
-            .search_scan_all(make_regex("(?i)hello"), 100, 5)
-            .unwrap();
+        let state = scan_all(&mut buf, make_regex("(?i)hello"), 100);
         assert_eq!(state.matches.len(), 3);
         assert_eq!(state.matches[0].line, 1);
         assert_eq!(state.matches[1].line, 2);
@@ -2931,7 +2947,7 @@ mod chunked_search {
     #[test]
     fn whole_word_boundary() {
         let mut buf = make_buffer(b"foobar\nfoo bar\nfoo\n");
-        let state = buf.search_scan_all(make_regex(r"\bfoo\b"), 100, 3).unwrap();
+        let state = scan_all(&mut buf, make_regex(r"\bfoo\b"), 100);
         assert_eq!(state.matches.len(), 2);
         assert_eq!(state.matches[0].line, 2);
         assert_eq!(state.matches[0].column, 1);
@@ -2956,9 +2972,7 @@ mod chunked_search {
         std::fs::write(&path, &content).unwrap();
         let mut buffer = TextBuffer::load_from_file(&path, 10, test_fs()).unwrap();
 
-        let state = buffer
-            .search_scan_all(make_regex("line_050"), 100, 8)
-            .unwrap();
+        let state = scan_all(&mut buffer, make_regex("line_050"), 100);
         assert_eq!(state.matches.len(), 1);
         let m = &state.matches[0];
         assert_eq!(m.line, 50);
@@ -2981,7 +2995,7 @@ mod chunked_search {
         let mut buffer = TextBuffer::load_from_file(&path, 10, test_fs()).unwrap();
 
         // Search for a pattern that appears exactly once per line
-        let state = buffer.search_scan_all(make_regex("word_"), 200, 5).unwrap();
+        let state = scan_all(&mut buffer, make_regex("word_"), 200);
         assert_eq!(
             state.matches.len(),
             100,
@@ -3023,16 +3037,14 @@ mod chunked_search {
         std::fs::write(&path, &content).unwrap();
         let mut buffer = TextBuffer::load_from_file(&path, 10, test_fs()).unwrap();
 
-        let state = buffer
-            .search_scan_all(make_regex("TARGET_HERE"), 100, 11)
-            .unwrap();
+        let state = scan_all(&mut buffer, make_regex("TARGET_HERE"), 100);
         assert_eq!(state.matches.len(), 1);
         let m = &state.matches[0];
         assert_eq!(m.line, 2, "TARGET_HERE is on line 2 (the long line)");
         assert_eq!(m.length, 11);
 
         // Also check "after" is on line 3
-        let state2 = buffer.search_scan_all(make_regex("after"), 100, 5).unwrap();
+        let state2 = scan_all(&mut buffer, make_regex("after"), 100);
         assert_eq!(state2.matches.len(), 1);
         assert_eq!(state2.matches[0].line, 3);
     }
@@ -3056,7 +3068,7 @@ mod chunked_search {
         std::fs::write(&path, &content).unwrap();
         let mut buffer = TextBuffer::load_from_file(&path, 10, test_fs()).unwrap();
 
-        let state = buffer.search_scan_all(make_regex("SPLIT"), 100, 5).unwrap();
+        let state = scan_all(&mut buffer, make_regex("SPLIT"), 100);
         assert_eq!(state.matches.len(), 1, "SPLIT should be found exactly once");
         assert_eq!(state.matches[0].line, 2); // Still on line 2 (the long X line)
     }
@@ -3064,7 +3076,7 @@ mod chunked_search {
     #[test]
     fn empty_buffer_no_matches() {
         let mut buf = make_buffer(b"");
-        let state = buf.search_scan_all(make_regex("anything"), 100, 8).unwrap();
+        let state = scan_all(&mut buf, make_regex("anything"), 100);
         assert!(state.matches.is_empty());
         assert!(!state.capped);
     }
@@ -3072,7 +3084,7 @@ mod chunked_search {
     #[test]
     fn single_line_no_newline() {
         let mut buf = make_buffer(b"hello world");
-        let state = buf.search_scan_all(make_regex("world"), 100, 5).unwrap();
+        let state = scan_all(&mut buf, make_regex("world"), 100);
         assert_eq!(state.matches.len(), 1);
         let m = &state.matches[0];
         assert_eq!(m.line, 1);
@@ -3085,7 +3097,7 @@ mod chunked_search {
     #[test]
     fn multiple_matches_same_line() {
         let mut buf = make_buffer(b"aa bb aa cc aa\nother\n");
-        let state = buf.search_scan_all(make_regex("aa"), 100, 2).unwrap();
+        let state = scan_all(&mut buf, make_regex("aa"), 100);
         assert_eq!(state.matches.len(), 3);
         for m in &state.matches {
             assert_eq!(m.line, 1);
@@ -3097,206 +3109,55 @@ mod chunked_search {
     }
 }
 
-mod hybrid_search {
+/// A search reaches what a lazily loaded file has not loaded yet, and sees
+/// unsaved edits.
+mod lazily_loaded_search {
     use super::*;
 
-    fn make_regex(pattern: &str) -> regex::bytes::Regex {
-        regex::bytes::Regex::new(pattern).unwrap()
-    }
-
-    fn make_opts() -> crate::model::filesystem::FileSearchOptions {
-        crate::model::filesystem::FileSearchOptions {
-            fixed_string: false,
-            case_sensitive: true,
-            whole_word: false,
-            max_matches: 100,
-        }
-    }
-
-    /// Hybrid search on a fully-loaded small buffer should produce
-    /// the same results as search_scan_all.
-    #[test]
-    fn hybrid_matches_scan_all_for_loaded_buffer() {
-        let content = b"foo bar baz\nfoo again\nlast line\n";
-        let mut buf = TextBuffer::from_bytes(content.to_vec(), test_fs());
-        let regex = make_regex("foo");
-        let opts = make_opts();
-
-        let hybrid = buf
-            .search_hybrid("foo", &opts, regex.clone(), 100, 3)
-            .unwrap();
-        let scan = buf.search_scan_all(regex, 100, 3).unwrap();
-
-        assert_eq!(hybrid.len(), scan.matches.len());
-        for (h, s) in hybrid.iter().zip(scan.matches.iter()) {
-            assert_eq!(h.byte_offset, s.byte_offset);
-            assert_eq!(h.line, s.line);
-            assert_eq!(h.column, s.column);
-            assert_eq!(h.length, s.length);
-            assert_eq!(h.context, s.context);
-        }
-    }
-
-    /// Hybrid search on a file-backed buffer (large file with unloaded
-    /// regions) should find matches using fs.search_file.
-    #[test]
-    fn hybrid_finds_matches_in_unloaded_regions() {
+    fn lazily_loaded(content: &[u8]) -> (tempfile::TempDir, TextBuffer) {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let path = temp_dir.path().join("big.txt");
+        std::fs::write(&path, content).unwrap();
+        let buf = TextBuffer::load_from_file(&path, 10, test_fs()).unwrap();
+        (temp_dir, buf)
+    }
 
-        // Create a file with known content
+    fn search(buf: &mut TextBuffer, pattern: &str) -> Vec<SearchMatch> {
+        let regex = regex::bytes::Regex::new(pattern).unwrap();
+        RegexSearch::new(regex, 0..buf.len(), 32, buf)
+            .with_lines(1)
+            .with_window(100)
+            .run(buf, usize::MAX)
+            .unwrap()
+    }
+
+    #[test]
+    fn finds_matches_in_unloaded_regions() {
         let mut content = Vec::new();
         for i in 0..100 {
             content.extend_from_slice(format!("line {:03}\n", i).as_bytes());
         }
-        std::fs::write(&path, &content).unwrap();
-
-        // Load as a large file (unloaded mode)
-        let mut buf = TextBuffer::load_from_file(&path, 10, test_fs()).unwrap();
-
-        // Verify some leaves are unloaded
-        let leaves = buf.piece_tree.get_leaves();
-        let has_unloaded = leaves.iter().any(|l| {
-            matches!(l.location, BufferLocation::Stored(_))
-                && buf
-                    .buffers
-                    .get(l.location.buffer_id())
-                    .map(|b| !b.is_loaded())
-                    .unwrap_or(false)
-        });
-
-        let regex = make_regex("line 050");
-        let opts = make_opts();
-        let matches = buf.search_hybrid("line 050", &opts, regex, 100, 8).unwrap();
-
+        let (_dir, mut buf) = lazily_loaded(&content);
+        let matches = search(&mut buf, "line 050");
         assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].line, 51); // 1-based
-        assert!(matches[0].context.contains("line 050"));
-        // If the buffer had unloaded regions, hybrid search used fs.search_file
-        if has_unloaded {
-            // Just verify it worked — the match was found without loading everything
-        }
+        assert_eq!(matches[0].line, 51);
+        assert_eq!(matches[0].context, "line 050");
     }
 
-    /// Hybrid search on a dirty buffer should find matches in both
-    /// edited (loaded) and unedited (unloaded) regions.
     #[test]
-    fn hybrid_dirty_buffer_finds_all_matches() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let path = temp_dir.path().join("dirty.txt");
-
+    fn edited_lazily_loaded_buffer_finds_all_matches() {
         let mut content = Vec::new();
         for i in 0..50 {
             content.extend_from_slice(format!("target {:02}\n", i).as_bytes());
         }
-        std::fs::write(&path, &content).unwrap();
-
-        let mut buf = TextBuffer::load_from_file(&path, 10, test_fs()).unwrap();
-
-        // Make a small edit near the beginning — insert "target XX" at position 0
+        let (_dir, mut buf) = lazily_loaded(&content);
         buf.insert(0, "target XX\n");
-
-        let regex = make_regex("target");
-        let opts = make_opts();
-        let matches = buf.search_hybrid("target", &opts, regex, 200, 6).unwrap();
-
-        // Should find the inserted "target XX" plus all 50 original "target NN"
+        let matches = search(&mut buf, "target");
         assert_eq!(matches.len(), 51);
-        // First match should be the inserted one
-        assert!(matches[0].context.contains("target XX"));
-    }
-
-    /// Boundary match: pattern spans loaded→unloaded boundary.
-    #[test]
-    fn hybrid_boundary_match() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let path = temp_dir.path().join("boundary.txt");
-
-        // File content: "AAAAABBBBB" (no newlines)
-        let content = b"AAAAABBBBB";
-        std::fs::write(&path, content).unwrap();
-
-        let mut buf = TextBuffer::from_bytes(content.to_vec(), test_fs());
-        buf.rename_file_path(path);
-
-        let regex = make_regex("AAAAABBBBB");
-        let opts = make_opts();
-        let matches = buf
-            .search_hybrid("AAAAABBBBB", &opts, regex, 100, 10)
-            .unwrap();
-
-        assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].byte_offset, 0);
-    }
-
-    /// Max matches limit is respected.
-    #[test]
-    fn hybrid_max_matches_respected() {
-        let content = b"aaa\naaa\naaa\naaa\naaa\n";
-        let mut buf = TextBuffer::from_bytes(content.to_vec(), test_fs());
-        let regex = make_regex("aaa");
-        let opts = crate::model::filesystem::FileSearchOptions {
-            max_matches: 3,
-            ..make_opts()
-        };
-        let matches = buf.search_hybrid("aaa", &opts, regex, 3, 3).unwrap();
-        assert!(matches.len() <= 3);
-    }
-}
-
-mod boundary_overlap {
-    use super::*;
-
-    fn make_regex(pattern: &str) -> regex::bytes::Regex {
-        regex::bytes::Regex::new(pattern).unwrap()
-    }
-
-    #[test]
-    fn empty_prev_tail_returns_nothing() {
-        let matches = search_boundary_overlap(b"", b"hello", 0, 1, &make_regex("hello"), 100);
-        assert!(matches.is_empty());
-    }
-
-    #[test]
-    fn pure_tail_match_skipped() {
-        // "foo" is entirely in prev_tail — should NOT be returned
-        let matches = search_boundary_overlap(b"foo bar", b" baz", 0, 1, &make_regex("foo"), 100);
-        assert!(matches.is_empty());
-    }
-
-    #[test]
-    fn cross_boundary_match_found() {
-        // "SPLIT" spans: prev_tail="...SPL", next_head="IT..."
-        let matches = search_boundary_overlap(b"xxSPL", b"ITyy", 0, 1, &make_regex("SPLIT"), 100);
-        assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].byte_offset, 2);
-        assert_eq!(matches[0].length, 5);
-    }
-
-    #[test]
-    fn pure_head_match_skipped() {
-        // "baz" is entirely in next_head — should NOT be returned
-        // (it starts at offset 4 which is >= overlap_len 3)
-        let matches = search_boundary_overlap(b"foo", b" baz", 0, 1, &make_regex("baz"), 100);
-        assert!(matches.is_empty());
-    }
-
-    #[test]
-    fn line_number_tracking() {
-        // prev_tail has a newline; running_line=5 means "line 5 at
-        // the boundary".  The newline in the tail means SPLIT starts
-        // on line 5 (the boundary line).
-        let matches =
-            search_boundary_overlap(b"line1\nSPL", b"IT end", 0, 5, &make_regex("SPLIT"), 100);
-        assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].line, 5);
-    }
-
-    #[test]
-    fn max_matches_respected() {
-        // Two cross-boundary matches but max is 1
-        let matches = search_boundary_overlap(b"aXb", b"Xc", 0, 1, &make_regex("X"), 1);
-        assert!(matches.len() <= 1);
+        assert_eq!(matches[0].context, "target XX");
+        for (i, m) in matches.iter().enumerate() {
+            assert_eq!(m.line, i + 1);
+        }
     }
 }
 
@@ -3318,61 +3179,6 @@ fn position_to_lsp_position_counts_utf16_from_the_line_start() {
     // Past the astral clef: 6 + 2 UTF-16 units.
     let after_clef = after_word + "𝄞".len();
     assert_eq!(buffer.position_to_lsp_position(after_clef), (1, 8));
-}
-
-/// `find_all_in_range` streams the buffer once, so it has to reproduce what
-/// repeated `find_next_in_range` calls returned: non-overlapping matches, in
-/// order, including ones straddling the 64KB chunk boundary it reads in.
-#[test]
-fn find_all_in_range_matches_repeated_find_next() {
-    // Long enough to span several 64KB chunks, with a match landing on every
-    // boundary: the filler length is chosen so occurrences fall at regular
-    // offsets that cross 65536.
-    let mut text = String::new();
-    while text.len() < 200_000 {
-        text.push_str("some source code here\n");
-    }
-    let buffer = Buffer::from_bytes(text.into_bytes(), test_fs());
-
-    let mut expected = Vec::new();
-    let mut pos = 0;
-    while let Some(offset) = buffer.find_next_in_range("source", pos, Some(pos..buffer.len())) {
-        expected.push(offset);
-        pos = offset + "source".len();
-    }
-    assert!(expected.len() > 3_000, "expected many matches");
-
-    assert_eq!(
-        buffer.find_all_in_range("source", 0..buffer.len(), usize::MAX),
-        expected
-    );
-
-    // The limit caps the result without changing which matches come first.
-    assert_eq!(
-        buffer.find_all_in_range("source", 0..buffer.len(), 5),
-        expected[..5]
-    );
-
-    // A sub-range reports only matches fully inside it.
-    let third = expected[2];
-    let in_range = buffer.find_all_in_range("source", third..expected[5], usize::MAX);
-    assert_eq!(in_range, &expected[2..5]);
-}
-
-/// Overlapping candidates are skipped the same way the sequential search
-/// skipped them: each match resumes the scan after the previous one.
-#[test]
-fn find_all_in_range_skips_overlapping_matches() {
-    let buffer = Buffer::from_bytes(b"aaaaaa".to_vec(), test_fs());
-    assert_eq!(
-        buffer.find_all_in_range("aa", 0..buffer.len(), usize::MAX),
-        vec![0, 2, 4]
-    );
-
-    // An empty pattern never matches, as with find_next_in_range.
-    assert!(buffer
-        .find_all_in_range("", 0..buffer.len(), usize::MAX)
-        .is_empty());
 }
 
 /// A stretch the line-break search has already walked is not walked again —
@@ -3594,13 +3400,13 @@ fn test_failed_save_leaves_the_hot_exit_entry_as_unsaved_work() {
     assert_eq!(buffer.hot_exit_entry(), Some(&entry));
 }
 
-/// `find_regex_matches_loading` gives exactly what `find_iter` over the
+/// `find_regex_matches` gives exactly what `find_iter` over the
 /// whole text gives, on an edited buffer (many piece-tree leaves) larger than
 /// several windows: matches spanning leaves and window edges, case folding,
 /// whole words, overlapping candidates, empty matches, and a match longer
 /// than a window.
 #[test]
-fn find_regex_matches_loading_agrees_with_find_iter() {
+fn find_regex_matches_agrees_with_find_iter() {
     let mut text = String::new();
     let mut i = 0;
     while text.len() < LOAD_CHUNK_SIZE * 2 {
@@ -3623,13 +3429,12 @@ fn find_regex_matches_loading_agrees_with_find_iter() {
         let expected: Vec<(usize, usize)> =
             re.find_iter(&whole).map(|m| (m.start(), m.len())).collect();
         let found = buf
-            .find_regex_matches_loading(&re, 0..len, 4096, usize::MAX)
+            .find_regex_matches(&re, 0..len, 4096, usize::MAX)
             .unwrap();
         assert_eq!(found.len(), expected.len(), "pattern {pattern}");
         assert!(found == expected, "pattern {pattern}: matches differ");
         assert_eq!(
-            buf.find_regex_matches_loading(&re, 0..len, 4096, 3)
-                .unwrap(),
+            buf.find_regex_matches(&re, 0..len, 4096, 3).unwrap(),
             expected[..3.min(expected.len())],
             "pattern {pattern} with a limit"
         );
@@ -3639,23 +3444,22 @@ fn find_regex_matches_loading_agrees_with_find_iter() {
 /// A match that runs past the end of the range is not one of its matches,
 /// and the search ends rather than re-reading for it.
 #[test]
-fn find_regex_matches_loading_stops_at_the_range_end() {
+fn find_regex_matches_stops_at_the_range_end() {
     let mut buf = TextBuffer::from_bytes(b"xx hello yy".to_vec(), test_fs());
     let re = regex::bytes::Regex::new("hello").unwrap();
     assert!(buf
-        .find_regex_matches_loading(&re, 0..5, 20, usize::MAX)
+        .find_regex_matches(&re, 0..5, 20, usize::MAX)
         .unwrap()
         .is_empty());
     let re = regex::bytes::Regex::new("aa").unwrap();
     let mut buf = TextBuffer::from_bytes(b"aaaaa".to_vec(), test_fs());
     assert_eq!(
-        buf.find_regex_matches_loading(&re, 0..3, 8, usize::MAX)
-            .unwrap(),
+        buf.find_regex_matches(&re, 0..3, 8, usize::MAX).unwrap(),
         vec![(0, 2)]
     );
 }
 
-/// Property tests for `find_regex_matches_loading`: whatever the text, the
+/// Property tests for `find_regex_matches`: whatever the text, the
 /// piece-tree layout, the window size and the pattern, it finds exactly what a
 /// regex over the whole text finds.
 mod regex_matches_loading {
@@ -3776,6 +3580,82 @@ mod regex_matches_loading {
         }
     }
 
+    /// The 1-based line and column of `start`, and its line's text, as
+    /// counted over the whole text.
+    fn line_info(text: &[u8], start: usize) -> (usize, usize, String) {
+        let line = 1 + text[..start].iter().filter(|&&b| b == b'\n').count();
+        let line_start = text[..start]
+            .iter()
+            .rposition(|&b| b == b'\n')
+            .map_or(0, |p| p + 1);
+        let line_end = text[start..]
+            .iter()
+            .position(|&b| b == b'\n')
+            .map_or(text.len(), |p| start + p);
+        let context = String::from_utf8_lossy(&text[line_start..line_end]).into_owned();
+        (line, start - line_start + 1, context)
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+
+        /// Run a step at a time — any byte budget, any number of matches per
+        /// step — a search finds what one pass over the whole text does,
+        /// each match on the line and column counted over the whole text.
+        #[test]
+        fn prop_stepped_search_matches_one_pass_with_lines(
+            text in text_strategy(),
+            edits in edits_strategy(),
+            pattern in prop::sample::select(PATTERNS),
+            window in 1usize..48,
+            steps in prop::collection::vec((1usize..64, 1usize..4), 1..32),
+        ) {
+            let (mut buf, model) = edited_buffer(&text, &edits);
+            let re = regex::bytes::Regex::new(pattern).unwrap();
+            let expected = reference(&re, &model, 0..model.len());
+            let mut search = RegexSearch::new(re, 0..buf.len(), 8, &buf)
+                .with_lines(1)
+                .with_window(window);
+            let mut found = Vec::new();
+            for (n, &(bytes, limit)) in steps.iter().cycle().enumerate() {
+                if search.is_done() {
+                    break;
+                }
+                prop_assert!(n < 100_000, "the search never finished");
+                found.extend(search.step(&mut buf, bytes, limit).unwrap());
+            }
+            let got: Vec<(usize, usize)> =
+                found.iter().map(|m| (m.byte_offset, m.length)).collect();
+            prop_assert_eq!(&got, &expected);
+            for m in &found {
+                let (line, column, _) = line_info(&model, m.byte_offset);
+                prop_assert_eq!((m.line, m.column), (line, column));
+            }
+        }
+
+        /// With a window holding the whole text, each match's context is its
+        /// whole line.
+        #[test]
+        fn prop_context_is_the_matched_line(
+            text in text_strategy(),
+            edits in edits_strategy(),
+            pattern in prop::sample::select(PATTERNS),
+        ) {
+            let (mut buf, model) = edited_buffer(&text, &edits);
+            let re = regex::bytes::Regex::new(pattern).unwrap();
+            let len = buf.len();
+            let found = RegexSearch::new(re, 0..len, 8, &buf)
+                .with_lines(1)
+                .run(&mut buf, usize::MAX)
+                .unwrap();
+            for m in &found {
+                let (line, column, context) = line_info(&model, m.byte_offset);
+                prop_assert_eq!((m.line, m.column), (line, column));
+                prop_assert_eq!(&m.context, &context);
+            }
+        }
+    }
+
     proptest! {
         // A lazily loaded file on disk, MB scale: keep the case count modest.
         #![proptest_config(ProptestConfig::with_cases(12))]
@@ -3807,7 +3687,7 @@ mod regex_matches_loading {
             let expected: Vec<(usize, usize)> =
                 re.find_iter(&content).map(|m| (m.start(), m.len())).collect();
             let len = buf.len();
-            let found = buf.find_regex_matches_loading(&re, 0..len, 4096, usize::MAX).unwrap();
+            let found = buf.find_regex_matches(&re, 0..len, 4096, usize::MAX).unwrap();
             prop_assert_eq!(found, expected);
             prop_assert_eq!(buf.get_text_range_mut(0, len).unwrap(), content);
         }
@@ -3821,55 +3701,47 @@ mod regex_matches_loading {
         // An empty buffer, an empty range, a range past the end, a zero limit.
         let mut buf = TextBuffer::from_bytes(Vec::new(), test_fs());
         assert!(buf
-            .find_regex_matches_loading(&re, 0..0, 8, usize::MAX)
+            .find_regex_matches(&re, 0..0, 8, usize::MAX)
             .unwrap()
             .is_empty());
         assert_eq!(
-            buf.find_regex_matches_loading(&empty, 0..0, 8, usize::MAX)
-                .unwrap(),
+            buf.find_regex_matches(&empty, 0..0, 8, usize::MAX).unwrap(),
             vec![(0, 0)],
             "an empty buffer has one line start"
         );
         let mut buf = TextBuffer::from_bytes(b"ab ab".to_vec(), test_fs());
         assert!(buf
-            .find_regex_matches_loading(&re, 2..2, 8, usize::MAX)
+            .find_regex_matches(&re, 2..2, 8, usize::MAX)
             .unwrap()
             .is_empty());
         assert!(buf
-            .find_regex_matches_loading(&re, 9..20, 8, usize::MAX)
+            .find_regex_matches(&re, 9..20, 8, usize::MAX)
             .unwrap()
             .is_empty());
-        assert!(buf
-            .find_regex_matches_loading(&re, 0..5, 8, 0)
-            .unwrap()
-            .is_empty());
+        assert!(buf.find_regex_matches(&re, 0..5, 8, 0).unwrap().is_empty());
         assert_eq!(
-            buf.find_regex_matches_loading(&re, 0..5, 8, 1).unwrap(),
+            buf.find_regex_matches(&re, 0..5, 8, 1).unwrap(),
             vec![(0, 2)]
         );
 
         // A match must lie wholly inside the range.
         assert_eq!(
-            buf.find_regex_matches_loading(&re, 0..4, 8, usize::MAX)
-                .unwrap(),
+            buf.find_regex_matches(&re, 0..4, 8, usize::MAX).unwrap(),
             vec![(0, 2)]
         );
         assert_eq!(
-            buf.find_regex_matches_loading(&re, 1..5, 8, usize::MAX)
-                .unwrap(),
+            buf.find_regex_matches(&re, 1..5, 8, usize::MAX).unwrap(),
             vec![(3, 2)]
         );
 
         // An empty match at the end of the range counts only at the buffer's end.
         let mut buf = TextBuffer::from_bytes(b"x\ny\n".to_vec(), test_fs());
         assert_eq!(
-            buf.find_regex_matches_loading(&empty, 0..4, 8, usize::MAX)
-                .unwrap(),
+            buf.find_regex_matches(&empty, 0..4, 8, usize::MAX).unwrap(),
             vec![(0, 0), (2, 0), (4, 0)]
         );
         assert_eq!(
-            buf.find_regex_matches_loading(&empty, 0..2, 8, usize::MAX)
-                .unwrap(),
+            buf.find_regex_matches(&empty, 0..2, 8, usize::MAX).unwrap(),
             vec![(0, 0)]
         );
 

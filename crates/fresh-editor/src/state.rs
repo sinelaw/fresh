@@ -2163,19 +2163,19 @@ impl DocumentModel for EditorState {
             (0, self.buffer.len())
         };
 
-        // Get text in range
-        let bytes = self
-            .buffer
-            .get_text_range_mut(start_offset, end_offset - start_offset)?;
-        let text = String::from_utf8_lossy(&bytes);
-
-        // Find all matches (simple substring search for now)
-        let mut matches = Vec::new();
-        let mut search_offset = 0;
-        while let Some(pos) = text[search_offset..].find(pattern) {
-            matches.push(start_offset + search_offset + pos);
-            search_offset += pos + pattern.len();
+        // A literal search with the buffer's one search. An empty pattern
+        // matches nothing.
+        if pattern.is_empty() {
+            return Ok(Vec::new());
         }
+        let regex = crate::model::buffer::build_search_regex(pattern, false, false, true)?;
+        let overlap = crate::model::buffer::match_overlap(pattern, false);
+        let matches = self
+            .buffer
+            .find_regex_matches(&regex, start_offset..end_offset, overlap, usize::MAX)?
+            .into_iter()
+            .map(|(pos, _)| pos)
+            .collect();
 
         Ok(matches)
     }

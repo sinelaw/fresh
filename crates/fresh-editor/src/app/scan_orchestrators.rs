@@ -232,112 +232,80 @@ impl Editor {
         }
     }
 
-    // === Incremental Search Scan (for large files) ===
+    // === Incremental Search Scan ===
 
-    /// Process chunks for the incremental search scan.
+    /// Run the in-flight search scan for this tick's slice.
     /// Returns `true` if the UI should re-render (progress updated or scan finished).
     pub fn process_search_scan(&mut self) -> bool {
-        let Some(buffer_id) = self.active_window_mut().search_scan.buffer_id() else {
+        let Some(scan) = self.active_window_mut().search_scan.take() else {
             return false;
         };
-
-        if let Err(e) = self.process_search_scan_batch(buffer_id) {
-            tracing::warn!("Search scan error: {e}");
-            self.active_window_mut().search_scan.abandon();
-            self.set_status_message(format!("Search failed: {e}"));
-            return true;
-        }
-
-        if self.active_window_mut().search_scan.is_done() {
-            self.finish_search_scan();
-        } else {
-            let pct = self.active_window_mut().search_scan.progress_percent();
-            let match_count = self.active_window_mut().search_scan.match_count();
-            self.set_status_message(format!(
-                "Searching... {}% ({} matches so far)",
-                pct, match_count
-            ));
-        }
+        self.advance_search_scan(scan, Some(super::search_scan::SEARCH_SCAN_SLICE));
         true
     }
 
-    /// Process a batch of search chunks by delegating to
-    /// `TextBuffer::search_scan_next_chunk`.
-    fn process_search_scan_batch(
+    /// Run `scan` for `budget` (or to the end without one), then finish it
+    /// or put it back to go on next tick.
+    pub(super) fn advance_search_scan(
         &mut self,
-        buffer_id: crate::model::event::BufferId,
-    ) -> std::io::Result<()> {
-        let concurrency = self.config.editor.read_concurrency.max(1);
-
-        for _ in 0..concurrency {
-            if self.active_window_mut().search_scan.is_done() {
-                break;
-            }
-
-            // Extract the ChunkedSearchState, run one chunk on the buffer,
-            // then put it back. This is the same take/restore dance the
-            // previous `Option<SearchScanState>` code did, now wrapped in
-            // the subsystem's API so we're not poking its internals.
-            let Some(mut chunked) = self.active_window_mut().search_scan.take_chunked() else {
-                return Ok(());
-            };
-            let result = if let Some(state) = self
-                .windows
-                .get_mut(&self.active_window)
-                .map(|w| &mut w.buffers)
-                .expect("active window present")
-                .get_mut(&buffer_id)
-            {
-                state.buffer.search_scan_next_chunk(&mut chunked)
-            } else {
-                Ok(false)
-            };
-            self.active_window_mut()
-                .search_scan
-                .restore_chunked(chunked);
-
-            match result {
-                Ok(false) => break, // scan complete
-                Ok(true) => {}      // more chunks
-                Err(e) => return Err(e),
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Finalize the incremental search scan: take the accumulated matches
-    /// and hand them to `finalize_search()` which sets search_state, moves
-    /// the cursor, and creates viewport overlays.
-    fn finish_search_scan(&mut self) {
-        let Some(finished) = self.active_window_mut().search_scan.take_finished() else {
-            return;
-        };
-
-        // The search scan loaded chunks via chunk_split_and_load, which
-        // restructures the piece tree.  Refresh saved_root so that
-        // diff_since_saved() can take the fast Arc::ptr_eq path.
-        if let Some(state) = self
+        mut scan: super::search_scan::ActiveSearchScan,
+        budget: Option<std::time::Duration>,
+    ) {
+        let Some(state) = self
             .windows
             .get_mut(&self.active_window)
             .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get_mut(&finished.buffer_id)
-        {
-            state.buffer.refresh_saved_root_if_unmodified();
+            .get_mut(&scan.buffer_id)
+        else {
+            return; // The buffer is gone.
+        };
+        if let Err(e) = scan.run(&mut state.buffer, budget) {
+            tracing::warn!("Search scan error: {e}");
+            self.set_status_message(format!("Search failed: {e}"));
+            return;
         }
+        if scan.is_done() {
+            self.finish_search_scan(scan);
+        } else {
+            let pct = scan.progress_percent(state.buffer.len());
+            self.set_status_message(format!(
+                "Searching... {}% ({} matches so far)",
+                pct,
+                scan.matches.len()
+            ));
+            self.active_window_mut().search_scan.start(scan);
+        }
+    }
 
-        if finished.match_ranges.is_empty() {
-            self.active_window_mut().search_state = None;
-            self.set_status_message(format!("No matches found for '{}'", finished.query));
+    /// Hand a finished scan's matches to `finalize_search()`, which sets
+    /// search_state, moves the cursor, and creates overlays.
+    fn finish_search_scan(&mut self, scan: super::search_scan::ActiveSearchScan) {
+        // The matches are for that buffer: if another is active now, they
+        // would be shown and selected in the wrong one.
+        if self.active_buffer() != scan.buffer_id {
             return;
         }
 
-        self.finalize_search(
-            &finished.query,
-            finished.match_ranges,
-            finished.capped,
-            None,
-        );
+        // Reading a lazily loaded file loads chunks via
+        // chunk_split_and_load, which restructures the piece tree.  Refresh
+        // saved_root so that diff_since_saved() can take the fast
+        // Arc::ptr_eq path.
+        self.active_state_mut()
+            .buffer
+            .refresh_saved_root_if_unmodified();
+
+        if scan.matches.is_empty() {
+            self.active_window_mut().search_state = None;
+            let msg = if scan.search_range.is_some() {
+                format!("No matches found for '{}' in selection", scan.query)
+            } else {
+                format!("No matches found for '{}'", scan.query)
+            };
+            self.set_status_message(msg);
+            return;
+        }
+
+        self.finalize_search(&scan.query, scan.matches, scan.capped, scan.search_range);
     }
 }

@@ -1,82 +1,16 @@
 /// Pure, buffer-agnostic helpers for regex find-and-replace.
 ///
-/// Build a Unicode [`regex::Regex`] for the search/highlight path.
-///
-/// Unlike [`build_regex`] (used for replace), this always produces a regex:
-/// when `use_regex` is false the query is `regex::escape`d so the resulting
-/// pattern matches the literal text.  That lets the caller share one code
-/// path for both regex and plain-text search.
-///
-/// Returns `Err` with a user-facing message when the pattern fails to
-/// compile (regex-mode only; escaped literal patterns never fail).
+/// The search regex for these settings — the buffer's one
+/// [`build_search_regex`](crate::model::buffer::build_search_regex) — with
+/// a compile error (regex mode only) as a user-facing message.
 pub fn build_search_regex(
     query: &str,
     use_regex: bool,
     whole_word: bool,
     case_sensitive: bool,
-) -> Result<regex::Regex, String> {
-    let pattern = if use_regex {
-        if whole_word {
-            format!(r"\b{}\b", query)
-        } else {
-            query.to_string()
-        }
-    } else {
-        let escaped = regex::escape(query);
-        if whole_word {
-            format!(r"\b{}\b", escaped)
-        } else {
-            escaped
-        }
-    };
-
-    regex::RegexBuilder::new(&pattern)
-        .case_insensitive(!case_sensitive)
-        // Match `^`/`$` at every line boundary, like every editor's find.
-        // `crlf` makes both `\n` and `\r\n` count as terminators so the
-        // anchors behave the same on LF and CRLF buffers.
-        .multi_line(true)
-        .crlf(true)
-        .build()
+) -> Result<regex::bytes::Regex, String> {
+    crate::model::buffer::build_search_regex(query, use_regex, whole_word, case_sensitive)
         .map_err(|e| e.to_string())
-}
-
-/// Build a [`regex::bytes::Regex`] from user-supplied search settings, for
-/// the replace path.
-///
-/// Returns `None` only for a plain-text, case-sensitive, non-whole-word
-/// search, which the buffer's byte-exact search matches as is. A plain-text
-/// search with case folding or whole-word matching gets a regex over the
-/// escaped text, so replace matches exactly what the search highlights
-/// (#3575). Its replacement is still literal: only regex mode expands `$1`
-/// or `\n`; the caller inserts a plain-text replacement as typed.
-pub fn build_regex(
-    search: &str,
-    use_regex: bool,
-    whole_word: bool,
-    case_sensitive: bool,
-) -> Option<regex::bytes::Regex> {
-    let query = if use_regex {
-        search.to_string()
-    } else if case_sensitive && !whole_word {
-        return None;
-    } else {
-        regex::escape(search)
-    };
-
-    let pattern = if whole_word {
-        format!(r"\b{}\b", query)
-    } else {
-        query
-    };
-
-    regex::bytes::RegexBuilder::new(&pattern)
-        .case_insensitive(!case_sensitive)
-        // Keep `^`/`$` line-anchored in replace, matching the search path.
-        .multi_line(true)
-        .crlf(true)
-        .build()
-        .ok()
 }
 
 /// Interpret the common backslash escapes in a replacement template:
@@ -173,41 +107,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn build_regex_returns_none_when_disabled() {
-        assert!(build_regex("foo", false, false, true).is_none());
-    }
-
-    #[test]
     fn build_search_regex_plain_text_escapes_special_chars() {
         // Non-regex mode: "a.b" should match "a.b" literally, not "a?b".
         let re = build_search_regex("a.b", false, false, true).unwrap();
-        assert!(re.is_match("a.b"));
-        assert!(!re.is_match("axb"));
+        assert!(re.is_match(b"a.b"));
+        assert!(!re.is_match(b"axb"));
     }
 
     #[test]
     fn build_search_regex_regex_mode_treats_dot_as_wildcard() {
         let re = build_search_regex("a.b", true, false, true).unwrap();
-        assert!(re.is_match("axb"));
-        assert!(re.is_match("a.b"));
+        assert!(re.is_match(b"axb"));
+        assert!(re.is_match(b"a.b"));
     }
 
     #[test]
     fn build_search_regex_whole_word_wraps_pattern() {
         let re = build_search_regex("foo", false, true, true).unwrap();
-        assert!(re.is_match("foo bar"));
-        assert!(!re.is_match("foobar"));
+        assert!(re.is_match(b"foo bar"));
+        assert!(!re.is_match(b"foobar"));
     }
 
     /// Issue #3575: plain text with case folding or whole word gets a regex
     /// over the escaped text, so replace matches what search highlights.
     #[test]
     fn build_regex_plain_text_honors_case_and_whole_word() {
-        let re = build_regex("a.b", false, false, false).unwrap();
+        let re = build_search_regex("a.b", false, false, false).unwrap();
         assert!(re.is_match(b"A.B"));
         assert!(!re.is_match(b"axb"), "plain text must stay literal");
 
-        let re = build_regex("cat", false, true, true).unwrap();
+        let re = build_search_regex("cat", false, true, true).unwrap();
         assert!(re.is_match(b"a cat."));
         assert!(!re.is_match(b"concat"));
     }
@@ -215,8 +144,8 @@ mod tests {
     #[test]
     fn build_search_regex_case_insensitive_when_flag_off() {
         let re = build_search_regex("Hello", false, false, false).unwrap();
-        assert!(re.is_match("HELLO"));
-        assert!(re.is_match("hello"));
+        assert!(re.is_match(b"HELLO"));
+        assert!(re.is_match(b"hello"));
     }
 
     #[test]
@@ -237,14 +166,14 @@ mod tests {
         // Regression: `^use` must match the start of *every* line, not just
         // the start of the buffer. Without multi-line mode this finds 1.
         let re = build_search_regex("^use", true, false, true).unwrap();
-        let text = "use a;\nuse b;\nlet use_x = 1;\nuse c;\n";
+        let text = b"use a;\nuse b;\nlet use_x = 1;\nuse c;\n";
         assert_eq!(re.find_iter(text).count(), 3);
     }
 
     #[test]
     fn build_search_regex_dollar_anchors_every_line() {
         let re = build_search_regex("foo$", true, false, true).unwrap();
-        let text = "foo\nfoobar\nbar foo\n";
+        let text = b"foo\nfoobar\nbar foo\n";
         assert_eq!(re.find_iter(text).count(), 2);
     }
 
@@ -252,7 +181,7 @@ mod tests {
     fn build_search_regex_anchors_match_crlf_lines() {
         // On CRLF buffers `$` must match before `\r\n`, so `foo$` still hits.
         let re = build_search_regex("foo$", true, false, true).unwrap();
-        let text = "foo\r\nbar\r\nfoo\r\n";
+        let text = b"foo\r\nbar\r\nfoo\r\n";
         assert_eq!(re.find_iter(text).count(), 2);
     }
 
@@ -262,44 +191,54 @@ mod tests {
         // line boundary (no `dot_matches_new_line`). So `a.b` cannot span
         // "a\nb", but a greedy `a.*` stays within its line.
         let re = build_search_regex("a.b", true, false, true).unwrap();
-        assert!(!re.is_match("a\nb"));
+        assert!(!re.is_match(b"a\nb"));
         let re2 = build_search_regex("a.*", true, false, true).unwrap();
-        let m = re2.find("axy\nbcd").unwrap();
-        assert_eq!(m.as_str(), "axy");
+        let m = re2.find(b"axy\nbcd").unwrap();
+        assert_eq!(m.as_bytes(), b"axy");
     }
 
     #[test]
     fn build_regex_caret_anchors_every_line() {
         // The bytes builder used for replace must anchor per line too.
-        let re = build_regex("^use", true, false, true).unwrap();
+        let re = build_search_regex("^use", true, false, true).unwrap();
         let text = b"use a;\nuse b;\nuse c;\n";
         assert_eq!(re.find_iter(text).count(), 3);
     }
 
     #[test]
     fn build_regex_basic_pattern() {
-        let re = build_regex("foo.*bar", true, false, true).unwrap();
+        let re = build_search_regex("foo.*bar", true, false, true).unwrap();
         assert!(re.is_match(b"foo123bar"));
         assert!(!re.is_match(b"baz"));
     }
 
     #[test]
     fn build_regex_case_insensitive() {
-        let re = build_regex("hello", true, false, false).unwrap();
+        let re = build_search_regex("hello", true, false, false).unwrap();
         assert!(re.is_match(b"HELLO"));
         assert!(re.is_match(b"hello"));
     }
 
     #[test]
     fn build_regex_whole_word() {
-        let re = build_regex("foo", true, true, true).unwrap();
+        let re = build_search_regex("foo", true, true, true).unwrap();
         assert!(re.is_match(b"foo bar"));
         assert!(!re.is_match(b"foobar"));
     }
 
+    /// Whole word applies to the whole pattern, not just its first and
+    /// last alternatives.
+    #[test]
+    fn build_search_regex_whole_word_groups_alternation() {
+        let re = build_search_regex("cat|dog", true, true, true).unwrap();
+        assert!(re.is_match(b"a dog."));
+        assert!(!re.is_match(b"catalog"));
+        assert!(!re.is_match(b"hotdog"));
+    }
+
     #[test]
     fn expand_replacement_with_groups() {
-        let re = build_regex(r"(\d+)-(\d+)", true, false, true).unwrap();
+        let re = build_search_regex(r"(\d+)-(\d+)", true, false, true).unwrap();
         let matched = b"123-456";
         let result = expand_replacement(&re, matched, "$2/$1");
         assert_eq!(result, "456/123");
@@ -307,7 +246,7 @@ mod tests {
 
     #[test]
     fn expand_replacement_no_groups() {
-        let re = build_regex("hello", true, false, true).unwrap();
+        let re = build_search_regex("hello", true, false, true).unwrap();
         let matched = b"hello";
         let result = expand_replacement(&re, matched, "world");
         assert_eq!(result, "world");
@@ -338,7 +277,7 @@ mod tests {
 
     #[test]
     fn expand_replacement_non_ascii_with_groups_and_escapes() {
-        let re = build_regex(r"(\w+)=(\w+)", true, false, true).unwrap();
+        let re = build_search_regex(r"(\w+)=(\w+)", true, false, true).unwrap();
         let result = expand_replacement(&re, "名前=値".as_bytes(), r"$2・$1\tほげ");
         assert_eq!(result, "値・名前\tほげ");
     }
@@ -385,7 +324,7 @@ mod tests {
 
     #[test]
     fn expand_replacement_interprets_escapes() {
-        let re = build_regex(r"(\w+)", true, false, true).unwrap();
+        let re = build_search_regex(r"(\w+)", true, false, true).unwrap();
         let result = expand_replacement(&re, b"hello", r"$1\tend");
         assert_eq!(result, "hello\tend");
     }

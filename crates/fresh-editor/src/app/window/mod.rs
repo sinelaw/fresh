@@ -66,7 +66,7 @@ use std::sync::Arc;
 /// megabytes away. Overshooting merely widens a window that is compared
 /// against the cursor's byte, so a generous bound costs nothing but is still a
 /// bound.
-const VISIBLE_WINDOW_SCAN_BYTES: usize = 256 * 1024;
+pub(crate) const VISIBLE_WINDOW_SCAN_BYTES: usize = 256 * 1024;
 
 /// A project-rooted unit of editor state.
 ///
@@ -1675,11 +1675,10 @@ impl Window {
         }
     }
 
-    /// Build a compiled `regex::Regex` from this window's current
-    /// search-flags (`use_regex`, `whole_word`, `case_sensitive`)
-    /// applied to `query`. Returns the compiled regex or a
-    /// human-readable error string.
-    pub(crate) fn build_search_regex(&self, query: &str) -> Result<regex::Regex, String> {
+    /// The search regex for `query` under this window's search flags
+    /// (`use_regex`, `whole_word`, `case_sensitive`), or a human-readable
+    /// error.
+    pub(crate) fn build_search_regex(&self, query: &str) -> Result<regex::bytes::Regex, String> {
         crate::app::regex_replace::build_search_regex(
             query,
             self.search_use_regex,
@@ -4347,6 +4346,7 @@ impl Window {
         }
 
         let ns = self.search_namespace.clone();
+        let overlap = crate::model::buffer::match_overlap(query, self.search_use_regex);
 
         // Share the one search-regex builder so highlight anchoring (`^`/`$`
         // line-matching) stays consistent with the actual search results.
@@ -4379,11 +4379,12 @@ impl Window {
             .buffer
             .advance_lines_within(top_byte, visible_height as usize, VISIBLE_WINDOW_SCAN_BYTES)
             .min(state.buffer.len());
-        let visible_text = state.get_text_range(visible_start, visible_end);
+        let found = state
+            .buffer
+            .find_regex_matches(&regex, visible_start..visible_end, overlap, usize::MAX)
+            .unwrap_or_default();
 
-        for mat in regex.find_iter(&visible_text) {
-            let absolute_pos = visible_start + mat.start();
-            let match_len = mat.end() - mat.start();
+        for (absolute_pos, match_len) in found {
             let search_style = ratatui::style::Style::default().fg(search_fg).bg(search_bg);
             let overlay = crate::view::overlay::Overlay::with_namespace_fixed_end(
                 &mut state.marker_list,
@@ -4434,6 +4435,7 @@ impl Window {
             Ok(r) => r,
             Err(_) => return,
         };
+        let overlap = crate::model::buffer::match_overlap(&query, self.search_use_regex);
 
         let state = self.active_state_mut();
         let buf_len = state.buffer.len();
@@ -4450,13 +4452,14 @@ impl Window {
             .unwrap_or(buf_len)
             .min(buf_len);
 
-        let text = state.get_text_range(win_start, win_end);
+        let found = state
+            .buffer
+            .find_regex_matches(&regex, win_start..win_end, overlap, usize::MAX)
+            .unwrap_or_default();
 
         let mut new_overlays = Vec::new();
         let mut new_ranges = Vec::new();
-        for mat in regex.find_iter(&text) {
-            let absolute_pos = win_start + mat.start();
-            let match_len = mat.end() - mat.start();
+        for (absolute_pos, match_len) in found {
             new_ranges.push(absolute_pos..absolute_pos + match_len);
             let search_style = ratatui::style::Style::default().fg(search_fg).bg(search_bg);
             new_overlays.push(

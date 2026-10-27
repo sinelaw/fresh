@@ -22,7 +22,6 @@ use std::sync::Arc;
 use fresh_core::api::{GrepMatch, JsCallbackId, PluginAsyncMessage};
 use fresh_core::BufferId;
 
-use crate::model::buffer::HybridSearchPlan;
 use crate::model::filesystem::{FileSearchCursor, FileSearchOptions, FileSystem};
 use crate::services::async_bridge::AsyncMessage;
 use crate::services::runtime::LiveRuntime;
@@ -295,13 +294,12 @@ fn parse_printenv(stdout: &str, names: &[String]) -> serde_json::Map<String, ser
     found
 }
 
-/// Editor-thread-collected inputs for a project grep. Everything here is a
-/// snapshot: the piece tree is not `Send`, so dirty buffers are captured as
-/// `HybridSearchPlan`s while still on the editor thread.
+/// Editor-thread-collected inputs for a project grep. Modified open
+/// buffers are searched on the editor thread (the piece tree is not
+/// `Send`); their matches arrive on `open_results`.
 pub(crate) struct GrepProjectRequest {
     pub pattern: String,
     pub opts: FileSearchOptions,
-    pub regex: regex::bytes::Regex,
     pub max_results: usize,
     pub root: PathBuf,
     /// Runs `git ls-files` to list the project's files; the authority's, so a
@@ -310,9 +308,11 @@ pub(crate) struct GrepProjectRequest {
     /// `file_explorer.custom_ignore_patterns`, rooted at `root`.
     pub custom_ignore: crate::view::file_tree::ignore::CustomIgnore,
     pub callback_id: JsCallbackId,
-    /// Open, modified buffers keyed by path — searched through their plan so
-    /// unsaved edits are visible to the grep.
-    pub dirty_plans: HashMap<PathBuf, (BufferId, HybridSearchPlan)>,
+    /// Open, modified buffers: searched as they are on the editor thread
+    /// (see `OpenBufferSearch`), so the walk skips their files and their
+    /// matches arrive here.
+    pub open_paths: std::collections::HashSet<PathBuf>,
+    pub open_results: Vec<tokio::sync::oneshot::Receiver<Vec<GrepMatch>>>,
     /// Open, clean buffers keyed by path — attributed to their buffer id so
     /// plugins can jump straight to the buffer, but read from disk.
     pub clean_buffers: HashMap<PathBuf, BufferId>,
@@ -335,17 +335,16 @@ pub(crate) fn grep_project(runtime: &LiveRuntime, cap: OffLoop, req: GrepProject
         let GrepProjectRequest {
             pattern,
             opts,
-            regex,
             max_results,
             root,
             spawner,
             custom_ignore,
             callback_id,
-            mut dirty_plans,
+            open_paths,
+            open_results,
             clean_buffers,
             cancel,
         } = req;
-        let query_len = pattern.len();
 
         let (path_tx, mut path_rx) = tokio::sync::mpsc::channel::<PathBuf>(256);
         let walk_fs = Arc::clone(&cap.filesystem);
@@ -380,28 +379,19 @@ pub(crate) fn grep_project(runtime: &LiveRuntime, cap: OffLoop, req: GrepProject
                 break;
             };
             let fs = Arc::clone(&cap.filesystem);
-            let regex = regex.clone();
             let pattern = pattern.clone();
             let opts = opts.clone();
+            if open_paths.contains(&file_path) {
+                continue;
+            }
             let task_cancel = Arc::clone(&cancel);
-            let dirty = dirty_plans.remove(&file_path);
             let buffer_id = clean_buffers.get(&file_path).map(|b| b.0).unwrap_or(0);
             joins.push(tokio::task::spawn_blocking(move || {
                 let _permit = permit;
                 if task_cancel.load(Ordering::Relaxed) {
                     return Vec::new();
                 }
-                search_one(
-                    &*fs,
-                    &file_path,
-                    dirty,
-                    buffer_id,
-                    &pattern,
-                    &opts,
-                    &regex,
-                    max_results,
-                    query_len,
-                )
+                search_one(&*fs, &file_path, buffer_id, &pattern, &opts, max_results)
             }));
 
             // Reap eagerly so a huge tree doesn't accumulate a join list
@@ -421,33 +411,13 @@ pub(crate) fn grep_project(runtime: &LiveRuntime, cap: OffLoop, req: GrepProject
         }
         drain_joins(&mut joins, &mut results, max_results).await;
 
-        // Dirty buffers whose files the walk never reached (e.g. an unsaved
-        // buffer outside the workspace root) still deserve a search.
-        for (file_path, (bid, plan)) in dirty_plans {
-            if results.len() >= max_results || cancel.load(Ordering::Relaxed) {
-                break;
-            }
-            let remaining = max_results - results.len();
-            if let Ok(matches) = plan.execute(
-                &*cap.filesystem,
-                &pattern,
-                &opts,
-                &regex,
-                remaining,
-                query_len,
-            ) {
-                let file = file_path.to_string_lossy().to_string();
-                results.extend(matches.into_iter().map(|m| GrepMatch {
-                    file: file.clone(),
-                    buffer_id: bid.0,
-                    byte_offset: m.byte_offset,
-                    length: m.length,
-                    line: m.line,
-                    column: m.column,
-                    context: m.context,
-                }));
-            }
+        // The open, modified buffers, searched on the editor thread. They
+        // come first: unsaved edits are what the user is working on.
+        let mut open = Vec::new();
+        for receiver in open_results {
+            open.extend(receiver.await.unwrap_or_default());
         }
+        results.splice(0..0, open);
 
         // A superseded request stopped mid-walk, so `results` is an arbitrary
         // prefix of the real answer. Returning it would be indistinguishable
@@ -484,37 +454,15 @@ async fn drain_joins(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn search_one(
     fs: &dyn FileSystem,
     file_path: &std::path::Path,
-    dirty: Option<(BufferId, HybridSearchPlan)>,
     clean_buffer_id: usize,
     pattern: &str,
     opts: &FileSearchOptions,
-    regex: &regex::bytes::Regex,
     max_results: usize,
-    query_len: usize,
 ) -> Vec<GrepMatch> {
     let file = file_path.to_string_lossy().to_string();
-    if let Some((bid, plan)) = dirty {
-        let Ok(matches) = plan.execute(fs, pattern, opts, regex, max_results, query_len) else {
-            return Vec::new();
-        };
-        return matches
-            .into_iter()
-            .map(|m| GrepMatch {
-                file: file.clone(),
-                buffer_id: bid.0,
-                byte_offset: m.byte_offset,
-                length: m.length,
-                line: m.line,
-                column: m.column,
-                context: m.context,
-            })
-            .collect();
-    }
-
     let mut cursor = FileSearchCursor::new();
     let mut matches = Vec::new();
     while !cursor.done && matches.len() < max_results {
@@ -758,13 +706,13 @@ mod tests {
             GrepProjectRequest {
                 pattern: "NEEDLE".to_string(),
                 opts: opts(),
-                regex: regex::bytes::Regex::new("NEEDLE").unwrap(),
                 max_results: 100,
                 root,
                 spawner: Arc::new(NoGit),
                 custom_ignore,
                 callback_id: JsCallbackId::new(1),
-                dirty_plans: HashMap::new(),
+                open_paths: Default::default(),
+                open_results: Vec::new(),
                 clean_buffers: HashMap::new(),
                 cancel,
             },

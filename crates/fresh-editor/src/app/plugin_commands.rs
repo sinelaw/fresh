@@ -33,6 +33,28 @@ fn menu_item_matches(item: &crate::config::MenuItem, needle: &str) -> bool {
 }
 
 /// Build `FileSearchOptions` from the common grep parameters.
+/// Add `matches` to a streaming search's pending results, up to
+/// `max_results` in all.
+fn push_capped(
+    handle: &fresh_core::api::SearchHandleState,
+    match_count: &std::sync::atomic::AtomicUsize,
+    max_results: usize,
+    mut matches: Vec<GrepMatch>,
+) {
+    let seen = match_count.load(std::sync::atomic::Ordering::Relaxed);
+    matches.truncate(max_results.saturating_sub(seen));
+    if matches.is_empty() {
+        return;
+    }
+    match_count.fetch_add(matches.len(), std::sync::atomic::Ordering::Relaxed);
+    let mut state = match handle.state.lock() {
+        Ok(s) => s,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    state.total_seen += matches.len();
+    state.pending.extend(matches);
+}
+
 fn make_search_opts(
     fixed_string: bool,
     case_sensitive: bool,
@@ -3807,13 +3829,11 @@ impl Editor {
     /// grep from the same plugin supersedes and cancels the first, so a plugin
     /// looping on `grepProject` collapses instead of queueing.
     ///
-    /// What stays on the editor thread is the snapshot, and it is not free:
-    /// `search_hybrid_plan` copies the loaded bytes of every *modified* open
-    /// buffer, because the piece tree cannot cross threads. Unmodified buffers
-    /// cost only their id, and unloaded regions of a modified one are recorded
-    /// as file offsets rather than copied — but a large fully-loaded dirty
-    /// buffer is copied in full, once per call. Worth knowing before adding
-    /// anything else to this path.
+    /// What stays on the editor thread is the search of every *modified*
+    /// open buffer, which has to see its unsaved edits: the live buffer is
+    /// searched a slice per tick (see `OpenBufferSearch`), and the worker
+    /// skips its file and takes its matches. Unmodified buffers cost only
+    /// their id.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn handle_grep_project(
         &mut self,
@@ -3847,29 +3867,50 @@ impl Editor {
             }
         };
 
-        // Snapshot open buffers. Dirty ones become `HybridSearchPlan`s (the
-        // piece tree is not `Send`); clean ones only contribute their id so
-        // matches stay attributable to a buffer.
-        let mut dirty_plans = std::collections::HashMap::new();
+        // A new grep from this plugin supersedes the last; the open-buffer
+        // searches below watch the same flag.
+        if let Some(prev) = self.grep_project_cancel.remove(&plugin_name) {
+            prev.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        // Modified open buffers are searched as they are, on this thread (see
+        // `OpenBufferSearch`); clean ones are read from disk and only
+        // contribute their id, so matches stay attributable to a buffer.
+        let overlap = crate::model::buffer::match_overlap(&pattern, !fixed_string);
+        let window = self.active_window;
+        let mut open_paths = std::collections::HashSet::new();
+        let mut open_results = Vec::new();
         let mut clean_buffers = std::collections::HashMap::new();
+        let mut jobs = Vec::new();
         for (bid, state) in self
             .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
             .expect("active window present")
         {
             let Some(path) = state.buffer.file_path().map(|p| p.to_path_buf()) else {
                 continue;
             };
-            if state.buffer.is_modified() {
-                if let Some(plan) = state.buffer.search_hybrid_plan() {
-                    dirty_plans.insert(path, (*bid, plan));
-                    continue;
-                }
+            if !state.buffer.is_modified() {
+                clean_buffers.insert(path, *bid);
+                continue;
             }
-            clean_buffers.insert(path, *bid);
+            let job_cancel = Arc::clone(&cancel);
+            let (job, receiver) = super::open_buffer_search::OpenBufferSearch::new(
+                window,
+                *bid,
+                path.to_string_lossy().into_owned(),
+                regex.clone(),
+                overlap,
+                max_results,
+                &state.buffer,
+                Box::new(move || job_cancel.load(std::sync::atomic::Ordering::Relaxed)),
+            );
+            jobs.push(job);
+            open_results.push(receiver);
+            open_paths.insert(path);
         }
-
         // Held here, not inside the capability — see `OffLoop`: the capability
         // rides into the spawned task, and an owning runtime in there would
         // keep the work running after the editor has gone.
@@ -3896,10 +3937,6 @@ impl Editor {
         // no way for its caller to tell. The superseded request now rejects
         // instead, so a caller that really did want both answers hears about it
         // rather than believing a truncated one.
-        if let Some(prev) = self.grep_project_cancel.remove(&plugin_name) {
-            prev.store(true, std::sync::atomic::Ordering::Relaxed);
-        }
-        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
         self.grep_project_cancel
             .insert(plugin_name, Arc::clone(&cancel));
 
@@ -3908,6 +3945,9 @@ impl Editor {
             &root,
             &self.config.file_explorer.custom_ignore_patterns,
         );
+        for job in jobs {
+            self.start_open_buffer_search(job);
+        }
         super::plugin_offloop::grep_project(
             &runtime,
             super::plugin_offloop::OffLoop {
@@ -3920,13 +3960,13 @@ impl Editor {
             super::plugin_offloop::GrepProjectRequest {
                 pattern,
                 opts: fs_opts,
-                regex,
                 max_results,
                 root,
                 spawner: self.authority().process_spawner.clone(),
                 custom_ignore,
                 callback_id,
-                dirty_plans,
+                open_paths,
+                open_results,
                 clean_buffers,
                 cancel,
             },
@@ -4004,101 +4044,71 @@ impl Editor {
             }
         };
 
-        // Snapshot dirty buffers' search plans on the main thread (same
-        // reasoning as the legacy streaming path: piece tree isn't Send).
-        let mut dirty_plans: std::collections::HashMap<
-            std::path::PathBuf,
-            (BufferId, crate::model::buffer::HybridSearchPlan),
-        > = std::collections::HashMap::new();
+        let cwd = self.working_dir().to_path_buf();
+        // The name a file is shown and glob-matched under: relative and
+        // `/`-separated when it is in the root, as the project walk gives it.
+        let shown_path = |path: &std::path::Path| match path.strip_prefix(&cwd) {
+            Ok(rel) => rel.to_string_lossy().replace('\\', "/"),
+            Err(_) => path.to_string_lossy().into_owned(),
+        };
+
+        // Modified open buffers, and an unnamed source buffer (which no walk
+        // can reach), are searched as they are on this thread (see
+        // `OpenBufferSearch`); the walk skips their files. The source
+        // buffer's matches are taken first, so `max_results` can't cut them
+        // off; the others' at the end.
+        let overlap = crate::model::buffer::match_overlap(&pattern, !fixed_string);
+        let window = self.active_window;
+        let mut open_paths = std::collections::HashSet::new();
+        let mut source_result = None;
+        let mut open_results = Vec::new();
+        let mut jobs = Vec::new();
         for (bid, state) in self
             .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
             .expect("active window present")
         {
-            if let Some(path) = state.buffer.file_path().map(|p| p.to_path_buf()) {
-                if state.buffer.is_modified() {
-                    if let Some(plan) = state.buffer.search_hybrid_plan() {
-                        dirty_plans.insert(path, (*bid, plan));
-                    }
-                }
+            let is_source = bid.0 == source_buffer_id;
+            let path = state.buffer.file_path().map(|p| p.to_path_buf());
+            let file = match &path {
+                Some(path) if state.buffer.is_modified() => path.to_string_lossy().into_owned(),
+                None if is_source => "[No Name]".to_string(),
+                _ => continue,
+            };
+            let shown = path.as_deref().map_or(file.clone(), &shown_path);
+            if !search_file_glob_matches(&file_glob, &shown) {
+                continue;
             }
-        }
-
-        // An unnamed/unsaved buffer has no on-disk file, so the project walk
-        // below can never reach it (`search_hybrid_plan` also bails without a
-        // path). When the plugin passes the source buffer id and that buffer
-        // has no path, search its in-memory content here on the main thread
-        // (the piece tree isn't `Send`) and seed the results with matches that
-        // carry the buffer id so a later replace can target it directly.
-        if source_buffer_id != 0 {
-            let bid = BufferId(source_buffer_id);
-            let content = self
-                .windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.buffers.get_mut(&bid))
-                .filter(|state| state.buffer.file_path().is_none())
-                .and_then(|state| state.buffer.to_string());
-            if let Some(content) =
-                content.filter(|_| search_file_glob_matches(&file_glob, "[No Name]"))
-            {
-                let bytes = content.as_bytes();
-                let mut grep_matches: Vec<GrepMatch> = Vec::new();
-                let mut running_line = 1usize;
-                let mut counted_to = 0usize;
-                for mat in regex.find_iter(bytes) {
-                    if grep_matches.len() >= max_results {
-                        break;
-                    }
-                    let start = mat.start();
-                    let end = mat.end();
-                    running_line += bytes[counted_to..start]
-                        .iter()
-                        .filter(|&&b| b == b'\n')
-                        .count();
-                    counted_to = start;
-                    let line_start = bytes[..start]
-                        .iter()
-                        .rposition(|&b| b == b'\n')
-                        .map(|p| p + 1)
-                        .unwrap_or(0);
-                    let line_end = bytes[start..]
-                        .iter()
-                        .position(|&b| b == b'\n')
-                        .map(|p| start + p)
-                        .unwrap_or(bytes.len());
-                    grep_matches.push(GrepMatch {
-                        file: "[No Name]".to_string(),
-                        buffer_id: source_buffer_id,
-                        byte_offset: start,
-                        length: end - start,
-                        line: running_line,
-                        column: start - line_start + 1,
-                        context: String::from_utf8_lossy(&bytes[line_start..line_end]).into_owned(),
-                    });
-                }
-                if !grep_matches.is_empty() {
-                    let count = grep_matches.len();
-                    let mut state = match handle.state.lock() {
-                        Ok(s) => s,
-                        Err(poisoned) => poisoned.into_inner(),
-                    };
-                    state.pending.extend(grep_matches);
-                    state.total_seen += count;
-                }
+            let job_handle = Arc::clone(&handle);
+            let (job, receiver) = super::open_buffer_search::OpenBufferSearch::new(
+                window,
+                *bid,
+                file,
+                regex.clone(),
+                overlap,
+                max_results,
+                &state.buffer,
+                Box::new(move || job_handle.cancel.load(std::sync::atomic::Ordering::Relaxed)),
+            );
+            jobs.push(job);
+            if is_source {
+                source_result = Some(receiver);
+            } else {
+                open_results.push(receiver);
+            }
+            if let Some(path) = path {
+                open_paths.insert(path);
             }
         }
 
         let filesystem = self.authority().filesystem.clone();
         let filesystem_walker = self.authority().filesystem.clone();
         let spawner = self.authority().process_spawner.clone();
-        let cwd = self.working_dir().to_path_buf();
         let custom_ignore = crate::view::file_tree::ignore::CustomIgnore::new(
             &cwd,
             &self.config.file_explorer.custom_ignore_patterns,
         );
-        let query_len = pattern.len();
-
         // The project listing below (Quick Open's rules with hidden and
         // gitignored files left out, see `services::project_files`) misses files the user can plainly have
         // open: anything outside `cwd` (e.g. opened from /tmp), hidden files
@@ -4106,10 +4116,10 @@ impl Editor {
         // custom-ignored or skipped-directory files. A current-file search
         // filters this listing's results, so for those it found nothing. Queue
         // the source buffer's file explicitly, ahead of the listing, so it
-        // flows through the same per-file search path (which also handles the
-        // dirty-buffer hybrid plan) and its matches arrive before
-        // `max_results` can cut them off. The listing skips that path so it
-        // isn't searched twice.
+        // flows through the same per-file search path and its matches arrive
+        // before `max_results` can cut them off. The listing skips that path
+        // so it isn't searched twice. (A modified source buffer is an
+        // open-buffer search instead, taken first above.)
         let source_file = (source_buffer_id != 0)
             .then_some(BufferId(source_buffer_id))
             .and_then(|bid| {
@@ -4119,16 +4129,11 @@ impl Editor {
             })
             .and_then(|state| state.buffer.file_path().map(|p| p.to_path_buf()))
             .filter(|path| {
-                // Match globs against the path the walk would have given
-                // (relative, `/`-separated) when the file is in the root.
-                let shown = match path.strip_prefix(&cwd) {
-                    Ok(rel) => rel.to_string_lossy().replace('\\', "/"),
-                    Err(_) => path.to_string_lossy().into_owned(),
-                };
-                search_file_glob_matches(&file_glob, &shown)
+                !open_paths.contains(path)
+                    && search_file_glob_matches(&file_glob, &shown_path(path))
             });
 
-        let Some(runtime) = &self.tokio_runtime else {
+        let Some(runtime) = self.tokio_runtime.clone() else {
             finish_with(
                 &handle,
                 false,
@@ -4136,9 +4141,18 @@ impl Editor {
             );
             return;
         };
+        for job in jobs {
+            self.start_open_buffer_search(job);
+        }
 
         let handle_for_task = Arc::clone(&handle);
         runtime.spawn(async move {
+            let match_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            if let Some(receiver) = source_result {
+                let matches = receiver.await.unwrap_or_default();
+                push_capped(&handle_for_task, &match_count, max_results, matches);
+            }
+
             let (path_tx, mut path_rx) = tokio::sync::mpsc::channel::<std::path::PathBuf>(256);
 
             if let Some(path) = source_file.clone() {
@@ -4159,8 +4173,8 @@ impl Editor {
                     &custom_ignore,
                     &walker_handle.cancel,
                     &mut |path, rel| {
-                        if source_file.as_deref() == Some(path) {
-                            // Already queued ahead of the walk.
+                        if source_file.as_deref() == Some(path) || open_paths.contains(path) {
+                            // Queued ahead of the walk, or searched as open.
                             true
                         } else if search_file_glob_matches(&walk_file_glob, rel) {
                             walk_tx.blocking_send(path.to_path_buf()).is_ok()
@@ -4177,7 +4191,6 @@ impl Editor {
             drop(path_tx);
 
             let semaphore = Arc::new(tokio::sync::Semaphore::new(8));
-            let match_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
             let mut joins: Vec<tokio::task::JoinHandle<()>> = Vec::new();
 
             while let Some(file_path) = path_rx.recv().await {
@@ -4198,10 +4211,7 @@ impl Editor {
 
                 let fs = filesystem.clone();
                 let match_count = match_count.clone();
-                let regex = regex.clone();
                 let pattern = pattern.clone();
-                let fs_opts = fs_opts.clone();
-                let dirty_plan = dirty_plans.remove(&file_path);
                 let task_handle = Arc::clone(&handle_for_task);
 
                 // Push matches into the shared state under the handle's
@@ -4235,94 +4245,52 @@ impl Editor {
                     }
                     let remaining = max_results - current;
 
-                    if let Some((bid, plan)) = dirty_plan {
-                        let matches = match plan
-                            .execute(&*fs, &pattern, &fs_opts, &regex, remaining, query_len)
+                    let fs_opts = crate::model::filesystem::FileSearchOptions {
+                        fixed_string,
+                        case_sensitive,
+                        whole_word: whole_words,
+                        max_matches: remaining,
+                    };
+                    let mut cursor = crate::model::filesystem::FileSearchCursor::new();
+                    while !cursor.done {
+                        if task_handle
+                            .cancel
+                            .load(std::sync::atomic::Ordering::Relaxed)
                         {
-                            Ok(m) => m,
-                            Err(e) => {
-                                tracing::debug!(
-                                    "BeginSearch: hybrid search failed {:?}: {}",
-                                    file_path,
-                                    e
-                                );
-                                return;
-                            }
-                        };
-
-                        if !matches.is_empty() {
-                            let file_str = file_path.to_string_lossy().to_string();
-                            let file_matches: Vec<GrepMatch> = matches
-                                .into_iter()
-                                .map(|m| GrepMatch {
-                                    file: file_str.clone(),
-                                    buffer_id: bid.0,
-                                    byte_offset: m.byte_offset,
-                                    length: m.length,
-                                    line: m.line,
-                                    column: m.column,
-                                    context: m.context,
-                                })
-                                .collect();
-                            match_count.fetch_add(
-                                file_matches.len(),
-                                std::sync::atomic::Ordering::Relaxed,
-                            );
-                            push_matches(&task_handle, file_matches);
+                            break;
                         }
-                    } else {
-                        let fs_opts = crate::model::filesystem::FileSearchOptions {
-                            fixed_string,
-                            case_sensitive,
-                            whole_word: whole_words,
-                            max_matches: remaining,
-                        };
-                        let mut cursor = crate::model::filesystem::FileSearchCursor::new();
-                        while !cursor.done {
-                            if task_handle
-                                .cancel
-                                .load(std::sync::atomic::Ordering::Relaxed)
-                            {
-                                break;
-                            }
-                            let current = match_count.load(std::sync::atomic::Ordering::Relaxed);
-                            if current >= max_results {
-                                break;
-                            }
-
-                            let batch =
-                                match fs.search_file(&file_path, &pattern, &fs_opts, &mut cursor) {
-                                    Ok(b) => b,
-                                    Err(e) => {
-                                        tracing::debug!(
-                                            "search_file failed {:?}: {}",
-                                            file_path,
-                                            e
-                                        );
-                                        break;
-                                    }
-                                };
-                            if batch.is_empty() {
-                                continue;
-                            }
-
-                            match_count
-                                .fetch_add(batch.len(), std::sync::atomic::Ordering::Relaxed);
-                            let file_str = file_path.to_string_lossy().to_string();
-                            let file_matches: Vec<GrepMatch> = batch
-                                .into_iter()
-                                .map(|m| GrepMatch {
-                                    file: file_str.clone(),
-                                    buffer_id: 0,
-                                    byte_offset: m.byte_offset,
-                                    length: m.length,
-                                    line: m.line,
-                                    column: m.column,
-                                    context: m.context,
-                                })
-                                .collect();
-                            push_matches(&task_handle, file_matches);
+                        let current = match_count.load(std::sync::atomic::Ordering::Relaxed);
+                        if current >= max_results {
+                            break;
                         }
+
+                        let batch =
+                            match fs.search_file(&file_path, &pattern, &fs_opts, &mut cursor) {
+                                Ok(b) => b,
+                                Err(e) => {
+                                    tracing::debug!("search_file failed {:?}: {}", file_path, e);
+                                    break;
+                                }
+                            };
+                        if batch.is_empty() {
+                            continue;
+                        }
+
+                        match_count.fetch_add(batch.len(), std::sync::atomic::Ordering::Relaxed);
+                        let file_str = file_path.to_string_lossy().to_string();
+                        let file_matches: Vec<GrepMatch> = batch
+                            .into_iter()
+                            .map(|m| GrepMatch {
+                                file: file_str.clone(),
+                                buffer_id: 0,
+                                byte_offset: m.byte_offset,
+                                length: m.length,
+                                line: m.line,
+                                column: m.column,
+                                context: m.context,
+                            })
+                            .collect();
+                        push_matches(&task_handle, file_matches);
                     }
                 });
 
@@ -4331,6 +4299,10 @@ impl Editor {
 
             for join in joins {
                 drop(join.await);
+            }
+            for receiver in open_results {
+                let matches = receiver.await.unwrap_or_default();
+                push_capped(&handle_for_task, &match_count, max_results, matches);
             }
 
             let total = match_count.load(std::sync::atomic::Ordering::Relaxed);

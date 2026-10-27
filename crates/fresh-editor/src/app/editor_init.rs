@@ -742,6 +742,7 @@ impl Editor {
             plugin_command_backlog: std::collections::VecDeque::new(),
             #[cfg(feature = "plugins")]
             grep_project_cancel: std::collections::HashMap::new(),
+            open_buffer_searches: Vec::new(),
             #[cfg(feature = "plugins")]
             plugin_timers: Vec::new(),
             macro_replay: None,
