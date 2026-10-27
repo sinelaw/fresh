@@ -5123,23 +5123,17 @@ impl Editor {
         // other overlay is up, which reads as "folds case" and is the
         // right default. A query that isn't valid regex falls back to a
         // literal match.
-        let preview_regex = if query.is_empty() {
+        let preview_query = if query.is_empty() {
             None
         } else {
             let case_insensitive = !["mode_case", "git_grep_case"]
                 .iter()
                 .any(|k| self.prompt_toolbar_toggle_checked(k));
             let build = |use_regex| {
-                crate::model::buffer::build_search_regex(
-                    &query,
-                    use_regex,
-                    false,
-                    !case_insensitive,
-                )
+                crate::model::buffer::SearchQuery::new(&query, use_regex, false, !case_insensitive)
             };
             build(true).or_else(|_| build(false)).ok()
         };
-        let preview_overlap = crate::model::buffer::match_overlap(&query, true);
         let preview_ns = crate::view::overlay::OverlayNamespace::from_string(
             "overlay-preview-search".to_string(),
         );
@@ -5202,7 +5196,7 @@ impl Editor {
                 state
                     .overlays
                     .clear_namespace(&preview_ns, &mut state.marker_list);
-                if let Some(re) = &preview_regex {
+                if let Some(preview_query) = &preview_query {
                     let visible_start = pstate.view_state.buffer_tab_state().viewport.top_byte();
                     let visible_rows =
                         pstate.view_state.buffer_tab_state().viewport.height as usize;
@@ -5216,25 +5210,19 @@ impl Editor {
                         .min(state.buffer.len());
                     let found = state
                         .buffer
-                        .find_regex_matches(
-                            re,
-                            visible_start..visible_end,
-                            preview_overlap,
-                            usize::MAX,
-                        )
+                        .find_regex_matches(preview_query, visible_start..visible_end, usize::MAX)
                         .unwrap_or_default();
-                    for (absolute_pos, match_len) in found {
-                        if match_len == 0 {
+                    for (pos, len) in found {
+                        if len == 0 {
                             continue;
                         }
-                        let style = ratatui::style::Style::default().fg(search_fg).bg(search_bg);
-                        let overlay = crate::view::overlay::Overlay::with_namespace(
+                        let overlay = crate::view::overlay::Overlay::search_match(
                             &mut state.marker_list,
-                            absolute_pos..(absolute_pos + match_len),
-                            crate::view::overlay::OverlayFace::Style { style },
+                            pos..pos + len,
                             preview_ns.clone(),
-                        )
-                        .with_priority_value(10);
+                            search_fg,
+                            search_bg,
+                        );
                         state.overlays.add(overlay);
                     }
                 }

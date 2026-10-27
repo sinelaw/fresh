@@ -3856,8 +3856,8 @@ impl Editor {
         }
 
         let fs_opts = make_search_opts(fixed_string, case_sensitive, whole_words, max_results);
-        let regex = match crate::model::filesystem::build_search_regex(&pattern, &fs_opts) {
-            Ok(re) => re,
+        let query = match fs_opts.query(&pattern) {
+            Ok(query) => query,
             Err(e) => {
                 self.plugin_manager
                     .read()
@@ -3877,7 +3877,6 @@ impl Editor {
         // Modified open buffers are searched as they are, on this thread (see
         // `OpenBufferSearch`); clean ones are read from disk and only
         // contribute their id, so matches stay attributable to a buffer.
-        let overlap = crate::model::buffer::match_overlap(&pattern, !fixed_string);
         let window = self.active_window;
         let mut open_paths = std::collections::HashSet::new();
         let mut open_results = Vec::new();
@@ -3901,8 +3900,7 @@ impl Editor {
                 window,
                 *bid,
                 path.to_string_lossy().into_owned(),
-                regex.clone(),
-                overlap,
+                query.clone(),
                 max_results,
                 &state.buffer,
                 Box::new(move || job_cancel.load(std::sync::atomic::Ordering::Relaxed)),
@@ -4036,8 +4034,8 @@ impl Editor {
         }
 
         let fs_opts = make_search_opts(fixed_string, case_sensitive, whole_words, max_results);
-        let regex = match crate::model::filesystem::build_search_regex(&pattern, &fs_opts) {
-            Ok(re) => re,
+        let query = match fs_opts.query(&pattern) {
+            Ok(query) => query,
             Err(e) => {
                 finish_with(&handle, false, Some(format!("Invalid regex: {}", e)));
                 return;
@@ -4057,7 +4055,6 @@ impl Editor {
         // `OpenBufferSearch`); the walk skips their files. The source
         // buffer's matches are taken first, so `max_results` can't cut them
         // off; the others' at the end.
-        let overlap = crate::model::buffer::match_overlap(&pattern, !fixed_string);
         let window = self.active_window;
         let mut open_paths = std::collections::HashSet::new();
         let mut source_result = None;
@@ -4085,8 +4082,7 @@ impl Editor {
                 window,
                 *bid,
                 file,
-                regex.clone(),
-                overlap,
+                query.clone(),
                 max_results,
                 &state.buffer,
                 Box::new(move || job_handle.cancel.load(std::sync::atomic::Ordering::Relaxed)),
@@ -4450,8 +4446,8 @@ impl Editor {
             Some(regex) => {
                 let opts =
                     make_search_opts(false, regex.case_sensitive, regex.whole_words, usize::MAX);
-                let re = match crate::model::filesystem::build_search_regex(&regex.pattern, &opts) {
-                    Ok(re) => re,
+                let re = match opts.query(&regex.pattern) {
+                    Ok(query) => query.regex,
                     Err(e) => {
                         self.plugin_manager
                             .read()
@@ -4475,9 +4471,10 @@ impl Editor {
                 let expanded: AnyhowResult<Vec<(usize, usize, String)>> = sorted_matches
                     .iter()
                     .map(|&(offset, len)| {
-                        let bytes = state.buffer.get_text_range_mut(offset, len)?;
                         let text =
-                            super::regex_replace::expand_replacement(&re, &bytes, &replacement);
+                            state
+                                .buffer
+                                .expand_replacement(&re, offset, len, &replacement)?;
                         Ok((offset, len, text))
                     })
                     .collect();

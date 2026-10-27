@@ -2168,11 +2168,10 @@ impl DocumentModel for EditorState {
         if pattern.is_empty() {
             return Ok(Vec::new());
         }
-        let regex = crate::model::buffer::build_search_regex(pattern, false, false, true)?;
-        let overlap = crate::model::buffer::match_overlap(pattern, false);
+        let query = crate::model::buffer::SearchQuery::new(pattern, false, false, true)?;
         let matches = self
             .buffer
-            .find_regex_matches(&regex, start_offset..end_offset, overlap, usize::MAX)?
+            .find_regex_matches(&query, start_offset..end_offset, usize::MAX)?
             .into_iter()
             .map(|(pos, _)| pos)
             .collect();

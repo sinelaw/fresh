@@ -30,6 +30,10 @@ pub struct SearchState {
     /// True if the match count was capped at MAX_MATCHES
     #[allow(dead_code)]
     pub capped: bool,
+    /// The query as it was searched for, with the flags of that search:
+    /// re-highlighting after an edit matches with it, not with whatever
+    /// the flags are now.
+    pub search_query: crate::model::buffer::SearchQuery,
 }
 
 impl SearchState {
@@ -56,9 +60,8 @@ pub struct InteractiveReplaceState {
     pub has_wrapped: bool,
     /// Number of replacements made so far
     pub replacements_made: usize,
-    /// Compiled regex the matches are found with — the escaped query for
-    /// plain text.
-    pub regex: regex::bytes::Regex,
+    /// The query the matches are found with.
+    pub query: crate::model::buffer::SearchQuery,
     /// Whether the replacement is a template (`$1`, `\n`) expanded per
     /// match: regex mode only. Plain-text replacement is literal.
     pub expand_replacement: bool,

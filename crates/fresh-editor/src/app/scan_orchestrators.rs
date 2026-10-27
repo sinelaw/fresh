@@ -272,7 +272,7 @@ impl Editor {
             self.set_status_message(format!(
                 "Searching... {}% ({} matches so far)",
                 pct,
-                scan.matches.len()
+                scan.match_count()
             ));
             self.active_window_mut().search_scan.start(scan);
         }
@@ -295,17 +295,23 @@ impl Editor {
             .buffer
             .refresh_saved_root_if_unmodified();
 
-        if scan.matches.is_empty() {
+        let (query, search_query, search_range) = (
+            scan.query.clone(),
+            scan.search_query.clone(),
+            scan.search_range.clone(),
+        );
+        let (matches, capped) = scan.into_matches();
+        if matches.is_empty() {
             self.active_window_mut().search_state = None;
-            let msg = if scan.search_range.is_some() {
-                format!("No matches found for '{}' in selection", scan.query)
+            let msg = if search_range.is_some() {
+                format!("No matches found for '{}' in selection", query)
             } else {
-                format!("No matches found for '{}'", scan.query)
+                format!("No matches found for '{}'", query)
             };
             self.set_status_message(msg);
             return;
         }
 
-        self.finalize_search(&scan.query, scan.matches, scan.capped, scan.search_range);
+        self.finalize_search(&query, search_query, matches, capped, search_range);
     }
 }

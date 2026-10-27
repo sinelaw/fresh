@@ -81,7 +81,6 @@ mod popup_overlay_actions;
 mod prompt_actions;
 mod prompt_lifecycle;
 mod recovery_actions;
-mod regex_replace;
 pub(crate) mod render;
 mod scan_orchestrators;
 mod scroll_sync;
@@ -3629,8 +3628,7 @@ mod tests {
         let scan = search_scan::ActiveSearchScan::new(
             buffer_id,
             "test".to_string(),
-            regex::bytes::Regex::new("test").unwrap(),
-            16,
+            crate::model::buffer::SearchQuery::new("test", false, false, true).unwrap(),
             None,
             &editor.active_state().buffer,
         );

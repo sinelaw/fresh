@@ -6,6 +6,14 @@ fn test_fs() -> Arc<dyn crate::model::filesystem::FileSystem + Send + Sync> {
 }
 use super::*;
 
+/// A search for `regex` reaching back `overlap` bytes at window edges.
+fn q(regex: &regex::bytes::Regex, overlap: usize) -> SearchQuery {
+    SearchQuery {
+        regex: regex.clone(),
+        overlap,
+    }
+}
+
 /// Open a file via the normal load path (small empty file) then
 /// grow it through `extend_streaming` — the path the
 /// openFileStreaming + refreshBufferFromDisk plugin APIs use.
@@ -2870,7 +2878,7 @@ mod chunked_search {
     /// Up to `max_matches` matches with their lines, read in small windows so
     /// even short texts cross window boundaries.
     fn scan_all(buf: &mut TextBuffer, regex: regex::bytes::Regex, max_matches: usize) -> Scan {
-        let mut search = RegexSearch::new(regex, 0..buf.len(), 32, buf)
+        let mut search = RegexSearch::new(&q(&regex, 32), 0..buf.len(), buf)
             .with_lines(1)
             .with_window(100);
         let matches = search.run(buf, max_matches).unwrap();
@@ -3124,7 +3132,7 @@ mod lazily_loaded_search {
 
     fn search(buf: &mut TextBuffer, pattern: &str) -> Vec<SearchMatch> {
         let regex = regex::bytes::Regex::new(pattern).unwrap();
-        RegexSearch::new(regex, 0..buf.len(), 32, buf)
+        RegexSearch::new(&q(&regex, 32), 0..buf.len(), buf)
             .with_lines(1)
             .with_window(100)
             .run(buf, usize::MAX)
@@ -3429,12 +3437,12 @@ fn find_regex_matches_agrees_with_find_iter() {
         let expected: Vec<(usize, usize)> =
             re.find_iter(&whole).map(|m| (m.start(), m.len())).collect();
         let found = buf
-            .find_regex_matches(&re, 0..len, 4096, usize::MAX)
+            .find_regex_matches(&q(&re, 4096), 0..len, usize::MAX)
             .unwrap();
         assert_eq!(found.len(), expected.len(), "pattern {pattern}");
         assert!(found == expected, "pattern {pattern}: matches differ");
         assert_eq!(
-            buf.find_regex_matches(&re, 0..len, 4096, 3).unwrap(),
+            buf.find_regex_matches(&q(&re, 4096), 0..len, 3).unwrap(),
             expected[..3.min(expected.len())],
             "pattern {pattern} with a limit"
         );
@@ -3448,13 +3456,14 @@ fn find_regex_matches_stops_at_the_range_end() {
     let mut buf = TextBuffer::from_bytes(b"xx hello yy".to_vec(), test_fs());
     let re = regex::bytes::Regex::new("hello").unwrap();
     assert!(buf
-        .find_regex_matches(&re, 0..5, 20, usize::MAX)
+        .find_regex_matches(&q(&re, 20), 0..5, usize::MAX)
         .unwrap()
         .is_empty());
     let re = regex::bytes::Regex::new("aa").unwrap();
     let mut buf = TextBuffer::from_bytes(b"aaaaa".to_vec(), test_fs());
     assert_eq!(
-        buf.find_regex_matches(&re, 0..3, 8, usize::MAX).unwrap(),
+        buf.find_regex_matches(&q(&re, 8), 0..3, usize::MAX)
+            .unwrap(),
         vec![(0, 2)]
     );
 }
@@ -3549,7 +3558,7 @@ mod regex_matches_loading {
             let expected: Vec<(usize, usize)> =
                 re.find_iter(&model).map(|m| (m.start(), m.len())).collect();
             let len = buf.len();
-            let found = buf.find_regex_matches_in_windows(&re, 0..len, 8, usize::MAX, window).unwrap();
+            let found = buf.find_regex_matches_in_windows(&q(&re, 8), 0..len, usize::MAX, window).unwrap();
             prop_assert_eq!(found, expected);
         }
 
@@ -3570,11 +3579,11 @@ mod regex_matches_loading {
             let re = regex::bytes::Regex::new(pattern).unwrap();
             let expected = reference(&re, &model, range.clone());
             let found = buf
-                .find_regex_matches_in_windows(&re, range.clone(), 8, usize::MAX, window)
+                .find_regex_matches_in_windows(&q(&re, 8), range.clone(), usize::MAX, window)
                 .unwrap();
             prop_assert_eq!(&found, &expected);
             let limited = buf
-                .find_regex_matches_in_windows(&re, range, 8, limit, window)
+                .find_regex_matches_in_windows(&q(&re, 8), range, limit, window)
                 .unwrap();
             prop_assert_eq!(&limited[..], &expected[..limit.min(expected.len())]);
         }
@@ -3613,7 +3622,7 @@ mod regex_matches_loading {
             let (mut buf, model) = edited_buffer(&text, &edits);
             let re = regex::bytes::Regex::new(pattern).unwrap();
             let expected = reference(&re, &model, 0..model.len());
-            let mut search = RegexSearch::new(re, 0..buf.len(), 8, &buf)
+            let mut search = RegexSearch::new(&q(&re, 8), 0..buf.len(), &buf)
                 .with_lines(1)
                 .with_window(window);
             let mut found = Vec::new();
@@ -3644,7 +3653,7 @@ mod regex_matches_loading {
             let (mut buf, model) = edited_buffer(&text, &edits);
             let re = regex::bytes::Regex::new(pattern).unwrap();
             let len = buf.len();
-            let found = RegexSearch::new(re, 0..len, 8, &buf)
+            let found = RegexSearch::new(&q(&re, 8), 0..len, &buf)
                 .with_lines(1)
                 .run(&mut buf, usize::MAX)
                 .unwrap();
@@ -3687,7 +3696,7 @@ mod regex_matches_loading {
             let expected: Vec<(usize, usize)> =
                 re.find_iter(&content).map(|m| (m.start(), m.len())).collect();
             let len = buf.len();
-            let found = buf.find_regex_matches(&re, 0..len, 4096, usize::MAX).unwrap();
+            let found = buf.find_regex_matches(&q(&re, 4096), 0..len, usize::MAX).unwrap();
             prop_assert_eq!(found, expected);
             prop_assert_eq!(buf.get_text_range_mut(0, len).unwrap(), content);
         }
@@ -3701,47 +3710,55 @@ mod regex_matches_loading {
         // An empty buffer, an empty range, a range past the end, a zero limit.
         let mut buf = TextBuffer::from_bytes(Vec::new(), test_fs());
         assert!(buf
-            .find_regex_matches(&re, 0..0, 8, usize::MAX)
+            .find_regex_matches(&q(&re, 8), 0..0, usize::MAX)
             .unwrap()
             .is_empty());
         assert_eq!(
-            buf.find_regex_matches(&empty, 0..0, 8, usize::MAX).unwrap(),
+            buf.find_regex_matches(&q(&empty, 8), 0..0, usize::MAX)
+                .unwrap(),
             vec![(0, 0)],
             "an empty buffer has one line start"
         );
         let mut buf = TextBuffer::from_bytes(b"ab ab".to_vec(), test_fs());
         assert!(buf
-            .find_regex_matches(&re, 2..2, 8, usize::MAX)
+            .find_regex_matches(&q(&re, 8), 2..2, usize::MAX)
             .unwrap()
             .is_empty());
         assert!(buf
-            .find_regex_matches(&re, 9..20, 8, usize::MAX)
+            .find_regex_matches(&q(&re, 8), 9..20, usize::MAX)
             .unwrap()
             .is_empty());
-        assert!(buf.find_regex_matches(&re, 0..5, 8, 0).unwrap().is_empty());
+        assert!(buf
+            .find_regex_matches(&q(&re, 8), 0..5, 0)
+            .unwrap()
+            .is_empty());
         assert_eq!(
-            buf.find_regex_matches(&re, 0..5, 8, 1).unwrap(),
+            buf.find_regex_matches(&q(&re, 8), 0..5, 1).unwrap(),
             vec![(0, 2)]
         );
 
         // A match must lie wholly inside the range.
         assert_eq!(
-            buf.find_regex_matches(&re, 0..4, 8, usize::MAX).unwrap(),
+            buf.find_regex_matches(&q(&re, 8), 0..4, usize::MAX)
+                .unwrap(),
             vec![(0, 2)]
         );
         assert_eq!(
-            buf.find_regex_matches(&re, 1..5, 8, usize::MAX).unwrap(),
+            buf.find_regex_matches(&q(&re, 8), 1..5, usize::MAX)
+                .unwrap(),
             vec![(3, 2)]
         );
 
         // An empty match at the end of the range counts only at the buffer's end.
         let mut buf = TextBuffer::from_bytes(b"x\ny\n".to_vec(), test_fs());
         assert_eq!(
-            buf.find_regex_matches(&empty, 0..4, 8, usize::MAX).unwrap(),
+            buf.find_regex_matches(&q(&empty, 8), 0..4, usize::MAX)
+                .unwrap(),
             vec![(0, 0), (2, 0), (4, 0)]
         );
         assert_eq!(
-            buf.find_regex_matches(&empty, 0..2, 8, usize::MAX).unwrap(),
+            buf.find_regex_matches(&q(&empty, 8), 0..2, usize::MAX)
+                .unwrap(),
             vec![(0, 0)]
         );
 
@@ -3749,7 +3766,7 @@ mod regex_matches_loading {
         let mut buf = TextBuffer::from_bytes(b"xxxxxxxxab".to_vec(), test_fs());
         let len = buf.len();
         assert_eq!(
-            buf.find_regex_matches_in_windows(&re, 0..len, 64, usize::MAX, 1)
+            buf.find_regex_matches_in_windows(&q(&re, 64), 0..len, usize::MAX, 1)
                 .unwrap(),
             vec![(8, 2)]
         );

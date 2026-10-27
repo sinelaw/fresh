@@ -443,21 +443,7 @@ impl FileSearchCursor {
 
 /// A single search match with position and context.
 ///
-/// What `FileSystem::search_file` and a `RegexSearch` made `with_lines`
-/// return.
-#[derive(Clone, Debug)]
-pub struct SearchMatch {
-    /// Byte offset of the match in the file/buffer.
-    pub byte_offset: usize,
-    /// Length of the match in bytes.
-    pub length: usize,
-    /// 1-based line number.
-    pub line: usize,
-    /// 1-based byte column within the line.
-    pub column: usize,
-    /// Content of the line containing the match (no trailing newline).
-    pub context: String,
-}
+pub use crate::model::buffer::SearchMatch;
 
 /// A file's size and the SHA-256 of its bytes: enough to tell whether it
 /// still holds bytes seen earlier, without keeping them. SHA-256 so the
@@ -1248,19 +1234,17 @@ pub fn sibling_temp_pid(file_name: &str) -> Option<u32> {
 // Default search_file implementation
 // ============================================================================
 
-/// The search regex for `opts`: the buffer's one
-/// [`build_search_regex`](crate::model::buffer::build_search_regex).
-pub fn build_search_regex(
-    pattern: &str,
-    opts: &FileSearchOptions,
-) -> io::Result<regex::bytes::Regex> {
-    crate::model::buffer::build_search_regex(
-        pattern,
-        !opts.fixed_string,
-        opts.whole_word,
-        opts.case_sensitive,
-    )
-    .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))
+impl FileSearchOptions {
+    /// `pattern` compiled for searching with these options.
+    pub fn query(&self, pattern: &str) -> io::Result<crate::model::buffer::SearchQuery> {
+        crate::model::buffer::SearchQuery::new(
+            pattern,
+            !self.fixed_string,
+            self.whole_word,
+            self.case_sensitive,
+        )
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))
+    }
 }
 
 /// Maximum per-file size for unbounded project-wide search.  Files larger
@@ -1472,12 +1456,11 @@ pub fn default_search_file(
         }
     }
 
-    let regex = build_search_regex(pattern, opts)?;
+    let query = opts.query(pattern)?;
     let mut buffer =
         crate::model::buffer::TextBuffer::from_bytes(contents, std::sync::Arc::new(NoopFileSystem));
     let end = cursor.end_offset.unwrap_or(usize::MAX);
-    let overlap = crate::model::buffer::match_overlap(pattern, !opts.fixed_string);
-    let found = crate::model::buffer::RegexSearch::new(regex, cursor.offset..end, overlap, &buffer)
+    let found = crate::model::buffer::RegexSearch::new(&query, cursor.offset..end, &buffer)
         .with_lines(cursor.running_line)
         .run(&mut buffer, opts.max_matches)
         .map_err(io::Error::other)?;
@@ -3297,14 +3280,14 @@ mod tests {
             whole_word: false,
             max_matches: 100,
         };
-        let re = build_search_regex("foo\n.+bar", &opts).unwrap();
+        let re = opts.query("foo\n.+bar").unwrap().regex;
         assert!(re.is_match(b"foo\nXXXXbar"));
         // Sanity: literal mode also matches the embedded newline.
         let opts_lit = FileSearchOptions {
             fixed_string: true,
             ..opts
         };
-        let re_lit = build_search_regex("foo\nbar", &opts_lit).unwrap();
+        let re_lit = opts_lit.query("foo\nbar").unwrap().regex;
         assert!(re_lit.is_match(b"foo\nbar"));
     }
 

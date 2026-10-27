@@ -30,7 +30,7 @@ pub use persistence::Persistence;
 pub use save::SudoSaveRequired;
 #[cfg(test)]
 pub(crate) use save::{RecipeAction, WriteRecipe};
-pub use search::{build_search_regex, match_overlap, RegexSearch};
+pub use search::{expand_replacement, BufferSearch, RegexSearch, SearchMatch, SearchQuery};
 
 /// Error returned when a large file has a non-resynchronizable encoding
 /// and requires user confirmation before loading the entire file into memory.
@@ -76,7 +76,6 @@ pub struct LineScanChunk {
 // Re-export SearchMatch from filesystem — same type is used by both
 // FileSystem::search_file (project grep on disk) and the piece-tree
 // search below (in-editor Ctrl+F and dirty buffers).
-pub use crate::model::filesystem::SearchMatch;
 
 // Large file support configuration.
 //
@@ -2494,34 +2493,53 @@ impl TextBuffer {
 
     // Search and Replace Operations
 
-    /// Up to `limit` matches of `regex` within `range`, as `(start, len)`:
+    /// Up to `limit` matches of `query` within `range`, as `(start, len)`:
     /// a whole [`RegexSearch`] run at once.
     pub fn find_regex_matches(
         &mut self,
-        regex: &Regex,
+        query: &SearchQuery,
         range: Range<usize>,
-        overlap: usize,
         limit: usize,
     ) -> Result<Vec<(usize, usize)>> {
-        self.find_regex_matches_in_windows(regex, range, overlap, limit, LOAD_CHUNK_SIZE)
+        self.find_regex_matches_in_windows(query, range, limit, LOAD_CHUNK_SIZE)
     }
 
     /// `find_regex_matches` reading `window` bytes at a time.
     fn find_regex_matches_in_windows(
         &mut self,
-        regex: &Regex,
+        query: &SearchQuery,
         range: Range<usize>,
-        overlap: usize,
         limit: usize,
         window: usize,
     ) -> Result<Vec<(usize, usize)>> {
-        let found = RegexSearch::new(regex.clone(), range, overlap, self)
+        let found = RegexSearch::new(query, range, self)
             .with_window(window)
             .run(self, limit)?;
         Ok(found
             .into_iter()
             .map(|m| (m.byte_offset, m.length))
             .collect())
+    }
+
+    /// The replacement for the match of `regex` at `start..start + len`:
+    /// [`expand_replacement`] over the match and the bytes around it.
+    pub fn expand_replacement(
+        &mut self,
+        regex: &Regex,
+        start: usize,
+        len: usize,
+        template: &str,
+    ) -> Result<String> {
+        const AROUND: usize = 4;
+        let from = start.saturating_sub(AROUND);
+        let bytes = self.get_text_range_mut(from, start + len + AROUND - from)?;
+        Ok(expand_replacement(
+            regex,
+            &bytes,
+            start - from,
+            len,
+            template,
+        ))
     }
 
     /// Replace a range with replacement text

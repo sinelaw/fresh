@@ -1666,16 +1666,42 @@ impl Window {
         }
     }
 
-    /// The search regex for `query` under this window's search flags
-    /// (`use_regex`, `whole_word`, `case_sensitive`), or a human-readable
-    /// error.
-    pub(crate) fn build_search_regex(&self, query: &str) -> Result<regex::bytes::Regex, String> {
-        crate::app::regex_replace::build_search_regex(
+    /// `query` compiled under this window's search flags (`use_regex`,
+    /// `whole_word`, `case_sensitive`), or a human-readable error.
+    pub(crate) fn search_query(
+        &self,
+        query: &str,
+    ) -> Result<crate::model::buffer::SearchQuery, String> {
+        crate::model::buffer::SearchQuery::new(
             query,
             self.search_use_regex,
             self.search_whole_word,
             self.search_case_sensitive,
         )
+        .map_err(|e| e.to_string())
+    }
+
+    /// The viewport's top byte, and the byte range of the lines it shows
+    /// (at most `VISIBLE_WINDOW_SCAN_BYTES` of them): where search matches
+    /// are highlighted when only the visible ones are.
+    pub(crate) fn visible_search_range(&mut self) -> (usize, std::ops::Range<usize>) {
+        let active_split = self.effective_active_split();
+        let (top_byte, visible_height) = self
+            .splits()
+            .1
+            .get(&active_split)
+            .map(|vs| {
+                (
+                    vs.buffer_tab_state().viewport.top_byte(),
+                    vs.buffer_tab_state().viewport.height.saturating_sub(2),
+                )
+            })
+            .unwrap_or((0, 20));
+        let buffer = &mut self.active_state_mut().buffer;
+        let end = buffer
+            .advance_lines_within(top_byte, visible_height as usize, VISIBLE_WINDOW_SCAN_BYTES)
+            .min(buffer.len());
+        (top_byte, top_byte..end)
     }
 
     /// True iff editing should be disabled for the active buffer
@@ -4334,59 +4360,29 @@ impl Window {
             self.clear_search_highlights();
             return;
         }
-
-        let ns = self.search_namespace.clone();
-        let overlap = crate::model::buffer::match_overlap(query, self.search_use_regex);
-
-        // Share the one search-regex builder so highlight anchoring (`^`/`$`
+        // Share the one search-query builder so highlight anchoring (`^`/`$`
         // line-matching) stays consistent with the actual search results.
-        let regex = match self.build_search_regex(query) {
-            Ok(r) => r,
-            Err(_) => {
-                self.clear_search_highlights();
-                return;
-            }
+        let Ok(search_query) = self.search_query(query) else {
+            self.clear_search_highlights();
+            return;
         };
-
-        let active_split = self.effective_active_split();
-        let (top_byte, visible_height) = self
-            .splits()
-            .1
-            .get(&active_split)
-            .map(|vs| {
-                (
-                    vs.buffer_tab_state().viewport.top_byte(),
-                    vs.buffer_tab_state().viewport.height.saturating_sub(2),
-                )
-            })
-            .unwrap_or((0, 20));
+        let ns = self.search_namespace.clone();
+        let (_, visible) = self.visible_search_range();
 
         let state = self.active_state_mut();
         state.overlays.clear_namespace(&ns, &mut state.marker_list);
-
-        let visible_start = top_byte;
-        let visible_end = state
-            .buffer
-            .advance_lines_within(top_byte, visible_height as usize, VISIBLE_WINDOW_SCAN_BYTES)
-            .min(state.buffer.len());
         let found = state
             .buffer
-            .find_regex_matches(&regex, visible_start..visible_end, overlap, usize::MAX)
+            .find_regex_matches(&search_query, visible, usize::MAX)
             .unwrap_or_default();
-
-        for (absolute_pos, match_len) in found {
-            let search_style = ratatui::style::Style::default().fg(search_fg).bg(search_bg);
-            let overlay = crate::view::overlay::Overlay::with_namespace_fixed_end(
+        for (pos, len) in found {
+            let overlay = crate::view::overlay::Overlay::search_match(
                 &mut state.marker_list,
-                absolute_pos..(absolute_pos + match_len),
-                crate::view::overlay::OverlayFace::themed(
-                    "search.match_fg",
-                    "search.match_bg",
-                    search_style,
-                ),
+                pos..pos + len,
                 ns.clone(),
-            )
-            .with_priority_value(10);
+                search_fg,
+                search_bg,
+            );
             state.overlays.add(overlay);
         }
     }
@@ -4412,59 +4408,48 @@ impl Window {
         search_fg: ratatui::style::Color,
         search_bg: ratatui::style::Color,
     ) {
-        let query = match self.search_state.as_ref() {
-            Some(ss) if !ss.query.is_empty() => ss.query.clone(),
+        // The query as it was searched for: a flag toggled since must not
+        // change what the search's highlights match.
+        let search_query = match self.search_state.as_ref() {
+            Some(ss) if !ss.query.is_empty() => ss.search_query.clone(),
             _ => return,
         };
-
         let ns = self.search_namespace.clone();
-
-        // Share the one search-regex builder so re-highlighting after an edit
-        // keeps `^`/`$` line-anchoring consistent with the search results.
-        let regex = match self.build_search_regex(&query) {
-            Ok(r) => r,
-            Err(_) => return,
-        };
-        let overlap = crate::model::buffer::match_overlap(&query, self.search_use_regex);
 
         let state = self.active_state_mut();
         let buf_len = state.buffer.len();
+        let edit_start = edit_start.min(buf_len);
         let edit_end = edit_start.saturating_add(edit_new_len).min(buf_len);
 
-        // Expand the edited byte span to the full line(s) it touches so that
-        // word-boundary context on either side of the edit is included.
-        let start_line = state.buffer.get_line_number(edit_start.min(buf_len));
-        let end_line = state.buffer.get_line_number(edit_end);
-        let win_start = state.buffer.line_start_offset(start_line).unwrap_or(0);
+        // Expand the edited span to the line(s) it touches, so word-boundary
+        // context on either side of the edit is included — but no further
+        // than the viewport would read: a line can be the whole file.
+        const CAP: usize = VISIBLE_WINDOW_SCAN_BYTES;
+        let win_start = state
+            .buffer
+            .prev_line_start_within(edit_start, CAP)
+            .unwrap_or(edit_start.saturating_sub(CAP));
         let win_end = state
             .buffer
-            .line_start_offset(end_line + 1)
-            .unwrap_or(buf_len)
-            .min(buf_len);
+            .next_line_start_within(edit_end, CAP)
+            .unwrap_or_else(|| edit_end.saturating_add(CAP).min(buf_len));
 
         let found = state
             .buffer
-            .find_regex_matches(&regex, win_start..win_end, overlap, usize::MAX)
+            .find_regex_matches(&search_query, win_start..win_end, usize::MAX)
             .unwrap_or_default();
 
         let mut new_overlays = Vec::new();
         let mut new_ranges = Vec::new();
-        for (absolute_pos, match_len) in found {
-            new_ranges.push(absolute_pos..absolute_pos + match_len);
-            let search_style = ratatui::style::Style::default().fg(search_fg).bg(search_bg);
-            new_overlays.push(
-                crate::view::overlay::Overlay::with_namespace_fixed_end(
-                    &mut state.marker_list,
-                    absolute_pos..(absolute_pos + match_len),
-                    crate::view::overlay::OverlayFace::themed(
-                        "search.match_fg",
-                        "search.match_bg",
-                        search_style,
-                    ),
-                    ns.clone(),
-                )
-                .with_priority_value(10),
-            );
+        for (pos, len) in found {
+            new_ranges.push(pos..pos + len);
+            new_overlays.push(crate::view::overlay::Overlay::search_match(
+                &mut state.marker_list,
+                pos..pos + len,
+                ns.clone(),
+                search_fg,
+                search_bg,
+            ));
         }
 
         state.overlays.replace_range_in_namespace(

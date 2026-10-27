@@ -3,8 +3,8 @@
 //! A project search reads the files that aren't open from disk, off the
 //! editor thread. An open buffer with unsaved edits has to be searched as
 //! it is, so it is searched here instead, through its live `TextBuffer` — a
-//! slice per editor tick, like a Ctrl+F search of a large file — and the
-//! matches go back to the search's task over a channel.
+//! [`BufferSearch`] run a slice per editor tick, like a Ctrl+F search of a
+//! large file — and the matches go back to the search's task over a channel.
 
 use std::time::Instant;
 
@@ -14,7 +14,21 @@ use tokio::sync::oneshot;
 
 use super::search_scan::SEARCH_SCAN_SLICE;
 use super::Editor;
-use crate::model::buffer::{RegexSearch, TextBuffer, LOAD_CHUNK_SIZE};
+use crate::model::buffer::{BufferSearch, SearchMatch, SearchQuery, TextBuffer};
+
+/// A match as a project search reports it: in `file`, attributed to
+/// `buffer_id` (0 when the file isn't open).
+pub(crate) fn grep_match(file: &str, buffer_id: usize, m: SearchMatch) -> GrepMatch {
+    GrepMatch {
+        file: file.to_string(),
+        buffer_id,
+        byte_offset: m.byte_offset,
+        length: m.length,
+        line: m.line,
+        column: m.column,
+        context: m.context,
+    }
+}
 
 /// A search of one open buffer for a project search.
 pub(crate) struct OpenBufferSearch {
@@ -22,13 +36,7 @@ pub(crate) struct OpenBufferSearch {
     buffer_id: BufferId,
     /// The file name the matches are reported under.
     file: String,
-    regex: regex::bytes::Regex,
-    overlap: usize,
-    limit: usize,
-    /// The buffer version the matches are for.
-    version: u64,
-    search: RegexSearch,
-    found: Vec<GrepMatch>,
+    search: BufferSearch,
     cancelled: Box<dyn Fn() -> bool + Send>,
     reply: oneshot::Sender<Vec<GrepMatch>>,
 }
@@ -42,77 +50,43 @@ impl OpenBufferSearch {
         window: WindowId,
         buffer_id: BufferId,
         file: String,
-        regex: regex::bytes::Regex,
-        overlap: usize,
+        query: SearchQuery,
         limit: usize,
         buffer: &TextBuffer,
         cancelled: Box<dyn Fn() -> bool + Send>,
     ) -> (Self, oneshot::Receiver<Vec<GrepMatch>>) {
         let (reply, receiver) = oneshot::channel();
-        let search = Self::search(&regex, overlap, buffer);
         let job = Self {
             window,
             buffer_id,
             file,
-            regex,
-            overlap,
-            limit,
-            version: buffer.version(),
-            search,
-            found: Vec::new(),
+            search: BufferSearch::new(query, None, limit, buffer).with_lines(buffer),
             cancelled,
             reply,
         };
         (job, receiver)
     }
 
-    fn search(regex: &regex::bytes::Regex, overlap: usize, buffer: &TextBuffer) -> RegexSearch {
-        RegexSearch::new(regex.clone(), 0..buffer.len(), overlap, buffer).with_lines(1)
-    }
-
-    /// Search on until `deadline`; true once done. An edit of the buffer
-    /// since the last run starts the search over.
+    /// Search on until `deadline`; true once there is nothing more to do.
     fn run(&mut self, buffer: &mut TextBuffer, deadline: Instant) -> bool {
-        if (self.cancelled)() {
-            self.found.clear();
+        if let Err(e) = self.search.run(buffer, Some(deadline)) {
+            tracing::warn!("Project search of {} failed: {}", self.file, e);
             return true;
         }
-        if buffer.version() != self.version {
-            self.version = buffer.version();
-            self.found.clear();
-            self.search = Self::search(&self.regex, self.overlap, buffer);
-        }
-        while !self.search.is_done() && self.found.len() < self.limit {
-            let found =
-                match self
-                    .search
-                    .step(buffer, LOAD_CHUNK_SIZE, self.limit - self.found.len())
-                {
-                    Ok(found) => found,
-                    Err(e) => {
-                        tracing::warn!("Project search of {} failed: {}", self.file, e);
-                        return true;
-                    }
-                };
-            self.found.extend(found.into_iter().map(|m| GrepMatch {
-                file: self.file.clone(),
-                buffer_id: self.buffer_id.0,
-                byte_offset: m.byte_offset,
-                length: m.length,
-                line: m.line,
-                column: m.column,
-                context: m.context,
-            }));
-            if Instant::now() >= deadline {
-                break;
-            }
-        }
-        self.search.is_done() || self.found.len() >= self.limit
+        self.search.is_done()
     }
 
+    /// Send what was found, or nothing if the search was cancelled.
     fn finish(self) {
+        let found = if (self.cancelled)() {
+            Vec::new()
+        } else {
+            let (file, id) = (self.file, self.buffer_id.0);
+            let found = self.search.into_found().into_iter();
+            found.map(|m| grep_match(&file, id, m)).collect()
+        };
         // The search's task may have stopped waiting; nothing to do then.
-        self.reply.send(self.found).ok();
+        self.reply.send(found).ok();
     }
 }
 
@@ -135,6 +109,7 @@ impl Editor {
                 .get_mut(&job.window)
                 .and_then(|w| w.buffers.get_mut(&job.buffer_id));
             let done = match buffer {
+                _ if (job.cancelled)() => true,
                 // The buffer was closed: report what was found.
                 None => true,
                 Some(_) if Instant::now() >= deadline => false,
