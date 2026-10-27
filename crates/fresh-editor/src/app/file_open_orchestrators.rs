@@ -114,6 +114,43 @@ impl Editor {
         })
     }
 
+    /// Close the clean hidden buffers other windows have for `path` (a
+    /// plugin's, left by a replace across files): the file is about to have
+    /// its one buffer here. One with unsaved changes is left alone.
+    fn close_hidden_copies_elsewhere(&mut self, path: &Path) {
+        let Some(active) = self.windows.get(&self.active_window) else {
+            return;
+        };
+        let canonical = active.resolve_open_path(path).canonical_path;
+        let host = active.host_key();
+        let copies: Vec<(fresh_core::WindowId, BufferId)> = self
+            .windows
+            .iter()
+            .filter(|(id, w)| **id != self.active_window && w.host_key() == host)
+            .flat_map(|(id, w)| {
+                w.file_buffers(true)
+                    .filter(|(buffer_id, file)| {
+                        *file == canonical.as_path()
+                            && w.buffer_metadata
+                                .get(buffer_id)
+                                .is_some_and(|meta| meta.hidden_from_tabs)
+                            && w.buffers
+                                .get(buffer_id)
+                                .is_some_and(|state| !state.buffer.is_modified())
+                    })
+                    .map(|(buffer_id, _)| (*id, buffer_id))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        for (window, buffer_id) in copies {
+            let closed =
+                self.with_window_retargeted(window, |editor| editor.force_close_buffer(buffer_id));
+            if let Err(e) = closed {
+                tracing::debug!("Failed to close a hidden copy of {}: {e}", path.display());
+            }
+        }
+    }
+
     /// Close in window `id` the clean tabs of files another workspace has
     /// open: a workspace restored after another took the file comes back
     /// without its own copy. Before any recovery runs, so nothing here has
@@ -247,6 +284,7 @@ impl Editor {
             return Ok(buffer_id);
         }
 
+        self.close_hidden_copies_elsewhere(path);
         self.active_window_mut()
             .redirect_active_split_away_from_dock_if_needed();
 
@@ -440,6 +478,7 @@ impl Editor {
         if let Some(elsewhere) = self.file_open_in_other_window(path) {
             return Err(elsewhere.into());
         }
+        self.close_hidden_copies_elsewhere(path);
         let buffer_id = self.active_window_mut().open_file_no_focus(path)?;
         // Read-only if another editor has it open
         self.sync_file_locks();
@@ -1219,20 +1258,37 @@ impl crate::app::window::Window {
 
     /// Which authority this window's files are on: `None` for this machine,
     /// the host for a remote one. The same path under two is two files.
+    ///
+    /// A remote workspace not connected yet runs on a local placeholder; its
+    /// files are still the remote host's, so it is keyed by the backend it
+    /// will reconnect to — never as this machine.
     pub(crate) fn host_key(&self) -> Option<String> {
-        self.authority()
-            .filesystem
-            .remote_connection_info()
-            .map(str::to_owned)
+        if let Some(host) = self.authority().filesystem.remote_connection_info() {
+            return Some(host.to_owned());
+        }
+        self.authority_spec.is_remote().then(|| {
+            format!(
+                "unconnected:{}",
+                serde_json::to_string(&self.authority_spec).unwrap_or_default()
+            )
+        })
     }
 
     /// This window's file buffers that have a tab, with their files: what a
     /// file being "open" here means. A plugin's hidden or virtual buffer,
     /// and a composite view, are not.
     pub(crate) fn tab_file_buffers(&self) -> impl Iterator<Item = (BufferId, &Path)> {
-        self.buffers.iter().filter_map(|(buffer_id, state)| {
+        self.file_buffers(false)
+    }
+
+    /// This window's file buffers, with their files: those with a tab, and
+    /// with `hidden` also a plugin's hidden ones (a replace across files
+    /// opens them) — every buffer that can write its file.
+    pub(crate) fn file_buffers(&self, hidden: bool) -> impl Iterator<Item = (BufferId, &Path)> {
+        self.buffers.iter().filter_map(move |(buffer_id, state)| {
             let meta = self.buffer_metadata.get(buffer_id)?;
-            if state.is_composite_buffer || meta.hidden_from_tabs || meta.is_virtual() {
+            if state.is_composite_buffer || (meta.hidden_from_tabs && !hidden) || meta.is_virtual()
+            {
                 return None;
             }
             let file = state.buffer.file_path()?;

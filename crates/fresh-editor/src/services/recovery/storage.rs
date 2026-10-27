@@ -156,13 +156,13 @@ impl RecoveryStorage {
             final_size,
             None,
             None,
-            false,
+            None,
         )
     }
 
     /// [`Self::save_recovery`], recording the project root the buffer is
-    /// edited in (see [`RecoveryMetadata::root`]) and whether the file is on
-    /// another host (see [`RecoveryMetadata::remote`]). `workspace_id` writes
+    /// edited in (see [`RecoveryMetadata::root`]) and, for a file on another
+    /// host, which one (see [`RecoveryMetadata::host`]). `workspace_id` writes
     /// the stamp earlier versions filed entries by, for their tests.
     #[allow(clippy::too_many_arguments)]
     pub fn save_recovery_owned(
@@ -176,8 +176,9 @@ impl RecoveryStorage {
         final_size: usize,
         workspace_id: Option<&str>,
         root: Option<&Path>,
-        remote: bool,
+        host: Option<&str>,
     ) -> io::Result<RecoveryMetadata> {
+        let remote = host.is_some();
         self.ensure_dir()?;
 
         let (meta_path, _content_path) = self.recovery_paths(id);
@@ -242,6 +243,7 @@ impl RecoveryStorage {
         metadata.buffer_name = buffer_name.map(|s| s.to_string());
         metadata.original_mtime = original_mtime;
         metadata.remote = remote;
+        metadata.host = host.map(str::to_owned);
         metadata.original_file_size = original_file_size;
         // This content is newer than anything a save recorded before it
         // (see `SaveIntent`), so that save no longer says anything about it.
@@ -1824,7 +1826,7 @@ mod tests {
                 12,
                 None,
                 None,
-                false,
+                None,
             )
             .unwrap();
 

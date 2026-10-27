@@ -254,6 +254,7 @@ impl Store {
         if let Some((root, known_ids)) = legacy {
             entries.extend(self.legacy_entries(root, known_ids));
         }
+
         entries.retain(|entry| !self.given_back.contains(&entry.id));
         entries.retain_mut(settle_interrupted_save);
         entries.sort_by_key(|e| std::cmp::Reverse(e.metadata.updated_at));
@@ -403,9 +404,16 @@ impl Store {
             });
         match taken {
             Ok(mut claimed) => {
-                // An old store's entry keeps the root it was listed under
+                // An old store's entry keeps the root it was listed under,
+                // on disk too: a crash before its next backup must not leave
+                // it with none
                 if claimed.metadata.root.is_none() {
-                    claimed.metadata.root = entry.metadata.root.clone();
+                    if let Some(root) = entry.metadata.root.clone() {
+                        if let Err(e) = claimed.handle().set_root(&root) {
+                            tracing::debug!("Could not record the root of {}: {e}", claimed.id);
+                        }
+                        claimed.metadata.root = Some(root);
+                    }
                 }
                 Ok(Some(claimed))
             }
@@ -639,7 +647,7 @@ mod tests {
                 4,
                 None,
                 Some(root),
-                false,
+                None,
             )
             .unwrap();
     }
@@ -762,7 +770,7 @@ mod tests {
                 1,
                 ws,
                 None,
-                false,
+                None,
             )
             .unwrap();
         };
@@ -872,7 +880,7 @@ mod tests {
                 1,
                 stamp,
                 None,
-                false,
+                None,
             )
             .unwrap();
         }

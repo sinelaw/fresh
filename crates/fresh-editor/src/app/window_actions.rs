@@ -1515,6 +1515,9 @@ impl crate::app::Editor {
         // The window's reference is gone; close its connection if nothing else shares it.
         self.prune_connections();
 
+        // Its files' locks, for an editor waiting on one of them
+        self.sync_file_locks();
+
         true
     }
 

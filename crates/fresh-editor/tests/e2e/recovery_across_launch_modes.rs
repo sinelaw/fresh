@@ -90,7 +90,7 @@ fn plant_legacy_entry(store: &Path, id: &str, path: Option<&Path>, text: &str) {
             text.len(),
             None,
             None,
-            false,
+            None,
         )
         .unwrap();
 }

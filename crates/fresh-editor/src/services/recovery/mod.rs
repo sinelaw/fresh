@@ -118,7 +118,7 @@ impl RecoveryService {
         line_count: Option<usize>,
         original_file_size: usize,
         final_size: usize,
-        remote: bool,
+        host: Option<&str>,
     ) -> io::Result<Option<HotExitEntry>> {
         let Some(store) = self.store.as_mut() else {
             return Ok(None);
@@ -135,7 +135,7 @@ impl RecoveryService {
             final_size,
             None,
             Some(&root),
-            remote,
+            host,
         )?;
         Ok(Some(store.own_handle(id)))
     }
@@ -186,20 +186,22 @@ impl RecoveryService {
     }
 
     /// The unsaved work no running editor holds, newest first: for a window
-    /// on a remote authority (`Some(true)`), a local one (`Some(false)`), or
-    /// either (`None`). With `legacy` — a root and its
+    /// on host `Some(host)` (`Some(None)` for this machine), or anywhere
+    /// (`None`). With `legacy` — a root and its
     /// [`Self::known_workspace_ids`] — also earlier versions' entries for it.
     pub fn list_recoverable(
         &self,
         legacy: Option<(&Path, &HashSet<String>)>,
-        remote: Option<bool>,
+        host: Option<Option<&str>>,
     ) -> Vec<RecoveryEntry> {
         let Some(store) = &self.store else {
             return Vec::new();
         };
         let mut entries = store.recoverable(legacy);
-        if let Some(remote) = remote {
-            entries.retain(|entry| entry.metadata.remote == remote);
+        if let Some(host) = host {
+            entries.retain(|entry| {
+                entry.metadata.remote == host.is_some() && entry.metadata.host.as_deref() == host
+            });
         }
         entries
     }
@@ -363,14 +365,15 @@ mod tests {
         let id = RecoveryService::new_entry_id();
         let chunks = vec![RecoveryChunk::new(0, 0, text.to_vec())];
         service
-            .save_buffer(root, &id, chunks, path, None, Some(1), 0, text.len(), false)
+            .save_buffer(root, &id, chunks, path, None, Some(1), 0, text.len(), None)
             .unwrap()
             .unwrap()
     }
 
-    fn recoverable(service: &RecoveryService, root: &Path) -> Vec<RecoveryEntry> {
-        let _ = root;
-        service.list_recoverable(None, Some(false))
+    /// Everything recoverable on this machine: the store is one for every
+    /// root, and each test has its own.
+    fn recoverable(service: &RecoveryService, _root: &Path) -> Vec<RecoveryEntry> {
+        service.list_recoverable(None, Some(None))
     }
 
     // The crash tests below stop a save between its steps — record the save
@@ -481,7 +484,7 @@ mod tests {
             assert!(entry.begin_save(&target, 5).unwrap());
             let chunks = vec![RecoveryChunk::new(0, 0, b"second".to_vec())];
             crashed
-                .save_buffer(&root, entry.id(), chunks, None, None, Some(1), 0, 6, false)
+                .save_buffer(&root, entry.id(), chunks, None, None, Some(1), 0, 6, None)
                 .unwrap();
         }
 
@@ -539,8 +542,9 @@ mod tests {
         assert_eq!(entry.metadata.workspace_id, None);
     }
 
-    /// A remote buffer's entry is restored only into a remote window, and
-    /// the other way round: the paths name files on different hosts.
+    /// A remote buffer's entry is restored only into a window on its host,
+    /// and a local one only into a local window: the paths name files on
+    /// different hosts.
     #[test]
     fn remote_and_local_entries_stay_apart() {
         let base = TempDir::new().unwrap();
@@ -557,16 +561,21 @@ mod tests {
                 Some(1),
                 0,
                 6,
-                true,
+                Some("srv"),
             )
             .unwrap();
         drop(crashed);
 
         let next = service(&base);
-        assert!(next.list_recoverable(None, Some(false)).is_empty());
-        let remote = next.list_recoverable(None, Some(true));
+        assert!(next.list_recoverable(None, Some(None)).is_empty());
+        let remote = next.list_recoverable(None, Some(Some("srv")));
         assert_eq!(remote.len(), 1);
         assert_eq!(remote[0].metadata.original_mtime, None);
+        assert!(
+            next.list_recoverable(None, Some(Some("other-host")))
+                .is_empty(),
+            "the same path on another host is another file"
+        );
     }
 
     #[test]
@@ -577,7 +586,7 @@ mod tests {
         assert!(!service.is_enabled());
         let chunks = vec![RecoveryChunk::new(0, 0, b"content".to_vec())];
         assert!(service
-            .save_buffer(&root, "test", chunks, None, None, None, 0, 7, false)
+            .save_buffer(&root, "test", chunks, None, None, None, 0, 7, None)
             .unwrap()
             .is_none());
         assert!(!base.path().join("entries").exists());
@@ -604,7 +613,7 @@ mod tests {
                     Some(1),
                     original_content.len(), // original_file_size > 0
                     original_content.len() + 8,
-                    false,
+                    None,
                 )
                 .unwrap();
         }

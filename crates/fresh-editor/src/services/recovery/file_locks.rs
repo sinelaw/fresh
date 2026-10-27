@@ -82,9 +82,14 @@ impl FileLocks {
                 Ok(FileLock::Ours)
             }
             Err(fs::TryLockError::WouldBlock) => {
+                // Another editor has it. Who, only when it can be read: on
+                // Windows a locked file can't be (`LockFileEx` covers reads
+                // too), which says nothing about whether it is held.
                 let mut content = String::new();
-                handle.read_to_string(&mut content)?;
-                let pid = content.lines().next().and_then(|l| l.trim().parse().ok());
+                let pid = handle
+                    .read_to_string(&mut content)
+                    .ok()
+                    .and_then(|_| content.lines().next()?.trim().parse().ok());
                 Ok(FileLock::Elsewhere { pid })
             }
             Err(fs::TryLockError::Error(e)) => Err(e),
@@ -140,12 +145,15 @@ mod tests {
 
         assert_eq!(first.acquire(&file), FileLock::Ours);
         assert_eq!(first.acquire(&file), FileLock::Ours);
-        assert_eq!(
-            second.acquire(&file),
-            FileLock::Elsewhere {
-                pid: Some(std::process::id())
+        match second.acquire(&file) {
+            FileLock::Elsewhere { pid } => {
+                // Unreadable while locked on Windows
+                #[cfg(unix)]
+                assert_eq!(pid, Some(std::process::id()));
+                let _ = pid;
             }
-        );
+            FileLock::Ours => panic!("the second editor took a file the first has"),
+        }
 
         first.keep_only(&std::collections::HashSet::new());
         assert_eq!(second.acquire(&file), FileLock::Ours);

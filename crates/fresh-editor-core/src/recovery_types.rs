@@ -181,6 +181,12 @@ pub struct RecoveryMetadata {
     /// a window on a remote authority.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub remote: bool,
+
+    /// For a remote file, which host it is on (the authority's connection,
+    /// e.g. `user@host`): the same path on two hosts is two files, and a
+    /// file's unsaved work is restored only into a window on its own host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
 }
 
 impl RecoveryMetadata {
@@ -217,6 +223,7 @@ impl RecoveryMetadata {
             original_file_size,
             workspace_id,
             root: None,
+            host: None,
             saving: None,
             remote: false,
         }
@@ -461,6 +468,14 @@ impl HotExitEntry {
         };
         let intent = serde_json::to_value(&intent).map_err(io::Error::other)?;
         self.set_fields(&[("saving", Some(intent))])
+    }
+
+    /// Record the project root the buffer was last edited under (see
+    /// [`RecoveryMetadata::root`]), for an entry that has none: one moved
+    /// out of an earlier version's store.
+    pub fn set_root(&self, root: &Path) -> io::Result<bool> {
+        let root = serde_json::to_value(root).map_err(io::Error::other)?;
+        self.set_fields(&[("root", Some(root))])
     }
 
     /// Take back [`Self::begin_save`]: the save failed, and the entry is the

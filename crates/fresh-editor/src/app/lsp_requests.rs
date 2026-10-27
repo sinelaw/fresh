@@ -3009,6 +3009,50 @@ impl Editor {
     /// refusal has already put a message naming the file on the status line,
     /// and overwriting it with "renamed 3 occurrences" would hide the fact
     /// that the server asked for something Fresh declined to do.
+    /// Why `edit` must not be applied here, if it must not: it touches a
+    /// file another workspace has open. A file has one buffer, and it isn't
+    /// this workspace's.
+    fn workspace_edit_touches_another_workspace(
+        &self,
+        edit: &lsp_types::WorkspaceEdit,
+    ) -> Option<String> {
+        use lsp_types::{DocumentChangeOperation, DocumentChanges, ResourceOp};
+        let mut uris: Vec<&lsp_types::Uri> = Vec::new();
+        if let Some(changes) = &edit.changes {
+            uris.extend(changes.keys());
+        }
+        match &edit.document_changes {
+            Some(DocumentChanges::Edits(edits)) => {
+                uris.extend(edits.iter().map(|e| &e.text_document.uri));
+            }
+            Some(DocumentChanges::Operations(ops)) => {
+                for op in ops {
+                    match op {
+                        DocumentChangeOperation::Edit(e) => uris.push(&e.text_document.uri),
+                        DocumentChangeOperation::Op(ResourceOp::Create(c)) => uris.push(&c.uri),
+                        DocumentChangeOperation::Op(ResourceOp::Rename(r)) => {
+                            uris.push(&r.old_uri);
+                            uris.push(&r.new_uri);
+                        }
+                        DocumentChangeOperation::Op(ResourceOp::Delete(d)) => uris.push(&d.uri),
+                    }
+                }
+            }
+            None => {}
+        }
+        uris.into_iter().find_map(|uri| {
+            let uri = crate::app::types::LspUri::from_wire(uri.clone());
+            let path =
+                super::lsp_uri_to_host_path(&uri, self.authority().path_translation.as_ref())
+                    .ok()?;
+            let elsewhere = self.file_open_in_other_window(&path)?;
+            Some(format!(
+                "Not changed: {}: {elsewhere}; close it there first",
+                path.display()
+            ))
+        })
+    }
+
     pub(crate) fn apply_workspace_edit(
         &mut self,
         workspace_edit: lsp_types::WorkspaceEdit,
@@ -3021,6 +3065,17 @@ impl Editor {
                 lsp_types::DocumentChanges::Operations(o) => format!("{} operations", o.len()),
             })
         );
+
+        // All or nothing: an edit touching a file another workspace has open
+        // is refused whole, rather than applied in part or in a buffer whose
+        // text the server never saw
+        if let Some(refusal) = self.workspace_edit_touches_another_workspace(&workspace_edit) {
+            self.set_status_message(refusal);
+            return Ok(AppliedEdit {
+                changes: 0,
+                refused: 1,
+            });
+        }
 
         let mut total_changes = 0;
         let mut refused = 0;
@@ -4067,6 +4122,65 @@ mod tests {
         Arc::new(StdFileSystem)
     }
     use super::{lsp_range_contains, lsp_range_overlaps, Editor};
+
+    /// A rename (any workspace edit) that touches a file another workspace
+    /// has open is refused whole: nothing is applied, in that workspace's
+    /// buffer or here, and the user stays where they are.
+    #[test]
+    fn a_workspace_edit_touching_another_workspaces_file_is_refused_whole() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let dir_context = crate::config_io::DirectoryContext::for_testing(temp.path());
+        let mut editor = crate::app::Editor::new(
+            crate::config::Config::default(),
+            80,
+            24,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            test_fs(),
+        )
+        .unwrap();
+        let file = |name: &str| {
+            let path = temp.path().join(name);
+            std::fs::write(&path, "one\n").unwrap();
+            path.canonicalize().unwrap()
+        };
+        let (here, there) = (file("here.rs"), file("there.rs"));
+        let home = editor.active_window_id();
+        editor.open_file(&here).unwrap();
+        let other_root = temp.path().join("other");
+        std::fs::create_dir(&other_root).unwrap();
+        let other = editor.create_window_at(other_root, "other".to_string());
+        editor.set_active_window(other);
+        editor.open_file(&there).unwrap();
+        editor.set_active_window(home);
+
+        let edit_for = |path: &std::path::Path| {
+            let uri: lsp_types::Uri = format!("file://{}", path.display()).parse().unwrap();
+            (
+                uri,
+                vec![lsp_types::TextEdit::new(
+                    range(0, 0, 0, 3),
+                    "TWO".to_string(),
+                )],
+            )
+        };
+        let edit = lsp_types::WorkspaceEdit {
+            changes: Some([edit_for(&here), edit_for(&there)].into_iter().collect()),
+            ..Default::default()
+        };
+        let applied = editor.apply_workspace_edit(edit).unwrap();
+
+        assert_eq!(applied.changes, 0);
+        assert_eq!(editor.active_window_id(), home);
+        for window in [home, other] {
+            for (_, state) in editor.windows[&window].buffers.iter() {
+                assert!(
+                    !state.buffer.to_string().unwrap_or_default().contains("TWO"),
+                    "part of a refused edit was applied"
+                );
+            }
+        }
+    }
 
     fn range(sl: u32, sc: u32, el: u32, ec: u32) -> lsp_types::Range {
         lsp_types::Range {

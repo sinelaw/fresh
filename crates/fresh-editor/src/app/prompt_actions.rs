@@ -760,6 +760,20 @@ impl Editor {
 
     /// Check for overwrite/missing directory before saving, prompting if needed.
     pub(crate) fn save_file_as_with_checks(&mut self, full_path: std::path::PathBuf) {
+        // One path per file, the one a buffer opened on it would have: a
+        // symlinked spelling would let the file have a second buffer, and its
+        // unsaved work go unfound by whoever opens it.
+        let full_path = self
+            .active_window()
+            .resolve_open_path(&full_path)
+            .canonical_path;
+        // A file has one buffer across workspaces: saving this one over a file
+        // another workspace has open would make two
+        if let Some(elsewhere) = self.file_open_in_other_window(&full_path) {
+            self.set_status_message(elsewhere.to_string());
+            return;
+        }
+
         // Check if we're saving to a different file that already exists
         let current_file_path = self
             .active_state()

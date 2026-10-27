@@ -80,13 +80,6 @@ fn tick(harness: &mut EditorTestHarness) {
     harness.render().unwrap();
 }
 
-fn save(harness: &mut EditorTestHarness) {
-    harness
-        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
-}
-
 /// The windows of `h` with a buffer for `file`, materializing every one.
 fn windows_with(h: &mut EditorTestHarness, file: &Path) -> Vec<fresh_core::WindowId> {
     h.editor_mut().materialize_all_windows();
@@ -172,6 +165,7 @@ fn co_tenant_workspaces_on_one_root_share_one_buffer_for_a_file() {
 /// workspace opened F, comes back without a tab of its own for it: F stays
 /// where it is open.
 #[test]
+#[cfg(target_os = "linux")] // the pinned data dir; see `isolated_dir_context`
 fn a_workspace_restored_after_another_took_a_file_leaves_it_there() {
     let temp = TempDir::new().unwrap();
     let ws_a = temp.path().join("wsA");
@@ -180,13 +174,12 @@ fn a_workspace_restored_after_another_took_a_file_leaves_it_there() {
     for dir in [&ws_a, &ws_b, &shared] {
         std::fs::create_dir(dir).unwrap();
     }
-    let file = shared
-        .join("F.txt")
-        .canonicalize()
-        .unwrap_or(shared.join("F.txt"));
+    let file = shared.join("F.txt");
     std::fs::write(&file, "base\n").unwrap();
     let file = file.canonicalize().unwrap();
-    let dir_context = DirectoryContext::for_testing(temp.path());
+    let ws_b_root = ws_b.canonicalize().unwrap();
+    // Workspace layouts live in the data dir, which a daemon's restore reads
+    let (dir_context, _pin) = isolated_dir_context(temp.path());
 
     // B has F in its layout
     {
@@ -201,17 +194,39 @@ fn a_workspace_restored_after_another_took_a_file_leaves_it_there() {
         daemon.shutdown(true).unwrap();
     }
 
-    // A opens F before B is shown; then B is
+    // A opens F before B is shown: B, not restored yet, has no buffer for
+    // it, so F opens in A
     let mut daemon = daemon_in(&ws_a, &dir_context);
     daemon.render().unwrap();
+    let a = daemon.editor().active_window_id();
     daemon.open_file(&file).unwrap();
+    assert_eq!(daemon.editor().active_window_id(), a, "F opened in A");
     daemon.type_text("A-EDIT ").unwrap();
     daemon.render().unwrap();
-    let holding = windows_with(&mut daemon, &file);
-    assert_eq!(holding.len(), 1, "F has one buffer: {holding:?}");
+
+    // Then B is shown: its saved layout has F, and it comes back without it
+    let saved_with_f = std::fs::read_dir(dir_context.workspaces_dir())
+        .unwrap()
+        .flatten()
+        .any(|f| {
+            f.file_name().to_string_lossy().contains("wsB")
+                && std::fs::read_to_string(f.path())
+                    .is_ok_and(|json| json.contains(&*file.to_string_lossy()))
+        });
+    assert!(saved_with_f, "B's saved layout has F");
+    let b = daemon
+        .editor_mut()
+        .create_window_at(ws_b_root, "wsB".to_string());
+    daemon.editor_mut().set_active_window(b);
+    daemon.render().unwrap();
+    assert_eq!(
+        windows_with(&mut daemon, &file),
+        vec![a],
+        "F stays in A, once"
+    );
     let text = daemon
         .editor()
-        .session(holding[0])
+        .session(a)
         .unwrap()
         .buffers
         .iter()
@@ -224,9 +239,26 @@ fn a_workspace_restored_after_another_took_a_file_leaves_it_there() {
     );
 }
 
+/// The text of `h`'s buffer for `file`, and whether it has unsaved changes.
+fn buffer_of(h: &EditorTestHarness, file: &Path) -> Option<(String, bool)> {
+    h.editor()
+        .active_window()
+        .buffers
+        .iter()
+        .find(|(_, s)| s.buffer.file_path() == Some(file))
+        .map(|(_, s)| {
+            (
+                s.buffer.to_string().unwrap_or_default(),
+                s.buffer.is_modified(),
+            )
+        })
+}
+
 /// (c) Two editors at once on one project — a direct launch and the
-/// Orchestrator. The second to open F gets it read-only while the first
-/// has it open, so there is never a second version of it to keep.
+/// Orchestrator. The second to open F gets it read-only while the first has
+/// it open, so there is never a second version of it. When the first lets
+/// go, keeping its unsaved work, the second gets the file — and that work,
+/// rather than the file as it is on disk.
 #[test]
 fn a_second_editor_gets_a_file_the_first_has_open_read_only() {
     let temp = TempDir::new().unwrap();
@@ -234,6 +266,7 @@ fn a_second_editor_gets_a_file_the_first_has_open_read_only() {
     std::fs::create_dir(&root).unwrap();
     let file = root.join("F.txt");
     std::fs::write(&file, "base\n").unwrap();
+    let file = file.canonicalize().unwrap();
     let dir_context = DirectoryContext::for_testing(temp.path());
 
     let mut direct = launch(&root, &dir_context);
@@ -242,29 +275,39 @@ fn a_second_editor_gets_a_file_the_first_has_open_read_only() {
     direct.type_text("D-EDIT ").unwrap();
     tick(&mut direct);
 
-    {
-        let mut daemon = daemon_in(&root, &dir_context);
-        daemon.open_file(&file).unwrap();
-        daemon.render().unwrap();
-        daemon.assert_screen_contains("read-only");
-        daemon.type_text("O-EDIT ").unwrap();
-        tick(&mut daemon);
-        assert!(
-            entries_holding(&dir_context, &root, "O-EDIT").is_empty(),
-            "the second editor changed a file the first has open"
-        );
-        daemon.shutdown(true).unwrap();
-    }
-
-    // Once the first lets go, a later editor gets it writable — and its work
-    save(&mut direct);
-    direct.shutdown(true).unwrap();
-    drop(direct);
     let mut daemon = daemon_in(&root, &dir_context);
     daemon.open_file(&file).unwrap();
+    daemon.render().unwrap();
+    daemon.assert_screen_contains("read-only");
+    daemon.type_text("O-EDIT ").unwrap();
+    tick(&mut daemon);
+    assert_eq!(
+        buffer_of(&daemon, &file),
+        Some(("base\n".to_string(), false))
+    );
+    assert!(
+        entries_holding(&dir_context, &root, "O-EDIT").is_empty(),
+        "the second editor changed a file the first has open"
+    );
+
+    // The first quits, keeping its unsaved work
+    direct.shutdown(true).unwrap();
+    drop(direct);
+    daemon.advance_time(std::time::Duration::from_secs(3));
+    tick(&mut daemon);
+    let (text, modified) = buffer_of(&daemon, &file).unwrap();
+    assert!(
+        text.contains("D-EDIT") && modified,
+        "the first editor's kept work was not picked up: {text:?}"
+    );
     daemon.type_text("LATER ").unwrap();
     daemon.render().unwrap();
-    daemon.assert_screen_contains("LATER");
+    let (text, _) = buffer_of(&daemon, &file).unwrap();
+    assert!(text.contains("LATER"), "still read-only: {text:?}");
+    assert!(
+        !std::fs::read_to_string(&file).unwrap().contains("D-EDIT"),
+        "nothing was saved"
+    );
 }
 
 /// Workspace B on a root has a saved workspace file whose layout places an

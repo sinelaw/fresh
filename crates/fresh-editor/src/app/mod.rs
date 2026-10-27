@@ -717,6 +717,10 @@ pub struct Editor {
     /// an entry it already holds must not look for that file's work again.
     adopting_recovery: bool,
 
+    /// When the file locks were last brought in line with the open buffers
+    /// (see [`Editor::sync_file_locks`]).
+    last_lock_sync: Option<std::time::Instant>,
+
     /// Running in session/server mode (use hardware cursor only, no REVERSED style)
     session_mode: bool,
 

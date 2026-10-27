@@ -158,19 +158,19 @@ impl Editor {
         out
     }
 
-    /// Whether window `id` edits through a remote authority, whose files are
-    /// on another host: its unsaved work is kept apart from local work on the
-    /// same paths (see `RecoveryMetadata::remote`).
-    fn window_is_remote(&self, id: WindowId) -> bool {
-        self.windows
-            .get(&id)
-            .is_some_and(|w| w.authority().filesystem.remote_connection_info().is_some())
-    }
-
     /// Hold this editor's lock on every local file it has a tab on, and let
     /// go of those it has closed. A file another running editor has open is
     /// read-only here until that one lets it go, so no file ever has a
     /// second version to keep or to save over the first.
+    /// Let go of every file lock now, for an editor about to be dropped
+    /// while another is built in its place (the web UI's reset).
+    pub fn release_file_locks(&mut self) {
+        self.recovery_service
+            .lock()
+            .unwrap()
+            .keep_file_locks(&std::collections::HashSet::new());
+    }
+
     pub(crate) fn sync_file_locks(&mut self) {
         use crate::services::recovery::FileLock;
         let open: Vec<(WindowId, BufferId, PathBuf, bool)> = self
@@ -178,7 +178,7 @@ impl Editor {
             .iter()
             .filter(|(_, w)| w.host_key().is_none())
             .flat_map(|(id, w)| {
-                w.tab_file_buffers().map(move |(buffer_id, file)| {
+                w.file_buffers(true).map(move |(buffer_id, file)| {
                     let modified = w
                         .buffers
                         .get(&buffer_id)
@@ -199,6 +199,9 @@ impl Editor {
                 .map(|(_, _, path, _)| service.lock_file(path))
                 .collect()
         };
+        // Files this editor just got: the editor that let them go may have
+        // kept unsaved work on them, which comes here now rather than wait
+        let mut released: Vec<(WindowId, PathBuf)> = Vec::new();
         for ((window_id, buffer_id, path, modified), lock) in open.into_iter().zip(locks) {
             let Some(window) = self.windows.get_mut(&window_id) else {
                 continue;
@@ -221,11 +224,21 @@ impl Editor {
                 (FileLock::Ours, Some(was_read_only)) => {
                     meta.open_elsewhere = None;
                     window.mark_buffer_read_only(buffer_id, was_read_only);
+                    released.push((window_id, path));
                     t!("buffer.open_in_other_editor_released", file = name)
                 }
                 _ => continue,
             };
             self.set_status_message(message.to_string());
+        }
+        if !self.adopting_recovery {
+            for (window_id, path) in released {
+                self.adopt_recovery_for_window(
+                    window_id,
+                    Some(std::slice::from_ref(&path)),
+                    AdoptScope::OpenFiles,
+                );
+            }
         }
     }
 
@@ -310,14 +323,15 @@ impl Editor {
             }
             AdoptScope::Root | AdoptScope::OpenFiles => HashSet::new(),
         };
-        let remote = self.window_is_remote(self.active_window);
+        // Only work on this window's host: the same path elsewhere is
+        // another file. A remote window not connected yet matches none.
         let known =
             RecoveryService::known_workspace_ids(&root, self.open_workspace_ids_for_active());
         let entries: Vec<_> = self
             .recovery_service
             .lock()
             .unwrap()
-            .list_recoverable(Some((&root, &known)), Some(remote))
+            .list_recoverable(Some((&root, &known)), Some(host.as_deref()))
             .into_iter()
             .filter(|entry| {
                 let on_this_root = entry.metadata.root.as_deref() == Some(canonical_root.as_path());
@@ -388,6 +402,14 @@ impl Editor {
         };
         if !open_tabs && !matches!(target, Target::File(Some(_))) {
             return false;
+        }
+        // Opening it here would go to the workspace that has it — never
+        // restore through that into a buffer this window doesn't own
+        if let (Target::File(None), Some(path)) = (&target, entry.metadata.original_path.as_deref())
+        {
+            if self.file_open_in_other_window(path).is_some() {
+                return false;
+            }
         }
 
         let claimed = self.recovery_service.lock().unwrap().claim(&entry);
@@ -487,6 +509,14 @@ impl Editor {
             Target::File(None) => {
                 let path = entry.metadata.original_path.clone().unwrap_or_default();
                 match self.open_file(&path) {
+                    // Opened, but onto a buffer that isn't free to take it:
+                    // one this window already had under another spelling of
+                    // the path, or one another editor has (read-only here).
+                    // Never restored over; kept for a later look.
+                    Ok(buffer_id) if !self.can_take_recovered_content(buffer_id) => {
+                        self.give_back_recovery_entry(&entry);
+                        return false;
+                    }
                     Ok(buffer_id) => buffer_id,
                     Err(e) => {
                         if let Some(confirmation) =
@@ -541,18 +571,24 @@ impl Editor {
     }
 
     /// Whether `buffer_id` has nothing of its own a restore would overwrite:
-    /// no unsaved changes, and no entry of its own.
+    /// no unsaved changes, no entry of its own, not another editor's file
+    /// (read-only here), and a tab to show the restored work in — a
+    /// plugin's hidden buffer has none, and the exit doesn't keep its work.
     fn can_take_recovered_content(&self, buffer_id: BufferId) -> bool {
         let clean = self
             .buffers()
             .get(&buffer_id)
             .is_some_and(|state| !state.buffer.is_modified());
-        let unbacked = self
+        let free = self
             .active_window()
             .buffer_metadata
             .get(&buffer_id)
-            .is_none_or(|meta| meta.recovery_id.is_none());
-        clean && unbacked
+            .is_none_or(|meta| {
+                meta.recovery_id.is_none()
+                    && meta.open_elsewhere.is_none()
+                    && !meta.hidden_from_tabs
+            });
+        clean && free
     }
 
     /// Put an entry this editor took but did not restore back as unsaved
@@ -652,6 +688,18 @@ impl Editor {
             return Ok(0);
         }
 
+        // On a clock of their own: an editor waiting for another to let a
+        // file go shouldn't wait as long as the backup interval
+        const LOCK_SYNC_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+        let now = self.time_source.now();
+        if self
+            .last_lock_sync
+            .is_none_or(|last| now.saturating_duration_since(last) >= LOCK_SYNC_INTERVAL)
+        {
+            self.last_lock_sync = Some(now);
+            self.sync_file_locks();
+        }
+
         let interval = std::time::Duration::from_secs(
             self.config.editor.auto_recovery_save_interval_secs as u64,
         );
@@ -662,10 +710,6 @@ impl Editor {
         {
             return Ok(0);
         }
-
-        // Files closed since let go of, and ones another editor let go of
-        // made editable here
-        self.sync_file_locks();
 
         let mut saved = 0;
         for window_id in self.window_ids_sorted() {
@@ -799,17 +843,25 @@ impl Editor {
         // Read before the mutable borrow of the buffer state below: the root
         // the buffer is last edited under (see `RecoveryMetadata::root`)
         let root = self.active_window().root.clone();
+        // The file as a buffer opened on it is keyed, so whoever opens it
+        // finds this, however this buffer came to name it (a Save As through
+        // a symlink, say)
+        let path = self
+            .buffers()
+            .get(buffer_id)
+            .and_then(|state| state.buffer.file_path())
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(|p| self.active_window().resolve_open_path(p).canonical_path);
         let recovery_service = std::sync::Arc::clone(&self.recovery_service);
         let state = match self.buffers_mut().get_mut(buffer_id) {
             Some(s) => s,
             None => return Ok(false),
         };
-        let path = state
+        let host = state
             .buffer
-            .file_path()
-            .filter(|p| !p.as_os_str().is_empty())
-            .map(|p| p.to_path_buf());
-        let remote = state.buffer.filesystem().remote_connection_info().is_some();
+            .filesystem()
+            .remote_connection_info()
+            .map(str::to_owned);
         let line_count = state.buffer.line_count();
 
         let (chunks, original_size, final_size) = if state.buffer.is_large_file() {
@@ -849,7 +901,7 @@ impl Editor {
             line_count,
             original_size,
             final_size,
-            remote,
+            host.as_deref(),
         )?;
         match handle {
             Some(handle) => state.buffer.set_backed_by(handle),

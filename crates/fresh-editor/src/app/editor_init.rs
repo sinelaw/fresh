@@ -711,6 +711,7 @@ impl Editor {
             workspace_trust_markers: Vec::new(),
             should_detach: false,
             adopting_recovery: false,
+            last_lock_sync: None,
             session_mode: false,
             software_cursor_only: false,
             session_name: None,
