@@ -1728,9 +1728,9 @@ fn test_live_grep_results_window_follows_selection_and_keeps_the_wheel() {
 }
 
 /// The Terminals scope finds text still on a terminal's screen, not only
-/// lines that have scrolled into its history: the terminal stays in terminal
-/// mode, so nothing but the search itself writes its screen to the backing
-/// file (issue #3645).
+/// lines that have scrolled into its history, and finds it without writing:
+/// the terminal stays in terminal mode, and its backing file stays as the
+/// read loop left it (issue #3645).
 #[test]
 #[cfg_attr(target_os = "windows", ignore)] // `printf` in a Unix shell
 fn live_grep_finds_text_still_on_a_terminal_screen() {
@@ -1780,8 +1780,25 @@ fn live_grep_finds_text_still_on_a_terminal_screen() {
         .unwrap();
     harness.type_text("ZEBRA_3645").unwrap();
 
-    // A Terminals result row names the terminal's backing file
+    // A Terminals result row for the screen's line
     harness
-        .wait_until(|h| h.screen_to_string().contains("fresh-terminal-"))
+        .wait_until(|h| h.screen_to_string().contains("[term] "))
         .unwrap();
+
+    // The search read the screen; it wrote no file
+    let terminals = harness
+        .editor()
+        .dir_context()
+        .terminal_dir_for(&project_root);
+    for entry in fs::read_dir(&terminals).unwrap().flatten() {
+        let path = entry.path();
+        if path.extension().is_some_and(|e| e == "txt") {
+            let text = fs::read_to_string(&path).unwrap();
+            assert!(
+                !text.contains("ZEBRA_3645"),
+                "{} holds the screen after a search: {text:?}",
+                path.display()
+            );
+        }
+    }
 }

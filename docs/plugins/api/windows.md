@@ -565,15 +565,14 @@ example while it shuts down).
 setWindowPreparing(id: number, message: string, label: string | null, failed: boolean, done: boolean): boolean;
 ```
 
-### `syncTerminals`
+### `getTerminalScreens`
 
-Write every open terminal's visible screen to its backing file (in
-`getTerminalDir()`), as a workspace checkpoint does. The backing files
-otherwise hold only lines that have scrolled off the screen, so
-await this before searching them.
+The visible screen of each terminal open in the active window, read
+from memory: a terminal's backing file (in `getTerminalDir()`) holds
+only the lines that have scrolled off it.
 
 ```typescript
-syncTerminals(): Promise<void>;
+getTerminalScreens(): Promise<TerminalScreen[]>;
 ```
 
 ### `sendTerminalInput`

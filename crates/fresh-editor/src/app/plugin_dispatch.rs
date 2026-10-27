@@ -2101,14 +2101,24 @@ impl Editor {
                 self.handle_send_terminal_input(terminal_id, data);
             }
 
-            PluginCommand::SyncTerminals { callback_id } => {
-                for window in self.windows.values() {
-                    window.sync_terminal_backing_files();
-                }
-                self.plugin_manager
-                    .read()
-                    .unwrap()
-                    .resolve_callback(callback_id, "null".to_string());
+            PluginCommand::GetTerminalScreens { callback_id } => {
+                let window = self.active_window();
+                let screens: Vec<fresh_core::api::TerminalScreen> = window
+                    .terminal_buffers
+                    .iter()
+                    .filter_map(|(buffer_id, info)| {
+                        let handle = window.terminal_manager.get(info.terminal_id)?;
+                        let state = handle.state.lock().ok()?;
+                        Some(fresh_core::api::TerminalScreen {
+                            buffer_id: buffer_id.0 as u64,
+                            lines: state.screen_lines(),
+                        })
+                    })
+                    .collect();
+                self.plugin_manager.read().unwrap().resolve_callback(
+                    callback_id,
+                    serde_json::to_string(&screens).unwrap_or_else(|_| "[]".to_string()),
+                );
             }
 
             PluginCommand::CloseTerminal { terminal_id } => {

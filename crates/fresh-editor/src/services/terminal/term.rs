@@ -941,6 +941,34 @@ impl TerminalState {
         cells
     }
 
+    /// The screen as it is now (not scrolled back) as plain text, for
+    /// searching it: one entry per logical line, the rows a wrap continues
+    /// joined, wide characters' spacer cells and right-edge padding left out.
+    pub fn screen_lines(&self) -> Vec<String> {
+        use alacritty_terminal::term::cell::Flags;
+        let grid = self.term.grid();
+        let rows = self.rows as i32;
+        let mut lines = Vec::new();
+        let mut line = String::new();
+        for row in 0..rows {
+            let cells = &grid[Line(row)];
+            for col in 0..self.cols as usize {
+                let cell = &cells[Column(col)];
+                if !cell
+                    .flags
+                    .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+                {
+                    line.push(cell.c);
+                }
+            }
+            if !self.row_wraps(Line(row)) || row + 1 == rows {
+                lines.push(line.trim_end().to_string());
+                line.clear();
+            }
+        }
+        lines
+    }
+
     /// Get all visible content as a string (for testing/debugging)
     pub fn content_string(&self) -> String {
         let mut result = String::new();
@@ -2716,6 +2744,17 @@ mod tests {
         state.process_output(b"\x1b]7;relative/path\x07");
         // The relative payload is ignored; the previous valid cwd is kept.
         assert_eq!(state.cwd(), Some(std::path::Path::new("/good")));
+    }
+
+    #[test]
+    fn test_screen_lines_join_wrapped_rows_and_drop_spacers() {
+        let mut state = TerminalState::new(10, 4);
+        state.process_output("日本 ok\r\n".as_bytes());
+        state.process_output(b"0123456789ABCDE\r\n");
+        let lines = state.screen_lines();
+        assert_eq!(lines[0], "日本 ok");
+        assert_eq!(lines[1], "0123456789ABCDE");
+        assert!(lines[2..].iter().all(String::is_empty), "{lines:?}");
     }
 
     /// The backing file under every interleaving of its writers, modelled

@@ -9746,15 +9746,18 @@ impl JsEditorApi {
             .is_ok()
     }
 
-    /// Write every open terminal's visible screen to its backing file (in
-    /// `getTerminalDir()`), as a workspace checkpoint does. The backing files
-    /// otherwise hold only lines that have scrolled off the screen, so
-    /// await this before searching them.
-    #[plugin_api(async_promise, js_name = "syncTerminals", ts_return = "void")]
-    #[qjs(rename = "_syncTerminalsStart")]
-    pub fn sync_terminals_start(&self) -> u64 {
+    /// The visible screen of each terminal open in the active window, read
+    /// from memory: a terminal's backing file (in `getTerminalDir()`) holds
+    /// only the lines that have scrolled off it.
+    #[plugin_api(
+        async_promise,
+        js_name = "getTerminalScreens",
+        ts_return = "TerminalScreen[]"
+    )]
+    #[qjs(rename = "_getTerminalScreensStart")]
+    pub fn get_terminal_screens_start(&self) -> u64 {
         let id = self.alloc_request_id();
-        let _ = self.command_sender.send(PluginCommand::SyncTerminals {
+        let _ = self.command_sender.send(PluginCommand::GetTerminalScreens {
             callback_id: fresh_core::api::JsCallbackId::new(id),
         });
         id

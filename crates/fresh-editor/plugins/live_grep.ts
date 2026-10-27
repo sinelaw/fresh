@@ -56,6 +56,9 @@ interface GrepMatch {
   column: number;
   content: string;
   source?: ScopeId;
+  /** A line on a terminal's screen, which is in no file: the terminal's
+   *  buffer, shown when the match is picked. */
+  bufferId?: number;
 }
 
 /** Options passed to a provider's `search` callback. */
@@ -766,11 +769,12 @@ const finder = new Finder<GrepMatch>(editor, {
       match.content.length > 60
         ? match.content.substring(0, 57).trim() + "..."
         : match.content.trim(),
-    location: {
-      file: match.file,
-      line: match.line,
-      column: match.column,
-    },
+    // A line on a terminal's screen is in no file: picking it shows the
+    // terminal (`onSelect`), and there is nothing to preview
+    location:
+      match.bufferId === undefined
+        ? { file: match.file, line: match.line, column: match.column }
+        : undefined,
   }),
   onClose: () => {
     overlayActive = false;
@@ -780,8 +784,10 @@ const finder = new Finder<GrepMatch>(editor, {
   // hidden inside the overlay (it can't apply while the overlay
   // is open), but it's exactly what the user needs to know once
   // they've jumped to a result and want to keep browsing.
-  onSelect: (_item, entry) => {
-    if (entry.location) {
+  onSelect: (item, entry) => {
+    if (item.bufferId !== undefined) {
+      editor.showBuffer(item.bufferId);
+    } else if (entry.location) {
       editor.openFile(
         entry.location.file,
         entry.location.line,
@@ -940,17 +946,38 @@ function stripAnsi(s: string): string {
  *  (`getTerminalDir()` → `<data_dir>/terminals/<encoded-cwd>/`) — open
  *  terminals stream their scrollback there live, and closed terminals
  *  are retained there too (renamed `*-closed-*.txt`). Scoping to that
- *  subdir keeps the search to *this* project / worktree. Open terminals
- *  first write their visible screen there (`syncTerminals`), since only
- *  lines that have scrolled off are streamed. We grep it with rg
- *  (falling back to grep), then strip ANSI for display.
- *  Opening a hit opens the backing file at the matched line. */
+ *  subdir keeps the search to *this* project / worktree. We grep it
+ *  with rg (falling back to grep), then strip ANSI for display.
+ *  Opening a hit opens the backing file at the matched line. Those files
+ *  hold only lines that have scrolled off, so what is still on an open
+ *  terminal's screen is matched as it is in memory (`getTerminalScreens`,
+ *  which writes nothing); opening such a hit shows the terminal. */
 async function searchTerminals(
   query: string,
   limit: number,
   cancellation?: SearchCancellation,
 ): Promise<GrepMatch[]> {
   if (limit <= 0) return [];
+  const onScreen: GrepMatch[] = [];
+  const matchCol = buildLineMatcher(query);
+  for (const screen of await editor.getTerminalScreens()) {
+    const name = editor.getBufferInfo(screen.bufferId)?.name ?? "terminal";
+    screen.lines.forEach((line, i) => {
+      const column = matchCol(line);
+      if (column > 0 && onScreen.length < limit) {
+        onScreen.push({
+          file: name,
+          line: i + 1,
+          column,
+          content: line,
+          source: "terminals",
+          bufferId: screen.bufferId,
+        });
+      }
+    });
+  }
+  limit -= onScreen.length;
+  if (limit <= 0) return onScreen;
   const dir = editor.getTerminalDir();
   const cwd = editor.getCwd();
   let raw: GrepMatch[] = [];
@@ -969,7 +996,6 @@ async function searchTerminals(
   };
   const spawnOpts = { cwd, maxResults: limit, cancellation };
   try {
-    await editor.syncTerminals();
     const r = await spawnSearch("rg", rgArgs(query, opts), cwd, spawnOpts);
     if (r.exit_code === 0) {
       raw = parseGrepOutput(r.stdout, limit, (m) => editor.debug(m)) as GrepMatch[];
@@ -983,11 +1009,11 @@ async function searchTerminals(
   } catch (e) {
     editor.debug(`[live_grep:terminals] ${e}`);
   }
-  return raw.slice(0, limit).map((m) => ({
+  return onScreen.concat(raw.slice(0, limit).map((m) => ({
     ...m,
     source: "terminals" as const,
     content: stripAnsi(m.content),
-  }));
+  })));
 }
 
 /** Search the text of currently-open, modified file buffers.

@@ -4155,6 +4155,24 @@ type TerminalResult = {
 };
 ```
 
+### `TerminalScreen`
+
+A terminal's visible screen, returned by `getTerminalScreens`
+
+```typescript
+type TerminalScreen = {
+  /**
+  * The terminal's buffer (for `showBuffer`, `getBufferInfo`)
+  */
+  bufferId: number;
+  /**
+  * The screen's lines, top to bottom, as plain text: rows a wrap
+  * continues are joined into one
+  */
+  lines: Array<string>;
+};
+```
+
 ### `TextPropertiesAtCursor`
 
 Result of getTextPropertiesAtCursor - array of property objects

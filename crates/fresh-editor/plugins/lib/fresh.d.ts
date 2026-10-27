@@ -1349,6 +1349,20 @@ type TerminalResult = {
 	splitId: number | null;
 };
 /**
+* A terminal's visible screen, returned by `getTerminalScreens`
+*/
+type TerminalScreen = {
+	/**
+	* The terminal's buffer (for `showBuffer`, `getBufferInfo`)
+	*/
+	bufferId: number;
+	/**
+	* The screen's lines, top to bottom, as plain text: rows a wrap
+	* continues are joined into one
+	*/
+	lines: Array<string>;
+};
+/**
 * Options for `createWindowWithTerminal` — the atomic
 * "spawn a new editor session that hosts an agent terminal"
 * entry point used by Orchestrator. Bundles window creation,
@@ -8466,12 +8480,11 @@ interface EditorAPI {
 	*/
 	setWindowPreparing(id: number, message: string, label: string | null, failed: boolean, done: boolean): boolean;
 	/**
-	* Write every open terminal's visible screen to its backing file (in
-	* `getTerminalDir()`), as a workspace checkpoint does. The backing files
-	* otherwise hold only lines that have scrolled off the screen, so
-	* await this before searching them.
+	* The visible screen of each terminal open in the active window, read
+	* from memory: a terminal's backing file (in `getTerminalDir()`) holds
+	* only the lines that have scrolled off it.
 	*/
-	syncTerminals(): Promise<void>;
+	getTerminalScreens(): Promise<TerminalScreen[]>;
 	/**
 	* Send input data to a terminal
 	* 
