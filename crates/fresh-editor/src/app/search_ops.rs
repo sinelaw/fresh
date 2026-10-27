@@ -895,6 +895,10 @@ impl Editor {
     /// OPTIMIZATION: Uses BulkEdit for O(n) tree operations instead of O(n²)
     /// This directly edits the piece tree without loading the entire buffer into memory
     pub(super) fn perform_replace(&mut self, search: &str, replacement: &str) {
+        // The search that found the matches to replace may still be running on
+        // a large file; the replace's edits would restart it, and when it
+        // finished it would move the cursor in the middle of the replace.
+        self.active_window_mut().search_scan.take();
         if search.is_empty() {
             self.set_status_message(t!("replace.empty_query").to_string());
             return;
@@ -984,6 +988,10 @@ impl Editor {
 
     /// Start interactive replace mode (query-replace)
     pub(super) fn start_interactive_replace(&mut self, search: &str, replacement: &str) {
+        // The search that found the matches to replace may still be running on
+        // a large file; the replace's edits would restart it, and when it
+        // finished it would move the cursor in the middle of the replace.
+        self.active_window_mut().search_scan.take();
         if search.is_empty() {
             self.set_status_message(t!("replace.query_empty").to_string());
             return;
