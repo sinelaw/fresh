@@ -291,3 +291,51 @@ fn review_stream_collapsed_hunk_closes_its_own_header() {
         })
         .unwrap();
 }
+
+/// A refresh that rewrites the stream to text of the same length must
+/// recolour it, not keep the colours of the text it replaced.
+#[test]
+fn review_stream_recolours_a_same_length_refresh() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+    repo.create_file("src/tool.py", "a = 1\n");
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+    repo.create_file("src/tool.py", "a = 1\nlabel = \"abc\"\n");
+    let mut harness = harness_for(&repo);
+    open_review_diff_for(&mut harness, "+label = \"abc\"");
+
+    let y = row_containing(&harness, "+label = \"abc\"").unwrap();
+    let x = column_of(&row_text(&harness, y), "abc");
+    let string_fg = harness.buffer()[(x, y)].style().fg;
+
+    // Same bytes count, but `abc` is now inside a comment.
+    repo.create_file("src/tool.py", "a = 1\nlabel # \"abc\"\n");
+    harness
+        .send_key(KeyCode::Char('r'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("+label # \"abc\""))
+        .unwrap();
+
+    let y = row_containing(&harness, "+label # \"abc\"").unwrap();
+    let row = row_text(&harness, y);
+    let hash = column_of(&row, "#");
+    let x = column_of(&row, "abc");
+    let buf = harness.buffer();
+    let comment_fg = buf[(hash, y)].style().fg;
+    assert_eq!(
+        buf[(x, y)].style().fg,
+        comment_fg,
+        "`abc` should take the comment's colour after the refresh:\n{}",
+        harness.screen_to_string()
+    );
+    assert_ne!(
+        comment_fg,
+        string_fg,
+        "the comment should not keep the string's colour:\n{}",
+        harness.screen_to_string()
+    );
+}

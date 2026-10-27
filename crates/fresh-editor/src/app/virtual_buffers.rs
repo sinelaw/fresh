@@ -479,6 +479,9 @@ impl crate::app::window::Window {
         // Regions a plugin declared on the previous content pointed into
         // it; the new content brings its own (see `SetSyntaxRegions`).
         state.highlighter.set_declared_regions(Vec::new());
+        // The buffer was rewritten behind the highlighter's back; its cache
+        // only notices a length change, so drop it.
+        state.highlighter.invalidate_all();
 
         // Create inline overlays for the new content. Build the full vec
         // first and bulk-add it so the OverlayManager sorts exactly once;
