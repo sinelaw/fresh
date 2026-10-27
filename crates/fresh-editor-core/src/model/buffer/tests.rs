@@ -2702,15 +2702,8 @@ mod rebuild_pristine_saved_root_tests {
                 path: &Path,
                 pattern: &str,
                 opts: &crate::model::filesystem::FileSearchOptions,
-                cursor: &mut crate::model::filesystem::FileSearchCursor,
             ) -> std::io::Result<Vec<SearchMatch>> {
-                crate::model::filesystem::default_search_file(
-                    &self.inner,
-                    path,
-                    pattern,
-                    opts,
-                    cursor,
-                )
+                crate::model::filesystem::default_search_file(&self.inner, path, pattern, opts)
             }
             fn walk(
                 &self,

@@ -50,6 +50,7 @@ impl OpenBufferSearch {
     /// arrive on the returned receiver once it is done, or empty if it is
     /// `cancelled` first.
     #[allow(clippy::too_many_arguments)]
+    #[cfg_attr(not(feature = "plugins"), allow(dead_code))]
     pub(crate) fn new(
         window: WindowId,
         buffer_id: BufferId,
@@ -96,6 +97,7 @@ impl OpenBufferSearch {
 
 impl Editor {
     /// Queue a search of an open buffer for a project search.
+    #[cfg_attr(not(feature = "plugins"), allow(dead_code))]
     pub(crate) fn start_open_buffer_search(&mut self, job: OpenBufferSearch) {
         self.open_buffer_searches.push(job);
     }

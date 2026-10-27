@@ -30,8 +30,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fresh_editor_core::model::filesystem::{
-    ContentDigest, DirEntry, FileMetadata, FilePermissions, FileReader, FileSearchCursor,
-    FileSearchOptions, FileSystem, FileWriter, ReplaceError, SearchMatch,
+    ContentDigest, DirEntry, FileMetadata, FilePermissions, FileReader, FileSearchOptions,
+    FileSystem, FileWriter, ReplaceError, SearchMatch,
 };
 
 #[cfg(unix)]
@@ -295,9 +295,8 @@ impl FileSystem for SpoolFileSystem {
         path: &Path,
         pattern: &str,
         opts: &FileSearchOptions,
-        cursor: &mut FileSearchCursor,
     ) -> io::Result<Vec<SearchMatch>> {
-        self.inner.search_file(path, pattern, opts, cursor)
+        self.inner.search_file(path, pattern, opts)
     }
     fn sudo_write(
         &self,

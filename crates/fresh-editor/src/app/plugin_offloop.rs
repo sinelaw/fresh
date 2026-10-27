@@ -25,7 +25,7 @@ use tokio::sync::oneshot;
 
 use super::open_buffer_search::grep_match;
 
-use crate::model::filesystem::{FileSearchCursor, FileSearchOptions, FileSystem};
+use crate::model::filesystem::{FileSearchOptions, FileSystem};
 use crate::services::async_bridge::AsyncMessage;
 use crate::services::runtime::LiveRuntime;
 
@@ -473,20 +473,15 @@ pub(crate) fn project_search(
             joins.push(tokio::task::spawn_blocking(move || {
                 let _permit = permit;
                 let file = file_path.to_string_lossy().into_owned();
-                let mut cursor = FileSearchCursor::new();
-                while !cursor.done
-                    && !cancelled(&handle)
-                    && match_count.load(Ordering::Relaxed) < max_results
-                {
-                    let batch = match fs.search_file(&file_path, &pattern, &opts, &mut cursor) {
-                        Ok(batch) => batch,
-                        Err(e) => {
-                            tracing::debug!("search_file failed {:?}: {}", file_path, e);
-                            break;
-                        }
-                    };
-                    let batch = batch.into_iter().map(|m| grep_match(&file, buffer_id, m));
-                    push_capped(&handle, &match_count, max_results, batch.collect());
+                if cancelled(&handle) || match_count.load(Ordering::Relaxed) >= max_results {
+                    return;
+                }
+                match fs.search_file(&file_path, &pattern, &opts) {
+                    Ok(found) => {
+                        let found = found.into_iter().map(|m| grep_match(&file, buffer_id, m));
+                        push_capped(&handle, &match_count, max_results, found.collect());
+                    }
+                    Err(e) => tracing::debug!("search_file failed {:?}: {}", file_path, e),
                 }
             }));
         }

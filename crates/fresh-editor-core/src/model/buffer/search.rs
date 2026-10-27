@@ -11,7 +11,7 @@ use std::time::Instant;
 use super::{TextBuffer, LOAD_CHUNK_SIZE};
 
 /// A single search match with position and context.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SearchMatch {
     /// Byte offset of the match in the file/buffer.
     pub byte_offset: usize,
