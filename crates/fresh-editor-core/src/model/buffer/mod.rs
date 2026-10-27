@@ -2316,7 +2316,9 @@ impl TextBuffer {
                     stored_bytes_before += piece.bytes;
                 }
                 BufferLocation::Added(buffer_id) => {
-                    if let Some(buffer) = self.buffers.iter().find(|b| b.id == buffer_id) {
+                    // Indexed by id, as every read does: a search per piece
+                    // made a replace-all of many matches quadratic here.
+                    if let Some(buffer) = self.buffers.get(buffer_id) {
                         // Skip buffers that originate from the original file
                         // (loaded by chunk_split_and_load for viewport display).
                         // These have stored_file_offset set and are not user edits.

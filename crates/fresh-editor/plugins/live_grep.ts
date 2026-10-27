@@ -1027,8 +1027,10 @@ async function searchOpenBuffers(
       // surface the error.
       continue;
     }
+    // Named like the file scan's rows: relative to the cwd when under it.
+    const file = relativeUnder(editor.getCwd(), b.path) || b.path;
     for (const m of matches) {
-      out.push({ file: b.path, line: m.line, column: m.column, content: m.context, source: "buffers" });
+      out.push({ file, line: m.line, column: m.column, content: m.context, source: "buffers" });
     }
   }
   return out;
@@ -1118,8 +1120,17 @@ async function search(query: string, cancellation?: SearchCancellation): Promise
         );
       }
     } else {
+      // A file open with unsaved edits is searched as its buffer below;
+      // the disk's rows for it point at lines that are no longer there.
+      const cwd = editor.getCwd();
+      const unsaved = new Set(
+        scopeEnabled.buffers
+          ? editor.listBuffers().filter((b) => b.modified && !b.is_virtual && b.path).map((b) => b.path)
+          : [],
+      );
       for (const m of fileMatches) {
         if (results.length >= MAX_RESULTS) break;
+        if (unsaved.has(editor.pathJoin(cwd, m.file))) continue;
         results.push(m);
       }
     }
