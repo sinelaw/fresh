@@ -4155,7 +4155,7 @@ mod tests {
         editor.set_active_window(home);
 
         let edit_for = |path: &std::path::Path| {
-            let uri: lsp_types::Uri = format!("file://{}", path.display()).parse().unwrap();
+            let uri = crate::services::lsp::manager::path_to_uri(path).unwrap();
             (
                 uri,
                 vec![lsp_types::TextEdit::new(
