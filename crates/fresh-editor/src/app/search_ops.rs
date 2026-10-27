@@ -42,14 +42,6 @@ impl Editor {
             .update_search_highlights(query, search_fg, search_bg);
     }
 
-    /// Perform a search and update search state.
-    ///
-    /// For large files (lazy-loaded buffers), this starts an incremental
-    /// chunked search that runs a few pieces per render frame so the UI
-    /// stays responsive.  For normal-sized files the search runs inline.
-    ///
-    /// Matches are capped at `MAX_SEARCH_MATCHES` to bound memory usage,
-    /// and overlays are only created for the visible viewport.
     /// Move the primary cursor to `position`, clear its selection anchor,
     /// update the cached line number (used by the status bar), and scroll
     /// the active split so the cursor is visible.
@@ -101,6 +93,12 @@ impl Editor {
         self.mark_current_match(position, len);
     }
 
+    /// Perform a search and update search state.
+    ///
+    /// A small file is searched to the end in this call; a large one a time
+    /// slice per editor tick (`process_search_scan`) so the UI stays
+    /// responsive. Matches are capped at `SearchState::MAX_MATCHES` to bound
+    /// memory use.
     pub(super) fn perform_search(&mut self, query: &str) {
         // A new search replaces any still running, which would otherwise
         // finish later over its results.
@@ -135,7 +133,8 @@ impl Editor {
             &self.active_state().buffer,
         );
         if is_large {
-            self.set_status_message(t!("goto.scanning_progress", percent = 0).to_string());
+            let progress = fresh_i18n::tn!("search.progress", 0, percent = 0);
+            self.set_status_message(progress.to_string());
         }
         self.advance_search_scan(
             scan,
@@ -216,31 +215,19 @@ impl Editor {
             }
         }
 
-        let cap_suffix = if capped { "+" } else { "" };
-        let msg = if self
-            .active_window_mut()
+        // "N+" when the search stopped at its match limit with more to find.
+        let more = if capped { "+" } else { "" };
+        let in_selection = self
+            .active_window()
             .search_state
             .as_ref()
-            .unwrap()
-            .search_range
-            .is_some()
-        {
-            format!(
-                "Found {}{} match{} for '{}' in selection",
-                num_matches,
-                cap_suffix,
-                if num_matches == 1 { "" } else { "es" },
-                query
-            )
+            .is_some_and(|ss| ss.search_range.is_some());
+        let key = if in_selection {
+            "search.found_in_selection"
         } else {
-            format!(
-                "Found {}{} match{} for '{}'",
-                num_matches,
-                cap_suffix,
-                if num_matches == 1 { "" } else { "es" },
-                query
-            )
+            "search.found"
         };
+        let msg = fresh_i18n::tn!(key, num_matches, more = more, search = query).to_string();
         self.set_status_message(msg);
     }
 
@@ -546,17 +533,17 @@ impl Editor {
             search_state.current_match_index = Some(target_index);
             let match_pos = match_positions[target_index];
             let match_len = match_lengths.get(target_index).copied().unwrap_or(0);
-            let matches_len = match_positions.len();
+            // "N+" when the search stopped at its match limit with more to find.
+            let total = format!(
+                "{}{}",
+                match_positions.len(),
+                if search_state.capped { "+" } else { "" }
+            );
 
             self.select_match(match_pos, match_len);
 
             self.set_status_message(
-                t!(
-                    "search.match_of",
-                    current = target_index + 1,
-                    total = matches_len
-                )
-                .to_string(),
+                t!("search.match_of", current = target_index + 1, total = total).to_string(),
             );
 
             if is_large {

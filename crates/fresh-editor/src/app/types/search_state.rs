@@ -27,8 +27,7 @@ pub struct SearchState {
     pub wrap_search: bool,
     /// Optional search range (for search in selection)
     pub search_range: Option<Range<usize>>,
-    /// True if the match count was capped at MAX_MATCHES
-    #[allow(dead_code)]
+    /// True if the search stopped at MAX_MATCHES with more to find
     pub capped: bool,
     /// The query as it was searched for, with the flags of that search:
     /// re-highlighting after an edit matches with it, not with whatever

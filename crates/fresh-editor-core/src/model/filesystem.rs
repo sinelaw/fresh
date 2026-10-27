@@ -409,9 +409,6 @@ pub struct FileSearchCursor {
     pub running_line: usize,
     /// Set to true when the entire file has been searched.
     pub done: bool,
-    /// Optional upper bound — stop searching at this byte offset instead
-    /// of EOF.
-    pub end_offset: Option<usize>,
 }
 
 impl Default for FileSearchCursor {
@@ -420,7 +417,6 @@ impl Default for FileSearchCursor {
             offset: 0,
             running_line: 1,
             done: false,
-            end_offset: None,
         }
     }
 }
@@ -428,16 +424,6 @@ impl Default for FileSearchCursor {
 impl FileSearchCursor {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Create a cursor bounded to a specific file range.
-    pub fn for_range(offset: usize, end_offset: usize, running_line: usize) -> Self {
-        Self {
-            offset,
-            running_line,
-            done: false,
-            end_offset: Some(end_offset),
-        }
     }
 }
 
@@ -847,11 +833,10 @@ pub trait FileSystem: Send + Sync {
     // Search Operations
     // ========================================================================
 
-    /// Search a file on disk for a pattern, returning one batch of matches.
+    /// Search a file on disk for a pattern, returning a batch of matches.
     ///
-    /// Call repeatedly with the same cursor until `cursor.done` is true.
-    /// Each call searches one chunk; the cursor tracks position and line
-    /// numbers across calls.
+    /// Call repeatedly with the same cursor until `cursor.done` is true; the
+    /// local search ([`default_search_file`]) is done after one call.
     ///
     /// The search runs where the data lives: `StdFileSystem` reads and
     /// scans locally; `RemoteFileSystem` sends a stateless RPC to the
@@ -1252,7 +1237,7 @@ impl FileSearchOptions {
 /// archives, model weights, or audio files would otherwise lock up the
 /// editor for minutes (issue #1342).  Source files virtually never exceed
 /// this limit; users wanting to search huge text logs should open them
-/// directly so hybrid buffer search applies.
+/// and search the open buffer.
 pub const MAX_PROJECT_SEARCH_FILE_SIZE: u64 = 10 * 1024 * 1024;
 
 /// Filename extensions that always represent binary content for project
@@ -1419,15 +1404,12 @@ fn is_byte_searchable_encoding(enc: crate::model::encoding::Encoding) -> bool {
 /// Search a file that is not open in the editor: load it into a
 /// `TextBuffer`, as opening it would, and search that with the editor's
 /// [`RegexSearch`](crate::model::buffer::RegexSearch) — the one search every
-/// buffer search uses. The whole range is searched in one call (up to
+/// buffer search uses. The whole file is searched in one call (up to
 /// `opts.max_matches`), so the cursor is done after it.
 ///
-/// An unbounded search (the whole file) first skips what is not text:
-/// known binary extensions, empty files, files over
-/// [`MAX_PROJECT_SEARCH_FILE_SIZE`], and files whose bytes are binary, in
-/// an encoding a byte regex cannot match, or hold a NUL anywhere. A bounded
-/// one (`end_offset` set) searches its range as is, counting lines from
-/// `cursor.running_line`.
+/// What is not text is skipped: known binary extensions, empty files, files
+/// over [`MAX_PROJECT_SEARCH_FILE_SIZE`], and files whose bytes are binary,
+/// in an encoding a byte regex cannot match, or hold a NUL anywhere.
 pub fn default_search_file(
     fs: &dyn FileSystem,
     path: &Path,
@@ -1439,33 +1421,27 @@ pub fn default_search_file(
         return Ok(vec![]);
     }
     cursor.done = true;
-    let unbounded = cursor.offset == 0 && cursor.end_offset.is_none();
-    if unbounded && has_binary_extension(path) {
+    if has_binary_extension(path) {
         return Ok(vec![]);
     }
     let size = fs.metadata(path)?.size;
-    if unbounded && (size == 0 || size > MAX_PROJECT_SEARCH_FILE_SIZE) {
+    if size == 0 || size > MAX_PROJECT_SEARCH_FILE_SIZE {
         return Ok(vec![]);
     }
     let contents = fs.read_file(path)?;
-    if unbounded {
-        let (encoding, is_binary) =
-            crate::model::encoding::detect_encoding_or_binary(&contents, false);
-        if is_binary || !is_byte_searchable_encoding(encoding) || contents.contains(&0) {
-            return Ok(vec![]);
-        }
+    let (encoding, is_binary) = crate::model::encoding::detect_encoding_or_binary(&contents, false);
+    if is_binary || !is_byte_searchable_encoding(encoding) || contents.contains(&0) {
+        return Ok(vec![]);
     }
 
     let query = opts.query(pattern)?;
     let mut buffer =
         crate::model::buffer::TextBuffer::from_bytes(contents, std::sync::Arc::new(NoopFileSystem));
-    let end = cursor.end_offset.unwrap_or(usize::MAX);
-    let found = crate::model::buffer::RegexSearch::new(&query, cursor.offset..end, &buffer)
-        .with_lines(cursor.running_line)
+    let len = buffer.len();
+    crate::model::buffer::RegexSearch::new(&query, 0..len, &buffer)
+        .with_lines(1)
         .run(&mut buffer, opts.max_matches)
-        .map_err(io::Error::other)?;
-    cursor.offset = end.min(buffer.len());
-    Ok(found)
+        .map_err(io::Error::other)
 }
 
 // ============================================================================
@@ -3487,42 +3463,6 @@ mod tests {
         assert_eq!(all_matches.len(), 1);
         assert_eq!(all_matches[0].line, total_lines); // last line
         assert_eq!(all_matches[0].context, "FINDME at the end");
-    }
-
-    #[test]
-    fn test_search_file_end_offset_bounds_search() {
-        let fs = StdFileSystem;
-        let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir.path().join("bounded.txt");
-
-        // "AAA\nBBB\nCCC\nDDD\n" — each line is 4 bytes
-        fs.write_file(&path, b"AAA\nBBB\nCCC\nDDD\n").unwrap();
-
-        // Search only the first 8 bytes ("AAA\nBBB\n") — should find AAA and BBB
-        let opts = make_search_opts(true);
-        let mut cursor = FileSearchCursor::for_range(0, 8, 1);
-        let mut matches = Vec::new();
-        while !cursor.done {
-            matches.extend(fs.search_file(&path, "AAA", &opts, &mut cursor).unwrap());
-        }
-        assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].context, "AAA");
-        assert_eq!(matches[0].line, 1);
-
-        // CCC is at byte 8, outside the first 8 bytes
-        let mut cursor = FileSearchCursor::for_range(0, 8, 1);
-        let ccc = fs.search_file(&path, "CCC", &opts, &mut cursor).unwrap();
-        assert!(ccc.is_empty(), "CCC should not be found in first 8 bytes");
-
-        // Search bytes 8..16 ("CCC\nDDD\n") — should find CCC
-        let mut cursor = FileSearchCursor::for_range(8, 16, 3);
-        let mut matches = Vec::new();
-        while !cursor.done {
-            matches.extend(fs.search_file(&path, "CCC", &opts, &mut cursor).unwrap());
-        }
-        assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].context, "CCC");
-        assert_eq!(matches[0].line, 3);
     }
 
     // ====================================================================

@@ -3366,7 +3366,7 @@ fn test_interactive_plain_replace_honors_case_insensitive_search() {
 }
 
 /// Issue #3575 on a lazily loaded large file: plain-text replace with case
-/// folding (the default) goes through the chunked scan, so it reaches every
+/// folding (the default) goes through the windowed search, so it reaches every
 /// occurrence in parts of the file not yet loaded, in either case.
 #[test]
 fn test_plain_replace_case_insensitive_in_a_large_file() {

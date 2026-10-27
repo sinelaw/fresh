@@ -1813,14 +1813,14 @@ impl TextBuffer {
 
     /// Get all text as a single Vec<u8>
     /// Returns None if any buffers are unloaded (lazy loading)
-    /// CRATE-PRIVATE: External code should use get_text_range_mut() or DocumentModel methods
+    /// CRATE-PRIVATE: External code should use get_text_range_mut()
     pub(crate) fn get_all_text(&self) -> Option<Vec<u8>> {
         self.get_text_range(0, self.total_bytes())
     }
 
     /// Get all text as a String
     /// Returns None if any buffers are unloaded (lazy loading)
-    /// CRATE-PRIVATE: External code should use get_text_range_mut() or DocumentModel methods
+    /// CRATE-PRIVATE: External code should use get_text_range_mut()
     pub(crate) fn get_all_text_string(&self) -> Option<String> {
         self.get_all_text()
             .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
@@ -1829,7 +1829,7 @@ impl TextBuffer {
     /// Get text from a byte range as bytes
     /// CRATE-PRIVATE: Returns empty vector if any buffers are unloaded (silently fails!)
     /// Only use this when you KNOW the data is loaded (e.g., for syntax highlighting small regions)
-    /// External code should use get_text_range_mut() or DocumentModel methods
+    /// External code should use get_text_range_mut()
     pub fn slice_bytes(&self, range: Range<usize>) -> Vec<u8> {
         self.get_text_range(range.start, range.end.saturating_sub(range.start))
             .unwrap_or_default()
@@ -3183,27 +3183,6 @@ impl TextBuffer {
         LineIterator::from_mid_line(self, byte_pos, estimated_line_length)
     }
 
-    /// Iterate over lines starting from a given byte offset, with line numbers
-    ///
-    /// This is a more efficient alternative to using line_iterator() + offset_to_position()
-    /// because it calculates line numbers incrementally during iteration by accumulating
-    /// line_feed_cnt from pieces (which is already tracked in the piece tree).
-    ///
-    /// Returns: Iterator yielding (byte_offset, content, line_number: Option<usize>)
-    /// - line_number is Some(n) for small files with line metadata
-    /// - line_number is None for large files without line metadata
-    ///
-    /// # Performance
-    /// - O(1) per line for line number calculation (vs O(log n) per line with offset_to_position)
-    /// - Uses single source of truth: piece tree's existing line_feed_cnt metadata
-    pub fn iter_lines_from(
-        &mut self,
-        byte_pos: usize,
-        max_lines: usize,
-    ) -> Result<TextBufferLineIterator> {
-        TextBufferLineIterator::new(self, byte_pos, max_lines)
-    }
-
     // Legacy API methods for backwards compatibility
 
     /// Get the line number for a given byte offset
@@ -3294,169 +3273,3 @@ mod tests;
 
 #[cfg(test)]
 mod property_tests;
-
-/// Line data with optional line number
-#[derive(Debug, Clone)]
-pub struct LineData {
-    /// Byte offset where this line starts in the document
-    pub byte_offset: usize,
-    /// Line content (without trailing newline)
-    pub content: String,
-    /// Whether this line ends with a newline
-    pub has_newline: bool,
-    /// Line number (None for large files without line metadata)
-    pub line_number: Option<usize>,
-}
-
-/// Iterator over lines in a TextBuffer that efficiently tracks line numbers
-/// using piece tree metadata (single source of truth)
-pub struct TextBufferLineIterator {
-    /// Collected lines (we collect all at once since we need mutable access to load chunks)
-    lines: Vec<LineData>,
-    /// Current index in the lines vector
-    current_index: usize,
-    /// Whether there are more lines after these
-    pub has_more: bool,
-}
-
-impl TextBufferLineIterator {
-    pub(crate) fn new(buffer: &mut TextBuffer, byte_pos: usize, max_lines: usize) -> Result<Self> {
-        let buffer_len = buffer.len();
-        if byte_pos >= buffer_len {
-            return Ok(Self {
-                lines: Vec::new(),
-                current_index: 0,
-                has_more: false,
-            });
-        }
-
-        // Check if buffer has line metadata (None for large files > 1MB)
-        let has_line_metadata = buffer.line_count().is_some();
-
-        // Determine starting line number by querying piece tree once
-        // (only if we have line metadata)
-        let mut current_line = if has_line_metadata {
-            buffer.offset_to_position(byte_pos).map(|pos| pos.line)
-        } else {
-            None
-        };
-
-        let mut lines = Vec::with_capacity(max_lines);
-        let mut current_offset = byte_pos;
-        let estimated_line_length = 80; // Use default estimate
-
-        // Collect lines by scanning forward
-        for _ in 0..max_lines {
-            if current_offset >= buffer_len {
-                break;
-            }
-
-            let line_start = current_offset;
-            let line_number = current_line;
-
-            // Estimate how many bytes to load for this line
-            let estimated_max_line_length = estimated_line_length * 3;
-            let bytes_to_scan = estimated_max_line_length.min(buffer_len - current_offset);
-
-            // Load chunk (this handles lazy loading)
-            let chunk = buffer.get_text_range_mut(current_offset, bytes_to_scan)?;
-
-            // Scan for newline
-            let mut line_len = 0;
-            let mut found_newline = false;
-            for &byte in chunk.iter() {
-                line_len += 1;
-                if byte == b'\n' {
-                    found_newline = true;
-                    break;
-                }
-            }
-
-            // Handle long lines (rare case)
-            if !found_newline && current_offset + line_len < buffer_len {
-                // Line is longer than expected, load more data
-                let remaining = buffer_len - current_offset - line_len;
-                let additional_bytes = estimated_max_line_length.min(remaining);
-                let more_chunk =
-                    buffer.get_text_range_mut(current_offset + line_len, additional_bytes)?;
-
-                let mut extended_chunk = chunk;
-                extended_chunk.extend_from_slice(&more_chunk);
-
-                for &byte in more_chunk.iter() {
-                    line_len += 1;
-                    if byte == b'\n' {
-                        found_newline = true;
-                        break;
-                    }
-                }
-
-                let line_string = String::from_utf8_lossy(&extended_chunk[..line_len]).into_owned();
-                let has_newline = line_string.ends_with('\n');
-                let content = if has_newline {
-                    line_string[..line_string.len() - 1].to_string()
-                } else {
-                    line_string
-                };
-
-                lines.push(LineData {
-                    byte_offset: line_start,
-                    content,
-                    has_newline,
-                    line_number,
-                });
-
-                current_offset += line_len;
-                if has_line_metadata && found_newline {
-                    current_line = current_line.map(|n| n + 1);
-                }
-                continue;
-            }
-
-            // Normal case
-            let line_string = String::from_utf8_lossy(&chunk[..line_len]).into_owned();
-            let has_newline = line_string.ends_with('\n');
-            let content = if has_newline {
-                line_string[..line_string.len() - 1].to_string()
-            } else {
-                line_string
-            };
-
-            lines.push(LineData {
-                byte_offset: line_start,
-                content,
-                has_newline,
-                line_number,
-            });
-
-            current_offset += line_len;
-            // Increment line number if we have metadata and found a newline
-            if has_line_metadata && found_newline {
-                current_line = current_line.map(|n| n + 1);
-            }
-        }
-
-        // Check if there are more lines
-        let has_more = current_offset < buffer_len;
-
-        Ok(Self {
-            lines,
-            current_index: 0,
-            has_more,
-        })
-    }
-}
-
-impl Iterator for TextBufferLineIterator {
-    type Item = LineData;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.current_index < self.lines.len() {
-            let line = self.lines[self.current_index].clone();
-            self.current_index += 1;
-            Some(line)
-        } else {
-            None
-        }
-    }
-}

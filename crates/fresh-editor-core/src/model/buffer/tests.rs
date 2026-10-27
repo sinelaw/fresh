@@ -2859,7 +2859,8 @@ mod rebuild_pristine_saved_root_tests {
     }
 }
 
-mod chunked_search {
+/// Matches with their line, column and line text.
+mod search_with_lines {
     use super::*;
 
     fn make_buffer(content: &[u8]) -> TextBuffer {

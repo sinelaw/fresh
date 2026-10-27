@@ -1,10 +1,9 @@
 //! Line-scan and search-scan orchestrators on `Editor`.
 //!
-//! Drive the chunked-scan subsystems extracted in phase 2 (LineScan,
-//! SearchScan) one batch per render frame. Coordinate with
-//! self.buffers (to read leaves and apply scan results), the tokio
-//! runtime (for concurrent filesystem I/O), and the status message
-//! (for progress reporting).
+//! Drive the line-feed scan one batch per render frame, and the Ctrl+F
+//! search a time slice per frame. Coordinate with self.buffers (to read
+//! leaves and apply scan results), the tokio runtime (for concurrent
+//! filesystem I/O), and the status message (for progress reporting).
 
 use fresh_i18n::t;
 
@@ -262,18 +261,15 @@ impl Editor {
         };
         if let Err(e) = scan.run(&mut state.buffer, budget) {
             tracing::warn!("Search scan error: {e}");
-            self.set_status_message(format!("Search failed: {e}"));
+            self.set_status_message(t!("search.failed", error = e).to_string());
             return;
         }
         if scan.is_done() {
             self.finish_search_scan(scan);
         } else {
             let pct = scan.progress_percent(state.buffer.len());
-            self.set_status_message(format!(
-                "Searching... {}% ({} matches so far)",
-                pct,
-                scan.match_count()
-            ));
+            let progress = fresh_i18n::tn!("search.progress", scan.match_count(), percent = pct);
+            self.set_status_message(progress.to_string());
             self.active_window_mut().search_scan.start(scan);
         }
     }
@@ -303,12 +299,12 @@ impl Editor {
         let (matches, capped) = scan.into_matches();
         if matches.is_empty() {
             self.active_window_mut().search_state = None;
-            let msg = if search_range.is_some() {
-                format!("No matches found for '{}' in selection", query)
+            let key = if search_range.is_some() {
+                "search.none_in_selection"
             } else {
-                format!("No matches found for '{}'", query)
+                "search.none"
             };
-            self.set_status_message(msg);
+            self.set_status_message(t!(key, search = query).to_string());
             return;
         }
 
