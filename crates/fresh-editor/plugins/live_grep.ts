@@ -1087,6 +1087,8 @@ async function searchFiles(query: string, cancellation?: SearchCancellation): Pr
     });
     return results.map((m) => ({ ...m, source: "files" as const }));
   } catch (e) {
+    // A killed search fails with exit -1; it was superseded, not broken.
+    if (cancellation?.cancelled) return [];
     editor.error(`[live_grep:${provider.name}] ${e}`);
     throw new Error(`${provider.name}: ${e instanceof Error ? e.message : String(e)}`);
   }

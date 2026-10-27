@@ -110,8 +110,9 @@ const finder = new Finder<GrepMatch>(editor, {
 // Search function using git grep. Resolves the repo from the active buffer
 // (so it works from a sub-project buffer even when the workspace root isn't a
 // repo) and runs git inside it via the shared gateway, with Live Grep's
-// git-grep command line: extended regex, and the usual build directories
-// left out. Unlike Live Grep it searches only what git tracks.
+// git-grep command line, but as `git grep` itself searches: git's basic
+// regex, so `foo(` is literal, and every tracked file, `target/` and
+// `node_modules/` too — and nothing untracked.
 async function searchWithGitGrep(query: string, cancellation: SearchCancellation): Promise<GrepMatch[]> {
   const repo = await resolveGitRepo(editor);
   if (!repo) {
@@ -119,7 +120,11 @@ async function searchWithGitGrep(query: string, cancellation: SearchCancellation
     return [];
   }
 
-  const args = gitGrepArgs(query, { maxResults: MAX_RESULTS, caseSensitive, regex: true, untracked: false }, null);
+  const args = gitGrepArgs(
+    query,
+    { maxResults: MAX_RESULTS, caseSensitive, regex: "basic", includeIgnored: true, untracked: false },
+    null,
+  );
   const process = git(editor, repo, args);
   // A newer query, or closing the prompt, kills this one.
   cancellation.onCancel(() => process.kill());

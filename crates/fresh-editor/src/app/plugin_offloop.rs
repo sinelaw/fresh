@@ -369,12 +369,19 @@ fn push_capped(
     max_results: usize,
     mut matches: Vec<GrepMatch>,
 ) {
-    let seen = match_count.load(Ordering::Relaxed);
-    matches.truncate(max_results.saturating_sub(seen));
+    // Claim room atomically: several files' searches push at once, and a
+    // separate check and add would let each see room for its whole batch.
+    let wanted = matches.len();
+    let Ok(seen) = match_count.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |seen| {
+        let room = max_results.saturating_sub(seen);
+        (room > 0).then(|| seen + wanted.min(room))
+    }) else {
+        return;
+    };
+    matches.truncate(max_results - seen);
     if matches.is_empty() {
         return;
     }
-    match_count.fetch_add(matches.len(), Ordering::Relaxed);
     let mut state = match handle.state.lock() {
         Ok(s) => s,
         Err(poisoned) => poisoned.into_inner(),

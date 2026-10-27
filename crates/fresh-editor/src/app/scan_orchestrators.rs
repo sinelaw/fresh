@@ -280,6 +280,8 @@ impl Editor {
         // The matches are for that buffer: if another is active now, they
         // would be shown and selected in the wrong one.
         if self.active_buffer() != scan.buffer_id {
+            // Nor leave "Searching… N%" standing for a search that is gone.
+            self.set_status_message(t!("search.cancelled").to_string());
             return;
         }
 

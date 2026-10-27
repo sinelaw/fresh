@@ -441,6 +441,7 @@ def cmd_info(id, p):
 # `\r\n`), and a file in a legacy code page other than Windows-1252 (the
 # editor guesses which; this reads them all as Windows-1252).
 MAX_SEARCH_FILE_SIZE = 10 * 1024 * 1024
+CONTEXT_BEFORE_MATCH = 4096
 DETECT_SAMPLE = 8 * 1024
 # Control bytes no text holds (all but tab, LF, VT, FF, CR and ESC; and DEL).
 BINARY_CONTROL = re.compile(b"[\x00-\x08\x0e-\x1a\x1c-\x1f\x7f]")
@@ -525,7 +526,11 @@ def cmd_search_file(id, p):
         line_end = text.find("\n", start)
         if line_end == -1:
             line_end = len(text)
-        context = text[line_start:line_end]
+        # From the line's start, or CONTEXT_BEFORE_MATCH bytes before the
+        # match on a longer line, as the local search gives it.
+        head = text[line_start:start].encode("utf-8", errors="surrogateescape")
+        head = head[-CONTEXT_BEFORE_MATCH:].decode("utf-8", errors="surrogateescape")
+        context = head + text[start:line_end]
         if context.endswith("\r"):
             context = context[:-1]
         matches.append({

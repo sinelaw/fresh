@@ -6930,10 +6930,12 @@ pub struct GrepMatch {
     /// 1-indexed line number
     #[ts(type = "number")]
     pub line: usize,
-    /// 1-indexed column number
+    /// 1-indexed byte column within the line
     #[ts(type = "number")]
     pub column: usize,
-    /// The matched line content (for display)
+    /// The matched line, for display: from its start, or on a long line from
+    /// 4096 bytes before the match — so the match is `min(column - 1, 4096)`
+    /// bytes into it.
     pub context: String,
 }
 

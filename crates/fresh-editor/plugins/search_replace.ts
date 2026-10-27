@@ -1360,7 +1360,8 @@ async function performSearch(pattern: string, silent?: boolean): Promise<SearchR
       for (const m of chunk) {
         const result: SearchResult = {
           match: m,
-          contextAt: Math.max(0, m.column - 1),
+          // `context` starts at most 4096 bytes before the match.
+          contextAt: Math.min(Math.max(0, m.column - 1), 4096),
           contextLen: m.length,
           selected: true,
         };

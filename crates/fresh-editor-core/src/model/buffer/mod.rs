@@ -30,7 +30,9 @@ pub use persistence::Persistence;
 pub use save::SudoSaveRequired;
 #[cfg(test)]
 pub(crate) use save::{RecipeAction, WriteRecipe};
-pub use search::{expand_replacement, BufferSearch, RegexSearch, SearchMatch, SearchQuery};
+pub use search::{
+    expand_replacement, BufferSearch, RegexSearch, SearchMatch, SearchQuery, CONTEXT_BEFORE_MATCH,
+};
 
 /// Error returned when a large file has a non-resynchronizable encoding
 /// and requires user confirmation before loading the entire file into memory.

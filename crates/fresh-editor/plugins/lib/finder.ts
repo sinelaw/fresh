@@ -997,6 +997,11 @@ export class Finder<T> {
       }
     } catch (e) {
       finished();
+      // A search that was cancelled (its process killed) or superseded
+      // failing is expected, not news: the newer search's results replace it.
+      if (cancellation.cancelled || this.promptState.searchVersion !== thisVersion) {
+        return;
+      }
       const errorMsg = String(e);
       // "killed" / "not found" come from the cancellation path (a
       // newer search aborted this one). Suppress those entirely —

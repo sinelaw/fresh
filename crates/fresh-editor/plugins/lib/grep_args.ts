@@ -44,7 +44,9 @@ export interface GrepArgOpts {
   maxResults: number;
   includeIgnored?: boolean;
   wholeWord?: boolean;
-  regex?: boolean;
+  /** Regex (the default), fixed string (`false`), or for git grep, git's
+   *  basic regex (`"basic"`), where `(`, `+` and `|` are literal. */
+  regex?: boolean | "basic";
   caseSensitive?: boolean;
   /** `.gitignore` lines, relative to the directory searched. */
   ignorePatterns?: readonly string[];
@@ -227,11 +229,12 @@ export function gitGrepArgs(query: string, o: GrepArgOpts, prefix: string | null
   if (!o.caseSensitive) args.push("-i");
   // Default git-grep is basic regex; use extended when regex is on, or
   // fixed-strings when it's off so the query is matched literally.
-  args.push(o.regex === false ? "-F" : "-E");
+  if (o.regex !== "basic") args.push(o.regex === false ? "-F" : "-E");
   if (o.wholeWord) args.push("-w");
-  // Stop honouring the standard ignore files so `.gitignore`d content is
-  // searched too.
-  if (o.includeIgnored) args.push("--no-exclude-standard");
+  // Stop honouring the standard ignore files so `.gitignore`d untracked
+  // content is searched too (git refuses the flag for tracked files alone,
+  // which ignore files never hide).
+  if (o.includeIgnored && o.untracked !== false) args.push("--no-exclude-standard");
   args.push("-e", query);
   // Exclude-only pathspecs search what no pathspec would (git 2.13+).
   const specs = gitExcludePathspecs(parseIgnoreLines(o.ignorePatterns ?? []), prefix);

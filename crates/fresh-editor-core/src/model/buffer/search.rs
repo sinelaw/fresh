@@ -21,9 +21,17 @@ pub struct SearchMatch {
     pub line: usize,
     /// 1-based byte column within the line.
     pub column: usize,
-    /// Content of the line containing the match (no trailing newline).
+    /// The line holding the match, without its line break: from its start,
+    /// or from [`CONTEXT_BEFORE_MATCH`] bytes before the match on a longer
+    /// line — so the match is `min(column - 1, CONTEXT_BEFORE_MATCH)` bytes
+    /// into it — to its end, or to the end of the window read for a line
+    /// running on past it.
     pub context: String,
 }
+
+/// How far into a long line before its match a [`SearchMatch::context`]
+/// reaches.
+pub const CONTEXT_BEFORE_MATCH: usize = 4096;
 
 /// A query compiled for searching: the regex every search builds for it,
 /// and how far each window of a search must reach back into the last so a
@@ -135,7 +143,9 @@ impl RegexSearch {
             pos: range.start.min(end),
             last_end: None,
             lines: None,
-            done: false,
+            // A range starting past the end has nothing in it, not even an
+            // empty match at the buffer's end.
+            done: range.start > end,
         }
     }
 
@@ -189,7 +199,17 @@ impl RegexSearch {
                 self.done = true;
                 break;
             }
-            let read_from = self.pos.saturating_sub(CONTEXT);
+            let window_start = self.pos;
+            // With lines, from the line's start (or as far back as a match's
+            // context reaches), so each match's context is its line.
+            let read_from = match &self.lines {
+                Some(lines) => self.pos.saturating_sub(CONTEXT).min(
+                    lines
+                        .line_start
+                        .max(self.pos.saturating_sub(CONTEXT_BEFORE_MATCH)),
+                ),
+                None => self.pos.saturating_sub(CONTEXT),
+            };
             let window_end = self.pos.saturating_add(self.window).min(end);
             let read_to = (window_end + CONTEXT).min(len);
             let bytes = buffer.get_text_range_mut(read_from, read_to - read_from)?;
@@ -236,10 +256,15 @@ impl RegexSearch {
                 self.done = true;
                 break;
             }
-            // Always forward, even for an `overlap` as long as a window.
-            let next = self
-                .pos
-                .max(window_end.saturating_sub(self.overlap).max(self.pos + 1));
+            // On from `overlap` back into this window, or from where the last
+            // match ended if that is later — a match may start right there.
+            // A window no longer than `overlap` that found nothing to move
+            // past is read again, bigger, so the search always goes forward.
+            let next = self.pos.max(window_end.saturating_sub(self.overlap));
+            if next <= window_start {
+                self.window = self.window.saturating_mul(2);
+                continue;
+            }
             self.count_lines(&bytes, read_from, next);
             self.pos = next;
             self.window = self.base_window;
@@ -292,7 +317,10 @@ impl RegexSearch {
         if let Some(lines) = &self.lines {
             found.line = lines.line;
             found.column = start - lines.line_start + 1;
-            let from = lines.line_start.max(read_from) - read_from;
+            let from = lines
+                .line_start
+                .max(start.saturating_sub(CONTEXT_BEFORE_MATCH))
+                - read_from;
             let to = bytes[start - read_from..]
                 .iter()
                 .position(|&b| b == b'\n')

@@ -256,6 +256,16 @@ eq(grepArgs("q", terminals).slice(-4), ["--include=*.txt", "--", "q", "/t"], "gr
 
 eq(gitGrepArgs("q", base, null).includes("--untracked"), true, "git grep: untracked files by default");
 eq(gitGrepArgs("q", { ...base, untracked: false }, null).includes("--untracked"), false, "git grep: tracked files only");
+eq(
+  gitGrepArgs("q", { ...base, regex: "basic" }, null).some((a) => a === "-E" || a === "-F"),
+  false,
+  "git grep: basic regex passes neither -E nor -F",
+);
+eq(
+  gitGrepArgs("q", { ...base, includeIgnored: true, untracked: false }, null).includes("--no-exclude-standard"),
+  false,
+  "git grep: no --no-exclude-standard for tracked files alone (git refuses it)",
+);
 
 if (failures > 0) {
   console.log(`${failures} failure(s)`);

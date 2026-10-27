@@ -3473,7 +3473,7 @@ mod regex_matches_loading {
     /// greedy runs, multi-byte text and empty matches.
     const PATTERNS: &[&str] = &[
         "a", "ab", "(?i)ab", r"\bab\b", "ab|b", "a+", r"\s+", "é", "(?i)É", "(?m)^", "(?m)$",
-        "(?m)^a", "b?",
+        "(?m)^a", "b?", "[^\n]{5}",
     ];
 
     /// The reference: the regex run over the whole text with full context,
@@ -3631,8 +3631,12 @@ mod regex_matches_loading {
                 found.iter().map(|m| (m.byte_offset, m.length)).collect();
             prop_assert_eq!(&got, &expected);
             for m in &found {
-                let (line, column, _) = line_info(&model, m.byte_offset);
+                let (line, column, context) = line_info(&model, m.byte_offset);
                 prop_assert_eq!((m.line, m.column), (line, column));
+                // The context holds the line from its start, wherever the
+                // windows fell (its tail may stop at a window's end).
+                let head = m.column - 1;
+                prop_assert_eq!(&m.context.as_bytes()[..head], &context.as_bytes()[..head]);
             }
         }
 
@@ -3696,6 +3700,52 @@ mod regex_matches_loading {
         }
     }
 
+    /// A match starting where the last one ended, running on past the
+    /// window that found the last one, is found by the next window.
+    #[test]
+    fn back_to_back_matches_across_a_window_boundary() {
+        let re = regex::bytes::Regex::new("abcdef").unwrap();
+        let mut text = vec![b'X'; LOAD_CHUNK_SIZE - 6];
+        text.extend_from_slice(b"abcdefabcdef");
+        let mut buf = TextBuffer::from_bytes(text, test_fs());
+        let len = buf.len();
+        assert_eq!(
+            buf.find_regex_matches(&q(&re, 24), 0..len, usize::MAX)
+                .unwrap(),
+            vec![(LOAD_CHUNK_SIZE - 6, 6), (LOAD_CHUNK_SIZE, 6)]
+        );
+    }
+
+    /// A match's context is its line even where the line began in an
+    /// earlier window; on a line longer than `CONTEXT_BEFORE_MATCH` before
+    /// the match, it starts that far before it.
+    #[test]
+    fn context_reaches_back_into_earlier_windows() {
+        let re = regex::bytes::Regex::new("needle").unwrap();
+        let line = format!("{}needle{}", "x".repeat(90), "y".repeat(10));
+        let mut buf = TextBuffer::from_bytes(format!("top\n{line}\n").into_bytes(), test_fs());
+        let len = buf.len();
+        let found = RegexSearch::new(&q(&re, 8), 0..len, &buf)
+            .with_lines(1)
+            .with_window(40)
+            .run(&mut buf, usize::MAX)
+            .unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!((found[0].line, found[0].column), (2, 91));
+        assert_eq!(found[0].context, line);
+
+        let long = format!("{}needle", "x".repeat(CONTEXT_BEFORE_MATCH + 100));
+        let mut buf = TextBuffer::from_bytes(long.clone().into_bytes(), test_fs());
+        let len = buf.len();
+        let found = RegexSearch::new(&q(&re, 8), 0..len, &buf)
+            .with_lines(1)
+            .with_window(64)
+            .run(&mut buf, usize::MAX)
+            .unwrap();
+        assert_eq!(found[0].column, CONTEXT_BEFORE_MATCH + 101);
+        assert_eq!(found[0].context, long[100..]);
+    }
+
     #[test]
     fn edge_cases() {
         let re = regex::bytes::Regex::new("ab").unwrap();
@@ -3754,6 +3804,20 @@ mod regex_matches_loading {
             buf.find_regex_matches(&q(&empty, 8), 0..2, usize::MAX)
                 .unwrap(),
             vec![(0, 0)]
+        );
+
+        // A range starting past the end holds nothing, not even the empty
+        // match at the buffer's end (query-replace's `n` past it wraps).
+        let dollar = regex::bytes::Regex::new("(?m)$").unwrap();
+        let mut buf = TextBuffer::from_bytes(b"a\nb".to_vec(), test_fs());
+        assert!(buf
+            .find_regex_matches(&q(&dollar, 8), 4..9, usize::MAX)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            buf.find_regex_matches(&q(&dollar, 8), 3..3, usize::MAX)
+                .unwrap(),
+            vec![(3, 0)]
         );
 
         // An overlap longer than the window still moves forward.
