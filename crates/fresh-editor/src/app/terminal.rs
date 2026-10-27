@@ -2459,7 +2459,7 @@ impl Window {
                     fs: fs.as_ref(),
                     path: &backing_file,
                 };
-                match state.write_backing_file_tail(&mut file) {
+                match state.write_viewed_backing_file_tail(&mut file) {
                     Ok(head) => prepended = head,
                     Err(e) => {
                         tracing::error!("Failed to append visible screen to backing file: {}", e)

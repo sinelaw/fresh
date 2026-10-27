@@ -1287,3 +1287,72 @@ fn test_large_file_recovery_restore_has_bounded_io() {
         );
     }
 }
+
+/// A large file's restored edits are its own bytes, not text: the chunk
+/// two nearby edits merge into carries the file's bytes between them, and
+/// one that isn't UTF-8 (a stray Latin-1 `é`) must come back as itself, not
+/// as U+FFFD (issue #3645).
+#[test]
+fn test_large_file_recovery_keeps_bytes_that_are_not_utf8() {
+    use fresh::config::Config;
+    use fresh::config_io::DirectoryContext;
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    fs::create_dir(&project_dir).unwrap();
+    let file_path = project_dir.join("latin1.log");
+    let mut original = b"ab\xE9cd\n".to_vec();
+    original.extend("zzzz\n".repeat(400).as_bytes());
+    fs::write(&file_path, &original).unwrap();
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+    let config = || {
+        let mut config = Config::default();
+        config.editor.hot_exit = true;
+        config.editor.large_file_threshold_bytes = 1000;
+        config
+    };
+    let harness = || {
+        EditorTestHarness::create(
+            80,
+            24,
+            HarnessOptions::new()
+                .with_config(config())
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap()
+    };
+
+    // Session 1: edit either side of the byte, back up, stop
+    {
+        let mut harness = harness();
+        harness.open_file(&file_path).unwrap();
+        assert!(harness.editor().active_state().buffer.is_large_file());
+        harness.type_text("EDIT").unwrap();
+        harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+        harness.type_text("MORE").unwrap();
+        harness.advance_time(std::time::Duration::from_millis(2100));
+        let saved = harness
+            .editor_mut()
+            .auto_recovery_save_dirty_buffers()
+            .unwrap();
+        assert!(saved > 0, "should have backed up the edits");
+        harness.shutdown(true).unwrap();
+    }
+
+    // Session 2: restore and save; the file holds exactly the edited bytes
+    let mut harness = harness();
+    assert!(harness.startup(true, &[]).unwrap(), "should restore");
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| !h.editor().active_state().buffer.is_modified())
+        .unwrap();
+    let mut expected = b"EDITab\xE9cdMORE\n".to_vec();
+    expected.extend("zzzz\n".repeat(400).as_bytes());
+    assert_eq!(fs::read(&file_path).unwrap(), expected);
+}

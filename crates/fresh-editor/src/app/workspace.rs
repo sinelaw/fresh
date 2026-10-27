@@ -2261,7 +2261,7 @@ impl crate::app::window::Window {
                         fs: fs.as_ref(),
                         path: &backing_path,
                     };
-                    if let Err(e) = state.write_backing_file_tail(&mut file) {
+                    if let Err(e) = state.sync_backing_file_tail(&mut file) {
                         tracing::warn!(
                             "Failed to sync terminal {:?} to backing file: {}",
                             terminal_id,
