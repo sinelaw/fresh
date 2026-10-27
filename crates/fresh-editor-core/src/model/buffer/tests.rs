@@ -3732,7 +3732,13 @@ mod regex_matches_loading {
             .unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!((found[0].line, found[0].column), (2, 91));
-        assert_eq!(found[0].context, line);
+        // The line from its start through the match; its tail may stop at
+        // the end of the window the match was read in.
+        assert!(
+            found[0].context.len() >= 96 && line.starts_with(&found[0].context),
+            "context {:?}",
+            found[0].context
+        );
 
         let long = format!("{}needle", "x".repeat(CONTEXT_BEFORE_MATCH + 100));
         let mut buf = TextBuffer::from_bytes(long.clone().into_bytes(), test_fs());
