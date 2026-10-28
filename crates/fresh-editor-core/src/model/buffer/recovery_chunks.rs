@@ -157,37 +157,32 @@ impl<'a> Chunker<'a> {
     }
 
     fn complete(&self, pending: Pending<'a>) -> io::Result<RecoveryChunk> {
-        // The unloaded stretches are of the one file, near each other: read
-        // the span they are in at once
-        let mut files = pending.parts.iter().filter_map(|part| match part {
-            Part::File(path, range) => Some((*path, range)),
-            Part::Bytes(_) => None,
-        });
-        let span = match files.next() {
-            Some((path, first)) => {
-                let (start, end) = files.fold((first.start, first.end), |(s, e), (p, r)| {
-                    debug_assert_eq!(p, path, "one original file");
-                    (s.min(r.start), e.max(r.end))
-                });
-                let bytes = self.fs.read_range(path, start as u64, end - start)?;
-                if bytes.len() != end - start {
+        // The unloaded stretches are of the one file, mostly near each other:
+        // each span of them is read in one go
+        let (spans, span_of) = read_spans(&pending.parts);
+        let read = spans
+            .iter()
+            .map(|(path, span)| {
+                let bytes = self.fs.read_range(path, span.start as u64, span.len())?;
+                if bytes.len() != span.len() {
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
                         format!("{} is shorter than when it was opened", path.display()),
                     ));
                 }
-                Some((start, bytes))
-            }
-            None => None,
-        };
+                Ok(bytes)
+            })
+            .collect::<io::Result<Vec<_>>>()?;
+        let mut span_of = span_of.into_iter();
         let mut content = Vec::new();
         for part in &pending.parts {
-            match (part, &span) {
-                (Part::Bytes(bytes), _) => content.extend_from_slice(bytes),
-                (Part::File(_, range), Some((start, bytes))) => {
-                    content.extend_from_slice(&bytes[range.start - start..range.end - start])
+            match part {
+                Part::Bytes(bytes) => content.extend_from_slice(bytes),
+                Part::File(_, range) => {
+                    let i = span_of.next().expect("a span for every file part");
+                    let start = spans[i].1.start;
+                    content.extend_from_slice(&read[i][range.start - start..range.end - start]);
                 }
-                (Part::File(..), None) => unreachable!("a file part makes a span"),
             }
         }
         Ok(RecoveryChunk::new(
@@ -196,6 +191,34 @@ impl<'a> Chunker<'a> {
             content,
         ))
     }
+}
+
+/// Unloaded stretches of a chunk this close together are read as one span,
+/// the bytes between included; farther apart (a large deletion between
+/// them), separately, so a chunk never reads much more than it holds.
+const READ_SPAN_GAP: usize = 64 * 1024;
+
+/// The spans of the file to read for `parts`' unloaded stretches, and for
+/// each of those stretches, in order, the span it is in.
+fn read_spans<'a>(parts: &[Part<'a>]) -> (Vec<(&'a Path, Range<usize>)>, Vec<usize>) {
+    let mut spans: Vec<(&'a Path, Range<usize>)> = Vec::new();
+    let mut span_of = Vec::new();
+    for part in parts {
+        if let Part::File(path, range) = part {
+            match spans.last_mut() {
+                Some((p, span))
+                    if p == path
+                        && range.start >= span.start
+                        && range.start <= span.end + READ_SPAN_GAP =>
+                {
+                    span.end = span.end.max(range.end);
+                }
+                _ => spans.push((path, range.clone())),
+            }
+            span_of.push(spans.len() - 1);
+        }
+    }
+    (spans, span_of)
 }
 
 #[cfg(test)]
@@ -293,6 +316,31 @@ mod tests {
             }
             prop_assert_eq!(content(&mut buffer), expected);
         }
+    }
+
+    /// Stretches near each other are read as one span; one far past the
+    /// last (a large deletion between) starts a span of its own.
+    #[test]
+    fn read_spans_skip_what_lies_far_between() {
+        let path = Path::new("/f");
+        let other = Path::new("/g");
+        let parts = [
+            Part::File(path, 0..10),
+            Part::Bytes(b"new"),
+            Part::File(path, 20..30),
+            Part::File(path, 1_000_000..1_000_010),
+            Part::File(other, 1_000_010..1_000_020),
+        ];
+        let (spans, span_of) = read_spans(&parts);
+        assert_eq!(
+            spans,
+            vec![
+                (path, 0..30),
+                (path, 1_000_000..1_000_010),
+                (other, 1_000_010..1_000_020),
+            ]
+        );
+        assert_eq!(span_of, vec![0, 0, 1, 2]);
     }
 
     /// The issue's case: a replace-all of a match on every line of a file

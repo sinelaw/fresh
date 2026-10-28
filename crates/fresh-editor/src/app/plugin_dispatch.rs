@@ -2112,6 +2112,11 @@ impl Editor {
                         Some(fresh_core::api::TerminalScreen {
                             buffer_id: buffer_id.0 as u64,
                             lines: state.screen_lines(),
+                            file: window
+                                .terminal_backing_files
+                                .get(&info.terminal_id)
+                                .map(|p| p.to_string_lossy().into_owned())
+                                .unwrap_or_default(),
                         })
                     })
                     .collect();

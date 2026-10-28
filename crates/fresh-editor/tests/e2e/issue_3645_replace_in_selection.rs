@@ -116,3 +116,19 @@ fn query_replace_all_stays_inside_a_multi_line_selection() {
     harness.render().unwrap();
     assert_eq!(harness.get_buffer_content().unwrap(), "a1\n@2\n@3\na4\n");
 }
+
+/// Previewing a match with F3 before confirming the search keeps the
+/// selection the replace is confined to: the preview ran the search, which
+/// used to use the selection up.
+#[test]
+fn replace_all_after_an_f3_preview_stays_inside_the_selection() {
+    let mut harness = harness_with(TEXT);
+    select_lines(&mut harness, 2, 3);
+    key(&mut harness, KeyCode::Char('r'), KeyModifiers::CONTROL);
+    harness.type_text("a").unwrap();
+    key(&mut harness, KeyCode::F(3), KeyModifiers::NONE);
+    key(&mut harness, KeyCode::Enter, KeyModifiers::NONE);
+    harness.type_text("@").unwrap();
+    key(&mut harness, KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(harness.get_buffer_content().unwrap(), "a1\n@2\n@3\na4\n");
+}

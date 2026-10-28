@@ -13,7 +13,7 @@
 use crate::model::buffer::Buffer;
 use crate::primitives::highlight_types::HighlightSpan;
 use crate::primitives::word_navigation::{
-    is_unicode_word_char, is_word_char_at, is_word_char_before,
+    char_at, char_before, is_unicode_word_char, is_word_char_at, is_word_char_before,
 };
 use ratatui::style::Color;
 use std::ops::Range;
@@ -124,27 +124,24 @@ pub fn word_at(buffer: &Buffer, position: usize) -> Option<Range<usize>> {
     if !on_word {
         return None;
     }
-    // A window around `position`, on character boundaries so it decodes
-    const WINDOW: usize = 1000;
-    let start = buffer.snap_to_char_boundary(position.saturating_sub(WINDOW));
-    let end = buffer.snap_to_char_boundary((position + WINDOW).min(len));
-    let bytes = buffer.slice_bytes(start..end);
-    let text = std::str::from_utf8(&bytes).ok()?;
-    let rel = position - start;
-    if !text.is_char_boundary(rel) {
-        return None;
+    // Out from the cursor a character at a time, as far as a long word can
+    // be; a byte that is no valid character just ends the word
+    const MAX_WORD: usize = 1000;
+    let mut start = position;
+    while let Some(c) = char_before(buffer, start).filter(|&c| is_unicode_word_char(c)) {
+        if position - start >= MAX_WORD {
+            break;
+        }
+        start -= c.len_utf8();
     }
-    let word_start = text[..rel]
-        .char_indices()
-        .rev()
-        .take_while(|&(_, c)| is_unicode_word_char(c))
-        .last()
-        .map_or(rel, |(i, _)| i);
-    let word_end = text[rel..]
-        .char_indices()
-        .find(|&(_, c)| !is_unicode_word_char(c))
-        .map_or(text.len(), |(i, _)| rel + i);
-    (word_start < word_end).then(|| start + word_start..start + word_end)
+    let mut end = position;
+    while let Some(c) = char_at(buffer, end).filter(|&c| is_unicode_word_char(c)) {
+        if end - position >= MAX_WORD {
+            break;
+        }
+        end += c.len_utf8();
+    }
+    (start < end).then_some(start..end)
 }
 
 /// The most text a match search covers: beyond it (a huge single-line
@@ -255,6 +252,23 @@ mod tests {
         assert_eq!(word_at(&empty, 0), None);
         let trailing_space = Buffer::from_str_test("ab ");
         assert_eq!(word_at(&trailing_space, 3), None);
+    }
+
+    /// A byte that is no valid UTF-8 near the cursor ends a word, and does
+    /// not stop the word under the cursor being found.
+    #[test]
+    fn word_at_finds_words_beside_invalid_bytes() {
+        let fs = Arc::new(NoopFileSystem);
+        let mut buffer = Buffer::empty(fs);
+        buffer.insert_bytes(0, b"ab\xFFcafe\xE9 x caf".to_vec());
+        let cafe = 3;
+        assert_eq!(word_at(&buffer, cafe + 1), Some(cafe..cafe + 4));
+        assert_eq!(word_at(&buffer, 0), Some(0..2));
+        assert_eq!(word_at(&buffer, 2), None);
+        assert_eq!(
+            word_at(&buffer, buffer.len()),
+            Some(buffer.len() - 3..buffer.len())
+        );
     }
 
     /// The text of each whole-word occurrence of the word at `cursor`.

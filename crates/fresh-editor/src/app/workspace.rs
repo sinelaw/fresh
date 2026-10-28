@@ -378,13 +378,15 @@ impl Editor {
         if self.preparing_windows.contains_key(&id) {
             return Ok(());
         }
+        // Ensure terminal backing files have complete state, and persist
+        // per-file global states, before snapshotting.
+        let Some(win) = self.windows.get_mut(&id) else {
+            return Ok(());
+        };
+        win.sync_terminal_backing_files();
         let Some(win) = self.windows.get(&id) else {
             return Ok(());
         };
-
-        // Ensure terminal backing files have complete state, and persist
-        // per-file global states, before snapshotting.
-        win.sync_terminal_backing_files();
         win.save_all_global_file_states();
 
         // The single funnel for every workspace write, so `--no-restore`
@@ -2237,7 +2239,7 @@ impl crate::app::window::Window {
 
     /// Sync this window's active terminal visible screens to their
     /// backing files (so the snapshot captures complete terminal state).
-    pub(crate) fn sync_terminal_backing_files(&self) {
+    pub(crate) fn sync_terminal_backing_files(&mut self) {
         let terminals_to_sync: Vec<_> = self
             .terminal_buffers
             .values()
@@ -2251,6 +2253,7 @@ impl crate::app::window::Window {
 
         let fs = crate::app::terminal::terminal_backing_fs();
         for (terminal_id, backing_path) in terminals_to_sync {
+            self.pin_terminal_view_tail(terminal_id);
             if let Some(handle) = self.terminal_manager.get(terminal_id) {
                 if let Ok(mut state) = handle.state.lock() {
                     // Persists scrolled-off lines not yet in the file too
@@ -2261,7 +2264,7 @@ impl crate::app::window::Window {
                         fs: fs.as_ref(),
                         path: &backing_path,
                     };
-                    if let Err(e) = state.sync_backing_file_tail(&mut file) {
+                    if let Err(e) = state.write_backing_file_tail(&mut file) {
                         tracing::warn!(
                             "Failed to sync terminal {:?} to backing file: {}",
                             terminal_id,

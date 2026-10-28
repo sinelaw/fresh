@@ -26,24 +26,30 @@ pub fn is_unicode_word_char(c: char) -> bool {
     regex_syntax::is_word_character(c)
 }
 
+/// The character starting at byte `pos` of `buffer`; `None` at the end, and
+/// U+FFFD for a byte that starts no valid character.
+pub fn char_at(buffer: &Buffer, pos: usize) -> Option<char> {
+    let bytes = buffer.slice_bytes(pos..(pos + 4).min(buffer.len()));
+    String::from_utf8_lossy(&bytes).chars().next()
+}
+
+/// The character ending at byte `pos` of `buffer`; `None` at the start, and
+/// U+FFFD for bytes that end no valid character.
+pub fn char_before(buffer: &Buffer, pos: usize) -> Option<char> {
+    let bytes = buffer.slice_bytes(pos.saturating_sub(4)..pos);
+    String::from_utf8_lossy(&bytes).chars().next_back()
+}
+
 /// Whether the character starting at byte `pos` of `buffer` is a word
 /// character (see [`is_unicode_word_char`]).
 pub fn is_word_char_at(buffer: &Buffer, pos: usize) -> bool {
-    let bytes = buffer.slice_bytes(pos..(pos + 4).min(buffer.len()));
-    String::from_utf8_lossy(&bytes)
-        .chars()
-        .next()
-        .is_some_and(is_unicode_word_char)
+    char_at(buffer, pos).is_some_and(is_unicode_word_char)
 }
 
 /// Whether the character ending at byte `pos` of `buffer` is a word
 /// character (see [`is_unicode_word_char`]).
 pub fn is_word_char_before(buffer: &Buffer, pos: usize) -> bool {
-    let bytes = buffer.slice_bytes(pos.saturating_sub(4)..pos);
-    String::from_utf8_lossy(&bytes)
-        .chars()
-        .next_back()
-        .is_some_and(is_unicode_word_char)
+    char_before(buffer, pos).is_some_and(is_unicode_word_char)
 }
 
 /// Check if a byte is a word character (alphanumeric or underscore)

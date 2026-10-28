@@ -408,7 +408,9 @@ impl Editor {
             return false;
         }
 
-        self.perform_search(&query);
+        // The prompt is still open: keep the selection it is confined to for
+        // the search its confirm runs, and for a replace after it
+        self.search_keeping_scope(&query);
 
         // `perform_search` stops at the first match at/after the cursor,
         // which is where a forward search should land. A backward one wants
@@ -801,10 +803,11 @@ impl Editor {
         }
     }
 
-    /// The search prompt of a replace was confirmed: search for `query`, as
-    /// a search would, and keep the selection the search was confined to
-    /// (see `start_search_prompt`) for the replace that follows.
-    pub(super) fn search_for_replace(&mut self, query: &str) {
+    /// Search for `query`, keeping the selection the search prompt is
+    /// confined to (see `start_search_prompt`) for what follows: the replace
+    /// a replace prompt goes on to, or the search a prompt still open
+    /// confirms (after F3 has previewed a match).
+    pub(super) fn search_keeping_scope(&mut self, query: &str) {
         let scope = self.active_window().pending_search_range.clone();
         self.perform_search(query);
         self.active_window_mut().pending_search_range = scope;

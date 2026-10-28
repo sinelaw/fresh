@@ -4170,6 +4170,12 @@ type TerminalScreen = {
   * continues are joined into one
   */
   lines: Array<string>;
+  /**
+  * The terminal's backing file (in `getTerminalDir()`), or "" when it
+  * has none. A checkpoint leaves the screen there too, after the
+  * scrollback, until the next one replaces it.
+  */
+  file: string;
 };
 ```
 

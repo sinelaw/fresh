@@ -64,6 +64,11 @@
 //! screen — and never keeps a screen that later scrolled into history as well
 //! (fresh#3151, #3645).
 //!
+//! Those rewrites change only bytes past the history end. Before one, the UI
+//! thread loads those bytes of the terminal's scroll-back view into memory
+//! (`Window::pin_terminal_view_tail`), so a view of a large file, which reads
+//! it lazily, keeps showing what it showed — in every split showing it.
+//!
 //! ## Module Responsibilities
 //!
 //! - `term.rs`: Terminal state and incremental streaming methods

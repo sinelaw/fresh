@@ -2023,6 +2023,8 @@ impl Editor {
 
             // Truncate backing file to remove visible screen tail and scroll to bottom
             if let Some(terminal_id) = self.active_window().get_terminal_id(self.active_buffer()) {
+                // Another split may still be reading the tail in scroll-back
+                self.active_window_mut().pin_terminal_view_tail(terminal_id);
                 // Truncate backing file to remove visible screen that was appended
                 if let Some(backing_path) = self
                     .active_window()
@@ -2411,6 +2413,44 @@ impl Window {
         }
     }
 
+    /// Before terminal `terminal_id`'s backing file is rewritten past its
+    /// history end (its screen tail cut out or written anew), load those
+    /// bytes of the terminal's scroll-back view into memory: a view of a
+    /// large file reads it lazily, and would otherwise show what the rewrite
+    /// put there — in every split showing it. The history before that point
+    /// is never rewritten, so it can stay on disk.
+    pub(crate) fn pin_terminal_view_tail(
+        &mut self,
+        terminal_id: crate::services::terminal::TerminalId,
+    ) {
+        let Some(history_end) = self.terminal_manager.get(terminal_id).and_then(|handle| {
+            handle
+                .state
+                .lock()
+                .ok()
+                .map(|s| s.backing_file_history_end())
+        }) else {
+            return;
+        };
+        let viewing: Vec<BufferId> = self
+            .terminal_buffers
+            .iter()
+            .filter(|(_, tb)| tb.terminal_id == terminal_id)
+            .map(|(&buffer_id, _)| buffer_id)
+            .collect();
+        for buffer_id in viewing {
+            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                let len = state.buffer.len();
+                let from = (history_end as usize).min(len);
+                if state.buffer.is_large_file() && from < len {
+                    if let Err(e) = state.buffer.get_text_range_mut(from, len - from) {
+                        tracing::warn!("Failed to load terminal scroll-back tail: {}", e);
+                    }
+                }
+            }
+        }
+    }
+
     /// Sync terminal content to the active terminal buffer's text view
     /// for read-only viewing / selection.
     ///
@@ -2459,7 +2499,7 @@ impl Window {
                     fs: fs.as_ref(),
                     path: &backing_file,
                 };
-                match state.write_viewed_backing_file_tail(&mut file) {
+                match state.write_backing_file_tail(&mut file) {
                     Ok(head) => prepended = head,
                     Err(e) => {
                         tracing::error!("Failed to append visible screen to backing file: {}", e)

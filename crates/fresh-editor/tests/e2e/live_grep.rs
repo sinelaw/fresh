@@ -1271,6 +1271,30 @@ fn test_live_grep_preview_wraps_long_lines() {
     );
 }
 
+/// A result in no file (a line on a terminal's screen) carries its index as
+/// its `value`: nothing is previewed for it, rather than its label being
+/// parsed as a path, which opened a buffer for a file that isn't there
+/// (issue #3645). The label here does name a real file, so a fallback to it
+/// would show that file's marker.
+#[test]
+fn test_live_grep_previews_nothing_for_a_result_in_no_file() {
+    let files = &[("scrollback.txt", "TERMPREVIEWMARKER\nmatch line here\n")];
+    let (mut harness, _tmp) = open_live_grep_overlay(files, Default::default());
+    {
+        let prompt = harness.editor_mut().prompt_mut().unwrap();
+        prompt.suggestions =
+            vec![Suggestion::new("0", "scrollback.txt:1".to_string()).with_value("0".to_string())]
+                .into();
+        prompt.select_suggestion(Some(0));
+    }
+    harness.render().unwrap();
+    assert!(
+        !harness.screen_to_string().contains("TERMPREVIEWMARKER"),
+        "a result whose value is no location must preview nothing. Screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
 /// Issue #5: non-file scopes (terminals, diagnostics, buffers) carry a
 /// source badge in the result-list label — e.g. `[term] …` — which makes
 /// the label unparseable as a `path:line:col`. The authoritative location

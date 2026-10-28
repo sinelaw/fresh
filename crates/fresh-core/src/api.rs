@@ -163,6 +163,10 @@ pub struct TerminalScreen {
     /// The screen's lines, top to bottom, as plain text: rows a wrap
     /// continues are joined into one
     pub lines: Vec<String>,
+    /// The terminal's backing file (in `getTerminalDir()`), or "" when it
+    /// has none. A checkpoint leaves the screen there too, after the
+    /// scrollback, until the next one replaces it.
+    pub file: String,
 }
 
 /// Result of creating a virtual buffer

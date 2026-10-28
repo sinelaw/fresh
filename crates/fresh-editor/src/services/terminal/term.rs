@@ -491,12 +491,10 @@ pub struct TerminalState {
     /// so scrollback it streams meanwhile goes after it; whoever next deals
     /// with the tail cuts it out from between the two
     /// ([`Self::cut_backing_file_tail`]), so the file never keeps a screen
-    /// that later scrolled into history as well (fresh#3151, #3645).
+    /// that later scrolled into history as well (fresh#3151, #3645). Those
+    /// writers run on the UI thread, which first has a view reading the file
+    /// lazily load the bytes past the history end (`pin_terminal_view_tail`).
     backing_file_tail_end: Option<u64>,
-    /// The tail was written for a scroll-back view, which may be reading its
-    /// bytes lazily (a large file): until the visit ends and cuts it, nothing
-    /// rewrites it ([`Self::sync_backing_file_tail`] leaves it alone).
-    backing_file_tail_viewed: bool,
     /// Queue of data to write back to the PTY (for DSR responses, etc.)
     pty_write_queue: Arc<Mutex<Vec<String>>>,
     /// Pending title set by the program via OSC 0/1/2 (shared with the
@@ -638,7 +636,6 @@ impl TerminalState {
             pending_reflow_resync: false,
             backing_file_history_end: 0,
             backing_file_tail_end: None,
-            backing_file_tail_viewed: false,
             pty_write_queue,
             pending_title,
             pending_clipboard,
@@ -1506,7 +1503,6 @@ impl TerminalState {
         let after = file.read_from(tail_end)?;
         file.truncate(self.backing_file_history_end)?;
         self.backing_file_tail_end = None;
-        self.backing_file_tail_viewed = false;
         file.append(&after)?;
         self.backing_file_history_end += after.len() as u64;
         Ok(())
@@ -1540,28 +1536,6 @@ impl TerminalState {
         Ok(head)
     }
 
-    /// [`Self::write_backing_file_tail`] for a scroll-back view that will read
-    /// the tail: it stays as written until the visit ends.
-    pub fn write_viewed_backing_file_tail(
-        &mut self,
-        file: &mut impl BackingFile,
-    ) -> io::Result<PrependedHead> {
-        let head = self.write_backing_file_tail(file);
-        self.backing_file_tail_viewed = true;
-        head
-    }
-
-    /// [`Self::write_backing_file_tail`] for a checkpoint or a search, unless
-    /// a scroll-back view is reading the tail: then the file already holds
-    /// the screen being looked at, and scrollback streamed meanwhile is
-    /// after it.
-    pub fn sync_backing_file_tail(&mut self, file: &mut impl BackingFile) -> io::Result<()> {
-        if self.backing_file_tail_viewed {
-            return Ok(());
-        }
-        self.write_backing_file_tail(file).map(drop)
-    }
-
     /// Get the number of scrollback lines that have been synced to the backing file.
     pub fn synced_history_lines(&self) -> usize {
         self.synced_history_lines
@@ -1575,7 +1549,6 @@ impl TerminalState {
         self.pending_reflow_resync = false;
         self.backing_file_history_end = 0;
         self.backing_file_tail_end = None;
-        self.backing_file_tail_viewed = false;
     }
 }
 
@@ -2770,12 +2743,10 @@ mod tests {
             /// The program prints this many lines; the read loop streams
             /// what scrolled off (`manager.rs`, the PTY read loop).
             Output(usize),
-            /// A checkpoint or a Live Grep search writes the screen as the
-            /// tail (`Window::sync_terminal_backing_files`).
+            /// A checkpoint or scroll-back entry writes the screen as the tail
+            /// (`Window::sync_terminal_backing_files`,
+            /// `sync_terminal_to_buffer`).
             Sync,
-            /// Scroll-back mode is entered: the screen is written as the
-            /// tail a view then reads (`sync_terminal_to_buffer`).
-            EnterView,
             /// Scroll-back mode is left: the tail is cut back out
             /// (`enter_terminal_mode`).
             EndVisit,
@@ -2801,7 +2772,6 @@ mod tests {
             prop_oneof![
                 (1usize..12).prop_map(Op::Output),
                 Just(Op::Sync),
-                Just(Op::EnterView),
                 Just(Op::EndVisit),
             ]
         }
@@ -2814,9 +2784,10 @@ mod tests {
                 let mut state = TerminalState::new(80, 5);
                 let mut file = Vec::new();
                 let mut printed = Vec::new();
-                // What an open scroll-back view reads: the file up to its tail
-                let mut viewed: Option<Vec<u8>> = None;
                 for op in &ops {
+                    // The history so far: no writer changes it, only adds to
+                    // it, so what a view reads of it stays put
+                    let history = file[..state.backing_file_history_end as usize].to_vec();
                     match op {
                         Op::Output(n) => {
                             for _ in 0..*n {
@@ -2826,28 +2797,15 @@ mod tests {
                             }
                             read_loop(&mut state, &mut file);
                         }
-                        Op::Sync => state.sync_backing_file_tail(&mut file).unwrap(),
-                        // A visit can't start while one is open
-                        Op::EnterView if viewed.is_none() => {
-                            state.write_viewed_backing_file_tail(&mut file).unwrap();
-                            viewed = Some(file.clone());
+                        Op::Sync => {
+                            state.write_backing_file_tail(&mut file).unwrap();
                         }
-                        Op::EnterView => {}
-                        Op::EndVisit => {
-                            state.cut_backing_file_tail(&mut file).unwrap();
-                            viewed = None;
-                        }
+                        Op::EndVisit => state.cut_backing_file_tail(&mut file).unwrap(),
                     }
-                    // Nothing changes the bytes a view is reading
-                    if let Some(viewed) = &viewed {
-                        prop_assert_eq!(&file[..viewed.len()], &viewed[..]);
-                    }
+                    prop_assert_eq!(&file[..history.len()], &history[..]);
                     // The history is lines printed, in order, none twice
-                    let history = printed_lines(&file[..state.backing_file_history_end as usize]);
-                    prop_assert_eq!(&history[..], &printed[..history.len()]);
-                }
-                if viewed.is_some() {
-                    state.cut_backing_file_tail(&mut file).unwrap();
+                    let lines = printed_lines(&file[..state.backing_file_history_end as usize]);
+                    prop_assert_eq!(&lines[..], &printed[..lines.len()]);
                 }
                 // Read as a restored session reads it: with the screen as it
                 // is now on the end
