@@ -152,6 +152,23 @@ pub struct TerminalResult {
     pub split_id: Option<u64>,
 }
 
+/// A terminal's visible screen, returned by `getTerminalScreens`
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct TerminalScreen {
+    /// The terminal's buffer (for `showBuffer`, `getBufferInfo`)
+    #[ts(type = "number")]
+    pub buffer_id: u64,
+    /// The screen's lines, top to bottom, as plain text: rows a wrap
+    /// continues are joined into one
+    pub lines: Vec<String>,
+    /// The terminal's backing file (in `getTerminalDir()`), or "" when it
+    /// has none. A checkpoint leaves the screen there too, after the
+    /// scrollback, until the next one replaces it.
+    pub file: String,
+}
+
 /// Result of creating a virtual buffer
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -6029,6 +6046,11 @@ pub enum PluginCommand {
         /// Callback ID for async response
         request_id: u64,
     },
+
+    /// The visible screen of each terminal open in the active window, read
+    /// from memory (a terminal's backing file holds only what has scrolled
+    /// off). Resolves the callback with `TerminalScreen[]`.
+    GetTerminalScreens { callback_id: JsCallbackId },
 
     /// Send input data to a terminal by its terminal ID
     SendTerminalInput {

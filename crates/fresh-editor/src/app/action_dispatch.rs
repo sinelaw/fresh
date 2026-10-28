@@ -908,10 +908,11 @@ impl Editor {
                     return Ok(());
                 }
                 // Use same flow as query-replace, just with confirm_each defaulting to false
+                let in_selection = self.selection_spans_lines();
                 self.start_search_prompt(
                     t!("file.replace_prompt").to_string(),
                     PromptType::ReplaceSearch,
-                    false,
+                    in_selection,
                 );
             }
             Action::QueryReplace => {
@@ -920,10 +921,11 @@ impl Editor {
                 }
                 // Enable confirm mode by default for query-replace
                 self.active_window_mut().search_confirm_each = true;
+                let in_selection = self.selection_spans_lines();
                 self.start_search_prompt(
                     "Query replace: ".to_string(),
                     PromptType::QueryReplaceSearch,
-                    false,
+                    in_selection,
                 );
             }
             Action::FindInSelection => {

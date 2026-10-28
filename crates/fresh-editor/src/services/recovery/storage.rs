@@ -134,7 +134,7 @@ impl RecoveryStorage {
     /// ## File Layout
     ///
     /// - `{id}.meta.json` - Contains RecoveryMetadata with embedded ChunkedRecoveryIndex
-    /// - `{id}.chunk.0`, `{id}.chunk.1`, ... - Raw binary content for each chunk
+    /// - `{id}.chunk.0` - Every chunk's raw content, one after another
     #[allow(clippy::too_many_arguments)]
     pub fn save_recovery(
         &self,
@@ -189,13 +189,17 @@ impl RecoveryStorage {
         // Create chunked data structure
         let chunked_data = ChunkedRecoveryData::new(original_file_size, final_size, chunks);
 
-        // Write each chunk to a separate file
-        let mut total_chunk_bytes = 0u64;
-        for (i, chunk) in chunked_data.chunks.iter().enumerate() {
-            let chunk_path = self.chunk_path(id, i);
-            self.atomic_write(&chunk_path, &chunk.content)?;
-            total_chunk_bytes += chunk.content.len() as u64;
-        }
+        // Every chunk's content goes in one file, however many chunks there
+        // are (see `ChunkedRecoveryIndex::packed`)
+        let content = chunked_data
+            .chunks
+            .iter()
+            .fold(Vec::new(), |mut all, chunk| {
+                all.extend_from_slice(&chunk.content);
+                all
+            });
+        self.atomic_write(&self.chunk_path(id, 0), &content)?;
+        let total_chunk_bytes = content.len() as u64;
 
         // Create the index (metadata without binary content)
         let index = chunked_data.to_index();
@@ -311,9 +315,7 @@ impl RecoveryStorage {
             None => return Ok(None),
         };
 
-        // Load content for each chunk from its file
-        let mut chunks = Vec::with_capacity(index.chunks.len());
-        for (i, chunk_meta) in index.chunks.iter().enumerate() {
+        let read = |i: usize| -> io::Result<Vec<u8>> {
             let chunk_path = self.chunk_path(id, i);
             if !chunk_path.exists() {
                 return Err(io::Error::new(
@@ -321,17 +323,53 @@ impl RecoveryStorage {
                     format!("Chunk file {} not found", chunk_path.display()),
                 ));
             }
-
             let content = fs::read(&chunk_path)?;
             crate::services::counters::global().inc_recovery_chunks(1);
             crate::services::counters::global().inc_recovery_bytes(content.len() as u64);
-
-            chunks.push(RecoveryChunk {
-                offset: chunk_meta.offset,
-                original_len: chunk_meta.original_len,
-                content,
-            });
-        }
+            Ok(content)
+        };
+        // Each chunk's content: its slice of the one file, or (an entry an
+        // earlier version wrote) a file of its own
+        let contents = if index.packed {
+            let all = read(0)?;
+            let total: usize = index.chunks.iter().map(|c| c.size).sum();
+            // A lone chunk cut short is handed back as it is, as a chunk
+            // file of its own was: the caller weighs it against the size
+            // the metadata recorded (`RecoveryResult::RecoveredPartial`).
+            // Cut short across several, which chunk lost bytes can't be
+            // told, and more than the index accounts for is not this
+            // entry's content.
+            let short_single = index.chunks.len() == 1 && all.len() < total;
+            if total != all.len() && !short_single {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "recovery entry {id} holds {} bytes of content, its index {total}",
+                        all.len()
+                    ),
+                ));
+            }
+            let mut rest = all.as_slice();
+            index
+                .chunks
+                .iter()
+                .map(|c| {
+                    let (content, after) = rest.split_at(c.size.min(rest.len()));
+                    rest = after;
+                    content.to_vec()
+                })
+                .collect()
+        } else {
+            (0..index.chunks.len())
+                .map(read)
+                .collect::<io::Result<Vec<_>>>()?
+        };
+        let chunks = index
+            .chunks
+            .iter()
+            .zip(contents)
+            .map(|(meta, content)| RecoveryChunk::new(meta.offset, meta.original_len, content))
+            .collect();
 
         Ok(Some(ChunkedRecoveryData::new(
             index.original_size,
@@ -775,17 +813,10 @@ mod tests {
         assert_eq!(metadata.chunk_count, 2);
         assert_eq!(metadata.original_file_size, original_size);
 
-        // Verify chunk files exist
-        assert!(storage.chunk_path(id, 0).exists());
-        assert!(storage.chunk_path(id, 1).exists());
-        assert!(!storage.chunk_path(id, 2).exists()); // Only 2 chunks
-
-        // Verify chunk file contents
-        let chunk0_content = fs::read(storage.chunk_path(id, 0)).unwrap();
-        assert_eq!(chunk0_content, b"INSERTED_AT_START");
-
-        let chunk1_content = fs::read(storage.chunk_path(id, 1)).unwrap();
-        assert_eq!(chunk1_content, b"REPLACED");
+        // Both chunks' content is in the one chunk file, in order
+        assert_eq!(storage.list_chunk_paths(id).unwrap().len(), 1);
+        let content = fs::read(storage.chunk_path(id, 0)).unwrap();
+        assert_eq!(content, b"INSERTED_AT_STARTREPLACED");
 
         // Verify metadata file contains chunked_index
         let (meta_path, _) = storage.recovery_paths(id);
@@ -871,6 +902,122 @@ mod tests {
         assert_eq!(reconstructed, expected);
     }
 
+    /// However many chunks an entry has, its content is one file: a
+    /// replace-all in a large file made one file per match (issue #3645).
+    #[test]
+    fn test_many_chunks_are_one_file_and_read_back_in_order() {
+        let (storage, _temp) = create_test_storage();
+        let chunks: Vec<_> = (0..5000)
+            .map(|i| RecoveryChunk::new(i * 10, i % 3, format!("c{i}").into_bytes()))
+            .collect();
+        let final_size: usize = 50_000 + chunks.iter().map(|c| c.size()).sum::<usize>()
+            - chunks.iter().map(|c| c.original_len).sum::<usize>();
+        let id = "many";
+        storage
+            .save_recovery(id, chunks.clone(), None, None, None, 50_000, final_size)
+            .unwrap();
+
+        assert_eq!(storage.list_chunk_paths(id).unwrap().len(), 1);
+        let read = storage.read_chunked_content(id).unwrap().unwrap();
+        assert_eq!(read.chunks.len(), chunks.len());
+        for (got, want) in read.chunks.iter().zip(&chunks) {
+            assert_eq!(
+                (got.offset, got.original_len, &got.content),
+                (want.offset, want.original_len, &want.content)
+            );
+        }
+    }
+
+    /// An entry an earlier version wrote, one `.chunk.N` file per chunk and
+    /// no `packed` in its index, still loads; saving over it leaves only the
+    /// one file.
+    #[test]
+    fn test_entry_with_a_file_per_chunk_still_loads() {
+        let (storage, temp) = create_test_storage();
+        let id = "legacy";
+        let meta = serde_json::json!({
+            "original_path": null,
+            "buffer_name": null,
+            "created_at": 1,
+            "updated_at": 1,
+            "content_size": 7,
+            "line_count": null,
+            "original_mtime": null,
+            "format_version": 2,
+            "chunk_count": 2,
+            "original_file_size": 100,
+            "chunked_index": {
+                "original_size": 100,
+                "final_size": 104,
+                "chunks": [
+                    { "offset": 0, "original_len": 0, "size": 3 },
+                    { "offset": 50, "original_len": 3, "size": 4 }
+                ]
+            }
+        });
+        fs::write(
+            temp.path().join(format!("{id}.meta.json")),
+            serde_json::to_vec(&meta).unwrap(),
+        )
+        .unwrap();
+        fs::write(temp.path().join(format!("{id}.chunk.0")), b"abc").unwrap();
+        fs::write(temp.path().join(format!("{id}.chunk.1")), b"defg").unwrap();
+
+        let read = storage.read_chunked_content(id).unwrap().unwrap();
+        let chunks: Vec<_> = read
+            .chunks
+            .iter()
+            .map(|c| (c.offset, c.original_len, c.content.as_slice()))
+            .collect();
+        assert_eq!(chunks, vec![(0, 0, &b"abc"[..]), (50, 3, &b"defg"[..])]);
+
+        let chunks = vec![RecoveryChunk::new(1, 1, b"x".to_vec())];
+        storage
+            .save_recovery(id, chunks, None, None, None, 100, 100)
+            .unwrap();
+        assert_eq!(
+            storage.list_chunk_paths(id).unwrap(),
+            vec![storage.chunk_path(id, 0)]
+        );
+        let read = storage.read_chunked_content(id).unwrap().unwrap();
+        assert_eq!(read.chunks.len(), 1);
+        assert_eq!(read.chunks[0].content, b"x");
+    }
+
+    /// Content that doesn't add up to what the index says, across several
+    /// chunks, is a broken entry, never chunks cut at the wrong places. A
+    /// lone chunk cut short comes back short, for the caller to weigh
+    /// against the recorded size.
+    #[test]
+    fn test_content_shorter_or_longer_than_its_index_is_an_error() {
+        let (storage, _temp) = create_test_storage();
+        let id = "torn";
+        let chunks = vec![
+            RecoveryChunk::new(0, 0, b"one".to_vec()),
+            RecoveryChunk::new(9, 0, b"two".to_vec()),
+        ];
+        storage
+            .save_recovery(id, chunks, None, None, None, 10, 16)
+            .unwrap();
+        for content in [&b"onetw"[..], &b"onetwothree"[..]] {
+            fs::write(storage.chunk_path(id, 0), content).unwrap();
+            let err = storage.read_chunked_content(id).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        }
+
+        let id = "torn-single";
+        let chunks = vec![RecoveryChunk::new(0, 0, b"whole".to_vec())];
+        storage
+            .save_recovery(id, chunks, None, None, None, 0, 5)
+            .unwrap();
+        fs::write(storage.chunk_path(id, 0), b"who").unwrap();
+        let read = storage.read_chunked_content(id).unwrap().unwrap();
+        assert_eq!(read.chunks[0].content, b"who");
+        fs::write(storage.chunk_path(id, 0), b"whole and more").unwrap();
+        let err = storage.read_chunked_content(id).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
     #[test]
     fn test_chunked_recovery_delete() {
         let (storage, _temp) = create_test_storage();
@@ -891,8 +1038,6 @@ mod tests {
         let (meta_path, _) = storage.recovery_paths(id);
         assert!(meta_path.exists());
         assert!(storage.chunk_path(id, 0).exists());
-        assert!(storage.chunk_path(id, 1).exists());
-        assert!(storage.chunk_path(id, 2).exists());
 
         // Delete recovery
         storage.delete_recovery(id).unwrap();

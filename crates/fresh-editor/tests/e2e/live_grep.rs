@@ -1271,6 +1271,30 @@ fn test_live_grep_preview_wraps_long_lines() {
     );
 }
 
+/// A result in no file (a line on a terminal's screen) carries its index as
+/// its `value`: nothing is previewed for it, rather than its label being
+/// parsed as a path, which opened a buffer for a file that isn't there
+/// (issue #3645). The label here does name a real file, so a fallback to it
+/// would show that file's marker.
+#[test]
+fn test_live_grep_previews_nothing_for_a_result_in_no_file() {
+    let files = &[("scrollback.txt", "TERMPREVIEWMARKER\nmatch line here\n")];
+    let (mut harness, _tmp) = open_live_grep_overlay(files, Default::default());
+    {
+        let prompt = harness.editor_mut().prompt_mut().unwrap();
+        prompt.suggestions =
+            vec![Suggestion::new("0", "scrollback.txt:1".to_string()).with_value("0".to_string())]
+                .into();
+        prompt.select_suggestion(Some(0));
+    }
+    harness.render().unwrap();
+    assert!(
+        !harness.screen_to_string().contains("TERMPREVIEWMARKER"),
+        "a result whose value is no location must preview nothing. Screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
 /// Issue #5: non-file scopes (terminals, diagnostics, buffers) carry a
 /// source badge in the result-list label — e.g. `[term] …` — which makes
 /// the label unparseable as a `path:line:col`. The authoritative location
@@ -1725,4 +1749,80 @@ fn test_live_grep_results_window_follows_selection_and_keeps_the_wheel() {
         "{}",
         harness.screen_to_string()
     );
+}
+
+/// The Terminals scope finds text still on a terminal's screen, not only
+/// lines that have scrolled into its history, and finds it without writing:
+/// the terminal stays in terminal mode, and its backing file stays as the
+/// read loop left it (issue #3645).
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // `printf` in a Unix shell
+fn live_grep_finds_text_still_on_a_terminal_screen() {
+    use portable_pty::{native_pty_system, PtySize};
+    let pty = native_pty_system().openpty(PtySize {
+        rows: 1,
+        cols: 1,
+        pixel_width: 0,
+        pixel_height: 0,
+    });
+    if pty.is_err() {
+        eprintln!("Skipping test: PTY not available in this environment");
+        return;
+    }
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().canonicalize().unwrap().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "live_grep");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        140,
+        30,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.editor_mut().open_terminal();
+    // `\x5a` is `Z`: the marker is only ever on screen as output, never as
+    // the typed command
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(b"printf '\\x5aEBRA_3645\\n'\n");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("ZEBRA_3645"))
+        .unwrap();
+
+    harness
+        .run_palette_command("Live Grep (Find in Files)")
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Scope "))
+        .unwrap();
+    harness.type_text("ZEBRA_3645").unwrap();
+
+    // A Terminals result row for the screen's line
+    harness
+        .wait_until(|h| h.screen_to_string().contains("[term] "))
+        .unwrap();
+
+    // The search read the screen; it wrote no file
+    let terminals = harness
+        .editor()
+        .dir_context()
+        .terminal_dir_for(&project_root);
+    for entry in fs::read_dir(&terminals).unwrap().flatten() {
+        let path = entry.path();
+        if path.extension().is_some_and(|e| e == "txt") {
+            let text = fs::read_to_string(&path).unwrap();
+            assert!(
+                !text.contains("ZEBRA_3645"),
+                "{} holds the screen after a search: {text:?}",
+                path.display()
+            );
+        }
+    }
 }

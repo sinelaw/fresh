@@ -56,6 +56,9 @@ interface GrepMatch {
   column: number;
   content: string;
   source?: ScopeId;
+  /** A line on a terminal's screen, which is in no file: the terminal's
+   *  buffer, shown when the match is picked. */
+  bufferId?: number;
 }
 
 /** Options passed to a provider's `search` callback. */
@@ -602,7 +605,9 @@ registerProvider({
     const { cwd, maxResults } = opts;
     const args = rgArgs(query, opts);
     const r = await spawnSearch("rg", args, cwd, opts);
-    if (r.exit_code === 0) {
+    // 1 is "no matches", not a failure: throwing on it aborted the whole
+    // search before buffers and terminals were searched
+    if (r.exit_code === 0 || r.exit_code === 1) {
       return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg)) as GrepMatch[];
     }
     throw new Error(`rg exited with code ${r.exit_code}: ${r.stderr}`);
@@ -764,11 +769,12 @@ const finder = new Finder<GrepMatch>(editor, {
       match.content.length > 60
         ? match.content.substring(0, 57).trim() + "..."
         : match.content.trim(),
-    location: {
-      file: match.file,
-      line: match.line,
-      column: match.column,
-    },
+    // A line on a terminal's screen is in no file: picking it shows the
+    // terminal (`onSelect`), and there is nothing to preview
+    location:
+      match.bufferId === undefined
+        ? { file: match.file, line: match.line, column: match.column }
+        : undefined,
   }),
   onClose: () => {
     overlayActive = false;
@@ -778,8 +784,10 @@ const finder = new Finder<GrepMatch>(editor, {
   // hidden inside the overlay (it can't apply while the overlay
   // is open), but it's exactly what the user needs to know once
   // they've jumped to a result and want to keep browsing.
-  onSelect: (_item, entry) => {
-    if (entry.location) {
+  onSelect: (item, entry) => {
+    if (item.bufferId !== undefined) {
+      editor.showBuffer(item.bufferId);
+    } else if (entry.location) {
       editor.openFile(
         entry.location.file,
         entry.location.line,
@@ -940,13 +948,38 @@ function stripAnsi(s: string): string {
  *  are retained there too (renamed `*-closed-*.txt`). Scoping to that
  *  subdir keeps the search to *this* project / worktree. We grep it
  *  with rg (falling back to grep), then strip ANSI for display.
- *  Opening a hit opens the backing file at the matched line. */
+ *  Opening a hit opens the backing file at the matched line. Those files
+ *  are written as lines scroll off, and hold the screen only as of the last
+ *  checkpoint, so what is on an open terminal's screen now is matched as it
+ *  is in memory (`getTerminalScreens`, which writes nothing); opening such a
+ *  hit shows the terminal. */
 async function searchTerminals(
   query: string,
   limit: number,
   cancellation?: SearchCancellation,
 ): Promise<GrepMatch[]> {
   if (limit <= 0) return [];
+  const onScreen: GrepMatch[] = [];
+  const matchCol = buildLineMatcher(query);
+  const screens = await editor.getTerminalScreens();
+  for (const screen of screens) {
+    const name = editor.getBufferInfo(screen.bufferId)?.name ?? "terminal";
+    screen.lines.forEach((line, i) => {
+      const column = matchCol(line);
+      if (column > 0 && onScreen.length < limit) {
+        onScreen.push({
+          file: name,
+          line: i + 1,
+          column,
+          content: line,
+          source: "terminals",
+          bufferId: screen.bufferId,
+        });
+      }
+    });
+  }
+  limit -= onScreen.length;
+  if (limit <= 0) return onScreen;
   const dir = editor.getTerminalDir();
   const cwd = editor.getCwd();
   let raw: GrepMatch[] = [];
@@ -978,11 +1011,18 @@ async function searchTerminals(
   } catch (e) {
     editor.debug(`[live_grep:terminals] ${e}`);
   }
-  return raw.slice(0, limit).map((m) => ({
-    ...m,
-    source: "terminals" as const,
-    content: stripAnsi(m.content),
-  }));
+  // A checkpoint leaves a terminal's screen in its backing file too, after
+  // the scrollback: a line found on the screen isn't listed again from it
+  const baseName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+  const shown = new Map(
+    screens
+      .filter((s) => s.file !== "")
+      .map((s) => [baseName(s.file), new Set(s.lines)] as const),
+  );
+  const fromFiles = raw
+    .map((m) => ({ ...m, source: "terminals" as const, content: stripAnsi(m.content) }))
+    .filter((m) => !shown.get(baseName(m.file))?.has(m.content.trimEnd()));
+  return onScreen.concat(fromFiles.slice(0, limit));
 }
 
 /** Search the text of currently-open, modified file buffers.

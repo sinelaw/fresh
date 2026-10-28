@@ -24,7 +24,7 @@ use fresh_core::api::{
     JsRange, JsTextPropertyEntry, KeyEventPayload, LanguagePackConfig, LayoutHints, LineDiffHunk,
     LspServerPackConfig, OverlayColorSpec, OverlayOptions, PluginAnimationEdge,
     PluginAnimationKind, ProcessLimitsPackConfig, RemoteBackendInfo, ReplaceResult, ScreenSize,
-    ScrollbarMarker, SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult,
+    ScrollbarMarker, SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult, TerminalScreen,
     TextPropertiesAtCursor, TokenColor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire,
     ViewTokenWireKind, ViewportInfo, VirtualBufferResult, WindowInfo,
 };
@@ -95,6 +95,7 @@ fn get_type_decl(type_name: &str) -> Option<String> {
 
         // Terminal types
         "TerminalResult" => Some(decl_with_docs::<TerminalResult>(&cfg)),
+        "TerminalScreen" => Some(decl_with_docs::<TerminalScreen>(&cfg)),
         "CreateTerminalOptions" => Some(decl_with_docs::<CreateTerminalOptions>(&cfg)),
         "CreateWindowWithTerminalOptions" => {
             Some(decl_with_docs::<fresh_core::api::CreateWindowWithTerminalOptions>(&cfg))
@@ -408,6 +409,7 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "FormatterPackConfig",             // Used by LanguagePackConfig.formatter
     "ProcessLimitsPackConfig",         // Used by LspServerPackConfig.process_limits
     "TerminalResult",                  // Used by createTerminal return type
+    "TerminalScreen",                  // Used by getTerminalScreens return type
     "CreateWindowWithTerminalOptions", // Used by createWindowWithTerminal opts
     "SessionWithTerminalResult",       // Used by createWindowWithTerminal return type
     "CreatePreparingWindowOptions",    // Used by createPreparingWindow opts
@@ -1324,6 +1326,7 @@ mod tests {
             "SpawnResult",
             "BackgroundProcessResult",
             "TerminalResult",
+            "TerminalScreen",
             "CreateTerminalOptions",
             "CreateWindowWithTerminalOptions",
             "SessionWithTerminalResult",
@@ -1928,6 +1931,7 @@ mod tests {
             "spawnBackgroundProcess",
             "killBackgroundProcess",
             "createTerminal",
+            "getTerminalScreens",
             "sendTerminalInput",
             "closeTerminal",
             "signalWindow",

@@ -4854,15 +4854,18 @@ impl Editor {
                     // `value` is the authoritative `path:line:col` for the
                     // result. We must not rely on parsing the user-facing
                     // label (`text`), which may carry source badges (e.g.
-                    // "[term]") that make it unparseable as a path. Only fall
-                    // back to the label when `value` is absent/unparseable.
-                    if let Some(v) = s.value.as_deref() {
-                        let from_value = parse_path_line_col(v);
-                        if !from_value.0.is_empty() && from_value.1.is_some() {
-                            return from_value;
-                        }
+                    // "[term]") that make it unparseable as a path. A `value`
+                    // that is no location (a result in no file, such as a
+                    // line on a terminal's screen, carries its index) has
+                    // nothing to preview; the label is parsed only when
+                    // there is no `value` at all.
+                    match s.value.as_deref() {
+                        Some(v) => match parse_path_line_col(v) {
+                            from_value @ (_, Some(_), _) => from_value,
+                            _ => (String::new(), None, None),
+                        },
+                        None => parse_path_line_col(&s.text),
                     }
-                    parse_path_line_col(&s.text)
                 })
         };
         // No selectable result (empty list, no selection, or an

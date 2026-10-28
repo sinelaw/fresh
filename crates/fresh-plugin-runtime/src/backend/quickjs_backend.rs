@@ -9746,6 +9746,23 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// The visible screen of each terminal open in the active window, read
+    /// from memory: a terminal's backing file (in `getTerminalDir()`) holds
+    /// only the lines that have scrolled off it.
+    #[plugin_api(
+        async_promise,
+        js_name = "getTerminalScreens",
+        ts_return = "TerminalScreen[]"
+    )]
+    #[qjs(rename = "_getTerminalScreensStart")]
+    pub fn get_terminal_screens_start(&self) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::GetTerminalScreens {
+            callback_id: fresh_core::api::JsCallbackId::new(id),
+        });
+        id
+    }
+
     /// Send input data to a terminal
     ///
     /// @param terminalId - The terminal ID (from `TerminalResult`)

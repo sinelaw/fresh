@@ -297,6 +297,29 @@ impl Editor {
         id: BufferId,
         terminal_id: crate::services::terminal::TerminalId,
     ) {
+        // Leave its backing file as a checkpoint would, the screen after the
+        // scrollback with no tail left in between, before it is kept below
+        // for search: a tail with lines streamed past it would otherwise
+        // stay in the kept file, those lines in it twice.
+        if let (Some(path), Some(handle)) = (
+            self.active_window()
+                .terminal_backing_files
+                .get(&terminal_id)
+                .cloned(),
+            self.active_window().terminal_manager.get(terminal_id),
+        ) {
+            if let Ok(mut state) = handle.state.lock() {
+                let fs = crate::app::terminal::terminal_backing_fs();
+                let mut file = crate::services::terminal::BackingFileAt {
+                    fs: fs.as_ref(),
+                    path: &path,
+                };
+                if let Err(e) = state.write_backing_file_tail(&mut file) {
+                    tracing::warn!("Failed to sync closing terminal's backing file: {}", e);
+                }
+            }
+        }
+
         // Close the terminal process
         self.active_window_mut().terminal_manager.close(terminal_id);
         // Drop any explicit-title marker / cached foreground name so the

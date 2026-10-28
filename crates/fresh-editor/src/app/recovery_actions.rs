@@ -619,15 +619,16 @@ impl Editor {
             }
             Recovered::Chunks(chunks) => {
                 // The entry holds deltas against what is on disk: replay
-                // them later offsets first, so earlier ones don't shift them
+                // them later offsets first, so earlier ones don't shift them.
+                // As bytes: a chunk carries the file's own bytes between
+                // nearby edits, which need not be UTF-8.
                 for chunk in chunks.into_iter().rev() {
-                    let text = String::from_utf8_lossy(&chunk.content).into_owned();
                     if chunk.original_len > 0 {
                         state
                             .buffer
                             .delete(chunk.offset..chunk.offset + chunk.original_len);
                     }
-                    state.buffer.insert(chunk.offset, &text);
+                    state.buffer.insert_bytes(chunk.offset, chunk.content);
                 }
             }
         }
@@ -865,17 +866,17 @@ impl Editor {
         let line_count = state.buffer.line_count();
 
         let (chunks, original_size, final_size) = if state.buffer.is_large_file() {
-            let chunks = state.buffer.get_recovery_chunks();
+            let chunks = match state.buffer.get_recovery_chunks() {
+                Ok(chunks) => chunks,
+                Err(e) => {
+                    tracing::warn!("Failed to read the changes for a recovery save: {}", e);
+                    return Ok(false);
+                }
+            };
             if chunks.is_empty() {
                 state.buffer.set_recovery_pending(false);
                 return Ok(false);
             }
-            let chunks: Vec<_> = chunks
-                .into_iter()
-                .map(|(offset, content)| {
-                    crate::services::recovery::types::RecoveryChunk::new(offset, 0, content)
-                })
-                .collect();
             let original_size = state.buffer.original_file_size().unwrap_or(0);
             (chunks, original_size, state.buffer.total_bytes())
         } else {

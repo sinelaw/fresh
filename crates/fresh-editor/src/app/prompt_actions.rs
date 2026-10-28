@@ -109,7 +109,7 @@ impl Editor {
                 self.perform_search(&input);
             }
             PromptType::ReplaceSearch => {
-                self.perform_search(&input);
+                self.search_keeping_scope(&input);
                 self.start_prompt(
                     t!("replace.prompt", search = &input).to_string(),
                     PromptType::Replace {
@@ -125,7 +125,7 @@ impl Editor {
                 }
             }
             PromptType::QueryReplaceSearch => {
-                self.perform_search(&input);
+                self.search_keeping_scope(&input);
                 self.start_prompt(
                     t!("replace.query_prompt", search = &input).to_string(),
                     PromptType::QueryReplace {

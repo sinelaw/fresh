@@ -565,6 +565,16 @@ example while it shuts down).
 setWindowPreparing(id: number, message: string, label: string | null, failed: boolean, done: boolean): boolean;
 ```
 
+### `getTerminalScreens`
+
+The visible screen of each terminal open in the active window, read
+from memory: a terminal's backing file (in `getTerminalDir()`) holds
+only the lines that have scrolled off it.
+
+```typescript
+getTerminalScreens(): Promise<TerminalScreen[]>;
+```
+
 ### `sendTerminalInput`
 
 Send input data to a terminal

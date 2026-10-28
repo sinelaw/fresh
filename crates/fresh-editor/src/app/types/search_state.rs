@@ -64,4 +64,8 @@ pub struct InteractiveReplaceState {
     /// Whether the replacement is a template (`$1`, `\n`) expanded per
     /// match: regex mode only. Plain-text replacement is literal.
     pub expand_replacement: bool,
+    /// The selection the replace is confined to, as Find in Selection
+    /// confines a search (None: the whole buffer). Its end moves with the
+    /// replacements made inside it.
+    pub scope: Option<std::ops::Range<usize>>,
 }
