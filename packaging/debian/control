@@ -125,8 +125,8 @@ Build-Depends:
  librust-xz2-0.1+default-dev (>= 0.1-~~),
 Standards-Version: 4.7.4
 Homepage: https://sinelaw.github.io/fresh/
-Vcs-Browser: https://github.com/sinelaw/fresh
-Vcs-Git: https://github.com/sinelaw/fresh.git
+Vcs-Browser: https://salsa.debian.org/sinelaw/fresh-editor
+Vcs-Git: https://salsa.debian.org/sinelaw/fresh-editor.git
 Rules-Requires-Root: no
 
 Package: fresh-editor
