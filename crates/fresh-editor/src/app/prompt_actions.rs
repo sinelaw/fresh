@@ -367,8 +367,7 @@ impl Editor {
                             &info.dest_path,
                             &data,
                             info.mode,
-                            info.uid,
-                            info.gid,
+                            info.owner,
                         )?;
                         // The file now holds the full content, so a copy an
                         // earlier interrupted in-place attempt staged for it

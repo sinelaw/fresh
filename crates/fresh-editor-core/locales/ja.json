@@ -1607,7 +1607,7 @@
   "settings.field.editor.auto_recovery_save_interval_secs": "リカバリ保存の間隔 (秒)",
   "settings.field.editor.auto_recovery_save_interval_secs_desc": "`recovery_enabled` がオンの場合の、リカバリ保存の間隔（秒）。既定: 2",
   "settings.field.editor.auto_revert_poll_interval_ms": "自動復元の確認間隔 (ms)",
-  "settings.field.editor.auto_revert_poll_interval_ms_desc": "自動復元がオンの場合に、開いているファイルの外部での変更を確認する間隔（ms）。短いほど早く反映されますが、CPU 使用量が増えます。既定: 2000",
+  "settings.field.editor.auto_revert_poll_interval_ms_desc": "開いているファイルの外部での変更を確認する間隔（ms）。自動復元をオフにしたバッファー（「自動復元を切り替え（現在のバッファー）」）以外が確認されます。短いほど早く反映されますが、CPU 使用量が増えます。既定: 2000",
   "settings.field.editor.auto_save_enabled": "自動保存",
   "settings.field.editor.auto_save_enabled_desc": "`auto_save_interval_secs` ごとに、変更されたファイルをディスクに自動保存します。既定: false",
   "settings.field.editor.auto_save_interval_secs": "自動保存の間隔 (秒)",

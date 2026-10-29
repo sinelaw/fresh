@@ -1607,7 +1607,7 @@
   "settings.field.editor.auto_recovery_save_interval_secs": "รอบบันทึกกู้คืน (วินาที)",
   "settings.field.editor.auto_recovery_save_interval_secs_desc": "จำนวนวินาทีระหว่างการบันทึกข้อมูลกู้คืนแต่ละครั้ง เมื่อเปิด `recovery_enabled` ค่าเริ่มต้น: 2",
   "settings.field.editor.auto_revert_poll_interval_ms": "รอบตรวจคืนค่าอัตโนมัติ (ms)",
-  "settings.field.editor.auto_revert_poll_interval_ms_desc": "ความถี่ (ms) ในการตรวจไฟล์ที่เปิดอยู่ว่ามีการเปลี่ยนแปลงจากภายนอกหรือไม่ เมื่อเปิดการคืนค่าอัตโนมัติ ค่ายิ่งต่ำยิ่งตอบสนองเร็วแต่ใช้ CPU มากขึ้น ค่าเริ่มต้น: 2000",
+  "settings.field.editor.auto_revert_poll_interval_ms_desc": "ความถี่ (ms) ในการตรวจไฟล์ที่เปิดอยู่ว่ามีการเปลี่ยนแปลงจากภายนอกหรือไม่ ทุกบัฟเฟอร์จะถูกตรวจ เว้นแต่ปิดการย้อนกลับอัตโนมัติไว้สำหรับบัฟเฟอร์นั้น (\"สลับการย้อนกลับอัตโนมัติ (บัฟเฟอร์ปัจจุบัน)\") ค่ายิ่งต่ำยิ่งตอบสนองเร็วแต่ใช้ CPU มากขึ้น ค่าเริ่มต้น: 2000",
   "settings.field.editor.auto_save_enabled": "เปิดบันทึกอัตโนมัติ",
   "settings.field.editor.auto_save_enabled_desc": "บันทึกไฟล์ที่เปลี่ยนแปลงลงดิสก์โดยอัตโนมัติทุก `auto_save_interval_secs` ค่าเริ่มต้น: false",
   "settings.field.editor.auto_save_interval_secs": "รอบบันทึกอัตโนมัติ (วินาที)",

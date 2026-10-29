@@ -1614,7 +1614,7 @@
   "settings.field.editor.auto_recovery_save_interval_secs": "Intervallo salvataggio ripristino (s)",
   "settings.field.editor.auto_recovery_save_interval_secs_desc": "Secondi tra un salvataggio di ripristino e l'altro, quando `recovery_enabled` è attivo. Predefinito: 2",
   "settings.field.editor.auto_revert_poll_interval_ms": "Polling ripristino automatico (ms)",
-  "settings.field.editor.auto_revert_poll_interval_ms_desc": "Ogni quanto (ms) controllare se i file aperti sono stati modificati dall'esterno quando il ripristino automatico è attivo. Valori più bassi sono più reattivi ma usano più CPU. Predefinito: 2000",
+  "settings.field.editor.auto_revert_poll_interval_ms_desc": "Ogni quanto (ms) controllare se i file aperti sono stati modificati dall'esterno. Ogni buffer viene controllato, a meno che il ripristino automatico non sia disattivato per esso («Alterna ripristino automatico (buffer corrente)»). Valori più bassi sono più reattivi ma usano più CPU. Predefinito: 2000",
   "settings.field.editor.auto_save_enabled": "Salvataggio automatico",
   "settings.field.editor.auto_save_enabled_desc": "Salva automaticamente su disco i file modificati ogni `auto_save_interval_secs`. Predefinito: false",
   "settings.field.editor.auto_save_interval_secs": "Intervallo salvataggio automatico (s)",

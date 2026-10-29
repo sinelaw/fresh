@@ -324,13 +324,12 @@ impl FileSystem for SlowFileSystem {
         &self,
         path: &Path,
         data: &[u8],
-        mode: u32,
-        uid: u32,
-        gid: u32,
+        mode: Option<u32>,
+        owner: Option<(u32, u32)>,
     ) -> io::Result<()> {
         self.add_delay(self.config.write_file_delay);
         self.metrics.write_file_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner.sudo_write(path, data, mode, uid, gid)
+        self.inner.sudo_write(path, data, mode, owner)
     }
 
     fn search_file(

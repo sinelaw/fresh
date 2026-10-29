@@ -1607,7 +1607,7 @@
   "settings.field.editor.auto_recovery_save_interval_secs": "恢复保存间隔（秒）",
   "settings.field.editor.auto_recovery_save_interval_secs_desc": "开启 `recovery_enabled` 时，两次恢复保存之间的间隔秒数。默认：2",
   "settings.field.editor.auto_revert_poll_interval_ms": "自动还原轮询间隔（毫秒）",
-  "settings.field.editor.auto_revert_poll_interval_ms_desc": "开启自动还原时，检查已打开文件是否被外部修改的间隔（毫秒）。值越小响应越快，但 CPU 占用越高。默认：2000",
+  "settings.field.editor.auto_revert_poll_interval_ms_desc": "检查已打开文件是否被外部修改的间隔（毫秒）。除非某个缓冲区关闭了自动还原（“切换自动还原（当前缓冲区）”），否则都会被检查。值越小响应越快，但 CPU 占用越高。默认：2000",
   "settings.field.editor.auto_save_enabled": "启用自动保存",
   "settings.field.editor.auto_save_enabled_desc": "每隔 `auto_save_interval_secs` 自动将已更改的文件保存到磁盘。默认：false",
   "settings.field.editor.auto_save_interval_secs": "自动保存间隔（秒）",

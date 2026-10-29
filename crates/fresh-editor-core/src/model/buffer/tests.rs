@@ -1860,6 +1860,9 @@ mod line_ending_conversion {
                 if let Some(sudo_err) = e.downcast_ref::<SudoSaveRequired>() {
                     assert_eq!(sudo_err.dest_path, file_path);
                     assert!(sudo_err.temp_path().exists());
+                    // A new file has no mode or owner to restore (#3641)
+                    assert_eq!(sudo_err.mode, None);
+                    assert_eq!(sudo_err.owner, None);
                     // It should be in /tmp because the directory was not writable
                     assert!(sudo_err.temp_path().starts_with(std::env::temp_dir()));
                 } else {
@@ -2691,11 +2694,10 @@ mod rebuild_pristine_saved_root_tests {
                 &self,
                 path: &Path,
                 data: &[u8],
-                mode: u32,
-                uid: u32,
-                gid: u32,
+                mode: Option<u32>,
+                owner: Option<(u32, u32)>,
             ) -> std::io::Result<()> {
-                self.inner.sudo_write(path, data, mode, uid, gid)
+                self.inner.sudo_write(path, data, mode, owner)
             }
             fn search_file(
                 &self,

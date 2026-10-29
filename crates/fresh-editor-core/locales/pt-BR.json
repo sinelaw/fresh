@@ -1614,7 +1614,7 @@
   "settings.field.editor.auto_recovery_save_interval_secs": "Intervalo de recuperação (s)",
   "settings.field.editor.auto_recovery_save_interval_secs_desc": "Segundos entre salvamentos de recuperação, quando `recovery_enabled` está ativado. Padrão: 2",
   "settings.field.editor.auto_revert_poll_interval_ms": "Intervalo de auto-reversão (ms)",
-  "settings.field.editor.auto_revert_poll_interval_ms_desc": "Com que frequência (ms) verificar alterações externas nos arquivos abertos quando a auto-reversão está ativada. Valores menores são mais rápidos, mas usam mais CPU. Padrão: 2000",
+  "settings.field.editor.auto_revert_poll_interval_ms_desc": "Com que frequência (ms) verificar alterações externas nos arquivos abertos. Cada buffer é verificado, a menos que a auto-reversão esteja desativada para ele (\"Alternar Auto-Reversão (buffer atual)\"). Valores menores são mais rápidos, mas usam mais CPU. Padrão: 2000",
   "settings.field.editor.auto_save_enabled": "Salvamento automático",
   "settings.field.editor.auto_save_enabled_desc": "Salva automaticamente no disco os arquivos alterados a cada `auto_save_interval_secs`. Padrão: false",
   "settings.field.editor.auto_save_interval_secs": "Intervalo de salvamento (s)",

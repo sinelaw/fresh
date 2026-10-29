@@ -35,12 +35,13 @@ pub struct SudoSaveRequired {
     temp_file: SudoSaveTempFile,
     /// Destination path where the file should be saved
     pub dest_path: PathBuf,
-    /// Original file owner (UID)
-    pub uid: u32,
-    /// Original file group (GID)
-    pub gid: u32,
-    /// Original file permissions (mode)
-    pub mode: u32,
+    /// Original file owner as `(uid, gid)`, or `None` when it isn't known
+    /// (a new file, or a platform without Unix ownership): the sudo write
+    /// then leaves ownership alone.
+    pub owner: Option<(u32, u32)>,
+    /// Original file permissions (mode), or `None` when not known: the sudo
+    /// write then leaves the mode as `sudo tee` made it.
+    pub mode: Option<u32>,
 }
 
 impl SudoSaveRequired {
@@ -1267,29 +1268,47 @@ fn make_sudo_error(
     dest_path: &Path,
     original_metadata: Option<FileMetadata>,
 ) -> anyhow::Error {
+    // Only what the original file actually had is restored. A guessed
+    // fallback is worse than none: mode 0 left new files unreadable (#3641).
     #[cfg(unix)]
-    let (uid, gid, mode) = if let Some(ref meta) = original_metadata {
-        (
-            meta.uid.unwrap_or(0),
-            meta.gid.unwrap_or(0),
-            meta.permissions
-                .as_ref()
-                .map(|p| p.mode() & 0o7777)
-                .unwrap_or(0),
-        )
-    } else {
-        (0, 0, 0)
+    let (owner, mode) = match original_metadata {
+        Some(meta) => (
+            meta.uid.zip(meta.gid),
+            meta.permissions.as_ref().map(|p| p.mode() & 0o7777),
+        ),
+        None => (None, None),
     };
     #[cfg(not(unix))]
-    let (uid, gid, mode) = (0u32, 0u32, 0u32);
-
-    let _ = original_metadata; // suppress unused warning on non-Unix
+    let (owner, mode) = {
+        let _ = original_metadata;
+        (None, None)
+    };
 
     anyhow::anyhow!(SudoSaveRequired {
         temp_file,
         dest_path: dest_path.to_path_buf(),
-        uid,
-        gid,
+        owner,
         mode,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::filesystem::StdFileSystem;
+
+    /// A sudo save of a file that doesn't exist yet has no mode or owner to
+    /// restore, so it must not ask for any: a guessed mode 0 left the new file
+    /// unreadable (#3641).
+    #[test]
+    fn a_new_file_staged_for_sudo_asks_for_no_mode_or_owner() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let fs: Arc<dyn FileSystem + Send + Sync> = Arc::new(StdFileSystem);
+        let dest = dir.path().join("new.conf");
+
+        let err = stage_for_sudo(&fs, &dest, b"x\n", None).unwrap();
+        let sudo = err.downcast_ref::<SudoSaveRequired>().unwrap();
+        assert_eq!(sudo.mode, None);
+        assert_eq!(sudo.owner, None);
+    }
 }

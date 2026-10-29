@@ -741,15 +741,14 @@ impl FileSystem for RemoteFileSystem {
         &self,
         path: &Path,
         data: &[u8],
-        mode: u32,
-        uid: u32,
-        gid: u32,
+        mode: Option<u32>,
+        owner: Option<(u32, u32)>,
     ) -> io::Result<()> {
         let path_str = path.to_string_lossy();
         self.channel
             .request_blocking(
                 "sudo_write",
-                sudo_write_params(&path_str, data, mode, uid, gid),
+                sudo_write_params(&path_str, data, mode, owner),
             )
             .map_err(Self::to_io_error)?;
         Ok(())

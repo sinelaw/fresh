@@ -1614,7 +1614,7 @@
   "settings.field.editor.auto_recovery_save_interval_secs": "Intervalle de récupération (s)",
   "settings.field.editor.auto_recovery_save_interval_secs_desc": "Secondes entre deux sauvegardes de récupération, lorsque `recovery_enabled` est activé. Par défaut : 2",
   "settings.field.editor.auto_revert_poll_interval_ms": "Vérification des fichiers ouverts (ms)",
-  "settings.field.editor.auto_revert_poll_interval_ms_desc": "Fréquence (ms) de vérification des modifications externes des fichiers ouverts lorsque le rechargement automatique est activé. Une valeur plus basse est plus réactive mais consomme plus de CPU. Par défaut : 2000",
+  "settings.field.editor.auto_revert_poll_interval_ms_desc": "Fréquence (ms) de vérification des modifications externes des fichiers ouverts. Chaque tampon est vérifié, sauf si la restauration automatique y est désactivée (« Basculer la restauration automatique (tampon actuel) »). Une valeur plus basse est plus réactive mais consomme plus de CPU. Par défaut : 2000",
   "settings.field.editor.auto_save_enabled": "Enregistrement automatique",
   "settings.field.editor.auto_save_enabled_desc": "Enregistrer automatiquement les fichiers modifiés sur le disque toutes les `auto_save_interval_secs` secondes. Par défaut : false",
   "settings.field.editor.auto_save_interval_secs": "Intervalle d'enregistrement (s)",

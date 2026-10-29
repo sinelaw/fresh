@@ -465,9 +465,8 @@ impl FileSystem for WriteDeniedFileSystem {
         &self,
         path: &Path,
         data: &[u8],
-        _mode: u32,
-        _uid: u32,
-        _gid: u32,
+        _mode: Option<u32>,
+        _owner: Option<(u32, u32)>,
     ) -> io::Result<()> {
         match self.sudo_disk_full_after {
             Some(n) => {
