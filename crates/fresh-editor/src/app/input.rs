@@ -721,7 +721,7 @@ impl Editor {
             }
             WidgetKeyOutcome::BlurUnconsumed => {
                 if let Some(slot) = slot {
-                    self.blur_floating_panel(slot);
+                    self.blur_floating_panel_passing_key(slot);
                 }
                 false
             }

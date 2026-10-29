@@ -2728,6 +2728,19 @@ impl Editor {
     /// Shared by the Esc handler, the editor-click handler, and the
     /// `FloatingPanelControl{op:"blur"}` command.
     pub(super) fn blur_floating_panel(&mut self, slot: super::PanelSlot) {
+        self.blur_floating_panel_with(slot, serde_json::json!({}));
+    }
+
+    /// [`Self::blur_floating_panel`] for a key the panel gave up the keyboard
+    /// to pass on (an unhandled chord such as Ctrl+P). The `blur` says so
+    /// (`passed_on: true`), so the plugin can tell a panel left to run a
+    /// command — whose result may hand the keyboard back to it — from one the
+    /// user left (#3136).
+    pub(super) fn blur_floating_panel_passing_key(&mut self, slot: super::PanelSlot) {
+        self.blur_floating_panel_with(slot, serde_json::json!({ "passed_on": true }));
+    }
+
+    fn blur_floating_panel_with(&mut self, slot: super::PanelSlot, payload: serde_json::Value) {
         let Some(panel_key) = self.panel(slot).map(|f| f.panel_key.clone()) else {
             return;
         };
@@ -2754,12 +2767,7 @@ impl Editor {
             .get(&panel_key)
             .map(|p| p.focus_key.clone())
             .unwrap_or_default();
-        self.fire_widget_event(
-            &panel_key,
-            widget_key,
-            "blur".to_string(),
-            serde_json::json!({}),
-        );
+        self.fire_widget_event(&panel_key, widget_key, "blur".to_string(), payload);
     }
 
     /// Handle CloseSplit command

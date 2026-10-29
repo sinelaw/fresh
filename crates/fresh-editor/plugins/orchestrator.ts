@@ -886,6 +886,15 @@ let dockMode = false;
 // the editor and the dock just reflects the active session. The
 // toggle command re-focuses; Enter/Esc blur.
 let dockBlurred = false;
+// True while the dock's blur was it giving up the keyboard to pass a key on
+// (an unhandled chord such as Ctrl+P, the host's `passed_on`): the user is
+// running a command from the dock, not leaving it.
+let dockBlurredPassingKey = false;
+// Whether the dock had the keyboard when the modal picker floated over it —
+// focused, or blurred only to pass on the key that opened the picker.
+// Closing the picker gives the keyboard back to a dock that had it, and
+// leaves it with the editor or terminal otherwise (#3136).
+let dockHadKeyboardBehindPicker = false;
 // Monotonic token so a rapid run of ↑/↓ only commits the *last*
 // selection after the debounce window (30ms) — see `scheduleDockSwitch`.
 let dockSwitchToken = 0;
@@ -5628,6 +5637,7 @@ function openControlRoom(
     if (!asDock && dockMode) {
       dockPanel = openPanel; // dock stays mounted behind the picker
       openPanel = null; // fall through builds the picker as a new panel
+      dockHadKeyboardBehindPicker = !dockBlurred || dockBlurredPassingKey;
       dockBlurred = true; // the dock is now the inert background
       // dockMode flips to false in the (asDock === false) branch below.
     } else {
@@ -5772,7 +5782,14 @@ function restoreDockBehindPicker(): boolean {
   openPanel = dockPanel;
   dockPanel = null;
   dockMode = true;
-  dockBlurred = false;
+  // Only a dock that had the keyboard gets it back. One the user had left
+  // for a terminal stays blurred: focusing it here left the terminal
+  // showing while the dock held the keys, so the next Alt+O blurred the
+  // dock instead of focusing it, and the arrow keys meant for the dock
+  // reached the shell (#3136).
+  const refocus = dockHadKeyboardBehindPicker;
+  dockHadKeyboardBehindPicker = false;
+  dockBlurred = !refocus;
   if (openDialog) {
     openDialog.filter = { value: "", cursor: 0 };
     const activeId = editor.activeWindow();
@@ -5781,8 +5798,10 @@ function restoreDockBehindPicker(): boolean {
     openDialog.selectedIndex = activeIdx >= 0 ? activeIdx : 0;
   }
   refreshOpenDialog();
-  editor.floatingPanelControl(openPanel.id(), "focus", 0);
-  focusDockControl("sessions");
+  if (refocus) {
+    editor.floatingPanelControl(openPanel.id(), "focus", 0);
+    focusDockControl("sessions");
+  }
   return true;
 }
 
@@ -18276,6 +18295,8 @@ editor.on("widget_event", (e) => {
         const wasDive = dockDiveBlur;
         dockDiveBlur = false;
         dockBlurred = true;
+        dockBlurredPassingKey =
+          (e.payload as { passed_on?: boolean } | undefined)?.passed_on === true;
         // Leaving the dock abandons a move-to-folder pick.
         movePick = null;
         // Leaving the dock also closes its dropdowns so they don't
@@ -18342,6 +18363,7 @@ editor.on("widget_event", (e) => {
         dockDiveBlur = false;
         const wasBlurred = dockBlurred;
         dockBlurred = false;
+        dockBlurredPassingKey = false;
         // Re-render so the keyboard hints reappear now the dock holds
         // focus again.
         if (wasBlurred) openPanel?.update(buildDockSpec());
