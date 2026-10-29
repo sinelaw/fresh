@@ -36,7 +36,7 @@
 
 use crate::services::async_bridge::{AsyncBridge, AsyncMessage, PathChangeKind};
 use notify::{
-    event::{CreateKind, EventKind, ModifyKind, RemoveKind},
+    event::{AccessKind, AccessMode, CreateKind, EventKind, ModifyKind, RemoveKind},
     PollWatcher, RecommendedWatcher, RecursiveMode, Watcher,
 };
 use std::collections::HashMap;
@@ -263,13 +263,16 @@ fn matches_handle(watch_path: &Path, recursive: RecursiveMode, event_path: &Path
 }
 
 /// The kind of change an event reports, or `None` for an event that changes
-/// nothing: an open, read or close (`EventKind::Access`). inotify reports
-/// those for every read of a watched file, so forwarding them told plugins a
-/// file changed whenever anything read it — `git_statusbar` re-ran `git`
-/// on each `.git/HEAD` read, and that `git` read HEAD again (#3607). A write
-/// still arrives as its own `Modify`.
+/// nothing: an open, a read, or the close of a file opened for reading
+/// (`EventKind::Access`). inotify reports those for every read of a watched
+/// file, so forwarding them told plugins a file changed whenever anything
+/// read it — `git_statusbar` re-ran `git` on each `.git/HEAD` read, and that
+/// `git` read HEAD again (#3607). Closing a file opened for writing is kept,
+/// as a `Modify`: for a write through `mmap` it is the only event inotify
+/// sends.
 fn classify_kind(kind: &EventKind) -> Option<PathChangeKind> {
     Some(match kind {
+        EventKind::Access(AccessKind::Close(AccessMode::Write)) => PathChangeKind::Modify,
         EventKind::Access(_) => return None,
         EventKind::Create(CreateKind::File)
         | EventKind::Create(CreateKind::Folder)
@@ -453,6 +456,10 @@ mod tests {
         // Reads change nothing (#3607)
         assert!(classify_kind(&EventKind::Access(AccessKind::Open(AccessMode::Any))).is_none());
         assert!(classify_kind(&EventKind::Access(AccessKind::Close(AccessMode::Read))).is_none());
+        assert!(matches!(
+            classify_kind(&EventKind::Access(AccessKind::Close(AccessMode::Write))),
+            Some(PathChangeKind::Modify)
+        ));
     }
 
     /// Reading a watched file reports no change; writing it does (#3607).
@@ -465,7 +472,11 @@ mod tests {
         let head = dir.path().join("HEAD");
         std::fs::write(&head, "ref: refs/heads/main\n").unwrap();
         let bridge = AsyncBridge::new();
-        let mut manager = FileWatcherManager::new();
+        // The native backend, where reads are reported (inotify), on every
+        // platform: macOS polls non-recursive watches by default, and the
+        // poller compares whole-second mtimes, so it would never see a write
+        // made in the same second as the watch began.
+        let mut manager = FileWatcherManager::with_non_recursive_polling(None);
         let handle = manager.watch(&bridge, &head, false).unwrap();
 
         let _ = std::fs::read(&head).unwrap();
@@ -477,7 +488,11 @@ mod tests {
             true
         });
         assert!(
-            matches!(first.get(), Some(PathChangeKind::Modify)),
+            // FSEvents may coalesce the file's creation into the write.
+            matches!(
+                first.get(),
+                Some(PathChangeKind::Modify | PathChangeKind::Create)
+            ),
             "the read was reported as a change: {:?}",
             first.get()
         );
