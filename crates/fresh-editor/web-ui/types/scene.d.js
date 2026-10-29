@@ -209,7 +209,8 @@
 
 // view/scene.rs `StatusSegment`. `name`: "lsp" | "warning" | "language" |
 // "encoding" | "lineEnding" | "remote" | "trust" | "message" |
-// "terminalRestart" | "plugin" | "text" (per the Rust doc comment).
+// "terminalRestart" | "searchNext" | "searchPrevious" |
+// "plugin" | "text" (per the Rust doc comment).
 /** type StatusSegment = {
     name: String,
     key: String | Null,
