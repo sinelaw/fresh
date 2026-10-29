@@ -4360,6 +4360,26 @@ impl Window {
         }
     }
 
+    /// Whether the status bar's `{search_nav}` arrows are shown this frame:
+    /// while a search is active for the active buffer. O(1), read per frame.
+    ///
+    /// Hidden:
+    /// - in a buffer other than the one searched (`search_state` belongs to
+    ///   the window and survives a tab switch);
+    /// - during an interactive query replace, so a click cannot move the
+    ///   cursor off the match the y/n/a/c prompt is asking about. The replace
+    ///   ends the search when it finishes (`finish_interactive_replace`), as
+    ///   a replace-all does (`perform_replace`);
+    /// - while a large-file search is still scanning: there is nothing to
+    ///   step through until it finishes.
+    pub fn search_nav_shown(&self) -> bool {
+        self.search_state
+            .as_ref()
+            .is_some_and(|s| s.buffer_id == self.active_buffer())
+            && self.interactive_replace_state.is_none()
+            && self.search_scan.is_none()
+    }
+
     /// Update search highlights in the visible viewport for the active
     /// buffer. Caller passes theme colors as parameters because `theme`
     /// is editor-global (not yet on `Window.resources`).

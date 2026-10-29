@@ -42,6 +42,12 @@ pub enum StatusBarClickable {
     /// The restart indicator on a terminal buffer whose process quit — click
     /// to respawn it (resuming the agent conversation when there is one).
     RestartTerminal,
+    /// The `↓` of the `{search_nav}` arrows — click to go to the next match,
+    /// as Find Next (F3) does.
+    SearchNext,
+    /// The `↑` of the `{search_nav}` arrows — click to go to the previous
+    /// match, as Find Previous (Shift+F3) does.
+    SearchPrevious,
 }
 
 /// Visual/semantic state of the remote authority indicator.
@@ -260,6 +266,9 @@ pub struct StatusBarContext<'a> {
     /// renders only in that state. `None` for every other buffer — including a
     /// live terminal, so the indicator never offers to restart a running agent.
     pub terminal_restart: Option<TerminalRestartState>,
+    /// Whether the `{search_nav}` arrows are on the bar: while a search is
+    /// active for the active buffer (`Window::search_nav_shown`).
+    pub search_nav: bool,
 }
 
 /// What the `{terminal_restart}` indicator needs to describe the dead process
@@ -403,6 +412,7 @@ impl StatusBarRenderer {
                     | StatusBarElement::Cursor
                     | StatusBarElement::CursorCompact
                     | StatusBarElement::CursorCount
+                    | StatusBarElement::SearchNav
                     | StatusBarElement::Diagnostics
                     | StatusBarElement::LineEnding
                     | StatusBarElement::Encoding
@@ -555,6 +565,8 @@ impl StatusBarRenderer {
                 }
                 item(parts.join(" "), "text", BAR, None, hovered)
             }
+            // Two items, each answering its own click: `search_nav_items`.
+            StatusBarElement::SearchNav => None,
             StatusBarElement::CursorCount => {
                 if ctx.cursors.count() <= 1 {
                     return None;
@@ -828,16 +840,56 @@ impl StatusBarRenderer {
         }
     }
 
+    /// The `{search_nav}` arrows: a `↓` and a `↑` that step to the next and
+    /// previous match. Two items because an item answers one click; joined,
+    /// so no separator splits them. Empty while there is no search to step
+    /// through. The match position itself is the "Match X of Y" message's.
+    fn search_nav_items(ctx: &StatusBarContext<'_>) -> Vec<Item> {
+        if !ctx.search_nav || ctx.is_synthetic_placeholder {
+            return Vec::new();
+        }
+        let hovered = ctx.hovered;
+        let arrow = |glyph: &str, name, id| {
+            item(
+                glyph.to_string(),
+                name,
+                BAR,
+                Some((id, Hover::Swap(MENU_HOVER))),
+                hovered,
+            )
+        };
+        [
+            arrow("\u{2193}", "searchNext", StatusBarClickable::SearchNext),
+            arrow(
+                "\u{2191}",
+                "searchPrevious",
+                StatusBarClickable::SearchPrevious,
+            ),
+        ]
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .map(|(i, mut it)| {
+            it.joined = i > 0;
+            it
+        })
+        .collect()
+    }
+
     /// Render a configured side (left/right), in order, skipping elements
     /// with nothing to show.
     pub(crate) fn render_side(
         config_side: &[StatusBarElement],
         ctx: &mut StatusBarContext<'_>,
     ) -> Vec<Item> {
-        config_side
-            .iter()
-            .filter_map(|elem| Self::render_element(elem, ctx))
-            .collect()
+        let mut items = Vec::with_capacity(config_side.len());
+        for elem in config_side {
+            match elem {
+                StatusBarElement::SearchNav => items.extend(Self::search_nav_items(ctx)),
+                _ => items.extend(Self::render_element(elem, ctx)),
+            }
+        }
+        items
     }
 }
 
@@ -919,6 +971,7 @@ fn item(
         name,
         clickable: click.map(|(id, _)| id),
         token_key: None,
+        joined: false,
     })
 }
 
@@ -941,6 +994,7 @@ fn disconnected_filename(text: String) -> Option<Item> {
         name: "text",
         clickable: None,
         token_key: None,
+        joined: false,
     })
 }
 
@@ -957,6 +1011,80 @@ fn ink((fg, bg): Keys, underline: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The arrows are two items, each answering its own click, joined so a
+    /// configured separator does not split them; nothing without a search.
+    #[test]
+    fn search_nav_items_are_two_joined_clickable_arrows() {
+        let mut state = crate::state::EditorState::new(
+            80,
+            24,
+            1024,
+            std::sync::Arc::new(crate::model::filesystem::StdFileSystem),
+        );
+        let cursors = crate::model::cursor::Cursors::new();
+        let keybindings =
+            crate::input::keybindings::KeybindingResolver::new(&crate::config::Config::default());
+        let none = None;
+        let mut ctx = StatusBarContext {
+            state: &mut state,
+            cursors: &cursors,
+            primary_cursor_line: 0,
+            status_message: &none,
+            plugin_status_message: &none,
+            lsp_status: "",
+            lsp_indicator_state: LspIndicatorState::None,
+            display_name: "",
+            keybindings: &keybindings,
+            chord_state: &[],
+            update_available: None,
+            update_phase: Default::default(),
+            general_warning_count: 0,
+            hovered: None,
+            remote_connection: None,
+            session_name: None,
+            read_only: false,
+            remote_state_override: None,
+            remote_reconnect_error: None,
+            remote_connecting: false,
+            is_synthetic_placeholder: false,
+            remote_indicator_on_bar: false,
+            dynamic_status_bar_elements: HashMap::new(),
+            workspace_trust_level: Default::default(),
+            terminal_restart: None,
+            search_nav: false,
+        };
+        let side = [StatusBarElement::SearchNav];
+        assert!(StatusBarRenderer::render_side(&side, &mut ctx).is_empty());
+
+        ctx.search_nav = true;
+        let items = StatusBarRenderer::render_side(&side, &mut ctx);
+        let got: Vec<_> = items
+            .iter()
+            .map(|it| (it.text(), it.name, it.clickable, it.joined))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (
+                    " \u{2193} ".to_string(),
+                    "searchNext",
+                    Some(StatusBarClickable::SearchNext),
+                    false
+                ),
+                (
+                    " \u{2191} ".to_string(),
+                    "searchPrevious",
+                    Some(StatusBarClickable::SearchPrevious),
+                    true
+                ),
+            ]
+        );
+
+        // A synthesized placeholder buffer has no search to step through.
+        ctx.is_synthetic_placeholder = true;
+        assert!(StatusBarRenderer::render_side(&side, &mut ctx).is_empty());
+    }
 
     #[test]
     fn test_remote_indicator_state_default_is_local() {

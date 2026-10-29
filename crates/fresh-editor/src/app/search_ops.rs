@@ -176,12 +176,14 @@ impl Editor {
         self.select_match(match_pos, match_len);
 
         let num_matches = matches.len();
+        let buffer_id = self.active_buffer();
 
         self.active_window_mut().search_state = Some(SearchState {
             query: query.to_string(),
             matches,
             match_lengths: match_lengths.clone(),
             current_match_index: Some(current_match_index),
+            buffer_id,
             wrap_search: search_range.is_none(),
             search_range,
             capped,
@@ -1290,8 +1292,11 @@ impl Editor {
         self.active_window_mut().interactive_replace_state = None;
         self.drop_prompt(); // Clear the query-replace prompt
 
-        // Clear search highlights
-        self.active_window_mut().clear_search_overlays();
+        // End the search with the replace, as `perform_replace` does. Its
+        // stored positions are for the text before the replacements, and
+        // with the overlays gone Find Next (and the status bar's arrows)
+        // would step through them as if they were still matches.
+        self.active_window_mut().clear_search_highlights();
 
         self.set_status_message(t!("search.replaced_count", count = replacements_made).to_string());
     }
