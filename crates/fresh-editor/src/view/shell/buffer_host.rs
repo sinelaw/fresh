@@ -70,21 +70,27 @@ pub struct PaneView {
     pub caret_shown: bool,
     /// The buffer the rows show, and its version when they were drawn. An
     /// edit since then moved the bytes under the rows, and keyboard motion
-    /// must not walk them (see [`Self::rows_current_for`]).
+    /// walks them only mapped through it (see [`Self::mapped`]).
     pub drawn_from: Option<(BufferId, u64)>,
 }
 
 impl PaneView {
-    /// Whether the rows still describe `buffer` at `version`: they were drawn
-    /// from it, with no edit since.
-    ///
-    /// Input is handled in batches between frames, so an edit and a motion
-    /// that reads the rows can come in one batch — fast typing followed by
-    /// Home or Down. The rows then name bytes that have moved: Home landed
-    /// mid-line and Down in the wrong column, and the next text went in
-    /// there (#3642). Motion falls back to the buffer when this is false.
-    pub fn rows_current_for(&self, buffer: BufferId, version: u64) -> bool {
-        self.drawn_from == Some((buffer, version))
+    /// This view with every byte position it holds passed through `map` —
+    /// the forward mapping of the edits made since it was drawn — or `None`
+    /// when `map` can't place one.
+    pub fn mapped(&self, map: impl Fn(usize) -> Option<usize>) -> Option<PaneView> {
+        let mut view = self.clone();
+        view.top_byte = map(view.top_byte)?;
+        for row in &mut view.rows {
+            for byte in row.char_source_bytes.iter_mut().flatten() {
+                *byte = map(*byte)?;
+            }
+            row.line_end_byte = map(row.line_end_byte)?;
+            if let Some(end) = row.end_exclusive.as_mut() {
+                *end = map(*end)?;
+            }
+        }
+        Some(view)
     }
 
     /// The buffer position under a cell of the pane's content, with how far

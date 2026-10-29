@@ -3226,24 +3226,92 @@ impl Window {
         }
     }
 
-    /// `split_id`'s rows as last drawn, when no edit has moved the bytes
-    /// under them since — the rows keyboard motion may walk. `None` sends
-    /// the motion to the buffer-based movers instead (#3642).
+    /// `split_id`'s rows as last drawn, brought up to the buffer as it is
+    /// now — the rows keyboard motion walks — and whether an edit since the
+    /// frame had to be mapped through to get there.
+    ///
+    /// Input is handled in batches between frames, so typing and a motion
+    /// that reads the rows can arrive with no frame drawn in between. The
+    /// rows then name the bytes as they were before the typing: Home went to
+    /// a byte of the line below and Down to the wrong column (#3642). Each
+    /// row's bytes are mapped forward through the edits since (the same
+    /// right-gravity shift markers take), which keeps a wrapped line's rows
+    /// rather than falling back to whole-line motion. `None` — no rows, or
+    /// edits that can no longer be mapped — sends the motion to the
+    /// buffer-based movers.
+    fn pane_view_now(
+        &self,
+        split_id: LeafId,
+    ) -> Option<(crate::view::shell::buffer_host::PaneView, bool)> {
+        let buffer = self.pane_buffer(split_id)?;
+        let state = self.buffers.get(&buffer)?;
+        let view = self.pane_view(split_id)?;
+        let (drawn_buffer, drawn_version) = view.drawn_from?;
+        if drawn_buffer != buffer {
+            return None;
+        }
+        if drawn_version == state.buffer.version() {
+            return Some((view.clone(), false));
+        }
+        let shifted = view.mapped(|byte| state.coord_map.map(byte, drawn_version))?;
+        Some((shifted, true))
+    }
+
+    /// [`Self::pane_view_now`]'s rows alone.
     pub(crate) fn current_pane_view(
         &self,
         split_id: LeafId,
-    ) -> Option<std::cell::Ref<'_, crate::view::shell::buffer_host::PaneView>> {
-        let buffer = self.pane_buffer(split_id)?;
-        let version = self.buffers.get(&buffer)?.buffer.version();
-        self.pane_view(split_id)
-            .filter(|view| view.rows_current_for(buffer, version))
+    ) -> Option<crate::view::shell::buffer_host::PaneView> {
+        self.pane_view_now(split_id).map(|(view, _)| view)
     }
 
     /// The visual column of a byte position within its visual row, in
     /// `split_id`'s rows as last drawn.
+    ///
+    /// When edits since the frame were mapped through, text typed into the
+    /// row has no cell yet, so the column is measured from the row's first
+    /// drawn byte through the buffer as it is now (except across a tab,
+    /// whose width the cells alone know).
     pub fn byte_to_visual_column(&self, split_id: LeafId, byte_pos: usize) -> Option<usize> {
-        self.current_pane_view(split_id)?
-            .byte_to_visual_column(byte_pos)
+        let (view, mapped) = self.pane_view_now(split_id)?;
+        if mapped {
+            if let Some(col) = self.column_through_typed_text(split_id, &view, byte_pos) {
+                return Some(col);
+            }
+        }
+        view.byte_to_visual_column(byte_pos)
+    }
+
+    fn column_through_typed_text(
+        &self,
+        split_id: LeafId,
+        view: &crate::view::shell::buffer_host::PaneView,
+        byte_pos: usize,
+    ) -> Option<usize> {
+        let row = view.rows.get(view.find_visual_row(byte_pos)?)?;
+        let (first_col, first_byte) =
+            row.visual_to_char
+                .iter()
+                .enumerate()
+                .find_map(|(col, &char_idx)| {
+                    row.char_source_bytes
+                        .get(char_idx)
+                        .copied()
+                        .flatten()
+                        .map(|byte| (col, byte))
+                })?;
+        if first_byte > byte_pos {
+            return None;
+        }
+        let state = self.buffers.get(&self.pane_buffer(split_id)?)?;
+        let bytes = state.buffer.slice_bytes(first_byte..byte_pos);
+        if bytes.contains(&b'\t') || bytes.contains(&b'\n') {
+            return None;
+        }
+        Some(
+            first_col
+                + crate::primitives::display_width::str_width(&String::from_utf8_lossy(&bytes)),
+        )
     }
 
     /// Move by visual line using the pane's settled rows.
