@@ -40,13 +40,13 @@ async function loadGitFiles(): Promise<GitFile[]> {
     return [];
   }
 
-  const result = await editor.spawnProcess(
+  const result = await editor.runOnTarget(
     "git",
     // `-z`: names as they are, unquoted, whatever characters they hold.
     ["ls-files", "-z", "--full-name"],
     repo.root,
   );
-  if (result.exit_code !== 0) {
+  if (result.code !== 0) {
     editor.debug(`Failed to load git files: ${result.stderr}`);
     return [];
   }

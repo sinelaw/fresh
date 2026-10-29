@@ -736,32 +736,32 @@ async function surfaceLifecycleResult(
   cmdName: string,
   label: string | null,
   cmdline: string,
-  result: { stdout: string; stderr: string; exit_code: number },
+  result: CommandResult,
 ): Promise<void> {
   // Status line: the at-a-glance signal. Detail lands in the
   // panel slot below.
-  if (result.exit_code === 0) {
+  if (result.code === 0) {
     editor.setStatus(editor.t("status.completed", { name: cmdName }));
   } else if (label !== null) {
     editor.setStatus(
       editor.t("status.failed_sub", {
         name: cmdName,
         label,
-        code: String(result.exit_code),
+        code: String(result.code),
       }),
     );
   } else {
     editor.setStatus(
       editor.t("status.failed", {
         name: cmdName,
-        code: String(result.exit_code),
+        code: String(result.code),
       }),
     );
   }
 
   const headerLine = label !== null
-    ? `--- ${cmdName} (${label}) — exit ${result.exit_code} ---\n`
-    : `--- ${cmdName} — exit ${result.exit_code} ---\n`;
+    ? `--- ${cmdName} (${label}) — exit ${result.code} ---\n`
+    : `--- ${cmdName} — exit ${result.code} ---\n`;
   const cmdLineText = `$ ${cmdline}\n`;
   const stdoutBlock = result.stdout.length > 0 ? result.stdout : "";
   const stderrBlock = result.stderr.length > 0
@@ -796,7 +796,7 @@ function readRemoteWorkspace(): string | null {
   return typeof raw === "string" && raw.length > 0 ? raw : null;
 }
 
-/// Pick the cwd to pass to lifecycle-command `spawnProcess` calls.
+/// Pick the cwd to pass to lifecycle-command `runOnTarget` calls.
 /// When attached to a Container authority, returns the recorded
 /// `remoteWorkspaceFolder` so `docker exec -w` lands inside the
 /// container. Otherwise returns undefined so the runtime fills
@@ -863,8 +863,8 @@ async function getOrComputeProbedEnv(): Promise<Record<string, string>> {
   // configured rc file.
   const baseEnv: Record<string, string> = config?.remoteEnv ?? {};
   const [bin, probeArgs] = wrapWithEnv(baseEnv, "bash", [...flags, "-c", ENV_DUMP]);
-  const result = await editor.spawnProcess(bin, probeArgs, cwd);
-  if (result.exit_code !== 0) {
+  const result = await editor.runOnTarget(bin, probeArgs, cwd);
+  if (result.code !== 0) {
     editor.debug(
       `devcontainer: userEnvProbe (${probe}) failed: ${result.stderr.trim()}`,
     );
@@ -931,7 +931,7 @@ async function captureContainerLoginEnv(
 
   // Compose `docker exec -i [-u USER] [-w WORKSPACE] <id> bash ...`
   // by hand: at this point the authority hasn't been installed yet,
-  // so `editor.spawnProcess` would route to the host. Use
+  // so `editor.runOnTarget` would route to the host. Use
   // `spawnHostProcess` and address the container directly via the
   // host docker CLI.
   const dockerArgs: string[] = ["exec", "-i"];
@@ -1017,7 +1017,7 @@ async function runLifecycleObjectForm(
         cmdline = subcmd as string;
       }
       const [bin, args] = wrapWithEnv(env, origBin, origArgs);
-      const r = await editor.spawnProcess(bin, args, cwd);
+      const r = await editor.runOnTarget(bin, args, cwd);
       return { label, cmdline, result: r };
     }),
   );
@@ -1027,10 +1027,10 @@ async function runLifecycleObjectForm(
   // across N intermediate states. Failed entries first so the
   // user sees the failures even if stdout is enormous.
   const sorted = [...results].sort(
-    (a, b) => Number(a.result.exit_code === 0) - Number(b.result.exit_code === 0),
+    (a, b) => Number(a.result.code === 0) - Number(b.result.code === 0),
   );
   const sections = sorted.map(({ label, cmdline, result: r }) => {
-    const header = `--- ${cmdName} (${label}) — exit ${r.exit_code} ---\n`;
+    const header = `--- ${cmdName} (${label}) — exit ${r.code} ---\n`;
     const cmdLine = `$ ${cmdline}\n`;
     const stdoutBlock = r.stdout.length > 0 ? r.stdout : "";
     const stderrBlock = r.stderr.length > 0
@@ -1045,7 +1045,7 @@ async function runLifecycleObjectForm(
     entries: [{ text: sections.join("\n"), properties: { type: "log" } }],
   });
 
-  const failed = results.filter((r) => r.result.exit_code !== 0);
+  const failed = results.filter((r) => r.result.code !== 0);
   if (failed.length === 0) {
     editor.setStatus(editor.t("status.completed", { name: cmdName }));
     return;
@@ -1058,7 +1058,7 @@ async function runLifecycleObjectForm(
     editor.t("status.failed_sub", {
       name: cmdName,
       label: first.label,
-      code: String(first.result.exit_code),
+      code: String(first.result.code),
     }),
   );
 }
@@ -1589,7 +1589,7 @@ function buildContainerAuthorityPayload(
     args.push("-w", workspace);
   }
   // Apply the captured userEnvProbe env to the integrated terminal too, so it
-  // matches what LSP / spawnProcess get inside the container (issue #2355; see
+  // matches what LSP / runOnTarget get inside the container (issue #2355; see
   // docs/internal/uniform-env-activation-design.md). Mirrors the spawner's
   // `build_docker_exec_prefix`, which already passes these as `-e` flags;
   // without them the terminal would drop into `bash -l` with only whatever the
@@ -1882,11 +1882,10 @@ async function runDevcontainerUp(extraArgs: string[]): Promise<void> {
   // failure (no authority landed — surfaces as FailedAttach).
   writeAttachAttempt();
   // Persist `remoteWorkspaceFolder` so the post-restart plugin
-  // instance can pass it as the cwd to lifecycle commands. The
-  // runtime's `spawnProcess` auto-fills working_dir (host path)
-  // when cwd is omitted — that breaks `docker exec -w` for
-  // configs whose `workspaceFolder` differs from the host
-  // workspace path. See `lifecycleCwd()`.
+  // instance can pass it as the cwd to lifecycle commands: a
+  // command run without one does not land in `workspaceFolder`
+  // for configs where it differs from the host workspace path.
+  // See `lifecycleCwd()`.
   writeRemoteWorkspace(parsed.remoteWorkspaceFolder ?? null);
   editor.setAuthority(payload);
 }
@@ -2488,13 +2487,13 @@ editor.on("prompt_confirmed", async (data) => {
   if (typeof cmd === "string") {
     editor.setStatus(editor.t("status.running", { name: cmdName }));
     const [bin, args] = wrapWithEnv(env, "sh", ["-c", cmd]);
-    const result = await editor.spawnProcess(bin, args, cwd);
+    const result = await editor.runOnTarget(bin, args, cwd);
     await surfaceLifecycleResult(cmdName, null, cmd, result);
   } else if (Array.isArray(cmd)) {
     const [origBin, ...origArgs] = cmd;
     const [bin, args] = wrapWithEnv(env, origBin, origArgs);
     editor.setStatus(editor.t("status.running", { name: cmdName }));
-    const result = await editor.spawnProcess(bin, args, cwd);
+    const result = await editor.runOnTarget(bin, args, cwd);
     await surfaceLifecycleResult(cmdName, null, [origBin, ...origArgs].join(" "), result);
   } else {
     // Object form: see the rewritten parallel branch in

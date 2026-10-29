@@ -45,6 +45,7 @@ import {
   type WidgetSpec,
   type WidgetEvt,
 } from "./lib/widgets.ts";
+import { WindowMachines } from "./lib/window_machines.ts";
 import { BIG_FILE_ARGS } from "./lib/git_repo.ts";
 import {
   AGENT_REGISTRY,
@@ -5302,13 +5303,31 @@ const MAX_CONCURRENT_GIT_PROBES = 6;
 // kills the ones already running, and waits for them to exit before the
 // caller touches the directory.
 const probesHeldOff = new Set<number>();
-const probeProcs = new Map<number, Set<ProcessHandle<SpawnResult>>>();
+const probeProcs = new Map<number, Set<ProcessHandle<CommandResult>>>();
+
+// The machine each window's commands run on: that window's own backend, so a
+// remote workspace is probed on its host whichever window is in front.
+const windowMachines = new WindowMachines(editor);
 
 // Every probe subprocess goes through here, so `holdProbesOff` can find it.
-// A held session spawns nothing: its probe sees a failed command.
-async function probeSpawn(s: AgentSession, command: string, args: string[]): Promise<SpawnResult> {
-  if (probesHeldOff.has(s.id)) return { stdout: "", stderr: "", exit_code: -1 };
-  const handle = editor.spawnProcess(command, args, s.root);
+// A held session spawns nothing: its probe sees a failed command. A session
+// with a window runs on that window's machine; a remote one that is not
+// connected has nothing to run on yet, and a discovered worktree (no window)
+// runs on the active window's.
+async function probeSpawn(s: AgentSession, command: string, args: string[]): Promise<CommandResult> {
+  const failed = { stdout: "", stderr: "", code: -1 };
+  if (probesHeldOff.has(s.id)) return failed;
+  let handle: ProcessHandle<CommandResult>;
+  if (s.id > 0) {
+    const win = editor.listWindows().find((w) => w.id === s.id);
+    if (!win || (win.remote && !win.remote.connected)) return failed;
+    const machine = await windowMachines.get(s.id).catch(() => null);
+    // The hold may have started while the machine opened.
+    if (!machine || probesHeldOff.has(s.id)) return failed;
+    handle = machine.run(command, args, s.root);
+  } else {
+    handle = editor.runOnTarget(command, args, s.root);
+  }
   let running = probeProcs.get(s.id);
   if (!running) {
     running = new Set();
@@ -5343,7 +5362,7 @@ async function sessionBranch(s: AgentSession): Promise<string> {
   if (s.branch) return s.branch;
   try {
     const r = await probeSpawn(s, "git", ["rev-parse", "--abbrev-ref", "HEAD"]);
-    if (r.exit_code === 0) {
+    if (r.code === 0) {
       const b = (r.stdout || "").trim();
       if (b && b !== "HEAD") {
         s.branch = b;
@@ -5403,7 +5422,7 @@ async function probePr(s: AgentSession): Promise<void> {
     const fields =
       "number,state,isDraft,reviewDecision,mergeable,statusCheckRollup,comments";
     const r = await probeSpawn(s, "gh", ["pr", "view", branch, "--json", fields]);
-    if (r.exit_code !== 0) {
+    if (r.code !== 0) {
       // No PR for this branch, or `gh` unavailable / not a GH remote.
       s.pr = { status: "none", fetchedAt: Date.now() };
       return;
@@ -5499,7 +5518,7 @@ async function probeGit(s: AgentSession): Promise<void> {
   s.git = { status: "loading", fetchedAt: s.git?.fetchedAt ?? 0, info: s.git?.info };
   try {
     const st = await probeSpawn(s, "git", ["status", "--porcelain=v2", "--branch"]);
-    if (st.exit_code !== 0) {
+    if (st.code !== 0) {
       // `git status` failed. This is usually transient — an agent holding
       // `.git/index.lock`, a mid-checkout worktree, etc. — so KEEP the last
       // known summary instead of blanking it (a genuine non-git dir simply
@@ -5515,7 +5534,7 @@ async function probeGit(s: AgentSession): Promise<void> {
     // either way, but without the cap git still diffs a multi-megabyte blob
     // in full to count it, once per session per tick.
     const diff = await probeSpawn(s, "git", [...BIG_FILE_ARGS, "diff", "--shortstat", "HEAD"]);
-    if (diff.exit_code === 0) {
+    if (diff.code === 0) {
       const ins = (diff.stdout || "").match(/(\d+) insertion/);
       const del = (diff.stdout || "").match(/(\d+) deletion/);
       if (ins) info.added = Number(ins[1]);
@@ -7768,7 +7787,7 @@ async function unarchiveOne(e: ArchivedSession): Promise<LifecycleResult> {
       ["-C", repoRoot, "worktree", "move", e.root, e.original_root],
       repoRoot,
     );
-    if (res.exit_code !== 0) {
+    if (res.code !== 0) {
       return {
         ok: false,
         err: lastNonEmptyLine(res.stderr) || editor.t("err.worktree_move_failed"),
@@ -7994,7 +8013,7 @@ async function archiveOneNow(id: number): Promise<LifecycleResult> {
       ["-C", repoRoot, "worktree", "move", s.root, archivedRoot],
       repoRoot,
     );
-    if (moveRes.exit_code !== 0) {
+    if (moveRes.code !== 0) {
       return {
         ok: false,
         err: lastNonEmptyLine(moveRes.stderr) || editor.t("err.worktree_move_failed"),
@@ -8129,7 +8148,7 @@ async function deleteOneNow(id: number, removeWorktree: boolean): Promise<Lifecy
         ["-C", rr, "worktree", "remove", "--force", s.root],
         rr,
       );
-      if (removeRes.exit_code !== 0) {
+      if (removeRes.code !== 0) {
         return {
           ok: false,
           err: lastNonEmptyLine(removeRes.stderr) || editor.t("err.worktree_remove_failed"),
@@ -8876,8 +8895,8 @@ async function spawnCollect(
   command: string,
   args: string[],
   cwd: string,
-): Promise<SpawnResult> {
-  return await editor.spawnProcess(command, args, cwd);
+): Promise<CommandResult> {
+  return await editor.runOnTarget(command, args, cwd);
 }
 
 /// Resolve the origin's default branch as `"origin/<name>"` from
@@ -8906,7 +8925,7 @@ async function detectDefaultBranchWithFallback(
     ["-C", repoRoot, "symbolic-ref", "refs/remotes/origin/HEAD"],
     repoRoot,
   );
-  if (res.exit_code === 0) {
+  if (res.code === 0) {
     const trimmed = (res.stdout || "").trim();
     const prefix = "refs/remotes/";
     if (trimmed.startsWith(prefix)) {
@@ -8930,7 +8949,7 @@ async function resolveCanonicalRepoRoot(
     ["rev-parse", "--show-toplevel"],
     cwd,
   );
-  if (top.exit_code !== 0) return null;
+  if (top.code !== 0) return null;
   const toplevel = (top.stdout || "").trim();
   if (!toplevel) return null;
   // `--git-common-dir` returns the shared `.git` dir even when
@@ -8942,7 +8961,7 @@ async function resolveCanonicalRepoRoot(
     ["rev-parse", "--path-format=absolute", "--git-common-dir"],
     toplevel,
   );
-  if (common.exit_code === 0) {
+  if (common.code === 0) {
     const parent = editor.pathDirname((common.stdout || "").trim());
     if (parent) return parent;
   }
@@ -8961,7 +8980,7 @@ async function pathIsInsideGitWorkTree(
     ["-C", path, "rev-parse", "--is-inside-work-tree"],
     path,
   );
-  if (res.exit_code !== 0) return false; // non-zero = not a repo
+  if (res.code !== 0) return false; // non-zero = not a repo
   return (res.stdout || "").trim() === "true";
 }
 
@@ -9004,7 +9023,7 @@ interface WorktreeInfo {
 async function classifyWorktree(path: string): Promise<WorktreeInfo | null> {
   if (!path) return null;
   const top = await spawnCollect("git", ["-C", path, "rev-parse", "--show-toplevel"], path);
-  if (top.exit_code !== 0) return null;
+  if (top.code !== 0) return null;
   const toplevel = (top.stdout || "").trim();
   if (!toplevel) return null;
 
@@ -9020,8 +9039,8 @@ async function classifyWorktree(path: string): Promise<WorktreeInfo | null> {
       toplevel,
     ),
   ]);
-  const gd = gitDir.exit_code === 0 ? (gitDir.stdout || "").trim() : "";
-  const cd = commonDir.exit_code === 0 ? (commonDir.stdout || "").trim() : "";
+  const gd = gitDir.code === 0 ? (gitDir.stdout || "").trim() : "";
+  const cd = commonDir.code === 0 ? (commonDir.stdout || "").trim() : "";
   const isLinked = gd !== "" && cd !== "" && gd !== cd;
   const mainRoot = cd ? editor.pathDirname(cd) : toplevel;
 
@@ -9030,7 +9049,7 @@ async function classifyWorktree(path: string): Promise<WorktreeInfo | null> {
     ["-C", toplevel, "rev-parse", "--abbrev-ref", "HEAD"],
     toplevel,
   );
-  let branch = head.exit_code === 0 ? (head.stdout || "").trim() : "";
+  let branch = head.code === 0 ? (head.stdout || "").trim() : "";
   if (branch === "HEAD") branch = ""; // detached
 
   return { toplevel, mainRoot, isLinked, branch };
@@ -9080,7 +9099,7 @@ async function listLinkedWorktrees(
     ["-C", repoRoot, "worktree", "list", "--porcelain"],
     repoRoot,
   );
-  if (res.exit_code !== 0) return null;
+  if (res.code !== 0) return null;
   const all = parseWorktreePorcelain(res.stdout || "");
   if (all.length === 0) return null;
   // The first entry is always the main worktree.
@@ -9158,7 +9177,7 @@ async function nextAutoSessionName(
     repoRoot,
   );
   const taken = new Set<number>();
-  if (refs.exit_code === 0) {
+  if (refs.code === 0) {
     const re = new RegExp(`^${base.replace(/[.]/g, "\\.")}-(\\d+)$`);
     for (const line of (refs.stdout || "").split(/\r?\n/)) {
       const m = re.exec(line.trim());
@@ -9884,7 +9903,7 @@ function remoteWorktreeReachable(s: AgentSession): boolean {
 // Remove a remote worktree over the session's **own** connection.
 //
 // **This runs while the session's window is still active, and that is the
-// point.** `spawnProcess` routes through the active authority, so with the
+// point.** `runOnTarget` runs on the active window's machine, so with the
 // remote window in front the `git` below executes on the far side with no ssh
 // argv to rebuild — the plugin never sees a live session's transport
 // (`WindowInfo.remote` carries a display identity, not an identity file), and
@@ -9905,7 +9924,7 @@ async function removeRemoteWorktree(s: AgentSession): Promise<string | null> {
     s.root,
   );
   const lines = (linked.stdout || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  if (linked.exit_code !== 0 || lines.length < 2) {
+  if (linked.code !== 0 || lines.length < 2) {
     return lastNonEmptyLine(linked.stderr) || editor.t("err.remote_worktree_remove_failed");
   }
   // A main checkout has `--git-dir` === `--git-common-dir`; only a linked
@@ -9919,7 +9938,7 @@ async function removeRemoteWorktree(s: AgentSession): Promise<string | null> {
     ["-C", s.root, "worktree", "remove", "--force", s.root],
     s.root,
   );
-  if (rm.exit_code !== 0) {
+  if (rm.code !== 0) {
     return lastNonEmptyLine(rm.stderr) || editor.t("err.remote_worktree_remove_failed");
   }
   return null;
@@ -14770,7 +14789,7 @@ async function fetchBranchCompletions(typed: string): Promise<string[]> {
     ],
     projectPath,
   );
-  if (res.exit_code !== 0) return [];
+  if (res.code !== 0) return [];
   const lines = (res.stdout || "")
     .split(/\r?\n/)
     .map((l) => l.trim())
@@ -15526,7 +15545,7 @@ async function freeWorktreeName(projectPath: string, name: string): Promise<stri
       ["-C", repoRoot, "rev-parse", "--verify", "--quiet", `refs/heads/${n}`],
       repoRoot,
     );
-    return ref.exit_code === 0;
+    return ref.code === 0;
   };
   for (let i = 1; i < 100; i++) {
     const n = i === 1 ? name : `${name}-${i}`;
@@ -15608,7 +15627,7 @@ async function runLocalCreate(id: number): Promise<void> {
         ["-C", repoRoot, "worktree", "add", root, "-b", newBranch, base],
         repoRoot,
       );
-      if (addRes.exit_code !== 0) {
+      if (addRes.code !== 0) {
         if (/already exists/i.test(addRes.stderr || "")) {
           failPending(id, editor.t("err.branch_exists", { branch: newBranch }));
         } else {
@@ -15627,7 +15646,7 @@ async function runLocalCreate(id: number): Promise<void> {
         ["-C", repoRoot, "worktree", "add", root, checkoutBranch],
         repoRoot,
       );
-      if (addRes.exit_code !== 0) {
+      if (addRes.code !== 0) {
         failPending(
           id,
           lastNonEmptyLine(addRes.stderr) || editor.t("err.worktree_add_failed"),
@@ -15643,13 +15662,13 @@ async function runLocalCreate(id: number): Promise<void> {
         ["-C", repoRoot, "worktree", "add", root, "-b", sessionName, defaultBranch],
         repoRoot,
       );
-      if (addRes.exit_code !== 0) {
+      if (addRes.code !== 0) {
         const fallback = await spawnCollect(
           "git",
           ["-C", repoRoot, "worktree", "add", root, sessionName],
           repoRoot,
         );
-        if (fallback.exit_code !== 0) {
+        if (fallback.code !== 0) {
           failPending(
             id,
             lastNonEmptyLine(fallback.stderr) ||
@@ -15685,7 +15704,7 @@ async function runLocalCreate(id: number): Promise<void> {
       ["-C", projectPath, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
       projectPath,
     );
-    if (upstreamRes.exit_code !== 0) {
+    if (upstreamRes.code !== 0) {
       failPending(id, editor.t("err.checkout_no_upstream"));
       return;
     }
@@ -15703,7 +15722,7 @@ async function runLocalCreate(id: number): Promise<void> {
       ["-C", projectPath, "checkout", checkoutBranch],
       projectPath,
     );
-    if (coRes.exit_code !== 0) {
+    if (coRes.code !== 0) {
       failPending(
         id,
         lastNonEmptyLine(coRes.stderr) || editor.t("err.worktree_add_failed"),
@@ -18848,7 +18867,8 @@ editor.on("window_created", () => {
   refreshOpenDialog();
 });
 
-editor.on("window_closed", () => {
+editor.on("window_closed", (args) => {
+  windowMachines.close(args.id);
   // Deliberately does NOT clear the window's tombstone. The hook fires when
   // the host closes the window, but the plugin's `listWindows()` snapshot
   // may not have caught up yet — and a reconcile in that gap would see a

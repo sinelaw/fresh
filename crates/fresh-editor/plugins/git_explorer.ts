@@ -157,7 +157,7 @@ async function refreshGitExplorerDecorations() {
   refreshInFlight = true;
   try {
     const cwd = editor.getCwd();
-    const rootResult = await editor.spawnProcess("git", ["rev-parse", "--show-toplevel"], cwd);
+    const rootResult = await editor.runOnTarget("git", ["rev-parse", "--show-toplevel"], cwd);
 
     type Decoration = { path: string; symbol: string; color: string; priority: number };
     // Keep each repo's decorations grouped with the root they came from, so
@@ -174,14 +174,14 @@ async function refreshGitExplorerDecorations() {
     const addRepoGroup = async (repoRoot: string): Promise<void> => {
       if (!repoRoot || seenRoots.has(repoRoot)) return;
       seenRoots.add(repoRoot);
-      const statusResult = await editor.spawnProcess("git", ["status", "--porcelain", "-z"], repoRoot);
-      if (statusResult.exit_code === 0) {
+      const statusResult = await editor.runOnTarget("git", ["status", "--porcelain", "-z"], repoRoot);
+      if (statusResult.code === 0) {
         repoGroups.push({ root: repoRoot, decorations: parseStatusOutput(statusResult.stdout, repoRoot) });
       }
     };
 
     // Decorate the workspace root's own repo when it is one.
-    if (rootResult.exit_code === 0 && rootResult.stdout.trim()) {
+    if (rootResult.code === 0 && rootResult.stdout.trim()) {
       await addRepoGroup(rootResult.stdout.trim());
     }
     // Always also discover nested sub-repos below cwd. A monorepo whose root
@@ -192,8 +192,8 @@ async function refreshGitExplorerDecorations() {
     // sole discovery path (plain monorepo/multi-repo layout).
     const subRepos = discoverSubRepos(editor, cwd);
     for (const subDir of subRepos) {
-      const subRootResult = await editor.spawnProcess("git", ["rev-parse", "--show-toplevel"], subDir);
-      if (subRootResult.exit_code !== 0) continue;
+      const subRootResult = await editor.runOnTarget("git", ["rev-parse", "--show-toplevel"], subDir);
+      if (subRootResult.code !== 0) continue;
       await addRepoGroup(subRootResult.stdout.trim());
     }
 
