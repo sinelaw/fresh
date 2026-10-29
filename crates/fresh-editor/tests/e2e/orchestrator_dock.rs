@@ -1294,6 +1294,47 @@ fn picker_opened_away_from_the_dock_leaves_the_keyboard_there() {
     h.wait_until(|h| h.editor().is_dock_focused()).unwrap();
 }
 
+/// A palette opened from the dock and closed, then later another palette
+/// that opens the picker: the dock was left by then, so closing the picker
+/// leaves the keyboard in the editor. The dock's blur for the first Ctrl+P
+/// (a key it passed on) must not still count as the dock having the
+/// keyboard (#3136).
+#[test]
+fn picker_after_an_earlier_palette_from_the_dock_leaves_the_keyboard_in_the_editor() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(200, 40, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // Ctrl+P from the dock, and Esc: the keyboard is the editor's
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.editor().is_dock_focused()).unwrap();
+
+    // Later, from the editor: the picker, then Esc
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Orchestrator: Open").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: Open"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: Workspaces"))
+        .unwrap();
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("ORCHESTRATOR :: Workspaces"))
+        .unwrap();
+
+    assert!(!h.editor().is_dock_focused(), "the dock took the keyboard");
+    h.type_text("BACKINEDITOR").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("BACKINEDITOR"))
+        .unwrap();
+}
+
 /// The Quick Open hint bar (`file | >command | :line | #buffer`) must align
 /// with the suggestions popup above it — both sit in the chrome area to the
 /// right of the dock. The hint row used to hardcode `x: 0`, drawing the bar

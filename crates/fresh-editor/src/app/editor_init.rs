@@ -807,6 +807,7 @@ impl Editor {
             widget_registry: crate::widgets::WidgetRegistry::new(),
             floating_widget_panel: None,
             dock_covered: false,
+            dock_passed_key_pending: false,
             dock: None,
             dock_reserved: false,
             dock_width_percent: None,

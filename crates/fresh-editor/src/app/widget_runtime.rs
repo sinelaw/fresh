@@ -2690,6 +2690,9 @@ impl Editor {
         let Some(panel_key) = self.panel(slot).map(|f| f.panel_key.clone()) else {
             return;
         };
+        if slot == super::PanelSlot::Dock {
+            self.dock_passed_key_pending = false;
+        }
         if let Some(f) = self.panel_mut(slot) {
             f.focused = true;
         }
@@ -2738,6 +2741,25 @@ impl Editor {
     /// user left (#3136).
     pub(super) fn blur_floating_panel_passing_key(&mut self, slot: super::PanelSlot) {
         self.blur_floating_panel_with(slot, serde_json::json!({ "passed_on": true }));
+        if slot == super::PanelSlot::Dock {
+            self.dock_passed_key_pending = true;
+        }
+    }
+
+    /// The command a key passed on from the dock ran is over once a later
+    /// key arrives with no prompt open (a palette the key opened has closed,
+    /// confirmed or not): tell the dock it was left, with a plain `blur`, so
+    /// that the plugin stops counting it as still holding the keyboard. A
+    /// picker the command floated over the dock has already noted that the
+    /// dock had it.
+    pub(super) fn end_dock_passed_key(&mut self) {
+        if !self.dock_passed_key_pending || self.active_window().prompt.is_some() {
+            return;
+        }
+        self.dock_passed_key_pending = false;
+        if self.dock.as_ref().is_some_and(|d| !d.focused) {
+            self.blur_floating_panel(super::PanelSlot::Dock);
+        }
     }
 
     fn blur_floating_panel_with(&mut self, slot: super::PanelSlot, payload: serde_json::Value) {

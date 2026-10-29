@@ -1627,6 +1627,11 @@ pub struct Editor {
     /// back is answered with the matching `focus` exactly once. See
     /// `Editor::panel_keyboard_changed`.
     pub(crate) dock_covered: bool,
+    /// The dock gave up the keyboard to pass a key on (Ctrl+P typed in it),
+    /// and that key's command may still hand it back: true until the next key
+    /// handled with no prompt open, when the command is over and the dock is
+    /// told with a plain `blur` (#3136). See `blur_floating_panel_passing_key`.
+    pub(crate) dock_passed_key_pending: bool,
 
     /// The editor-global left **dock** panel (`PanelSlot::Dock`), if
     /// shown. Independent of `floating_widget_panel` so the dock persists
