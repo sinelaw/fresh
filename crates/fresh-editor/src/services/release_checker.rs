@@ -313,10 +313,17 @@ mod tests {
         assert!(parts[1].parse::<u32>().is_ok());
     }
 
+    #[cfg(debug_assertions)]
     use std::sync::mpsc as std_mpsc;
 
     /// Test helper: start a local HTTP server that returns a mock release JSON
     /// Returns (stop_sender, url) - send to stop_sender to shut down the server
+    ///
+    /// The feed is plain http, which fresh-update's endpoint policy only
+    /// accepts under `debug_assertions` (or `insecure-endpoints`): a release
+    /// build ignores it and asks the real GitHub API instead. So this helper
+    /// and every test that uses it are debug-only.
+    #[cfg(debug_assertions)]
     fn start_mock_release_server(version: &str) -> (std_mpsc::Sender<()>, String) {
         let server = tiny_http::Server::http("127.0.0.1:0").expect("Failed to start test server");
         let port = server.server_addr().to_ip().unwrap().port();
@@ -360,9 +367,6 @@ mod tests {
         (stop_tx, url)
     }
 
-    // The mock feed is plain http, which fresh-update's endpoint policy only
-    // accepts under `debug_assertions` (or `insecure-endpoints`); a release
-    // build falls back to GitHub and never sees the mock's update.
     #[cfg(debug_assertions)]
     #[test]
     fn test_update_checker_detects_new_version() {
@@ -388,6 +392,7 @@ mod tests {
         stop_tx.send(()).ok();
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn test_update_checker_no_update_when_current() {
         let (stop_tx, url) = start_mock_release_server(CURRENT_VERSION);
@@ -413,6 +418,7 @@ mod tests {
         stop_tx.send(()).ok();
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn test_update_checker_api_before_result() {
         let (stop_tx, url) = start_mock_release_server("99.0.0");
@@ -468,7 +474,8 @@ mod tests {
     /// the update child the popup spawns, must agree on where releases come
     /// from. They share one env var so they cannot drift.
     ///
-    /// Debug only: a release build refuses the http override, as above.
+    /// Debug only: a release build refuses an http override (see
+    /// `start_mock_release_server`).
     #[cfg(debug_assertions)]
     #[test]
     fn the_release_feed_override_is_shared_by_check_and_update() {
