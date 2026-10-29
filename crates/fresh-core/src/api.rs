@@ -167,6 +167,56 @@ pub struct TerminalScreen {
     /// has none. A checkpoint leaves the screen there too, after the
     /// scrollback, until the next one replaces it.
     pub file: String,
+    /// The terminal's tab label (e.g. `claude`, `Terminal 1`)
+    pub name: String,
+}
+
+/// An open file buffer, listed by `getWorkspaceSearchSources`
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct WorkspaceBuffer {
+    /// The buffer, for `searchBuffer` and `showBuffer`
+    #[ts(type = "number")]
+    pub buffer_id: u64,
+    /// The file it edits (absolute)
+    pub path: String,
+    /// Whether it has edits not yet saved
+    pub modified: bool,
+}
+
+/// Unsaved edits to a file kept for a workspace that has not been opened in
+/// this session yet, as they come back when it is
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct RecoveredFile {
+    /// The file the edits are to (absolute)
+    pub path: String,
+    /// The whole text with the edits in it
+    pub text: String,
+}
+
+/// What one workspace has to search besides its files on disk, returned by
+/// `getWorkspaceSearchSources`
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct WorkspaceSearchSources {
+    /// Whether the workspace has been opened in this session. One that is
+    /// listed (in the dock) but not opened yet has no buffers or terminals
+    /// running: its unsaved edits are in `recovered`, and its terminals'
+    /// history is in the files under `terminalDirs`.
+    pub loaded: bool,
+    /// The directories holding its terminals' backing files (`*.txt`, with
+    /// ANSI escapes), the workspace's own `getTerminalDir()` first
+    pub terminal_dirs: Vec<String>,
+    /// The visible screen of each of its terminals, as `getTerminalScreens`
+    pub terminals: Vec<TerminalScreen>,
+    /// Its open file buffers
+    pub buffers: Vec<WorkspaceBuffer>,
+    /// The unsaved edits of a workspace not opened yet; empty once it is
+    pub recovered: Vec<RecoveredFile>,
 }
 
 /// Result of creating a virtual buffer
@@ -6051,6 +6101,16 @@ pub enum PluginCommand {
     /// from memory (a terminal's backing file holds only what has scrolled
     /// off). Resolves the callback with `TerminalScreen[]`.
     GetTerminalScreens { callback_id: JsCallbackId },
+
+    /// What workspace `window_id` has to search besides its files on disk:
+    /// its terminals' screens and backing-file directories, its file
+    /// buffers, and — for a workspace not opened yet — its unsaved edits
+    /// from the recovery store. Resolves the callback with
+    /// `WorkspaceSearchSources`, or `null` for an unknown window.
+    GetWorkspaceSearchSources {
+        window_id: WindowId,
+        callback_id: JsCallbackId,
+    },
 
     /// Send input data to a terminal by its terminal ID
     SendTerminalInput {

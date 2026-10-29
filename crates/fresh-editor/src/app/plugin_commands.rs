@@ -3885,10 +3885,21 @@ impl Editor {
         let query = opts
             .query(pattern)
             .map_err(|e| format!("Invalid regex: {}", e))?;
+        // Buffer ids are unique across windows: the buffer may be another
+        // workspace's (Universal Search's "All workspaces").
+        let window_id = if self.active_window().buffers.contains_key(&buffer_id) {
+            self.active_window
+        } else {
+            self.windows
+                .iter()
+                .find(|(_, w)| w.buffers.contains_key(&buffer_id))
+                .map(|(id, _)| *id)
+                .ok_or_else(|| format!("Buffer {} not found", buffer_id.0))?
+        };
         let state = self
-            .active_window()
-            .buffers
-            .get(&buffer_id)
+            .windows
+            .get(&window_id)
+            .and_then(|w| w.buffers.get(&buffer_id))
             .ok_or_else(|| format!("Buffer {} not found", buffer_id.0))?;
         let file = state
             .buffer
@@ -3901,7 +3912,7 @@ impl Editor {
         // One more than is kept, to tell a capped search from one that found
         // exactly `max`.
         let job = super::open_buffer_search::OpenBufferSearch::new(
-            self.active_window,
+            window_id,
             buffer_id,
             file,
             query,

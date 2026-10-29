@@ -244,6 +244,32 @@ impl RecoveryService {
         }
     }
 
+    /// The whole text `entry` holds — the buffer as it was last backed up,
+    /// edits applied to the original file when only they were stored — for
+    /// looking at, not restoring. `None` when the entry no longer applies
+    /// (its file changed on disk since) or is unreadable as a whole.
+    pub fn read_content(&self, entry: &RecoveryEntry) -> io::Result<Option<Vec<u8>>> {
+        match self.load_recovery(entry)? {
+            RecoveryResult::Recovered { content, .. }
+            | RecoveryResult::RecoveredPartial { content, .. } => Ok(Some(content)),
+            RecoveryResult::RecoveredChunks { original_path, .. } => {
+                let storage = RecoveryStorage::with_dir(
+                    entry
+                        .metadata_path
+                        .parent()
+                        .unwrap_or(Path::new("."))
+                        .to_path_buf(),
+                );
+                storage
+                    .reconstruct_from_chunks(&entry.id, &original_path)
+                    .map(Some)
+            }
+            RecoveryResult::OriginalFileModified { .. }
+            | RecoveryResult::Corrupted { .. }
+            | RecoveryResult::NotFound { .. } => Ok(None),
+        }
+    }
+
     /// Load recovery content for a specific entry
     ///
     /// For entries with original_file_size > 0, returns RecoveredChunks so the caller

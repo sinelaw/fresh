@@ -4107,8 +4107,9 @@ impl JsEditorApi {
 
     /// Directory holding terminal scrollback backing files for the current
     /// working directory. Each project root / worktree has its own subdir, so
-    /// Universal Search's terminal scope can stay scoped to the active
-    /// project rather than spanning every project's terminals.
+    /// Universal Search's terminal scope stays scoped to the active project;
+    /// its "All workspaces" toggle reads the other workspaces' directories
+    /// from `getWorkspaceSearchSources`.
     pub fn get_terminal_dir(&self) -> String {
         let working_dir = self
             .state_snapshot
@@ -9337,7 +9338,8 @@ impl JsEditorApi {
     /// editor's own search — the one Ctrl+F and `beginSearch` use. Resolves
     /// with its matches in order: each with its byte offset and length, its
     /// 1-based line and byte column, and the text of its line. `bufferId` 0
-    /// is the active buffer. Every match is found unless `maxResults` is
+    /// is the active buffer; any other workspace's buffer (from
+    /// `getWorkspaceSearchSources`) can be searched too. Every match is found unless `maxResults` is
     /// given; `fixedString` and `caseSensitive` default to true. `cancel()`
     /// stops it, resolving with no matches.
     #[plugin_api(
@@ -9760,6 +9762,32 @@ impl JsEditorApi {
         let _ = self.command_sender.send(PluginCommand::GetTerminalScreens {
             callback_id: fresh_core::api::JsCallbackId::new(id),
         });
+        id
+    }
+
+    /// What workspace `windowId` (from `listWindows()`) has to search besides
+    /// its files on disk: its terminals' screens and the directories of their
+    /// backing files, its open file buffers (search them with
+    /// `searchBuffer`), and, for a workspace listed but not opened yet in this
+    /// session, its unsaved edits as they will come back when it is opened.
+    /// Resolves with `null` for an unknown window. Universal Search's "All
+    /// workspaces" toggle reads every other workspace through this.
+    ///
+    /// @param windowId - The workspace's window id
+    #[plugin_api(
+        async_promise,
+        js_name = "getWorkspaceSearchSources",
+        ts_return = "WorkspaceSearchSources | null"
+    )]
+    #[qjs(rename = "_getWorkspaceSearchSourcesStart")]
+    pub fn get_workspace_search_sources_start(&self, window_id: u64) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self
+            .command_sender
+            .send(PluginCommand::GetWorkspaceSearchSources {
+                window_id: fresh_core::WindowId(window_id),
+                callback_id: fresh_core::api::JsCallbackId::new(id),
+            });
         id
     }
 

@@ -120,6 +120,8 @@ pub mod window;
 mod window_actions;
 pub mod window_resources;
 pub mod workspace;
+#[cfg(feature = "plugins")]
+mod workspace_search_sources;
 
 use anyhow::Result as AnyhowResult;
 use fresh_i18n::t;

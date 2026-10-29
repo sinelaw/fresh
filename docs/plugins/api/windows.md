@@ -575,6 +575,24 @@ only the lines that have scrolled off it.
 getTerminalScreens(): Promise<TerminalScreen[]>;
 ```
 
+### `getWorkspaceSearchSources`
+
+What workspace `windowId` (from `listWindows()`) has to search besides
+its files on disk: its terminals' screens and the directories of their
+backing files, its open file buffers (search them with
+`searchBuffer`), and, for a workspace listed but not opened yet in this
+session, its unsaved edits as they will come back when it is opened.
+Resolves with `null` for an unknown window. Universal Search's "All
+workspaces" toggle reads every other workspace through this.
+
+```typescript
+getWorkspaceSearchSources(windowId: number): Promise<WorkspaceSearchSources | null>;
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `windowId` | The workspace's window id |
+
 ### `sendTerminalInput`
 
 Send input data to a terminal

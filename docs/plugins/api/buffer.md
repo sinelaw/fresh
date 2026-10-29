@@ -572,7 +572,8 @@ Search one buffer as it is now, unsaved edits included, with the
 editor's own search — the one Ctrl+F and `beginSearch` use. Resolves
 with its matches in order: each with its byte offset and length, its
 1-based line and byte column, and the text of its line. `bufferId` 0
-is the active buffer. Every match is found unless `maxResults` is
+is the active buffer; any other workspace's buffer (from
+`getWorkspaceSearchSources`) can be searched too. Every match is found unless `maxResults` is
 given; `fixedString` and `caseSensitive` default to true. `cancel()`
 stops it, resolving with no matches.
 

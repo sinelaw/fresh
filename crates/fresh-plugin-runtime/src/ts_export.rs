@@ -23,10 +23,11 @@ use fresh_core::api::{
     DirEntry, FormatterPackConfig, GrammarInfoSnapshot, GrepMatch, JsDiagnostic, JsPosition,
     JsRange, JsTextPropertyEntry, KeyEventPayload, LanguagePackConfig, LayoutHints, LineDiffHunk,
     LspServerPackConfig, OverlayColorSpec, OverlayOptions, PluginAnimationEdge,
-    PluginAnimationKind, ProcessLimitsPackConfig, RemoteBackendInfo, ReplaceResult, ScreenSize,
-    ScrollbarMarker, SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult, TerminalScreen,
-    TextPropertiesAtCursor, TokenColor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire,
-    ViewTokenWireKind, ViewportInfo, VirtualBufferResult, WindowInfo,
+    PluginAnimationKind, ProcessLimitsPackConfig, RecoveredFile, RemoteBackendInfo, ReplaceResult,
+    ScreenSize, ScrollbarMarker, SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult,
+    TerminalScreen, TextPropertiesAtCursor, TokenColor, TsHighlightSpan, ViewTokenStyle,
+    ViewTokenWire, ViewTokenWireKind, ViewportInfo, VirtualBufferResult, WindowInfo,
+    WorkspaceBuffer, WorkspaceSearchSources,
 };
 use fresh_core::command::Suggestion;
 use fresh_core::file_explorer::{
@@ -96,6 +97,9 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         // Terminal types
         "TerminalResult" => Some(decl_with_docs::<TerminalResult>(&cfg)),
         "TerminalScreen" => Some(decl_with_docs::<TerminalScreen>(&cfg)),
+        "WorkspaceSearchSources" => Some(decl_with_docs::<WorkspaceSearchSources>(&cfg)),
+        "WorkspaceBuffer" => Some(decl_with_docs::<WorkspaceBuffer>(&cfg)),
+        "RecoveredFile" => Some(decl_with_docs::<RecoveredFile>(&cfg)),
         "CreateTerminalOptions" => Some(decl_with_docs::<CreateTerminalOptions>(&cfg)),
         "CreateWindowWithTerminalOptions" => {
             Some(decl_with_docs::<fresh_core::api::CreateWindowWithTerminalOptions>(&cfg))
@@ -410,6 +414,9 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "ProcessLimitsPackConfig",         // Used by LspServerPackConfig.process_limits
     "TerminalResult",                  // Used by createTerminal return type
     "TerminalScreen",                  // Used by getTerminalScreens return type
+    "WorkspaceSearchSources",          // Used by getWorkspaceSearchSources return type
+    "WorkspaceBuffer",                 // Used by WorkspaceSearchSources.buffers
+    "RecoveredFile",                   // Used by WorkspaceSearchSources.recovered
     "CreateWindowWithTerminalOptions", // Used by createWindowWithTerminal opts
     "SessionWithTerminalResult",       // Used by createWindowWithTerminal return type
     "CreatePreparingWindowOptions",    // Used by createPreparingWindow opts
@@ -1327,6 +1334,7 @@ mod tests {
             "BackgroundProcessResult",
             "TerminalResult",
             "TerminalScreen",
+            "WorkspaceSearchSources",
             "CreateTerminalOptions",
             "CreateWindowWithTerminalOptions",
             "SessionWithTerminalResult",
@@ -1932,6 +1940,7 @@ mod tests {
             "killBackgroundProcess",
             "createTerminal",
             "getTerminalScreens",
+            "getWorkspaceSearchSources",
             "sendTerminalInput",
             "closeTerminal",
             "signalWindow",

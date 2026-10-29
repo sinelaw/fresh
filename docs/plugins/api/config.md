@@ -236,8 +236,9 @@ getHomeDir(): string;
 
 Directory holding terminal scrollback backing files for the current
 working directory. Each project root / worktree has its own subdir, so
-Universal Search's terminal scope can stay scoped to the active
-project rather than spanning every project's terminals.
+Universal Search's terminal scope stays scoped to the active project;
+its "All workspaces" toggle reads the other workspaces' directories
+from `getWorkspaceSearchSources`.
 
 ```typescript
 getTerminalDir(): string;
