@@ -18,6 +18,7 @@
     "scope.buffers": "буфери",
     "scope.terminals": "Терминали",
     "scope.diagnostics": "диагностика",
+    "scope.workspaces": "Всички работни области",
     "cmd.live_grep_toggle_files": "Search: Превключване на Project Files",
     "cmd.live_grep_toggle_files_desc": "Включване/Изключване на проектни файлове в търсенето",
     "cmd.live_grep_toggle_ignored": "Търсене: Превключване на Игнорирани & Скрити Файлове",
@@ -28,6 +29,8 @@
     "cmd.live_grep_toggle_terminals_desc": "Търсене: Включѝ/изключѝ на обратно превъртане на Терминал (scrollback)",
     "cmd.live_grep_toggle_diagnostics": "Търсене: Превключване на Диагностика",
     "cmd.live_grep_toggle_diagnostics_desc": "Включѝ/изключѝ съобщенията на лингвистична диагностика в търсенето",
+    "cmd.live_grep_toggle_workspaces": "Търсене: Превключване на всички работни области",
+    "cmd.live_grep_toggle_workspaces_desc": "Включване на съвпадения от всяка отворена работна област, групирани по работна област",
     "label.search": "Търсене",
     "label.scope": "Обхват",
     "label.match": "Съответствие:",
@@ -42,7 +45,9 @@
     "cmd.live_grep_toggle_regex": "търсене: Превключване на Regex",
     "cmd.live_grep_toggle_regex_desc": "Интерпретирай заявка като регулярен израз",
     "cmd.live_grep_toggle_case": "Търсене: Превключване на Отчитане на Регистъра",
-    "cmd.live_grep_toggle_case_desc": "Различавай главни и малки букви"
+    "cmd.live_grep_toggle_case_desc": "Различавай главни и малки букви",
+    "group.match_count": "%{count} съвпадения",
+    "group.match_count_one": "1 съвпадение"
   },
   "cs": {
     "cmd.live_grep": "Live Grep (Hledat v souborech)",
@@ -63,6 +68,7 @@
     "scope.buffers": "Buffery",
     "scope.terminals": "Terminály",
     "scope.diagnostics": "Diagnostika",
+    "scope.workspaces": "Všechny pracovní prostory",
     "cmd.live_grep_toggle_files": "Hledání: Přepnout soubory projektu",
     "cmd.live_grep_toggle_files_desc": "Zahrnout/vyloučit soubory projektu z hledání",
     "cmd.live_grep_toggle_ignored": "Hledání: Přepnout ignorované a skryté soubory",
@@ -73,6 +79,8 @@
     "cmd.live_grep_toggle_terminals_desc": "Zahrnout/vyloučit obsah terminálu z hledání",
     "cmd.live_grep_toggle_diagnostics": "Hledání: Přepnout diagnostiku",
     "cmd.live_grep_toggle_diagnostics_desc": "Zahrnout/vyloučit zprávy diagnostiky LSP z hledání",
+    "cmd.live_grep_toggle_workspaces": "Hledání: Přepnout všechny pracovní prostory",
+    "cmd.live_grep_toggle_workspaces_desc": "Zahrnout shody ze všech otevřených pracovních prostorů, seskupené podle pracovního prostoru",
     "label.search": "Hledat",
     "label.scope": "Rozsah",
     "label.match": "Shoda: ",
@@ -87,7 +95,9 @@
     "cmd.live_grep_toggle_regex": "Hledání: Přepnout regulární výraz",
     "cmd.live_grep_toggle_regex_desc": "Interpretovat dotaz jako regulární výraz",
     "cmd.live_grep_toggle_case": "Hledání: Přepnout rozlišování velikosti písmen",
-    "cmd.live_grep_toggle_case_desc": "Rozlišovat velká a malá písmena"
+    "cmd.live_grep_toggle_case_desc": "Rozlišovat velká a malá písmena",
+    "group.match_count": "Shod: %{count}",
+    "group.match_count_one": "1 shoda"
   },
   "de": {
     "cmd.live_grep": "Live Grep (Suche in Dateien)",
@@ -108,6 +118,7 @@
     "scope.buffers": "Puffer",
     "scope.terminals": "Terminals",
     "scope.diagnostics": "Diagnose",
+    "scope.workspaces": "Alle Arbeitsbereiche",
     "cmd.live_grep_toggle_files": "Suche: Projektdateien umschalten",
     "cmd.live_grep_toggle_files_desc": "Projektdateien in der Suche ein-/ausschließen",
     "cmd.live_grep_toggle_ignored": "Suche: Ignorierte & versteckte Dateien umschalten",
@@ -118,6 +129,8 @@
     "cmd.live_grep_toggle_terminals_desc": "Terminal-Scrollback in der Suche ein-/ausschließen",
     "cmd.live_grep_toggle_diagnostics": "Suche: Diagnose umschalten",
     "cmd.live_grep_toggle_diagnostics_desc": "LSP-Diagnosemeldungen in der Suche ein-/ausschließen",
+    "cmd.live_grep_toggle_workspaces": "Suche: Alle Arbeitsbereiche umschalten",
+    "cmd.live_grep_toggle_workspaces_desc": "Treffer aus allen geöffneten Arbeitsbereichen einbeziehen, nach Arbeitsbereich gruppiert",
     "label.search": "Suche",
     "label.scope": "Bereich",
     "label.match": "Treffer: ",
@@ -132,7 +145,9 @@
     "cmd.live_grep_toggle_regex": "Suche: Regex umschalten",
     "cmd.live_grep_toggle_regex_desc": "Die Abfrage als regulären Ausdruck interpretieren",
     "cmd.live_grep_toggle_case": "Suche: Groß-/Kleinschreibung umschalten",
-    "cmd.live_grep_toggle_case_desc": "Groß- und Kleinschreibung unterscheiden"
+    "cmd.live_grep_toggle_case_desc": "Groß- und Kleinschreibung unterscheiden",
+    "group.match_count": "%{count} Treffer",
+    "group.match_count_one": "1 Treffer"
   },
   "en": {
     "cmd.live_grep": "Live Grep (Find in Files)",
@@ -153,6 +168,7 @@
     "scope.buffers": "Buffers",
     "scope.terminals": "Terminals",
     "scope.diagnostics": "Diagnostics",
+    "scope.workspaces": "All workspaces",
     "cmd.live_grep_toggle_files": "Search: Toggle Project Files",
     "cmd.live_grep_toggle_files_desc": "Include/exclude project files in the search",
     "cmd.live_grep_toggle_ignored": "Search: Toggle Ignored & Hidden Files",
@@ -163,6 +179,8 @@
     "cmd.live_grep_toggle_terminals_desc": "Include/exclude terminal scrollback in the search",
     "cmd.live_grep_toggle_diagnostics": "Search: Toggle Diagnostics",
     "cmd.live_grep_toggle_diagnostics_desc": "Include/exclude LSP diagnostic messages in the search",
+    "cmd.live_grep_toggle_workspaces": "Search: Toggle All Workspaces",
+    "cmd.live_grep_toggle_workspaces_desc": "Include matches from every open workspace, grouped by workspace",
     "label.search": "Search",
     "label.scope": "Scope",
     "label.match": "Match: ",
@@ -177,7 +195,9 @@
     "cmd.live_grep_toggle_regex": "Search: Toggle Regex",
     "cmd.live_grep_toggle_regex_desc": "Interpret the query as a regular expression",
     "cmd.live_grep_toggle_case": "Search: Toggle Case Sensitive",
-    "cmd.live_grep_toggle_case_desc": "Match upper and lower case exactly"
+    "cmd.live_grep_toggle_case_desc": "Match upper and lower case exactly",
+    "group.match_count": "%{count} matches",
+    "group.match_count_one": "1 match"
   },
   "es": {
     "cmd.live_grep": "Grep en Vivo (Buscar en Archivos)",
@@ -198,6 +218,7 @@
     "scope.buffers": "Búferes",
     "scope.terminals": "Terminales",
     "scope.diagnostics": "Diagnósticos",
+    "scope.workspaces": "Todos los espacios de trabajo",
     "cmd.live_grep_toggle_files": "Búsqueda: Alternar archivos del proyecto",
     "cmd.live_grep_toggle_files_desc": "Incluir/excluir archivos del proyecto en la búsqueda",
     "cmd.live_grep_toggle_ignored": "Búsqueda: Alternar archivos ignorados y ocultos",
@@ -208,6 +229,8 @@
     "cmd.live_grep_toggle_terminals_desc": "Incluir/excluir el desplazamiento del terminal en la búsqueda",
     "cmd.live_grep_toggle_diagnostics": "Búsqueda: Alternar diagnósticos",
     "cmd.live_grep_toggle_diagnostics_desc": "Incluir/excluir mensajes de diagnóstico de LSP en la búsqueda",
+    "cmd.live_grep_toggle_workspaces": "Buscar: Alternar todos los espacios de trabajo",
+    "cmd.live_grep_toggle_workspaces_desc": "Incluir coincidencias de todos los espacios de trabajo abiertos, agrupadas por espacio de trabajo",
     "label.search": "Buscar",
     "label.scope": "Ámbito",
     "label.match": "Coincidencia: ",
@@ -222,7 +245,9 @@
     "cmd.live_grep_toggle_regex": "Búsqueda: Alternar regex",
     "cmd.live_grep_toggle_regex_desc": "Interpretar la consulta como una expresión regular",
     "cmd.live_grep_toggle_case": "Búsqueda: Alternar distinción de mayúsculas",
-    "cmd.live_grep_toggle_case_desc": "Distinguir mayúsculas y minúsculas"
+    "cmd.live_grep_toggle_case_desc": "Distinguir mayúsculas y minúsculas",
+    "group.match_count": "%{count} coincidencias",
+    "group.match_count_one": "1 coincidencia"
   },
   "fr": {
     "cmd.live_grep": "Grep en Direct (Rechercher dans les Fichiers)",
@@ -243,6 +268,7 @@
     "scope.buffers": "Tampons",
     "scope.terminals": "Terminaux",
     "scope.diagnostics": "Diagnostics",
+    "scope.workspaces": "Tous les espaces de travail",
     "cmd.live_grep_toggle_files": "Recherche : Basculer les fichiers du projet",
     "cmd.live_grep_toggle_files_desc": "Inclure/exclure les fichiers du projet dans la recherche",
     "cmd.live_grep_toggle_ignored": "Recherche : Basculer les fichiers ignorés et cachés",
@@ -253,6 +279,8 @@
     "cmd.live_grep_toggle_terminals_desc": "Inclure/exclure le défilement du terminal dans la recherche",
     "cmd.live_grep_toggle_diagnostics": "Recherche : Basculer les diagnostics",
     "cmd.live_grep_toggle_diagnostics_desc": "Inclure/exclure les messages de diagnostic LSP dans la recherche",
+    "cmd.live_grep_toggle_workspaces": "Recherche : basculer tous les espaces de travail",
+    "cmd.live_grep_toggle_workspaces_desc": "Inclure les correspondances de tous les espaces de travail ouverts, regroupées par espace de travail",
     "label.search": "Rechercher",
     "label.scope": "Portée",
     "label.match": "Correspondance : ",
@@ -267,7 +295,9 @@
     "cmd.live_grep_toggle_regex": "Recherche : Basculer le regex",
     "cmd.live_grep_toggle_regex_desc": "Interpréter la requête comme une expression régulière",
     "cmd.live_grep_toggle_case": "Recherche : Basculer la sensibilité à la casse",
-    "cmd.live_grep_toggle_case_desc": "Distinguer les majuscules des minuscules"
+    "cmd.live_grep_toggle_case_desc": "Distinguer les majuscules des minuscules",
+    "group.match_count": "%{count} correspondances",
+    "group.match_count_one": "1 correspondance"
   },
   "it": {
     "cmd.live_grep": "Live Grep (Cerca nei file)",
@@ -288,6 +318,7 @@
     "scope.buffers": "Buffer",
     "scope.terminals": "Terminali",
     "scope.diagnostics": "Diagnostica",
+    "scope.workspaces": "Tutti gli spazi di lavoro",
     "cmd.live_grep_toggle_files": "Ricerca: Attiva/disattiva file di progetto",
     "cmd.live_grep_toggle_files_desc": "Includi/escludi i file di progetto nella ricerca",
     "cmd.live_grep_toggle_ignored": "Ricerca: Attiva/disattiva file ignorati e nascosti",
@@ -298,6 +329,8 @@
     "cmd.live_grep_toggle_terminals_desc": "Includi/escludi lo scrollback del terminale nella ricerca",
     "cmd.live_grep_toggle_diagnostics": "Ricerca: Attiva/disattiva diagnostica",
     "cmd.live_grep_toggle_diagnostics_desc": "Includi/escludi i messaggi di diagnostica LSP nella ricerca",
+    "cmd.live_grep_toggle_workspaces": "Cerca: attiva/disattiva tutti gli spazi di lavoro",
+    "cmd.live_grep_toggle_workspaces_desc": "Includi le corrispondenze di tutti gli spazi di lavoro aperti, raggruppate per spazio di lavoro",
     "label.search": "Cerca",
     "label.scope": "Ambito",
     "label.match": "Corrispondenza: ",
@@ -312,7 +345,9 @@
     "cmd.live_grep_toggle_regex": "Ricerca: Attiva/disattiva regex",
     "cmd.live_grep_toggle_regex_desc": "Interpreta la query come espressione regolare",
     "cmd.live_grep_toggle_case": "Ricerca: Attiva/disattiva distinzione maiuscole",
-    "cmd.live_grep_toggle_case_desc": "Distinguere maiuscole e minuscole"
+    "cmd.live_grep_toggle_case_desc": "Distinguere maiuscole e minuscole",
+    "group.match_count": "%{count} corrispondenze",
+    "group.match_count_one": "1 corrispondenza"
   },
   "ja": {
     "cmd.live_grep": "Live Grep (ファイル内検索)",
@@ -333,6 +368,7 @@
     "scope.buffers": "バッファ",
     "scope.terminals": "ターミナル",
     "scope.diagnostics": "診断",
+    "scope.workspaces": "すべてのワークスペース",
     "cmd.live_grep_toggle_files": "検索: プロジェクトファイルを切り替え",
     "cmd.live_grep_toggle_files_desc": "検索にプロジェクトファイルを含める/除外する",
     "cmd.live_grep_toggle_ignored": "検索: 無視・隠しファイルを切り替え",
@@ -343,6 +379,8 @@
     "cmd.live_grep_toggle_terminals_desc": "検索にターミナルのスクロールバックを含める/除外する",
     "cmd.live_grep_toggle_diagnostics": "検索: 診断を切り替え",
     "cmd.live_grep_toggle_diagnostics_desc": "検索に LSP 診断メッセージを含める/除外する",
+    "cmd.live_grep_toggle_workspaces": "検索: すべてのワークスペースを切り替え",
+    "cmd.live_grep_toggle_workspaces_desc": "開いているすべてのワークスペースの一致を、ワークスペースごとにまとめて含める",
     "label.search": "検索",
     "label.scope": "範囲",
     "label.match": "一致: ",
@@ -357,7 +395,9 @@
     "cmd.live_grep_toggle_regex": "検索: 正規表現を切り替え",
     "cmd.live_grep_toggle_regex_desc": "クエリを正規表現として解釈する",
     "cmd.live_grep_toggle_case": "検索: 大文字小文字の区別を切り替え",
-    "cmd.live_grep_toggle_case_desc": "大文字と小文字を区別して一致させる"
+    "cmd.live_grep_toggle_case_desc": "大文字と小文字を区別して一致させる",
+    "group.match_count": "%{count} 件の一致",
+    "group.match_count_one": "1 件の一致"
   },
   "ko": {
     "cmd.live_grep": "라이브 Grep (파일에서 찾기)",
@@ -378,6 +418,7 @@
     "scope.buffers": "버퍼",
     "scope.terminals": "터미널",
     "scope.diagnostics": "진단",
+    "scope.workspaces": "모든 워크스페이스",
     "cmd.live_grep_toggle_files": "검색: 프로젝트 파일 전환",
     "cmd.live_grep_toggle_files_desc": "검색에 프로젝트 파일 포함/제외",
     "cmd.live_grep_toggle_ignored": "검색: 무시 및 숨김 파일 전환",
@@ -388,6 +429,8 @@
     "cmd.live_grep_toggle_terminals_desc": "검색에 터미널 스크롤백 포함/제외",
     "cmd.live_grep_toggle_diagnostics": "검색: 진단 전환",
     "cmd.live_grep_toggle_diagnostics_desc": "검색에 LSP 진단 메시지 포함/제외",
+    "cmd.live_grep_toggle_workspaces": "검색: 모든 워크스페이스 전환",
+    "cmd.live_grep_toggle_workspaces_desc": "열려 있는 모든 워크스페이스의 일치 항목을 워크스페이스별로 묶어 포함",
     "label.search": "검색",
     "label.scope": "범위",
     "label.match": "일치: ",
@@ -402,7 +445,9 @@
     "cmd.live_grep_toggle_regex": "검색: 정규식 전환",
     "cmd.live_grep_toggle_regex_desc": "쿼리를 정규식으로 해석",
     "cmd.live_grep_toggle_case": "검색: 대소문자 구분 전환",
-    "cmd.live_grep_toggle_case_desc": "대문자와 소문자를 구분하여 일치"
+    "cmd.live_grep_toggle_case_desc": "대문자와 소문자를 구분하여 일치",
+    "group.match_count": "일치 %{count}개",
+    "group.match_count_one": "일치 1개"
   },
   "pt-BR": {
     "cmd.live_grep": "Grep ao Vivo (Buscar em Arquivos)",
@@ -423,6 +468,7 @@
     "scope.buffers": "Buffers",
     "scope.terminals": "Terminais",
     "scope.diagnostics": "Diagnósticos",
+    "scope.workspaces": "Todos os espaços de trabalho",
     "cmd.live_grep_toggle_files": "Pesquisa: Alternar arquivos do projeto",
     "cmd.live_grep_toggle_files_desc": "Incluir/excluir arquivos do projeto na pesquisa",
     "cmd.live_grep_toggle_ignored": "Pesquisa: Alternar arquivos ignorados e ocultos",
@@ -433,6 +479,8 @@
     "cmd.live_grep_toggle_terminals_desc": "Incluir/excluir o scrollback do terminal na pesquisa",
     "cmd.live_grep_toggle_diagnostics": "Pesquisa: Alternar diagnósticos",
     "cmd.live_grep_toggle_diagnostics_desc": "Incluir/excluir mensagens de diagnóstico do LSP na pesquisa",
+    "cmd.live_grep_toggle_workspaces": "Pesquisar: alternar todos os espaços de trabalho",
+    "cmd.live_grep_toggle_workspaces_desc": "Incluir correspondências de todos os espaços de trabalho abertos, agrupadas por espaço de trabalho",
     "label.search": "Buscar",
     "label.scope": "Escopo",
     "label.match": "Correspondência: ",
@@ -447,7 +495,9 @@
     "cmd.live_grep_toggle_regex": "Pesquisa: Alternar regex",
     "cmd.live_grep_toggle_regex_desc": "Interpretar a consulta como expressão regular",
     "cmd.live_grep_toggle_case": "Pesquisa: Alternar diferenciar maiúsculas",
-    "cmd.live_grep_toggle_case_desc": "Diferenciar maiúsculas de minúsculas"
+    "cmd.live_grep_toggle_case_desc": "Diferenciar maiúsculas de minúsculas",
+    "group.match_count": "%{count} correspondências",
+    "group.match_count_one": "1 correspondência"
   },
   "ru": {
     "cmd.live_grep": "Live Grep (Поиск в файлах)",
@@ -468,6 +518,7 @@
     "scope.buffers": "Буферы",
     "scope.terminals": "Терминалы",
     "scope.diagnostics": "Диагностика",
+    "scope.workspaces": "Все рабочие области",
     "cmd.live_grep_toggle_files": "Поиск: переключить файлы проекта",
     "cmd.live_grep_toggle_files_desc": "Включить/исключить файлы проекта в поиске",
     "cmd.live_grep_toggle_ignored": "Поиск: переключить игнорируемые и скрытые файлы",
@@ -478,6 +529,8 @@
     "cmd.live_grep_toggle_terminals_desc": "Включить/исключить прокрутку терминала в поиске",
     "cmd.live_grep_toggle_diagnostics": "Поиск: переключить диагностику",
     "cmd.live_grep_toggle_diagnostics_desc": "Включить/исключить сообщения диагностики LSP в поиске",
+    "cmd.live_grep_toggle_workspaces": "Поиск: переключить все рабочие области",
+    "cmd.live_grep_toggle_workspaces_desc": "Включать совпадения из всех открытых рабочих областей, сгруппированные по рабочей области",
     "label.search": "Поиск",
     "label.scope": "Область",
     "label.match": "Совпадение: ",
@@ -492,7 +545,9 @@
     "cmd.live_grep_toggle_regex": "Поиск: переключить регулярное выражение",
     "cmd.live_grep_toggle_regex_desc": "Интерпретировать запрос как регулярное выражение",
     "cmd.live_grep_toggle_case": "Поиск: переключить учёт регистра",
-    "cmd.live_grep_toggle_case_desc": "Различать строчные и прописные буквы"
+    "cmd.live_grep_toggle_case_desc": "Различать строчные и прописные буквы",
+    "group.match_count": "Совпадений: %{count}",
+    "group.match_count_one": "1 совпадение"
   },
   "th": {
     "cmd.live_grep": "Live Grep (ค้นหาในไฟล์)",
@@ -513,6 +568,7 @@
     "scope.buffers": "บัฟเฟอร์",
     "scope.terminals": "เทอร์มินัล",
     "scope.diagnostics": "การวินิจฉัย",
+    "scope.workspaces": "พื้นที่ทำงานทั้งหมด",
     "cmd.live_grep_toggle_files": "ค้นหา: สลับไฟล์โปรเจกต์",
     "cmd.live_grep_toggle_files_desc": "รวม/ยกเว้นไฟล์โปรเจกต์ในการค้นหา",
     "cmd.live_grep_toggle_ignored": "ค้นหา: สลับไฟล์ที่ละเว้นและซ่อน",
@@ -523,6 +579,8 @@
     "cmd.live_grep_toggle_terminals_desc": "รวม/ยกเว้นเนื้อหาเทอร์มินัลในการค้นหา",
     "cmd.live_grep_toggle_diagnostics": "ค้นหา: สลับการวินิจฉัย",
     "cmd.live_grep_toggle_diagnostics_desc": "รวม/ยกเว้นข้อความวินิจฉัย LSP ในการค้นหา",
+    "cmd.live_grep_toggle_workspaces": "ค้นหา: สลับพื้นที่ทำงานทั้งหมด",
+    "cmd.live_grep_toggle_workspaces_desc": "รวมผลที่ตรงกันจากทุกพื้นที่ทำงานที่เปิดอยู่ โดยจัดกลุ่มตามพื้นที่ทำงาน",
     "label.search": "ค้นหา",
     "label.scope": "ขอบเขต",
     "label.match": "การจับคู่: ",
@@ -537,7 +595,9 @@
     "cmd.live_grep_toggle_regex": "ค้นหา: สลับ Regex",
     "cmd.live_grep_toggle_regex_desc": "ตีความคำค้นหาเป็นนิพจน์ทั่วไป",
     "cmd.live_grep_toggle_case": "ค้นหา: สลับการแยกตัวพิมพ์เล็กใหญ่",
-    "cmd.live_grep_toggle_case_desc": "จับคู่ตัวพิมพ์เล็กและใหญ่แบบตรงกัน"
+    "cmd.live_grep_toggle_case_desc": "จับคู่ตัวพิมพ์เล็กและใหญ่แบบตรงกัน",
+    "group.match_count": "ตรงกัน %{count} รายการ",
+    "group.match_count_one": "ตรงกัน 1 รายการ"
   },
   "uk": {
     "cmd.live_grep": "Live Grep (Пошук у файлах)",
@@ -558,6 +618,7 @@
     "scope.buffers": "Буфери",
     "scope.terminals": "Термінали",
     "scope.diagnostics": "Діагностика",
+    "scope.workspaces": "Усі робочі області",
     "cmd.live_grep_toggle_files": "Пошук: перемкнути файли проєкту",
     "cmd.live_grep_toggle_files_desc": "Включити/виключити файли проєкту в пошуку",
     "cmd.live_grep_toggle_ignored": "Пошук: перемкнути ігноровані та приховані файли",
@@ -568,6 +629,8 @@
     "cmd.live_grep_toggle_terminals_desc": "Включити/виключити прокручування термінала в пошуку",
     "cmd.live_grep_toggle_diagnostics": "Пошук: перемкнути діагностику",
     "cmd.live_grep_toggle_diagnostics_desc": "Включити/виключити повідомлення діагностики LSP в пошуку",
+    "cmd.live_grep_toggle_workspaces": "Пошук: перемкнути всі робочі області",
+    "cmd.live_grep_toggle_workspaces_desc": "Включати збіги з усіх відкритих робочих областей, згруповані за робочою областю",
     "label.search": "Пошук",
     "label.scope": "Область",
     "label.match": "Збіг: ",
@@ -582,7 +645,9 @@
     "cmd.live_grep_toggle_regex": "Пошук: перемкнути регулярний вираз",
     "cmd.live_grep_toggle_regex_desc": "Інтерпретувати запит як регулярний вираз",
     "cmd.live_grep_toggle_case": "Пошук: перемкнути врахування регістру",
-    "cmd.live_grep_toggle_case_desc": "Розрізняти великі та малі літери"
+    "cmd.live_grep_toggle_case_desc": "Розрізняти великі та малі літери",
+    "group.match_count": "Збігів: %{count}",
+    "group.match_count_one": "1 збіг"
   },
   "vi": {
     "cmd.live_grep": "Live Grep (Tìm trong tệp)",
@@ -603,6 +668,7 @@
     "scope.buffers": "Bộ đệm",
     "scope.terminals": "Terminal",
     "scope.diagnostics": "Chẩn đoán",
+    "scope.workspaces": "Tất cả không gian làm việc",
     "cmd.live_grep_toggle_files": "Tìm kiếm: Bật/tắt tệp dự án",
     "cmd.live_grep_toggle_files_desc": "Bao gồm/loại trừ tệp dự án trong tìm kiếm",
     "cmd.live_grep_toggle_ignored": "Tìm kiếm: Bật/tắt tệp bị bỏ qua và ẩn",
@@ -613,6 +679,8 @@
     "cmd.live_grep_toggle_terminals_desc": "Bao gồm/loại trừ nội dung cuộn của terminal trong tìm kiếm",
     "cmd.live_grep_toggle_diagnostics": "Tìm kiếm: Bật/tắt chẩn đoán",
     "cmd.live_grep_toggle_diagnostics_desc": "Bao gồm/loại trừ thông báo chẩn đoán LSP trong tìm kiếm",
+    "cmd.live_grep_toggle_workspaces": "Tìm kiếm: Bật/tắt tất cả không gian làm việc",
+    "cmd.live_grep_toggle_workspaces_desc": "Bao gồm kết quả khớp từ mọi không gian làm việc đang mở, nhóm theo không gian làm việc",
     "label.search": "Tìm kiếm",
     "label.scope": "Phạm vi",
     "label.match": "Khớp: ",
@@ -627,7 +695,9 @@
     "cmd.live_grep_toggle_regex": "Tìm kiếm: Bật/tắt regex",
     "cmd.live_grep_toggle_regex_desc": "Diễn giải truy vấn như một biểu thức chính quy",
     "cmd.live_grep_toggle_case": "Tìm kiếm: Bật/tắt phân biệt hoa thường",
-    "cmd.live_grep_toggle_case_desc": "Phân biệt chữ hoa và chữ thường"
+    "cmd.live_grep_toggle_case_desc": "Phân biệt chữ hoa và chữ thường",
+    "group.match_count": "%{count} kết quả khớp",
+    "group.match_count_one": "1 kết quả khớp"
   },
   "zh-CN": {
     "cmd.live_grep": "实时 Grep (文件内搜索)",
@@ -648,6 +718,7 @@
     "scope.buffers": "缓冲区",
     "scope.terminals": "终端",
     "scope.diagnostics": "诊断",
+    "scope.workspaces": "所有工作区",
     "cmd.live_grep_toggle_files": "搜索：切换项目文件",
     "cmd.live_grep_toggle_files_desc": "在搜索中包含/排除项目文件",
     "cmd.live_grep_toggle_ignored": "搜索：切换忽略和隐藏文件",
@@ -658,6 +729,8 @@
     "cmd.live_grep_toggle_terminals_desc": "在搜索中包含/排除终端回滚内容",
     "cmd.live_grep_toggle_diagnostics": "搜索：切换诊断",
     "cmd.live_grep_toggle_diagnostics_desc": "在搜索中包含/排除 LSP 诊断消息",
+    "cmd.live_grep_toggle_workspaces": "搜索：切换所有工作区",
+    "cmd.live_grep_toggle_workspaces_desc": "包含所有已打开工作区的匹配项，按工作区分组",
     "label.search": "搜索",
     "label.scope": "范围",
     "label.match": "匹配: ",
@@ -672,6 +745,8 @@
     "cmd.live_grep_toggle_regex": "搜索：切换正则",
     "cmd.live_grep_toggle_regex_desc": "将查询解释为正则表达式",
     "cmd.live_grep_toggle_case": "搜索：切换区分大小写",
-    "cmd.live_grep_toggle_case_desc": "区分大写和小写字母"
+    "cmd.live_grep_toggle_case_desc": "区分大写和小写字母",
+    "group.match_count": "%{count} 个匹配",
+    "group.match_count_one": "1 个匹配"
   }
 }

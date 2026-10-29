@@ -199,6 +199,7 @@ pub mod line_numbers_override;
 pub mod line_wrapping;
 pub mod list_clamp_no_spurious_select;
 pub mod live_grep;
+pub mod live_grep_all_workspaces;
 pub mod locale;
 pub mod lsp;
 pub mod lsp_autostart_selective;

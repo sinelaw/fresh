@@ -16620,6 +16620,12 @@ export type OrchestratorApi = DiscoveryHost & {
    *  needs to find the one it made earlier, or to report on all of them.
    *  Reads the live model, so it reflects creations made moments ago. */
   listWorkspaces(): WorkspaceSummary[];
+  /** The open workspaces, top to bottom as the dock rows list them (folders
+   *  flattened) while the dock is up, and in the order it first saw them
+   *  otherwise: each one's `windowId` and its short name (a rename, else its
+   *  directory's name — a row's label without the terminal title). Universal
+   *  Search's "All workspaces" groups its results in this order. */
+  workspaceOrder(): { windowId: number; name: string }[];
   /** One workspace — by `workspaceId`, `windowId` (or its decimal string),
    *  or dock name — with the decision chain behind its `agentState`
    *  (`explain`: reasons, the question line and rule that matched, output
@@ -17011,6 +17017,24 @@ function listWorkspaces(): WorkspaceSummary[] {
   });
 }
 
+/// The open workspaces' window ids in dock row order. The dock's rows are
+/// what `buildDockSpec` last laid out; with no dock up there are none, and the
+/// model's first-seen order — the one the dock falls back to within a day —
+/// stands in.
+function workspaceOrder(): { windowId: number; name: string }[] {
+  const fromDock = dockMode && openDialog
+    ? openDialog.dockKeys
+      .filter((k) => k.startsWith(SESSION_NODE_PREFIX))
+      .map((k) => Number(k.slice(SESSION_NODE_PREFIX.length)))
+    : [];
+  reconcileSessions();
+  const rest = [...orchestratorSessions.keys()].filter((id) => !fromDock.includes(id));
+  return [...fromDock, ...rest].flatMap((id) => {
+    const session = orchestratorSessions.get(id);
+    return id > 0 && session ? [{ windowId: id, name: sessionShortName(session) }] : [];
+  });
+}
+
 /// Focus a workspace by durable `workspaceId` or per-process `windowId`.
 ///
 /// The reason this exists rather than leaving callers to
@@ -17371,6 +17395,7 @@ editor.exportPluginApi("orchestrator", {
   runAgent,
   newWorkspace,
   listWorkspaces,
+  workspaceOrder,
   getWorkspace,
   waitForState,
   focusWorkspace,

@@ -66,6 +66,13 @@ export interface DisplayEntry {
   location?: Location;
   /** Severity for visual styling */
   severity?: "error" | "warning" | "info" | "hint";
+  /**
+   * A group's header row rather than a result (Live Grep's "All
+   * workspaces" groups). Still selectable — what Enter does on it is the
+   * finder's `onSelect` to say — but a fresh result list starts its
+   * selection on the first row that is not one.
+   */
+  heading?: boolean;
   /** Custom metadata */
   metadata?: unknown;
 }
@@ -1072,7 +1079,14 @@ export class Finder<T> {
       })
     );
 
-    this.editor.setPromptSuggestions(suggestions, this.initialSelectedIndex);
+    // A list that opens on a header starts on its first result instead.
+    const firstResult = this.promptState.entries[0]?.heading
+      ? this.promptState.entries.findIndex((e) => !e.heading)
+      : -1;
+    this.editor.setPromptSuggestions(
+      suggestions,
+      this.initialSelectedIndex ?? (firstResult >= 0 ? firstResult : undefined),
+    );
     if (results.length > 0) {
       this.initialSelectedIndex = undefined;
     }
