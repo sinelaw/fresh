@@ -243,6 +243,8 @@ impl Editor {
             );
         }
 
+        self.end_dock_passed_key();
+
         // Event debug dialog intercepts ALL key events before any other processing.
         // This must be checked here (not just in main.rs/gui) so it works in
         // client/server mode where handle_key is called directly.
@@ -721,7 +723,7 @@ impl Editor {
             }
             WidgetKeyOutcome::BlurUnconsumed => {
                 if let Some(slot) = slot {
-                    self.blur_floating_panel(slot);
+                    self.blur_floating_panel_passing_key(slot);
                 }
                 false
             }
