@@ -1946,9 +1946,9 @@ interface EditorConfig {
     */
     auto_recovery_save_interval_secs?: number;
     /**
-    * How often (ms) to check open files for outside changes. Auto-revert is
-    * on for each buffer by default; "Toggle Auto-Revert (Current Buffer)"
-    * turns it off for one. Lower is faster but uses more CPU. Default: 2000
+    * How often (ms) to check open files for outside changes. A buffer is
+    * checked unless auto-revert is off for it ("Toggle Auto-Revert (Current
+    * Buffer)"). Lower is faster but uses more CPU. Default: 2000
     *
     * Default: `2000`
     */

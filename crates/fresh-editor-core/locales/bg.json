@@ -1571,7 +1571,7 @@
   "settings.field.editor.auto_recovery_save_interval_secs": "Интервал за възстановяване (сек)",
   "settings.field.editor.auto_recovery_save_interval_secs_desc": "Секунди между записите за възстановяване, когато `recovery_enabled` е включено. По подразбиране: 2",
   "settings.field.editor.auto_revert_poll_interval_ms": "Интервал за автопрезареждане (ms)",
-  "settings.field.editor.auto_revert_poll_interval_ms_desc": "Колко често (в ms) да се проверяват отворените файлове за външни промени, когато автоматичното презареждане е включено. По-ниската стойност дава по-бърза реакция, но натоварва повече процесора. По подразбиране: 2000",
+  "settings.field.editor.auto_revert_poll_interval_ms_desc": "Колко често (в ms) да се проверяват отворените файлове за външни промени. Всеки буфер се проверява, освен ако автоматичното презареждане не е изключено за него („Превключване на автоматичното презареждане“). По-ниската стойност дава по-бърза реакция, но натоварва повече процесора. По подразбиране: 2000",
   "settings.field.editor.auto_save_enabled": "Автоматичен запис",
   "settings.field.editor.auto_save_enabled_desc": "Автоматичен запис на променените файлове на диска на всеки `auto_save_interval_secs`. По подразбиране: false",
   "settings.field.editor.auto_save_interval_secs": "Интервал за автозапис (сек)",

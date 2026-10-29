@@ -976,7 +976,7 @@
           "x-section": "Recovery"
         },
         "auto_revert_poll_interval_ms": {
-          "description": "How often (ms) to check open files for outside changes. Auto-revert is\non for each buffer by default; \"Toggle Auto-Revert (Current Buffer)\"\nturns it off for one. Lower is faster but uses more CPU. Default: 2000",
+          "description": "How often (ms) to check open files for outside changes. A buffer is\nchecked unless auto-revert is off for it (\"Toggle Auto-Revert (Current\nBuffer)\"). Lower is faster but uses more CPU. Default: 2000",
           "type": "integer",
           "format": "uint64",
           "minimum": 0,

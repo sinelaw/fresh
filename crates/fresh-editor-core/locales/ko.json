@@ -1607,7 +1607,7 @@
   "settings.field.editor.auto_recovery_save_interval_secs": "복구 저장 간격(초)",
   "settings.field.editor.auto_recovery_save_interval_secs_desc": "`recovery_enabled`가 켜져 있을 때 복구 저장 간격(초)입니다. 기본값: 2",
   "settings.field.editor.auto_revert_poll_interval_ms": "자동 되돌리기 확인 주기(ms)",
-  "settings.field.editor.auto_revert_poll_interval_ms_desc": "자동 되돌리기가 켜져 있을 때 열린 파일의 외부 변경을 확인하는 주기(ms)입니다. 낮을수록 빠르지만 CPU를 더 사용합니다. 기본값: 2000",
+  "settings.field.editor.auto_revert_poll_interval_ms_desc": "열린 파일의 외부 변경을 확인하는 주기(ms)입니다. 자동 되돌리기를 끈 버퍼('자동 되돌리기 전환 (현재 버퍼)')를 제외한 모든 버퍼를 확인합니다. 낮을수록 빠르지만 CPU를 더 사용합니다. 기본값: 2000",
   "settings.field.editor.auto_save_enabled": "자동 저장 사용",
   "settings.field.editor.auto_save_enabled_desc": "변경된 파일을 `auto_save_interval_secs`마다 디스크에 자동 저장합니다. 기본값: false",
   "settings.field.editor.auto_save_interval_secs": "자동 저장 간격(초)",

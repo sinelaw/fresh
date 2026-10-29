@@ -1607,7 +1607,7 @@
   "settings.field.editor.auto_recovery_save_interval_secs": "Chu kỳ lưu khôi phục (giây)",
   "settings.field.editor.auto_recovery_save_interval_secs_desc": "Số giây giữa các lần lưu khôi phục, khi bật `recovery_enabled`. Mặc định: 2",
   "settings.field.editor.auto_revert_poll_interval_ms": "Chu kỳ quét tự động hoàn nguyên (ms)",
-  "settings.field.editor.auto_revert_poll_interval_ms_desc": "Tần suất (ms) kiểm tra xem các tệp đang mở có bị thay đổi từ bên ngoài không, khi bật tự động hoàn nguyên. Giá trị thấp hơn phản hồi nhanh hơn nhưng tốn CPU hơn. Mặc định: 2000",
+  "settings.field.editor.auto_revert_poll_interval_ms_desc": "Tần suất (ms) kiểm tra xem các tệp đang mở có bị thay đổi từ bên ngoài không. Mỗi bộ đệm đều được kiểm tra, trừ khi đã tắt tự động hoàn nguyên cho nó (\"Bật/tắt tự động hoàn nguyên (bộ đệm hiện tại)\"). Giá trị thấp hơn phản hồi nhanh hơn nhưng tốn CPU hơn. Mặc định: 2000",
   "settings.field.editor.auto_save_enabled": "Bật tự động lưu",
   "settings.field.editor.auto_save_enabled_desc": "Tự động lưu các tệp đã thay đổi xuống đĩa sau mỗi `auto_save_interval_secs`. Mặc định: false",
   "settings.field.editor.auto_save_interval_secs": "Chu kỳ tự động lưu (giây)",

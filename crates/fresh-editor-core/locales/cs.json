@@ -1621,7 +1621,7 @@
   "settings.field.editor.auto_recovery_save_interval_secs": "Interval ukládání obnovy (s)",
   "settings.field.editor.auto_recovery_save_interval_secs_desc": "Počet sekund mezi ukládáním obnovovacích dat, je-li zapnuto `recovery_enabled`. Výchozí: 2",
   "settings.field.editor.auto_revert_poll_interval_ms": "Interval kontroly automatického vracení (ms)",
-  "settings.field.editor.auto_revert_poll_interval_ms_desc": "Jak často (ms) kontrolovat otevřené soubory kvůli změnám zvenčí, je-li zapnuto automatické vracení. Nižší hodnota je rychlejší, ale více zatěžuje CPU. Výchozí: 2000",
+  "settings.field.editor.auto_revert_poll_interval_ms_desc": "Jak často (ms) kontrolovat otevřené soubory kvůli změnám zvenčí. Buffer se kontroluje, pokud pro něj není automatické vracení vypnuto („Přepnout automatické vracení (aktuální buffer)“). Nižší hodnota je rychlejší, ale více zatěžuje CPU. Výchozí: 2000",
   "settings.field.editor.auto_save_enabled": "Povolit automatické ukládání",
   "settings.field.editor.auto_save_enabled_desc": "Automaticky ukládat změněné soubory na disk každých `auto_save_interval_secs`. Výchozí: false",
   "settings.field.editor.auto_save_interval_secs": "Interval automatického ukládání (s)",

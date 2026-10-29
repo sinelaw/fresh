@@ -1628,7 +1628,7 @@
   "settings.field.editor.auto_recovery_save_interval_secs": "Інтервал відновлення, с",
   "settings.field.editor.auto_recovery_save_interval_secs_desc": "Інтервал у секундах між збереженнями для відновлення, коли ввімкнено `recovery_enabled`. Типово: 2",
   "settings.field.editor.auto_revert_poll_interval_ms": "Інтервал опитування файлів, мс",
-  "settings.field.editor.auto_revert_poll_interval_ms_desc": "Як часто (у мс) перевіряти відкриті файли на зовнішні зміни, коли ввімкнено автовідновлення. Менше значення — швидша реакція, але більше навантаження на CPU. Типово: 2000",
+  "settings.field.editor.auto_revert_poll_interval_ms_desc": "Як часто (у мс) перевіряти відкриті файли на зовнішні зміни. Буфер перевіряється, якщо для нього не вимкнено автовідновлення («Перемкнути автовідновлення (поточний буфер)»). Менше значення — швидша реакція, але більше навантаження на CPU. Типово: 2000",
   "settings.field.editor.auto_save_enabled": "Автозбереження",
   "settings.field.editor.auto_save_enabled_desc": "Автоматично зберігати змінені файли на диск кожні `auto_save_interval_secs`. Типово: false",
   "settings.field.editor.auto_save_interval_secs": "Інтервал автозбереження, с",

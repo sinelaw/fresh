@@ -1614,7 +1614,7 @@
   "settings.field.editor.auto_recovery_save_interval_secs": "Wiederherstellungsintervall (s)",
   "settings.field.editor.auto_recovery_save_interval_secs_desc": "Sekunden zwischen Wiederherstellungs-Speicherungen, wenn `recovery_enabled` aktiv ist. Standard: 2",
   "settings.field.editor.auto_revert_poll_interval_ms": "Auto-Zurücksetzen-Intervall (ms)",
-  "settings.field.editor.auto_revert_poll_interval_ms_desc": "Wie oft (ms) geöffnete Dateien auf externe Änderungen geprüft werden, wenn Auto-Zurücksetzen aktiv ist. Niedriger ist schneller, braucht aber mehr CPU. Standard: 2000",
+  "settings.field.editor.auto_revert_poll_interval_ms_desc": "Wie oft (ms) geöffnete Dateien auf externe Änderungen geprüft werden. Jeder Puffer wird geprüft, außer Auto-Zurücksetzen ist für ihn ausgeschaltet („Auto-Zurücksetzen umschalten (aktueller Puffer)“). Niedriger ist schneller, braucht aber mehr CPU. Standard: 2000",
   "settings.field.editor.auto_save_enabled": "Automatisches Speichern",
   "settings.field.editor.auto_save_enabled_desc": "Geänderte Dateien alle `auto_save_interval_secs` automatisch auf die Festplatte speichern. Standard: false",
   "settings.field.editor.auto_save_interval_secs": "Auto-Speichern-Intervall (s)",

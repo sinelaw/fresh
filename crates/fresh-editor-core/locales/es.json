@@ -1614,7 +1614,7 @@
   "settings.field.editor.auto_recovery_save_interval_secs": "Intervalo de recuperación (s)",
   "settings.field.editor.auto_recovery_save_interval_secs_desc": "Segundos entre guardados de recuperación, cuando `recovery_enabled` está activado. Predeterminado: 2",
   "settings.field.editor.auto_revert_poll_interval_ms": "Sondeo de auto-revertir (ms)",
-  "settings.field.editor.auto_revert_poll_interval_ms_desc": "Cada cuánto tiempo (ms) se comprueba si los archivos abiertos han cambiado fuera del editor cuando auto-revertir está activado. Un valor menor es más rápido pero usa más CPU. Predeterminado: 2000",
+  "settings.field.editor.auto_revert_poll_interval_ms_desc": "Cada cuánto tiempo (ms) se comprueba si los archivos abiertos han cambiado fuera del editor. Se comprueba cada búfer, salvo que tenga desactivado auto-revertir («Alternar auto-revertir (búfer actual)»). Un valor menor es más rápido pero usa más CPU. Predeterminado: 2000",
   "settings.field.editor.auto_save_enabled": "Guardado automático",
   "settings.field.editor.auto_save_enabled_desc": "Guardar automáticamente en disco los archivos modificados cada `auto_save_interval_secs`. Predeterminado: false",
   "settings.field.editor.auto_save_interval_secs": "Intervalo de autoguardado (s)",
