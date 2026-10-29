@@ -906,6 +906,19 @@ const quickfixFinder = new Finder<GrepMatch>(editor, {
   // quickfix and VS Code's results list — so the user can step through
   // matches. (Find References / Diagnostics keep the default close.)
   closeOnSelect: false,
+  // As in the overlay: another workspace's entry goes to that workspace
+  // first, and a line on a terminal's screen shows the terminal.
+  onSelect: (item, entry) => {
+    if (item.workspace && item.workspace.id !== editor.activeWindow()) {
+      switchToWorkspace(item.workspace);
+    }
+    if (item.bufferId !== undefined) {
+      editor.showBuffer(item.bufferId);
+    } else if (entry.location) {
+      editor.openFile(entry.location.file, entry.location.line, entry.location.column);
+      editor.setStatus(`Jumped to ${entry.location.file}:${entry.location.line}`);
+    }
+  },
 });
 
 // Snapshot the current Live Grep results into the Quickfix dock panel.
@@ -1241,14 +1254,31 @@ function customIgnorePatterns(): string[] {
  *  then the first other one that can run. */
 async function providerForOther(cwd: string): Promise<LiveGrepProvider | null> {
   const selected = cachedSelected !== undefined ? cachedSelected : await selectProvider();
-  if (!selected || selected.name !== "git-grep" || (await gitGrepCwd(cwd)) !== null) {
-    return selected;
+  if (!selected || selected.name !== "git-grep") return selected;
+  // Whether a root is in a repo does not change while the overlay is up
+  const key = `${selected.name}\0${cwd}`;
+  const known = otherProviders.get(key);
+  if (known !== undefined) return known;
+  let chosen: LiveGrepProvider | null = selected;
+  if ((await gitGrepCwd(cwd)) === null) {
+    chosen = null;
+    for (const p of providers) {
+      if (p !== selected && p.name !== "git-grep" && (await probeProvider(p))) {
+        chosen = p;
+        break;
+      }
+    }
   }
-  for (const p of providers) {
-    if (p !== selected && p.name !== "git-grep" && (await probeProvider(p))) return p;
-  }
-  return null;
+  otherProviders.set(key, chosen);
+  return chosen;
 }
+
+/** `providerForOther`'s answers, by provider and root, for one overlay. */
+const otherProviders = new Map<string, LiveGrepProvider | null>();
+
+/** The window list with every saved workspace in it, read once per
+ *  overlay rather than per keystroke. */
+let workspacesLoaded: Promise<void> | null = null;
 
 // Run the project-file grep for the enabled file-backed scopes
 // (`files` / `ignored`) in `workspace`'s root. Returns null when no
@@ -1347,21 +1377,29 @@ function currentWorkspace(): Workspace {
  *  no matches is left out too. */
 async function searchAllWorkspaces(query: string, cancellation?: SearchCancellation): Promise<GrepMatch[]> {
   // The dock lists workspaces not opened yet this session; so does this.
-  await editor.loadWorkspaces();
-  const workspaces = orderWorkspaces(
+  workspacesLoaded ??= editor.loadWorkspaces();
+  await workspacesLoaded;
+  const [current, ...others] = orderWorkspaces(
     { id: editor.activeWindow(), root: editor.getCwd() },
     editor.listWindows(),
     dockOrder(),
   );
-  const groups: { workspace: Workspace; matches: GrepMatch[] }[] = [];
-  let found = 0;
-  for (const workspace of workspaces) {
-    if (found >= MAX_RESULTS || cancellation?.cancelled) break;
-    const content = await workspaceContent(workspace);
-    const matches = await searchWorkspace(query, content, MAX_RESULTS - found, cancellation);
-    groups.push({ workspace, matches });
-    found += matches.length;
-  }
+  const own = await searchWorkspace(query, await workspaceContent(current), MAX_RESULTS, cancellation);
+  // The others share what is left of the cap and run side by side; their
+  // groups keep dock order, cut at the cap in that order.
+  const left = MAX_RESULTS - own.length;
+  const theirs = left <= 0 || cancellation?.cancelled
+    ? []
+    : await Promise.all(
+      others.map(async (workspace) => searchWorkspace(query, await workspaceContent(workspace), left, cancellation)),
+    );
+  const groups: { workspace: Workspace; matches: GrepMatch[] }[] = [{ workspace: current, matches: own }];
+  let found = own.length;
+  theirs.forEach((matches, i) => {
+    const kept = matches.slice(0, MAX_RESULTS - found);
+    groups.push({ workspace: others[i], matches: kept });
+    found += kept.length;
+  });
   return groupByWorkspace<GrepMatch>(
     groups,
     (workspace, count) => ({ file: "", line: 0, column: 0, content: "", workspace, heading: count }),
@@ -1447,6 +1485,8 @@ for (const m of MODES) {
 // same flow with prepopulated data, no bespoke overlay.
 function openLiveGrep(initialQuery: string): void {
   overlayActive = true;
+  workspacesLoaded = null;
+  otherProviders.clear();
   finder.prompt({
     title: queryLabel(),
     source: {

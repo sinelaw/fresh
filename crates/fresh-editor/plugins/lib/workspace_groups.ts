@@ -37,7 +37,9 @@ export interface DockEntry {
  * The workspaces to search: the current one first, then the others in dock
  * order — those the dock does not list (no Orchestrator, or a window it has
  * not seen) after it, by window id. Remote workspaces are left out: their
- * files and terminals are not on this machine. Each is named as the dock
+ * files and terminals are not on this machine. From a remote current
+ * workspace there are no others: searches run where the current workspace
+ * runs, which is not where the others' files are. Each is named as the dock
  * names it, else by its window label.
  */
 export function orderWorkspaces(
@@ -53,7 +55,7 @@ export function orderWorkspaces(
     dock.find((d) => d.windowId === w.id)?.name || w.label;
   const here = windows.find((w) => w.id === current.id);
   const others = windows
-    .filter((w) => w.id !== current.id && !w.remote)
+    .filter((w) => !here?.remote && w.id !== current.id && !w.remote)
     .sort((a, b) => rank(a.id) - rank(b.id))
     .map((w) => ({ id: w.id, name: name(w), root: w.root, current: false }));
   return [

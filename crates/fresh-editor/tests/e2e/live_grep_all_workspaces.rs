@@ -118,6 +118,55 @@ fn all_workspaces_lists_every_workspaces_matches_grouped_by_workspace() {
         harness.screen_row_text(web_row - 1).contains("· 1 match"),
         "this workspace's group has its own header:\n{screen}"
     );
+
+    // Off again: back to this workspace's matches, ungrouped
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            !s.contains("api_note.txt") && !s.contains("── ") && s.contains("web_note.txt:1")
+        })
+        .unwrap();
+}
+
+/// Enter on another workspace's header row switches to that workspace,
+/// opening nothing new there.
+#[test]
+fn enter_on_another_workspaces_header_goes_there() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let (web, api) = two_projects(temp.path());
+    let mut harness = harness_with_two_workspaces(&web, &api);
+    harness.open_file(&web.join("web_note.txt")).unwrap();
+
+    open_universal_search(&mut harness, MARKER);
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("── api · 2 matches"))
+        .unwrap();
+    // web_note (selected), api header
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            !s.contains("Scope ") && s.contains("api_draft.txt*")
+        })
+        .unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("web_note.txt"),
+        "web's tab is gone:\n{screen}"
+    );
+    assert!(
+        !screen.contains("api_note.txt"),
+        "a header opens no file:\n{screen}"
+    );
 }
 
 /// Enter on another workspace's unsaved buffer switches to that workspace
@@ -226,6 +275,7 @@ fn enter_on_another_workspaces_terminal_line_shows_that_terminal() {
         .wait_until(|h| h.screen_to_string().contains("ZEBRA_XWS"))
         .unwrap();
     harness.editor_mut().set_active_window(web_id);
+    harness.open_file(&web.join("web_note.txt")).unwrap();
     harness
         .wait_until(|h| !h.screen_to_string().contains("ZEBRA_XWS"))
         .unwrap();
@@ -250,6 +300,9 @@ fn enter_on_another_workspaces_terminal_line_shows_that_terminal() {
             !s.contains("Scope ") && s.contains("ZEBRA_XWS")
         })
         .unwrap();
+    // In api's workspace: web's tab is not on screen
+    let screen = harness.screen_to_string();
+    assert!(!screen.contains("web_note.txt"), "{screen}");
 }
 
 /// A workspace listed but not opened yet this session is searched too — its

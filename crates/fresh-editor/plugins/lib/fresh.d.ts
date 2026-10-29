@@ -5284,7 +5284,10 @@ interface EditorAPI {
 	* @param windowId - List this window's buffers (from `listWindows()`)
 	* instead of the active window's. A buffer of a window not on screen
 	* is in no split, so its `view_mode`, `splits` and the like describe
-	* nothing visible. An unknown window has none.
+	* nothing visible. An unknown window has none. Such a buffer's id works
+	* with `searchBuffer`, and with `showBuffer` once its window is active;
+	* `getBufferInfo` and the other buffer reads answer for the active
+	* window's buffers only.
 	*/
 	listBuffers(windowId?: number): BufferInfo[];
 	/**

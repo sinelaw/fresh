@@ -46,6 +46,11 @@ eq(
   "dock names win over labels unless empty; the current root is the cwd given",
 );
 eq(
+  ids(orderWorkspaces({ id: 4, root: "/w/box" }, windows, [])),
+  [4],
+  "from a remote workspace, only it: searches run on its host",
+);
+eq(
   orderWorkspaces({ id: 9, root: "/gone" }, windows, []).map((w) => [w.id, w.name]),
   [[9, ""], [1, "main"], [2, "web"], [3, "api"], [5, "docs"]],
   "a current window missing from the list still leads",

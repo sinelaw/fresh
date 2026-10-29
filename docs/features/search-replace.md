@@ -110,7 +110,7 @@ output are searched in each workspace. A workspace the dock lists that you
 have not opened since starting Fresh has no buffers or terminals running, so
 its files on disk and its terminals' history are searched. Diagnostics stay
 this workspace's. Workspaces on a remote host (SSH, Kubernetes) are left
-out.
+out, and from a remote workspace only that workspace is searched.
 
 `Enter` on another workspace's result switches to that workspace, as picking
 it in the dock does, and then lands on the result as in its own: the file at

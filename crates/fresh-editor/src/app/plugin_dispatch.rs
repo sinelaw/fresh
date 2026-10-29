@@ -7069,24 +7069,6 @@ fn clamp_buffer_text_range(start: usize, end: usize, len: usize) -> (usize, usiz
 }
 
 impl Window {
-    /// Populate the per-window fields of the plugin state snapshot.
-    ///
-    /// Called by `Editor::update_plugin_state_snapshot` while it holds
-    /// the snapshot write lock. Covers everything that a single Window
-    /// owns: active buffer/split ids, all this window's buffers (with
-    /// per-buffer view-mode, compose state, preview flag, split
-    /// membership), per-buffer cursor positions and text properties,
-    /// the active buffer's cursors / viewport / selected text, the
-    /// per-split snapshot list, this window's active-session plugin
-    /// state, this window's authority label, diagnostics, folding
-    /// ranges, editor mode, and the per-window plugin view states.
-    /// Editor-wide fields (clipboard, windows list, config cache,
-    /// user_config_raw, plugin_global_state) are populated by the
-    /// Editor coda after this returns.
-    #[cfg(feature = "plugins")]
-    /// Returns how many buffers' property sets were shared into the
-    /// snapshot, for [`crate::app::PerfCounters`] — the caller owns the
-    /// counters because they are editor-wide.
     /// This window's buffers as `listBuffers(windowId)` lists them while
     /// another window is active: no split of it is on screen, so the view
     /// fields read as for a buffer shown nowhere.
@@ -7117,6 +7099,24 @@ impl Window {
             .collect()
     }
 
+    /// Populate the per-window fields of the plugin state snapshot.
+    ///
+    /// Called by `Editor::update_plugin_state_snapshot` while it holds
+    /// the snapshot write lock. Covers everything that a single Window
+    /// owns: active buffer/split ids, all this window's buffers (with
+    /// per-buffer view-mode, compose state, preview flag, split
+    /// membership), per-buffer cursor positions and text properties,
+    /// the active buffer's cursors / viewport / selected text, the
+    /// per-split snapshot list, this window's active-session plugin
+    /// state, this window's authority label, diagnostics, folding
+    /// ranges, editor mode, and the per-window plugin view states.
+    /// Editor-wide fields (clipboard, windows list, config cache,
+    /// user_config_raw, plugin_global_state) are populated by the
+    /// Editor coda after this returns.
+    #[cfg(feature = "plugins")]
+    /// Returns how many buffers' property sets were shared into the
+    /// snapshot, for [`crate::app::PerfCounters`] — the caller owns the
+    /// counters because they are editor-wide.
     pub(crate) fn populate_plugin_state_snapshot(
         &mut self,
         snapshot: &mut fresh_core::api::EditorStateSnapshot,

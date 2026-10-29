@@ -1826,3 +1826,67 @@ fn live_grep_finds_text_still_on_a_terminal_screen() {
         }
     }
 }
+
+/// A Terminals hit from a terminal's history (its backing file, not its
+/// screen) is listed under the terminal's name, like a hit on its screen,
+/// rather than under the backing file's path.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // `printf`/`seq` in a Unix shell
+fn live_grep_names_a_terminal_history_hit_after_its_terminal() {
+    use portable_pty::{native_pty_system, PtySize};
+    let pty = native_pty_system().openpty(PtySize {
+        rows: 1,
+        cols: 1,
+        pixel_width: 0,
+        pixel_height: 0,
+    });
+    if pty.is_err() {
+        eprintln!("Skipping test: PTY not available in this environment");
+        return;
+    }
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().canonicalize().unwrap().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "live_grep");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        140,
+        30,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.editor_mut().open_terminal();
+    // The marker, then enough lines to push it off the screen into history
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(b"printf '\\x5aEBRA_HISTORY\\n'; seq 1000 1100\n");
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("1100") && !s.contains("ZEBRA_HISTORY")
+        })
+        .unwrap();
+
+    harness
+        .run_palette_command("Live Grep (Find in Files)")
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Scope "))
+        .unwrap();
+    harness.type_text("ZEBRA_HISTORY").unwrap();
+    // One result, the history line
+    harness
+        .wait_until(|h| h.screen_to_string().contains("] 1 / 1"))
+        .unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("[term] ") && !screen.contains("fresh-terminal-"),
+        "the row names the terminal, not its backing file:\n{screen}"
+    );
+}

@@ -3872,7 +3872,7 @@ impl Editor {
         })
     }
 
-    /// Search one buffer of the active window as it is — a slice per tick,
+    /// Search one buffer, of whichever window holds it, as it is — a slice per tick,
     /// like an open buffer in a project search — into `handle`: a
     /// `beginSearch` (or `searchBuffer`) of just that buffer.
     fn search_one_buffer(
