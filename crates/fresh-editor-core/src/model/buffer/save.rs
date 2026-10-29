@@ -1275,10 +1275,10 @@ fn make_sudo_error(
             meta.permissions
                 .as_ref()
                 .map(|p| p.mode() & 0o7777)
-                .unwrap_or(0),
+                .unwrap_or(0o644),
         )
     } else {
-        (0, 0, 0)
+        (0, 0, 0o644)
     };
     #[cfg(not(unix))]
     let (uid, gid, mode) = (0u32, 0u32, 0u32);
@@ -1292,4 +1292,24 @@ fn make_sudo_error(
         gid,
         mode,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::filesystem::StdFileSystem;
+
+    /// A sudo save of a file that doesn't exist yet must not ask for mode 0,
+    /// or `sudo chmod` leaves the new file unreadable (#3641).
+    #[test]
+    #[cfg(unix)]
+    fn a_new_file_staged_for_sudo_gets_a_readable_mode() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let fs: Arc<dyn FileSystem + Send + Sync> = Arc::new(StdFileSystem);
+        let dest = dir.path().join("new.conf");
+
+        let err = stage_for_sudo(&fs, &dest, b"x\n", None).unwrap();
+        let sudo = err.downcast_ref::<SudoSaveRequired>().unwrap();
+        assert_eq!(sudo.mode, 0o644);
+    }
 }
