@@ -262,8 +262,15 @@ fn matches_handle(watch_path: &Path, recursive: RecursiveMode, event_path: &Path
     }
 }
 
-fn classify_kind(kind: &EventKind) -> PathChangeKind {
-    match kind {
+/// The kind of change an event reports, or `None` for an event that changes
+/// nothing: an open, read or close (`EventKind::Access`). inotify reports
+/// those for every read of a watched file, so forwarding them told plugins a
+/// file changed whenever anything read it — `git_statusbar` re-ran `git`
+/// on each `.git/HEAD` read, and that `git` read HEAD again (#3607). A write
+/// still arrives as its own `Modify`.
+fn classify_kind(kind: &EventKind) -> Option<PathChangeKind> {
+    Some(match kind {
+        EventKind::Access(_) => return None,
         EventKind::Create(CreateKind::File)
         | EventKind::Create(CreateKind::Folder)
         | EventKind::Create(CreateKind::Any)
@@ -275,7 +282,7 @@ fn classify_kind(kind: &EventKind) -> PathChangeKind {
         EventKind::Modify(ModifyKind::Name(_)) => PathChangeKind::Rename,
         EventKind::Modify(_) => PathChangeKind::Modify,
         _ => PathChangeKind::Other,
-    }
+    })
 }
 
 fn build_watcher(bridge: AsyncBridge) -> Result<RecommendedWatcher, String> {
@@ -303,7 +310,9 @@ fn event_handler(bridge: AsyncBridge) -> impl Fn(notify::Result<notify::Event>) 
                 return;
             }
         };
-        let kind = classify_kind(&event.kind);
+        let Some(kind) = classify_kind(&event.kind) else {
+            return;
+        };
         let map = match handle_map().lock() {
             Ok(m) => m,
             Err(_) => return,
@@ -427,19 +436,51 @@ mod tests {
         use notify::event::*;
         assert!(matches!(
             classify_kind(&EventKind::Create(CreateKind::File)),
-            PathChangeKind::Create
+            Some(PathChangeKind::Create)
         ));
         assert!(matches!(
             classify_kind(&EventKind::Remove(RemoveKind::File)),
-            PathChangeKind::Delete
+            Some(PathChangeKind::Delete)
         ));
         assert!(matches!(
             classify_kind(&EventKind::Modify(ModifyKind::Data(DataChange::Content))),
-            PathChangeKind::Modify
+            Some(PathChangeKind::Modify)
         ));
         assert!(matches!(
             classify_kind(&EventKind::Modify(ModifyKind::Name(RenameMode::Both))),
-            PathChangeKind::Rename
+            Some(PathChangeKind::Rename)
         ));
+        // Reads change nothing (#3607)
+        assert!(classify_kind(&EventKind::Access(AccessKind::Open(AccessMode::Any))).is_none());
+        assert!(classify_kind(&EventKind::Access(AccessKind::Close(AccessMode::Read))).is_none());
+    }
+
+    /// Reading a watched file reports no change; writing it does (#3607).
+    ///
+    /// The file is read first, then written, so the first event the watch
+    /// delivers would be the read's, had reads been forwarded.
+    #[test]
+    fn reading_a_watched_file_reports_no_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let head = dir.path().join("HEAD");
+        std::fs::write(&head, "ref: refs/heads/main\n").unwrap();
+        let bridge = AsyncBridge::new();
+        let mut manager = FileWatcherManager::new();
+        let handle = manager.watch(&bridge, &head, false).unwrap();
+
+        let _ = std::fs::read(&head).unwrap();
+        std::fs::write(&head, "ref: refs/heads/other\n").unwrap();
+
+        let first = std::cell::Cell::new(None);
+        wait_for_change(&bridge, handle, |_, kind| {
+            first.set(Some(kind));
+            true
+        });
+        assert!(
+            matches!(first.get(), Some(PathChangeKind::Modify)),
+            "the read was reported as a change: {:?}",
+            first.get()
+        );
+        manager.unwatch(handle);
     }
 }
