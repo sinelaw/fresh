@@ -5,7 +5,7 @@ use crate::input::line_move::{move_lines, LineMoveDirection};
 use crate::model::buffer::{Buffer, LineEnding};
 use crate::model::buffer_position::{byte_to_2d, pos_2d_to_byte};
 use crate::model::cursor::{Cursor, Cursors, Position2D, SelectionMode};
-use crate::model::event::{CursorId, Event};
+use crate::model::event::{CursorId, EditText, Event};
 use crate::model::virtual_space::{
     cursor_virtual_columns, cursor_virtual_lines, line_width_at_content_end,
 };
@@ -402,7 +402,7 @@ fn apply_deletions(
     events: &mut Vec<Event>,
 ) {
     for (cursor_id, range) in deletions {
-        let deleted_text = state.get_text_range(range.start, range.end);
+        let deleted_text = state.get_edit_text(range.start, range.end);
         events.push(Event::Delete {
             range,
             deleted_text,
@@ -984,7 +984,7 @@ fn handle_skip_over_with_dedent(
 
     if current_visual_indent != correct_indent {
         // Delete incorrect spacing
-        let deleted_text = state.get_text_range(line_start, insert_position);
+        let deleted_text = state.get_edit_text(line_start, insert_position);
         events.push(Event::Delete {
             range: line_start..insert_position,
             deleted_text,
@@ -997,7 +997,7 @@ fn handle_skip_over_with_dedent(
         if indent_byte_len > 0 {
             events.push(Event::Insert {
                 position: line_start,
-                text: indent_str,
+                text: indent_str.into(),
                 cursor_id,
             });
         }
@@ -1105,7 +1105,7 @@ fn handle_auto_dedent(
     // Delete the incorrect spacing
     let spaces_to_delete = insert_position - line_start;
     if spaces_to_delete > 0 {
-        let deleted_text = state.get_text_range(line_start, insert_position);
+        let deleted_text = state.get_edit_text(line_start, insert_position);
         events.push(Event::Delete {
             range: line_start..insert_position,
             deleted_text,
@@ -1120,7 +1120,7 @@ fn handle_auto_dedent(
     text.push(ch);
     events.push(Event::Insert {
         position: line_start,
-        text,
+        text: text.into(),
         cursor_id,
     });
 }
@@ -1220,7 +1220,7 @@ fn handle_keyword_dedent(
     let prefix = state.get_text_range(line_start, insert_position);
     events.push(Event::Delete {
         range: line_start..insert_position,
-        deleted_text: prefix.clone(),
+        deleted_text: prefix.clone().into(),
         cursor_id,
     });
     let use_tabs = state.buffer_settings.use_tabs;
@@ -1231,7 +1231,7 @@ fn handle_keyword_dedent(
     text.push(ch);
     events.push(Event::Insert {
         position: line_start,
-        text,
+        text: text.into(),
         cursor_id,
     });
     true
@@ -1257,7 +1257,7 @@ fn handle_auto_close(
     let text = format!("{}{}", ch, close_char);
     events.push(Event::Insert {
         position: insert_position,
-        text,
+        text: text.into(),
         cursor_id,
     });
     // Move cursor between the brackets
@@ -1280,7 +1280,7 @@ struct InsertCursorData {
     line_start: usize,
     only_spaces: bool,
     char_after: Option<u8>,
-    deleted_text: Option<String>,
+    deleted_text: Option<EditText>,
     /// Text that materializes the cursor's virtual-space position (line
     /// endings for virtual lines below the buffer end, then column padding).
     /// Empty unless the cursor is in virtual space. Typing inserts this
@@ -1376,7 +1376,7 @@ fn collect_insert_cursor_data(state: &mut EditorState, cursors: &Cursors) -> Vec
 
             let deleted_text = selection
                 .as_ref()
-                .map(|r| state.get_text_range(r.start, r.end));
+                .map(|r| state.get_edit_text(r.start, r.end));
 
             InsertCursorData {
                 cursor_id,
@@ -1448,7 +1448,7 @@ fn insert_char_events(
         if !gap.is_empty() && data.selection.is_none() {
             events.push(Event::Insert {
                 position: data.insert_position,
-                text: format!("{}{}", gap, ch),
+                text: format!("{}{}", gap, ch).into(),
                 cursor_id: data.cursor_id,
             });
             continue;
@@ -1464,13 +1464,13 @@ fn insert_char_events(
                     // Insert closing char at end of selection first (higher position)
                     events.push(Event::Insert {
                         position: sel_end,
-                        text: close_char.to_string(),
+                        text: close_char.to_string().into(),
                         cursor_id: data.cursor_id,
                     });
                     // Insert opening char at start of selection
                     events.push(Event::Insert {
                         position: sel_start,
-                        text: ch.to_string(),
+                        text: ch.to_string().into(),
                         cursor_id: data.cursor_id,
                     });
                     // Place cursor after closing char (sel_end + 2: +1 for open, +1 for close)
@@ -1582,7 +1582,7 @@ fn insert_char_events(
         // Normal character insertion
         events.push(Event::Insert {
             position: data.insert_position,
-            text: ch.to_string(),
+            text: ch.to_string().into(),
             cursor_id: data.cursor_id,
         });
     }
@@ -1631,12 +1631,12 @@ fn transform_case<F>(
         if transformed != text {
             events.push(Event::Delete {
                 range: start..end,
-                deleted_text: text,
+                deleted_text: text.into(),
                 cursor_id,
             });
             events.push(Event::Insert {
                 position: start,
-                text: transformed,
+                text: transformed.into(),
                 cursor_id,
             });
         }
@@ -1679,7 +1679,7 @@ fn handle_insert_newline(
 
     // Get text for deletions and build delete events
     for (cursor_id, range, _start) in deletions {
-        let deleted_text = state.get_text_range(range.start, range.end);
+        let deleted_text = state.get_edit_text(range.start, range.end);
         events.push(Event::Delete {
             range,
             deleted_text,
@@ -1792,7 +1792,7 @@ fn handle_insert_newline(
 
         events.push(Event::Insert {
             position: indent_position,
-            text,
+            text: text.into(),
             cursor_id,
         });
 
@@ -1880,7 +1880,7 @@ fn handle_dedent_selection(
     for (&line_start, (chars_to_remove, deleted_text)) in all_line_deletions.iter().rev() {
         events.push(Event::Delete {
             range: line_start..line_start + chars_to_remove,
-            deleted_text: deleted_text.clone(),
+            deleted_text: deleted_text.clone().into(),
             cursor_id: first_cursor_id,
         });
     }
@@ -2001,7 +2001,7 @@ fn handle_insert_tab(
         for &line_start in all_line_starts.iter().rev() {
             events.push(Event::Insert {
                 position: line_start,
-                text: tab_str.clone(),
+                text: tab_str.clone().into(),
                 cursor_id: first_cursor_id,
             });
         }
@@ -2057,7 +2057,7 @@ fn handle_insert_tab(
             };
             events.push(Event::Insert {
                 position: cursor.position,
-                text,
+                text: text.into(),
                 cursor_id,
             });
         }
@@ -2718,13 +2718,13 @@ fn handle_transpose_chars(state: &mut EditorState, cursors: &Cursors, events: &m
             if chars.len() >= 2 {
                 events.push(Event::Delete {
                     range: (pos - 1)..(pos + 1),
-                    deleted_text: text,
+                    deleted_text: text.into(),
                     cursor_id,
                 });
                 let swapped = format!("{}{}", chars[1], chars[0]);
                 events.push(Event::Insert {
                     position: pos - 1,
-                    text: swapped,
+                    text: swapped.into(),
                     cursor_id,
                 });
             }
@@ -2742,7 +2742,7 @@ fn handle_open_line(state: &mut EditorState, cursors: &Cursors, events: &mut Vec
     for (cursor_id, cursor) in cursors.iter() {
         events.push(Event::Insert {
             position: cursor.position,
-            text: line_ending.to_string(),
+            text: line_ending.to_string().into(),
             cursor_id,
         });
         events.push(Event::MoveCursor {
@@ -2958,12 +2958,12 @@ fn handle_toggle_case(state: &mut EditorState, cursors: &Cursors, events: &mut V
         if toggled != text {
             events.push(Event::Delete {
                 range: pos..next_pos,
-                deleted_text: text,
+                deleted_text: text.into(),
                 cursor_id,
             });
             events.push(Event::Insert {
                 position: pos,
-                text: toggled,
+                text: toggled.into(),
                 cursor_id,
             });
         }
@@ -3008,12 +3008,12 @@ fn handle_sort_lines(state: &mut EditorState, cursors: &Cursors, events: &mut Ve
             if sorted_text != text {
                 events.push(Event::Delete {
                     range: range.clone(),
-                    deleted_text: text,
+                    deleted_text: text.into(),
                     cursor_id,
                 });
                 events.push(Event::Insert {
                     position: range.start,
-                    text: sorted_text,
+                    text: sorted_text.into(),
                     cursor_id,
                 });
             }
@@ -3112,7 +3112,7 @@ fn handle_duplicate_line(
         let old_position = position + text.len();
         events.push(Event::Insert {
             position,
-            text,
+            text: text.into(),
             cursor_id,
         });
         events.push(Event::MoveCursor {
@@ -4096,7 +4096,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text,
+                text: text.into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -4148,7 +4148,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "Hello\nWorld".to_string(),
+                text: "Hello\nWorld".to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -4210,7 +4210,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "Line1\nLine2\nLine3".to_string(),
+                text: "Line1\nLine2\nLine3".to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -4293,7 +4293,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: content.to_string(),
+                text: content.to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -4372,7 +4372,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: content.to_string(),
+                text: content.to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -4493,7 +4493,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "A\nB".to_string(),
+                text: "A\nB".to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -4546,7 +4546,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "A\nB".to_string(),
+                text: "A\nB".to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -4599,7 +4599,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "A\nB".to_string(),
+                text: "A\nB".to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -4649,7 +4649,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "A\nB".to_string(),
+                text: "A\nB".to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -4699,7 +4699,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "A\nB\nC\nD".to_string(),
+                text: "A\nB\nC\nD".to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -4906,7 +4906,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "Line1\nLine2\nLine3".to_string(),
+                text: "Line1\nLine2\nLine3".to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -4992,7 +4992,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "12345\n123\n12345".to_string(),
+                text: "12345\n123\n12345".to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -5096,7 +5096,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "12345\n123\n12345".to_string(),
+                text: "12345\n123\n12345".to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -5200,7 +5200,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "First\nSecond".to_string(),
+                text: "First\nSecond".to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -5256,7 +5256,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "First\nSecond".to_string(),
+                text: "First\nSecond".to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -5315,7 +5315,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "Line1\n\nLine3".to_string(),
+                text: "Line1\n\nLine3".to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -5386,7 +5386,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "Hello".to_string(),
+                text: "Hello".to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -5486,7 +5486,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "Line1\nLine2\nLine3".to_string(),
+                text: "Line1\nLine2\nLine3".to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -5564,7 +5564,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "HelloNew Line\nWorld!".to_string(),
+                text: "HelloNew Line\nWorld!".to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -5629,7 +5629,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "HelloNew Line\nWorld!".to_string(),
+                text: "HelloNew Line\nWorld!".to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -5774,7 +5774,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "HelloNew Line\nWorld!".to_string(),
+                text: "HelloNew Line\nWorld!".to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -5858,7 +5858,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "HelloNew Line\nWorld!".to_string(),
+                text: "HelloNew Line\nWorld!".to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -6177,7 +6177,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "abc".to_string(),
+                text: "abc".to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -6234,7 +6234,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "foo\nbar".to_string(),
+                text: "foo\nbar".to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -6314,7 +6314,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "\n".to_string(),
+                text: "\n".to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -6479,7 +6479,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "\n\n".to_string(),
+                text: "\n\n".to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -6621,7 +6621,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "()".to_string(),
+                text: "()".to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -6680,7 +6680,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "{}".to_string(),
+                text: "{}".to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -6735,7 +6735,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "\"\"".to_string(),
+                text: "\"\"".to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -6790,7 +6790,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "()".to_string(),
+                text: "()".to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -6846,7 +6846,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "(]".to_string(),
+                text: "(]".to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -6902,7 +6902,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "(abc)".to_string(),
+                text: "(abc)".to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -6954,7 +6954,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: text.to_string(),
+                text: text.to_string().into(),
                 cursor_id: CursorId(0),
             },
         );
@@ -7038,7 +7038,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: text.to_string(),
+                text: text.to_string().into(),
                 cursor_id: CursorId(0),
             },
         );

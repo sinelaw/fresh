@@ -539,7 +539,7 @@ fn test_quick_open_goto_line_live_preview_buffer_edit_invalidates() {
     harness
         .apply_event(Event::Insert {
             position: 0,
-            text: "PREFIX\n".to_string(),
+            text: "PREFIX\n".to_string().into(),
             cursor_id: CursorId(999_999),
         })
         .unwrap();

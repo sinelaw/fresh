@@ -2673,3 +2673,57 @@ fn test_utf8_cjk_file_larger_than_8kb_displays_correctly() {
         );
     }
 }
+
+/// Undoing a delete of a byte that is not UTF-8 puts that byte back.
+///
+/// A file reloaded as UTF-8 can hold bytes that aren't UTF-8. Deleting one
+/// recorded the deleted text as a lossy `String`, so undo put back U+FFFD
+/// (`EF BF BD`) and the save wrote it: the file changed although the edits
+/// cancel out (#3652).
+#[test]
+fn test_undo_delete_of_invalid_utf8_byte_restores_it() {
+    let mut harness = EditorTestHarness::with_temp_project(100, 24).unwrap();
+    let file_path = harness.project_dir().unwrap().join("invalid.txt");
+    std::fs::write(&file_path, b"a\xffb\n").unwrap();
+
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Reload as UTF-8, so the 0xFF byte is held as an invalid byte.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("Reload with Encoding").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.assert_screen_contains("Reload with encoding:");
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("UTF-8").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.assert_screen_contains("Reloaded with");
+    harness.assert_screen_contains("a<FF>b");
+
+    // Delete the invalid byte, then undo the delete.
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Delete, KeyModifiers::NONE)
+        .unwrap();
+    harness.assert_screen_not_contains("<FF>");
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.assert_screen_contains("a<FF>b");
+    harness.assert_screen_not_contains("\u{FFFD}");
+
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    assert_eq!(std::fs::read(&file_path).unwrap(), b"a\xffb\n");
+}

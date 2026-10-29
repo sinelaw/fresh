@@ -554,12 +554,12 @@ impl Editor {
         // Delete all content and insert new
         let delete_event = Event::Delete {
             range: 0..buffer_len,
-            deleted_text: buffer_content,
+            deleted_text: buffer_content.into(),
             cursor_id,
         };
         let insert_event = Event::Insert {
             position: 0,
-            text: output.to_string(),
+            text: output.to_string().into(),
             cursor_id,
         };
 
@@ -725,12 +725,12 @@ impl Editor {
             events: vec![
                 Event::Delete {
                     range: 0..old.len(),
-                    deleted_text: old.clone(),
+                    deleted_text: old.clone().into(),
                     cursor_id: CursorId(0),
                 },
                 Event::Insert {
                     position: 0,
-                    text: output.to_string(),
+                    text: output.to_string().into(),
                     cursor_id: CursorId(0),
                 },
             ],

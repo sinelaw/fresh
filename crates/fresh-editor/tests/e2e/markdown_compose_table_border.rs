@@ -609,7 +609,7 @@ fn structure_changing_edit_clears_seen_byte_ranges() {
     harness
         .apply_event(Event::Insert {
             position: 0,
-            text: "x".to_string(),
+            text: "x".to_string().into(),
             cursor_id,
         })
         .unwrap();
@@ -624,7 +624,7 @@ fn structure_changing_edit_clears_seen_byte_ranges() {
     harness
         .apply_event(Event::Insert {
             position: 0,
-            text: "\n".to_string(),
+            text: "\n".to_string().into(),
             cursor_id,
         })
         .unwrap();
@@ -639,7 +639,7 @@ fn structure_changing_edit_clears_seen_byte_ranges() {
     harness
         .apply_event(Event::Delete {
             range: 0..1,
-            deleted_text: "\n".to_string(),
+            deleted_text: "\n".to_string().into(),
             cursor_id,
         })
         .unwrap();
@@ -860,7 +860,7 @@ fn test_wide_table_not_corrupted_by_rapid_delete_above() {
         harness
             .apply_event(Event::Delete {
                 range: 0..1,
-                deleted_text: "\n".to_string(),
+                deleted_text: "\n".to_string().into(),
                 cursor_id,
             })
             .unwrap();
@@ -982,7 +982,7 @@ fn bulk_edit_records_into_coord_map_ring() {
     harness
         .apply_event(Event::Insert {
             position: 0,
-            text: "abcdefghij".to_string(),
+            text: "abcdefghij".to_string().into(),
             cursor_id,
         })
         .unwrap();
@@ -993,7 +993,7 @@ fn bulk_edit_records_into_coord_map_ring() {
     harness.editor_mut().apply_events_as_bulk_edit(
         vec![Event::Insert {
             position: 0,
-            text: "XXXX".to_string(),
+            text: "XXXX".to_string().into(),
             cursor_id,
         }],
         "paste".to_string(),

@@ -79,7 +79,7 @@ fn test_insert_event_marks_buffer_recovery_dirty() {
     // Apply an insert event directly
     let event = Event::Insert {
         position: 0,
-        text: "test".to_string(),
+        text: "test".to_string().into(),
         cursor_id: CursorId(0),
     };
     harness.apply_event(event).unwrap();
@@ -109,7 +109,7 @@ fn test_delete_event_marks_buffer_recovery_dirty() {
     // Apply delete event
     let delete_event = Event::Delete {
         range: 0..5,
-        deleted_text: "Hello".to_string(),
+        deleted_text: "Hello".to_string().into(),
         cursor_id: CursorId(0),
     };
     harness.apply_event(delete_event).unwrap();
@@ -140,12 +140,12 @@ fn test_batch_event_marks_buffer_recovery_dirty() {
         events: vec![
             Event::Insert {
                 position: 0,
-                text: "Hello".to_string(),
+                text: "Hello".to_string().into(),
                 cursor_id: CursorId(0),
             },
             Event::Insert {
                 position: 5,
-                text: " World".to_string(),
+                text: " World".to_string().into(),
                 cursor_id: CursorId(0),
             },
         ],

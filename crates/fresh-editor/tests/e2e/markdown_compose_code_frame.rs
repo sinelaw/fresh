@@ -670,7 +670,7 @@ fn deleting_the_last_character_of_a_code_line_keeps_the_rail_on_that_line() {
     harness
         .apply_event(Event::Delete {
             range: code.end - 1..code.end,
-            deleted_text: "}".to_string(),
+            deleted_text: "}".to_string().into(),
             cursor_id,
         })
         .unwrap();
@@ -712,7 +712,7 @@ fn typing_at_the_end_of_a_code_line_stays_inside_the_frame() {
     harness
         .apply_event(Event::Insert {
             position: code.end,
-            text: "Z".to_string(),
+            text: "Z".to_string().into(),
             cursor_id,
         })
         .unwrap();

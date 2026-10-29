@@ -297,7 +297,7 @@ impl Editor {
                     .to_string();
                     events.push(Event::Delete {
                         range: (line_start + leading_ws)..(line_start + leading_ws + remove_len),
-                        deleted_text,
+                        deleted_text: deleted_text.into(),
                         cursor_id,
                     });
                     position_deltas.push((line_start, -(remove_len as isize)));
@@ -309,7 +309,7 @@ impl Editor {
             for &line_start in line_starts.iter().rev() {
                 events.push(Event::Insert {
                     position: line_start,
-                    text: comment_prefix.to_string(),
+                    text: comment_prefix.to_string().into(),
                     cursor_id,
                 });
                 position_deltas.push((line_start, prefix_len as isize));

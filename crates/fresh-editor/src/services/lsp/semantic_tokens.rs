@@ -117,7 +117,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "fn main() {}".to_string(),
+                text: "fn main() {}".to_string().into(),
                 cursor_id: CursorId::UNDO_SENTINEL,
             },
         );
@@ -154,7 +154,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "abc".to_string(),
+                text: "abc".to_string().into(),
                 cursor_id: CursorId::UNDO_SENTINEL,
             },
         );

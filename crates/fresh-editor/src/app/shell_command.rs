@@ -108,7 +108,7 @@ impl Editor {
 
         // Now get the deleted text if there's a selection
         let selection_info = if let Some((start, end)) = selection_range {
-            let deleted_text = self.active_state_mut().get_text_range(start, end);
+            let deleted_text = self.active_state_mut().get_edit_text(start, end);
             Some((start, end, deleted_text))
         } else {
             None
@@ -134,7 +134,7 @@ impl Editor {
         &mut self,
         output: &str,
         has_selection: bool,
-        selection_info: Option<(usize, usize, String)>,
+        selection_info: Option<(usize, usize, crate::model::event::EditText)>,
     ) {
         let cursor_id = self.active_cursors().primary_id();
 
@@ -154,7 +154,7 @@ impl Editor {
                 };
                 let insert_event = Event::Insert {
                     position: start,
-                    text: output.to_string(),
+                    text: output.to_string().into(),
                     cursor_id,
                 };
 
@@ -176,12 +176,12 @@ impl Editor {
             // Delete all content and insert new
             let delete_event = Event::Delete {
                 range: 0..buffer_len,
-                deleted_text: buffer_content,
+                deleted_text: buffer_content.into(),
                 cursor_id,
             };
             let insert_event = Event::Insert {
                 position: 0,
-                text: output.to_string(),
+                text: output.to_string().into(),
                 cursor_id,
             };
 
@@ -230,7 +230,7 @@ impl Editor {
         let cursor_id = self.active_cursors().primary_id();
         let insert_event = Event::Insert {
             position: 0,
-            text: output.to_string(),
+            text: output.to_string().into(),
             cursor_id,
         };
         self.apply_event_to_active_buffer(&insert_event);
