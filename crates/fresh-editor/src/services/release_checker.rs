@@ -360,6 +360,10 @@ mod tests {
         (stop_tx, url)
     }
 
+    // The mock feed is plain http, which fresh-update's endpoint policy only
+    // accepts under `debug_assertions` (or `insecure-endpoints`); a release
+    // build falls back to GitHub and never sees the mock's update.
+    #[cfg(debug_assertions)]
     #[test]
     fn test_update_checker_detects_new_version() {
         let (stop_tx, url) = start_mock_release_server("99.0.0");
@@ -463,6 +467,9 @@ mod tests {
     /// the background check that decides whether to show the indicator, and
     /// the update child the popup spawns, must agree on where releases come
     /// from. They share one env var so they cannot drift.
+    ///
+    /// Debug only: a release build refuses the http override, as above.
+    #[cfg(debug_assertions)]
     #[test]
     fn the_release_feed_override_is_shared_by_check_and_update() {
         // Not set: both fall back to the GitHub API.
