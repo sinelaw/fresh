@@ -428,6 +428,7 @@ fn every_theme_name() -> Vec<String> {
             out.push(source_theme(disabled, st));
         }
     }
+    out.push(hints_theme());
     out
 }
 
@@ -841,6 +842,17 @@ pub fn suggestions_layer(s: &Suggestions) -> Node<UiMsg> {
     }
 }
 
+/// The hints row wears the selected row's colours, dimmed: it sits on the
+/// selection background, so its text has to be the ink a theme already pairs
+/// with that background, not a second one the theme must also suit (#3616).
+fn hints_theme() -> String {
+    attrs(
+        "ui.popup_selection_fg",
+        "ui.suggestion_selected_bg",
+        &["dim"],
+    )
+}
+
 /// The quick-open mode hints, as the row under the popup.
 ///
 /// `render_quick_open_hints`, which was a `Paragraph` of three spans — a
@@ -849,7 +861,7 @@ pub fn suggestions_layer(s: &Suggestions) -> Node<UiMsg> {
 /// and the margin is the same fixed cell the rows use, so what is left is the
 /// text and its name.
 fn hints_row(text_of: &str) -> Node<UiMsg> {
-    let t = attrs("ui.suggestion_fg", "ui.suggestion_selected_bg", &["dim"]);
+    let t = hints_theme();
     row().h(Sizing::Cells(1)).theme(t.clone()).children([
         row().w(Sizing::Cells(LEFT_MARGIN)),
         text(text_of).theme(t).elide(Elide::Tail),
@@ -1061,6 +1073,17 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The hints row shares its colours with the selected row, so a theme
+    /// that makes the selection readable makes the hints readable too.
+    #[test]
+    fn the_hints_row_uses_the_selected_rows_colours() {
+        use crate::app::shell_host::shell_theme::names;
+        assert_eq!(
+            names(&hints_theme()),
+            names(&theme(false, RowState::Selected))
+        );
     }
 
     /// **Ledger rule 2: clicking a row selects it — by index, not by
