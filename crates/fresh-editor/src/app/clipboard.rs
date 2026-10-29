@@ -556,7 +556,7 @@ impl Editor {
                 .iter()
                 .rev()
                 .map(|range| {
-                    let deleted_text = state.get_text_range(range.start, range.end);
+                    let deleted_text = state.get_edit_text(range.start, range.end);
                     Event::Delete {
                         range: range.clone(),
                         deleted_text,
@@ -612,7 +612,7 @@ impl Editor {
                 .iter()
                 .rev()
                 .map(|range| {
-                    let deleted_text = state.get_text_range(range.start, range.end);
+                    let deleted_text = state.get_edit_text(range.start, range.end);
                     Event::Delete {
                         range: range.clone(),
                         deleted_text,
@@ -786,7 +786,7 @@ impl Editor {
             for (cursor_id, range) in &cursor_selections {
                 let deleted_text = self
                     .active_state_mut()
-                    .get_text_range(range.start, range.end);
+                    .get_edit_text(range.start, range.end);
                 delete_events.push(Event::Delete {
                     range: range.clone(),
                     deleted_text,
@@ -1055,7 +1055,7 @@ impl Editor {
                 };
                 events.push(Event::Insert {
                     position: *pos,
-                    text: text_for_anchor,
+                    text: text_for_anchor.into(),
                     // No cursor moves on this insert: the user has
                     // been editing freely, and yanking their cursor
                     // to the paste site (which might be far away)
@@ -1381,7 +1381,7 @@ impl Editor {
                 .map(|(cursor_id, selection, insert_position, virtual_cols)| {
                     let deleted_text = selection
                         .as_ref()
-                        .map(|r| state.get_text_range(r.start, r.end));
+                        .map(|r| state.get_edit_text(r.start, r.end));
                     (
                         cursor_id,
                         selection,
@@ -1422,7 +1422,7 @@ impl Editor {
             }
             events.push(Event::Insert {
                 position: insert_position,
-                text,
+                text: text.into(),
                 cursor_id,
             });
         }

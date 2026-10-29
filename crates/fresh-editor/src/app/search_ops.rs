@@ -917,7 +917,7 @@ impl Editor {
             // Get the actual matched text for the delete event
             let deleted_text = self
                 .active_state_mut()
-                .get_text_range(*match_pos, match_pos + match_len);
+                .get_edit_text(*match_pos, match_pos + match_len);
             // Delete the matched text
             events.push(Event::Delete {
                 range: *match_pos..match_pos + match_len,
@@ -927,7 +927,7 @@ impl Editor {
             // Insert the replacement (with capture groups expanded)
             events.push(Event::Insert {
                 position: *match_pos,
-                text: expanded_replacement.clone(),
+                text: expanded_replacement.clone().into(),
                 cursor_id,
             });
         }
@@ -1115,7 +1115,7 @@ impl Editor {
                     for &(match_pos, match_len) in &all_matches {
                         let deleted_text = self
                             .active_state_mut()
-                            .get_text_range(match_pos, match_pos + match_len);
+                            .get_edit_text(match_pos, match_pos + match_len);
                         // Expand capture group references if in regex mode
                         let replacement_text = if ir_state.expand_replacement {
                             self.expand_regex_replacement(
@@ -1134,7 +1134,7 @@ impl Editor {
                         });
                         events.push(Event::Insert {
                             position: match_pos,
-                            text: replacement_text,
+                            text: replacement_text.into(),
                             cursor_id,
                         });
                     }
@@ -1213,7 +1213,7 @@ impl Editor {
         // Get the deleted text for the event
         let deleted_text = self
             .active_state_mut()
-            .get_text_range(range.start, range.end);
+            .get_edit_text(range.start, range.end);
 
         // Capture current cursor state for undo
         let cursor_id = self.active_cursors().primary_id();
@@ -1241,7 +1241,7 @@ impl Editor {
             },
             Event::Insert {
                 position: match_pos,
-                text: replacement_text,
+                text: replacement_text.into(),
                 cursor_id,
             },
         ];

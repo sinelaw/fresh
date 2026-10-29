@@ -23,7 +23,7 @@ fn test_overlay_background_color_direct() {
         &mut cursors,
         &Event::Insert {
             position: 0,
-            text: text.clone(),
+            text: text.clone().into(),
             cursor_id: CursorId(0),
         },
     );

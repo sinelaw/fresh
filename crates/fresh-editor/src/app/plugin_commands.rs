@@ -1395,7 +1395,7 @@ impl Editor {
         let text_len = text.len();
         let event = Event::Insert {
             position,
-            text,
+            text: text.into(),
             cursor_id: CursorId(0),
         };
         // Deriving the change reads the line up to the edit to convert byte
@@ -1466,7 +1466,7 @@ impl Editor {
             .get_mut(&self.active_window)
             .expect("active window present")
             .buffer_state_mut(buffer_id)
-            .map(|state| state.get_text_range(range.start, range.end))
+            .map(|state| state.get_edit_text(range.start, range.end))
             .unwrap_or_default();
         let removed_newline = deleted_text.contains('\n');
         let event = Event::Delete {
@@ -1580,7 +1580,7 @@ impl Editor {
         let inserted_newline = text.contains('\n');
         let event = Event::Insert {
             position: cursor_pos,
-            text,
+            text: text.into(),
             cursor_id: CursorId(0),
         };
         let split_id = self.effective_active_split();
@@ -1637,7 +1637,7 @@ impl Editor {
                 .iter()
                 .rev()
                 .map(|range| {
-                    let deleted_text = state.get_text_range(range.start, range.end);
+                    let deleted_text = state.get_edit_text(range.start, range.end);
                     Event::Delete {
                         range: range.clone(),
                         deleted_text,
@@ -3200,7 +3200,7 @@ impl Editor {
         {
             return false;
         }
-        let deleted_text = state.get_text_range(start, end);
+        let deleted_text = state.get_edit_text(start, end);
         let (removed, inserted) = (end - start, text.len());
         let touches_newline = deleted_text.contains('\n') || text.contains('\n');
         let delete = Event::Delete {
@@ -3210,7 +3210,7 @@ impl Editor {
         };
         let insert = Event::Insert {
             position: start,
-            text,
+            text: text.into(),
             cursor_id: CursorId(0),
         };
 

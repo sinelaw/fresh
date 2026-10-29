@@ -287,7 +287,7 @@ fn test_deleting_the_fold_header_line_expands_the_fold() {
     harness
         .apply_event(Event::Delete {
             range: start..end,
-            deleted_text,
+            deleted_text: deleted_text.into(),
             cursor_id,
         })
         .unwrap();
@@ -333,7 +333,7 @@ fn test_emptying_the_fold_header_line_expands_the_fold() {
     harness
         .apply_event(Event::Delete {
             range: start..start + text_len,
-            deleted_text: text.trim_end_matches('\n').to_string(),
+            deleted_text: text.trim_end_matches('\n').to_string().into(),
             cursor_id,
         })
         .unwrap();

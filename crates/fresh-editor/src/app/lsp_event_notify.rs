@@ -49,7 +49,7 @@ impl Window {
                 vec![TextDocumentContentChangeEvent {
                     range: Some(lsp_range),
                     range_length: None,
-                    text: text.clone(),
+                    text: text.to_string(),
                 }]
             }
             Event::Delete { range, .. } => {

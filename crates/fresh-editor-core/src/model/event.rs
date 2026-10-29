@@ -6,20 +6,161 @@ use serde::{Deserialize, Serialize};
 use std::ops::Range;
 use std::sync::Arc;
 
+/// The text an `Insert` adds or a `Delete` removes.
+///
+/// A buffer can hold bytes that are not UTF-8: a file opened as UTF-8 that
+/// isn't, or an encoding reload. Undo puts back what a `Delete` recorded, so
+/// a `String` made with `from_utf8_lossy` would put back U+FFFD instead of
+/// the byte that was there, and the next save writes it (#3652). The exact
+/// bytes are kept beside a lossy rendering of them, which is what readers
+/// that want text (LSP, plugins, line counting) see through `Deref`.
+///
+/// `len` and `as_bytes` are the exact bytes: they are what the buffer holds.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct EditText {
+    /// The text, with any invalid sequence replaced by U+FFFD.
+    text: String,
+    /// The exact bytes, when they are not valid UTF-8 (`text` is then lossy).
+    raw: Option<Box<[u8]>>,
+}
+
+impl EditText {
+    /// Text from bytes taken out of a buffer, kept exactly as they were.
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        match String::from_utf8(bytes) {
+            Ok(text) => Self { text, raw: None },
+            Err(e) => {
+                let bytes = e.into_bytes();
+                Self {
+                    text: String::from_utf8_lossy(&bytes).into_owned(),
+                    raw: Some(bytes.into_boxed_slice()),
+                }
+            }
+        }
+    }
+
+    /// The exact bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        self.raw.as_deref().unwrap_or(self.text.as_bytes())
+    }
+
+    /// Length of the exact bytes.
+    pub fn len(&self) -> usize {
+        self.as_bytes().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.as_bytes().is_empty()
+    }
+
+    /// The text, lossy when the bytes are not UTF-8.
+    pub fn as_str(&self) -> &str {
+        &self.text
+    }
+}
+
+impl std::ops::Deref for EditText {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.text
+    }
+}
+
+impl From<String> for EditText {
+    fn from(text: String) -> Self {
+        Self { text, raw: None }
+    }
+}
+
+impl From<&str> for EditText {
+    fn from(text: &str) -> Self {
+        Self::from(text.to_string())
+    }
+}
+
+impl From<&String> for EditText {
+    fn from(text: &String) -> Self {
+        Self::from(text.clone())
+    }
+}
+
+impl PartialEq<str> for EditText {
+    fn eq(&self, other: &str) -> bool {
+        self.as_bytes() == other.as_bytes()
+    }
+}
+
+impl PartialEq<&str> for EditText {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_bytes() == other.as_bytes()
+    }
+}
+
+impl PartialEq<String> for EditText {
+    fn eq(&self, other: &String) -> bool {
+        self.as_bytes() == other.as_bytes()
+    }
+}
+
+impl std::fmt::Debug for EditText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.raw {
+            None => std::fmt::Debug::fmt(&self.text, f),
+            Some(raw) => write!(f, "{:?}", String::from_utf8_lossy(raw)),
+        }
+    }
+}
+
+impl std::fmt::Display for EditText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.text)
+    }
+}
+
+/// UTF-8 text serializes as a plain string, as `String` did, so existing
+/// event logs read back unchanged; other bytes serialize as `{"bytes": [..]}`.
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum EditTextRepr {
+    Text(String),
+    Bytes { bytes: Vec<u8> },
+}
+
+impl Serialize for EditText {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match &self.raw {
+            None => serializer.serialize_str(&self.text),
+            Some(raw) => EditTextRepr::Bytes {
+                bytes: raw.to_vec(),
+            }
+            .serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for EditText {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(match EditTextRepr::deserialize(deserializer)? {
+            EditTextRepr::Text(text) => Self::from(text),
+            EditTextRepr::Bytes { bytes } => Self::from_bytes(bytes),
+        })
+    }
+}
+
 /// Core event types representing all possible state changes
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Event {
     /// Insert text at a position
     Insert {
         position: usize,
-        text: String,
+        text: EditText,
         cursor_id: CursorId,
     },
 
     /// Delete a range of text
     Delete {
         range: Range<usize>,
-        deleted_text: String,
+        deleted_text: EditText,
         cursor_id: CursorId,
     },
 
@@ -1035,13 +1176,13 @@ mod tests {
                 // Insert events
                 (0usize..1000, ".{1,50}").prop_map(|(pos, text)| Event::Insert {
                     position: pos,
-                    text,
+                    text: text.into(),
                     cursor_id: CursorId(0),
                 }),
                 // Delete events
                 (0usize..1000, 1usize..50).prop_map(|(pos, len)| Event::Delete {
                     range: pos..pos + len,
-                    deleted_text: "x".repeat(len),
+                    deleted_text: "x".repeat(len).into(),
                     cursor_id: CursorId(0),
                 }),
             ]
@@ -1136,7 +1277,7 @@ mod tests {
         let mut log = EventLog::new();
         let event = Event::Insert {
             position: 0,
-            text: "hello".to_string(),
+            text: "hello".to_string().into(),
             cursor_id: CursorId(0),
         };
 
@@ -1152,13 +1293,13 @@ mod tests {
 
         log.append(Event::Insert {
             position: 0,
-            text: "a".to_string(),
+            text: "a".to_string().into(),
             cursor_id: CursorId(0),
         });
 
         log.append(Event::Insert {
             position: 1,
-            text: "b".to_string(),
+            text: "b".to_string().into(),
             cursor_id: CursorId(0),
         });
 
@@ -1184,7 +1325,7 @@ mod tests {
     fn test_event_inverse() {
         let insert = Event::Insert {
             position: 5,
-            text: "hello".to_string(),
+            text: "hello".to_string().into(),
             cursor_id: CursorId(0),
         };
 
@@ -1208,13 +1349,13 @@ mod tests {
 
         log.append(Event::Insert {
             position: 0,
-            text: "a".to_string(),
+            text: "a".to_string().into(),
             cursor_id: CursorId(0),
         });
 
         log.append(Event::Insert {
             position: 1,
-            text: "b".to_string(),
+            text: "b".to_string().into(),
             cursor_id: CursorId(0),
         });
 
@@ -1224,7 +1365,7 @@ mod tests {
         // Adding new event should truncate the future
         log.append(Event::Insert {
             position: 1,
-            text: "c".to_string(),
+            text: "c".to_string().into(),
             cursor_id: CursorId(0),
         });
 
@@ -1241,7 +1382,7 @@ mod tests {
         // Type 'a' (Insert + MoveCursor)
         log.append(Event::Insert {
             position: 0,
-            text: "a".to_string(),
+            text: "a".to_string().into(),
             cursor_id: CursorId(0),
         });
         log.append(Event::MoveCursor {
@@ -1294,7 +1435,7 @@ mod tests {
         for (i, ch) in ['a', 'b', 'c'].into_iter().enumerate() {
             log.append(Event::Insert {
                 position: i,
-                text: ch.to_string(),
+                text: ch.to_string().into(),
                 cursor_id: CursorId(0),
             });
         }
@@ -1327,12 +1468,12 @@ mod tests {
         log.begin_undo_group();
         log.append(Event::Insert {
             position: 0,
-            text: "ab".to_string(),
+            text: "ab".to_string().into(),
             cursor_id: CursorId(0),
         });
         log.append(Event::Insert {
             position: 2,
-            text: "cd".to_string(),
+            text: "cd".to_string().into(),
             cursor_id: CursorId(0),
         });
         log.end_undo_group();
@@ -1340,7 +1481,7 @@ mod tests {
         // Standalone insert (not in any group).
         log.append(Event::Insert {
             position: 4,
-            text: "Z".to_string(),
+            text: "Z".to_string().into(),
             cursor_id: CursorId(0),
         });
         assert_eq!(log.current_index(), 3);
@@ -1365,12 +1506,12 @@ mod tests {
             log.begin_undo_group();
             log.append(Event::Insert {
                 position: 0,
-                text: "xy".to_string(),
+                text: "xy".to_string().into(),
                 cursor_id: CursorId(0),
             });
             log.append(Event::Insert {
                 position: 2,
-                text: "zw".to_string(),
+                text: "zw".to_string().into(),
                 cursor_id: CursorId(0),
             });
             log.end_undo_group();
@@ -1393,7 +1534,7 @@ mod tests {
 
         log.append(Event::Insert {
             position: 0,
-            text: "a".to_string(),
+            text: "a".to_string().into(),
             cursor_id: CursorId(0),
         });
 
@@ -1403,7 +1544,7 @@ mod tests {
         // New write action should truncate redo
         log.append(Event::Insert {
             position: 0,
-            text: "b".to_string(),
+            text: "b".to_string().into(),
             cursor_id: CursorId(0),
         });
         assert!(
@@ -1428,7 +1569,7 @@ mod tests {
         for i in 0..150 {
             log.append(Event::Insert {
                 position: i,
-                text: "x".to_string(),
+                text: "x".to_string().into(),
                 cursor_id: CursorId(0),
             });
         }
@@ -1449,7 +1590,7 @@ mod tests {
         // Step 4: Make new changes - this truncates entries to 120, then adds new
         log.append(Event::Insert {
             position: 0,
-            text: "NEW".to_string(),
+            text: "NEW".to_string().into(),
             cursor_id: CursorId(0),
         });
 
@@ -1467,5 +1608,35 @@ mod tests {
             !result,
             "Should not be at saved position after undo + new edit"
         );
+    }
+
+    /// A delete of bytes that are not UTF-8 inverts to an insert of those
+    /// same bytes, not of their lossy rendering (#3652), and survives the
+    /// event log's JSON.
+    #[test]
+    fn delete_of_invalid_utf8_inverts_to_the_same_bytes() {
+        let delete = Event::Delete {
+            range: 1..2,
+            deleted_text: EditText::from_bytes(vec![0xff]),
+            cursor_id: CursorId(0),
+        };
+        match delete.inverse() {
+            Some(Event::Insert { text, .. }) => {
+                assert_eq!(text.as_bytes(), &[0xff]);
+                assert_eq!(text.len(), 1);
+                assert_eq!(&*text, "\u{FFFD}");
+            }
+            other => panic!("expected an Insert, got {other:?}"),
+        }
+
+        let json = serde_json::to_string(&delete).unwrap();
+        match serde_json::from_str::<Event>(&json).unwrap() {
+            Event::Delete { deleted_text, .. } => assert_eq!(deleted_text.as_bytes(), &[0xff]),
+            other => panic!("expected a Delete, got {other:?}"),
+        }
+
+        // UTF-8 text keeps the plain-string form logs have always used.
+        let text = EditText::from("é");
+        assert_eq!(serde_json::to_string(&text).unwrap(), "\"é\"");
     }
 }

@@ -470,12 +470,12 @@ pub(crate) fn move_lines(
 
         events.push(Event::Delete {
             range: region.start..region.end,
-            deleted_text: old_text,
+            deleted_text: old_text.into(),
             cursor_id: primary_cursor_id,
         });
         events.push(Event::Insert {
             position: region.start,
-            text: new_text,
+            text: new_text.into(),
             cursor_id: primary_cursor_id,
         });
     }
