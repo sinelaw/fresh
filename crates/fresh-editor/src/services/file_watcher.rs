@@ -36,7 +36,7 @@
 
 use crate::services::async_bridge::{AsyncBridge, AsyncMessage, PathChangeKind};
 use notify::{
-    event::{CreateKind, EventKind, ModifyKind, RemoveKind},
+    event::{AccessKind, AccessMode, CreateKind, EventKind, ModifyKind, RemoveKind},
     PollWatcher, RecommendedWatcher, RecursiveMode, Watcher,
 };
 use std::collections::HashMap;
@@ -262,8 +262,18 @@ fn matches_handle(watch_path: &Path, recursive: RecursiveMode, event_path: &Path
     }
 }
 
-fn classify_kind(kind: &EventKind) -> PathChangeKind {
-    match kind {
+/// The kind of change an event reports, or `None` for an event that changes
+/// nothing: an open, a read, or the close of a file opened for reading
+/// (`EventKind::Access`). inotify reports those for every read of a watched
+/// file, so forwarding them told plugins a file changed whenever anything
+/// read it — `git_statusbar` re-ran `git` on each `.git/HEAD` read, and that
+/// `git` read HEAD again (#3607). Closing a file opened for writing is kept,
+/// as a `Modify`: for a write through `mmap` it is the only event inotify
+/// sends.
+fn classify_kind(kind: &EventKind) -> Option<PathChangeKind> {
+    Some(match kind {
+        EventKind::Access(AccessKind::Close(AccessMode::Write)) => PathChangeKind::Modify,
+        EventKind::Access(_) => return None,
         EventKind::Create(CreateKind::File)
         | EventKind::Create(CreateKind::Folder)
         | EventKind::Create(CreateKind::Any)
@@ -275,7 +285,7 @@ fn classify_kind(kind: &EventKind) -> PathChangeKind {
         EventKind::Modify(ModifyKind::Name(_)) => PathChangeKind::Rename,
         EventKind::Modify(_) => PathChangeKind::Modify,
         _ => PathChangeKind::Other,
-    }
+    })
 }
 
 fn build_watcher(bridge: AsyncBridge) -> Result<RecommendedWatcher, String> {
@@ -303,7 +313,9 @@ fn event_handler(bridge: AsyncBridge) -> impl Fn(notify::Result<notify::Event>) 
                 return;
             }
         };
-        let kind = classify_kind(&event.kind);
+        let Some(kind) = classify_kind(&event.kind) else {
+            return;
+        };
         let map = match handle_map().lock() {
             Ok(m) => m,
             Err(_) => return,
@@ -427,19 +439,63 @@ mod tests {
         use notify::event::*;
         assert!(matches!(
             classify_kind(&EventKind::Create(CreateKind::File)),
-            PathChangeKind::Create
+            Some(PathChangeKind::Create)
         ));
         assert!(matches!(
             classify_kind(&EventKind::Remove(RemoveKind::File)),
-            PathChangeKind::Delete
+            Some(PathChangeKind::Delete)
         ));
         assert!(matches!(
             classify_kind(&EventKind::Modify(ModifyKind::Data(DataChange::Content))),
-            PathChangeKind::Modify
+            Some(PathChangeKind::Modify)
         ));
         assert!(matches!(
             classify_kind(&EventKind::Modify(ModifyKind::Name(RenameMode::Both))),
-            PathChangeKind::Rename
+            Some(PathChangeKind::Rename)
         ));
+        // Reads change nothing (#3607)
+        assert!(classify_kind(&EventKind::Access(AccessKind::Open(AccessMode::Any))).is_none());
+        assert!(classify_kind(&EventKind::Access(AccessKind::Close(AccessMode::Read))).is_none());
+        assert!(matches!(
+            classify_kind(&EventKind::Access(AccessKind::Close(AccessMode::Write))),
+            Some(PathChangeKind::Modify)
+        ));
+    }
+
+    /// Reading a watched file reports no change; writing it does (#3607).
+    ///
+    /// The file is read first, then written, so the first event the watch
+    /// delivers would be the read's, had reads been forwarded.
+    #[test]
+    fn reading_a_watched_file_reports_no_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let head = dir.path().join("HEAD");
+        std::fs::write(&head, "ref: refs/heads/main\n").unwrap();
+        let bridge = AsyncBridge::new();
+        // The native backend, where reads are reported (inotify), on every
+        // platform: macOS polls non-recursive watches by default, and the
+        // poller compares whole-second mtimes, so it would never see a write
+        // made in the same second as the watch began.
+        let mut manager = FileWatcherManager::with_non_recursive_polling(None);
+        let handle = manager.watch(&bridge, &head, false).unwrap();
+
+        let _ = std::fs::read(&head).unwrap();
+        std::fs::write(&head, "ref: refs/heads/other\n").unwrap();
+
+        let first = std::cell::Cell::new(None);
+        wait_for_change(&bridge, handle, |_, kind| {
+            first.set(Some(kind));
+            true
+        });
+        assert!(
+            // FSEvents may coalesce the file's creation into the write.
+            matches!(
+                first.get(),
+                Some(PathChangeKind::Modify | PathChangeKind::Create)
+            ),
+            "the read was reported as a change: {:?}",
+            first.get()
+        );
+        manager.unwatch(handle);
     }
 }
