@@ -53,6 +53,16 @@ override_dh_auto_configure:
 # package without LTO.
 CARGO_PROFILE := --config profile.release.lto=false
 
+# On 32-bit architectures rustc has a 4 GiB address space, and LLVM runs out
+# of it compiling the editor crate as one codegen unit with full debug info
+# ("rustc-LLVM ERROR: out of memory" on i386). Keep line tables only (the
+# cargo wrapper's own -Cdebuginfo=2 comes first, so this one wins) and split
+# codegen into smaller units.
+ifeq ($(DEB_HOST_ARCH_BITS),32)
+export RUSTFLAGS += -C debuginfo=line-tables-only
+CARGO_PROFILE += --config profile.release.codegen-units=16
+endif
+
 override_dh_auto_build:
 	cargo build --release $(CARGO_PROFILE) -p fresh-editor --no-default-features --features $(FEATURES)
 

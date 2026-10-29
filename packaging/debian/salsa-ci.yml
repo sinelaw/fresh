@@ -1,0 +1,7 @@
+include:
+  - https://salsa.debian.org/salsa-ci-team/pipeline/raw/master/recipes/debian.yml
+
+variables:
+  # blhc checks C compiler command lines, and reads cargo's "Compiling ..."
+  # lines as non-verbose C builds; it has nothing to check in a Rust build.
+  SALSA_CI_DISABLE_BLHC: 1

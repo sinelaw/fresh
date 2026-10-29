@@ -50,7 +50,15 @@ if [ -z "$VERSION" ]; then
 fi
 
 # Timestamp (best-effort; -u for UTC). Omitted if `date` is unavailable.
-INSTALLED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)
+# SOURCE_DATE_EPOCH, when the build sets it (dpkg-buildpackage does, from the
+# changelog), wins over the clock so the package is reproducible. GNU date
+# takes `-d @N`, BSD date `-r N`.
+if [ -n "${SOURCE_DATE_EPOCH:-}" ]; then
+    INSTALLED_AT=$(date -u -d "@$SOURCE_DATE_EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+        || date -u -r "$SOURCE_DATE_EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)
+else
+    INSTALLED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)
+fi
 
 mkdir -p "$(dirname "$OUT")"
 
