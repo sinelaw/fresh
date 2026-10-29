@@ -36,7 +36,7 @@ use ratatui::style::Color;
 use crate::app::click_geometry::{screen_to_buffer_position_with_overshoot, ClickTarget};
 use crate::app::shell_host::shell_theme::{literal, pair};
 use crate::app::types::ViewLineMapping;
-use crate::model::event::LeafId;
+use crate::model::event::{BufferId, LeafId};
 use crate::view::scrollbar_marker::{bucket, RowMark};
 
 /// What a pane's last text pass settled: where its content was drawn and
@@ -68,9 +68,25 @@ pub struct PaneView {
     /// while another surface owns the keyboard or a modal is up, when the
     /// caret still has a cell (a popup anchors to it) but is not on screen.
     pub caret_shown: bool,
+    /// The buffer the rows show, and its version when they were drawn. An
+    /// edit since then moved the bytes under the rows, and keyboard motion
+    /// must not walk them (see [`Self::rows_current_for`]).
+    pub drawn_from: Option<(BufferId, u64)>,
 }
 
 impl PaneView {
+    /// Whether the rows still describe `buffer` at `version`: they were drawn
+    /// from it, with no edit since.
+    ///
+    /// Input is handled in batches between frames, so an edit and a motion
+    /// that reads the rows can come in one batch — fast typing followed by
+    /// Home or Down. The rows then name bytes that have moved: Home landed
+    /// mid-line and Down in the wrong column, and the next text went in
+    /// there (#3642). Motion falls back to the buffer when this is false.
+    pub fn rows_current_for(&self, buffer: BufferId, version: u64) -> bool {
+        self.drawn_from == Some((buffer, version))
+    }
+
     /// The buffer position under a cell of the pane's content, with how far
     /// past the drawn content the cell is.
     ///
@@ -459,6 +475,7 @@ impl PaneHandle {
         top_byte: usize,
         caret: Option<(u16, u16)>,
         caret_shown: bool,
+        drawn_from: Option<(BufferId, u64)>,
     ) {
         *self.view.borrow_mut() = PaneView {
             rect,
@@ -468,6 +485,7 @@ impl PaneHandle {
             rows,
             caret,
             caret_shown,
+            drawn_from,
         };
     }
 
@@ -744,6 +762,7 @@ mod tests {
             0,
             None,
             false,
+            None,
         );
     }
 
@@ -847,6 +866,7 @@ mod tests {
             0,
             Some((3, 2)),
             true,
+            None,
         );
         assert_eq!(
             cursor_of(&h),
@@ -862,6 +882,7 @@ mod tests {
             0,
             Some((3, 2)),
             false,
+            None,
         );
         assert_eq!(
             cursor_of(&h),
@@ -885,6 +906,7 @@ mod tests {
             0,
             Some((3, 2)),
             true,
+            None,
         );
         h.clear_caret();
         let v = h.view();
@@ -897,7 +919,7 @@ mod tests {
     #[test]
     fn an_unsettled_pane_answers_its_top() {
         let h = PaneHandle::new(leaf());
-        h.settle(Rect::new(0, 0, 10, 3), Vec::new(), 0, None, 42, None, false);
+        h.settle(Rect::new(0, 0, 10, 3), Vec::new(), 0, None, 42, None, false, None);
         let obj = (h.factory)();
         assert_eq!(obj.text_byte_at(Point::new(4, 2)), Some(42));
     }

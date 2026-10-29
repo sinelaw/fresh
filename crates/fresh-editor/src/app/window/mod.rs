@@ -3226,10 +3226,24 @@ impl Window {
         }
     }
 
+    /// `split_id`'s rows as last drawn, when no edit has moved the bytes
+    /// under them since — the rows keyboard motion may walk. `None` sends
+    /// the motion to the buffer-based movers instead (#3642).
+    pub(crate) fn current_pane_view(
+        &self,
+        split_id: LeafId,
+    ) -> Option<std::cell::Ref<'_, crate::view::shell::buffer_host::PaneView>> {
+        let buffer = self.pane_buffer(split_id)?;
+        let version = self.buffers.get(&buffer)?.buffer.version();
+        self.pane_view(split_id)
+            .filter(|view| view.rows_current_for(buffer, version))
+    }
+
     /// The visual column of a byte position within its visual row, in
     /// `split_id`'s rows as last drawn.
     pub fn byte_to_visual_column(&self, split_id: LeafId, byte_pos: usize) -> Option<usize> {
-        self.pane_view(split_id)?.byte_to_visual_column(byte_pos)
+        self.current_pane_view(split_id)?
+            .byte_to_visual_column(byte_pos)
     }
 
     /// Move by visual line using the pane's settled rows.
@@ -3241,7 +3255,7 @@ impl Window {
         goal_visual_col: usize,
         direction: i8, // -1 = up, 1 = down
     ) -> Option<(usize, usize)> {
-        self.pane_view(split_id)?
+        self.current_pane_view(split_id)?
             .move_visual_line(current_pos, goal_visual_col, direction)
     }
 
@@ -3254,7 +3268,7 @@ impl Window {
         byte_pos: usize,
         allow_advance: bool,
     ) -> Option<usize> {
-        self.pane_view(split_id)?
+        self.current_pane_view(split_id)?
             .visual_line_start(byte_pos, allow_advance)
     }
 
@@ -3267,7 +3281,7 @@ impl Window {
         byte_pos: usize,
         allow_advance: bool,
     ) -> Option<usize> {
-        self.pane_view(split_id)?
+        self.current_pane_view(split_id)?
             .visual_line_end(byte_pos, allow_advance)
     }
 
