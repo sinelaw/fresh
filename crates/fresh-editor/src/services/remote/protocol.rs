@@ -167,20 +167,20 @@ pub fn write_params(path: &str, data: &[u8]) -> serde_json::Value {
     })
 }
 
-/// Build params for sudo_write request (write file as root)
+/// Build params for sudo_write request (write file as root). The agent skips
+/// chmod for a null `mode`, and chown unless both `uid` and `gid` are set.
 pub fn sudo_write_params(
     path: &str,
     data: &[u8],
-    mode: u32,
-    uid: u32,
-    gid: u32,
+    mode: Option<u32>,
+    owner: Option<(u32, u32)>,
 ) -> serde_json::Value {
     serde_json::json!({
         "path": path,
         "data": encode_base64(data),
         "mode": mode,
-        "uid": uid,
-        "gid": gid
+        "uid": owner.map(|(uid, _)| uid),
+        "gid": owner.map(|(_, gid)| gid)
     })
 }
 
@@ -325,6 +325,22 @@ mod tests {
         let encoded = encode_base64(data);
         let decoded = decode_base64(&encoded).unwrap();
         assert_eq!(data.as_slice(), decoded.as_slice());
+    }
+
+    /// An unknown mode or owner goes to the agent as null, which it reads as
+    /// "leave it alone"; a 0 there would `chmod 0` / `chown 0:0` the file.
+    #[test]
+    fn sudo_write_params_send_null_for_an_unknown_mode_or_owner() {
+        let known = sudo_write_params("/etc/x", b"", Some(0o600), Some((0, 4)));
+        assert_eq!(known["mode"], 0o600);
+        assert_eq!(
+            (known["uid"].clone(), known["gid"].clone()),
+            (0.into(), 4.into())
+        );
+
+        let unknown = sudo_write_params("/etc/x", b"", None, None);
+        assert!(unknown["mode"].is_null());
+        assert!(unknown["uid"].is_null() && unknown["gid"].is_null());
     }
 
     #[test]

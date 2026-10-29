@@ -826,11 +826,17 @@ pub trait FileSystem: Send + Sync {
     ///
     /// - `path`: Destination file path
     /// - `data`: File contents to write
-    /// - `mode`: File permissions (e.g., 0o644)
-    /// - `uid`: Owner user ID
-    /// - `gid`: Owner group ID
-    fn sudo_write(&self, path: &Path, data: &[u8], mode: u32, uid: u32, gid: u32)
-        -> io::Result<()>;
+    /// - `mode`: File permissions to set (e.g., 0o644), or `None` to leave them
+    ///   as the write left them (an existing file keeps its own, a new one
+    ///   gets root's umask)
+    /// - `owner`: `(uid, gid)` to set, or `None` to leave ownership alone
+    fn sudo_write(
+        &self,
+        path: &Path,
+        data: &[u8],
+        mode: Option<u32>,
+        owner: Option<(u32, u32)>,
+    ) -> io::Result<()>;
 
     // ========================================================================
     // Directory Walking
@@ -1952,9 +1958,8 @@ impl FileSystem for StdFileSystem {
         &self,
         path: &Path,
         data: &[u8],
-        mode: u32,
-        uid: u32,
-        gid: u32,
+        mode: Option<u32>,
+        owner: Option<(u32, u32)>,
     ) -> io::Result<()> {
         use crate::process_hidden::HideWindow;
         use std::process::{Command, Stdio};
@@ -1984,25 +1989,29 @@ impl FileSystem for StdFileSystem {
         }
 
         // Set permissions via sudo chmod
-        let status = Command::new("sudo")
-            .args(["chmod", &format!("{:o}", mode), &path.to_string_lossy()])
-            .hide_window()
-            .status()?;
-        if !status.success() {
-            return Err(io::Error::other("sudo chmod failed"));
+        if let Some(mode) = mode {
+            let status = Command::new("sudo")
+                .args(["chmod", &format!("{:o}", mode), &path.to_string_lossy()])
+                .hide_window()
+                .status()?;
+            if !status.success() {
+                return Err(io::Error::other("sudo chmod failed"));
+            }
         }
 
         // Set ownership via sudo chown
-        let status = Command::new("sudo")
-            .args([
-                "chown",
-                &format!("{}:{}", uid, gid),
-                &path.to_string_lossy(),
-            ])
-            .hide_window()
-            .status()?;
-        if !status.success() {
-            return Err(io::Error::other("sudo chown failed"));
+        if let Some((uid, gid)) = owner {
+            let status = Command::new("sudo")
+                .args([
+                    "chown",
+                    &format!("{}:{}", uid, gid),
+                    &path.to_string_lossy(),
+                ])
+                .hide_window()
+                .status()?;
+            if !status.success() {
+                return Err(io::Error::other("sudo chown failed"));
+            }
         }
 
         Ok(())
@@ -2243,9 +2252,8 @@ impl FileSystem for NoopFileSystem {
         &self,
         _path: &Path,
         _data: &[u8],
-        _mode: u32,
-        _uid: u32,
-        _gid: u32,
+        _mode: Option<u32>,
+        _owner: Option<(u32, u32)>,
     ) -> io::Result<()> {
         Self::unsupported()
     }
@@ -4019,11 +4027,10 @@ mod tests {
             &self,
             path: &Path,
             data: &[u8],
-            mode: u32,
-            uid: u32,
-            gid: u32,
+            mode: Option<u32>,
+            owner: Option<(u32, u32)>,
         ) -> io::Result<()> {
-            StdFileSystem.sudo_write(path, data, mode, uid, gid)
+            StdFileSystem.sudo_write(path, data, mode, owner)
         }
         fn search_file(
             &self,
