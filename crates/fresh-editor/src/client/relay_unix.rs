@@ -247,6 +247,7 @@ fn suspend_client(stdout: &mut io::Stdout, conn: &mut ClientConnection) -> io::R
     if let Err(e) = disable_raw_mode() {
         tracing::warn!("Failed to disable raw mode before suspend: {}", e);
     }
+    crate::services::stderr_redirect::restore();
 
     // Block until the parent shell sends SIGCONT (typically via `fg`).
     if let Err(e) = raise(Signal::SIGTSTP) {
@@ -255,6 +256,7 @@ fn suspend_client(stdout: &mut io::Stdout, conn: &mut ClientConnection) -> io::R
         if let Err(re) = enable_raw_mode() {
             tracing::error!("Failed to re-enable raw mode after failed suspend: {}", re);
         }
+        crate::services::stderr_redirect::redirect_to_log();
         return Err(io::Error::other(format!("raise(SIGTSTP) failed: {}", e)));
     }
 
@@ -264,6 +266,7 @@ fn suspend_client(stdout: &mut io::Stdout, conn: &mut ClientConnection) -> io::R
         tracing::error!("Failed to re-enable raw mode after resume: {}", e);
         return Err(io::Error::other(format!("enable_raw_mode failed: {}", e)));
     }
+    crate::services::stderr_redirect::redirect_to_log();
 
     // Echo our current size back so the server is guaranteed to tick a
     // render (Resize always flips `needs_render`) without waiting on input.

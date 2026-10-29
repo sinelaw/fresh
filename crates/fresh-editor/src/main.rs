@@ -6018,6 +6018,10 @@ fn run_attach(
     // Enable raw mode - the server sends terminal setup sequences (alternate screen, etc.)
     // but we need raw mode so key presses are forwarded immediately
     enable_raw_mode()?;
+    // The client draws the server's frames on this tty, and copies to the
+    // host clipboard here too: keep fd 2 writes off the screen (#3662).
+    // `emergency_cleanup` below puts stderr back.
+    fresh::services::stderr_redirect::redirect_to_log();
 
     // Run the client relay loop (handshake already done)
     let result = client::run_client_relay(conn);
