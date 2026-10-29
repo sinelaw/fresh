@@ -17,25 +17,28 @@ import { gitCwdCandidate } from "./lib/git_repo.ts";
  *     liveGrep?.registerProvider({
  *       name: "fff",
  *       priority: 100,                     // higher wins
- *       isAvailable: async () => {
- *         const r = await editor.spawnProcess("fff", ["--version"], editor.getCwd());
- *         return r.exit_code === 0;
+ *       isAvailable: async ({ machine, cwd }) => {
+ *         const r = await machine.run("fff", ["--version"], cwd);
+ *         return r.code === 0;
  *       },
- *       search: async (query, { cwd, maxResults }) => {
- *         const r = await editor.spawnProcess("fff", [query], cwd);
+ *       search: async (query, { machine, cwd, maxResults }) => {
+ *         const r = await machine.run("fff", [query], cwd);
  *         return parseFFFOutput(r.stdout);
  *       },
  *     });
  *
- * The provider whose `isAvailable()` returns true with the highest
- * priority is selected on each Live Grep invocation; the result is
- * cached for the duration of the prompt.
+ * A provider runs its commands on the `machine` it is handed: the searched
+ * workspace's (its SSH host or container for a remote one). The provider
+ * whose `isAvailable()` returns true with the highest priority is selected
+ * on each Live Grep invocation; the result is cached for the duration of
+ * the prompt. "All workspaces" probes each other workspace's machine too.
  */
 
 import { Finder, parseGrepOutput, type SearchCancellation } from "./lib/finder.ts";
 import { ackArgs, agArgs, gitGrepArgs, grepArgs, relativeUnder, rgArgs, type GrepArgOpts } from "./lib/grep_args.ts";
 import { col, dropdown, raw, row, spacer, styledRow, toggle, wrappingRow } from "./lib/widgets.ts";
 import { groupByWorkspace, orderWorkspaces, terminalRowName, type Workspace } from "./lib/workspace_groups.ts";
+import { WindowMachines } from "./lib/window_machines.ts";
 
 const editor = getEditor();
 
@@ -73,10 +76,17 @@ interface GrepMatch {
   heading?: number;
 }
 
-/** Options passed to a provider's `search` callback. */
-export interface SearchOpts {
-  /** Working directory the search should run in (the editor's cwd). */
+/** Where a provider runs: the searched workspace's machine, and its root. */
+export interface ProviderContext {
+  /** The workspace's machine (`openMachine({ kind: "window" })`): run every
+   *  command on it, so a remote workspace is searched on its host. */
+  machine: FreshMachine;
+  /** The workspace's root: the directory to search. */
   cwd: string;
+}
+
+/** Options passed to a provider's `search` callback. */
+export interface SearchOpts extends ProviderContext {
   /** Caller's preferred result cap. Providers may return fewer.
    *  Returning more is allowed; the Finder caps at its own
    *  `maxResults`. */
@@ -107,14 +117,14 @@ export interface SearchOpts {
    *  rg `--case-sensitive`/`--ignore-case`, git-grep/grep/ack `-i`. */
   caseSensitive?: boolean;
   /** Fires when the search is superseded by a newer query or the overlay
-   *  closes: kill what you spawned (`spawnSearch` does it for you). */
+   *  closes: kill what you started (`runSearch` does it for you). */
   cancellation?: SearchCancellation;
 }
 
-/** Spawn a search process that is killed when `opts`' search is
- *  cancelled, rather than running on to completion unread. */
-function spawnSearch(cmd: string, args: string[], cwd: string, opts: SearchOpts): ProcessHandle<SpawnResult> {
-  const process = editor.spawnProcess(cmd, args, cwd);
+/** Run a search command on `opts`' machine, killed when the search is
+ *  cancelled rather than running on to completion unread. */
+function runSearch(cmd: string, args: string[], cwd: string, opts: SearchOpts): ProcessHandle<CommandResult> {
+  const process = opts.machine.run(cmd, args, cwd);
   opts.cancellation?.onCancel(() => process.kill());
   return process;
 }
@@ -128,10 +138,10 @@ export interface LiveGrepProvider {
   /** Higher priority wins. Built-ins use 0/-1/-2; user-registered
    *  providers default to 0 if omitted. */
   priority?: number;
-  /** Cheap probe — typically `editor.spawnProcess("foo", [], cwd)`
-   *  and check `exit_code`. May be sync or async. Failures (thrown
+  /** Cheap probe — typically `ctx.machine.run("foo", ["--version"],
+   *  ctx.cwd)` and check `code`. May be sync or async. Failures (thrown
    *  errors) are treated as "not available". */
-  isAvailable: () => boolean | Promise<boolean>;
+  isAvailable: (ctx: ProviderContext) => boolean | Promise<boolean>;
   /** Run the search. Return an array of matches; an empty array
    *  means "no matches" (not "provider broken"). Errors thrown
    *  here surface as a status message and bypass the next
@@ -533,12 +543,33 @@ function updateOverlayTitle(provider: LiveGrepProvider | null): void {
 // `cycleProvider` make on their own.
 const providerAvailable = new Map<string, boolean>();
 
+/** Each window's machine, where its searches run (`lib/window_machines.ts`). */
+const machines = new WindowMachines(editor);
+editor.on("window_closed", ({ id }) => machines.close(id));
+
+/** The current workspace, as a provider sees it. */
+async function currentContext(): Promise<ProviderContext> {
+  return { machine: await machines.get(editor.activeWindow()), cwd: editor.getCwd() };
+}
+
+/** Whether `p` can run in `ctx`'s workspace; a probe that throws cannot. */
+async function canRun(p: LiveGrepProvider, ctx: ProviderContext): Promise<boolean> {
+  try {
+    return await Promise.resolve(p.isAvailable(ctx));
+  } catch (e) {
+    editor.debug(`[live-grep] ${p.name}.isAvailable threw: ${e}`);
+    return false;
+  }
+}
+
+/** Whether `p` can run in the current workspace, remembered for the
+ *  dropdown. */
 async function probeProvider(p: LiveGrepProvider): Promise<boolean> {
   let ok = false;
   try {
-    ok = await Promise.resolve(p.isAvailable());
+    ok = await canRun(p, await currentContext());
   } catch (e) {
-    editor.debug(`[live-grep] ${p.name}.isAvailable threw: ${e}`);
+    editor.debug(`[live-grep] no machine for the current workspace: ${e}`);
   }
   providerAvailable.set(p.name, ok);
   return ok;
@@ -608,46 +639,32 @@ async function selectProvider(): Promise<LiveGrepProvider | null> {
 registerProvider({
   name: "rg",
   priority: -1,
-  isAvailable: async () => {
-    try {
-      const r = await editor.spawnProcess("rg", ["--version"], editor.getCwd());
-      return r.exit_code === 0;
-    } catch {
-      return false;
-    }
-  },
+  isAvailable: async ({ machine, cwd }) => (await machine.run("rg", ["--version"], cwd)).code === 0,
   search: async (query, opts) => {
     const { cwd, maxResults } = opts;
     const args = rgArgs(query, opts);
-    const r = await spawnSearch("rg", args, cwd, opts);
+    const r = await runSearch("rg", args, cwd, opts);
     // 1 is "no matches", not a failure: throwing on it aborted the whole
     // search before buffers and terminals were searched
-    if (r.exit_code === 0 || r.exit_code === 1) {
+    if (r.code === 0 || r.code === 1) {
       return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg)) as GrepMatch[];
     }
-    throw new Error(`rg exited with code ${r.exit_code}: ${r.stderr}`);
+    throw new Error(`rg exited with code ${r.code}: ${r.stderr}`);
   },
 });
 
 registerProvider({
   name: "ag",
   priority: -2,
-  isAvailable: async () => {
-    try {
-      const r = await editor.spawnProcess("ag", ["--version"], editor.getCwd());
-      return r.exit_code === 0;
-    } catch {
-      return false;
-    }
-  },
+  isAvailable: async ({ machine, cwd }) => (await machine.run("ag", ["--version"], cwd)).code === 0,
   search: async (query, opts) => {
     const { cwd, maxResults } = opts;
     const args = agArgs(query, opts);
-    const r = await spawnSearch("ag", args, cwd, opts);
-    if (r.exit_code === 0 || r.exit_code === 1) {
+    const r = await runSearch("ag", args, cwd, opts);
+    if (r.code === 0 || r.code === 1) {
       return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg)) as GrepMatch[];
     }
-    throw new Error(`ag exited with code ${r.exit_code}: ${r.stderr}`);
+    throw new Error(`ag exited with code ${r.code}: ${r.stderr}`);
   },
 });
 
@@ -655,20 +672,16 @@ registerProvider({
  *  itself inside a repo, else the active buffer's dir (monorepo: the workspace
  *  root isn't a repo but the open file is). Returns null when neither is a
  *  repo. Used by both `isAvailable` and `search` so they can't disagree. */
-async function gitGrepCwd(preferred: string): Promise<string | null> {
-  const inRepo = await editor.spawnProcess(
-    "git", ["rev-parse", "--is-inside-work-tree"], preferred
-  );
-  if (inRepo.exit_code === 0) return preferred;
+async function gitGrepCwd(machine: FreshMachine, preferred: string): Promise<string | null> {
+  const inRepo = await machine.run("git", ["rev-parse", "--is-inside-work-tree"], preferred);
+  if (inRepo.code === 0) return preferred;
   // The active buffer is in the current workspace: it says nothing about
   // another workspace's root ("All workspaces").
   if (preferred !== editor.getCwd()) return null;
   const cand = gitCwdCandidate(editor);
   if (cand !== preferred) {
-    const r = await editor.spawnProcess(
-      "git", ["rev-parse", "--is-inside-work-tree"], cand
-    );
-    if (r.exit_code === 0) return cand;
+    const r = await machine.run("git", ["rev-parse", "--is-inside-work-tree"], cand);
+    if (r.code === 0) return cand;
   }
   return null;
 }
@@ -680,33 +693,29 @@ registerProvider({
   // installed. `isAvailable` checks both, and outside a repo the
   // registry falls through to ripgrep / ag / ack / grep in order.
   priority: 0,
-  isAvailable: async () => {
-    try {
-      // git grep needs both `git` on PATH and a repo to run in. Resolve
-      // the repo cwd the *same way* search() does, so the two can never
-      // disagree (availability said yes but search runs in a non-repo).
-      const ver = await editor.spawnProcess("git", ["--version"], editor.getCwd());
-      if (ver.exit_code !== 0) return false;
-      return (await gitGrepCwd(editor.getCwd())) !== null;
-    } catch {
-      return false;
-    }
+  isAvailable: async ({ machine, cwd }) => {
+    // git grep needs both `git` on PATH and a repo to run in. Resolve
+    // the repo cwd the *same way* search() does, so the two can never
+    // disagree (availability said yes but search runs in a non-repo).
+    const ver = await machine.run("git", ["--version"], cwd);
+    if (ver.code !== 0) return false;
+    return (await gitGrepCwd(machine, cwd)) !== null;
   },
   search: async (query, opts) => {
     const { cwd, maxResults } = opts;
     // Run in the same repo cwd isAvailable() confirmed. Null means the
     // context is no longer a repo — return empty rather than throwing.
-    const gitCwd = await gitGrepCwd(cwd);
+    const gitCwd = await gitGrepCwd(opts.machine, cwd);
     if (!gitCwd) return [] as GrepMatch[];
     // The ignore patterns are relative to `cwd`; tell the builder where
     // the repo cwd sits below it so rooted ones can be rebased.
     const args = gitGrepArgs(query, opts, relativeUnder(cwd, gitCwd));
-    const r = await spawnSearch("git", args, gitCwd, opts);
+    const r = await runSearch("git", args, gitCwd, opts);
     // git grep exits 1 when no matches — treat as empty, not error.
-    if (r.exit_code === 0 || r.exit_code === 1) {
+    if (r.code === 0 || r.code === 1) {
       return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg)) as GrepMatch[];
     }
-    throw new Error(`git grep exited with code ${r.exit_code}: ${r.stderr}`);
+    throw new Error(`git grep exited with code ${r.code}: ${r.stderr}`);
   },
 });
 
@@ -716,22 +725,15 @@ registerProvider({
   // Note: ack/grep are kept at lower priority than ripgrep/ag/
   // git-grep because they're slower on large trees; the cycler
   // skips them automatically when a faster backend is available.
-  isAvailable: async () => {
-    try {
-      const r = await editor.spawnProcess("ack", ["--version"], editor.getCwd());
-      return r.exit_code === 0;
-    } catch {
-      return false;
-    }
-  },
+  isAvailable: async ({ machine, cwd }) => (await machine.run("ack", ["--version"], cwd)).code === 0,
   search: async (query, opts) => {
     const { cwd, maxResults } = opts;
     const args = ackArgs(query, opts);
-    const r = await spawnSearch("ack", args, cwd, opts);
-    if (r.exit_code === 0 || r.exit_code === 1) {
+    const r = await runSearch("ack", args, cwd, opts);
+    if (r.code === 0 || r.code === 1) {
       return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg)) as GrepMatch[];
     }
-    throw new Error(`ack exited with code ${r.exit_code}: ${r.stderr}`);
+    throw new Error(`ack exited with code ${r.code}: ${r.stderr}`);
   },
 });
 
@@ -748,23 +750,16 @@ registerProvider({
 registerProvider({
   name: "grep",
   priority: -4,
-  isAvailable: async () => {
-    try {
-      const r = await editor.spawnProcess("grep", ["--version"], editor.getCwd());
-      return r.exit_code === 0;
-    } catch {
-      return false;
-    }
-  },
+  isAvailable: async ({ machine, cwd }) => (await machine.run("grep", ["--version"], cwd)).code === 0,
   search: async (query, opts) => {
     const { cwd, maxResults } = opts;
     const args = grepArgs(query, opts);
-    const r = await spawnSearch("grep", args, cwd, opts);
-    if (r.exit_code === 0 || r.exit_code === 1) {
+    const r = await runSearch("grep", args, cwd, opts);
+    if (r.code === 0 || r.code === 1) {
       // grep emits `path:line:content` (no column; it defaults to 1).
       return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg), false) as GrepMatch[];
     }
-    throw new Error(`grep exited with code ${r.exit_code}: ${r.stderr}`);
+    throw new Error(`grep exited with code ${r.code}: ${r.stderr}`);
   },
 });
 
@@ -1112,7 +1107,6 @@ async function searchTerminals(
   if (!content.terminalDir || !editor.fileExists(editor.localPath(content.terminalDir))) {
     return onScreen;
   }
-  const cwd = editor.getCwd();
   let raw: GrepMatch[] = [];
   // The backing files as text (they hold ANSI escapes), only the rendered
   // `.txt` ones — not the raw `.log` replay logs, which would double every
@@ -1127,14 +1121,20 @@ async function searchTerminals(
     include: "*.txt",
     paths: [content.terminalDir],
   };
-  const spawnOpts = { cwd, maxResults: limit, cancellation };
+  // The backing files are in the editor's data dir: always on this computer,
+  // whichever machine the workspace's own files are on.
+  const hostSearch = (cmd: string, args: string[]) => {
+    const process = editor.spawnHostProcess(cmd, args, content.terminalDir);
+    cancellation?.onCancel(() => process.kill());
+    return process;
+  };
   try {
-    const r = await spawnSearch("rg", rgArgs(query, opts), cwd, spawnOpts);
+    const r = await hostSearch("rg", rgArgs(query, opts));
     if (r.exit_code === 0) {
       raw = parseGrepOutput(r.stdout, limit, (m) => editor.debug(m)) as GrepMatch[];
     } else if (r.exit_code !== 1) {
       // rg missing or path error → fall back to grep.
-      const g = await spawnSearch("grep", grepArgs(query, opts), cwd, spawnOpts);
+      const g = await hostSearch("grep", grepArgs(query, opts));
       if (g.exit_code === 0) {
         raw = parseGrepOutput(g.stdout, limit, (m) => editor.debug(m), false) as GrepMatch[];
       }
@@ -1249,32 +1249,26 @@ function customIgnorePatterns(): string[] {
   return Array.isArray(patterns) ? patterns.filter((p): p is string => typeof p === "string") : [];
 }
 
-/** The provider to search another workspace's files with: the selected
- *  one, unless that is git-grep and the workspace is not in a git repo —
- *  then the first other one that can run. */
-async function providerForOther(cwd: string): Promise<LiveGrepProvider | null> {
-  const selected = cachedSelected !== undefined ? cachedSelected : await selectProvider();
-  if (!selected || selected.name !== "git-grep") return selected;
-  // Whether a root is in a repo does not change while the overlay is up
-  const key = `${selected.name}\0${cwd}`;
-  const known = otherProviders.get(key);
+/** The provider to search another workspace's files with: the first that
+ *  can run on that workspace's machine, the one selected here tried first.
+ *  Decided once per workspace per overlay. */
+async function providerForOther(workspace: Workspace, ctx: ProviderContext): Promise<LiveGrepProvider | null> {
+  const known = otherProviders.get(workspace.id);
   if (known !== undefined) return known;
-  let chosen: LiveGrepProvider | null = selected;
-  if ((await gitGrepCwd(cwd)) === null) {
-    chosen = null;
-    for (const p of providers) {
-      if (p !== selected && p.name !== "git-grep" && (await probeProvider(p))) {
-        chosen = p;
-        break;
-      }
+  const selected = cachedSelected !== undefined ? cachedSelected : await selectProvider();
+  let chosen: LiveGrepProvider | null = null;
+  for (const p of selected ? [selected, ...providers.filter((q) => q !== selected)] : providers) {
+    if (await canRun(p, ctx)) {
+      chosen = p;
+      break;
     }
   }
-  otherProviders.set(key, chosen);
+  otherProviders.set(workspace.id, chosen);
   return chosen;
 }
 
-/** `providerForOther`'s answers, by provider and root, for one overlay. */
-const otherProviders = new Map<string, LiveGrepProvider | null>();
+/** `providerForOther`'s answers, by window, for one overlay. */
+const otherProviders = new Map<number, LiveGrepProvider | null>();
 
 /** The window list with every saved workspace in it, read once per
  *  overlay rather than per keystroke. */
@@ -1289,12 +1283,21 @@ async function searchFiles(
   workspace: Workspace,
   cancellation?: SearchCancellation,
 ): Promise<GrepMatch[] | null> {
-  const provider = workspace.current ? await selectProvider() : await providerForOther(workspace.root);
+  let machine: FreshMachine;
+  try {
+    machine = await machines.get(workspace.id);
+  } catch (e) {
+    // A workspace that closed under the search has nothing to search.
+    editor.debug(`[live_grep] no machine for workspace ${workspace.id}: ${e}`);
+    return workspace.current ? null : [];
+  }
+  const ctx = { machine, cwd: workspace.root };
+  const provider = workspace.current ? await selectProvider() : await providerForOther(workspace, ctx);
   if (!provider) return null;
   try {
     const results = await provider.search(query, {
+      ...ctx,
       cancellation,
-      cwd: workspace.root,
       maxResults: MAX_RESULTS,
       includeIgnored: scopeEnabled.ignored,
       ignorePatterns: scopeEnabled.ignored ? [] : customIgnorePatterns(),

@@ -20,14 +20,15 @@ const windows = [
   { id: 3, label: "api", root: "/w/api" },
   { id: 4, label: "box", root: "/w/box", remote: { kind: "ssh", detail: "me@box", connected: true } },
   { id: 5, label: "docs", root: "/w/docs" },
+  { id: 6, label: "pod", root: "/w/pod", remote: { kind: "kubernetes", detail: "ns/pod", connected: false } },
 ];
 
 const ids = (ws: { id: number }[]) => ws.map((w) => w.id);
 
 eq(
   ids(orderWorkspaces({ id: 3, root: "/w/api" }, windows, [])),
-  [3, 1, 2, 5],
-  "no dock: current first, then by window id, remote left out",
+  [3, 1, 2, 4, 5],
+  "no dock: current first, then by window id; a disconnected remote left out",
 );
 eq(
   ids(orderWorkspaces({ id: 3, root: "/w/api" }, windows, [
@@ -35,7 +36,7 @@ eq(
     { windowId: 3, name: "api" },
     { windowId: 2, name: "web" },
   ])),
-  [3, 5, 2, 1],
+  [3, 5, 2, 1, 4],
   "dock order for the others; ones the dock does not list after them",
 );
 eq(
@@ -47,12 +48,17 @@ eq(
 );
 eq(
   ids(orderWorkspaces({ id: 4, root: "/w/box" }, windows, [])),
-  [4],
-  "from a remote workspace, only it: searches run on its host",
+  [4, 1, 2, 3, 5],
+  "from a remote workspace, every other connected one: each runs on its own machine",
+);
+eq(
+  ids(orderWorkspaces({ id: 6, root: "/w/pod" }, windows, [])),
+  [6, 1, 2, 3, 4, 5],
+  "the current workspace leads even when not connected",
 );
 eq(
   orderWorkspaces({ id: 9, root: "/gone" }, windows, []).map((w) => [w.id, w.name]),
-  [[9, ""], [1, "main"], [2, "web"], [3, "api"], [5, "docs"]],
+  [[9, ""], [1, "main"], [2, "web"], [3, "api"], [4, "box"], [5, "docs"]],
   "a current window missing from the list still leads",
 );
 

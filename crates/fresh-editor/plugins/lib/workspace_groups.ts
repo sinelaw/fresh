@@ -23,8 +23,8 @@ export interface WindowLike {
   id: number;
   label: string;
   root: string;
-  /** Set for a workspace on a remote host. */
-  remote?: unknown;
+  /** Set for a workspace on a remote host: whether it is connected. */
+  remote?: { connected: boolean } | null;
 }
 
 /** One dock row: a workspace's window and its dock name. */
@@ -36,11 +36,10 @@ export interface DockEntry {
 /**
  * The workspaces to search: the current one first, then the others in dock
  * order — those the dock does not list (no Orchestrator, or a window it has
- * not seen) after it, by window id. Remote workspaces are left out: their
- * files and terminals are not on this machine. From a remote current
- * workspace there are no others: searches run where the current workspace
- * runs, which is not where the others' files are. Each is named as the dock
- * names it, else by its window label.
+ * not seen) after it, by window id. Each is searched on its own machine, so
+ * a remote one is searched on its host; one that is not connected (restored
+ * from disk, or its link dropped) has no host to search on yet and is left
+ * out. Each is named as the dock names it, else by its window label.
  */
 export function orderWorkspaces(
   current: { id: number; root: string },
@@ -55,7 +54,7 @@ export function orderWorkspaces(
     dock.find((d) => d.windowId === w.id)?.name || w.label;
   const here = windows.find((w) => w.id === current.id);
   const others = windows
-    .filter((w) => !here?.remote && w.id !== current.id && !w.remote)
+    .filter((w) => w.id !== current.id && !(w.remote && !w.remote.connected))
     .sort((a, b) => rank(a.id) - rank(b.id))
     .map((w) => ({ id: w.id, name: name(w), root: w.root, current: false }));
   return [

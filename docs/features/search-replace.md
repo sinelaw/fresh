@@ -109,8 +109,10 @@ header read as they do in their own workspace — `src/x.rs:4`,
 output are searched in each workspace. A workspace the dock lists that you
 have not opened since starting Fresh has no buffers or terminals running, so
 its files on disk and its terminals' history are searched. Diagnostics stay
-this workspace's. Workspaces on a remote host (SSH, Kubernetes) are left
-out, and from a remote workspace only that workspace is searched.
+this workspace's. Each workspace is searched where its files are: a remote
+one (SSH, Kubernetes, a container) on its own host, whichever workspace you
+search from. A remote workspace that is not connected yet — restored from
+disk, or its link dropped — is left out until you switch to it.
 
 `Enter` on another workspace's result switches to that workspace, as picking
 it in the dock does, and then lands on the result as in its own: the file at
