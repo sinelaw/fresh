@@ -252,24 +252,21 @@ fn enter_on_another_workspaces_terminal_line_shows_that_terminal() {
         .unwrap();
 }
 
-/// A workspace listed but not opened yet this session is searched too: its
-/// files on disk, and its unsaved edits as the recovery store keeps them.
-/// Enter on such an edit opens the workspace with the edit restored.
+/// A workspace listed but not opened yet this session is searched too — its
+/// files on disk — and Enter on one of them opens that workspace at it.
 #[test]
 #[cfg(target_os = "linux")] // the pinned data dir; see `isolated_dir_context`
-fn a_workspace_not_opened_yet_is_searched_with_its_unsaved_edits() {
+fn a_workspace_not_opened_yet_is_searched_and_opened_on_enter() {
     let temp = tempfile::TempDir::new().unwrap();
     let (web, api) = two_projects(temp.path());
     // Both sessions save to and discover from one store
     let (dir_context, _pin) = isolated_dir_context(&temp.path().join("state"));
     let harness_in = |dir: &Path| {
-        let mut config = config();
-        config.editor.hot_exit = true;
         EditorTestHarness::create(
             140,
             36,
             HarnessOptions::new()
-                .with_config(config)
+                .with_config(config())
                 .with_working_dir(dir.to_path_buf())
                 .with_shared_dir_context(dir_context.clone())
                 .without_empty_plugins_dir(),
@@ -277,12 +274,11 @@ fn a_workspace_not_opened_yet_is_searched_with_its_unsaved_edits() {
         .unwrap()
     };
 
-    // A session in api leaves an unsaved edit behind, recoverable
+    // A session in api leaves its workspace saved
     {
         let mut harness = harness_in(&api);
         harness.startup(true, &[]).unwrap();
         harness.open_file(&api.join("api_draft.txt")).unwrap();
-        harness.type_text(&format!("{MARKER} kept ")).unwrap();
         harness.render().unwrap();
         harness.shutdown(true).unwrap();
     }
@@ -298,14 +294,12 @@ fn a_workspace_not_opened_yet_is_searched_with_its_unsaved_edits() {
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
-            s.contains("── api · 2 matches")
-                && s.contains("api_note.txt:1")
-                && s.contains("[buf] api_draft.txt:1")
+            s.contains("── api · 1 match") && s.contains("api_note.txt:1")
         })
         .unwrap();
 
-    // web_note, api header, api_note, api_draft
-    for _ in 0..3 {
+    // web_note, api header, api_note
+    for _ in 0..2 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
     harness
@@ -314,7 +308,9 @@ fn a_workspace_not_opened_yet_is_searched_with_its_unsaved_edits() {
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
-            !s.contains("Scope ") && s.contains(&format!("{MARKER} kept draft"))
+            !s.contains("Scope ") && s.contains(&format!("{MARKER} in api"))
         })
         .unwrap();
+    // It opened in api's workspace, next to api's own tab
+    harness.assert_screen_contains("api_draft.txt");
 }

@@ -567,31 +567,17 @@ setWindowPreparing(id: number, message: string, label: string | null, failed: bo
 
 ### `getTerminalScreens`
 
-The visible screen of each terminal open in the active window, read
-from memory: a terminal's backing file (in `getTerminalDir()`) holds
-only the lines that have scrolled off it.
+The visible screen of each terminal open in a window, read from
+memory: a terminal's backing file (in `getTerminalDir()`) holds only
+the lines that have scrolled off it.
 
 ```typescript
-getTerminalScreens(): Promise<TerminalScreen[]>;
-```
-
-### `getWorkspaceSearchSources`
-
-What workspace `windowId` (from `listWindows()`) has to search besides
-its files on disk: its terminals' screens and the directories of their
-backing files, its open file buffers (search them with
-`searchBuffer`), and, for a workspace listed but not opened yet in this
-session, its unsaved edits as they will come back when it is opened.
-Resolves with `null` for an unknown window. Universal Search's "All
-workspaces" toggle reads every other workspace through this.
-
-```typescript
-getWorkspaceSearchSources(windowId: number): Promise<WorkspaceSearchSources | null>;
+getTerminalScreens(windowId?: number): Promise<TerminalScreen[]>;
 ```
 
 | Parameter | Description |
 |-----------|-------------|
-| `windowId` | The workspace's window id |
+| `windowId` | The window (from `listWindows()`); defaults to the active one. An unknown window has no terminals. |
 
 ### `sendTerminalInput`
 

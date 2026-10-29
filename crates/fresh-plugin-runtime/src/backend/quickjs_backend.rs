@@ -1349,10 +1349,24 @@ impl JsEditorApi {
 
     #[plugin_api(section = "Buffer Queries")]
     /// List all open buffers - returns array of BufferInfo objects
+    ///
+    /// @param windowId - List this window's buffers (from `listWindows()`)
+    /// instead of the active window's. A buffer of a window not on screen
+    /// is in no split, so its `view_mode`, `splits` and the like describe
+    /// nothing visible. An unknown window has none.
     #[plugin_api(ts_return = "BufferInfo[]")]
-    pub fn list_buffers<'js>(&self, ctx: fresh_js::Ctx<'js>) -> fresh_js::Result<Value<'js>> {
+    pub fn list_buffers<'js>(
+        &self,
+        ctx: fresh_js::Ctx<'js>,
+        window_id: fresh_js::function::Opt<u64>,
+    ) -> fresh_js::Result<Value<'js>> {
         let buffers: Vec<BufferInfo> = if let Ok(s) = self.state_snapshot.read() {
-            s.buffers.values().cloned().collect()
+            match window_id.0.map(fresh_core::WindowId) {
+                Some(id) if id != s.active_window_id => {
+                    s.background_buffers.get(&id).cloned().unwrap_or_default()
+                }
+                _ => s.buffers.values().cloned().collect(),
+            }
         } else {
             Vec::new()
         };
@@ -4107,15 +4121,21 @@ impl JsEditorApi {
 
     /// Directory holding terminal scrollback backing files for the current
     /// working directory. Each project root / worktree has its own subdir, so
-    /// Universal Search's terminal scope stays scoped to the active project;
-    /// its "All workspaces" toggle reads the other workspaces' directories
-    /// from `getWorkspaceSearchSources`.
-    pub fn get_terminal_dir(&self) -> String {
-        let working_dir = self
-            .state_snapshot
-            .read()
-            .map(|s| s.working_dir.clone())
-            .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    /// Universal Search's terminal scope can stay scoped to one project.
+    ///
+    /// @param windowId - The directory of this window's root instead (from
+    /// `listWindows()`); `""` for an unknown window.
+    pub fn get_terminal_dir(&self, window_id: fresh_js::function::Opt<u64>) -> String {
+        let working_dir = match self.state_snapshot.read() {
+            Ok(s) => match window_id.0.map(fresh_core::WindowId) {
+                Some(id) => match s.windows.iter().find(|w| w.id == id) {
+                    Some(w) => w.root.clone(),
+                    None => return String::new(),
+                },
+                None => s.working_dir.clone(),
+            },
+            Err(_) => std::path::PathBuf::from("."),
+        };
         self.services
             .terminal_dir(&working_dir)
             .to_string_lossy()
@@ -9338,8 +9358,8 @@ impl JsEditorApi {
     /// editor's own search — the one Ctrl+F and `beginSearch` use. Resolves
     /// with its matches in order: each with its byte offset and length, its
     /// 1-based line and byte column, and the text of its line. `bufferId` 0
-    /// is the active buffer; any other workspace's buffer (from
-    /// `getWorkspaceSearchSources`) can be searched too. Every match is found unless `maxResults` is
+    /// is the active buffer; a buffer of any window (`listBuffers(windowId)`)
+    /// can be searched. Every match is found unless `maxResults` is
     /// given; `fixedString` and `caseSensitive` default to true. `cancel()`
     /// stops it, resolving with no matches.
     #[plugin_api(
@@ -9748,46 +9768,24 @@ impl JsEditorApi {
             .is_ok()
     }
 
-    /// The visible screen of each terminal open in the active window, read
-    /// from memory: a terminal's backing file (in `getTerminalDir()`) holds
-    /// only the lines that have scrolled off it.
+    /// The visible screen of each terminal open in a window, read from
+    /// memory: a terminal's backing file (in `getTerminalDir()`) holds only
+    /// the lines that have scrolled off it.
+    ///
+    /// @param windowId - The window (from `listWindows()`); defaults to the
+    /// active one. An unknown window has no terminals.
     #[plugin_api(
         async_promise,
         js_name = "getTerminalScreens",
         ts_return = "TerminalScreen[]"
     )]
     #[qjs(rename = "_getTerminalScreensStart")]
-    pub fn get_terminal_screens_start(&self) -> u64 {
+    pub fn get_terminal_screens_start(&self, window_id: fresh_js::function::Opt<u64>) -> u64 {
         let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::GetTerminalScreens {
+            window_id: window_id.0.map(fresh_core::WindowId),
             callback_id: fresh_core::api::JsCallbackId::new(id),
         });
-        id
-    }
-
-    /// What workspace `windowId` (from `listWindows()`) has to search besides
-    /// its files on disk: its terminals' screens and the directories of their
-    /// backing files, its open file buffers (search them with
-    /// `searchBuffer`), and, for a workspace listed but not opened yet in this
-    /// session, its unsaved edits as they will come back when it is opened.
-    /// Resolves with `null` for an unknown window. Universal Search's "All
-    /// workspaces" toggle reads every other workspace through this.
-    ///
-    /// @param windowId - The workspace's window id
-    #[plugin_api(
-        async_promise,
-        js_name = "getWorkspaceSearchSources",
-        ts_return = "WorkspaceSearchSources | null"
-    )]
-    #[qjs(rename = "_getWorkspaceSearchSourcesStart")]
-    pub fn get_workspace_search_sources_start(&self, window_id: u64) -> u64 {
-        let id = self.alloc_request_id();
-        let _ = self
-            .command_sender
-            .send(PluginCommand::GetWorkspaceSearchSources {
-                window_id: fresh_core::WindowId(window_id),
-                callback_id: fresh_core::api::JsCallbackId::new(id),
-            });
         id
     }
 

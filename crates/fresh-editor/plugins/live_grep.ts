@@ -1026,41 +1026,30 @@ function stripAnsi(s: string): string {
 interface WorkspaceContent {
   workspace: Workspace;
   /** Its open file buffers. */
-  buffers: WorkspaceBuffer[];
-  /** A workspace not opened yet: its unsaved edits, from the recovery store. */
-  recovered: RecoveredFile[];
+  buffers: { bufferId: number; path: string; modified: boolean }[];
   /** Its terminals' screens. */
   screens: TerminalScreen[];
-  /** The directories of its terminals' backing files. */
-  terminalDirs: string[];
+  /** The directory of its terminals' backing files. */
+  terminalDir: string;
 }
 
-/** The current workspace's content, read as this overlay always has. */
-async function currentContent(workspace: Workspace): Promise<WorkspaceContent> {
+/** What `workspace` has open: the active window's, or — for another
+ *  workspace — that window's, through the same calls with its id. A
+ *  workspace not opened yet this session has no buffers or terminals
+ *  running; its terminals' history is still in its directory. */
+async function workspaceContent(workspace: Workspace): Promise<WorkspaceContent> {
+  // No argument means the active window
+  const id: [] | [number] = workspace.current ? [] : [workspace.id];
   return {
     workspace,
     // Virtual buffers (terminals, panels) and bufferless/unnamed buffers
     // have no on-disk file to navigate to.
     buffers: editor
-      .listBuffers()
+      .listBuffers(...id)
       .filter((b) => !b.is_virtual && b.path)
-      .map((b) => ({ bufferId: b.id, path: b.path, modified: b.modified })),
-    recovered: [],
-    screens: scopeEnabled.terminals ? await editor.getTerminalScreens() : [],
-    terminalDirs: [editor.getTerminalDir()],
-  };
-}
-
-/** Another workspace's content, or null when it is gone. */
-async function otherContent(workspace: Workspace): Promise<WorkspaceContent | null> {
-  const sources = await editor.getWorkspaceSearchSources(workspace.id);
-  if (!sources) return null;
-  return {
-    workspace,
-    buffers: sources.buffers,
-    recovered: sources.recovered,
-    screens: sources.terminals,
-    terminalDirs: sources.terminalDirs,
+      .map((b) => ({ bufferId: b.id, path: b.path as string, modified: b.modified })),
+    screens: scopeEnabled.terminals ? await editor.getTerminalScreens(...id) : [],
+    terminalDir: editor.getTerminalDir(...id),
   };
 }
 
@@ -1106,9 +1095,10 @@ async function searchTerminals(
   }
   limit -= onScreen.length;
   if (limit <= 0) return onScreen;
-  // The terminal directories are in the editor's data dir, on this machine
-  const dirs = content.terminalDirs.filter((d) => editor.fileExists(editor.localPath(d)));
-  if (dirs.length === 0) return onScreen;
+  // The terminal directory is in the editor's data dir, on this machine
+  if (!content.terminalDir || !editor.fileExists(editor.localPath(content.terminalDir))) {
+    return onScreen;
+  }
   const cwd = editor.getCwd();
   let raw: GrepMatch[] = [];
   // The backing files as text (they hold ANSI escapes), only the rendered
@@ -1122,7 +1112,7 @@ async function searchTerminals(
     caseSensitive: searchModes.case,
     text: true,
     include: "*.txt",
-    paths: dirs,
+    paths: [content.terminalDir],
   };
   const spawnOpts = { cwd, maxResults: limit, cancellation };
   try {
@@ -1164,8 +1154,7 @@ async function searchTerminals(
  *  the unsaved edits a disk grep would miss, without double-reporting.
  *  The editor searches each buffer as it is (`searchBuffer`), however
  *  large, with the same query language as its own search; a row per
- *  match, at its byte column. A workspace not opened yet has no buffers:
- *  its unsaved edits are the recovery store's, matched here line by line. */
+ *  match, at its byte column. */
 async function searchOpenBuffers(
   query: string,
   content: WorkspaceContent,
@@ -1205,17 +1194,6 @@ async function searchOpenBuffers(
     for (const m of matches) {
       out.push({ file, line: m.line, column: m.column, content: m.context, source: "buffers", openPath: b.path });
     }
-  }
-  const matchCol = buildLineMatcher(query);
-  for (const r of content.recovered) {
-    if (out.length >= limit || cancellation?.cancelled) break;
-    const file = relativeUnder(cwd, r.path) || r.path;
-    r.text.split(/\r?\n/).forEach((line, i) => {
-      const column = matchCol(line);
-      if (column > 0 && out.length < limit) {
-        out.push({ file, line: i + 1, column, content: line, source: "buffers", openPath: r.path });
-      }
-    });
   }
   return out;
 }
@@ -1331,12 +1309,7 @@ async function searchWorkspace(
       // A file open with unsaved edits is searched as its buffer below;
       // the disk's rows for it point at lines that are no longer there.
       const unsaved = new Set(
-        scopeEnabled.buffers
-          ? [
-            ...content.buffers.filter((b) => b.modified).map((b) => b.path),
-            ...content.recovered.map((r) => r.path),
-          ]
-          : [],
+        scopeEnabled.buffers ? content.buffers.filter((b) => b.modified).map((b) => b.path) : [],
       );
       for (const m of fileMatches) {
         if (results.length >= limit) break;
@@ -1384,8 +1357,7 @@ async function searchAllWorkspaces(query: string, cancellation?: SearchCancellat
   let found = 0;
   for (const workspace of workspaces) {
     if (found >= MAX_RESULTS || cancellation?.cancelled) break;
-    const content = workspace.current ? await currentContent(workspace) : await otherContent(workspace);
-    if (!content) continue;
+    const content = await workspaceContent(workspace);
     const matches = await searchWorkspace(query, content, MAX_RESULTS - found, cancellation);
     groups.push({ workspace, matches });
     found += matches.length;
@@ -1402,7 +1374,7 @@ async function search(query: string, cancellation?: SearchCancellation): Promise
   const wasTruncated = lastSearchTruncated;
   const results = scopeEnabled.workspaces
     ? await searchAllWorkspaces(query, cancellation)
-    : await searchWorkspace(query, await currentContent(currentWorkspace()), MAX_RESULTS, cancellation);
+    : await searchWorkspace(query, await workspaceContent(currentWorkspace()), MAX_RESULTS, cancellation);
   const matches = results.filter((m) => m.heading === undefined);
 
   lastSearchTruncated = matches.length >= MAX_RESULTS;

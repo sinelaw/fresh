@@ -1373,67 +1373,6 @@ type TerminalScreen = {
 	name: string;
 };
 /**
-* What one workspace has to search besides its files on disk, returned by
-* `getWorkspaceSearchSources`
-*/
-type WorkspaceSearchSources = {
-	/**
-	* Whether the workspace has been opened in this session. One that is
-	* listed (in the dock) but not opened yet has no buffers or terminals
-	* running: its unsaved edits are in `recovered`, and its terminals'
-	* history is in the files under `terminalDirs`.
-	*/
-	loaded: boolean;
-	/**
-	* The directories holding its terminals' backing files (`*.txt`, with
-	* ANSI escapes), the workspace's own `getTerminalDir()` first
-	*/
-	terminalDirs: Array<string>;
-	/**
-	* The visible screen of each of its terminals, as `getTerminalScreens`
-	*/
-	terminals: Array<TerminalScreen>;
-	/**
-	* Its open file buffers
-	*/
-	buffers: Array<WorkspaceBuffer>;
-	/**
-	* The unsaved edits of a workspace not opened yet; empty once it is
-	*/
-	recovered: Array<RecoveredFile>;
-};
-/**
-* An open file buffer, listed by `getWorkspaceSearchSources`
-*/
-type WorkspaceBuffer = {
-	/**
-	* The buffer, for `searchBuffer` and `showBuffer`
-	*/
-	bufferId: number;
-	/**
-	* The file it edits (absolute)
-	*/
-	path: string;
-	/**
-	* Whether it has edits not yet saved
-	*/
-	modified: boolean;
-};
-/**
-* Unsaved edits to a file kept for a workspace that has not been opened in
-* this session yet, as they come back when it is
-*/
-type RecoveredFile = {
-	/**
-	* The file the edits are to (absolute)
-	*/
-	path: string;
-	/**
-	* The whole text with the edits in it
-	*/
-	text: string;
-};
-/**
 * Options for `createWindowWithTerminal` — the atomic
 * "spawn a new editor session that hosts an agent terminal"
 * entry point used by Orchestrator. Bundles window creation,
@@ -5341,8 +5280,13 @@ interface EditorAPI {
 	hasActiveSearch(): boolean;
 	/**
 	* List all open buffers - returns array of BufferInfo objects
+	* 
+	* @param windowId - List this window's buffers (from `listWindows()`)
+	* instead of the active window's. A buffer of a window not on screen
+	* is in no split, so its `view_mode`, `splits` and the like describe
+	* nothing visible. An unknown window has none.
 	*/
-	listBuffers(): BufferInfo[];
+	listBuffers(windowId?: number): BufferInfo[];
 	/**
 	* List all available grammars with source info - returns array of GrammarInfo objects
 	* Grammars come from all sources: built-in, user-installed, language packs,
@@ -6379,11 +6323,12 @@ interface EditorAPI {
 	/**
 	* Directory holding terminal scrollback backing files for the current
 	* working directory. Each project root / worktree has its own subdir, so
-	* Universal Search's terminal scope stays scoped to the active project;
-	* its "All workspaces" toggle reads the other workspaces' directories
-	* from `getWorkspaceSearchSources`.
+	* Universal Search's terminal scope can stay scoped to one project.
+	* 
+	* @param windowId - The directory of this window's root instead (from
+	* `listWindows()`); `""` for an unknown window.
 	*/
-	getTerminalDir(): string;
+	getTerminalDir(windowId?: number): string;
 	/**
 	* Per-working-directory data root for plugin state scoped to the current
 	* project root / worktree (`<data_dir>/workdirs/<encoded-cwd>/`). Use
@@ -8444,8 +8389,8 @@ interface EditorAPI {
 	* editor's own search — the one Ctrl+F and `beginSearch` use. Resolves
 	* with its matches in order: each with its byte offset and length, its
 	* 1-based line and byte column, and the text of its line. `bufferId` 0
-	* is the active buffer; any other workspace's buffer (from
-	* `getWorkspaceSearchSources`) can be searched too. Every match is found unless `maxResults` is
+	* is the active buffer; a buffer of any window (`listBuffers(windowId)`)
+	* can be searched. Every match is found unless `maxResults` is
 	* given; `fixedString` and `caseSensitive` default to true. `cancel()`
 	* stops it, resolving with no matches.
 	*/
@@ -8553,23 +8498,14 @@ interface EditorAPI {
 	*/
 	setWindowPreparing(id: number, message: string, label: string | null, failed: boolean, done: boolean): boolean;
 	/**
-	* The visible screen of each terminal open in the active window, read
-	* from memory: a terminal's backing file (in `getTerminalDir()`) holds
-	* only the lines that have scrolled off it.
-	*/
-	getTerminalScreens(): Promise<TerminalScreen[]>;
-	/**
-	* What workspace `windowId` (from `listWindows()`) has to search besides
-	* its files on disk: its terminals' screens and the directories of their
-	* backing files, its open file buffers (search them with
-	* `searchBuffer`), and, for a workspace listed but not opened yet in this
-	* session, its unsaved edits as they will come back when it is opened.
-	* Resolves with `null` for an unknown window. Universal Search's "All
-	* workspaces" toggle reads every other workspace through this.
+	* The visible screen of each terminal open in a window, read from
+	* memory: a terminal's backing file (in `getTerminalDir()`) holds only
+	* the lines that have scrolled off it.
 	* 
-	* @param windowId - The workspace's window id
+	* @param windowId - The window (from `listWindows()`); defaults to the
+	* active one. An unknown window has no terminals.
 	*/
-	getWorkspaceSearchSources(windowId: number): Promise<WorkspaceSearchSources | null>;
+	getTerminalScreens(windowId?: number): Promise<TerminalScreen[]>;
 	/**
 	* Send input data to a terminal
 	* 

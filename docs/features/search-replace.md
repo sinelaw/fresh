@@ -106,10 +106,10 @@ you are in first, then the others in the order the
 [Orchestrator dock](./session-persistence.md) lists them. The rows under a
 header read as they do in their own workspace — `src/x.rs:4`,
 `[buf] src/x.rs:4`, `[term] claude:12`. Files, unsaved buffers and terminal
-output are searched in each workspace, including workspaces the dock lists
-that you have not opened since starting Fresh: their files on disk, their
-terminals' history, and the unsaved edits Fresh kept for them. Diagnostics
-stay this workspace's. Workspaces on a remote host (SSH, Kubernetes) are left
+output are searched in each workspace. A workspace the dock lists that you
+have not opened since starting Fresh has no buffers or terminals running, so
+its files on disk and its terminals' history are searched. Diagnostics stay
+this workspace's. Workspaces on a remote host (SSH, Kubernetes) are left
 out.
 
 `Enter` on another workspace's result switches to that workspace, as picking

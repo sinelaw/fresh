@@ -3648,24 +3648,6 @@ type PromptSuggestion = {
 };
 ```
 
-### `RecoveredFile`
-
-Unsaved edits to a file kept for a workspace that has not been opened in
-this session yet, as they come back when it is
-
-```typescript
-type RecoveredFile = {
-  /**
-  * The file the edits are to (absolute)
-  */
-  path: string;
-  /**
-  * The whole text with the edits in it
-  */
-  text: string;
-};
-```
-
 ### `RemoteAgentSpec`
 
 ```typescript
@@ -5884,27 +5866,6 @@ type WindowPath = {
 };
 ```
 
-### `WorkspaceBuffer`
-
-An open file buffer, listed by `getWorkspaceSearchSources`
-
-```typescript
-type WorkspaceBuffer = {
-  /**
-  * The buffer, for `searchBuffer` and `showBuffer`
-  */
-  bufferId: number;
-  /**
-  * The file it edits (absolute)
-  */
-  path: string;
-  /**
-  * Whether it has edits not yet saved
-  */
-  modified: boolean;
-};
-```
-
 ### `WorkspaceDescription`
 
 The answer to "what does the editor look like right now" — the call an
@@ -5938,40 +5899,6 @@ type WorkspaceDescription = {
   * Which pane has focus; also flagged on the pane itself.
   */
   activeSplitId: number;
-};
-```
-
-### `WorkspaceSearchSources`
-
-What one workspace has to search besides its files on disk, returned by
-`getWorkspaceSearchSources`
-
-```typescript
-type WorkspaceSearchSources = {
-  /**
-  * Whether the workspace has been opened in this session. One that is
-  * listed (in the dock) but not opened yet has no buffers or terminals
-  * running: its unsaved edits are in `recovered`, and its terminals'
-  * history is in the files under `terminalDirs`.
-  */
-  loaded: boolean;
-  /**
-  * The directories holding its terminals' backing files (`*.txt`, with
-  * ANSI escapes), the workspace's own `getTerminalDir()` first
-  */
-  terminalDirs: Array<string>;
-  /**
-  * The visible screen of each of its terminals, as `getTerminalScreens`
-  */
-  terminals: Array<TerminalScreen>;
-  /**
-  * Its open file buffers
-  */
-  buffers: Array<WorkspaceBuffer>;
-  /**
-  * The unsaved edits of a workspace not opened yet; empty once it is
-  */
-  recovered: Array<RecoveredFile>;
 };
 ```
 
