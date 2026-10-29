@@ -120,7 +120,18 @@ static SYSTEM_CLIPBOARD: Mutex<Option<arboard::Clipboard>> = Mutex::new(None);
 /// The persistent handle is critical: a temporary arboard::Clipboard would take
 /// selection ownership from the terminal (clobbering OSC 52) then destroy the
 /// selection/data-source on drop, leaving the clipboard empty.
+///
+/// On macOS the arboard write goes first. A terminal that honours OSC 52
+/// (Ghostty, iTerm2, ...) writes the same `NSPasteboard`, asynchronously:
+/// sent first, its write could land between arboard's `clearContents` and
+/// `writeObjects`, which then fails and AppKit logs the failure to our
+/// stderr (#3662). Finishing ours before sending OSC 52 keeps the two apart.
 pub fn copy_to_system_clipboard(text: &str, use_osc52: bool, use_system_clipboard: bool) {
+    let system_first = cfg!(target_os = "macos");
+    if use_system_clipboard && system_first {
+        copy_with_system_backends(text);
+    }
+
     if use_osc52 {
         if let Err(e) = execute!(stdout(), CopyToClipboard::to_clipboard_from(text)) {
             tracing::debug!("OSC 52 clipboard copy failed: {}", e);
@@ -129,13 +140,18 @@ pub fn copy_to_system_clipboard(text: &str, use_osc52: bool, use_system_clipboar
         let _ = stdout().flush();
     }
 
-    if use_system_clipboard {
-        set_system_clipboard_text(text);
-        // On Termux arboard is a no-op (no Android backend), so also push to
-        // the Android clipboard via the termux-api helper. The call is gated
-        // on `is_termux()` inside, so it costs nothing on other platforms.
-        termux_clipboard_set(text);
+    if use_system_clipboard && !system_first {
+        copy_with_system_backends(text);
     }
+}
+
+/// Copy via the native clipboard backends (arboard, plus termux-api).
+fn copy_with_system_backends(text: &str) {
+    set_system_clipboard_text(text);
+    // On Termux arboard is a no-op (no Android backend), so also push to
+    // the Android clipboard via the termux-api helper. The call is gated
+    // on `is_termux()` inside, so it costs nothing on other platforms.
+    termux_clipboard_set(text);
 }
 
 /// Set text on the arboard system clipboard, creating it if needed.

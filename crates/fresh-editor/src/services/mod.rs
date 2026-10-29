@@ -33,6 +33,7 @@ pub mod remote;
 pub mod runtime;
 pub mod signal_handler;
 pub mod status_log;
+pub mod stderr_redirect;
 pub mod stdin_spool;
 pub mod styled_html;
 pub mod telemetry;
