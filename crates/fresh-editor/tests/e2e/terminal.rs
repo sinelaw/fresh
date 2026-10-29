@@ -4056,6 +4056,98 @@ fn test_paste_without_bracketed_paste_sends_carriage_returns() {
         .send_terminal_input(b"\x04");
 }
 
+/// Ctrl+V in a terminal pane, with a system clipboard that holds no text (an
+/// image, say), reaches the program as the key, and pastes no stale yank.
+///
+/// Regression (#3129): the paste fell back to the internal clipboard, so an
+/// old yank was typed into the program, and the program — an agent CLI that
+/// reads the image from the clipboard itself on Ctrl+V — never saw the key.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses Unix shell commands (stty/cat)
+fn test_ctrl_v_reaches_terminal_when_clipboard_has_no_text() {
+    use fresh::services::clipboard::SystemClipboard;
+
+    // `cat -v` shows the byte Ctrl+V sends as `^V`; `-icanon` makes it echo
+    // without waiting for a line, `-echo` keeps the line discipline from
+    // echoing it as well, and `-iexten` from taking ^V as its literal-next.
+    let Some(mut harness) =
+        harness_running_or_skip("stty -echo -icanon -iexten; printf 'CAT_READY\\n'; cat -v")
+    else {
+        return;
+    };
+    harness
+        .editor_mut()
+        .set_clipboard_for_test("STALE_YANK".to_string());
+    harness
+        .editor_mut()
+        .set_system_clipboard_probe_for_test(|| SystemClipboard::NoText);
+
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("CAT_READY"))
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    // A marker after it, so the wait has something that arrives after ^V.
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(b"END");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("END"))
+        .unwrap();
+
+    harness.assert_screen_contains("^VEND");
+    harness.assert_screen_not_contains("STALE_YANK");
+
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(b"\x04");
+}
+
+/// With a system clipboard that can't be read at all, Ctrl+V in a terminal
+/// pane still pastes the internal clipboard (the #3129 change keeps that).
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses Unix shell commands (stty/cat)
+fn test_ctrl_v_in_terminal_pastes_internal_clipboard_when_system_unavailable() {
+    use fresh::services::clipboard::SystemClipboard;
+
+    let Some(mut harness) =
+        harness_running_or_skip("stty -echo -icanon -iexten; printf 'CAT_READY\\n'; cat -v")
+    else {
+        return;
+    };
+    harness
+        .editor_mut()
+        .set_clipboard_for_test("INTERNAL_YANK".to_string());
+    harness
+        .editor_mut()
+        .set_system_clipboard_probe_for_test(|| SystemClipboard::Unavailable);
+
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("CAT_READY"))
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("INTERNAL_YANK"))
+        .unwrap();
+    harness.assert_screen_not_contains("^V");
+
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(b"\x04");
+}
+
 /// Regression test: when an alternate-screen program is *tracking the mouse*
 /// (mouse reporting enabled), wheel events must be forwarded to it as real
 /// mouse reports — never converted into arrow keys by alternate-scroll mode.
