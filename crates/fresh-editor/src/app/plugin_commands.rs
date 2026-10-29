@@ -3740,6 +3740,7 @@ impl Editor {
         program: String,
         args: Vec<String>,
         cwd: Option<String>,
+        stdout_to: Option<std::path::PathBuf>,
         callback_id: fresh_core::api::JsCallbackId,
     ) {
         let Some((runtime, sender)) = self.off_loop_parts(callback_id) else {
@@ -3748,10 +3749,17 @@ impl Editor {
         let Some(authority) = self.authority_for(machine, callback_id) else {
             return;
         };
+        let spawner = authority.process_spawner.clone();
+        let filesystem = authority.filesystem.clone();
+        // Killed by the handle's `kill()` (`KillHostProcess`, keyed by the
+        // callback id); dropped when the run settles.
+        let (kill_tx, kill_rx) = tokio::sync::oneshot::channel::<()>();
+        self.host_process_handles
+            .insert(callback_id.as_u64(), kill_tx);
         super::plugin_offloop::run_on_target(
             &runtime,
             super::plugin_offloop::OffLoop {
-                filesystem: authority.filesystem.clone(),
+                filesystem,
                 sender,
                 cancel: self.cancel_for(machine),
             },
@@ -3759,7 +3767,9 @@ impl Editor {
                 program,
                 args,
                 cwd,
-                spawner: authority.process_spawner.clone(),
+                stdout_to,
+                kill_rx,
+                spawner,
                 callback_id,
             },
         );

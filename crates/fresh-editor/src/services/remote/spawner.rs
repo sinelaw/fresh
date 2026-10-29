@@ -278,6 +278,10 @@ impl ProcessSpawner for LocalProcessSpawner {
         cmd.args(&args);
         self.apply_env(&mut cmd).await;
         cmd.hide_window();
+        // Nothing writes to a plugin's child: one that inherited the editor's
+        // stdin could read it, and a program like `rg` given no path searches
+        // a piped stdin instead of its cwd, waiting forever on one held open.
+        cmd.stdin(Stdio::null());
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
         if let Some(ref dir) = cwd {

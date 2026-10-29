@@ -6226,6 +6226,9 @@ pub enum PluginCommand {
         program: String,
         args: Vec<String>,
         cwd: Option<String>,
+        /// Stream stdout into this file instead of buffering it.
+        stdout_to: Option<PathBuf>,
+        /// Also the process id `KillHostProcess` kills it by.
         callback_id: JsCallbackId,
     },
 

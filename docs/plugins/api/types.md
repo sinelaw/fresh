@@ -2902,7 +2902,11 @@ interface FreshMachine {
     path: string;
     maxBytes: number;
   }[]): Promise<FilePrefix[]>;
-  run(program: string, args?: string[], cwd?: string): Promise<CommandResult>;
+  /** Run a command here, without a shell. `stdoutTo` streams stdout into
+  *  that file instead (`stdout` then resolves empty). Never rejects: a
+  *  command that could not be started resolves with `code` -1 and the reason
+  *  in `stderr`. `kill()` stops it. */
+  run(program: string, args?: string[], cwd?: string, stdoutTo?: string): ProcessHandle<CommandResult>;
   /** Environment variables, for the names that are set. A remote machine is
   *  asked with `printenv`; never this computer's values for another machine. */
   env(names: string[]): Promise<Record<string, string>>;

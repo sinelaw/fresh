@@ -646,7 +646,9 @@ clearRemoteIndicatorState(): void;
 ### `openMachine`
 
 Open a machine to read without attaching it to a window.
- `{ kind: "window", window?: number }` borrows a window's own authority.
+ `{ kind: "window", window?: number }` borrows a window's own authority
+ (the active window's when `window` is omitted): `run` on it runs where
+ that window's files are, whichever window is active.
  `{ kind: "ssh" | "kubectl-exec", ... }` connects to a machine nothing is
  attached to; it is read-only, so `run` rejects. Anything else is an
  `AuthorityPayload`, as `setAuthority` takes.
@@ -675,10 +677,16 @@ readFilePrefixes(requests: {
 
 ### `runOnTarget`
 
-Unlike `spawnHostProcess`, a remote authority runs the command there.
+Run a command on the active window's machine, without a shell: a remote
+ window runs it there, unlike `spawnHostProcess`. For another window, use
+ `run` on the machine `openMachine({ kind: "window", window })` returns.
+ `stdoutTo` streams stdout into that file instead (`stdout` then resolves
+ empty). Resolves with a non-zero `code` rather than rejecting, and with
+ `code` -1 (the reason in `stderr`) when the command could not be
+ started; `kill()` stops it. The replacement for `spawnProcess`.
 
 ```typescript
-runOnTarget(program: string, args?: string[], cwd?: string): Promise<CommandResult>;
+runOnTarget(program: string, args?: string[], cwd?: string, stdoutTo?: string): ProcessHandle<CommandResult>;
 ```
 
 ### `machineEnv`

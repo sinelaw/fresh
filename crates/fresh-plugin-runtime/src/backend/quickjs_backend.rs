@@ -2179,8 +2179,12 @@ impl JsEditorApi {
     }
 
     /// Run a command on the machine. Resolves with `{code, stdout, stderr}`; a
-    /// non-zero `code` resolves rather than rejecting. Unlike `spawnHostProcess`,
-    /// a remote machine runs it there. Rejects on a machine opened read-only.
+    /// non-zero `code` resolves rather than rejecting, and a command that could
+    /// not be started (the program missing, the cwd gone, a machine opened
+    /// read-only) resolves with `code` -1 and the reason in `stderr`. Unlike
+    /// `spawnHostProcess`, a remote machine runs it there.
+    /// A non-empty `stdoutTo` streams stdout into that file instead. The id
+    /// returned is the process id `_killHostProcess` kills it by.
     #[plugin_api(
         async_promise,
         js_name = "_runOnTargetOn",
@@ -2194,6 +2198,7 @@ impl JsEditorApi {
         program: String,
         #[plugin_api(ts_type = "string[]")] args: fresh_js::Value<'js>,
         cwd: String,
+        stdout_to: String,
     ) -> fresh_js::Result<u64> {
         let parsed: serde_json::Value = fresh_js::serde::from_value(args)
             .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))?;
@@ -2214,6 +2219,7 @@ impl JsEditorApi {
             program,
             args,
             cwd: (!cwd.is_empty()).then_some(cwd),
+            stdout_to: (!stdout_to.is_empty()).then(|| PathBuf::from(stdout_to)),
             callback_id: JsCallbackId::new(id),
         });
         Ok(id)
@@ -8581,6 +8587,13 @@ impl JsEditorApi {
     /// directly into the named file instead of buffering it. The
     /// resolved `SpawnResult.stdout` is empty in that case; the bytes
     /// land on disk for `openFile` to pick up as a file-backed buffer.
+    ///
+    /// @deprecated Run commands on a machine instead: `editor.runOnTarget`
+    /// for the active window, or `run` on the machine
+    /// `editor.openMachine({ kind: "window", window })` returns for any
+    /// window, so the command runs where that window's files are. Both take
+    /// the same arguments, return the same killable handle, and resolve with
+    /// `{ code, stdout, stderr }`. `spawnHostProcess` runs on this computer.
     #[plugin_api(async_thenable, js_name = "spawnProcess", ts_return = "SpawnResult")]
     #[qjs(rename = "_spawnProcessStart")]
     pub fn spawn_process_start(
@@ -10338,7 +10351,27 @@ const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
                 editor.getNextKey = _wrapAsync("_getNextKeyStart", "getNextKey");
                 editor._walkTreeOn = _wrapAsync("_walkTreeStart", "walkTree");
                 editor._readFilePrefixesOn = _wrapAsync("_readFilePrefixesStart", "readFilePrefixes");
-                editor._runOnTargetOn = _wrapAsync("_runOnTargetStart", "runOnTarget");
+                // A run is a `ProcessHandle`: awaitable, and `kill()` stops it.
+                editor._runOnTargetOn = function(machine, program, args, cwd, stdoutTo) {
+                    const callbackId = editor._runOnTargetStart(
+                        machine, program, args || [], cwd || "", stdoutTo || "");
+                    const resultPromise = new Promise((resolve, reject) => {
+                        globalThis._pendingCallbacks.set(callbackId, { resolve, reject });
+                    });
+                    return {
+                        processId: callbackId,
+                        result: resultPromise,
+                        kill() {
+                            return Promise.resolve(editor._killHostProcess(callbackId));
+                        },
+                        then(onFulfilled, onRejected) {
+                            return resultPromise.then(onFulfilled, onRejected);
+                        },
+                        catch(onRejected) {
+                            return resultPromise.catch(onRejected);
+                        },
+                    };
+                };
                 editor._machineEnvOn = _wrapAsync("_machineEnvStart", "machineEnv");
                 editor._openMachineRaw = _wrapAsync("_openMachineStart", "openMachine");
                 editor._closeMachineRaw = _wrapAsync("_closeMachineStart", "closeMachine");
@@ -10350,8 +10383,8 @@ const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
                 editor.readFilePrefixes = function(requests) {
                     return editor._readFilePrefixesOn(0, requests);
                 };
-                editor.runOnTarget = function(program, args, cwd) {
-                    return editor._runOnTargetOn(0, program, args || [], cwd || "");
+                editor.runOnTarget = function(program, args, cwd, stdoutTo) {
+                    return editor._runOnTargetOn(0, program, args, cwd, stdoutTo);
                 };
                 editor.machineEnv = function(names) {
                     return editor._machineEnvOn(0, names || []);
@@ -10370,8 +10403,8 @@ const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
                             readFilePrefixes: function(requests) {
                                 return editor._readFilePrefixesOn(id, requests);
                             },
-                            run: function(program, args, cwd) {
-                                return editor._runOnTargetOn(id, program, args || [], cwd || "");
+                            run: function(program, args, cwd, stdoutTo) {
+                                return editor._runOnTargetOn(id, program, args, cwd, stdoutTo);
                             },
                             env: function(names) {
                                 return editor._machineEnvOn(id, names || []);
@@ -11985,6 +12018,57 @@ mod tests {
         assert_eq!(
             killed, started,
             "each kill should name its spawn: {spawned:?}"
+        );
+    }
+
+    /// `runOnTarget` (the active window's machine) returns a handle like
+    /// `spawnProcess` does: it carries `stdoutTo` to the editor, and its
+    /// `kill()` names that very run, so a superseded command can be stopped.
+    #[test]
+    fn test_api_run_on_target_streams_and_kills() {
+        let (mut backend, rx) = create_test_backend();
+
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            const run = editor.runOnTarget("rg", ["x"], "/src", "/tmp/out.txt");
+            if (typeof run.then !== "function") throw new Error("not awaitable");
+            run.kill();
+        "#,
+                "test.js",
+            )
+            .unwrap();
+
+        let sent: Vec<PluginCommand> = rx.try_iter().collect();
+        let run = sent.iter().find_map(|cmd| match cmd {
+            PluginCommand::RunOnTarget {
+                machine,
+                program,
+                cwd,
+                stdout_to,
+                callback_id,
+                ..
+            } => Some((
+                *machine,
+                program.clone(),
+                cwd.clone(),
+                stdout_to.clone(),
+                callback_id.as_u64(),
+            )),
+            _ => None,
+        });
+        let Some((machine, program, cwd, stdout_to, id)) = run else {
+            panic!("no RunOnTarget sent: {sent:?}");
+        };
+        assert_eq!(machine, None, "the active window's machine");
+        assert_eq!(program, "rg");
+        assert_eq!(cwd.as_deref(), Some("/src"));
+        assert_eq!(stdout_to, Some(std::path::PathBuf::from("/tmp/out.txt")));
+        assert!(
+            sent.iter()
+                .any(|cmd| matches!(cmd, PluginCommand::KillHostProcess { process_id } if *process_id == id)),
+            "kill() should name the run: {sent:?}"
         );
     }
 

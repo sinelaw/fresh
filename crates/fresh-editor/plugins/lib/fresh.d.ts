@@ -8071,6 +8071,13 @@ interface EditorAPI {
 	* directly into the named file instead of buffering it. The
 	* resolved `SpawnResult.stdout` is empty in that case; the bytes
 	* land on disk for `openFile` to pick up as a file-backed buffer.
+	* 
+	* @deprecated Run commands on a machine instead: `editor.runOnTarget`
+	* for the active window, or `run` on the machine
+	* `editor.openMachine({ kind: "window", window })` returns for any
+	* window, so the command runs where that window's files are. Both take
+	* the same arguments, return the same killable handle, and resolve with
+	* `{ code, stdout, stderr }`. `spawnHostProcess` runs on this computer.
 	*/
 	spawnProcess(command: string, args: string[], cwd?: string, stdoutTo?: string): ProcessHandle<SpawnResult>;
 	/**
@@ -8621,7 +8628,11 @@ interface FreshMachine {
 		path: string;
 		maxBytes: number;
 	}[]): Promise<FilePrefix[]>;
-	run(program: string, args?: string[], cwd?: string): Promise<CommandResult>;
+	/** Run a command here, without a shell. `stdoutTo` streams stdout into
+	*  that file instead (`stdout` then resolves empty). Never rejects: a
+	*  command that could not be started resolves with `code` -1 and the reason
+	*  in `stderr`. `kill()` stops it. */
+	run(program: string, args?: string[], cwd?: string, stdoutTo?: string): ProcessHandle<CommandResult>;
 	/** Environment variables, for the names that are set. A remote machine is
 	*  asked with `printenv`; never this computer's values for another machine. */
 	env(names: string[]): Promise<Record<string, string>>;
@@ -8666,7 +8677,9 @@ interface CommandResult {
 /** Bare shapes bound to machine 0, the active window's own authority. */
 interface EditorAPI {
 	/** Open a machine to read without attaching it to a window.
-	*  `{ kind: "window", window?: number }` borrows a window's own authority.
+	*  `{ kind: "window", window?: number }` borrows a window's own authority
+	*  (the active window's when `window` is omitted): `run` on it runs where
+	*  that window's files are, whichever window is active.
 	*  `{ kind: "ssh" | "kubectl-exec", ... }` connects to a machine nothing is
 	*  attached to; it is read-only, so `run` rejects. Anything else is an
 	*  `AuthorityPayload`, as `setAuthority` takes. */
@@ -8679,8 +8692,14 @@ interface EditorAPI {
 		path: string;
 		maxBytes: number;
 	}[]): Promise<FilePrefix[]>;
-	/** Unlike `spawnHostProcess`, a remote authority runs the command there. */
-	runOnTarget(program: string, args?: string[], cwd?: string): Promise<CommandResult>;
+	/** Run a command on the active window's machine, without a shell: a remote
+	*  window runs it there, unlike `spawnHostProcess`. For another window, use
+	*  `run` on the machine `openMachine({ kind: "window", window })` returns.
+	*  `stdoutTo` streams stdout into that file instead (`stdout` then resolves
+	*  empty). Resolves with a non-zero `code` rather than rejecting, and with
+	*  `code` -1 (the reason in `stderr`) when the command could not be
+	*  started; `kill()` stops it. The replacement for `spawnProcess`. */
+	runOnTarget(program: string, args?: string[], cwd?: string, stdoutTo?: string): ProcessHandle<CommandResult>;
 	machineEnv(names: string[]): Promise<Record<string, string>>;
 }
 /**

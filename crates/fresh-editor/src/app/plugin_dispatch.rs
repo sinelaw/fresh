@@ -2259,9 +2259,10 @@ impl Editor {
                 program,
                 args,
                 cwd,
+                stdout_to,
                 callback_id,
             } => {
-                self.handle_run_on_target(machine, program, args, cwd, callback_id);
+                self.handle_run_on_target(machine, program, args, cwd, stdout_to, callback_id);
             }
 
             PluginCommand::GrepProject {
