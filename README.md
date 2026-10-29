@@ -341,7 +341,19 @@ cargo binstall fresh-editor
 
 ### Nix flakes
 
-Run without installing:
+The latest release is packaged in
+[nixpkgs unstable](https://search.nixos.org/packages?channel=unstable&query=fresh-editor)
+as `fresh-editor`:
+```bash
+nix profile add nixpkgs#fresh-editor
+```
+
+For declarative management, add `pkgs.fresh-editor` to your
+[NixOS](https://nixos.org/manual/nixos/stable/#sec-declarative-package-mgmt),
+[Home Manager](https://nix-community.github.io/home-manager/), or
+[nix-darwin](https://github.com/LnL/nix-darwin) configuration.
+
+To follow `master` instead, use this repository's flake. Run without installing:
 ```bash
 nix run github:sinelaw/fresh
 ```
