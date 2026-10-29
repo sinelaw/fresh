@@ -169,14 +169,18 @@ impl Editor {
                 self.apply_event_to_active_buffer(&batch);
             }
         } else {
-            // Replace entire buffer
-            let buffer_content = self.active_state().buffer.to_string().unwrap_or_default();
+            // Replace entire buffer: delete its exact bytes, for undo (#3652)
+            let buffer_content = {
+                let state = self.active_state_mut();
+                let len = state.buffer.len();
+                state.get_edit_text(0, len)
+            };
             let buffer_len = buffer_content.len();
 
             // Delete all content and insert new
             let delete_event = Event::Delete {
                 range: 0..buffer_len,
-                deleted_text: buffer_content.into(),
+                deleted_text: buffer_content,
                 cursor_id,
             };
             let insert_event = Event::Insert {
