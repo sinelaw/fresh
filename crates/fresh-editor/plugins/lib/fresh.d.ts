@@ -1349,6 +1349,26 @@ type TerminalResult = {
 	splitId: number | null;
 };
 /**
+* A terminal's visible screen, returned by `getTerminalScreens`
+*/
+type TerminalScreen = {
+	/**
+	* The terminal's buffer (for `showBuffer`, `getBufferInfo`)
+	*/
+	bufferId: number;
+	/**
+	* The screen's lines, top to bottom, as plain text: rows a wrap
+	* continues are joined into one
+	*/
+	lines: Array<string>;
+	/**
+	* The terminal's backing file (in `getTerminalDir()`), or "" when it
+	* has none. A checkpoint leaves the screen there too, after the
+	* scrollback, until the next one replaces it.
+	*/
+	file: string;
+};
+/**
 * Options for `createWindowWithTerminal` — the atomic
 * "spawn a new editor session that hosts an agent terminal"
 * entry point used by Orchestrator. Bundles window creation,
@@ -3410,13 +3430,18 @@ type GrepMatch = {
 	*/
 	line: number;
 	/**
-	* 1-indexed column number
+	* 1-indexed byte column within the line
 	*/
 	column: number;
 	/**
-	* The matched line content (for display)
+	* The matched line, for display — on a long line only up to 4096 bytes
+	* of it on each side of the match
 	*/
 	context: string;
+	/**
+	* Where the match starts in `context`, in bytes
+	*/
+	contextOffset: number;
 };
 /**
 * Language configuration for language packs
@@ -8336,7 +8361,8 @@ interface EditorAPI {
 	* Begin a streaming project-wide search and return a `SearchHandle`.
 	* The producer (host) writes matches at full speed into shared state;
 	* the consumer drains via `handle.take()` at its own cadence. Call
-	* `handle.cancel()` to abort. Searches the same files as `grepProject`.
+	* `handle.cancel()` to abort. Searches the same files as `grepProject`,
+	* or with `bufferId` only that buffer, as it is.
 	*/
 	beginSearch(pattern: string, opts?: {
 		fixedString?: boolean;
@@ -8345,7 +8371,25 @@ interface EditorAPI {
 		wholeWords?: boolean;
 		sourceBufferId?: number;
 		fileGlob?: string;
+		bufferId?: number;
 	}): SearchHandle;
+	/**
+	* Search one buffer as it is now, unsaved edits included, with the
+	* editor's own search — the one Ctrl+F and `beginSearch` use. Resolves
+	* with its matches in order: each with its byte offset and length, its
+	* 1-based line and byte column, and the text of its line. `bufferId` 0
+	* is the active buffer. Every match is found unless `maxResults` is
+	* given; `fixedString` and `caseSensitive` default to true. `cancel()`
+	* stops it, resolving with no matches.
+	*/
+	searchBuffer(bufferId: number, pattern: string, opts?: {
+		fixedString?: boolean;
+		caseSensitive?: boolean;
+		wholeWords?: boolean;
+		maxResults?: number;
+	}): Promise<GrepMatch[]> & {
+		cancel(): void;
+	};
 	/**
 	* Replace matches in a file's buffer (async)
 	* Opens the file if not already in a buffer, applies edits via the buffer model,
@@ -8441,6 +8485,12 @@ interface EditorAPI {
 	* example while it shuts down).
 	*/
 	setWindowPreparing(id: number, message: string, label: string | null, failed: boolean, done: boolean): boolean;
+	/**
+	* The visible screen of each terminal open in the active window, read
+	* from memory: a terminal's backing file (in `getTerminalDir()`) holds
+	* only the lines that have scrolled off it.
+	*/
+	getTerminalScreens(): Promise<TerminalScreen[]>;
 	/**
 	* Send input data to a terminal
 	* 

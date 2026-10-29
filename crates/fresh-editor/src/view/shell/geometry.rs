@@ -265,6 +265,7 @@ mod tests {
     /// oracles — *and* against the rects written out by hand below, so the
     /// oracles were checked too. The hand-written rects were always the real
     /// assertion; the oracles are gone and these stay.
+    #[cfg(debug_assertions)]
     #[test]
     fn the_tree_places_every_pane_and_its_content_slot() {
         let root = split(

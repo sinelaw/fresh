@@ -28,7 +28,6 @@ impl Editor {
         // Apply all inverse events collected during undo.
         // Each event may carry displaced markers that need restoration after apply.
         for (event, displaced_markers) in &events {
-            tracing::debug!("Undo applying event: {:?}", event);
             self.apply_event_to_active_buffer(event);
 
             // Restore displaced markers from LogEntry (for single Delete events).

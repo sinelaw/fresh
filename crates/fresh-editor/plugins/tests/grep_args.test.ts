@@ -246,6 +246,14 @@ eq(
   "ack: the Ignored scope keeps them in",
 );
 
+// Live Grep's Terminals scope: backing files as text, `.txt` only, in the
+// directory given.
+const terminals = { ...base, includeIgnored: true, text: true, include: "*.txt", paths: ["/t"] };
+eq(rgArgs("q", terminals).slice(-6), ["--text", "-g", "*.txt", "--", "q", "/t"], "rg: text, include, paths");
+eq(grepArgs("q", terminals)[1], "-a", "grep: text searches binary-looking files too");
+eq(grepArgs("q", base)[1], "-I", "grep: binary files are skipped otherwise");
+eq(grepArgs("q", terminals).slice(-4), ["--include=*.txt", "--", "q", "/t"], "grep: include, paths");
+
 if (failures > 0) {
   console.log(`${failures} failure(s)`);
   process.exit(1);

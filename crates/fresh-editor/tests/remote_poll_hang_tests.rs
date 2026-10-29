@@ -13,7 +13,7 @@
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use fresh::config::Config;
 use fresh::model::filesystem::{
-    DirEntry, FileMetadata, FilePermissions, FileReader, FileSearchCursor, FileSearchOptions,
+    DirEntry, FileMetadata, FilePermissions, FileReader, FileSearchOptions,
     FileSystem, FileWriter, SearchMatch, StdFileSystem,
 };
 use std::io;
@@ -158,9 +158,8 @@ impl FileSystem for DroppableFileSystem {
         path: &Path,
         pattern: &str,
         opts: &FileSearchOptions,
-        cursor: &mut FileSearchCursor,
     ) -> io::Result<Vec<SearchMatch>> {
-        self.inner.search_file(path, pattern, opts, cursor)
+        self.inner.search_file(path, pattern, opts)
     }
     fn sudo_write(
         &self,

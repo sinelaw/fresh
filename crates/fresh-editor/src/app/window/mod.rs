@@ -68,6 +68,19 @@ use std::sync::Arc;
 /// bound.
 const VISIBLE_WINDOW_SCAN_BYTES: usize = 256 * 1024;
 
+/// The bytes `rows` lines from `top_byte` take in `buffer` — the visible
+/// text, for search highlights — reading at most `VISIBLE_WINDOW_SCAN_BYTES`.
+pub(crate) fn visible_range(
+    buffer: &mut crate::model::buffer::TextBuffer,
+    top_byte: usize,
+    rows: usize,
+) -> std::ops::Range<usize> {
+    let end = buffer
+        .advance_lines_within(top_byte, rows, VISIBLE_WINDOW_SCAN_BYTES)
+        .min(buffer.len());
+    top_byte..end
+}
+
 /// A project-rooted unit of editor state.
 ///
 /// After Step 0b every per-subsystem field listed below is owned
@@ -295,6 +308,21 @@ impl LspCompletionCandidate {
     }
 }
 
+/// A file a workspace listed that exists but failed to open on restore —
+/// see [`Window::unopened_files`].
+#[derive(Debug, Clone)]
+pub struct UnopenedFile {
+    /// The path as the workspace recorded it: relative to the window's root
+    /// for a file under it, absolute for an external file.
+    pub path: PathBuf,
+    /// Whether a split listed it as a tab.
+    pub in_tabs: bool,
+    /// Whether the workspace listed it under `external_files`.
+    pub external: bool,
+    /// Its saved cursor and scroll state, carried through unchanged.
+    pub state: Option<crate::workspace::SerializedFileState>,
+}
+
 pub struct Window {
     /// Stable identifier. The base window is always `WindowId(1)`.
     pub id: WindowId,
@@ -348,14 +376,14 @@ pub struct Window {
     /// way to "rename" the root.
     pub root: PathBuf,
 
-    /// Unnamed buffers this window's workspace listed that this session could
-    /// not find in the recovery store it can see.
-    ///
-    /// Non-empty means the window knows less than its workspace file does, so
-    /// it must not overwrite that file — see `Editor::save_workspace_for`.
-    /// Only *absent* entries count: one that is present but unusable will
-    /// never resolve, and would stop the file being saved for good.
-    pub unresolved_unnamed_buffers: Vec<crate::workspace::UnnamedBufferRef>,
+    /// Files this window's workspace listed that exist but could not be
+    /// opened this session (a permission blip, an I/O error, a path briefly
+    /// shadowed by a directory). The snapshot is built from the live
+    /// buffers, so without these a save would write each file's place away
+    /// for good (#3532); `capture_workspace` writes them back instead. A
+    /// file that is gone from disk is not listed: dropping it is right. One
+    /// leaves the list when the window opens it.
+    pub unopened_files: Vec<UnopenedFile>,
 
     /// Things the user needs told about this window's restore, queued by
     /// `restore_unnamed_buffers` and shown by `log_restore_summary`.
@@ -1248,7 +1276,7 @@ pub struct Window {
     pub(crate) line_scan: crate::app::line_scan::LineScan,
 
     /// Background search-scan state for this window.
-    pub(crate) search_scan: crate::app::search_scan::SearchScan,
+    pub(crate) search_scan: Option<crate::app::search_scan::ActiveSearchScan>,
 
     /// Anchor for the search-result overlay in this window.
     pub search_overlay_top_byte: Option<usize>,
@@ -1651,16 +1679,41 @@ impl Window {
         }
     }
 
-    /// Build a compiled `regex::Regex` from this window's current
-    /// search-flags (`use_regex`, `whole_word`, `case_sensitive`)
-    /// applied to `query`. Returns the compiled regex or a
-    /// human-readable error string.
-    pub(crate) fn build_search_regex(&self, query: &str) -> Result<regex::Regex, String> {
-        crate::app::regex_replace::build_search_regex(
+    /// `query` compiled under this window's search flags (`use_regex`,
+    /// `whole_word`, `case_sensitive`), or a human-readable error.
+    pub(crate) fn search_query(
+        &self,
+        query: &str,
+    ) -> Result<crate::model::buffer::SearchQuery, String> {
+        crate::model::buffer::SearchQuery::new(
             query,
             self.search_use_regex,
             self.search_whole_word,
             self.search_case_sensitive,
+        )
+        .map_err(|e| e.to_string())
+    }
+
+    /// The viewport's top byte, and the byte range of the lines it shows
+    /// (at most `VISIBLE_WINDOW_SCAN_BYTES` of them): where search matches
+    /// are highlighted when only the visible ones are.
+    pub(crate) fn visible_search_range(&mut self) -> (usize, std::ops::Range<usize>) {
+        let active_split = self.effective_active_split();
+        let (top_byte, visible_height) = self
+            .splits()
+            .1
+            .get(&active_split)
+            .map(|vs| {
+                (
+                    vs.buffer_tab_state().viewport.top_byte(),
+                    vs.buffer_tab_state().viewport.height.saturating_sub(2),
+                )
+            })
+            .unwrap_or((0, 20));
+        let buffer = &mut self.active_state_mut().buffer;
+        (
+            top_byte,
+            visible_range(buffer, top_byte, visible_height as usize),
         )
     }
 
@@ -2479,7 +2532,7 @@ impl Window {
             last_focused_at: crate::workspace::now_millis(),
             workspace_restored: false,
             root,
-            unresolved_unnamed_buffers: Vec::new(),
+            unopened_files: Vec::new(),
             recovery_notices: Vec::new(),
             connection,
             file_explorer: None,
@@ -2670,7 +2723,7 @@ impl Window {
             wait_tracking: HashMap::new(),
             completed_waits: Vec::new(),
             line_scan: crate::app::line_scan::LineScan::default(),
-            search_scan: crate::app::search_scan::SearchScan::default(),
+            search_scan: None,
             search_overlay_top_byte: None,
             animations: crate::view::animation::AnimationRunner::default(),
             plugin_errors: Vec::new(),
@@ -4320,57 +4373,29 @@ impl Window {
             self.clear_search_highlights();
             return;
         }
-
-        let ns = self.search_namespace.clone();
-
-        // Share the one search-regex builder so highlight anchoring (`^`/`$`
+        // Share the one search-query builder so highlight anchoring (`^`/`$`
         // line-matching) stays consistent with the actual search results.
-        let regex = match self.build_search_regex(query) {
-            Ok(r) => r,
-            Err(_) => {
-                self.clear_search_highlights();
-                return;
-            }
+        let Ok(search_query) = self.search_query(query) else {
+            self.clear_search_highlights();
+            return;
         };
-
-        let active_split = self.effective_active_split();
-        let (top_byte, visible_height) = self
-            .splits()
-            .1
-            .get(&active_split)
-            .map(|vs| {
-                (
-                    vs.buffer_tab_state().viewport.top_byte(),
-                    vs.buffer_tab_state().viewport.height.saturating_sub(2),
-                )
-            })
-            .unwrap_or((0, 20));
+        let ns = self.search_namespace.clone();
+        let (_, visible) = self.visible_search_range();
 
         let state = self.active_state_mut();
         state.overlays.clear_namespace(&ns, &mut state.marker_list);
-
-        let visible_start = top_byte;
-        let visible_end = state
+        let found = state
             .buffer
-            .advance_lines_within(top_byte, visible_height as usize, VISIBLE_WINDOW_SCAN_BYTES)
-            .min(state.buffer.len());
-        let visible_text = state.get_text_range(visible_start, visible_end);
-
-        for mat in regex.find_iter(&visible_text) {
-            let absolute_pos = visible_start + mat.start();
-            let match_len = mat.end() - mat.start();
-            let search_style = ratatui::style::Style::default().fg(search_fg).bg(search_bg);
-            let overlay = crate::view::overlay::Overlay::with_namespace_fixed_end(
+            .find_regex_matches(&search_query, visible, usize::MAX)
+            .unwrap_or_default();
+        for (pos, len) in found {
+            let overlay = crate::view::overlay::Overlay::search_match(
                 &mut state.marker_list,
-                absolute_pos..(absolute_pos + match_len),
-                crate::view::overlay::OverlayFace::themed(
-                    "search.match_fg",
-                    "search.match_bg",
-                    search_style,
-                ),
+                pos..pos + len,
                 ns.clone(),
-            )
-            .with_priority_value(10);
+                search_fg,
+                search_bg,
+            );
             state.overlays.add(overlay);
         }
     }
@@ -4396,57 +4421,48 @@ impl Window {
         search_fg: ratatui::style::Color,
         search_bg: ratatui::style::Color,
     ) {
-        let query = match self.search_state.as_ref() {
-            Some(ss) if !ss.query.is_empty() => ss.query.clone(),
+        // The query as it was searched for: a flag toggled since must not
+        // change what the search's highlights match.
+        let search_query = match self.search_state.as_ref() {
+            Some(ss) if !ss.query.is_empty() => ss.search_query.clone(),
             _ => return,
         };
-
         let ns = self.search_namespace.clone();
-
-        // Share the one search-regex builder so re-highlighting after an edit
-        // keeps `^`/`$` line-anchoring consistent with the search results.
-        let regex = match self.build_search_regex(&query) {
-            Ok(r) => r,
-            Err(_) => return,
-        };
 
         let state = self.active_state_mut();
         let buf_len = state.buffer.len();
+        let edit_start = edit_start.min(buf_len);
         let edit_end = edit_start.saturating_add(edit_new_len).min(buf_len);
 
-        // Expand the edited byte span to the full line(s) it touches so that
-        // word-boundary context on either side of the edit is included.
-        let start_line = state.buffer.get_line_number(edit_start.min(buf_len));
-        let end_line = state.buffer.get_line_number(edit_end);
-        let win_start = state.buffer.line_start_offset(start_line).unwrap_or(0);
+        // Expand the edited span to the line(s) it touches, so word-boundary
+        // context on either side of the edit is included — but no further
+        // than the viewport would read: a line can be the whole file.
+        const CAP: usize = VISIBLE_WINDOW_SCAN_BYTES;
+        let win_start = state
+            .buffer
+            .prev_line_start_within(edit_start, CAP)
+            .unwrap_or(edit_start.saturating_sub(CAP));
         let win_end = state
             .buffer
-            .line_start_offset(end_line + 1)
-            .unwrap_or(buf_len)
-            .min(buf_len);
+            .next_line_start_within(edit_end, CAP)
+            .unwrap_or_else(|| edit_end.saturating_add(CAP).min(buf_len));
 
-        let text = state.get_text_range(win_start, win_end);
+        let found = state
+            .buffer
+            .find_regex_matches(&search_query, win_start..win_end, usize::MAX)
+            .unwrap_or_default();
 
         let mut new_overlays = Vec::new();
         let mut new_ranges = Vec::new();
-        for mat in regex.find_iter(&text) {
-            let absolute_pos = win_start + mat.start();
-            let match_len = mat.end() - mat.start();
-            new_ranges.push(absolute_pos..absolute_pos + match_len);
-            let search_style = ratatui::style::Style::default().fg(search_fg).bg(search_bg);
-            new_overlays.push(
-                crate::view::overlay::Overlay::with_namespace_fixed_end(
-                    &mut state.marker_list,
-                    absolute_pos..(absolute_pos + match_len),
-                    crate::view::overlay::OverlayFace::themed(
-                        "search.match_fg",
-                        "search.match_bg",
-                        search_style,
-                    ),
-                    ns.clone(),
-                )
-                .with_priority_value(10),
-            );
+        for (pos, len) in found {
+            new_ranges.push(pos..pos + len);
+            new_overlays.push(crate::view::overlay::Overlay::search_match(
+                &mut state.marker_list,
+                pos..pos + len,
+                ns.clone(),
+                search_fg,
+                search_bg,
+            ));
         }
 
         state.overlays.replace_range_in_namespace(

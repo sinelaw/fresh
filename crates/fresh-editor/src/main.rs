@@ -984,18 +984,6 @@ fn handle_first_run_setup(
     }
     // The warning-log channel and status-log path are wired up in main.
 
-    // Unsaved work a bare `fresh` (Auto Attach's daemon) left for this
-    // directory, so every launch below can restore it — including the ones
-    // that restore no workspace (`--no-restore`). A file launch restores
-    // only the files it names, so it takes over only theirs.
-    let named_files: Vec<PathBuf> = file_locations
-        .iter()
-        .filter(|loc| !loc.path.is_dir())
-        .map(|loc| loc.path.canonicalize().unwrap_or_else(|_| loc.path.clone()))
-        .collect();
-    let only = editor.file_launch().then_some(named_files.as_slice());
-    editor.adopt_other_mode_recovery(editor.active_window_id(), only);
-
     // If the user passed any file argument on the command line and the
     // `skip_session_restore_when_files_passed` option is on (default), the
     // launch is a focused "open these files" invocation (`Editor::file_launch`):
@@ -1123,21 +1111,6 @@ fn handle_first_run_setup(
     // branches above (via `restore_window` / `apply_active_window_explorer_default`),
     // which respect a deliberately-closed explorer rather than re-opening
     // it unconditionally on every relaunch.
-
-    if editor.has_recovery_files().unwrap_or(false) {
-        tracing::info!("Recovery files found from previous session, recovering...");
-        match editor.recover_all_buffers() {
-            Ok(count) if count > 0 => {
-                tracing::info!("Recovered {} buffer(s)", count);
-            }
-            Ok(_) => {
-                tracing::info!("No buffers to recover");
-            }
-            Err(e) => {
-                tracing::warn!("Failed to recover buffers: {}", e);
-            }
-        }
-    }
 
     Ok(())
 }
@@ -2098,12 +2071,7 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
 
     // Enable terminal modes (raw mode, alternate screen, mouse capture, etc.)
     // This checks support for each mode and tracks what was enabled
-    let keyboard_config = KeyboardConfig {
-        disambiguate_escape_codes: config.editor.keyboard_disambiguate_escape_codes,
-        report_event_types: config.editor.keyboard_report_event_types,
-        report_alternate_keys: config.editor.keyboard_report_alternate_keys,
-        report_all_keys_as_escape_codes: config.editor.keyboard_report_all_keys_as_escape_codes,
-    };
+    let keyboard_config = KeyboardConfig::from_editor_config(&config.editor);
     tracing::info!("Enabling terminal modes...");
     let terminal_modes = TerminalModes::enable(Some(&keyboard_config))?;
     tracing::info!("Terminal modes enabled");
@@ -7009,15 +6977,7 @@ fn handle_suspend_request(
 ) -> AnyhowResult<()> {
     #[cfg(unix)]
     {
-        let keyboard_config = KeyboardConfig {
-            disambiguate_escape_codes: editor.config().editor.keyboard_disambiguate_escape_codes,
-            report_event_types: editor.config().editor.keyboard_report_event_types,
-            report_alternate_keys: editor.config().editor.keyboard_report_alternate_keys,
-            report_all_keys_as_escape_codes: editor
-                .config()
-                .editor
-                .keyboard_report_all_keys_as_escape_codes,
-        };
+        let keyboard_config = KeyboardConfig::from_editor_config(&editor.config().editor);
         terminal_modes::suspend_and_resume(terminal_modes, Some(&keyboard_config))
             .context("Failed to suspend process")?;
         editor.request_full_redraw();

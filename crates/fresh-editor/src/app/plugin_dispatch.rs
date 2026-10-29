@@ -2101,6 +2101,31 @@ impl Editor {
                 self.handle_send_terminal_input(terminal_id, data);
             }
 
+            PluginCommand::GetTerminalScreens { callback_id } => {
+                let window = self.active_window();
+                let screens: Vec<fresh_core::api::TerminalScreen> = window
+                    .terminal_buffers
+                    .iter()
+                    .filter_map(|(buffer_id, info)| {
+                        let handle = window.terminal_manager.get(info.terminal_id)?;
+                        let state = handle.state.lock().ok()?;
+                        Some(fresh_core::api::TerminalScreen {
+                            buffer_id: buffer_id.0 as u64,
+                            lines: state.screen_lines(),
+                            file: window
+                                .terminal_backing_files
+                                .get(&info.terminal_id)
+                                .map(|p| p.to_string_lossy().into_owned())
+                                .unwrap_or_default(),
+                        })
+                    })
+                    .collect();
+                self.plugin_manager.read().unwrap().resolve_callback(
+                    callback_id,
+                    serde_json::to_string(&screens).unwrap_or_else(|_| "[]".to_string()),
+                );
+            }
+
             PluginCommand::CloseTerminal { terminal_id } => {
                 self.handle_close_terminal(terminal_id);
             }
@@ -2269,6 +2294,7 @@ impl Editor {
                 whole_words,
                 file_glob,
                 source_buffer_id,
+                buffer_id,
                 handle_id,
             } => {
                 self.handle_begin_search(crate::app::plugin_commands::BeginSearchArgs {
@@ -2279,6 +2305,7 @@ impl Editor {
                     whole_words,
                     file_glob,
                     source_buffer_id,
+                    buffer_id,
                     handle_id,
                 });
             }
@@ -2881,6 +2908,12 @@ impl Editor {
 
     /// Save a buffer to a specific file path (for :w filename)
     fn handle_save_buffer_to_path(&mut self, buffer_id: BufferId, path: std::path::PathBuf) {
+        // Never over a file whose one buffer is elsewhere
+        if let Some(refusal) = self.save_target_refusal(&path, buffer_id) {
+            self.handle_set_status(format!("Not saved: {refusal}"));
+            tracing::warn!("SaveBufferToPath: refused {}: {refusal}", path.display());
+            return;
+        }
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
@@ -2894,9 +2927,12 @@ impl Editor {
                 .save_to_file(&path, &self.dir_context.recovery_dir())
             {
                 Ok(()) => {
-                    // save_to_file already updates file_path internally via finalize_save
-                    // Run on-save actions (formatting, etc.)
-                    if let Err(e) = self.finalize_save(Some(path)) {
+                    // Finalize the buffer that was saved, which need not be
+                    // the active one: finalizing the active buffer deleted
+                    // the hot-exit entry of a buffer still holding unsaved
+                    // work, left the saved one marked for a backup, and ran
+                    // the saved buffer's on-save actions on the active one.
+                    if let Err(e) = self.finalize_save_buffer(buffer_id, Some(path), false) {
                         tracing::warn!("Failed to finalize save: {}", e);
                     }
                     tracing::debug!("Saved buffer {:?} to path", buffer_id);

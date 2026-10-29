@@ -756,13 +756,7 @@ impl crate::app::Editor {
         // store — crash leftovers the workspace snapshot doesn't cover. Per
         // workspace, on activation, so each buffer returns to where it was
         // edited; a workspace never visited is never touched (issue #3189).
-        match self.adopt_recovery_for_active_window(false) {
-            Ok(n) if n > 0 => {
-                tracing::info!("Adopted {n} recovery entry/entries into window {id}")
-            }
-            Ok(_) => {}
-            Err(e) => tracing::warn!("Recovery adopt for window {id} failed: {e}"),
-        }
+        self.adopt_recovery_for_window(id, None, super::recovery_actions::AdoptScope::Workspace);
 
         // If we just switched to a remote session that came back from disk
         // dormant (backend spec known, live authority still the local
@@ -1520,6 +1514,9 @@ impl crate::app::Editor {
 
         // The window's reference is gone; close its connection if nothing else shares it.
         self.prune_connections();
+
+        // Its files' locks, for an editor waiting on one of them
+        self.sync_file_locks();
 
         true
     }

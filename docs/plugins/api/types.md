@@ -2996,13 +2996,18 @@ type GrepMatch = {
   */
   line: number;
   /**
-  * 1-indexed column number
+  * 1-indexed byte column within the line
   */
   column: number;
   /**
-  * The matched line content (for display)
+  * The matched line, for display — on a long line only up to 4096 bytes
+  * of it on each side of the match
   */
   context: string;
+  /**
+  * Where the match starts in `context`, in bytes
+  */
+  contextOffset: number;
 };
 ```
 
@@ -4147,6 +4152,30 @@ type TerminalResult = {
   * The split ID (if created in a new split)
   */
   splitId: number | null;
+};
+```
+
+### `TerminalScreen`
+
+A terminal's visible screen, returned by `getTerminalScreens`
+
+```typescript
+type TerminalScreen = {
+  /**
+  * The terminal's buffer (for `showBuffer`, `getBufferInfo`)
+  */
+  bufferId: number;
+  /**
+  * The screen's lines, top to bottom, as plain text: rows a wrap
+  * continues are joined into one
+  */
+  lines: Array<string>;
+  /**
+  * The terminal's backing file (in `getTerminalDir()`), or "" when it
+  * has none. A checkpoint leaves the screen there too, after the
+  * scrollback, until the next one replaces it.
+  */
+  file: string;
 };
 ```
 

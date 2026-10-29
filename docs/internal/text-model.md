@@ -14,8 +14,6 @@ Three "buffer" concepts are easy to conflate; they are distinct:
 | `TextBuffer` (alias `Buffer`) | the document store: piece tree + buffer pool + format/persistence metadata | yes |
 | `CompositeBuffer` | synthesized multi-source view (diff/merge/side-by-side) | no — references `TextBuffer`s by id |
 
-`DocumentModel` is a **trait**, the editor-facing abstraction over a buffer; it is implemented by `EditorState`, not by `TextBuffer`.
-
 Cursors and markers are **not** owned by `TextBuffer`. It owns only the piece tree, the buffer pool, and persistence/file-kind/format/version/config state. Cursors and markers are held by editor/view state.
 
 ---
@@ -58,7 +56,7 @@ Line/column navigation needs newline counts. Fresh tracks them at two levels:
 - **Per leaf:** an optional line-feed count, summed into the internal nodes' left line-feed summaries. An unset count means "not yet scanned" — line-based navigation is unavailable for that subtree and line↔offset lookups bail out.
 - **Per `StringBuffer`:** an optional `line_starts` index. Present for small/loaded buffers; **absent = large-file mode**, where building a full line index would defeat the negligible-memory goal.
 
-This optional index is the central large-file concession: with no line index, the editor works in byte-offset space (see `DocumentPosition::ByteOffset`) and fills in per-leaf line-feed counts incrementally as chunks are scanned. The incremental update has a path-copy variant that preserves `Arc::ptr_eq` for unscanned subtrees.
+This optional index is the central large-file concession: with no line index, the editor works in byte-offset space and fills in per-leaf line-feed counts incrementally as chunks are scanned. The incremental update has a path-copy variant that preserves `Arc::ptr_eq` for unscanned subtrees.
 
 ### 2.5 Balancing: rebuild, not red-black
 
@@ -234,8 +232,8 @@ Two "saved root" mechanisms:
 - **Line diff** — an LCS line diff (inserted/modified/deleted) for saved-vs-current comparison.
 - **Cursor** — a cursor holds a position, anchor, sticky column, selection mode, block anchor, and a deselect-on-move flag; positions are **byte offsets**. The cursor collection is a map from cursor id to cursor with a designated primary, supporting multi-cursor merge/dedupe and per-edit adjustment.
 - **Buffer position** — free functions converting byte↔(line, col) over a buffer reference, kept as functions to avoid growing `TextBuffer`'s surface.
-- **Document model** — the `DocumentModel` trait plus `DocumentPosition` (`LineColumn` or `ByteOffset`, the dual coordinate system for huge files) and viewport types.
-- **Filesystem** — a `FileSystem` trait of backend primitives: range read (the lazy-load primitive), patched write (zero-copy save), atomic replace (plain, and identity-preserving with a typed refusal), exclusive create (`create_new_file`) and private exclusive create (`create_new_private_file`, 0600 from the start), metadata, server-side file search, and a content digest (size and SHA-256, computed by the backend where the file lives, streamed by default). It holds no save strategy (§7.2). The exclusive creates have no default, so a backend that can't make them atomic says so (`Unsupported`, as the remote one does) instead of racing, and a wrapper must forward them. Local and remote backends implement it, so the entire model is FS-agnostic (enabling remote editing).
+- **Search** — `SearchQuery` (a query compiled once: regex and window overlap), `RegexSearch` (every match in a range, as `find_iter` would give, read a window at a time through the buffer's lazy loading, a step at a time if need be) and `BufferSearch` (a `RegexSearch` run a time slice at a time, restarting after an edit). Every search uses them: Ctrl+F, replace, highlights, add-cursor-at-next-match and project search.
+- **Filesystem** — a `FileSystem` trait of backend primitives: range read (the lazy-load primitive), patched write (zero-copy save), atomic replace (plain, and identity-preserving with a typed refusal), exclusive create (`create_new_file`) and private exclusive create (`create_new_private_file`, 0600 from the start), metadata, server-side file search (locally a `TextBuffer` searched with `RegexSearch`; the remote agent searches where the file lives), and a content digest (size and SHA-256, computed by the backend where the file lives, streamed by default). It holds no save strategy (§7.2). The exclusive creates have no default, so a backend that can't make them atomic says so (`Unsupported`, as the remote one does) instead of racing, and a wrapper must forward them. Local and remote backends implement it, so the entire model is FS-agnostic (enabling remote editing).
 
 ---
 

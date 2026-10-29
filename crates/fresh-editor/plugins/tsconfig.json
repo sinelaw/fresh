@@ -25,7 +25,6 @@
     "lib/panel-manager.ts",
     "lib/pickers.ts",
     "lib/project_identity.ts",
-    "lib/search-utils.ts",
     "lib/types.ts",
     "lib/virtual-buffer-factory.ts",
     "lib/widgets.ts",

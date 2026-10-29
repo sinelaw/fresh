@@ -903,7 +903,7 @@ impl EditorServer {
     /// Initialize the editor on first client connection.
     ///
     /// Performs the full first-boot sequence: build editor, restore
-    /// workspace, recover buffers from hot exit, start recovery
+    /// workspace (which brings back its unsaved work), start recovery
     /// session.
     pub fn initialize_editor(&mut self) -> io::Result<()> {
         let (mut editor, terminal) = self.build_editor_instance()?;
@@ -921,22 +921,6 @@ impl EditorServer {
             }
             Err(e) => {
                 tracing::warn!("Failed to restore session workspace: {}", e);
-            }
-        }
-
-        // Recover buffers from hot exit recovery files
-        if editor.has_recovery_files().unwrap_or(false) {
-            tracing::info!("Recovery files found for session, recovering...");
-            match editor.recover_all_buffers() {
-                Ok(count) if count > 0 => {
-                    tracing::info!("Recovered {} buffer(s) for session", count);
-                }
-                Ok(_) => {
-                    tracing::info!("No buffers to recover for session");
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to recover session buffers: {}", e);
-                }
             }
         }
 
@@ -1036,7 +1020,13 @@ impl EditorServer {
 
         // Send terminal setup sequences
         let mouse_hover_enabled = self.config.editor_config.editor.mouse_hover_enabled;
-        let setup = terminal_setup_sequences(mouse_hover_enabled);
+        let keyboard = crate::services::terminal_modes::KeyboardConfig::from_editor_config(
+            self.editor
+                .as_ref()
+                .map(|e| &e.config().editor)
+                .unwrap_or(&self.config.editor_config.editor),
+        );
+        let setup = terminal_setup_sequences(mouse_hover_enabled, &keyboard);
         conn.write_data(&setup)?;
 
         // Send cursor style (from editor if running, otherwise from config)

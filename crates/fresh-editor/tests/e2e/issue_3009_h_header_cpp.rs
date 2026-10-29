@@ -11,8 +11,8 @@
 
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use fresh::model::filesystem::{
-    DirEntry, FileMetadata, FilePermissions, FileReader, FileSearchCursor, FileSearchOptions,
-    FileSystem, FileWriter, SearchMatch, StdFileSystem, WalkEntry, WalkOptions,
+    DirEntry, FileMetadata, FilePermissions, FileReader, FileSearchOptions, FileSystem, FileWriter,
+    SearchMatch, StdFileSystem, WalkEntry, WalkOptions,
 };
 use ratatui::style::Color;
 use std::io;
@@ -306,10 +306,8 @@ impl FileSystem for RemoteTreeFs {
         path: &Path,
         pattern: &str,
         opts: &FileSearchOptions,
-        cursor: &mut FileSearchCursor,
     ) -> io::Result<Vec<SearchMatch>> {
-        self.inner
-            .search_file(&self.map(path), pattern, opts, cursor)
+        self.inner.search_file(&self.map(path), pattern, opts)
     }
     fn sudo_write(
         &self,

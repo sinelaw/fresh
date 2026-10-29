@@ -367,13 +367,26 @@ impl Backend for CaptureBackend {
 /// omitted and only mode 1002 (cell motion) is enabled, reducing event volume
 /// and avoiding input corruption. On non-Windows platforms the parameter is
 /// ignored and full mouse tracking is always enabled.
-pub fn terminal_setup_sequences(mouse_hover_enabled: bool) -> Vec<u8> {
+///
+/// The keyboard enhancement flags `keyboard` enables are pushed as in direct
+/// mode, so an attached client's terminal reports Super and the other
+/// modifiers legacy encoding can't carry (#3618).
+pub fn terminal_setup_sequences(
+    mouse_hover_enabled: bool,
+    keyboard: &crate::services::terminal_modes::KeyboardConfig,
+) -> Vec<u8> {
     use crate::services::terminal_modes::sequences as seq;
 
     let mut buf = Vec::new();
 
     // Enter alternate screen
     buf.extend_from_slice(seq::ENTER_ALTERNATE_SCREEN);
+    // Push keyboard enhancement flags, after entering the alternate screen:
+    // the kitty protocol keeps a separate stack per screen, so this push must
+    // land on the alternate one (see `TerminalModes::enable`).
+    if keyboard.any_enabled() {
+        buf.extend_from_slice(&seq::push_keyboard_enhancement(keyboard.to_flags()));
+    }
     // Enable mouse tracking (SGR format)
     buf.extend_from_slice(seq::ENABLE_MOUSE_CLICK);
     buf.extend_from_slice(seq::ENABLE_MOUSE_DRAG);
@@ -422,6 +435,10 @@ pub fn terminal_teardown_sequences() -> Vec<u8> {
     buf.extend_from_slice(seq::DISABLE_MOUSE_CLICK);
     // Reset attributes
     buf.extend_from_slice(seq::RESET_ATTRIBUTES);
+    // Pop the keyboard enhancement flags the setup pushed, while still on the
+    // alternate screen whose stack holds them. With nothing pushed, the pop
+    // leaves the flags at their default.
+    buf.extend_from_slice(seq::POP_KEYBOARD_ENHANCEMENT);
     // Leave alternate screen
     buf.extend_from_slice(seq::LEAVE_ALTERNATE_SCREEN);
 
@@ -431,6 +448,7 @@ pub fn terminal_teardown_sequences() -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::terminal_modes::KeyboardConfig;
     use ratatui::buffer::Buffer;
     use ratatui::style::Style;
 
@@ -514,7 +532,7 @@ mod tests {
 
     #[test]
     fn test_setup_sequences_enable_features() {
-        let setup = terminal_setup_sequences(true);
+        let setup = terminal_setup_sequences(true, &KeyboardConfig::default());
         let setup_str = String::from_utf8_lossy(&setup);
 
         // Alternate screen
@@ -534,6 +552,39 @@ mod tests {
         assert!(teardown_str.contains("\x1b[?1049l"));
         // Reset attributes
         assert!(teardown_str.contains("\x1b[0m"));
+    }
+
+    /// Issue #3618: an attached client gets the same keyboard enhancement
+    /// push a standalone editor writes (`CSI > 5 u` for disambiguate +
+    /// alternate keys), on the alternate screen, and teardown pops it there.
+    #[test]
+    fn test_setup_pushes_configured_keyboard_flags_on_the_alternate_screen() {
+        let keyboard = KeyboardConfig {
+            disambiguate_escape_codes: true,
+            report_event_types: false,
+            report_alternate_keys: true,
+            report_all_keys_as_escape_codes: false,
+        };
+        let setup = String::from_utf8(terminal_setup_sequences(true, &keyboard)).unwrap();
+        let alt = setup.find("\x1b[?1049h").unwrap();
+        let push = setup.find("\x1b[>5u").expect("keyboard flags pushed");
+        assert!(alt < push, "push must follow entering the alternate screen");
+
+        let teardown = String::from_utf8(terminal_teardown_sequences()).unwrap();
+        let pop = teardown.find("\x1b[<1u").expect("keyboard flags popped");
+        assert!(pop < teardown.find("\x1b[?1049l").unwrap());
+    }
+
+    #[test]
+    fn test_setup_pushes_nothing_when_keyboard_flags_are_off() {
+        let keyboard = KeyboardConfig {
+            disambiguate_escape_codes: false,
+            report_event_types: false,
+            report_alternate_keys: false,
+            report_all_keys_as_escape_codes: false,
+        };
+        let setup = String::from_utf8(terminal_setup_sequences(true, &keyboard)).unwrap();
+        assert!(!setup.contains("\x1b[>"));
     }
 
     /// Issue #2723: a resize inside a daemon session left blank cells filled

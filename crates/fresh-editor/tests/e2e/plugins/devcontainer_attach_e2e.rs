@@ -240,7 +240,7 @@ fn drop_workspace_temp(_workspace: &Path) {}
 ///
 /// The fake docker exposes two hooks that make this checkable
 /// without a real container:
-///   - `FAKE_DC_PROBE_RESPONSE`: stdout for any `docker exec ... -c env`,
+///   - `FAKE_DC_PROBE_RESPONSE`: stdout for any `docker exec ... -c <env dump>`,
 ///     standing in for what `bash -lic env` would print inside a
 ///     real container.
 ///   - `<state>/exec_history`: tab-separated record of every `docker
@@ -275,14 +275,19 @@ fn user_env_probe_capture_propagates_path_into_subsequent_execs() {
 
     // Pin the env-probe response in the per-test state dir (process
     // env vars would leak across parallel test bins). The fake docker
-    // shim cats this file when invoked with `... -c env`.
+    // shim cats this file when invoked with `... -c <env dump>`.
     let state = harness
         .fake_devcontainer_state()
         .expect("fake state present")
         .to_path_buf();
+    // Shaped like the real dump (lib/env_dump.ts): an rc file's noise,
+    // the marker line, then NUL-separated records — one a multi-line value
+    // whose second line looks like a `PATH` of its own (#3586).
     fs::write(
         state.join("probe_response"),
-        "PATH=/home/vscode/.local/bin:/usr/local/bin:/usr/bin\nHOME=/home/vscode\nLANG=C.UTF-8\n",
+        "rc says: PATH=/noise\n\n__FRESH_ENV_DUMP_5d0b7a__\n\
+         PATH=/home/vscode/.local/bin:/usr/local/bin:/usr/bin\0HOME=/home/vscode\0\
+         MULTI=line1\nPATH=/evil\0LANG=C.UTF-8\0",
     )
     .expect("write probe_response");
 
@@ -296,19 +301,23 @@ fn user_env_probe_capture_propagates_path_into_subsequent_execs() {
     let _label = wait_for_container_authority(&mut harness);
 
     // Read the recorded exec history. The probe call should be in
-    // there: a `bash -l -i -c env` invocation against the just-up
-    // container — the plugin's `captureContainerLoginEnv` runs this
-    // before handing the payload to `setAuthority`.
+    // there: a `bash -l -i -c <env dump>` invocation (lib/env_dump.ts)
+    // against the just-up container — the plugin's
+    // `captureContainerLoginEnv` runs this before handing the payload to
+    // `setAuthority`.
     let history_path = state.join("exec_history");
     let history = fs::read_to_string(&history_path)
         .unwrap_or_else(|e| panic!("exec_history not found at {history_path:?}: {e}"));
     let probe_lines: Vec<_> = history
         .lines()
-        .filter(|l| l.contains("bash -l -i -c env") || l.contains("bash -l -c env"))
+        .filter(|l| {
+            (l.contains("bash -l -i -c ") || l.contains("bash -l -c "))
+                && l.contains("__FRESH_ENV_DUMP_")
+        })
         .collect();
     assert!(
         !probe_lines.is_empty(),
-        "plugin must call `bash -lic env` to capture userEnvProbe; \
+        "plugin must run its env dump under `bash -lic` to capture userEnvProbe; \
          exec_history was:\n{history}"
     );
 
@@ -339,6 +348,11 @@ fn user_env_probe_capture_propagates_path_into_subsequent_execs() {
         last.contains("PATH=/home/vscode/.local/bin:/usr/local/bin:/usr/bin"),
         "command_exists probe must include the captured PATH; \
          got line: {last:?}\nfull history:\n{final_history}"
+    );
+    assert!(
+        !last.contains("/evil") && !last.contains("/noise"),
+        "neither rc noise nor a value's continuation line may become PATH; \
+         got line: {last:?}"
     );
 
     drop_workspace_temp(&workspace);

@@ -5737,3 +5737,70 @@ fn test_focusing_an_already_live_terminal_keeps_its_scrollback() {
         missing
     );
 }
+
+/// A checkpoint while a terminal is in scroll-back rewrites the screen saved
+/// at the end of its backing file, after the lines printed since. A view of
+/// a large transcript reads that file lazily, and must keep showing what it
+/// showed rather than whatever the rewrite put there (issue #3645).
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // Unix shell loop
+fn test_checkpoint_leaves_a_lazily_read_scrollback_view_intact() {
+    if native_pty_system()
+        .openpty(PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .is_err()
+    {
+        eprintln!("Skipping terminal test: PTY not available in this environment");
+        return;
+    }
+    let mut config = Config::default();
+    // Any transcript is "large": the view reads it lazily
+    config.editor.large_file_threshold_bytes = 64;
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+
+    harness.editor_mut().open_terminal();
+    let buffer_id = harness.editor().active_buffer_id();
+    let terminal_id = harness
+        .editor()
+        .active_window()
+        .get_terminal_id(buffer_id)
+        .unwrap();
+    let backing = harness.editor().active_window().terminal_backing_files[&terminal_id].clone();
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(b"for i in $(seq 1 60); do echo row$i; done\n");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("row60"))
+        .unwrap();
+
+    // Into scroll-back, without drawing it (which would load what it shows)
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Char(']'), KeyModifiers::CONTROL)
+        .unwrap();
+    assert!(harness.editor().active_state().buffer.is_large_file());
+    let shown = std::fs::read(&backing).unwrap();
+
+    // More output scrolls past the saved screen, then a checkpoint
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(b"for i in $(seq 61 120); do echo row$i; done\n");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while std::fs::read(&backing).unwrap().len() <= shown.len() {
+        assert!(std::time::Instant::now() < deadline, "no output streamed");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    harness.editor_mut().save_workspace().unwrap();
+    assert_ne!(std::fs::read(&backing).unwrap()[..shown.len()], shown[..]);
+
+    // The view reads what it showed
+    let buffer = &mut harness.editor_mut().active_state_mut().buffer;
+    let len = buffer.len();
+    assert_eq!(buffer.get_text_range_mut(0, len).unwrap(), shown);
+}

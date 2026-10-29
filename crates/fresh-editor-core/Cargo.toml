@@ -68,6 +68,7 @@ tracing.workspace = true
 anyhow.workspace = true
 
 regex = { version = "1.12" }
+regex-syntax = { version = "0.8" }
 dirs = { version = "6.0" }
 unicode-width = { version = "0.2" }
 unicode-segmentation = { version = "1.12" }

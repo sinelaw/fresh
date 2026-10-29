@@ -128,54 +128,44 @@ fn crash_during_save_as(
     let dir_context = DirectoryContext::for_testing(temp_dir.path());
     let target = project.join("input-23.txt");
 
-    let store =
-        {
-            let mut harness = launch_in(&project, &dir_context);
-            harness.startup(true, &[]).unwrap();
-            harness.new_buffer().unwrap();
-            harness.type_text("FOOTNOTES-3626").unwrap();
-            harness.render().unwrap();
-            harness
-                .editor_mut()
-                .auto_recovery_save_dirty_buffers()
-                .unwrap();
+    {
+        let mut harness = launch_in(&project, &dir_context);
+        harness.startup(true, &[]).unwrap();
+        harness.new_buffer().unwrap();
+        harness.type_text("FOOTNOTES-3626").unwrap();
+        harness.render().unwrap();
+        harness
+            .editor_mut()
+            .auto_recovery_save_dirty_buffers()
+            .unwrap();
 
-            let entry = harness
-                .editor()
-                .active_state()
-                .buffer
-                .hot_exit_entry()
-                .cloned()
-                .expect("the recovery save leaves the buffer backed by its entry");
-            match crash {
-                CrashPoint::BeforeWrite => {
-                    let size = "FOOTNOTES-3626".len() as u64;
-                    assert!(entry.begin_save(&target, size).unwrap());
-                }
-                CrashPoint::AfterWrite => {
-                    // The buffer's own save, without the editor's follow-up:
-                    // the process is gone the moment the file is written.
-                    let recovery_dir = dir_context.recovery_dir();
-                    harness
-                        .editor_mut()
-                        .active_state_mut()
-                        .buffer
-                        .save_to_file(&target, &recovery_dir)
-                        .unwrap();
-                }
+        let entry = harness
+            .editor()
+            .active_state()
+            .buffer
+            .hot_exit_entry()
+            .cloned()
+            .expect("the recovery save leaves the buffer backed by its entry");
+        match crash {
+            CrashPoint::BeforeWrite => {
+                let size = "FOOTNOTES-3626".len() as u64;
+                assert!(entry.begin_save(&target, size).unwrap());
             }
-            dir_context.recovery_dir().join("default").join(
-                fresh::workspace::encode_path_for_filename(harness.editor().working_dir()),
-            )
-            // Dropped without a shutdown: nothing the exit path does runs.
-        };
-
-    // What a crash leaves: a session lock naming a process that is gone.
-    std::fs::write(
-        store.join("session.lock"),
-        r#"{"pid": 4194303, "started_at": 0, "working_dir": null}"#,
-    )
-    .unwrap();
+            CrashPoint::AfterWrite => {
+                // The buffer's own save, without the editor's follow-up:
+                // the process is gone the moment the file is written.
+                let recovery_dir = dir_context.recovery_dir();
+                harness
+                    .editor_mut()
+                    .active_state_mut()
+                    .buffer
+                    .save_to_file(&target, &recovery_dir)
+                    .unwrap();
+            }
+        }
+        // Dropped without a shutdown, as a crash would leave it: nothing
+        // the exit path does runs, and the editor's lock is let go.
+    }
 
     let mut harness = launch_in(&project, &dir_context);
     harness.startup(true, &[]).unwrap();
@@ -208,29 +198,25 @@ fn a_crash_after_save_as_wrote_brings_nothing_back() {
     assert!(entries.is_empty(), "left in the store: {entries:?}");
 }
 
-/// The recovery store a direct launch's editor writes to.
-fn store_of(harness: &EditorTestHarness, dir_context: &DirectoryContext) -> PathBuf {
-    dir_context
-        .recovery_dir()
-        .join("default")
-        .join(fresh::workspace::encode_path_for_filename(
-            harness.editor().working_dir(),
-        ))
+/// A project's part of the recovery store: the store, and the root.
+type Store = (PathBuf, PathBuf);
+
+/// The recovery store's part for the project of `harness`'s launch.
+fn store_of(harness: &EditorTestHarness, dir_context: &DirectoryContext) -> Store {
+    (
+        dir_context.recovery_dir(),
+        harness.editor().working_dir().to_path_buf(),
+    )
 }
 
-/// The ids of the recovery entries in `store`.
-fn entry_ids(store: &Path) -> Vec<String> {
-    std::fs::read_dir(store)
-        .map(|entries| {
-            entries
-                .flatten()
-                .filter_map(|e| {
-                    let name = e.file_name().to_string_lossy().into_owned();
-                    name.strip_suffix(".meta.json").map(str::to_string)
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+/// The recovery entries last edited in project `store`.
+fn entries(store: &Store) -> Vec<fresh::services::recovery::RecoveryEntry> {
+    fresh::services::recovery::entries_for_root(&store.0, &store.1)
+}
+
+/// The ids of the recovery entries last edited in project `store`.
+fn entry_ids(store: &Store) -> Vec<String> {
+    entries(store).into_iter().map(|e| e.id).collect()
 }
 
 /// Save As the active buffer to `path`, whether or not it has a name.
@@ -286,66 +272,4 @@ fn save_as_leaves_nothing_for_the_next_recovery_save() {
 
     let entries = entry_ids(&store_of(&harness, &dir_context));
     assert!(entries.is_empty(), "left in the store: {entries:?}");
-}
-
-/// Two workspaces with the same file open and edited share its recovery
-/// entry, keyed by the file's path. Save As to a new name in one of them
-/// must leave that entry alone: it holds the other's unsaved work too.
-#[test]
-fn save_as_keeps_another_workspaces_unsaved_work_on_the_same_file() {
-    let temp_dir = TempDir::new().unwrap();
-    let project = temp_dir.path().join("project");
-    std::fs::create_dir(&project).unwrap();
-    let shared = project.join("shared.txt");
-    std::fs::write(&shared, "base\n").unwrap();
-    let dir_context = DirectoryContext::for_testing(temp_dir.path());
-    let mut harness = launch_in(&project, &dir_context);
-    harness.startup(true, &[]).unwrap();
-    let store = store_of(&harness, &dir_context);
-    let home = harness.editor().active_window_id();
-
-    harness.open_file(&shared).unwrap();
-    harness.type_text("A-EDIT ").unwrap();
-    harness.render().unwrap();
-    harness
-        .editor_mut()
-        .auto_recovery_save_dirty_buffers()
-        .unwrap();
-
-    let other_root = temp_dir.path().join("workspace_b");
-    std::fs::create_dir_all(&other_root).unwrap();
-    let other = harness
-        .editor_mut()
-        .create_window_at(other_root, "workspace_b".to_string());
-    harness.editor_mut().set_active_window(other);
-    harness.render().unwrap();
-    harness.editor_mut().open_file(&shared).unwrap();
-    harness.render().unwrap();
-    harness.type_text("B-EDIT ").unwrap();
-    harness.render().unwrap();
-    harness
-        .editor_mut()
-        .auto_recovery_save_dirty_buffers()
-        .unwrap();
-
-    // The editor keys a file's entry by its canonical path: on macOS the
-    // temp directory is reached through a symlink (/var -> /private/var).
-    let shared_id = fresh::services::recovery::path_hash(&shared.canonicalize().unwrap());
-    assert_eq!(entry_ids(&store), vec![shared_id.clone()]);
-
-    harness.editor_mut().set_active_window(home);
-    harness.render().unwrap();
-    save_as(&mut harness, &project.join("renamed.txt"));
-    assert!(project.join("renamed.txt").exists());
-
-    assert_eq!(
-        entry_ids(&store),
-        vec![shared_id.clone()],
-        "the other workspace's unsaved edits to shared.txt lost their entry"
-    );
-    let meta = std::fs::read_to_string(store.join(format!("{shared_id}.meta.json"))).unwrap();
-    assert!(
-        !meta.contains("\"saving\""),
-        "the entry was marked as saved: {meta}"
-    );
 }

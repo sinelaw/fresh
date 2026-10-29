@@ -60,6 +60,7 @@ mod mouse_input;
 pub(crate) mod native_panels;
 mod navigation;
 mod on_save_actions;
+mod open_buffer_search;
 mod orchestrator_persistence;
 mod overlay;
 mod pane_mirror;
@@ -80,7 +81,6 @@ mod popup_overlay_actions;
 mod prompt_actions;
 mod prompt_lifecycle;
 mod recovery_actions;
-mod regex_replace;
 pub(crate) mod render;
 mod scan_orchestrators;
 mod scroll_sync;
@@ -179,6 +179,9 @@ pub fn editor_tick(
     if search_scan {
         needs_render = true;
     }
+    if editor.process_open_buffer_searches() {
+        needs_render = true;
+    }
     let search_overlay_refresh = {
         let _s = tracing::info_span!("check_search_overlay_refresh").entered();
         editor.check_search_overlay_refresh()
@@ -244,9 +247,7 @@ pub fn editor_tick(
 
 pub(crate) use path_utils::{normalize_path, ExplorerRoot};
 
-use self::types::{
-    LspMenuItem, LspMessageEntry, LspProgressInfo, SearchState, DEFAULT_BACKGROUND_FILE,
-};
+use self::types::{LspMenuItem, LspMessageEntry, LspProgressInfo, DEFAULT_BACKGROUND_FILE};
 use crate::config::Config;
 use crate::config_io::DirectoryContext;
 use crate::input::buffer_mode::ModeRegistry;
@@ -713,6 +714,14 @@ pub struct Editor {
     /// Should the client detach (keep server running)?
     should_detach: bool,
 
+    /// A restore from the recovery store is under way: a file it opens for
+    /// an entry it already holds must not look for that file's work again.
+    adopting_recovery: bool,
+
+    /// When the file locks were last brought in line with the open buffers
+    /// (see [`Editor::sync_file_locks`]).
+    last_lock_sync: Option<std::time::Instant>,
+
     /// Running in session/server mode (use hardware cursor only, no REVERSED style)
     session_mode: bool,
 
@@ -1168,7 +1177,10 @@ pub struct Editor {
     /// Cancellation flag for the in-flight `grepProject`, if any. A new
     /// request supersedes the old one rather than queueing behind it.
     #[cfg(feature = "plugins")]
-    grep_project_cancel: std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>,
+    grep_project_cancel: std::collections::HashMap<String, Arc<fresh_core::api::SearchHandleState>>,
+
+    /// Open buffers being searched for project searches, a slice per tick.
+    open_buffer_searches: Vec<open_buffer_search::OpenBufferSearch>,
 
     /// Live `editor.setInterval` / `setTimeout` timers, checked once per
     /// tick by `check_plugin_timers`. Held on the editor rather than in the
@@ -3594,11 +3606,9 @@ mod tests {
 
     #[test]
     fn test_search_scan_completes_when_capped() {
-        // Regression test: when the incremental search scan hits MAX_MATCHES
-        // early (e.g. at 15% of the file), the scan's `capped` flag is set to
-        // true and the batch loop breaks.  The completion check in
-        // process_search_scan() must also consider `capped` — otherwise the
-        // scan gets stuck in an infinite loop showing "Searching... 15%".
+        // Regression test: a scan that reaches MAX_MATCHES before the end of
+        // the file must finish, capped — not stay stuck showing
+        // "Searching... N%".
         let config = Config::default();
         let (dir_context, _temp) = test_dir_context();
         let mut editor = Editor::new(
@@ -3611,86 +3621,32 @@ mod tests {
         )
         .unwrap();
 
-        // Manually create a search scan state that is already capped but not
-        // at the last chunk (simulating early cap at ~15%).
         let buffer_id = editor.active_buffer();
-        let regex = regex::bytes::Regex::new("test").unwrap();
-        let fake_chunks = vec![
-            crate::model::buffer::LineScanChunk {
-                leaf_index: 0,
-                byte_len: 100,
-                already_known: true,
-            },
-            crate::model::buffer::LineScanChunk {
-                leaf_index: 1,
-                byte_len: 100,
-                already_known: true,
-            },
-        ];
-
-        let chunked = crate::model::buffer::ChunkedSearchState {
-            chunks: fake_chunks,
-            next_chunk: 1, // Only processed 1 of 2 chunks
-            next_doc_offset: 100,
-            total_bytes: 200,
-            scanned_bytes: 100,
-            regex,
-            matches: vec![
-                crate::model::buffer::SearchMatch {
-                    byte_offset: 10,
-                    length: 4,
-                    line: 1,
-                    column: 11,
-                    context: String::new(),
-                },
-                crate::model::buffer::SearchMatch {
-                    byte_offset: 50,
-                    length: 4,
-                    line: 1,
-                    column: 51,
-                    context: String::new(),
-                },
-            ],
-            overlap_tail: Vec::new(),
-            overlap_doc_offset: 0,
-            max_matches: 10_000,
-            capped: true, // Capped early — this is the key condition
-            query_len: 4,
-            running_line: 1,
-        };
-
-        editor.active_window_mut().search_scan.start(
+        let max = types::SearchState::MAX_MATCHES;
+        let text = "test ".repeat(max + 10);
+        editor.active_state_mut().buffer.insert(0, &text);
+        let scan = search_scan::ActiveSearchScan::new(
             buffer_id,
-            Vec::new(),
-            chunked,
             "test".to_string(),
+            crate::model::buffer::SearchQuery::new("test", false, false, true).unwrap(),
             None,
-            false,
-            false,
-            false,
+            &editor.active_state().buffer,
         );
+        editor.active_window_mut().search_scan = Some(scan);
 
-        // process_search_scan should finalize the search (not loop forever)
-        let result = editor.process_search_scan();
-        assert!(
-            result,
-            "process_search_scan should return true (needs render)"
-        );
+        // Run slices until no scan is left; it must finish, and soon.
+        let mut ticks = 0;
+        while editor.process_search_scan() {
+            ticks += 1;
+            assert!(ticks < 10_000, "the capped scan never finished");
+        }
 
-        // The scan state should be consumed (drained)
-        assert_eq!(
-            editor.active_window().search_scan.buffer_id(),
-            None,
-            "search_scan should be drained after capped scan completes"
-        );
-
-        // Search state should be set with the accumulated matches
         let search_state = editor
             .active_window()
             .search_state
             .as_ref()
             .expect("search_state should be set after scan finishes");
-        assert_eq!(search_state.matches.len(), 2, "Should have 2 matches");
+        assert_eq!(search_state.matches.len(), max);
         assert_eq!(search_state.query, "test");
         assert!(
             search_state.capped,
@@ -4337,6 +4293,7 @@ mod tests {
     /// window retains where the panes are, so the neighbour query — which
     /// pane is beside this one, by geometry — answers off the grid as it is.
     #[cfg(feature = "plugins")]
+    #[cfg(debug_assertions)]
     #[test]
     fn a_new_pane_is_beside_its_source_before_any_frame() {
         use crate::view::shell::geometry::stats;
@@ -4464,6 +4421,7 @@ mod tests {
     /// fact the key produced is applied over the tree that produced it, and
     /// its context read does not lay it out again. Two layouts per key made
     /// typing a long text on CI time out.
+    #[cfg(debug_assertions)]
     #[test]
     fn a_typed_key_lays_the_tree_out_once() {
         use crate::view::shell::geometry::stats;
@@ -4547,6 +4505,7 @@ mod tests {
     /// Every window's panes are placed by the layout funnel, not only the
     /// active window's: the active window's off the frame, another window's
     /// off one offscreen layout of its own grid at its own body.
+    #[cfg(debug_assertions)]
     #[test]
     fn the_funnel_places_every_windows_panes() {
         use crate::view::shell::geometry::stats;

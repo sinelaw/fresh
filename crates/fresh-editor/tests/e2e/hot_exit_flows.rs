@@ -781,12 +781,10 @@ fn test_flow_e_active_tab_preserved_across_restart() {
 // Flow F: File changed on disk since hot exit (mtime mismatch)
 // =========================================================================
 
-/// When a file is modified on disk between shutdown and restore, the recovery
-/// should be skipped and the user should be warned (not silently discarded).
-///
-/// Currently fails because recovery is applied regardless of mtime changes,
-/// silently overwriting external edits. Will pass after implementing mtime
-/// check with user warning (Phase 4, Task 4.2 of the plan).
+/// When a file is modified on disk between shutdown and restore, the unsaved
+/// version must neither overwrite the newer file nor be dropped: the file
+/// shows what is on disk, and the unsaved version comes back beside it as an
+/// unsaved copy.
 #[test]
 fn test_flow_f_mtime_mismatch_skips_recovery() {
     let temp_dir = TempDir::new().unwrap();
@@ -851,7 +849,13 @@ fn test_flow_f_mtime_mismatch_skips_recovery() {
         harness.startup(true, &[]).unwrap();
         harness.render().unwrap();
 
-        // The buffer should show the new on-disk content, not the stale recovery
+        // The unsaved version is back, as a copy beside the file
+        harness.assert_screen_contains("changing.txt (unsaved copy)");
+        harness.assert_screen_contains("original on disk UNSAVED_EDIT");
+
+        // The file itself shows the new on-disk content, not the stale recovery
+        harness.open_file(&file1).unwrap();
+        harness.render().unwrap();
         harness.assert_screen_contains("externally modified on disk");
         harness.assert_screen_not_contains("UNSAVED_EDIT");
     }
@@ -939,7 +943,9 @@ fn test_multiple_unnamed_buffers_preserved() {
     }
 }
 
-/// Hot exit disabled: modified buffers should NOT be recovered.
+/// Hot exit disabled: modified buffers the user discards at the quit prompt
+/// are not recovered. Discarding is the user's choice to make; an exit that
+/// asks nothing keeps the work (see `recovery_across_launch_modes`).
 #[test]
 fn test_hot_exit_disabled_no_recovery() {
     let temp_dir = TempDir::new().unwrap();
@@ -968,7 +974,7 @@ fn test_hot_exit_disabled_no_recovery() {
         )
         .unwrap();
 
-        harness.editor_mut().set_session_mode(true);
+        // Not a daemon session: there Ctrl+Q first asks Detach or Quit
         harness.open_file(&file1).unwrap();
         harness.render().unwrap();
 
@@ -976,10 +982,20 @@ fn test_hot_exit_disabled_no_recovery() {
         harness.type_text(" SHOULD_NOT_RECOVER").unwrap();
         harness.render().unwrap();
 
+        harness
+            .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+        harness
+            .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
+            .unwrap();
+        harness.render().unwrap();
+        assert!(harness.should_quit(), "Discard and Quit quits");
+
         harness.shutdown(true).unwrap();
     }
 
-    // Session 2: restore — with hot_exit off, no recovery data should exist
+    // Session 2: restore — the discarded edit left no recovery data
     {
         let mut config = Config::default();
         config.editor.hot_exit = false;

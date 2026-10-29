@@ -2645,3 +2645,139 @@ fn test_restore_orphaned_active_unnamed_tab_renders_surviving_tab() {
         );
     }
 }
+
+/// Issue #3532: a file that exists but cannot be opened on one launch keeps
+/// its place in the workspace, and is back once it can be opened again. Only a
+/// file that is gone from disk is dropped.
+#[test]
+fn test_session_keeps_a_file_that_could_not_be_opened() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let real = project_dir.join("real.txt");
+    let other = project_dir.join("other.txt");
+    std::fs::write(&real, "REAL_FILE_CONTENT").unwrap();
+    std::fs::write(&other, "OTHER_CONTENT").unwrap();
+
+    let launch = || {
+        EditorTestHarness::with_config_and_working_dir(
+            100,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap()
+    };
+
+    {
+        let mut harness = launch();
+        harness.open_file(&real).unwrap();
+        harness.open_file(&other).unwrap();
+        harness.editor_mut().save_workspace().unwrap();
+    }
+
+    // The path exists but can't be opened as a file: a stand-in for any
+    // transient open failure (permissions, I/O error, unmounted share).
+    std::fs::remove_file(&real).unwrap();
+    std::fs::create_dir(&real).unwrap();
+
+    {
+        let mut harness = launch();
+        assert!(harness.editor_mut().try_restore_workspace().unwrap());
+        harness.render().unwrap();
+        harness.assert_screen_contains("Could not open real.txt");
+        harness.editor_mut().save_workspace().unwrap();
+    }
+
+    std::fs::remove_dir(&real).unwrap();
+    std::fs::write(&real, "REAL_FILE_CONTENT").unwrap();
+
+    {
+        let mut harness = launch();
+        assert!(harness.editor_mut().try_restore_workspace().unwrap());
+        harness.render().unwrap();
+        let screen = harness.screen_to_string();
+        assert!(
+            screen.contains("real.txt") && screen.contains("other.txt"),
+            "both tabs should be back once real.txt opens again. Screen:\n{screen}"
+        );
+        harness.editor_mut().save_workspace().unwrap();
+    }
+
+    // Deleted for real: the next launch drops it, as before.
+    std::fs::remove_file(&real).unwrap();
+    {
+        let mut harness = launch();
+        assert!(harness.editor_mut().try_restore_workspace().unwrap());
+        harness.editor_mut().save_workspace().unwrap();
+    }
+    std::fs::write(&real, "REAL_FILE_CONTENT").unwrap();
+    {
+        let mut harness = launch();
+        assert!(harness.editor_mut().try_restore_workspace().unwrap());
+        harness.render().unwrap();
+        let screen = harness.screen_to_string();
+        assert!(
+            !screen.contains("real.txt"),
+            "a file deleted between launches is dropped. Screen:\n{screen}"
+        );
+    }
+}
+
+/// Issue #3532: a file that keeps failing to open stays in the workspace for
+/// as many launches as it fails, and is back once it opens. An external file
+/// — listed both as a tab and under `external_files` — is held, and reported,
+/// once.
+#[test]
+fn test_session_keeps_a_file_that_fails_on_every_launch() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    let outside = temp_dir.path().join("outside.txt");
+    std::fs::write(&outside, "OUTSIDE").unwrap();
+
+    let launch = || {
+        EditorTestHarness::with_config_and_working_dir(
+            300,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap()
+    };
+    {
+        let mut harness = launch();
+        harness.open_file(&outside).unwrap();
+        harness.editor_mut().save_workspace().unwrap();
+    }
+    std::fs::remove_file(&outside).unwrap();
+    std::fs::create_dir(&outside).unwrap();
+
+    for launch_no in 1..=5 {
+        let mut harness = launch();
+        harness.editor_mut().try_restore_workspace().unwrap();
+        harness.render().unwrap();
+        let screen = harness.screen_to_string();
+        assert!(
+            screen.contains("Could not open") && screen.contains("It stays in this workspace"),
+            "launch {launch_no} should say so. Screen:\n{screen}"
+        );
+        assert!(
+            !screen.contains("more recovery warning"),
+            "one file, one warning. Screen:\n{screen}"
+        );
+        harness.editor_mut().save_workspace().unwrap();
+    }
+
+    std::fs::remove_dir(&outside).unwrap();
+    std::fs::write(&outside, "OUTSIDE").unwrap();
+    let mut harness = launch();
+    harness.editor_mut().try_restore_workspace().unwrap();
+    harness.render().unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("outside.txt"),
+        "back once it opens. Screen:\n{screen}"
+    );
+}

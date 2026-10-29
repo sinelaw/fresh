@@ -1136,6 +1136,92 @@ pub fn workspace_path_for(working_dir: &Path, stable_id: &str) -> io::Result<Pat
     Ok(get_workspaces_dir()?.join(filename))
 }
 
+/// The stable ids of the workspaces saved for `root`: read from the names
+/// of its `<encoded root>.<id>.json` files (an id never holds a dot, which
+/// keeps `/a`'s files apart from `/a.b`'s), plus the id recorded inside a
+/// pre-stable-id `<encoded root>.json`. Recovery uses it to leave an entry
+/// stamped for one of them to that workspace.
+pub fn workspace_ids_for_root(root: &Path) -> std::collections::HashSet<String> {
+    let mut ids = std::collections::HashSet::new();
+    let Ok(dir) = get_workspaces_dir() else {
+        return ids;
+    };
+    let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let encoded = encode_path_for_filename(&canonical);
+    let id_prefix = format!("{encoded}.");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return ids;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let Some(rest) = name
+            .strip_prefix(&id_prefix)
+            .and_then(|rest| rest.strip_suffix(".json"))
+        else {
+            continue;
+        };
+        if !rest.is_empty() && !rest.contains('.') {
+            ids.insert(rest.to_string());
+        }
+    }
+    let legacy = dir.join(format!("{encoded}.json"));
+    if let Some(id) = std::fs::read_to_string(legacy)
+        .ok()
+        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+        .and_then(|val| val.get("stable_id")?.as_str().map(str::to_string))
+    {
+        ids.insert(id);
+    }
+    ids
+}
+
+/// The unnamed buffers the saved workspaces on `root` other than `except`
+/// place in their layouts, by recovery id: the unsaved work those
+/// workspaces come back with, which another window on the root leaves to
+/// them.
+pub fn unnamed_refs_for_root(root: &Path, except: &str) -> std::collections::HashSet<String> {
+    let mut refs = std::collections::HashSet::new();
+    for id in workspace_ids_for_root(root) {
+        if id == except {
+            continue;
+        }
+        let Ok(path) = workspace_path_for(root, &id) else {
+            continue;
+        };
+        if let Ok(Some(workspace)) = Workspace::load_from_path(&path, root) {
+            refs.extend(workspace.unnamed_buffers.into_iter().map(|r| r.recovery_id));
+        }
+    }
+    refs
+}
+
+/// The stable ids of every saved workspace, whatever its root, read from
+/// the names of the `<encoded root>.<id>.json` files: an id never holds a
+/// dot, and an encoded root never ends in one. Recovery uses it to tell an
+/// entry stamped for some other project's workspace from one whose
+/// workspace was never saved.
+pub fn all_workspace_ids() -> std::collections::HashSet<String> {
+    let mut ids = std::collections::HashSet::new();
+    let Ok(entries) = get_workspaces_dir().and_then(std::fs::read_dir) else {
+        return ids;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(stem) = name.to_str().and_then(|n| n.strip_suffix(".json")) else {
+            continue;
+        };
+        if let Some((_, id)) = stem.rsplit_once('.') {
+            if !id.is_empty() {
+                ids.insert(id.to_string());
+            }
+        }
+    }
+    ids
+}
+
 /// Identity fields of a candidate workspace file for one directory.
 struct WorkspaceFileIdentity {
     path: PathBuf,

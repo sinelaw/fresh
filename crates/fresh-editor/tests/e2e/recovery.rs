@@ -433,7 +433,7 @@ fn test_chunked_recovery_size_mismatch() {
 }
 
 /// Test the full recovery flow: open file, replace content, verify via get_all_text
-/// This reproduces the flow in Editor::recover_all_buffers to ensure content is
+/// This reproduces the flow in Editor's recovery adoption to ensure content is
 /// properly accessible after recovery replacement.
 #[test]
 fn test_recovery_content_replacement_flow() {
@@ -450,7 +450,7 @@ fn test_recovery_content_replacement_flow() {
         "File should load correctly"
     );
 
-    // Simulate recovery replacement (same flow as recover_all_buffers)
+    // Simulate recovery replacement (same flow as recovery adoption)
     let recovered_text = "RECOVERED CONTENT";
     {
         let state = harness.editor_mut().active_state_mut();
@@ -514,7 +514,7 @@ fn test_full_chunked_recovery_cycle() {
         "Hello, Universe! This is the original file content."
     );
 
-    // Now test applying this to a buffer (simulating recover_all_buffers flow)
+    // Now test applying this to a buffer (simulating the recovery adoption flow)
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Open the original file
@@ -682,10 +682,10 @@ fn test_huge_file_recovery_is_small() {
     buffer.insert_bytes(0, edit_text.to_vec());
 
     // Get recovery chunks - should be small!
-    let chunks = buffer.get_recovery_chunks();
+    let chunks = buffer.get_recovery_chunks().unwrap();
 
     // Calculate total recovery data size
-    let recovery_data_size: usize = chunks.iter().map(|(_, data)| data.len()).sum();
+    let recovery_data_size: usize = chunks.iter().map(|c| c.content.len()).sum();
 
     // Verify recovery data is MUCH smaller than original file
     assert!(
@@ -703,7 +703,7 @@ fn test_huge_file_recovery_is_small() {
     );
 
     // The chunk should contain our edit text
-    let all_chunk_data: Vec<u8> = chunks.into_iter().flat_map(|(_, data)| data).collect();
+    let all_chunk_data: Vec<u8> = chunks.into_iter().flat_map(|c| c.content).collect();
     assert!(
         all_chunk_data.starts_with(edit_text),
         "Recovery chunks should contain our edit"
@@ -723,7 +723,6 @@ fn test_huge_file_recovery_is_small() {
 /// Before the fix, this test would fail because recovery saved the entire file.
 #[test]
 fn test_large_file_auto_save_creates_small_recovery_file() {
-    use fresh::services::recovery::RecoveryStorage;
     use std::fs;
     use tempfile::TempDir;
 
@@ -767,8 +766,7 @@ fn test_large_file_auto_save_creates_small_recovery_file() {
     let recovery_dir = harness
         .recovery_dir()
         .expect("harness should have recovery dir");
-    let storage = RecoveryStorage::with_dir(recovery_dir);
-    let entries = storage.list_entries().unwrap();
+    let entries = fresh::services::recovery::all_entries(&recovery_dir);
 
     // Find our file's recovery entry
     let our_entry = entries.iter().find(|e| {
@@ -917,8 +915,7 @@ fn test_recovery_after_save_with_size_change() {
     drop(harness);
 
     // Manually trigger recovery for this file using harness's recovery directory
-    let storage = RecoveryStorage::with_dir(recovery_dir);
-    let entries = storage.list_entries().unwrap();
+    let entries = fresh::services::recovery::all_entries(&recovery_dir);
 
     let our_entry = entries.iter().find(|e| {
         e.metadata
@@ -930,7 +927,8 @@ fn test_recovery_after_save_with_size_change() {
 
     if let Some(entry) = our_entry {
         // Try to reconstruct content - this should NOT fail with size mismatch
-        let result = storage.reconstruct_from_chunks(&entry.id, &file_path);
+        let result = RecoveryStorage::with_dir(entry.metadata_path.parent().unwrap().to_path_buf())
+            .reconstruct_from_chunks(&entry.id, &file_path);
 
         match result {
             Ok(content) => {
@@ -967,8 +965,7 @@ fn test_recovery_after_save_with_size_change() {
             }
         }
     } else {
-        // Check if it's using full content format instead of chunked
-        println!("No chunked recovery entry found - file might be using full content format");
+        panic!("Expected a recovery entry for large_file.txt");
     }
 }
 
@@ -1021,8 +1018,7 @@ fn test_unnamed_buffer_created_via_new_buffer_has_stable_recovery() {
 
     // Check recovery directory
     let recovery_dir = harness.recovery_dir().expect("should have recovery dir");
-    let storage = RecoveryStorage::with_dir(recovery_dir);
-    let entries = storage.list_entries().unwrap();
+    let entries = fresh::services::recovery::all_entries(&recovery_dir);
 
     let unsaved_entries: Vec<_> = entries
         .iter()
@@ -1040,10 +1036,16 @@ fn test_unnamed_buffer_created_via_new_buffer_has_stable_recovery() {
     );
 
     // Verify content is the latest version
-    let chunked = storage
-        .read_chunked_content(&unsaved_entries[0].id)
-        .unwrap()
-        .unwrap();
+    let chunked = RecoveryStorage::with_dir(
+        unsaved_entries[0]
+            .metadata_path
+            .parent()
+            .unwrap()
+            .to_path_buf(),
+    )
+    .read_chunked_content(&unsaved_entries[0].id)
+    .unwrap()
+    .unwrap();
     let content = String::from_utf8_lossy(&chunked.chunks[0].content);
     assert_eq!(content, "First content more");
 }
@@ -1118,8 +1120,7 @@ fn test_recovery_insert_at_end_of_large_file() {
     // Now simulate restart and recovery - this is where the crash happens
     drop(harness);
 
-    let storage = RecoveryStorage::with_dir(recovery_dir);
-    let entries = storage.list_entries().unwrap();
+    let entries = fresh::services::recovery::all_entries(&recovery_dir);
 
     let our_entry = entries.iter().find(|e| {
         e.metadata
@@ -1131,7 +1132,8 @@ fn test_recovery_insert_at_end_of_large_file() {
 
     if let Some(entry) = our_entry {
         // This should NOT panic with "range end index X out of range for slice of length Y"
-        let result = storage.reconstruct_from_chunks(&entry.id, &file_path);
+        let result = RecoveryStorage::with_dir(entry.metadata_path.parent().unwrap().to_path_buf())
+            .reconstruct_from_chunks(&entry.id, &file_path);
 
         match result {
             Ok(content) => {
@@ -1163,7 +1165,7 @@ fn test_recovery_insert_at_end_of_large_file() {
             }
         }
     } else {
-        println!("No chunked recovery entry found");
+        panic!("Expected a recovery entry for large_file.txt");
     }
 }
 
@@ -1284,4 +1286,73 @@ fn test_large_file_recovery_restore_has_bounded_io() {
             recovery_bytes, disk_bytes, file_size
         );
     }
+}
+
+/// A large file's restored edits are its own bytes, not text: the chunk
+/// two nearby edits merge into carries the file's bytes between them, and
+/// one that isn't UTF-8 (a stray Latin-1 `é`) must come back as itself, not
+/// as U+FFFD (issue #3645).
+#[test]
+fn test_large_file_recovery_keeps_bytes_that_are_not_utf8() {
+    use fresh::config::Config;
+    use fresh::config_io::DirectoryContext;
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    fs::create_dir(&project_dir).unwrap();
+    let file_path = project_dir.join("latin1.log");
+    let mut original = b"ab\xE9cd\n".to_vec();
+    original.extend("zzzz\n".repeat(400).as_bytes());
+    fs::write(&file_path, &original).unwrap();
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+    let config = || {
+        let mut config = Config::default();
+        config.editor.hot_exit = true;
+        config.editor.large_file_threshold_bytes = 1000;
+        config
+    };
+    let harness = || {
+        EditorTestHarness::create(
+            80,
+            24,
+            HarnessOptions::new()
+                .with_config(config())
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap()
+    };
+
+    // Session 1: edit either side of the byte, back up, stop
+    {
+        let mut harness = harness();
+        harness.open_file(&file_path).unwrap();
+        assert!(harness.editor().active_state().buffer.is_large_file());
+        harness.type_text("EDIT").unwrap();
+        harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+        harness.type_text("MORE").unwrap();
+        harness.advance_time(std::time::Duration::from_millis(2100));
+        let saved = harness
+            .editor_mut()
+            .auto_recovery_save_dirty_buffers()
+            .unwrap();
+        assert!(saved > 0, "should have backed up the edits");
+        harness.shutdown(true).unwrap();
+    }
+
+    // Session 2: restore and save; the file holds exactly the edited bytes
+    let mut harness = harness();
+    assert!(harness.startup(true, &[]).unwrap(), "should restore");
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| !h.editor().active_state().buffer.is_modified())
+        .unwrap();
+    let mut expected = b"EDITab\xE9cdMORE\n".to_vec();
+    expected.extend("zzzz\n".repeat(400).as_bytes());
+    assert_eq!(fs::read(&file_path).unwrap(), expected);
 }

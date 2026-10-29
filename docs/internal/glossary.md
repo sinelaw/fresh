@@ -58,7 +58,7 @@ on-disk filename and the UI label.
 | Term | Means | Doc |
 |---|---|---|
 | **`Editor`** | The central mutable struct holding all state. Most logic is `impl Editor` spread across the app modules. | `00-overview.md` |
-| **`EditorState`** | Per-**buffer** shared state: the document, authoritative cursors, overlays/margins/virtual-text, highlight caches. Implements the `DocumentModel` trait. | `00-overview.md`, `text-model.md` |
+| **`EditorState`** | Per-**buffer** shared state: the document, authoritative cursors, overlays/margins/virtual-text, highlight caches. | `00-overview.md`, `text-model.md` |
 | **`SplitViewState`** | Per-**split** view state: viewport/scroll, wrap mode, a render copy of cursors, plugin `view_transform`. The same buffer can show in many splits. | `buffers-splits-undo.md`, `rendering-and-layout.md` |
 | **Action** | The "what the user wants" intent layer (`Save`, `MoveLeft`, `LspHover`, `PluginAction`). Produced by keybindings/menus/palette; rebindable and serializable. | `input-keybindings-actions.md` |
 | **Event** | The event-sourced "what changed" layer (`Insert`, `Delete`, `BulkEdit`). Stored in a per-buffer `EventLog` for undo/redo and modified-tracking. | `text-model.md`, `input-keybindings-actions.md` |

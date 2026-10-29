@@ -109,7 +109,7 @@ impl Editor {
                 self.perform_search(&input);
             }
             PromptType::ReplaceSearch => {
-                self.perform_search(&input);
+                self.search_keeping_scope(&input);
                 self.start_prompt(
                     t!("replace.prompt", search = &input).to_string(),
                     PromptType::Replace {
@@ -125,7 +125,7 @@ impl Editor {
                 }
             }
             PromptType::QueryReplaceSearch => {
-                self.perform_search(&input);
+                self.search_keeping_scope(&input);
                 self.start_prompt(
                     t!("replace.query_prompt", search = &input).to_string(),
                     PromptType::QueryReplace {
@@ -760,6 +760,21 @@ impl Editor {
 
     /// Check for overwrite/missing directory before saving, prompting if needed.
     pub(crate) fn save_file_as_with_checks(&mut self, full_path: std::path::PathBuf) {
+        // One path per file, the one a buffer opened on it would have: a
+        // symlinked spelling would let the file have a second buffer, and its
+        // unsaved work go unfound by whoever opens it.
+        let full_path = self
+            .active_window()
+            .resolve_open_path(&full_path)
+            .canonical_path;
+        // A file has one buffer, across workspaces and editors: saving this
+        // one over a file open in another would make two
+        let own = self.active_buffer();
+        if let Some(refusal) = self.save_target_refusal(&full_path, own) {
+            self.set_status_message(refusal);
+            return;
+        }
+
         // Check if we're saving to a different file that already exists
         let current_file_path = self
             .active_state()
@@ -829,23 +844,7 @@ impl Editor {
             before_len
         );
 
-        // The recovery entry holding an unnamed buffer's unsaved content,
-        // named before the save gives the buffer a path. Only an unnamed
-        // buffer's: a file's entry is keyed by its path, and holds the
-        // unsaved work of every workspace with that file open.
         let active_buffer = self.active_buffer();
-        let unnamed = self
-            .active_state()
-            .buffer
-            .file_path()
-            .is_none_or(|p| p.as_os_str().is_empty());
-        let recovery_id = self
-            .active_window()
-            .buffer_metadata
-            .get(&active_buffer)
-            .and_then(|meta| meta.recovery_id.clone())
-            .filter(|_| unnamed);
-
         let recovery_dir = self.dir_context.recovery_dir();
         match self
             .active_state_mut()
@@ -855,16 +854,11 @@ impl Editor {
             Ok(()) => {
                 // The content is in the file now. Left behind, the entry came
                 // back as an unsaved buffer at the next switch to this
-                // workspace (issue #3626).
-                if let Some(recovery_id) = recovery_id {
-                    self.delete_recovery_entry(recovery_id);
+                // workspace (issue #3626). Deleted here, while the buffer's
+                // metadata still names it: the metadata is replaced below.
+                if let Err(e) = self.delete_buffer_recovery(active_buffer) {
+                    tracing::warn!("Failed to delete recovery entry after Save As: {e}");
                 }
-                // Saved: nothing is left for the recovery auto-save, which
-                // would otherwise write an entry for the clean file, and no
-                // entry is this buffer's unsaved work any more.
-                let state = self.active_state_mut();
-                state.buffer.set_recovery_pending(false);
-                state.buffer.clear_hot_exit_entry();
                 let after_save_idx = self.active_event_log().current_index();
                 let after_save_len = self.active_event_log().len();
                 tracing::debug!(
@@ -2034,6 +2028,43 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::parse_path_line_col;
+
+    /// Save As onto a file another running editor has open is refused: the
+    /// file isn't written, and this buffer stays what it was.
+    #[test]
+    fn save_as_onto_a_file_another_editor_has_open_is_refused() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let editor = || {
+            crate::app::Editor::new(
+                crate::config::Config::default(),
+                80,
+                24,
+                crate::config_io::DirectoryContext::for_testing(temp.path()),
+                crate::view::color_support::ColorCapability::TrueColor,
+                std::sync::Arc::new(crate::model::filesystem::StdFileSystem),
+            )
+            .unwrap()
+        };
+        let file = temp.path().join("f.txt");
+        std::fs::write(&file, "theirs\n").unwrap();
+        let mut first = editor();
+        first.open_file(&file).unwrap();
+
+        let mut second = editor();
+        second.new_buffer();
+        second.active_state_mut().buffer.insert(0, "mine\n");
+        second.save_file_as_with_checks(file.clone());
+
+        let status = second
+            .active_window()
+            .status_message
+            .clone()
+            .unwrap_or_default();
+        assert!(status.contains("another Fresh"), "not refused: {status:?}");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "theirs\n");
+        assert!(second.active_state().buffer.file_path().is_none());
+        drop(first);
+    }
 
     #[test]
     fn test_parse_path_line_col_empty() {

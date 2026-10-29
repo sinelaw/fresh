@@ -338,13 +338,12 @@ impl FileSystem for SlowFileSystem {
         path: &Path,
         pattern: &str,
         opts: &crate::model::filesystem::FileSearchOptions,
-        cursor: &mut crate::model::filesystem::FileSearchCursor,
     ) -> io::Result<Vec<crate::model::filesystem::SearchMatch>> {
         self.add_delay(self.config.search_file_delay);
         self.metrics
             .search_file_calls
             .fetch_add(1, Ordering::SeqCst);
-        crate::model::filesystem::default_search_file(&*self.inner, path, pattern, opts, cursor)
+        crate::model::filesystem::default_search_file(&*self.inner, path, pattern, opts)
     }
 
     fn walk(

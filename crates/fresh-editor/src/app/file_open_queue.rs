@@ -18,10 +18,12 @@ impl Editor {
     /// code path as interactive file opens, providing consistent error handling
     /// (e.g., encoding confirmation prompts are shown in the UI instead of crashing).
     /// Schedule hot exit recovery to run after the next batch of pending file opens.
+    ///
+    /// Whatever `hot_exit` says: work in the store is work nobody chose to
+    /// discard (a crash, an exit that asked nothing), and a launch that
+    /// opens its file is where it gets found.
     pub fn schedule_hot_exit_recovery(&mut self) {
-        if self.config.editor.hot_exit {
-            self.active_window_mut().pending_hot_exit_recovery = true;
-        }
+        self.active_window_mut().pending_hot_exit_recovery = true;
     }
 
     #[allow(clippy::too_many_arguments)]

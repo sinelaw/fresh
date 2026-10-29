@@ -12,7 +12,9 @@
 
 use crate::model::buffer::Buffer;
 use crate::primitives::highlight_types::HighlightSpan;
-use crate::primitives::word_navigation::{find_word_end, find_word_start, is_word_char};
+use crate::primitives::word_navigation::{
+    char_at, char_before, is_unicode_word_char, is_word_char_at, is_word_char_before,
+};
 use ratatui::style::Color;
 use std::ops::Range;
 
@@ -71,152 +73,139 @@ impl TextReferenceHighlighter {
             return Vec::new();
         }
 
-        // Find the word under the cursor
-        let word_range = match self.get_word_at_position(buffer, cursor_position) {
-            Some(range) => range,
-            None => return Vec::new(),
-        };
+        word_occurrences(
+            buffer,
+            cursor_position,
+            viewport_start..viewport_end,
+            self.min_word_length,
+        )
+        .into_iter()
+        .map(|range| HighlightSpan {
+            range,
+            color: self.highlight_color,
+            bg: None,
+            category: None,
+        })
+        .collect()
+    }
+}
 
-        // Get the word text
-        let word_bytes = buffer.slice_bytes(word_range.clone());
-        let word = match std::str::from_utf8(&word_bytes) {
-            Ok(s) => s.to_string(),
-            Err(_) => return Vec::new(),
-        };
-
-        // Check minimum length
-        if word.len() < self.min_word_length {
-            return Vec::new();
+/// Each whole-word occurrence, overlapping `range`, of the word at
+/// `cursor_position` — if it is at least `min_word_length` bytes long.
+pub fn word_occurrences(
+    buffer: &Buffer,
+    cursor_position: usize,
+    range: Range<usize>,
+    min_word_length: usize,
+) -> Vec<Range<usize>> {
+    let Some(word_range) = word_at(buffer, cursor_position) else {
+        return Vec::new();
+    };
+    let word_bytes = buffer.slice_bytes(word_range);
+    match std::str::from_utf8(&word_bytes) {
+        Ok(word) if word.len() >= min_word_length => {
+            find_matches_in_range(buffer, word, range.start, range.end, true)
         }
+        _ => Vec::new(),
+    }
+}
 
-        // Find all occurrences in the viewport
-        let occurrences =
-            self.find_occurrences_in_range(buffer, &word, viewport_start, viewport_end);
+/// The word under the cursor at `position` (or just before it at the end
+/// of the buffer); `None` when the cursor is not on a word character. A word
+/// is a run of Unicode word characters, as the regex `\w` counts them
+/// ([`is_unicode_word_char`]), so `caf` is not a word inside `café`.
+pub fn word_at(buffer: &Buffer, position: usize) -> Option<Range<usize>> {
+    let len = buffer.len();
+    let on_word = if position < len {
+        is_word_char_at(buffer, position)
+    } else {
+        position == len && is_word_char_before(buffer, position)
+    };
+    if !on_word {
+        return None;
+    }
+    // Out from the cursor a character at a time, as far as a long word can
+    // be; a byte that is no valid character just ends the word
+    const MAX_WORD: usize = 1000;
+    let mut start = position;
+    while let Some(c) = char_before(buffer, start).filter(|&c| is_unicode_word_char(c)) {
+        if position - start >= MAX_WORD {
+            break;
+        }
+        start -= c.len_utf8();
+    }
+    let mut end = position;
+    while let Some(c) = char_at(buffer, end).filter(|&c| is_unicode_word_char(c)) {
+        if end - position >= MAX_WORD {
+            break;
+        }
+        end += c.len_utf8();
+    }
+    (start < end).then_some(start..end)
+}
 
-        // Convert to highlight spans
-        occurrences
-            .into_iter()
-            .map(|range| HighlightSpan {
-                range,
-                color: self.highlight_color,
-                bg: None,
-                category: None,
-            })
-            .collect()
+/// The most text a match search covers: beyond it (a huge single-line
+/// file), nothing is highlighted rather than scanning it all.
+pub const MAX_SEARCH_RANGE: usize = 1024 * 1024;
+
+/// All literal matches of `needle` overlapping the `start..end` byte range
+/// (resident text only). With `whole_word`, matches that continue into a
+/// surrounding word are rejected (the cursor-word highlight); without it
+/// every match counts (the selection highlight).
+pub fn find_matches_in_range(
+    buffer: &Buffer,
+    needle: &str,
+    start: usize,
+    end: usize,
+    whole_word: bool,
+) -> Vec<Range<usize>> {
+    // Skip if search range is too large (e.g., huge single-line files)
+    if end.saturating_sub(start) > MAX_SEARCH_RANGE {
+        return Vec::new();
     }
 
-    /// Get the word range at the given position
-    fn get_word_at_position(&self, buffer: &Buffer, position: usize) -> Option<Range<usize>> {
-        let buf_len = buffer.len();
-        if position > buf_len {
-            return None;
-        }
+    let mut occurrences = Vec::new();
 
-        // Check if cursor is on a word character
-        let is_on_word = if position < buf_len {
-            let byte_at_pos = buffer.slice_bytes(position..position + 1);
-            byte_at_pos
-                .first()
-                .map(|&b| is_word_char(b))
-                .unwrap_or(false)
-        } else if position > 0 {
-            // Cursor at end of buffer - check previous character
-            let byte_before = buffer.slice_bytes(position - 1..position);
-            byte_before
-                .first()
-                .map(|&b| is_word_char(b))
-                .unwrap_or(false)
+    // Get the text in the range (with some padding for edge matches),
+    // kept on character boundaries so the slice stays valid UTF-8.
+    let search_start = buffer.snap_to_char_boundary(start.saturating_sub(needle.len()));
+    let padded_end = (end + needle.len()).min(buffer.len());
+    let search_end = {
+        let snapped = buffer.snap_to_char_boundary(padded_end);
+        if snapped == padded_end {
+            padded_end
         } else {
-            false
-        };
-
-        if !is_on_word && position > 0 {
-            // Check if we're just after a word at end of buffer
-            let byte_before = buffer.slice_bytes(position.saturating_sub(1)..position);
-            let is_after_word = byte_before
-                .first()
-                .map(|&b| is_word_char(b))
-                .unwrap_or(false);
-
-            if is_after_word && position >= buf_len {
-                let start = find_word_start(buffer, position.saturating_sub(1));
-                let end = position;
-                if start < end {
-                    return Some(start..end);
-                }
-            }
-            return None;
+            buffer.next_char_boundary(snapped)
         }
+    };
 
-        if !is_on_word {
-            return None;
-        }
+    let bytes = buffer.slice_bytes(search_start..search_end);
+    let text = match std::str::from_utf8(&bytes) {
+        Ok(s) => s,
+        Err(_) => return occurrences,
+    };
 
-        // Find word boundaries
-        let start = find_word_start(buffer, position);
-        let end = find_word_end(buffer, position);
+    // Use match_indices for single-pass searching (creates StrSearcher once)
+    // This is much more efficient than repeatedly calling find() which creates
+    // a new searcher each time
+    for (rel_pos, _) in text.match_indices(needle) {
+        let abs_start = search_start + rel_pos;
+        let abs_end = abs_start + needle.len();
 
-        if start < end {
-            Some(start..end)
-        } else {
-            None
-        }
-    }
+        // Check if this is a whole word match (not part of a larger word)
+        let is_word_start = !whole_word || !is_word_char_before(buffer, abs_start);
 
-    /// Maximum search range (1MB) to avoid performance issues
-    const MAX_SEARCH_RANGE: usize = 1024 * 1024;
+        let is_word_end = !whole_word || !is_word_char_at(buffer, abs_end);
 
-    /// Find all whole-word occurrences in a byte range
-    fn find_occurrences_in_range(
-        &self,
-        buffer: &Buffer,
-        word: &str,
-        start: usize,
-        end: usize,
-    ) -> Vec<Range<usize>> {
-        // Skip if search range is too large
-        if end.saturating_sub(start) > Self::MAX_SEARCH_RANGE {
-            return Vec::new();
-        }
-
-        let mut occurrences = Vec::new();
-
-        // Get the text with padding for edge words
-        let search_start = start.saturating_sub(word.len());
-        let search_end = (end + word.len()).min(buffer.len());
-
-        let bytes = buffer.slice_bytes(search_start..search_end);
-        let text = match std::str::from_utf8(&bytes) {
-            Ok(s) => s,
-            Err(_) => return occurrences,
-        };
-
-        // Use match_indices for efficient single-pass searching
-        for (rel_pos, _) in text.match_indices(word) {
-            let abs_start = search_start + rel_pos;
-            let abs_end = abs_start + word.len();
-
-            // Check if this is a whole word match
-            let is_word_start = abs_start == 0 || {
-                let prev_byte = buffer.slice_bytes(abs_start - 1..abs_start);
-                prev_byte.first().map(|&b| !is_word_char(b)).unwrap_or(true)
-            };
-
-            let is_word_end = abs_end >= buffer.len() || {
-                let next_byte = buffer.slice_bytes(abs_end..abs_end + 1);
-                next_byte.first().map(|&b| !is_word_char(b)).unwrap_or(true)
-            };
-
-            if is_word_start && is_word_end {
-                // Only include if within viewport
-                if abs_start < end && abs_end > start {
-                    occurrences.push(abs_start..abs_end);
-                }
+        if is_word_start && is_word_end {
+            // Only include if it overlaps with the actual viewport
+            if abs_start < end && abs_end > start {
+                occurrences.push(abs_start..abs_end);
             }
         }
-
-        occurrences
     }
+
+    occurrences
 }
 
 #[cfg(test)]
@@ -230,6 +219,104 @@ mod tests {
         let mut buf = Buffer::empty(fs);
         buf.insert(0, content);
         buf
+    }
+
+    #[test]
+    fn word_at_takes_whole_unicode_words() {
+        let text = "x café, naïve_1 日本語 e\u{301}t";
+        let buffer = Buffer::from_str_test(text);
+        let word = |pos: usize| word_at(&buffer, pos).map(|r| &text[r]);
+        // Anywhere in a word, its start, its end, on the accented letter
+        for (needle, word_text) in [
+            ("café", "café"),
+            ("é", "café"),
+            ("naïve", "naïve_1"),
+            ("ïve", "naïve_1"),
+            ("_1", "naïve_1"),
+            ("本", "日本語"),
+            ("e\u{301}", "e\u{301}t"),
+            ("\u{301}", "e\u{301}t"),
+        ] {
+            assert_eq!(
+                word(text.find(needle).unwrap()),
+                Some(word_text),
+                "{needle:?}"
+            );
+        }
+        // Off any word: punctuation, space; at the end, the word before it
+        assert_eq!(word(text.find(',').unwrap()), None);
+        assert_eq!(word(1), None);
+        assert_eq!(word(text.len()), Some("e\u{301}t"));
+        assert_eq!(word(text.len() + 1), None);
+        let empty = Buffer::from_str_test("");
+        assert_eq!(word_at(&empty, 0), None);
+        let trailing_space = Buffer::from_str_test("ab ");
+        assert_eq!(word_at(&trailing_space, 3), None);
+    }
+
+    /// A byte that is no valid UTF-8 near the cursor ends a word, and does
+    /// not stop the word under the cursor being found.
+    #[test]
+    fn word_at_finds_words_beside_invalid_bytes() {
+        let fs = Arc::new(NoopFileSystem);
+        let mut buffer = Buffer::empty(fs);
+        buffer.insert_bytes(0, b"ab\xFFcafe\xE9 x caf".to_vec());
+        let cafe = 3;
+        assert_eq!(word_at(&buffer, cafe + 1), Some(cafe..cafe + 4));
+        assert_eq!(word_at(&buffer, 0), Some(0..2));
+        assert_eq!(word_at(&buffer, 2), None);
+        assert_eq!(
+            word_at(&buffer, buffer.len()),
+            Some(buffer.len() - 3..buffer.len())
+        );
+    }
+
+    /// The text of each whole-word occurrence of the word at `cursor`.
+    fn occurrences(text: &str, cursor: usize) -> Vec<&str> {
+        let buffer = Buffer::from_str_test(text);
+        word_occurrences(&buffer, cursor, 0..buffer.len(), 2)
+            .into_iter()
+            .map(|range| &text[range])
+            .collect()
+    }
+
+    /// Letters past ASCII are word characters, as for the regex `\b`: a
+    /// word is never matched inside a longer one that goes on with one
+    /// (issue #3645).
+    #[test]
+    fn non_ascii_letters_are_word_characters() {
+        let text = "café caf cafe";
+        let caf = text.find(" caf ").unwrap() + 1;
+        assert_eq!(occurrences(text, caf), vec!["caf"]);
+        // On the `é` itself, and on the letters before it: the whole word
+        assert_eq!(occurrences(text, text.find('é').unwrap()), vec!["café"]);
+        assert_eq!(occurrences(text, 0), vec!["café"]);
+    }
+
+    #[test]
+    fn non_ascii_words_match_whole() {
+        // (text, cursor, the word under it, how many times it occurs whole):
+        // Cyrillic, a decomposed accent (`e` + U+0301, a mark, which `\w`
+        // includes), and CJK
+        let decomposed = "cafe\u{301} cafe cafe\u{301}";
+        for (text, cursor, word, expected) in [
+            ("при привет при", 0, "при", 2),
+            (decomposed, 0, "cafe\u{301}", 2),
+            (
+                decomposed,
+                decomposed.find(" cafe ").unwrap() + 1,
+                "cafe",
+                1,
+            ),
+            ("日本 日本語 日本", 0, "日本", 2),
+            ("naïve x naïve", "naïve x naïve".len(), "naïve", 2),
+        ] {
+            assert_eq!(
+                occurrences(text, cursor),
+                vec![word; expected],
+                "{text:?}, cursor at {cursor}"
+            );
+        }
     }
 
     #[test]

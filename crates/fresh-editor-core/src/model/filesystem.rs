@@ -380,10 +380,10 @@ impl FileReader for StdFileReader {}
 // runs where the data lives: `StdFileSystem` scans locally, `RemoteFileSystem`
 // delegates to the remote agent so only matches cross the network.
 //
-// For searching an already-open buffer's piece tree (in-editor Ctrl+F and
-// dirty buffers in project search), see `TextBuffer::search_scan_*` in
-// `buffer.rs` which uses the same `SearchMatch` type but reads from the
-// in-memory piece tree rather than from disk.
+// The local search loads the file into a `TextBuffer` and searches it with
+// `RegexSearch`, the search every open buffer is searched with too (Ctrl+F,
+// replace, and open buffers in project search), so both give the same
+// matches and the same `SearchMatch`.
 
 /// Options for searching within a file via `FileSystem::search_file`.
 #[derive(Clone, Debug)]
@@ -394,70 +394,12 @@ pub struct FileSearchOptions {
     pub case_sensitive: bool,
     /// If true, match whole words only (wrap with `\b`).
     pub whole_word: bool,
-    /// Maximum number of matches to return per batch.
+    /// Maximum number of matches to return.
     pub max_matches: usize,
 }
 
-/// Cursor for incremental `search_file` calls.  Each call searches one
-/// chunk and advances the cursor; the caller loops until `done`.
-#[derive(Clone, Debug)]
-pub struct FileSearchCursor {
-    /// Byte offset to resume searching from.
-    pub offset: usize,
-    /// 1-based line number at `offset` (tracks newlines across calls).
-    pub running_line: usize,
-    /// Set to true when the entire file has been searched.
-    pub done: bool,
-    /// Optional upper bound — stop searching at this byte offset instead
-    /// of EOF.  Used by hybrid search to restrict `search_file` to a
-    /// specific file range (e.g. an unloaded piece-tree region).
-    pub end_offset: Option<usize>,
-}
-
-impl Default for FileSearchCursor {
-    fn default() -> Self {
-        Self {
-            offset: 0,
-            running_line: 1,
-            done: false,
-            end_offset: None,
-        }
-    }
-}
-
-impl FileSearchCursor {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Create a cursor bounded to a specific file range.
-    pub fn for_range(offset: usize, end_offset: usize, running_line: usize) -> Self {
-        Self {
-            offset,
-            running_line,
-            done: false,
-            end_offset: Some(end_offset),
-        }
-    }
-}
-
 /// A single search match with position and context.
-///
-/// Shared between `FileSystem::search_file` (project grep on disk) and
-/// `TextBuffer::search_scan_*` (in-editor search on piece tree).
-#[derive(Clone, Debug)]
-pub struct SearchMatch {
-    /// Byte offset of the match in the file/buffer.
-    pub byte_offset: usize,
-    /// Length of the match in bytes.
-    pub length: usize,
-    /// 1-based line number.
-    pub line: usize,
-    /// 1-based byte column within the line.
-    pub column: usize,
-    /// Content of the line containing the match (no trailing newline).
-    pub context: String,
-}
+pub use crate::model::buffer::SearchMatch;
 
 /// A file's size and the SHA-256 of its bytes: enough to tell whether it
 /// still holds bytes seen earlier, without keeping them. SHA-256 so the
@@ -861,24 +803,20 @@ pub trait FileSystem: Send + Sync {
     // Search Operations
     // ========================================================================
 
-    /// Search a file on disk for a pattern, returning one batch of matches.
-    ///
-    /// Call repeatedly with the same cursor until `cursor.done` is true.
-    /// Each call searches one chunk; the cursor tracks position and line
-    /// numbers across calls.
+    /// Search a file on disk for a pattern, returning its matches (up to
+    /// `opts.max_matches`) — the whole file in one call.
     ///
     /// The search runs where the data lives: `StdFileSystem` reads and
     /// scans locally; `RemoteFileSystem` sends a stateless RPC to the
     /// remote agent.  Only matches cross the network.
     ///
-    /// For searching an already-open buffer with unsaved edits, use
-    /// `TextBuffer::search_scan_all` which reads from the piece tree.
+    /// An open buffer is searched as it is, with `RegexSearch`, which sees
+    /// its unsaved edits.
     fn search_file(
         &self,
         path: &Path,
         pattern: &str,
         opts: &FileSearchOptions,
-        cursor: &mut FileSearchCursor,
     ) -> io::Result<Vec<SearchMatch>>;
 
     /// Write file using sudo (for root-owned files).
@@ -1248,34 +1186,17 @@ pub fn sibling_temp_pid(file_name: &str) -> Option<u32> {
 // Default search_file implementation
 // ============================================================================
 
-/// Build a `regex::bytes::Regex` from a user-facing pattern and search options.
-pub fn build_search_regex(
-    pattern: &str,
-    opts: &FileSearchOptions,
-) -> io::Result<regex::bytes::Regex> {
-    let re_pattern = if opts.fixed_string {
-        regex::escape(pattern)
-    } else {
-        pattern.to_string()
-    };
-    let re_pattern = if opts.whole_word {
-        format!(r"\b{}\b", re_pattern)
-    } else {
-        re_pattern
-    };
-    let re_pattern = if opts.case_sensitive {
-        re_pattern
-    } else {
-        format!("(?i){}", re_pattern)
-    };
-    // Multi-line regex patterns get (?s) so `.` matches newlines.
-    let re_pattern = if !opts.fixed_string && pattern.contains('\n') {
-        format!("(?s){}", re_pattern)
-    } else {
-        re_pattern
-    };
-    regex::bytes::Regex::new(&re_pattern)
+impl FileSearchOptions {
+    /// `pattern` compiled for searching with these options.
+    pub fn query(&self, pattern: &str) -> io::Result<crate::model::buffer::SearchQuery> {
+        crate::model::buffer::SearchQuery::new(
+            pattern,
+            !self.fixed_string,
+            self.whole_word,
+            self.case_sensitive,
+        )
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))
+    }
 }
 
 /// Maximum per-file size for unbounded project-wide search.  Files larger
@@ -1283,7 +1204,7 @@ pub fn build_search_regex(
 /// archives, model weights, or audio files would otherwise lock up the
 /// editor for minutes (issue #1342).  Source files virtually never exceed
 /// this limit; users wanting to search huge text logs should open them
-/// directly so hybrid buffer search applies.
+/// and search the open buffer.
 pub const MAX_PROJECT_SEARCH_FILE_SIZE: u64 = 10 * 1024 * 1024;
 
 /// Filename extensions that always represent binary content for project
@@ -1426,7 +1347,7 @@ pub const BINARY_FILE_EXTENSIONS: &[&str] = &[
 ];
 
 /// True if `path`'s extension matches a known binary format.
-fn has_binary_extension(path: &Path) -> bool {
+pub fn has_binary_extension(path: &Path) -> bool {
     let Some(ext) = path.extension().and_then(|s| s.to_str()) else {
         return false;
     };
@@ -1447,154 +1368,42 @@ fn is_byte_searchable_encoding(enc: crate::model::encoding::Encoding) -> bool {
     !matches!(enc, Encoding::Utf16Le | Encoding::Utf16Be)
 }
 
-/// Default implementation of `FileSystem::search_file` that works for any
-/// filesystem backend.  Reads one chunk via `read_range`, scans with the
-/// given regex, and returns matches with line/column/context.
+/// Search a file that is not open in the editor: load it into a
+/// `TextBuffer`, as opening it would, and search that with the editor's
+/// [`RegexSearch`](crate::model::buffer::RegexSearch) — the one search every
+/// buffer search uses. The whole file is searched in one call (up to
+/// `opts.max_matches`).
+///
+/// What is not text is skipped: known binary extensions, empty files, files
+/// over [`MAX_PROJECT_SEARCH_FILE_SIZE`], and files whose bytes are binary,
+/// in an encoding a byte regex cannot match, or hold a NUL anywhere.
 pub fn default_search_file(
     fs: &dyn FileSystem,
     path: &Path,
     pattern: &str,
     opts: &FileSearchOptions,
-    cursor: &mut FileSearchCursor,
 ) -> io::Result<Vec<SearchMatch>> {
-    if cursor.done {
+    if has_binary_extension(path) {
+        return Ok(vec![]);
+    }
+    let size = fs.metadata(path)?.size;
+    if size == 0 || size > MAX_PROJECT_SEARCH_FILE_SIZE {
+        return Ok(vec![]);
+    }
+    let contents = fs.read_file(path)?;
+    let (encoding, is_binary) = crate::model::encoding::detect_encoding_or_binary(&contents, false);
+    if is_binary || !is_byte_searchable_encoding(encoding) || contents.contains(&0) {
         return Ok(vec![]);
     }
 
-    const CHUNK_SIZE: usize = 1_048_576; // 1 MB
-    let overlap = pattern.len().max(256);
-
-    // Pre-flight checks for unbounded scans.  Bounded scans (hybrid
-    // buffer search) intentionally bypass all of these — they run only
-    // when the user has explicitly opened the file as text, and we trust
-    // the editor's load-time decision.
-    if cursor.offset == 0 && cursor.end_offset.is_none() {
-        // Extension fast-path: skip known-binary formats with no I/O at
-        // all (no stat, no header read).
-        if has_binary_extension(path) {
-            cursor.done = true;
-            return Ok(vec![]);
-        }
-    }
-
-    let meta = fs.metadata(path)?;
-    let file_size = meta.size;
-    let file_len = file_size as usize;
-    let effective_end = cursor.end_offset.unwrap_or(file_len).min(file_len);
-
-    if cursor.offset == 0 && cursor.end_offset.is_none() {
-        if file_size == 0 {
-            cursor.done = true;
-            return Ok(vec![]);
-        }
-        // Skip files that exceed the project-search size cap.  Multi-gigabyte
-        // archives, model weights, and audio files would otherwise lock up
-        // the editor (issue #1342).
-        if file_size > MAX_PROJECT_SEARCH_FILE_SIZE {
-            cursor.done = true;
-            return Ok(vec![]);
-        }
-        // Delegate the header sniff to the same encoding detector the
-        // buffer loader uses, so search and editor agree on what's text.
-        // The detector handles BOMs, UTF-16 statistical detection, and
-        // the full set of "non-text control char" indicators.  We then
-        // additionally reject encodings byte-regex can't meaningfully
-        // match (UTF-16/32) until we add transcoding.
-        let header_len = file_len.min(8192);
-        let header = fs.read_range(path, 0, header_len)?;
-        let truncated = header_len < file_len;
-        let (encoding, is_binary) =
-            crate::model::encoding::detect_encoding_or_binary(&header, truncated);
-        if is_binary || !is_byte_searchable_encoding(encoding) {
-            cursor.done = true;
-            return Ok(vec![]);
-        }
-    }
-
-    if cursor.offset >= effective_end {
-        cursor.done = true;
-        return Ok(vec![]);
-    }
-
-    let regex = build_search_regex(pattern, opts)?;
-
-    // Read chunk with overlap from previous
-    let read_start = cursor.offset.saturating_sub(overlap);
-    let read_end = (read_start + CHUNK_SIZE).min(effective_end);
-    let chunk = fs.read_range(path, read_start as u64, read_end - read_start)?;
-
-    let overlap_len = cursor.offset - read_start;
-
-    // Mid-stream binary detection.  The 8 KB header check at the top of
-    // the function only sees the start of the file, but plenty of formats
-    // are text in their first few KB and binary thereafter (self-extracting
-    // installers, mbox files with attachments, log files with embedded
-    // crash dumps).  A NUL byte in any subsequent chunk is the strongest
-    // indicator the file isn't text we should be searching, so bail out
-    // and discard whatever pseudo-matches the regex would have found.
-    // Bounded scans skip this — they're searching a delimited region of
-    // an already-loaded text buffer where NULs may legitimately appear
-    // mid-stream (e.g., cursor sentinels in piece-tree leaves).
-    if cursor.end_offset.is_none() && chunk[overlap_len..].contains(&0) {
-        cursor.done = true;
-        return Ok(vec![]);
-    }
-
-    // Incremental line counting (same algorithm as search_scan_next_chunk)
-    let newlines_in_overlap = chunk[..overlap_len].iter().filter(|&&b| b == b'\n').count();
-    let mut line_at = cursor.running_line.saturating_sub(newlines_in_overlap);
-    let mut counted_to = 0usize;
-    let mut matches = Vec::new();
-
-    for m in regex.find_iter(&chunk) {
-        // Skip matches in overlap region (already reported in previous batch)
-        if overlap_len > 0 && m.end() <= overlap_len {
-            continue;
-        }
-        if matches.len() >= opts.max_matches {
-            break;
-        }
-
-        // Count newlines from last position to this match
-        line_at += chunk[counted_to..m.start()]
-            .iter()
-            .filter(|&&b| b == b'\n')
-            .count();
-        counted_to = m.start();
-
-        // Find line boundaries for context
-        let line_start = chunk[..m.start()]
-            .iter()
-            .rposition(|&b| b == b'\n')
-            .map(|p| p + 1)
-            .unwrap_or(0);
-        let line_end = chunk[m.start()..]
-            .iter()
-            .position(|&b| b == b'\n')
-            .map(|p| m.start() + p)
-            .unwrap_or(chunk.len());
-
-        let column = m.start() - line_start + 1;
-        let context = String::from_utf8_lossy(&chunk[line_start..line_end]).into_owned();
-
-        matches.push(SearchMatch {
-            byte_offset: read_start + m.start(),
-            length: m.end() - m.start(),
-            line: line_at,
-            column,
-            context,
-        });
-    }
-
-    // Advance cursor
-    let new_data = &chunk[overlap_len..];
-    cursor.running_line += new_data.iter().filter(|&&b| b == b'\n').count();
-    cursor.offset = read_end;
-    if read_end >= effective_end {
-        cursor.done = true;
-    }
-
-    Ok(matches)
+    let query = opts.query(pattern)?;
+    let mut buffer =
+        crate::model::buffer::TextBuffer::from_bytes(contents, std::sync::Arc::new(NoopFileSystem));
+    let len = buffer.len();
+    crate::model::buffer::RegexSearch::new(&query, 0..len, &buffer)
+        .with_lines(1)
+        .run(&mut buffer, opts.max_matches)
+        .map_err(io::Error::other)
 }
 
 // ============================================================================
@@ -2204,9 +2013,8 @@ impl FileSystem for StdFileSystem {
         path: &Path,
         pattern: &str,
         opts: &FileSearchOptions,
-        cursor: &mut FileSearchCursor,
     ) -> io::Result<Vec<SearchMatch>> {
-        default_search_file(self, path, pattern, opts, cursor)
+        default_search_file(self, path, pattern, opts)
     }
 
     fn walk(
@@ -2427,7 +2235,6 @@ impl FileSystem for NoopFileSystem {
         _path: &Path,
         _pattern: &str,
         _opts: &FileSearchOptions,
-        _cursor: &mut FileSearchCursor,
     ) -> io::Result<Vec<SearchMatch>> {
         Self::unsupported()
     }
@@ -3179,10 +2986,8 @@ mod tests {
             .unwrap();
 
         let opts = make_search_opts(true);
-        let mut cursor = FileSearchCursor::new();
-        let matches = fs.search_file(&path, "hello", &opts, &mut cursor).unwrap();
+        let matches = fs.search_file(&path, "hello", &opts).unwrap();
 
-        assert!(cursor.done);
         assert_eq!(matches.len(), 2);
 
         assert_eq!(matches[0].line, 1);
@@ -3202,12 +3007,8 @@ mod tests {
         fs.write_file(&path, b"hello world\n").unwrap();
 
         let opts = make_search_opts(true);
-        let mut cursor = FileSearchCursor::new();
-        let matches = fs
-            .search_file(&path, "NOTFOUND", &opts, &mut cursor)
-            .unwrap();
+        let matches = fs.search_file(&path, "NOTFOUND", &opts).unwrap();
 
-        assert!(cursor.done);
         assert!(matches.is_empty());
     }
 
@@ -3224,8 +3025,7 @@ mod tests {
             whole_word: false,
             max_matches: 100,
         };
-        let mut cursor = FileSearchCursor::new();
-        let matches = fs.search_file(&path, "hello", &opts, &mut cursor).unwrap();
+        let matches = fs.search_file(&path, "hello", &opts).unwrap();
 
         assert_eq!(matches.len(), 3);
     }
@@ -3243,8 +3043,7 @@ mod tests {
             whole_word: true,
             max_matches: 100,
         };
-        let mut cursor = FileSearchCursor::new();
-        let matches = fs.search_file(&path, "cat", &opts, &mut cursor).unwrap();
+        let matches = fs.search_file(&path, "cat", &opts).unwrap();
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].column, 1);
@@ -3263,10 +3062,7 @@ mod tests {
             whole_word: false,
             max_matches: 100,
         };
-        let mut cursor = FileSearchCursor::new();
-        let matches = fs
-            .search_file(&path, r"[a-z]+\d+", &opts, &mut cursor)
-            .unwrap();
+        let matches = fs.search_file(&path, r"[a-z]+\d+", &opts).unwrap();
 
         assert_eq!(matches.len(), 2);
         assert_eq!(matches[0].context, "foo123 bar456 baz");
@@ -3283,10 +3079,8 @@ mod tests {
         fs.write_file(&path, &data).unwrap();
 
         let opts = make_search_opts(true);
-        let mut cursor = FileSearchCursor::new();
-        let matches = fs.search_file(&path, "hello", &opts, &mut cursor).unwrap();
+        let matches = fs.search_file(&path, "hello", &opts).unwrap();
 
-        assert!(cursor.done);
         assert!(matches.is_empty());
     }
 
@@ -3302,10 +3096,8 @@ mod tests {
         fs.write_file(&path, b"hello world\nhello again\n").unwrap();
 
         let opts = make_search_opts(true);
-        let mut cursor = FileSearchCursor::new();
-        let matches = fs.search_file(&path, "hello", &opts, &mut cursor).unwrap();
+        let matches = fs.search_file(&path, "hello", &opts).unwrap();
 
-        assert!(cursor.done);
         assert!(
             matches.is_empty(),
             ".png extension should short-circuit before content scan"
@@ -3325,12 +3117,8 @@ mod tests {
                 .unwrap();
 
             let opts = make_search_opts(true);
-            let mut cursor = FileSearchCursor::new();
-            let matches = fs
-                .search_file(&path, "definitely", &opts, &mut cursor)
-                .unwrap();
+            let matches = fs.search_file(&path, "definitely", &opts).unwrap();
 
-            assert!(cursor.done, "{} should be marked done", name);
             assert!(
                 matches.is_empty(),
                 "{} matched but extension should have skipped it",
@@ -3359,10 +3147,8 @@ mod tests {
         fs.write_file(&path, &data).unwrap();
 
         let opts = make_search_opts(true);
-        let mut cursor = FileSearchCursor::new();
-        let matches = fs.search_file(&path, "hello", &opts, &mut cursor).unwrap();
+        let matches = fs.search_file(&path, "hello", &opts).unwrap();
 
-        assert!(cursor.done);
         assert!(
             matches.is_empty(),
             "UTF-16 file must be skipped: byte-regex can't match UTF-8 patterns in it"
@@ -3388,12 +3174,8 @@ mod tests {
         fs.write_file(&path, &data).unwrap();
 
         let opts = make_search_opts(true);
-        let mut cursor = FileSearchCursor::new();
-        let matches = fs
-            .search_file(&path, "PATTERN_AFTER_NUL", &opts, &mut cursor)
-            .unwrap();
+        let matches = fs.search_file(&path, "PATTERN_AFTER_NUL", &opts).unwrap();
 
-        assert!(cursor.done);
         assert!(
             matches.is_empty(),
             "mid-stream NUL should abort scan and discard pseudo-matches"
@@ -3409,14 +3191,14 @@ mod tests {
             whole_word: false,
             max_matches: 100,
         };
-        let re = build_search_regex("foo\n.+bar", &opts).unwrap();
+        let re = opts.query("foo\n.+bar").unwrap().regex;
         assert!(re.is_match(b"foo\nXXXXbar"));
         // Sanity: literal mode also matches the embedded newline.
         let opts_lit = FileSearchOptions {
             fixed_string: true,
             ..opts
         };
-        let re_lit = build_search_regex("foo\nbar", &opts_lit).unwrap();
+        let re_lit = opts_lit.query("foo\nbar").unwrap().regex;
         assert!(re_lit.is_match(b"foo\nbar"));
     }
 
@@ -3428,10 +3210,8 @@ mod tests {
         fs.write_file(&path, b"").unwrap();
 
         let opts = make_search_opts(true);
-        let mut cursor = FileSearchCursor::new();
-        let matches = fs.search_file(&path, "hello", &opts, &mut cursor).unwrap();
+        let matches = fs.search_file(&path, "hello", &opts).unwrap();
 
-        assert!(cursor.done);
         assert!(matches.is_empty());
     }
 
@@ -3452,15 +3232,8 @@ mod tests {
         fs.write_file(&path, &data).unwrap();
 
         let opts = make_search_opts(true);
-        let mut cursor = FileSearchCursor::new();
-        let matches = fs
-            .search_file(&path, "UNIQUE_TAIL_MARKER", &opts, &mut cursor)
-            .unwrap();
+        let matches = fs.search_file(&path, "UNIQUE_TAIL_MARKER", &opts).unwrap();
 
-        assert!(
-            cursor.done,
-            "oversized file should be marked done in one call"
-        );
         assert!(matches.is_empty(), "oversized file should yield no matches");
     }
 
@@ -3481,10 +3254,8 @@ mod tests {
         fs.write_file(&path, &data).unwrap();
 
         let opts = make_search_opts(true);
-        let mut cursor = FileSearchCursor::new();
-        let matches = fs.search_file(&path, "hello", &opts, &mut cursor).unwrap();
+        let matches = fs.search_file(&path, "hello", &opts).unwrap();
 
-        assert!(cursor.done);
         assert!(matches.is_empty());
     }
 
@@ -3501,19 +3272,18 @@ mod tests {
             whole_word: false,
             max_matches: 2,
         };
-        let mut cursor = FileSearchCursor::new();
-        let matches = fs.search_file(&path, "aa", &opts, &mut cursor).unwrap();
+        let matches = fs.search_file(&path, "aa", &opts).unwrap();
 
         assert_eq!(matches.len(), 2);
     }
 
     #[test]
-    fn test_search_file_cursor_multi_chunk() {
+    fn test_search_file_larger_than_a_window() {
         let fs = StdFileSystem;
         let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path().join("large.txt");
 
-        // Create a file larger than 1MB chunk size to test cursor continuation
+        // A file larger than a 1 MB search window
         let mut content = Vec::new();
         for i in 0..100_000 {
             content.extend_from_slice(format!("line {} content here\n", i).as_bytes());
@@ -3526,15 +3296,7 @@ mod tests {
             whole_word: false,
             max_matches: 1000,
         };
-        let mut cursor = FileSearchCursor::new();
-        let mut all_matches = Vec::new();
-
-        while !cursor.done {
-            let batch = fs
-                .search_file(&path, "line 5000", &opts, &mut cursor)
-                .unwrap();
-            all_matches.extend(batch);
-        }
+        let all_matches = fs.search_file(&path, "line 5000", &opts).unwrap();
 
         // "line 5000" matches: "line 5000 ", "line 50000 "..  "line 50009 "
         // = 11 matches (5000, 50000-50009)
@@ -3548,7 +3310,7 @@ mod tests {
     }
 
     #[test]
-    fn test_search_file_cursor_no_duplicates() {
+    fn test_search_file_no_duplicates_across_windows() {
         let fs = StdFileSystem;
         let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path().join("large.txt");
@@ -3566,20 +3328,9 @@ mod tests {
             whole_word: false,
             max_matches: 200_000,
         };
-        let mut cursor = FileSearchCursor::new();
-        let mut all_matches = Vec::new();
-        let mut batches = 0;
+        // The file is over 1MB, so the search crosses window boundaries.
+        let all_matches = fs.search_file(&path, "MARKER_", &opts).unwrap();
 
-        while !cursor.done {
-            let batch = fs
-                .search_file(&path, "MARKER_", &opts, &mut cursor)
-                .unwrap();
-            all_matches.extend(batch);
-            batches += 1;
-        }
-
-        // Must have multiple batches (file > 1MB)
-        assert!(batches > 1, "Expected multiple batches, got {}", batches);
         // Exactly one match per line, no duplicates
         assert_eq!(all_matches.len(), 100_000);
         // Check no duplicate byte offsets
@@ -3608,53 +3359,11 @@ mod tests {
         fs.write_file(&path, &content).unwrap();
 
         let opts = make_search_opts(true);
-        let mut cursor = FileSearchCursor::new();
-        let mut all_matches = Vec::new();
-
-        while !cursor.done {
-            let batch = fs.search_file(&path, "FINDME", &opts, &mut cursor).unwrap();
-            all_matches.extend(batch);
-        }
+        let all_matches = fs.search_file(&path, "FINDME", &opts).unwrap();
 
         assert_eq!(all_matches.len(), 1);
         assert_eq!(all_matches[0].line, total_lines); // last line
         assert_eq!(all_matches[0].context, "FINDME at the end");
-    }
-
-    #[test]
-    fn test_search_file_end_offset_bounds_search() {
-        let fs = StdFileSystem;
-        let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir.path().join("bounded.txt");
-
-        // "AAA\nBBB\nCCC\nDDD\n" — each line is 4 bytes
-        fs.write_file(&path, b"AAA\nBBB\nCCC\nDDD\n").unwrap();
-
-        // Search only the first 8 bytes ("AAA\nBBB\n") — should find AAA and BBB
-        let opts = make_search_opts(true);
-        let mut cursor = FileSearchCursor::for_range(0, 8, 1);
-        let mut matches = Vec::new();
-        while !cursor.done {
-            matches.extend(fs.search_file(&path, "AAA", &opts, &mut cursor).unwrap());
-        }
-        assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].context, "AAA");
-        assert_eq!(matches[0].line, 1);
-
-        // CCC is at byte 8, outside the first 8 bytes
-        let mut cursor = FileSearchCursor::for_range(0, 8, 1);
-        let ccc = fs.search_file(&path, "CCC", &opts, &mut cursor).unwrap();
-        assert!(ccc.is_empty(), "CCC should not be found in first 8 bytes");
-
-        // Search bytes 8..16 ("CCC\nDDD\n") — should find CCC
-        let mut cursor = FileSearchCursor::for_range(8, 16, 3);
-        let mut matches = Vec::new();
-        while !cursor.done {
-            matches.extend(fs.search_file(&path, "CCC", &opts, &mut cursor).unwrap());
-        }
-        assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].context, "CCC");
-        assert_eq!(matches[0].line, 3);
     }
 
     // ====================================================================
@@ -4321,9 +4030,8 @@ mod tests {
             path: &Path,
             pattern: &str,
             opts: &FileSearchOptions,
-            cursor: &mut FileSearchCursor,
         ) -> io::Result<Vec<SearchMatch>> {
-            default_search_file(&StdFileSystem, path, pattern, opts, cursor)
+            default_search_file(&StdFileSystem, path, pattern, opts)
         }
         fn walk(
             &self,
