@@ -1012,10 +1012,43 @@ impl TextBuffer {
         Ok(())
     }
 
+    /// Record in the hot-exit entry that a save done outside
+    /// [`Self::save_to_file`] — the sudo prompt's — is about to write `size`
+    /// bytes to `dest_path`, as `save_to_file` does before its own write.
+    /// Without it a crash between the write and the entry's deletion brought
+    /// the entry back as unsaved work, over the file just written (#3633,
+    /// A7). Returns whether it was recorded: never for a remote file, whose
+    /// `stat` the next start can't take.
+    ///
+    /// Pass the answer to [`Self::finalize_external_save`], or to
+    /// [`Self::abandon_external_save`] when the write fails.
+    pub fn begin_external_save(&self, dest_path: &Path, size: u64) -> bool {
+        self.persistence.fs().remote_connection_info().is_none()
+            && self.begin_hot_exit_save(dest_path, size)
+    }
+
+    /// The external save [`Self::begin_external_save`] recorded failed: the
+    /// hot-exit entry is the unsaved work again.
+    pub fn abandon_external_save(&self, journaled: bool) {
+        if journaled {
+            self.abandon_hot_exit_save();
+        }
+    }
+
     /// Finalize buffer state after an external save operation (e.g., via sudo).
     ///
     /// This updates the saved snapshot and file size to match the new state on disk.
-    pub fn finalize_external_save(&mut self, dest_path: PathBuf) -> anyhow::Result<()> {
+    /// `journaled` is what [`Self::begin_external_save`] answered.
+    pub fn finalize_external_save(
+        &mut self,
+        dest_path: PathBuf,
+        journaled: bool,
+    ) -> anyhow::Result<()> {
+        // Spent, as after `save_to_file`'s own write: the entry is no one's
+        // unsaved work any more.
+        if journaled {
+            self.persistence.set_hot_exit_entry(None);
+        }
         let new_size = self.persistence.fs().metadata(&dest_path)?.size as usize;
         self.persistence.set_saved_content(None);
         self.persistence.set_saved_file_size(Some(new_size));

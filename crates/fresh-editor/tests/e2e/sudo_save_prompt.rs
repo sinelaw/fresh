@@ -329,6 +329,9 @@ struct WriteDeniedFileSystem {
     /// The elevated write runs out of space once it has written this many
     /// bytes, as `sudo tee` does on a full disk: the file is left torn.
     sudo_disk_full_after: Option<usize>,
+    /// Run at the start of the elevated write, to look at what the editor
+    /// had recorded by then.
+    on_sudo_write: Option<Box<dyn Fn() + Send + Sync>>,
 }
 
 impl WriteDeniedFileSystem {
@@ -469,6 +472,9 @@ impl FileSystem for WriteDeniedFileSystem {
         _uid: u32,
         _gid: u32,
     ) -> io::Result<()> {
+        if let Some(hook) = &self.on_sudo_write {
+            hook();
+        }
         match self.sudo_disk_full_after {
             Some(n) => {
                 self.inner.write_file(path, &data[..n.min(data.len())])?;
@@ -512,6 +518,7 @@ fn dirty_unwritable_file(config: Config) -> (EditorTestHarness, TempDir, PathBuf
         denied: file_path.clone(),
         denied_dir: None,
         sudo_disk_full_after: None,
+        on_sudo_write: None,
     });
     let mut harness = EditorTestHarness::create(
         120,
@@ -751,6 +758,7 @@ fn sudo_save_temp_file_is_private() {
             denied: file_path.clone(),
             denied_dir: (!dir_writable).then(|| temp_dir.path().to_path_buf()),
             sudo_disk_full_after: None,
+            on_sudo_write: None,
         });
         let mut buffer = TextBuffer::load_from_file(&file_path, 1024 * 1024, fs).unwrap();
         buffer.insert_bytes(0, b"modified ".to_vec());
@@ -876,6 +884,7 @@ fn save_and_quit_is_not_held_by_a_hidden_buffer() {
         denied: hidden.clone(),
         denied_dir: None,
         sudo_disk_full_after: None,
+        on_sudo_write: None,
     });
     let mut harness = EditorTestHarness::create(
         120,
@@ -1055,6 +1064,7 @@ fn a_sudo_save_failing_part_way_is_not_taken_for_a_change_on_disk() {
         denied: file_path.clone(),
         denied_dir: None,
         sudo_disk_full_after: Some(3),
+        on_sudo_write: None,
     });
     // Wide enough for the poll's "File <full path> changed on disk (...)"
     // whole, however long the temp dir's path (macOS, Windows).
@@ -1140,6 +1150,7 @@ fn a_retry_after_a_large_files_sudo_save_failed_part_way_is_refused() {
         // Longer than the original, so every part a retry reads back from
         // the torn file is still there to read.
         sudo_disk_full_after: Some(original.len() + 3),
+        on_sudo_write: None,
     });
     let mut config = Config::default();
     config.editor.large_file_threshold_bytes = 1024;
@@ -1190,5 +1201,100 @@ fn a_retry_after_a_large_files_sudo_save_failed_part_way_is_refused() {
         std::fs::read(&file_path).unwrap(),
         torn,
         "nothing more is written"
+    );
+}
+
+/// The recovery entries' metadata files under `dir` that record a save in
+/// progress (a `saving` field).
+fn entries_recording_a_save(dir: &Path) -> usize {
+    let mut found = 0;
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(next) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&next) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|e| e == "json")
+                && std::fs::read_to_string(&path).is_ok_and(|json| json.contains("\"saving\""))
+            {
+                found += 1;
+            }
+        }
+    }
+    found
+}
+
+/// A sudo save tells the buffer's recovery entry it is saving before it
+/// writes, as a save's own write does. Without that, a crash between the
+/// write and the entry's deletion brought the entry back on the next start
+/// as unsaved work, over the file the save had just written (#3633, A7).
+#[test]
+fn a_sudo_save_records_itself_in_the_recovery_entry_before_writing() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("notes.txt");
+    std::fs::write(&file_path, "original content\n").unwrap();
+    let recovery_dir: Arc<Mutex<Option<PathBuf>>> = Arc::default();
+    let recorded = Arc::new(AtomicBool::new(false));
+    let fs = Arc::new(WriteDeniedFileSystem {
+        inner: Arc::new(StdFileSystem),
+        denied: file_path.clone(),
+        denied_dir: None,
+        sudo_disk_full_after: None,
+        on_sudo_write: Some(Box::new({
+            let recovery_dir = Arc::clone(&recovery_dir);
+            let recorded = Arc::clone(&recorded);
+            move || {
+                if let Some(dir) = recovery_dir.lock().unwrap().as_deref() {
+                    recorded.store(entries_recording_a_save(dir) == 1, Ordering::SeqCst);
+                }
+            }
+        })),
+    });
+    let mut config = Config::default();
+    config.editor.hot_exit = true;
+    config.editor.auto_recovery_save_interval_secs = 0;
+    let mut harness = EditorTestHarness::create(
+        120,
+        24,
+        HarnessOptions::new()
+            .with_config(config)
+            .with_filesystem(fs)
+            .with_working_dir(temp_dir.path().to_path_buf()),
+    )
+    .unwrap();
+    *recovery_dir.lock().unwrap() = harness.recovery_dir();
+
+    harness.open_file(&file_path).unwrap();
+    harness.type_text("modified ").unwrap();
+    harness.render().unwrap();
+    // Backed up: the buffer has a recovery entry for the save to tell
+    harness
+        .editor_mut()
+        .auto_recovery_save_dirty_buffers()
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Save with sudo");
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(&file_path).unwrap(),
+        "modified original content\n"
+    );
+    assert!(
+        recorded.load(Ordering::SeqCst),
+        "the entry did not record the save before the sudo write"
     );
 }

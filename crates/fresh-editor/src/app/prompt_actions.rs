@@ -361,8 +361,17 @@ impl Editor {
                     let mtime_before = mtime(self);
 
                     // Read temp file and write via sudo (works for both local and remote)
+                    let mut journaled = false;
                     let result = (|| -> anyhow::Result<()> {
                         let data = info.read_content()?;
+                        // Told first, as a save's own write tells it, so a
+                        // crash on either side of the write leaves something
+                        // the next start can settle (#3633, A7).
+                        journaled = self.buffers().get(&buffer_id).is_some_and(|state| {
+                            state
+                                .buffer
+                                .begin_external_save(&info.dest_path, data.len() as u64)
+                        });
                         self.authority().filesystem.sudo_write(
                             &info.dest_path,
                             &data,
@@ -386,9 +395,13 @@ impl Editor {
                             buffer_id,
                             info.dest_path.clone(),
                             close_after_save,
+                            journaled,
                         ),
                         Err(e) => {
                             tracing::warn!("Sudo save failed: {}", e);
+                            if let Some(state) = self.buffers().get(&buffer_id) {
+                                state.buffer.abandon_external_save(journaled);
+                            }
                             // `sudo tee` truncates and then writes, and the
                             // chmod/chown come after: failing part-way, it
                             // changed the file. That change is our own, not
@@ -1418,13 +1431,14 @@ impl Editor {
         buffer_id: BufferId,
         path: std::path::PathBuf,
         close_after_save: bool,
+        journaled: bool,
     ) {
         let Some(state) = self.buffers_mut().get_mut(&buffer_id) else {
             // Gone while the prompt was open; the file is written regardless.
             tracing::warn!("Buffer {buffer_id:?} closed before its sudo save finished");
             return;
         };
-        if let Err(e) = state.buffer.finalize_external_save(path.clone()) {
+        if let Err(e) = state.buffer.finalize_external_save(path.clone(), journaled) {
             tracing::warn!("Failed to finalize sudo save: {}", e);
             self.set_status_message(
                 t!("prompt.sudo_save_failed", error = e.to_string()).to_string(),
