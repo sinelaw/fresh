@@ -919,7 +919,16 @@ mod tests {
     #[test]
     fn an_unsettled_pane_answers_its_top() {
         let h = PaneHandle::new(leaf());
-        h.settle(Rect::new(0, 0, 10, 3), Vec::new(), 0, None, 42, None, false, None);
+        h.settle(
+            Rect::new(0, 0, 10, 3),
+            Vec::new(),
+            0,
+            None,
+            42,
+            None,
+            false,
+            None,
+        );
         let obj = (h.factory)();
         assert_eq!(obj.text_byte_at(Point::new(4, 2)), Some(42));
     }
