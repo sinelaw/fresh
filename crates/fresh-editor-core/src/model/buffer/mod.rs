@@ -3049,8 +3049,8 @@ impl TextBuffer {
     /// line tracking is integrated directly into the piece tree via:
     /// ```rust
     /// BufferData::Loaded {
-    ///     data: Vec<u8>,
-    ///     line_starts: Option<Vec<usize>>  // None = large file mode (no line metadata)
+    ///     data: Arc<Vec<u8>>,
+    ///     line_starts: Option<Arc<Vec<usize>>>  // None = large file mode (no line metadata)
     /// }
     /// ```
     ///
