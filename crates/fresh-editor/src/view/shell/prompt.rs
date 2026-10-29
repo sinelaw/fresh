@@ -849,11 +849,7 @@ pub fn suggestions_layer(s: &Suggestions) -> Node<UiMsg> {
 /// and the margin is the same fixed cell the rows use, so what is left is the
 /// text and its name.
 fn hints_row(text_of: &str) -> Node<UiMsg> {
-    let t = attrs(
-        "editor.line_number_fg",
-        "ui.suggestion_selected_bg",
-        &["dim"],
-    );
+    let t = attrs("ui.suggestion_fg", "ui.suggestion_selected_bg", &["dim"]);
     row().h(Sizing::Cells(1)).theme(t.clone()).children([
         row().w(Sizing::Cells(LEFT_MARGIN)),
         text(text_of).theme(t).elide(Elide::Tail),
