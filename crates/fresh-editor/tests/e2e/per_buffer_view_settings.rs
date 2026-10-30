@@ -1507,25 +1507,22 @@ fn pty_available() -> bool {
 }
 
 /// Open a terminal tab beside the current document and leave terminal mode,
-/// so the palette and tab keys act on the editor rather than the shell.
+/// so the palette and menus act on the editor rather than the shell.
 fn open_terminal_tab(harness: &mut EditorTestHarness) {
-    run_command(harness, "Open Terminal");
-    // Ctrl+Space toggles terminal mode, and whether a new terminal starts in
-    // it is not this test's concern: toggle until the status says it is off.
-    // With it on, the palette refuses most editor commands. Callers use a
-    // wide terminal so the status message is not truncated.
-    for _ in 0..2 {
+    // As the terminal tests do (`terminal_close.rs`): open it directly, then
+    // leave terminal mode with Ctrl+Space, since with it on the palette
+    // refuses most editor commands.
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    if harness.editor().is_terminal_mode() {
         harness
             .send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
             .unwrap();
         harness.render().unwrap();
-        if harness.get_status_bar().contains("Terminal mode disabled") {
-            return;
-        }
     }
-    panic!(
-        "could not leave terminal mode; status bar: {}",
-        harness.get_status_bar()
+    assert!(
+        !harness.editor().is_terminal_mode(),
+        "setup: the terminal tab should be out of terminal mode"
     );
 }
 
