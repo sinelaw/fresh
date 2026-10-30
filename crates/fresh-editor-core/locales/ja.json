@@ -345,6 +345,7 @@
   "action.show_status_log": "ステータスメッセージログを表示",
   "action.show_warnings": "警告を表示",
   "action.smart_home": "スマートホーム (行頭/最初の非空白文字を切り替え)",
+  "action.select_smart_home": "スマート行頭まで選択 (最初の非空白文字/行頭)",
   "action.sort_lines": "行を並べ替え",
   "action.split_horizontal": "水平に分割",
   "action.split_vertical": "垂直に分割",

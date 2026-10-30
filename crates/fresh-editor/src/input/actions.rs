@@ -3799,6 +3799,7 @@ pub fn action_to_events(
         | Action::ShowReadOnlyMenu
         | Action::ClearWarnings
         | Action::SmartHome
+        | Action::SelectSmartHome
         | Action::ToggleComment
         | Action::DabbrevExpand
         | Action::ToggleFold

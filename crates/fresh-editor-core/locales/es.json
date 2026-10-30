@@ -345,6 +345,7 @@
   "action.show_status_log": "Mostrar registro de mensajes de estado",
   "action.show_warnings": "Mostrar advertencias",
   "action.smart_home": "Inicio inteligente (alternar inicio de línea / primer carácter no-espacio)",
+  "action.select_smart_home": "Selección inteligente hasta el inicio (primer carácter no-espacio / inicio de línea)",
   "action.sort_lines": "Ordenar líneas",
   "action.split_horizontal": "Dividir horizontalmente",
   "action.split_vertical": "Dividir verticalmente",

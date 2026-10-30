@@ -64,9 +64,26 @@ impl Editor {
     /// Update all menu context values based on current editor state.
     /// This should be called before rendering the menu bar.
     pub fn update_menu_context(&mut self) {
-        // Window-scoped lookups delegated to `Window`.
-        let line_numbers = self.active_window().is_line_numbers_visible();
-        let line_wrap = self.active_window().is_line_wrap_enabled();
+        // One shared answer to "what can this buffer be asked to do", also used
+        // by the command palette so the two surfaces can't drift.
+        let caps = self.buffer_capabilities();
+        // Window-scoped lookups delegated to `Window`. The View menu's Line
+        // Numbers / Line Wrap toggles flip the global setting, so on a tab
+        // that isn't a text buffer (terminal, Welcome, plugin panels) the
+        // checkbox reports that setting: the tab's own view state there is
+        // whatever the tab chose for itself, not something the toggle
+        // controls (#3550).
+        let (line_numbers, line_wrap) = if caps.is_text_buffer {
+            (
+                self.active_window().is_line_numbers_visible(),
+                self.active_window().is_line_wrap_enabled(),
+            )
+        } else {
+            (
+                self.config.editor.line_numbers,
+                self.config.editor.line_wrap,
+            )
+        };
         let page_view = self.active_window().is_page_view();
         let file_explorer_visible = self.file_explorer_visible();
         let file_explorer_focused = self.active_window().is_file_explorer_focused();
@@ -78,9 +95,6 @@ impl Editor {
             .load(std::sync::atomic::Ordering::Relaxed);
         let mouse_hover = self.config.editor.mouse_hover_enabled;
         let inlay_hints = self.config.editor.enable_inlay_hints;
-        // One shared answer to "what can this buffer be asked to do", also used
-        // by the command palette so the two surfaces can't drift.
-        let caps = self.buffer_capabilities();
         let has_buffer = caps.has_buffer;
         let has_text_buffer = caps.is_text_buffer;
         let has_selection = has_buffer && self.has_active_selection();

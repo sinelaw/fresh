@@ -3261,14 +3261,20 @@ impl MenuConfig {
                         label: t!("menu.view.line_numbers").to_string(),
                         action: "toggle_line_numbers".to_string(),
                         args: HashMap::new(),
-                        when: None,
+                        // Greyed out where the focused tab has no gutter or
+                        // wrapping of its own (a terminal, a plugin panel):
+                        // the box still shows the setting (#3550).
+                        when: Some(context_keys::HAS_TEXT_BUFFER.to_string()),
                         checkbox: Some(context_keys::LINE_NUMBERS.to_string()),
                     },
                     MenuItem::Action {
                         label: t!("menu.view.line_wrap").to_string(),
                         action: "toggle_line_wrap".to_string(),
                         args: HashMap::new(),
-                        when: None,
+                        // Greyed out where the focused tab has no gutter or
+                        // wrapping of its own (a terminal, a plugin panel):
+                        // the box still shows the setting (#3550).
+                        when: Some(context_keys::HAS_TEXT_BUFFER.to_string()),
                         checkbox: Some(context_keys::LINE_WRAP.to_string()),
                     },
                     MenuItem::Action {

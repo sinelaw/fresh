@@ -327,7 +327,7 @@
     {
       "key": "Home",
       "modifiers": ["shift"],
-      "action": "select_line_start",
+      "action": "select_smart_home",
       "args": {},
       "when": "normal"
     },

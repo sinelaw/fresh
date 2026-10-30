@@ -496,6 +496,8 @@ pub enum Action {
 
     // Smart editing
     SmartHome,
+    /// `SmartHome` extending the selection instead of moving the cursor.
+    SelectSmartHome,
     DedentSelection,
     ToggleComment,
     DabbrevExpand,
@@ -1099,6 +1101,7 @@ impl Action {
             "jump_to_previous_error" => JumpToPreviousError,
 
             "smart_home" => SmartHome,
+            "select_smart_home" => SelectSmartHome,
             "dedent_selection" => DedentSelection,
             "toggle_comment" => ToggleComment,
             "dabbrev_expand" => DabbrevExpand,
@@ -1567,6 +1570,7 @@ impl Action {
                 | Action::SelectWordEnd
                 | Action::ViSelectWordEnd
                 | Action::SelectLineStart
+                | Action::SelectSmartHome
                 | Action::SelectLineEnd
                 | Action::SelectDocumentStart
                 | Action::SelectDocumentEnd
@@ -3143,6 +3147,7 @@ impl KeybindingResolver {
             Action::JumpToNextError => t!("action.jump_to_next_error"),
             Action::JumpToPreviousError => t!("action.jump_to_previous_error"),
             Action::SmartHome => t!("action.smart_home"),
+            Action::SelectSmartHome => t!("action.select_smart_home"),
             Action::DedentSelection => t!("action.dedent_selection"),
             Action::ToggleComment => t!("action.toggle_comment"),
             Action::DabbrevExpand => std::borrow::Cow::Borrowed("Expand abbreviation (dabbrev)"),

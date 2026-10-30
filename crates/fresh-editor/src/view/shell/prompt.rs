@@ -807,7 +807,7 @@ fn popup(s: &Suggestions) -> Node<UiMsg> {
 /// when it would not fit above — arithmetic that had to agree with a second
 /// copy in `chrome::Prompt::collect` for the click rail to hit the right
 /// cells. `Anchor::Node` names the row it sits on and `Place::Above` says
-/// which side, with `Fit::FLIP` for the case that used to be an `if`.
+/// which side, and `Fit::SHRINK` for a terminal too short to hold it all.
 pub fn suggestions_layer(s: &Suggestions) -> Node<UiMsg> {
     use fresh_ui::{layer, Anchor, Fit};
     let l = layer().key(LAYER_KEY.with(|k| k.clone()));
@@ -822,7 +822,11 @@ pub fn suggestions_layer(s: &Suggestions) -> Node<UiMsg> {
             // row's width is now something the tree knows rather than
             // something the caller measures and passes in.
             .stretch_to_anchor()
-            .fit(Fit::FLIP.or(Fit::CLAMP)),
+            // The prompt row is the bottom of the frame, so there is never
+            // room to flip into; on a short terminal the list gives up rows
+            // to the space above the row instead. Flip-then-clamp slid the
+            // full-height box back down over the hints and the input (#3578).
+            .fit(Fit::SHRINK),
         // The card's results band, by name. `Fill` takes its whole rectangle,
         // and no `Fit` — a band the card carved out of the frame is already
         // inside it.
@@ -837,7 +841,9 @@ pub fn suggestions_layer(s: &Suggestions) -> Node<UiMsg> {
     // than about this layer — see the ledger's withdrawn finding D.
     let card = popup(s);
     match &s.hints {
-        Some(h) => l.child(col().children([card, hints_row(h)])),
+        // The hints keep their row when the layer is short of room
+        // (`Fit::SHRINK` above): the list scrolls, the hints would just vanish.
+        Some(h) => l.child(col().children([card, hints_row(h).priority(1)])),
         None => l.child(card),
     }
 }
@@ -1045,6 +1051,31 @@ mod tests {
     fn laid_out(s: Suggestions, w: u16, h: u16) -> Ui<UiMsg> {
         let mut ui: Ui<UiMsg> = Ui::new();
         ui.frame(suggestions(&s), Size::new(w, h));
+        ui
+    }
+
+    /// The list of `n` rows as a layer above a prompt row on the frame's last
+    /// line — the row it is anchored to. The row has to exist: `Fit::SHRINK`
+    /// sizes the box to the room above it.
+    fn above_prompt_in_frame(n: usize, size: Size) -> Ui<UiMsg> {
+        use crate::view::shell::frame::{region_key, HostRegion};
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(
+            col().children([
+                col().flex(1),
+                row()
+                    .key(region_key(HostRegion::PromptLine))
+                    .h(Sizing::Cells(1)),
+                suggestions_layer(&Suggestions {
+                    rows: rows(n).into(),
+                    selected: Some(0),
+                    place: Place::AbovePrompt,
+                    hints: None,
+                    pager: Default::default(),
+                }),
+            ]),
+            size,
+        );
         ui
     }
 
@@ -1605,17 +1636,7 @@ mod tests {
     #[test]
     fn the_popup_stops_at_the_visible_row_cap() {
         let tall = |n: usize| {
-            let mut ui: Ui<UiMsg> = Ui::new();
-            ui.frame(
-                col().child(suggestions_layer(&Suggestions {
-                    rows: rows(n).into(),
-                    selected: Some(0),
-                    place: Place::AbovePrompt,
-                    hints: None,
-                    pager: Default::default(),
-                })),
-                Size::new(60, 40),
-            );
+            let ui = above_prompt_in_frame(n, Size::new(60, 40));
             ui.rect_of(
                 ui.find_by_key(&POPUP_KEY.with(|k| k.clone()))
                     .expect("the box"),
@@ -1647,17 +1668,7 @@ mod tests {
     /// what kept the buffer's context menu from opening through the palette.
     #[test]
     fn a_press_on_the_popup_chrome_is_claimed_and_says_nothing() {
-        let mut ui: Ui<UiMsg> = Ui::new();
-        ui.frame(
-            col().child(suggestions_layer(&Suggestions {
-                rows: rows(3).into(),
-                selected: Some(0),
-                place: Place::AbovePrompt,
-                hints: None,
-                pager: Default::default(),
-            })),
-            Size::new(60, 20),
-        );
+        let mut ui = above_prompt_in_frame(3, Size::new(60, 20));
         let box_rect = ui.rect_of(
             ui.find_by_key(&POPUP_KEY.with(|k| k.clone()))
                 .expect("the box"),

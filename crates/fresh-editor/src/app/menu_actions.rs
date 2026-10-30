@@ -381,6 +381,13 @@ impl Editor {
                 }
                 Ok(Ok(()))
             }
+            // A greyed-out item takes the click and does nothing, as Enter on
+            // it already does (`MenuState::get_highlighted_action`).
+            MenuItem::Action { .. }
+                if !crate::view::ui::menu::is_menu_item_enabled(item, &self.menu_state.context) =>
+            {
+                Ok(Ok(()))
+            }
             MenuItem::Action { action, args, .. } => {
                 // Clicked on action - execute it
                 let action_name = action.clone();

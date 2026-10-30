@@ -1029,6 +1029,51 @@ fn a_layer_confined_to_a_region_clamps_to_that_region() {
     assert_eq!(x_of(&ui), 59, "the reserved column is left alone");
 }
 
+/// **`Fit::SHRINK` gives up rows rather than covering the anchor.**
+///
+/// A box twelve rows tall placed above an anchor with only eight rows over it:
+/// flip has nowhere to go and clamp slides it down over the anchor, which is
+/// how a prompt's suggestion list came to hide the prompt (#3578). Shrink
+/// measures against the room on the placed side, so the box is eight rows and
+/// ends where the anchor starts.
+#[test]
+fn a_shrinking_layer_fits_the_room_on_its_side() {
+    let anchor = Key::Str("anchor".into());
+    let popup = Key::Str("popup".into());
+    let tree = |fit: fresh_ui::Fit| -> Node<()> {
+        col()
+            .child(col().h(Sizing::Cells(8)))
+            .child(col().key(anchor.clone()).h(Sizing::Cells(1)))
+            .child(
+                fresh_ui::layer()
+                    .key(popup.clone())
+                    .anchor(fresh_ui::Anchor::Node(anchor.clone()))
+                    .place(fresh_ui::Place::Above)
+                    .fit(fit)
+                    .child(col().h(Sizing::Cells(12)).theme("p")),
+            )
+    };
+    let size = Size::new(40, 9);
+    let rect_of = |fit| {
+        let mut ui: Ui<()> = Ui::new();
+        ui.frame(tree(fit), size);
+        ui.find_by_key(&popup).map(|id| ui.rect_of(id)).unwrap()
+    };
+
+    let clamped = rect_of(fresh_ui::Fit::FLIP.or(fresh_ui::Fit::CLAMP));
+    assert!(
+        clamped.bottom() > 8,
+        "control: flip-then-clamp lands on the anchor row, got {clamped:?}"
+    );
+
+    let shrunk = rect_of(fresh_ui::Fit::SHRINK);
+    assert_eq!(
+        (shrunk.y, shrunk.h),
+        (0, 8),
+        "the box takes exactly the room above the anchor"
+    );
+}
+
 /// A region also moves where a screen-anchored layer centres, and where it can
 /// start: the bounds are the whole coordinate space the placement works in, not
 /// just a right-hand limit.

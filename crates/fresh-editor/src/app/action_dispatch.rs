@@ -1270,7 +1270,20 @@ impl Editor {
                         return Ok(());
                     }
                 }
-                self.smart_home();
+                self.smart_home(false);
+            }
+            Action::SelectSmartHome => {
+                // Composite (diff) views have no smart variant of the plain
+                // selection either; they select to the line start.
+                let buffer_id = self.active_buffer();
+                if self.active_window().is_composite_buffer(buffer_id) {
+                    if let Some(_handled) =
+                        self.handle_composite_action(buffer_id, &Action::SelectSmartHome)
+                    {
+                        return Ok(());
+                    }
+                }
+                self.smart_home(true);
             }
             Action::ToggleComment => {
                 self.toggle_comment();
