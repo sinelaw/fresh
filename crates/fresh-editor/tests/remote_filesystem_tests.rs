@@ -379,6 +379,32 @@ fn test_metadata() {
     );
 }
 
+/// The agent answers "can the remote user write this?" itself (#2944), so a
+/// file it can write is editable and one it cannot is read-only — whatever
+/// the local user's uid would make of the mode bits.
+#[cfg(unix)]
+#[test]
+fn test_metadata_readonly_comes_from_the_agent() {
+    use std::os::unix::fs::PermissionsExt;
+    let Some((fs, temp_dir, _rt)) = create_test_filesystem() else {
+        eprintln!("Skipping test: could not create test filesystem");
+        return;
+    };
+
+    let writable = temp_dir.path().join("writable.txt");
+    std::fs::write(&writable, b"x").unwrap();
+    std::fs::set_permissions(&writable, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(!fs.metadata(&writable).unwrap().is_readonly);
+
+    let locked = temp_dir.path().join("locked.txt");
+    std::fs::write(&locked, b"x").unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o444)).unwrap();
+    // `access(W_OK)` is true for root on any file, so the agent is right to
+    // call this writable there.
+    let root = std::fs::OpenOptions::new().write(true).open(&locked).is_ok();
+    assert_eq!(fs.metadata(&locked).unwrap().is_readonly, !root);
+}
+
 #[test]
 fn test_read_file_larger_than_threshold() {
     // Test reading a file larger than LARGE_FILE_THRESHOLD_BYTES (1MB)

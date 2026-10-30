@@ -108,6 +108,11 @@ pub struct RemoteMetadata {
     pub file: bool,
     #[serde(default)]
     pub link: bool,
+    /// Whether the remote user can write this path, as the agent's
+    /// `os.access(path, W_OK)` answers it on the remote host. `None` from an
+    /// agent that predates the field.
+    #[serde(default)]
+    pub writable: Option<bool>,
 }
 
 /// Process execution result
