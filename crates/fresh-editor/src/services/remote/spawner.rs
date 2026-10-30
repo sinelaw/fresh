@@ -1529,7 +1529,9 @@ mod tests {
     }
 
     /// A kill reaches the process on the host: the agent terminates it, so
-    /// what it would have done next never happens.
+    /// what it would have done next never happens. The hosts are Unix: the
+    /// agent's `select` on pipes, and `sh`, are not on Windows.
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_remote_spawner_cancellable_kill() {
         let Ok(channel) = crate::services::remote::spawn_local_agent().await else {

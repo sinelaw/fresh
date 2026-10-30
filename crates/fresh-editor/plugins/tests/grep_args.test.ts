@@ -94,6 +94,9 @@ eq(relativeUnder("/p/", "/p/a/b"), "a/b", "a directory below the root");
 eq(relativeUnder("/p", "/pq/a"), null, "a sibling sharing a prefix is outside");
 eq(relativeUnder("C:\\p", "C:\\p\\a"), "a", "Windows separators");
 eq(relativeUnder("C:\\p", "c:\\p\\a"), "a", "Windows drive letters in either case");
+eq(relativeUnder("\\\\?\\C:\\p", "C:\\p\\a"), "a", "a verbatim root and a plain path");
+eq(relativeUnder("C:\\p", "\\\\?\\C:\\p\\a"), "a", "a plain root and a verbatim path");
+eq(relativeUnder("\\\\?\\UNC\\srv\\share", "\\\\srv\\share\\a"), "a", "a verbatim UNC root");
 
 // ── rg ──────────────────────────────────────────────────────────
 
