@@ -8,7 +8,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Features
 
-* **Compare Files** - `fresh --diff A B` shows any two files side by side, both editable (#3611)
+* **Compare Files** - `fresh --diff A B` shows any two files side by side, both editable (#3611, requested by @cherio)
 * **Universal Search across all workspaces** - toggle **All workspaces** (`Alt+A`) to search every local workspace's files, unsaved buffers and terminals; Enter jumps there (#3654)
 * **`fresh --update`** - alias for `fresh --cmd update`, which now asks before installing instead of looking like a finished update (#3064, #3614, reported by @davidwooff)
 * **`Shift+Home` selects to the first non-blank character** first, then column 0, like `Home` - new `select_smart_home` action (#3585, #3669, requested by @notnout)
@@ -23,6 +23,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Undo restores the exact bytes of a deleted non-UTF-8 byte** instead of writing U+FFFD on save (#3652, #3655)
 * **Sudo-saving a new file** no longer creates it with mode 000 (#3641, #3653, reported by @ViolinKaine)
 * **Files over SSH are writable** when the remote user owns them, even if local and remote UIDs differ (#2944, #3669, reported by @mommysgoodpuppy)
+* **Ctrl+V in a terminal pane reaches the program when the clipboard has no text**, so agent CLIs can paste images; turn off with `terminal.pass_ctrl_v_without_text` (#3129, #3658, reported by @andreivinca)
 * **Typing in long wrapped lines** is one frame per key and no longer stutters (#3631, #3632, reported by @jmote)
 * **Home, End, Up and Down after fast typing** land in the right place (#3642, #3656)
 * **Replace-all on huge files** uses far less memory (#3642, #3657)
