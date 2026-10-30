@@ -400,7 +400,8 @@ impl InputHistory {
 
 /// Get the data directory for Fresh editor state
 /// Returns $XDG_DATA_HOME/fresh or ~/.local/share/fresh on Linux
-/// Returns ~/Library/Application Support/fresh on macOS
+/// Returns ~/Library/Application Support/fresh on macOS, or `$XDG_DATA_HOME/fresh`
+/// when that variable is absolute and no older install is still in use
 // `get_data_dir` lives in `fresh-editor-core` (model::buffer::save needs it
 // for the in-place-write recovery directory); re-exported here so the old
 // path keeps working.

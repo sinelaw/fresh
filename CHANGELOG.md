@@ -83,6 +83,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Clear error in mintty / Git Bash** - Fresh now explains it needs a real console instead of failing with `os error 6` (#3547, #3549, reported by @netoffice-zz)
 * **git no longer hangs on a detached daemon** - `--wait` against a daemon with nothing attached no longer waits on an invisible editor (#3555)
 * **Plugin bundling uses a private temp directory**, closing a local-user file-overwrite risk (#3557)
+* **macOS honors `XDG_CONFIG_HOME` and `XDG_DATA_HOME`** - an absolute `XDG_CONFIG_HOME` now selects `$XDG_CONFIG_HOME/fresh` instead of `~/.config/fresh`, and an absolute `XDG_DATA_HOME` does the same for sessions, workspace trust and crash recovery. An existing install stays on its old directory until the new one exists, so an upgrade does not look like a fresh start (#3497 by @LuisAlejandro)
 * **`fresh -a` works in deeply nested directories** - the daemon no longer dies at startup when the directory path is too long for a Unix socket name; such directories get a shortened, hashed socket name, and every other directory keeps the name it had
 * **macOS file-descriptor leak** - the daemon no longer runs out of fds after files change in the project root (#3523, #3584, reported by @IconRunner05)
 * **Windows fixes** (#3281, #3289, #3296, #3545, reported by @CnsMaple)
