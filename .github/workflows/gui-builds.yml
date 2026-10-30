@@ -200,6 +200,11 @@ jobs:
               cp "$size_dir/fresh.png" "$APPDIR/usr/share/icons/hicolor/${size}/apps/fresh.png"
           done
 
+          # appimagetool no longer accepts an SVG as the top-level icon: it wants
+          # fresh.png (or .xpm) next to the desktop file, plus a .DirIcon.
+          cp docs/icons/linux/hicolor/256x256/apps/fresh.png "$APPDIR/fresh.png"
+          ln -sf fresh.png "$APPDIR/.DirIcon"
+
           # Copy metainfo
           cp "crates/fresh-editor/flatpak/${APP_ID}.metainfo.xml" \
             "$APPDIR/usr/share/metainfo/${APP_ID}.metainfo.xml"
