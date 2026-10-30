@@ -2302,6 +2302,13 @@ pub struct TerminalConfig {
     /// scrollback. Terminals running a command (agents, plugins) are kept.
     #[serde(default)]
     pub close_on_exit: bool,
+
+    /// When the system clipboard holds no text (an image, or nothing), terminal
+    /// paste sends Ctrl+V to the program instead of your last yank, so an agent
+    /// CLI can read an image from the clipboard itself. Turn off to paste the
+    /// yank as before. Default: true
+    #[serde(default = "default_true")]
+    pub pass_ctrl_v_without_text: bool,
 }
 
 /// When programs in the terminal get mouse events.
@@ -2325,6 +2332,7 @@ impl Default for TerminalConfig {
             mouse_drag_selects: true,
             mouse_forwarding: TerminalMouseForwarding::default(),
             close_on_exit: false,
+            pass_ctrl_v_without_text: true,
         }
     }
 }
