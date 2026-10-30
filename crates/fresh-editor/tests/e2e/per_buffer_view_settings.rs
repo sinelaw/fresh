@@ -1441,17 +1441,7 @@ fn test_guide_and_fold_pins_scope_to_the_split() {
 /// grid, so on master it showed both boxes inverted against the defaults.
 #[test]
 fn test_view_menu_reports_config_on_a_terminal_tab() {
-    use portable_pty::{native_pty_system, PtySize};
-    if native_pty_system()
-        .openpty(PtySize {
-            rows: 1,
-            cols: 1,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .is_err()
-    {
-        eprintln!("Skipping terminal test: PTY not available in this environment");
+    if !pty_available() {
         return;
     }
 
@@ -1484,4 +1474,103 @@ fn test_view_menu_reports_config_on_a_terminal_tab() {
         screen.contains("☐ Line Wrap"),
         "on a terminal tab Line Wrap must show `editor.line_wrap`; got:\n{screen}"
     );
+}
+
+/// Whether this environment can open a PTY; terminal tests skip without one.
+fn pty_available() -> bool {
+    use portable_pty::{native_pty_system, PtySize};
+    let ok = native_pty_system()
+        .openpty(PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .is_ok();
+    if !ok {
+        eprintln!("Skipping terminal test: PTY not available in this environment");
+    }
+    ok
+}
+
+/// Open a terminal tab beside the current document and leave terminal mode,
+/// so the palette and tab keys act on the editor rather than the shell.
+fn open_terminal_tab(harness: &mut EditorTestHarness) {
+    run_command(harness, "Open Terminal");
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+}
+
+/// Ctrl+PageUp / Ctrl+PageDown between the two tabs of the pane.
+fn switch_tab(harness: &mut EditorTestHarness, key: KeyCode) {
+    harness.send_key(key, KeyModifiers::CONTROL).unwrap();
+    harness.render().unwrap();
+}
+
+/// Opening a terminal in a pane must not touch the document that pane was
+/// showing. The terminal's grid-wrap flags were written to the pane's
+/// current tab — the document — before the terminal became it, which
+/// soft-wrapped the document against `editor.line_wrap = false` and marked
+/// it as a terminal grid, so global view toggles skipped it from then on.
+#[test]
+fn test_opening_a_terminal_leaves_the_document_view_alone() {
+    if !pty_available() {
+        return;
+    }
+    let mut config = Config::default();
+    config.editor.line_wrap = false;
+    let mut harness = EditorTestHarness::with_temp_project_and_config(80, 24, config).unwrap();
+    let dir = harness.project_dir().unwrap().to_path_buf();
+    std::fs::write(dir.join("a.txt"), format!("{}TAILAAA\n", "A".repeat(120))).unwrap();
+    harness.open_file(&dir.join("a.txt")).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_not_contains("TAILAAA");
+
+    open_terminal_tab(&mut harness);
+    switch_tab(&mut harness, KeyCode::PageUp);
+    harness.assert_screen_contains("AAAA");
+    harness.assert_screen_not_contains("TAILAAA");
+}
+
+/// The View menu's global Line Numbers / Line Wrap toggles, used while a
+/// terminal tab is focused, must do exactly what they do from a document:
+/// change the setting for the documents — including the one behind the
+/// terminal in the same pane — and leave the terminal itself alone. Line
+/// Numbers used to draw a gutter down the terminal, and neither reached the
+/// document in that pane.
+#[test]
+fn test_global_view_toggles_from_a_terminal_tab_reach_documents_only() {
+    if !pty_available() {
+        return;
+    }
+    let mut config = Config::default();
+    config.editor.line_numbers = false;
+    config.editor.line_wrap = false;
+    let mut harness = EditorTestHarness::with_temp_project_and_config(80, 24, config).unwrap();
+    let dir = harness.project_dir().unwrap().to_path_buf();
+    std::fs::write(dir.join("a.txt"), format!("{}TAILAAA\n", "A".repeat(120))).unwrap();
+    harness.open_file(&dir.join("a.txt")).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_not_contains("│ AAAA");
+    harness.assert_screen_not_contains("TAILAAA");
+
+    open_terminal_tab(&mut harness);
+    run_command(&mut harness, "Toggle Line Numbers");
+    run_command(&mut harness, "Toggle Line Wrap");
+
+    // The terminal's first content row (below the menu bar and the tabs)
+    // starts with the shell's own output, not a gutter.
+    let first = harness.get_screen_row(2);
+    assert!(
+        !first.chars().take(8).any(|c| c == '│'),
+        "a global Line Numbers toggle must not draw a gutter in the terminal; \
+         got:\n{}",
+        harness.screen_to_string()
+    );
+
+    switch_tab(&mut harness, KeyCode::PageUp);
+    harness.assert_screen_contains("│ AAAA");
+    harness.assert_screen_contains("TAILAAA");
 }

@@ -48,9 +48,15 @@ impl Editor {
     /// [`toggle_line_numbers_current_buffer`](Self::toggle_line_numbers_current_buffer);
     /// `Window::resync_global_display_defaults` then re-resolves the new
     /// default on every other open view.
+    ///
+    /// When the focused tab is not a text buffer (a terminal, a plugin panel)
+    /// only the setting changes: that view has no gutter of its own to show,
+    /// and stamping the default onto it drew line numbers down a terminal.
     pub fn toggle_line_numbers(&mut self) {
         let new_value = !self.config.editor.line_numbers;
-        let resolved = {
+        let resolved = if !self.buffer_capabilities().is_text_buffer {
+            new_value
+        } else {
             // The buffer the user is on (`Window::focused_view_mut`): a
             // shown group's focused panel, never the buffer behind it.
             let vs = self.active_window_mut().focused_view_mut();
