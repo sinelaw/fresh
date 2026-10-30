@@ -61,6 +61,9 @@ jobs:
           - suite: unstable
             arch: amd64
             runner: ubuntu-latest
+    # unstable is informational: a transition there (librust-*-dev packages
+    # mid-upgrade) must not turn the workflow, or a release calling it, red.
+    continue-on-error: ${{ matrix.suite == 'unstable' }}
     runs-on: ${{ matrix.runner }}
     container: debian:${{ matrix.suite }}
     timeout-minutes: 90

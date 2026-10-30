@@ -483,6 +483,11 @@ jobs:
   # failed, except build-debian-testing: its packages are attached when it
   # builds, but it builds against Debian testing as it is that day, so a
   # transition there must not hold up the release.
+  #
+  # Every job downstream of this one gates on its direct needs' results, never
+  # on the bare status functions: `failure()` (and the implicit `success()`)
+  # look at all ancestors, so a build-debian-testing failure would otherwise
+  # skip verification, promotion and publishing even though the release ran.
   release:
     needs: [plan, build, build-freebsd, build-musl, build-min-size, build-linux-packages, build-debian-testing, build-flatpak, build-appimage, build-gui, build-desktop, build-npm-package, build-homebrew-formula, test-nix-build]
     if: >-
@@ -639,7 +644,7 @@ jobs:
   # otherwise surface as a broken update on a user's machine.
   verify-release:
     needs: [plan, release]
-    if: ${{ !cancelled() && !failure() && needs.plan.outputs.publishing == 'true' }}
+    if: ${{ !cancelled() && needs.release.result == 'success' && needs.plan.outputs.publishing == 'true' }}
     runs-on: ubuntu-22.04
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -657,7 +662,7 @@ jobs:
   # attestation gate live. A release that fails here is never promoted.
   rehearse-update:
     needs: [plan, release]
-    if: ${{ !cancelled() && !failure() && needs.plan.outputs.publishing == 'true' }}
+    if: ${{ !cancelled() && needs.release.result == 'success' && needs.plan.outputs.publishing == 'true' }}
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v6
@@ -679,7 +684,7 @@ jobs:
   # the swap runs downwards, which exercises the same path.
   verify-shipped-updater:
     needs: [plan, release]
-    if: ${{ !cancelled() && !failure() && needs.plan.outputs.publishing == 'true' }}
+    if: ${{ !cancelled() && needs.release.result == 'success' && needs.plan.outputs.publishing == 'true' }}
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v6
@@ -702,7 +707,13 @@ jobs:
   # prevent.
   promote:
     needs: [plan, release, verify-release, rehearse-update, verify-shipped-updater]
-    if: ${{ needs.plan.outputs.publishing == 'true' && needs.plan.outputs.is_prerelease != 'true' }}
+    if: >-
+      ${{ !cancelled() && needs.plan.outputs.publishing == 'true'
+      && needs.plan.outputs.is_prerelease != 'true'
+      && needs.release.result == 'success'
+      && needs.verify-release.result == 'success'
+      && needs.rehearse-update.result == 'success'
+      && needs.verify-shipped-updater.result == 'success' }}
     runs-on: ubuntu-22.04
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -761,7 +772,7 @@ jobs:
   # Publish to Homebrew tap
   publish-homebrew:
     needs: [plan, promote]
-    if: ${{ needs.plan.outputs.publishing == 'true' }}
+    if: ${{ !cancelled() && needs.promote.result == 'success' && needs.plan.outputs.publishing == 'true' }}
     runs-on: ubuntu-22.04
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -796,7 +807,7 @@ jobs:
   # workflow on the release tag, as a run of its own, and waits for it.
   publish-npm:
     needs: [plan, promote]
-    if: ${{ needs.plan.outputs.publishing == 'true' }}
+    if: ${{ !cancelled() && needs.promote.result == 'success' && needs.plan.outputs.publishing == 'true' }}
     runs-on: ubuntu-22.04
     permissions:
       actions: write
@@ -832,7 +843,7 @@ jobs:
   # Publish to AUR
   publish-aur:
     needs: [plan, promote]
-    if: ${{ needs.plan.outputs.publishing == 'true' }}
+    if: ${{ !cancelled() && needs.promote.result == 'success' && needs.plan.outputs.publishing == 'true' }}
     uses: ./.github/workflows/aur-publish.yml
     with:
       version: ${{ needs.plan.outputs.version }}
@@ -841,14 +852,14 @@ jobs:
   # Publish to crates.io
   publish-cargo:
     needs: [plan, promote]
-    if: ${{ needs.plan.outputs.publishing == 'true' }}
+    if: ${{ !cancelled() && needs.promote.result == 'success' && needs.plan.outputs.publishing == 'true' }}
     uses: ./.github/workflows/cargo-publish.yml
     secrets: inherit
 
   # Publish to winget-pkgs
   publish-winget:
     needs: [plan, promote]
-    if: ${{ needs.plan.outputs.publishing == 'true' }}
+    if: ${{ !cancelled() && needs.promote.result == 'success' && needs.plan.outputs.publishing == 'true' }}
     uses: ./.github/workflows/winget-publish.yml
     with:
       version: ${{ needs.plan.outputs.version }}
