@@ -217,6 +217,15 @@ async function md_src_tab() : Promise<void> {
     return;
   }
 
+  // A selection or several cursors: indent them the way plain Tab does.
+  // The list handling below only knows the primary cursor, and its fallback
+  // would replace the selection with spaces (#3666).
+  const cursors = editor.getAllCursors();
+  if (cursors.length > 1 || cursors.some((c) => c.selection && c.selection.start !== c.selection.end)) {
+    editor.executeAction("insert_tab");
+    return;
+  }
+
   const cursorPos = editor.getCursorPosition();
   const windowStart = Math.max(0, cursorPos - 1024);
   const textBefore = await editor.getBufferText(bufferId, windowStart, cursorPos);
