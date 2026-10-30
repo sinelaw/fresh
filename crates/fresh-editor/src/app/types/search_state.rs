@@ -23,6 +23,10 @@ pub struct SearchState {
     pub match_lengths: Vec<usize>,
     /// Index of the currently selected match
     pub current_match_index: Option<usize>,
+    /// The buffer the search ran on. `search_state` belongs to the window,
+    /// not the buffer, so it outlives a switch to another tab; the status
+    /// bar's next/previous arrows are only shown while this buffer is active.
+    pub buffer_id: crate::model::event::BufferId,
     /// Whether search wraps around at document boundaries
     pub wrap_search: bool,
     /// Optional search range (for search in selection)

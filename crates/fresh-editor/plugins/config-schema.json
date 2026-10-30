@@ -75,6 +75,7 @@
             "{cursor}",
             "{diagnostics}",
             "{cursor_count}",
+            "{search_nav}",
             "{messages}"
           ],
           "right": [
@@ -574,6 +575,7 @@
               "{cursor}",
               "{diagnostics}",
               "{cursor_count}",
+              "{search_nav}",
               "{messages}"
             ],
             "right": [
@@ -1062,7 +1064,7 @@
       "type": "object",
       "properties": {
         "left": {
-          "description": "Elements on the left side of the status bar.\nDefault: [\"{trust}\", \"{remote}\", \"{terminal_restart}\", \"{cursor}\", \"{diagnostics}\", \"{cursor_count}\", \"{messages}\"]",
+          "description": "Elements on the left side of the status bar.\nDefault: [\"{trust}\", \"{remote}\", \"{terminal_restart}\", \"{cursor}\", \"{diagnostics}\", \"{cursor_count}\", \"{search_nav}\", \"{messages}\"]",
           "type": "array",
           "items": {
             "$ref": "#/$defs/StatusBarElement"
@@ -1074,6 +1076,7 @@
             "{cursor}",
             "{diagnostics}",
             "{cursor_count}",
+            "{search_nav}",
             "{messages}"
           ],
           "x-section": "Status Bar",
@@ -1134,6 +1137,10 @@
         {
           "value": "{cursor_count}",
           "name": "Cursor Count"
+        },
+        {
+          "value": "{search_nav}",
+          "name": "Search Navigation"
         },
         {
           "value": "{messages}",

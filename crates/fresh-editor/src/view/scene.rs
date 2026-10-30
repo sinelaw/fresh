@@ -303,7 +303,7 @@ pub struct TabBarView {
 pub struct StatusSegment {
     /// Semantic kind: "lsp" | "warning" | "language" | "encoding" |
     /// "lineEnding" | "remote" | "trust" | "message" | "terminalRestart" |
-    /// "plugin" | "text".
+    /// "searchNext" | "searchPrevious" | "plugin" | "text".
     pub name: &'static str,
     /// Plugin token key for `name == "plugin"`.
     pub key: Option<String>,

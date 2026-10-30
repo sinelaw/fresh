@@ -1585,6 +1585,7 @@
   "settings.option.cursor_compact": "Cursor (compact)",
   "settings.option.diagnostics": "Diagnostics",
   "settings.option.cursor_count": "Cursor Count",
+  "settings.option.search_nav": "Search Navigation",
   "settings.option.messages": "Messages",
   "settings.option.chord": "Chord",
   "settings.option.line_ending": "Line Ending",
