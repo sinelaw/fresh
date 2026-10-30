@@ -2823,6 +2823,15 @@ interface TerminalConfig {
     * Default: `false`
     */
     close_on_exit?: boolean;
+    /**
+    * When the system clipboard holds no text (an image, or nothing), terminal
+    * paste sends Ctrl+V to the program instead of your last yank, so an agent
+    * CLI can read an image from the clipboard itself. Turn off to paste the
+    * yank as before. Default: true
+    *
+    * Default: `true`
+    */
+    pass_ctrl_v_without_text?: boolean;
   }
 ```
 

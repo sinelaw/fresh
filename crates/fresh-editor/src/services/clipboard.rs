@@ -381,9 +381,16 @@ impl Clipboard {
     /// thing and keep the key from the program (#3129). Only a clipboard that
     /// can't be read falls back.
     ///
+    /// `pass_key_without_text` off (`terminal.pass_ctrl_v_without_text`)
+    /// keeps the old behavior: a clipboard with no text pastes the yank.
+    ///
     /// `probe` stands in for the system clipboard in tests, where it is read
     /// even in internal-only mode.
-    pub fn paste_for_terminal(&mut self, probe: Option<fn() -> SystemClipboard>) -> Option<String> {
+    pub fn paste_for_terminal(
+        &mut self,
+        probe: Option<fn() -> SystemClipboard>,
+        pass_key_without_text: bool,
+    ) -> Option<String> {
         let system = match probe {
             Some(probe) => probe(),
             None if self.internal_only || !self.use_system_clipboard => {
@@ -396,8 +403,8 @@ impl Clipboard {
                 self.internal = text.clone();
                 Some(text)
             }
-            SystemClipboard::NoText => None,
-            SystemClipboard::Unavailable => self.paste_internal(),
+            SystemClipboard::NoText if pass_key_without_text => None,
+            SystemClipboard::NoText | SystemClipboard::Unavailable => self.paste_internal(),
         }
     }
 

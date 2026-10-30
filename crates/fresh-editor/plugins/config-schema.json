@@ -218,7 +218,8 @@
         "resume_agents": true,
         "mouse_drag_selects": true,
         "mouse_forwarding": "requested",
-        "close_on_exit": false
+        "close_on_exit": false,
+        "pass_ctrl_v_without_text": true
       }
     },
     "keybindings": {
@@ -1438,6 +1439,11 @@
           "description": "Close a shell's tab (and its pane, if it was the only tab) when the\nshell exits (`exit`, Ctrl+D) instead of keeping it as read-only\nscrollback. Terminals running a command (agents, plugins) are kept.",
           "type": "boolean",
           "default": false
+        },
+        "pass_ctrl_v_without_text": {
+          "description": "When the system clipboard holds no text (an image, or nothing), terminal\npaste sends Ctrl+V to the program instead of your last yank, so an agent\nCLI can read an image from the clipboard itself. Turn off to paste the\nyank as before. Default: true",
+          "type": "boolean",
+          "default": true
         }
       }
     },

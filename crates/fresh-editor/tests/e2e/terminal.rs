@@ -3926,6 +3926,14 @@ fn test_bracket_paste_in_terminal_mode() {
 /// Returns `None` when there is no PTY (or no `/bin/sh`) to run it on, which
 /// the paste tests below treat as "skip", like the rest of this file.
 fn harness_running_or_skip(script: &str) -> Option<EditorTestHarness> {
+    harness_running_with_config_or_skip(script, Config::default())
+}
+
+/// [`harness_running_or_skip`] on top of `config`.
+fn harness_running_with_config_or_skip(
+    script: &str,
+    mut config: Config,
+) -> Option<EditorTestHarness> {
     if native_pty_system()
         .openpty(PtySize {
             rows: 1,
@@ -3940,7 +3948,6 @@ fn harness_running_or_skip(script: &str) -> Option<EditorTestHarness> {
         return None;
     }
 
-    let mut config = Config::default();
     config.terminal.shell = Some(TerminalShellConfig {
         command: "/bin/sh".to_string(),
         args: vec!["-c".to_string(), script.to_string()],
@@ -4102,6 +4109,48 @@ fn test_ctrl_v_reaches_terminal_when_clipboard_has_no_text() {
 
     harness.assert_screen_contains("^VEND");
     harness.assert_screen_not_contains("STALE_YANK");
+
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(b"\x04");
+}
+
+/// With `terminal.pass_ctrl_v_without_text` off, a clipboard with no text
+/// pastes the internal clipboard into the terminal, as before #3129.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses Unix shell commands (stty/cat)
+fn test_ctrl_v_in_terminal_pastes_yank_when_pass_through_is_off() {
+    use fresh::services::clipboard::SystemClipboard;
+
+    let mut config = Config::default();
+    config.terminal.pass_ctrl_v_without_text = false;
+    let Some(mut harness) = harness_running_with_config_or_skip(
+        "stty -echo -icanon -iexten; printf 'CAT_READY\\n'; cat -v",
+        config,
+    ) else {
+        return;
+    };
+    harness
+        .editor_mut()
+        .set_clipboard_for_test("INTERNAL_YANK".to_string());
+    harness
+        .editor_mut()
+        .set_system_clipboard_probe_for_test(|| SystemClipboard::NoText);
+
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("CAT_READY"))
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("INTERNAL_YANK"))
+        .unwrap();
+    harness.assert_screen_not_contains("^V");
 
     harness
         .editor_mut()

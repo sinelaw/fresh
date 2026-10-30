@@ -1665,9 +1665,10 @@ impl Editor {
                 // `paste_text`: CRLF/CR → LF, then wrapped in the paste
                 // markers when the child asked for DECSET 2004.
                 if self.active_window().focused_terminal_live() {
+                    let pass_key = self.config.terminal.pass_ctrl_v_without_text;
                     match self
                         .clipboard
-                        .paste_for_terminal(self.system_clipboard_probe)
+                        .paste_for_terminal(self.system_clipboard_probe, pass_key)
                     {
                         Some(text) => {
                             let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
@@ -1676,10 +1677,11 @@ impl Editor {
                         // No text to paste: the key is the program's. An
                         // agent CLI reads an image from the clipboard itself
                         // when it gets Ctrl+V (#3129).
-                        None => self.active_window_mut().send_terminal_key(
+                        None if pass_key => self.active_window_mut().send_terminal_key(
                             crossterm::event::KeyCode::Char('v'),
                             crossterm::event::KeyModifiers::CONTROL,
                         ),
+                        None => {}
                     }
                 }
             }
