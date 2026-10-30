@@ -847,6 +847,87 @@ fn test_current_column_highlight_tints_full_column() {
     );
 }
 
+/// A committed search match sitting under the `highlight_current_column`
+/// tint keeps its match background: the column repaints only cells that
+/// carry no background of their own, so an overlay highlight wins.
+#[test]
+fn test_current_column_does_not_repaint_search_match_under_it() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use fresh::config::Config;
+    use ratatui::style::Color;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("col_highlight_search_test.txt");
+    std::fs::write(&file_path, "abcdef\nghijkl\nmnopqr\n").unwrap();
+
+    let mut config = Config {
+        theme: "dark".into(),
+        ..Default::default()
+    };
+    config.editor.highlight_current_column = true;
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Commit a search for "ij" on line 2 ("ghijkl"); Enter lands the cursor
+    // on the match, which stays highlighted after the prompt closes.
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("ij").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+
+    // Step back up to line 1 so the cursor column crosses the match on line 2
+    // without the match being on the cursor line.
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let search_bg = harness.editor().theme().search_match_bg;
+    let current_match_bg = harness.editor().theme().search_current_match_bg;
+    let current_line_bg = Color::Rgb(40, 40, 40);
+    assert_ne!(search_bg, current_line_bg);
+    assert_ne!(current_match_bg, current_line_bg);
+
+    let cursor_x = harness
+        .render_observing_cursor()
+        .unwrap()
+        .expect("cursor should be visible")
+        .0;
+    let (content_row, _) = harness.content_area_rows();
+    let match_row = content_row as u16 + 1;
+
+    // The match's first cell sits in the cursor's column, so the column tint
+    // must leave the search-match background alone. The match under the
+    // caret may also carry the *current* match colour, so accept either
+    // search highlight — what matters is that the column tint did not
+    // replace it.
+    let match_cell = harness
+        .get_cell_style(cursor_x, match_row)
+        .expect("cell should exist");
+    assert!(
+        match_cell.bg == Some(search_bg) || match_cell.bg == Some(current_match_bg),
+        "cursor column must not repaint a search match sitting in it (got {:?})",
+        match_cell.bg
+    );
+
+    // The same column on the (non-match) line below is still tinted, so the
+    // column highlight itself still works.
+    let plain_cell = harness
+        .get_cell_style(cursor_x, match_row + 1)
+        .expect("cell should exist");
+    assert_eq!(
+        plain_cell.bg,
+        Some(current_line_bg),
+        "cursor column should still be tinted on lines without a match"
+    );
+}
+
 /// When `highlight_current_column` is disabled, no extra column is tinted.
 #[test]
 fn test_current_column_highlight_disabled_is_noop() {
