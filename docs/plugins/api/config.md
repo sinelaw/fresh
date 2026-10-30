@@ -236,12 +236,15 @@ getHomeDir(): string;
 
 Directory holding terminal scrollback backing files for the current
 working directory. Each project root / worktree has its own subdir, so
-Universal Search's terminal scope can stay scoped to the active
-project rather than spanning every project's terminals.
+Universal Search's terminal scope can stay scoped to one project.
 
 ```typescript
-getTerminalDir(): string;
+getTerminalDir(windowId?: number): string;
 ```
+
+| Parameter | Description |
+|-----------|-------------|
+| `windowId` | The directory of this window's root instead (from `listWindows()`); `""` for an unknown window. |
 
 ### `getWorkingDataDir`
 

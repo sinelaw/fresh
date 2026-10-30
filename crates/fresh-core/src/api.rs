@@ -167,6 +167,8 @@ pub struct TerminalScreen {
     /// has none. A checkpoint leaves the screen there too, after the
     /// scrollback, until the next one replaces it.
     pub file: String,
+    /// The terminal's tab label (e.g. `claude`, `Terminal 1`)
+    pub name: String,
 }
 
 /// Result of creating a virtual buffer
@@ -1682,6 +1684,11 @@ pub struct EditorStateSnapshot {
     pub active_split_id: usize,
     /// Information about all open buffers
     pub buffers: HashMap<BufferId, BufferInfo>,
+    /// The open buffers of every other window, by window, for
+    /// `listBuffers(windowId)`. Their view fields (`view_mode`, `splits`, …)
+    /// describe nothing on screen: only the active window is laid out.
+    #[serde(default)]
+    pub background_buffers: HashMap<WindowId, Vec<BufferInfo>>,
     /// Diff vs last saved snapshot for each buffer (line counts may be unknown)
     pub buffer_saved_diffs: HashMap<BufferId, BufferSavedDiff>,
     /// Primary cursor position for the active buffer
@@ -1949,6 +1956,7 @@ impl EditorStateSnapshot {
             active_buffer_id: BufferId(0),
             active_split_id: 0,
             buffers: HashMap::new(),
+            background_buffers: HashMap::new(),
             buffer_saved_diffs: HashMap::new(),
             primary_cursor: None,
             primary_cursor_line: None,
@@ -6047,10 +6055,14 @@ pub enum PluginCommand {
         request_id: u64,
     },
 
-    /// The visible screen of each terminal open in the active window, read
-    /// from memory (a terminal's backing file holds only what has scrolled
-    /// off). Resolves the callback with `TerminalScreen[]`.
-    GetTerminalScreens { callback_id: JsCallbackId },
+    /// The visible screen of each terminal open in window `window_id` (the
+    /// active window when `None`), read from memory (a terminal's backing
+    /// file holds only what has scrolled off). Resolves the callback with
+    /// `TerminalScreen[]`; an unknown window has none.
+    GetTerminalScreens {
+        window_id: Option<WindowId>,
+        callback_id: JsCallbackId,
+    },
 
     /// Send input data to a terminal by its terminal ID
     SendTerminalInput {
@@ -6214,6 +6226,9 @@ pub enum PluginCommand {
         program: String,
         args: Vec<String>,
         cwd: Option<String>,
+        /// Stream stdout into this file instead of buffering it.
+        stdout_to: Option<PathBuf>,
+        /// Also the process id `KillHostProcess` kills it by.
         callback_id: JsCallbackId,
     },
 

@@ -5785,6 +5785,7 @@ mod tests {
             "live_grep_toggle_buffers",
             "live_grep_toggle_terminals",
             "live_grep_toggle_diagnostics",
+            "live_grep_toggle_workspaces",
             "live_grep_toggle_word",
             "live_grep_toggle_regex",
             "live_grep_toggle_case",

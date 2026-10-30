@@ -4888,12 +4888,13 @@ THE RUNTIME, IN FULL
     plugin published with `editor.exportPluginApi(...)` / read back with
     `getPluginApi("...")`. Nothing else crosses between realms.
   - Most `editor.*` calls that ask the host a question are async and return a
-    promise — `getBufferText`, `createVirtualBuffer`, `spawnProcess`,
+    promise — `getBufferText`, `createVirtualBuffer`, `runOnTarget`,
     `listCommands`. Await them.
   - Layout mutations are queued, not immediate. After creating/closing splits
     or buffers, `await editor.flush()` before reading state back, or you will
     read the layout as it was.
-  - `editor.spawnProcess(cmd, args, cwd)` runs the program directly — no
+  - `editor.runOnTarget(cmd, args, cwd)` runs the program directly, on the
+    active window's machine (its SSH host or container, if remote) — no
     shell. No pipes, globs, quoting or $VARS; pass args pre-split. It inherits
     the editor's PATH, so `git` and `gh` resolve by bare name. Do not wrap it
     in `/bin/sh -lc` — that sources the user's profile and can hang.

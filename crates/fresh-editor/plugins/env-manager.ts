@@ -6,7 +6,7 @@
  * Activates a project's environment manager (Python venv, direnv, mise, …) by
  * handing core an activation **snippet** via `editor.setEnv`. Core captures the
  * resulting environment on the active backend (local / SSH) and applies it to
- * every editor-spawned process — language servers, formatters, `spawnProcess`.
+ * every editor-spawned process — language servers, formatters, `runOnTarget`.
  *
  * **Detection lives in core, not here.** Which marker files mean which
  * environment, and the snippet that activates it, are defined by `env.detectors`

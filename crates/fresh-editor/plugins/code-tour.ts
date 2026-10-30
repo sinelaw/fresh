@@ -801,7 +801,7 @@ async function commitDrift(manifest: TourManifest): Promise<string | null> {
   const repo = await resolveGitRepo(editor);
   if (!repo) return null;
   const result = await git(editor, repo, ["rev-parse", "--short", "HEAD"]);
-  if (!result || result.exit_code !== 0) return null;
+  if (!result || result.code !== 0) return null;
   const head = result.stdout.trim();
   if (head.startsWith(manifest.commit_hash) || manifest.commit_hash.startsWith(head)) return null;
   return editor.t("panel.drift", { recorded: manifest.commit_hash, current: head });

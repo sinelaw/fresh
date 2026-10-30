@@ -124,8 +124,8 @@ export async function fetchGitLog(
   // revision. Restricts the log to commits touching that file.
   if (opts.pathFilter) args.push("--", opts.pathFilter);
 
-  const result = await editor.spawnProcess("git", args, cwd);
-  if (result.exit_code !== 0) return [];
+  const result = await editor.runOnTarget("git", args, cwd);
+  if (result.code !== 0) return [];
 
   const commits: GitCommit[] = [];
   const records = result.stdout.split("\x1e");
@@ -169,13 +169,13 @@ export async function fetchCommitShow(
   // pulling the full diff.
   // Through `diffArgs` so the paths come back unquoted and match the
   // `:(exclude,top)` pathspecs built from them below.
-  const numstatResult = await editor.spawnProcess(
+  const numstatResult = await editor.runOnTarget(
     "git",
     diffArgs(["show"], "--numstat", "--format=", hash),
     workdir
   );
   const oversized: string[] = [];
-  if (numstatResult.exit_code === 0) {
+  if (numstatResult.code === 0) {
     for (const line of numstatResult.stdout.split("\n")) {
       if (!line) continue;
       // numstat format: "<added>\t<removed>\t<path>"; "-" for binary files.
@@ -200,8 +200,8 @@ export async function fetchCommitShow(
     showArgs.push("--", ".");
     for (const p of oversized) showArgs.push(`:(exclude,top)${p}`);
   }
-  const result = await editor.spawnProcess("git", showArgs, workdir);
-  if (result.exit_code !== 0) return result.stderr || "(no output)";
+  const result = await editor.runOnTarget("git", showArgs, workdir);
+  if (result.code !== 0) return result.stderr || "(no output)";
 
   if (oversized.length === 0) return result.stdout;
 
