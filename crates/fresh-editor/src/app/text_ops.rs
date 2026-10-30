@@ -15,8 +15,10 @@ impl Editor {
     /// Smart home: toggle between line start and first non-whitespace character.
     ///
     /// Runs independently for every cursor so multi-cursor selections all move
-    /// to their respective line starts / first-non-ws positions.
-    pub(super) fn smart_home(&mut self) {
+    /// to their respective line starts / first-non-ws positions. With `select`
+    /// the selection is extended to the same target instead
+    /// (`select_smart_home`).
+    pub(super) fn smart_home(&mut self, select: bool) {
         let estimated_line_length = self.config.editor.estimated_line_length;
         let line_wrap = self.config.editor.line_wrap;
 
@@ -85,10 +87,14 @@ impl Editor {
                 }
             };
 
-            // Respect Emacs-style mark mode: preserve the anchor when movement
-            // should keep extending the selection (e.g. after Set Mark), so the
-            // Home key extends the selection instead of collapsing it.
-            let new_anchor = if cursor.deselect_on_move {
+            // Selecting extends from the existing anchor, or starts one where
+            // the cursor was. Otherwise respect Emacs-style mark mode: preserve
+            // the anchor when movement should keep extending the selection
+            // (e.g. after Set Mark), so the Home key extends the selection
+            // instead of collapsing it.
+            let new_anchor = if select {
+                Some(cursor.anchor.unwrap_or(cursor.position))
+            } else if cursor.deselect_on_move {
                 None
             } else {
                 cursor.anchor

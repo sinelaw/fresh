@@ -6,7 +6,7 @@ Some keybindings may not work or may differ on your system due to differences in
 
 ## Smart Editing
 
-- **Smart Home** — Home toggles between first non-whitespace character and column 0.
+- **Smart Home** — Home toggles between first non-whitespace character and column 0; Shift+Home extends the selection the same way (`select_smart_home`).
 - **Smart Backspace** — Backspace in leading whitespace removes one indent level instead of a single character.
 - **Auto-indent** — Enter preserves the current indentation level. After `{`, `(`, or `:`, an extra indent level is added.
 - **Auto-close** — Typing an opening bracket or quote inserts the closing pair. Controlled by `auto_close` (default: on), independent of `auto_indent`. Per-language overrides via `languages.<lang>.auto_close`. Plain text files never auto-close quotes, only brackets.
@@ -119,7 +119,7 @@ Edit multiple locations simultaneously:
 | `Ctrl+A` | Select all |
 | `Shift+Arrow` | Extend selection in direction |
 | `Ctrl+Shift+←/→` | Select word left/right |
-| `Shift+Home/End` | Select to line start/end |
+| `Shift+Home/End` | Select to line start (smart, like Home) / line end |
 | `Ctrl+Shift+Home/End` | Select to document start/end |
 | `Shift+PgUp/PgDn` | Select page up/down |
 | Double-click, then drag | Extend the selection a whole word at a time (a plain click-drag extends it by single characters) |

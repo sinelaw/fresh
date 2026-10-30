@@ -345,6 +345,7 @@
   "action.show_status_log": "상태 메시지 로그 표시",
   "action.show_warnings": "경고 표시",
   "action.smart_home": "스마트 홈 (줄 시작 / 첫 비공백 문자 전환)",
+  "action.select_smart_home": "스마트 줄 시작까지 선택 (첫 비공백 문자 / 줄 시작)",
   "action.sort_lines": "줄 정렬",
   "action.split_horizontal": "가로로 분할",
   "action.split_vertical": "세로로 분할",

@@ -345,6 +345,7 @@
   "action.show_status_log": "显示状态消息日志",
   "action.show_warnings": "显示警告",
   "action.smart_home": "智能 Home（切换行首/首个非空白字符）",
+  "action.select_smart_home": "智能选择到行首（首个非空白字符/行首）",
   "action.sort_lines": "排序行",
   "action.split_horizontal": "水平分割",
   "action.split_vertical": "垂直分割",

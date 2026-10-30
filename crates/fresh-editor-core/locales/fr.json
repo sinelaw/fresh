@@ -345,6 +345,7 @@
   "action.show_status_log": "Afficher le journal des messages d'état",
   "action.show_warnings": "Afficher les avertissements",
   "action.smart_home": "Début intelligent (basculer entre début de ligne / premier caractère non-blanc)",
+  "action.select_smart_home": "Sélection intelligente jusqu'au début (premier caractère non-blanc / début de ligne)",
   "action.sort_lines": "Trier les lignes",
   "action.split_horizontal": "Diviser horizontalement",
   "action.split_vertical": "Diviser verticalement",

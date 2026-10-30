@@ -345,6 +345,7 @@
   "action.show_status_log": "แสดงบันทึกข้อความสถานะ",
   "action.show_warnings": "แสดงคำเตือน",
   "action.smart_home": "สมาร์ทโฮม (สลับต้นบรรทัด / ตัวแรก)",
+  "action.select_smart_home": "เลือกอัจฉริยะถึงต้นบรรทัด (อักขระแรกที่ไม่ใช่ช่องว่าง / ต้นบรรทัด)",
   "action.sort_lines": "เรียงลำดับบรรทัด",
   "action.split_horizontal": "แบ่งแนวนอน",
   "action.split_vertical": "แบ่งแนวตั้ง",
