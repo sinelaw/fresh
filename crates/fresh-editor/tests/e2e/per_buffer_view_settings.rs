@@ -1435,12 +1435,13 @@ fn test_guide_and_fold_pins_scope_to_the_split() {
     );
 }
 
-/// On a tab that isn't a document the View menu's Line Numbers / Line Wrap
-/// checkboxes must report the editor-wide setting those items toggle, not the
-/// tab's own view state (#3550). A terminal draws no gutter and wraps its
-/// grid, so on master it showed both boxes inverted against the defaults.
+/// On a tab that isn't a document (a terminal) the View menu's Line Numbers /
+/// Line Wrap items are greyed out (#3550): that tab has no gutter or wrapping
+/// of its own for them to change. Their boxes still show the editor-wide
+/// setting rather than the terminal's own view state, which on master showed
+/// both inverted, and clicking one changes nothing.
 #[test]
-fn test_view_menu_reports_config_on_a_terminal_tab() {
+fn test_view_menu_line_items_are_disabled_on_a_terminal_tab() {
     if !pty_available() {
         return;
     }
@@ -1453,27 +1454,39 @@ fn test_view_menu_reports_config_on_a_terminal_tab() {
     std::fs::write(dir.join("a.txt"), "alpha\n").unwrap();
     harness.open_file(&dir.join("a.txt")).unwrap();
     harness.render().unwrap();
+    harness.assert_screen_contains("│ alpha");
 
-    // Control: on the document the menu already agrees with the config.
+    // Control: on the document the menu agrees with the config.
     let screen = view_menu_screen(&mut harness);
     assert!(
         screen.contains("☑ Line Numbers") && screen.contains("☐ Line Wrap"),
         "precondition: the View menu agrees with the config on a document; got:\n{screen}"
     );
 
-    run_command(&mut harness, "Open Terminal");
-    harness.render().unwrap();
-    harness.assert_screen_contains("*Terminal");
+    open_terminal_tab(&mut harness);
 
     let screen = view_menu_screen(&mut harness);
     assert!(
-        screen.contains("☑ Line Numbers"),
-        "on a terminal tab Line Numbers must show `editor.line_numbers`; got:\n{screen}"
+        screen.contains("☑ Line Numbers") && screen.contains("☐ Line Wrap"),
+        "on a terminal tab the boxes show the editor-wide setting; got:\n{screen}"
     );
-    assert!(
-        screen.contains("☐ Line Wrap"),
-        "on a terminal tab Line Wrap must show `editor.line_wrap`; got:\n{screen}"
-    );
+
+    // Click Line Numbers while it is greyed out.
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+    let (col, row) = harness
+        .find_text_on_screen("Line Numbers")
+        .expect("the View menu lists Line Numbers");
+    harness.mouse_click(col, row).unwrap();
+    harness.render().unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // The setting did not flip: the document keeps its gutter.
+    show_document(&mut harness, &dir.join("a.txt"));
+    harness.assert_screen_contains("│ alpha");
 }
 
 /// Whether this environment can open a PTY; terminal tests skip without one.
