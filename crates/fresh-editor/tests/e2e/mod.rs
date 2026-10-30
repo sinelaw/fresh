@@ -121,6 +121,7 @@ pub mod issue_2449_scrollback_wrapped_ansi_color;
 pub mod issue_2566_env_detector_labels;
 pub mod issue_2572_hover_through_panel;
 pub mod issue_2605_format_selection_range;
+pub mod issue_2727_bash_status_bar_name;
 pub mod issue_2761_git_commit_msg_state;
 pub mod issue_2796_key_release_duplicates;
 pub mod issue_2797_selection_visibility;
