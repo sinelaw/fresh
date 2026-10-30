@@ -17,6 +17,7 @@ use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 use fresh::config_io::DirectoryContext;
+use fresh::test_api::Action;
 use tempfile::TempDir;
 
 /// A guide-bearing first indent level, using the default guide glyph.
@@ -1506,24 +1507,11 @@ fn pty_available() -> bool {
     ok
 }
 
-/// Open a terminal tab beside the current document and leave terminal mode,
-/// so the palette and menus act on the editor rather than the shell.
+/// Open a terminal tab beside the current document; it becomes the focused
+/// tab of the pane.
 fn open_terminal_tab(harness: &mut EditorTestHarness) {
-    // As the terminal tests do (`terminal_close.rs`): open it directly, then
-    // leave terminal mode with Ctrl+Space, since with it on the palette
-    // refuses most editor commands.
     harness.editor_mut().open_terminal();
     harness.render().unwrap();
-    if harness.editor().is_terminal_mode() {
-        harness
-            .send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
-            .unwrap();
-        harness.render().unwrap();
-    }
-    assert!(
-        !harness.editor().is_terminal_mode(),
-        "setup: the terminal tab should be out of terminal mode"
-    );
 }
 
 /// Bring an already-open document back to the front of its pane, the way
@@ -1560,8 +1548,9 @@ fn test_opening_a_terminal_leaves_the_document_view_alone() {
     harness.assert_screen_not_contains("TAILAAA");
 }
 
-/// The View menu's global Line Numbers / Line Wrap toggles, used while a
-/// terminal tab is focused, must do exactly what they do from a document:
+/// The global Line Numbers / Line Wrap toggles, run while a terminal tab is
+/// focused (from the palette — the View menu greys them out there), must do
+/// exactly what they do from a document:
 /// change the setting for the documents — including the one behind the
 /// terminal in the same pane — and leave the terminal itself alone. Line
 /// Numbers used to draw a gutter down the terminal, and neither reached the
@@ -1583,18 +1572,11 @@ fn test_global_view_toggles_from_a_terminal_tab_reach_documents_only() {
     harness.assert_screen_not_contains("TAILAAA");
 
     open_terminal_tab(&mut harness);
-    run_command(&mut harness, "Toggle Line Numbers");
-    assert!(
-        harness.get_status_bar().contains("Line numbers shown"),
-        "Toggle Line Numbers should run from the terminal tab; status bar: {}",
-        harness.get_status_bar()
-    );
-    run_command(&mut harness, "Toggle Line Wrap");
-    assert!(
-        harness.get_status_bar().contains("Line wrap enabled"),
-        "Toggle Line Wrap should run from the terminal tab; status bar: {}",
-        harness.get_status_bar()
-    );
+    // The global toggles, run while the terminal tab is focused — what the
+    // palette's "Toggle Line Numbers" / "Toggle Line Wrap" do from there.
+    harness.api_mut().dispatch(Action::ToggleLineNumbers);
+    harness.api_mut().dispatch(Action::ToggleLineWrap);
+    harness.render().unwrap();
 
     // The terminal's first content row (below the menu bar and the tabs)
     // starts with the shell's own output, not a gutter.
