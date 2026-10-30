@@ -1320,6 +1320,10 @@ impl<M: 'static> Ui<M> {
             } else {
                 Constraints::loose(bounds.size())
             };
+            let c = match props.fit.shrink {
+                true => shrink_to_room(c, props.place, anchor, bounds),
+                false => c,
+            };
             self.render.get_mut(lr).expect("live").data.needs_layout = true;
             let size = self.measure(lr, c);
             let origin = place(
@@ -1353,6 +1357,22 @@ impl<M: 'static> Ui<M> {
             }
         }
         None
+    }
+}
+
+/// `Fit::shrink`: cap the placed axis at the room between the anchor and the
+/// edge of `bounds` on the placed side. A box of fixed height then gives up
+/// rows rather than being clamped back over its anchor.
+fn shrink_to_room(c: Constraints, p: Place, anchor: Rect, bounds: Rect) -> Constraints {
+    let room = |n: i32| n.clamp(0, u16::MAX as i32) as u16;
+    let cap_h = |h: u16| Constraints::new(c.min_w, c.max_w, c.min_h.min(h), c.max_h.min(h));
+    let cap_w = |w: u16| Constraints::new(c.min_w.min(w), c.max_w.min(w), c.min_h, c.max_h);
+    match p {
+        Place::Above => cap_h(room(anchor.y - bounds.y)),
+        Place::Below => cap_h(room(bounds.bottom() - anchor.bottom())),
+        Place::LeftOf => cap_w(room(anchor.x - bounds.x)),
+        Place::RightOf => cap_w(room(bounds.right() - anchor.right())),
+        Place::Over | Place::Fill => c,
     }
 }
 
