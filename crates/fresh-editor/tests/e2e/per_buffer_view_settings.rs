@@ -1449,7 +1449,7 @@ fn test_view_menu_line_items_are_disabled_on_a_terminal_tab() {
     let mut config = Config::default();
     config.editor.line_numbers = true;
     config.editor.line_wrap = false;
-    let mut harness = EditorTestHarness::with_temp_project_and_config(120, 30, config).unwrap();
+    let mut harness = EditorTestHarness::with_temp_project_and_config(140, 30, config).unwrap();
     let dir = harness.project_dir().unwrap().to_path_buf();
     std::fs::write(dir.join("a.txt"), "alpha\n").unwrap();
     harness.open_file(&dir.join("a.txt")).unwrap();
@@ -1512,7 +1512,8 @@ fn open_terminal_tab(harness: &mut EditorTestHarness) {
     run_command(harness, "Open Terminal");
     // Ctrl+Space toggles terminal mode, and whether a new terminal starts in
     // it is not this test's concern: toggle until the status says it is off.
-    // With it on, the palette refuses most editor commands.
+    // With it on, the palette refuses most editor commands. Callers use a
+    // wide terminal so the status message is not truncated.
     for _ in 0..2 {
         harness
             .send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
@@ -1547,9 +1548,9 @@ fn test_opening_a_terminal_leaves_the_document_view_alone() {
     }
     let mut config = Config::default();
     config.editor.line_wrap = false;
-    let mut harness = EditorTestHarness::with_temp_project_and_config(80, 24, config).unwrap();
+    let mut harness = EditorTestHarness::with_temp_project_and_config(140, 24, config).unwrap();
     let dir = harness.project_dir().unwrap().to_path_buf();
-    std::fs::write(dir.join("a.txt"), format!("{}TAILAAA\n", "A".repeat(120))).unwrap();
+    std::fs::write(dir.join("a.txt"), format!("{}TAILAAA\n", "A".repeat(200))).unwrap();
     harness.open_file(&dir.join("a.txt")).unwrap();
     harness.render().unwrap();
     harness.assert_screen_not_contains("TAILAAA");
