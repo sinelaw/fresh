@@ -1510,10 +1510,22 @@ fn pty_available() -> bool {
 /// so the palette and tab keys act on the editor rather than the shell.
 fn open_terminal_tab(harness: &mut EditorTestHarness) {
     run_command(harness, "Open Terminal");
-    harness
-        .send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
+    // Ctrl+Space toggles terminal mode, and whether a new terminal starts in
+    // it is not this test's concern: toggle until the status says it is off.
+    // With it on, the palette refuses most editor commands.
+    for _ in 0..2 {
+        harness
+            .send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+        if harness.get_status_bar().contains("Terminal mode disabled") {
+            return;
+        }
+    }
+    panic!(
+        "could not leave terminal mode; status bar: {}",
+        harness.get_status_bar()
+    );
 }
 
 /// Bring an already-open document back to the front of its pane, the way
@@ -1564,9 +1576,9 @@ fn test_global_view_toggles_from_a_terminal_tab_reach_documents_only() {
     let mut config = Config::default();
     config.editor.line_numbers = false;
     config.editor.line_wrap = false;
-    let mut harness = EditorTestHarness::with_temp_project_and_config(80, 24, config).unwrap();
+    let mut harness = EditorTestHarness::with_temp_project_and_config(140, 24, config).unwrap();
     let dir = harness.project_dir().unwrap().to_path_buf();
-    std::fs::write(dir.join("a.txt"), format!("{}TAILAAA\n", "A".repeat(120))).unwrap();
+    std::fs::write(dir.join("a.txt"), format!("{}TAILAAA\n", "A".repeat(200))).unwrap();
     harness.open_file(&dir.join("a.txt")).unwrap();
     harness.render().unwrap();
     harness.assert_screen_not_contains("│ AAAA");
@@ -1574,7 +1586,17 @@ fn test_global_view_toggles_from_a_terminal_tab_reach_documents_only() {
 
     open_terminal_tab(&mut harness);
     run_command(&mut harness, "Toggle Line Numbers");
+    assert!(
+        harness.get_status_bar().contains("Line numbers shown"),
+        "Toggle Line Numbers should run from the terminal tab; status bar: {}",
+        harness.get_status_bar()
+    );
     run_command(&mut harness, "Toggle Line Wrap");
+    assert!(
+        harness.get_status_bar().contains("Line wrap enabled"),
+        "Toggle Line Wrap should run from the terminal tab; status bar: {}",
+        harness.get_status_bar()
+    );
 
     // The terminal's first content row (below the menu bar and the tabs)
     // starts with the shell's own output, not a gutter.
