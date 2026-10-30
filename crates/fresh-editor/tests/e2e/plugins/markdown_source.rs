@@ -324,6 +324,64 @@ fn test_tab_inserts_spaces() {
     harness.assert_no_plugin_errors();
 }
 
+/// Tab with several lines selected indents every selected line, as it does
+/// outside Markdown, instead of replacing the selection with spaces (#3666).
+#[test]
+fn test_tab_indents_a_multi_line_selection() {
+    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+
+    let content = "https://a.example/one\nhttps://b.example/two\nhttps://c.example/three\n";
+    let fixture = TestFixture::new("urls.md", content).unwrap();
+    open_md_and_wait_for_mode(&mut harness, &fixture.path);
+
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::SHIFT).unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+
+    harness
+        .wait_until(|h| {
+            h.get_buffer_content().is_some_and(|c| {
+                c == "    https://a.example/one\n    https://b.example/two\n    https://c.example/three\n"
+            })
+        })
+        .unwrap();
+    harness.assert_no_plugin_errors();
+}
+
+/// Tab with several cursors indents at every cursor, not just the primary.
+#[test]
+fn test_tab_with_multiple_cursors_indents_each_line() {
+    let (mut harness, _temp_dir) = markdown_source_harness(80, 24);
+
+    let content = "one\ntwo\nthree\n";
+    let fixture = TestFixture::new("multi.md", content).unwrap();
+    open_md_and_wait_for_mode(&mut harness, &fixture.path);
+
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.editor_mut().add_cursor_below();
+    harness.editor_mut().add_cursor_below();
+    harness.render().unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+
+    harness
+        .wait_until(|h| {
+            h.get_buffer_content()
+                .is_some_and(|c| c == "    one\n    two\n    three\n")
+        })
+        .unwrap();
+    harness.assert_no_plugin_errors();
+}
+
 /// Multiple Tab presses should accumulate spaces.
 #[test]
 fn test_multiple_tabs() {
