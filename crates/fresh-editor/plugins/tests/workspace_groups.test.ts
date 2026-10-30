@@ -47,6 +47,11 @@ eq(
   "dock names win over labels unless empty; the current root is the cwd given",
 );
 eq(
+  orderWorkspaces({ id: 4, root: "/w/box" }, windows, []).map((w) => [w.id, w.remote]),
+  [[4, true], [1, false], [2, false], [3, false], [5, false]],
+  "which are on a remote host, the current one included",
+);
+eq(
   ids(orderWorkspaces({ id: 4, root: "/w/box" }, windows, [])),
   [4, 1, 2, 3, 5],
   "from a remote workspace, every other connected one: each runs on its own machine",

@@ -111,13 +111,16 @@ have not opened since starting Fresh has no buffers or terminals running, so
 its files on disk and its terminals' history are searched. Diagnostics stay
 this workspace's. Each workspace is searched where its files are: a remote
 one (SSH, Kubernetes, a container) on its own host, whichever workspace you
-search from. A remote workspace that is not connected yet — restored from
-disk, or its link dropped — is left out until you switch to it.
+search from. A remote workspace restored from disk is left out until you
+switch to it and it connects; while a remote workspace's link is down, its
+files are left out.
 
 `Enter` on another workspace's result switches to that workspace, as picking
 it in the dock does, and then lands on the result as in its own: the file at
 the line, the unsaved buffer, or the terminal. `Enter` on a header row just
-switches to its workspace.
+switches to its workspace. The preview shows another workspace's file when
+both workspaces are on this computer; a file on another machine, or an
+unsaved buffer of another workspace, shows once you press `Enter`.
 
 Like the **Case** toggle, **All workspaces** keeps its setting for the rest
 of the session.

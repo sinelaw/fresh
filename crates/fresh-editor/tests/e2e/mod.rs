@@ -171,6 +171,7 @@ pub mod kotlin_language;
 pub mod language_dialog_esc_cancels_edit;
 pub mod language_dialog_tab_size;
 pub mod language_textmate_grammar;
+pub mod machine_run_closed;
 pub mod mouse_session_input;
 pub mod odin_language;
 pub mod one_buffer_per_file;

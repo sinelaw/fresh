@@ -3587,23 +3587,33 @@ impl Editor {
         machine: Option<u64>,
         callback_id: fresh_core::api::JsCallbackId,
     ) -> Option<&crate::services::authority::Authority> {
+        self.machine_authority(machine)
+            .map_err(|msg| {
+                self.plugin_manager
+                    .read()
+                    .unwrap()
+                    .reject_callback(callback_id, msg)
+            })
+            .ok()
+    }
+
+    /// The authority behind `machine` (the active window's when `None`), or
+    /// why there is none.
+    fn machine_authority(
+        &self,
+        machine: Option<u64>,
+    ) -> Result<&crate::services::authority::Authority, String> {
         let Some(id) = machine else {
-            return Some(self.authority());
-        };
-        let reject = |msg: String| {
-            self.plugin_manager
-                .read()
-                .unwrap()
-                .reject_callback(callback_id, msg);
-            None
+            return Ok(self.authority());
         };
         match self.open_machines.get(&id).map(|m| &m.kind) {
-            Some(super::OpenMachineKind::Owned(connection)) => Some(&connection.authority),
-            Some(super::OpenMachineKind::Window(window)) => match self.windows.get(window) {
-                Some(window) => Some(window.authority()),
-                None => reject(format!("machine {id}'s window has closed")),
-            },
-            None => reject(format!("machine {id} is not open")),
+            Some(super::OpenMachineKind::Owned(connection)) => Ok(&connection.authority),
+            Some(super::OpenMachineKind::Window(window)) => self
+                .windows
+                .get(window)
+                .map(|window| window.authority())
+                .ok_or_else(|| format!("machine {id}'s window has closed")),
+            None => Err(format!("machine {id} is not open")),
         }
     }
 
@@ -3746,8 +3756,18 @@ impl Editor {
         let Some((runtime, sender)) = self.off_loop_parts(callback_id) else {
             return;
         };
-        let Some(authority) = self.authority_for(machine, callback_id) else {
-            return;
+        // Like a command that cannot start, a machine that is gone resolves
+        // with -1: callers written for `spawnProcess` expect a result.
+        let authority = match self.machine_authority(machine) {
+            Ok(authority) => authority,
+            Err(reason) => {
+                let result = serde_json::json!({ "code": -1, "stdout": "", "stderr": reason });
+                self.plugin_manager
+                    .read()
+                    .unwrap()
+                    .resolve_callback(callback_id, result.to_string());
+                return;
+            }
         };
         let spawner = authority.process_spawner.clone();
         let filesystem = authority.filesystem.clone();

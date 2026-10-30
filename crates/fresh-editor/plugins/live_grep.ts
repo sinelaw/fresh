@@ -74,6 +74,8 @@ interface GrepMatch {
   /** Set on a group's header row (no match itself): the number of matches
    *  in `workspace` listed under it. */
   heading?: number;
+  /** False when the preview would not show what matched (`previewable`). */
+  preview?: boolean;
 }
 
 /** Where a provider runs: the searched workspace's machine, and its root. */
@@ -676,8 +678,8 @@ async function gitGrepCwd(machine: FreshMachine, preferred: string): Promise<str
   const inRepo = await machine.run("git", ["rev-parse", "--is-inside-work-tree"], preferred);
   if (inRepo.code === 0) return preferred;
   // The active buffer is in the current workspace: it says nothing about
-  // another workspace's root ("All workspaces").
-  if (preferred !== editor.getCwd()) return null;
+  // another workspace ("All workspaces"), whose machine is its own.
+  if (machine.id !== (await machines.get(editor.activeWindow())).id) return null;
   const cand = gitCwdCandidate(editor);
   if (cand !== preferred) {
     const r = await machine.run("git", ["rev-parse", "--is-inside-work-tree"], cand);
@@ -763,6 +765,11 @@ registerProvider({
   },
 });
 
+/** The providers above: they run everything on the machine they are given.
+ *  One registered from init.ts may predate that and spawn on its own, on the
+ *  active window's machine. */
+const builtinProviders = new Set(providers);
+
 // ── Wiring ──────────────────────────────────────────────────────
 
 function badgeFor(source: ScopeId | undefined): string {
@@ -845,6 +852,7 @@ const finder = new Finder<GrepMatch>(editor, {
         match.bufferId === undefined
           ? { file: openPathOf(match), line: match.line, column: match.column }
           : undefined,
+      preview: match.preview,
     };
   },
   onClose: () => {
@@ -895,6 +903,7 @@ const quickfixFinder = new Finder<GrepMatch>(editor, {
       line: match.line,
       column: match.column,
     },
+    preview: match.preview,
   }),
   useUtilityDock: true,
   // Keep the Quickfix list docked when jumping to an entry — like Vim's
@@ -1251,13 +1260,16 @@ function customIgnorePatterns(): string[] {
 
 /** The provider to search another workspace's files with: the first that
  *  can run on that workspace's machine, the one selected here tried first.
- *  Decided once per workspace per overlay. */
+ *  On a machine other than the active window's, only the built-in ones,
+ *  which run where they are told. Decided once per workspace per overlay. */
 async function providerForOther(workspace: Workspace, ctx: ProviderContext): Promise<LiveGrepProvider | null> {
   const known = otherProviders.get(workspace.id);
   if (known !== undefined) return known;
   const selected = cachedSelected !== undefined ? cachedSelected : await selectProvider();
+  const sameMachine = !workspace.remote && !currentWorkspace().remote;
   let chosen: LiveGrepProvider | null = null;
   for (const p of selected ? [selected, ...providers.filter((q) => q !== selected)] : providers) {
+    if (!sameMachine && !builtinProviders.has(p)) continue;
     if (await canRun(p, ctx)) {
       chosen = p;
       break;
@@ -1333,7 +1345,8 @@ async function searchWorkspace(
     const fileMatches = await searchFiles(query, workspace, cancellation);
     if (fileMatches === null) {
       // No grep backend. Only fatal if there's nothing else to search.
-      if (workspace.current && !scopeEnabled.buffers && !scopeEnabled.diagnostics) {
+      const otherScopes = scopeEnabled.buffers || scopeEnabled.terminals || scopeEnabled.diagnostics;
+      if (workspace.current && !otherScopes && !scopeEnabled.workspaces) {
         throw new Error(
           "no search backend available — install ripgrep, or register a provider via init.ts (`editor.getPluginApi(\"live-grep\")?.registerProvider(...)`)."
         );
@@ -1371,13 +1384,30 @@ async function searchWorkspace(
 
 /** The workspace the overlay was opened in. */
 function currentWorkspace(): Workspace {
-  return orderWorkspaces({ id: editor.activeWindow(), root: editor.getCwd() }, [], [])[0];
+  const id = editor.activeWindow();
+  const here = editor.listWindows().filter((w) => w.id === id);
+  return orderWorkspaces({ id, root: editor.getCwd() }, here, [])[0];
+}
+
+/** Workspaces searched at once under "All workspaces", besides the current
+ *  one: each runs a search, and a terminal-history grep, per keystroke. */
+const WORKSPACES_AT_ONCE = 4;
+
+/** Whether the preview shows what matched for `match`, in another workspace
+ *  than `current`. The preview reads files through the current workspace's
+ *  machine, so it cannot show one on another machine; nor an unsaved
+ *  buffer's text, only its file on disk. A terminal's history is on this
+ *  computer. */
+function previewable(match: GrepMatch, current: Workspace): boolean {
+  if (current.remote) return false;
+  if (match.source === "terminals") return true;
+  return match.source !== "buffers" && !match.workspace?.remote;
 }
 
 /** "All workspaces": each workspace's matches as one group under a header
  *  row — the current workspace first, then the others in dock order (window
- *  order without the Orchestrator), remote ones left out. A workspace with
- *  no matches is left out too. */
+ *  order without the Orchestrator), each searched on its own machine. A
+ *  workspace with no matches is left out. */
 async function searchAllWorkspaces(query: string, cancellation?: SearchCancellation): Promise<GrepMatch[]> {
   // The dock lists workspaces not opened yet this session; so does this.
   workspacesLoaded ??= editor.loadWorkspaces();
@@ -1388,16 +1418,22 @@ async function searchAllWorkspaces(query: string, cancellation?: SearchCancellat
     dockOrder(),
   );
   const own = await searchWorkspace(query, await workspaceContent(current), MAX_RESULTS, cancellation);
-  // The others share what is left of the cap and run side by side; their
-  // groups keep dock order, cut at the cap in that order.
-  const left = MAX_RESULTS - own.length;
-  const theirs = left <= 0 || cancellation?.cancelled
-    ? []
-    : await Promise.all(
-      others.map(async (workspace) => searchWorkspace(query, await workspaceContent(workspace), left, cancellation)),
-    );
-  const groups: { workspace: Workspace; matches: GrepMatch[] }[] = [{ workspace: current, matches: own }];
+  // The others share what is left of the cap, a few side by side, started in
+  // dock order; none is started once the cap is filled. Their groups keep
+  // dock order, cut at the cap in that order.
+  const theirs: GrepMatch[][] = others.map(() => []);
   let found = own.length;
+  let next = 0;
+  const searchNext = async (): Promise<void> => {
+    while (next < others.length && found < MAX_RESULTS && !cancellation?.cancelled) {
+      const i = next++;
+      theirs[i] = await searchWorkspace(query, await workspaceContent(others[i]), MAX_RESULTS - found, cancellation);
+      found += theirs[i].length;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(WORKSPACES_AT_ONCE, others.length) }, searchNext));
+  const groups: { workspace: Workspace; matches: GrepMatch[] }[] = [{ workspace: current, matches: own }];
+  found = own.length;
   theirs.forEach((matches, i) => {
     const kept = matches.slice(0, MAX_RESULTS - found);
     groups.push({ workspace: others[i], matches: kept });
@@ -1406,7 +1442,11 @@ async function searchAllWorkspaces(query: string, cancellation?: SearchCancellat
   return groupByWorkspace<GrepMatch>(
     groups,
     (workspace, count) => ({ file: "", line: 0, column: 0, content: "", workspace, heading: count }),
-    (match, workspace) => ({ ...match, workspace }),
+    (match, workspace) => ({
+      ...match,
+      workspace,
+      ...(workspace.current ? {} : { preview: previewable({ ...match, workspace }, current) }),
+    }),
   );
 }
 

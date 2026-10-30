@@ -8629,9 +8629,11 @@ interface FreshMachine {
 		maxBytes: number;
 	}[]): Promise<FilePrefix[]>;
 	/** Run a command here, without a shell. `stdoutTo` streams stdout into
-	*  that file instead (`stdout` then resolves empty). Never rejects: a
-	*  command that could not be started resolves with `code` -1 and the reason
-	*  in `stderr`. `kill()` stops it. */
+	*  that file instead (`stdout` then resolves empty; this computer only).
+	*  Never rejects: a command that could not be started, or a machine that
+	*  is closed or whose window has closed, resolves with `code` -1 and the
+	*  reason in `stderr`. `kill()` stops it here, on an SSH host or in a
+	*  Kubernetes pod; in a container it runs to completion. */
 	run(program: string, args?: string[], cwd?: string, stdoutTo?: string): ProcessHandle<CommandResult>;
 	/** Environment variables, for the names that are set. A remote machine is
 	*  asked with `printenv`; never this computer's values for another machine. */
@@ -8681,7 +8683,7 @@ interface EditorAPI {
 	*  (the active window's when `window` is omitted): `run` on it runs where
 	*  that window's files are, whichever window is active.
 	*  `{ kind: "ssh" | "kubectl-exec", ... }` connects to a machine nothing is
-	*  attached to; it is read-only, so `run` rejects. Anything else is an
+	*  attached to; it is read-only, so `run` resolves with `code` -1. Anything else is an
 	*  `AuthorityPayload`, as `setAuthority` takes. */
 	openMachine(spec: {
 		kind: "window";
@@ -8698,7 +8700,8 @@ interface EditorAPI {
 	*  `stdoutTo` streams stdout into that file instead (`stdout` then resolves
 	*  empty). Resolves with a non-zero `code` rather than rejecting, and with
 	*  `code` -1 (the reason in `stderr`) when the command could not be
-	*  started; `kill()` stops it. The replacement for `spawnProcess`. */
+	*  started; `kill()` stops it, as `run` says. The replacement for
+	*  `spawnProcess`. */
 	runOnTarget(program: string, args?: string[], cwd?: string, stdoutTo?: string): ProcessHandle<CommandResult>;
 	machineEnv(names: string[]): Promise<Record<string, string>>;
 }

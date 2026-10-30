@@ -3836,6 +3836,9 @@ impl Editor {
                 use crate::services::process_hidden::HideWindow;
                 let mut cmd = TokioCommand::new(&command);
                 cmd.args(&args);
+                // As for `run` (`LocalProcessSpawner`): nothing writes to it,
+                // and one reading the editor's stdin could wait forever.
+                cmd.stdin(std::process::Stdio::null());
                 cmd.stdout(std::process::Stdio::piped());
                 cmd.stderr(std::process::Stdio::piped());
                 cmd.hide_window();

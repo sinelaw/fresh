@@ -187,7 +187,8 @@ pub trait ProcessSpawner: Send + Sync {
     /// the result reflects the killed exit status.
     ///
     /// Default impl ignores `kill_rx` (no true cancellation for backends
-    /// that buffer in memory). Local override implements real kill.
+    /// that buffer in memory). The local and remote-agent (SSH, Kubernetes)
+    /// overrides implement real kill; a container's `docker exec` runs on.
     async fn spawn_cancellable(
         &self,
         command: String,
@@ -546,13 +547,16 @@ impl RemoteProcessSpawner {
     }
 }
 
-#[async_trait::async_trait]
-impl ProcessSpawner for RemoteProcessSpawner {
-    async fn spawn_raw(
+impl RemoteProcessSpawner {
+    /// Run `command` on the host. When `kill` fires first, the agent is told
+    /// to cancel the request — which terminates the process — and the run
+    /// ends with exit code -1 and what it had written so far.
+    async fn exec(
         &self,
         command: String,
         args: Vec<String>,
         cwd: Option<String>,
+        mut kill: Option<tokio::sync::oneshot::Receiver<()>>,
     ) -> Result<RawSpawnResult, SpawnError> {
         gate(&self.trust, &command, cwd.as_deref())?;
         let captured = self.captured_env().await;
@@ -571,12 +575,30 @@ impl ProcessSpawner for RemoteProcessSpawner {
         // empty chunk every `EXEC_KEEPALIVE_SECS` while the process is quiet, so
         // nothing arriving within `STREAM_IDLE_TIMEOUT` means the agent is gone.
         loop {
-            match tokio::time::timeout(
+            let next = tokio::time::timeout(
                 crate::services::remote::channel::STREAM_IDLE_TIMEOUT,
                 data_rx.recv(),
-            )
-            .await
-            {
+            );
+            let next = match kill.as_mut() {
+                Some(kill_rx) => tokio::select! {
+                    next = next => next,
+                    killed = kill_rx => {
+                        // A dropped sender is no kill: keep reading.
+                        kill = None;
+                        if killed.is_err() {
+                            continue;
+                        }
+                        self.channel.cancel_detached(request_id);
+                        return Ok(RawSpawnResult {
+                            stdout,
+                            stderr: String::from_utf8_lossy(&stderr).to_string(),
+                            exit_code: -1,
+                        });
+                    }
+                },
+                None => next.await,
+            };
+            match next {
                 Ok(Some(data)) => {
                     if let Some(out) = data.get("out").and_then(|v| v.as_str()) {
                         if let Ok(decoded) = decode_base64(out) {
@@ -624,6 +646,18 @@ impl ProcessSpawner for RemoteProcessSpawner {
             exit_code,
         })
     }
+}
+
+#[async_trait::async_trait]
+impl ProcessSpawner for RemoteProcessSpawner {
+    async fn spawn_raw(
+        &self,
+        command: String,
+        args: Vec<String>,
+        cwd: Option<String>,
+    ) -> Result<RawSpawnResult, SpawnError> {
+        self.exec(command, args, cwd, None).await
+    }
 
     async fn spawn_to_file(
         &self,
@@ -635,6 +669,25 @@ impl ProcessSpawner for RemoteProcessSpawner {
         Err(SpawnError::Process(
             "stdoutTo is not supported for remote processes".to_string(),
         ))
+    }
+
+    /// Killed through the agent: it terminates the process when the request
+    /// is cancelled.
+    async fn spawn_cancellable(
+        &self,
+        command: String,
+        args: Vec<String>,
+        cwd: Option<String>,
+        stdout_to: Option<std::path::PathBuf>,
+        kill_rx: tokio::sync::oneshot::Receiver<()>,
+    ) -> Result<SpawnResult, SpawnError> {
+        match stdout_to {
+            Some(p) => self.spawn_to_file(command, args, cwd, p).await,
+            None => self
+                .exec(command, args, cwd, Some(kill_rx))
+                .await
+                .map(Into::into),
+        }
     }
 }
 
@@ -1473,6 +1526,48 @@ mod tests {
             elapsed
         );
         assert_ne!(result.exit_code, 0, "killed process shouldn't be exit 0");
+    }
+
+    /// A kill reaches the process on the host: the agent terminates it, so
+    /// what it would have done next never happens.
+    #[tokio::test]
+    async fn test_remote_spawner_cancellable_kill() {
+        let Ok(channel) = crate::services::remote::spawn_local_agent().await else {
+            eprintln!("Skipping test: could not spawn the agent");
+            return;
+        };
+        // Held for the whole test, as the authority holds it: the cancel is
+        // written after the run has returned
+        let spawner = RemoteProcessSpawner::new(
+            channel.clone(),
+            Arc::new(EnvProvider::inactive()),
+            Arc::new(WorkspaceTrust::permissive()),
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("not-killed");
+        let script = format!("echo started; sleep 1; touch '{}'", marker.display());
+        let (kill_tx, kill_rx) = tokio::sync::oneshot::channel::<()>();
+        let task = tokio::spawn(async move {
+            spawner
+                .spawn_cancellable(
+                    "sh".to_string(),
+                    vec!["-c".to_string(), script],
+                    None,
+                    None,
+                    kill_rx,
+                )
+                .await
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        #[allow(clippy::let_underscore_must_use)]
+        let _ = kill_tx.send(());
+        let result = task.await.unwrap().unwrap();
+        assert_eq!(result.exit_code, -1, "a killed run ends with -1");
+
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        assert!(!marker.exists(), "the process ran on after the kill");
+        drop(channel);
     }
 
     #[tokio::test]

@@ -16,6 +16,8 @@ export interface Workspace {
   root: string;
   /** The workspace the search was started from. */
   current: boolean;
+  /** On a remote host (SSH, a container, a pod), not this computer. */
+  remote: boolean;
 }
 
 /** The part of a `WindowInfo` this needs. */
@@ -56,9 +58,15 @@ export function orderWorkspaces(
   const others = windows
     .filter((w) => w.id !== current.id && !(w.remote && !w.remote.connected))
     .sort((a, b) => rank(a.id) - rank(b.id))
-    .map((w) => ({ id: w.id, name: name(w), root: w.root, current: false }));
+    .map((w) => ({ id: w.id, name: name(w), root: w.root, current: false, remote: !!w.remote }));
   return [
-    { id: current.id, name: name({ id: current.id, label: here?.label ?? "" }), root: current.root, current: true },
+    {
+      id: current.id,
+      name: name({ id: current.id, label: here?.label ?? "" }),
+      root: current.root,
+      current: true,
+      remote: !!here?.remote,
+    },
     ...others,
   ];
 }

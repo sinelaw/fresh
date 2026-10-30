@@ -650,7 +650,7 @@ Open a machine to read without attaching it to a window.
  (the active window's when `window` is omitted): `run` on it runs where
  that window's files are, whichever window is active.
  `{ kind: "ssh" | "kubectl-exec", ... }` connects to a machine nothing is
- attached to; it is read-only, so `run` rejects. Anything else is an
+ attached to; it is read-only, so `run` resolves with `code` -1. Anything else is an
  `AuthorityPayload`, as `setAuthority` takes.
 
 ```typescript
@@ -683,7 +683,8 @@ Run a command on the active window's machine, without a shell: a remote
  `stdoutTo` streams stdout into that file instead (`stdout` then resolves
  empty). Resolves with a non-zero `code` rather than rejecting, and with
  `code` -1 (the reason in `stderr`) when the command could not be
- started; `kill()` stops it. The replacement for `spawnProcess`.
+ started; `kill()` stops it, as `run` says. The replacement for
+ `spawnProcess`.
 
 ```typescript
 runOnTarget(program: string, args?: string[], cwd?: string, stdoutTo?: string): ProcessHandle<CommandResult>;
