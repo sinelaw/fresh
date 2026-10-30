@@ -3843,3 +3843,31 @@ mod regex_matches_loading {
         );
     }
 }
+
+/// An undo snapshot shares the loaded chunks' bytes with the live buffer
+/// instead of copying them: a replace-all takes two snapshots, and copies
+/// held about three times a fully loaded file in memory (#3642). Editing
+/// after the snapshot leaves the snapshot's content as it was.
+#[test]
+fn snapshot_shares_loaded_chunks_and_survives_later_edits() {
+    let mut buffer = TextBuffer::from_bytes(b"hello\nworld\n".to_vec(), test_fs());
+    let snapshot = buffer.snapshot_buffer_state();
+
+    let mut shared = 0;
+    for (live, saved) in buffer.buffers.iter().zip(snapshot.buffers.iter()) {
+        if let (BufferData::Loaded { data: a, .. }, BufferData::Loaded { data: b, .. }) =
+            (&live.data, &saved.data)
+        {
+            assert!(Arc::ptr_eq(a, b), "buffer {} was copied", live.id);
+            shared += 1;
+        }
+    }
+    assert!(shared > 0, "no loaded buffer to share");
+
+    buffer.insert(5, " there");
+    buffer.insert(buffer.len(), "!");
+    assert_eq!(buffer.to_string().unwrap(), "hello there\nworld\n!");
+
+    buffer.restore_buffer_state(&snapshot);
+    assert_eq!(buffer.to_string().unwrap(), "hello\nworld\n");
+}
