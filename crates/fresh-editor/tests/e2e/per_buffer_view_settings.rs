@@ -1434,3 +1434,54 @@ fn test_guide_and_fold_pins_scope_to_the_split() {
          ({guides_one_split} then {guides_both_splits})"
     );
 }
+
+/// On a tab that isn't a document the View menu's Line Numbers / Line Wrap
+/// checkboxes must report the editor-wide setting those items toggle, not the
+/// tab's own view state (#3550). A terminal draws no gutter and wraps its
+/// grid, so on master it showed both boxes inverted against the defaults.
+#[test]
+fn test_view_menu_reports_config_on_a_terminal_tab() {
+    use portable_pty::{native_pty_system, PtySize};
+    if native_pty_system()
+        .openpty(PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .is_err()
+    {
+        eprintln!("Skipping terminal test: PTY not available in this environment");
+        return;
+    }
+
+    let mut config = Config::default();
+    config.editor.line_numbers = true;
+    config.editor.line_wrap = false;
+    let mut harness = EditorTestHarness::with_temp_project_and_config(120, 30, config).unwrap();
+    let dir = harness.project_dir().unwrap().to_path_buf();
+    std::fs::write(dir.join("a.txt"), "alpha\n").unwrap();
+    harness.open_file(&dir.join("a.txt")).unwrap();
+    harness.render().unwrap();
+
+    // Control: on the document the menu already agrees with the config.
+    let screen = view_menu_screen(&mut harness);
+    assert!(
+        screen.contains("☑ Line Numbers") && screen.contains("☐ Line Wrap"),
+        "precondition: the View menu agrees with the config on a document; got:\n{screen}"
+    );
+
+    run_command(&mut harness, "Open Terminal");
+    harness.render().unwrap();
+    harness.assert_screen_contains("*Terminal");
+
+    let screen = view_menu_screen(&mut harness);
+    assert!(
+        screen.contains("☑ Line Numbers"),
+        "on a terminal tab Line Numbers must show `editor.line_numbers`; got:\n{screen}"
+    );
+    assert!(
+        screen.contains("☐ Line Wrap"),
+        "on a terminal tab Line Wrap must show `editor.line_wrap`; got:\n{screen}"
+    );
+}
