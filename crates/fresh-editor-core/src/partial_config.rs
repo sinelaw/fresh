@@ -505,6 +505,7 @@ pub struct PartialTerminalConfig {
     pub mouse_drag_selects: Option<bool>,
     pub mouse_forwarding: Option<crate::config::TerminalMouseForwarding>,
     pub close_on_exit: Option<bool>,
+    pub pass_ctrl_v_without_text: Option<bool>,
 }
 
 impl Merge for PartialTerminalConfig {
@@ -519,6 +520,8 @@ impl Merge for PartialTerminalConfig {
             .merge_from(&other.mouse_drag_selects);
         self.mouse_forwarding.merge_from(&other.mouse_forwarding);
         self.close_on_exit.merge_from(&other.close_on_exit);
+        self.pass_ctrl_v_without_text
+            .merge_from(&other.pass_ctrl_v_without_text);
     }
 }
 
@@ -1078,6 +1081,7 @@ impl From<&TerminalConfig> for PartialTerminalConfig {
             mouse_drag_selects: Some(cfg.mouse_drag_selects),
             mouse_forwarding: Some(cfg.mouse_forwarding),
             close_on_exit: Some(cfg.close_on_exit),
+            pass_ctrl_v_without_text: Some(cfg.pass_ctrl_v_without_text),
         }
     }
 }
@@ -1098,6 +1102,9 @@ impl PartialTerminalConfig {
                 .unwrap_or(defaults.mouse_drag_selects),
             mouse_forwarding: self.mouse_forwarding.unwrap_or(defaults.mouse_forwarding),
             close_on_exit: self.close_on_exit.unwrap_or(defaults.close_on_exit),
+            pass_ctrl_v_without_text: self
+                .pass_ctrl_v_without_text
+                .unwrap_or(defaults.pass_ctrl_v_without_text),
         }
     }
 }
