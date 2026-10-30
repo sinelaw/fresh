@@ -1503,9 +1503,10 @@ fn open_terminal_tab(harness: &mut EditorTestHarness) {
     harness.render().unwrap();
 }
 
-/// Ctrl+PageUp / Ctrl+PageDown between the two tabs of the pane.
-fn switch_tab(harness: &mut EditorTestHarness, key: KeyCode) {
-    harness.send_key(key, KeyModifiers::CONTROL).unwrap();
+/// Bring an already-open document back to the front of its pane, the way
+/// the other tests here switch between open documents.
+fn show_document(harness: &mut EditorTestHarness, path: &std::path::Path) {
+    harness.open_file(path).unwrap();
     harness.render().unwrap();
 }
 
@@ -1529,8 +1530,10 @@ fn test_opening_a_terminal_leaves_the_document_view_alone() {
     harness.assert_screen_not_contains("TAILAAA");
 
     open_terminal_tab(&mut harness);
-    switch_tab(&mut harness, KeyCode::PageUp);
-    harness.assert_screen_contains("AAAA");
+    show_document(&mut harness, &dir.join("a.txt"));
+    // The gutter in front of the text says this is the document on screen,
+    // not cells of it left under the terminal.
+    harness.assert_screen_contains("│ AAAA");
     harness.assert_screen_not_contains("TAILAAA");
 }
 
@@ -1570,7 +1573,7 @@ fn test_global_view_toggles_from_a_terminal_tab_reach_documents_only() {
         harness.screen_to_string()
     );
 
-    switch_tab(&mut harness, KeyCode::PageUp);
+    show_document(&mut harness, &dir.join("a.txt"));
     harness.assert_screen_contains("│ AAAA");
     harness.assert_screen_contains("TAILAAA");
 }
