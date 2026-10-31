@@ -93,6 +93,8 @@
         "status_separator_bg": null,
         "status_lsp_on_fg": null,
         "status_lsp_on_bg": null,
+        "status_remote_connected_fg": null,
+        "status_remote_connected_bg": null,
         "status_lsp_actionable_fg": null,
         "status_lsp_actionable_bg": null,
         "prompt_fg": null,
@@ -1047,6 +1049,30 @@
         },
         "status_lsp_on_bg": {
           "description": "Status bar LSP indicator background when LSP is running (falls back to status_bar_bg)",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status_remote_connected_fg": {
+          "description": "Status bar remote indicator text color while connecting to or connected\nto a remote authority (falls back to status_bar_fg)",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status_remote_connected_bg": {
+          "description": "Status bar remote indicator background while connecting to or connected\nto a remote authority (falls back to status_bar_bg)",
           "anyOf": [
             {
               "$ref": "#/$defs/StyledColorDef"

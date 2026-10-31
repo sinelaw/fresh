@@ -735,6 +735,14 @@ pub struct UiColors {
     /// Status bar LSP indicator background when LSP is running (falls back to status_bar_bg)
     #[serde(default)]
     pub status_lsp_on_bg: Option<StyledColorDef>,
+    /// Status bar remote indicator text color while connecting to or connected
+    /// to a remote authority (falls back to status_bar_fg)
+    #[serde(default)]
+    pub status_remote_connected_fg: Option<StyledColorDef>,
+    /// Status bar remote indicator background while connecting to or connected
+    /// to a remote authority (falls back to status_bar_bg)
+    #[serde(default)]
+    pub status_remote_connected_bg: Option<StyledColorDef>,
     /// Status bar LSP indicator text color when LSP options are available
     /// to act on (configured-but-not-running). Drawn prominently to signal
     /// "click here to enable". Falls back to `status_warning_indicator_fg`.
@@ -1153,6 +1161,9 @@ pub struct Theme {
     /// Status bar LSP indicator colors when running (default: same as status bar)
     pub status_lsp_on_fg: Color,
     pub status_lsp_on_bg: Color,
+    /// Status bar remote indicator colors while connecting/connected (default: same as status bar)
+    pub status_remote_connected_fg: Color,
+    pub status_remote_connected_bg: Color,
     /// Status bar LSP indicator colors when actionable options are available
     /// (configured-but-not-running). Default: same as status warning indicator.
     pub status_lsp_actionable_fg: Color,
@@ -1415,6 +1426,8 @@ impl From<ThemeFile> for Theme {
             status_separator_bg: styled_color(&file.ui.status_separator_bg),
             status_lsp_on_fg: styled_color(&file.ui.status_lsp_on_fg),
             status_lsp_on_bg: styled_color(&file.ui.status_lsp_on_bg),
+            status_remote_connected_fg: styled_color(&file.ui.status_remote_connected_fg),
+            status_remote_connected_bg: styled_color(&file.ui.status_remote_connected_bg),
             status_lsp_actionable_fg: styled_color(&file.ui.status_lsp_actionable_fg),
             status_lsp_actionable_bg: styled_color(&file.ui.status_lsp_actionable_bg),
             prompt_fg: styled_color(&file.ui.prompt_fg),
@@ -1596,6 +1609,8 @@ impl From<Theme> for ThemeFile {
                 status_separator_bg: styled(&theme, "ui.status_separator_bg"),
                 status_lsp_on_fg: styled(&theme, "ui.status_lsp_on_fg"),
                 status_lsp_on_bg: styled(&theme, "ui.status_lsp_on_bg"),
+                status_remote_connected_fg: styled(&theme, "ui.status_remote_connected_fg"),
+                status_remote_connected_bg: styled(&theme, "ui.status_remote_connected_bg"),
                 status_lsp_actionable_fg: styled(&theme, "ui.status_lsp_actionable_fg"),
                 status_lsp_actionable_bg: styled(&theme, "ui.status_lsp_actionable_bg"),
                 prompt_fg: styled(&theme, "ui.prompt_fg"),
@@ -2385,6 +2400,8 @@ theme_color_keys! {
         "status_lsp_on_fg" => color status_lsp_on_fg fallback "ui.status_bar_fg",
         "status_palette_bg" => color status_palette_bg fallback "ui.status_bar_bg",
         "status_palette_fg" => color status_palette_fg fallback "ui.status_bar_fg",
+        "status_remote_connected_bg" => color status_remote_connected_bg fallback "ui.status_bar_bg",
+        "status_remote_connected_fg" => color status_remote_connected_fg fallback "ui.status_bar_fg",
         "status_separator_bg" => color status_separator_bg fallback "ui.status_bar_bg",
         "status_separator_fg" => color status_separator_fg fallback "ui.status_bar_fg",
         "status_warning_indicator_bg" => color status_warning_indicator_bg fallback "diagnostic.warning_bg",
