@@ -168,3 +168,27 @@ fn test_shift_home_selects_smartly() {
     harness.assert_buffer_content("Y");
     harness.assert_screen_contains("Y");
 }
+
+/// With line wrapping on, an indent of multi-byte whitespace (here an
+/// ideographic space, U+3000, three bytes in UTF-8) must put the cursor on
+/// the character after it. Counting the indent in characters and adding the
+/// count to a byte position put the cursor inside the space instead, and
+/// the next edit there split the character.
+#[test]
+fn test_smart_home_multibyte_indent_with_line_wrap() {
+    let mut harness = EditorTestHarness::with_config(80, 24, config_with_line_wrap()).unwrap();
+    let _fixture = harness.load_buffer_from_text("\u{3000}abc").unwrap();
+    harness.render().unwrap();
+
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.type_text("X").unwrap();
+    harness.assert_buffer_content("\u{3000}Xabc");
+
+    // From just after X, Home goes back to the first non-whitespace
+    // character, and again to the line start.
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.type_text("Z").unwrap();
+    harness.assert_buffer_content("Z\u{3000}Xabc");
+}
