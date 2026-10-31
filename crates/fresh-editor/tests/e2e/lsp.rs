@@ -3941,6 +3941,91 @@ fn test_inlay_hint_cleared_when_range_deleted() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// An inlay hint keeps its own colour beside a cell an overlay paints.
+///
+/// Injected hint cells borrow the overlays standing at the byte before them
+/// so a band's background continues behind them (see
+/// `overlay_extend_to_line_end_covers_inlay_hints`). They must borrow only the
+/// ground: the `(` in `package(...)` carries the bracket-colourisation
+/// `Foreground` overlay, so `name:` used to render in the bracket's colour
+/// while the `version:` hint after a plain space stayed grey.
+#[test]
+fn test_inlay_hint_keeps_its_colour_next_to_a_colourised_bracket() -> anyhow::Result<()> {
+    use crate::common::harness::HarnessOptions;
+    use fresh::app::Editor;
+    use lsp_types::{InlayHint, InlayHintLabel, Position};
+    use std::path::Path;
+
+    let mut harness = EditorTestHarness::create(
+        80,
+        20,
+        HarnessOptions::new()
+            .with_project_root()
+            .with_full_grammar_registry(),
+    )?;
+    let path = harness.project_dir().unwrap().join("sample.rs");
+    std::fs::write(
+        &path,
+        "fn main() { let wm = package(\"wm\", \"~0.4.2\"); }\n",
+    )?;
+    harness.open_file(Path::new(&path))?;
+    harness.render()?;
+
+    let hint = |character: u32, label: &str| InlayHint {
+        position: Position { line: 0, character },
+        label: InlayHintLabel::String(label.to_string()),
+        kind: None,
+        text_edits: None,
+        tooltip: None,
+        padding_left: None,
+        padding_right: None,
+        data: None,
+    };
+    // Parameter-name hints in front of each string argument. The first sits
+    // right after `(`, the second after a space.
+    Editor::apply_inlay_hints_to_state(
+        harness.editor_mut().active_state_mut(),
+        &[hint(29, "name:"), hint(35, "version:")],
+    );
+    harness.render()?;
+
+    let name_fg = {
+        let (x, y) = harness
+            .find_text_on_screen("name:")
+            .expect("name hint is not on screen");
+        harness.get_cell_style(x, y).and_then(|s| s.fg)
+    };
+    let version_fg = {
+        let (x, y) = harness
+            .find_text_on_screen("version:")
+            .expect("version hint is not on screen");
+        harness.get_cell_style(x, y).and_then(|s| s.fg)
+    };
+    let bracket_fg = {
+        let (x, y) = harness
+            .find_text_on_screen("package(")
+            .expect("the call is not on screen");
+        harness
+            .get_cell_style(x + "package".len() as u16, y)
+            .and_then(|s| s.fg)
+    };
+
+    assert_eq!(
+        name_fg,
+        version_fg,
+        "both parameter hints must use the hint colour.\nScreen:\n{}",
+        harness.screen_to_string(),
+    );
+    assert_ne!(
+        name_fg,
+        bracket_fg,
+        "a hint must not take the bracket colourisation of its neighbour.\nScreen:\n{}",
+        harness.screen_to_string(),
+    );
+
+    Ok(())
+}
+
 /// Test that stopped LSP server does not auto-restart when typing
 ///
 /// This test verifies that when a user explicitly stops an LSP server via the "stop lsp"
