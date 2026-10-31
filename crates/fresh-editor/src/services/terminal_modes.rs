@@ -388,6 +388,10 @@ pub fn emergency_cleanup() {
     // Pop keyboard enhancement flags
     let _ = stdout().execute(PopKeyboardEnhancementFlags);
 
+    // Stop win32-input-mode key reports, or the shell would receive them raw.
+    #[cfg(windows)]
+    let _ = fresh_winterm::disable_win32_input_mode();
+
     // Disable raw mode
     let _ = disable_raw_mode();
 
