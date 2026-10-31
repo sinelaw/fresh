@@ -63,6 +63,12 @@ pub(super) fn render_column_guides(
 /// `columns` are absolute display columns within the line, gutter included.
 /// `tint` is the column's background, with that theme key's text attributes;
 /// `default_fg` styles the padding cells of a short line.
+/// `overridable_bgs` names base backgrounds this tint may retake even when a
+/// cell already carries them: the ruler passes the current-line and reference
+/// (semantic) highlight backgrounds, which are base surfaces rather than
+/// transient overlays, so a ruler stays visible on a highlighted cursor row
+/// and where the hovered symbol is highlighted; the cursor column passes an
+/// empty slice — the line tint is its own and must not repaint a search match.
 /// `rows` bounds how many lines are tinted — the cursor column stops at the
 /// rendered rows, while a ruler runs the pane's full height (#2631), which is
 /// why the caller hands this one a padded `lines`.
@@ -81,6 +87,7 @@ pub(super) fn tint_columns_in_lines(
     columns: &[usize],
     tint: Style,
     default_fg: Style,
+    overridable_bgs: &[Color],
     rows: usize,
 ) {
     use unicode_width::UnicodeWidthChar;
@@ -139,7 +146,28 @@ pub(super) fn tint_columns_in_lines(
                 .max(1);
             if start + width > column {
                 for (_, style) in chars[first..=last].iter_mut() {
-                    *style = style.patch(tint);
+                    // Do not overwrite existing background highlights (e.g. search matches,
+                    // selections, diffs) to preserve contrast and visual continuity. A tint
+                    // may retake only its own colour, or a base surface `overridable_bgs`
+                    // names for it — the ruler passes the current-line and reference
+                    // highlight backgrounds so it stays visible over those base surfaces.
+                    if style.bg.is_none()
+                        || style.bg == tint.bg
+                        || style
+                            .bg
+                            .map(|bg| overridable_bgs.contains(&bg))
+                            .unwrap_or(false)
+                    {
+                        *style = style.patch(tint);
+                        if let Some(fg) = style.fg {
+                            if let Some(repaired) = crate::view::color_support::repaired_fg(
+                                fg,
+                                tint.bg.unwrap_or(Color::Reset),
+                            ) {
+                                *style = style.fg(repaired);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -306,5 +334,108 @@ pub(super) fn apply_background_to_lines(
         }
 
         line.spans = compress_chars(chars_with_style);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::style::Color;
+    use ratatui::text::Span;
+
+    fn tint(bg: Color) -> Style {
+        Style::default().bg(bg)
+    }
+
+    #[test]
+    fn test_tint_columns_preserves_existing_bg() {
+        let mut lines = vec![Line::from(vec![
+            Span::styled("ab", Style::default()),
+            Span::styled("c", Style::default().bg(Color::Yellow).fg(Color::Black)),
+            Span::styled("de", Style::default()),
+        ])];
+
+        tint_columns_in_lines(
+            &mut lines,
+            &[2], // column 2 is 'c' with Yellow bg
+            tint(Color::Rgb(20, 20, 20)),
+            Style::default().fg(Color::White),
+            &[],
+            1,
+        );
+
+        let mut col = 0;
+        for span in &lines[0].spans {
+            for ch in span.content.chars() {
+                if col == 2 {
+                    assert_eq!(ch, 'c');
+                    assert_eq!(span.style.bg, Some(Color::Yellow));
+                    assert_eq!(span.style.fg, Some(Color::Black));
+                }
+                col += 1;
+            }
+        }
+    }
+
+    #[test]
+    fn test_tint_columns_repairs_low_contrast_fg() {
+        let mut lines = vec![Line::from(vec![
+            Span::styled("a", Style::default().fg(Color::Rgb(10, 10, 10))), // dark fg
+        ])];
+
+        tint_columns_in_lines(
+            &mut lines,
+            &[0],
+            tint(Color::Rgb(20, 20, 20)), // dark bg
+            Style::default().fg(Color::White),
+            &[Color::Rgb(40, 40, 40)],
+            1,
+        );
+
+        let span = &lines[0].spans[0];
+        assert_eq!(span.style.bg, Some(Color::Rgb(20, 20, 20)));
+        assert_ne!(span.style.fg, Some(Color::Rgb(10, 10, 10)));
+    }
+
+    #[test]
+    fn tint_preserves_search_match_and_overlays_ruler_on_cursor_line() {
+        let mut lines = vec![Line::from(vec![
+            Span::styled("a", Style::default().fg(Color::Black).bg(Color::Yellow)),
+            Span::styled("b", Style::default().bg(Color::Rgb(40, 40, 40))),
+            Span::styled("c", Style::default()),
+        ])];
+
+        tint_columns_in_lines(
+            &mut lines,
+            &[0, 1],
+            tint(Color::Rgb(50, 50, 50)),
+            Style::default().fg(Color::White),
+            &[Color::Rgb(40, 40, 40)],
+            1,
+        );
+
+        assert_eq!(lines[0].spans[0].style.bg, Some(Color::Yellow));
+        assert_eq!(lines[0].spans[0].style.fg, Some(Color::Black));
+        assert_eq!(lines[0].spans[1].style.bg, Some(Color::Rgb(50, 50, 50)));
+    }
+
+    #[test]
+    fn cursor_column_tint_does_not_take_the_line_tint_as_overridable() {
+        let mut lines = vec![Line::from(vec![
+            Span::styled("a", Style::default().fg(Color::Black).bg(Color::Yellow)),
+            Span::styled("b", Style::default().bg(Color::Rgb(40, 40, 40))),
+        ])];
+
+        tint_columns_in_lines(
+            &mut lines,
+            &[0, 1],
+            tint(Color::Rgb(40, 40, 40)),
+            Style::default().fg(Color::White),
+            &[],
+            1,
+        );
+
+        assert_eq!(lines[0].spans[0].style.bg, Some(Color::Yellow));
+        assert_eq!(lines[0].spans[1].style.bg, Some(Color::Rgb(40, 40, 40)));
     }
 }
