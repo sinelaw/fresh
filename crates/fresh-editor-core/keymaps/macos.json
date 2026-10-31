@@ -246,6 +246,22 @@
       "when": "normal"
     },
     {
+      "comment": "Alt+Backspace -> Delete word backward (macOS Option+Delete)",
+      "key": "Backspace",
+      "modifiers": ["alt"],
+      "action": "delete_word_backward",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Alt+Delete -> Delete word forward (macOS Option+Fn+Delete)",
+      "key": "Delete",
+      "modifiers": ["alt"],
+      "action": "delete_word_forward",
+      "args": {},
+      "when": "normal"
+    },
+    {
       "comment": "Ctrl+B -> Toggle sidebar/file explorer (Mac: Cmd+B)",
       "key": "b",
       "modifiers": ["ctrl"],
@@ -386,6 +402,22 @@
       "key": "w",
       "modifiers": ["ctrl"],
       "action": "prompt_delete_word_backward",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Alt+Backspace -> Delete word backward (macOS Option+Delete)",
+      "key": "Backspace",
+      "modifiers": ["alt"],
+      "action": "prompt_delete_word_backward",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Alt+Delete -> Delete word forward (macOS Option+Fn+Delete)",
+      "key": "Delete",
+      "modifiers": ["alt"],
+      "action": "prompt_delete_word_forward",
       "args": {},
       "when": "prompt"
     },
