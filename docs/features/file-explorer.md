@@ -7,7 +7,7 @@ Fresh includes a built-in file explorer.
 *   **Sidebar sections:** Plugins can add sections under the file tree — the Markdown **Contents** outline, for example. `Alt+Shift+N` cycles the keyboard through the sidebar (file explorer, then each section, then back to the editor) and `Alt+Shift+P` runs the cycle the other way; both work from inside the tree, a section, the dock or a terminal (in a terminal these two chords go to the editor, not to the program running in it). A hidden sidebar is shown first. A section belongs to the window — or the file — it was made for, so another workspace's outline never appears in yours.
 *   **Reveal:** Showing or focusing the explorer selects the current file in the tree. When it cannot — an unnamed buffer, or a file outside the project — the status bar says so.
 *   **Navigation:** Use the arrow keys to move up and down the file tree.
-*   **Sticky parents:** When you scroll through a nested folder, its expanded ancestor folders remain visible at the top of the sidebar.
+*   **Sticky parents:** When you scroll through a nested folder, its expanded ancestor folders remain visible at the top of the sidebar. The pinned rows are drawn shaded, so the band reads as a distinct strip above the run rather than as the tree itself.
 
 ## Opening Files
 

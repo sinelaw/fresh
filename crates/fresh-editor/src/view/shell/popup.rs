@@ -813,7 +813,7 @@ pub fn content(
                     let rows = rows.clone();
                     move |i| Key::Str(format!("popup_item:{}", rows[i].id).into())
                 },
-                move |i, st| match for_row.get(i) {
+                move |i, st, _| match for_row.get(i) {
                     Some(it) => list_row(
                         it,
                         &row_theme(i == sel, st == RowState::Hover),
