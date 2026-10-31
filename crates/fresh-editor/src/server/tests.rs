@@ -1884,4 +1884,133 @@ mod integration_tests {
         drop(socket_paths.cleanup());
         std::fs::remove_dir_all(&temp_dir).ok();
     }
+
+    /// A repaint from a second client or a queued Resize is not a resume.
+    #[test]
+    fn suspended_client_waits_for_explicit_resume() {
+        check_suspend_resume(false);
+    }
+
+    #[test]
+    fn suspended_client_with_keyboard_disabled_waits_for_explicit_resume() {
+        check_suspend_resume(true);
+    }
+
+    fn check_suspend_resume(keyboard_disabled: bool) {
+        use crate::server::editor_server::EditorServer;
+        use crate::server::ipc::ControlReader;
+        use std::time::Instant;
+
+        fn drain(conn: &ClientConnection, duration: Duration) -> Vec<u8> {
+            let deadline = Instant::now() + duration;
+            let mut output = Vec::new();
+            let mut buf = [0u8; 65536];
+            while Instant::now() < deadline {
+                match conn.data.try_read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => output.extend_from_slice(&buf[..n]),
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                    Err(e) => panic!("{e}"),
+                }
+                thread::sleep(Duration::from_millis(5));
+            }
+            output
+        }
+        let temp_dir = test_temp_dir("resume");
+        let name = unique_session_name("resume");
+        let mut config = editor_server_config(&temp_dir, &name, None);
+        config
+            .editor_config
+            .keybindings
+            .push(serde_json::from_str(r#"{"key":"F12","action":"suspend_process"}"#).unwrap());
+        if keyboard_disabled {
+            config
+                .editor_config
+                .editor
+                .keyboard_disambiguate_escape_codes = false;
+            config.editor_config.editor.keyboard_report_event_types = false;
+            config.editor_config.editor.keyboard_report_alternate_keys = false;
+            config
+                .editor_config
+                .editor
+                .keyboard_report_all_keys_as_escape_codes = false;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handle = thread::spawn(move || {
+            let mut server = EditorServer::new(config).unwrap();
+            tx.send((server.socket_paths().clone(), server.shutdown_handle()))
+                .unwrap();
+            server.run()
+        });
+        let (paths, shutdown) = rx.recv().unwrap();
+        let conn = ClientConnection::connect(&paths).unwrap();
+        assert!(matches!(client_hello(&conn), ServerControl::Hello(_)));
+        drain(&conn, Duration::from_millis(200));
+        let mut control = ControlReader::new(&conn.control);
+        let mut premature_setup = false;
+        let mut setup_counts = Vec::new();
+        let mut kitty_counts = Vec::new();
+        let mut duplicate_counts = Vec::new();
+        for _ in 0..2 {
+            conn.write_data(b"\x1b[24~").unwrap();
+            loop {
+                let line = control
+                    .read_line_timeout(Duration::from_secs(2))
+                    .unwrap()
+                    .unwrap();
+                if matches!(
+                    serde_json::from_str::<ServerControl>(&line).unwrap(),
+                    ServerControl::SuspendClient
+                ) {
+                    break;
+                }
+            }
+            // Both this old Resize and another connection force daemon renders.
+            // Neither is the suspended client's acknowledgement.
+            conn.write_control(
+                &serde_json::to_string(&ClientControl::Resize { cols: 80, rows: 24 }).unwrap(),
+            )
+            .unwrap();
+            let other = ClientConnection::connect(&paths).unwrap();
+            client_hello(&other);
+            let before = drain(&conn, Duration::from_millis(150));
+            premature_setup |= before.windows(8).any(|w| w == b"\x1b[?1049h");
+            conn.write_control(&serde_json::to_string(&ClientControl::Resumed).unwrap())
+                .unwrap();
+            let restored = drain(&conn, Duration::from_millis(200));
+            setup_counts.push(restored.windows(8).filter(|w| *w == b"\x1b[?1049h").count());
+            kitty_counts.push(restored.windows(5).filter(|w| *w == b"\x1b[>5u").count());
+            conn.write_control(&serde_json::to_string(&ClientControl::Resumed).unwrap())
+                .unwrap();
+            conn.write_control(
+                &serde_json::to_string(&ClientControl::Resize { cols: 80, rows: 24 }).unwrap(),
+            )
+            .unwrap();
+            let duplicate = drain(&conn, Duration::from_millis(100));
+            duplicate_counts.push(
+                duplicate
+                    .windows(8)
+                    .filter(|w| *w == b"\x1b[?1049h")
+                    .count(),
+            );
+            drop(other);
+        }
+        shutdown.store(true, Ordering::SeqCst);
+        drop(handle.join());
+        drop(paths.cleanup());
+        assert!(!premature_setup, "setup arrived before Resumed");
+        assert_eq!(setup_counts, vec![1, 1], "one setup per resume");
+        let expected = if keyboard_disabled { 0 } else { 1 };
+        assert_eq!(
+            kitty_counts,
+            vec![expected, expected],
+            "push only configured flags"
+        );
+        assert_eq!(
+            duplicate_counts,
+            vec![0, 0],
+            "duplicate Resumed must not push again"
+        );
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
 }
