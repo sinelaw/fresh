@@ -202,6 +202,11 @@ struct ConnectedClient {
     input_parser: ClientInputParser,
     /// Whether this client needs a full screen render on next frame
     needs_full_render: bool,
+    /// Whether the next frame owed to this client must be preceded by the
+    /// terminal setup sequences (alternate screen, mouse, kitty keyboard
+    /// flags) and the cursor shape — set when a suspended client is about to
+    /// resume, since its own teardown undid them.
+    needs_terminal_setup: bool,
     /// If set, this client is waiting for a --wait completion signal
     wait_id: Option<u64>,
     /// Control-socket bytes not yet ending in a newline.
@@ -511,8 +516,12 @@ impl EditorServer {
                         let _ = self.clients[idx].conn.write_control(&suspend_msg);
                         // Mark so the next render re-emits setup sequences and a
                         // full paint once the client resumes and reconnects its
-                        // terminal.
+                        // terminal. The client's own teardown popped the kitty
+                        // keyboard flags and left the alternate screen, so the
+                        // setup it needs back is the same one a new connection
+                        // gets.
                         self.clients[idx].needs_full_render = true;
+                        self.clients[idx].needs_terminal_setup = true;
                     }
                 } else {
                     tracing::warn!("Suspend requested but no input source; ignoring");
@@ -656,7 +665,10 @@ impl EditorServer {
             if needs_render && last_render.elapsed() >= FRAME_DURATION {
                 self.render_and_broadcast()?;
                 last_render = Instant::now();
-                needs_render = false;
+                // A client whose setup frame did not fit in its output buffer
+                // still owes it; try again next frame rather than waiting for
+                // some unrelated event.
+                needs_render = self.clients.iter().any(|c| c.needs_terminal_setup);
             }
 
             let mut wait = if last_activity.elapsed() < ACTIVE_WINDOW {
@@ -1020,12 +1032,7 @@ impl EditorServer {
 
         // Send terminal setup sequences
         let mouse_hover_enabled = self.config.editor_config.editor.mouse_hover_enabled;
-        let keyboard = crate::services::terminal_modes::KeyboardConfig::from_editor_config(
-            self.editor
-                .as_ref()
-                .map(|e| &e.config().editor)
-                .unwrap_or(&self.config.editor_config.editor),
-        );
+        let keyboard = self.keyboard_config();
         let setup = terminal_setup_sequences(mouse_hover_enabled, &keyboard);
         conn.write_data(&setup)?;
 
@@ -1051,6 +1058,8 @@ impl EditorServer {
             id: client_id,
             input_parser: ClientInputParser::new(),
             needs_full_render: true,
+            // The setup sequences were just written above.
+            needs_terminal_setup: false,
             wait_id: None,
             gpm_pointer: false,
             control_buf: Vec::new(),
@@ -1539,6 +1548,16 @@ impl EditorServer {
         let linux_console = self
             .sizing_client()
             .is_some_and(|c| c.term() == Some("linux"));
+        // A client that comes back from a suspend has to be handed the same
+        // setup a new connection gets: its teardown left the alternate screen,
+        // stopped the mouse and popped the kitty keyboard flags.
+        let keyboard = self.keyboard_config();
+        let mouse_hover_enabled = self.config.editor_config.editor.mouse_hover_enabled;
+        let cursor_style = self
+            .editor
+            .as_ref()
+            .map(|e| e.config().editor.cursor_style)
+            .unwrap_or(self.config.editor_config.editor.cursor_style);
         let Some(ref mut editor) = self.editor else {
             return Ok(());
         };
@@ -1597,7 +1616,10 @@ impl EditorServer {
         // Get the captured output
         let output = terminal.backend_mut().take_buffer();
 
-        if output.is_empty() && pending_sequences.is_empty() {
+        // A client waiting to be given its terminal back has to hear from us
+        // even when the frame itself is empty.
+        let any_needs_setup = self.clients.iter().any(|c| c.needs_terminal_setup);
+        if output.is_empty() && pending_sequences.is_empty() && !any_needs_setup {
             return Ok(());
         }
 
@@ -1618,14 +1640,40 @@ impl EditorServer {
                 output.clone()
             };
 
+            // Re-arm this client's terminal before drawing into it. The
+            // sequences go first, on the client's own stream, so the paint
+            // lands on the alternate screen it has just re-entered.
+            let frame = client_output(
+                client.needs_terminal_setup,
+                mouse_hover_enabled,
+                &keyboard,
+                cursor_style,
+                &frame,
+            );
+
             if !frame.is_empty() && !client.data_writer.try_write(&frame) {
                 tracing::warn!("Client {} output buffer full, dropping frame", client.id);
+                // Keep the mark: the next frame has to carry the setup.
+                continue;
             }
             // Clear full render flag after sending
             client.needs_full_render = false;
+            client.needs_terminal_setup = false;
         }
 
         Ok(())
+    }
+
+    /// The kitty keyboard flags a client's terminal is set up with: the
+    /// `editor.keyboard_*` settings, from the editor if running, otherwise
+    /// from config.
+    fn keyboard_config(&self) -> crate::services::terminal_modes::KeyboardConfig {
+        crate::services::terminal_modes::KeyboardConfig::from_editor_config(
+            self.editor
+                .as_ref()
+                .map(|e| &e.config().editor)
+                .unwrap_or(&self.config.editor_config.editor),
+        )
     }
 
     /// Disconnect all clients
@@ -1646,6 +1694,30 @@ impl EditorServer {
         self.clients.clear();
         Ok(())
     }
+}
+
+/// The bytes to write to one client now: the terminal setup and cursor shape
+/// first when that client is coming back from a suspend, then the frame that
+/// was just rendered.
+///
+/// A suspended client runs the teardown itself (it is the only side with a
+/// real terminal in the foreground), which leaves the alternate screen, stops
+/// mouse reporting and pops the kitty keyboard flags. None of that comes back
+/// on its own, so the daemon re-sends exactly what a new connection gets.
+fn client_output(
+    needs_terminal_setup: bool,
+    mouse_hover_enabled: bool,
+    keyboard: &crate::services::terminal_modes::KeyboardConfig,
+    cursor_style: crate::config::CursorStyle,
+    frame: &[u8],
+) -> Vec<u8> {
+    if !needs_terminal_setup {
+        return frame.to_vec();
+    }
+    let mut out = terminal_setup_sequences(mouse_hover_enabled, keyboard);
+    out.extend_from_slice(cursor_style.to_escape_sequence());
+    out.extend_from_slice(frame);
+    out
 }
 
 /// Whether an input event means its terminal is the one in use, and so takes
@@ -2010,5 +2082,68 @@ mod editor_tick_tests {
                 .take_full_redraw_request(),
             "the tick must have consumed the full-redraw request"
         );
+    }
+}
+
+#[cfg(test)]
+mod terminal_setup_on_resume_tests {
+    //! A client's suspend teardown leaves the alternate screen, stops mouse
+    //! reporting and pops the kitty keyboard flags. The daemon has to put all
+    //! of that back on the client's next frame, or Ctrl+Shift+<letter> stops
+    //! working after a Ctrl+Z / fg.
+
+    use super::client_output;
+    use crate::config::CursorStyle;
+    use crate::services::terminal_modes::{sequences, KeyboardConfig};
+
+    #[test]
+    fn a_resumed_client_gets_the_setup_its_teardown_undid() {
+        let keyboard = KeyboardConfig::default();
+        let paint = b"painted frame";
+        let out = client_output(true, true, &keyboard, CursorStyle::Default, paint);
+
+        assert!(out.ends_with(paint), "the paint has to come last");
+        assert!(
+            out.starts_with(sequences::ENTER_ALTERNATE_SCREEN),
+            "the alternate screen has to be back before anything is drawn into it"
+        );
+        assert!(
+            keyboard.any_enabled(),
+            "the default config asks for kitty flags"
+        );
+        let push = sequences::push_keyboard_enhancement(keyboard.to_flags());
+        assert!(
+            out.windows(push.len()).any(|w| w == push.as_slice()),
+            "the kitty flags have to be pushed again, got {out:?}"
+        );
+        let cursor = CursorStyle::Default.to_escape_sequence();
+        assert!(
+            out.windows(cursor.len()).any(|w| w == cursor),
+            "the cursor shape has to be restored too"
+        );
+    }
+
+    #[test]
+    fn a_client_that_did_not_suspend_gets_only_the_frame() {
+        let keyboard = KeyboardConfig::default();
+        assert_eq!(
+            client_output(false, true, &keyboard, CursorStyle::Default, b"x"),
+            b"x",
+            "an ordinary frame must not carry setup sequences"
+        );
+    }
+
+    /// With every keyboard setting off the server pushed nothing, so the setup
+    /// it re-sends must not push anything either.
+    #[test]
+    fn a_setup_with_no_keyboard_flags_pushes_nothing() {
+        let none = KeyboardConfig {
+            disambiguate_escape_codes: false,
+            report_event_types: false,
+            report_alternate_keys: false,
+            report_all_keys_as_escape_codes: false,
+        };
+        let out = client_output(true, true, &none, CursorStyle::Default, b"x");
+        assert!(!out.windows(3).any(|w| w == b"\x1b[>"), "got {out:?}");
     }
 }
