@@ -231,15 +231,15 @@ pub fn relay_loop(
 /// that has a real foreground shell to hand control back to. We emit the same
 /// teardown bytes the server would have sent had the client detached, drop
 /// raw mode, raise SIGTSTP, and on resume re-enable raw mode and nudge the
-/// server to repaint by echoing the current terminal size back.
+/// server to restore terminal modes with an explicit Resumed notification.
 fn suspend_client(stdout: &mut io::Stdout, conn: &mut ClientConnection) -> io::Result<()> {
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
     use nix::sys::signal::{raise, Signal};
 
     // Leave alternate screen, disable mouse + bracketed paste, etc. — mirrors
-    // what `TerminalModes::undo()` does in direct mode. The server already
-    // marked this client for a full render plus terminal setup, so the bytes
-    // it queues next will include the matching setup sequences + a full paint.
+    // what `TerminalModes::undo()` does in direct mode. The server withholds
+    // this client's output until it receives Resumed after SIGCONT, then sends
+    // the matching setup sequences and a full paint.
     let teardown = crate::server::capture_backend::terminal_teardown_sequences();
     stdout.write_all(&teardown)?;
     stdout.flush()?;
@@ -260,19 +260,19 @@ fn suspend_client(stdout: &mut io::Stdout, conn: &mut ClientConnection) -> io::R
         return Err(io::Error::other(format!("raise(SIGTSTP) failed: {}", e)));
     }
 
-    // Resumed. Re-enable raw mode; the server will repaint on its next tick
-    // because it marked this client for terminal setup and a full render
-    // before we left. That mark is a request to re-send the setup sequences
-    // (alternate screen, mouse, kitty flags) the teardown above undid, and it
-    // is why Ctrl+Shift+<letter> keeps working after a Ctrl+Z / fg.
+    // Only acknowledge resume after raw mode is back. The daemon withholds
+    // output for this client until then, even if another client forces a paint.
     if let Err(e) = enable_raw_mode() {
         tracing::error!("Failed to re-enable raw mode after resume: {}", e);
         return Err(io::Error::other(format!("enable_raw_mode failed: {}", e)));
     }
     crate::services::stderr_redirect::redirect_to_log();
 
-    // Echo our current size back so the server is guaranteed to tick a
-    // render (Resize always flips `needs_render`) without waiting on input.
+    let resumed = serde_json::to_string(&ClientControl::Resumed)?;
+    conn.write_control(&resumed)?;
+
+    // Send the current dimensions too. A Resize queued before suspension must
+    // never be mistaken for the explicit resume acknowledgement above.
     if let Ok(size) = super::get_terminal_size() {
         let resize_msg = serde_json::to_string(&ClientControl::Resize {
             cols: size.cols,
