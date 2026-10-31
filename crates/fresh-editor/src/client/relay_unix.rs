@@ -238,8 +238,8 @@ fn suspend_client(stdout: &mut io::Stdout, conn: &mut ClientConnection) -> io::R
 
     // Leave alternate screen, disable mouse + bracketed paste, etc. — mirrors
     // what `TerminalModes::undo()` does in direct mode. The server already
-    // marked this client `needs_full_render`, so the bytes it queues next
-    // will include the matching setup sequences + a full paint.
+    // marked this client for a full render plus terminal setup, so the bytes
+    // it queues next will include the matching setup sequences + a full paint.
     let teardown = crate::server::capture_backend::terminal_teardown_sequences();
     stdout.write_all(&teardown)?;
     stdout.flush()?;
@@ -261,7 +261,10 @@ fn suspend_client(stdout: &mut io::Stdout, conn: &mut ClientConnection) -> io::R
     }
 
     // Resumed. Re-enable raw mode; the server will repaint on its next tick
-    // because `needs_full_render` was set before we left.
+    // because it marked this client for terminal setup and a full render
+    // before we left. That mark is a request to re-send the setup sequences
+    // (alternate screen, mouse, kitty flags) the teardown above undid, and it
+    // is why Ctrl+Shift+<letter> keeps working after a Ctrl+Z / fg.
     if let Err(e) = enable_raw_mode() {
         tracing::error!("Failed to re-enable raw mode after resume: {}", e);
         return Err(io::Error::other(format!("enable_raw_mode failed: {}", e)));
