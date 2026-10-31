@@ -358,10 +358,11 @@ fn goto_definition_translates_uris_between_host_and_container() {
     .unwrap();
 
     // Pin the in-container workspace path so it diverges from the
-    // host path. Set AFTER `with_fake_devcontainer()` acquires its
-    // process-global mutex — setting before would race with parallel
-    // tests' cleanup of the same env var.
-    std::env::set_var("FAKE_DC_REMOTE_WORKSPACE", "/workspaces/proj");
+    // host path. Set through the harness's pin, which serializes us
+    // with parallel tests and unsets it when the harness drops.
+    harness
+        .fake_devcontainer_env()
+        .set_env("FAKE_DC_REMOTE_WORKSPACE", "/workspaces/proj");
 
     // Pre-state: the fake-lsp uri log must not exist yet (or be
     // empty). The fake-pylsp creates it on first message, so we
@@ -378,13 +379,7 @@ fn goto_definition_translates_uris_between_host_and_container() {
     // injected through the fake docker shim, this is the simplest way
     // to make the binary reachable from "inside" the container.
     let fake_lsp_bin = fake_lsp_bin_dir();
-    let host_path = std::env::var("PATH").unwrap_or_default();
-    let already_on_path = host_path
-        .split(':')
-        .any(|p| Path::new(p) == fake_lsp_bin.as_path());
-    if !already_on_path {
-        std::env::set_var("PATH", format!("{}:{}", fake_lsp_bin.display(), host_path));
-    }
+    harness.fake_devcontainer_env().prepend_dir(&fake_lsp_bin);
 
     // Have `userEnvProbe` echo a PATH that includes the fake-lsp dir
     // so the in-container `command -v fake-pylsp` probe (and the
@@ -567,11 +562,6 @@ fn goto_definition_translates_uris_between_host_and_container() {
          usually means the editor opened a fresh empty buffer for \
          the container URI instead of resolving it to the host file."
     );
-
-    // Cleanup any per-test env that we set above so neighbouring
-    // tests in the same process don't inherit it. The fake-devcontainer
-    // mutex serializes us, so no race window.
-    std::env::remove_var("FAKE_DC_REMOTE_WORKSPACE");
 }
 
 /// Common setup for the container-fetched-buffer tests below: planted
@@ -627,12 +617,12 @@ fn arrange_attached_session_with_open_main_py() -> (
     )
     .unwrap();
 
-    // Set FAKE_DC_REMOTE_WORKSPACE *after* the fake-devcontainer
-    // mutex is held (it's acquired inside `with_fake_devcontainer`).
-    // Setting before would race with parallel tests' cleanup of the
-    // same env var — they could clobber the value between our
-    // `set_var` and the lock acquisition.
-    std::env::set_var("FAKE_DC_REMOTE_WORKSPACE", "/workspaces/proj");
+    // Set FAKE_DC_REMOTE_WORKSPACE through the harness's pin, which
+    // serializes us with parallel tests and unsets it when the caller's
+    // harness drops.
+    harness
+        .fake_devcontainer_env()
+        .set_env("FAKE_DC_REMOTE_WORKSPACE", "/workspaces/proj");
 
     let state = harness
         .fake_devcontainer_state()
@@ -640,13 +630,7 @@ fn arrange_attached_session_with_open_main_py() -> (
         .to_path_buf();
 
     let fake_lsp_bin = fake_lsp_bin_dir();
-    let host_path = std::env::var("PATH").unwrap_or_default();
-    if !host_path
-        .split(':')
-        .any(|p| Path::new(p) == fake_lsp_bin.as_path())
-    {
-        std::env::set_var("PATH", format!("{}:{}", fake_lsp_bin.display(), host_path));
-    }
+    harness.fake_devcontainer_env().prepend_dir(&fake_lsp_bin);
     // The captured probe PATH gets sent to every subsequent
     // `docker exec` via `-e PATH=…`, which means it has to be a PATH
     // a real shell can survive on. Include `/bin` and `/sbin`
@@ -928,8 +912,6 @@ fn goto_definition_into_container_only_file_opens_read_only_buffer() {
          usually means the editor created an empty buffer instead of \
          fetching the container file."
     );
-
-    std::env::remove_var("FAKE_DC_REMOTE_WORKSPACE");
 }
 
 /// Reproducer for the failure mode: Goto-Def returns a URI that
@@ -980,6 +962,4 @@ fn goto_definition_to_unreachable_uri_surfaces_error_message() {
         "Goto-Def into an unreachable URI must NOT open a phantom \
          buffer at that path. Got: {active_path:?}"
     );
-
-    std::env::remove_var("FAKE_DC_REMOTE_WORKSPACE");
 }
