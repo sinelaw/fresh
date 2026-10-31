@@ -378,6 +378,23 @@ impl LspClientState {
     }
 }
 
+/// Serialize `initialize` params. lsp-types writes the workspace diagnostic
+/// capability as `workspace.diagnostic`, but the spec key is
+/// `workspace.diagnostics` (read by rust-analyzer and roslyn) — send both
+/// until lsp-types renames the field.
+fn initialize_params_json(params: &InitializeParams) -> Result<Value, String> {
+    let mut value = serde_json::to_value(params).map_err(|e| e.to_string())?;
+    if let Some(workspace) = value
+        .pointer_mut("/capabilities/workspace")
+        .and_then(Value::as_object_mut)
+    {
+        if let Some(diagnostic) = workspace.get("diagnostic").cloned() {
+            workspace.entry("diagnostics").or_insert(diagnostic);
+        }
+    }
+    Ok(value)
+}
+
 /// Create common LSP client capabilities with workDoneProgress support
 fn create_client_capabilities() -> ClientCapabilities {
     use lsp_types::{
@@ -1471,7 +1488,11 @@ impl LspState {
         };
 
         let result: InitializeResult = self
-            .send_request_sequential(Initialize::METHOD, Some(params), pending)
+            .send_request_sequential(
+                Initialize::METHOD,
+                Some(initialize_params_json(&params)?),
+                pending,
+            )
             .await?;
 
         tracing::info!(
