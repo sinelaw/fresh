@@ -1,6 +1,6 @@
 # Release Notes
 
-## 0.5.6
+## 0.5.7
 
 For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
