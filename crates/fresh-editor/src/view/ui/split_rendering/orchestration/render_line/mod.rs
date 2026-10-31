@@ -1507,7 +1507,7 @@ fn locate_cursor_in_view_map(
     last_visible_x
 }
 
-/// Right-align an inline diagnostic message after the line's content.
+/// Left-align an inline diagnostic message 2 spaces after the line's content.
 /// No-op when there isn't room for a meaningful amount of text.
 #[allow(clippy::too_many_arguments)]
 fn append_inline_diagnostic(
@@ -1527,40 +1527,36 @@ fn append_inline_diagnostic(
         return;
     }
 
-    // Truncate message to fit
+    // Render 2-space gap between code and diagnostic text
+    let pad_style = if cursor_line_active {
+        current_line_bg
+    } else {
+        Style::default()
+    };
+    push_span_with_map(line_spans, line_view_map, "  ".to_string(), pad_style, None);
+    *rendered_cols += gap;
+
+    // Truncate message to fit remaining space after the gap
     let max_chars = available - gap;
     let display: String = if message.chars().count() > max_chars {
         let truncated: String = message.chars().take(max_chars.saturating_sub(1)).collect();
-        format!("{}…", truncated)
+        format!("{truncated}…")
     } else {
         message.to_string()
     };
     let display_width = display.chars().count();
 
-    // Right-align: fill gap between code and diagnostic text
-    let padding = available.saturating_sub(display_width);
-    if padding > 0 {
-        let pad_style = if cursor_line_active {
-            current_line_bg
+    // Apply severity pill styling (foreground AND background).
+    // If the theme specified no background or Color::Reset (e.g. terminal theme),
+    // and cursor line is active, fallback to current_line_bg.
+    // Otherwise, the diagnostic's background color takes precedence as a pill.
+    let effective_diag_style =
+        if cursor_line_active && (diag_style.bg.is_none() || diag_style.bg == Some(Color::Reset)) {
+            diag_style.patch(current_line_bg)
         } else {
-            Style::default()
+            *diag_style
         };
-        push_span_with_map(
-            line_spans,
-            line_view_map,
-            " ".repeat(padding),
-            pad_style,
-            None,
-        );
-        *rendered_cols += padding;
-    }
 
-    // Apply current line background to diagnostic text when on cursor line
-    let effective_diag_style = if cursor_line_active && diag_style.bg.is_none() {
-        diag_style.patch(current_line_bg)
-    } else {
-        *diag_style
-    };
     push_span_with_map(
         line_spans,
         line_view_map,

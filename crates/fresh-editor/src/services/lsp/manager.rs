@@ -1207,6 +1207,10 @@ impl LspManager {
 
         let mut spawned_handles = Vec::new();
         let manually_allowed = self.allowed_languages.contains(language);
+        let any_available = configs.len() > 1
+            && configs
+                .iter()
+                .any(|c| !c.command.is_empty() && self.command_exists_via_authority(&c.command));
 
         for config in &configs {
             if manually_allowed {
@@ -1229,6 +1233,16 @@ impl LspManager {
                     "force_spawn: LSP command is empty for {} server '{}'",
                     language,
                     config.display_name()
+                );
+                continue;
+            }
+
+            if any_available && !self.command_exists_via_authority(&config.command) {
+                tracing::debug!(
+                    "force_spawn: skipping unavailable LSP server '{}' ({}) for {} because another configured server is available",
+                    config.display_name(),
+                    config.command,
+                    language
                 );
                 continue;
             }

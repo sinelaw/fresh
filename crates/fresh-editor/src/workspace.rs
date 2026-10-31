@@ -419,6 +419,12 @@ pub struct SerializedFileState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub highlight_occurrences: Option<bool>,
 
+    /// Explicit per-buffer inline diagnostics override (`None` = follow the
+    /// global default). Persists the "Toggle Inline Diagnostics (Current
+    /// Buffer)" choice across restarts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnostics_inline_text: Option<bool>,
+
     /// Plugin-managed state (arbitrary key-value pairs, persisted across sessions)
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub plugin_state: HashMap<String, serde_json::Value>,
@@ -1855,6 +1861,7 @@ mod tests {
             tab_indicators: None,
             highlight_current_line: None,
             highlight_occurrences: None,
+            diagnostics_inline_text: None,
             plugin_state: HashMap::new(),
             folds: Vec::new(),
         };
@@ -2501,6 +2508,7 @@ mod tests {
             tab_indicators: None,
             highlight_current_line: None,
             highlight_occurrences: None,
+            diagnostics_inline_text: None,
             plugin_state: std::collections::HashMap::new(),
             folds: Vec::new(),
         };
