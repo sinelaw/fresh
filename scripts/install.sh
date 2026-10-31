@@ -158,7 +158,7 @@ Methods:
   rpm       Fedora/RHEL/openSUSE .rpm from the latest release (needs root)
   aur       Arch Linux, via the AUR
   brew      Homebrew
-  nix       Nix profile
+  nix       Nix profile (fresh-editor from nixpkgs)
   cargo     cargo install / cargo binstall
   npm       npm install -g
   appimage  AppImage, extracted under ~/.local
@@ -167,6 +167,7 @@ Options:
   --no-desktop-integration
             do not install the .desktop entry and icon theme into the XDG data
             dirs (universal build only)
+  --head    install the current master via the nix flake (nix method only)
 
 Environment:
   FRESH_INSTALL_METHOD   same as --method
@@ -195,10 +196,17 @@ for arg in "$@"; do
         --method=*) METHOD="${arg#--method=}" ;;
         --method)   log_error "--method needs a value, e.g. --method=deb" ;;
         --no-desktop-integration) NO_DESKTOP=1 ;;
+        --head) HEAD=1 ;;
         -h|--help)  usage; exit 0 ;;
         *)          log_error "unknown argument: $arg (try --help)" ;;
     esac
 done
+
+# --head asks for the current master, which today only the nix flake can
+# deliver; other methods may grow head support later.
+if [ "${HEAD:-0}" = 1 ] && [ "$METHOD" != "nix" ]; then
+    log_error "--head currently only supports --method=nix (this may change as other methods gain head support)"
+fi
 
 # --- Privilege, staging, and verification ---
 
@@ -716,7 +724,25 @@ EOF
 
 do_install_nix() {
     log_info "Attempting Nix install..."
-    nix profile install "github:${REPO_OWNER}/${REPO_NAME}"
+    # The extra features make both installables work on any nix >= 2.4
+    # without relying on the user's experimental-features config:
+    # nix-command for `nix profile` itself, flakes for the installable syntax.
+    if [ "${HEAD:-0}" = 1 ]; then
+        # The flake builds the current master, at the cost of compiling the
+        # whole toolchain from source: the flake has no binary cache.
+        nix --extra-experimental-features 'nix-command flakes' profile install "github:${REPO_OWNER}/${REPO_NAME}"
+    else
+        # nixpkgs ships fresh as fresh-editor, binary-cached via
+        # cache.nixos.org; it tracks releases rather than master.
+        nix --extra-experimental-features 'nix-command flakes' profile install nixpkgs#fresh-editor
+    fi
+    log_info "Update later with: nix profile upgrade fresh"
+    # Imperative profile installs are fine for trying fresh out, but a Nix
+    # system stays healthy when its packages are declared in its config.
+    log_info "Installed 'fresh' into your nix profile. On a Nix system, declaring it in your config is the more robust path:"
+    log_info "  NixOS:        environment.systemPackages  https://nixos.org/manual/nixos/stable/#sec-declarative-package-mgmt"
+    log_info "  home-manager: https://nix-community.github.io/home-manager/"
+    log_info "  nix-darwin:   https://github.com/LnL/nix-darwin"
 }
 
 do_install_cargo() {
