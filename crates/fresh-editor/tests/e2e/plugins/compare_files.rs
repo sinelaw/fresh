@@ -633,3 +633,26 @@ fn a_binary_file_is_not_compared() {
     h.wait_until(|h| status_has(h, "is a binary file")).unwrap();
     assert!(!tabs(&h).contains("↔"), "no comparison tab: {:?}", tabs(&h));
 }
+
+/// Closing a new file opened from the comparison goes back to the
+/// comparison, and only it: neither compared file gets a tab of its own, and
+/// the comparison stays open (issue #3688). Closing the new file used to land
+/// on the left file as a tab beside the comparison's, whose close then took
+/// the comparison down with it.
+#[test]
+fn closing_a_new_file_returns_to_the_comparison_alone() {
+    let Compare { mut h, _tmp, .. } = compare(LEFT.as_bytes(), RIGHT.as_bytes());
+    h.wait_until(|h| status_has(h, "Compare: 3 difference(s)"))
+        .unwrap();
+
+    h.send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_until(|h| tabs(h).contains("[No Name]")).unwrap();
+
+    h.run_palette_command("Close Tab").unwrap();
+    h.wait_until(|h| !tabs(h).contains("[No Name]") && level(h, "alpha") && level(h, "foxtrot"))
+        .unwrap();
+    let tab_bar = tabs(&h);
+    assert_eq!(tab_bar.matches('×').count(), 1, "one tab: {tab_bar:?}");
+    assert!(tab_bar.contains("left.txt ↔ right.txt"), "{tab_bar:?}");
+}

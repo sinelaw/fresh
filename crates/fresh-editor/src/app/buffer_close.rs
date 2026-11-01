@@ -210,14 +210,24 @@ impl Editor {
         // Only needed when the closing buffer is the one the user is
         // looking at — otherwise the current active buffer stays.
         if closing_active {
+            // Whether the replacement already has a tab in the host split,
+            // read before `set_active_buffer` gives it one.
+            let was_tab = self
+                .active_window()
+                .split_view_states()
+                .get(&active_split)
+                .is_some_and(|vs| vs.has_buffer(replacement_buffer));
+
             self.set_active_buffer(replacement_buffer);
 
-            // If we landed on a hidden panel buffer to fill the Group-case
-            // housekeeping slot, scrub the *visible* side effects
-            // (`open_buffers`, `focus_history`) so the panel buffer doesn't
-            // appear as a tab. The view state `set_buffer_tab` inserted has
-            // to stay — the buffer tab always has one — but it's harmless
-            // as long as
+            // If we landed on a buffer that had no tab here to fill the
+            // Group-case housekeeping slot, scrub the *visible* side effects
+            // (`open_buffers`, `focus_history`) so it doesn't appear as a
+            // tab. That is a hidden panel buffer, or a file a group panel
+            // borrowed without a tab of its own — the files of a
+            // `--diff` comparison (issue #3688). The view state
+            // `set_buffer_tab` inserted has to stay — the buffer tab always
+            // has one — but it's harmless as long as
             // the plugin-snapshot lookup skips it; see
             // `snapshot_source_split` in `update_plugin_state_snapshot`.
             let hidden = self
@@ -225,7 +235,7 @@ impl Editor {
                 .buffer_metadata
                 .get(&replacement_buffer)
                 .is_some_and(|m| m.hidden_from_tabs);
-            if return_to_group.is_some() && hidden {
+            if return_to_group.is_some() && (hidden || !was_tab) {
                 use crate::view::split::TabTarget;
                 if let Some(vs) = self
                     .active_window_mut()
