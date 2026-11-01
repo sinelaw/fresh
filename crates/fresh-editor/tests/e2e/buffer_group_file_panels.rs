@@ -390,3 +390,19 @@ fn saving_the_file_on_close_closes_its_emptied_pane() {
         "saved: {saved:?}"
     );
 }
+
+/// A group that gave no segmented title is marked as a whole while the file
+/// its panels show has unsaved changes, as the file's own tab is.
+#[test]
+fn an_unsaved_file_marks_the_group_tab() {
+    let (mut h, _tmp) = setup();
+    open_pair(&mut h);
+    assert!(!h.screen_row_text(1).contains("PAIR*"));
+
+    h.type_text("XYZ").unwrap();
+    h.wait_until(|h| {
+        let tabs = h.screen_row_text(1);
+        tabs.contains("PAIR*") && tabs.contains("a.txt*")
+    })
+    .unwrap();
+}

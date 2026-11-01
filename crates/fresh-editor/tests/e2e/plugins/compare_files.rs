@@ -633,3 +633,87 @@ fn a_binary_file_is_not_compared() {
     h.wait_until(|h| status_has(h, "is a binary file")).unwrap();
     assert!(!tabs(&h).contains("↔"), "no comparison tab: {:?}", tabs(&h));
 }
+
+/// Closing a new file opened from the comparison goes back to the
+/// comparison, and only it: neither compared file gets a tab of its own, and
+/// the comparison stays open (issue #3688). Closing the new file used to land
+/// on the left file as a tab beside the comparison's, whose close then took
+/// the comparison down with it.
+#[test]
+fn closing_a_new_file_returns_to_the_comparison_alone() {
+    let Compare { mut h, _tmp, .. } = compare(LEFT.as_bytes(), RIGHT.as_bytes());
+    h.wait_until(|h| status_has(h, "Compare: 3 difference(s)"))
+        .unwrap();
+
+    h.send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_until(|h| tabs(h).contains("[No Name]")).unwrap();
+
+    h.run_palette_command("Close Tab").unwrap();
+    h.wait_until(|h| !tabs(h).contains("[No Name]") && level(h, "alpha") && level(h, "foxtrot"))
+        .unwrap();
+    let tab_bar = tabs(&h);
+    assert_eq!(tab_bar.matches('×').count(), 1, "one tab: {tab_bar:?}");
+    assert!(tab_bar.contains("left.txt ↔ right.txt"), "{tab_bar:?}");
+}
+
+/// A click past the end of a line lands at the end of that line, on a line
+/// the two sides differ in as on one they share, on either side (issue
+/// #3689). A changed line's background runs on past its text, and a click
+/// on that background used to put the cursor at the start of the line.
+#[test]
+fn a_click_past_the_end_of_a_changed_line_lands_at_its_end() {
+    let Compare { mut h, _tmp, .. } = compare(LEFT.as_bytes(), RIGHT.as_bytes());
+    h.wait_until(|h| status_has(h, "Compare: 3 difference(s)"))
+        .unwrap();
+    let changed = row_of(&h, "charlie").unwrap();
+    let shared = row_of(&h, "delta").unwrap();
+
+    // Left panel: `charlie` is changed, `delta` is shared.
+    h.mouse_click(40, changed).unwrap();
+    h.wait_until(|h| status_has(h, "Ln 3, Col 8")).unwrap();
+    h.mouse_click(40, shared).unwrap();
+    h.wait_until(|h| status_has(h, "Ln 4, Col 6")).unwrap();
+
+    // Right panel: `CHARLIE changed`.
+    h.mouse_click(110, changed).unwrap();
+    h.wait_until(|h| status_has(h, "Ln 3, Col 16")).unwrap();
+}
+
+/// An unsaved edit marks the side it was made on in the comparison's tab,
+/// the way a file's own tab marks its name, and saving takes the mark away
+/// again (issue #3691).
+#[test]
+fn an_unsaved_edit_marks_its_side_of_the_tab() {
+    let Compare { mut h, _tmp, .. } = compare(LEFT.as_bytes(), RIGHT.as_bytes());
+    h.wait_until(|h| status_has(h, "Compare: 3 difference(s)"))
+        .unwrap();
+    assert!(
+        tabs(&h).contains(" left.txt ↔ right.txt ×"),
+        "unmodified: {:?}",
+        tabs(&h)
+    );
+
+    // The left side has the focus, on the first change.
+    h.type_text("Z").unwrap();
+    h.wait_until(|h| tabs(h).contains(" left.txt* ↔ right.txt ×"))
+        .unwrap();
+    h.send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_until(|h| tabs(h).contains(" left.txt ↔ right.txt ×"))
+        .unwrap();
+
+    // The right side marks its own name.
+    h.run_palette_command("Compare: Switch Side").unwrap();
+    h.type_text("Y").unwrap();
+    h.wait_until(|h| {
+        h.screen_to_string().contains("YCHARLIE") && tabs(h).contains(" left.txt ↔ right.txt* ×")
+    })
+    .unwrap();
+
+    // Both sides unsaved: both names are marked.
+    h.run_palette_command("Compare: Switch Side").unwrap();
+    h.type_text("X").unwrap();
+    h.wait_until(|h| tabs(h).contains(" left.txt* ↔ right.txt* ×"))
+        .unwrap();
+}

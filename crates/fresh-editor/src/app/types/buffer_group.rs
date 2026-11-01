@@ -82,4 +82,8 @@ pub struct BufferGroup {
     /// The "representative" split that owns the tab entry.
     /// This is typically the first scrollable panel.
     pub representative_split: Option<LeafId>,
+    /// The tab title `setBufferGroupTitle` set, piece by piece, when it set
+    /// one: the tab marks each piece naming a panel whose file has unsaved
+    /// changes. `None` shows `name`, marked as a whole.
+    pub title: Option<Vec<fresh_core::api::BufferGroupTitleSegment>>,
 }

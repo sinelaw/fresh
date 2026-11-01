@@ -5211,6 +5211,13 @@ pub enum PluginCommand {
     /// commands eating the typing.
     SetBufferMode { buffer_id: BufferId, mode: String },
 
+    /// Give a buffer group's tab a title made of segments, each of which
+    /// may name the panel it stands for; see `BufferGroupTitleSegment`.
+    SetBufferGroupTitle {
+        group_id: usize,
+        segments: Vec<BufferGroupTitleSegment>,
+    },
+
     /// Show or hide one panel of a buffer group without tearing the
     /// group down. The panel's buffer and its scroll position survive
     /// while hidden; only the group's split tree changes.
@@ -7402,6 +7409,21 @@ pub struct CreateVirtualBufferInExistingSplitOptions {
     pub initial_cursor_line: Option<u32>,
 }
 
+/// One piece of a buffer group's tab title, for `setBufferGroupTitle`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct BufferGroupTitleSegment {
+    /// The text this piece of the title shows.
+    pub text: String,
+    /// The panel this piece names, if any. While the file that panel shows
+    /// has unsaved changes, the tab shows `*` right after this piece, as a
+    /// file's own tab does after its name.
+    #[serde(default)]
+    #[ts(optional)]
+    pub panel: Option<String>,
+}
+
 /// Options for createTerminal
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
@@ -7742,6 +7764,7 @@ mod fromjs_impls {
 
     impl_from_js_via_serde!(
         JsTextPropertyEntry,
+        BufferGroupTitleSegment,
         CreateVirtualBufferOptions,
         CreateVirtualBufferInSplitOptions,
         CreateVirtualBufferInExistingSplitOptions,
