@@ -16,8 +16,8 @@
 //! keys. These tests check both from the outside, where the bug was visible:
 //! fd 0 is a terminal, and the editor answers the keyboard.
 //!
-//! Linux-gated: `common::pty` needs `ptsname_r`, and fd 0 is read from
-//! `/proc`.
+//! Linux-gated: fd 0 is read from `/proc`. The keyboard half of these
+//! launches runs on macOS too, in `stdin_redirect_keyboard.rs` (#3683).
 #![cfg(target_os = "linux")]
 
 use crate::common::pty::{pty_available, spawn_on_pty, ChildStdin, PtyChild};

@@ -1,17 +1,17 @@
-//! Unix-specific relay loop using poll()
+//! Unix-specific relay loop using poll() (select() for macOS's `/dev/tty`)
 
 use std::io::{self, Read, Write};
-use std::os::unix::io::{AsRawFd, BorrowedFd};
+use std::os::unix::io::AsRawFd;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-
-use nix::poll::{poll, PollFd, PollFlags};
+use std::time::Duration;
 
 use super::{get_terminal_size, ClientExitReason};
 use crate::server::ipc::ClientConnection;
 use crate::server::protocol::ClientControl;
+use crate::services::fd_wait::wait_readable;
 
-/// Main relay loop - bidirectional byte forwarding using poll()
+/// Main relay loop - bidirectional byte forwarding using poll() (see `fd_wait`)
 pub fn relay_loop(
     conn: &mut ClientConnection,
     resize_flag: Arc<AtomicBool>,
@@ -67,39 +67,29 @@ pub fn relay_loop(
             }
         }
 
-        // Poll stdin, data socket, and control socket
-        // SAFETY: The file descriptors are valid for the duration of this scope
-        let stdin_borrowed = unsafe { BorrowedFd::borrow_raw(stdin_fd) };
-        let data_borrowed = unsafe { BorrowedFd::borrow_raw(data_fd) };
-        let ctrl_borrowed = unsafe { BorrowedFd::borrow_raw(ctrl_fd) };
-        // A `Vec` for the GPM fd that only Linux pushes.
-        #[cfg_attr(not(target_os = "linux"), allow(clippy::useless_vec))]
-        let mut fds = vec![
-            PollFd::new(stdin_borrowed, PollFlags::POLLIN),
-            PollFd::new(data_borrowed, PollFlags::POLLIN),
-            PollFd::new(ctrl_borrowed, PollFlags::POLLIN),
-        ];
+        // Wait on stdin, the data socket and the control socket.
+        //
+        // Through `fd_wait` rather than poll(2) directly: on macOS a stdin
+        // reopened from `/dev/tty` (`fresh -a </dev/tty`, or a bare `fresh`
+        // that auto-attaches) makes poll(2) report `POLLNVAL` at once, so
+        // stdin was never read and this loop spun (#3683).
+        #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
+        let mut fds: Vec<std::os::unix::io::RawFd> = vec![stdin_fd, data_fd, ctrl_fd];
         #[cfg(target_os = "linux")]
         if let Some(gpm) = &gpm {
-            // SAFETY: the GPM connection outlives this scope.
-            let gpm_borrowed = unsafe { BorrowedFd::borrow_raw(gpm.fd()) };
-            fds.push(PollFd::new(gpm_borrowed, PollFlags::POLLIN));
+            fds.push(gpm.fd());
         }
 
-        match poll(&mut fds, nix::poll::PollTimeout::from(100u8)) {
-            // 100ms timeout for resize check
-            Ok(0) => continue, // Timeout, check resize
-            Ok(_) => {}
-            Err(nix::errno::Errno::EINTR) => continue,
-            Err(e) => return Err(io::Error::other(e.to_string())),
-        }
+        // 100ms timeout for the resize check.
+        let ready = match wait_readable(&fds, Duration::from_millis(100)) {
+            Ok(ready) if ready.is_empty() => continue, // Timeout, check resize
+            Ok(ready) => ready,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        };
 
         // Check stdin
-        if fds[0]
-            .revents()
-            .map(|r| r.contains(PollFlags::POLLIN))
-            .unwrap_or(false)
-        {
+        if ready.readable(0) {
             match stdin.read(&mut stdin_buf) {
                 Ok(0) => {
                     // EOF on stdin - detach
@@ -121,10 +111,7 @@ pub fn relay_loop(
 
         #[cfg(target_os = "linux")]
         if let Some(gpm) = &gpm {
-            if fds[3]
-                .revents()
-                .is_some_and(|r| r.contains(PollFlags::POLLIN))
-            {
+            if ready.readable(3) {
                 let reports = gpm.read_sgr_reports();
                 if !reports.is_empty() {
                     conn.write_data(&reports)?;
@@ -133,11 +120,7 @@ pub fn relay_loop(
         }
 
         // Check data socket
-        if fds[1]
-            .revents()
-            .map(|r| r.contains(PollFlags::POLLIN))
-            .unwrap_or(false)
-        {
+        if ready.readable(1) {
             match conn.read_data(&mut data_buf) {
                 Ok(0) => {
                     // Server closed connection
@@ -153,11 +136,7 @@ pub fn relay_loop(
         }
 
         // Check control socket for server messages
-        if fds[2]
-            .revents()
-            .map(|r| r.contains(PollFlags::POLLIN))
-            .unwrap_or(false)
-        {
+        if ready.readable(2) {
             // Drain whatever is available without blocking, then process every
             // complete newline-delimited message. Partial trailing bytes stay
             // in `ctrl_buf` for the next iteration.
@@ -215,11 +194,7 @@ pub fn relay_loop(
         }
 
         // Check for socket errors
-        if fds[1]
-            .revents()
-            .map(|r| r.contains(PollFlags::POLLHUP) || r.contains(PollFlags::POLLERR))
-            .unwrap_or(false)
-        {
+        if ready.hung_up(1) {
             return Ok(ClientExitReason::ServerQuit);
         }
     }

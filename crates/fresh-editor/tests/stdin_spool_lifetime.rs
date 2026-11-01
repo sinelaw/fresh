@@ -18,7 +18,8 @@
 //! still enumerated below, because each of them used to leak and a
 //! regression would show up as a name reappearing.
 //!
-//! Linux-gated with `common::pty`, which needs `ptsname_r`.
+//! Linux-gated. (`common::pty` itself also runs on macOS, but these have
+//! only been run on Linux.)
 #![cfg(target_os = "linux")]
 
 use crate::common::pty::{pty_available, spawn_on_pty, ChildStdin, PtyChild};

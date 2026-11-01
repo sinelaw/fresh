@@ -13,9 +13,14 @@
 //! writes, which is the semantic wait CONTRIBUTING asks for: no sleeps, no
 //! deadlines, and `cargo nextest` supplies the outer timeout.
 //!
-//! Linux-only. `ptsname_r` is not portable, and the callers are gated on
-//! Linux anyway for `XDG_*` isolation.
-#![cfg(target_os = "linux")]
+//! Linux and macOS. The slave's name comes from `ptsname_r` on Linux and
+//! from `ptsname` (under a lock, since it returns a static buffer) on macOS,
+//! which has no `ptsname_r`; everything else here is POSIX. Most callers are
+//! still Linux-gated for reasons of their own (`XDG_*` isolation, `/proc`).
+//! The ones that are not are what put the macOS-only failure of #3683 —
+//! keys never reaching an editor whose stdin was reopened from `/dev/tty` —
+//! in front of CI's macOS runner.
+#![cfg(any(target_os = "linux", target_os = "macos"))]
 
 use std::ffi::CStr;
 use std::fs::File;
@@ -43,6 +48,13 @@ pub enum ChildStdin {
     /// exactly the shape `fresh -` needs: a pipe on fd 0 *and* a
     /// `/dev/tty` to reopen for keystrokes.
     Piped(Vec<u8>),
+    /// `/dev/null` — `fresh file </dev/null`. Not a terminal, so the editor
+    /// reopens stdin from `/dev/tty` just as it does for a pipe.
+    Null,
+    /// `/dev/tty` itself, opened in the child once the pty is its
+    /// controlling terminal — `fresh file </dev/tty`. A terminal already, so
+    /// the editor keeps it as it is: fd 0 is `/dev/tty` with no reopen.
+    DevTty,
 }
 
 /// Whether this environment can hand out a pty at all.
@@ -73,16 +85,29 @@ pub fn spawn_on_pty(
     let (master, slave_path) = open_pty()?;
     resize(&master, cols, rows)?;
 
-    let slave = File::options().read(true).write(true).open(&slave_path)?;
+    // `O_NOCTTY`: the slave is the child's terminal, never ours.
+    let slave = {
+        use std::os::unix::fs::OpenOptionsExt;
+        File::options()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NOCTTY)
+            .open(&slave_path)?
+    };
 
     match &stdin {
-        ChildStdin::Terminal => {
+        // `DevTty` starts from the slave and swaps it for `/dev/tty` below.
+        ChildStdin::Terminal | ChildStdin::DevTty => {
             command.stdin(Stdio::from(slave.try_clone()?));
         }
         ChildStdin::Piped(_) => {
             command.stdin(Stdio::piped());
         }
+        ChildStdin::Null => {
+            command.stdin(Stdio::null());
+        }
     }
+    let stdin_from_dev_tty = matches!(stdin, ChildStdin::DevTty);
     command.stdout(Stdio::from(slave.try_clone()?));
     command.stderr(Stdio::from(slave.try_clone()?));
 
@@ -90,15 +115,24 @@ pub fn spawn_on_pty(
     // async-signal-safe calls are allowed. `setsid` and `ioctl` are both
     // such calls and touch no allocator or lock this process holds.
     // `setsid` drops the inherited controlling terminal, which is what lets
-    // `TIOCSCTTY` on fd 1 (always the pty slave, in both stdin shapes)
-    // adopt ours in its place.
+    // `TIOCSCTTY` on fd 1 (always the pty slave, in every stdin shape)
+    // adopt ours in its place. `open`, `dup2` and `close` for `DevTty` are
+    // async-signal-safe too, and the path is a literal, so nothing allocates.
     unsafe {
-        command.pre_exec(|| {
+        command.pre_exec(move || {
             if libc::setsid() == -1 {
                 return Err(std::io::Error::last_os_error());
             }
-            if libc::ioctl(libc::STDOUT_FILENO, libc::TIOCSCTTY, 0) == -1 {
+            // `as _`: the constant is `c_uint` on macOS, `c_ulong` on glibc.
+            if libc::ioctl(libc::STDOUT_FILENO, libc::TIOCSCTTY as _, 0) == -1 {
                 return Err(std::io::Error::last_os_error());
+            }
+            if stdin_from_dev_tty {
+                let tty = libc::open(c"/dev/tty".as_ptr(), libc::O_RDWR);
+                if tty == -1 || libc::dup2(tty, libc::STDIN_FILENO) == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                libc::close(tty);
             }
             Ok(())
         });
@@ -318,20 +352,48 @@ fn open_pty() -> std::io::Result<(File, PathBuf)> {
             return Err(std::io::Error::last_os_error());
         }
 
-        // `c_char`, not `i8`: it is unsigned on aarch64/arm Linux (and
-        // ppc64le, s390x, riscv64), where a `[i8; N]` would not coerce to
-        // the `*mut c_char` `ptsname_r` wants. aarch64 is a shipped target.
-        let mut name = [0 as libc::c_char; 128];
-        if libc::ptsname_r(master_fd, name.as_mut_ptr(), name.len()) != 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        let path = CStr::from_ptr(name.as_ptr())
-            .to_str()
-            .map_err(|e| std::io::Error::other(format!("pty name is not UTF-8: {e}")))?
-            .to_string();
-
-        Ok((master, PathBuf::from(path)))
+        Ok((master, PathBuf::from(slave_name(master_fd)?)))
     }
+}
+
+/// The path of the slave belonging to the pty master `master_fd`.
+#[cfg(target_os = "linux")]
+fn slave_name(master_fd: libc::c_int) -> std::io::Result<String> {
+    // `c_char`, not `i8`: it is unsigned on aarch64/arm Linux (and
+    // ppc64le, s390x, riscv64), where a `[i8; N]` would not coerce to
+    // the `*mut c_char` `ptsname_r` wants. aarch64 is a shipped target.
+    let mut name = [0 as libc::c_char; 128];
+    // SAFETY: `name` is a writable buffer of the length passed.
+    if unsafe { libc::ptsname_r(master_fd, name.as_mut_ptr(), name.len()) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: on success `ptsname_r` leaves a NUL-terminated string in `name`.
+    unsafe { CStr::from_ptr(name.as_ptr()) }
+        .to_str()
+        .map(str::to_string)
+        .map_err(|e| std::io::Error::other(format!("pty name is not UTF-8: {e}")))
+}
+
+/// The path of the slave belonging to the pty master `master_fd`.
+///
+/// macOS has no `ptsname_r`. `ptsname` returns a buffer shared by the whole
+/// process, so tests running on parallel threads take turns, and the name is
+/// copied out before the lock is released.
+#[cfg(target_os = "macos")]
+fn slave_name(master_fd: libc::c_int) -> std::io::Result<String> {
+    static PTSNAME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _turn = PTSNAME.lock().unwrap_or_else(|e| e.into_inner());
+    // SAFETY: `master_fd` is an open, unlocked pty master; the returned
+    // pointer is only read while the lock is held.
+    let name = unsafe { libc::ptsname(master_fd) };
+    if name.is_null() {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: non-null `ptsname` results are NUL-terminated strings.
+    unsafe { CStr::from_ptr(name) }
+        .to_str()
+        .map(str::to_string)
+        .map_err(|e| std::io::Error::other(format!("pty name is not UTF-8: {e}")))
 }
 
 fn resize(master: &File, cols: u16, rows: u16) -> std::io::Result<()> {

@@ -3,7 +3,7 @@
 //!
 //! The daemon is made to fail with a runtime directory too long for a Unix
 //! socket path, so its `bind()` fails. Linux-gated like the other
-//! binary-driving tests: `XDG_*` isolation and `common::pty` are Linux-only.
+//! binary-driving tests: `XDG_*` isolation is Linux-only.
 #![cfg(target_os = "linux")]
 
 use crate::common::pty::{pty_available, spawn_on_pty, ChildStdin};
