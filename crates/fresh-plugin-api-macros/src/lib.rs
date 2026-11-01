@@ -504,6 +504,7 @@ fn rust_to_typescript(ty: &Type, attrs: &[Attribute]) -> String {
                 | "TsLspMenuItem"
                 | "JsDiagnostic"
                 | "CreateTerminalOptions"
+                | "BufferGroupTitleSegment"
                 | "TerminalResult" => type_name,
 
                 // Types renamed by ts-rs — map Rust name to TypeScript name

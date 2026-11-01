@@ -16,15 +16,16 @@ use ts_rs::{Config as TsConfig, TS};
 
 use fresh_core::api::{
     ActionPopupAction, ActionPopupOptions, ActionSpec, AnimationRect, BackgroundProcessResult,
-    BufferGroupResult, BufferInfo, BufferSavedDiff, CompareHunk, CompareResult, CompareSide,
-    CompositeHunk, CompositeLayoutConfig, CompositePaneStyle, CompositeSourceConfig,
-    CreateCompositeBufferOptions, CreateTerminalOptions, CreateVirtualBufferInExistingSplitOptions,
-    CreateVirtualBufferInSplitOptions, CreateVirtualBufferOptions, CursorInfo, DiffBaselineResult,
-    DirEntry, FormatterPackConfig, GrammarInfoSnapshot, GrepMatch, JsDiagnostic, JsPosition,
-    JsRange, JsTextPropertyEntry, KeyEventPayload, LanguagePackConfig, LayoutHints, LineDiffHunk,
-    LspServerPackConfig, OverlayColorSpec, OverlayOptions, PluginAnimationEdge,
-    PluginAnimationKind, ProcessLimitsPackConfig, RemoteBackendInfo, ReplaceResult, ScreenSize,
-    ScrollbarMarker, SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult, TerminalScreen,
+    BufferGroupResult, BufferGroupTitleSegment, BufferInfo, BufferSavedDiff, CompareHunk,
+    CompareResult, CompareSide, CompositeHunk, CompositeLayoutConfig, CompositePaneStyle,
+    CompositeSourceConfig, CreateCompositeBufferOptions, CreateTerminalOptions,
+    CreateVirtualBufferInExistingSplitOptions, CreateVirtualBufferInSplitOptions,
+    CreateVirtualBufferOptions, CursorInfo, DiffBaselineResult, DirEntry, FormatterPackConfig,
+    GrammarInfoSnapshot, GrepMatch, JsDiagnostic, JsPosition, JsRange, JsTextPropertyEntry,
+    KeyEventPayload, LanguagePackConfig, LayoutHints, LineDiffHunk, LspServerPackConfig,
+    OverlayColorSpec, OverlayOptions, PluginAnimationEdge, PluginAnimationKind,
+    ProcessLimitsPackConfig, RemoteBackendInfo, ReplaceResult, ScreenSize, ScrollbarMarker,
+    SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult, TerminalScreen,
     TextPropertiesAtCursor, TokenColor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire,
     ViewTokenWireKind, ViewportInfo, VirtualBufferResult, WindowInfo,
 };
@@ -152,6 +153,7 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "TextPropertiesAtCursor" => Some(decl_with_docs::<TextPropertiesAtCursor>(&cfg)),
         "VirtualBufferResult" => Some(decl_with_docs::<VirtualBufferResult>(&cfg)),
         "BufferGroupResult" => Some(decl_with_docs::<BufferGroupResult>(&cfg)),
+        "BufferGroupTitleSegment" => Some(decl_with_docs::<BufferGroupTitleSegment>(&cfg)),
 
         // Prompt and directory types
         "PromptSuggestion" | "Suggestion" => Some(decl_with_docs::<Suggestion>(&cfg)),

@@ -3034,6 +3034,43 @@ impl Window {
             .collect()
     }
 
+    /// The buffer group whose tab is `leaf` (`TabTarget::Group(leaf)`).
+    fn group_of_tab(&self, leaf: LeafId) -> Option<&crate::app::types::BufferGroup> {
+        self.buffer_groups
+            .values()
+            .find(|g| g.representative_split == Some(leaf))
+    }
+
+    /// Whether `id`, a buffer a group borrowed (a file one of its panels
+    /// shows), has unsaved changes. The buffers a group owns are the
+    /// plugin's own content, never saved, so only borrowed ones are asked.
+    fn borrowed_buffer_modified(&self, id: crate::model::event::BufferId) -> bool {
+        self.buffers
+            .get(&id)
+            .is_some_and(|s| s.buffer.is_modified())
+    }
+
+    /// `group`'s segmented title with a `*` after each piece that names a
+    /// panel whose file has unsaved changes; `None` for a group with no
+    /// segmented title.
+    fn marked_group_title(&self, group: &crate::app::types::BufferGroup) -> Option<String> {
+        let segments = group.title.as_ref()?;
+        let mut out = String::new();
+        for segment in segments {
+            out.push_str(&segment.text);
+            let modified = segment
+                .panel
+                .as_ref()
+                .and_then(|panel| group.panel_buffers.get(panel))
+                .filter(|id| group.borrowed_buffers.contains(id))
+                .is_some_and(|id| self.borrowed_buffer_modified(*id));
+            if modified {
+                out.push('*');
+            }
+        }
+        Some(out)
+    }
+
     /// Each pane's tab strip, as content — what the tab painter read off the
     /// window on its way to the cells, read once into a value the tree lays
     /// out (`shell::tabs::strip`) and the web reads back (`tab_bar_view`).
@@ -3054,11 +3091,19 @@ impl Window {
         let Some((mgr, vs_map)) = self.buffers.splits() else {
             return Default::default();
         };
+        // A group with a segmented title (`setBufferGroupTitle`) shows a `*`
+        // after each piece naming a panel whose file has unsaved changes, so
+        // a comparison says which side is unsaved (issue #3691).
         let group_names: HashMap<LeafId, String> = self
             .grouped_subtrees
             .iter()
             .filter_map(|(leaf, node)| match node {
-                crate::view::split::SplitNode::Grouped { name, .. } => Some((*leaf, name.clone())),
+                crate::view::split::SplitNode::Grouped { name, .. } => Some((
+                    *leaf,
+                    self.group_of_tab(*leaf)
+                        .and_then(|g| self.marked_group_title(g))
+                        .unwrap_or_else(|| name.clone()),
+                )),
                 _ => None,
             })
             .collect();
@@ -3094,20 +3139,17 @@ impl Window {
                                 && self.buffers.get(id).is_some_and(|s| s.buffer.is_modified()),
                             self.buffer_metadata.get(id).is_some_and(|m| m.binary),
                         ),
-                        // A group is modified when a file one of its panels
-                        // shows is: those are the buffers it borrowed (the
-                        // two files of a comparison, say). The buffers it
-                        // owns are the plugin's own content, never saved, so
-                        // they don't count (issue #3691).
+                        // A group without a segmented title is marked as a
+                        // whole when a file one of its panels shows is
+                        // modified; one with a title marks the pieces in its
+                        // name instead (see `group_names` above).
                         TabTarget::Group(leaf) => (
-                            self.buffer_groups
-                                .values()
-                                .find(|g| g.representative_split == Some(*leaf))
-                                .is_some_and(|g| {
-                                    g.borrowed_buffers.iter().any(|id| {
-                                        self.buffers.get(id).is_some_and(|s| s.buffer.is_modified())
-                                    })
-                                }),
+                            self.group_of_tab(*leaf).is_some_and(|g| {
+                                g.title.is_none()
+                                    && g.borrowed_buffers
+                                        .iter()
+                                        .any(|id| self.borrowed_buffer_modified(*id))
+                            }),
                             false,
                         ),
                     };

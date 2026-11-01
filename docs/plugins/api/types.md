@@ -235,6 +235,25 @@ type BufferGroupResult = {
 };
 ```
 
+### `BufferGroupTitleSegment`
+
+One piece of a buffer group's tab title, for `setBufferGroupTitle`.
+
+```typescript
+type BufferGroupTitleSegment = {
+  /**
+  * The text this piece of the title shows.
+  */
+  text: string;
+  /**
+  * The panel this piece names, if any. While the file that panel shows
+  * has unsaved changes, the tab shows `*` right after this piece, as a
+  * file's own tab does after its name.
+  */
+  panel?: string;
+};
+```
+
 ### `BufferId`
 
 Buffer identifier

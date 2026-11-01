@@ -1999,6 +1999,9 @@ impl Editor {
                     meta.set_virtual_mode(mode);
                 }
             }
+            PluginCommand::SetBufferGroupTitle { group_id, segments } => {
+                self.set_buffer_group_title(group_id, segments);
+            }
             PluginCommand::SetBufferGroupPanelVisible {
                 group_id,
                 panel_name,

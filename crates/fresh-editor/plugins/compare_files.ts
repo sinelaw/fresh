@@ -20,7 +20,8 @@ const editor = getEditor();
  *     sit on the same screen row in both panels;
  *   - a note where two lines differ only in their line ending;
  *   - scroll sync between the panels, anchored at every change;
- *   - a fresh diff after every edit to either side.
+ *   - a fresh diff after every edit to either side;
+ *   - a `*` in the tab after the name of each file with unsaved changes.
  *
  * The diff and every offset come from the host (`compareBuffers`): no file
  * text is copied into the plugin, which is what kept large files slow.
@@ -150,6 +151,25 @@ function tabLabels(leftPath: string, rightPath: string): { left: string; right: 
     return dir ? `${dir}/${name}` : name;
   };
   return { left: withDir(leftPath, left), right: withDir(rightPath, right) };
+}
+
+/** The comparison tab's title as segments: the localized `tab_name` with
+ * each file's label naming its panel, so the tab shows `*` after the side
+ * that has unsaved changes. The template is filled with placeholders and
+ * split on them, which keeps a translation free to order the two names. */
+function titleSegments(labels: { left: string; right: string }): BufferGroupTitleSegment[] {
+  const mark = (side: string) => `\u0001${side}\u0001`;
+  const filled = editor.t("tab_name", { left: mark("left"), right: mark("right") });
+  const segments: BufferGroupTitleSegment[] = [];
+  filled.split("\u0001").forEach((part, i) => {
+    // Odd parts are the placeholders' names.
+    if (i % 2 === 1 && (part === "left" || part === "right")) {
+      segments.push({ text: labels[part], panel: part });
+    } else if (part !== "") {
+      segments.push({ text: part });
+    }
+  });
+  return segments;
 }
 
 /** Run plugin commands one at a time. A command reads the cursor, and a
@@ -386,11 +406,12 @@ async function compare(leftPath: string, rightPath: string): Promise<boolean> {
   }
   await editor.flush();
 
+  const labels = tabLabels(leftAbs, rightAbs);
   const panel = (id: string, path: string) => ({ type: "scrollable", id, path });
   let group: BufferGroupResult;
   try {
     group = await editor.createBufferGroup(
-      editor.t("tab_name", tabLabels(leftAbs, rightAbs)),
+      editor.t("tab_name", labels),
       "",
       JSON.stringify({
         type: "split",
@@ -412,6 +433,8 @@ async function compare(leftPath: string, rightPath: string): Promise<boolean> {
     editor.setStatus(editor.t("status.same_file"));
     return false;
   }
+
+  editor.setBufferGroupTitle(group.groupId, titleSegments(labels));
 
   const c: Comparison = {
     groupId: group.groupId,
