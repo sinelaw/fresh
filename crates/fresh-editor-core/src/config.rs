@@ -849,6 +849,7 @@ impl WhitespaceVisibility {
 /// - `"{cursor:compact}"` — cursor position as `1:1`
 /// - `"{diagnostics}"` — error/warning/info counts (e.g. `E:1 W:2`)
 /// - `"{cursor_count}"` — number of active cursors (hidden when only 1)
+/// - `"{search_nav}"` — clickable `↓` / `↑` arrows that go to the next / previous search match, like F3 / Shift+F3 (hidden when no search is active)
 /// - `"{messages}"` — editor and plugin status messages
 /// - `"{chord}"` — in-progress chord key sequence
 /// - `"{line_ending}"` — line ending format (LF, CRLF, Auto)
@@ -877,6 +878,9 @@ pub enum StatusBarElement {
     Diagnostics,
     /// Active cursor count (hidden when 1)
     CursorCount,
+    /// Clickable next (`↓`) and previous (`↑`) arrows for the active search,
+    /// the same as F3 / Shift+F3. Hidden while no search is active.
+    SearchNav,
     /// Status messages from editor and plugins
     Messages,
     /// In-progress chord key sequence
@@ -931,6 +935,7 @@ impl TryFrom<String> for StatusBarElement {
             "cursor:compact" => Ok(Self::CursorCompact),
             "diagnostics" => Ok(Self::Diagnostics),
             "cursor_count" => Ok(Self::CursorCount),
+            "search_nav" => Ok(Self::SearchNav),
             "messages" => Ok(Self::Messages),
             "chord" => Ok(Self::Chord),
             "line_ending" => Ok(Self::LineEnding),
@@ -965,6 +970,7 @@ impl From<StatusBarElement> for String {
             StatusBarElement::CursorCompact => "{cursor:compact}".to_string(),
             StatusBarElement::Diagnostics => "{diagnostics}".to_string(),
             StatusBarElement::CursorCount => "{cursor_count}".to_string(),
+            StatusBarElement::SearchNav => "{search_nav}".to_string(),
             StatusBarElement::Messages => "{messages}".to_string(),
             StatusBarElement::Chord => "{chord}".to_string(),
             StatusBarElement::LineEnding => "{line_ending}".to_string(),
@@ -997,6 +1003,7 @@ impl schemars::JsonSchema for StatusBarElement {
                 {"value": "{cursor:compact}", "name": "Cursor (compact)"},
                 {"value": "{diagnostics}", "name": "Diagnostics"},
                 {"value": "{cursor_count}", "name": "Cursor Count"},
+                {"value": "{search_nav}", "name": "Search Navigation"},
                 {"value": "{messages}", "name": "Messages"},
                 {"value": "{chord}", "name": "Chord"},
                 {"value": "{line_ending}", "name": "Line Ending"},
@@ -1036,6 +1043,10 @@ fn default_status_bar_left() -> Vec<StatusBarElement> {
         StatusBarElement::Cursor,
         StatusBarElement::Diagnostics,
         StatusBarElement::CursorCount,
+        // Renders only while a search is active. Ahead of `{messages}`: the
+        // left side elides at its tail, so a long message is what gets cut,
+        // never the arrows.
+        StatusBarElement::SearchNav,
         StatusBarElement::Messages,
     ]
 }
@@ -1064,7 +1075,7 @@ fn default_status_bar_right() -> Vec<StatusBarElement> {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct StatusBarConfig {
     /// Elements on the left side of the status bar.
-    /// Default: ["{trust}", "{remote}", "{terminal_restart}", "{cursor}", "{diagnostics}", "{cursor_count}", "{messages}"]
+    /// Default: ["{trust}", "{remote}", "{terminal_restart}", "{cursor}", "{diagnostics}", "{cursor_count}", "{search_nav}", "{messages}"]
     #[serde(default = "default_status_bar_left")]
     #[schemars(extend("x-section" = "Status Bar", "x-dual-list-sibling" = "/editor/status_bar/right", "x-dynamically-extendable-status-bar-elements" = true))]
     pub left: Vec<StatusBarElement>,
@@ -8438,6 +8449,23 @@ pub fn builtin_keymap_json(name: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn search_nav_status_bar_element_round_trips_through_its_config_string() {
+        let element = StatusBarElement::try_from("{search_nav}".to_string()).unwrap();
+        assert_eq!(element, StatusBarElement::SearchNav);
+        assert_eq!(String::from(element), "{search_nav}");
+        // Braces are optional on input, as for every built-in element.
+        assert_eq!(
+            StatusBarElement::try_from("search_nav".to_string()).unwrap(),
+            StatusBarElement::SearchNav
+        );
+        // It is on the default left side, ahead of the messages that elide.
+        let left = default_status_bar_left();
+        let at = |e: &StatusBarElement| left.iter().position(|x| x == e).unwrap();
+        assert!(at(&StatusBarElement::CursorCount) < at(&StatusBarElement::SearchNav));
+        assert!(at(&StatusBarElement::SearchNav) < at(&StatusBarElement::Messages));
+    }
 
     #[test]
     fn test_file_explorer_width_default_is_percent_30() {

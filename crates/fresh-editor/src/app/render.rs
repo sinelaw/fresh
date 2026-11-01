@@ -6282,6 +6282,9 @@ impl Editor {
                 resumes_agent: e.resumes_agent() && self.config.terminal.resume_agents,
             }
         });
+        // Whether the `{search_nav}` arrows are on the bar — read before the
+        // mutable window borrow.
+        let search_nav = self.active_window().search_nav_shown();
         // A field-level borrow, disjoint from the `self.windows` borrow below.
         let keybindings_guard = self.keybindings.read().unwrap();
         let keybindings = &*keybindings_guard;
@@ -6331,6 +6334,7 @@ impl Editor {
                     dynamic_status_bar_elements,
                     workspace_trust_level,
                     terminal_restart,
+                    search_nav,
                 };
 
                 let left = StatusBarRenderer::render_side(&config.left, &mut status_ctx);
@@ -6348,8 +6352,11 @@ impl Editor {
                 let sep_w = crate::primitives::display_width::str_width(&config.separator);
                 let width_of =
                     |it: &sb::Item| crate::primitives::display_width::str_width(&it.text());
+                // An element drawn as several joined items (no separator
+                // between them) counts, and is dropped, as one.
+                let elements = |items: &[sb::Item]| items.iter().filter(|it| !it.joined).count();
                 let total_right: usize = right.iter().map(width_of).sum::<usize>()
-                    + sep_w * right.len().saturating_sub(1);
+                    + sep_w * elements(&right).saturating_sub(1);
                 let left_min_target = available.saturating_mul(2).saturating_div(5).min(40);
                 let right_budget = available.saturating_sub(left_min_target + 1);
                 // How many right elements are kept whatever happens. Normally one,
@@ -6357,13 +6364,17 @@ impl Editor {
                 // On a bar too narrow to host both sides (`sb::BOTH_SIDES_MIN`) it
                 // is none: the left side is what survives there.
                 let keep = usize::from(available >= sb::BOTH_SIDES_MIN);
-                if total_right > right_budget && right.len() > keep {
+                if total_right > right_budget && elements(&right) > keep {
                     let mut current = total_right;
-                    while current > right_budget && right.len() > keep {
-                        let Some(dropped) = right.pop() else { break };
-                        current = current
-                            .saturating_sub(width_of(&dropped))
-                            .saturating_sub(sep_w);
+                    while current > right_budget && elements(&right) > keep {
+                        // The last element: its joined parts, then its head.
+                        while let Some(dropped) = right.pop() {
+                            current = current.saturating_sub(width_of(&dropped));
+                            if !dropped.joined {
+                                break;
+                            }
+                        }
+                        current = current.saturating_sub(sep_w);
                     }
                 }
 

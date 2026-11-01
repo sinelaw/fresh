@@ -53,6 +53,11 @@ pub struct Item {
     /// `"<plugin>:<token>"` for a plugin-registered token, which is how the
     /// click rail finds it to fire `status_bar_token_clicked`.
     pub token_key: Option<String>,
+    /// Drawn right after the previous item, with no separator between: a
+    /// later part of one element whose parts answer different clicks (the
+    /// search match indicator's count and arrows). Never set on a side's
+    /// first item.
+    pub joined: bool,
 }
 
 impl Item {
@@ -212,7 +217,7 @@ pub fn status_bar(bar: &StatusBar) -> Node<UiMsg> {
 fn build(bar: &StatusBar) -> Node<UiMsg> {
     let mut kids: Vec<Node<UiMsg>> = Vec::new();
     for (i, it) in bar.left.iter().enumerate() {
-        if i > 0 {
+        if i > 0 && !it.joined {
             kids.push(separator(bar, Side::Left));
         }
         kids.push(element(it, key_of(Side::Left, i, it), Side::Left));
@@ -220,7 +225,7 @@ fn build(bar: &StatusBar) -> Node<UiMsg> {
     // The gap, which closes completely on a bar too narrow for both sides.
     kids.push(row().flex(1));
     for (i, it) in bar.right.iter().enumerate() {
-        if i > 0 {
+        if i > 0 && !it.joined {
             kids.push(separator(bar, Side::Right));
         }
         kids.push(element(it, key_of(Side::Right, i, it), Side::Right));
@@ -415,6 +420,7 @@ mod tests {
             name,
             clickable: None,
             token_key: None,
+            joined: false,
         }
     }
 
@@ -572,6 +578,30 @@ mod tests {
             3,
         );
         assert_eq!(got, "main.rs | 1:1                 UTF-8 | LF");
+    }
+
+    /// The parts of one element are joined: no separator between them, and
+    /// the next element is separated from the group as usual.
+    #[test]
+    fn joined_items_have_no_separator_between_them() {
+        let joined = |text: &str| Item {
+            joined: true,
+            ..plain(text, "text")
+        };
+        let got = row_text(
+            bar_of(
+                vec![
+                    plain("1/3", "text"),
+                    joined("v"),
+                    joined("^"),
+                    plain("msg", "text"),
+                ],
+                vec![plain("UTF-8", "encoding"), joined("!")],
+            ),
+            40,
+            3,
+        );
+        assert_eq!(got, "1/3v^ | msg                       UTF-8!");
     }
 
     /// A separator sits *between* elements, so one element on a side has none

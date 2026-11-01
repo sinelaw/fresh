@@ -2743,7 +2743,7 @@ Example: `{"left": ["{filename}", "{cursor:compact}"], "right": ["{language}", "
 interface StatusBarConfig {
     /**
     * Elements on the left side of the status bar.
-    * Default: ["{trust}", "{remote}", "{terminal_restart}", "{cursor}", "{diagnostics}", "{cursor_count}", "{messages}"]
+    * Default: ["{trust}", "{remote}", "{terminal_restart}", "{cursor}", "{diagnostics}", "{cursor_count}", "{search_nav}", "{messages}"]
     */
     left?: StatusBarElement[];
     /**

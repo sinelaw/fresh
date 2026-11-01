@@ -395,6 +395,7 @@ pub mod status_bar_config;
 #[cfg(feature = "plugins")]
 pub mod status_bar_message_click;
 pub mod status_bar_palette_click;
+pub mod status_bar_search_nav;
 pub mod stdin_input;
 pub mod sticky_column_units;
 pub mod sudo_save_prompt;
