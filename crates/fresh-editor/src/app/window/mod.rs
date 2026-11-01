@@ -3094,7 +3094,22 @@ impl Window {
                                 && self.buffers.get(id).is_some_and(|s| s.buffer.is_modified()),
                             self.buffer_metadata.get(id).is_some_and(|m| m.binary),
                         ),
-                        TabTarget::Group(_) => (false, false),
+                        // A group is modified when a file one of its panels
+                        // shows is: those are the buffers it borrowed (the
+                        // two files of a comparison, say). The buffers it
+                        // owns are the plugin's own content, never saved, so
+                        // they don't count (issue #3691).
+                        TabTarget::Group(leaf) => (
+                            self.buffer_groups
+                                .values()
+                                .find(|g| g.representative_split == Some(*leaf))
+                                .is_some_and(|g| {
+                                    g.borrowed_buffers.iter().any(|id| {
+                                        self.buffers.get(id).is_some_and(|s| s.buffer.is_modified())
+                                    })
+                                }),
+                            false,
+                        ),
                     };
                     Some(Tab {
                         target: *t,

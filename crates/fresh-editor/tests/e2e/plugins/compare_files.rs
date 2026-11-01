@@ -679,3 +679,34 @@ fn a_click_past_the_end_of_a_changed_line_lands_at_its_end() {
     h.mouse_click(110, changed).unwrap();
     h.wait_until(|h| status_has(h, "Ln 3, Col 16")).unwrap();
 }
+
+/// Editing either side marks the comparison's tab modified, as any tab with
+/// unsaved changes is; saving takes the mark away again (issue #3691).
+#[test]
+fn an_unsaved_edit_on_either_side_marks_the_tab_modified() {
+    let Compare { mut h, _tmp, .. } = compare(LEFT.as_bytes(), RIGHT.as_bytes());
+    h.wait_until(|h| status_has(h, "Compare: 3 difference(s)"))
+        .unwrap();
+    assert!(
+        tabs(&h).contains("left.txt ↔ right.txt ×"),
+        "unmodified: {:?}",
+        tabs(&h)
+    );
+
+    // The left side has the focus, on the first change.
+    h.type_text("Z").unwrap();
+    h.wait_until(|h| tabs(h).contains("left.txt ↔ right.txt*"))
+        .unwrap();
+    h.send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_until(|h| tabs(h).contains("left.txt ↔ right.txt ×"))
+        .unwrap();
+
+    // The same from the right side.
+    h.run_palette_command("Compare: Switch Side").unwrap();
+    h.type_text("Y").unwrap();
+    h.wait_until(|h| {
+        h.screen_to_string().contains("YCHARLIE") && tabs(h).contains("left.txt ↔ right.txt*")
+    })
+    .unwrap();
+}
