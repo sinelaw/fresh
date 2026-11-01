@@ -147,7 +147,8 @@
         "file_status_deleted_fg": null,
         "file_status_renamed_fg": null,
         "file_status_untracked_fg": null,
-        "file_status_conflicted_fg": null
+        "file_status_conflicted_fg": null,
+        "file_explorer_pinned_bg": null
       }
     },
     "search": {
@@ -1707,6 +1708,18 @@
         },
         "file_status_conflicted_fg": {
           "description": "File status: conflicted file color in file explorer (falls back to diagnostic.error_fg)",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "file_explorer_pinned_bg": {
+          "description": "The ground of the file explorer's sticky-parent band: the expanded\nancestors the list holds above the run. Falls back to\n`editor.current_line_bg`, but built-in themes set it apart from both\nthe panel and the unfocused cursor, so a pinned row and a cursor on a\npinned row do not read as the same thing.",
           "anyOf": [
             {
               "$ref": "#/$defs/StyledColorDef"

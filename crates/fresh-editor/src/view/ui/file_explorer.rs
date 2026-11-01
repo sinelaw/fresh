@@ -54,6 +54,13 @@ pub struct RowDesc<'a> {
     /// A drop's preview is opening a row under this directory, so it is drawn
     /// open whatever its state.
     pub opening: bool,
+    /// The row is one of the sticky rows the list holds above the run: the
+    /// fold's own decision, told to the row at the moment it is built (a
+    /// model-side copy would always be a frame behind the wheel). The row
+    /// draws on `ui.file_explorer_pinned_bg`, so the band reads as a distinct
+    /// strip — "there is more of your tree above this folder" — and not as
+    /// the tree itself.
+    pub pinned: bool,
 }
 
 /// One row of the tree, as the shell describes it.
@@ -97,10 +104,15 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
     // is the only one of the three that is about the pointer.
     let selected = d.drop_target == Some(node.entry.path.as_path())
         || (d.focused && (d.is_cursor || d.is_multi));
+    // The pinned band has a ground of its own: one shade above the panel, but
+    // not the unfocused cursor's — a cursor on a pinned row must stay legible
+    // as a cursor. The band yields to both the selection and the cursor.
     let ground = if selected {
         "editor.selection_bg"
     } else if d.is_cursor {
         "editor.current_line_bg"
+    } else if d.pinned {
+        "ui.file_explorer_pinned_bg"
     } else {
         "editor.bg"
     };
@@ -387,6 +399,7 @@ mod tests {
             expanded: "▼",
             ghost: None,
             opening: false,
+            pinned: false,
         });
         let resolve = |name: &str| crate::app::shell_host::shell_theme::resolve(name, theme);
         // The label's parts in the order the row draws them.
@@ -596,6 +609,7 @@ mod tests {
                 expanded: "▼",
                 ghost: None,
                 opening: false,
+                pinned: false,
             })
         };
 
@@ -647,6 +661,7 @@ mod tests {
             expanded: "▼",
             ghost: None,
             opening: false,
+            pinned: false,
         });
 
         let drawn =
@@ -668,6 +683,112 @@ mod tests {
         assert_eq!(drawn(&row.left), "    ▼ ", "the indent and the indicator");
         // The anchor's own name is no segment's, so a press on it is the row's.
         assert_eq!(drawn(&row.name), "c");
+    }
+
+    /// **A row the list pins says so on screen: shaded where it would be
+    /// plain, saying the same thing.** The sticky band holds a scrolled
+    /// tree's expanded ancestors over the run; if the pinned rows drew like
+    /// the tree itself, there would be nothing on screen to say "your run
+    /// continues above this folder" (#2705).
+    #[tokio::test]
+    async fn a_pinned_ancestor_row_is_shaded_an_unpinned_one_is_not() {
+        let (_temp_dir, view) = create_renderer_view().await;
+        let theme = Theme::load_builtin("dark").unwrap();
+        let resolver = crate::view::file_tree::default_slot_providers().resolver();
+        let projection = view.projection();
+        // One expanded directory is enough: only a directory is ever pinned,
+        // and only when it is expanded (a pinned ancestor is an open door).
+        let src_id = view
+            .tree()
+            .get_node(view.tree().root_id())
+            .unwrap()
+            .children
+            .iter()
+            .copied()
+            .find(|id| view.tree().get_node(*id).unwrap().entry.name == "src")
+            .expect("the fixture has src");
+        let row_of = |pinned: bool, is_cursor: bool, focused: bool| {
+            let node =
+                projection.rows[projection.index_of(src_id).expect("src is visible")].clone();
+            describe_row(RowDesc {
+                node: &node,
+                row: 0,
+                is_cursor,
+                is_multi: false,
+                focused,
+                unsaved: &HashSet::new(),
+                cut: &[],
+                drop_target: None,
+                fuzzy: None,
+                decorations: &FileExplorerDecorationCache::default(),
+                slot_overrides: &FileExplorerSlotOverrideCache::default(),
+                slot_resolver: &resolver,
+                theme: &theme,
+                collapsed: ">",
+                expanded: "▼",
+                ghost: None,
+                opening: false,
+                pinned,
+            })
+        };
+        let plain = row_of(false, false, false);
+        let pinned = row_of(true, false, false);
+        let cursor_on_pinned = row_of(true, true, false);
+
+        // The band changes the colour, not the words: the same glyph, the
+        // same name, the same geometry, so a pinned row stays a clickable
+        // identical (only shaded) copy of its tree row.
+        let said = |row: &crate::view::shell::file_explorer::Row| {
+            row.left
+                .iter()
+                .map(|(t, _)| t.to_string())
+                .chain(row.name.iter().map(|(t, _)| t.to_string()))
+                .collect::<Vec<String>>()
+        };
+        assert_eq!(said(&plain), said(&pinned), "only the ink changed");
+
+        // Every run of the pinned row sits on the band's ground, and none of
+        // the plain row's does.
+        let ground_of = |row: &crate::view::shell::file_explorer::Row| {
+            row.left
+                .iter()
+                .chain(row.name.iter())
+                .map(|(_, th)| th.split('/').next_back().unwrap_or(th).to_string())
+                .collect::<Vec<String>>()
+        };
+        assert_eq!(
+            pinned.theme.split('/').next_back().unwrap_or(&pinned.theme),
+            "ui.file_explorer_pinned_bg",
+            "the pinned row's band"
+        );
+        for ground in ground_of(&pinned) {
+            assert_eq!(
+                ground, "ui.file_explorer_pinned_bg",
+                "the pinned row's runs"
+            );
+        }
+        // A cursor on a pinned folder is still a cursor: the band's ground
+        // yields to the current-line ground, so the two do not collide.
+        assert_eq!(
+            cursor_on_pinned
+                .theme
+                .split('/')
+                .next_back()
+                .unwrap_or(&cursor_on_pinned.theme),
+            "editor.current_line_bg",
+            "the cursor stays visible on a pinned row"
+        );
+        for ground in ground_of(&cursor_on_pinned) {
+            assert_eq!(ground, "editor.current_line_bg", "the cursor's runs");
+        }
+        assert_eq!(
+            plain.theme.split('/').next_back().unwrap_or(&plain.theme),
+            "editor.bg",
+            "an unpinned row sits on the panel"
+        );
+        for ground in ground_of(&plain) {
+            assert_eq!(ground, "editor.bg", "the plain row's ground");
+        }
     }
 
     /// A drag held over one of a compact row's folded names shows on *that*
@@ -707,6 +828,7 @@ mod tests {
                 expanded: "▼",
                 ghost: None,
                 opening: false,
+                pinned: false,
             })
         };
         let themes = |row: &crate::view::shell::file_explorer::Row| {

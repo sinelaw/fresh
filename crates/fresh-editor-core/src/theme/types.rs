@@ -941,6 +941,13 @@ pub struct UiColors {
     /// File status: conflicted file color in file explorer (falls back to diagnostic.error_fg)
     #[serde(default)]
     pub file_status_conflicted_fg: Option<StyledColorDef>,
+    /// The ground of the file explorer's sticky-parent band: the expanded
+    /// ancestors the list holds above the run. Falls back to
+    /// `editor.current_line_bg`, but built-in themes set it apart from both
+    /// the panel and the unfocused cursor, so a pinned row and a cursor on a
+    /// pinned row do not read as the same thing.
+    #[serde(default)]
+    pub file_explorer_pinned_bg: Option<StyledColorDef>,
 }
 
 /// Search result highlighting colors
@@ -1247,6 +1254,9 @@ pub struct Theme {
     pub file_status_untracked_fg: Color,
     pub file_status_conflicted_fg: Color,
 
+    /// The ground of the file explorer's sticky-parent band.
+    pub file_explorer_pinned_bg: Color,
+
     // Search colors
     pub search_match_bg: Color,
     pub search_match_fg: Color,
@@ -1474,6 +1484,7 @@ impl From<ThemeFile> for Theme {
             file_status_renamed_fg: styled_color(&file.ui.file_status_renamed_fg),
             file_status_untracked_fg: styled_color(&file.ui.file_status_untracked_fg),
             file_status_conflicted_fg: styled_color(&file.ui.file_status_conflicted_fg),
+            file_explorer_pinned_bg: styled_color(&file.ui.file_explorer_pinned_bg),
             search_match_bg: styled_color(&file.search.match_bg),
             search_match_fg: styled_color(&file.search.match_fg),
             search_current_match_bg: styled_color(&file.search.current_match_bg),
@@ -1663,6 +1674,7 @@ impl From<Theme> for ThemeFile {
                 file_status_renamed_fg: styled(&theme, "ui.file_status_renamed_fg"),
                 file_status_untracked_fg: styled(&theme, "ui.file_status_untracked_fg"),
                 file_status_conflicted_fg: styled(&theme, "ui.file_status_conflicted_fg"),
+                file_explorer_pinned_bg: styled(&theme, "ui.file_explorer_pinned_bg"),
             },
             search: SearchColors {
                 match_bg: styled(&theme, "search.match_bg"),
@@ -2327,6 +2339,7 @@ theme_color_keys! {
         "blame_header_bg" => color blame_header_bg fallback "ui.menu_bg",
         "blame_header_fg" => color blame_header_fg fallback "ui.menu_fg",
         "compose_margin_bg" => color compose_margin_bg fallback "editor.after_eof_bg",
+        "file_explorer_pinned_bg" => color file_explorer_pinned_bg fallback "editor.current_line_bg",
         "file_status_added_fg" => color file_status_added_fg fallback "diagnostic.info_fg",
         "file_status_conflicted_fg" => color file_status_conflicted_fg fallback "diagnostic.error_fg",
         "file_status_deleted_fg" => color file_status_deleted_fg fallback "diagnostic.error_fg",
@@ -3618,6 +3631,28 @@ mod tests {
                     key
                 );
             }
+        }
+    }
+
+    /// Every builtin theme must give the file explorer's pinned band a ground
+    /// of its own: not the panel, and not the unfocused cursor's
+    /// `current_line_bg`, or a cursor on a pinned row would vanish into the
+    /// band it sits in.
+    #[test]
+    fn test_all_builtin_themes_set_a_distinct_pinned_band() {
+        for builtin in BUILTIN_THEMES {
+            let theme = Theme::from_json(builtin.json)
+                .unwrap_or_else(|e| panic!("Theme '{}' failed to parse: {}", builtin.name, e));
+            assert_ne!(
+                theme.file_explorer_pinned_bg, theme.editor_bg,
+                "Theme '{}' paints the pinned band on the panel ground",
+                builtin.name
+            );
+            assert_ne!(
+                theme.file_explorer_pinned_bg, theme.current_line_bg,
+                "Theme '{}' paints the pinned band on the unfocused cursor's ground",
+                builtin.name
+            );
         }
     }
 

@@ -72,7 +72,8 @@
     "settings_selected_bg": [38, 139, 210],
     "settings_selected_fg": [253, 246, 227],
     "status_lsp_actionable_fg": [0, 0, 0],
-    "status_lsp_actionable_bg": [181, 137, 0]
+    "status_lsp_actionable_bg": [181, 137, 0],
+    "file_explorer_pinned_bg": [4, 50, 62]
   },
   "search": {
     "match_bg": [181, 137, 0],

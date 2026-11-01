@@ -109,7 +109,8 @@
     "file_status_deleted_fg": "Red",
     "file_status_renamed_fg": "Cyan",
     "file_status_untracked_fg": "Gray",
-    "file_status_conflicted_fg": "Magenta"
+    "file_status_conflicted_fg": "Magenta",
+    "file_explorer_pinned_bg": "DarkGray"
   },
   "search": {
     "match_bg": "Yellow",
