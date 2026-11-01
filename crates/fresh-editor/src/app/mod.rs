@@ -846,6 +846,9 @@ pub struct Editor {
     /// so the internal-clipboard fallback can be exercised in isolation
     /// without touching the real host clipboard.
     pub(super) system_clipboard_reader: Option<fn() -> Option<String>>,
+    /// Test override for the system clipboard a terminal paste reads; see
+    /// `Clipboard::paste_for_terminal`. `None` reads the real one.
+    pub(super) system_clipboard_probe: Option<fn() -> crate::services::clipboard::SystemClipboard>,
 
     // split_manager and split_view_states moved onto `Window`. Access
     // via `Editor::split_manager()` / `split_manager_mut()` and

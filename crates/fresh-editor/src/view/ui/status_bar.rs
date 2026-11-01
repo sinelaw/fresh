@@ -612,14 +612,15 @@ impl StatusBarRenderer {
                 Hover::Swap(MENU_HOVER),
             ),
             StatusBarElement::Language => {
+                let name = crate::primitives::grammar::short_display_name(&ctx.state.display_name);
                 let text = if ctx.state.language == "text"
-                    && ctx.state.display_name != "Text"
-                    && ctx.state.display_name != "Plain Text"
-                    && ctx.state.display_name != "text"
+                    && name != "Text"
+                    && name != "Plain Text"
+                    && name != "text"
                 {
-                    format!("{} [syntax only]", &ctx.state.display_name)
+                    format!("{} [syntax only]", name)
                 } else {
-                    ctx.state.display_name.to_string()
+                    name.to_string()
                 };
                 clickable(
                     text,

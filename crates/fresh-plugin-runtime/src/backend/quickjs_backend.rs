@@ -1349,10 +1349,27 @@ impl JsEditorApi {
 
     #[plugin_api(section = "Buffer Queries")]
     /// List all open buffers - returns array of BufferInfo objects
+    ///
+    /// @param windowId - List this window's buffers (from `listWindows()`)
+    /// instead of the active window's. A buffer of a window not on screen
+    /// is in no split, so its `view_mode`, `splits` and the like describe
+    /// nothing visible. An unknown window has none. Such a buffer's id works
+    /// with `searchBuffer`, and with `showBuffer` once its window is active;
+    /// `getBufferInfo` and the other buffer reads answer for the active
+    /// window's buffers only.
     #[plugin_api(ts_return = "BufferInfo[]")]
-    pub fn list_buffers<'js>(&self, ctx: fresh_js::Ctx<'js>) -> fresh_js::Result<Value<'js>> {
+    pub fn list_buffers<'js>(
+        &self,
+        ctx: fresh_js::Ctx<'js>,
+        window_id: fresh_js::function::Opt<u64>,
+    ) -> fresh_js::Result<Value<'js>> {
         let buffers: Vec<BufferInfo> = if let Ok(s) = self.state_snapshot.read() {
-            s.buffers.values().cloned().collect()
+            match window_id.0.map(fresh_core::WindowId) {
+                Some(id) if id != s.active_window_id => {
+                    s.background_buffers.get(&id).cloned().unwrap_or_default()
+                }
+                _ => s.buffers.values().cloned().collect(),
+            }
         } else {
             Vec::new()
         };
@@ -2162,8 +2179,12 @@ impl JsEditorApi {
     }
 
     /// Run a command on the machine. Resolves with `{code, stdout, stderr}`; a
-    /// non-zero `code` resolves rather than rejecting. Unlike `spawnHostProcess`,
-    /// a remote machine runs it there. Rejects on a machine opened read-only.
+    /// non-zero `code` resolves rather than rejecting, and a command that could
+    /// not be started (the program missing, the cwd gone, a machine opened
+    /// read-only) resolves with `code` -1 and the reason in `stderr`. Unlike
+    /// `spawnHostProcess`, a remote machine runs it there.
+    /// A non-empty `stdoutTo` streams stdout into that file instead. The id
+    /// returned is the process id `_killHostProcess` kills it by.
     #[plugin_api(
         async_promise,
         js_name = "_runOnTargetOn",
@@ -2177,6 +2198,7 @@ impl JsEditorApi {
         program: String,
         #[plugin_api(ts_type = "string[]")] args: fresh_js::Value<'js>,
         cwd: String,
+        stdout_to: String,
     ) -> fresh_js::Result<u64> {
         let parsed: serde_json::Value = fresh_js::serde::from_value(args)
             .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))?;
@@ -2197,6 +2219,7 @@ impl JsEditorApi {
             program,
             args,
             cwd: (!cwd.is_empty()).then_some(cwd),
+            stdout_to: (!stdout_to.is_empty()).then(|| PathBuf::from(stdout_to)),
             callback_id: JsCallbackId::new(id),
         });
         Ok(id)
@@ -4107,14 +4130,21 @@ impl JsEditorApi {
 
     /// Directory holding terminal scrollback backing files for the current
     /// working directory. Each project root / worktree has its own subdir, so
-    /// Universal Search's terminal scope can stay scoped to the active
-    /// project rather than spanning every project's terminals.
-    pub fn get_terminal_dir(&self) -> String {
-        let working_dir = self
-            .state_snapshot
-            .read()
-            .map(|s| s.working_dir.clone())
-            .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    /// Universal Search's terminal scope can stay scoped to one project.
+    ///
+    /// @param windowId - The directory of this window's root instead (from
+    /// `listWindows()`); `""` for an unknown window.
+    pub fn get_terminal_dir(&self, window_id: fresh_js::function::Opt<u64>) -> String {
+        let working_dir = match self.state_snapshot.read() {
+            Ok(s) => match window_id.0.map(fresh_core::WindowId) {
+                Some(id) => match s.windows.iter().find(|w| w.id == id) {
+                    Some(w) => w.root.clone(),
+                    None => return String::new(),
+                },
+                None => s.working_dir.clone(),
+            },
+            Err(_) => std::path::PathBuf::from("."),
+        };
         self.services
             .terminal_dir(&working_dir)
             .to_string_lossy()
@@ -8557,6 +8587,13 @@ impl JsEditorApi {
     /// directly into the named file instead of buffering it. The
     /// resolved `SpawnResult.stdout` is empty in that case; the bytes
     /// land on disk for `openFile` to pick up as a file-backed buffer.
+    ///
+    /// @deprecated Run commands on a machine instead: `editor.runOnTarget`
+    /// for the active window, or `run` on the machine
+    /// `editor.openMachine({ kind: "window", window })` returns for any
+    /// window, so the command runs where that window's files are. Both take
+    /// the same arguments, return the same killable handle, and resolve with
+    /// `{ code, stdout, stderr }`. `spawnHostProcess` runs on this computer.
     #[plugin_api(async_thenable, js_name = "spawnProcess", ts_return = "SpawnResult")]
     #[qjs(rename = "_spawnProcessStart")]
     pub fn spawn_process_start(
@@ -9337,7 +9374,8 @@ impl JsEditorApi {
     /// editor's own search — the one Ctrl+F and `beginSearch` use. Resolves
     /// with its matches in order: each with its byte offset and length, its
     /// 1-based line and byte column, and the text of its line. `bufferId` 0
-    /// is the active buffer. Every match is found unless `maxResults` is
+    /// is the active buffer; a buffer of any window (`listBuffers(windowId)`)
+    /// can be searched. Every match is found unless `maxResults` is
     /// given; `fixedString` and `caseSensitive` default to true. `cancel()`
     /// stops it, resolving with no matches.
     #[plugin_api(
@@ -9746,18 +9784,22 @@ impl JsEditorApi {
             .is_ok()
     }
 
-    /// The visible screen of each terminal open in the active window, read
-    /// from memory: a terminal's backing file (in `getTerminalDir()`) holds
-    /// only the lines that have scrolled off it.
+    /// The visible screen of each terminal open in a window, read from
+    /// memory: a terminal's backing file (in `getTerminalDir()`) holds only
+    /// the lines that have scrolled off it.
+    ///
+    /// @param windowId - The window (from `listWindows()`); defaults to the
+    /// active one. An unknown window has no terminals.
     #[plugin_api(
         async_promise,
         js_name = "getTerminalScreens",
         ts_return = "TerminalScreen[]"
     )]
     #[qjs(rename = "_getTerminalScreensStart")]
-    pub fn get_terminal_screens_start(&self) -> u64 {
+    pub fn get_terminal_screens_start(&self, window_id: fresh_js::function::Opt<u64>) -> u64 {
         let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::GetTerminalScreens {
+            window_id: window_id.0.map(fresh_core::WindowId),
             callback_id: fresh_core::api::JsCallbackId::new(id),
         });
         id
@@ -10309,7 +10351,27 @@ const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
                 editor.getNextKey = _wrapAsync("_getNextKeyStart", "getNextKey");
                 editor._walkTreeOn = _wrapAsync("_walkTreeStart", "walkTree");
                 editor._readFilePrefixesOn = _wrapAsync("_readFilePrefixesStart", "readFilePrefixes");
-                editor._runOnTargetOn = _wrapAsync("_runOnTargetStart", "runOnTarget");
+                // A run is a `ProcessHandle`: awaitable, and `kill()` stops it.
+                editor._runOnTargetOn = function(machine, program, args, cwd, stdoutTo) {
+                    const callbackId = editor._runOnTargetStart(
+                        machine, program, args || [], cwd || "", stdoutTo || "");
+                    const resultPromise = new Promise((resolve, reject) => {
+                        globalThis._pendingCallbacks.set(callbackId, { resolve, reject });
+                    });
+                    return {
+                        processId: callbackId,
+                        result: resultPromise,
+                        kill() {
+                            return Promise.resolve(editor._killHostProcess(callbackId));
+                        },
+                        then(onFulfilled, onRejected) {
+                            return resultPromise.then(onFulfilled, onRejected);
+                        },
+                        catch(onRejected) {
+                            return resultPromise.catch(onRejected);
+                        },
+                    };
+                };
                 editor._machineEnvOn = _wrapAsync("_machineEnvStart", "machineEnv");
                 editor._openMachineRaw = _wrapAsync("_openMachineStart", "openMachine");
                 editor._closeMachineRaw = _wrapAsync("_closeMachineStart", "closeMachine");
@@ -10321,8 +10383,8 @@ const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
                 editor.readFilePrefixes = function(requests) {
                     return editor._readFilePrefixesOn(0, requests);
                 };
-                editor.runOnTarget = function(program, args, cwd) {
-                    return editor._runOnTargetOn(0, program, args || [], cwd || "");
+                editor.runOnTarget = function(program, args, cwd, stdoutTo) {
+                    return editor._runOnTargetOn(0, program, args, cwd, stdoutTo);
                 };
                 editor.machineEnv = function(names) {
                     return editor._machineEnvOn(0, names || []);
@@ -10341,8 +10403,8 @@ const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
                             readFilePrefixes: function(requests) {
                                 return editor._readFilePrefixesOn(id, requests);
                             },
-                            run: function(program, args, cwd) {
-                                return editor._runOnTargetOn(id, program, args || [], cwd || "");
+                            run: function(program, args, cwd, stdoutTo) {
+                                return editor._runOnTargetOn(id, program, args, cwd, stdoutTo);
                             },
                             env: function(names) {
                                 return editor._machineEnvOn(id, names || []);
@@ -11956,6 +12018,57 @@ mod tests {
         assert_eq!(
             killed, started,
             "each kill should name its spawn: {spawned:?}"
+        );
+    }
+
+    /// `runOnTarget` (the active window's machine) returns a handle like
+    /// `spawnProcess` does: it carries `stdoutTo` to the editor, and its
+    /// `kill()` names that very run, so a superseded command can be stopped.
+    #[test]
+    fn test_api_run_on_target_streams_and_kills() {
+        let (mut backend, rx) = create_test_backend();
+
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            const run = editor.runOnTarget("rg", ["x"], "/src", "/tmp/out.txt");
+            if (typeof run.then !== "function") throw new Error("not awaitable");
+            run.kill();
+        "#,
+                "test.js",
+            )
+            .unwrap();
+
+        let sent: Vec<PluginCommand> = rx.try_iter().collect();
+        let run = sent.iter().find_map(|cmd| match cmd {
+            PluginCommand::RunOnTarget {
+                machine,
+                program,
+                cwd,
+                stdout_to,
+                callback_id,
+                ..
+            } => Some((
+                *machine,
+                program.clone(),
+                cwd.clone(),
+                stdout_to.clone(),
+                callback_id.as_u64(),
+            )),
+            _ => None,
+        });
+        let Some((machine, program, cwd, stdout_to, id)) = run else {
+            panic!("no RunOnTarget sent: {sent:?}");
+        };
+        assert_eq!(machine, None, "the active window's machine");
+        assert_eq!(program, "rg");
+        assert_eq!(cwd.as_deref(), Some("/src"));
+        assert_eq!(stdout_to, Some(std::path::PathBuf::from("/tmp/out.txt")));
+        assert!(
+            sent.iter()
+                .any(|cmd| matches!(cmd, PluginCommand::KillHostProcess { process_id } if *process_id == id)),
+            "kill() should name the run: {sent:?}"
         );
     }
 

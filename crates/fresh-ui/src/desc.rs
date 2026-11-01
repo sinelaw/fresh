@@ -713,6 +713,10 @@ pub struct Fit {
     pub clamp: bool,
     /// Slide along the cross axis.
     pub shift: bool,
+    /// Measure against the room on the placed side of the anchor rather than
+    /// the whole frame, so content that can give up rows (a scrolling list)
+    /// does, instead of being moved over the anchor it was placed beside.
+    pub shrink: bool,
 }
 
 impl Fit {
@@ -720,16 +724,25 @@ impl Fit {
         flip: true,
         clamp: false,
         shift: false,
+        shrink: false,
     };
     pub const CLAMP: Fit = Fit {
         flip: false,
         clamp: true,
         shift: false,
+        shrink: false,
     };
     pub const SHIFT: Fit = Fit {
         flip: false,
         clamp: false,
         shift: true,
+        shrink: false,
+    };
+    pub const SHRINK: Fit = Fit {
+        flip: false,
+        clamp: false,
+        shift: false,
+        shrink: true,
     };
 
     pub const fn or(self, o: Fit) -> Fit {
@@ -737,6 +750,7 @@ impl Fit {
             flip: self.flip | o.flip,
             clamp: self.clamp | o.clamp,
             shift: self.shift | o.shift,
+            shrink: self.shrink | o.shrink,
         }
     }
 }

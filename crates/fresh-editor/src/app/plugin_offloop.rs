@@ -206,31 +206,45 @@ pub(crate) struct RunOnTargetRequest {
     pub program: String,
     pub args: Vec<String>,
     pub cwd: Option<String>,
+    /// Stream stdout into this file; `stdout` then resolves empty.
+    pub stdout_to: Option<PathBuf>,
+    /// Fired by the handle's `kill()`: the child is killed and the run
+    /// settles with its killed status.
+    pub kill_rx: tokio::sync::oneshot::Receiver<()>,
     pub spawner: Arc<dyn crate::services::remote::ProcessSpawner>,
     pub callback_id: JsCallbackId,
 }
 
 /// Run a command through the authority's spawner, so a remote machine runs it
-/// there. A non-zero exit is data, not an error.
+/// there. A non-zero exit is data, not an error, and so is a command that
+/// could not be started at all (the program missing, the cwd gone): it
+/// settles with code -1 and the reason as its stderr, as `spawnProcess` did,
+/// so a caller never has a rejection to forget to catch.
 pub(crate) fn run_on_target(runtime: &LiveRuntime, cap: OffLoop, req: RunOnTargetRequest) {
     runtime.spawn(async move {
         let RunOnTargetRequest {
             program,
             args,
             cwd,
+            stdout_to,
+            kill_rx,
             spawner,
             callback_id,
         } = req;
 
-        let result = match spawner.spawn(program.clone(), args, cwd).await {
-            Ok(out) => serde_json::to_string(&serde_json::json!({
-                "code": out.exit_code,
-                "stdout": out.stdout,
-                "stderr": out.stderr,
-            }))
-            .map_err(|err| format!("could not serialise command result: {err}")),
-            Err(err) => Err(format!("{program}: {err}")),
+        let (code, stdout, stderr) = match spawner
+            .spawn_cancellable(program.clone(), args, cwd, stdout_to, kill_rx)
+            .await
+        {
+            Ok(out) => (out.exit_code, out.stdout, out.stderr),
+            Err(err) => (-1, String::new(), format!("{program}: {err}")),
         };
+        let result = serde_json::to_string(&serde_json::json!({
+            "code": code,
+            "stdout": stdout,
+            "stderr": stderr,
+        }))
+        .map_err(|err| format!("could not serialise command result: {err}"));
         cap.settle(callback_id, result);
     });
 }

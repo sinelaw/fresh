@@ -2162,6 +2162,53 @@ fn test_command_palette_page_down_moves_by_the_clamped_window() {
     );
 }
 
+/// On a terminal too short for the full list, the list gives up rows instead
+/// of covering the hints row and the input line (#3578). The list used to be
+/// flipped below the prompt row, run off the screen, and get clamped back up
+/// over the last two rows.
+#[test]
+fn test_quick_open_list_shrinks_above_the_prompt_on_a_short_terminal() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut harness = EditorTestHarness::with_temp_project(182, 12).unwrap();
+    let root = harness.project_dir().unwrap();
+    for i in 1..=12 {
+        fs::write(root.join(format!("shortterm{i}.txt")), "x").unwrap();
+    }
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("shortterm").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("shortterm1"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    let lines: Vec<&str> = screen.lines().collect();
+    let last = lines.len() - 1;
+    assert!(
+        lines[last].starts_with("shortterm"),
+        "the input line must stay visible on the last row:\n{screen}"
+    );
+    assert!(
+        lines[last - 1].contains(">command"),
+        "the mode hints must stay visible above the input line:\n{screen}"
+    );
+    assert!(
+        lines[last - 2].starts_with('└'),
+        "the list's bottom edge must sit right above the hints row:\n{screen}"
+    );
+    let rows = lines.iter().filter(|l| l.starts_with("│  ")).count();
+    assert!(
+        (1..10).contains(&rows),
+        "the list gives up rows to fit:\n{screen}"
+    );
+}
+
 /// Quick Open in a non-Git folder lists dotfiles only while Show Hidden Files is on.
 #[test]
 fn test_quick_open_follows_show_hidden_files_in_non_git_folder() {

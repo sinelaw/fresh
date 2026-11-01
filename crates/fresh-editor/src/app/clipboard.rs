@@ -1462,6 +1462,17 @@ impl Editor {
         self.system_clipboard_reader = Some(reader);
     }
 
+    /// Stand in for the system clipboard a terminal paste reads, for tests:
+    /// one that holds no text (an image) can't be had from a real host
+    /// deterministically. Read even in internal-only mode.
+    #[doc(hidden)]
+    pub fn set_system_clipboard_probe_for_test(
+        &mut self,
+        probe: fn() -> crate::services::clipboard::SystemClipboard,
+    ) {
+        self.system_clipboard_probe = Some(probe);
+    }
+
     /// Paste from internal clipboard only (for testing)
     /// This bypasses the system clipboard to avoid interference from CI environments
     #[doc(hidden)]

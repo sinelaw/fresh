@@ -1027,6 +1027,9 @@ impl Editor {
                 callback_id,
                 result,
             } => {
+                // A settled `run`'s kill handle is stale; for other off-loop
+                // work there is none and this is a no-op.
+                self.host_process_handles.remove(&callback_id);
                 let pm = self.plugin_manager.read().unwrap();
                 match result {
                     Ok(json) => pm.resolve_callback(JsCallbackId::from(callback_id), json),

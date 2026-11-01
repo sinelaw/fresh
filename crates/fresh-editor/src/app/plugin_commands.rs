@@ -3587,23 +3587,33 @@ impl Editor {
         machine: Option<u64>,
         callback_id: fresh_core::api::JsCallbackId,
     ) -> Option<&crate::services::authority::Authority> {
+        self.machine_authority(machine)
+            .map_err(|msg| {
+                self.plugin_manager
+                    .read()
+                    .unwrap()
+                    .reject_callback(callback_id, msg)
+            })
+            .ok()
+    }
+
+    /// The authority behind `machine` (the active window's when `None`), or
+    /// why there is none.
+    fn machine_authority(
+        &self,
+        machine: Option<u64>,
+    ) -> Result<&crate::services::authority::Authority, String> {
         let Some(id) = machine else {
-            return Some(self.authority());
-        };
-        let reject = |msg: String| {
-            self.plugin_manager
-                .read()
-                .unwrap()
-                .reject_callback(callback_id, msg);
-            None
+            return Ok(self.authority());
         };
         match self.open_machines.get(&id).map(|m| &m.kind) {
-            Some(super::OpenMachineKind::Owned(connection)) => Some(&connection.authority),
-            Some(super::OpenMachineKind::Window(window)) => match self.windows.get(window) {
-                Some(window) => Some(window.authority()),
-                None => reject(format!("machine {id}'s window has closed")),
-            },
-            None => reject(format!("machine {id} is not open")),
+            Some(super::OpenMachineKind::Owned(connection)) => Ok(&connection.authority),
+            Some(super::OpenMachineKind::Window(window)) => self
+                .windows
+                .get(window)
+                .map(|window| window.authority())
+                .ok_or_else(|| format!("machine {id}'s window has closed")),
+            None => Err(format!("machine {id} is not open")),
         }
     }
 
@@ -3740,18 +3750,36 @@ impl Editor {
         program: String,
         args: Vec<String>,
         cwd: Option<String>,
+        stdout_to: Option<std::path::PathBuf>,
         callback_id: fresh_core::api::JsCallbackId,
     ) {
         let Some((runtime, sender)) = self.off_loop_parts(callback_id) else {
             return;
         };
-        let Some(authority) = self.authority_for(machine, callback_id) else {
-            return;
+        // Like a command that cannot start, a machine that is gone resolves
+        // with -1: callers written for `spawnProcess` expect a result.
+        let authority = match self.machine_authority(machine) {
+            Ok(authority) => authority,
+            Err(reason) => {
+                let result = serde_json::json!({ "code": -1, "stdout": "", "stderr": reason });
+                self.plugin_manager
+                    .read()
+                    .unwrap()
+                    .resolve_callback(callback_id, result.to_string());
+                return;
+            }
         };
+        let spawner = authority.process_spawner.clone();
+        let filesystem = authority.filesystem.clone();
+        // Killed by the handle's `kill()` (`KillHostProcess`, keyed by the
+        // callback id); dropped when the run settles.
+        let (kill_tx, kill_rx) = tokio::sync::oneshot::channel::<()>();
+        self.host_process_handles
+            .insert(callback_id.as_u64(), kill_tx);
         super::plugin_offloop::run_on_target(
             &runtime,
             super::plugin_offloop::OffLoop {
-                filesystem: authority.filesystem.clone(),
+                filesystem,
                 sender,
                 cancel: self.cancel_for(machine),
             },
@@ -3759,7 +3787,9 @@ impl Editor {
                 program,
                 args,
                 cwd,
-                spawner: authority.process_spawner.clone(),
+                stdout_to,
+                kill_rx,
+                spawner,
                 callback_id,
             },
         );
@@ -3872,7 +3902,7 @@ impl Editor {
         })
     }
 
-    /// Search one buffer of the active window as it is — a slice per tick,
+    /// Search one buffer, of whichever window holds it, as it is — a slice per tick,
     /// like an open buffer in a project search — into `handle`: a
     /// `beginSearch` (or `searchBuffer`) of just that buffer.
     fn search_one_buffer(
@@ -3885,10 +3915,21 @@ impl Editor {
         let query = opts
             .query(pattern)
             .map_err(|e| format!("Invalid regex: {}", e))?;
+        // Buffer ids are unique across windows: the buffer may be another
+        // workspace's (Universal Search's "All workspaces").
+        let window_id = if self.active_window().buffers.contains_key(&buffer_id) {
+            self.active_window
+        } else {
+            self.windows
+                .iter()
+                .find(|(_, w)| w.buffers.contains_key(&buffer_id))
+                .map(|(id, _)| *id)
+                .ok_or_else(|| format!("Buffer {} not found", buffer_id.0))?
+        };
         let state = self
-            .active_window()
-            .buffers
-            .get(&buffer_id)
+            .windows
+            .get(&window_id)
+            .and_then(|w| w.buffers.get(&buffer_id))
             .ok_or_else(|| format!("Buffer {} not found", buffer_id.0))?;
         let file = state
             .buffer
@@ -3901,7 +3942,7 @@ impl Editor {
         // One more than is kept, to tell a capped search from one that found
         // exactly `max`.
         let job = super::open_buffer_search::OpenBufferSearch::new(
-            self.active_window,
+            window_id,
             buffer_id,
             file,
             query,

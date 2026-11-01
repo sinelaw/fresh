@@ -657,6 +657,10 @@ pub(crate) fn settle_pane_view(
         .get(&buffer_id)
         .map(|s| s.margins.left_total_width() as u16)
         .unwrap_or(0);
+    let drawn_from = win
+        .buffers
+        .get(&buffer_id)
+        .map(|s| (buffer_id, s.buffer.version()));
     let (compose_width, top_byte) = win
         .buffers
         .splits()
@@ -676,6 +680,7 @@ pub(crate) fn settle_pane_view(
         top_byte,
         caret,
         caret_shown,
+        drawn_from,
     );
 }
 

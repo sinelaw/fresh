@@ -47,6 +47,8 @@ The indicator is the `{terminal_restart}` status-bar element and can be moved or
 
 To have a shell's tab close when you `exit` it (or press `Ctrl+D`) instead, set `terminal.close_on_exit = true`. A pane the terminal was the only tab of closes with it, like clicking the tab's ×. Terminals running a command — an agent, a plugin's build output — keep their scrollback either way, since reading it is the point.
 
+In a terminal pane, `Ctrl+V` pastes the system clipboard's text. When the clipboard holds no text, for example an image you copied, `Ctrl+V` goes to the program instead, so an agent CLI such as Claude Code can read the image from the clipboard itself. Set `terminal.pass_ctrl_v_without_text = false` to paste your last yank in that case instead. When the system clipboard can't be read at all (no display, over SSH), `Ctrl+V` pastes your last yank either way.
+
 ## Terminal Modes
 
 The terminal has two modes, indicated in the status bar:

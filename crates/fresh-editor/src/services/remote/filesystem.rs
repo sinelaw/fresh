@@ -163,14 +163,14 @@ impl RemoteFileSystem {
         let is_hidden = name.starts_with('.');
         let permissions = FilePermissions::from_mode(rm.mode);
 
-        #[cfg(unix)]
-        let is_readonly = {
-            let (euid, user_groups) =
-                crate::model::filesystem::StdFileSystem::current_user_groups();
-            permissions.is_readonly_for_user(euid, rm.uid, rm.gid, &user_groups)
+        // Writability is a question about the *remote* user, so the agent
+        // answers it. The local euid and groups are no evidence: the SSH user
+        // usually has a different uid, and every file it owns would read as
+        // someone else's (#2944).
+        let is_readonly = match rm.writable {
+            Some(writable) => !writable,
+            None => Self::readonly_from_mode(rm, &permissions),
         };
-        #[cfg(not(unix))]
-        let is_readonly = permissions.is_readonly();
 
         let mut meta = FileMetadata::new(rm.size)
             .with_hidden(is_hidden)
@@ -188,6 +188,23 @@ impl RemoteFileSystem {
         }
 
         meta
+    }
+
+    /// The fallback for an agent that does not report `writable`: the mode
+    /// bits, judged against the local user. Wrong whenever the remote user's
+    /// uid differs, which is why the agent's answer is preferred.
+    fn readonly_from_mode(rm: &RemoteMetadata, permissions: &FilePermissions) -> bool {
+        #[cfg(unix)]
+        {
+            let (euid, user_groups) =
+                crate::model::filesystem::StdFileSystem::current_user_groups();
+            permissions.is_readonly_for_user(euid, rm.uid, rm.gid, &user_groups)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = rm;
+            permissions.is_readonly()
+        }
     }
 
     /// Convert remote dir entry to DirEntry
@@ -1016,6 +1033,7 @@ mod tests {
             dir: false,
             file: true,
             link: false,
+            writable: None,
         };
 
         let meta = RemoteFileSystem::convert_metadata(&rm, "test.txt");
@@ -1025,6 +1043,47 @@ mod tests {
 
         let meta = RemoteFileSystem::convert_metadata(&rm, ".hidden");
         assert!(meta.is_hidden);
+    }
+
+    /// The agent's `stat` reply for a file the remote user owns, under a uid
+    /// the local user does not have (#2944). The mode bits alone, judged
+    /// against the local user, say read-only; the agent says writable, and
+    /// that is the answer that counts. (Run as root the fallback errs the
+    /// other way — root writes anything — which the second half catches.)
+    #[test]
+    fn test_convert_metadata_trusts_remote_writability() {
+        #[cfg(unix)]
+        let foreign_uid = {
+            let (euid, _) = crate::model::filesystem::StdFileSystem::current_user_groups();
+            euid.wrapping_add(1)
+        };
+        #[cfg(not(unix))]
+        let foreign_uid = 4242u32;
+        let reply = |writable: bool| {
+            serde_json::json!({
+                "size": 15,
+                "mtime": 1700000000,
+                "mode": 0o100644,
+                "uid": foreign_uid,
+                "gid": 4242,
+                "dir": false,
+                "file": true,
+                "link": false,
+                "writable": writable,
+            })
+        };
+
+        let rm: RemoteMetadata = serde_json::from_value(reply(true)).unwrap();
+        assert!(
+            !RemoteFileSystem::convert_metadata(&rm, "notes.txt").is_readonly,
+            "a file the remote user can write must not be marked read-only"
+        );
+
+        let rm: RemoteMetadata = serde_json::from_value(reply(false)).unwrap();
+        assert!(
+            RemoteFileSystem::convert_metadata(&rm, "notes.txt").is_readonly,
+            "a file the remote user cannot write must stay read-only"
+        );
     }
 
     #[test]

@@ -1069,10 +1069,10 @@ function paint(dims?: { width: number; height: number }) {
 // platform; the other exits immediately with ENOENT and causes no
 // user-visible effect. Fire-and-forget: we don't await.
 function openUrl(url: string) {
-    // spawnProcess returns a ProcessHandle; we intentionally discard it.
+    // runOnTarget returns a ProcessHandle; we intentionally discard it.
     // The process runs to completion on its own; failures are silent.
-    editor.spawnProcess("xdg-open", [url]);
-    editor.spawnProcess("open", [url]);
+    editor.runOnTarget("xdg-open", [url]);
+    editor.runOnTarget("open", [url]);
 }
 
 function dispatchClickAction(action: ClickAction) {
@@ -1098,15 +1098,15 @@ async function run(
     cwd: string,
     timeoutMs: number,
 ): Promise<{ stdout: string; stderr: string; ok: boolean }> {
-    const handle = editor.spawnProcess(cmd, args, cwd);
+    const handle = editor.runOnTarget(cmd, args, cwd);
     const timeout = editor.delay(timeoutMs).then(() => "__timeout__");
     const res = await Promise.race([(async () => await handle)(), timeout]);
     if (res === "__timeout__") {
         await handle.kill();
         return { stdout: "", stderr: "timed out", ok: false };
     }
-    const r = res as SpawnResult;
-    return { stdout: r.stdout ?? "", stderr: r.stderr ?? "", ok: r.exit_code === 0 };
+    const r = res as CommandResult;
+    return { stdout: r.stdout ?? "", stderr: r.stderr ?? "", ok: r.code === 0 };
 }
 
 const trim = (s: string) => s.replace(/\s+$/, "");

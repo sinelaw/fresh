@@ -71,6 +71,14 @@
       "when": "normal"
     },
     {
+      "comment": "Shift+Home selects to the true beginning of line too, matching Home above",
+      "key": "Home",
+      "modifiers": ["shift"],
+      "action": "select_line_start",
+      "args": {},
+      "when": "normal"
+    },
+    {
       "comment": "M-m - back-to-indentation",
       "key": "m",
       "modifiers": ["alt"],

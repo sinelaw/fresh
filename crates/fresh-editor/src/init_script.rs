@@ -206,16 +206,12 @@ const editor = getEditor();
 //     liveGrep.registerProvider({
 //         name: "fff",
 //         priority: 100,
-//         isAvailable: async () => {
-//             try {
-//                 const r = await editor.spawnProcess("fff", ["--version"], editor.getCwd());
-//                 return r.exit_code === 0;
-//             } catch {
-//                 return false;
-//             }
-//         },
-//         search: async (query, { cwd, maxResults }) => {
-//             const r = await editor.spawnProcess("fff", [query], cwd);
+//         // Run on the machine you are handed: the searched workspace's
+//         // (its SSH host or container, for a remote one).
+//         isAvailable: async ({ machine, cwd }) =>
+//             (await machine.run("fff", ["--version"], cwd)).code === 0,
+//         search: async (query, { machine, cwd, maxResults }) => {
+//             const r = await machine.run("fff", [query], cwd);
 //             // Return GrepMatch[]: { file, line, column, content }
 //             return r.stdout.split("\n").filter(Boolean).map((line) => {
 //                 const [file, lineStr, ...rest] = line.split(":");

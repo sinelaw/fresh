@@ -7,6 +7,7 @@ Maintainer: Noam Lewis <jones.noamle@gmail.com>
 # (Debian testing's index), which lists every crate dependency of every
 # workspace crate that the archive can satisfy; debian/rules drops the rest
 # (oxc, ts-rs, three tree-sitter grammars, fresh-gui) from the manifests.
+# jsonc-parser is written by hand: unstable has 0.34, testing 0.33.
 Build-Depends:
  debhelper-compat (= 13),
  dh-cargo (>= 34),
@@ -45,10 +46,10 @@ Build-Depends:
  librust-insta-1+yaml-dev (>= 1.46-~~) <!nocheck>,
  librust-interprocess-2+default-dev (>= 2.2-~~),
  librust-interprocess-2+tokio-dev (>= 2.2-~~),
- librust-jsonc-parser-0.33+cst-dev (>= 0.33-~~),
- librust-jsonc-parser-0.33+default-dev (>= 0.33-~~),
- librust-jsonc-parser-0.33+serde-dev (>= 0.33-~~),
- librust-jsonc-parser-0.33+serde-json-dev (>= 0.33-~~),
+ librust-jsonc-parser-0.34+cst-dev (>= 0.34-~~) | librust-jsonc-parser-0.33+cst-dev (>= 0.33-~~),
+ librust-jsonc-parser-0.34+default-dev (>= 0.34-~~) | librust-jsonc-parser-0.33+default-dev (>= 0.33-~~),
+ librust-jsonc-parser-0.34+serde-dev (>= 0.34-~~) | librust-jsonc-parser-0.33+serde-dev (>= 0.33-~~),
+ librust-jsonc-parser-0.34+serde-json-dev (>= 0.34-~~) | librust-jsonc-parser-0.33+serde-json-dev (>= 0.33-~~),
  librust-libc-0.2+default-dev (>= 0.2-~~),
  librust-libloading-0.8+default-dev (>= 0.8-~~),
  librust-lsp-types-0.97+default-dev (>= 0.97-~~),

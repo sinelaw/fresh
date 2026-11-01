@@ -2824,6 +2824,15 @@ interface TerminalConfig {
     * Default: `false`
     */
     close_on_exit?: boolean;
+    /**
+    * When the system clipboard holds no text (an image, or nothing), terminal
+    * paste sends Ctrl+V to the program instead of your last yank, so an agent
+    * CLI can read an image from the clipboard itself. Turn off to paste the
+    * yank as before. Default: true
+    *
+    * Default: `true`
+    */
+    pass_ctrl_v_without_text?: boolean;
   }
 ```
 
@@ -2903,7 +2912,13 @@ interface FreshMachine {
     path: string;
     maxBytes: number;
   }[]): Promise<FilePrefix[]>;
-  run(program: string, args?: string[], cwd?: string): Promise<CommandResult>;
+  /** Run a command here, without a shell. `stdoutTo` streams stdout into
+  *  that file instead (`stdout` then resolves empty; this computer only).
+  *  Never rejects: a command that could not be started, or a machine that
+  *  is closed or whose window has closed, resolves with `code` -1 and the
+  *  reason in `stderr`. `kill()` stops it here, on an SSH host or in a
+  *  Kubernetes pod; in a container it runs to completion. */
+  run(program: string, args?: string[], cwd?: string, stdoutTo?: string): ProcessHandle<CommandResult>;
   /** Environment variables, for the names that are set. A remote machine is
   *  asked with `printenv`; never this computer's values for another machine. */
   env(names: string[]): Promise<Record<string, string>>;
@@ -4177,6 +4192,10 @@ type TerminalScreen = {
   * scrollback, until the next one replaces it.
   */
   file: string;
+  /**
+  * The terminal's tab label (e.g. `claude`, `Terminal 1`)
+  */
+  name: string;
 };
 ```
 

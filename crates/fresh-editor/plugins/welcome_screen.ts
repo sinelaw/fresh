@@ -2068,8 +2068,8 @@ async function probeRepoFiles(): Promise<void> {
   if (repoFilesLoading) return;
   repoFilesLoading = true;
   try {
-    const res = await editor.spawnProcess("git", ["ls-files"], editor.getCwd());
-    if (res.exit_code === 0) {
+    const res = await editor.runOnTarget("git", ["ls-files"], editor.getCwd());
+    if (res.code === 0) {
       repoFiles = res.stdout.split("\n").filter((l) => l.length > 0).slice(0, 5000);
       recomputeHits();
     } else {
@@ -2084,8 +2084,8 @@ async function probeRepoFiles(): Promise<void> {
 
 async function probeGit(): Promise<void> {
   try {
-    const st = await editor.spawnProcess("git", ["status", "--porcelain", "-b"], editor.getCwd());
-    if (st.exit_code === 0) {
+    const st = await editor.runOnTarget("git", ["status", "--porcelain", "-b"], editor.getCwd());
+    if (st.code === 0) {
       const lines = st.stdout.split("\n").filter((l) => l.length > 0);
       const head = lines.find((l) => l.startsWith("## "));
       if (head) {

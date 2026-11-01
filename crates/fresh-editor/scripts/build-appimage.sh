@@ -114,6 +114,11 @@ if [ -d "$ICONS_ROOT" ]; then
     echo "Installed hicolor PNG icons"
 fi
 
+# appimagetool no longer accepts an SVG as the top-level icon: it wants
+# fresh.png (or .xpm) next to the desktop file, plus a .DirIcon.
+cp "$ICONS_ROOT/256x256/apps/fresh.png" "$APPDIR/fresh.png"
+ln -sf fresh.png "$APPDIR/.DirIcon"
+
 # Copy and update AppStream metadata (filename must match the app ID)
 METAINFO="$APPDIR/usr/share/metainfo/${APP_ID}.metainfo.xml"
 cp "$REPO_ROOT/flatpak/${APP_ID}.metainfo.xml" "$METAINFO"

@@ -154,10 +154,10 @@
       "when": "normal"
     },
     {
-      "comment": "Shift+Home -> Select to line start (for terminals that send Home correctly)",
+      "comment": "Shift+Home -> Smart select to line start, like Home (for terminals that send Home correctly)",
       "key": "Home",
       "modifiers": ["shift"],
-      "action": "select_line_start",
+      "action": "select_smart_home",
       "args": {},
       "when": "normal"
     },

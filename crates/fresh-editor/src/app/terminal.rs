@@ -587,9 +587,10 @@ impl Window {
                 // width so scroll-back lays out like the live grid
                 // (fresh#2649). The width is filled in on scroll-back entry
                 // / by the per-frame healer once the PTY reports its size.
-                view_state.buffer_tab_state_mut().viewport.line_wrap_enabled = true;
-                view_state.buffer_tab_state_mut().viewport.grid_wrap = true;
-                view_state.buffer_tab_state_mut().viewport.wrap_indent = false;
+                // Set on the terminal's own state below: `add_buffer` only
+                // adds the tab, so `buffer_tab_state_mut()` here is still the
+                // buffer the pane was showing, and writing it there wrapped
+                // that document and hid it from global view toggles.
                 // Disable line numbers + current-line highlight for the
                 // terminal buffer's per-buffer view state so exiting
                 // terminal mode doesn't suddenly add a gutter / row
@@ -2102,6 +2103,32 @@ impl Editor {
 }
 
 impl Window {
+    /// The visible screen of each of this window's terminals, read from
+    /// memory, for the plugin API's `getTerminalScreens`.
+    pub(crate) fn terminal_screens(&self) -> Vec<fresh_core::api::TerminalScreen> {
+        self.terminal_buffers
+            .iter()
+            .filter_map(|(buffer_id, info)| {
+                let handle = self.terminal_manager.get(info.terminal_id)?;
+                let state = handle.state.lock().ok()?;
+                Some(fresh_core::api::TerminalScreen {
+                    buffer_id: buffer_id.0 as u64,
+                    lines: state.screen_lines(),
+                    file: self
+                        .terminal_backing_files
+                        .get(&info.terminal_id)
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                    name: self
+                        .buffer_metadata
+                        .get(buffer_id)
+                        .map(|m| m.display_name.clone())
+                        .unwrap_or_default(),
+                })
+            })
+            .collect()
+    }
+
     /// Get the terminal state for the active buffer (if it's a terminal buffer).
     pub fn get_active_terminal_state(
         &self,

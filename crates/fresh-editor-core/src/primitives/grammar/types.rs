@@ -85,6 +85,22 @@ pub struct GrammarInfo {
 const SYNTECT_TO_TREE_SITTER_ALIASES: &[(&str, fresh_languages::Language)] =
     &[("Bourne Again Shell (bash)", fresh_languages::Language::Bash)];
 
+/// Grammars whose display name is too long for the status bar, with the
+/// label shown there instead. The display name stays the grammar's identity
+/// everywhere else (config, the language picker, alias resolution).
+const SHORT_DISPLAY_NAMES: &[(&str, &str)] = &[("Bourne Again Shell (bash)", "Bash")];
+
+/// The label to show for a grammar where space is tight, such as the status
+/// bar: a short form for the few grammars with verbose names, otherwise the
+/// display name unchanged.
+pub fn short_display_name(display_name: &str) -> &str {
+    SHORT_DISPLAY_NAMES
+        .iter()
+        .find(|(full, _)| *full == display_name)
+        .map(|(_, short)| *short)
+        .unwrap_or(display_name)
+}
+
 /// Resolve a syntect syntax display name to a tree-sitter language, using
 /// strict equality against the alias table and `Language::display_name()`.
 fn tree_sitter_for_syntect_name(display_name: &str) -> Option<fresh_languages::Language> {

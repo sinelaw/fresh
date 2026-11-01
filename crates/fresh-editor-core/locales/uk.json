@@ -345,6 +345,7 @@
   "action.show_status_log": "Показати журнал повідомлень стану",
   "action.show_warnings": "Показати попередження",
   "action.smart_home": "Розумний Home (перемкнути початок рядка / перший непробільний символ)",
+  "action.select_smart_home": "Розумне виділення до початку (перший непробільний символ / початок рядка)",
   "action.sort_lines": "Сортувати рядки",
   "action.split_horizontal": "Розділити горизонтально",
   "action.split_vertical": "Розділити вертикально",

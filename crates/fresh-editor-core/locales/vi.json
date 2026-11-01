@@ -345,6 +345,7 @@
   "action.show_status_log": "Hiển thị nhật ký thông báo trạng thái",
   "action.show_warnings": "Hiển thị cảnh báo",
   "action.smart_home": "Home thông minh (chuyển đổi đầu dòng / ký tự không phải khoảng trắng đầu tiên)",
+  "action.select_smart_home": "Chọn thông minh đến đầu dòng (ký tự không phải khoảng trắng đầu tiên / đầu dòng)",
   "action.sort_lines": "Sắp xếp các dòng",
   "action.split_horizontal": "Chia màn hình ngang",
   "action.split_vertical": "Chia màn hình dọc",

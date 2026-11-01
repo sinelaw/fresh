@@ -371,6 +371,13 @@ impl Editor {
             .active_window_mut()
             .populate_plugin_state_snapshot(&mut snapshot);
         self.perf_counters.text_property_shares += shares;
+        let active = self.active_window;
+        snapshot.background_buffers = self
+            .windows
+            .iter()
+            .filter(|(id, _)| **id != active)
+            .map(|(id, w)| (*id, w.background_buffer_infos()))
+            .collect();
 
         // Editor-wide fields below — these reach state outside any
         // single Window.
@@ -2101,25 +2108,16 @@ impl Editor {
                 self.handle_send_terminal_input(terminal_id, data);
             }
 
-            PluginCommand::GetTerminalScreens { callback_id } => {
-                let window = self.active_window();
-                let screens: Vec<fresh_core::api::TerminalScreen> = window
-                    .terminal_buffers
-                    .iter()
-                    .filter_map(|(buffer_id, info)| {
-                        let handle = window.terminal_manager.get(info.terminal_id)?;
-                        let state = handle.state.lock().ok()?;
-                        Some(fresh_core::api::TerminalScreen {
-                            buffer_id: buffer_id.0 as u64,
-                            lines: state.screen_lines(),
-                            file: window
-                                .terminal_backing_files
-                                .get(&info.terminal_id)
-                                .map(|p| p.to_string_lossy().into_owned())
-                                .unwrap_or_default(),
-                        })
-                    })
-                    .collect();
+            PluginCommand::GetTerminalScreens {
+                window_id,
+                callback_id,
+            } => {
+                let window_id = window_id.unwrap_or(self.active_window);
+                let screens = self
+                    .windows
+                    .get(&window_id)
+                    .map(|w| w.terminal_screens())
+                    .unwrap_or_default();
                 self.plugin_manager.read().unwrap().resolve_callback(
                     callback_id,
                     serde_json::to_string(&screens).unwrap_or_else(|_| "[]".to_string()),
@@ -2261,9 +2259,10 @@ impl Editor {
                 program,
                 args,
                 cwd,
+                stdout_to,
                 callback_id,
             } => {
-                self.handle_run_on_target(machine, program, args, cwd, callback_id);
+                self.handle_run_on_target(machine, program, args, cwd, stdout_to, callback_id);
             }
 
             PluginCommand::GrepProject {
@@ -3837,6 +3836,9 @@ impl Editor {
                 use crate::services::process_hidden::HideWindow;
                 let mut cmd = TokioCommand::new(&command);
                 cmd.args(&args);
+                // As for `run` (`LocalProcessSpawner`): nothing writes to it,
+                // and one reading the editor's stdin could wait forever.
+                cmd.stdin(std::process::Stdio::null());
                 cmd.stdout(std::process::Stdio::piped());
                 cmd.stderr(std::process::Stdio::piped());
                 cmd.hide_window();
@@ -7071,6 +7073,36 @@ fn clamp_buffer_text_range(start: usize, end: usize, len: usize) -> (usize, usiz
 }
 
 impl Window {
+    /// This window's buffers as `listBuffers(windowId)` lists them while
+    /// another window is active: no split of it is on screen, so the view
+    /// fields read as for a buffer shown nowhere.
+    pub(crate) fn background_buffer_infos(&self) -> Vec<fresh_core::api::BufferInfo> {
+        self.buffers
+            .iter()
+            .map(|(buffer_id, state)| {
+                let meta = self.buffer_metadata.get(buffer_id);
+                fresh_core::api::BufferInfo {
+                    id: *buffer_id,
+                    window_id: self.id.0,
+                    path: state.buffer.file_path().map(|p| p.to_path_buf()),
+                    name: meta.map(|m| m.display_name.clone()).unwrap_or_default(),
+                    modified: state.buffer.is_modified(),
+                    length: state.buffer.len(),
+                    line_count: state.buffer.line_count(),
+                    is_virtual: meta.is_some_and(|m| m.is_virtual()),
+                    is_terminal: self.is_terminal_buffer(*buffer_id),
+                    editing_disabled: state.editing_disabled,
+                    view_mode: "source".to_string(),
+                    is_composing_in_any_split: false,
+                    compose_width: None,
+                    language: state.language.clone(),
+                    is_preview: self.is_buffer_preview(*buffer_id),
+                    splits: Vec::new(),
+                }
+            })
+            .collect()
+    }
+
     /// Populate the per-window fields of the plugin state snapshot.
     ///
     /// Called by `Editor::update_plugin_state_snapshot` while it holds
