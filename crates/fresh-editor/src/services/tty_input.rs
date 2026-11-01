@@ -24,7 +24,7 @@
 //! handler and synthesize [`InputEvent::Resize`].
 
 use std::collections::VecDeque;
-use std::os::unix::io::{AsRawFd, BorrowedFd, RawFd};
+use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -161,18 +161,12 @@ fn install_sigwinch_handler() {
 /// Poll a single fd for readability. Returns `true` if readable, `false` on
 /// timeout or `EINTR` (e.g. a `SIGWINCH`, whose pending resize the caller then
 /// picks up via [`TtyReader::take_resize`]).
+///
+/// Waits through [`crate::services::fd_wait`], not poll(2) directly: on macOS
+/// a stdin reopened from `/dev/tty` makes poll(2) return `POLLNVAL` at once,
+/// which this used to read as a timeout and spin on (#3683).
 fn poll_readable(fd: RawFd, timeout: Duration) -> bool {
-    use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
-    // SAFETY: fd is stdin, valid for the duration of the poll call.
-    let borrowed = unsafe { BorrowedFd::borrow_raw(fd) };
-    let mut fds = [PollFd::new(borrowed, PollFlags::POLLIN)];
-    let timeout_ms = timeout.as_millis().min(u16::MAX as u128) as u16;
-    match poll(&mut fds, PollTimeout::from(timeout_ms)) {
-        Ok(n) if n > 0 => fds[0]
-            .revents()
-            .is_some_and(|r| r.contains(PollFlags::POLLIN)),
-        _ => false,
-    }
+    crate::services::fd_wait::wait_readable(&[fd], timeout).is_ok_and(|r| r.readable(0))
 }
 
 /// Read exactly one byte from `fd`, or `None` if the read did not yield one.
