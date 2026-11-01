@@ -13,31 +13,27 @@
 //! stderr); GREEN after.
 
 use std::path::PathBuf;
-use std::sync::Once;
 
 use fresh::services::remote::{ConnectionParams, SshConnection, SshError};
 
-static PATH_INIT: Once = Once::new();
-
-/// Prepend the fake-ssh fixtures dir to PATH once, so `Command::new("ssh")`
-/// resolves to the shim. `Once` keeps the process-global env mutation from
-/// racing across parallel tests in this binary.
-fn ensure_fake_ssh_on_path() {
-    PATH_INIT.call_once(|| {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake-ssh");
-        assert!(
-            dir.join("ssh").exists(),
-            "fake ssh shim missing at {}",
-            dir.display()
-        );
-        let old = std::env::var("PATH").unwrap_or_default();
-        std::env::set_var("PATH", format!("{}:{old}", dir.display()));
-    });
+/// Put the fake-ssh fixtures dir in front of PATH until the returned pin
+/// drops, so `Command::new("ssh")` resolves to the shim. PATH is
+/// process-global and every test file runs in the one `all_tests` binary,
+/// where other tests install other `ssh` shims, so this goes through the
+/// same pin as they do instead of a permanent prepend.
+fn fake_ssh_on_path() -> crate::common::global_state::PathPin {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake-ssh");
+    assert!(
+        dir.join("ssh").exists(),
+        "fake ssh shim missing at {}",
+        dir.display()
+    );
+    crate::common::global_state::pin_path_with_dir_first(&dir)
 }
 
 #[test]
 fn failed_ssh_connect_surfaces_carrier_stderr_in_the_error() {
-    ensure_fake_ssh_on_path();
+    let _path = fake_ssh_on_path();
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)

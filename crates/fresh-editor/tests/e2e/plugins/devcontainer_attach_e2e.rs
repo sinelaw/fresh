@@ -393,12 +393,12 @@ fn attach_failure_surfaces_failed_attach_popup() {
             .with_fake_devcontainer(),
     )
     .unwrap();
-    // Per-test env knob — set AFTER the harness exists so the
-    // fake-devcontainer mutex (held in `FakeDevcontainerHandle`)
-    // already serializes us with other tests. Setting before the
-    // mutex is acquired races against sibling tests' subprocesses.
-    std::env::set_var("FAKE_DC_UP_FAIL", "1");
-    std::env::set_var("FAKE_DC_UP_FAIL_REASON", "image not found: bogus:latest");
+    // Per-test env knobs, set through the harness's pin: it already
+    // serializes us with other tests, and it unsets them when the harness
+    // drops, even if an assertion below panics first.
+    let env = harness.fake_devcontainer_env();
+    env.set_env("FAKE_DC_UP_FAIL", "1");
+    env.set_env("FAKE_DC_UP_FAIL_REASON", "image not found: bogus:latest");
     harness.tick_and_render().unwrap();
 
     accept_attach(&mut harness);
@@ -416,11 +416,6 @@ fn attach_failure_surfaces_failed_attach_popup() {
         harness.editor().authority().display_label,
     );
 
-    // Clean up env vars before the harness drops (releases the
-    // mutex). The harness's mutex guard is the only thing keeping
-    // a sibling test's subprocess from inheriting these vars.
-    std::env::remove_var("FAKE_DC_UP_FAIL");
-    std::env::remove_var("FAKE_DC_UP_FAIL_REASON");
     drop(harness);
     drop_workspace_temp(&workspace);
 }
@@ -440,12 +435,11 @@ fn attach_bad_json_surfaces_failed_attach_popup() {
             .with_fake_devcontainer(),
     )
     .unwrap();
-    // Set after the harness exists — see comment in
-    // `attach_failure_surfaces_failed_attach_popup`. The fake-
-    // devcontainer mutex held by the harness serializes us with
-    // sibling tests; setting before that mutex is acquired races
-    // against their subprocesses.
-    std::env::set_var("FAKE_DC_UP_BAD_JSON", "1");
+    // Through the harness's pin — see
+    // `attach_failure_surfaces_failed_attach_popup`.
+    harness
+        .fake_devcontainer_env()
+        .set_env("FAKE_DC_UP_BAD_JSON", "1");
     harness.tick_and_render().unwrap();
 
     accept_attach(&mut harness);
@@ -460,7 +454,6 @@ fn attach_bad_json_surfaces_failed_attach_popup() {
         "bad-JSON failure must not install a container authority"
     );
 
-    std::env::remove_var("FAKE_DC_UP_BAD_JSON");
     drop(harness);
     drop_workspace_temp(&workspace);
 }
@@ -734,12 +727,11 @@ fn attach_missing_container_id_surfaces_failed_attach_popup() {
             .with_fake_devcontainer(),
     )
     .unwrap();
-    // Set after the harness exists — see comment in
-    // `attach_failure_surfaces_failed_attach_popup`. The fake-
-    // devcontainer mutex held by the harness serializes us with
-    // sibling tests; setting before that mutex is acquired races
-    // against their subprocesses.
-    std::env::set_var("FAKE_DC_UP_NO_CONTAINER_ID", "1");
+    // Through the harness's pin — see
+    // `attach_failure_surfaces_failed_attach_popup`.
+    harness
+        .fake_devcontainer_env()
+        .set_env("FAKE_DC_UP_NO_CONTAINER_ID", "1");
     harness.tick_and_render().unwrap();
 
     accept_attach(&mut harness);
@@ -754,7 +746,6 @@ fn attach_missing_container_id_surfaces_failed_attach_popup() {
         "missing-containerId failure must not install a container authority"
     );
 
-    std::env::remove_var("FAKE_DC_UP_NO_CONTAINER_ID");
     drop(harness);
     drop_workspace_temp(&workspace);
 }
@@ -784,9 +775,8 @@ fn attach_succeeds_when_which_cannot_locate_cli() {
     )
     .unwrap();
 
-    // Shadow `which` AFTER the harness exists so the fake-devcontainer
-    // mutex already serializes us with sibling tests (same reasoning
-    // as the FAKE_DC_* env knobs above). The shim fails only for
+    // Shadow `which` through the harness's pin (same reasoning as the
+    // FAKE_DC_* env knobs above). The shim fails only for
     // `devcontainer` and delegates everything else, so the rest of the
     // attach flow (sh, mkdir, docker) is unaffected.
     let shim_temp = tempfile::tempdir().unwrap();
@@ -803,11 +793,9 @@ fn attach_succeeds_when_which_cannot_locate_cli() {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
     }
-    let saved_path = std::env::var("PATH").unwrap_or_default();
-    std::env::set_var(
-        "PATH",
-        format!("{}:{}", shim_temp.path().display(), saved_path),
-    );
+    harness
+        .fake_devcontainer_env()
+        .prepend_dir(shim_temp.path());
     harness.tick_and_render().unwrap();
 
     accept_attach(&mut harness);
@@ -817,7 +805,6 @@ fn attach_succeeds_when_which_cannot_locate_cli() {
         "attach must succeed without `which` vouching for the CLI; label = {label:?}"
     );
 
-    std::env::set_var("PATH", saved_path);
     drop(harness);
     drop_workspace_temp(&workspace);
 }

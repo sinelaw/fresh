@@ -1157,6 +1157,23 @@ impl EditorTestHarness {
             .map(|h| h.state_path.as_path())
     }
 
+    /// The `$PATH` pin [`HarnessOptions::with_fake_devcontainer`] holds, for
+    /// a test that sets one of the fake's knobs (`FAKE_DC_*`) or puts another
+    /// shim on `$PATH`. Whatever is set through it is undone when the harness
+    /// drops, including when the test panics, so a failed test cannot hand
+    /// its knobs to the next one.
+    ///
+    /// Panics for a harness that didn't opt into the fake CLI.
+    /// Unix-only: see [`HarnessOptions::with_fake_devcontainer`].
+    #[cfg(unix)]
+    pub fn fake_devcontainer_env(&mut self) -> &mut super::global_state::PathPin {
+        &mut self
+            .fake_devcontainer
+            .as_mut()
+            .expect("harness created without with_fake_devcontainer()")
+            ._pin
+    }
+
     /// Get the recovery directory path for this test harness: the one store
     /// every editor writes, whatever its project (list it with
     /// `fresh::services::recovery::all_entries`, or one project's with

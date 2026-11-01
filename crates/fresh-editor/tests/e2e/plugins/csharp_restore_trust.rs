@@ -46,8 +46,9 @@ const EVIL_CSPROJ: &str = r#"<Project Sdk="Microsoft.NET.Sdk">
 const PROGRAM_CS: &str = "public class Program {\n    public static void Main() {}\n}\n";
 
 /// Install `csharp_support` + its lib into the project's `plugins/` dir so the
-/// real plugin loads when the harness boots against `project`.
-fn setup_project(project: &Path, marker: &Path) {
+/// real plugin loads when the harness boots against `project`, and put the
+/// fake `dotnet` on `$PATH` until the returned pin drops.
+fn setup_project(project: &Path, marker: &Path) -> crate::common::global_state::PathPin {
     fs::write(project.join("evil.csproj"), EVIL_CSPROJ).unwrap();
     fs::write(project.join("Program.cs"), PROGRAM_CS).unwrap();
 
@@ -82,10 +83,11 @@ fn setup_project(project: &Path, marker: &Path) {
     fs::set_permissions(&dotnet, perms).unwrap();
 
     // Prepend the fake bin so `spawnProcess("dotnet", …)` resolves to it.
-    let old = std::env::var("PATH").unwrap_or_default();
-    if !old.split(':').any(|p| Path::new(p) == fake_bin) {
-        std::env::set_var("PATH", format!("{}:{}", fake_bin.display(), old));
-    }
+    // Through the shared pin: a bare prepend could land between another
+    // test's snapshot and restore of `$PATH`, and lose the fake or keep
+    // that test's shim on `$PATH` for good. Taken before the harness, which
+    // takes the config globals after it.
+    crate::common::global_state::pin_path_with_dir_first(&fake_bin)
 }
 
 /// Boot a harness rooted at `project`, pin its trust level, publish it to the
@@ -129,7 +131,7 @@ fn opening_cs_file_gates_dotnet_restore_on_trust() {
     let project: PathBuf = tmp.path().join("proj");
     fs::create_dir_all(&project).unwrap();
     let marker = tmp.path().join("restore_invocations.log");
-    setup_project(&project, &marker);
+    let _path = setup_project(&project, &marker);
 
     // ---- 1. Restricted: opening the .cs file must NOT run restore. ----
     let mut restricted = open_cs_at_trust(&project, TrustLevel::Restricted);
