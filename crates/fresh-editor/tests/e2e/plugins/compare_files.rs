@@ -656,3 +656,26 @@ fn closing_a_new_file_returns_to_the_comparison_alone() {
     assert_eq!(tab_bar.matches('×').count(), 1, "one tab: {tab_bar:?}");
     assert!(tab_bar.contains("left.txt ↔ right.txt"), "{tab_bar:?}");
 }
+
+/// A click past the end of a line lands at the end of that line, on a line
+/// the two sides differ in as on one they share, on either side (issue
+/// #3689). A changed line's background runs on past its text, and a click
+/// on that background used to put the cursor at the start of the line.
+#[test]
+fn a_click_past_the_end_of_a_changed_line_lands_at_its_end() {
+    let Compare { mut h, _tmp, .. } = compare(LEFT.as_bytes(), RIGHT.as_bytes());
+    h.wait_until(|h| status_has(h, "Compare: 3 difference(s)"))
+        .unwrap();
+    let changed = row_of(&h, "charlie").unwrap();
+    let shared = row_of(&h, "delta").unwrap();
+
+    // Left panel: `charlie` is changed, `delta` is shared.
+    h.mouse_click(40, changed).unwrap();
+    h.wait_until(|h| status_has(h, "Ln 3, Col 8")).unwrap();
+    h.mouse_click(40, shared).unwrap();
+    h.wait_until(|h| status_has(h, "Ln 4, Col 6")).unwrap();
+
+    // Right panel: `CHARLIE changed`.
+    h.mouse_click(110, changed).unwrap();
+    h.wait_until(|h| status_has(h, "Ln 3, Col 16")).unwrap();
+}

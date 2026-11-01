@@ -40,16 +40,21 @@ pub(super) struct TailFillInput<'a> {
     /// the virtual-line fallback instead).
     pub first_line_byte_pos: Option<usize>,
     pub last_line_byte_pos: Option<usize>,
+    /// The byte a click past the row's content lands on (its newline, or
+    /// the position after its last character): what the fill cells map to.
+    pub row_end_byte: usize,
 }
 
 pub(super) struct TailFillResult {
     pub style: Style,
-    /// Source byte to attach to the fill span. Mirrors the original
-    /// inline behaviour: `None` for virtual lines (so visual-line
-    /// motion keeps skipping them), the line's start byte for empty
-    /// source lines (so `char_source_bytes` has at least one `Some`
-    /// entry and the navigable check doesn't treat the row as a
-    /// plugin-injected decoration to skip).
+    /// Source byte to attach to the fill span: `None` for virtual lines
+    /// (so visual-line motion keeps skipping them), else the row's end
+    /// byte. For an empty source line that is its start, so
+    /// `char_source_bytes` has at least one `Some` entry and the
+    /// navigable check doesn't treat the row as a plugin-injected
+    /// decoration to skip. For a line with text it is past the text, so
+    /// a click on the fill lands at the end of the line as it does on a
+    /// row without one, not at its start (issue #3689).
     pub source_byte: Option<usize>,
 }
 
@@ -74,6 +79,7 @@ pub(super) fn resolve_tail_fill(input: TailFillInput<'_>) -> Option<TailFillResu
         syntax_extend_bg,
         first_line_byte_pos,
         last_line_byte_pos,
+        row_end_byte,
     } = input;
 
     let row_had_source_bytes = first_line_byte_pos.is_some() && last_line_byte_pos.is_some();
@@ -96,12 +102,12 @@ pub(super) fn resolve_tail_fill(input: TailFillInput<'_>) -> Option<TailFillResu
         .or_else(|| virtual_line_fallback_style(current_view_line, theme))?;
 
     // Virtual lines stay None so visual-line motion keeps skipping
-    // them; non-virtual rows carry the line's start byte (so empty
-    // source lines aren't mistaken for decorations).
+    // them; non-virtual rows carry the row's end byte (see
+    // `TailFillResult::source_byte`).
     let source_byte = if current_view_line.line_start == LineStart::AfterInjectedNewline {
         None
     } else {
-        current_view_line.source_start_byte
+        Some(row_end_byte)
     };
 
     Some(TailFillResult { style, source_byte })
