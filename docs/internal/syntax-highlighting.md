@@ -116,9 +116,19 @@ bundles — plus one local fix marked `# FRESH:`. Upstream read the `(` of a
 subshell function body, `f() ( … )`, as a second parameter list and then waited
 for a `{` that never came, so highlighting died from there to the end of the
 file (#3473, #3201). The body is now chosen after the (empty, optional)
-parameter list: a brace group or a subshell. Keeping the bundled revision rather
-than current upstream keeps every other Bash scope unchanged; refreshing to
-current Packages is a separate, larger change. **[impl]**
+parameter list: a brace group, a subshell, or any other compound command, which
+is left to `main`. Keeping the bundled revision rather than current upstream
+keeps every other Bash scope unchanged; refreshing to current Packages is a
+separate, larger change. **[impl]**
+
+The shadowing reaches lookups by name and extension, not the links syntect
+resolved when it built its defaults. The bundled `commands-builtin-shell-bash`
+grammar, which the vendored one includes for builtins like `echo`, includes
+`scope:source.shell.bash#…` for those commands' arguments, and those links still
+point at syntect's own Bash. So a subshell function defined *inside* a builtin's
+argument — `echo "$(f() ( … ); f)"` — is still read by the old rules. The damage
+stays inside that argument: the next line highlights normally. Vendoring that
+grammar too (1,223 lines) would close it, if it ever matters in practice.
 
 Because both grammars live in the set, the catalog keeps only the **last**
 syntax of any given name, matching syntect's own lookups, which scan in reverse

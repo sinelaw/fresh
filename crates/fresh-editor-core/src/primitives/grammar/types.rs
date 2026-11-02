@@ -3131,6 +3131,26 @@ mod tests {
             assert!(at_echo[0].contains("meta.function.shell"), "{src:?}");
             assert!(!at_echo[1].contains("meta.function.shell"), "{src:?}");
         }
+
+        // Bodies that are neither braces nor a subshell (bash accepts any
+        // compound command), and a subshell body inside backticks, which goes
+        // through the grammar's separate `-bt` contexts. Each must leave the
+        // next line as ordinary top-level code.
+        for src in [
+            "f() [[ -n x ]]\necho CANARY\n",
+            "f() ((1))\necho CANARY\n",
+            "f() if true; then :; fi\necho CANARY\n",
+            "x=`f() ( :\n); f`\necho CANARY\n",
+        ] {
+            let at_echo = bash_scopes_at(src, "echo CANARY");
+            assert_eq!(at_echo.len(), 1, "{src:?}");
+            assert!(
+                at_echo[0].contains("support.function.echo")
+                    && !at_echo[0].contains("meta.function.shell"),
+                "`echo CANARY` should be a top-level builtin in {src:?}, scopes were {:?}",
+                at_echo[0]
+            );
+        }
     }
 
     /// Julia: a single-quote after an identifier is the adjoint

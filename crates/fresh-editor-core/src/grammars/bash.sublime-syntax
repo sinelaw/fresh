@@ -18,7 +18,7 @@
 # a subshell, `f() ( ... )`, read the body's `(` as a second parameter list and
 # then waited for a `{` that never came, so highlighting died from there to
 # the end of the file (issues #3473, #3201). The body is now chosen after the
-# parameter list: `{ ... }` or `( ... )`.
+# parameter list: `{ ... }`, `( ... )`, or any other compound command.
 # [Sublime]: https://www.sublimetext.com/docs/3/syntax.html
 # [Bash]:    https://www.gnu.org/software/bash/manual/bash.html
 --- #---------------------------------------------------------------------------
@@ -310,29 +310,39 @@ contexts:
         1: punctuation.section.parens.begin.shell
         2: punctuation.section.parens.end.shell
       pop: true
-    - match: (?=[{(])
+    - match: (?=\S)
       pop: true
 
   # FRESH: a function body is a brace group or a subshell. The meta scope
   # covers the name and parameter list, as upstream's funcdef-body did from
-  # the bottom of the stack.
+  # the bottom of the stack. Any other compound command (`f() [[ ... ]]`,
+  # `f() (( ... ))`, `f() if ...`) is left to `main` rather than skipped
+  # over until the next `{` somewhere later in the file.
   funcdef-body-select:
     - meta_scope: meta.function.shell
     - match: \{
       scope: punctuation.section.braces.begin.shell
       set: funcdef-body
+    - match: (?=\(\()
+      pop: true
     - match: \(
       scope: punctuation.section.parens.begin.shell
       set: funcdef-body-subshell
+    - match: (?=\S)
+      pop: true
 
   funcdef-body-select-bt:
     - meta_scope: meta.function.shell
     - match: \{
       scope: punctuation.section.braces.begin.shell
       set: funcdef-body-bt
+    - match: (?=\(\()
+      pop: true
     - match: \(
       scope: punctuation.section.parens.begin.shell
       set: funcdef-body-subshell-bt
+    - match: (?=\S)
+      pop: true
 
   funcdef-body:
     - meta_scope: meta.function.shell
