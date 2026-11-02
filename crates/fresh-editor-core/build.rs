@@ -251,6 +251,9 @@ fn generate_syntax_packdump(
             "src/grammars/bash.sublime-syntax",
             "Bourne Again Shell (bash)",
         ),
+        // Shadows syntect's bundled C# grammar, whose format-spec rule
+        // backtracks catastrophically on interpolated strings (issue #3667).
+        ("src/grammars/csharp.sublime-syntax", "C#"),
         ("src/grammars/odin/Odin.sublime-syntax", "Odin"),
         ("src/grammars/zig.sublime-syntax", "Zig"),
         ("src/grammars/gdscript.sublime-syntax", "GDScript"),
