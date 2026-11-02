@@ -1461,6 +1461,12 @@ impl Editor {
                     // (`getPanelFocusKey`); it must read the host's answer as
                     // of this key, not the last full snapshot's.
                     self.publish_panel_focus();
+                    // Likewise the rest of its state: a key handled earlier in
+                    // the same input batch (adding a cursor, moving the
+                    // selection) must be visible to `getAllCursors()` and the
+                    // like, or the handler acts on the frame before (#3666).
+                    // A no-op when nothing changed since the last rebuild.
+                    self.refresh_plugin_state_snapshot();
                     // A macro replay step runs as an answerable call, so the
                     // replay learns when the handler has settled.
                     let request_id = self.macro_replay.as_ref().and_then(|r| r.dispatch_request);
