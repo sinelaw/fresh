@@ -717,3 +717,32 @@ fn an_unsaved_edit_marks_its_side_of_the_tab() {
     h.wait_until(|h| tabs(h).contains(" left.txt* ↔ right.txt* ×"))
         .unwrap();
 }
+
+/// The same with a second split in the window: closing the new file leaves
+/// its pane on the comparison, rather than closing the pane and the
+/// comparison with it, as a pane whose only *buffer* tab was the new file
+/// used to (issue #3688).
+#[test]
+fn closing_a_new_file_beside_another_split_keeps_the_comparison() {
+    let Compare { mut h, _tmp, .. } = compare(LEFT.as_bytes(), RIGHT.as_bytes());
+    h.wait_until(|h| status_has(h, "Compare: 3 difference(s)"))
+        .unwrap();
+
+    h.run_palette_command("Split Horizontal").unwrap();
+    h.run_palette_command("Previous Split").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("left.txt ↔ right.txt"))
+        .unwrap();
+    h.send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("[No Name]"))
+        .unwrap();
+
+    h.run_palette_command("Close Tab").unwrap();
+    h.wait_until(|h| {
+        let screen = h.screen_to_string();
+        !screen.contains("[No Name]")
+            && screen.contains("left.txt ↔ right.txt")
+            && screen.contains("CHARLIE changed")
+    })
+    .unwrap();
+}
