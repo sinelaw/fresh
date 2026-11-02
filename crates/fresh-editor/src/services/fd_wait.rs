@@ -126,11 +126,12 @@ fn fd_is_open(fd: RawFd) -> bool {
 /// The select(2) form of [`wait_readable`].
 ///
 /// select(2) cannot name a descriptor at or past `FD_SETSIZE`; such a wait
-/// fails with `InvalidInput` instead of touching memory outside the set.
+/// fails with `InvalidInput` instead of touching memory outside the set. A
+/// negative descriptor is skipped and never readable, as poll(2) treats it.
 pub(crate) fn select_readable(fds: &[RawFd], timeout: Duration) -> io::Result<Ready> {
     if let Some(&fd) = fds
         .iter()
-        .find(|&&fd| fd < 0 || fd as usize >= libc::FD_SETSIZE)
+        .find(|&&fd| fd >= 0 && fd as usize >= libc::FD_SETSIZE)
     {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -141,14 +142,16 @@ pub(crate) fn select_readable(fds: &[RawFd], timeout: Duration) -> io::Result<Re
     // SAFETY: an all-zero `fd_set` is a valid empty set (what FD_ZERO makes).
     let mut set: libc::fd_set = unsafe { std::mem::zeroed() };
     let mut max_fd = -1;
-    for &fd in fds {
+    for &fd in fds.iter().filter(|&&fd| fd >= 0) {
         // SAFETY: `fd` is inside the set, checked above.
         unsafe { libc::FD_SET(fd, &mut set) };
         max_fd = max_fd.max(fd);
     }
 
     let mut tv = libc::timeval {
-        tv_sec: timeout.as_secs().min(i32::MAX as u64) as libc::time_t,
+        // macOS rejects a timeout over 1e8 s with EINVAL; no caller comes
+        // near it, but a clamp keeps a huge one a long wait, not an error.
+        tv_sec: timeout.as_secs().min(100_000_000) as libc::time_t,
         tv_usec: timeout.subsec_micros() as libc::suseconds_t,
     };
     // SAFETY: `set` and `tv` are initialized locals that outlive the call.
@@ -167,8 +170,8 @@ pub(crate) fn select_readable(fds: &[RawFd], timeout: Duration) -> io::Result<Re
 
     let mut ready = Ready::default();
     for (i, &fd) in fds.iter().enumerate() {
-        // SAFETY: `fd` is inside the set, checked above.
-        if unsafe { libc::FD_ISSET(fd, &set) } {
+        // SAFETY: a non-negative `fd` is inside the set, checked above.
+        if fd >= 0 && unsafe { libc::FD_ISSET(fd, &set) } {
             ready.readable |= 1 << i;
         }
     }
@@ -244,6 +247,14 @@ mod tests {
         drop(w);
         let ready = wait_readable(&[r.as_raw_fd()], Duration::from_secs(5)).unwrap();
         assert!(ready.hung_up(0), "{ready:?}");
+    }
+
+    #[test]
+    fn select_skips_negative_fds_as_poll_does() {
+        let (r, w) = pipe();
+        write_byte(&w);
+        let ready = select_readable(&[-1, r.as_raw_fd()], Duration::from_secs(5)).unwrap();
+        assert!(!ready.readable(0) && ready.readable(1), "{ready:?}");
     }
 
     #[test]

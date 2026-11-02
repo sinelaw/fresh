@@ -73,7 +73,7 @@ pub fn relay_loop(
         // reopened from `/dev/tty` (`fresh -a </dev/tty`, or a bare `fresh`
         // that auto-attaches) makes poll(2) report `POLLNVAL` at once, so
         // stdin was never read and this loop spun (#3683).
-        #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
+        #[cfg_attr(not(target_os = "linux"), allow(unused_mut, clippy::useless_vec))]
         let mut fds: Vec<std::os::unix::io::RawFd> = vec![stdin_fd, data_fd, ctrl_fd];
         #[cfg(target_os = "linux")]
         if let Some(gpm) = &gpm {

@@ -145,7 +145,14 @@ pub fn spawn_on_pty(
 
     if let ChildStdin::Piped(bytes) = stdin {
         let mut pipe = child.stdin.take().expect("piped stdin");
-        pipe.write_all(&bytes)?;
+        // A launch that leaves the pipe unread (`… | fresh FILE`) drops its
+        // read end when it reopens fd 0 from `/dev/tty`. If that wins the
+        // race with this write, the write is EPIPE — which is the editor
+        // doing its job, not a failure to spawn it.
+        match pipe.write_all(&bytes) {
+            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {}
+            other => other?,
+        }
         // Dropping closes the write end, so the child sees EOF on the pipe.
     }
 

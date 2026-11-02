@@ -36,6 +36,14 @@ const NAMED_TEXT: &str = "from-the-named-file";
 /// language pinned so the English predicates match. `HOME` alone confines it
 /// on macOS; the `XDG_*` variables do the same on Linux.
 fn isolated_fresh(home: &Path, args: &[&str]) -> Command {
+    let mut cmd = fresh_in(home);
+    cmd.args(["--no-session", "--no-init", "--no-upgrade-check"])
+        .args(args);
+    cmd
+}
+
+/// The binary, with the environment of [`isolated_fresh`] and no arguments.
+fn fresh_in(home: &Path) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_fresh"));
     cmd.current_dir(home)
         .env("TMPDIR", home)
@@ -49,8 +57,7 @@ fn isolated_fresh(home: &Path, args: &[&str]) -> Command {
         .env_remove("LC_ALL")
         .env_remove("LC_MESSAGES")
         .env_remove("FRESH_SESSION")
-        .args(["--no-session", "--no-init", "--no-upgrade-check"])
-        .args(args);
+        .env_remove("FRESH_BIN");
     cmd
 }
 
@@ -133,9 +140,64 @@ fn keys_reach_a_bare_fresh_reading_a_pipe() {
     editor
         .wait_for_screen(|screen| screen.contains("bytes from stdin"))
         .expect("the pipe should be read into a buffer");
+    assert_keyboard_works(editor);
+}
 
-    editor.send(b"ZZZ").expect("type into the editor");
-    editor
-        .wait_for_screen(|screen| screen.contains("ZZZ"))
-        .expect("typed keys should reach the buffer");
+/// The daemon client reads the keyboard in a loop of its own
+/// (`client/relay_unix.rs`), which polled stdin the same way and failed the
+/// same way on macOS: `fresh -a </dev/tty`, or a bare `fresh </dev/tty`
+/// that auto-attaches.
+///
+/// The temp tree is made under `/tmp`, not the platform temp dir: the
+/// daemon's sockets live in it, and macOS's temp dir is long enough to push
+/// a socket path past `sun_path`'s 103 bytes. `XDG_RUNTIME_DIR` is read
+/// straight from the environment on every Unix, so the socket tree is
+/// isolated there too.
+#[test]
+fn keys_reach_a_daemon_session_through_a_client_on_dev_tty() {
+    use crate::common::daemon::spawn_daemon;
+    if !pty_available() {
+        eprintln!("Skipping: no PTY available in this environment");
+        return;
+    }
+    let home = tempfile::tempdir_in("/tmp").unwrap();
+    let home = home.path();
+    let run = home.join("run");
+    std::fs::create_dir_all(&run).unwrap();
+    std::fs::write(home.join(NAMED), format!("{NAMED_TEXT}\n")).unwrap();
+    let session = "devtty";
+    let pid_file = run.join("fresh").join(format!("{session}.pid"));
+
+    // Started here, so it is listening before the client looks for it and
+    // the client does not start one of its own.
+    let mut server = fresh_in(home);
+    server
+        .env("XDG_RUNTIME_DIR", &run)
+        .args([
+            "--server",
+            "--session-name",
+            session,
+            "--no-plugins",
+            "--no-upgrade-check",
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let mut server = spawn_daemon(server, &pid_file);
+
+    let mut client = fresh_in(home);
+    client
+        .env("XDG_RUNTIME_DIR", &run)
+        .args(["--no-plugins", "--no-upgrade-check", "-a", session, NAMED]);
+    let mut client = spawn_on_pty(client, ChildStdin::DevTty, COLS, ROWS).expect("spawn client");
+
+    let result = client
+        .wait_for_screen(|screen| screen.contains(NAMED_TEXT))
+        .and_then(|()| client.send(b"ZZZ").map_err(|e| e.to_string()))
+        .and_then(|()| client.wait_for_screen(|screen| screen.contains("ZZZ")));
+
+    client.kill();
+    let _ = server.kill();
+    let _ = server.wait();
+    result.expect("typed keys should reach the daemon's buffer through the client");
 }
