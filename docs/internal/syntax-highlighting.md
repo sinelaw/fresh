@@ -108,6 +108,18 @@ which MIT requires us to keep). Measured against upstream's own syntax test
 suite (`Rust/tests`, 12117 assertions), syntect's bundled grammar fails 4904 of
 them; the vendored one fails 5. **[impl]**
 
+**Bash replaces one too, but with syntect's own grammar.**
+`src/grammars/bash.sublime-syntax` is `ShellScript/Bash.sublime-syntax` from
+sublimehq/Packages at fa6b8629c95041bf262d4c1dab95c456a0530122 — the revision
+syntect 5.3's `testdata/Packages` submodule pins, i.e. exactly what syntect
+bundles — plus one local fix marked `# FRESH:`. Upstream read the `(` of a
+subshell function body, `f() ( … )`, as a second parameter list and then waited
+for a `{` that never came, so highlighting died from there to the end of the
+file (#3473, #3201). The body is now chosen after the (empty, optional)
+parameter list: a brace group or a subshell. Keeping the bundled revision rather
+than current upstream keeps every other Bash scope unchanged; refreshing to
+current Packages is a separate, larger change. **[impl]**
+
 Because both grammars live in the set, the catalog keeps only the **last**
 syntax of any given name, matching syntect's own lookups, which scan in reverse
 and so already resolve a name or extension to the last definition. That is what

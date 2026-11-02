@@ -244,6 +244,13 @@ fn generate_syntax_packdump(
         // string's opening quote after an unspaced `<` (issue #3325). Added
         // after the defaults, so it wins the reverse-order extension lookup.
         ("src/grammars/rust.sublime-syntax", "Rust"),
+        // Shadows syntect's bundled Bash grammar (the same file, vendored from
+        // the revision syntect ships, plus a fix for subshell function bodies,
+        // issue #3473).
+        (
+            "src/grammars/bash.sublime-syntax",
+            "Bourne Again Shell (bash)",
+        ),
         ("src/grammars/odin/Odin.sublime-syntax", "Odin"),
         ("src/grammars/zig.sublime-syntax", "Zig"),
         ("src/grammars/gdscript.sublime-syntax", "GDScript"),

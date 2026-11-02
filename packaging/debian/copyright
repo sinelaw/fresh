@@ -47,6 +47,20 @@ License: Expat
 Comment: Based on https://github.com/beefsack/GDScript-sublime; the file
  carries the upstream notice.
 
+Files: crates/fresh-editor-core/src/grammars/bash.sublime-syntax
+Copyright: Sublime HQ Pty Ltd and the sublimehq/Packages contributors
+License: sublimehq-packages
+ Permission to copy, use, modify, sell and distribute this
+ software is granted. This software is provided "as is" without
+ express or implied warranty, and with no claim as to its
+ suitability for any purpose.
+Comment: ShellScript/Bash.sublime-syntax from
+ https://github.com/sublimehq/Packages at commit
+ fa6b8629c95041bf262d4c1dab95c456a0530122 (the revision syntect 5.3
+ bundles), with a local fix for subshell function bodies. The
+ ShellScript package has no license file of its own, so the
+ repository-wide grant above applies.
+
 Files: crates/fresh-editor-core/src/grammars/rust.sublime-syntax
        crates/fresh-editor-core/src/grammars/rust.sublime-syntax.LICENSE.txt
 Copyright: Sublime HQ Pty Ltd and the sublimehq/Packages contributors
