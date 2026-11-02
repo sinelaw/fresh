@@ -96,10 +96,10 @@ pack / bundle / plugin grammars; otherwise those layers are added on and the set
 is rebuilt. Grammar provenance is tracked (user, language pack, bundle, plugin).
 **[impl]**
 
-Most embedded grammars fill a gap syntect has no grammar for. **Rust is the
-exception: it replaces one.** syntect bundles a years-old Rust grammar that read
-an unspaced `<` before a string literal as the start of a generic argument list
-and then *consumed* the string's opening quote recovering from it, inverting
+Most embedded grammars fill a gap syntect has no grammar for. **Rust, C# and
+JavaScript (above) are the exceptions: they replace one.** syntect bundles a
+years-old Rust grammar that read an unspaced `<` before a string literal as the
+start of a generic argument list and then *consumed* the string's opening quote recovering from it, inverting
 quote parity for the rest of the buffer (#3325). Fresh vendors current
 sublimehq/Packages instead, at a pinned commit, in
 `src/grammars/rust.sublime-syntax` (MIT — the package ships its own
@@ -131,6 +131,29 @@ silently and compiles regexes lazily:
 
 When refreshing, re-run upstream's `Rust/tests` through a syntect-backed runner
 (syntect ships `examples/syntest.rs`) rather than trusting a clean load.
+
+**C#** (`src/grammars/csharp.sublime-syntax`, MIT, notice vendored alongside as
+`csharp.sublime-syntax.LICENSE.txt`) is *the same* grammar syntect bundles —
+sublimehq/Packages at syntect's pinned commit — with one regex rewritten
+(marked `# FRESH:`). The rule flagging an interpolation's format spec as
+unclosed, `([^}"\\]+(\\.)*)+(?="(?!"))`, nests a quantifier inside a
+quantifier, and syntect searches each candidate pattern from the cursor to the
+end of the line, so a line like
+`$"{v:F2} {F(v):F2} {G(v):F2}"` cost ~300 ms (release) to highlight and every
+keystroke on or above it stalled (#3667). The replacement
+`[^}"\\](?:[^}"\\]|\\.)*` matches the same strings with no nested quantifier,
+so each match attempt is linear (a search over a line can still be quadratic
+in the length of one format spec, as for any unanchored pattern); upstream's
+C# syntax tests parse to identical scope operations with either. A `# FRESH:`
+variable, `fresh_vendored`, marks the file so tests can check that `.cs`
+resolves to it rather than to the bundled grammar. **[impl]**
+
+`test_csharp_grammar_has_no_catastrophic_backtracking` guards this without
+timing anything: it runs every `match:` regex of the grammar through Oniguruma
+with a cap on backtracking steps per search
+(`MatchParam::set_retry_limit_in_match`). A healthy regex needs a few hundred steps on the
+test lines; the original rule needed over ten million. The same check is a
+cheap way to vet any other grammar suspected of a stall.
 
 ### `DetectedLanguage` — the per-buffer source of truth
 
