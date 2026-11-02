@@ -40,6 +40,12 @@ fn compare_sized(left: &[u8], right: &[u8], width: u16, height: u16) -> Compare 
 
 /// The launch alone, for a test that expects the comparison not to open.
 fn launch(left: &[u8], right: &[u8], width: u16, height: u16) -> Compare {
+    launch_files(("left.txt", left), ("right.txt", right), width, height)
+}
+
+/// The launch over files named `left.0` and `right.0` (relative paths under
+/// the work directory) holding `left.1` and `right.1`.
+fn launch_files(left: (&str, &[u8]), right: (&str, &[u8]), width: u16, height: u16) -> Compare {
     let tmp = tempfile::TempDir::new().unwrap();
     let root = tmp.path().join("work");
     let plugins_dir = root.join("plugins");
@@ -47,8 +53,12 @@ fn launch(left: &[u8], right: &[u8], width: u16, height: u16) -> Compare {
     copy_plugin(&plugins_dir, "compare_files");
     copy_plugin_lib(&plugins_dir);
 
-    let left_path = root.join("left.txt");
-    let right_path = root.join("right.txt");
+    let left_path = root.join(left.0);
+    let right_path = root.join(right.0);
+    for path in [&left_path, &right_path] {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+    }
+    let (left, right) = (left.1, right.1);
     fs::write(&left_path, left).unwrap();
     fs::write(&right_path, right).unwrap();
 
@@ -743,6 +753,37 @@ fn closing_a_new_file_beside_another_split_keeps_the_comparison() {
         !screen.contains("[No Name]")
             && screen.contains("left.txt ↔ right.txt")
             && screen.contains("CHARLIE changed")
+    })
+    .unwrap();
+}
+
+/// A title too long for the tab strip is shortened, but each side's `*`
+/// stays: the strip shortens the two names, not the marks after them. With
+/// two `config.yaml`s the names carry their directories, and a narrow
+/// terminal caps them; the mark used to be cut off with the name.
+#[test]
+fn a_shortened_tab_title_keeps_each_sides_mark() {
+    let Compare { mut h, _tmp, .. } = launch_files(
+        ("old/config.yaml", LEFT.as_bytes()),
+        ("new/config.yaml", RIGHT.as_bytes()),
+        40,
+        20,
+    );
+    // Both names show, shortened, with no mark yet.
+    h.wait_until(|h| {
+        let tab_bar = tabs(h);
+        tab_bar.contains('↔') && !tab_bar.contains('*') && row_of(h, "CHARLIE").is_some()
+    })
+    .unwrap();
+
+    // The left side has the focus.
+    h.type_text("Z").unwrap();
+    h.wait_until(|h| {
+        let tab_bar = tabs(h);
+        let Some((left, right)) = tab_bar.split_once('↔') else {
+            return false;
+        };
+        left.contains('*') && !right.contains('*')
     })
     .unwrap();
 }

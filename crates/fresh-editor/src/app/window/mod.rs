@@ -3050,25 +3050,29 @@ impl Window {
             .is_some_and(|s| s.buffer.is_modified())
     }
 
-    /// `group`'s segmented title with a `*` after each piece that names a
-    /// panel whose file has unsaved changes; `None` for a group with no
-    /// segmented title.
-    fn marked_group_title(&self, group: &crate::app::types::BufferGroup) -> Option<String> {
+    /// `group`'s segmented title as tab-strip pieces, each marked when it
+    /// names a panel whose file has unsaved changes; `None` for a group with
+    /// no segmented title.
+    fn group_title_pieces(
+        &self,
+        group: &crate::app::types::BufferGroup,
+    ) -> Option<Vec<crate::view::shell::tabs::TitlePiece>> {
         let segments = group.title.as_ref()?;
-        let mut out = String::new();
-        for segment in segments {
-            out.push_str(&segment.text);
-            let modified = segment
-                .panel
-                .as_ref()
-                .and_then(|panel| group.panel_buffers.get(panel))
-                .filter(|id| group.borrowed_buffers.contains(id))
-                .is_some_and(|id| self.borrowed_buffer_modified(*id));
-            if modified {
-                out.push('*');
-            }
-        }
-        Some(out)
+        Some(
+            segments
+                .iter()
+                .map(|segment| crate::view::shell::tabs::TitlePiece {
+                    text: segment.text.clone(),
+                    names_panel: segment.panel.is_some(),
+                    modified: segment
+                        .panel
+                        .as_ref()
+                        .and_then(|panel| group.panel_buffers.get(panel))
+                        .filter(|id| group.borrowed_buffers.contains(id))
+                        .is_some_and(|id| self.borrowed_buffer_modified(*id)),
+                })
+                .collect(),
+        )
     }
 
     /// Each pane's tab strip, as content — what the tab painter read off the
@@ -3091,19 +3095,11 @@ impl Window {
         let Some((mgr, vs_map)) = self.buffers.splits() else {
             return Default::default();
         };
-        // A group with a segmented title (`setBufferGroupTitle`) shows a `*`
-        // after each piece naming a panel whose file has unsaved changes, so
-        // a comparison says which side is unsaved (issue #3691).
         let group_names: HashMap<LeafId, String> = self
             .grouped_subtrees
             .iter()
             .filter_map(|(leaf, node)| match node {
-                crate::view::split::SplitNode::Grouped { name, .. } => Some((
-                    *leaf,
-                    self.group_of_tab(*leaf)
-                        .and_then(|g| self.marked_group_title(g))
-                        .unwrap_or_else(|| name.clone()),
-                )),
+                crate::view::split::SplitNode::Grouped { name, .. } => Some((*leaf, name.clone())),
                 _ => None,
             })
             .collect();
@@ -3141,8 +3137,8 @@ impl Window {
                         ),
                         // A group without a segmented title is marked as a
                         // whole when a file one of its panels shows is
-                        // modified; one with a title marks the pieces in its
-                        // name instead (see `group_names` above).
+                        // modified; one with a title marks its pieces
+                        // instead (`group_title_pieces`).
                         TabTarget::Group(leaf) => (
                             self.group_of_tab(*leaf).is_some_and(|g| {
                                 g.title.is_none()
@@ -3153,12 +3149,23 @@ impl Window {
                             false,
                         ),
                     };
+                    // A group with a segmented title (`setBufferGroupTitle`)
+                    // shows a `*` after each piece naming a panel whose file
+                    // has unsaved changes, so a comparison says which side
+                    // is unsaved (issue #3691).
+                    let title = match t {
+                        TabTarget::Group(leaf) => self
+                            .group_of_tab(*leaf)
+                            .and_then(|g| self.group_title_pieces(g)),
+                        TabTarget::Buffer(_) => None,
+                    };
                     Some(Tab {
                         target: *t,
                         name,
                         modified,
                         preview: matches!(t, TabTarget::Buffer(id) if Some(*id) == preview),
                         binary,
+                        title,
                     })
                 })
                 .collect();

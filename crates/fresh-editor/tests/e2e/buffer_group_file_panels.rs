@@ -56,6 +56,17 @@ registerHandler("fpanel_close_file", () => {
 });
 editor.registerCommand("fpanel: Close File", "Close the file", "fpanel_close_file", null);
 
+registerHandler("fpanel_title", () => {
+    // An unknown group is ignored; an unknown panel's piece shows its text.
+    editor.setBufferGroupTitle(groupId + 1000, [{ text: "NOWHERE" }]);
+    editor.setBufferGroupTitle(groupId, [
+        { text: "LEFT", panel: "left" },
+        { text: "+" },
+        { text: "GHOST", panel: "ghost" },
+    ]);
+});
+editor.registerCommand("fpanel: Title", "Title the group in pieces", "fpanel_title", null);
+
 editor.on("buffer_group_closed", (data) => {
     closed++;
     editor.setStatus(`fpanel-closed-${data.group_id === groupId ? "pair" : "other"}-${closed}`);
@@ -405,4 +416,21 @@ fn an_unsaved_file_marks_the_group_tab() {
         tabs.contains("PAIR*") && tabs.contains("a.txt*")
     })
     .unwrap();
+}
+
+/// A group titled in pieces marks the piece naming a panel whose file has
+/// unsaved changes, and only that one: a piece naming no panel of the group
+/// shows its text unmarked. A title for an unknown group changes nothing.
+#[test]
+fn a_pieced_title_marks_only_the_pieces_naming_a_modified_panel() {
+    let (mut h, _tmp) = setup();
+    open_pair(&mut h);
+    run(&mut h, "fpanel: Title");
+    h.wait_until(|h| h.screen_row_text(1).contains(" LEFT+GHOST ×"))
+        .unwrap();
+
+    h.type_text("XYZ").unwrap();
+    h.wait_until(|h| h.screen_row_text(1).contains(" LEFT*+GHOST ×"))
+        .unwrap();
+    assert!(!h.screen_to_string().contains("NOWHERE"));
 }
