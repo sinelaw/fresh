@@ -190,6 +190,12 @@ pub const TOML_GRAMMAR: &str = include_str!("../../grammars/toml.sublime-syntax"
 /// both halves of that are fixed. Added after the defaults so it shadows them.
 pub const RUST_GRAMMAR: &str = include_str!("../../grammars/rust.sublime-syntax");
 
+/// Embedded Bash grammar. Like Rust, this replaces the grammar syntect bundles
+/// — it *is* that grammar, vendored from the same sublimehq/Packages revision,
+/// with one fix: a function whose body is a subshell, `f() ( … )`, no longer
+/// kills highlighting from there to the end of the file (issue #3473). Added
+/// after the defaults so it shadows them.
+pub const BASH_GRAMMAR: &str = include_str!("../../grammars/bash.sublime-syntax");
 /// Embedded C# grammar. Like Rust, this shadows a grammar syntect bundles: it
 /// is that same grammar (sublimehq/Packages at syntect's pinned commit) with
 /// one format-spec regex rewritten, because its nested quantifier backtracked
@@ -721,6 +727,18 @@ impl GrammarRegistry {
             }
             Err(e) => {
                 tracing::warn!("Failed to load embedded Rust grammar: {}", e);
+            }
+        }
+
+        // Bash grammar (shadows syntect's bundled one, see BASH_GRAMMAR)
+        match SyntaxDefinition::load_from_str(BASH_GRAMMAR, true, Some("Bourne Again Shell (bash)"))
+        {
+            Ok(syntax) => {
+                builder.add(syntax);
+                tracing::debug!("Loaded embedded Bash grammar");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load embedded Bash grammar: {}", e);
             }
         }
 
@@ -3178,6 +3196,92 @@ mod tests {
             .count();
         assert_eq!(second_extensions, 1, "extensions must not duplicate");
         assert_eq!(second_globs, 1, "globs must not duplicate");
+    }
+
+    /// The scope stack at the first byte of `needle` on each line of `src`
+    /// that contains it, parsed with the grammar `.sh` resolves to.
+    fn bash_scopes_at(src: &str, needle: &str) -> Vec<String> {
+        use syntect::parsing::{ParseState, ScopeStack};
+
+        let registry = GrammarRegistry::default();
+        let syntax_set = registry.syntax_set();
+        let syntax = syntax_set
+            .find_syntax_by_extension("sh")
+            .expect("`.sh` should resolve to the Bash grammar");
+        let mut state = ParseState::new(syntax);
+        let mut scopes = ScopeStack::new();
+        let mut found = Vec::new();
+        for line in src.split_inclusive('\n') {
+            let ops = state.parse_line(line, syntax_set).unwrap();
+            let at = line.find(needle);
+            let mut ops = ops.iter().peekable();
+            if let Some(at) = at {
+                while let Some((offset, op)) = ops.peek() {
+                    if *offset > at {
+                        break;
+                    }
+                    scopes.apply(op).unwrap();
+                    ops.next();
+                }
+                let names: Vec<String> =
+                    scopes.as_slice().iter().map(|s| s.build_string()).collect();
+                found.push(names.join(" "));
+            }
+            for (_, op) in ops {
+                scopes.apply(op).unwrap();
+            }
+        }
+        found
+    }
+
+    /// A function whose body is a subshell, `f() ( … )`, must not swallow the
+    /// rest of the file. syntect's bundled Bash grammar read the body's `(` as
+    /// a second parameter list and then waited for a `{`, so every later line
+    /// lost its highlighting — `echo` both inside the body and after it came
+    /// out as plain text (issue #3473). The vendored grammar fixes that; a
+    /// brace body is the control and must keep working.
+    #[test]
+    fn test_bash_subshell_function_body_keeps_highlighting() {
+        for src in [
+            "f() (\n  echo one\n)\necho CANARY\n",
+            "f() {\n  echo one\n}\necho CANARY\n",
+            "function f (\n  echo one\n)\necho CANARY\n",
+            "function f {\n  echo one\n}\necho CANARY\n",
+            "function f() (\n  echo one\n)\necho CANARY\n",
+            "f()\n{\n  echo one\n}\necho CANARY\n",
+        ] {
+            let at_echo = bash_scopes_at(src, "echo");
+            assert_eq!(at_echo.len(), 2, "{src:?}");
+            for scopes in &at_echo {
+                assert!(
+                    scopes.contains("support.function.echo"),
+                    "`echo` should be a builtin in {src:?}, scopes were {scopes:?}"
+                );
+            }
+            // Inside the body, then back at the top level after it.
+            assert!(at_echo[0].contains("meta.function.shell"), "{src:?}");
+            assert!(!at_echo[1].contains("meta.function.shell"), "{src:?}");
+        }
+
+        // Bodies that are neither braces nor a subshell (bash accepts any
+        // compound command), and a subshell body inside backticks, which goes
+        // through the grammar's separate `-bt` contexts. Each must leave the
+        // next line as ordinary top-level code.
+        for src in [
+            "f() [[ -n x ]]\necho CANARY\n",
+            "f() ((1))\necho CANARY\n",
+            "f() if true; then :; fi\necho CANARY\n",
+            "x=`f() ( :\n); f`\necho CANARY\n",
+        ] {
+            let at_echo = bash_scopes_at(src, "echo CANARY");
+            assert_eq!(at_echo.len(), 1, "{src:?}");
+            assert!(
+                at_echo[0].contains("support.function.echo")
+                    && !at_echo[0].contains("meta.function.shell"),
+                "`echo CANARY` should be a top-level builtin in {src:?}, scopes were {:?}",
+                at_echo[0]
+            );
+        }
     }
 
     /// Julia: a single-quote after an identifier is the adjoint

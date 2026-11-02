@@ -108,6 +108,7 @@ pub mod issue_2031_next_prev_window;
 pub mod issue_2035_preview_renders_buffer_groups;
 pub mod issue_2111_find_next_with_search_bar_open;
 pub mod issue_2119_wheel_scroll;
+pub mod issue_2122_paragraph_motion_reachable;
 pub mod issue_2124_quickfix_enter;
 pub mod issue_2197_lsp_timeout_visible;
 pub mod issue_2283_dock_last_tab_close;
