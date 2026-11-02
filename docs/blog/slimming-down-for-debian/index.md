@@ -9,7 +9,7 @@ outline: deep
 
 In [I hate packaging my software for Linux](../packaging-for-linux/) I explained why Fresh wasn't in Debian: an official package has to build every Rust dependency from Debian's own archive, and I didn't have time to package and maintain the crates Debian was missing.
 
-Fresh now builds that way, and the result is in the Debian process ([ITP #1124035](https://bugs.debian.org/1124035)). We didn't add Fresh's missing crates to Debian. We changed Fresh so the Debian build doesn't need them. This post covers what that took, and what we found along the way.
+Fresh now builds that way, and the result is in the Debian process. Someone had already asked for a Fresh package back in December 2025, in a request-for-packaging bug that has since become my ITP, [#1124035](https://bugs.debian.org/1124035). We didn't add Fresh's missing crates to Debian. We changed Fresh so the Debian build doesn't need them. This post covers what that took, and what we found along the way.
 
 ## The rule
 
@@ -21,7 +21,7 @@ The usual approach is to package each missing crate yourself, through the Debian
 
 ## What was missing
 
-The first audit of Fresh's dependency graph against Debian testing found these problems:
+Against Debian unstable, the first audit found about **35 crates missing and about 7 at the wrong version**. Debian 13 (trixie) was further away: even a build without plugins had 80 crates missing or at the wrong version there. So the target became Debian testing, where the gaps were these:
 
 | Missing or mismatched | What it does in Fresh |
 | --- | --- |
@@ -72,7 +72,7 @@ Before writing the backend, a spike ran **every bundled plugin on both engines**
 
 quickjs-ng has 38 built-ins Bellard's engine lacks, mostly ES2024/2025 additions such as iterator helpers, the new `Set` methods and `Promise.try`. A search of the compiled plugin JavaScript found that no plugin uses any of them. User plugins are already type-checked against `ES2020`, so TypeScript flags those built-ins for plugin authors.
 
-There's now a parity test suite that runs against whichever backend is built, and a CI job runs it, the plugin runtime's tests, and the editor's plugin end-to-end tests in a `debian:testing` container.
+All 671 of the editor's plugin end-to-end tests pass on Debian's QuickJS too. There's also a parity test suite that runs against whichever backend is built, and a CI job runs it, the plugin runtime's tests, and the editor's plugin end-to-end tests in a `debian:testing` container.
 
 One bonus: Debian's `libquickjs` keeps QuickJS's teardown assertion, so a leaked reference aborts the test run. That assertion caught a real refcount bug while the backend was being written, and the spike's wrapper turned out to have the same bug.
 
@@ -82,7 +82,7 @@ oxc, about two dozen crates, compiles plugin TypeScript in-process. It isn't in 
 
 `fresh-parser-js` now has an `oxc` cargo feature, on by default. Without it, transpiling, bundling, import stripping and syntax checks run the system `esbuild`, with results cached under `~/.cache/fresh/esbuild`.
 
-That made esbuild a runtime dependency, and esbuild Recommends Node.js. A default `apt install fresh-editor` would have pulled in **about 100 packages**. So we went one step further:
+That made esbuild a runtime dependency, and esbuild Recommends Node.js. A default `apt install fresh-editor` would have pulled in **about 100 packages**. My preference was a minimal footprint for Fresh, so we went one step further:
 
 - A **`precompiled-plugins`** feature compiles the bundled plugins while Fresh builds, and embeds the JavaScript, keyed by a hash of the source. At startup, a bundled plugin whose source still matches uses that JavaScript, and nothing is compiled.
 - esbuild becomes a build dependency, and the binary package only **Suggests** it, for your own TypeScript (`init.ts`, your plugins). Without it, Fresh tells you to `apt install esbuild`.
@@ -107,7 +107,9 @@ The same `fresh-editor` crate, with the default features and with the Debian one
 | `.deb` for amd64 (0.5.7) | 10.9 MB | **9.4 MB** |
 | runtime Depends | — | `libc6`, `libgcc-s1`, `libonig5` |
 
-The Debian build drops 91 crates: the five `rquickjs` crates, 23 `oxc_*` crates and their helpers, `ureq` with `rustls`/`ring`/`webpki-roots`, `zip`/`tar`/`xz2`, `ts-rs`, five tree-sitter grammars, and more. It adds 7: `bindgen` and its helpers, `fresh-quickjs-sys` and `fresh-js-macros`. That's 84 fewer crates to audit, and each one that remains already has a Debian maintainer.
+The Debian build drops 91 crates: the five `rquickjs` crates, 23 `oxc_*` crates and their helpers, `ureq` with `rustls`/`ring`/`webpki-roots`, `zip`/`tar`/`xz2`, `ts-rs`, five tree-sitter grammars, and more. It adds 7: `bindgen` and its helpers, `fresh-quickjs-sys` and `fresh-js-macros`. That's 84 fewer crates to audit, and each one that remains already has a Debian maintainer. The package's `debian/control` lists 105 `librust-*-dev` build dependencies.
+
+The smaller download doesn't mean a smaller binary. Measured against an earlier release, the stripped Debian binary was slightly larger: 35.7 MB against 33.9 MB. Two things account for it. The Debian build has no LTO (see below), and it embeds about 2.4 MB of precompiled plugin JavaScript. Its machine code alone was smaller, at 13.4 MB against 14.5 MB.
 
 ## Keeping it true
 
@@ -131,10 +133,15 @@ The archive check couldn't catch everything. Actually building the package found
 
 ## Where it stands
 
-- The ITP is [#1124035](https://bugs.debian.org/1124035), and the source package has been uploaded to mentors.debian.net.
-- The packaging lives on Salsa at [`salsa.debian.org/sinelaw/fresh-editor`](https://salsa.debian.org/sinelaw/fresh-editor), and Salsa CI builds it, runs lintian and autopkgtests, and checks reproducibility.
-- **What's left:** a sponsor to upload it to unstable, and agreement with the Debian Rust team on how the source package carries Fresh's own workspace crates (`fresh-core`, `fresh-js`, …).
+- **ITP** [#1124035](https://bugs.debian.org/1124035) and **RFS** [#1151577](https://bugs.debian.org/1151577) are filed. 0.5.7-1 is on mentors.debian.net, waiting for a sponsor.
+- **Salsa:** the packaging lives at [`salsa.debian.org/sinelaw/fresh-editor`](https://salsa.debian.org/sinelaw/fresh-editor) in the DEP-14 layout. Salsa CI's full pipeline passes: builds including i386, lintian, autopkgtest, piuparts and a reproducibility rebuild.
+- **Not done yet:** nobody has replied to the RFS so far, so there's no sponsor. The Debian Rust team usually packages each crate separately, so they'll need to agree to one source package that builds Fresh's own workspace crates (`fresh-core`, `fresh-js`, …) in-tree. texlab and uv are precedents.
 
-Unstable keeps moving under us. While I was writing this, Debian unstable replaced `jsonc-parser` 0.33 with 0.34, so Fresh now accepts both. That's what the CI job on unstable is for.
+Unstable keeps moving under us. In one week:
+
+- `typed-path` 0.13 replaced 0.12 while Debian's `zip` still needed 0.12. That made our build dependencies uninstallable on unstable through a chain Fresh doesn't use: `arboard` → `image` → `dav1d` → `system-deps` → `zip`. We waited for Debian to fix it.
+- Unstable replaced `jsonc-parser` 0.33 with 0.34, so Fresh now accepts both.
+
+That's what the CI job on unstable is for. It can turn red without blocking a release.
 
 If you run Debian testing or unstable, you can try the package now. Download `fresh-editor_<version>-1_<arch>.debian-testing.deb` from the [latest release](https://github.com/sinelaw/fresh/releases/latest) and install it with `apt install ./fresh-editor_*.debian-testing.deb`. If you're a Debian Developer who sponsors Rust packages, I'd love to hear from you.
