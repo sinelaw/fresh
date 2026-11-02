@@ -17,7 +17,7 @@
 //!
 //! Linux-gated: `XDG_CONFIG_HOME`/`XDG_RUNTIME_DIR` are what isolate the
 //! config the daemon reads and the socket it binds, and `dirs` honours them
-//! only on Linux. `common::pty` is Linux-only for the same kind of reason.
+//! only on Linux.
 #![cfg(target_os = "linux")]
 
 use crate::common::pty::{pty_available, spawn_on_pty, ChildStdin};
