@@ -29,7 +29,8 @@
 # took ~300 ms to highlight in a release build (seconds in a debug build), and
 # every keystroke on or above it re-highlighted it. The replacement matches the
 # same strings (a non-special character, then any mix of non-special characters
-# and backslash escapes) without the ambiguous nesting. Syntect parses
+# and backslash escapes) without the ambiguous nesting, so each attempt is
+# linear rather than exponential. Syntect parses
 # upstream's C# syntax tests (2472 lines) to the same scope operations with
 # either pattern.
 #
@@ -48,6 +49,10 @@ file_extensions:
 scope: source.cs
 
 variables:
+
+  # FRESH: unused by the rules; lets tests tell this grammar apart from the
+  # identically named one syntect bundles (which this one must shadow).
+  fresh_vendored: 'issue-3667'
 
   bin_op: '(?:\+|->|-|\*|/|%|\|\||&&|\||&|\^|<<|>>|=>|<=|<|>=|>|==|!=|\?\?)'
   unary_op: '(?:\+\+|--|-|~|!|&|\*)'
@@ -1608,7 +1613,7 @@ contexts:
         - match: '(?=\})'
           pop: true
         # FRESH: was '([^}"\\]+(\\.)*)+(?="(?!"))', whose nested quantifier
-        # backtracks exponentially (issue #3667). Same language, linear match.
+        # backtracks exponentially (issue #3667). Same strings, no nesting.
         - match: '[^}"\\](?:[^}"\\]|\\.)*(?="(?!"))'
           scope: invalid.illegal.unclosed-string-placeholder.cs
           pop: true

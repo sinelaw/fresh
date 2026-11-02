@@ -1986,37 +1986,50 @@ mod tests {
     }
 
     /// Like Rust, C# is vendored (`CSHARP_GRAMMAR`) to replace syntect's
-    /// bundled grammar (issue #3667): one catalog entry, and `.cs` resolving to
-    /// the vendored grammar, which is added after the defaults.
+    /// bundled grammar (issue #3667). Both grammars are named "C#", so check
+    /// that `.cs` and the `csharp` alias reach the vendored one — recognised by
+    /// its `fresh_vendored` marker variable — through both the runtime builder
+    /// (`default`) and the build-time packdump the editor starts from
+    /// (`defaults_only`), and that the catalog lists C# once.
     #[test]
     fn test_vendored_csharp_grammar_shadows_the_bundled_one() {
-        let registry = GrammarRegistry::default();
+        for (path, registry) in [
+            ("default", Arc::new(GrammarRegistry::default())),
+            ("defaults_only", GrammarRegistry::defaults_only()),
+        ] {
+            let entries = registry
+                .catalog()
+                .iter()
+                .filter(|entry| entry.display_name == "C#")
+                .count();
+            assert_eq!(entries, 1, "{path}: the catalog should list C# once");
 
-        let entries = registry
-            .catalog()
-            .iter()
-            .filter(|entry| entry.display_name == "C#")
-            .count();
-        assert_eq!(entries, 1, "the catalog should list C# once");
+            let syntax_set = registry.syntax_set();
+            let csharp: Vec<_> = syntax_set
+                .syntaxes()
+                .iter()
+                .filter(|s| s.name == "C#")
+                .collect();
+            assert_eq!(
+                csharp.len(),
+                2,
+                "{path}: expected syntect's bundled C# grammar plus the vendored one"
+            );
 
-        let syntax_set = registry.syntax_set();
-        let resolved = syntax_set
-            .find_syntax_by_extension("cs")
-            .expect("`.cs` should resolve to a C# grammar");
-        let last_csharp = syntax_set
-            .syntaxes()
-            .iter()
-            .rposition(|s| s.name == "C#")
-            .unwrap();
-        let resolved_index = syntax_set
-            .syntaxes()
-            .iter()
-            .position(|s| std::ptr::eq(s, resolved))
-            .unwrap();
-        assert_eq!(
-            resolved_index, last_csharp,
-            "`.cs` should resolve to the vendored grammar, not syntect's bundled one"
-        );
+            let by_extension = syntax_set
+                .find_syntax_by_extension("cs")
+                .expect("`.cs` should resolve to a C# grammar");
+            let by_alias = registry
+                .find_syntax_by_name("csharp")
+                .expect("alias `csharp` should resolve");
+            for (how, resolved) in [("`.cs`", by_extension), ("`csharp`", by_alias)] {
+                assert!(
+                    resolved.variables.contains_key("fresh_vendored"),
+                    "{path}: {how} should resolve to the vendored C# grammar, \
+                     not syntect's bundled one"
+                );
+            }
+        }
     }
 
     /// No regex in the C# grammar may backtrack catastrophically on the line
