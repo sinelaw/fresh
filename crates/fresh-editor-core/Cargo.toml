@@ -107,6 +107,12 @@ windows-sys = { version = "0.61", features = [
 proptest = "1.9"
 tempfile = "3.25"
 
+# The regex engine syntect drives in native builds. Tests use its per-search
+# backtracking cap to catch catastrophic grammar regexes deterministically
+# (issue #3667); already in the build graph through syntect's `regex-onig`.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+onig = { version = "6.5", default-features = false }
+
 [build-dependencies]
 serde_json.workspace = true
 syntect = { version = "5.3", default-features = false, features = ["parsing", "dump-load", "dump-create", "yaml-load", "default-syntaxes", "regex-onig"] }

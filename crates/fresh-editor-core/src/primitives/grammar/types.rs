@@ -190,6 +190,13 @@ pub const TOML_GRAMMAR: &str = include_str!("../../grammars/toml.sublime-syntax"
 /// both halves of that are fixed. Added after the defaults so it shadows them.
 pub const RUST_GRAMMAR: &str = include_str!("../../grammars/rust.sublime-syntax");
 
+/// Embedded C# grammar. Like Rust, this shadows a grammar syntect bundles: it
+/// is that same grammar (sublimehq/Packages at syntect's pinned commit) with
+/// one format-spec regex rewritten, because its nested quantifier backtracked
+/// catastrophically on interpolated strings such as
+/// `$"{v:F2} {F(v):F2} {G(v):F2}"`, stalling every keystroke (issue #3667).
+pub const CSHARP_GRAMMAR: &str = include_str!("../../grammars/csharp.sublime-syntax");
+
 /// Embedded Zig grammar (syntect doesn't include one)
 pub const ZIG_GRAMMAR: &str = include_str!("../../grammars/zig.sublime-syntax");
 
@@ -714,6 +721,17 @@ impl GrammarRegistry {
             }
             Err(e) => {
                 tracing::warn!("Failed to load embedded Rust grammar: {}", e);
+            }
+        }
+
+        // C# grammar (shadows syntect's bundled one, see CSHARP_GRAMMAR)
+        match SyntaxDefinition::load_from_str(CSHARP_GRAMMAR, true, Some("C#")) {
+            Ok(syntax) => {
+                builder.add(syntax);
+                tracing::debug!("Loaded embedded C# grammar");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load embedded C# grammar: {}", e);
             }
         }
 
@@ -1964,6 +1982,107 @@ mod tests {
             resolved_index,
             *rust_indices.last().unwrap(),
             "`.rs` should resolve to the vendored grammar, not syntect's bundled one"
+        );
+    }
+
+    /// Like Rust, C# is vendored (`CSHARP_GRAMMAR`) to replace syntect's
+    /// bundled grammar (issue #3667): one catalog entry, and `.cs` resolving to
+    /// the vendored grammar, which is added after the defaults.
+    #[test]
+    fn test_vendored_csharp_grammar_shadows_the_bundled_one() {
+        let registry = GrammarRegistry::default();
+
+        let entries = registry
+            .catalog()
+            .iter()
+            .filter(|entry| entry.display_name == "C#")
+            .count();
+        assert_eq!(entries, 1, "the catalog should list C# once");
+
+        let syntax_set = registry.syntax_set();
+        let resolved = syntax_set
+            .find_syntax_by_extension("cs")
+            .expect("`.cs` should resolve to a C# grammar");
+        let last_csharp = syntax_set
+            .syntaxes()
+            .iter()
+            .rposition(|s| s.name == "C#")
+            .unwrap();
+        let resolved_index = syntax_set
+            .syntaxes()
+            .iter()
+            .position(|s| std::ptr::eq(s, resolved))
+            .unwrap();
+        assert_eq!(
+            resolved_index, last_csharp,
+            "`.cs` should resolve to the vendored grammar, not syntect's bundled one"
+        );
+    }
+
+    /// No regex in the C# grammar may backtrack catastrophically on the line
+    /// from issue #3667. Syntect searches each candidate pattern from the
+    /// cursor to the end of the line, so a single exponential pattern there
+    /// stalled every keystroke on or above the line for seconds.
+    ///
+    /// Rather than timing the highlighter (flaky), this runs every `match:`
+    /// regex of the grammar through Oniguruma — the engine syntect uses in
+    /// native builds, with the same options — from every start offset, with a
+    /// cap on backtracking steps per search. A well-behaved regex needs a few
+    /// hundred steps on this line; the original format-spec rule needed more
+    /// than ten million.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_csharp_grammar_has_no_catastrophic_backtracking() {
+        use syntect::parsing::syntax_definition::Pattern;
+
+        const RETRY_LIMIT: u32 = 100_000;
+        let lines = [
+            "        Console.WriteLine($\"v={v:F2} stop={FieldStop(v):F2} slow={FieldSlowingDown(v):F2}\");\n",
+            "        var s = $\"{a:N0} {b:yyyy-MM-dd HH:mm} {F(c):0.00} {G(H(d)):F2} {e,-12:C}\";\n",
+            "        var t = $@\"{a:F2} {Compute(b, c):0.000} {Other(d):P1}\";\n",
+        ];
+
+        let def = SyntaxDefinition::load_from_str(CSHARP_GRAMMAR, true, Some("C#"))
+            .expect("vendored C# grammar should load");
+        let mut checked = 0;
+        for (context_name, context) in &def.contexts {
+            for pattern in &context.patterns {
+                let Pattern::Match(m) = pattern else {
+                    continue;
+                };
+                let source = m.regex.regex_str();
+                let regex = onig::Regex::with_options(
+                    source,
+                    onig::RegexOptions::REGEX_OPTION_CAPTURE_GROUP,
+                    onig::Syntax::default(),
+                )
+                .unwrap_or_else(|e| panic!("regex in `{context_name}` should compile: {e}"));
+                checked += 1;
+                for line in lines {
+                    for start in (0..line.len()).filter(|&i| line.is_char_boundary(i)) {
+                        let mut param = onig::MatchParam::default();
+                        param.set_retry_limit_in_match(RETRY_LIMIT);
+                        let result = regex.search_with_param(
+                            line,
+                            start,
+                            line.len(),
+                            onig::SearchOptions::SEARCH_OPTION_NONE,
+                            None,
+                            param,
+                        );
+                        assert!(
+                            result.is_ok(),
+                            "regex `{source}` in context `{context_name}` exceeded \
+                             {RETRY_LIMIT} backtracking steps from offset {start} of \
+                             {line:?}: {result:?}"
+                        );
+                    }
+                }
+            }
+        }
+        assert!(
+            checked > 100,
+            "expected to check the grammar's regexes, got {checked}"
         );
     }
 

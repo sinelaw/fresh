@@ -1473,6 +1473,7 @@ dependencies = [
  "libc",
  "nix 0.31.3",
  "once_cell",
+ "onig",
  "proptest",
  "pulldown-cmark",
  "ratatui",
