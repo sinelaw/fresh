@@ -183,7 +183,9 @@ fn keys_reach_a_daemon_session_through_a_client_on_dev_tty() {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    let mut server = spawn_daemon(server, &pid_file);
+    // Killed on drop, so a failure anywhere below (a client that cannot
+    // spawn, a panic) does not leave the daemon running after the test.
+    let _server = KillOnDrop(spawn_daemon(server, &pid_file));
 
     let mut client = fresh_in(home);
     client
@@ -197,7 +199,16 @@ fn keys_reach_a_daemon_session_through_a_client_on_dev_tty() {
         .and_then(|()| client.wait_for_screen(|screen| screen.contains("ZZZ")));
 
     client.kill();
-    let _ = server.kill();
-    let _ = server.wait();
     result.expect("typed keys should reach the daemon's buffer through the client");
+}
+
+/// A child that is killed and reaped when this goes out of scope, panics
+/// included.
+struct KillOnDrop(std::process::Child);
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
 }

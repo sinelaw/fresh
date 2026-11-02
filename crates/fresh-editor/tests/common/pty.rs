@@ -83,8 +83,6 @@ pub fn spawn_on_pty(
     rows: u16,
 ) -> std::io::Result<PtyChild> {
     let (master, slave_path) = open_pty()?;
-    resize(&master, cols, rows)?;
-
     // `O_NOCTTY`: the slave is the child's terminal, never ours.
     let slave = {
         use std::os::unix::fs::OpenOptionsExt;
@@ -94,6 +92,9 @@ pub fn spawn_on_pty(
             .custom_flags(libc::O_NOCTTY)
             .open(&slave_path)?
     };
+    // After the slave is open: macOS refuses `TIOCSWINSZ` on a master whose
+    // slave has never been opened (ENOTTY). Linux takes it either way.
+    resize(&master, cols, rows)?;
 
     match &stdin {
         // `DevTty` starts from the slave and swaps it for `/dev/tty` below.
