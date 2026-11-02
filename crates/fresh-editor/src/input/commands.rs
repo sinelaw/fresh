@@ -1324,6 +1324,23 @@ static COMMAND_DEFS: &[CommandDef] = &[
         contexts: &[Normal],
         custom_contexts: &[],
     },
+    // The paragraph motions have no default key (Ctrl+Up/Down means "scroll a
+    // line" in other editors, so it is not a safe default), which made the
+    // palette the only way to reach them (#2122).
+    CommandDef {
+        name_key: "cmd.goto_next_paragraph",
+        desc_key: "cmd.goto_next_paragraph_desc",
+        action: || Action::MoveToParagraphDown,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.goto_prev_paragraph",
+        desc_key: "cmd.goto_prev_paragraph_desc",
+        action: || Action::MoveToParagraphUp,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
     // Error navigation
     CommandDef {
         name_key: "cmd.jump_to_next_error",

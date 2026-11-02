@@ -14,6 +14,7 @@ Some keybindings may not work or may differ on your system due to differences in
 - **Markdown types delimiters literally** — Markdown ships with both `languages.markdown.auto_close` and `languages.markdown.auto_surround` set to `false`, because prose types backticks, quotes and brackets as literal text far more often than as pairs. Set either to `true` to opt back in.
 - **Smart quote suppression** — Quotes typed inside an existing string don't auto-close.
 - **Bracket matching** — Matching brackets are highlighted. Use "Go to Matching Bracket" from the command palette to jump. Enabled by default; toggle via `highlight_matching_brackets` in settings.
+- **Paragraph motion** — "Go to Next Paragraph" / "Go to Previous Paragraph" (command palette, or **Go → Next/Previous Paragraph**) move the cursor to the next or previous empty line. They have no default key; bind `move_to_paragraph_down` / `move_to_paragraph_up` in the [Keybinding Editor](./keybinding-editor.md) if you want one. Ctrl+Shift+Down/Up extend the selection the same way.
 
 ## Vertical Rulers
 

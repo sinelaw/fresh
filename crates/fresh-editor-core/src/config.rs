@@ -3617,6 +3617,21 @@ impl MenuConfig {
                     },
                     MenuItem::Separator { separator: true },
                     MenuItem::Action {
+                        label: t!("menu.go.next_paragraph").to_string(),
+                        action: "move_to_paragraph_down".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.go.prev_paragraph").to_string(),
+                        action: "move_to_paragraph_up".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
                         label: t!("menu.go.next_buffer").to_string(),
                         action: "next_buffer".to_string(),
                         args: HashMap::new(),
