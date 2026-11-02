@@ -3098,6 +3098,21 @@ type BackgroundProcessResult = {
 	exit_code: number;
 };
 /**
+* One piece of a buffer group's tab title, for `setBufferGroupTitle`.
+*/
+type BufferGroupTitleSegment = {
+	/**
+	* The text this piece of the title shows.
+	*/
+	text: string;
+	/**
+	* The panel this piece names, if any. While the file that panel shows
+	* has unsaved changes, the tab shows `*` right after this piece, as a
+	* file's own tab does after its name.
+	*/
+	panel?: string;
+};
+/**
 * Diff between current buffer content and last saved snapshot
 */
 type BufferSavedDiff = {
@@ -7872,6 +7887,23 @@ interface EditorAPI {
 	* back to the global bindings.
 	*/
 	setBufferMode(bufferId: number, mode: string): boolean;
+	/**
+	* Set the title a buffer group's tab shows, as a list of segments.
+	* 
+	* The tab shows the segments' text one after another. A segment that
+	* names a panel stands for the file that panel shows: while that file
+	* has unsaved changes, the tab shows `*` right after the segment, as a
+	* file's own tab does after its name. So a group comparing two files
+	* can say which of them is unsaved, rather than marking the whole tab.
+	* 
+	* Replaces the name the group was created with. Returns `false` only
+	* if the command could not be sent; an unknown group or panel is
+	* ignored (an unknown panel's segment shows its text, never a `*`).
+	* 
+	* @param groupId - The group, as `createBufferGroup` returned it
+	* @param segments - The title's pieces, in order
+	*/
+	setBufferGroupTitle(groupId: number, segments: BufferGroupTitleSegment[]): boolean;
 	/**
 	* Show or hide one panel of a buffer group, without tearing the
 	* group down.

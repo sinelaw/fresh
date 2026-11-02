@@ -946,6 +946,7 @@ mod tests {
                 modified: false,
                 preview: false,
                 binary: false,
+                title: None,
             }],
             active: Some(TabTarget::Buffer(BufferId(n))),
             active_pane: n == 0,
