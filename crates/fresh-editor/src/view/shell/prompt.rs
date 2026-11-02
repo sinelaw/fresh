@@ -848,14 +848,20 @@ pub fn suggestions_layer(s: &Suggestions) -> Node<UiMsg> {
     }
 }
 
-/// The hints row wears the selected row's colours, dimmed: it sits on the
-/// selection background, so its text has to be the ink a theme already pairs
-/// with that background, not a second one the theme must also suit (#3616).
+/// The hints row wears the selected row's colours: it sits on the selection
+/// background, so its text has to be the ink a theme already pairs with that
+/// background, not a second one the theme must also suit (#3616).
+///
+/// Italic, not `dim`, is what sets it apart from a selected row. `dim` asks
+/// the terminal to fade that ink towards the background, which on the
+/// high-contrast theme's blue selection left the hints unreadable — the
+/// colours the theme chose for legibility have to reach the screen as they
+/// are.
 fn hints_theme() -> String {
     attrs(
         "ui.popup_selection_fg",
         "ui.suggestion_selected_bg",
-        &["dim"],
+        &["italic"],
     )
 }
 
@@ -1115,6 +1121,15 @@ mod tests {
             names(&hints_theme()),
             names(&theme(false, RowState::Selected))
         );
+    }
+
+    /// ...and shows them at full strength: `dim` faded the hints into the
+    /// selection background until they could not be read (#3616).
+    #[test]
+    fn the_hints_row_is_not_dimmed() {
+        use crate::app::shell_host::shell_theme::{Attrs, Ink};
+        let ink = Ink::parse(&hints_theme()).expect("hints theme parses");
+        assert!(!ink.attrs.contains(Attrs::DIM), "{:?}", hints_theme());
     }
 
     /// **Ledger rule 2: clicking a row selects it — by index, not by
