@@ -6,16 +6,14 @@
 //! Paragraph") and entries in the Go menu. No default key is added: the
 //! obvious candidate, Ctrl+Up/Down, means "scroll one line" in other editors.
 //!
-//! Observable: the cursor's byte offset lands on the blank line that ends
-//! the paragraph, with no selection.
+//! Observable: the status bar's `Ln N, Col 1` lands on the blank line that
+//! ends the paragraph, and the text it moved over is not painted as selected.
 
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 
-/// Byte offsets of the two blank lines in [`TEXT`].
+/// Blank lines at 3 and 6.
 const TEXT: &str = "one\ntwo\n\nthree\nfour\n\nfive\n";
-const FIRST_BLANK: usize = 8;
-const SECOND_BLANK: usize = 20;
 
 fn run_palette_command(harness: &mut EditorTestHarness, command: &str) {
     harness
@@ -28,45 +26,57 @@ fn run_palette_command(harness: &mut EditorTestHarness, command: &str) {
     harness.render().unwrap();
 }
 
+/// The motion moves the cursor without selecting: the line it passed over
+/// keeps the ordinary background.
+fn assert_not_selected(harness: &EditorTestHarness, word: &str) {
+    let (x, y) = harness
+        .find_text_on_screen(word)
+        .unwrap_or_else(|| panic!("{word:?} should be on screen"));
+    let bg = harness.get_cell_style(x, y).and_then(|s| s.bg);
+    assert_ne!(
+        bg,
+        Some(harness.editor().theme().selection_bg),
+        "{word:?} should not be painted as selected"
+    );
+}
+
 #[test]
 fn palette_moves_to_next_and_previous_paragraph() {
     let mut harness = EditorTestHarness::new(100, 30).unwrap();
     let _fixture = harness.load_buffer_from_text(TEXT).unwrap();
-    assert_eq!(harness.cursor_position(), 0);
+    harness.assert_screen_contains("Ln 1, Col 1");
 
     run_palette_command(&mut harness, "Go to Next Paragraph");
-    assert_eq!(harness.cursor_position(), FIRST_BLANK);
+    harness.assert_screen_contains("Ln 3, Col 1");
+    assert_not_selected(&harness, "two");
 
     run_palette_command(&mut harness, "Go to Next Paragraph");
-    assert_eq!(harness.cursor_position(), SECOND_BLANK);
+    harness.assert_screen_contains("Ln 6, Col 1");
 
     run_palette_command(&mut harness, "Go to Previous Paragraph");
-    assert_eq!(harness.cursor_position(), FIRST_BLANK);
-
-    // A motion, not a selection.
-    assert!(harness.get_selected_text().is_empty());
+    harness.assert_screen_contains("Ln 3, Col 1");
+    assert_not_selected(&harness, "four");
 }
 
 #[test]
 fn go_menu_lists_and_runs_the_paragraph_motions() {
     let mut harness = EditorTestHarness::new(100, 30).unwrap();
     let _fixture = harness.load_buffer_from_text(TEXT).unwrap();
+    harness.assert_screen_not_contains("Next Paragraph");
 
+    // The entries appear only once the Go menu is open, so they belong to it.
     harness
         .send_key(KeyCode::Char('g'), KeyModifiers::ALT)
         .unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains("Next Paragraph");
+    harness.assert_screen_contains("Go to Line");
     harness.assert_screen_contains("Previous Paragraph");
 
-    // Go to Line, Go to Definition, Find References, Go to Implementation,
-    // then (past the separator) Next Paragraph.
-    for _ in 0..4 {
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    }
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
+    let (x, y) = harness
+        .find_text_on_screen("Next Paragraph")
+        .expect("Go menu should list Next Paragraph");
+    harness.mouse_click(x, y).unwrap();
     harness.render().unwrap();
-    assert_eq!(harness.cursor_position(), FIRST_BLANK);
+    harness.assert_screen_not_contains("Next Paragraph");
+    harness.assert_screen_contains("Ln 3, Col 1");
 }
