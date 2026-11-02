@@ -368,9 +368,10 @@ fn test_tab_with_multiple_cursors_indents_each_line() {
     harness
         .send_key(KeyCode::Home, KeyModifiers::CONTROL)
         .unwrap();
+    // Add the cursors and press Tab with no frame in between, as a fast key
+    // sequence does: the handler must still see all three cursors.
     harness.editor_mut().add_cursor_below();
     harness.editor_mut().add_cursor_below();
-    harness.render().unwrap();
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
 
     harness
