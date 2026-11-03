@@ -100,7 +100,8 @@
     "status_error_indicator_hover_bg": [230, 70, 70],
     "status_error_indicator_hover_fg": [255, 255, 255],
     "tab_drop_zone_bg": [173, 214, 255],
-    "tab_drop_zone_border": [70, 130, 180]
+    "tab_drop_zone_border": [70, 130, 180],
+    "file_explorer_pinned_bg": [238, 240, 248]
   },
   "search": {
     "match_bg": [255, 255, 150],

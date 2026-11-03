@@ -65,7 +65,7 @@ impl ExplorerPreviewRows {
 impl ExplorerRows {
     /// Row `j` of the window: a projection row, or one of a preview's empty
     /// rows.
-    fn describe_at(&self, j: usize) -> crate::view::shell::file_explorer::Row {
+    fn describe_at(&self, j: usize, pinned: bool) -> crate::view::shell::file_explorer::Row {
         use crate::view::move_preview::Spot;
         match self.preview.as_ref().map(|p| p.layout.splice.spot(j)) {
             Some(Spot::Inserted(k)) => {
@@ -81,12 +81,12 @@ impl ExplorerRows {
                     &self.expanded,
                 )
             }
-            Some(Spot::Row(i)) => self.describe(i),
-            None => self.describe(j),
+            Some(Spot::Row(i)) => self.describe(i, pinned),
+            None => self.describe(j, pinned),
         }
     }
 
-    fn describe(&self, i: usize) -> crate::view::shell::file_explorer::Row {
+    fn describe(&self, i: usize, pinned: bool) -> crate::view::shell::file_explorer::Row {
         let node = &self.projection.rows[i];
         let fuzzy = self
             .search
@@ -118,6 +118,7 @@ impl ExplorerRows {
                 .preview
                 .as_ref()
                 .is_some_and(|p| p.layout.dest_row == Some(i)),
+            pinned,
         })
     }
 }
@@ -3412,7 +3413,7 @@ impl Editor {
                 Spot::Row(i) => fe::row_key(&keys.rows[i].entry.path),
                 Spot::Inserted(k) => fresh_ui::Key::Pair("explorer_move_preview".into(), k as u64),
             }),
-            row: std::rc::Rc::new(move |j| rows.describe_at(j)),
+            row: std::rc::Rc::new(move |j, pin| rows.describe_at(j, pin)),
             parent: std::rc::Rc::new(move |j| {
                 let parent = match parent_spot(j) {
                     Spot::Row(i) => parents.rows.get(i).and_then(|r| r.parent),

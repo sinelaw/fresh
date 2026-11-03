@@ -1118,7 +1118,7 @@ fn tree_band(st: fresh_ui::widgets::RowState, focused: bool) -> Option<String> {
         (RowState::Selected | RowState::SelectedBlur, false) => {
             Some(pair("ui.menu_fg", "editor.selection_bg"))
         }
-        (RowState::Hover | RowState::Normal, _) => None,
+        (RowState::Hover | RowState::Normal | RowState::Pinned, _) => None,
     }
 }
 

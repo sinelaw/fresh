@@ -156,8 +156,11 @@ impl Default for Body {
 pub struct Tree {
     pub count: usize,
     pub key: Rc<dyn Fn(usize) -> Key>,
-    /// What row `i` says. Asked at layout, by the window.
-    pub row: Rc<dyn Fn(usize) -> Row>,
+    /// What row `i` says. Asked at layout, by the window. The second
+    /// argument says the row is one of the pinned ancestors the window
+    /// holds above the run — decided by the list at the moment it builds
+    /// the row, so what the band shows is never a frame behind the scroll.
+    pub row: Rc<dyn Fn(usize, bool) -> Row>,
     /// Row `i`'s parent, by row index — what the sticky ancestors are.
     pub parent: Rc<dyn Fn(usize) -> Option<usize>>,
     /// Depth, children and expansion of row `i`, as the tree widget asks.
@@ -210,7 +213,7 @@ impl Tree {
         Tree {
             count: rows.len(),
             key: Rc::new(move |i| row_key(std::path::Path::new(&keys[i].name[0].0))),
-            row: Rc::new(move |i| described[i].clone()),
+            row: Rc::new(move |i, _| described[i].clone()),
             parent: Rc::new(parent),
             node: Rc::new(|_| fresh_ui::widgets::TreeRow {
                 depth: 0,
@@ -360,14 +363,15 @@ pub fn rows(e: &Explorer) -> Node<UiMsg> {
             move |i| key(i)
         },
         move |i| node(i),
-        move |i, _, _| {
+        move |i, _, st| {
             // Clip hit targets as well as ink to the row's lane. A long
             // row's status slot can otherwise answer hover beneath the
             // scrollbar. A column, so the row is as wide as the lane and its
             // gap pushes the status slot to the edge.
-            col()
-                .clip(true)
-                .child(node_row(caret && selected == Some(i), &describe(i)))
+            col().clip(true).child(node_row(
+                caret && selected == Some(i),
+                &describe(i, st == fresh_ui::widgets::RowState::Pinned),
+            ))
         },
     )
     .sticky(MAX_STICKY_ANCESTORS, move |i| parent(i))
