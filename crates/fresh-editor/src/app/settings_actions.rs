@@ -246,6 +246,7 @@ impl Editor {
         }
 
         self.refresh_open_buffer_settings_from_config();
+        self.relayout();
 
         // Save ONLY the changes to disk (preserves external edits to the config file)
         let resolver =
