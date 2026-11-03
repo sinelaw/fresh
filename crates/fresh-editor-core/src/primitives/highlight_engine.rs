@@ -1922,6 +1922,7 @@ impl TextMateEngine {
             parse_end,
             viewport_start,
             viewport_end,
+            dirty,
         )
     }
 
@@ -2017,6 +2018,19 @@ impl TextMateEngine {
             0
         };
         let mut bytes_since_checkpoint: usize = 0;
+        // Spans are collected for everything the splice below will replace:
+        // the cached spans from `actual_start` on, within the cache. Not from
+        // `desired_parse_start` — when a caller asks to start below the
+        // cache's own start (a viewport scrolled down since the cache was
+        // built, a structure query at the viewport top), the lines between
+        // the anchor and that start would lose their cached spans to the
+        // splice and get none back: a hole of plain text above the viewport,
+        // served as a cache hit once it scrolls into view.
+        let collect_from = self
+            .cache
+            .as_ref()
+            .map_or(desired_parse_start, |cache| cache.range.start)
+            .max(actual_start);
 
         while pos < content_bytes.len() {
             // Create checkpoints in new territory
@@ -2026,9 +2040,7 @@ impl TextMateEngine {
             }
 
             let (line_end, line_byte_len, prepared) = prepare_line_at(content_bytes, pos);
-            // Collect spans for the dirty region
-            let collect_spans =
-                current_offset + line_byte_len > desired_parse_start.max(actual_start);
+            let collect_spans = current_offset + line_byte_len > collect_from;
             if let Some(prepared) = prepared {
                 let _ = self.parse_cached_line(
                     &mut snapshot,
@@ -2041,7 +2053,7 @@ impl TextMateEngine {
                         if !collect_spans {
                             return;
                         }
-                        let clamped_start = byte_start.max(actual_start);
+                        let clamped_start = byte_start.max(collect_from);
                         if clamped_start < byte_end {
                             new_spans.push(CachedSpan {
                                 range: clamped_start..byte_end,
@@ -2365,6 +2377,7 @@ impl TextMateEngine {
         parse_end: usize,
         viewport_start: usize,
         viewport_end: usize,
+        pending_edit: Option<usize>,
     ) -> Vec<CachedSpan> {
         self.stats.cache_misses += 1;
         self.dirty_from = None; // consumed
@@ -2376,6 +2389,13 @@ impl TextMateEngine {
         let syntax = &self.syntax_set.syntaxes()[self.syntax_index];
         let (actual_start, mut snapshot, anchored) =
             self.find_parse_resume_point(desired_parse_start, parse_end, syntax);
+        // A checkpoint at or past an edit no pass has repaired still holds the
+        // state from before the edit (`notify_insert`/`notify_delete` move
+        // checkpoints, they do not re-parse them). Colouring from it is the
+        // engine's long-standing best effort; reporting structure from it is
+        // a confident wrong frame, so such a cache answers none.
+        let anchored =
+            anchored && pending_edit.is_none_or(|edit| actual_start == 0 || actual_start < edit);
 
         let content = buffer.slice_bytes(actual_start..parse_end);
         let content_str = match std::str::from_utf8(&content) {
@@ -2716,11 +2736,16 @@ impl TextMateEngine {
     }
 
     /// Read `range`'s structure off the cache's recorded lines, or `None` when
-    /// the cache cannot vouch for every line it needs: the lines of `range`,
-    /// the one before it (whether its first row follows the delimiter) and
-    /// those up to `need_end` (whether its last row closes the table). The
-    /// lines must be recorded contiguously — a missing one is unknown, not
-    /// "no structure" — and none may sit at or past an unrepaired edit.
+    /// the cache cannot vouch for every line it needs: the lines of `range`
+    /// and those up to `need_end` (whether its last row closes the table).
+    /// The lines must be recorded contiguously — a missing one is unknown,
+    /// not "no structure" — and none may sit at or past an unrepaired edit.
+    ///
+    /// The line *before* `range` is read when it is recorded, and only
+    /// settles whether the range's first line is a table's first row. When it
+    /// is not — the parse began right at `range.start`, as one does at a
+    /// checkpoint after a jump in a large file — that one flag stays false,
+    /// which is what the old probe resuming from the same checkpoint said.
     fn structure_from_cache(
         &self,
         range: &Range<usize>,
@@ -2736,13 +2761,12 @@ impl TextMateEngine {
         }
         let lines = &cache.lines;
         // The line holding `range.start`, and the one before it when it is
-        // recorded. A first line at byte 0 has no line before it to know.
+        // recorded (see above for when it is not).
         let at = lines.partition_point(|line| line.end <= range.start);
         let first = lines.get(at).filter(|line| line.start <= range.start)?;
         let from = match at.checked_sub(1) {
             Some(prev) if lines[prev].end == first.start => prev,
-            _ if first.start == 0 => at,
-            _ => return None,
+            _ => at,
         };
 
         let table_hosted = self.table_body_scope.is_some();
@@ -3851,6 +3875,180 @@ mod tests {
                  of the same text"
             );
         }
+    }
+
+    /// A large file's cache is a window. The `lines_changed` pass asks for
+    /// structure from the viewport top *before* the frame's highlight pass,
+    /// whose window starts a viewport and some context above it. When that
+    /// query repairs a pending edit, the partial update resumes from a
+    /// checkpoint above the viewport top and replaces the cached spans from
+    /// there — so it must also re-collect spans from there, not from where
+    /// the query asked to start. Otherwise the lines just above the viewport
+    /// keep no spans, and scrolling up onto them is a cache hit that draws
+    /// them as plain text.
+    #[test]
+    fn test_structure_query_after_edit_keeps_spans_above_the_viewport_in_a_large_file() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+
+        let mut content = String::new();
+        let mut i = 0;
+        while content.len() <= MAX_PARSE_BYTES + 64 * 1024 {
+            content.push_str(&format!("Line {i} has **bold** and `code` in it.\n"));
+            i += 1;
+        }
+        let mut buffer = Buffer::from_str(&content, 0, test_fs());
+        let line_starts: Vec<usize> = std::iter::once(0)
+            .chain(content.match_indices('\n').map(|(i, _)| i + 1))
+            .collect();
+        // What the renderer asks for: a viewport, widened by its own size on
+        // either side, plus the context bytes.
+        let frame = |engine: &mut HighlightEngine, buffer: &Buffer, top: usize, bottom: usize| {
+            let size = bottom - top;
+            engine.highlight_viewport(
+                buffer,
+                top.saturating_sub(size),
+                (bottom + size).min(buffer.len()),
+                &theme,
+                1024,
+            );
+        };
+
+        // Scroll to a viewport deep in the file, one frame at a time.
+        let rows = 30;
+        let mut top_line = 20_000;
+        for _ in 0..30 {
+            frame(
+                &mut engine,
+                &buffer,
+                line_starts[top_line],
+                line_starts[top_line + rows],
+            );
+            top_line += 1;
+        }
+        // Type on the viewport's second line. The next frame's structure
+        // query runs before its highlight pass, as `lines_changed` does.
+        let at = line_starts[top_line + 1] + 4;
+        buffer.insert(at, "x");
+        engine.notify_insert(at, 1);
+        let top = line_starts[top_line];
+        let bottom = line_starts[top_line + rows] + 1;
+        engine.structure_lines_in(&buffer, top..bottom);
+        frame(&mut engine, &buffer, top, bottom);
+
+        // Scroll up five lines: those lines must still be highlighted.
+        let up = line_starts[top_line - 5];
+        let spans = engine.highlight_viewport(&buffer, up, top, &theme, 1024);
+        let mut cold = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+        let want = cold.highlight_viewport(&buffer, up, top, &theme, 1024);
+        let ranges = |spans: &[HighlightSpan]| -> Vec<Range<usize>> {
+            spans
+                .iter()
+                .filter(|s| s.range.start >= up && s.range.end <= top)
+                .map(|s| s.range.clone())
+                .collect()
+        };
+        assert!(
+            !ranges(&want).is_empty(),
+            "precondition: those lines have spans"
+        );
+        assert_eq!(
+            ranges(&spans),
+            ranges(&want),
+            "the lines just above the edited viewport lost their highlighting"
+        );
+    }
+
+    /// After a jump in a large file the structure query is the first to
+    /// parse, and it resumes from the checkpoint at or before the viewport
+    /// top — often exactly on it, every `CHECKPOINT_INTERVAL` bytes. The line
+    /// above the viewport is then never parsed, which must not turn the whole
+    /// viewport's answer into "unknown": that line only settles whether the
+    /// first line is a table's first row.
+    #[test]
+    fn test_structure_lines_answer_after_a_jump_wherever_the_checkpoint_lands() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+
+        let mut content = String::from("intro\n\n```text\n");
+        while content.len() <= MAX_PARSE_BYTES + 128 * 1024 {
+            content.push_str("fenced body line\n");
+        }
+        content.push_str("```\n\nafter\n");
+        let buffer = Buffer::from_str(&content, 0, test_fs());
+
+        // Read down the file from the top, so checkpoints exist all along it
+        // and every one of them was parsed from byte 0.
+        let step = 32 * 1024;
+        let mut top = 0;
+        while top + step < MAX_PARSE_BYTES + 64 * 1024 {
+            engine.highlight_viewport(&buffer, top, top + step, &theme, 1024);
+            top += step;
+        }
+        let target = content[..MAX_PARSE_BYTES / 2].rfind('\n').unwrap() + 1;
+
+        // Whichever line the viewport lands on — on a checkpoint or not —
+        // its lines are fence body. Each query follows a jump away, so it
+        // is the first parse there.
+        for (offset, _) in content[target..target + 600].match_indices('\n') {
+            let start = target + offset + 1;
+            // Away to the end of the file: outside the window the walk down
+            // cached, so the cache moves there and the query below finds
+            // nothing cached at `start`.
+            let len = buffer.len();
+            engine.highlight_viewport(&buffer, len - 4096, len, &theme, 1024);
+            let regions = engine.region_lines_in(&buffer, start..start + 2000);
+            assert!(
+                !regions.is_empty() && regions.iter().all(|(_, r)| *r == RegionLine::Body),
+                "viewport at byte {start} inside the fence: got {} regions",
+                regions.len()
+            );
+        }
+    }
+
+    /// A jump while an edit is still unrepaired: the structure query is the
+    /// first parse at the destination, and the checkpoint it resumes from
+    /// sits past the edit, still holding the state from before it. Here the
+    /// edit deletes the fence that every line below was inside, so that
+    /// state says "fence body" for what is now prose. Such a cache must
+    /// answer nothing rather than frame the prose as code.
+    #[test]
+    fn test_structure_lines_after_a_jump_ignore_checkpoints_past_a_pending_edit() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+
+        // A fence that is never closed: every line below it is its body.
+        let mut content = String::from("```text\n");
+        while content.len() <= MAX_PARSE_BYTES + 128 * 1024 {
+            content.push_str("a line of text\n");
+        }
+        let mut buffer = Buffer::from_str(&content, 0, test_fs());
+        let step = 32 * 1024;
+        let mut top = 0;
+        while top + step < MAX_PARSE_BYTES + 64 * 1024 {
+            engine.highlight_viewport(&buffer, top, top + step, &theme, 1024);
+            top += step;
+        }
+        let len = buffer.len();
+        engine.highlight_viewport(&buffer, len - 4096, len, &theme, 1024);
+
+        // Delete the fence, then jump before any pass repairs the edit.
+        buffer.delete(0..8);
+        engine.notify_delete(0, 8);
+        let start = content[..MAX_PARSE_BYTES / 2].rfind('\n').unwrap() + 1 - 8;
+        let regions = engine.region_lines_in(&buffer, start..start + 2000);
+        assert!(
+            regions.is_empty(),
+            "with the fence deleted there is no region; got {} lines of {:?}",
+            regions.len(),
+            regions.first().map(|r| r.1)
+        );
     }
 
     /// Once the frame's highlight pass has parsed the viewport, asking for

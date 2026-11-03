@@ -265,10 +265,17 @@ than a wrong colour. It reports nothing — which consumers must read as
   with no newline yet — so the records are not contiguous;
 - an edit at or before the end of what it needs is still unrepaired
   (`dirty_from`), which can happen in a large file whose partial update hit
-  its per-pass budget.
+  its per-pass budget;
+- the parse that built the cache resumed from a checkpoint at or past an
+  edit no pass had repaired yet (a jump right after an edit): that
+  checkpoint still holds the state from before the edit.
 
 That is the same cold-start trade-off this engine already makes for styling
-inside a huge region.
+inside a huge region. One gap is shared with highlighting rather than
+specific to structure: a partial update that converges, or stops, at the
+cache's end repairs nothing past it, so checkpoints beyond the cache keep
+their pre-edit states, and a later visit that resumes from one colours —
+and frames — the text as it was before the edit.
 
 ### Adding a new host
 

@@ -7204,6 +7204,9 @@ where
     const FRAME_DURATION: Duration = Duration::from_millis(16); // 60fps
     const LAUNCH_HOLD_POLL: Duration = Duration::from_millis(1);
     let mut last_render = Instant::now();
+    // When the last frame *began*. A periodic deadline at or before it has
+    // been served: that frame's render already ran past it.
+    let mut last_render_started = last_render;
     let mut needs_render = true;
     let mut pending_event: Option<InputEvent> = None;
     // Time of the last real input event, used to start the wave-animation
@@ -7269,10 +7272,18 @@ where
         // Every other time-driven effect asks for its frame through
         // `next_periodic_redraw_deadline` (the occurrence highlight's
         // debounce, the async-paste fallback, a parked macro replay, ...).
-        // Once that deadline is due, the frame is owed — the same rule the
-        // daemon loop applies (`EditorServer`).
-        if editor
-            .next_periodic_redraw_deadline()
+        // A deadline owes exactly one frame: the first one to begin at or
+        // after it. Once that frame has begun the deadline is served, whether
+        // or not its source cleared it — the occurrence-highlight debounce of
+        // a buffer that was switched away from before it fired is cleared
+        // only when that buffer next renders, and treating it as owed until
+        // then redrew every frame.
+        let periodic_deadline = |editor: &Editor, last_render_started: Instant| {
+            editor
+                .next_periodic_redraw_deadline()
+                .filter(|deadline| *deadline > last_render_started)
+        };
+        if periodic_deadline(editor, last_render_started)
             .is_some_and(|deadline| Instant::now() >= deadline)
         {
             needs_render = true;
@@ -7291,6 +7302,7 @@ where
             && !editor.holds_launch_frames()
         {
             let r0 = Instant::now();
+            last_render_started = r0;
             let was_paste_pending = editor.is_paste_pending();
             {
                 let _span = tracing::info_span!("terminal_draw").entered();
@@ -7321,10 +7333,17 @@ where
             // with a zero timeout until the deadline arrived — a full core for
             // the 150 ms of every occurrence-highlight debounce, i.e. after
             // every cursor move onto a word. Mirrors the daemon loop.
-            if let Some(deadline) = editor.next_periodic_redraw_deadline() {
+            if let Some(deadline) = periodic_deadline(editor, last_render_started) {
                 let until_next_frame = FRAME_DURATION.saturating_sub(last_render.elapsed());
                 let until_deadline = deadline.saturating_duration_since(Instant::now());
                 timeout = timeout.min(until_deadline.max(until_next_frame));
+            }
+            // Work the editor finishes on its own ticks rather than in a frame
+            // — draining an async paste, a macro replay parked on a plugin
+            // step — wants the loop back promptly, not at the next frame.
+            // Nothing wakes the wait when its answer arrives, so a short one.
+            if editor.is_paste_pending() || editor.macro_replay_parked() {
+                timeout = timeout.min(LAUNCH_HOLD_POLL);
             }
             // A `--diff` launch draws nothing until its plugin has the view up,
             // and the plugin gets there through a chain of calls the editor
