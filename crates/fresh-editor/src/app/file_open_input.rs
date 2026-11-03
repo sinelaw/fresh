@@ -201,6 +201,11 @@ impl Editor {
                 current_dir.join(&path_input)
             };
 
+            // A prefix of the highlighted directory (typically a partial dotfile
+            // name) is a filter, not a new filename
+            let names_new_file = Self::should_create_new_file(&path_input)
+                && !self.file_open_highlighted_dir_extends(&path_input);
+
             if expanded_path.is_dir() {
                 if is_folder_mode {
                     // In folder mode, selecting a directory switches to it as the project root
@@ -220,7 +225,7 @@ impl Editor {
                 return;
             } else if !is_folder_mode
                 && self.active_window().pending_file_pick_callback.is_some()
-                && Self::should_create_new_file(&path_input)
+                && names_new_file
             {
                 // Pick mode (`editor.pickFile`): the typed path names nothing
                 // on disk, and a pick has nothing to create — resolving with a
@@ -229,7 +234,7 @@ impl Editor {
                 // confirm silently: the browser stays open with the input
                 // intact, and the user fixes the name or Escapes out.
                 return;
-            } else if !is_folder_mode && Self::should_create_new_file(&path_input) {
+            } else if !is_folder_mode && names_new_file {
                 // File doesn't exist but input looks like a filename - create new file
                 // This handles cases like "newfile.txt" or "/path/to/newfile.txt"
                 self.file_open_create_new_file(expanded_path);
@@ -514,6 +519,22 @@ impl Editor {
         let has_path_separator = input.contains('/') || input.contains('\\');
 
         has_extension || has_path_separator
+    }
+
+    /// Check if the highlighted entry is a directory whose name starts with
+    /// `input` (case-insensitively, like the filter)
+    fn file_open_highlighted_dir_extends(&self, input: &str) -> bool {
+        self.active_window()
+            .file_open_state
+            .as_ref()
+            .and_then(|s| s.selected_entry())
+            .is_some_and(|e| {
+                e.fs_entry.is_dir()
+                    && e.fs_entry
+                        .name
+                        .to_lowercase()
+                        .starts_with(&input.to_lowercase())
+            })
     }
 
     /// Navigate to parent directory
