@@ -1273,6 +1273,24 @@ impl TextMateEngine {
         }
     }
 
+    /// Forget every checkpoint at or past `from`.
+    ///
+    /// The engine's invariant is that **with no edit pending (`dirty_from` is
+    /// `None`), every checkpoint's state is the true parse state at its
+    /// position**. `notify_insert`/`notify_delete` only move checkpoints, so
+    /// those past an edit hold pre-edit states until a pass re-parses through
+    /// them or converges onto them; `dirty_from` marks that they are
+    /// unverified. A pass that must clear `dirty_from` without having verified
+    /// them drops them here instead — re-creating a checkpoint costs a parse
+    /// of the text before it, resuming from a stale one colours and frames the
+    /// text as it was before the edit.
+    fn drop_checkpoints_from(&mut self, from: usize) {
+        for (id, _, _) in self.checkpoint_markers.query_range(from, usize::MAX) {
+            self.checkpoint_markers.delete(id);
+            self.checkpoint_states.remove(&id);
+        }
+    }
+
     /// Whether this syntax hosts any structure `structure_lines_in` reports
     /// — embedded-language regions or tables. Currently only Markdown and
     /// Vue; every other syntax records nothing per line.
@@ -2138,6 +2156,12 @@ impl TextMateEngine {
             // Stopped at `parse_end`; the cached spans past it predate the edit.
             (current_offset, Some(current_offset))
         } else {
+            // Reached the cache's end without converging: nothing past here
+            // is cached, but checkpoints from an earlier visit may be, and the
+            // walk never verified them. Clearing `dirty_from` must not leave
+            // them behind (see `drop_checkpoints_from`). A checkpoint exactly
+            // at `current_offset` was just given this walk's state.
+            self.drop_checkpoints_from(current_offset.saturating_add(1));
             (current_offset, None)
         };
 
@@ -2380,6 +2404,17 @@ impl TextMateEngine {
         pending_edit: Option<usize>,
     ) -> Vec<CachedSpan> {
         self.stats.cache_misses += 1;
+        // This pass clears `dirty_from`, so the checkpoints an unrepaired
+        // edit left stale go first (see `drop_checkpoints_from`): resuming
+        // from one would parse the text as it was before the edit. The resume
+        // point is then before the edit — and the parse runs through it,
+        // re-laying checkpoints — or, in a large file with none in reach, a
+        // fresh start, which reports itself unanchored. One exactly at the
+        // edit goes too: the same "strictly before the edit" rule
+        // `try_partial_update` resumes by.
+        if let Some(edit) = pending_edit {
+            self.drop_checkpoints_from(edit);
+        }
         self.dirty_from = None; // consumed
 
         if parse_end <= desired_parse_start {
@@ -2389,13 +2424,6 @@ impl TextMateEngine {
         let syntax = &self.syntax_set.syntaxes()[self.syntax_index];
         let (actual_start, mut snapshot, anchored) =
             self.find_parse_resume_point(desired_parse_start, parse_end, syntax);
-        // A checkpoint at or past an edit no pass has repaired still holds the
-        // state from before the edit (`notify_insert`/`notify_delete` move
-        // checkpoints, they do not re-parse them). Colouring from it is the
-        // engine's long-standing best effort; reporting structure from it is
-        // a confident wrong frame, so such a cache answers none.
-        let anchored =
-            anchored && pending_edit.is_none_or(|edit| actual_start == 0 || actual_start < edit);
 
         let content = buffer.slice_bytes(actual_start..parse_end);
         let content_str = match std::str::from_utf8(&content) {
@@ -4008,6 +4036,76 @@ mod tests {
                 regions.len()
             );
         }
+    }
+
+    /// An edit whose effect never converges — deleting the fence that every
+    /// line below it was inside — repaired by a pass that stops at the cache's
+    /// end. Checkpoints past that end, laid down by an earlier visit, still
+    /// hold the pre-edit "inside the fence" state. With the edit then counted
+    /// as repaired, a later visit resumed from one and coloured and framed
+    /// the prose below as fence body. Both must match a parse of the text as
+    /// it now is.
+    #[test]
+    fn test_checkpoints_past_a_repaired_edit_never_carry_pre_edit_state() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+
+        // A Rust fence that is never closed: every line below it is Rust.
+        let mut content = String::from(
+            "```rust
+",
+        );
+        // Long enough that its end is out of a checkpoint's reach from where the
+        // read below stops, so going there is a cheap fresh start.
+        while content.len() <= MAX_PARSE_BYTES / 4 + MAX_PARSE_BYTES + 128 * 1024 {
+            content.push_str("let value = call(1, \"two\");\n");
+        }
+        let mut buffer = Buffer::from_str(&content, 0, test_fs());
+        // Read a quarter of the way down, laying checkpoints all along.
+        let step = 32 * 1024;
+        let mut top = 0;
+        while top < MAX_PARSE_BYTES / 4 + step {
+            engine.highlight_viewport(&buffer, top, top + step, &theme, 1024);
+            top += step;
+        }
+        // Back to the top by way of the end, so the cache there is a small
+        // window rather than the one the read built.
+        let len = buffer.len();
+        engine.highlight_viewport(&buffer, len - 4096, len, &theme, 1024);
+        engine.highlight_viewport(&buffer, 0, 4096, &theme, 1024);
+
+        // Delete the fence and let a pass repair the edit in that window.
+        buffer.delete(0..8);
+        engine.notify_delete(0, 8);
+        engine.highlight_viewport(&buffer, 0, 4096, &theme, 1024);
+
+        // Jump back down there: no fence, so no region, and the lines are
+        // coloured as the prose they now are.
+        let middle = content[..MAX_PARSE_BYTES / 4].rfind('\n').unwrap() + 1 - 8;
+        let window = middle..middle + 2000;
+        let regions = engine.region_lines_in(&buffer, window.clone());
+        assert!(
+            regions.is_empty(),
+            "the fence is gone; got {} lines of {:?}",
+            regions.len(),
+            regions.first().map(|r| r.1)
+        );
+        let spans = engine.highlight_viewport(&buffer, window.start, window.end, &theme, 0);
+        let mut cold = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+        let want = cold.highlight_viewport(&buffer, window.start, window.end, &theme, 0);
+        let cats = |spans: &[HighlightSpan]| -> Vec<(Range<usize>, Option<HighlightCategory>)> {
+            spans
+                .iter()
+                .map(|s| (s.range.clone(), s.category))
+                .collect()
+        };
+        assert_eq!(
+            cats(&spans),
+            cats(&want),
+            "the lines are coloured as they were inside the deleted fence"
+        );
     }
 
     /// A jump while an edit is still unrepaired: the structure query is the
