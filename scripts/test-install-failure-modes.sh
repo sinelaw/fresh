@@ -237,6 +237,58 @@ else
     fail "offline path does not mention the network"
 fi
 
+# --- The nix method must install the nixpkgs package, not the flake: the flake
+# --- has no binary cache, so it compiles the whole toolchain from source, while
+# --- nixpkgs is served from cache.nixos.org. The shim is added only now so the
+# --- fallback runs above stay nix-free, as the header comment promises. ---
+cat > "$BINDIR/nix" <<EOF
+#!/bin/sh
+echo "\$*" >> "$WORK/nix.log"
+exit 0
+EOF
+chmod +x "$BINDIR/nix"
+: > "$WORK/nix.log"
+OUT="$(run_install nix-method --method=nix)"
+assert_ran "nix method" "$OUT"
+if grep -q -- '--extra-experimental-features nix-command flakes profile install nixpkgs#fresh-editor' "$WORK/nix.log"; then
+    pass "nix method installs nixpkgs#fresh-editor with the features enabled"
+else
+    fail "nix method did not install nixpkgs#fresh-editor: $(cat "$WORK/nix.log")"
+fi
+if grep -q 'github:sinelaw/fresh' "$WORK/nix.log"; then
+    fail "nix method still installs the flake"
+else
+    pass "nix method does not build the flake"
+fi
+if grep -q 'declaring it in your config' <<<"$OUT"; then
+    pass "nix method points at declarative management"
+else
+    fail "nix method does not mention the declarative alternative"
+fi
+
+# --- --head opts back into the flake: master instead of the nixpkgs release,
+# --- at the cost of compiling from source. Without an explicit nix method it
+# --- must be refused, since no other method can deliver master today. ---
+: > "$WORK/nix.log"
+OUT="$(run_install nix-head --method=nix --head)"
+assert_ran "nix --head" "$OUT"
+if grep -q -- '--extra-experimental-features nix-command flakes profile install github:sinelaw/fresh' "$WORK/nix.log"; then
+    pass "nix --head installs the flake"
+else
+    fail "nix --head did not install the flake: $(cat "$WORK/nix.log")"
+fi
+if grep -q 'nixpkgs#fresh-editor' "$WORK/nix.log"; then
+    fail "nix --head still installs nixpkgs"
+else
+    pass "nix --head does not install nixpkgs"
+fi
+OUT="$(run_install head-alone --head)"
+if grep -q 'only supports --method=nix' <<<"$OUT"; then
+    pass "--head without nix is refused with a pointer at the method"
+else
+    fail "--head without nix is not explained"
+fi
+
 echo
 if [ "$FAILED" -eq 0 ]; then
     echo "all checks passed"
