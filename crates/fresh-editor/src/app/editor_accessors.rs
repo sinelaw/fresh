@@ -510,6 +510,8 @@ impl Editor {
         self.set_session_connection(active, connection);
         // The terminals are still shells inside the container just left; move them.
         self.move_window_terminals_to_its_authority(active);
+        // So are its language servers.
+        self.move_window_lsp_to_its_authority();
         self.prune_connections();
     }
 

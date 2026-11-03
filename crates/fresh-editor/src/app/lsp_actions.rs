@@ -125,6 +125,51 @@ impl Editor {
         }
     }
 
+    /// Move the active window's language servers onto the authority it now has.
+    ///
+    /// Servers are spawned through the authority's long-running spawner, so
+    /// the ones started (or that failed to start) before an attach or detach
+    /// belong to the machine the window just left: a server missing on the
+    /// host stayed "not found" after attaching to a container that has it.
+    /// Shut them all down and start them again for the open buffers.
+    /// `reopen_buffers_for_language` goes through `try_spawn`, so `auto_start`
+    /// and workspace trust are honoured exactly as when a file is opened.
+    pub(crate) fn move_window_lsp_to_its_authority(&mut self) {
+        let mut languages: std::collections::BTreeSet<String> = self
+            .buffers()
+            .iter()
+            .map(|(_, state)| state.language.clone())
+            .collect();
+        languages.extend(
+            self.active_window()
+                .lsp_server_statuses
+                .keys()
+                .map(|(language, _)| language.clone()),
+        );
+        let stopped_names: Vec<String> = self
+            .lsp()
+            .map(|lsp| lsp.all_handles().iter().map(|sh| sh.name.clone()).collect())
+            .unwrap_or_default();
+
+        let window = self.active_window_mut();
+        window.lsp.shutdown_all();
+        for language in &languages {
+            window.lsp.clear_cooldown(language);
+        }
+        window.lsp_server_statuses.clear();
+        window.lsp_progress.clear();
+        for meta in window.buffer_metadata.values_mut() {
+            meta.lsp_opened_with.clear();
+        }
+        for name in &stopped_names {
+            self.clear_diagnostics_for_server(name);
+        }
+
+        for language in &languages {
+            self.reopen_buffers_for_language(language);
+        }
+    }
+
     /// Send didOpen notifications for all buffers of a given language to any
     /// server handles that haven't received them yet.
     ///
