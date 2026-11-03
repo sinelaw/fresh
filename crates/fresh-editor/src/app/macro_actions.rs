@@ -353,7 +353,7 @@ impl Editor {
 
     /// Whether a replay is parked on a plugin step, for the event loop's
     /// wake-up deadline: it has to come straight back to resume it.
-    pub(crate) fn macro_replay_parked(&self) -> bool {
+    pub fn macro_replay_parked(&self) -> bool {
         self.macro_replay.as_ref().is_some_and(|r| !r.stepping)
     }
 

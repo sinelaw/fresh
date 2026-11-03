@@ -809,10 +809,11 @@ impl Editor {
                             // coordinates, so a consumer never has to store
                             // structure of its own.
                             //
-                            // One probe answers both. It costs nothing for
-                            // syntaxes with neither (the overwhelming majority),
-                            // and each list is skipped when it has nothing to
-                            // report.
+                            // One lookup answers both, read off the highlight
+                            // cache this frame's highlight pass then hits. It
+                            // costs nothing for syntaxes with neither (the
+                            // overwhelming majority), and each list is skipped
+                            // when it has nothing to report.
                             let structure = state
                                 .highlighter
                                 .structure_lines_in(&state.buffer, walk_start..walked_end);
