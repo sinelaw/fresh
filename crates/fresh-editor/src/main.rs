@@ -7266,6 +7266,18 @@ where
             needs_render = true;
         }
 
+        // Every other time-driven effect asks for its frame through
+        // `next_periodic_redraw_deadline` (the occurrence highlight's
+        // debounce, the async-paste fallback, a parked macro replay, ...).
+        // Once that deadline is due, the frame is owed — the same rule the
+        // daemon loop applies (`EditorServer`).
+        if editor
+            .next_periodic_redraw_deadline()
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            needs_render = true;
+        }
+
         // Terminal tabs auto-name from the foreground process (tmux-style);
         // poll on an interval so a command that starts/exits while the UI is
         // idle is reflected without waiting for an unrelated event.
@@ -7300,16 +7312,19 @@ where
             } else {
                 Duration::from_millis(50)
             };
-            // Cap the timeout for any time-driven UI element that needs
-            // periodic frames — animations and the LSP status-bar
-            // spinner. `next_periodic_redraw_deadline` rolls both into
-            // one Option<Instant>; when it's `Some`, we also bound the
-            // wait to the next frame so the render budget is respected.
+            // Wake for the next time-driven frame
+            // (`next_periodic_redraw_deadline`), but never before the frame
+            // budget lets it be drawn. A deadline already due waits out the
+            // budget, not 0: bounding the wait by the time to the next frame
+            // whenever *any* deadline was pending meant that, with no frame
+            // owed and the last one more than a frame ago, the loop polled
+            // with a zero timeout until the deadline arrived — a full core for
+            // the 150 ms of every occurrence-highlight debounce, i.e. after
+            // every cursor move onto a word. Mirrors the daemon loop.
             if let Some(deadline) = editor.next_periodic_redraw_deadline() {
                 let until_next_frame = FRAME_DURATION.saturating_sub(last_render.elapsed());
-                timeout = timeout.min(until_next_frame);
                 let until_deadline = deadline.saturating_duration_since(Instant::now());
-                timeout = timeout.min(until_deadline);
+                timeout = timeout.min(until_deadline.max(until_next_frame));
             }
             // A `--diff` launch draws nothing until its plugin has the view up,
             // and the plugin gets there through a chain of calls the editor

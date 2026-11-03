@@ -391,6 +391,37 @@ struct TextMateCache {
     // Parse state at `range.end`; powers forward extension. None when the
     // last mutation didn't end at `range.end`.
     tail_state: Option<ParseSnapshot>,
+    // What the parse said about each whole line it walked, ascending by
+    // start; empty for syntaxes that host no structure (`hosts_structure`).
+    // Kept by the same three paths, edit shifts and rewind as `spans`, so
+    // `structure_lines_in` reads it rather than parsing again. A line the
+    // parse did not commit (a streaming tail, a host parse error, the
+    // unparsed rest of a cut line) is simply absent, and a lookup that
+    // needs it answers "unknown".
+    lines: Vec<LineStructure>,
+    // Whether the parse that built this cache started from a state it can
+    // vouch for — byte 0 or a checkpoint — rather than a fresh state in the
+    // middle of a large file. A fresh state reads as "outside every region",
+    // which is a confident wrong answer, so an unanchored cache answers no
+    // structure question at all. Highlighting from it is still fine: there a
+    // wrong guess only mis-colours, and only until the parse is anchored.
+    anchored: bool,
+}
+
+/// The structure state the host grammar's scope stack was in around one
+/// line: whether an embedded-language region (`EMBEDDING_SPECS`) and a
+/// table body (`TABLE_SPECS`) were open before the line and after it.
+/// Every role `structure_lines_in` reports is a function of these
+/// transitions, read across a line and its neighbours.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LineStructure {
+    start: usize,
+    /// One past the line's terminator.
+    end: usize,
+    region_before: bool,
+    region_after: bool,
+    table_before: bool,
+    table_after: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -515,10 +546,10 @@ const TABLE_SPECS: &[TableSpecDef] = &[TableSpecDef {
     body_scope: "meta.table",
 }];
 
-/// How far past the requested range `structure_lines_in` may walk to see
-/// the line that closes a table. One line is enough; this is the byte
+/// How far past the requested range `structure_lines_in` looks for the end
+/// of the line that closes a table. One line is enough; this is the byte
 /// budget for finding it, generous enough for any realistic line and
-/// small enough that it never turns a viewport probe into a scan.
+/// small enough that it never turns a viewport query into a scan.
 const TABLE_LOOKAHEAD_BYTES: usize = 8192;
 
 /// What the host grammar says about each line in a range: its role in an
@@ -533,10 +564,10 @@ pub struct StructureLines {
 
 impl StructureLines {
     /// Record a table line, dropping it if it falls outside the caller's
-    /// range — the walk deliberately covers more lines than the caller
-    /// asked about (a checkpoint below `range.start`, one line of
-    /// lookahead past `range.end`), and those extra lines exist only to
-    /// classify the ones inside it.
+    /// range — the lookup deliberately reads more lines than the caller
+    /// asked about (the one before `range.start`, one line of lookahead
+    /// past `range.end`), and those extra lines exist only to classify the
+    /// ones inside it.
     fn push_table(
         &mut self,
         line_start: usize,
@@ -783,6 +814,20 @@ fn prepare_unified_diff_content(
         return None;
     }
     prepare_row_content(prepared, 1)
+}
+
+/// Resolve a cached span's colours against a theme.
+fn color_span(span: CachedSpan, theme: &Theme) -> HighlightSpan {
+    let bg = span
+        .background_category
+        .and_then(|category| highlight_bg(category, theme))
+        .or_else(|| highlight_bg(span.category, theme));
+    HighlightSpan {
+        range: span.range,
+        color: highlight_color(span.category, theme),
+        bg,
+        category: Some(span.category),
+    }
 }
 
 /// How much of a line is highlighted: the rest of a longer one is plain text.
@@ -1136,6 +1181,17 @@ impl TextMateEngine {
                     span.range.end += length;
                 }
             }
+            // A line the insert lands in is stale until the partial update
+            // re-parses it (it starts before `dirty_from`); only positions
+            // move here, exactly as for spans.
+            for line in &mut cache.lines {
+                if line.start >= position {
+                    line.start += length;
+                    line.end += length;
+                } else if line.end > position {
+                    line.end += length;
+                }
+            }
             if cache.range.end >= position {
                 cache.range.end += length;
                 if position < cache.range.end {
@@ -1178,6 +1234,18 @@ impl TextMateEngine {
                     span.range.start < span.range.end
                 }
             });
+            // Lines the delete touches are dropped rather than clamped: the
+            // partial update that repairs this edit re-parses from before
+            // `position` and lays down fresh entries for them.
+            cache.lines.retain_mut(|line| {
+                if line.start >= delete_end {
+                    line.start -= length;
+                    line.end -= length;
+                    true
+                } else {
+                    line.end <= position
+                }
+            });
             if cache.range.end > delete_end {
                 cache.range.end -= length;
             } else if cache.range.end > position {
@@ -1203,6 +1271,59 @@ impl TextMateEngine {
             let marker_id = self.checkpoint_markers.create(current_offset);
             self.checkpoint_states.insert(marker_id, snapshot.clone());
         }
+    }
+
+    /// Whether this syntax hosts any structure `structure_lines_in` reports
+    /// — embedded-language regions or tables. Currently only Markdown and
+    /// Vue; every other syntax records nothing per line.
+    fn hosts_structure(&self) -> bool {
+        !self.embedding.is_empty() || self.table_body_scope.is_some()
+    }
+
+    /// (inside a region, inside a table body) for a scope stack.
+    fn structure_state(&self, scopes: &syntect::parsing::ScopeStack) -> (bool, bool) {
+        (
+            self.active_region_spec(scopes).is_some(),
+            self.table_body_scope
+                .is_some_and(|scope| scopes_contain(scopes, scope)),
+        )
+    }
+
+    /// `parse_snapshot_line` for the three cache paths: the same parse, plus
+    /// the line's structure appended to `lines` when the syntax hosts any and
+    /// the line is whole — terminated, or the buffer's last. A partial
+    /// streaming tail is not recorded, for the reason its spans are not
+    /// committed (see `extend_cache_forward`), and neither is a line the host
+    /// failed to parse, whose scope transition would be a guess.
+    #[allow(clippy::too_many_arguments)]
+    fn parse_cached_line(
+        &mut self,
+        snapshot: &mut ParseSnapshot,
+        prepared: &PreparedLine,
+        line_start: usize,
+        line_end: usize,
+        buffer_len: usize,
+        lines: &mut Vec<LineStructure>,
+        on_span: impl FnMut(usize, usize, HighlightCategory, Option<HighlightCategory>),
+    ) -> bool {
+        let before = self
+            .hosts_structure()
+            .then(|| self.structure_state(&snapshot.scopes));
+        let parsed = self.parse_snapshot_line(snapshot, prepared, line_start, on_span);
+        if let Some((region_before, table_before)) = before {
+            if parsed && (prepared.ends_with_newline || line_end >= buffer_len) {
+                let (region_after, table_after) = self.structure_state(&snapshot.scopes);
+                lines.push(LineStructure {
+                    start: line_start,
+                    end: line_end,
+                    region_before,
+                    region_after,
+                    table_before,
+                    table_after,
+                });
+            }
+        }
+        parsed
     }
 
     /// Drive `state.parse_line(prepared.line_for_syntect)` and emit one
@@ -1288,8 +1409,8 @@ impl TextMateEngine {
     /// optional embedded-language child parser). This is the single
     /// per-line entry point for all parse paths, so embedded regions
     /// behave identically under cold start, forward extension and
-    /// partial update — and under `structure_lines_in`, which advances
-    /// the same snapshot but discards the spans.
+    /// partial update — and the region/table structure those paths record
+    /// for `structure_lines_in` is read off the same snapshot.
     ///
     /// Line classification is driven purely by the host grammar's scope
     /// stack (no second lexer that could disagree with what the host
@@ -1702,6 +1823,23 @@ impl TextMateEngine {
         theme: &Theme,
         context_bytes: usize,
     ) -> Vec<HighlightSpan> {
+        self.sync_cache(buffer, viewport_start, viewport_end, context_bytes)
+            .into_iter()
+            .map(|span| color_span(span, theme))
+            .collect()
+    }
+
+    /// Bring the cache up to date for a viewport and return the viewport's
+    /// spans, uncoloured. This is the one dispatcher over the cache paths —
+    /// hit, forward extension, partial update, cold parse — shared by
+    /// `highlight_viewport` and `structure_lines_in`, so both read one parse.
+    fn sync_cache(
+        &mut self,
+        buffer: &Buffer,
+        viewport_start: usize,
+        viewport_end: usize,
+        context_bytes: usize,
+    ) -> Vec<CachedSpan> {
         let buf_len = buffer.len();
         let (desired_parse_start, parse_end) = if buf_len <= MAX_PARSE_BYTES {
             (0, (viewport_end + context_bytes).min(buf_len))
@@ -1737,7 +1875,7 @@ impl TextMateEngine {
         // Cache hit.
         if exact_cache_hit {
             self.stats.cache_hits += 1;
-            return self.filter_cached_spans(viewport_start, viewport_end, theme);
+            return self.cached_spans_in(viewport_start, viewport_end);
         }
 
         // Forward extension.
@@ -1749,13 +1887,7 @@ impl TextMateEngine {
                 .as_ref()
                 .is_some_and(|c| c.range.end < parse_end && c.tail_state.is_some())
         {
-            return self.extend_cache_forward(
-                buffer,
-                parse_end,
-                viewport_start,
-                viewport_end,
-                theme,
-            );
+            return self.extend_cache_forward(buffer, parse_end, viewport_start, viewport_end);
         }
 
         // Partial update.
@@ -1769,7 +1901,6 @@ impl TextMateEngine {
                         parse_end,
                         viewport_start,
                         viewport_end,
-                        theme,
                     ) {
                         return result;
                     }
@@ -1777,7 +1908,7 @@ impl TextMateEngine {
                     // Dirty region past viewport: cached spans are still valid.
                     self.dirty_from = Some(dirty_pos);
                     self.stats.cache_hits += 1;
-                    return self.filter_cached_spans(viewport_start, viewport_end, theme);
+                    return self.cached_spans_in(viewport_start, viewport_end);
                 }
             }
         } else if let Some(d) = dirty {
@@ -1791,18 +1922,11 @@ impl TextMateEngine {
             parse_end,
             viewport_start,
             viewport_end,
-            theme,
-            context_bytes,
         )
     }
 
-    /// Filter cached spans for the viewport and resolve colors.
-    fn filter_cached_spans(
-        &self,
-        viewport_start: usize,
-        viewport_end: usize,
-        theme: &Theme,
-    ) -> Vec<HighlightSpan> {
+    /// The cached spans overlapping the viewport.
+    fn cached_spans_in(&self, viewport_start: usize, viewport_end: usize) -> Vec<CachedSpan> {
         let cache = self.cache.as_ref().unwrap();
         // Sorted and disjoint, so the viewport's spans are one contiguous run.
         let first = cache
@@ -1811,18 +1935,7 @@ impl TextMateEngine {
         let last = cache
             .spans
             .partition_point(|span| span.range.start < viewport_end);
-        cache.spans[first..last.max(first)]
-            .iter()
-            .map(|span| HighlightSpan {
-                range: span.range.clone(),
-                color: highlight_color(span.category, theme),
-                bg: span
-                    .background_category
-                    .and_then(|category| highlight_bg(category, theme))
-                    .or_else(|| highlight_bg(span.category, theme)),
-                category: Some(span.category),
-            })
-            .collect()
+        cache.spans[first..last.max(first)].to_vec()
     }
 
     /// Partial update path. Returns `Some` whenever an anchor was available,
@@ -1837,8 +1950,7 @@ impl TextMateEngine {
         parse_end: usize,
         viewport_start: usize,
         viewport_end: usize,
-        theme: &Theme,
-    ) -> Option<Vec<HighlightSpan>> {
+    ) -> Option<Vec<CachedSpan>> {
         let syntax = &self.syntax_set.syntaxes()[self.syntax_index];
 
         // Resume from the nearest checkpoint before the dirty point (bounded
@@ -1892,6 +2004,8 @@ impl TextMateEngine {
         };
 
         let mut new_spans = Vec::new();
+        let mut new_lines = Vec::new();
+        let buffer_len = buffer.len();
         let content_bytes = content_str.as_bytes();
         let mut pos = 0;
         let mut current_offset = actual_start;
@@ -1916,10 +2030,13 @@ impl TextMateEngine {
             let collect_spans =
                 current_offset + line_byte_len > desired_parse_start.max(actual_start);
             if let Some(prepared) = prepared {
-                let _ = self.parse_snapshot_line(
+                let _ = self.parse_cached_line(
                     &mut snapshot,
                     &prepared,
                     current_offset,
+                    current_offset + line_byte_len,
+                    buffer_len,
+                    &mut new_lines,
                     |byte_start, byte_end, category, background_category| {
                         if !collect_spans {
                             return;
@@ -2049,6 +2166,15 @@ impl TextMateEngine {
                 cache.spans.sort_by_key(|s| s.range.start);
                 Self::merge_adjacent_spans(&mut cache.spans);
             }
+            // The re-parsed lines replace every recorded line they overlap.
+            // Both runs ascend, so this is one splice; a line the walk did not
+            // record (a host parse error) is left absent, never stale.
+            let lo = cache.lines.partition_point(|line| line.end <= actual_start);
+            let hi = cache
+                .lines
+                .partition_point(|line| line.start < splice_end)
+                .max(lo);
+            cache.lines.splice(lo..hi, new_lines);
             if splice_end > cache.range.end {
                 cache.range.end = splice_end;
             }
@@ -2058,7 +2184,7 @@ impl TextMateEngine {
         self.last_buffer_len = buffer.len();
         self.dirty_from = dirty_after;
 
-        Some(self.filter_cached_spans(viewport_start, viewport_end, theme))
+        Some(self.cached_spans_in(viewport_start, viewport_end))
     }
 
     /// Give a cache whose end state an edit cleared a new end at its last
@@ -2082,6 +2208,7 @@ impl TextMateEngine {
             span.range.end = span.range.end.min(pos);
             span.range.start < span.range.end
         });
+        cache.lines.retain(|line| line.end <= pos);
         cache.range.end = pos;
         cache.tail_state = Some(state.clone());
     }
@@ -2095,8 +2222,7 @@ impl TextMateEngine {
         parse_end: usize,
         viewport_start: usize,
         viewport_end: usize,
-        theme: &Theme,
-    ) -> Vec<HighlightSpan> {
+    ) -> Vec<CachedSpan> {
         self.stats.cache_misses += 1;
         let buf_len = buffer.len();
         let parse_end = parse_end.min(buf_len);
@@ -2115,16 +2241,17 @@ impl TextMateEngine {
         };
 
         if parse_end <= extension_start {
-            return self.filter_cached_spans(viewport_start, viewport_end, theme);
+            return self.cached_spans_in(viewport_start, viewport_end);
         }
 
         let content = buffer.slice_bytes(extension_start..parse_end);
         let content_str = match std::str::from_utf8(&content) {
             Ok(s) => s,
-            Err(_) => return self.filter_cached_spans(viewport_start, viewport_end, theme),
+            Err(_) => return self.cached_spans_in(viewport_start, viewport_end),
         };
 
         let mut new_spans = Vec::new();
+        let mut new_lines = Vec::new();
         let content_bytes = content_str.as_bytes();
         let mut pos = 0;
         let mut current_offset = extension_start;
@@ -2150,10 +2277,13 @@ impl TextMateEngine {
             let (line_end, line_byte_len, prepared) = prepare_line_at(content_bytes, pos);
             let mut newline_terminated = false;
             if let Some(prepared) = prepared {
-                let parse_ok = self.parse_snapshot_line(
+                let parse_ok = self.parse_cached_line(
                     &mut snapshot,
                     &prepared,
                     current_offset,
+                    current_offset + line_byte_len,
+                    buf_len,
+                    &mut new_lines,
                     |byte_start, byte_end, category, background_category| {
                         new_spans.push(CachedSpan {
                             range: byte_start..byte_end,
@@ -2209,27 +2339,18 @@ impl TextMateEngine {
             .expect("extend_cache_forward: cache must still exist");
         cache.spans.extend(safe_spans);
         Self::merge_adjacent_spans(&mut cache.spans);
+        cache
+            .lines
+            .extend(new_lines.into_iter().filter(|line| line.end <= safe_offset));
         cache.range.end = safe_offset;
         cache.tail_state = Some(safe_snapshot);
         self.last_buffer_len = buf_len;
 
-        let mut result = self.filter_cached_spans(viewport_start, viewport_end, theme);
+        let mut result = self.cached_spans_in(viewport_start, viewport_end);
         result.extend(
             unsafe_spans
                 .into_iter()
-                .filter(|s| s.range.start < viewport_end && s.range.end > viewport_start)
-                .map(|s| {
-                    let bg = s
-                        .background_category
-                        .and_then(|category| highlight_bg(category, theme))
-                        .or_else(|| highlight_bg(s.category, theme));
-                    HighlightSpan {
-                        range: s.range,
-                        color: highlight_color(s.category, theme),
-                        bg,
-                        category: Some(s.category),
-                    }
-                }),
+                .filter(|s| s.range.start < viewport_end && s.range.end > viewport_start),
         );
         result
     }
@@ -2244,9 +2365,7 @@ impl TextMateEngine {
         parse_end: usize,
         viewport_start: usize,
         viewport_end: usize,
-        theme: &Theme,
-        _context_bytes: usize,
-    ) -> Vec<HighlightSpan> {
+    ) -> Vec<CachedSpan> {
         self.stats.cache_misses += 1;
         self.dirty_from = None; // consumed
 
@@ -2255,7 +2374,7 @@ impl TextMateEngine {
         }
 
         let syntax = &self.syntax_set.syntaxes()[self.syntax_index];
-        let (actual_start, mut snapshot, create_checkpoints) =
+        let (actual_start, mut snapshot, anchored) =
             self.find_parse_resume_point(desired_parse_start, parse_end, syntax);
 
         let content = buffer.slice_bytes(actual_start..parse_end);
@@ -2277,6 +2396,8 @@ impl TextMateEngine {
                 .contains(&b'\n');
 
         let mut spans = Vec::new();
+        let mut lines = Vec::new();
+        let buffer_len = buffer.len();
         let content_bytes = content_str.as_bytes();
         let mut pos = 0;
         let mut current_offset = actual_start;
@@ -2294,7 +2415,7 @@ impl TextMateEngine {
         let mut safe_resumable = starts_line;
 
         while pos < content_bytes.len() {
-            if create_checkpoints && bytes_since_checkpoint >= CHECKPOINT_INTERVAL {
+            if bytes_since_checkpoint >= CHECKPOINT_INTERVAL {
                 self.maybe_create_checkpoint(current_offset, &snapshot);
                 bytes_since_checkpoint = 0;
             }
@@ -2308,10 +2429,13 @@ impl TextMateEngine {
             if std::mem::take(&mut past_cut) {
                 newline_terminated = prepared.is_some_and(|p| p.ends_with_newline);
             } else if let Some(prepared) = prepared {
-                let parse_ok = self.parse_snapshot_line(
+                let parse_ok = self.parse_cached_line(
                     &mut snapshot,
                     &prepared,
                     current_offset,
+                    current_offset + line_byte_len,
+                    buffer_len,
+                    &mut lines,
                     |byte_start, byte_end, category, background_category| {
                         if !collect_spans {
                             return;
@@ -2344,9 +2468,9 @@ impl TextMateEngine {
             // Update checkpoint states as we pass them. A checkpoint at
             // position `p` stores the state *before* `p` — that is the
             // contract every resume path relies on
-            // (`find_parse_resume_point`, `try_partial_update`,
-            // `structure_lines_in` all parse the line at `p` starting from
-            // it), so the state to store is the one that reflects
+            // (`find_parse_resume_point`, `try_partial_update` both parse
+            // the line at `p` starting from it), so the state to store is the
+            // one that reflects
             // everything up to but not including `p`.
             //
             // The range is therefore half-open at the *low* end
@@ -2407,9 +2531,17 @@ impl TextMateEngine {
             .cloned()
             .collect();
 
+        // Lines are kept from the parse's own start, not the cache's: a line
+        // above `desired_parse_start` has no cached spans but its structure is
+        // as sound as the rest, and the neighbour a lookup at the cache's top
+        // line needs.
+        lines.retain(|line| line.end <= cache_range_end);
+
         self.cache = Some(TextMateCache {
             range: desired_parse_start..cache_range_end,
             spans: cached_spans,
+            lines,
+            anchored,
             // The state belongs to `safe_offset`. A pass that ended inside a
             // line has none for the cache's end, and one that started inside a
             // line has only a guess: extending from either would resume the
@@ -2422,19 +2554,6 @@ impl TextMateEngine {
         spans
             .into_iter()
             .filter(|span| span.range.start < viewport_end && span.range.end > viewport_start)
-            .map(|span| {
-                let cat = span.category;
-                let bg = span
-                    .background_category
-                    .and_then(|category| highlight_bg(category, theme))
-                    .or_else(|| highlight_bg(cat, theme));
-                HighlightSpan {
-                    range: span.range,
-                    color: highlight_color(cat, theme),
-                    bg,
-                    category: Some(cat),
-                }
-            })
             .collect()
     }
 
@@ -2445,6 +2564,9 @@ impl TextMateEngine {
         parse_end: usize,
         syntax: &syntect::parsing::SyntaxReference,
     ) -> (usize, ParseSnapshot, bool) {
+        // Returns (start, state, anchored): anchored when the state is one
+        // the parse can vouch for — a checkpoint's, or the initial state at
+        // byte 0 — rather than a fresh state guessed mid-file.
         // Look for a checkpoint near the desired start. For large files, only
         // consider checkpoints that are within MAX_PARSE_BYTES of desired_start
         // to avoid parsing hundreds of MB from a distant checkpoint.
@@ -2466,7 +2588,11 @@ impl TextMateEngine {
         } else {
             // Large file, no nearby checkpoint — start fresh from desired_start.
             // Still create checkpoints so future visits to this region can resume.
-            (desired_start, ParseSnapshot::new(syntax), true)
+            (
+                desired_start,
+                ParseSnapshot::new(syntax),
+                desired_start == 0,
+            )
         }
     }
 
@@ -2524,193 +2650,173 @@ impl TextMateEngine {
     /// one `lines_changed` batch and cannot read the buffer around it
     /// synchronously.
     ///
-    /// One walk answers both, so a Markdown viewport is not parsed twice.
-    ///
-    /// Deliberately a probe, not a cache: it resumes from the nearest
-    /// checkpoint and drops everything it computes. That keeps it out of the
-    /// three incremental cache paths (`full_parse` / `extend_cache_forward` /
-    /// `try_partial_update`) entirely, so it cannot perturb highlighting, and
-    /// it needs no invalidation of its own. It creates no checkpoints and does
-    /// not touch `stats` — those measure the highlight cache's work, and
-    /// folding a separate read-only probe into them would make the assertions
-    /// that reason about cache behaviour meaningless.
+    /// A lookup, not a parse of its own. The highlight cache records every
+    /// line's scope transitions as it parses (`TextMateCache::lines`), so this
+    /// brings that cache up to date through the same dispatcher highlighting
+    /// uses (`sync_cache`) — to one line past `range.end`, the line that tells
+    /// whether the range's last table row is the table's last — and reads the
+    /// answer off it. Whatever that costs, the frame's highlight pass would
+    /// have paid anyway, and then finds a cache hit; on a scroll it is the few
+    /// lines that came into view. It used to be a separate, uncached walk from
+    /// the nearest checkpoint through the range plus 8 KB, repeated on every
+    /// frame that offered new lines, and the bundled Markdown grammar
+    /// backtracks exponentially on a line of several `code` spans (~100 ms
+    /// for one such line) — so a prose-heavy document re-paid that on every
+    /// scroll step.
     ///
     /// Cost: zero for the overwhelming majority of buffers (neither
     /// `embedding` nor `table_body_scope` is set unless the syntax hosts
-    /// these — currently only Markdown and Vue), otherwise one span-less
-    /// parse from the resume anchor — normally the checkpoint within
-    /// `CHECKPOINT_INTERVAL` bytes before `range.start` — through `range.end`
-    /// plus at most one line, and never more than `MAX_PARSE_BYTES` of it.
+    /// these — currently only Markdown and Vue).
     ///
-    /// Returns **empty** — not "no structures" — whenever the state at
-    /// `range.start` cannot be resolved within that budget: no usable anchor,
-    /// or one too far back to walk from. That is the same cold-start trade-off
-    /// the engine already documents for styling inside a huge region, and it is
-    /// why callers must treat an absent answer as "unknown".
+    /// Returns **empty** — not "no structures" — whenever the cache cannot
+    /// vouch for every line the answer depends on: the parse that built it
+    /// started from a guessed state in the middle of a large file, a line in
+    /// the range was not committed (a host parse error, a streaming tail), or
+    /// an edit past the range has not been repaired yet. That is the same
+    /// cold-start trade-off the engine already documents for styling inside a
+    /// huge region, and it is why callers must treat an absent answer as
+    /// "unknown".
     pub fn structure_lines_in(&mut self, buffer: &Buffer, range: Range<usize>) -> StructureLines {
-        let table_scope = self.table_body_scope;
-        if (self.embedding.is_empty() && table_scope.is_none()) || range.start >= range.end {
+        if !self.hosts_structure() || range.start >= range.end {
+            return StructureLines::default();
+        }
+        let buffer_len = buffer.len();
+        let range = range.start..range.end.min(buffer_len);
+        if range.start >= range.end {
             return StructureLines::default();
         }
         // One line past `range.end`, so the table's last row inside the range
         // can be recognized as last: that is the one fact about a table line
-        // which needs the line *after* it. Bounded, and only the tail of the
-        // walk — everything below still only emits for lines inside `range`.
-        let lookahead = if table_scope.is_some() {
-            TABLE_LOOKAHEAD_BYTES
+        // which needs the line *after* it. Found within a bounded look ahead;
+        // a line longer than that is left out, and the row above it simply
+        // isn't called last.
+        let need_end = if self.table_body_scope.is_some() {
+            let probe_end = range
+                .end
+                .saturating_add(TABLE_LOOKAHEAD_BYTES)
+                .min(buffer_len);
+            match buffer
+                .slice_bytes(range.end..probe_end)
+                .iter()
+                .position(|&b| b == b'\n')
+            {
+                Some(i) => range.end + i + 1,
+                None if probe_end == buffer_len => buffer_len,
+                None => range.end,
+            }
         } else {
-            0
+            range.end
         };
-        let parse_end = range.end.saturating_add(lookahead).min(buffer.len());
-        if range.start >= parse_end {
-            return StructureLines::default();
+
+        // The spans this returns are the highlighter's business; only the
+        // cache it leaves behind matters here.
+        let _ = self.sync_cache(buffer, range.start, need_end, 0);
+        self.structure_from_cache(&range, need_end, buffer_len)
+            .unwrap_or_default()
+    }
+
+    /// Read `range`'s structure off the cache's recorded lines, or `None` when
+    /// the cache cannot vouch for every line it needs: the lines of `range`,
+    /// the one before it (whether its first row follows the delimiter) and
+    /// those up to `need_end` (whether its last row closes the table). The
+    /// lines must be recorded contiguously — a missing one is unknown, not
+    /// "no structure" — and none may sit at or past an unrepaired edit.
+    fn structure_from_cache(
+        &self,
+        range: &Range<usize>,
+        need_end: usize,
+        buffer_len: usize,
+    ) -> Option<StructureLines> {
+        let cache = self.cache.as_ref()?;
+        if !cache.anchored || cache.range.end < need_end {
+            return None;
         }
-
-        // Resume anchor. Two rules, both stricter than
-        // `find_parse_resume_point`'s, because a wrong anchor here does not
-        // merely mis-colour a line — it reports the wrong region membership,
-        // and the caller frames the wrong lines:
-        //
-        //  * never start from a fresh state *mid-file*. A fresh state reads as
-        //    "outside a region", which is a confident wrong answer; only a real
-        //    checkpoint, or byte 0, can seed the walk.
-        //  * never resume from a checkpoint at or after `dirty_from`.
-        //    `notify_insert`/`notify_delete` shift checkpoint *positions* but
-        //    leave their stored states untouched — the repair happens lazily in
-        //    `try_partial_update` — so a checkpoint past an unrepaired edit can
-        //    still hold the region state from before it.
-        let dirty_limit = self.dirty_from.unwrap_or(usize::MAX);
-        let anchor_limit = range.start.min(dirty_limit.saturating_sub(1));
-        let search_start = anchor_limit.saturating_sub(MAX_PARSE_BYTES);
-        let nearest = self
-            .checkpoint_markers
-            .query_range(search_start, anchor_limit + 1)
-            .into_iter()
-            .filter(|(_, start, _)| *start <= anchor_limit)
-            .max_by_key(|(_, start, _)| *start);
-        let (mut current_offset, mut snapshot) = match nearest {
-            Some((id, cp_pos, _)) => match self.checkpoint_states.get(&id) {
-                Some(snap) => (cp_pos, snap.clone()),
-                None => return StructureLines::default(), // orphaned checkpoint
-            },
-            None if parse_end <= MAX_PARSE_BYTES => (
-                0,
-                ParseSnapshot::new(&self.syntax_set.syntaxes()[self.syntax_index]),
-            ),
-            None => return StructureLines::default(), // large file, no anchor: unknown
-        };
-
-        // Bound the walk itself, not just the anchor search. An edit high in a
-        // large buffer pulls `dirty_limit` — and with it the only trustworthy
-        // anchor — far above the viewport; without this, one `lines_changed`
-        // batch could drag a megabyte parse into the draw path. Better to
-        // report "unknown" and render conservatively.
-        if parse_end.saturating_sub(current_offset) > MAX_PARSE_BYTES {
-            return StructureLines::default();
+        if self.dirty_from.is_some_and(|dirty| dirty < need_end) {
+            return None;
         }
-
-        let content = buffer.slice_bytes(current_offset..parse_end);
-        let content_bytes = match std::str::from_utf8(&content) {
-            Ok(s) => s.as_bytes(),
-            Err(_) => return StructureLines::default(),
+        let lines = &cache.lines;
+        // The line holding `range.start`, and the one before it when it is
+        // recorded. A first line at byte 0 has no line before it to know.
+        let at = lines.partition_point(|line| line.end <= range.start);
+        let first = lines.get(at).filter(|line| line.start <= range.start)?;
+        let from = match at.checked_sub(1) {
+            Some(prev) if lines[prev].end == first.start => prev,
+            _ if first.start == 0 => at,
+            _ => return None,
         };
 
+        let table_hosted = self.table_body_scope.is_some();
         let mut out = StructureLines::default();
         // The table walk is one line behind the region walk: the *header* row
         // is the line before the delimiter row, and the *last* row is the line
         // before the table's body scope drops. Neither is knowable when that
-        // line is parsed, so both are settled retroactively — the header by
+        // line is read, so both are settled retroactively — the header by
         // holding on to the previous line's start, the last row by patching the
-        // entry already pushed. This is why the walk runs one line past
-        // `range.end`: without that line the final row inside the range could
-        // never be told apart from a row with more table below it.
-        let mut prev_line_start: Option<usize> = None;
+        // entry already pushed.
+        let mut prev: Option<&LineStructure> = None;
         // Start of the most recent line the walk saw *inside* a table, whether
         // or not it fell in the caller's range. `mark_table_line_last` matches
         // on it, so a table continuing past `range.end` never closes early.
         let mut last_table_line_start: Option<usize> = None;
-        let mut prev_in_table = false;
         let mut after_delimiter = false;
-        let mut pos = 0;
-        while pos < content_bytes.len() {
-            let (line_end, line_byte_len, prepared) = prepare_line_at(content_bytes, pos);
-            let line_start = current_offset;
-            if let Some(prepared) = prepared {
-                let was_in = self.active_region_spec(&snapshot.scopes);
-                let was_table = table_scope.is_some_and(|s| scopes_contain(&snapshot.scopes, s));
-                // Spans are discarded: only the scope-stack transition the
-                // parse leaves on `snapshot` matters here.
-                let parsed = self.parse_snapshot_line(
-                    &mut snapshot,
-                    &prepared,
-                    current_offset,
-                    |_, _, _, _| {},
-                );
-                if !parsed {
-                    // A host parse error leaves region membership untouched
-                    // (see `parse_snapshot_line`); classifying from it would
-                    // be a guess, so stop rather than emit one.
-                    break;
-                }
-                let now_in = self.active_region_spec(&snapshot.scopes);
-                let role = match (was_in, now_in) {
-                    (None, Some(_)) => Some(RegionLine::Open),
-                    (Some(_), Some(_)) => Some(RegionLine::Body),
-                    (Some(_), None) => Some(RegionLine::Close),
-                    (None, None) => None,
-                };
-                if let Some(role) = role {
-                    if line_start >= range.start && line_start < range.end {
-                        out.regions.push((line_start, role));
+        for line in &lines[from..] {
+            if prev.is_some_and(|p| p.end != line.start) {
+                return None;
+            }
+            let in_range = line.start >= range.start && line.start < range.end;
+            let role = match (line.region_before, line.region_after) {
+                (false, true) => Some(RegionLine::Open),
+                (true, true) => Some(RegionLine::Body),
+                (true, false) => Some(RegionLine::Close),
+                (false, false) => None,
+            };
+            if let (Some(role), true) = (role, in_range) {
+                out.regions.push((line.start, role));
+            }
+            if table_hosted {
+                match (line.table_before, line.table_after) {
+                    // The body scope opens on the delimiter row, so the line
+                    // above it is the header — emitted now, and still in
+                    // ascending order because it precedes this one.
+                    (false, true) => {
+                        if let Some(header) = prev {
+                            out.push_table(header.start, TableRole::Header, false, range);
+                        }
+                        out.push_table(line.start, TableRole::Delimiter, false, range);
+                        last_table_line_start = Some(line.start);
+                        after_delimiter = true;
                     }
-                }
-
-                if let Some(scope) = table_scope {
-                    let now_table = scopes_contain(&snapshot.scopes, scope);
-                    match (was_table, now_table) {
-                        // The body scope opens on the delimiter row, so the
-                        // line above it is the header — emitted now, and still
-                        // in ascending order because it precedes this one.
-                        (false, true) => {
-                            if let Some(header_start) = prev_line_start {
-                                out.push_table(header_start, TableRole::Header, false, &range);
-                            }
-                            out.push_table(line_start, TableRole::Delimiter, false, &range);
-                            last_table_line_start = Some(line_start);
-                            after_delimiter = true;
-                        }
-                        (true, true) => {
-                            out.push_table(line_start, TableRole::Row, after_delimiter, &range);
-                            last_table_line_start = Some(line_start);
-                            after_delimiter = false;
-                        }
-                        // The table ended above this line, so the previous one
-                        // was its last. Only trust this when the line that
-                        // closed it is whole: a truncated tail could be a table
-                        // row that merely looks like the end.
-                        (true, false) => {
-                            if prepared.ends_with_newline || line_end == content_bytes.len() {
-                                out.mark_table_line_last(last_table_line_start);
-                            }
-                            after_delimiter = false;
-                        }
-                        (false, false) => after_delimiter = false,
+                    (true, true) => {
+                        out.push_table(line.start, TableRole::Row, after_delimiter, range);
+                        last_table_line_start = Some(line.start);
+                        after_delimiter = false;
                     }
-                    prev_in_table = now_table;
+                    // The table ended above this line, so the previous one
+                    // was its last. Every recorded line is whole, so the
+                    // transition is final.
+                    (true, false) => {
+                        out.mark_table_line_last(last_table_line_start);
+                        after_delimiter = false;
+                    }
+                    (false, false) => after_delimiter = false,
                 }
             }
-            prev_line_start = Some(line_start);
-            pos = line_end;
-            current_offset += line_byte_len;
+            prev = Some(line);
+            if line.end >= need_end {
+                break;
+            }
+        }
+        let last = prev?;
+        if last.end < need_end {
+            return None;
         }
         // A table that runs to the end of the buffer has no line below it to
-        // close it, and the walk above therefore never sees the transition. The
-        // buffer's own end is that closing edge — but only when the walk really
-        // reached it, not when it stopped at the lookahead bound.
-        if prev_in_table && current_offset >= buffer.len() {
+        // close it, so the transition above never fires. The buffer's own end
+        // is that closing edge.
+        if last.table_after && last.end >= buffer_len {
             out.mark_table_line_last(last_table_line_start);
         }
-        out
+        Some(out)
     }
 
     /// Merge adjacent spans with the same foreground and background categories.
@@ -3646,9 +3752,149 @@ mod tests {
         );
     }
 
-    /// The probe is what makes a *scrolled-into* fence resolvable: asked only
-    /// about lines deep inside a block, it still answers, because it resumes
-    /// from the parse state before them rather than from the range start.
+    /// The structure answer is read off the highlight cache's per-line
+    /// records, which edits shift and the partial update re-parses alongside
+    /// the spans. This holds that bookkeeping to the only standard that
+    /// matters: after any mix of edits, highlight passes and queries, the
+    /// answer equals what a fresh engine parsing the same text from byte 0
+    /// says. Edits are drawn to hit the transitions the records encode —
+    /// fences and table rows opened, closed and broken, lines split and
+    /// joined — and queries run both before the frame's highlight pass (as
+    /// `lines_changed` does) and after it.
+    #[test]
+    fn test_structure_lines_match_a_cold_parse_through_edits() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+
+        let mut content = String::from("# Title\n\nintro with `a`, `b` and **bold**\n\n");
+        for i in 0..6 {
+            content.push_str(&format!(
+                "| K{i} | V |\n|---|---|\n| a | b |\n| c | d |\n\nprose {i}\n\n```rust\nlet x{i} = 1;\nlet y = 2;\n```\n\n"
+            ));
+        }
+        content.push_str("tail\n");
+        let mut buffer = Buffer::from_str(&content, 0, test_fs());
+
+        let snippets = [
+            "\n",
+            "\n\n",
+            "```",
+            "```js\n",
+            "| x |",
+            "|---|---|\n",
+            "| e | f |\n",
+            "`c`, ",
+            "words ",
+            "|",
+            "`",
+        ];
+        // Deterministic LCG: the sequence is the same on every run, so a
+        // failure reproduces.
+        let mut seed: u64 = 0x5eed_1234_abcd;
+        let mut next = |bound: usize| -> usize {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((seed >> 33) as usize) % bound.max(1)
+        };
+        let line_start_at_or_before = |buffer: &Buffer, pos: usize| -> usize {
+            let text = buffer.slice_bytes(0..pos);
+            text.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1)
+        };
+
+        for step in 0..300 {
+            let len = buffer.len();
+            match next(3) {
+                0 | 1 => {
+                    let at = next(len + 1);
+                    let text = snippets[next(snippets.len())];
+                    buffer.insert(at, text);
+                    engine.notify_insert(at, text.len());
+                }
+                _ if len > 0 => {
+                    let at = next(len);
+                    let n = (1 + next(24)).min(len - at);
+                    buffer.delete(at..at + n);
+                    engine.notify_delete(at, n);
+                }
+                _ => {}
+            }
+            let len = buffer.len();
+            if len == 0 {
+                continue;
+            }
+
+            // A query range shaped like a `lines_changed` batch: line-aligned
+            // start, a viewport's worth of bytes.
+            let start = line_start_at_or_before(&buffer, next(len));
+            let end = (start + 1 + next(600)).min(len);
+            let query = start..end;
+
+            // Half the time the frame's highlight pass has already run (with
+            // the renderer's one-viewport context either side); half the time
+            // the query comes first, against an unrepaired edit.
+            if next(2) == 0 {
+                let vs = start.saturating_sub(end - start);
+                let ve = (end + (end - start)).min(len);
+                engine.highlight_viewport(&buffer, vs, ve, &theme, 1024);
+            }
+
+            let got = engine.structure_lines_in(&buffer, query.clone());
+            let mut cold = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+            let want = cold.structure_lines_in(&buffer, query.clone());
+            assert_eq!(
+                (&got.regions, &got.tables),
+                (&want.regions, &want.tables),
+                "step {step}: cached structure for {query:?} disagrees with a cold parse \
+                 of the same text"
+            );
+        }
+    }
+
+    /// Once the frame's highlight pass has parsed the viewport, asking for
+    /// its structure parses nothing: the answer is already in the cache.
+    /// This is what keeps scrolling a prose-heavy Markdown file cheap — the
+    /// grammar backtracks exponentially on a line of several `code` spans,
+    /// and a query that re-parsed paid that again on every scroll step.
+    #[test]
+    fn test_structure_lines_after_a_highlight_pass_parse_nothing() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+
+        let mut content = String::new();
+        for i in 0..40 {
+            content.push_str(&format!(
+                "Line {i} names `a`, `b`, `c`, `d`, `e` and `f`.\n\n| K | V |\n|---|---|\n| a | b |\n\n"
+            ));
+        }
+        let buffer = Buffer::from_str(&content, 0, test_fs());
+        engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 1024);
+        engine.reset_highlight_stats();
+
+        let starts: Vec<usize> = std::iter::once(0)
+            .chain(content.match_indices('\n').map(|(i, _)| i + 1))
+            .filter(|&s| s < buffer.len())
+            .collect();
+        let mut tables = 0;
+        for &s in &starts {
+            let structure = engine.structure_lines_in(&buffer, s..(s + 400).min(buffer.len()));
+            tables += structure.tables.len();
+        }
+        assert!(tables > 0, "precondition: the queries see the tables");
+        assert_eq!(
+            engine.highlight_stats().map(|s| s.bytes_parsed),
+            Some(0),
+            "a structure query over already-highlighted lines must not re-parse them"
+        );
+    }
+
+    /// The engine is what makes a *scrolled-into* fence resolvable: asked only
+    /// about lines deep inside a block, it still answers, because its parse
+    /// carries the state from before them rather than starting at the range.
     /// A batch-local reading of those same lines has no way to know.
     #[test]
     fn test_region_lines_resolve_a_range_starting_inside_a_fence() {
@@ -3686,9 +3932,10 @@ mod tests {
 
     /// An edit that has not yet been repaired by a highlight pass must not be
     /// answered from a checkpoint captured before it. Checkpoint *states* are
-    /// left stale by `notify_insert` (only their positions shift), so a probe
-    /// that trusted one would keep reporting the pre-edit region structure —
-    /// and the caller would frame lines that are no longer code.
+    /// left stale by `notify_insert` (only their positions shift), and so are
+    /// the per-line structure records; a lookup that trusted either would
+    /// keep reporting the pre-edit region structure — and the caller would
+    /// frame lines that are no longer code.
     #[test]
     fn test_region_lines_ignore_checkpoints_stale_from_an_unrepaired_edit() {
         let registry =
@@ -3733,8 +3980,8 @@ mod tests {
     }
 
     /// A checkpoint stores the state *before* its position — every resume path
-    /// (`find_parse_resume_point`, `try_partial_update`, `structure_lines_in`)
-    /// parses the line at that position starting from it. `full_parse` used to
+    /// (`find_parse_resume_point`, `try_partial_update`) parses the line at
+    /// that position starting from it. `full_parse` used to
     /// overwrite a checkpoint sitting on a line start with the state *after*
     /// that line, so resuming from it re-parsed the line under the state that
     /// follows it.

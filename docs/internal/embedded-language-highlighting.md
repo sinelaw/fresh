@@ -187,7 +187,7 @@ its lines. What transfers is the shape of the answer: a per-line structural
 classification the host grammar already makes while parsing, delivered on
 the `lines_changed` payload, so the consumer stores no block model.
 
-`structure_lines_in` is the single walk that produces both. Tables get
+`structure_lines_in` reads both off the one highlight parse. Tables get
 their own tiny spec table (`TABLE_SPECS`: host syntax → table *body*
 scope, `meta.table` for Markdown) and their own vocabulary, because
 `open`/`body`/`close` does not describe a table:
@@ -204,14 +204,14 @@ Two things fall out of that table and are worth stating plainly:
 - **The header is not covered by the body scope.** The grammar opens
   `meta.table` on the *delimiter* row, so a pure before/after test cannot
   see the header at all. It is identified positionally, as the line above
-  the delimiter — which also means a walk that resumes from a checkpoint
-  *inside* a table never claims to know where that table began. That is
-  the honest answer, and it costs nothing: a header above the resume
-  anchor is off-screen anyway.
+  the delimiter — which also means a lookup whose cache does not hold the
+  line above the range never claims to know where a table began. That is
+  the honest answer, and it costs nothing: a header above the parsed
+  window is off-screen anyway.
 - **`last` needs the line below.** It is the one fact here that a forward
-  walk cannot settle in place, so the walk runs one line past the range it
-  was asked about (`TABLE_LOOKAHEAD_BYTES`). Where it cannot — the range
-  ends at the lookahead bound, or the walk stopped early — `last` stays
+  parse cannot settle in place, so the lookup brings the cache to one line
+  past the range it was asked about (found within `TABLE_LOOKAHEAD_BYTES`).
+  Where it cannot — that line is longer than the bound — `last` stays
   false, which draws no closing edge rather than one in the wrong place.
 
 The consequence for consumers is different from regions, and the
@@ -232,25 +232,43 @@ still cannot do synchronously, so compose mode's grow-only width memo
 stays. That memo is safe for the reason it always was: it carries only
 numbers, where staleness costs a column width for one frame.
 
-`region_lines_in` is a probe, not a cache: it resumes from the nearest
-checkpoint and discards what it computes, so it stays out of the three
-incremental cache paths and cannot perturb highlighting. Two rules keep it
-from answering confidently-wrong, both stricter than the highlight paths'
-own resume logic, because a wrong region is a wrong *frame* rather than a
-wrong colour:
+`structure_lines_in` is a lookup into the highlight cache, not a parse of
+its own. Every parse path that fills the cache (`full_parse`,
+`extend_cache_forward`, `try_partial_update`) records, for each whole line
+it walks, whether a region and a table body were open before and after it
+(`TextMateCache::lines`), alongside the spans and under the same commit
+rules; edits shift those records exactly as they shift spans, and the
+partial update that repairs an edit replaces them along with the spans. A
+query first brings the cache up to date for its range through the same
+dispatcher `highlight_viewport` uses (`sync_cache`), then reads the answer
+off it. So there is one parse, one invalidation story, and the frame's
+highlight pass that follows finds a cache hit.
 
-- it never resumes from a fresh state mid-file (a fresh state reads as
-  "outside a region"), only from a real checkpoint or byte 0;
-- it never resumes from a checkpoint at or after `dirty_from`.
-  `notify_insert`/`notify_delete` shift checkpoint *positions* but leave
-  their stored states for `try_partial_update` to repair lazily, so a
-  checkpoint past an unrepaired edit can still hold pre-edit region state.
+It used to be a separate probe that walked from the nearest checkpoint
+through the range plus an 8 KB lookahead and threw the result away, on
+every frame that offered `lines_changed` new lines. The bundled Markdown
+grammar backtracks exponentially on a line holding several `` `code` ``
+spans (eight of them cost ~80 ms to parse), so on prose-heavy documents
+that re-parse took 150–550 ms per scroll step. A test
+(`test_structure_lines_match_a_cold_parse_through_edits`) holds the cached
+answer equal to a cold parse of the same text through a randomized run of
+edits.
 
-When neither is available — a buffer past `MAX_PARSE_BYTES` whose viewport
-has no checkpoint before it yet — it reports nothing, and consumers must
-read that as *unknown*, not as "outside a region". That is the same
-cold-start trade-off this engine already makes for styling inside a huge
-region.
+The lookup fails closed, because a wrong region is a wrong *frame* rather
+than a wrong colour. It reports nothing — which consumers must read as
+*unknown*, not as "outside a region" — when:
+
+- the cache was built from a fresh state in the middle of a large file (a
+  buffer past `MAX_PARSE_BYTES` whose viewport had no checkpoint before
+  it): a fresh state reads as "outside a region", a confident wrong answer;
+- a line it needs was not recorded — a host parse error, a streaming tail
+  with no newline yet — so the records are not contiguous;
+- an edit at or before the end of what it needs is still unrepaired
+  (`dirty_from`), which can happen in a large file whose partial update hit
+  its per-pass budget.
+
+That is the same cold-start trade-off this engine already makes for styling
+inside a huge region.
 
 ### Adding a new host
 
