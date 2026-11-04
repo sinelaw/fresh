@@ -674,6 +674,17 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
                 .expect("render between step assertions failed");
             dispatched_up_to = want_inclusive;
         }
+        // A step that asserts nothing is only a render barrier (the
+        // render above) plus the cross-step observations. Skip the
+        // snapshot: with `needs_rows` it costs three more renders and a
+        // vt100 parse per step, which made 150-step walks take minutes
+        // on CI runners.
+        if step.expect.asserts_nothing() {
+            let api = harness.api_mut();
+            top_byte_observations.push(api.viewport_top_byte());
+            cursor_byte_observations.push(api.primary_caret().position);
+            continue;
+        }
         let snapshot = extract_snapshot(&mut harness);
         top_byte_observations.push(snapshot.viewport.top_byte);
         cursor_byte_observations.push(snapshot.cursor_byte);
