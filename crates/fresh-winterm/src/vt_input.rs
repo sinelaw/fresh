@@ -81,6 +81,33 @@ pub fn enable_mouse_tracking(mode: MouseMode) -> io::Result<()> {
     Ok(())
 }
 
+/// Ask the terminal to report keys in win32-input-mode (`CSI ? 9001 h`).
+///
+/// In VT input mode the console delivers ConPTY's VT encoding of each key,
+/// which has no spelling for many modifier combinations: Ctrl+Tab arrives as a
+/// plain Tab, and Windows Terminal sends Ctrl+Shift+E as Ctrl+E. With this mode
+/// on, the terminal reports every key as `CSI Vk ; Sc ; Uc ; Kd ; Cs ; Rc _` —
+/// the console's own KEY_EVENT record — which the input parser decodes with
+/// the modifiers intact. Mouse reports and bracketed paste are unaffected.
+/// A terminal that does not know the mode ignores the request.
+pub fn enable_win32_input_mode() -> io::Result<()> {
+    use std::io::Write;
+    let mut stdout = io::stdout();
+    stdout.write_all(b"\x1b[?9001h")?;
+    stdout.flush()?;
+    Ok(())
+}
+
+/// Turn win32-input-mode off again, so the shell fresh returns to gets its
+/// keys in the encoding it expects.
+pub fn disable_win32_input_mode() -> io::Result<()> {
+    use std::io::Write;
+    let mut stdout = io::stdout();
+    stdout.write_all(b"\x1b[?9001l")?;
+    stdout.flush()?;
+    Ok(())
+}
+
 /// Mouse tracking mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MouseMode {
@@ -375,19 +402,22 @@ impl Drop for VtInputReader {
 /// in a single batch is unambiguously a corrupt mouse sequence.
 ///
 /// See `docs/internal/windows-mouse-input.md` for the complete investigation.
+///
+/// A win32-input-mode key report (`[digits;digits;digits;digits;digits;digits_`)
+/// is written to the input buffer the same way, one KEY_EVENT record per byte,
+/// so it is stripped the same way when its ESC goes missing. With the mode on,
+/// a typed `[` arrives wrapped in a report of its own, so the bare pattern in
+/// one batch can only be a report that lost its ESC.
 fn strip_corrupt_mouse(mut bytes: Vec<u8>) -> Vec<u8> {
     let mut i = 0;
     while i < bytes.len() {
-        // Look for `[<` not preceded by ESC
-        if bytes[i] == b'['
-            && i + 1 < bytes.len()
-            && bytes[i + 1] == b'<'
-            && (i == 0 || bytes[i - 1] != 0x1b)
-        {
-            // Check if the rest matches `[<digits;digits;digits[Mm]`
-            if let Some(seq_len) = match_sgr_mouse(&bytes[i..]) {
+        if bytes[i] == b'[' && (i == 0 || bytes[i - 1] != 0x1b) {
+            // `[<digits;digits;digits[Mm]` (mouse) or a win32-input-mode report.
+            if let Some(seq_len) =
+                match_sgr_mouse(&bytes[i..]).or_else(|| match_win32_input(&bytes[i..]))
+            {
                 tracing::debug!(
-                    "Stripped corrupt mouse sequence ({} bytes) at offset {}",
+                    "Stripped corrupt input sequence ({} bytes) at offset {}",
                     seq_len,
                     i,
                 );
@@ -398,6 +428,25 @@ fn strip_corrupt_mouse(mut bytes: Vec<u8>) -> Vec<u8> {
         i += 1;
     }
     bytes
+}
+
+/// Check if bytes starting at `data` match a win32-input-mode report without
+/// its ESC, `[digits;digits;digits;digits;digits;digits_`.
+/// Returns the length of the match, or None if no match.
+fn match_win32_input(data: &[u8]) -> Option<usize> {
+    if data.first() != Some(&b'[') {
+        return None;
+    }
+    let mut semicolons = 0;
+    for (pos, &byte) in data.iter().enumerate().skip(1) {
+        match byte {
+            b'0'..=b'9' => {}
+            b';' => semicolons += 1,
+            b'_' if semicolons == 5 => return Some(pos + 1),
+            _ => return None,
+        }
+    }
+    None // Incomplete sequence
 }
 
 /// Check if bytes starting at `data` match `[<digits;digits;digits[Mm]`.
@@ -476,6 +525,22 @@ mod tests {
         let input = b"[hello".to_vec();
         let result = strip_corrupt_mouse(input);
         assert_eq!(result, b"[hello");
+    }
+
+    #[test]
+    fn test_strip_corrupt_win32_input() {
+        // A key report that lost its ESC, between two intact ones.
+        let input = b"\x1b[9;15;0;1;8;1_[69;18;5;1;24;1_\x1b[9;15;0;0;8;1_".to_vec();
+        let result = strip_corrupt_mouse(input);
+        assert_eq!(result, b"\x1b[9;15;0;1;8;1_\x1b[9;15;0;0;8;1_");
+    }
+
+    #[test]
+    fn test_strip_preserves_bracket_text_that_is_not_a_report() {
+        // Too few fields, or no `_`, is not a key report.
+        let input = b"[1;2_ [1;2;3;4;5;6".to_vec();
+        let result = strip_corrupt_mouse(input);
+        assert_eq!(result, b"[1;2_ [1;2;3;4;5;6");
     }
 
     #[test]

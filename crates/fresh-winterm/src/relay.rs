@@ -60,11 +60,15 @@ pub fn relay_loop(conn: &mut impl RelayConnection) -> io::Result<RelayExitReason
     if let Err(e) = vt_input::enable_mouse_tracking(vt_input::MouseMode::CellMotion) {
         tracing::warn!("Failed to enable mouse tracking: {}", e);
     }
+    if let Err(e) = vt_input::enable_win32_input_mode() {
+        tracing::warn!("Failed to enable win32-input-mode: {}", e);
+    }
     // Spawn dedicated reader thread (same as direct mode)
     let reader = VtInputReader::spawn();
     let result = relay_loop_inner(conn, &reader);
 
     // Restore mouse tracking and console mode on exit
+    let _ = vt_input::disable_win32_input_mode();
     let _ = vt_input::disable_mouse_tracking();
     if let Err(e) = vt_input::restore_console_mode(old_console_mode) {
         tracing::warn!("Failed to restore console mode: {}", e);
