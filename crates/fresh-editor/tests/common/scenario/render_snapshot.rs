@@ -394,6 +394,13 @@ pub struct HardwareCursorRect {
 }
 
 impl RenderSnapshotExpect {
+    /// True when no field is set, so [`Self::check_against`] passes for
+    /// any snapshot. Compared through `Debug` so a field added later
+    /// counts without this needing an edit.
+    pub fn asserts_nothing(&self) -> bool {
+        format!("{self:?}") == format!("{:?}", Self::default())
+    }
+
     /// Returns `Some((field, expected, actual))` on the first
     /// mismatch.
     pub fn check_against(&self, actual: &RenderSnapshot) -> Option<(&'static str, String, String)> {

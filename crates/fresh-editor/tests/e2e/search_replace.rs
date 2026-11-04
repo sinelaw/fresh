@@ -3151,6 +3151,67 @@ fn test_search_replace_positions_track_column_edits() {
         .unwrap();
 }
 
+/// An edit to a file with results re-runs the search, so the panel lists what
+/// the file holds now. That re-search must not lose the user's place: stepping
+/// on after it goes to the match after the one they edited, not back to the
+/// first. It used to reset the selection to the top of the list, so stepping
+/// through and editing each match restarted after every edit that outlived the
+/// debounce — and the `positions_track_*` tests above passed only while their
+/// next step beat it.
+#[test]
+fn test_search_replace_stepping_continues_after_an_edit_re_runs_the_search() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+
+    fs::write(
+        project_root.join("alpha.txt"),
+        "ZZNEEDLE one\nZZNEEDLE two\nZZNEEDLE three\n",
+    )
+    .unwrap();
+
+    let start_file = project_root.join("alpha.txt");
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 30, Default::default(), project_root)
+            .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Search:"))
+        .unwrap();
+    harness.type_text("ZZNEEDLE").unwrap();
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("alpha.txt:3"))
+        .unwrap();
+
+    // Step onto the first match and edit in front of it.
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Ln 1, Col 1"))
+        .unwrap();
+    harness.type_text("xx").unwrap();
+
+    // The re-search has landed: its row shows the edited line, and it has
+    // replaced the step's "Match 1/3" with its own count.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("alpha.txt:1 - xxZZNEEDLE one") && s.contains("Found 3 matches")
+        })
+        .unwrap();
+
+    // The next step goes on to the second match.
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Ln 2, Col 1"))
+        .unwrap();
+}
+
 /// Issue #2583, the case the event-hook approach could not cover: **bulk**
 /// edits — multi-cursor typing, paste-over, type-over-selection,
 /// query-replace, LSP code-action rewrites — apply as a single `BulkEdit`

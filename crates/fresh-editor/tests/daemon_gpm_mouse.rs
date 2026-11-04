@@ -247,12 +247,16 @@ fn the_console_mouse_reaches_a_daemon_session() {
             s.contents().contains("Ln 7, Col 6")
         });
 
-        // The wheel scrolls the buffer.
+        // The wheel scrolls the buffer: three notches of three lines, walked
+        // a line per frame (smooth scrolling), so "line 01" leaves at the first
+        // line of the first notch. Wait for the whole walk — "line 10" at the
+        // top — since the drag below is aimed at where "line 20" sits now, and
+        // a walk still playing out would move it from under the press.
         for _ in 0..3 {
             gpm.send(col + 5, row, MOVE, 0, -1);
         }
         wait_for(&mut client, "the GPM wheel did not scroll", |s| {
-            find(s, "line 01").is_none()
+            find(s, "line 09").is_none() && find(s, "line 10").is_some()
         });
 
         // A drag selects: typing over "line " leaves "X20".

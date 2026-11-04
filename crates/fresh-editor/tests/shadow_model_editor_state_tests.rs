@@ -206,8 +206,15 @@ fn test_shadow_model_every_op_pair() {
 }
 
 proptest! {
+    // 64 cases, not 200: each case builds an editor and renders after
+    // every one of up to 49 keys (~0.3s a case on a quiet Linux box).
+    // 200 cases took 80-100s on Windows and macOS CI and crossed nextest's
+    // 180s kill on a loaded macOS runner. `test_shadow_model_every_op_pair`
+    // above covers every pairwise interaction deterministically; this test
+    // is for long undo/redo chains, which sequence length (unchanged) is
+    // what reaches.
     #![proptest_config(ProptestConfig {
-        cases: 200,
+        cases: 64,
         max_shrink_iters: 5000,
         ..ProptestConfig::default()
     })]

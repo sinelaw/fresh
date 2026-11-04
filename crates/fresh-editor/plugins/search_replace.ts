@@ -1700,7 +1700,77 @@ async function executeReplacements(results?: SearchResult[]): Promise<string> {
 // Re-search
 // =============================================================================
 
-async function rerunSearch(): Promise<void> {
+/** The match the user had stepped onto when an edit re-ran the search
+ *  (`buffer_modified`), so stepping goes on from it rather than starting over
+ *  at the first match. Held by a marker of its own while the re-search runs:
+ *  each keystroke of the edit starts another re-search, and the edits made in
+ *  the meantime must shift it too. A match in a file that isn't open has no
+ *  marker; its file can't be edited, so its grep position stands. */
+let resumeAnchor: { file: string; byte: number; bufferId?: number; key?: string } | null = null;
+
+/** Anchor the match at the panel's selection, unless an earlier re-search
+ *  still holds an anchor — the selection was reset when that one started. */
+function anchorSteppedMatch(): void {
+  if (!panel || resumeAnchor) return;
+  const item = buildFlatItems()[panel.matchIndex];
+  if (!item || item.type !== "match") return;
+  const result = panel.fileGroups[item.fileIndex].matches[item.matchIndex!];
+  let byte = result.match.byteOffset;
+  if (result.markerKey && result.markerBufferId) {
+    const marker = editor.getMarker(result.markerBufferId, result.markerKey) as
+      | { start: number }
+      | null;
+    if (marker && typeof marker.start === "number") byte = marker.start;
+  }
+  resumeAnchor = { file: result.match.file, byte };
+  const key = `sr:${nextMatchMarkerId++}`;
+  if (result.markerBufferId && editor.createMarker(result.markerBufferId, key, byte, byte + result.match.length, null)) {
+    resumeAnchor.bufferId = result.markerBufferId;
+    resumeAnchor.key = key;
+  }
+}
+
+/** Forget the anchor, returning where its match is now. */
+function takeResumeAnchor(): { file: string; byte: number } | null {
+  const anchor = resumeAnchor;
+  resumeAnchor = null;
+  if (!anchor) return null;
+  if (anchor.bufferId && anchor.key) {
+    const marker = editor.getMarker(anchor.bufferId, anchor.key) as { start: number } | null;
+    if (marker && typeof marker.start === "number") anchor.byte = marker.start;
+    editor.deleteMarker(anchor.bufferId, anchor.key);
+  }
+  return { file: anchor.file, byte: anchor.byte };
+}
+
+/** The row to step on from: the match now at `at`, else the last one before
+ *  it in its file, else that file's header row — so the next step lands on the
+ *  first match after `at` either way. The top of the list when its file has no
+ *  matches left. */
+function flatIndexAtLocation(at: { file: string; byte: number }): number {
+  if (!panel) return 0;
+  const flat = buildFlatItems();
+  let found = 0;
+  for (let i = 0; i < flat.length; i++) {
+    const item = flat[i];
+    const group = panel.fileGroups[item.fileIndex];
+    if (group.absPath !== at.file) continue;
+    if (item.type === "match" && group.matches[item.matchIndex!].match.byteOffset > at.byte) {
+      break;
+    }
+    found = i;
+  }
+  return found;
+}
+
+/** The re-search an edit started, while it runs. It empties the result set
+ *  until the new one lands and then puts the selection back, so a step
+ *  pressed meanwhile waits for it instead of being dropped as "Searching…". */
+let searchAfterEdit: Promise<void> | null = null;
+
+/** Re-run the search. `keepPosition` is for the re-search an edit starts:
+ *  the user did not ask for it, so their place in the results survives it. */
+async function rerunSearch(keepPosition = false): Promise<void> {
   if (!panel || !panel.searchPattern) return;
   // No `panel.busy` early-return: if a search is already running for
   // an older pattern (e.g. user typed "pr" then "proj"), we want the
@@ -1715,6 +1785,8 @@ async function rerunSearch(): Promise<void> {
   // currentSearchGeneration moves past `myGen` and we know not to
   // finalize busy/searchPerformed for this stale invocation.
   const myGen = currentSearchGeneration + 1;
+  if (keepPosition) anchorSteppedMatch();
+  else takeResumeAnchor();
   panel.truncated = false;
   panel.busy = true;
   panel.matchIndex = 0;
@@ -1740,6 +1812,7 @@ async function rerunSearch(): Promise<void> {
         // full re-emit the body stays stuck on "Searching…". Re-emit
         // now that the flags are final so it shows "No matches".
         // Cheap: the tree is empty (no per-node serialization cost).
+        takeResumeAnchor();
         updatePanelContent();
       } else {
         // The tree was built incrementally in file-arrival order while
@@ -1750,18 +1823,24 @@ async function rerunSearch(): Promise<void> {
         // stopped and the user is about to start reviewing, so it
         // doesn't compete with input the way per-batch re-emits would.
         sortFileGroups();
+        const resumeAt = takeResumeAnchor();
+        if (resumeAt) panel.matchIndex = flatIndexAtLocation(resumeAt);
         updatePanelContent();
       }
     }
   }
 }
 
-function rerunSearchDebounced(): void {
+function rerunSearchDebounced(keepPosition = false): void {
   const gen = ++searchDebounceGeneration;
   editor.delay(SEARCH_DEBOUNCE_MS).then(() => {
-    if (gen === searchDebounceGeneration) {
-      rerunSearch();
-    }
+    if (gen !== searchDebounceGeneration) return;
+    const run = rerunSearch(keepPosition);
+    if (!keepPosition) return;
+    searchAfterEdit = run;
+    run.finally(() => {
+      if (searchAfterEdit === run) searchAfterEdit = null;
+    });
   });
 }
 
@@ -2247,6 +2326,10 @@ async function jumpToMatch(flat: FlatItem[], flatIdx: number): Promise<void> {
 }
 
 function navigateMatch(dir: 1 | -1): void {
+  if (searchAfterEdit) {
+    searchAfterEdit.then(() => navigateMatch(dir));
+    return;
+  }
   if (!panel || panel.searchResults.length === 0) {
     editor.setStatus(
       editor.t(panel?.busy ? "panel.searching" : "status.no_active_search"),
@@ -2324,6 +2407,7 @@ function search_replace_close(): void {
   // Drop the anchor markers we registered on the source buffers so they
   // don't linger after the panel is gone.
   clearMatchMarkers();
+  takeResumeAnchor();
   const sourceSplitId = panel.sourceSplitId;
   panel.widgetPanel?.unmount();
   editor.closeBuffer(panel.resultsBufferId);
@@ -2396,6 +2480,7 @@ editor.on("buffer_closed", (args) => {
     // The results buffer went away → tear down. Drop our anchor markers on
     // the (still-open) source buffers first so they don't leak.
     clearMatchMarkers();
+    takeResumeAnchor();
     panel.widgetPanel?.unmount();
     panel = null;
     settleConfirmDialog(false);
@@ -2414,7 +2499,7 @@ editor.on("buffer_closed", (args) => {
 editor.on("buffer_modified", (args) => {
   if (!panel || !panel.searchPattern || replaceInProgress) return true;
   if (args.buffer_id === panel.resultsBufferId) return true;
-  if (panelWatchesBuffer(args.buffer_id)) rerunSearchDebounced();
+  if (panelWatchesBuffer(args.buffer_id)) rerunSearchDebounced(true);
   return true;
 });
 
