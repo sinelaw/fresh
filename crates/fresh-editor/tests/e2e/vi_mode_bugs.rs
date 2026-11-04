@@ -2541,3 +2541,253 @@ fn test_vi_visual_up_keeps_anchor_character() {
 
     harness.wait_for_buffer_content("bb\nccc\n").unwrap();
 }
+
+// =============================================================================
+// Issue #3708: line motions stopped at soft-wrap boundaries
+// =============================================================================
+
+/// One 79-character line that a 40-column window wraps across several rows,
+/// followed by a short line.
+const WRAPPED_LINE: &str =
+    "aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll mmmm nnnn oooo pppp";
+
+/// A vi harness narrow enough that `WRAPPED_LINE` soft-wraps, on `content`.
+fn vi_wrapped_line_harness_with(
+    content: &str,
+) -> (EditorTestHarness, tempfile::TempDir, TestFixture) {
+    init_tracing_from_env();
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "vi_mode");
+    copy_plugin_lib(&plugins_dir);
+
+    let mut config = fresh::config::Config::default();
+    config.editor.line_wrap = true;
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(40, 12, config, project_root.clone())
+            .unwrap();
+    harness.editor_mut().set_clipboard_for_test("".to_string());
+
+    let fixture = TestFixture::new("test.txt", content).unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+    (harness, temp_dir, fixture)
+}
+
+/// `vi_wrapped_line_harness_with` on `WRAPPED_LINE` and a short line after it.
+fn vi_wrapped_line_harness() -> (EditorTestHarness, tempfile::TempDir, TestFixture) {
+    vi_wrapped_line_harness_with(&format!("{WRAPPED_LINE}\nnext\n"))
+}
+
+/// `$` goes to the last character of the line, not of the first screen row.
+#[test]
+fn test_vi_3708_dollar_on_wrapped_line_reaches_line_end() {
+    let (mut harness, _td, _fixture) = vi_wrapped_line_harness();
+
+    send_key(&mut harness, '$');
+
+    let last_char = WRAPPED_LINE.len() - 1;
+    harness
+        .wait_until(|h| h.cursor_position() == last_char)
+        .unwrap();
+}
+
+/// `0` from a continuation row goes to column 1 of the line.
+#[test]
+fn test_vi_3708_zero_on_wrapped_line_reaches_line_start() {
+    let (mut harness, _td, _fixture) = vi_wrapped_line_harness();
+
+    // Nine words in lands on "jjjj", well past the first screen row.
+    send_key(&mut harness, '9');
+    send_key(&mut harness, 'w');
+    harness
+        .wait_until(|h| h.cursor_position() == WRAPPED_LINE.find("jjjj").unwrap())
+        .unwrap();
+
+    send_key(&mut harness, '0');
+
+    harness.wait_until(|h| h.cursor_position() == 0).unwrap();
+}
+
+/// `A` appends after the line's last character.
+#[test]
+fn test_vi_3708_append_on_wrapped_line_appends_at_line_end() {
+    let (mut harness, _td, _fixture) = vi_wrapped_line_harness();
+
+    send_key(&mut harness, 'A');
+    wait_insert(&mut harness);
+    harness.type_text("X").unwrap();
+    escape(&mut harness);
+
+    harness
+        .wait_for_buffer_content(&format!("{WRAPPED_LINE}X\nnext\n"))
+        .unwrap();
+}
+
+/// `o` opens a line below the whole line instead of splitting it at the wrap.
+#[test]
+fn test_vi_3708_open_below_on_wrapped_line_keeps_line_intact() {
+    let (mut harness, _td, _fixture) = vi_wrapped_line_harness();
+
+    send_key(&mut harness, 'o');
+    wait_insert(&mut harness);
+    harness.type_text("X").unwrap();
+    escape(&mut harness);
+
+    harness
+        .wait_for_buffer_content(&format!("{WRAPPED_LINE}\nX\nnext\n"))
+        .unwrap();
+}
+
+/// `J` joins the next line onto the end of the wrapped line. It used to swap
+/// the space at the wrap point for another space and join nothing.
+#[test]
+fn test_vi_3708_join_on_wrapped_line_joins_next_line() {
+    let (mut harness, _td, _fixture) = vi_wrapped_line_harness();
+
+    send_key(&mut harness, 'J');
+
+    harness
+        .wait_for_buffer_content(&format!("{WRAPPED_LINE} next\n"))
+        .unwrap();
+}
+
+/// Visual `$` selects through the line break of the whole line, so `v$d`
+/// from column 1 deletes the line and joins the next one up.
+#[test]
+fn test_vi_3708_visual_dollar_on_wrapped_line_selects_whole_line() {
+    let (mut harness, _td, _fixture) = vi_wrapped_line_harness();
+
+    send_key(&mut harness, 'v');
+    harness
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual".to_string()))
+        .unwrap();
+    send_key(&mut harness, '$');
+    send_key(&mut harness, 'd');
+
+    harness.wait_for_buffer_content("next\n").unwrap();
+}
+
+/// Visual `0` from a continuation row extends the selection to column 1.
+#[test]
+fn test_vi_3708_visual_zero_on_wrapped_line_selects_to_line_start() {
+    let (mut harness, _td, _fixture) = vi_wrapped_line_harness();
+
+    send_key(&mut harness, '$');
+    let last_char = WRAPPED_LINE.len() - 1;
+    harness
+        .wait_until(|h| h.cursor_position() == last_char)
+        .unwrap();
+    send_key(&mut harness, 'v');
+    harness
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual".to_string()))
+        .unwrap();
+    send_key(&mut harness, '0');
+    send_key(&mut harness, 'd');
+
+    harness.wait_for_buffer_content("\nnext\n").unwrap();
+}
+
+fn enter_visual_block(harness: &mut EditorTestHarness) {
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual-block".to_string()))
+        .unwrap();
+}
+
+/// Visual-block `$` extends to the end of the whole line.
+#[test]
+fn test_vi_3708_visual_block_dollar_on_wrapped_line_reaches_line_end() {
+    let (mut harness, _td, _fixture) = vi_wrapped_line_harness();
+
+    enter_visual_block(&mut harness);
+    send_key(&mut harness, '$');
+    send_key(&mut harness, 'd');
+
+    harness.wait_for_buffer_content("\nnext\n").unwrap();
+}
+
+/// Visual-block `0` from a continuation row extends to column 1, taking the
+/// character the block started on with it.
+#[test]
+fn test_vi_3708_visual_block_zero_on_wrapped_line_reaches_line_start() {
+    let (mut harness, _td, _fixture) = vi_wrapped_line_harness();
+
+    send_key(&mut harness, '$');
+    let last_char = WRAPPED_LINE.len() - 1;
+    harness
+        .wait_until(|h| h.cursor_position() == last_char)
+        .unwrap();
+    enter_visual_block(&mut harness);
+    send_key(&mut harness, '0');
+    send_key(&mut harness, 'd');
+
+    harness.wait_for_buffer_content("\nnext\n").unwrap();
+}
+
+/// `3>>` indents three lines even when the first one wraps. Picking the lines
+/// by screen row kept all three inside the wrapped line.
+#[test]
+fn test_vi_3708_counted_indent_from_wrapped_line_indents_each_line() {
+    let (mut harness, _td, _fixture) =
+        vi_wrapped_line_harness_with(&format!("{WRAPPED_LINE}\nb\nc\nd\n"));
+
+    send_key(&mut harness, '3');
+    send_key(&mut harness, '>');
+    harness
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
+        .unwrap();
+    send_key(&mut harness, '>');
+
+    harness
+        .wait_for_buffer_content(&format!("    {WRAPPED_LINE}\n    b\n    c\nd\n"))
+        .unwrap();
+}
+
+/// `g$` stops at the end of the screen row, where `$` would go on to the end
+/// of the line.
+#[test]
+fn test_vi_3708_g_dollar_on_wrapped_line_stays_on_screen_row() {
+    let (mut harness, _td, _fixture) = vi_wrapped_line_harness();
+
+    send_key(&mut harness, 'g');
+    send_key(&mut harness, '$');
+
+    harness.wait_until(|h| h.cursor_position() > 0).unwrap();
+    // The first screen row ends before "gggg"; the line ends much later.
+    let position = harness.cursor_position();
+    assert!(
+        position < WRAPPED_LINE.find("gggg").unwrap(),
+        "g$ should stay on the first screen row, got {position}"
+    );
+}
+
+/// `g0` goes to the start of the screen row, where `0` would go on to column 1.
+#[test]
+fn test_vi_3708_g_zero_on_wrapped_line_stays_on_screen_row() {
+    let (mut harness, _td, _fixture) = vi_wrapped_line_harness();
+
+    let jjjj = WRAPPED_LINE.find("jjjj").unwrap();
+    send_key(&mut harness, '9');
+    send_key(&mut harness, 'w');
+    harness.wait_until(|h| h.cursor_position() == jjjj).unwrap();
+
+    send_key(&mut harness, 'g');
+    send_key(&mut harness, '0');
+
+    harness.wait_until(|h| h.cursor_position() < jjjj).unwrap();
+    // "jjjj" sits on the second screen row, which starts after column 1.
+    let position = harness.cursor_position();
+    assert!(
+        position > 0,
+        "g0 should stay on the second screen row, got {position}"
+    );
+}
