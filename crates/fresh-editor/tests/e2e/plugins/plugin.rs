@@ -576,47 +576,28 @@ editor.setStatus("Multi-action plugin loaded");
 
     // Create harness
     let mut harness =
-        EditorTestHarness::with_config_and_working_dir(80, 24, Default::default(), project_root)
+        // Wide enough that the status bar shows each status in full.
+        EditorTestHarness::with_config_and_working_dir(120, 24, Default::default(), project_root)
             .unwrap();
 
     // Open file and load plugins
     harness.open_file(&fixture.path).unwrap();
     harness.render().unwrap();
 
-    // Execute multiple commands in sequence rapidly
-    // This tests that the message queue handles multiple actions correctly
-    // The main assertion is that the commands execute without deadlock or hanging
-    let start = std::time::Instant::now();
-
-    for action_name in ["Action A", "Action B", "Action C"] {
-        // Open command palette
+    // Run the commands back to back. A deadlock in the message queue would
+    // leave a status unset and the wait hanging, which nextest reports; the
+    // wall clock says nothing about deadlock, only about how loaded the runner
+    // is (this test used to fail at 2.18s on a busy macOS runner).
+    for (action_name, status) in [
+        ("Action A", "Status: A executed"),
+        ("Action B", "Status: B executed"),
+        ("Action C", "Status: C executed"),
+    ] {
+        harness.run_palette_command(action_name).unwrap();
         harness
-            .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+            .wait_until(|h| h.screen_to_string().contains(status))
             .unwrap();
-        harness.render().unwrap();
-
-        // Type and execute command
-        harness.type_text(action_name).unwrap();
-        harness
-            .send_key(KeyCode::Enter, KeyModifiers::NONE)
-            .unwrap();
-
-        // Process async and render a few times to let the action execute
-        for _ in 0..3 {
-            harness.process_async_and_render().unwrap();
-            harness.sleep(Duration::from_millis(20));
-        }
     }
-
-    let elapsed = start.elapsed();
-
-    // The key assertion: all commands should execute quickly without deadlock
-    // If there's a deadlock or blocking issue, this would timeout
-    assert!(
-        elapsed < Duration::from_secs(2),
-        "Multiple actions should complete without deadlock. Took {:?}",
-        elapsed
-    );
 
     // Verify the editor is still responsive
     let screen = harness.screen_to_string();
@@ -653,7 +634,7 @@ editor.registerCommand(
     "Slow Action",
     "An action that does some computation",
     "slow_action",
-    "normal"
+    null
 );
 
 globalThis.slow_action = function(): void {
@@ -677,7 +658,8 @@ editor.setStatus("Nonblocking test plugin loaded");
 
     // Create harness
     let mut harness =
-        EditorTestHarness::with_config_and_working_dir(80, 24, Default::default(), project_root)
+        // Wide enough that the status bar shows the status in full.
+        EditorTestHarness::with_config_and_working_dir(120, 24, Default::default(), project_root)
             .unwrap();
 
     // Open file
@@ -685,33 +667,14 @@ editor.setStatus("Nonblocking test plugin loaded");
     harness.render().unwrap();
 
     // Execute the slow action
+    harness.run_palette_command("Slow Action").unwrap();
+
+    // The editor keeps rendering while the action runs, and the action's
+    // status arrives. A blocking dispatch would hang this wait (nextest
+    // reports it); a wall-clock bound only measures the runner's load.
     harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .wait_until(|h| h.screen_to_string().contains("Completed: sum = 499500"))
         .unwrap();
-    harness.render().unwrap();
-    harness.type_text("Slow Action").unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-
-    // The key test: we should be able to render without blocking while action runs
-    let start = std::time::Instant::now();
-
-    // Process several render cycles - this verifies the editor isn't blocked
-    for _ in 0..5 {
-        harness.process_async_and_render().unwrap();
-        harness.sleep(Duration::from_millis(50));
-    }
-
-    let elapsed = start.elapsed();
-
-    // If the action was blocking, renders would stall
-    // The action execution is async, so renders complete immediately
-    assert!(
-        elapsed < Duration::from_secs(1),
-        "Rendering should complete quickly even with action running. Took {:?}",
-        elapsed
-    );
 
     // Verify the screen is still responsive (command palette closed)
     let screen = harness.screen_to_string();
