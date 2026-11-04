@@ -403,10 +403,10 @@ impl VirtualTextManager {
                 .map(|(marker, _)| marker)
                 .collect();
             store.markers.adjust_for_delete(position, length);
-            for marker in landing {
-                // Out and back in at the same spot: the tree files it by key.
-                store.markers.set_position(marker, position);
-            }
+            // Out and back in at the same spot: the tree files them by key.
+            // All out first, then all in: one at a time, the ones still
+            // waiting sit out of key order and can misroute the others.
+            store.markers.set_positions(&landing, position);
         }
     }
 
@@ -1418,6 +1418,55 @@ mod tests {
                 prop_assert!(manager.is_empty() && manager.query_range(0, usize::MAX).is_empty());
             }
         }
+    }
+
+    /// A deletion that lands entries from two places on one position, beside
+    /// entries already there, keeps that position's entries in the order they
+    /// were added. Re-filing the landed entries one at a time put a later one
+    /// before an earlier one (the model test's minimal failing case).
+    #[test]
+    fn a_deletion_landing_entries_on_one_position_keeps_them_in_added_order() {
+        let mut manager = VirtualTextManager::new();
+        let add = |m: &mut VirtualTextManager, pos: usize, text: &str| {
+            m.add_with_theme_keys(
+                pos,
+                text.to_string(),
+                hint_style(),
+                None,
+                None,
+                VirtualTextPosition::BeforeChar,
+                0,
+                MarkerGravity::Right,
+            );
+        };
+        add(&mut manager, 0, "#0");
+        add(&mut manager, 31, "#1");
+        add(&mut manager, 18, "#2");
+        add(&mut manager, 19, "#3");
+        add(&mut manager, 18, "#4");
+        manager.adjust_for_delete(0, 6);
+        manager.adjust_for_delete(13, 7);
+        add(&mut manager, 0, "#7");
+        // #3 (at 13) and #1 (at 18) both land on 12, where #2 and #4 are.
+        manager.adjust_for_delete(12, 6);
+
+        let order: Vec<(usize, String)> = manager
+            .query_range(0, usize::MAX)
+            .into_iter()
+            .map(|(p, v)| (p, v.text.clone()))
+            .collect();
+        let expected: Vec<(usize, String)> = [
+            (0, "#0"),
+            (0, "#7"),
+            (12, "#1"),
+            (12, "#2"),
+            (12, "#3"),
+            (12, "#4"),
+        ]
+        .into_iter()
+        .map(|(p, t)| (p, t.to_string()))
+        .collect();
+        assert_eq!(order, expected);
     }
 
     #[test]

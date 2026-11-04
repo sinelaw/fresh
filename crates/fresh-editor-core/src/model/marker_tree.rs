@@ -516,6 +516,29 @@ impl IntervalTree {
         true
     }
 
+    /// Move several point markers to `position` at once, each filed among the
+    /// markers there by `(order, id)`. Ids that don't exist are skipped.
+    ///
+    /// All of them leave the tree before any goes back in. Moving them one by
+    /// one with [`set_position`](Self::set_position) is wrong when the markers
+    /// still waiting are out of `(start, order, id)` order — as a deletion
+    /// leaves the markers it clamps onto one position: the key-routed insert
+    /// of the first can take a wrong turn at one of them and file it on the
+    /// wrong side.
+    pub fn set_positions(&mut self, ids: &[MarkerId], position: u64) {
+        let moving: Vec<(MarkerId, MarkerType, bool, i64)> = ids
+            .iter()
+            .filter_map(|&id| {
+                let m = self.get_marker(id)?;
+                self.delete(id)
+                    .then_some((id, m.marker_type, m.right_gravity, m.order))
+            })
+            .collect();
+        for (id, marker_type, right_gravity, order) in moving {
+            self.insert_with_id(id, position, position, marker_type, right_gravity, order);
+        }
+    }
+
     /// Adjusts all markers for a batch of non-overlapping edits in one pass.
     ///
     /// `edits` are `(pos, delta)` pairs in the same net-delta form
