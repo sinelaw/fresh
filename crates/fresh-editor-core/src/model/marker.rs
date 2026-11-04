@@ -227,13 +227,14 @@ impl MarkerList {
         self.tree.set_position(id.0, pos, pos)
     }
 
-    /// Move several markers to `position` together, each placed among the
+    /// Move several markers at once, each to its position, placed among the
     /// markers there by its `order`, then by creation. Use this rather than
     /// [`set_position`](Self::set_position) in a loop for markers an edit has
-    /// clamped onto one position: see [`IntervalTree::set_positions`].
-    pub fn set_positions(&mut self, ids: &[MarkerId], position: usize) {
-        let ids: Vec<_> = ids.iter().map(|id| id.0).collect();
-        self.tree.set_positions(&ids, position as u64);
+    /// clamped onto one position: see [`IntervalTree::set_positions`], which
+    /// also states what the rest of the list must satisfy.
+    pub fn set_positions(&mut self, moves: &[(MarkerId, usize)]) {
+        let moves: Vec<_> = moves.iter().map(|(id, pos)| (id.0, *pos as u64)).collect();
+        self.tree.set_positions(&moves);
     }
 
     /// Get the current byte position of a marker
