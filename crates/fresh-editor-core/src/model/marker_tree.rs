@@ -516,6 +516,38 @@ impl IntervalTree {
         true
     }
 
+    /// Move several point markers at once, each to its own position and
+    /// filed among the markers there by `(order, id)`. Ids that don't exist,
+    /// or appear twice, are skipped after the first.
+    ///
+    /// All of them leave the tree before any goes back in. Moving them one by
+    /// one with [`set_position`](Self::set_position) can file one on the wrong
+    /// side of a same-position neighbour when markers still waiting to move
+    /// are out of `(start, order, id)` order, as a deletion leaves the markers
+    /// it clamps onto one position: the key-routed insert compares against
+    /// them. Order by position is never lost; the order among markers sharing
+    /// a position is.
+    ///
+    /// The result is fully key-ordered if every marker *not* moved already
+    /// was, which holds after a deletion for all but the ones it clamped.
+    pub fn set_positions(&mut self, moves: &[(MarkerId, u64)]) {
+        let moving: Vec<(MarkerId, u64, MarkerType, bool, i64)> = moves
+            .iter()
+            .filter_map(|&(id, position)| {
+                let m = self.get_marker(id)?;
+                debug_assert_eq!(
+                    m.interval.start, m.interval.end,
+                    "set_positions moves point markers only"
+                );
+                self.delete(id)
+                    .then_some((id, position, m.marker_type, m.right_gravity, m.order))
+            })
+            .collect();
+        for (id, position, marker_type, right_gravity, order) in moving {
+            self.insert_with_id(id, position, position, marker_type, right_gravity, order);
+        }
+    }
+
     /// Adjusts all markers for a batch of non-overlapping edits in one pass.
     ///
     /// `edits` are `(pos, delta)` pairs in the same net-delta form
@@ -1163,6 +1195,35 @@ impl IntervalTree {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Markers a deletion clamps onto one position come back in key order
+    /// once `set_positions` re-files them. Re-filed one at a time with
+    /// `set_position`, `c` went in after `e` — the key-routed insert compared
+    /// it against `a`, still sitting out of order.
+    #[test]
+    fn set_positions_refiles_clamped_markers_by_order_then_id() {
+        let mut tree = IntervalTree::new();
+        let at = |t: &mut IntervalTree, pos: u64| t.insert_ordered(pos, pos, 0, true);
+        let z = at(&mut tree, 0);
+        let a = at(&mut tree, 31);
+        let b = at(&mut tree, 18);
+        let c = at(&mut tree, 19);
+        let e = at(&mut tree, 18);
+        tree.adjust_for_edit(0, -6); // a 25, b 12, c 13, e 12
+        tree.adjust_for_edit(13, -7); // a 18
+        let y = at(&mut tree, 0);
+        // `c` (13) and `a` (18) both clamp onto 12, beside `b` and `e`.
+        tree.adjust_for_edit(12, -6);
+        tree.set_positions(&[(c, 12), (a, 12)]);
+
+        let keys = tree.debug_keys();
+        assert_eq!(
+            keys.iter().map(|k| k.0).collect::<Vec<_>>(),
+            vec![z, y, a, b, c, e],
+            "{keys:?}"
+        );
+        assert!(tree.sizes_consistent());
+    }
 
     /// Helper to insert and return the ID, making test setup cleaner.
     fn insert_marker(tree: &mut IntervalTree, start: u64, end: u64) -> MarkerId {
