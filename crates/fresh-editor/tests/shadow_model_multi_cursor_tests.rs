@@ -791,8 +791,14 @@ fn verify_step(
 // ============================================================================
 
 proptest! {
+    // 64 cases, not 200: each case builds an editor and renders after
+    // every key (~0.25s a case on a quiet Linux box). 200 cases took
+    // 50-160s on CI and crossed nextest's 180s kill on a loaded macOS
+    // runner. The op alphabet is eight keys, and the deterministic tests
+    // above pin the select-then-edit and enter-then-type interactions the
+    // earlier regressions came from.
     #![proptest_config(ProptestConfig {
-        cases: 200,
+        cases: 64,
         max_shrink_iters: 5000,
         ..ProptestConfig::default()
     })]
