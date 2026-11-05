@@ -221,11 +221,26 @@ fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
         return Some(HighlightCategory::Type);
     }
 
-    // SPIKE (not for merge): builtin types take the Type colour instead of the
-    // keyword colour. `storage.modifier` (const, static, virtual, final, …)
-    // stays a keyword.
+    // `storage.type` is overloaded: upstream grammars use it both for builtin
+    // type names (`int`, `i64`, Java primitives) and for declaration keywords
+    // (Python `def`, JS `function`/`const`/`let`, Rust `fn`/`struct`/`impl`).
+    // Only the first group reads as a type; everything else stays a keyword.
+    //
+    // Matched exactly, never by prefix: `storage.type.c` is a prefix of
+    // `storage.type.class.python`, so `starts_with` would repaint Python's
+    // `class` as a type. Go is deliberately absent — it scopes `func`, `type`,
+    // `var` and `int64`, `string`, `bool` all as `storage.type.go`, so the two
+    // groups cannot be told apart here at all.
     if scope_lower.starts_with("storage.type") {
-        return Some(HighlightCategory::Type);
+        let builtin_type = scope_lower == "storage.type.c"      // C, and C++ via its includes
+            || scope_lower == "storage.type.c++"                // C++ `void`
+            || scope_lower == "storage.type.rust"               // i64, u32, bool
+            || scope_lower.contains(".primitive"); // Java, Groovy, Scala, Smali, MLIR
+        return Some(if builtin_type {
+            HighlightCategory::Type
+        } else {
+            HighlightCategory::Keyword
+        });
     }
     if scope_lower.starts_with("storage.modifier") {
         return Some(HighlightCategory::Keyword);
