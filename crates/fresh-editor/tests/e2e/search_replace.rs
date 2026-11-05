@@ -4127,7 +4127,7 @@ fn test_search_replace_opens_in_the_window_it_is_invoked_from() {
     open_search_replace_via_palette(&mut harness);
     harness.type_text("hello").unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("hello from beta"))
+        .wait_until(|h| h.screen_to_string().contains("4 matches / 3 files"))
         .unwrap();
 
     let window_b = harness
@@ -4142,14 +4142,15 @@ fn test_search_replace_opens_in_the_window_it_is_invoked_from() {
     );
 
     // Alt+A in window B: the panel appears here, with the query carried over
-    // and its results shown.
+    // and its results shown (the match summary row; the match rows themselves
+    // may be below the panel's fold at this height).
     harness
         .send_key(KeyCode::Char('a'), KeyModifiers::ALT)
         .unwrap();
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
-            s.contains("*Search/Replace*") && s.contains("hello from beta")
+            s.contains("*Search/Replace*") && s.contains("4 matches / 3 files")
         })
         .unwrap();
 
