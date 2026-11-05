@@ -68,10 +68,17 @@ interface PanelState {
   /** The window the panel lives in. Its buffer and splits belong to that
    *  window, and split ids mean nothing outside it (#3704). */
   windowId: number;
+  /** The panel's window's root, for project-relative paths. Kept because
+   *  `getCwd()` answers for the active window, which a search running in
+   *  the background is not. */
+  root: string;
   /** Its results are out of date: a re-search was asked for, or a replace
    *  finished, while the panel's window was in the background. Re-searched
    *  when the window is active again. */
   stale: boolean;
+  /** The deferred re-search was an edit's, which keeps the user's place in
+   *  the results (`rerunSearch(keepPosition)`). */
+  staleKeepPosition: boolean;
   /** A search finished or progressed while the panel's window was in the
    *  background, where nothing is drawn: draw it when the window is back. */
   needsRedraw: boolean;
@@ -453,8 +460,8 @@ registerHandler("mode_text_input", mode_text_input);
 // File grouping
 // =============================================================================
 
-function getRelativePath(filePath: string): string {
-  const cwd = editor.getCwd();
+function getRelativePath(filePath: string, root: string = panel?.root ?? editor.getCwd()): string {
+  const cwd = root;
   if (filePath.startsWith(cwd)) {
     return filePath.slice(cwd.length + 1);
   }
@@ -1382,7 +1389,7 @@ async function performSearch(
           fileIdx = p.fileGroups.length;
           streamingFileIndexByPath?.set(m.file, fileIdx);
           p.fileGroups.push({
-            relPath: getRelativePath(m.file),
+            relPath: getRelativePath(m.file, p.root),
             absPath: m.file,
             expanded: true,
             matches: [],
@@ -1662,7 +1669,9 @@ async function openPanelInner(opts?: { allFiles?: boolean }): Promise<void> {
 
     const created: PanelState = {
       windowId,
+      root: editor.getCwd(),
       stale: false,
+      staleKeepPosition: false,
       needsRedraw: false,
       searchGeneration: 0,
       searchHandle: null,
@@ -1771,8 +1780,8 @@ async function executeReplacements(results?: SearchResult[]): Promise<string> {
   for (const group of groupList) {
     // The host rewrites files and buffers of the active window. Once the
     // user has switched windows, the rest of these belong to a window that
-    // is no longer active: stop. The caller's re-search refreshes the
-    // panel's results in the background.
+    // is no longer active: stop. The panel re-searches when its window is
+    // back (`rerunSearchQuiet` defers a search it can't start here).
     if (panel !== p) {
       interrupted = true;
       break;
@@ -1943,6 +1952,7 @@ function rerunSearchDebounced(keepPosition = false): void {
       // Asked for in a window the user has since left: run it when that
       // window is back.
       owner.stale = true;
+      owner.staleKeepPosition = owner.staleKeepPosition || keepPosition;
       return;
     }
     const run = rerunSearch(keepPosition);
@@ -1958,6 +1968,14 @@ function rerunSearchDebounced(keepPosition = false): void {
 // message), and for a given panel, which may be in the background by now.
 async function rerunSearchQuiet(p: PanelState | null = panel): Promise<void> {
   if (!p || !p.searchPattern) return;
+  if (p !== panel) {
+    // The host searches the *active* window's project, so a search can't be
+    // started for a panel in the background (one already running keeps its
+    // own). Run it when the panel's window is back.
+    p.stale = true;
+    p.needsRedraw = false;
+    return;
+  }
   if (p.busy) return;
   p.debounceGeneration++;
   p.busy = true;
@@ -2555,6 +2573,19 @@ function showStatusFor(p: PanelState, msg: string): void {
 /** Drop `p` from the per-window table, and its window-local context with it
  *  when it is the active window's panel. */
 function forgetPanel(p: PanelState): void {
+  // Stop its search, and drop its anchors: the active panel's are dropped by
+  // the callers, a background panel's (and its parked resume anchor) here.
+  p.searchGeneration++;
+  if (p.searchHandle) {
+    try { p.searchHandle.cancel(); } catch (_e) { /* ignore */ }
+    p.searchHandle = null;
+  }
+  if (panel !== p) {
+    withPanel(p, clearMatchMarkers);
+    const anchor = p.parked?.resumeAnchor;
+    if (anchor?.bufferId && anchor.key) editor.deleteMarker(anchor.bufferId, anchor.key);
+    p.parked = null;
+  }
   if (panels.get(p.windowId) === p) panels.delete(p.windowId);
   if (panel === p) {
     panel = null;
@@ -2658,9 +2689,11 @@ editor.on("active_window_changed", (args) => {
   }
   if (panel.stale) {
     // A re-search was asked for while the window was in the background.
+    const keepPosition = panel.staleKeepPosition;
     panel.stale = false;
+    panel.staleKeepPosition = false;
     panel.needsRedraw = false;
-    if (panel.searchPattern) void rerunSearch();
+    if (panel.searchPattern) void rerunSearch(keepPosition);
     else updatePanelContent();
   } else if (panel.needsRedraw && !panel.busy) {
     // A search finished in the background. (One still running redraws
@@ -2668,6 +2701,10 @@ editor.on("active_window_changed", (args) => {
     panel.needsRedraw = false;
     const resumeAt = takeResumeAnchor();
     if (resumeAt && panel.searchResults.length > 0) panel.matchIndex = flatIndexAtLocation(resumeAt);
+    updatePanelContent();
+  } else if (!panel.busy && getViewportWidth() !== panel.viewportWidth) {
+    // The terminal was resized while the window was in the background; the
+    // `resize` hook only redrew the active window's panel.
     updatePanelContent();
   }
 });

@@ -4192,3 +4192,79 @@ fn test_search_replace_panel_is_per_window() {
         })
         .unwrap();
 }
+
+/// A search keeps running for its own window's panel while the user works in
+/// another window, and what it finds meanwhile belongs to its window: paths
+/// relative to that window's root, not to the window the user is in (#3704).
+#[test]
+fn test_search_replace_search_continues_in_the_background() {
+    const FILES: usize = 5000;
+    let (temp_dir, project_root) = setup_search_replace_project();
+    // Enough files that the streaming search spans many pump ticks.
+    let big = project_root.join("big");
+    fs::create_dir(&big).unwrap();
+    for i in 0..FILES {
+        fs::write(big.join(format!("f{i}.txt")), format!("zqxneedle {i}\n")).unwrap();
+    }
+    // Window B's project: as large, so B's own search keeps frames coming
+    // for a good while — the time A's search spends in the background.
+    let other_root = temp_dir.path().join("other_root");
+    let many = other_root.join("many");
+    fs::create_dir_all(&many).unwrap();
+    for i in 0..FILES {
+        fs::write(many.join(format!("g{i}.txt")), format!("zqxneedle {i}\n")).unwrap();
+    }
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&big.join("f0.txt")).unwrap();
+    harness.render().unwrap();
+    let window_a = harness.editor().active_window_id();
+
+    open_search_replace_via_palette(&mut harness);
+    harness.type_text("zqxneedle").unwrap();
+    // Leave as soon as the search has results but before it has all of them.
+    let total = format!("({FILES} matches / {FILES} files)");
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains(" matches / ") && !s.contains(&total)
+        })
+        .unwrap();
+
+    let window_b = harness
+        .editor_mut()
+        .create_window_at(other_root.clone(), "other".to_string());
+    harness.editor_mut().set_active_window(window_b);
+    harness.open_file(&many.join("g0.txt")).unwrap();
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::ALT)
+        .unwrap();
+    harness.type_text("zqxneedle").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains(&total))
+        .unwrap();
+    let screen_b = harness.screen_to_string();
+    assert!(
+        !screen_b.contains("big/"),
+        "B's panel shows only B's files:\n{screen_b}"
+    );
+
+    // Back in A: every match, under paths relative to A's root.
+    harness.editor_mut().set_active_window(window_a);
+    harness
+        .wait_until(|h| h.screen_to_string().contains(&total))
+        .unwrap();
+    let screen = harness.screen_to_string();
+    let abs_prefix = project_root.to_string_lossy().to_string();
+    assert!(
+        !screen.contains(&abs_prefix) && !screen.contains("many/"),
+        "A's results should be A's files, relative to A's root:\n{screen}"
+    );
+    harness.assert_screen_contains("big/f0.txt:1 - zqxneedle 0");
+}
