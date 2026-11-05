@@ -92,6 +92,25 @@ Themes are stored as JSON files. You can also edit them directly at `~/.config/f
 Colors are specified as `[R, G, B]` arrays with values from 0-255, or by
 name (`"Red"`, `"LightBlue"`, …; `"Default"` is the terminal's own color).
 
+### File explorer colors
+
+Ordinary folder names in the file explorer use `ui.file_explorer_directory_fg`.
+A theme that leaves it out keeps the old look, with folders in the
+`syntax.keyword` color. Set it to color folders without changing how
+keywords look in code:
+
+```json
+{
+  "name": "neutral-folders",
+  "extends": "builtin://dark",
+  "syntax": { "keyword": [237, 65, 65] },
+  "ui": { "file_explorer_directory_fg": [200, 209, 217] }
+}
+```
+
+Git status colors (`ui.file_status_*_fg`) and the selected row are still drawn
+on top of it.
+
 ### Text attributes
 
 Every color in a theme — in `editor`, `ui`, `search`, `diagnostic` and
