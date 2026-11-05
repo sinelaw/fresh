@@ -128,8 +128,18 @@ fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
     }
 
     // Word operators (`new`, `typeof`, `instanceof`, `in`, `of`) read as keywords.
+    //
+    // `keyword.operator.word` is the scope Sublime grammars give operators that
+    // are spelled as words rather than symbols, so it belongs here too: C/C++
+    // `sizeof`, `alignof`, `typeid`, `static_assert`, `and`/`or`/`not`, Java
+    // `instanceof`, Fortran `.and.`, VHDL `mod`/`rem`, Typst `and`/`or`/`not`.
+    // Without it they fell through to Operator, whose colour equals plain text
+    // in most themes, so they read as unhighlighted identifiers (issue #3644)
+    // — and Java's `instanceof` was coloured differently from JavaScript's,
+    // which already lands on `keyword.operator.expression` just above.
     if scope_lower.starts_with("keyword.operator.new")
         || scope_lower.starts_with("keyword.operator.expression")
+        || scope_lower.starts_with("keyword.operator.word")
     {
         return Some(HighlightCategory::Keyword);
     }
@@ -3581,6 +3591,176 @@ mod tests {
         }
     }
 
+    /// Issue #3509: `match` and `case` are soft keywords that the Python
+    /// grammar syntect bundles predates, so they used to render as plain
+    /// identifiers. At the head of a compound statement they must read as
+    /// keywords, like the `if`/`else` on the same screen already did.
+    #[test]
+    fn test_python_match_case_are_keywords() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("m.py"), None, &registry);
+        assert_eq!(engine.backend_name(), "textmate");
+
+        let content = concat!(
+            "def f(x):\n",
+            "    match x:\n",
+            "        case 1:\n",
+            "            return \"one\"\n",
+            "        case _:\n",
+            "            return \"other\"\n",
+            "match command.split():\n",
+            "    case [\"go\", direction]:\n",
+            "        pass\n",
+        );
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+
+        for token in [
+            "match x",
+            "case 1",
+            "case _",
+            "match command",
+            "case [",
+            // Controls: these already worked and must keep working.
+            "def",
+            "return",
+        ] {
+            let at = content.find(token).unwrap();
+            assert_eq!(
+                engine.category_at_position(at),
+                Some(HighlightCategory::Keyword),
+                "{token:?} should be highlighted as a keyword"
+            );
+        }
+    }
+
+    /// The other half of issue #3509: because `match` and `case` are *soft*
+    /// keywords, they are ordinary identifiers everywhere else and must not be
+    /// highlighted there.
+    #[test]
+    fn test_python_match_case_as_identifiers_are_not_keywords() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("m.py"), None, &registry);
+        assert_eq!(engine.backend_name(), "textmate");
+
+        let content = concat!(
+            "import re\n",
+            "match = re.match(\"a\", \"b\")\n",
+            "case = match\n",
+            "match: int = 0\n",
+            "if match[0]:\n",
+            "    pass\n",
+            "def g(match, case):\n",
+            "    return match\n",
+        );
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+
+        for (token, what) in [
+            ("match = ", "assignment target"),
+            ("case = ", "assignment target"),
+            ("match: int", "annotated name"),
+            ("match[0]", "subscripted name"),
+            ("match, case", "parameter name"),
+        ] {
+            let at = content.find(token).unwrap();
+            assert_ne!(
+                engine.category_at_position(at),
+                Some(HighlightCategory::Keyword),
+                "`match`/`case` as a {what} ({token:?}) must not be a keyword"
+            );
+        }
+    }
+
+    /// Issue #3644: the C++ grammar syntect bundles predates `final`,
+    /// `requires` and the coroutine keywords, and scoped `static_assert` as an
+    /// operator. All four rendered as plain text next to keywords like `class`
+    /// and `virtual`.
+    #[test]
+    fn test_cpp_contextual_keywords_are_keywords() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("a.cpp"), None, &registry);
+        assert_eq!(engine.backend_name(), "textmate");
+
+        let content = concat!(
+            "class Foo final {\n",
+            "    virtual void bar() noexcept;\n",
+            "};\n",
+            "struct Shape final : Base {};\n",
+            "template <typename T>\n",
+            "requires std::integral<T>\n",
+            "T add(T a, T b) { return a + b; }\n",
+            "Task g() {\n",
+            "    static_assert(sizeof(int) > 0);\n",
+            "    co_return 1;\n",
+            "    co_await x;\n",
+            "    co_yield y;\n",
+            "}\n",
+        );
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+
+        for token in [
+            "final",
+            "requires",
+            "static_assert",
+            "co_return",
+            "co_await",
+            "co_yield",
+            // Controls from the issue: these already worked.
+            "class",
+            "virtual",
+            "noexcept",
+            "template",
+            "typename",
+            "return",
+        ] {
+            let at = content.find(token).unwrap();
+            assert_eq!(
+                engine.category_at_position(at),
+                Some(HighlightCategory::Keyword),
+                "{token:?} should be highlighted as a keyword"
+            );
+        }
+    }
+
+    /// `final` is a contextual keyword, legal as an identifier, so it must stay
+    /// plain outside a class or struct head (issue #3644). `requires` is not in
+    /// this list: it became a reserved word in C++20, so it is a keyword
+    /// wherever it appears.
+    #[test]
+    fn test_cpp_final_as_identifier_is_not_a_keyword() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("a.cpp"), None, &registry);
+        assert_eq!(engine.backend_name(), "textmate");
+
+        let content = concat!(
+            "int main() {\n",
+            "    int final = 0;\n",
+            "    return final;\n",
+            "}\n",
+        );
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+
+        for token in ["final = 0", "final;"] {
+            let at = content.find(token).unwrap();
+            assert_ne!(
+                engine.category_at_position(at),
+                Some(HighlightCategory::Keyword),
+                "a variable named `final` ({token:?}) must not be a keyword"
+            );
+        }
+    }
+
     /// The reporter's snippet from issue #3325, end to end: the two
     /// `<=` comparisons must not leak string state into the lines below them.
     #[test]
@@ -5258,6 +5438,31 @@ diff --git a/tools/check.py b/tools/check.py
         assert_eq!(
             scope_to_category("punctuation.definition.comment.begin"),
             Some(HighlightCategory::Comment)
+        );
+    }
+
+    #[test]
+    fn test_word_operators_use_keyword_color() {
+        // Operators spelled as words are scoped `keyword.operator.word` by
+        // Sublime grammars. They must read as keywords, not operators: the
+        // operator colour equals plain text in most themes, so C++
+        // `static_assert` looked unhighlighted (issue #3644).
+        assert_eq!(
+            scope_to_category("keyword.operator.word.c++"),
+            Some(HighlightCategory::Keyword)
+        );
+        assert_eq!(
+            scope_to_category("keyword.operator.word.instanceof.java"),
+            Some(HighlightCategory::Keyword)
+        );
+        // Symbolic operators keep the operator colour.
+        assert_eq!(
+            scope_to_category("keyword.operator.arithmetic.c"),
+            Some(HighlightCategory::Operator)
+        );
+        assert_eq!(
+            scope_to_category("keyword.operator.assignment.python"),
+            Some(HighlightCategory::Operator)
         );
     }
 

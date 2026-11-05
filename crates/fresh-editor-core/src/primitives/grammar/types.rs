@@ -1889,9 +1889,19 @@ impl GrammarRegistry {
 
 impl Default for GrammarRegistry {
     fn default() -> Self {
-        // Create with defaults and embedded grammars only (no user grammars)
+        // Create with defaults and embedded grammars only (no user grammars).
+        // The defaults are re-added one by one, in their original order so the
+        // links between them stay valid, so that the soft keywords the bundled
+        // Python and C++ grammars lack can be patched in on the way through —
+        // exactly as `build.rs` does for the packdump the editor normally
+        // starts from (issues #3509, #3644).
         let defaults = SyntaxSet::load_defaults_newlines();
-        let mut builder = defaults.into_builder();
+        let mut builder = syntect::parsing::SyntaxSetBuilder::new();
+        for syntax in defaults.into_builder().syntaxes() {
+            let mut syntax = syntax.clone();
+            super::soft_keywords::patch_soft_keywords(&mut syntax);
+            builder.add(syntax);
+        }
         Self::add_embedded_grammars(&mut builder);
         let syntax_set = builder.build();
         let filename_scopes = Self::build_filename_scopes();
@@ -2001,6 +2011,90 @@ mod tests {
             *rust_indices.last().unwrap(),
             "`.rs` should resolve to the vendored grammar, not syntect's bundled one"
         );
+    }
+
+    /// The soft keywords patched into syntect's bundled Python and C++
+    /// grammars (issues #3509, #3644) must be present through both the runtime
+    /// builder (`default`) and the build-time packdump the editor starts from
+    /// (`defaults_only`), so the two paths cannot drift apart.
+    #[test]
+    fn test_soft_keywords_are_patched_in_on_both_paths() {
+        use syntect::parsing::{ParseState, ScopeStack};
+
+        // (grammar, snippet, token, expected scope prefix). The token is looked
+        // up on the snippet's last line; the earlier lines are the enclosing
+        // context the keyword needs — `co_return` is only a keyword inside a
+        // function body, and a `requires` clause follows a template header.
+        let cases: &[(&str, &[&str], &str, &str)] = &[
+            ("Python", &["match x:\n"], "match", "keyword.control"),
+            (
+                "Python",
+                &["match x:\n", "    case 1:\n"],
+                "case",
+                "keyword.control",
+            ),
+            ("C++", &["class Foo final {\n"], "final", "storage.modifier"),
+            (
+                "C++",
+                &["Task g() {\n", "    co_return 1;\n"],
+                "co_return",
+                "keyword.control",
+            ),
+            (
+                "C++",
+                &["template <typename T>\n", "requires std::integral<T>\n"],
+                "requires",
+                "keyword.other",
+            ),
+        ];
+
+        for (path, registry) in [
+            ("default", Arc::new(GrammarRegistry::default())),
+            ("defaults_only", GrammarRegistry::defaults_only()),
+        ] {
+            let syntax_set = registry.syntax_set();
+            for (grammar, snippet, token, want) in cases {
+                let syntax = syntax_set
+                    .find_syntax_by_name(grammar)
+                    .unwrap_or_else(|| panic!("{path}: {grammar} grammar should be present"));
+                let mut state = ParseState::new(syntax);
+                let mut stack = ScopeStack::new();
+
+                // Run the context lines first, keeping the scope stack.
+                for line in &snippet[..snippet.len() - 1] {
+                    for (_, op) in state
+                        .parse_line(line, syntax_set)
+                        .expect("parsing a snippet line should not fail")
+                    {
+                        stack.apply(&op).expect("scope op applies");
+                    }
+                }
+
+                let line = snippet[snippet.len() - 1];
+                let ops = state
+                    .parse_line(line, syntax_set)
+                    .expect("parsing a snippet line should not fail");
+
+                // Walk to the token's offset, then read the scope stack there.
+                let at = line.find(token).expect("token is in the line");
+                let mut scope_at_token = None;
+                let mut last = 0usize;
+                for (offset, op) in &ops {
+                    if last <= at && at < *offset {
+                        scope_at_token = Some(format!("{stack}"));
+                        break;
+                    }
+                    stack.apply(op).expect("scope op applies");
+                    last = *offset;
+                }
+                let scope_at_token = scope_at_token.unwrap_or_else(|| format!("{stack}"));
+
+                assert!(
+                    scope_at_token.contains(want),
+                    "{path}: {grammar} `{token}` should be scoped {want}, got {scope_at_token:?}"
+                );
+            }
+        }
     }
 
     /// Like Rust, C# is vendored (`CSHARP_GRAMMAR`) to replace syntect's

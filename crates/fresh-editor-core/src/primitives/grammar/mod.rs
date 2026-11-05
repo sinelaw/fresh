@@ -30,6 +30,7 @@
 #[cfg(feature = "runtime")]
 mod loader;
 mod shebang;
+mod soft_keywords;
 mod types;
 
 // Re-export all public items for backward compatibility

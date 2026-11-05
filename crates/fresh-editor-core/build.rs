@@ -10,8 +10,14 @@
 use std::fs;
 use std::path::Path;
 
+// The soft-keyword patch table is shared with the crate itself, so the
+// runtime grammar builder (`GrammarRegistry::default`) and this build-time
+// packdump cannot drift apart.
+include!("src/primitives/grammar/soft_keywords.rs");
+
 fn main() {
     println!("cargo::rerun-if-changed=locales");
+    println!("cargo::rerun-if-changed=src/primitives/grammar/soft_keywords.rs");
     println!("cargo::rerun-if-changed=themes");
     println!("cargo::rerun-if-changed=src/grammars");
 
@@ -228,14 +234,22 @@ fn generate_syntax_packdump(
     javascript: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use syntect::dumps::dump_to_uncompressed_file;
-    use syntect::parsing::{SyntaxDefinition, SyntaxSet};
+    use syntect::parsing::{SyntaxDefinition, SyntaxSet, SyntaxSetBuilder};
 
     let out_dir = std::env::var("OUT_DIR")?;
     let dest_path = Path::new(&out_dir).join("default_syntaxes.packdump");
 
-    // Start with syntect's built-in defaults
+    // Start with syntect's built-in defaults, re-adding each one in its
+    // original order so the `ContextId`s the packdump already links against
+    // keep pointing at the same contexts, and patch the soft keywords the
+    // bundled Python and C++ grammars are missing on the way through.
     let defaults = SyntaxSet::load_defaults_newlines();
-    let mut builder = defaults.into_builder();
+    let mut builder = SyntaxSetBuilder::new();
+    for syntax in defaults.into_builder().syntaxes() {
+        let mut syntax = syntax.clone();
+        patch_soft_keywords(&mut syntax);
+        builder.add(syntax);
+    }
 
     // Add all embedded grammars — must match the list in types.rs add_embedded_grammars()
     let grammar_files: &[(&str, &str)] = &[
