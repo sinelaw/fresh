@@ -202,6 +202,17 @@ pub const BASH_GRAMMAR: &str = include_str!("../../grammars/bash.sublime-syntax"
 /// catastrophically on interpolated strings such as
 /// `$"{v:F2} {F(v):F2} {G(v):F2}"`, stalling every keystroke (issue #3667).
 pub const CSHARP_GRAMMAR: &str = include_str!("../../grammars/csharp.sublime-syntax");
+/// Embedded C++ grammar. Shadows the one syntect bundles, which predates the
+/// C++11/20 contextual keywords: `final`, `requires`, `concept`, `consteval`
+/// and `co_await`/`co_return`/`co_yield` appear nowhere in it, so no theme
+/// could colour them (issue #3644). Vendored verbatim from sublimehq/Packages.
+pub const CPP_GRAMMAR: &str = include_str!("../../grammars/cpp.sublime-syntax");
+/// Embedded C grammar, vendored from the same sublimehq/Packages commit as
+/// [`CPP_GRAMMAR`] purely to stay version-matched with it: the C++ grammar
+/// pulls in ~50 `scope:source.c` contexts, so pairing a new C++ with syntect's
+/// older bundled C would be a silent mismatch. Both are added after the
+/// defaults, so they win the reverse-order scope and extension lookups.
+pub const C_GRAMMAR: &str = include_str!("../../grammars/c.sublime-syntax");
 
 /// Embedded Zig grammar (syntect doesn't include one)
 pub const ZIG_GRAMMAR: &str = include_str!("../../grammars/zig.sublime-syntax");
@@ -727,6 +738,29 @@ impl GrammarRegistry {
             }
             Err(e) => {
                 tracing::warn!("Failed to load embedded Rust grammar: {}", e);
+            }
+        }
+
+        // C grammar, then C++ (shadow syntect's bundled pair, see CPP_GRAMMAR).
+        // C goes in first so the C++ grammar's `scope:source.c` includes have
+        // the matching C to bind to.
+        match SyntaxDefinition::load_from_str(C_GRAMMAR, true, Some("C")) {
+            Ok(syntax) => {
+                builder.add(syntax);
+                tracing::debug!("Loaded embedded C grammar");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load embedded C grammar: {}", e);
+            }
+        }
+
+        match SyntaxDefinition::load_from_str(CPP_GRAMMAR, true, Some("C++")) {
+            Ok(syntax) => {
+                builder.add(syntax);
+                tracing::debug!("Loaded embedded C++ grammar");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load embedded C++ grammar: {}", e);
             }
         }
 
@@ -2013,10 +2047,178 @@ mod tests {
         );
     }
 
-    /// The soft keywords patched into syntect's bundled Python and C++
-    /// grammars (issues #3509, #3644) must be present through both the runtime
-    /// builder (`default`) and the build-time packdump the editor starts from
-    /// (`defaults_only`), so the two paths cannot drift apart.
+    /// Like Rust and C#, C and C++ are vendored (`CPP_GRAMMAR`, `C_GRAMMAR`)
+    /// to replace the pair syntect bundles, which predates the C++11/20
+    /// contextual keywords (issue #3644). Check that `.cpp` reaches the
+    /// vendored grammar through both the runtime builder (`default`) and the
+    /// build-time packdump (`defaults_only`), that the catalog still lists each
+    /// language once, and that the keywords from the issue are now scoped.
+    #[test]
+    fn test_vendored_cpp_grammar_shadows_the_bundled_one() {
+        use syntect::parsing::{ParseState, ScopeStack};
+
+        for (path, registry) in [
+            ("default", Arc::new(GrammarRegistry::default())),
+            ("defaults_only", GrammarRegistry::defaults_only()),
+        ] {
+            for name in ["C", "C++"] {
+                let entries = registry
+                    .catalog()
+                    .iter()
+                    .filter(|entry| entry.display_name == name)
+                    .count();
+                assert_eq!(entries, 1, "{path}: the catalog should list {name} once");
+
+                let indices: Vec<_> = registry
+                    .syntax_set()
+                    .syntaxes()
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| s.name == name)
+                    .map(|(i, _)| i)
+                    .collect();
+                assert_eq!(
+                    indices.len(),
+                    2,
+                    "{path}: expected syntect's bundled {name} grammar plus the vendored one"
+                );
+            }
+
+            let syntax_set = registry.syntax_set();
+
+            // The vendored C++ is added last, so it wins the `.cpp` lookup, and
+            // the vendored C wins `scope:source.c` — which the C++ grammar
+            // includes in ~50 places, so the pair must stay version-matched.
+            let resolved = syntax_set
+                .find_syntax_by_extension("cpp")
+                .expect("`.cpp` should resolve to a C++ grammar");
+            let cpp_last = syntax_set
+                .syntaxes()
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| s.name == "C++")
+                .map(|(i, _)| i)
+                .next_back()
+                .unwrap();
+            assert!(
+                std::ptr::eq(resolved, &syntax_set.syntaxes()[cpp_last]),
+                "{path}: `.cpp` should resolve to the vendored grammar, not syntect's bundled one"
+            );
+
+            // The keywords from the issue, with the enclosing context each
+            // needs. `final` is contextual: upstream only treats it as a
+            // modifier in a class or struct head.
+            let cases: &[(&[&str], &str, &str)] = &[
+                (&["class Foo final {\n"], "final", "storage.modifier"),
+                (
+                    &["struct Shape final : Base {};\n"],
+                    "final",
+                    "storage.modifier",
+                ),
+                (
+                    &["template <typename T>\n", "requires std::integral<T>\n"],
+                    "requires",
+                    "storage.modifier",
+                ),
+                (
+                    &["Task g() {\n", "    co_return 1;\n"],
+                    "co_return",
+                    "keyword.control",
+                ),
+                (
+                    &["Task g() {\n", "    co_await x;\n"],
+                    "co_await",
+                    "keyword.control",
+                ),
+                (
+                    &[
+                        "template <class T>\n",
+                        "concept Addable = requires(T a) { a + a; };\n",
+                    ],
+                    "concept",
+                    "keyword.declaration",
+                ),
+                // Still an operator-word scope upstream, which is why
+                // `scope_to_category` maps word operators to Keyword.
+                (
+                    &["static_assert(sizeof(int) > 0);\n"],
+                    "static_assert",
+                    "keyword.operator.word",
+                ),
+            ];
+
+            let syntax = syntax_set
+                .find_syntax_by_name("C++")
+                .expect("C++ grammar should be present");
+            for (snippet, token, want) in cases {
+                let mut state = ParseState::new(syntax);
+                let mut stack = ScopeStack::new();
+                for line in &snippet[..snippet.len() - 1] {
+                    for (_, op) in state
+                        .parse_line(line, syntax_set)
+                        .expect("parsing a snippet line should not fail")
+                    {
+                        stack.apply(&op).expect("scope op applies");
+                    }
+                }
+                let line = snippet[snippet.len() - 1];
+                let ops = state
+                    .parse_line(line, syntax_set)
+                    .expect("parsing a snippet line should not fail");
+                let at = line.find(token).expect("token is in the line");
+                let mut scope_at_token = None;
+                let mut last = 0usize;
+                for (offset, op) in &ops {
+                    if last <= at && at < *offset {
+                        scope_at_token = Some(format!("{stack}"));
+                        break;
+                    }
+                    stack.apply(op).expect("scope op applies");
+                    last = *offset;
+                }
+                let scope_at_token = scope_at_token.unwrap_or_else(|| format!("{stack}"));
+                assert!(
+                    scope_at_token.contains(want),
+                    "{path}: C++ `{token}` should be scoped {want}, got {scope_at_token:?}"
+                );
+            }
+
+            // A variable named `final` is legal C++ and must stay unscoped.
+            let mut state = ParseState::new(syntax);
+            let mut stack = ScopeStack::new();
+            for (_, op) in state
+                .parse_line("int main() {\n", syntax_set)
+                .expect("parse")
+            {
+                stack.apply(&op).expect("scope op applies");
+            }
+            let line = "    int final = 0;\n";
+            let ops = state.parse_line(line, syntax_set).expect("parse");
+            let at = line.find("final").unwrap();
+            let mut scope_at_token = None;
+            let mut last = 0usize;
+            for (offset, op) in &ops {
+                if last <= at && at < *offset {
+                    scope_at_token = Some(format!("{stack}"));
+                    break;
+                }
+                stack.apply(op).expect("scope op applies");
+                last = *offset;
+            }
+            let scope_at_token = scope_at_token.unwrap_or_else(|| format!("{stack}"));
+            assert!(
+                !scope_at_token.contains("storage.modifier"),
+                "{path}: a variable named `final` must not be a modifier, got {scope_at_token:?}"
+            );
+        }
+    }
+
+    /// Python's `match`/`case` are patched into syntect's bundled grammar
+    /// (issue #3509) because, unlike C/C++, upstream's implementation uses
+    /// `branch`/`fail`, which syntect does not support. The patch must be
+    /// present through both the runtime builder (`default`) and the build-time
+    /// packdump the editor starts from (`defaults_only`), so the two paths
+    /// cannot drift apart.
     #[test]
     fn test_soft_keywords_are_patched_in_on_both_paths() {
         use syntect::parsing::{ParseState, ScopeStack};
@@ -2033,18 +2235,14 @@ mod tests {
                 "case",
                 "keyword.control",
             ),
-            ("C++", &["class Foo final {\n"], "final", "storage.modifier"),
+            // C and C++ are fixed by vendoring the upstream grammars instead
+            // (see `test_vendored_cpp_grammar_shadows_the_bundled_one`), so
+            // only Python is patched here.
             (
-                "C++",
-                &["Task g() {\n", "    co_return 1;\n"],
-                "co_return",
+                "Python",
+                &["match command.split():\n", "    case [\"go\", d]:\n"],
+                "case",
                 "keyword.control",
-            ),
-            (
-                "C++",
-                &["template <typename T>\n", "requires std::integral<T>\n"],
-                "requires",
-                "keyword.other",
             ),
         ];
 

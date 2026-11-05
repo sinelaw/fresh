@@ -268,6 +268,13 @@ fn generate_syntax_packdump(
         // Shadows syntect's bundled C# grammar, whose format-spec rule
         // backtracks catastrophically on interpolated strings (issue #3667).
         ("src/grammars/csharp.sublime-syntax", "C#"),
+        // Shadow syntect's bundled C/C++ pair, which predates the C++11/20
+        // contextual keywords (`final`, `requires`, `concept`, `co_return`, …).
+        // C is listed first so the C++ grammar's `scope:source.c` includes bind
+        // to the matching C, and both come after the defaults so they win the
+        // reverse-order lookups (issue #3644).
+        ("src/grammars/c.sublime-syntax", "C"),
+        ("src/grammars/cpp.sublime-syntax", "C++"),
         ("src/grammars/odin/Odin.sublime-syntax", "Odin"),
         ("src/grammars/zig.sublime-syntax", "Zig"),
         ("src/grammars/gdscript.sublime-syntax", "GDScript"),
