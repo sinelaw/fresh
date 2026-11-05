@@ -10,8 +10,14 @@
 use std::fs;
 use std::path::Path;
 
+// The soft-keyword patch table is shared with the crate itself, so the
+// runtime grammar builder (`GrammarRegistry::default`) and this build-time
+// packdump cannot drift apart.
+include!("src/primitives/grammar/soft_keywords.rs");
+
 fn main() {
     println!("cargo::rerun-if-changed=locales");
+    println!("cargo::rerun-if-changed=src/primitives/grammar/soft_keywords.rs");
     println!("cargo::rerun-if-changed=themes");
     println!("cargo::rerun-if-changed=src/grammars");
 
@@ -228,14 +234,30 @@ fn generate_syntax_packdump(
     javascript: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use syntect::dumps::dump_to_uncompressed_file;
-    use syntect::parsing::{SyntaxDefinition, SyntaxSet};
+    use syntect::parsing::{SyntaxDefinition, SyntaxSet, SyntaxSetBuilder};
 
     let out_dir = std::env::var("OUT_DIR")?;
     let dest_path = Path::new(&out_dir).join("default_syntaxes.packdump");
 
-    // Start with syntect's built-in defaults
+    // Start with syntect's built-in defaults, patching the soft keywords the
+    // bundled Python grammar is missing on the way through. `into_builder`
+    // hands back definitions whose contexts are name-keyed maps, and `build()`
+    // re-numbers and re-links them all, so re-adding is safe; the original
+    // order is kept anyway, since the editor's catalog resolves extensions
+    // first-wins over it.
+    //
+    // One wrinkle: `SyntaxSetBuilder::new()` starts without the
+    // `path_syntaxes` map that `into_builder()` would have carried over, so
+    // `find_syntax_by_path` on the resulting set returns `None`. Nothing in
+    // Fresh uses it (grammars are found by extension, filename or scope) and
+    // syntect 5.3 exposes no way to repopulate it.
     let defaults = SyntaxSet::load_defaults_newlines();
-    let mut builder = defaults.into_builder();
+    let mut builder = SyntaxSetBuilder::new();
+    for syntax in defaults.into_builder().syntaxes() {
+        let mut syntax = syntax.clone();
+        patch_soft_keywords(&mut syntax);
+        builder.add(syntax);
+    }
 
     // Add all embedded grammars — must match the list in types.rs add_embedded_grammars()
     let grammar_files: &[(&str, &str)] = &[
@@ -254,6 +276,18 @@ fn generate_syntax_packdump(
         // Shadows syntect's bundled C# grammar, whose format-spec rule
         // backtracks catastrophically on interpolated strings (issue #3667).
         ("src/grammars/csharp.sublime-syntax", "C#"),
+        // Shadow syntect's bundled C/C++ pair, which predates the C++11/20
+        // contextual keywords (`final`, `requires`, `concept`, `co_return`, …).
+        // Both come after the defaults so they win syntect's reverse-order
+        // lookups (issue #3644).
+        //
+        // C before C++ matters for the editor's catalog, not for linking: the
+        // catalog's extension index is first-wins, so listing C first is what
+        // keeps `.c` on the C grammar. (`scope:source.c` resolves to whichever
+        // C is *last*, so the C++ grammar's ~50 includes bind to the vendored
+        // C either way.)
+        ("src/grammars/c.sublime-syntax", "C"),
+        ("src/grammars/cpp.sublime-syntax", "C++"),
         ("src/grammars/odin/Odin.sublime-syntax", "Odin"),
         ("src/grammars/zig.sublime-syntax", "Zig"),
         ("src/grammars/gdscript.sublime-syntax", "GDScript"),

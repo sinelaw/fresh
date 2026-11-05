@@ -202,6 +202,26 @@ pub const BASH_GRAMMAR: &str = include_str!("../../grammars/bash.sublime-syntax"
 /// catastrophically on interpolated strings such as
 /// `$"{v:F2} {F(v):F2} {G(v):F2}"`, stalling every keystroke (issue #3667).
 pub const CSHARP_GRAMMAR: &str = include_str!("../../grammars/csharp.sublime-syntax");
+/// Embedded C++ grammar. Shadows the one syntect bundles, which predates the
+/// C++11/20 contextual keywords: `final`, `requires`, `concept`, `consteval`
+/// and `co_await`/`co_return`/`co_yield` appear nowhere in it, so no theme
+/// could colour them (issue #3644). Vendored verbatim from sublimehq/Packages.
+pub const CPP_GRAMMAR: &str = include_str!("../../grammars/cpp.sublime-syntax");
+/// Embedded C grammar, vendored from the same sublimehq/Packages commit as
+/// [`CPP_GRAMMAR`] purely to stay version-matched with it: the C++ grammar
+/// pulls in ~50 `scope:source.c` contexts, so pairing a new C++ with syntect's
+/// older bundled C would be a silent mismatch. Both are added after the
+/// defaults, so they win syntect's own reverse-order scope lookup. The
+/// editor's catalog index is the other way round (first-wins), which is why C
+/// is registered before C++ and why `.h` is forced to C++ in
+/// `rebuild_catalog`.
+///
+/// One knock-on: the vendored C++ advertises `C` (upstream's way of spelling
+/// "`.C` is C++"), and syntect compares extensions case-insensitively, so its
+/// `find_syntax_by_token("c")` now answers C++. That only reaches fenced
+/// ```c blocks in Markdown via `highlight_string`, where the C++ grammar is a
+/// superset; file resolution goes through the catalog and is unaffected.
+pub const C_GRAMMAR: &str = include_str!("../../grammars/c.sublime-syntax");
 
 /// Embedded Zig grammar (syntect doesn't include one)
 pub const ZIG_GRAMMAR: &str = include_str!("../../grammars/zig.sublime-syntax");
@@ -727,6 +747,29 @@ impl GrammarRegistry {
             }
             Err(e) => {
                 tracing::warn!("Failed to load embedded Rust grammar: {}", e);
+            }
+        }
+
+        // C grammar, then C++ (shadow syntect's bundled pair, see CPP_GRAMMAR).
+        // C goes in first so the C++ grammar's `scope:source.c` includes have
+        // the matching C to bind to.
+        match SyntaxDefinition::load_from_str(C_GRAMMAR, true, Some("C")) {
+            Ok(syntax) => {
+                builder.add(syntax);
+                tracing::debug!("Loaded embedded C grammar");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load embedded C grammar: {}", e);
+            }
+        }
+
+        match SyntaxDefinition::load_from_str(CPP_GRAMMAR, true, Some("C++")) {
+            Ok(syntax) => {
+                builder.add(syntax);
+                tracing::debug!("Loaded embedded C++ grammar");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load embedded C++ grammar: {}", e);
             }
         }
 
@@ -1282,6 +1325,18 @@ impl GrammarRegistry {
             // first-wins extension index since Bash precedes it in the packdump.
             if syntax.name != "Fish" {
                 extensions.retain(|e| e != "fish");
+            }
+
+            // Likewise `.h`, which C, C++, Objective-C and Objective-C++ all
+            // advertise. C++ must own it in this index: `detected_language`
+            // then decides C vs C++ per file (sibling translation units,
+            // `compile_commands.json` — issue #3009), and a C++ base is what
+            // gives a bare header a tree-sitter language for indent and
+            // bracket matching. Without this, vendoring C/C++ (which appends
+            // them after the defaults, see `CPP_GRAMMAR`) would hand `.h` to
+            // whichever of the Objective-C grammars comes first instead.
+            if syntax.name != "C++" {
+                extensions.retain(|e| e != "h");
             }
 
             catalog.push(GrammarEntry {
@@ -1889,9 +1944,20 @@ impl GrammarRegistry {
 
 impl Default for GrammarRegistry {
     fn default() -> Self {
-        // Create with defaults and embedded grammars only (no user grammars)
+        // Create with defaults and embedded grammars only (no user grammars).
+        // The defaults are re-added one by one so the soft keywords the bundled
+        // Python grammar lacks can be patched in on the way through — exactly
+        // as `build.rs` does for the packdump the editor normally starts from
+        // (issue #3509), keeping the two paths in agreement. Note this drops
+        // `into_builder`'s `path_syntaxes`, as `build.rs` explains; nothing in
+        // Fresh looks a grammar up by its own file path.
         let defaults = SyntaxSet::load_defaults_newlines();
-        let mut builder = defaults.into_builder();
+        let mut builder = syntect::parsing::SyntaxSetBuilder::new();
+        for syntax in defaults.into_builder().syntaxes() {
+            let mut syntax = syntax.clone();
+            super::soft_keywords::patch_soft_keywords(&mut syntax);
+            builder.add(syntax);
+        }
         Self::add_embedded_grammars(&mut builder);
         let syntax_set = builder.build();
         let filename_scopes = Self::build_filename_scopes();
@@ -2001,6 +2067,292 @@ mod tests {
             *rust_indices.last().unwrap(),
             "`.rs` should resolve to the vendored grammar, not syntect's bundled one"
         );
+    }
+
+    /// Like Rust and C#, C and C++ are vendored (`CPP_GRAMMAR`, `C_GRAMMAR`)
+    /// to replace the pair syntect bundles, which predates the C++11/20
+    /// contextual keywords (issue #3644). Check that `.cpp` reaches the
+    /// vendored grammar through both the runtime builder (`default`) and the
+    /// build-time packdump (`defaults_only`), that the catalog still lists each
+    /// language once, and that the keywords from the issue are now scoped.
+    #[test]
+    fn test_vendored_cpp_grammar_shadows_the_bundled_one() {
+        use syntect::parsing::{ParseState, ScopeStack};
+
+        for (path, registry) in [
+            ("default", Arc::new(GrammarRegistry::default())),
+            ("defaults_only", GrammarRegistry::defaults_only()),
+        ] {
+            for name in ["C", "C++"] {
+                let entries = registry
+                    .catalog()
+                    .iter()
+                    .filter(|entry| entry.display_name == name)
+                    .count();
+                assert_eq!(entries, 1, "{path}: the catalog should list {name} once");
+
+                let indices: Vec<_> = registry
+                    .syntax_set()
+                    .syntaxes()
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| s.name == name)
+                    .map(|(i, _)| i)
+                    .collect();
+                assert_eq!(
+                    indices.len(),
+                    2,
+                    "{path}: expected syntect's bundled {name} grammar plus the vendored one"
+                );
+            }
+
+            let syntax_set = registry.syntax_set();
+
+            // The vendored C++ is added last, so it wins the `.cpp` lookup, and
+            // the vendored C wins `scope:source.c` — which the C++ grammar
+            // includes in ~50 places, so the pair must stay version-matched.
+            let resolved = syntax_set
+                .find_syntax_by_extension("cpp")
+                .expect("`.cpp` should resolve to a C++ grammar");
+            let cpp_last = syntax_set
+                .syntaxes()
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| s.name == "C++")
+                .map(|(i, _)| i)
+                .next_back()
+                .unwrap();
+            assert!(
+                std::ptr::eq(resolved, &syntax_set.syntaxes()[cpp_last]),
+                "{path}: `.cpp` should resolve to the vendored grammar, not syntect's bundled one"
+            );
+
+            // The keywords from the issue, with the enclosing context each
+            // needs. `final` is contextual: upstream only treats it as a
+            // modifier in a class or struct head.
+            let cases: &[(&[&str], &str, &str)] = &[
+                (&["class Foo final {\n"], "final", "storage.modifier"),
+                (
+                    &["struct Shape final : Base {};\n"],
+                    "final",
+                    "storage.modifier",
+                ),
+                (
+                    &["template <typename T>\n", "requires std::integral<T>\n"],
+                    "requires",
+                    "storage.modifier",
+                ),
+                (
+                    &["Task g() {\n", "    co_return 1;\n"],
+                    "co_return",
+                    "keyword.control",
+                ),
+                (
+                    &["Task g() {\n", "    co_await x;\n"],
+                    "co_await",
+                    "keyword.control",
+                ),
+                (
+                    &[
+                        "template <class T>\n",
+                        "concept Addable = requires(T a) { a + a; };\n",
+                    ],
+                    "concept",
+                    "keyword.declaration",
+                ),
+                // Still an operator-word scope upstream, which is why
+                // `scope_to_category` maps word operators to Keyword.
+                (
+                    &["static_assert(sizeof(int) > 0);\n"],
+                    "static_assert",
+                    "keyword.operator.word",
+                ),
+            ];
+
+            let syntax = syntax_set
+                .find_syntax_by_name("C++")
+                .expect("C++ grammar should be present");
+            for (snippet, token, want) in cases {
+                let mut state = ParseState::new(syntax);
+                let mut stack = ScopeStack::new();
+                for line in &snippet[..snippet.len() - 1] {
+                    for (_, op) in state
+                        .parse_line(line, syntax_set)
+                        .expect("parsing a snippet line should not fail")
+                    {
+                        stack.apply(&op).expect("scope op applies");
+                    }
+                }
+                let line = snippet[snippet.len() - 1];
+                let ops = state
+                    .parse_line(line, syntax_set)
+                    .expect("parsing a snippet line should not fail");
+                let at = line.find(token).expect("token is in the line");
+                let mut scope_at_token = None;
+                let mut last = 0usize;
+                for (offset, op) in &ops {
+                    if last <= at && at < *offset {
+                        scope_at_token = Some(format!("{stack}"));
+                        break;
+                    }
+                    stack.apply(op).expect("scope op applies");
+                    last = *offset;
+                }
+                let scope_at_token = scope_at_token.unwrap_or_else(|| format!("{stack}"));
+                assert!(
+                    scope_at_token.contains(want),
+                    "{path}: C++ `{token}` should be scoped {want}, got {scope_at_token:?}"
+                );
+            }
+
+            // A variable named `final` is legal C++ and must stay unscoped.
+            let mut state = ParseState::new(syntax);
+            let mut stack = ScopeStack::new();
+            for (_, op) in state
+                .parse_line("int main() {\n", syntax_set)
+                .expect("parse")
+            {
+                stack.apply(&op).expect("scope op applies");
+            }
+            let line = "    int final = 0;\n";
+            let ops = state.parse_line(line, syntax_set).expect("parse");
+            let at = line.find("final").unwrap();
+            let mut scope_at_token = None;
+            let mut last = 0usize;
+            for (offset, op) in &ops {
+                if last <= at && at < *offset {
+                    scope_at_token = Some(format!("{stack}"));
+                    break;
+                }
+                stack.apply(op).expect("scope op applies");
+                last = *offset;
+            }
+            let scope_at_token = scope_at_token.unwrap_or_else(|| format!("{stack}"));
+            assert!(
+                !scope_at_token.contains("storage.modifier"),
+                "{path}: a variable named `final` must not be a modifier, got {scope_at_token:?}"
+            );
+        }
+    }
+
+    /// Vendoring C/C++ appends them after the defaults, which moves their
+    /// catalog entries to the end — and the catalog's extension index is
+    /// first-wins. So every extension they share with an earlier entry has to
+    /// be checked, not just the ones the vendoring was for: `.h` is claimed by
+    /// four grammars and regressed to Objective-C++ (losing its tree-sitter
+    /// language, and with it indent and bracket matching) until
+    /// `rebuild_catalog` forced it to C++.
+    #[test]
+    fn test_c_family_extensions_resolve_after_vendoring() {
+        for (path, registry) in [
+            ("default", Arc::new(GrammarRegistry::default())),
+            ("defaults_only", GrammarRegistry::defaults_only()),
+        ] {
+            // (file, display name, whether a tree-sitter language is attached)
+            for (file, want, want_ts) in [
+                ("a.h", "C++", true),
+                ("a.hpp", "C++", true),
+                ("a.cpp", "C++", true),
+                ("a.cc", "C++", true),
+                ("a.c", "C", true),
+            ] {
+                let entry = registry
+                    .find_by_path(Path::new(file), None)
+                    .unwrap_or_else(|| panic!("{path}: {file} should resolve"));
+                assert_eq!(
+                    entry.display_name, want,
+                    "{path}: {file} should resolve to {want}"
+                );
+                assert_eq!(
+                    entry.engines.tree_sitter.is_some(),
+                    want_ts,
+                    "{path}: {file} tree-sitter language presence should be {want_ts}; \
+                     it drives auto-indent and `<>` bracket matching"
+                );
+            }
+        }
+    }
+
+    /// Python's `match`/`case` are patched into syntect's bundled grammar
+    /// (issue #3509) because, unlike C/C++, upstream's implementation uses
+    /// `branch`/`fail`, which syntect does not support. The patch must be
+    /// present through both the runtime builder (`default`) and the build-time
+    /// packdump the editor starts from (`defaults_only`), so the two paths
+    /// cannot drift apart.
+    #[test]
+    fn test_soft_keywords_are_patched_in_on_both_paths() {
+        use syntect::parsing::{ParseState, ScopeStack};
+
+        // (grammar, snippet, token, expected scope prefix). The token is looked
+        // up on the snippet's last line; any earlier lines are the enclosing
+        // context the keyword needs — a `case` arm only reads as one under a
+        // `match` header.
+        let cases: &[(&str, &[&str], &str, &str)] = &[
+            ("Python", &["match x:\n"], "match", "keyword.control"),
+            (
+                "Python",
+                &["match x:\n", "    case 1:\n"],
+                "case",
+                "keyword.control",
+            ),
+            // C and C++ are fixed by vendoring the upstream grammars instead
+            // (see `test_vendored_cpp_grammar_shadows_the_bundled_one`), so
+            // only Python is patched here.
+            (
+                "Python",
+                &["match command.split():\n", "    case [\"go\", d]:\n"],
+                "case",
+                "keyword.control",
+            ),
+        ];
+
+        for (path, registry) in [
+            ("default", Arc::new(GrammarRegistry::default())),
+            ("defaults_only", GrammarRegistry::defaults_only()),
+        ] {
+            let syntax_set = registry.syntax_set();
+            for (grammar, snippet, token, want) in cases {
+                let syntax = syntax_set
+                    .find_syntax_by_name(grammar)
+                    .unwrap_or_else(|| panic!("{path}: {grammar} grammar should be present"));
+                let mut state = ParseState::new(syntax);
+                let mut stack = ScopeStack::new();
+
+                // Run the context lines first, keeping the scope stack.
+                for line in &snippet[..snippet.len() - 1] {
+                    for (_, op) in state
+                        .parse_line(line, syntax_set)
+                        .expect("parsing a snippet line should not fail")
+                    {
+                        stack.apply(&op).expect("scope op applies");
+                    }
+                }
+
+                let line = snippet[snippet.len() - 1];
+                let ops = state
+                    .parse_line(line, syntax_set)
+                    .expect("parsing a snippet line should not fail");
+
+                // Walk to the token's offset, then read the scope stack there.
+                let at = line.find(token).expect("token is in the line");
+                let mut scope_at_token = None;
+                let mut last = 0usize;
+                for (offset, op) in &ops {
+                    if last <= at && at < *offset {
+                        scope_at_token = Some(format!("{stack}"));
+                        break;
+                    }
+                    stack.apply(op).expect("scope op applies");
+                    last = *offset;
+                }
+                let scope_at_token = scope_at_token.unwrap_or_else(|| format!("{stack}"));
+
+                assert!(
+                    scope_at_token.contains(want),
+                    "{path}: {grammar} `{token}` should be scoped {want}, got {scope_at_token:?}"
+                );
+            }
+        }
     }
 
     /// Like Rust, C# is vendored (`CSHARP_GRAMMAR`) to replace syntect's
