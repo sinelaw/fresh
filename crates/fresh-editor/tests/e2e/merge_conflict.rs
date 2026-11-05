@@ -1234,3 +1234,243 @@ fn test_merge_mouse_click_on_buttons() {
         .unwrap();
     harness.render().unwrap();
 }
+
+// =============================================================================
+// Regression: resolution must not add a blank line (#3702)
+// =============================================================================
+
+/// Set up a real git merge conflict in `conflict.txt` inside `project_root`
+/// from the three given versions of the file.
+///
+/// Unlike the `TestFixture`-based tests above, the file lives *inside* the
+/// repository and the index is left genuinely unmerged, which is what the
+/// plugin's `git ls-files -u` gate requires before it will start resolution.
+/// Assumes `setup_merge_conflict_test` has already initialized the repo.
+fn setup_git_conflict_from(
+    project_root: &Path,
+    base: &str,
+    ours: &str,
+    theirs: &str,
+) -> std::path::PathBuf {
+    use std::process::Command;
+
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(project_root)
+            .output()
+            .unwrap_or_else(|e| panic!("git {args:?} failed to run: {e}"));
+        eprintln!(
+            "git {args:?} -> {} {:?}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        out
+    };
+
+    let conflict_file = project_root.join("conflict.txt");
+
+    // Commit signing would break commits in CI sandboxes.
+    git(&["config", "commit.gpgsign", "false"]);
+    // These tests assert the resolved file's exact bytes, so the fixture must
+    // not inherit the platform's end-of-line policy. Git for Windows defaults
+    // to core.autocrlf=true, which rewrites the conflicted working tree as
+    // CRLF and made the LF expectations below fail on the Windows runners.
+    // Pin it off so `git merge` writes back exactly the bytes written here.
+    git(&["config", "core.autocrlf", "false"]);
+
+    fs::write(&conflict_file, base).unwrap();
+    git(&["add", "."]);
+    git(&["commit", "-m", "base"]);
+
+    // `git init`'s default branch is master on some installs and main on
+    // others, so remember the name rather than guessing it later.
+    let ours_branch = String::from_utf8_lossy(&git(&["branch", "--show-current"]).stdout)
+        .trim()
+        .to_string();
+    assert!(!ours_branch.is_empty(), "could not read the initial branch");
+
+    git(&["checkout", "-b", "feature"]);
+    fs::write(&conflict_file, theirs).unwrap();
+    git(&["commit", "-am", "theirs"]);
+
+    git(&["checkout", &ours_branch]);
+    fs::write(&conflict_file, ours).unwrap();
+    git(&["commit", "-am", "ours"]);
+
+    git(&["merge", "feature"]);
+
+    // The merge must actually have conflicted, or the test below would pass
+    // vacuously (CONTRIBUTING.md Code §16).
+    let merged = fs::read_to_string(&conflict_file).unwrap();
+    assert!(
+        merged.contains("<<<<<<<") && merged.contains(">>>>>>>"),
+        "expected conflict markers in the merged file, got: {merged:?}"
+    );
+    let unmerged = git(&["ls-files", "-u", "conflict.txt"]);
+    assert!(
+        !String::from_utf8_lossy(&unmerged.stdout).trim().is_empty(),
+        "expected an unmerged index entry for conflict.txt"
+    );
+
+    conflict_file
+}
+
+/// Open the conflicted file, start resolution, run `action`, then save and
+/// exit, and return the text the source buffer is left holding — the exact
+/// bytes a following Ctrl+S writes to disk.
+fn resolve_conflict_via_palette(project_root: &Path, conflict_file: &Path, action: &str) -> String {
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Default::default(),
+        project_root.to_path_buf(),
+    )
+    .unwrap();
+
+    harness.open_file(conflict_file).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .run_palette_command("Merge: Start Resolution")
+        .unwrap();
+    // The panels only exist once the plugin's async git calls have landed, so
+    // gate on the RESULT panel rather than on a fixed number of ticks.
+    harness.wait_for_screen_contains("*RESULT*").unwrap();
+
+    // The resolution lands asynchronously, so gate on the plugin reporting every
+    // conflict resolved — the precondition Save & Exit itself checks. Waiting on
+    // "resolved" alone would not do: the start status reads "(0 auto-resolved)",
+    // so such a wait is already satisfied here and would gate nothing
+    // (CONTRIBUTING.md Code §16). "Press 's' to save" is printed only once no
+    // conflict is left unresolved, and the assert keeps that gate honest.
+    const ALL_RESOLVED: &str = "Press 's' to save";
+    assert!(
+        !harness.screen_to_string().contains(ALL_RESOLVED),
+        "nothing was left to resolve before {action} ran, so the wait below would gate nothing"
+    );
+    harness.run_palette_command(action).unwrap();
+    harness.wait_for_screen_contains(ALL_RESOLVED).unwrap();
+
+    harness.run_palette_command("Merge: Save & Exit").unwrap();
+    // Save & Exit writes the resolved text back into the source buffer and
+    // closes the panels; waiting for them to go is what gates on the write.
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("*RESULT*"))
+        .unwrap();
+
+    harness.assert_no_plugin_errors();
+
+    let content = harness
+        .get_buffer_content()
+        .expect("source buffer should be fully loaded");
+    eprintln!("resolved buffer content: {content:?}");
+    assert!(
+        !content.contains("<<<<<<<") && !content.contains(">>>>>>>"),
+        "resolution left conflict markers behind: {content:?}"
+    );
+    content
+}
+
+/// `Merge: Use Ours` must not leave a blank line where the conflict was.
+///
+/// Regression test for #3702: `parseConflicts` ended the block just *before*
+/// the newline closing the `>>>>>>>` line, while each side's text already
+/// carried its own trailing newline, so every splice left that newline behind.
+#[test]
+fn test_merge_use_ours_leaves_no_extra_blank_line() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    setup_merge_conflict_test(&project_root);
+    let conflict_file = setup_git_conflict_from(
+        &project_root,
+        "line1\nline2\nline3\n",
+        "line1\nOURS\nline3\n",
+        "line1\nTHEIRS\nline3\n",
+    );
+
+    let content = resolve_conflict_via_palette(&project_root, &conflict_file, "Merge: Use Ours");
+
+    assert_eq!(content, "line1\nOURS\nline3\n");
+}
+
+/// `Merge: Take Theirs` must not leave a blank line either (#3702).
+#[test]
+fn test_merge_take_theirs_leaves_no_extra_blank_line() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    setup_merge_conflict_test(&project_root);
+    let conflict_file = setup_git_conflict_from(
+        &project_root,
+        "line1\nline2\nline3\n",
+        "line1\nOURS\nline3\n",
+        "line1\nTHEIRS\nline3\n",
+    );
+
+    let content = resolve_conflict_via_palette(&project_root, &conflict_file, "Merge: Take Theirs");
+
+    assert_eq!(content, "line1\nTHEIRS\nline3\n");
+}
+
+/// A hunk whose own content ends in a blank line must keep exactly that blank
+/// line: #3702 is fixed by giving the conflict block the newline that closes
+/// `>>>>>>>`, not by trimming the hunk, which would corrupt content like this.
+///
+/// The ours side here is `OURS\n\n`, so the correct resolution keeps one blank
+/// line. Before the fix this produced two.
+#[test]
+fn test_merge_use_ours_keeps_hunk_trailing_blank_line() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    setup_merge_conflict_test(&project_root);
+    // Two differing lines per side keeps git from factoring the blank line out
+    // of the hunk as common context, so it really is part of the ours side.
+    let conflict_file = setup_git_conflict_from(
+        &project_root,
+        "line1\nA\nB\nline3\n",
+        "line1\nOURS\n\nline3\n",
+        "line1\nT1\nT2\nline3\n",
+    );
+
+    let content = resolve_conflict_via_palette(&project_root, &conflict_file, "Merge: Use Ours");
+
+    assert_eq!(content, "line1\nOURS\n\nline3\n");
+}
+
+/// A conflict that ends at EOF with no trailing newline must still parse and
+/// resolve. The fix for #3702 makes the conflict block swallow the newline
+/// after `>>>>>>>`; this covers the case where there is none to swallow, which
+/// the regex handles with its `$` alternative.
+///
+/// `git merge` always terminates the marker line, so the conflicted working
+/// tree is written by hand here; the index stays unmerged from the real merge.
+#[test]
+fn test_merge_use_ours_at_eof_without_trailing_newline() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    setup_merge_conflict_test(&project_root);
+    let conflict_file = setup_git_conflict_from(
+        &project_root,
+        "line1\nline2\n",
+        "line1\nOURS\n",
+        "line1\nTHEIRS\n",
+    );
+    fs::write(
+        &conflict_file,
+        "line1\n<<<<<<< HEAD\nOURS\n=======\nTHEIRS\n>>>>>>> feature",
+    )
+    .unwrap();
+
+    let content = resolve_conflict_via_palette(&project_root, &conflict_file, "Merge: Use Ours");
+
+    // The ours hunk is the line `OURS\n`, so the resolved file ends there.
+    assert_eq!(content, "line1\nOURS\n");
+}
