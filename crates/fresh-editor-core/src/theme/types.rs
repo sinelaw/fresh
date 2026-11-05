@@ -1930,7 +1930,6 @@ impl Theme {
         let theme_file: ThemeFile = serde_json::from_value(raw.clone()).ok()?;
         let mut theme: Theme = theme_file.into();
         theme.fill_fallbacks(&raw);
-        theme.keep_selection_visible();
         Some(theme)
     }
 
@@ -1968,28 +1967,13 @@ impl Theme {
         match resolve_base_theme(&theme_file, &raw)? {
             Some(mut theme) => {
                 apply_theme_overrides(&mut theme, &theme_file, &raw);
-                theme.keep_selection_visible();
                 Ok(theme)
             }
             None => {
                 let mut theme: Theme = theme_file.into();
                 theme.fill_fallbacks(&raw);
-                theme.keep_selection_visible();
                 Ok(theme)
             }
-        }
-    }
-
-    /// A selection drawn on `"Default"` — the terminal's own background — is
-    /// the ground every unselected cell already has, so on its own it marks
-    /// nothing (#1157). The terminal-native way to mark a selection without a
-    /// color of its own is reverse video, which is what the built-in
-    /// `terminal` theme pairs it with; a theme that gives `selection_bg` as
-    /// `"Default"` with no attributes gets that too. Attributes the theme does
-    /// give (bold, underline, …) are a mark of their own and are kept as-is.
-    fn keep_selection_visible(&mut self) {
-        if self.selection_bg == Color::Reset && self.selection_modifier.is_empty() {
-            self.selection_modifier = Modifier::REVERSED;
         }
     }
 
@@ -3691,33 +3675,6 @@ mod tests {
     /// of its own: not the panel, and not the unfocused cursor's
     /// `current_line_bg`, or a cursor on a pinned row would vanish into the
     /// band it sits in.
-    /// `selection_bg: "Default"` alone would draw the selection on the
-    /// terminal's background, i.e. invisibly; it is shown in reverse video,
-    /// the terminal-native selection look, unless the theme gives the
-    /// selection attributes of its own (#1157).
-    #[test]
-    fn default_selection_bg_is_shown_in_reverse_video() {
-        for extends in [r#""extends": "builtin://high-contrast","#, ""] {
-            let theme = Theme::from_json(&format!(
-                r#"{{"name": "seldef", {extends} "editor": {{"selection_bg": "Default"}}}}"#
-            ))
-            .unwrap();
-            assert_eq!(theme.selection_bg, Color::Reset);
-            assert_eq!(theme.selection_modifier, Modifier::REVERSED, "{extends:?}");
-        }
-
-        let theme = Theme::from_json(
-            r#"{"name": "selbold", "extends": "builtin://dark",
-                "editor": {"selection_bg": {"color": "Default", "modifier": ["bold"]}}}"#,
-        )
-        .unwrap();
-        assert_eq!(theme.selection_modifier, Modifier::BOLD);
-
-        // A real selection color is left alone.
-        let dark = Theme::load_builtin(THEME_DARK).unwrap();
-        assert!(dark.selection_modifier.is_empty());
-    }
-
     /// Explorer folder names have a key of their own (#3697): a theme that
     /// leaves it out keeps the old look (`syntax.keyword`), and one that sets
     /// it recolors folders without touching code keywords.
