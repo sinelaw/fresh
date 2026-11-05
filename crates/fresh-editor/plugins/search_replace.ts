@@ -65,6 +65,9 @@ type FocusPanel = "query" | "options" | "matches";
 type QueryField = "search" | "replace";
 
 interface PanelState {
+  /** The window the panel lives in. Its buffer and splits belong to that
+   *  window, and split ids mean nothing outside it (#3704). */
+  windowId: number;
   resultsBufferId: number;
   sourceSplitId: number;
   resultsSplitId: number;
@@ -1535,6 +1538,19 @@ async function openPanelInner(opts?: { allFiles?: boolean }): Promise<void> {
   const allFiles = opts?.allFiles ?? true;
   const sourceBufferRelPath = sourceBufferPath ? getRelativePath(sourceBufferPath) : "";
 
+  // A panel open in another window cannot be shown here: its buffer and
+  // split belong to that window. Close it there and open a fresh one in this
+  // window, carrying the query over (#3704).
+  let carried: { searchPattern: string; replaceText: string; fileGlob: string } | null = null;
+  if (panel && panel.windowId !== editor.activeWindow()) {
+    carried = {
+      searchPattern: panel.searchPattern,
+      replaceText: panel.replaceText,
+      fileGlob: panel.fileGlob,
+    };
+    discardPanel();
+  }
+
   if (panel) {
     panel.focusPanel = "query";
     panel.queryField = "search";
@@ -1585,14 +1601,15 @@ async function openPanelInner(opts?: { allFiles?: boolean }): Promise<void> {
     });
 
     panel = {
+      windowId: editor.activeWindow(),
       resultsBufferId: result.bufferId,
       sourceSplitId,
       resultsSplitId: result.splitId ?? editor.getActiveSplitId(),
       searchResults: [],
       fileGroups: [],
-      searchPattern: prefill,
-      replaceText: "",
-      fileGlob: "",
+      searchPattern: prefill || carried?.searchPattern || "",
+      replaceText: carried?.replaceText ?? "",
+      fileGlob: carried?.fileGlob ?? "",
       focusPanel: "query",
       queryField: "search",
       optionIndex: 0,
@@ -1609,7 +1626,7 @@ async function openPanelInner(opts?: { allFiles?: boolean }): Promise<void> {
       busy: false,
       searchPerformed: false,
       truncated: false,
-      cursorPos: prefill.length,
+      cursorPos: (prefill || carried?.searchPattern || "").length,
       scrollOffset: 0,
       expandedFileKeys: new Set<string>(),
       knownFileKeys: new Set<string>(),
@@ -1618,6 +1635,9 @@ async function openPanelInner(opts?: { allFiles?: boolean }): Promise<void> {
     editor.debug(`Search/Replace: panel opened, bufferId=${result.bufferId}, splitId=${result.splitId}`);
 
     updatePanelContent();
+    // A query carried over from another window's panel shows its results
+    // here too, as re-opening the panel in its own window does.
+    if (carried && panel.searchPattern) rerunSearchDebounced();
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     editor.setStatus(editor.t("status.failed_open_panel"));
@@ -2406,23 +2426,46 @@ function search_replace_close(): void {
   }
   // Drop the anchor markers we registered on the source buffers so they
   // don't linger after the panel is gone.
-  clearMatchMarkers();
-  takeResumeAnchor();
   const sourceSplitId = panel.sourceSplitId;
-  panel.widgetPanel?.unmount();
-  editor.closeBuffer(panel.resultsBufferId);
-  if (panel.resultsSplitId !== panel.sourceSplitId) {
-    editor.closeSplit(panel.resultsSplitId);
+  const here = panel.windowId === editor.activeWindow();
+  discardPanel();
+  // Restore focus to the split the user came from. Without this,
+  // `getActiveBufferId()` on the next invocation can return the
+  // utility dock's leftover buffer, and the §1 current-file scope
+  // shows "(unsaved buffer)" instead of the real filename. Only in the
+  // panel's own window: split ids are per window.
+  if (here) editor.focusSplit(sourceSplitId);
+  editor.setStatus(editor.t("status.closed"));
+}
+
+/** Tear the panel down — its anchor markers, widget, buffer and split — in
+ *  the window it lives in, and forget it.
+ *
+ *  The host closes buffers and splits in the active window, and split ids
+ *  are per window, so a panel in another window is closed by switching to
+ *  that window for the teardown and back again; closing its split from here
+ *  would hit whatever split has the same id in this window (#3704). A window
+ *  that is gone took the panel's buffer and split with it: there is nothing
+ *  left to close. */
+function discardPanel(): void {
+  if (!panel) return;
+  const p = panel;
+  const here = editor.activeWindow();
+  const elsewhere = p.windowId !== here;
+  const windowExists = !elsewhere || editor.listWindows().some((w) => w.id === p.windowId);
+  if (windowExists && (!elsewhere || editor.setActiveWindow(p.windowId))) {
+    clearMatchMarkers();
+    takeResumeAnchor();
+    p.widgetPanel?.unmount();
+    editor.closeBuffer(p.resultsBufferId);
+    if (p.resultsSplitId !== p.sourceSplitId) {
+      editor.closeSplit(p.resultsSplitId);
+    }
+    if (elsewhere) editor.setActiveWindow(here);
   }
   panel = null;
   settleConfirmDialog(false);
   lastReplacedFiles.clear();
-  // Restore focus to the split the user came from. Without this,
-  // `getActiveBufferId()` on the next invocation can return the
-  // utility dock's leftover buffer, and the §1 current-file scope
-  // shows "(unsaved buffer)" instead of the real filename.
-  editor.focusSplit(sourceSplitId);
-  editor.setStatus(editor.t("status.closed"));
 }
 registerHandler("search_replace_close", search_replace_close);
 

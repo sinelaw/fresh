@@ -4103,3 +4103,60 @@ fn test_search_replace_pan_homes_on_a_new_search() {
          where the last search was panned to. Row:\n{row}"
     );
 }
+
+/// Opening Search/Replace in a second window shows the panel there, rather
+/// than silently updating the panel still open in the first window; the
+/// first window's panel is closed, not left behind (#3704).
+#[test]
+fn test_search_replace_opens_in_the_window_it_is_invoked_from() {
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    create_test_files(&project_root);
+
+    let start_file = project_root.join("alpha.txt");
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+    let window_a = harness.editor().active_window_id();
+
+    open_search_replace_via_palette(&mut harness);
+    harness.type_text("hello").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("hello from beta"))
+        .unwrap();
+
+    let window_b = harness
+        .editor_mut()
+        .create_window_at(project_root.clone(), "second".to_string());
+    harness.editor_mut().set_active_window(window_b);
+    harness.open_file(&project_root.join("gamma.txt")).unwrap();
+    harness.render().unwrap();
+    assert!(
+        !harness.screen_to_string().contains("*Search/Replace*"),
+        "window B starts without the panel"
+    );
+
+    // Alt+A in window B: the panel appears here, with the query carried over
+    // and its results shown.
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("*Search/Replace*") && s.contains("hello from beta")
+        })
+        .unwrap();
+
+    // Window A no longer holds a panel.
+    harness.editor_mut().set_active_window(window_a);
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("*Search/Replace*"))
+        .unwrap();
+    harness.assert_screen_contains("hello world");
+}
