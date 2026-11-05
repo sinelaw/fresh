@@ -221,8 +221,13 @@ fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
         return Some(HighlightCategory::Type);
     }
 
-    // Storage keywords (class, def, function, var, let, const, etc.) and modifiers
-    if scope_lower.starts_with("storage.type") || scope_lower.starts_with("storage.modifier") {
+    // SPIKE (not for merge): builtin types take the Type colour instead of the
+    // keyword colour. `storage.modifier` (const, static, virtual, final, …)
+    // stays a keyword.
+    if scope_lower.starts_with("storage.type") {
+        return Some(HighlightCategory::Type);
+    }
+    if scope_lower.starts_with("storage.modifier") {
         return Some(HighlightCategory::Keyword);
     }
 
