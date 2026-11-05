@@ -1375,10 +1375,7 @@ async function performSearch(
         // Anchor the match to its buffer if the file is already open, so
         // edits made while stepping keep it in sync (#2583). Files opened
         // later are handled by the after_file_open hook.
-        // Anchored only while shown: the host keeps markers for the active
-        // window's buffers only. A background panel's matches are anchored
-        // when its window is back (`reanchorMatches`).
-        if (shown) ensureMatchMarker(result, buffersByPath);
+        ensureMatchMarker(result, buffersByPath);
         allResults.push(result);
         let fileIdx = streamingFileIndexByPath?.get(m.file);
         if (fileIdx === undefined) {
@@ -2555,21 +2552,6 @@ function showStatusFor(p: PanelState, msg: string): void {
   else p.pendingStatus = msg;
 }
 
-/** Re-anchor `p`'s matches in its (now active) window. The host keeps plugin
- *  markers for the active window's buffers only, so markers made for a
- *  panel are gone once its window has been in the background, and matches
- *  that arrived meanwhile have none yet. */
-function reanchorMatches(p: PanelState): void {
-  const byPath = windowBuffersByPath(p.windowId);
-  for (const r of p.searchResults) {
-    if (r.markerKey && r.markerBufferId && !editor.getMarker(r.markerBufferId, r.markerKey)) {
-      r.markerKey = undefined;
-      r.markerBufferId = undefined;
-    }
-    ensureMatchMarker(r, byPath);
-  }
-}
-
 /** Drop `p` from the per-window table, and its window-local context with it
  *  when it is the active window's panel. */
 function forgetPanel(p: PanelState): void {
@@ -2670,7 +2652,6 @@ editor.on("active_window_changed", (args) => {
   lastReplacedFiles = panel?.parked?.replacedFiles ?? new Set<string>();
   if (!panel) return;
   panel.parked = null;
-  reanchorMatches(panel);
   if (panel.pendingStatus) {
     editor.setStatus(panel.pendingStatus);
     panel.pendingStatus = null;
