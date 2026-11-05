@@ -372,6 +372,15 @@ impl Editor {
             .populate_plugin_state_snapshot(&mut snapshot);
         self.perf_counters.text_property_shares += shares;
         let active = self.active_window;
+        // Plugin markers live only in the snapshot, keyed by buffer id, which
+        // is unique editor-wide. Drop the markers of buffers that are closed —
+        // open in no window. Pruning against the active window's buffers
+        // instead dropped every marker in the other windows on the first
+        // refresh after a window switch, so a plugin's anchors in a window
+        // the user came back to were gone.
+        snapshot
+            .plugin_markers
+            .retain(|bid, _| self.windows.values().any(|w| w.buffers.get(bid).is_some()));
         snapshot.background_buffers = self
             .windows
             .iter()
@@ -7501,10 +7510,9 @@ impl Window {
             snapshot
                 .plugin_view_states
                 .retain(|bid, _| open_bids.contains(bid));
-            // Plugin markers live only in the snapshot; drop closed buffers'.
-            snapshot
-                .plugin_markers
-                .retain(|bid, _| open_bids.contains(bid));
+            // Plugin markers are pruned editor-wide, in
+            // `Editor::update_plugin_state_snapshot`: this window's buffers
+            // are not all the open ones.
         }
 
         // Merge from Rust-side plugin_state (source of truth for persisted state)

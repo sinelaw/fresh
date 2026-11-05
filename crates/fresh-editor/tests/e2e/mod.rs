@@ -181,6 +181,8 @@ pub mod one_buffer_per_file;
 pub mod pascal_indent;
 #[cfg(feature = "plugins")]
 pub mod placeholder_window_embed;
+#[cfg(feature = "plugins")]
+pub mod plugin_markers_across_windows;
 pub mod recovery_across_launch_modes;
 pub mod settings_localized_labels;
 pub mod suspend_process;
