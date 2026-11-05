@@ -1518,13 +1518,17 @@ impl crate::app::window::Window {
             // picked its language up at save time, so `languages.<lang>`
             // settings (tab size, use_tabs, …) did not apply while the new
             // file was being written (#3713).
+            //
+            // Without `default_language`: a name that matches nothing stays
+            // plain text, which is what lets save-time detection still read
+            // the shebang the user types into an extensionless script.
             let detected =
                 crate::primitives::detected_language::DetectedLanguage::from_path_with_fallback(
                     &display_path,
                     None,
                     &self.resources.grammar_registry,
                     &self.resources.config.languages,
-                    self.resources.config.default_language.as_deref(),
+                    None,
                     buffer.filesystem().as_ref(),
                 );
             let mut state = EditorState::from_buffer_with_language(buffer, detected);
