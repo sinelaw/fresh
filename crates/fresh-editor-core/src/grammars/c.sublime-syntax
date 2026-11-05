@@ -9,7 +9,7 @@
 # Vendored only to stay version-matched with cpp.sublime-syntax, which pulls
 # in ~50 `scope:source.c` contexts from it; mixing a new C++ grammar with
 # syntect's older bundled C would be a silent mismatch (issue #3644).
-# Vendored verbatim: no local modifications.
+# The grammar below is upstream's verbatim; only this header was added.
 # See the .LICENSE.txt beside this file.
 #
 # http://www.sublimetext.com/docs/3/syntax.html

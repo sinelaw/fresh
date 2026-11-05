@@ -3655,6 +3655,15 @@ mod tests {
             "    pass\n",
             "def g(match, case):\n",
             "    return match\n",
+            // `elif` scopes its keyword without pushing a sub-context, so the
+            // compound-statement context is still live for the rest of the
+            // line. This shape is real: CPython's `fractions.py` has it.
+            "if x:\n",
+            "    pass\n",
+            "elif match[\"align\"] is not None:\n",
+            "    pass\n",
+            "elif case != 1:\n",
+            "    pass\n",
         );
         let buffer = Buffer::from_str(content, 0, test_fs());
         let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
@@ -3666,6 +3675,8 @@ mod tests {
             ("match: int", "annotated name"),
             ("match[0]", "subscripted name"),
             ("match, case", "parameter name"),
+            ("match[\"align\"]", "subscript in an elif condition"),
+            ("case != 1", "comparison in an elif condition"),
         ] {
             let at = content.find(token).unwrap();
             assert_ne!(

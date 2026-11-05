@@ -211,7 +211,16 @@ pub const CPP_GRAMMAR: &str = include_str!("../../grammars/cpp.sublime-syntax");
 /// [`CPP_GRAMMAR`] purely to stay version-matched with it: the C++ grammar
 /// pulls in ~50 `scope:source.c` contexts, so pairing a new C++ with syntect's
 /// older bundled C would be a silent mismatch. Both are added after the
-/// defaults, so they win the reverse-order scope and extension lookups.
+/// defaults, so they win syntect's own reverse-order scope lookup. The
+/// editor's catalog index is the other way round (first-wins), which is why C
+/// is registered before C++ and why `.h` is forced to C++ in
+/// `rebuild_catalog`.
+///
+/// One knock-on: the vendored C++ advertises `C` (upstream's way of spelling
+/// "`.C` is C++"), and syntect compares extensions case-insensitively, so its
+/// `find_syntax_by_token("c")` now answers C++. That only reaches fenced
+/// ```c blocks in Markdown via `highlight_string`, where the C++ grammar is a
+/// superset; file resolution goes through the catalog and is unaffected.
 pub const C_GRAMMAR: &str = include_str!("../../grammars/c.sublime-syntax");
 
 /// Embedded Zig grammar (syntect doesn't include one)
@@ -1318,6 +1327,18 @@ impl GrammarRegistry {
                 extensions.retain(|e| e != "fish");
             }
 
+            // Likewise `.h`, which C, C++, Objective-C and Objective-C++ all
+            // advertise. C++ must own it in this index: `detected_language`
+            // then decides C vs C++ per file (sibling translation units,
+            // `compile_commands.json` — issue #3009), and a C++ base is what
+            // gives a bare header a tree-sitter language for indent and
+            // bracket matching. Without this, vendoring C/C++ (which appends
+            // them after the defaults, see `CPP_GRAMMAR`) would hand `.h` to
+            // whichever of the Objective-C grammars comes first instead.
+            if syntax.name != "C++" {
+                extensions.retain(|e| e != "h");
+            }
+
             catalog.push(GrammarEntry {
                 display_name: syntax.name.clone(),
                 language_id,
@@ -1924,11 +1945,12 @@ impl GrammarRegistry {
 impl Default for GrammarRegistry {
     fn default() -> Self {
         // Create with defaults and embedded grammars only (no user grammars).
-        // The defaults are re-added one by one, in their original order so the
-        // links between them stay valid, so that the soft keywords the bundled
-        // Python and C++ grammars lack can be patched in on the way through —
-        // exactly as `build.rs` does for the packdump the editor normally
-        // starts from (issues #3509, #3644).
+        // The defaults are re-added one by one so the soft keywords the bundled
+        // Python grammar lacks can be patched in on the way through — exactly
+        // as `build.rs` does for the packdump the editor normally starts from
+        // (issue #3509), keeping the two paths in agreement. Note this drops
+        // `into_builder`'s `path_syntaxes`, as `build.rs` explains; nothing in
+        // Fresh looks a grammar up by its own file path.
         let defaults = SyntaxSet::load_defaults_newlines();
         let mut builder = syntect::parsing::SyntaxSetBuilder::new();
         for syntax in defaults.into_builder().syntaxes() {
@@ -2213,6 +2235,44 @@ mod tests {
         }
     }
 
+    /// Vendoring C/C++ appends them after the defaults, which moves their
+    /// catalog entries to the end — and the catalog's extension index is
+    /// first-wins. So every extension they share with an earlier entry has to
+    /// be checked, not just the ones the vendoring was for: `.h` is claimed by
+    /// four grammars and regressed to Objective-C++ (losing its tree-sitter
+    /// language, and with it indent and bracket matching) until
+    /// `rebuild_catalog` forced it to C++.
+    #[test]
+    fn test_c_family_extensions_resolve_after_vendoring() {
+        for (path, registry) in [
+            ("default", Arc::new(GrammarRegistry::default())),
+            ("defaults_only", GrammarRegistry::defaults_only()),
+        ] {
+            // (file, display name, whether a tree-sitter language is attached)
+            for (file, want, want_ts) in [
+                ("a.h", "C++", true),
+                ("a.hpp", "C++", true),
+                ("a.cpp", "C++", true),
+                ("a.cc", "C++", true),
+                ("a.c", "C", true),
+            ] {
+                let entry = registry
+                    .find_by_path(Path::new(file), None)
+                    .unwrap_or_else(|| panic!("{path}: {file} should resolve"));
+                assert_eq!(
+                    entry.display_name, want,
+                    "{path}: {file} should resolve to {want}"
+                );
+                assert_eq!(
+                    entry.engines.tree_sitter.is_some(),
+                    want_ts,
+                    "{path}: {file} tree-sitter language presence should be {want_ts}; \
+                     it drives auto-indent and `<>` bracket matching"
+                );
+            }
+        }
+    }
+
     /// Python's `match`/`case` are patched into syntect's bundled grammar
     /// (issue #3509) because, unlike C/C++, upstream's implementation uses
     /// `branch`/`fail`, which syntect does not support. The patch must be
@@ -2224,9 +2284,9 @@ mod tests {
         use syntect::parsing::{ParseState, ScopeStack};
 
         // (grammar, snippet, token, expected scope prefix). The token is looked
-        // up on the snippet's last line; the earlier lines are the enclosing
-        // context the keyword needs — `co_return` is only a keyword inside a
-        // function body, and a `requires` clause follows a template header.
+        // up on the snippet's last line; any earlier lines are the enclosing
+        // context the keyword needs — a `case` arm only reads as one under a
+        // `match` header.
         let cases: &[(&str, &[&str], &str, &str)] = &[
             ("Python", &["match x:\n"], "match", "keyword.control"),
             (

@@ -239,10 +239,18 @@ fn generate_syntax_packdump(
     let out_dir = std::env::var("OUT_DIR")?;
     let dest_path = Path::new(&out_dir).join("default_syntaxes.packdump");
 
-    // Start with syntect's built-in defaults, re-adding each one in its
-    // original order so the `ContextId`s the packdump already links against
-    // keep pointing at the same contexts, and patch the soft keywords the
-    // bundled Python and C++ grammars are missing on the way through.
+    // Start with syntect's built-in defaults, patching the soft keywords the
+    // bundled Python grammar is missing on the way through. `into_builder`
+    // hands back definitions whose contexts are name-keyed maps, and `build()`
+    // re-numbers and re-links them all, so re-adding is safe; the original
+    // order is kept anyway, since the editor's catalog resolves extensions
+    // first-wins over it.
+    //
+    // One wrinkle: `SyntaxSetBuilder::new()` starts without the
+    // `path_syntaxes` map that `into_builder()` would have carried over, so
+    // `find_syntax_by_path` on the resulting set returns `None`. Nothing in
+    // Fresh uses it (grammars are found by extension, filename or scope) and
+    // syntect 5.3 exposes no way to repopulate it.
     let defaults = SyntaxSet::load_defaults_newlines();
     let mut builder = SyntaxSetBuilder::new();
     for syntax in defaults.into_builder().syntaxes() {
@@ -270,9 +278,14 @@ fn generate_syntax_packdump(
         ("src/grammars/csharp.sublime-syntax", "C#"),
         // Shadow syntect's bundled C/C++ pair, which predates the C++11/20
         // contextual keywords (`final`, `requires`, `concept`, `co_return`, …).
-        // C is listed first so the C++ grammar's `scope:source.c` includes bind
-        // to the matching C, and both come after the defaults so they win the
-        // reverse-order lookups (issue #3644).
+        // Both come after the defaults so they win syntect's reverse-order
+        // lookups (issue #3644).
+        //
+        // C before C++ matters for the editor's catalog, not for linking: the
+        // catalog's extension index is first-wins, so listing C first is what
+        // keeps `.c` on the C grammar. (`scope:source.c` resolves to whichever
+        // C is *last*, so the C++ grammar's ~50 includes bind to the vendored
+        // C either way.)
         ("src/grammars/c.sublime-syntax", "C"),
         ("src/grammars/cpp.sublime-syntax", "C++"),
         ("src/grammars/odin/Odin.sublime-syntax", "Odin"),

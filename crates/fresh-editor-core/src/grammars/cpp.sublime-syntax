@@ -9,7 +9,7 @@
 # Shadows syntect's bundled C++ grammar, which predates the C++11/20
 # contextual keywords (issue #3644). See the .LICENSE.txt beside this file.
 #
-# Vendored verbatim: no local modifications.
+# The grammar below is upstream's verbatim; only this header was added.
 #
 # http://www.sublimetext.com/docs/3/syntax.html
 name: C++
