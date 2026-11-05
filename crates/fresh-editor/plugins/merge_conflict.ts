@@ -268,7 +268,15 @@ function parseConflicts(content: string): ConflictBlock[] {
   // Supports optional base section (||||||| marker)
   // Key: use ^ anchors to ensure markers are at start of lines (multiline mode)
   // Note: use \r?\n to handle both LF and CRLF line endings
-  const conflictRegex = /^<<<<<<<[^\r\n]*\r?\n([\s\S]*?)(?:^\|\|\|\|\|\|\|[^\r\n]*\r?\n([\s\S]*?))?^=======\r?\n([\s\S]*?)^>>>>>>>[^\r\n]*$/gm;
+  //
+  // The closing marker swallows its own line terminator, so endOffset lands on
+  // the first byte *after* the conflict rather than on the newline that ends
+  // the `>>>>>>>` line. Each side's capture already includes the newline that
+  // terminates its last line, so leaving that trailing newline out of the block
+  // left it behind on every splice and added a blank line per resolved
+  // conflict (#3702). `$` is kept as the last alternative so a conflict that
+  // ends at EOF without a trailing newline still matches.
+  const conflictRegex = /^<<<<<<<[^\r\n]*\r?\n([\s\S]*?)(?:^\|\|\|\|\|\|\|[^\r\n]*\r?\n([\s\S]*?))?^=======\r?\n([\s\S]*?)^>>>>>>>[^\r\n]*(?:\r?\n|$)/gm;
 
   let match;
   let index = 0;
@@ -618,8 +626,10 @@ function buildResultFileEntries(): TextPropertyEntry[] {
     if (conflict.resolved && conflict.resolvedContent !== undefined) {
       replacement = conflict.resolvedContent;
     } else {
-      // Show unresolved conflict with markers
-      replacement = `<<<<<<< OURS\n${conflict.ours || ""}\n=======\n${conflict.theirs || ""}\n>>>>>>> THEIRS`;
+      // Show unresolved conflict with markers. Each side already ends with its
+      // own newline, and the block now owns the newline after `>>>>>>>`, so the
+      // replacement neither adds separators nor drops the closing terminator.
+      replacement = `<<<<<<< OURS\n${conflict.ours || ""}=======\n${conflict.theirs || ""}>>>>>>> THEIRS\n`;
     }
 
     // Replace the conflict region in the result
