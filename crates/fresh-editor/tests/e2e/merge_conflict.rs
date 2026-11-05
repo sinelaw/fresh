@@ -1272,6 +1272,12 @@ fn setup_git_conflict_from(
 
     // Commit signing would break commits in CI sandboxes.
     git(&["config", "commit.gpgsign", "false"]);
+    // These tests assert the resolved file's exact bytes, so the fixture must
+    // not inherit the platform's end-of-line policy. Git for Windows defaults
+    // to core.autocrlf=true, which rewrites the conflicted working tree as
+    // CRLF and made the LF expectations below fail on the Windows runners.
+    // Pin it off so `git merge` writes back exactly the bytes written here.
+    git(&["config", "core.autocrlf", "false"]);
 
     fs::write(&conflict_file, base).unwrap();
     git(&["add", "."]);
@@ -1332,8 +1338,19 @@ fn resolve_conflict_via_palette(project_root: &Path, conflict_file: &Path, actio
     // gate on the RESULT panel rather than on a fixed number of ticks.
     harness.wait_for_screen_contains("*RESULT*").unwrap();
 
+    // The resolution lands asynchronously, so gate on the plugin reporting every
+    // conflict resolved — the precondition Save & Exit itself checks. Waiting on
+    // "resolved" alone would not do: the start status reads "(0 auto-resolved)",
+    // so such a wait is already satisfied here and would gate nothing
+    // (CONTRIBUTING.md Code §16). "Press 's' to save" is printed only once no
+    // conflict is left unresolved, and the assert keeps that gate honest.
+    const ALL_RESOLVED: &str = "Press 's' to save";
+    assert!(
+        !harness.screen_to_string().contains(ALL_RESOLVED),
+        "nothing was left to resolve before {action} ran, so the wait below would gate nothing"
+    );
     harness.run_palette_command(action).unwrap();
-    harness.wait_for_screen_contains("resolved").unwrap();
+    harness.wait_for_screen_contains(ALL_RESOLVED).unwrap();
 
     harness.run_palette_command("Merge: Save & Exit").unwrap();
     // Save & Exit writes the resolved text back into the source buffer and
