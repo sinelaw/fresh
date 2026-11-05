@@ -608,6 +608,16 @@ pub struct BufferInfo {
     pub compose_width: Option<u16>,
     /// The detected language for this buffer (e.g., "rust", "markdown", "text")
     pub language: String,
+    /// Columns per indentation level for this buffer: `editor.tab_size`,
+    /// overridden by `languages.<language>.tab_size`, `.editorconfig`, or a
+    /// per-buffer "Set Tab Size". A plugin that inserts indentation itself
+    /// should use this rather than a fixed width.
+    #[serde(default = "default_buffer_tab_size")]
+    pub tab_size: usize,
+    /// Whether indentation in this buffer is a tab character rather than
+    /// `tab_size` spaces, resolved the same way as `tab_size`.
+    #[serde(default)]
+    pub use_tabs: bool,
     /// Whether this tab was opened in "preview" (ephemeral) mode — true when
     /// opened via single-click in the file explorer and not yet committed
     /// (no edit, no double-click, no tab-click, no layout change). Plugins
@@ -625,6 +635,10 @@ pub struct BufferInfo {
     #[serde(default)]
     #[ts(type = "number[]")]
     pub splits: Vec<SplitId>,
+}
+
+fn default_buffer_tab_size() -> usize {
+    4
 }
 
 fn serialize_path<S: serde::Serializer>(path: &Option<PathBuf>, s: S) -> Result<S::Ok, S::Error> {
@@ -8886,6 +8900,8 @@ mod tests {
                 is_composing_in_any_split: false,
                 compose_width: None,
                 language: "text".to_string(),
+                tab_size: 4,
+                use_tabs: false,
                 is_preview: false,
                 splits: Vec::new(),
             };
@@ -8937,6 +8953,8 @@ mod tests {
                     is_composing_in_any_split: false,
                     compose_width: None,
                     language: "text".to_string(),
+                    tab_size: 4,
+                    use_tabs: false,
                     is_preview: false,
                     splits: Vec::new(),
                 },
@@ -8958,6 +8976,8 @@ mod tests {
                     is_composing_in_any_split: false,
                     compose_width: None,
                     language: "text".to_string(),
+                    tab_size: 4,
+                    use_tabs: false,
                     is_preview: false,
                     splits: Vec::new(),
                 },
@@ -8981,6 +9001,8 @@ mod tests {
                     is_composing_in_any_split: false,
                     compose_width: None,
                     language: "text".to_string(),
+                    tab_size: 4,
+                    use_tabs: false,
                     is_preview: false,
                     splits: Vec::new(),
                 },

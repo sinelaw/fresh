@@ -17,6 +17,15 @@ use std::time::Duration;
 /// Create a harness with the markdown_source plugin loaded.
 /// Waits for the plugin to fully initialise (mode defined + event handler registered).
 fn markdown_source_harness(width: u16, height: u16) -> (EditorTestHarness, tempfile::TempDir) {
+    markdown_source_harness_with_config(width, height, Default::default())
+}
+
+/// [`markdown_source_harness`] with a given config.
+fn markdown_source_harness_with_config(
+    width: u16,
+    height: u16,
+    config: fresh::config::Config,
+) -> (EditorTestHarness, tempfile::TempDir) {
     init_tracing_from_env();
 
     let temp_dir = tempfile::TempDir::new().unwrap();
@@ -28,13 +37,9 @@ fn markdown_source_harness(width: u16, height: u16) -> (EditorTestHarness, tempf
     copy_plugin(&plugins_dir, "markdown_source");
     copy_plugin_lib(&plugins_dir);
 
-    let mut harness = EditorTestHarness::with_config_and_working_dir(
-        width,
-        height,
-        Default::default(),
-        project_root,
-    )
-    .unwrap();
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(width, height, config, project_root)
+            .unwrap();
 
     // Wait for the plugin to be fully loaded.
     // The plugin registers the "markdown-source" mode at load time via defineMode.
@@ -320,6 +325,116 @@ fn test_tab_inserts_spaces() {
             h.get_buffer_content()
                 .is_some_and(|c| c.starts_with("    text"))
         })
+        .unwrap();
+    harness.assert_no_plugin_errors();
+}
+
+/// Tab follows `editor.tab_size` instead of a fixed four columns, both for a
+/// plain line and for the indent + bullet cycle on a blank list item, and
+/// Shift+Tab takes the same width back off (#3713).
+#[test]
+fn test_tab_follows_editor_tab_size() {
+    let mut config = fresh::config::Config::default();
+    config.editor.tab_size = 2;
+    let (mut harness, _temp_dir) = markdown_source_harness_with_config(80, 24, config);
+
+    let fixture = TestFixture::new("tab2.md", "text\n- \n").unwrap();
+    open_md_and_wait_for_mode(&mut harness, &fixture.path);
+
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| {
+            h.get_buffer_content()
+                .is_some_and(|c| c.starts_with("  text\n"))
+        })
+        .unwrap();
+
+    // Blank list item: indent by one level and cycle the bullet.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| {
+            h.get_buffer_content()
+                .is_some_and(|c| c == "  text\n  + \n")
+        })
+        .unwrap();
+
+    // Shift+Tab removes that level again and cycles the bullet back.
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .wait_until(|h| h.get_buffer_content().is_some_and(|c| c == "  text\n- \n"))
+        .unwrap();
+    harness.assert_no_plugin_errors();
+}
+
+/// `languages.markdown.tab_size` and `.use_tabs` override the global setting
+/// for the plugin's own indentation too (#3713).
+#[test]
+fn test_tab_follows_markdown_language_settings() {
+    let mut config = fresh::config::Config::default();
+    config.editor.tab_size = 2;
+    config.languages.get_mut("markdown").unwrap().tab_size = Some(3);
+    let (mut harness, _temp_dir) = markdown_source_harness_with_config(80, 24, config.clone());
+
+    let fixture = TestFixture::new("tab3.md", "text\n").unwrap();
+    open_md_and_wait_for_mode(&mut harness, &fixture.path);
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.get_buffer_content().is_some_and(|c| c == "   text\n"))
+        .unwrap();
+    harness.assert_no_plugin_errors();
+
+    config.languages.get_mut("markdown").unwrap().use_tabs = Some(true);
+    let (mut harness, _temp_dir) = markdown_source_harness_with_config(80, 24, config);
+    let fixture = TestFixture::new("tabs.md", "text\n- \n").unwrap();
+    open_md_and_wait_for_mode(&mut harness, &fixture.path);
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| {
+            h.get_buffer_content()
+                .is_some_and(|c| c.starts_with("\ttext\n"))
+        })
+        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| {
+            h.get_buffer_content()
+                .is_some_and(|c| c == "\ttext\n\t+ \n")
+        })
+        .unwrap();
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .wait_until(|h| h.get_buffer_content().is_some_and(|c| c == "\ttext\n- \n"))
+        .unwrap();
+    harness.assert_no_plugin_errors();
+}
+
+/// A Markdown file named on open but not yet on disk gets the
+/// `languages.markdown` settings from the start, not only once it has been
+/// saved (#3713).
+#[test]
+fn test_new_markdown_file_uses_markdown_language_settings() {
+    let mut config = fresh::config::Config::default();
+    config.languages.get_mut("markdown").unwrap().tab_size = Some(3);
+    let (mut harness, temp_dir) = markdown_source_harness_with_config(80, 24, config);
+
+    let path = temp_dir.path().join("not_yet_saved.md");
+    open_md_and_wait_for_mode(&mut harness, &path);
+    harness.type_text("text").unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.get_buffer_content().is_some_and(|c| c == "   text"))
         .unwrap();
     harness.assert_no_plugin_errors();
 }

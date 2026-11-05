@@ -1508,11 +1508,26 @@ impl crate::app::window::Window {
             EditorState::from_buffer_with_language(buffer, detected)
         } else {
             // File doesn't exist - create empty buffer with the file path set
-            let mut state = EditorState::new_with_path(
+            let buffer = crate::model::buffer::Buffer::new_with_path(
                 self.resources.config.editor.large_file_threshold_bytes as usize,
                 Arc::clone(&self.authority().filesystem),
                 path.to_path_buf(),
             );
+            // Detect the language from the name the user is about to create,
+            // as for an existing file. Left as plain text, the buffer only
+            // picked its language up at save time, so `languages.<lang>`
+            // settings (tab size, use_tabs, …) did not apply while the new
+            // file was being written (#3713).
+            let detected =
+                crate::primitives::detected_language::DetectedLanguage::from_path_with_fallback(
+                    &display_path,
+                    None,
+                    &self.resources.grammar_registry,
+                    &self.resources.config.languages,
+                    self.resources.config.default_language.as_deref(),
+                    buffer.filesystem().as_ref(),
+                );
+            let mut state = EditorState::from_buffer_with_language(buffer, detected);
             // Honor the configured default line ending for the file the
             // user is about to create — without this the buffer keeps the
             // hard-coded LF default and saving a brand-new file ignored

@@ -7099,6 +7099,8 @@ impl Window {
                     is_composing_in_any_split: false,
                     compose_width: None,
                     language: state.language.clone(),
+                    tab_size: state.buffer_settings.tab_size,
+                    use_tabs: state.buffer_settings.use_tabs,
                     is_preview: self.is_buffer_preview(*buffer_id),
                     splits: Vec::new(),
                 }
@@ -7256,6 +7258,8 @@ impl Window {
                 is_composing_in_any_split,
                 compose_width,
                 language: state.language.clone(),
+                tab_size: state.buffer_settings.tab_size,
+                use_tabs: state.buffer_settings.use_tabs,
                 is_preview,
                 splits,
             };
