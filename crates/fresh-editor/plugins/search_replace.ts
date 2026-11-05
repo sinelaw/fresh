@@ -80,6 +80,18 @@ interface PanelState {
   searchGeneration: number;
   /** This panel's in-flight search, kept so a superseding one can cancel it. */
   searchHandle: SearchHandle | null;
+  /** Debounce generation for re-searches of this panel: a newer request
+   *  drops an older pending one, but never another window's. */
+  debounceGeneration: number;
+  /** The re-search an edit started, while it runs. It empties the result
+   *  set until the new one lands and then puts the selection back, so a step
+   *  pressed meanwhile waits for it instead of being dropped as "Searching…". */
+  searchAfterEdit: Promise<void> | null;
+  /** Lock against re-entrant Replace All / Replace Scoped on this panel. */
+  replaceInProgress: boolean;
+  /** A status message for this panel's window, held while it was in the
+   *  background (status messages are per window) and shown on return. */
+  pendingStatus: string | null;
   /** The per-window context the module-level `resumeAnchor` and
    *  `lastReplacedFiles` hold for the active panel, parked here while the
    *  panel's window is in the background. */
@@ -240,7 +252,6 @@ const MIN_WIDTH = 60;
 const DEFAULT_WIDTH = 100;
 const SEARCH_DEBOUNCE_MS = 150;
 
-let searchDebounceGeneration = 0;
 
 /** Most-recent-first history of search patterns, capped at HISTORY_MAX.
  *  Up arrow in the search field walks back into older entries; Down
@@ -1364,7 +1375,10 @@ async function performSearch(
         // Anchor the match to its buffer if the file is already open, so
         // edits made while stepping keep it in sync (#2583). Files opened
         // later are handled by the after_file_open hook.
-        ensureMatchMarker(result, buffersByPath);
+        // Anchored only while shown: the host keeps markers for the active
+        // window's buffers only. A background panel's matches are anchored
+        // when its window is back (`reanchorMatches`).
+        if (shown) ensureMatchMarker(result, buffersByPath);
         allResults.push(result);
         let fileIdx = streamingFileIndexByPath?.get(m.file);
         if (fileIdx === undefined) {
@@ -1513,22 +1527,22 @@ async function performSearch(
 
     p.truncated = truncated;
 
-    // Status messages are per window: one for a background panel would land
-    // in the window the user is in.
+    // Status messages are per window: one for a background panel is held
+    // until its window is back (`showStatusFor`).
 
-    if (!silent && p === panel) {
+    if (!silent) {
       if (allResults.length === 0) {
-        editor.setStatus(editor.t("status.no_matches", { pattern }));
+        showStatusFor(p, editor.t("status.no_matches", { pattern }));
       } else if (p.truncated) {
-        editor.setStatus(editor.t("status.found_matches", { count: String(allResults.length) }) + " " + editor.t("panel.limited"));
+        showStatusFor(p, editor.t("status.found_matches", { count: String(allResults.length) }) + " " + editor.t("panel.limited"));
       } else {
-        editor.setStatus(editor.t("status.found_matches", { count: String(allResults.length) }));
+        showStatusFor(p, editor.t("status.found_matches", { count: String(allResults.length) }));
       }
     }
     return allResults;
   } catch (e) {
-    if (!silent && p === panel) {
-      editor.setStatus(editor.t("status.search_error", { error: String(e) }));
+    if (!silent) {
+      showStatusFor(p, editor.t("status.search_error", { error: String(e) }));
     }
     return [];
   }
@@ -1655,6 +1669,10 @@ async function openPanelInner(opts?: { allFiles?: boolean }): Promise<void> {
       needsRedraw: false,
       searchGeneration: 0,
       searchHandle: null,
+      debounceGeneration: 0,
+      searchAfterEdit: null,
+      replaceInProgress: false,
+      pendingStatus: null,
       parked: null,
       resultsBufferId: result.bufferId,
       sourceSplitId,
@@ -1778,7 +1796,13 @@ async function executeReplacements(results?: SearchResult[]): Promise<string> {
   }
 
   if (interrupted) {
-    editor.debug(`Replacement stopped by a window switch after ${filesModified} file(s)`);
+    // Said in the panel's window when the user is back there (the caller
+    // holds the message), so a partial replace is never silent.
+    return editor.t("status.replace_interrupted", {
+      count: String(replacementsCount),
+      files: String(filesModified),
+      total: String(groupList.length),
+    });
   }
   if (errors.length > 0) {
     editor.debug(`Replacement errors: ${errors.join(", ")}`);
@@ -1855,10 +1879,6 @@ function flatIndexAtLocation(at: { file: string; byte: number }): number {
   return found;
 }
 
-/** The re-search an edit started, while it runs. It empties the result set
- *  until the new one lands and then puts the selection back, so a step
- *  pressed meanwhile waits for it instead of being dropped as "Searching…". */
-let searchAfterEdit: Promise<void> | null = null;
 
 /** Re-run the search. `keepPosition` is for the re-search an edit starts:
  *  the user did not ask for it, so their place in the results survives it.
@@ -1875,7 +1895,7 @@ async function rerunSearch(keepPosition = false): Promise<void> {
   // `performSearch` bumps the panel's search generation and cancels the
   // prior handle; the older in-flight search sees the mismatch on its next
   // pump tick and bails out without writing to panel state.
-  searchDebounceGeneration++;
+  p.debounceGeneration++;
   // The generation this rerunSearch will own once performSearch increments
   // it. If a newer search of this panel slots in while we're awaiting, the
   // generation moves past `myGen` and this stale invocation doesn't
@@ -1917,20 +1937,22 @@ async function rerunSearch(keepPosition = false): Promise<void> {
 }
 
 function rerunSearchDebounced(keepPosition = false): void {
-  const gen = ++searchDebounceGeneration;
   const owner = panel;
+  if (!owner) return;
+  const gen = ++owner.debounceGeneration;
   editor.delay(SEARCH_DEBOUNCE_MS).then(() => {
-    if (gen !== searchDebounceGeneration) return;
+    if (gen !== owner.debounceGeneration) return;
     if (panel !== owner) {
-      // Asked for in another window: run it when that window is back.
-      if (owner) owner.stale = true;
+      // Asked for in a window the user has since left: run it when that
+      // window is back.
+      owner.stale = true;
       return;
     }
     const run = rerunSearch(keepPosition);
     if (!keepPosition) return;
-    searchAfterEdit = run;
+    owner.searchAfterEdit = run;
     run.finally(() => {
-      if (searchAfterEdit === run) searchAfterEdit = null;
+      if (owner.searchAfterEdit === run) owner.searchAfterEdit = null;
     });
   });
 }
@@ -1940,7 +1962,7 @@ function rerunSearchDebounced(keepPosition = false): void {
 async function rerunSearchQuiet(p: PanelState | null = panel): Promise<void> {
   if (!p || !p.searchPattern) return;
   if (p.busy) return;
-  searchDebounceGeneration++;
+  p.debounceGeneration++;
   p.busy = true;
   const myGen = p.searchGeneration + 1;
   const results = await performSearch(p, p.searchPattern, true);
@@ -2123,7 +2145,6 @@ function settleConfirmDialog(ok: boolean, unmount = true): void {
  *  once the search finishes — the host queues each keystroke and
  *  drains them all when the JS event loop frees up; by then
  *  `panel.busy` is false so the busy guard doesn't fire. */
-let replaceInProgress = false;
 
 async function doReplaceAll(): Promise<void> {
   if (!panel) return;
@@ -2135,16 +2156,17 @@ async function doReplaceAll(): Promise<void> {
     editor.setStatus(editor.t("status.replace_wait_for_search"));
     return;
   }
-  if (replaceInProgress) {
+  if (panel.replaceInProgress) {
     // First Alt+Enter is already showing its prompt or running the
     // rewrites. Drop the duplicate so we don't stack prompts.
     return;
   }
-  replaceInProgress = true;
+  const owner = panel;
+  owner.replaceInProgress = true;
   try {
     await doReplaceAllInner();
   } finally {
-    replaceInProgress = false;
+    owner.replaceInProgress = false;
   }
 }
 
@@ -2164,15 +2186,14 @@ async function doReplaceAllInner(): Promise<void> {
   const fileCount = new Set(selected.map(r => r.match.file)).size;
   const owner = panel;
   if (!await confirmReplace(selected.length, fileCount)) {
-    editor.setStatus(editor.t("status.replace_cancelled"));
+    if (panel === owner) editor.setStatus(editor.t("status.replace_cancelled"));
     return;
   }
   if (!panel || panel !== owner) return;
   panel.busy = true;
   editor.setStatus(editor.t("status.replacing", { count: String(selected.length) }));
   const statusMsg = await executeReplacements(selected);
-  // Status messages are per window; the user may have switched meanwhile.
-  if (panel === owner) editor.setStatus(statusMsg);
+  showStatusFor(owner, statusMsg);
   // Clear stale results before re-searching: the byte offsets in
   // `panel.searchResults` now point at positions in the pre-replacement
   // file and must never be re-used (see bug #4 — a second Alt+Enter would
@@ -2192,12 +2213,13 @@ async function doReplaceScoped(): Promise<void> {
     editor.setStatus(editor.t("status.replace_wait_for_search"));
     return;
   }
-  if (replaceInProgress) return;
-  replaceInProgress = true;
+  if (panel.replaceInProgress) return;
+  const owner = panel;
+  owner.replaceInProgress = true;
   try {
     await doReplaceScopedInner();
   } finally {
-    replaceInProgress = false;
+    owner.replaceInProgress = false;
   }
 }
 
@@ -2225,7 +2247,7 @@ async function doReplaceScopedInner(): Promise<void> {
   const fileCount = new Set(toReplace.map(r => r.match.file)).size;
   const owner = panel;
   if (!await confirmReplace(toReplace.length, fileCount)) {
-    editor.setStatus(editor.t("status.replace_cancelled"));
+    if (panel === owner) editor.setStatus(editor.t("status.replace_cancelled"));
     return;
   }
   if (!panel || panel !== owner) return;
@@ -2233,7 +2255,7 @@ async function doReplaceScopedInner(): Promise<void> {
   panel.busy = true;
   editor.setStatus(editor.t("status.replacing", { count: String(toReplace.length) }));
   const statusMsg = await executeReplacements(toReplace);
-  if (panel === owner) editor.setStatus(statusMsg); // see doReplaceAllInner
+  showStatusFor(owner, statusMsg);
   // See doReplaceAll — clear stale offsets and drop busy before re-searching.
   withPanel(owner, clearMatchMarkers);
   owner.searchResults = [];
@@ -2423,8 +2445,14 @@ async function jumpToMatch(flat: FlatItem[], flatIdx: number): Promise<void> {
 }
 
 function navigateMatch(dir: 1 | -1): void {
-  if (searchAfterEdit) {
-    searchAfterEdit.then(() => navigateMatch(dir));
+  const waitFor = panel?.searchAfterEdit;
+  if (waitFor) {
+    // This window's own re-search; a step is dropped if the user has left
+    // the window by the time it lands.
+    const p = panel;
+    waitFor.then(() => {
+      if (panel === p) navigateMatch(dir);
+    });
     return;
   }
   if (!panel || panel.searchResults.length === 0) {
@@ -2518,6 +2546,28 @@ function search_replace_close(): void {
   // shows "(unsaved buffer)" instead of the real filename.
   editor.focusSplit(sourceSplitId);
   editor.setStatus(editor.t("status.closed"));
+}
+
+/** Show `msg` in `p`'s window: now if it is the active one, else when the
+ *  user is back there (status messages are per window). */
+function showStatusFor(p: PanelState, msg: string): void {
+  if (panel === p) editor.setStatus(msg);
+  else p.pendingStatus = msg;
+}
+
+/** Re-anchor `p`'s matches in its (now active) window. The host keeps plugin
+ *  markers for the active window's buffers only, so markers made for a
+ *  panel are gone once its window has been in the background, and matches
+ *  that arrived meanwhile have none yet. */
+function reanchorMatches(p: PanelState): void {
+  const byPath = windowBuffersByPath(p.windowId);
+  for (const r of p.searchResults) {
+    if (r.markerKey && r.markerBufferId && !editor.getMarker(r.markerBufferId, r.markerKey)) {
+      r.markerKey = undefined;
+      r.markerBufferId = undefined;
+    }
+    ensureMatchMarker(r, byPath);
+  }
 }
 
 /** Drop `p` from the per-window table, and its window-local context with it
@@ -2620,6 +2670,11 @@ editor.on("active_window_changed", (args) => {
   lastReplacedFiles = panel?.parked?.replacedFiles ?? new Set<string>();
   if (!panel) return;
   panel.parked = null;
+  reanchorMatches(panel);
+  if (panel.pendingStatus) {
+    editor.setStatus(panel.pendingStatus);
+    panel.pendingStatus = null;
+  }
   if (panel.stale) {
     // A re-search was asked for while the window was in the background.
     panel.stale = false;
@@ -2649,7 +2704,7 @@ editor.on("buffer_modified", (args) => {
   const p = panels.get(args.window_id);
   if (!p || !p.searchPattern || args.buffer_id === p.resultsBufferId) return true;
   if (p === panel) {
-    if (!replaceInProgress && panelWatchesBuffer(args.buffer_id)) rerunSearchDebounced(true);
+    if (!p.replaceInProgress && panelWatchesBuffer(args.buffer_id)) rerunSearchDebounced(true);
     return true;
   }
   // A background window's file changed: re-search when the window is back.
