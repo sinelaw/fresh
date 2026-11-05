@@ -4203,6 +4203,8 @@ fn test_search_replace_panel_is_per_window() {
 #[test]
 fn test_search_replace_search_continues_in_the_background() {
     const FILES: usize = 5000;
+    // Result rows show paths with the platform's separator.
+    let sep = std::path::MAIN_SEPARATOR;
     let (temp_dir, project_root) = setup_search_replace_project();
     // Enough files that the streaming search spans many pump ticks.
     let big = project_root.join("big");
@@ -4259,7 +4261,7 @@ fn test_search_replace_search_continues_in_the_background() {
         .unwrap();
     let screen_b = harness.screen_to_string();
     assert!(
-        !screen_b.contains("big/"),
+        !screen_b.contains(&format!("big{sep}")),
         "B's panel shows only B's files:\n{screen_b}"
     );
 
@@ -4271,8 +4273,8 @@ fn test_search_replace_search_continues_in_the_background() {
     let screen = harness.screen_to_string();
     let abs_prefix = project_root.to_string_lossy().to_string();
     assert!(
-        !screen.contains(&abs_prefix) && !screen.contains("many/"),
+        !screen.contains(&abs_prefix) && !screen.contains(&format!("many{sep}")),
         "A's results should be A's files, relative to A's root:\n{screen}"
     );
-    harness.assert_screen_contains("big/f0.txt:1 - zqxneedle 0");
+    harness.assert_screen_contains(&format!("big{sep}f0.txt:1 - zqxneedle 0"));
 }
