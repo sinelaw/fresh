@@ -206,7 +206,12 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
             };
             fe::ChainPart {
                 runs: vec![
-                    (seg.name.clone(), pair("syntax.keyword", ground)),
+                    // A folded segment is a directory name like any other:
+                    // the explorer's directory colour (#3697).
+                    (
+                        seg.name.clone(),
+                        pair("ui.file_explorer_directory_fg", ground),
+                    ),
                     ("/".to_string(), pair("editor.line_number_fg", ground)),
                 ],
                 path: seg.path.clone(),
