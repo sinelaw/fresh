@@ -1547,6 +1547,8 @@
   "settings.save_failed_unchanged": "Váš konfigurační soubor zůstal beze změny, takže jej můžete opravit.",
   "settings.save_failed_open_hint": "Stiskněte Esc pro otevření konfiguračního souboru a jeho opravu.",
   "settings.field.editor.auto_close": "Automatické uzavírání",
+  "settings.field.editor.auto_hide_tab_bar": "Automaticky skrýt lištu karet",
+  "settings.field.editor.auto_hide_tab_bar_desc": "Skrýt lištu karet, dokud okno zobrazuje jediný soubor: jeden panel s jednou kartou. Znovu se objeví, jakmile se otevře druhá karta nebo panel. Nemá vliv, když je lišta karet vypnutá. Výchozí: false",
   "settings.field.editor.whitespace_show": "Zobrazit bílé znaky",
   "settings.field.editor.whitespace_spaces_inner": "Vnitřní mezery",
   "settings.field.editor.whitespace_spaces_leading": "Úvodní mezery",

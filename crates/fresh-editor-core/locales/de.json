@@ -1540,6 +1540,8 @@
   "settings.save_failed_unchanged": "Ihre Konfigurationsdatei wurde nicht verändert, damit Sie sie korrigieren können.",
   "settings.save_failed_open_hint": "Drücken Sie Esc, um Ihre Konfigurationsdatei zu öffnen und zu korrigieren.",
   "settings.field.editor.auto_close": "Automatisches Schließen",
+  "settings.field.editor.auto_hide_tab_bar": "Tab-Leiste automatisch ausblenden",
+  "settings.field.editor.auto_hide_tab_bar_desc": "Die Tab-Leiste ausblenden, solange das Fenster eine einzige Datei zeigt: ein Bereich mit einem Tab. Sie erscheint wieder, sobald ein zweiter Tab oder Bereich geöffnet wird. Wirkungslos, solange die Tab-Leiste ausgeschaltet ist. Standard: false",
   "settings.field.editor.whitespace_show": "Leerzeichen anzeigen",
   "settings.field.editor.whitespace_spaces_inner": "Innere Leerzeichen",
   "settings.field.editor.whitespace_spaces_leading": "Führende Leerzeichen",

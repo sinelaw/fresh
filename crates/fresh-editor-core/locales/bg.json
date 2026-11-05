@@ -1497,6 +1497,8 @@
   "settings.failed_to_open": "Неуспешно отваряне на настройките: %{error}",
   "settings.failed_to_save": "Неуспешен запис на настройките: %{error}",
   "settings.field.editor.auto_close": "Автоматично затваряне",
+  "settings.field.editor.auto_hide_tab_bar": "Автоматично скриване на лентата с раздели",
+  "settings.field.editor.auto_hide_tab_bar_desc": "Скриване на лентата с раздели, докато прозорецът показва един файл: един панел с един раздел. Тя се появява отново, щом се отвори втори раздел или панел. Няма ефект, докато лентата с раздели е изключена. Стандартно: false",
   "settings.field.editor.whitespace_show": "Показване на интервалите",
   "settings.field.editor.whitespace_spaces_inner": "Вътрешни интервали",
   "settings.field.editor.whitespace_spaces_leading": "Начални интервали",

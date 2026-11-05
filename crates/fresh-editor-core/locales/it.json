@@ -1540,6 +1540,8 @@
   "settings.save_failed_unchanged": "Il file di configurazione non è stato modificato così puoi correggerlo.",
   "settings.save_failed_open_hint": "Premi Esc per aprire il file di configurazione e correggerlo.",
   "settings.field.editor.auto_close": "Chiusura automatica",
+  "settings.field.editor.auto_hide_tab_bar": "Nascondi automaticamente la barra delle schede",
+  "settings.field.editor.auto_hide_tab_bar_desc": "Nasconde la barra delle schede finché la finestra mostra un solo file: un riquadro con una scheda. Ricompare appena si apre una seconda scheda o un secondo riquadro. Non ha effetto se la barra delle schede è disattivata. Predefinito: false",
   "settings.field.editor.whitespace_show": "Mostra spazi bianchi",
   "settings.field.editor.whitespace_spaces_inner": "Spazi interni",
   "settings.field.editor.whitespace_spaces_leading": "Spazi iniziali",

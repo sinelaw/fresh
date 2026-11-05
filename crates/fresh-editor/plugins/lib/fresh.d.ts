@@ -4049,6 +4049,14 @@ interface EditorConfig {
 		*/
 		show_tab_bar?: boolean;
 		/**
+		* Hide the tab bar while the window shows a single file: one pane
+		* holding one tab. It comes back as soon as a second tab or pane opens.
+		* Has no effect while the tab bar is turned off. Default: false
+		*
+		* Default: `false`
+		*/
+		auto_hide_tab_bar?: boolean;
+		/**
 		* Show the status bar at the bottom. Can be toggled at any time.
 		* Default: true
 		*

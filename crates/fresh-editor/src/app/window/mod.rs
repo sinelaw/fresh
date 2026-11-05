@@ -3755,6 +3755,13 @@ impl Window {
         let Some((mgr, vs_map)) = self.buffers.splits() else {
             return HashMap::new();
         };
+        // `editor.auto_hide_tab_bar`: a window showing one file — one pane
+        // holding one tab — offers no tab bar (#3696).
+        let window = PaneChrome {
+            tabs: window.tabs
+                && !(self.resources.config.editor.auto_hide_tab_bar && self.shows_a_single_tab()),
+            ..window
+        };
         // A group's panels are panes too — they sit inside their outer
         // pane's interior, which is what `inner_group_leaf` says about them.
         let outer: std::collections::HashSet<LeafId> =
@@ -3790,6 +3797,38 @@ impl Window {
                 (leaf, PaneChrome::resolve(window, kind))
             })
             .collect()
+    }
+
+    /// Whether this window shows exactly one pane with at most one tab in
+    /// it, counting tabs the way the tab bar does (hidden buffers and the
+    /// gone don't count).
+    fn shows_a_single_tab(&self) -> bool {
+        use crate::view::split::TabTarget;
+        let Some((mgr, vs_map)) = self.buffers.splits() else {
+            return false;
+        };
+        let leaves = mgr.visible_leaves();
+        let [(leaf, _)] = leaves.as_slice() else {
+            return false;
+        };
+        let Some(vs) = vs_map.get(leaf) else {
+            return true;
+        };
+        let tabs = vs
+            .open_buffers
+            .iter()
+            .filter(|t| match t {
+                TabTarget::Group(_) => true,
+                TabTarget::Buffer(id) => {
+                    (self.buffers.get(id).is_some() || self.composite_buffers.contains_key(id))
+                        && !self
+                            .buffer_metadata
+                            .get(id)
+                            .is_some_and(|m| m.hidden_from_tabs)
+                }
+            })
+            .count();
+        tabs <= 1
     }
 
     /// Whether `split` is viewing terminal `buffer_id` in read-only scrollback.

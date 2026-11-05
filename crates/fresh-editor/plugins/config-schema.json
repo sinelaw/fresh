@@ -66,6 +66,7 @@
         "screensaver_idle_minutes": 5,
         "menu_bar_mnemonics": true,
         "show_tab_bar": true,
+        "auto_hide_tab_bar": false,
         "show_status_bar": true,
         "status_bar": {
           "left": [
@@ -556,6 +557,12 @@
           "description": "Show the tab bar of open files in each pane. Can be toggled at any time.\nDefault: true",
           "type": "boolean",
           "default": true,
+          "x-section": "Display"
+        },
+        "auto_hide_tab_bar": {
+          "description": "Hide the tab bar while the window shows a single file: one pane\nholding one tab. It comes back as soon as a second tab or pane opens.\nHas no effect while the tab bar is turned off. Default: false",
+          "type": "boolean",
+          "default": false,
           "x-section": "Display"
         },
         "show_status_bar": {

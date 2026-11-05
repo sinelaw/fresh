@@ -1540,6 +1540,8 @@
   "settings.save_failed_unchanged": "Tu archivo de configuración no se modificó para que puedas corregirlo.",
   "settings.save_failed_open_hint": "Pulsa Esc para abrir tu archivo de configuración y corregirlo.",
   "settings.field.editor.auto_close": "Cierre automático",
+  "settings.field.editor.auto_hide_tab_bar": "Ocultar automáticamente la barra de pestañas",
+  "settings.field.editor.auto_hide_tab_bar_desc": "Oculta la barra de pestañas mientras la ventana muestra un solo archivo: un panel con una pestaña. Vuelve a aparecer en cuanto se abre una segunda pestaña o panel. No tiene efecto mientras la barra de pestañas está desactivada. Predeterminado: false",
   "settings.field.editor.whitespace_show": "Mostrar espacios en blanco",
   "settings.field.editor.whitespace_spaces_inner": "Espacios interiores",
   "settings.field.editor.whitespace_spaces_leading": "Espacios iniciales",
