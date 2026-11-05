@@ -1439,3 +1439,160 @@ fn test_dismissing_hover_preserves_error_diagnostic_2601() -> anyhow::Result<()>
 
     Ok(())
 }
+
+/// Create a fake pull-only LSP server modelled on roslyn-language-server:
+/// - the first pull is empty (project still loading)
+/// - then it sends `workspace/diagnostic/refresh`, only if the client
+///   advertised `workspace.diagnostics.refreshSupport`
+/// - later pulls return the error
+fn create_spec_refresh_server_script(dir: &std::path::Path) -> std::path::PathBuf {
+    let script = r##"#!/bin/bash
+
+LOG_FILE="${1:-/tmp/fake_spec_refresh_log.txt}"
+> "$LOG_FILE"
+
+REFRESH_SUPPORT=0
+LOADED=0
+
+read_message() {
+    local content_length=0
+    while IFS=: read -r key value; do
+        key=$(echo "$key" | tr -d '\r\n')
+        value=$(echo "$value" | tr -d '\r\n ')
+        if [ "$key" = "Content-Length" ]; then
+            content_length=$value
+        fi
+        if [ -z "$key" ]; then
+            break
+        fi
+    done
+
+    if [ $content_length -gt 0 ]; then
+        dd bs=1 count=$content_length 2>/dev/null
+    fi
+}
+
+send_message() {
+    local message="$1"
+    local length=${#message}
+    printf "Content-Length: $length\r\n\r\n%s" "$message"
+}
+
+while true; do
+    msg=$(read_message)
+
+    if [ -z "$msg" ]; then
+        break
+    fi
+
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+
+    echo "RECV: method=$method id=$msg_id" >> "$LOG_FILE"
+
+    case "$method" in
+        "initialize")
+            if echo "$msg" | grep -q '"diagnostics":{"refreshSupport":true}'; then
+                REFRESH_SUPPORT=1
+                echo "CLIENT: workspace.diagnostics.refreshSupport" >> "$LOG_FILE"
+            fi
+            send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":{"capabilities":{"textDocumentSync":{"openClose":true,"change":2},"diagnosticProvider":{"interFileDependencies":true,"workspaceDiagnostics":false}}}}'
+            ;;
+        "textDocument/diagnostic")
+            if [ $LOADED -eq 0 ]; then
+                send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":{"kind":"full","resultId":"1","items":[]}}'
+                LOADED=1
+                if [ $REFRESH_SUPPORT -eq 1 ]; then
+                    send_message '{"jsonrpc":"2.0","id":1000,"method":"workspace/diagnostic/refresh","params":{}}'
+                    echo "SENT: workspace/diagnostic/refresh" >> "$LOG_FILE"
+                fi
+            else
+                send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":{"kind":"full","resultId":"2","items":[{"range":{"start":{"line":1,"character":17},"end":{"line":1,"character":24}},"severity":1,"message":"mismatched types"}]}}'
+                echo "SENT: pull result with 1 diagnostic" >> "$LOG_FILE"
+            fi
+            ;;
+        "shutdown")
+            send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":null}'
+            break
+            ;;
+        *)
+            # Only respond to requests, not to the client's refresh reply.
+            if [ -n "$method" ] && [ -n "$msg_id" ]; then
+                send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":null}'
+            fi
+            ;;
+    esac
+done
+"##;
+
+    let script_path = dir.join("fake_spec_refresh_server.sh");
+    std::fs::write(&script_path, script).expect("Failed to write spec refresh server script");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&script_path)
+            .expect("Failed to get script metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script_path, perms).expect("Failed to set script permissions");
+    }
+
+    script_path
+}
+
+/// Test diagnostics that appear after the first pull are shown via refresh
+/// when the server reads the spec key `workspace.diagnostics`.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses Bash-based fake LSP server
+fn test_spec_named_diagnostic_refresh_capability_shows_late_diagnostics() -> anyhow::Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let script_path = create_spec_refresh_server_script(temp_dir.path());
+    let log_file = temp_dir.path().join("spec_refresh_log.txt");
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(
+        &test_file,
+        "fn main() {\n    let x: i32 = \"hello\";\n    println!(\"{}\", x);\n}\n",
+    )?;
+
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: script_path.to_string_lossy().to_string(),
+            args: Some(vec![log_file.to_string_lossy().to_string()]),
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+            root_markers: Default::default(),
+            name: None,
+            only_features: None,
+            except_features: None,
+        }]),
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // The error only exists after the refresh-triggered re-pull.
+    harness.wait_until(|h| h.screen_to_string().contains("E:1"))?;
+
+    let log = std::fs::read_to_string(&log_file)?;
+    assert!(
+        log.contains("CLIENT: workspace.diagnostics.refreshSupport"),
+        "Expected the client to advertise workspace.diagnostics.refreshSupport.\nLog:\n{}",
+        log
+    );
+
+    Ok(())
+}
