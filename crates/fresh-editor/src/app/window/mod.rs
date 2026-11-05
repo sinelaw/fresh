@@ -4938,6 +4938,7 @@ impl Window {
         use crate::services::lsp::sync_policy::{decide_change_to_send, ChangeToSend, SyncState};
         let sync_state =
             |sh: &crate::services::lsp::manager::ServerHandle, text_available| SyncState {
+                server_sync: sh.capabilities.text_document_sync,
                 desynced: sh.handle.needs_full_resync(&path_for_resync),
                 has_capacity: sh.handle.has_command_capacity(),
                 text_available,
@@ -4960,11 +4961,13 @@ impl Window {
         for sh in lsp.get_handles_mut(&language) {
             let outgoing = match decide_change_to_send(sync_state(sh, resync_text.is_some())) {
                 ChangeToSend::FullText => {
-                    tracing::info!(
-                        "Resending full text of {} to '{}' after a dropped notification",
-                        uri.as_str(),
-                        sh.name
-                    );
+                    if sh.handle.needs_full_resync(&path_for_resync) {
+                        tracing::info!(
+                            "Resending full text of {} to '{}' after a dropped notification",
+                            uri.as_str(),
+                            sh.name
+                        );
+                    }
                     vec![lsp_types::TextDocumentContentChangeEvent {
                         range: None,
                         range_length: None,

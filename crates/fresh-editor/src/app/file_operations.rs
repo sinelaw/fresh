@@ -1421,6 +1421,13 @@ impl Editor {
                 text: content,
             };
             for sh in lsp.get_handles_mut(&language) {
+                // A server that declared `TextDocumentSyncKind.None` takes no
+                // didChange at all (#3436).
+                if sh.capabilities.text_document_sync
+                    == crate::services::lsp::sync_policy::ServerSync::None
+                {
+                    continue;
+                }
                 if let Err(e) = sh
                     .handle
                     .did_change(lsp_uri.clone(), vec![content_change.clone()])

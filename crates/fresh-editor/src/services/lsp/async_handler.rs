@@ -695,6 +695,7 @@ fn extract_capability_summary(caps: &ServerCapabilities) -> ServerCapabilitySumm
 
     ServerCapabilitySummary {
         initialized: false, // set to true by set_server_capabilities
+        text_document_sync: crate::services::lsp::sync_policy::ServerSync::from_capabilities(caps),
         hover: bool_or_options(&caps.hover_provider, |p| match p {
             lsp_types::HoverProviderCapability::Simple(v) => *v,
             lsp_types::HoverProviderCapability::Options(_) => true,
@@ -1056,6 +1057,12 @@ struct LspState {
 
     /// Document versions (shared with stdout reader for stale diagnostic filtering)
     document_versions: Arc<std::sync::Mutex<HashMap<PathBuf, i64>>>,
+
+    /// The handle's set of documents whose server copy has diverged (see
+    /// `LspHandle::desynced`). The task adds to it when it has to drop a
+    /// change it may not forward, so the editor's repair pass resends the
+    /// whole text.
+    desynced: Arc<std::sync::Mutex<std::collections::HashSet<PathBuf>>>,
 
     /// Track when didOpen was sent for each document to avoid race with didChange
     /// The LSP server needs time to process didOpen before it can handle didChange
@@ -1610,6 +1617,42 @@ impl LspState {
             }
             // Remove from pending_opens after grace period has passed
             self.pending_opens.lock().unwrap().remove(&path);
+        }
+
+        // What the server declared it wants (#3436). The editor already
+        // shapes each change to that kind; this catches the changes it
+        // shaped before the `initialize` reply told it, which waited in the
+        // queue and are only being replayed now.
+        let server_sync = self
+            .capabilities
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(crate::services::lsp::sync_policy::ServerSync::from_capabilities)
+            .unwrap_or_default();
+        match server_sync {
+            crate::services::lsp::sync_policy::ServerSync::None => {
+                tracing::trace!(
+                    "LSP ({}): server takes no didChange, dropping one",
+                    self.language
+                );
+                return Ok(());
+            }
+            crate::services::lsp::sync_policy::ServerSync::Full
+                if content_changes.iter().any(|c| c.range.is_some()) =>
+            {
+                // A Full-sync server reads `text` as the whole document, and
+                // a range edit cannot be turned into one here. Drop it and
+                // have the editor resend the whole text.
+                tracing::debug!(
+                    "LSP ({}): dropping a range edit for a full-sync server; \
+                     the whole text will be resent",
+                    self.language
+                );
+                self.desynced.lock().unwrap().insert(path);
+                return Ok(());
+            }
+            _ => {}
         }
 
         let new_version = {
@@ -3055,6 +3098,9 @@ struct LspTask {
     /// Document versions (shared with stdout reader for stale diagnostic filtering)
     document_versions: Arc<std::sync::Mutex<HashMap<PathBuf, i64>>>,
 
+    /// Shared with the handle; see `LspState::desynced`.
+    desynced: Arc<std::sync::Mutex<std::collections::HashSet<PathBuf>>>,
+
     /// Track when didOpen was sent for each document to avoid race with didChange
     /// The LSP server needs time to process didOpen before it can handle didChange
     pending_opens: HashMap<PathBuf, Instant>,
@@ -3103,6 +3149,7 @@ impl LspTask {
         stderr_log_path: std::path::PathBuf,
         language_id_overrides: HashMap<String, String>,
         document_versions: Arc<std::sync::Mutex<HashMap<PathBuf, i64>>>,
+        desynced: Arc<std::sync::Mutex<std::collections::HashSet<PathBuf>>>,
         long_running_spawner: Arc<dyn crate::services::remote::LongRunningSpawner>,
     ) -> Result<Self, String> {
         tracing::info!("Spawning async LSP server: {} {:?}", command, args);
@@ -3192,6 +3239,7 @@ impl LspTask {
             pending: HashMap::new(),
             capabilities: None,
             document_versions,
+            desynced,
             pending_opens: HashMap::new(),
             initialized: false,
             async_tx,
@@ -3312,6 +3360,7 @@ impl LspTask {
             next_id: Arc::new(AtomicI64::new(self.next_id)),
             capabilities: Arc::new(Mutex::new(self.capabilities)),
             document_versions: self.document_versions.clone(),
+            desynced: self.desynced.clone(),
             pending_opens: Arc::new(Mutex::new(self.pending_opens)),
             initialized: Arc::new(AtomicBool::new(self.initialized)),
             async_tx: self.async_tx.clone(),
@@ -4803,6 +4852,9 @@ impl LspHandle {
         let document_versions: Arc<std::sync::Mutex<HashMap<PathBuf, i64>>> =
             Arc::new(std::sync::Mutex::new(HashMap::new()));
         let document_versions_for_task = document_versions.clone();
+        let desynced: Arc<std::sync::Mutex<std::collections::HashSet<PathBuf>>> =
+            Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
+        let desynced_for_task = desynced.clone();
 
         let state_clone = state.clone();
         let stderr_log_path_clone = stderr_log_path.clone();
@@ -4818,6 +4870,7 @@ impl LspHandle {
                 stderr_log_path_clone.clone(),
                 language_id_overrides,
                 document_versions_for_task,
+                desynced_for_task,
                 long_running_spawner,
             )
             .await
@@ -4889,7 +4942,7 @@ impl LspHandle {
             state,
             runtime: runtime.clone(),
             document_versions,
-            desynced: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+            desynced,
             pending_saves: Arc::new(std::sync::Mutex::new(HashMap::new())),
         })
     }
@@ -6669,6 +6722,7 @@ mod tests {
                     return;
                 }
                 let state = SyncState {
+                    server_sync: crate::services::lsp::sync_policy::ServerSync::Incremental,
                     desynced: self.handle.needs_full_resync(&self.path),
                     has_capacity: self.handle.has_command_capacity(),
                     text_available: true,
