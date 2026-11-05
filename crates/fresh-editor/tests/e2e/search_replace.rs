@@ -4104,11 +4104,12 @@ fn test_search_replace_pan_homes_on_a_new_search() {
     );
 }
 
-/// Opening Search/Replace in a second window shows the panel there, rather
-/// than silently updating the panel still open in the first window; the
-/// first window's panel is closed, not left behind (#3704).
+/// Each window has its own Search/Replace panel (#3704). Opening it in a
+/// second window opens a panel there — before the fix, Alt+A silently
+/// re-ran the search in the first window's panel and drew nothing — and each
+/// window keeps its own query and results across switches.
 #[test]
-fn test_search_replace_opens_in_the_window_it_is_invoked_from() {
+fn test_search_replace_panel_is_per_window() {
     let (temp_dir, project_root) = setup_search_replace_project();
     create_test_files(&project_root);
     // A second workspace in a directory of its own (one window per root).
@@ -4116,7 +4117,7 @@ fn test_search_replace_opens_in_the_window_it_is_invoked_from() {
     fs::create_dir(&other_root).unwrap();
     fs::write(
         other_root.join("other.txt"),
-        "hello from the other window\n",
+        "hello from the other window\nsecond line\n",
     )
     .unwrap();
 
@@ -4131,6 +4132,7 @@ fn test_search_replace_opens_in_the_window_it_is_invoked_from() {
     harness.render().unwrap();
     let window_a = harness.editor().active_window_id();
 
+    // Window A: search for "hello".
     open_search_replace_via_palette(&mut harness);
     harness.type_text("hello").unwrap();
     harness
@@ -4146,27 +4148,47 @@ fn test_search_replace_opens_in_the_window_it_is_invoked_from() {
     harness.render().unwrap();
     assert!(
         !harness.screen_to_string().contains("*Search/Replace*"),
-        "window B starts without the panel:\n{}",
+        "window B starts without a panel:\n{}",
         harness.screen_to_string()
     );
 
-    // Alt+A in window B: the panel appears here, with the query carried over
-    // and run against this window's files.
+    // Window B: Alt+A opens B's own panel, and a search runs in B's files.
     harness
         .send_key(KeyCode::Char('a'), KeyModifiers::ALT)
         .unwrap();
     harness
-        .wait_until(|h| {
-            let s = h.screen_to_string();
-            s.contains("*Search/Replace*")
-                && s.contains("other.txt:1 - hello from the other window")
-        })
+        .wait_until(|h| h.screen_to_string().contains("*Search/Replace*"))
+        .unwrap();
+    harness.type_text("second").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("other.txt:2 - second line"))
         .unwrap();
 
-    // Window A no longer holds a panel.
+    // Back in A: A's panel is as it was left, with its own query and results.
     harness.editor_mut().set_active_window(window_a);
     harness
-        .wait_until(|h| !h.screen_to_string().contains("*Search/Replace*"))
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("Search: [hello") && s.contains("4 matches / 3 files")
+        })
         .unwrap();
-    harness.assert_screen_contains("hello world");
+    harness.assert_screen_not_contains("second line");
+
+    // Edit A's query and leave before its search has run: it runs for A, not
+    // for the window the user went to, and A shows it on return.
+    harness.type_text(" again").unwrap();
+    harness.editor_mut().set_active_window(window_b);
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("Search: [second") && s.contains("other.txt:2 - second line")
+        })
+        .unwrap();
+    harness.editor_mut().set_active_window(window_a);
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("Search: [hello again") && s.contains("1 matches / 1 files")
+        })
+        .unwrap();
 }
