@@ -831,6 +831,22 @@ pub struct SerializedTerminalWorkspace {
     /// re-derive their name the same way after restore.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// The name an *auto-named* tab last carried (`bash`, or
+    /// `bash — user@host: ~/dir`), for a terminal whose process had already
+    /// quit at save time.
+    ///
+    /// An auto-named tab re-derives its name from its foreground process, so
+    /// it normally needs nothing persisted — but a terminal restored *dead*
+    /// has no process to read, and fell back to `*Terminal N*`, which also
+    /// makes two dead terminals indistinguishable (#3074). This is that name,
+    /// kept so the restored tab reads as it did before the restart.
+    ///
+    /// Deliberately not `title`: that one means "explicitly titled" and opts
+    /// the tab out of auto-naming for good, so a restart would never pick its
+    /// name back up from the reborn process. Absent for explicitly-titled
+    /// tabs, for live terminals (they re-derive), and in older workspaces.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_title: Option<String>,
     /// Whether this terminal's child was granted editor control — the
     /// Orchestrator's `allowScript`, which stamps a `FRESH_CMD_TOKEN`
     /// capability token into the agent's environment.
