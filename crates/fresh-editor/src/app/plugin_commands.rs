@@ -3938,6 +3938,11 @@ impl Editor {
             .buffer
             .file_path()
             .map_or("[No Name]".to_string(), |p| {
+                // A remote window's root is canonical from the connect, and
+                // its canonicalize is a round trip: not on this thread.
+                if window.authority_spec.is_remote() {
+                    return p.to_string_lossy().into_owned();
+                }
                 super::plugin_offloop::rooted_like_the_walk(
                     p,
                     &window.root,

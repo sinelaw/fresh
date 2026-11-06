@@ -392,8 +392,8 @@ fn rerooted(path: PathBuf, reroot: &Option<(PathBuf, PathBuf)>) -> PathBuf {
 /// An open buffer's (canonical) `path` spelled as a project search under
 /// `root` names it: a single-buffer search's matches then read like the
 /// project search's. Only a path outside `root` as spelled asks `fs` for the
-/// root's canonical form, so the usual case costs nothing — nor does a
-/// remote window, whose root is canonical from the start.
+/// root's canonical form, so the usual case costs nothing. Runs on the
+/// editor thread: local filesystems only.
 pub(crate) fn rooted_like_the_walk(path: &Path, root: &Path, fs: &dyn FileSystem) -> PathBuf {
     if path.starts_with(root) {
         return path.to_path_buf();
@@ -550,8 +550,17 @@ pub(crate) fn project_search(
         let walk_tx = path_tx.clone();
         let walk_reroot = Arc::clone(&reroot);
         tokio::task::spawn_blocking(move || {
-            // Targets of symlinks out of the project already sent.
-            let mut sent_targets = HashSet::new();
+            // A symlink git tracks is a second name for its target: searched
+            // under both, Replace All rewrote the one file twice, at offsets
+            // the first rewrite had moved. Each file goes out once, under its
+            // own name: a link's target waits for the end of the walk and
+            // goes only if nothing has sent it, so a target the listing
+            // leaves out (gitignored, hidden, outside the project) is still
+            // searched through its link.
+            let mut sent = HashSet::new();
+            let mut link_targets = Vec::new();
+            let skip =
+                |path: &Path| source_file.as_deref() == Some(path) || open_paths.contains(path);
             if let Err(e) = crate::services::project_files::for_each_file_blocking(
                 &spawner,
                 &*walk_fs,
@@ -559,35 +568,39 @@ pub(crate) fn project_search(
                 &custom_ignore,
                 &walk_handle.cancel,
                 &mut |path, rel, is_link| {
-                    // A symlink git tracks is a second name for its target:
-                    // searched under both, Replace All rewrote the one file
-                    // twice, at offsets the first rewrite had moved. Search
-                    // the target under its own name, once: one in the
-                    // project is listed itself, so the link is left out.
-                    let target;
-                    let path = if is_link {
+                    if skip(path) || !search_file_glob_matches(&file_glob, rel) {
+                        // Queued ahead of the walk, searched as open, or
+                        // filtered out.
+                        return true;
+                    }
+                    if is_link {
+                        // Git lists the index's mode: a link replaced by a
+                        // file, not yet staged, resolves to itself.
                         let Ok(resolved) = walk_fs.canonicalize(path) else {
                             return true; // dangling: nothing to search
                         };
-                        target = rerooted(resolved, &walk_reroot);
-                        if target.starts_with(&root) || !sent_targets.insert(target.clone()) {
+                        let target = rerooted(resolved, &walk_reroot);
+                        if target != path {
+                            link_targets.push(target);
                             return true;
                         }
-                        &target
-                    } else {
-                        path
-                    };
-                    if source_file.as_deref() == Some(path) || open_paths.contains(path) {
-                        // Queued ahead of the walk, or searched as open.
-                        true
-                    } else if search_file_glob_matches(&file_glob, rel) {
-                        walk_tx.blocking_send(path.to_path_buf()).is_ok()
-                    } else {
-                        true
                     }
+                    sent.insert(path.to_path_buf());
+                    walk_tx.blocking_send(path.to_path_buf()).is_ok()
                 },
             ) {
                 tracing::warn!("Project search: listing project files failed: {}", e);
+            }
+            for target in link_targets {
+                if walk_handle.cancel.load(Ordering::Relaxed) {
+                    break;
+                }
+                if !skip(&target)
+                    && sent.insert(target.clone())
+                    && walk_tx.blocking_send(target).is_err()
+                {
+                    break;
+                }
             }
         });
         // Drop our retained sender so the receive loop terminates once the
