@@ -92,6 +92,7 @@ setting_keys! {
     EDITOR_SHOW_PROMPT_LINE: bool = "/editor/show_prompt_line";
     EDITOR_SHOW_VERTICAL_SCROLLBAR: bool = "/editor/show_vertical_scrollbar";
     EDITOR_SHOW_HORIZONTAL_SCROLLBAR: bool = "/editor/show_horizontal_scrollbar";
+    EDITOR_DIAGNOSTICS_INLINE_TEXT: bool = "/editor/diagnostics_inline_text";
     FILE_EXPLORER_SHOW_HIDDEN: bool = "/file_explorer/show_hidden";
     FILE_EXPLORER_SHOW_GITIGNORED: bool = "/file_explorer/show_gitignored";
     FILE_EXPLORER_SIDE: crate::config::FileExplorerSide = "/file_explorer/side";

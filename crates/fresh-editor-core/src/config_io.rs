@@ -2214,7 +2214,7 @@ mod tests {
         assert_eq!(config.editor.tab_size, 2);
 
         // User disables LSP via UI
-        if let Some(lsp_configs) = config.lsp.get_mut("python") {
+        if let Some(lsp_configs) = config.lsp.get_mut("rust") {
             for c in lsp_configs.as_mut_slice().iter_mut() {
                 c.enabled = false;
             }
@@ -2247,27 +2247,27 @@ mod tests {
         );
         assert_eq!(
             json.get("lsp")
-                .and_then(|l| l.get("python"))
+                .and_then(|l| l.get("rust"))
                 .and_then(|p| p.get("enabled"))
                 .and_then(|v| v.as_bool()),
             Some(false),
-            "lsp.python.enabled should be saved (differs from default)"
+            "lsp.rust.enabled should be saved (differs from default)"
         );
 
         // Reload and verify the full config is correct
         let reloaded = resolver.resolve().unwrap();
         assert_eq!(reloaded.theme.0, "dracula");
         assert_eq!(reloaded.editor.tab_size, 2);
-        assert!(!reloaded.lsp["python"].as_slice()[0].enabled);
+        assert!(!reloaded.lsp["rust"].as_slice()[0].enabled);
         // Command should come from defaults
-        assert_eq!(reloaded.lsp["python"].as_slice()[0].command, "pylsp");
+        assert_eq!(reloaded.lsp["rust"].as_slice()[0].command, "rust-analyzer");
     }
 
     /// Test that toggling LSP enabled/disabled preserves the command field.
     ///
-    /// 1. Start with empty config (defaults apply, python has command "pylsp")
-    /// 2. Disable python LSP, save
-    /// 3. Load, enable python LSP, save
+    /// 1. Start with empty config (defaults apply, rust has command "rust-analyzer")
+    /// 2. Disable rust LSP, save
+    /// 3. Load, enable rust LSP, save
     /// 4. Load and verify command is still the default
     #[test]
     fn toggle_lsp_preserves_command() {
@@ -2275,20 +2275,20 @@ mod tests {
         let user_config_path = resolver.user_config_path();
         std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
 
-        // Step 1: Empty config - defaults apply (python has command "pylsp")
+        // Step 1: Empty config - defaults apply (rust has command "rust-analyzer")
         std::fs::write(&user_config_path, r#"{}"#).unwrap();
 
         // Load and verify default command
         let config = resolver.resolve().unwrap();
-        let original_command = config.lsp["python"].as_slice()[0].command.clone();
+        let original_command = config.lsp["rust"].as_slice()[0].command.clone();
         assert!(
             !original_command.is_empty(),
-            "Default python LSP should have a command"
+            "Default rust LSP should have a command"
         );
 
-        // Step 2: Disable python LSP, save
+        // Step 2: Disable rust LSP, save
         let mut config = resolver.resolve().unwrap();
-        config.lsp.get_mut("python").unwrap().as_mut_slice()[0].enabled = false;
+        config.lsp.get_mut("rust").unwrap().as_mut_slice()[0].enabled = false;
         resolver.save_to_layer(&config, ConfigLayer::User).unwrap();
 
         // Verify saved file only has enabled:false, not empty command/args
@@ -2304,19 +2304,19 @@ mod tests {
             saved_content
         );
 
-        // Step 3: Load again, enable python LSP, save
+        // Step 3: Load again, enable rust LSP, save
         let mut config = resolver.resolve().unwrap();
-        assert!(!config.lsp["python"].as_slice()[0].enabled);
-        config.lsp.get_mut("python").unwrap().as_mut_slice()[0].enabled = true;
+        assert!(!config.lsp["rust"].as_slice()[0].enabled);
+        config.lsp.get_mut("rust").unwrap().as_mut_slice()[0].enabled = true;
         resolver.save_to_layer(&config, ConfigLayer::User).unwrap();
 
         // Step 4: Load and verify command is still the same
         let config = resolver.resolve().unwrap();
         assert_eq!(
-            config.lsp["python"].as_slice()[0].command,
+            config.lsp["rust"].as_slice()[0].command,
             original_command,
             "Command should be preserved after toggling enabled. Got: '{}'",
-            config.lsp["python"].as_slice()[0].command
+            config.lsp["rust"].as_slice()[0].command
         );
     }
 

@@ -33,10 +33,18 @@ pub(super) fn token_style_from_ratatui(style: Style) -> ViewTokenStyle {
 /// Priority values: 100=error, 50=warning, 30=info, 10=hint.
 pub(super) fn inline_diagnostic_style(priority: i32, theme: &Theme) -> Style {
     match priority {
-        100 => Style::default().theme_fg(theme, "diagnostic.error_fg"),
-        50 => Style::default().theme_fg(theme, "diagnostic.warning_fg"),
-        30 => Style::default().theme_fg(theme, "diagnostic.info_fg"),
-        _ => Style::default().theme_fg(theme, "diagnostic.hint_fg"),
+        100 => Style::default()
+            .theme_fg(theme, "diagnostic.error_fg")
+            .theme_bg(theme, "diagnostic.error_bg"),
+        50 => Style::default()
+            .theme_fg(theme, "diagnostic.warning_fg")
+            .theme_bg(theme, "diagnostic.warning_bg"),
+        30 => Style::default()
+            .theme_fg(theme, "diagnostic.info_fg")
+            .theme_bg(theme, "diagnostic.info_bg"),
+        _ => Style::default()
+            .theme_fg(theme, "diagnostic.hint_fg")
+            .theme_bg(theme, "diagnostic.hint_bg"),
     }
 }
 
