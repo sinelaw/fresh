@@ -15,7 +15,7 @@
 //! thread can see, hand it to a handler here, return immediately.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -389,6 +389,23 @@ fn rerooted(path: PathBuf, reroot: &Option<(PathBuf, PathBuf)>) -> PathBuf {
     }
 }
 
+/// An open buffer's (canonical) `path` spelled as a project search under
+/// `root` names it: a single-buffer search's matches then read like the
+/// project search's. Only a path outside `root` as spelled asks `fs` for the
+/// root's canonical form, so the usual case costs nothing — nor does a
+/// remote window, whose root is canonical from the start.
+pub(crate) fn rooted_like_the_walk(path: &Path, root: &Path, fs: &dyn FileSystem) -> PathBuf {
+    if path.starts_with(root) {
+        return path.to_path_buf();
+    }
+    let reroot = fs
+        .canonicalize(root)
+        .ok()
+        .filter(|canonical| canonical != root)
+        .map(|canonical| (canonical, root.to_path_buf()));
+    rerooted(path.to_path_buf(), &reroot)
+}
+
 /// The open buffers' matches carry the buffer's canonical path; name their
 /// file the way the walk names it, so a buffer's results read like every
 /// other file's (project-relative) and group with them.
@@ -531,14 +548,35 @@ pub(crate) fn project_search(
         let walk_fs = Arc::clone(&filesystem);
         let walk_handle = Arc::clone(&handle);
         let walk_tx = path_tx.clone();
+        let walk_reroot = Arc::clone(&reroot);
         tokio::task::spawn_blocking(move || {
+            // Targets of symlinks out of the project already sent.
+            let mut sent_targets = HashSet::new();
             if let Err(e) = crate::services::project_files::for_each_file_blocking(
                 &spawner,
                 &*walk_fs,
                 &root,
                 &custom_ignore,
                 &walk_handle.cancel,
-                &mut |path, rel| {
+                &mut |path, rel, is_link| {
+                    // A symlink git tracks is a second name for its target:
+                    // searched under both, Replace All rewrote the one file
+                    // twice, at offsets the first rewrite had moved. Search
+                    // the target under its own name, once: one in the
+                    // project is listed itself, so the link is left out.
+                    let target;
+                    let path = if is_link {
+                        let Ok(resolved) = walk_fs.canonicalize(path) else {
+                            return true; // dangling: nothing to search
+                        };
+                        target = rerooted(resolved, &walk_reroot);
+                        if target.starts_with(&root) || !sent_targets.insert(target.clone()) {
+                            return true;
+                        }
+                        &target
+                    } else {
+                        path
+                    };
                     if source_file.as_deref() == Some(path) || open_paths.contains(path) {
                         // Queued ahead of the walk, or searched as open.
                         true

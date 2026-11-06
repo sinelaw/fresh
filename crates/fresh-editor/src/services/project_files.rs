@@ -102,10 +102,18 @@ pub fn git_files_with_handle(
     limit: usize,
 ) -> Option<Vec<String>> {
     let mut files = Vec::new();
-    let walked = for_each_git_file(spawner, handle, fs, root, listing, cancel, &mut |_, rel| {
-        files.push(rel.to_string());
-        files.len() < limit
-    })?;
+    let walked = for_each_git_file(
+        spawner,
+        handle,
+        fs,
+        root,
+        listing,
+        cancel,
+        &mut |_, rel, _| {
+            files.push(rel.to_string());
+            files.len() < limit
+        },
+    )?;
     // A nested repository that can't be walked leaves out its own files only.
     if let Err(e) = walked {
         tracing::debug!(
@@ -117,8 +125,9 @@ pub fn git_files_with_handle(
     Some(files)
 }
 
-/// Call `on_file(path, rel)` for each file git lists under `root` (see the
-/// module docs), entering submodules and nested repositories with a walk.
+/// Call `on_file(path, rel, is_link)` for each file git lists under `root`
+/// (see the module docs), entering submodules and nested repositories with a
+/// walk. `is_link` marks a symlink git tracks (a walk never reports one).
 /// `None` when `root` is not in a git work tree or git cannot run there;
 /// otherwise the result of the walks, which stop early on `cancel` or when
 /// `on_file` returns `false`.
@@ -130,7 +139,7 @@ fn for_each_git_file(
     root: &Path,
     listing: Listing<'_>,
     cancel: &AtomicBool,
-    on_file: &mut dyn FnMut(&Path, &str) -> bool,
+    on_file: &mut dyn FnMut(&Path, &str, bool) -> bool,
 ) -> Option<std::io::Result<()>> {
     #[allow(clippy::disallowed_methods)] // liveness established by the caller, above
     let result = handle
@@ -146,10 +155,12 @@ fn for_each_git_file(
 
     let LsFiles {
         files,
+        links,
         nested_repos,
     } = parse_ls_files(&result.stdout, listing.custom_ignore);
     for rel in files {
-        if cancel.load(Ordering::Relaxed) || !on_file(&join_rel(root, &rel), &rel) {
+        let is_link = links.contains(&rel);
+        if cancel.load(Ordering::Relaxed) || !on_file(&join_rel(root, &rel), &rel, is_link) {
             return Some(Ok(()));
         }
     }
@@ -172,7 +183,7 @@ fn for_each_git_file(
             listing.custom_ignore,
             cancel,
             &mut |path, rel| {
-                go_on = on_file(path, rel);
+                go_on = on_file(path, rel, false);
                 go_on
             },
         );
@@ -226,6 +237,8 @@ fn git_ls_files_args(include_gitignored: bool, include_hidden: bool) -> Vec<Stri
 struct LsFiles {
     /// Each file, relative to the root and `/`-separated.
     files: Vec<String>,
+    /// Those of `files` that are symlinks git tracks (mode `120000`).
+    links: std::collections::HashSet<String>,
     /// Directories git lists but does not look into: submodules and
     /// untracked nested repositories, without the trailing `/`.
     nested_repos: Vec<String>,
@@ -239,6 +252,7 @@ struct LsFiles {
 fn parse_ls_files(stdout: &[u8], custom_ignore: &CustomIgnore) -> LsFiles {
     let mut out = LsFiles {
         files: Vec::new(),
+        links: std::collections::HashSet::new(),
         nested_repos: Vec::new(),
     };
     let mut last: Option<&[u8]> = None;
@@ -260,6 +274,9 @@ fn parse_ls_files(stdout: &[u8], custom_ignore: &CustomIgnore) -> LsFiles {
         if is_dir {
             out.nested_repos.push(rel.to_string());
         } else if !is_custom_ignored(custom_ignore, rel) {
+            if mode == Some(b"120000".as_slice()) {
+                out.links.insert(rel.to_string());
+            }
             out.files.push(rel.to_string());
         }
     }
@@ -336,10 +353,11 @@ fn walk_files_under(
     })
 }
 
-/// Call `on_file(path, rel)` for every project file under `root`, hidden and
-/// gitignored files left out: the git listing when `root` is in a git work
-/// tree, otherwise a [`walk_files`]. `on_file` returns `false` to stop, and
-/// `cancel` stops either source between files.
+/// Call `on_file(path, rel, is_link)` for every project file under `root`,
+/// hidden and gitignored files left out: the git listing when `root` is in a
+/// git work tree, otherwise a [`walk_files`]. `is_link` marks a symlink git
+/// tracks; the walk reports no symlinks. `on_file` returns `false` to stop,
+/// and `cancel` stops either source between files.
 ///
 /// Must be called from the runtime's blocking pool (see
 /// [`git_files_blocking`]).
@@ -349,7 +367,7 @@ pub fn for_each_file_blocking(
     root: &Path,
     custom_ignore: &CustomIgnore,
     cancel: &AtomicBool,
-    on_file: &mut dyn FnMut(&Path, &str) -> bool,
+    on_file: &mut dyn FnMut(&Path, &str, bool) -> bool,
 ) -> std::io::Result<()> {
     if cancel.load(Ordering::Relaxed) {
         return Ok(());
@@ -365,7 +383,9 @@ pub fn for_each_file_blocking(
         .and_then(|handle| for_each_git_file(spawner, &handle, fs, root, listing, cancel, on_file));
     match git {
         Some(result) => result,
-        None => walk_files(fs, root, false, custom_ignore, cancel, on_file),
+        None => walk_files(fs, root, false, custom_ignore, cancel, &mut |path, rel| {
+            on_file(path, rel, false)
+        }),
     }
 }
 
@@ -461,7 +481,7 @@ mod tests {
                 &root,
                 &custom_ignore,
                 &cancel,
-                &mut |path, rel| {
+                &mut |path, rel, _| {
                     assert_eq!(path, root.join(rel), "path must be root joined with rel");
                     files.push(rel.to_string());
                     true

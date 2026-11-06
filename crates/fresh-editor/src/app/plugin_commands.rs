@@ -3926,16 +3926,25 @@ impl Editor {
                 .map(|(id, _)| *id)
                 .ok_or_else(|| format!("Buffer {} not found", buffer_id.0))?
         };
-        let state = self
+        let window = self
             .windows
             .get(&window_id)
-            .and_then(|w| w.buffers.get(&buffer_id))
+            .ok_or_else(|| format!("Buffer {} not found", buffer_id.0))?;
+        let state = window
+            .buffers
+            .get(&buffer_id)
             .ok_or_else(|| format!("Buffer {} not found", buffer_id.0))?;
         let file = state
             .buffer
             .file_path()
             .map_or("[No Name]".to_string(), |p| {
-                p.to_string_lossy().into_owned()
+                super::plugin_offloop::rooted_like_the_walk(
+                    p,
+                    &window.root,
+                    &*window.authority().filesystem,
+                )
+                .to_string_lossy()
+                .into_owned()
             });
         let max = opts.max_matches;
         let reply_to = Arc::clone(handle);
