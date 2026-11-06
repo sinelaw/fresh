@@ -936,6 +936,41 @@ mod tests {
     }
 
     #[test]
+    fn test_delete_word_backward_non_ascii_word() {
+        // Ctrl+Backspace after a word made of multi-byte letters used to
+        // find no word start and delete nothing.
+        let mut edit = TextEdit::single_line_with_text("say αβγ");
+        edit.cursor_col = edit.value().len();
+        edit.delete_word_backward();
+        assert_eq!(edit.value(), "say ");
+        assert_eq!(edit.cursor_col, 4);
+    }
+
+    #[test]
+    fn test_delete_word_forward_non_ascii_word() {
+        let mut edit = TextEdit::single_line_with_text("αβγ end");
+        edit.cursor_col = 0;
+        edit.delete_word_forward();
+        assert_eq!(edit.value(), " end");
+        assert_eq!(edit.cursor_col, 0);
+    }
+
+    #[test]
+    fn test_word_navigation_non_ascii_word() {
+        let mut edit = TextEdit::single_line_with_text("café wörld");
+        edit.cursor_col = 0;
+
+        edit.move_word_right();
+        assert_eq!(edit.cursor_col, "café".len());
+
+        edit.move_word_right();
+        assert_eq!(edit.cursor_col, "café wörld".len());
+
+        edit.move_word_left();
+        assert_eq!(edit.cursor_col, "café ".len());
+    }
+
+    #[test]
     fn test_set_value_preserves_trailing_newline() {
         // "a\n" must round-trip as lines ["a", ""] — `str::lines()`
         // would drop the trailing empty line and every undo/redo
