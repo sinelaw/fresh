@@ -72,6 +72,9 @@ pub fn is_word_char(byte: u8) -> bool {
 /// Find the start of the word at or before the given position in a byte slice.
 ///
 /// This is the core logic shared by both Buffer and String word navigation.
+/// When `bytes` is valid UTF-8, words are made of whole characters, so letters
+/// outside ASCII (accents, Greek, CJK, ...) belong to words and the result
+/// always lands on a character boundary.
 ///
 /// # Arguments
 /// * `bytes` - The byte slice to search in
@@ -85,6 +88,9 @@ pub fn find_word_start_bytes(bytes: &[u8], pos: usize) -> usize {
     }
 
     let pos = pos.min(bytes.len());
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        return find_word_start_str(text, pos);
+    }
     let mut new_pos = pos;
 
     // If we're at the end or at a non-word character, scan left
@@ -116,6 +122,9 @@ pub fn find_word_start_bytes(bytes: &[u8], pos: usize) -> usize {
 /// Find the end of the word at or after the given position in a byte slice.
 ///
 /// This is the core logic shared by both Buffer and String word navigation.
+/// When `bytes` is valid UTF-8, words are made of whole characters, so letters
+/// outside ASCII belong to words and the result always lands on a character
+/// boundary.
 ///
 /// # Arguments
 /// * `bytes` - The byte slice to search in
@@ -125,6 +134,9 @@ pub fn find_word_start_bytes(bytes: &[u8], pos: usize) -> usize {
 /// Position of the word end (always >= pos)
 pub fn find_word_end_bytes(bytes: &[u8], pos: usize) -> usize {
     let pos = pos.min(bytes.len());
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        return find_word_end_str(text, pos);
+    }
     let mut new_pos = pos;
 
     // Skip to start of next word if we're at non-word character
@@ -135,6 +147,64 @@ pub fn find_word_end_bytes(bytes: &[u8], pos: usize) -> usize {
     // Find end of word
     while new_pos < bytes.len() && is_word_char(bytes[new_pos]) {
         new_pos += 1;
+    }
+
+    new_pos
+}
+
+fn is_word_str_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// Character-aware version of [`find_word_start_bytes`]. `pos` is snapped
+/// back to a character boundary first.
+fn find_word_start_str(text: &str, pos: usize) -> usize {
+    let mut new_pos = pos.min(text.len());
+    while !text.is_char_boundary(new_pos) {
+        new_pos -= 1;
+    }
+
+    // If we're at the end or on a non-word character, step left one character
+    let on_word = text[new_pos..].chars().next().is_some_and(is_word_str_char);
+    if !on_word {
+        if let Some(prev) = text[..new_pos].chars().next_back() {
+            new_pos -= prev.len_utf8();
+        }
+    }
+
+    // Scan left while the preceding character is a word character
+    while let Some(prev) = text[..new_pos].chars().next_back() {
+        if !is_word_str_char(prev) {
+            break;
+        }
+        new_pos -= prev.len_utf8();
+    }
+
+    new_pos
+}
+
+/// Character-aware version of [`find_word_end_bytes`]. `pos` is snapped
+/// back to a character boundary first.
+fn find_word_end_str(text: &str, pos: usize) -> usize {
+    let mut new_pos = pos.min(text.len());
+    while !text.is_char_boundary(new_pos) {
+        new_pos -= 1;
+    }
+
+    // Skip to the start of the next word if we're on a non-word character
+    for c in text[new_pos..].chars() {
+        if is_word_str_char(c) {
+            break;
+        }
+        new_pos += c.len_utf8();
+    }
+
+    // Find the end of the word
+    for c in text[new_pos..].chars() {
+        if !is_word_str_char(c) {
+            break;
+        }
+        new_pos += c.len_utf8();
     }
 
     new_pos
