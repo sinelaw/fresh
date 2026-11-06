@@ -170,6 +170,14 @@
       "when": "normal"
     },
     {
+      "comment": "Cmd+Shift+D -> Duplicate line/selection (issue #2673); overrides the inherited Ctrl+Shift+D so the Mac GUI uses the Cmd idiom",
+      "key": "d",
+      "modifiers": ["super", "shift"],
+      "action": "duplicate_line",
+      "args": {},
+      "when": "normal"
+    },
+    {
       "comment": "Cmd+L -> Go to line",
       "key": "l",
       "modifiers": ["super"],
