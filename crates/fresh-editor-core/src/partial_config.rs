@@ -221,6 +221,7 @@ pub struct PartialEditorConfig {
     pub screensaver_idle_minutes: Option<u32>,
     pub menu_bar_mnemonics: Option<bool>,
     pub show_tab_bar: Option<bool>,
+    pub auto_hide_tab_bar: Option<bool>,
     pub show_status_bar: Option<bool>,
     pub status_bar: Option<crate::config::StatusBarConfig>,
     pub search: Option<PartialSearchConfig>,
@@ -348,6 +349,7 @@ impl Merge for PartialEditorConfig {
         self.menu_bar_mnemonics
             .merge_from(&other.menu_bar_mnemonics);
         self.show_tab_bar.merge_from(&other.show_tab_bar);
+        self.auto_hide_tab_bar.merge_from(&other.auto_hide_tab_bar);
         self.show_status_bar.merge_from(&other.show_status_bar);
         if other.status_bar.is_some() {
             self.status_bar = other.status_bar.clone();
@@ -743,6 +745,7 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             screensaver_idle_minutes: Some(cfg.screensaver_idle_minutes),
             menu_bar_mnemonics: Some(cfg.menu_bar_mnemonics),
             show_tab_bar: Some(cfg.show_tab_bar),
+            auto_hide_tab_bar: Some(cfg.auto_hide_tab_bar),
             show_status_bar: Some(cfg.show_status_bar),
             status_bar: Some(cfg.status_bar.clone()),
             search: Some(PartialSearchConfig::from(&cfg.search)),
@@ -922,6 +925,7 @@ impl PartialEditorConfig {
                 .menu_bar_mnemonics
                 .unwrap_or(defaults.menu_bar_mnemonics),
             show_tab_bar: self.show_tab_bar.unwrap_or(defaults.show_tab_bar),
+            auto_hide_tab_bar: self.auto_hide_tab_bar.unwrap_or(defaults.auto_hide_tab_bar),
             show_status_bar: self.show_status_bar.unwrap_or(defaults.show_status_bar),
             status_bar: self
                 .status_bar

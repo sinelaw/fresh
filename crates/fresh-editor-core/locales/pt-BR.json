@@ -1540,6 +1540,8 @@
   "settings.save_failed_unchanged": "Seu arquivo de configuração não foi alterado para que você possa corrigi-lo.",
   "settings.save_failed_open_hint": "Pressione Esc para abrir seu arquivo de configuração e corrigi-lo.",
   "settings.field.editor.auto_close": "Fechamento automático",
+  "settings.field.editor.auto_hide_tab_bar": "Ocultar automaticamente a barra de abas",
+  "settings.field.editor.auto_hide_tab_bar_desc": "Oculta a barra de abas enquanto a janela mostra um único arquivo: um painel com uma aba. Ela volta assim que uma segunda aba ou painel é aberto. Não tem efeito enquanto a barra de abas está desativada. Padrão: false",
   "settings.field.editor.whitespace_show": "Mostrar espaços em branco",
   "settings.field.editor.whitespace_spaces_inner": "Espaços internos",
   "settings.field.editor.whitespace_spaces_leading": "Espaços iniciais",

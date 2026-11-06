@@ -170,3 +170,79 @@ fn test_compact_chain_keeps_cursor_on_visible_row_after_enter() {
         harness.screen_to_string()
     );
 }
+
+/// Every directory name on a compact chain row — the folded segments as well
+/// as the anchor — takes `ui.file_explorer_directory_fg`, not the keyword
+/// colour (#3697). Before, `chain/a/b/` were drawn in `syntax.keyword` and
+/// only the anchor `c` in the folder colour.
+#[test]
+fn test_compact_chain_segments_use_the_directory_colour() {
+    use crate::common::harness::HarnessOptions;
+    use fresh::config::Config;
+    use fresh::config_io::DirectoryContext;
+    use ratatui::style::Color;
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+    let themes_dir = temp_dir.path().join("config").join("themes");
+    fs::create_dir_all(&themes_dir).unwrap();
+    fs::write(
+        themes_dir.join("folders.json"),
+        r#"{"name": "folders", "extends": "builtin://dark",
+            "syntax": {"keyword": [237, 65, 65]},
+            "ui": {"file_explorer_directory_fg": [200, 209, 217]}}"#,
+    )
+    .unwrap();
+
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir_all(project_root.join("plugins")).unwrap();
+    fs::create_dir_all(project_root.join("chain/a/b/c")).unwrap();
+    fs::write(project_root.join("chain/a/b/c/leaf.txt"), "leaf").unwrap();
+    fs::create_dir_all(project_root.join("sibling")).unwrap();
+    fs::write(project_root.join("sibling/other.txt"), "other").unwrap();
+
+    let config = Config {
+        theme: "folders".to_string().into(),
+        ..Default::default()
+    };
+    let mut harness = EditorTestHarness::create(
+        120,
+        30,
+        HarnessOptions::new()
+            .with_config(config)
+            .with_working_dir(project_root)
+            .with_shared_dir_context(dir_context)
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
+    let directory_fg = Color::Rgb(200, 209, 217);
+    assert_eq!(
+        harness.editor().theme().file_explorer_directory_fg,
+        directory_fg,
+        "the custom theme should be the active one"
+    );
+
+    harness
+        .send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_file_explorer_item("chain").unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("chain/a/b/c"))
+        .unwrap();
+    // Move off the row so its colours are the neutral ones, not the cursor's.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let (x, y) = harness.find_text_on_screen("chain/a/b/c").unwrap();
+    for (offset, name) in [(0u16, "chain"), (6, "a"), (8, "b"), (10, "c")] {
+        assert_eq!(
+            harness.get_cell_style(x + offset, y).and_then(|s| s.fg),
+            Some(directory_fg),
+            "`{name}` on the compact row should be drawn in the directory colour"
+        );
+    }
+}

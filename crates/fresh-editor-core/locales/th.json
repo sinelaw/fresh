@@ -1533,6 +1533,8 @@
   "settings.save_failed_unchanged": "ไฟล์การตั้งค่าของคุณไม่ถูกเปลี่ยนแปลง คุณจึงสามารถแก้ไขได้",
   "settings.save_failed_open_hint": "กด Esc เพื่อเปิดไฟล์การตั้งค่าและแก้ไข",
   "settings.field.editor.auto_close": "ปิดอัตโนมัติ",
+  "settings.field.editor.auto_hide_tab_bar": "ซ่อนแถบแท็บอัตโนมัติ",
+  "settings.field.editor.auto_hide_tab_bar_desc": "ซ่อนแถบแท็บขณะที่หน้าต่างแสดงไฟล์เดียว: หนึ่งบานหน้าต่างที่มีหนึ่งแท็บ แถบจะกลับมาเมื่อเปิดแท็บหรือบานหน้าต่างที่สอง ไม่มีผลขณะที่ปิดแถบแท็บอยู่ ค่าเริ่มต้น: false",
   "settings.field.editor.whitespace_show": "แสดงช่องว่าง",
   "settings.field.editor.whitespace_spaces_inner": "ช่องว่างภายใน",
   "settings.field.editor.whitespace_spaces_leading": "ช่องว่างนำหน้า",

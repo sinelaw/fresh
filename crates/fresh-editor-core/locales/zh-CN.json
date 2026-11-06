@@ -1533,6 +1533,8 @@
   "settings.save_failed_unchanged": "你的配置文件未被更改，你可以修复它。",
   "settings.save_failed_open_hint": "按 Esc 打开你的配置文件并修复它。",
   "settings.field.editor.auto_close": "自动闭合",
+  "settings.field.editor.auto_hide_tab_bar": "自动隐藏标签栏",
+  "settings.field.editor.auto_hide_tab_bar_desc": "当窗口只显示一个文件（一个窗格中只有一个标签）时隐藏标签栏。一旦打开第二个标签或窗格，标签栏会重新出现。标签栏关闭时此设置无效。默认值：false",
   "settings.field.editor.whitespace_show": "显示空白字符",
   "settings.field.editor.whitespace_spaces_inner": "行内空格",
   "settings.field.editor.whitespace_spaces_leading": "行首空格",

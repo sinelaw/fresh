@@ -4103,3 +4103,178 @@ fn test_search_replace_pan_homes_on_a_new_search() {
          where the last search was panned to. Row:\n{row}"
     );
 }
+
+/// Each window has its own Search/Replace panel (#3704). Opening it in a
+/// second window opens a panel there — before the fix, Alt+A silently
+/// re-ran the search in the first window's panel and drew nothing — and each
+/// window keeps its own query and results across switches.
+#[test]
+fn test_search_replace_panel_is_per_window() {
+    let (temp_dir, project_root) = setup_search_replace_project();
+    create_test_files(&project_root);
+    // A second workspace in a directory of its own (one window per root).
+    let other_root = temp_dir.path().join("other_root");
+    fs::create_dir(&other_root).unwrap();
+    // Canonical, like the harness's own root: on macOS the temp dir is behind
+    // a symlink (/var → /private/var), and a window rooted at the symlinked
+    // path lists an open buffer (canonical path) and its file twice.
+    let other_root = other_root.canonicalize().unwrap();
+    fs::write(
+        other_root.join("other.txt"),
+        "hello from the other window\nsecond line\n",
+    )
+    .unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&project_root.join("alpha.txt")).unwrap();
+    harness.render().unwrap();
+    let window_a = harness.editor().active_window_id();
+
+    // Window A: search for "hello".
+    open_search_replace_via_palette(&mut harness);
+    harness.type_text("hello").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("4 matches / 3 files"))
+        .unwrap();
+
+    let window_b = harness
+        .editor_mut()
+        .create_window_at(other_root.clone(), "other".to_string());
+    assert_ne!(window_a, window_b);
+    harness.editor_mut().set_active_window(window_b);
+    harness.open_file(&other_root.join("other.txt")).unwrap();
+    harness.render().unwrap();
+    assert!(
+        !harness.screen_to_string().contains("*Search/Replace*"),
+        "window B starts without a panel:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Window B: Alt+A opens B's own panel, and a search runs in B's files.
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("*Search/Replace*"))
+        .unwrap();
+    harness.type_text("second").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("other.txt:2 - second line"))
+        .unwrap();
+
+    // Back in A: A's panel is as it was left, with its own query and results.
+    harness.editor_mut().set_active_window(window_a);
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("Search: [hello") && s.contains("4 matches / 3 files")
+        })
+        .unwrap();
+    harness.assert_screen_not_contains("second line");
+
+    // Edit A's query and leave before its search has run: it runs for A, not
+    // for the window the user went to, and A shows it on return.
+    harness.type_text(" again").unwrap();
+    harness.editor_mut().set_active_window(window_b);
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("Search: [second") && s.contains("other.txt:2 - second line")
+        })
+        .unwrap();
+    harness.editor_mut().set_active_window(window_a);
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("Search: [hello again") && s.contains("1 matches / 1 files")
+        })
+        .unwrap();
+}
+
+/// A search keeps running for its own window's panel while the user works in
+/// another window, and what it finds meanwhile belongs to its window: paths
+/// relative to that window's root, not to the window the user is in (#3704).
+#[test]
+fn test_search_replace_search_continues_in_the_background() {
+    const FILES: usize = 5000;
+    // Result rows show paths with the platform's separator.
+    let sep = std::path::MAIN_SEPARATOR;
+    let (temp_dir, project_root) = setup_search_replace_project();
+    // Enough files that the streaming search spans many pump ticks.
+    let big = project_root.join("big");
+    fs::create_dir(&big).unwrap();
+    for i in 0..FILES {
+        fs::write(big.join(format!("f{i}.txt")), format!("zqxneedle {i}\n")).unwrap();
+    }
+    // Window B's project: as large, so B's own search keeps frames coming
+    // for a good while — the time A's search spends in the background.
+    let other_root = temp_dir.path().join("other_root");
+    fs::create_dir_all(other_root.join("many")).unwrap();
+    // Canonical, like the harness's own root: on macOS the temp dir is behind
+    // a symlink (/var → /private/var), and a window rooted at the symlinked
+    // path lists an open buffer (canonical path) and its file twice.
+    let other_root = other_root.canonicalize().unwrap();
+    let many = other_root.join("many");
+    for i in 0..FILES {
+        fs::write(many.join(format!("g{i}.txt")), format!("zqxneedle {i}\n")).unwrap();
+    }
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&big.join("f0.txt")).unwrap();
+    harness.render().unwrap();
+    let window_a = harness.editor().active_window_id();
+
+    open_search_replace_via_palette(&mut harness);
+    harness.type_text("zqxneedle").unwrap();
+    // Leave as soon as the search has results but before it has all of them.
+    let total = format!("({FILES} matches / {FILES} files)");
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains(" matches / ") && !s.contains(&total)
+        })
+        .unwrap();
+
+    let window_b = harness
+        .editor_mut()
+        .create_window_at(other_root.clone(), "other".to_string());
+    harness.editor_mut().set_active_window(window_b);
+    harness.open_file(&many.join("g0.txt")).unwrap();
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::ALT)
+        .unwrap();
+    harness.type_text("zqxneedle").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains(&total))
+        .unwrap();
+    let screen_b = harness.screen_to_string();
+    assert!(
+        !screen_b.contains(&format!("big{sep}")),
+        "B's panel shows only B's files:\n{screen_b}"
+    );
+
+    // Back in A: every match, under paths relative to A's root.
+    harness.editor_mut().set_active_window(window_a);
+    harness
+        .wait_until(|h| h.screen_to_string().contains(&total))
+        .unwrap();
+    let screen = harness.screen_to_string();
+    let abs_prefix = project_root.to_string_lossy().to_string();
+    assert!(
+        !screen.contains(&abs_prefix) && !screen.contains(&format!("many{sep}")),
+        "A's results should be A's files, relative to A's root:\n{screen}"
+    );
+    harness.assert_screen_contains(&format!("big{sep}f0.txt:1 - zqxneedle 0"));
+}

@@ -1533,6 +1533,8 @@
   "settings.save_failed_unchanged": "Tệp cấu hình của bạn không bị thay đổi nên bạn có thể sửa nó.",
   "settings.save_failed_open_hint": "Nhấn Esc để mở tệp cấu hình của bạn và sửa nó.",
   "settings.field.editor.auto_close": "Tự động đóng",
+  "settings.field.editor.auto_hide_tab_bar": "Tự động ẩn thanh tab",
+  "settings.field.editor.auto_hide_tab_bar_desc": "Ẩn thanh tab khi cửa sổ chỉ hiển thị một tệp: một khung với một tab. Thanh tab hiện lại ngay khi mở tab hoặc khung thứ hai. Không có tác dụng khi thanh tab đang tắt. Mặc định: false",
   "settings.field.editor.whitespace_show": "Hiển thị khoảng trắng",
   "settings.field.editor.whitespace_spaces_inner": "Khoảng trắng bên trong",
   "settings.field.editor.whitespace_spaces_leading": "Khoảng trắng đầu dòng",

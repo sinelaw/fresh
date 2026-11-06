@@ -1226,6 +1226,13 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub show_tab_bar: bool,
 
+    /// Hide the tab bar while the window shows a single file: one pane
+    /// holding one tab. It comes back as soon as a second tab or pane opens.
+    /// Has no effect while the tab bar is turned off. Default: false
+    #[serde(default)]
+    #[schemars(extend("x-section" = "Display"))]
+    pub auto_hide_tab_bar: bool,
+
     /// Show the status bar at the bottom. Can be toggled at any time.
     /// Default: true
     #[serde(default = "default_true")]
@@ -1835,6 +1842,7 @@ impl Default for EditorConfig {
             screensaver_idle_minutes: default_screensaver_idle_minutes(),
             menu_bar_mnemonics: true,
             show_tab_bar: true,
+            auto_hide_tab_bar: false,
             show_status_bar: true,
             status_bar: StatusBarConfig::default(),
             search: SearchConfig::default(),

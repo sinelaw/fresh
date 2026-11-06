@@ -1540,6 +1540,8 @@
   "settings.save_failed_unchanged": "Votre fichier de configuration n'a pas été modifié afin que vous puissiez le corriger.",
   "settings.save_failed_open_hint": "Appuyez sur Échap pour ouvrir votre fichier de configuration et le corriger.",
   "settings.field.editor.auto_close": "Fermeture automatique",
+  "settings.field.editor.auto_hide_tab_bar": "Masquer automatiquement la barre d'onglets",
+  "settings.field.editor.auto_hide_tab_bar_desc": "Masque la barre d'onglets tant que la fenêtre n'affiche qu'un seul fichier : un panneau contenant un onglet. Elle réapparaît dès qu'un deuxième onglet ou panneau s'ouvre. Sans effet lorsque la barre d'onglets est désactivée. Par défaut : false",
   "settings.field.editor.whitespace_show": "Afficher les espaces",
   "settings.field.editor.whitespace_spaces_inner": "Espaces intérieurs",
   "settings.field.editor.whitespace_spaces_leading": "Espaces en début",

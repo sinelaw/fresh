@@ -348,6 +348,18 @@ type BufferInfo = {
   */
   language: string;
   /**
+  * Columns per indentation level for this buffer: `editor.tab_size`,
+  * overridden by `languages.<language>.tab_size`, `.editorconfig`, or a
+  * per-buffer "Set Tab Size". A plugin that inserts indentation itself
+  * should use this rather than a fixed width.
+  */
+  tab_size: number;
+  /**
+  * Whether indentation in this buffer is a tab character rather than
+  * `tab_size` spaces, resolved the same way as `tab_size`.
+  */
+  use_tabs: boolean;
+  /**
   * Whether this tab was opened in "preview" (ephemeral) mode — true when
   * opened via single-click in the file explorer and not yet committed
   * (no edit, no double-click, no tab-click, no layout change). Plugins
@@ -1556,6 +1568,14 @@ interface EditorConfig {
     * Default: `true`
     */
     show_tab_bar?: boolean;
+    /**
+    * Hide the tab bar while the window shows a single file: one pane
+    * holding one tab. It comes back as soon as a second tab or pane opens.
+    * Has no effect while the tab bar is turned off. Default: false
+    *
+    * Default: `false`
+    */
+    auto_hide_tab_bar?: boolean;
     /**
     * Show the status bar at the bottom. Can be toggled at any time.
     * Default: true

@@ -787,3 +787,72 @@ fn test_switch_keybinding_map_via_action_persists() {
         "Switching the keybinding style via the menu action must persist (issue #474)"
     );
 }
+
+/// Run a command palette command by name.
+fn run_palette_command(harness: &mut EditorTestHarness, name: &str) {
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text(name).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+}
+
+/// `editor.auto_hide_tab_bar` hides the tab bar while the window shows one
+/// file, brings it back for a second tab, and hides it again once that tab
+/// is closed (#3696).
+#[test]
+fn test_auto_hide_tab_bar_with_a_single_file() {
+    let temp = TempDir::new().unwrap();
+    let first = temp.path().join("first_file.txt");
+    let second = temp.path().join("second_file.txt");
+    std::fs::write(&first, "one\n").unwrap();
+    std::fs::write(&second, "two\n").unwrap();
+
+    let mut config = Config::default();
+    config.editor.auto_hide_tab_bar = true;
+    let mut harness = EditorTestHarness::with_config(100, 24, config).unwrap();
+
+    harness.open_file(&first).unwrap();
+    harness.render().unwrap();
+    // The file's text moves up into the tab bar's row.
+    assert!(
+        harness.get_tab_bar().contains("one"),
+        "with one file the buffer starts right under the menu bar: {:?}",
+        harness.get_tab_bar()
+    );
+
+    harness.open_file(&second).unwrap();
+    harness.render().unwrap();
+    let tab_bar = harness.get_tab_bar();
+    assert!(
+        tab_bar.contains("first_file.txt") && tab_bar.contains("second_file.txt"),
+        "a second tab brings the tab bar back: {tab_bar:?}"
+    );
+
+    run_palette_command(&mut harness, "Close Buffer");
+    let tab_bar = harness.get_tab_bar();
+    assert!(
+        !tab_bar.contains("first_file.txt") && tab_bar.contains("one"),
+        "back to one file, the tab bar hides again: {tab_bar:?}"
+    );
+}
+
+/// Off by default: a single file still has its tab bar (#3696).
+#[test]
+fn test_tab_bar_not_auto_hidden_by_default() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("only_file.txt");
+    std::fs::write(&file, "one\n").unwrap();
+
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    harness.open_file(&file).unwrap();
+    harness.render().unwrap();
+    assert!(
+        harness.get_tab_bar().contains("only_file.txt"),
+        "tab bar: {:?}",
+        harness.get_tab_bar()
+    );
+}

@@ -1554,6 +1554,8 @@
   "settings.save_failed_unchanged": "Ваш файл конфигурации остался без изменений, чтобы вы могли его исправить.",
   "settings.save_failed_open_hint": "Нажмите Esc, чтобы открыть файл конфигурации и исправить его.",
   "settings.field.editor.auto_close": "Автозакрытие",
+  "settings.field.editor.auto_hide_tab_bar": "Автоматически скрывать панель вкладок",
+  "settings.field.editor.auto_hide_tab_bar_desc": "Скрывать панель вкладок, пока в окне открыт один файл: одна панель с одной вкладкой. Она появляется снова, как только открывается вторая вкладка или панель. Не действует, пока панель вкладок выключена. По умолчанию: false",
   "settings.field.editor.whitespace_show": "Показать пробелы",
   "settings.field.editor.whitespace_spaces_inner": "Внутренние пробелы",
   "settings.field.editor.whitespace_spaces_leading": "Начальные пробелы",

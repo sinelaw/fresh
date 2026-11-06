@@ -194,6 +194,9 @@ pub struct ServerCapabilitySummary {
     pub document_symbols: bool,
     pub workspace_symbols: bool,
     pub diagnostics: bool,
+    /// How the server asked to be told about edits (`textDocumentSync`):
+    /// range edits, the whole document, or nothing (#3436).
+    pub text_document_sync: crate::services::lsp::sync_policy::ServerSync,
 }
 
 impl ServerCapabilitySummary {
@@ -278,6 +281,20 @@ impl ServerCapabilitySummary {
             "textDocument/documentSymbol" => self.document_symbols = register,
             "workspace/symbol" => self.workspace_symbols = register,
             "textDocument/diagnostic" => self.diagnostics = register,
+            "textDocument/didChange" => {
+                use crate::services::lsp::sync_policy::ServerSync;
+                // Unregistering leaves the server without a didChange
+                // registration at all; registering without a kind keeps
+                // what it declared statically.
+                self.text_document_sync = if register {
+                    ServerSync::from_registration(register_options)
+                        .unwrap_or(self.text_document_sync)
+                } else {
+                    ServerSync::None
+                };
+                // Not a feature gate: nothing to re-request.
+                return false;
+            }
             "textDocument/semanticTokens" => {
                 if register {
                     // Registration options carry the legend and full/range
