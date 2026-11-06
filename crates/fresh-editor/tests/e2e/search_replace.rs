@@ -4278,3 +4278,65 @@ fn test_search_replace_search_continues_in_the_background() {
     );
     harness.assert_screen_contains(&format!("big{sep}f0.txt:1 - zqxneedle 0"));
 }
+
+/// In a window whose root is reached through a symlink, a file open in the
+/// editor is searched once, and Replace All rewrites it once (#3720). Open
+/// buffers carry their canonical path while the project walk spells files
+/// under the root as given; before the fix the two never matched, the open
+/// file was listed twice, and Replace All applied its edits twice, the second
+/// time at offsets the first had moved, corrupting the file.
+#[cfg(unix)]
+#[test]
+fn test_search_replace_window_root_through_a_symlink() {
+    let (temp_dir, project_root) = setup_search_replace_project();
+    let real = temp_dir.path().join("real");
+    fs::create_dir(&real).unwrap();
+    fs::write(real.join("a.txt"), "needle here\n").unwrap();
+    fs::write(real.join("b.txt"), "needle too\n").unwrap();
+    let link = temp_dir.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 30, Default::default(), project_root)
+            .unwrap();
+    // A window at the symlinked path, as `createWindow` makes one.
+    let window = harness
+        .editor_mut()
+        .create_window_at(link.clone(), "link".to_string());
+    harness.editor_mut().set_active_window(window);
+    harness.open_file(&link.join("a.txt")).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness.type_text("needle").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("(2 matches / 2 files)"))
+        .unwrap();
+    // The open file under its project-relative name, not its canonical path.
+    harness.assert_screen_contains("a.txt:1 - needle here");
+    harness.assert_screen_not_contains(&real.to_string_lossy());
+
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.type_text("PIN").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::ALT).unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("Replace 2 match(es) in 2 file(s)?")
+        })
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("Replaced 2 occurrences in 2 files")
+        })
+        .unwrap();
+    assert_eq!(fs::read_to_string(real.join("b.txt")).unwrap(), "PIN too\n");
+    // a.txt is open: the replace lands in its buffer and is saved.
+    harness
+        .wait_until(|_| fs::read_to_string(real.join("a.txt")).unwrap() == "PIN here\n")
+        .unwrap();
+}

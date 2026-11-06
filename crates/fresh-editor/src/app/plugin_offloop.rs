@@ -440,6 +440,46 @@ pub(crate) fn project_search(
             open_results,
             clean_buffers,
         } = search;
+        // Open buffers carry their canonical path; the walk yields
+        // `root.join(rel)`. With a root that is not canonical — reached
+        // through a symlink, or `C:\…` where buffers say `\\?\C:\…` — the two
+        // spellings of one file never compared equal: an open file was
+        // searched twice, and Replace All rewrote it twice at offsets the
+        // first rewrite had moved (#3720). Put the open buffers' paths in the
+        // walk's spelling, so the walk skips them and attributes their
+        // matches to the buffer. Off the editor thread: on a remote window
+        // this asks the remote host.
+        let canonical_root = {
+            let (fs, root) = (Arc::clone(&filesystem), root.clone());
+            tokio::task::spawn_blocking(move || fs.canonicalize(&root).ok())
+                .await
+                .ok()
+                .flatten()
+        };
+        let (source_file, open_paths, clean_buffers) = {
+            let walk_form = |path: PathBuf| -> PathBuf {
+                match canonical_root.as_deref() {
+                    Some(canonical) if canonical != root.as_path() => {
+                        match path.strip_prefix(canonical) {
+                            Ok(rel) => root.join(rel),
+                            Err(_) => path,
+                        }
+                    }
+                    _ => path,
+                }
+            };
+            (
+                source_file.map(walk_form),
+                open_paths
+                    .into_iter()
+                    .map(walk_form)
+                    .collect::<HashSet<_>>(),
+                clean_buffers
+                    .into_iter()
+                    .map(|(path, id)| (walk_form(path), id))
+                    .collect::<HashMap<_, _>>(),
+            )
+        };
         let cancelled = |handle: &SearchHandleState| handle.cancel.load(Ordering::Relaxed);
         let match_count = Arc::new(AtomicUsize::new(0));
         // The source buffer's matches go in when its search (on the editor
