@@ -4340,3 +4340,41 @@ fn test_search_replace_window_root_through_a_symlink() {
         .wait_until(|_| fs::read_to_string(real.join("a.txt")).unwrap() == "PIN here\n")
         .unwrap();
 }
+
+/// An open file with unsaved changes, in a window rooted through a symlink,
+/// is searched once, as it is in the buffer, and listed under its
+/// project-relative name like every other file (#3720).
+#[cfg(unix)]
+#[test]
+fn test_search_replace_modified_buffer_under_a_symlinked_root() {
+    let (temp_dir, project_root) = setup_search_replace_project();
+    let real = temp_dir.path().join("real");
+    fs::create_dir(&real).unwrap();
+    fs::write(real.join("a.txt"), "needle here\n").unwrap();
+    fs::write(real.join("b.txt"), "needle too\n").unwrap();
+    let link = temp_dir.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 30, Default::default(), project_root)
+            .unwrap();
+    let window = harness
+        .editor_mut()
+        .create_window_at(link.clone(), "link".to_string());
+    harness.editor_mut().set_active_window(window);
+    harness.open_file(&link.join("a.txt")).unwrap();
+    // An unsaved second match: only the buffer has it.
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("needle unsaved").unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness.type_text("needle").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("(3 matches / 2 files)"))
+        .unwrap();
+    harness.assert_screen_contains("a.txt:2 - needle unsaved");
+    harness.assert_screen_not_contains(&real.to_string_lossy());
+}

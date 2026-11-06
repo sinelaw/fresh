@@ -376,6 +376,36 @@ pub(crate) struct ProjectSearch {
     pub clean_buffers: HashMap<PathBuf, BufferId>,
 }
 
+/// `path` spelled under the root as the project walk spells it, when it lies
+/// under the root's canonical form: `reroot` is `(canonical root, root)`, set
+/// only when the two differ (#3720).
+fn rerooted(path: PathBuf, reroot: &Option<(PathBuf, PathBuf)>) -> PathBuf {
+    match reroot {
+        Some((canonical, root)) => match path.strip_prefix(canonical) {
+            Ok(rel) => root.join(rel),
+            Err(_) => path,
+        },
+        None => path,
+    }
+}
+
+/// The open buffers' matches carry the buffer's canonical path; name their
+/// file the way the walk names it, so a buffer's results read like every
+/// other file's (project-relative) and group with them.
+fn rerooted_matches(
+    mut matches: Vec<GrepMatch>,
+    reroot: &Option<(PathBuf, PathBuf)>,
+) -> Vec<GrepMatch> {
+    if reroot.is_some() {
+        for m in &mut matches {
+            m.file = rerooted(PathBuf::from(&m.file), reroot)
+                .to_string_lossy()
+                .into_owned();
+        }
+    }
+    matches
+}
+
 /// Add `matches` to a search's pending results, up to `max_results` in all.
 fn push_capped(
     handle: &SearchHandleState,
@@ -456,18 +486,14 @@ pub(crate) fn project_search(
                 .ok()
                 .flatten()
         };
+        // `(canonical root, root)` when they differ: what re-rooting needs.
+        let reroot = Arc::new(
+            canonical_root
+                .filter(|canonical| canonical != &root)
+                .map(|canonical| (canonical, root.clone())),
+        );
         let (source_file, open_paths, clean_buffers) = {
-            let walk_form = |path: PathBuf| -> PathBuf {
-                match canonical_root.as_deref() {
-                    Some(canonical) if canonical != root.as_path() => {
-                        match path.strip_prefix(canonical) {
-                            Ok(rel) => root.join(rel),
-                            Err(_) => path,
-                        }
-                    }
-                    _ => path,
-                }
-            };
+            let walk_form = |path: PathBuf| rerooted(path, &reroot);
             (
                 source_file.map(walk_form),
                 open_paths
@@ -487,8 +513,9 @@ pub(crate) fn project_search(
         // be: they are the file the search was started from.
         let source_task = source_result.map(|receiver| {
             let (handle, match_count) = (Arc::clone(&handle), Arc::clone(&match_count));
+            let reroot = Arc::clone(&reroot);
             tokio::spawn(async move {
-                let matches = receiver.await.unwrap_or_default();
+                let matches = rerooted_matches(receiver.await.unwrap_or_default(), &reroot);
                 match_count.fetch_add(matches.len(), Ordering::Relaxed);
                 push_matches(&handle, matches);
             })
@@ -568,7 +595,7 @@ pub(crate) fn project_search(
             drop(task.await);
         }
         for receiver in open_results {
-            let matches = receiver.await.unwrap_or_default();
+            let matches = rerooted_matches(receiver.await.unwrap_or_default(), &reroot);
             push_capped(&handle, &match_count, max_results, matches);
         }
 
