@@ -4278,3 +4278,254 @@ fn test_search_replace_search_continues_in_the_background() {
     );
     harness.assert_screen_contains(&format!("big{sep}f0.txt:1 - zqxneedle 0"));
 }
+
+/// In a window whose root is reached through a symlink, a file open in the
+/// editor is searched once, and Replace All rewrites it once (#3720). Open
+/// buffers carry their canonical path while the project walk spells files
+/// under the root as given; before the fix the two never matched, the open
+/// file was listed twice, and Replace All applied its edits twice, the second
+/// time at offsets the first had moved, corrupting the file.
+#[cfg(unix)]
+#[test]
+fn test_search_replace_window_root_through_a_symlink() {
+    let (temp_dir, project_root) = setup_search_replace_project();
+    let real = temp_dir.path().join("real");
+    fs::create_dir(&real).unwrap();
+    fs::write(real.join("a.txt"), "needle here\n").unwrap();
+    fs::write(real.join("b.txt"), "needle too\n").unwrap();
+    let link = temp_dir.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 30, Default::default(), project_root)
+            .unwrap();
+    // A window at the symlinked path, as `createWindow` makes one.
+    let window = harness
+        .editor_mut()
+        .create_window_at(link.clone(), "link".to_string());
+    harness.editor_mut().set_active_window(window);
+    harness.open_file(&link.join("a.txt")).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness.type_text("needle").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("(2 matches / 2 files)"))
+        .unwrap();
+    // The open file under its project-relative name, not its canonical path.
+    harness.assert_screen_contains("a.txt:1 - needle here");
+    harness.assert_screen_not_contains(&real.to_string_lossy());
+
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.type_text("PIN").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::ALT).unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("Replace 2 match(es) in 2 file(s)?")
+        })
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("Replaced 2 occurrences in 2 files")
+        })
+        .unwrap();
+    assert_eq!(fs::read_to_string(real.join("b.txt")).unwrap(), "PIN too\n");
+    // a.txt is open: the replace lands in its buffer and is saved.
+    harness
+        .wait_until(|_| fs::read_to_string(real.join("a.txt")).unwrap() == "PIN here\n")
+        .unwrap();
+}
+
+/// An open file with unsaved changes, in a window rooted through a symlink,
+/// is searched once, as it is in the buffer, and listed under its
+/// project-relative name like every other file (#3720).
+#[cfg(unix)]
+#[test]
+fn test_search_replace_modified_buffer_under_a_symlinked_root() {
+    let (temp_dir, project_root) = setup_search_replace_project();
+    let real = temp_dir.path().join("real");
+    fs::create_dir(&real).unwrap();
+    fs::write(real.join("a.txt"), "needle here\n").unwrap();
+    fs::write(real.join("b.txt"), "needle too\n").unwrap();
+    let link = temp_dir.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 30, Default::default(), project_root)
+            .unwrap();
+    let window = harness
+        .editor_mut()
+        .create_window_at(link.clone(), "link".to_string());
+    harness.editor_mut().set_active_window(window);
+    harness.open_file(&link.join("a.txt")).unwrap();
+    // An unsaved second match: only the buffer has it.
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("needle unsaved").unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness.type_text("needle").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("(3 matches / 2 files)"))
+        .unwrap();
+    harness.assert_screen_contains("a.txt:2 - needle unsaved");
+    harness.assert_screen_not_contains(&real.to_string_lossy());
+}
+
+/// "Search and Replace in Current File" names its matches as the project
+/// search does in a window rooted through a symlink: by the file's
+/// project-relative name, not its canonical path.
+#[cfg(unix)]
+#[test]
+fn test_search_replace_in_current_file_under_a_symlinked_root() {
+    let (temp_dir, project_root) = setup_search_replace_project();
+    let real = temp_dir.path().join("real");
+    fs::create_dir(&real).unwrap();
+    fs::write(real.join("a.txt"), "needle here\n").unwrap();
+    let link = temp_dir.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 30, Default::default(), project_root)
+            .unwrap();
+    let window = harness
+        .editor_mut()
+        .create_window_at(link.clone(), "link".to_string());
+    harness.editor_mut().set_active_window(window);
+    harness.open_file(&link.join("a.txt")).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness
+        .type_text("Search and Replace in Current File")
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("Search and Replace in Current File")
+        })
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Search:"))
+        .unwrap();
+    harness.type_text("needle").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("(1 matches / 1 files)"))
+        .unwrap();
+    // The match row, not the canonical `…/real/a.txt:1`.
+    harness.assert_screen_contains("[v] a.txt:1 - needle here");
+}
+
+/// A symlink git tracks is a second name for its target. The project search
+/// lists the file once, under its own name — through two links to a file
+/// outside the project, once too; through a link to a gitignored file,
+/// still — and a tracked link since replaced by a file is searched as that
+/// file. Replace All rewrites each file once,
+/// leaving the links links. Searched under both names, Replace All rewrote
+/// the file twice at offsets the first rewrite had moved.
+#[cfg(unix)]
+#[test]
+fn test_search_replace_tracked_symlinks_are_searched_once() {
+    let (temp_dir, project_root) = setup_search_replace_project();
+    fs::write(
+        project_root.join("real.txt"),
+        "zqxneedle here\nmore zqxneedle\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("real.txt", project_root.join("link.txt")).unwrap();
+    let outside = temp_dir.path().join("outside");
+    fs::create_dir(&outside).unwrap();
+    fs::write(outside.join("o.txt"), "zqxneedle outside\n").unwrap();
+    for name in ["out1.txt", "out2.txt"] {
+        std::os::unix::fs::symlink(outside.join("o.txt"), project_root.join(name)).unwrap();
+    }
+    // A link to a file the listing leaves out (gitignored): the link is
+    // the only way the search reaches it.
+    fs::write(project_root.join(".gitignore"), "*.log\n").unwrap();
+    fs::write(project_root.join("secret.log"), "zqxneedle ignored\n").unwrap();
+    std::os::unix::fs::symlink("secret.log", project_root.join("to_ignored.txt")).unwrap();
+    // A tracked link replaced by a file, not yet staged: the index still
+    // says link.
+    std::os::unix::fs::symlink("real.txt", project_root.join("was_link.txt")).unwrap();
+    for args in [&["init", "-q"][..], &["add", "-A"][..]] {
+        assert!(std::process::Command::new("git")
+            .args(args)
+            .current_dir(&project_root)
+            .status()
+            .unwrap()
+            .success());
+    }
+    fs::remove_file(project_root.join("was_link.txt")).unwrap();
+    fs::write(project_root.join("was_link.txt"), "zqxneedle now a file\n").unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness.type_text("zqxneedle").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("(5 matches / 4 files)"))
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("real.txt:1 - zqxneedle here"))
+        .unwrap();
+    harness.assert_screen_not_contains("link.txt");
+
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.type_text("PIN").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::ALT).unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("Replace 5 match(es) in 4 file(s)?")
+        })
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("Replaced 5 occurrences in 4 files")
+        })
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(project_root.join("real.txt")).unwrap(),
+        "PIN here\nmore PIN\n"
+    );
+    assert_eq!(
+        fs::read_to_string(outside.join("o.txt")).unwrap(),
+        "PIN outside\n"
+    );
+    assert_eq!(
+        fs::read_to_string(project_root.join("secret.log")).unwrap(),
+        "PIN ignored\n"
+    );
+    assert_eq!(
+        fs::read_to_string(project_root.join("was_link.txt")).unwrap(),
+        "PIN now a file\n"
+    );
+    for name in ["link.txt", "out1.txt", "out2.txt", "to_ignored.txt"] {
+        let meta = fs::symlink_metadata(project_root.join(name)).unwrap();
+        assert!(meta.file_type().is_symlink(), "{name} is still a link");
+    }
+}
