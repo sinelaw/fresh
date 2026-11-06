@@ -257,18 +257,18 @@ fn lifecycle_command_cwd_must_be_remote_workspace_folder() {
             .with_fake_devcontainer(),
     )
     .unwrap();
-    // Set after harness creation so the fake-devcontainer mutex
-    // (held by the harness) serializes us with sibling tests; setting
-    // before lock acquisition races against their subprocesses.
+    // Set through the harness's pin, which serializes us with sibling
+    // tests and unsets it when the harness drops.
     // Fake will report `remoteWorkspaceFolder` as
     // `/workspaces/s1-cwd-distinct` — distinct from the host path.
-    std::env::set_var("FAKE_DC_REMOTE_WORKSPACE", "/workspaces/s1-cwd-distinct");
+    harness
+        .fake_devcontainer_env()
+        .set_env("FAKE_DC_REMOTE_WORKSPACE", "/workspaces/s1-cwd-distinct");
     harness.tick_and_render().unwrap();
 
     let probe_text = run_attach_and_postcreate(&mut harness, &probe, |l| {
         l == "REQUESTED_CWD=/workspaces/s1-cwd-distinct"
     });
-    std::env::remove_var("FAKE_DC_REMOTE_WORKSPACE");
 
     // The probe is appended to by both the picker run (via
     // `docker exec` — the path under test) AND the fake `up`'s

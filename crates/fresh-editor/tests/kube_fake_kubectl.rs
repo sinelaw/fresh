@@ -12,7 +12,7 @@
 //! resolve without any chroot.
 
 use std::path::PathBuf;
-use std::sync::{Arc, Once};
+use std::sync::Arc;
 
 use fresh::model::filesystem::FileSystem;
 use fresh::services::authority::{connect_kube_authority, RemoteAgentSpec};
@@ -20,23 +20,19 @@ use fresh::services::env_provider::EnvProvider;
 use fresh::services::remote::{KubeConnection, KubeTarget, RemoteFileSystem};
 use fresh::services::workspace_trust::WorkspaceTrust;
 
-static PATH_INIT: Once = Once::new();
-
-/// Prepend the fake-kubectl fixtures dir to PATH exactly once, so
-/// `Command::new("kubectl")` resolves to the shim. `Once` keeps the
-/// process-global env mutation from racing across parallel tests in this
-/// binary.
-fn ensure_fake_kubectl_on_path() {
-    PATH_INIT.call_once(|| {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake-kube");
-        assert!(
-            dir.join("kubectl").exists(),
-            "fake kubectl shim missing at {}",
-            dir.display()
-        );
-        let old = std::env::var("PATH").unwrap_or_default();
-        std::env::set_var("PATH", format!("{}:{old}", dir.display()));
-    });
+/// Put the fake-kubectl fixtures dir in front of PATH until the returned
+/// pin drops, so `Command::new("kubectl")` resolves to the shim. PATH is
+/// process-global and every test file runs in the one `all_tests` binary,
+/// so this goes through the same pin as every other shim instead of a
+/// permanent prepend.
+fn fake_kubectl_on_path() -> crate::common::global_state::PathPin {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake-kube");
+    assert!(
+        dir.join("kubectl").exists(),
+        "fake kubectl shim missing at {}",
+        dir.display()
+    );
+    crate::common::global_state::pin_path_with_dir_first(&dir)
 }
 
 fn python3_available() -> bool {
@@ -66,7 +62,7 @@ fn target(workspace: &std::path::Path) -> KubeTarget {
 
 #[test]
 fn kube_connection_round_trips_a_file_through_fake_kubectl() {
-    ensure_fake_kubectl_on_path();
+    let _path = fake_kubectl_on_path();
     if !python3_available() {
         eprintln!("skipping: python3 not found on PATH");
         return;
@@ -114,7 +110,7 @@ fn kube_connection_round_trips_a_file_through_fake_kubectl() {
 /// keepalive owns no runtime); GREEN once the keepalive owns a dedicated one.
 #[test]
 fn agent_channel_survives_dropping_the_attach_runtime() {
-    ensure_fake_kubectl_on_path();
+    let _path = fake_kubectl_on_path();
     if !python3_available() {
         eprintln!("skipping: python3 not found on PATH");
         return;
@@ -168,7 +164,7 @@ fn agent_channel_survives_dropping_the_attach_runtime() {
 
 #[test]
 fn attach_spec_payload_parses_and_connects_through_fake_kubectl() {
-    ensure_fake_kubectl_on_path();
+    let _path = fake_kubectl_on_path();
     if !python3_available() {
         eprintln!("skipping: python3 not found on PATH");
         return;
@@ -216,7 +212,7 @@ fn attach_spec_payload_parses_and_connects_through_fake_kubectl() {
 
 #[test]
 fn kube_authority_spawns_one_shot_and_lsp_through_fake_kubectl() {
-    ensure_fake_kubectl_on_path();
+    let _path = fake_kubectl_on_path();
     if !python3_available() {
         eprintln!("skipping: python3 not found on PATH");
         return;
@@ -333,7 +329,7 @@ fn kube_authority_spawns_one_shot_and_lsp_through_fake_kubectl() {
 /// gets `TrustLevel::Blocked`: it can read the disk and run nothing.
 #[test]
 fn a_blocked_authority_reads_the_machine_but_runs_nothing_on_it() {
-    ensure_fake_kubectl_on_path();
+    let _path = fake_kubectl_on_path();
     if !python3_available() {
         eprintln!("skipping: python3 not found on PATH");
         return;
