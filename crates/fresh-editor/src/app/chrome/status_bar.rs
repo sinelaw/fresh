@@ -60,6 +60,11 @@ impl Editor {
                 self.dismiss_menu_popups_for_prompt();
                 self.handle_action(Action::RestartTerminal)
             }
+            // The same actions F3 / Shift+F3 run. They open no prompt, so no
+            // popup is dismissed; and an open search bar stays open, as it
+            // does for F3 (issue #2111).
+            C::SearchNext => self.handle_action(Action::FindNext),
+            C::SearchPrevious => self.handle_action(Action::FindPrevious),
         }
     }
 

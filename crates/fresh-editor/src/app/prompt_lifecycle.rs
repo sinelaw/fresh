@@ -1369,8 +1369,12 @@ impl Window {
                     | PromptType::QueryReplaceConfirm
             ) {
                 self.prompt = None;
-                // Also cancel interactive replace if active
-                self.interactive_replace_state = None;
+                // Also cancel interactive replace if active. That ends its
+                // search too, as `finish_interactive_replace` does: the
+                // replacements made so far left its positions stale.
+                if self.interactive_replace_state.take().is_some() {
+                    self.search_state = None;
+                }
                 // Clear search highlights from current buffer
                 self.clear_search_overlays();
             }
