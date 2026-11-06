@@ -24,7 +24,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Bash highlighting survives `f() ( ... )` subshell functions** (#3473, #3201, reported by @asukaminato0721)
 * **C# typing lag** from slow highlighting of interpolated strings is gone (#3667, #3699, reported by @SONickode)
 * **LSP servers that declare full text sync** receive the whole document, so their diagnostics stay (#3436, reported by @dsvarela)
-* **Setting the terminal **Shell** from `init.ts`** applies to new terminals (#3712, reported by @brunnerh)
+* **Terminal Shell set from `init.ts`** applies to new terminals (#3712, reported by @brunnerh)
 * **Merge conflict resolution** no longer leaves an extra blank line per conflict (#3702, #3714, reported by @atk)
 * **`fresh --diff` fixes** - no stray tab after closing tabs (#3688), clicks past a changed line land at its end (#3689), per-side modified markers in tab titles (#3691) (#3694, reported by @Korkman)
 * **Keys work on macOS when stdin is `/dev/tty`** instead of hanging and spinning a core (#3683, #3693, reported by @StonesFromTheSky)
