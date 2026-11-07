@@ -14,16 +14,24 @@
 //! re-applied on restore *without* marking the tab explicitly titled, so
 //! restarting the terminal still hands naming back to the reborn process.
 //!
-//! Determinism: the terminal's "shell" is a script of this test's own that
-//! sets an OSC title and then waits for a sentinel file, so the name is read
-//! from the title rather than from whatever the host's process table happens
-//! to report, and the exit happens only once the test has seen the name on
-//! the tab. A plain shell would race the title poll against the exit.
+//! Two things make these deterministic rather than dependent on the host:
 //!
-//! Requires a working PTY (/dev/ptmx); skips when unavailable, like the other
-//! terminal e2e tests.
+//! * The terminal's "shell" is a script of this test's own that sets an OSC
+//!   title and then waits for a sentinel file. The name therefore comes from
+//!   that title, and the exit happens only once the test has seen the name on
+//!   the tab — a plain shell would race the title poll against the exit.
+//! * Auto-naming is turned back **on after construction**: the harness forces
+//!   `terminal_auto_title` off so other tests get static `*Terminal N*` tabs,
+//!   and it overrides whatever a constructor-time config asked for. This is
+//!   the same opt-in `terminal::test_terminal_tab_title_follows_foreground_process`
+//!   makes.
+//!
+//! Linux-only and PTY-gated, like the other terminal tests here: the
+//! foreground-process half of a tab's name is read through `tcgetpgrp` and
+//! `/proc`, which other platforms do not implement.
+#![cfg(target_os = "linux")]
 
-use crate::common::harness::{layout, EditorTestHarness, HarnessOptions};
+use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use fresh::config::Config;
 use fresh::config_io::DirectoryContext;
 use portable_pty::{native_pty_system, PtySize};
@@ -43,22 +51,47 @@ fn pty_available() -> bool {
 fn write_script(dir: &std::path::Path, name: &str, body: &str) -> String {
     let path = dir.join(name);
     std::fs::write(&path, body).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
     path.to_string_lossy().into_owned()
 }
 
-fn tab_bar(harness: &EditorTestHarness) -> String {
-    harness.screen_row_text(layout::TAB_BAR_ROW as u16)
+/// Turn tmux-style auto-naming back on for this harness.
+///
+/// It has to happen *after* construction: the harness sets
+/// `terminal_auto_title = false` on the config it builds, whatever was passed
+/// in, so that tabs elsewhere stay on their static `*Terminal N*` names.
+fn enable_auto_title(harness: &mut EditorTestHarness) {
+    let mut config = harness.editor().config().clone();
+    config.editor.terminal_auto_title = true;
+    harness.editor_mut().set_config(config);
+}
+
+/// Wait for the terminal tab to carry `name`, failing fast — with the screen
+/// — if the terminal exits first instead.
+///
+/// The scripts below hold their terminal open until the test releases it, so
+/// an exit here means the name is never coming, and waiting out the full
+/// deadline would cost two minutes to say so.
+fn wait_for_tab_name(harness: &mut EditorTestHarness, name: &str) {
+    harness
+        .wait_until(|h| {
+            let tabs = h.get_tab_bar();
+            tabs.contains(name) || tabs.contains("(exited)")
+        })
+        .unwrap_or_else(|e| panic!("waiting for the tab to read {name:?}: {e}"));
+    let tabs = harness.get_tab_bar();
+    assert!(
+        tabs.contains(name),
+        "the terminal should have named itself {name:?} from its OSC title, \
+         but it exited first.\nTabs: {tabs}\nScreen:\n{}",
+        harness.screen_to_string()
+    );
 }
 
 /// An auto-named terminal that exited before the quit comes back with the
 /// name it had, not the `*Terminal N*` default.
 #[test]
-#[cfg_attr(target_os = "windows", ignore)] // Uses a Unix shell script as the shell
 fn an_exited_terminals_auto_derived_name_survives_a_restart() {
     if !pty_available() {
         eprintln!("Skipping terminal-name-restore test: PTY not available");
@@ -70,8 +103,8 @@ fn an_exited_terminals_auto_derived_name_survives_a_restart() {
     std::fs::create_dir(&project_dir).unwrap();
     let dir_context = DirectoryContext::for_testing(temp_dir.path());
 
-    // Sets the tab's name through an OSC title, then holds the terminal open
-    // until the test has seen that name and asks it to quit.
+    // Names the tab through an OSC title, then holds the terminal open until
+    // the test has seen that name and asks it to quit.
     let sentinel = temp_dir.path().join("quit-now");
     let script = write_script(
         temp_dir.path(),
@@ -96,7 +129,7 @@ fn an_exited_terminals_auto_derived_name_survives_a_restart() {
             command: script.clone(),
             args: Vec::new(),
         });
-        EditorTestHarness::create(
+        let mut harness = EditorTestHarness::create(
             120,
             30,
             HarnessOptions::new()
@@ -105,7 +138,9 @@ fn an_exited_terminals_auto_derived_name_survives_a_restart() {
                 .with_shared_dir_context(dir_context.clone())
                 .without_empty_plugins_dir(),
         )
-        .unwrap()
+        .unwrap();
+        enable_auto_title(&mut harness);
+        harness
     };
 
     // Session 1: the terminal names itself, then exits, then the editor quits.
@@ -115,18 +150,16 @@ fn an_exited_terminals_auto_derived_name_survives_a_restart() {
         harness
             .run_palette_command("Open Terminal to the Right")
             .unwrap();
-        harness
-            .wait_until(|h| tab_bar(h).contains("TITLE-ALPHA"))
-            .expect("the terminal's OSC title should become its tab name");
+        wait_for_tab_name(&mut harness, "TITLE-ALPHA");
 
         // Only now let it exit, so the name is on the tab before the exit
         // path captures it.
         std::fs::write(&sentinel, b"").unwrap();
         harness
-            .wait_until(|h| tab_bar(h).contains("(exited)"))
+            .wait_until(|h| h.get_tab_bar().contains("(exited)"))
             .expect("the terminal should exit and say so on its tab");
 
-        let tabs = tab_bar(&harness);
+        let tabs = harness.get_tab_bar();
         assert!(
             tabs.contains("TITLE-ALPHA"),
             "an exited tab keeps its name within the session.\nTabs: {tabs}"
@@ -142,16 +175,10 @@ fn an_exited_terminals_auto_derived_name_survives_a_restart() {
     // The restore reopens the pane from its backing file; wait for the tab
     // rather than assuming it is there on the first frame.
     harness
-        .wait_until(|h| tab_bar(h).contains("(exited)"))
-        .unwrap_or_else(|_| {
-            panic!(
-                "the exited terminal should be restored.\nTabs: {}\nScreen:\n{}",
-                tab_bar(&harness),
-                harness.screen_to_string()
-            )
-        });
+        .wait_until(|h| h.get_tab_bar().contains("(exited)"))
+        .expect("the exited terminal should be restored");
 
-    let tabs = tab_bar(&harness);
+    let tabs = harness.get_tab_bar();
     assert!(
         tabs.contains("TITLE-ALPHA"),
         "a restored exited terminal must keep its name.\n\
@@ -170,7 +197,6 @@ fn an_exited_terminals_auto_derived_name_survives_a_restart() {
 /// both tabs fell back to the same base name, so which transcript was which
 /// was unrecoverable from the tab bar.
 #[test]
-#[cfg_attr(target_os = "windows", ignore)] // Uses a Unix shell script as the shell
 fn two_exited_terminals_stay_distinguishable_across_a_restart() {
     if !pty_available() {
         eprintln!("Skipping terminal-name-restore test: PTY not available");
@@ -182,9 +208,11 @@ fn two_exited_terminals_stay_distinguishable_across_a_restart() {
     std::fs::create_dir(&project_dir).unwrap();
     let dir_context = DirectoryContext::for_testing(temp_dir.path());
 
-    // One script, two names: it takes its title from the first file that is
-    // not yet claimed, so the two terminals name themselves differently
-    // without the test having to configure two shells.
+    // One script, two names: it takes its title from whether the first run
+    // has claimed its name yet, so the two terminals name themselves
+    // differently without the test having to configure two shells. The test
+    // waits for the first name before opening the second terminal, so the
+    // order is not a race.
     let sentinel = temp_dir.path().join("quit-now");
     let claimed = temp_dir.path().join("claimed");
     let script = write_script(
@@ -209,7 +237,7 @@ fn two_exited_terminals_stay_distinguishable_across_a_restart() {
             command: script.clone(),
             args: Vec::new(),
         });
-        EditorTestHarness::create(
+        let mut harness = EditorTestHarness::create(
             140,
             30,
             HarnessOptions::new()
@@ -218,7 +246,9 @@ fn two_exited_terminals_stay_distinguishable_across_a_restart() {
                 .with_shared_dir_context(dir_context.clone())
                 .without_empty_plugins_dir(),
         )
-        .unwrap()
+        .unwrap();
+        enable_auto_title(&mut harness);
+        harness
     };
 
     {
@@ -227,20 +257,13 @@ fn two_exited_terminals_stay_distinguishable_across_a_restart() {
         harness
             .run_palette_command("Open Terminal to the Right")
             .unwrap();
-        harness
-            .wait_until(|h| tab_bar(h).contains("TITLE-ALPHA"))
-            .expect("the first terminal should name itself");
+        wait_for_tab_name(&mut harness, "TITLE-ALPHA");
         harness.run_palette_command("Open Terminal").unwrap();
-        harness
-            .wait_until(|h| tab_bar(h).contains("TITLE-BETA"))
-            .expect("the second terminal should name itself differently");
+        wait_for_tab_name(&mut harness, "TITLE-BETA");
 
         std::fs::write(&sentinel, b"").unwrap();
         harness
-            .wait_until(|h| {
-                let tabs = tab_bar(h);
-                tabs.matches("(exited)").count() == 2
-            })
+            .wait_until(|h| h.get_tab_bar().matches("(exited)").count() == 2)
             .expect("both terminals should exit");
         harness.shutdown(true).unwrap();
     }
@@ -248,15 +271,10 @@ fn two_exited_terminals_stay_distinguishable_across_a_restart() {
     let mut harness = harness_in(&project_dir);
     harness.startup(true, &[]).unwrap();
     harness
-        .wait_until(|h| tab_bar(h).matches("(exited)").count() == 2)
-        .unwrap_or_else(|_| {
-            panic!(
-                "both exited terminals should be restored.\nTabs: {}",
-                tab_bar(&harness)
-            )
-        });
+        .wait_until(|h| h.get_tab_bar().matches("(exited)").count() == 2)
+        .expect("both exited terminals should be restored");
 
-    let tabs = tab_bar(&harness);
+    let tabs = harness.get_tab_bar();
     assert!(
         tabs.contains("TITLE-ALPHA") && tabs.contains("TITLE-BETA"),
         "both restored terminals must keep their own names, or the two dead \
