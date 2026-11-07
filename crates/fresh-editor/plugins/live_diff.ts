@@ -326,18 +326,18 @@ function releaseBaseline(state: BufferDiffState): void {
 
 async function resolveDefaultBranch(filePath: string): Promise<string> {
   const cwd = fileDir(filePath);
-  const head = await editor.spawnProcess(
+  const head = await editor.runOnTarget(
     "git", ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], cwd,
   );
-  if (head.exit_code === 0) {
+  if (head.code === 0) {
     const trimmed = head.stdout.trim();
     if (trimmed.startsWith("origin/")) return trimmed.substring("origin/".length);
     if (trimmed.length > 0) return trimmed;
   }
-  const main = await editor.spawnProcess(
+  const main = await editor.runOnTarget(
     "git", ["rev-parse", "--verify", "main"], cwd,
   );
-  if (main.exit_code === 0) return "main";
+  if (main.code === 0) return "main";
   return "master";
 }
 
@@ -1388,10 +1388,10 @@ async function discoverHeadLogPath(cwd: string): Promise<string | null> {
   // (e.g. `../.git/logs/HEAD` when the buffer is in a sub-directory), and the
   // file watcher compares against notify's canonical, `..`-free event paths —
   // a `..` in the watch path means the reflog event never matches (#2503).
-  const result = await editor.spawnProcess(
+  const result = await editor.runOnTarget(
     "git", ["rev-parse", "--absolute-git-dir"], cwd,
   );
-  if (result.exit_code !== 0) return null;
+  if (result.code !== 0) return null;
   const gitDir = result.stdout.trim();
   if (!gitDir) return null;
   return `${gitDir}/logs/HEAD`;

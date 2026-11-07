@@ -920,6 +920,18 @@ type BufferInfo = {
 	*/
 	language: string;
 	/**
+	* Columns per indentation level for this buffer: `editor.tab_size`,
+	* overridden by `languages.<language>.tab_size`, `.editorconfig`, or a
+	* per-buffer "Set Tab Size". A plugin that inserts indentation itself
+	* should use this rather than a fixed width.
+	*/
+	tab_size: number;
+	/**
+	* Whether indentation in this buffer is a tab character rather than
+	* `tab_size` spaces, resolved the same way as `tab_size`.
+	*/
+	use_tabs: boolean;
+	/**
 	* Whether this tab was opened in "preview" (ephemeral) mode — true when
 	* opened via single-click in the file explorer and not yet committed
 	* (no edit, no double-click, no tab-click, no layout change). Plugins
@@ -1367,6 +1379,10 @@ type TerminalScreen = {
 	* scrollback, until the next one replaces it.
 	*/
 	file: string;
+	/**
+	* The terminal's tab label (e.g. `claude`, `Terminal 1`)
+	*/
+	name: string;
 };
 /**
 * Options for `createWindowWithTerminal` — the atomic
@@ -3094,6 +3110,21 @@ type BackgroundProcessResult = {
 	exit_code: number;
 };
 /**
+* One piece of a buffer group's tab title, for `setBufferGroupTitle`.
+*/
+type BufferGroupTitleSegment = {
+	/**
+	* The text this piece of the title shows.
+	*/
+	text: string;
+	/**
+	* The panel this piece names, if any. While the file that panel shows
+	* has unsaved changes, the tab shows `*` right after this piece, as a
+	* file's own tab does after its name.
+	*/
+	panel?: string;
+};
+/**
 * Diff between current buffer content and last saved snapshot
 */
 type BufferSavedDiff = {
@@ -4018,6 +4049,14 @@ interface EditorConfig {
 		*/
 		show_tab_bar?: boolean;
 		/**
+		* Hide the tab bar while the window shows a single file: one pane
+		* holding one tab. It comes back as soon as a second tab or pane opens.
+		* Has no effect while the tab bar is turned off. Default: false
+		*
+		* Default: `false`
+		*/
+		auto_hide_tab_bar?: boolean;
+		/**
 		* Show the status bar at the bottom. Can be toggled at any time.
 		* Default: true
 		*
@@ -4426,8 +4465,9 @@ interface EditorConfig {
 		*/
 		auto_recovery_save_interval_secs?: number;
 		/**
-		* How often (ms) to check open files for outside changes when auto-revert is
-		* on. Lower is faster but uses more CPU. Default: 2000
+		* How often (ms) to check open files for outside changes. A buffer is
+		* checked unless auto-revert is off for it ("Toggle Auto-Revert (Current
+		* Buffer)"). Lower is faster but uses more CPU. Default: 2000
 		*
 		* Default: `2000`
 		*/
@@ -5182,6 +5222,15 @@ interface TerminalConfig {
 		* Default: `false`
 		*/
 		close_on_exit?: boolean;
+		/**
+		* When the system clipboard holds no text (an image, or nothing), terminal
+		* paste sends Ctrl+V to the program instead of your last yank, so an agent
+		* CLI can read an image from the clipboard itself. Turn off to paste the
+		* yank as before. Default: true
+		*
+		* Default: `true`
+		*/
+		pass_ctrl_v_without_text?: boolean;
 	}
 	/**
 	* When programs in the terminal get mouse events.
@@ -5276,8 +5325,16 @@ interface EditorAPI {
 	hasActiveSearch(): boolean;
 	/**
 	* List all open buffers - returns array of BufferInfo objects
+	* 
+	* @param windowId - List this window's buffers (from `listWindows()`)
+	* instead of the active window's. A buffer of a window not on screen
+	* is in no split, so its `view_mode`, `splits` and the like describe
+	* nothing visible. An unknown window has none. Such a buffer's id works
+	* with `searchBuffer`, and with `showBuffer` once its window is active;
+	* `getBufferInfo` and the other buffer reads answer for the active
+	* window's buffers only.
 	*/
-	listBuffers(): BufferInfo[];
+	listBuffers(windowId?: number): BufferInfo[];
 	/**
 	* List all available grammars with source info - returns array of GrammarInfo objects
 	* Grammars come from all sources: built-in, user-installed, language packs,
@@ -6314,10 +6371,12 @@ interface EditorAPI {
 	/**
 	* Directory holding terminal scrollback backing files for the current
 	* working directory. Each project root / worktree has its own subdir, so
-	* Universal Search's terminal scope can stay scoped to the active
-	* project rather than spanning every project's terminals.
+	* Universal Search's terminal scope can stay scoped to one project.
+	* 
+	* @param windowId - The directory of this window's root instead (from
+	* `listWindows()`); `""` for an unknown window.
 	*/
-	getTerminalDir(): string;
+	getTerminalDir(windowId?: number): string;
 	/**
 	* Per-working-directory data root for plugin state scoped to the current
 	* project root / worktree (`<data_dir>/workdirs/<encoded-cwd>/`). Use
@@ -7849,6 +7908,23 @@ interface EditorAPI {
 	*/
 	setBufferMode(bufferId: number, mode: string): boolean;
 	/**
+	* Set the title a buffer group's tab shows, as a list of segments.
+	* 
+	* The tab shows the segments' text one after another. A segment that
+	* names a panel stands for the file that panel shows: while that file
+	* has unsaved changes, the tab shows `*` right after the segment, as a
+	* file's own tab does after its name. So a group comparing two files
+	* can say which of them is unsaved, rather than marking the whole tab.
+	* 
+	* Replaces the name the group was created with. Returns `false` only
+	* if the command could not be sent; an unknown group or panel is
+	* ignored (an unknown panel's segment shows its text, never a `*`).
+	* 
+	* @param groupId - The group, as `createBufferGroup` returned it
+	* @param segments - The title's pieces, in order
+	*/
+	setBufferGroupTitle(groupId: number, segments: BufferGroupTitleSegment[]): boolean;
+	/**
 	* Show or hide one panel of a buffer group, without tearing the
 	* group down.
 	* 
@@ -8057,6 +8133,13 @@ interface EditorAPI {
 	* directly into the named file instead of buffering it. The
 	* resolved `SpawnResult.stdout` is empty in that case; the bytes
 	* land on disk for `openFile` to pick up as a file-backed buffer.
+	* 
+	* @deprecated Run commands on a machine instead: `editor.runOnTarget`
+	* for the active window, or `run` on the machine
+	* `editor.openMachine({ kind: "window", window })` returns for any
+	* window, so the command runs where that window's files are. Both take
+	* the same arguments, return the same killable handle, and resolve with
+	* `{ code, stdout, stderr }`. `spawnHostProcess` runs on this computer.
 	*/
 	spawnProcess(command: string, args: string[], cwd?: string, stdoutTo?: string): ProcessHandle<SpawnResult>;
 	/**
@@ -8378,7 +8461,8 @@ interface EditorAPI {
 	* editor's own search — the one Ctrl+F and `beginSearch` use. Resolves
 	* with its matches in order: each with its byte offset and length, its
 	* 1-based line and byte column, and the text of its line. `bufferId` 0
-	* is the active buffer. Every match is found unless `maxResults` is
+	* is the active buffer; a buffer of any window (`listBuffers(windowId)`)
+	* can be searched. Every match is found unless `maxResults` is
 	* given; `fixedString` and `caseSensitive` default to true. `cancel()`
 	* stops it, resolving with no matches.
 	*/
@@ -8486,11 +8570,14 @@ interface EditorAPI {
 	*/
 	setWindowPreparing(id: number, message: string, label: string | null, failed: boolean, done: boolean): boolean;
 	/**
-	* The visible screen of each terminal open in the active window, read
-	* from memory: a terminal's backing file (in `getTerminalDir()`) holds
-	* only the lines that have scrolled off it.
+	* The visible screen of each terminal open in a window, read from
+	* memory: a terminal's backing file (in `getTerminalDir()`) holds only
+	* the lines that have scrolled off it.
+	* 
+	* @param windowId - The window (from `listWindows()`); defaults to the
+	* active one. An unknown window has no terminals.
 	*/
-	getTerminalScreens(): Promise<TerminalScreen[]>;
+	getTerminalScreens(windowId?: number): Promise<TerminalScreen[]>;
 	/**
 	* Send input data to a terminal
 	* 
@@ -8603,7 +8690,13 @@ interface FreshMachine {
 		path: string;
 		maxBytes: number;
 	}[]): Promise<FilePrefix[]>;
-	run(program: string, args?: string[], cwd?: string): Promise<CommandResult>;
+	/** Run a command here, without a shell. `stdoutTo` streams stdout into
+	*  that file instead (`stdout` then resolves empty; this computer only).
+	*  Never rejects: a command that could not be started, or a machine that
+	*  is closed or whose window has closed, resolves with `code` -1 and the
+	*  reason in `stderr`. `kill()` stops it here, on an SSH host or in a
+	*  Kubernetes pod; in a container it runs to completion. */
+	run(program: string, args?: string[], cwd?: string, stdoutTo?: string): ProcessHandle<CommandResult>;
 	/** Environment variables, for the names that are set. A remote machine is
 	*  asked with `printenv`; never this computer's values for another machine. */
 	env(names: string[]): Promise<Record<string, string>>;
@@ -8648,9 +8741,11 @@ interface CommandResult {
 /** Bare shapes bound to machine 0, the active window's own authority. */
 interface EditorAPI {
 	/** Open a machine to read without attaching it to a window.
-	*  `{ kind: "window", window?: number }` borrows a window's own authority.
+	*  `{ kind: "window", window?: number }` borrows a window's own authority
+	*  (the active window's when `window` is omitted): `run` on it runs where
+	*  that window's files are, whichever window is active.
 	*  `{ kind: "ssh" | "kubectl-exec", ... }` connects to a machine nothing is
-	*  attached to; it is read-only, so `run` rejects. Anything else is an
+	*  attached to; it is read-only, so `run` resolves with `code` -1. Anything else is an
 	*  `AuthorityPayload`, as `setAuthority` takes. */
 	openMachine(spec: {
 		kind: "window";
@@ -8661,8 +8756,15 @@ interface EditorAPI {
 		path: string;
 		maxBytes: number;
 	}[]): Promise<FilePrefix[]>;
-	/** Unlike `spawnHostProcess`, a remote authority runs the command there. */
-	runOnTarget(program: string, args?: string[], cwd?: string): Promise<CommandResult>;
+	/** Run a command on the active window's machine, without a shell: a remote
+	*  window runs it there, unlike `spawnHostProcess`. For another window, use
+	*  `run` on the machine `openMachine({ kind: "window", window })` returns.
+	*  `stdoutTo` streams stdout into that file instead (`stdout` then resolves
+	*  empty). Resolves with a non-zero `code` rather than rejecting, and with
+	*  `code` -1 (the reason in `stderr`) when the command could not be
+	*  started; `kill()` stops it, as `run` says. The replacement for
+	*  `spawnProcess`. */
+	runOnTarget(program: string, args?: string[], cwd?: string, stdoutTo?: string): ProcessHandle<CommandResult>;
 	machineEnv(names: string[]): Promise<Record<string, string>>;
 }
 /**

@@ -415,9 +415,41 @@ Configure initialization options for a language server:
 }
 ```
 
-### Project-Specific Tab Size
+### Tabs vs Spaces
 
-Create `.fresh/config.json` in your project:
+Two settings decide how Fresh indents:
+
+- `editor.use_tabs` — when `true`, the Tab key and auto-indent insert tab
+  characters; when `false` (the default), they insert spaces.
+- `editor.tab_size` — the width of one indent level (default `4`). With spaces
+  it is how many spaces one level inserts; with tabs it is how wide a tab
+  character is displayed.
+
+```json
+{
+  "editor": {
+    "use_tabs": true,
+    "tab_size": 4
+  }
+}
+```
+
+Each language can override both under `languages.<id>`; a value left unset
+falls back to the `editor` one. Go and Makefile ship with `use_tabs: true`
+already.
+
+```json
+{
+  "languages": {
+    "python": { "use_tabs": false, "tab_size": 4 },
+    "c": { "use_tabs": true, "tab_size": 8 }
+  }
+}
+```
+
+To change only one project, put the same keys in `.fresh/config.json` at the
+project root (see [Configuration Layers](#configuration-layers)):
+
 ```json
 {
   "version": 1,
@@ -426,6 +458,15 @@ Create `.fresh/config.json` in your project:
   }
 }
 ```
+
+A `.editorconfig` file next to (or above) the file you open takes precedence
+over these: `indent_style` sets tabs or spaces and `indent_size` / `tab_width`
+set the width.
+
+For a single buffer, run **Toggle Indentation: Spaces ↔ Tabs (Current Buffer)**
+(action `toggle_indentation_style`) or **Set Tab Size** from the command
+palette. These change only the current buffer, are remembered for that file
+across sessions, and do not convert indentation that is already in the file.
 
 ## Layer Source Indicators
 

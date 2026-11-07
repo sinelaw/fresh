@@ -44,7 +44,7 @@ impl Editor {
         let prev_text = &state.candidates[state.index];
         let prev_end = word_start + prev_text.len();
         if cursor_pos == prev_end && prev_end <= self.active_state().buffer.len() {
-            let deleted_text = self.active_state_mut().get_text_range(word_start, prev_end);
+            let deleted_text = self.active_state_mut().get_edit_text(word_start, prev_end);
             let delete_event = Event::Delete {
                 range: word_start..prev_end,
                 deleted_text,
@@ -59,7 +59,7 @@ impl Editor {
             // Restore the original prefix the user typed.
             let insert_event = Event::Insert {
                 position: word_start,
-                text: state.original_prefix.clone(),
+                text: state.original_prefix.clone().into(),
                 cursor_id,
             };
             self.log_and_apply_event(&insert_event);
@@ -69,7 +69,7 @@ impl Editor {
             let next = state.candidates[state.index].clone();
             let insert_event = Event::Insert {
                 position: word_start,
-                text: next,
+                text: next.into(),
                 cursor_id,
             };
             self.log_and_apply_event(&insert_event);
@@ -141,7 +141,7 @@ impl Editor {
         let deleted_text = prefix.clone();
         let delete_event = Event::Delete {
             range: word_start..cursor_pos,
-            deleted_text,
+            deleted_text: deleted_text.into(),
             cursor_id,
         };
         self.log_and_apply_event(&delete_event);
@@ -149,7 +149,7 @@ impl Editor {
         let first = candidates[0].clone();
         let insert_event = Event::Insert {
             position: word_start,
-            text: first,
+            text: first.into(),
             cursor_id,
         };
         self.log_and_apply_event(&insert_event);

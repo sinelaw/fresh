@@ -98,6 +98,10 @@ impl ReferenceHighlightOverlay {
     /// `None` when nothing is armed: an idle editor with a settled highlight
     /// asks for no frames, exactly as before.
     pub fn next_deadline(&self) -> Option<Instant> {
+        // Disabled, `update` returns before it would ever consume the debounce.
+        if !self.enabled {
+            return None;
+        }
         self.target_changed_at.map(|at| at + self.debounce_delay)
     }
 

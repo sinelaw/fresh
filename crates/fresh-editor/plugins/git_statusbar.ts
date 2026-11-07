@@ -21,12 +21,12 @@ let ensureWatchInFlight: Promise<void> | null = null;
 
 
 async function discoverHeadPath(cwd: string): Promise<string | null> {
-  const result = await editor.spawnProcess(
+  const result = await editor.runOnTarget(
     "git",
     ["rev-parse", "--git-path", "HEAD"],
     cwd,
   );
-  if (result.exit_code !== 0) return null;
+  if (result.code !== 0) return null;
   const headPath = result.stdout.trim();
   if (!headPath) return null;
   // `--git-path` returns a path relative to cwd unless the git dir is
@@ -69,12 +69,12 @@ async function getCurrentGitBranch(): Promise<string> {
   inFlight = (async () => {
     try {
       const cwd = gitCwdCandidate(editor);
-      const result = await editor.spawnProcess(
+      const result = await editor.runOnTarget(
         "git",
         ["rev-parse", "--abbrev-ref", "HEAD"],
         cwd,
       );
-      if (result.exit_code === 0) {
+      if (result.code === 0) {
         const branch = result.stdout.trim();
         lastDetectedBranch = branch || "HEAD";
       } else {

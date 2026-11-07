@@ -84,6 +84,47 @@ In regex mode, `^` and `$` anchor at line boundaries, so an anchored pattern mat
 
 Run **Clear Search Highlights** from the command palette to remove the active search highlights from the buffer.
 
+## Universal Search (Live Grep)
+
+**Live Grep (Find in Files)** in the command palette opens Universal Search:
+results stream in as you type, and `Enter` opens the selected one. The
+**Scope** row picks where it looks, each toggle with its own `Alt` key (the
+underlined letter):
+
+| Toggle | Key | Searches | Default |
+| --- | --- | --- | --- |
+| **Files** | `Alt+L` | the project's files on disk | on |
+| **Ignored** | `Alt+I` | gitignored and hidden files too | off |
+| **Buffers** | `Alt+U` | unsaved edits in open buffers | on |
+| **Terminals** | `Alt+T` | terminal and coding-agent output, on screen and scrolled off | on |
+| **Diagnostics** | `Alt+D` | language-server diagnostic messages | off |
+| **All workspaces** | `Alt+A` | every workspace, not just this one | off |
+
+With **All workspaces** on, the results of every workspace come in one list,
+grouped under a header row per workspace (`api · 3 matches`): the workspace
+you are in first, then the others in the order the
+[Orchestrator dock](./session-persistence.md) lists them. The rows under a
+header read as they do in their own workspace — `src/x.rs:4`,
+`[buf] src/x.rs:4`, `[term] claude:12`. Files, unsaved buffers and terminal
+output are searched in each workspace. A workspace the dock lists that you
+have not opened since starting Fresh has no buffers or terminals running, so
+its files on disk and its terminals' history are searched. Diagnostics stay
+this workspace's. Each workspace is searched where its files are: a remote
+one (SSH, Kubernetes, a container) on its own host, whichever workspace you
+search from. A remote workspace restored from disk is left out until you
+switch to it and it connects; while a remote workspace's link is down, its
+files are left out.
+
+`Enter` on another workspace's result switches to that workspace, as picking
+it in the dock does, and then lands on the result as in its own: the file at
+the line, the unsaved buffer, or the terminal. `Enter` on a header row just
+switches to its workspace. The preview shows another workspace's file when
+both workspaces are on this computer; a file on another machine, or an
+unsaved buffer of another workspace, shows once you press `Enter`.
+
+Like the **Case** toggle, **All workspaces** keeps its setting for the rest
+of the session.
+
 ## Project-Wide Search and Replace
 
 Use "Search and Replace in Project" from the command palette to search across the project's files: in a git repository, tracked and untracked files that `.gitignore` does not exclude, and the files of its submodules; elsewhere, every file outside hidden directories and `node_modules`, `target` and the like. Hidden and gitignored files stay out even when the file explorer shows them, and `file_explorer.custom_ignore_patterns` leave files out too. Press `Alt+Enter` to replace all matches across the project. Works with unsaved buffers and large files, up to 10,000 results.

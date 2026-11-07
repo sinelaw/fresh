@@ -67,6 +67,13 @@ directly into the named file instead of buffering it. The
 resolved `SpawnResult.stdout` is empty in that case; the bytes
 land on disk for `openFile` to pick up as a file-backed buffer.
 
+@deprecated Run commands on a machine instead: `editor.runOnTarget`
+for the active window, or `run` on the machine
+`editor.openMachine({ kind: "window", window })` returns for any
+window, so the command runs where that window's files are. Both take
+the same arguments, return the same killable handle, and resolve with
+`{ code, stdout, stderr }`. `spawnHostProcess` runs on this computer.
+
 ```typescript
 spawnProcess(command: string, args: string[], cwd?: string, stdoutTo?: string): ProcessHandle<SpawnResult>;
 ```

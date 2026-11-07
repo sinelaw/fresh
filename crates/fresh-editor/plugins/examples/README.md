@@ -16,7 +16,7 @@ A simple "Hello World" plugin that demonstrates:
 ### async_demo.ts
 
 Demonstrates async process spawning:
-- Running external commands with `spawnProcess`
+- Running external commands with `runOnTarget`
 - Processing stdout/stderr
 - Handling exit codes
 

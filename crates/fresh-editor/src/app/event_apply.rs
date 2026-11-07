@@ -452,7 +452,7 @@ impl Editor {
         for event in &events {
             match event {
                 Event::Insert { position, text, .. } => {
-                    edits.push((*position, 0, text.clone()));
+                    edits.push((*position, 0, text.to_string()));
                 }
                 Event::Delete { range, .. } => {
                     edits.push((range.start, range.len(), String::new()));
@@ -777,7 +777,7 @@ impl Editor {
                         buffer_id,
                         window_id: self.active_window.0,
                         position: *position,
-                        text: text.clone(),
+                        text: text.to_string(),
                         // Byte range of the affected area
                         affected_start: insert_position,
                         affected_end: insert_position + insert_len,
@@ -810,7 +810,7 @@ impl Editor {
                         window_id: self.active_window.0,
                         start: range.start,
                         end: range.end,
-                        deleted_text: deleted_text.clone(),
+                        deleted_text: deleted_text.to_string(),
                         // Byte position and length of deleted content
                         affected_start: delete_start,
                         deleted_len: deleted_text.len(),

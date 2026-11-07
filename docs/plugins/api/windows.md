@@ -567,13 +567,17 @@ setWindowPreparing(id: number, message: string, label: string | null, failed: bo
 
 ### `getTerminalScreens`
 
-The visible screen of each terminal open in the active window, read
-from memory: a terminal's backing file (in `getTerminalDir()`) holds
-only the lines that have scrolled off it.
+The visible screen of each terminal open in a window, read from
+memory: a terminal's backing file (in `getTerminalDir()`) holds only
+the lines that have scrolled off it.
 
 ```typescript
-getTerminalScreens(): Promise<TerminalScreen[]>;
+getTerminalScreens(windowId?: number): Promise<TerminalScreen[]>;
 ```
+
+| Parameter | Description |
+|-----------|-------------|
+| `windowId` | The window (from `listWindows()`); defaults to the active one. An unknown window has no terminals. |
 
 ### `sendTerminalInput`
 

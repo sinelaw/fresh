@@ -133,6 +133,13 @@ pub enum RowState {
     /// Selected, in a list that does not — so the eye can tell which list among
     /// several the keyboard is driving.
     SelectedBlur,
+    /// One of the pinned rows the window holds above the run (see
+    /// [`List::pinned_at`]). Only a row the list itself pinned reads this way:
+    /// a pinned row the pointer is over is [`Hover`](RowState::Hover), and one
+    /// the selection is on is [`Selected`](RowState::Selected) or
+    /// [`SelectedBlur`](RowState::SelectedBlur), because those are the facts a
+    /// reader is looking for first.
+    Pinned,
 }
 
 impl RowState {
@@ -144,6 +151,7 @@ impl RowState {
             RowState::Hover => "list.row.hover",
             RowState::Selected => "list.row.selected",
             RowState::SelectedBlur => "list.row.selected.blur",
+            RowState::Pinned => "list.row.pinned",
         }
     }
 }
@@ -417,7 +425,8 @@ impl<M: 'static> List<M> {
     /// The state machine stays the widget's — which is the whole point of
     /// [`RowState`] — and this hands it to the builder as well as to
     /// `row_theme`, so a host can build the row *from* its state instead of
-    /// having one painted behind it.
+    /// having one painted behind it. A row the list pins is built as
+    /// [`RowState::Pinned`](RowState::Pinned), in the same frame it is pinned.
     pub fn windowed_stateful(
         count: usize,
         key: impl Fn(usize) -> Key + 'static,
@@ -627,9 +636,12 @@ impl<M: 'static> List<M> {
     /// room: the run starts under them and the ceiling accounts for them. See
     /// [`Node::pinned`](crate::Node::pinned).
     ///
-    /// A pinned row is built by the same builder, in the same state, with the
-    /// same handlers as it would be in the run: clicking it selects it, and
-    /// hovering it tints it.
+    /// A pinned row is built by the same builder, with the same handlers as
+    /// it would be in the run: clicking it selects it, and hovering it tints
+    /// it. It is built in the same state too — except that the builder is
+    /// told it is pinned (`windowed_stateful` and the tree's row builders
+    /// pass that on with the state), so what sits in the band does not have
+    /// to look like part of the run.
     pub fn pinned(mut self, indices: &[usize]) -> Self {
         self.pinned = Rc::from(indices);
         self
@@ -1058,8 +1070,9 @@ impl<M: 'static> Component<M> for List<M> {
                 .iter()
                 .copied()
                 .filter(|&i| i < n)
-                .chain(first..last);
-            let window = col().children(indices.map(|i| {
+                .map(|i| (i, true))
+                .chain((first..last).map(|i| (i, false)));
+            let window = col().children(indices.map(|(i, in_band)| {
                 let k = run.key_of(i).expect("index inside the source");
                 let state = if Some(i) == sel {
                     // A selected row reads as focused only when the list has
@@ -1071,6 +1084,8 @@ impl<M: 'static> Component<M> for List<M> {
                     }
                 } else if hov.as_ref() == Some(&k) {
                     RowState::Hover
+                } else if in_band {
+                    RowState::Pinned
                 } else {
                     RowState::Normal
                 };
@@ -1344,7 +1359,9 @@ impl<M: 'static> WindowedTree<M> {
         self
     }
 
-    /// The tree as the list it windows.
+    /// The window as one list, with the run's slice pinned. The pin rides
+    /// along with the state: pinned rows answer the pointer like any other,
+    /// but the builder is told it is pinned.
     pub fn list(self) -> List<M> {
         let WindowedTree {
             count,

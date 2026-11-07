@@ -99,6 +99,13 @@ pub fn status_log_path() -> PathBuf {
     log_dir().join(format!("status-{}.log", std::process::id()))
 }
 
+/// Get the path for this process's redirected stderr while the TUI is up.
+///
+/// Returns `{log_dir}/stderr-{PID}.log`
+pub fn stderr_log_path() -> PathBuf {
+    log_dir().join(format!("stderr-{}.log", std::process::id()))
+}
+
 /// Get the directory for LSP-related logs.
 ///
 /// Returns `{log_dir}/lsp/`, creating it if necessary.

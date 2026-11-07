@@ -17,32 +17,39 @@ import { gitCwdCandidate } from "./lib/git_repo.ts";
  *     liveGrep?.registerProvider({
  *       name: "fff",
  *       priority: 100,                     // higher wins
- *       isAvailable: async () => {
- *         const r = await editor.spawnProcess("fff", ["--version"], editor.getCwd());
- *         return r.exit_code === 0;
+ *       isAvailable: async ({ machine, cwd }) => {
+ *         const r = await machine.run("fff", ["--version"], cwd);
+ *         return r.code === 0;
  *       },
- *       search: async (query, { cwd, maxResults }) => {
- *         const r = await editor.spawnProcess("fff", [query], cwd);
+ *       search: async (query, { machine, cwd, maxResults }) => {
+ *         const r = await machine.run("fff", [query], cwd);
  *         return parseFFFOutput(r.stdout);
  *       },
  *     });
  *
- * The provider whose `isAvailable()` returns true with the highest
- * priority is selected on each Live Grep invocation; the result is
- * cached for the duration of the prompt.
+ * A provider runs its commands on the `machine` it is handed: the searched
+ * workspace's (its SSH host or container for a remote one). The provider
+ * whose `isAvailable()` returns true with the highest priority is selected
+ * on each Live Grep invocation; the result is cached for the duration of
+ * the prompt. "All workspaces" probes each other workspace's machine too.
  */
 
 import { Finder, parseGrepOutput, type SearchCancellation } from "./lib/finder.ts";
 import { ackArgs, agArgs, gitGrepArgs, grepArgs, relativeUnder, rgArgs, type GrepArgOpts } from "./lib/grep_args.ts";
 import { col, dropdown, raw, row, spacer, styledRow, toggle, wrappingRow } from "./lib/widgets.ts";
+import { groupByWorkspace, orderWorkspaces, terminalRowName, type Workspace } from "./lib/workspace_groups.ts";
+import { WindowMachines } from "./lib/window_machines.ts";
 
 const editor = getEditor();
 
 /** The data sources Universal Search can look in. `files` is the
  *  classic project-file grep; the others are opt-in scopes layered on
  *  top. Each enabled scope contributes tagged matches to one merged
- *  result list. See `docs/internal/global-search-ux.md`. */
-type ScopeId = "files" | "ignored" | "buffers" | "terminals" | "diagnostics";
+ *  result list. See `docs/internal/global-search-ux.md`. `workspaces`
+ *  is not a source but *which* workspaces the others look in: the
+ *  current one, or every open one, grouped. */
+type ScopeId = "files" | "ignored" | "buffers" | "terminals" | "diagnostics" | "workspaces";
+
 
 // One Live Grep match. Mirrors the JSON shape ripgrep emits with
 // `--line-number --column --no-heading`; built-in non-rg providers
@@ -59,12 +66,29 @@ interface GrepMatch {
   /** A line on a terminal's screen, which is in no file: the terminal's
    *  buffer, shown when the match is picked. */
   bufferId?: number;
+  /** The file to open when it is not `file` itself: a terminal's backing
+   *  file (`file` is the terminal's name), or an unsaved edit's file. */
+  openPath?: string;
+  /** The workspace the match is in, when "All workspaces" is on. */
+  workspace?: Workspace;
+  /** Set on a group's header row (no match itself): the number of matches
+   *  in `workspace` listed under it. */
+  heading?: number;
+  /** False when the preview would not show what matched (`previewable`). */
+  preview?: boolean;
+}
+
+/** Where a provider runs: the searched workspace's machine, and its root. */
+export interface ProviderContext {
+  /** The workspace's machine (`openMachine({ kind: "window" })`): run every
+   *  command on it, so a remote workspace is searched on its host. */
+  machine: FreshMachine;
+  /** The workspace's root: the directory to search. */
+  cwd: string;
 }
 
 /** Options passed to a provider's `search` callback. */
-export interface SearchOpts {
-  /** Working directory the search should run in (the editor's cwd). */
-  cwd: string;
+export interface SearchOpts extends ProviderContext {
   /** Caller's preferred result cap. Providers may return fewer.
    *  Returning more is allowed; the Finder caps at its own
    *  `maxResults`. */
@@ -95,14 +119,14 @@ export interface SearchOpts {
    *  rg `--case-sensitive`/`--ignore-case`, git-grep/grep/ack `-i`. */
   caseSensitive?: boolean;
   /** Fires when the search is superseded by a newer query or the overlay
-   *  closes: kill what you spawned (`spawnSearch` does it for you). */
+   *  closes: kill what you started (`runSearch` does it for you). */
   cancellation?: SearchCancellation;
 }
 
-/** Spawn a search process that is killed when `opts`' search is
- *  cancelled, rather than running on to completion unread. */
-function spawnSearch(cmd: string, args: string[], cwd: string, opts: SearchOpts): ProcessHandle<SpawnResult> {
-  const process = editor.spawnProcess(cmd, args, cwd);
+/** Run a search command on `opts`' machine, killed when the search is
+ *  cancelled rather than running on to completion unread. */
+function runSearch(cmd: string, args: string[], cwd: string, opts: SearchOpts): ProcessHandle<CommandResult> {
+  const process = opts.machine.run(cmd, args, cwd);
   opts.cancellation?.onCancel(() => process.kill());
   return process;
 }
@@ -116,10 +140,10 @@ export interface LiveGrepProvider {
   /** Higher priority wins. Built-ins use 0/-1/-2; user-registered
    *  providers default to 0 if omitted. */
   priority?: number;
-  /** Cheap probe — typically `editor.spawnProcess("foo", [], cwd)`
-   *  and check `exit_code`. May be sync or async. Failures (thrown
+  /** Cheap probe — typically `ctx.machine.run("foo", ["--version"],
+   *  ctx.cwd)` and check `code`. May be sync or async. Failures (thrown
    *  errors) are treated as "not available". */
-  isAvailable: () => boolean | Promise<boolean>;
+  isAvailable: (ctx: ProviderContext) => boolean | Promise<boolean>;
   /** Run the search. Return an array of matches; an empty array
    *  means "no matches" (not "provider broken"). Errors thrown
    *  here surface as a status message and bypass the next
@@ -183,18 +207,21 @@ const SCOPES: ScopeDef[] = [
   { id: "buffers", labelKey: "scope.buffers", action: "live_grep_toggle_buffers", badge: "buf" },
   { id: "terminals", labelKey: "scope.terminals", action: "live_grep_toggle_terminals", badge: "term" },
   { id: "diagnostics", labelKey: "scope.diagnostics", action: "live_grep_toggle_diagnostics", badge: "diag" },
+  { id: "workspaces", labelKey: "scope.workspaces", action: "live_grep_toggle_workspaces" },
 ];
 
 // Default scope set: same as the classic Live Grep, *minus* ignored
 // files (off — they were noisy) and *plus* unsaved open buffers and
 // terminal scrollback (on). `files` on, `ignored` off, `buffers` on,
-// `terminals` on, `diagnostics` off.
+// `terminals` on, `diagnostics` off, and only this workspace
+// (`workspaces` off). Like the match modes, a flip lasts the session.
 const scopeEnabled: Record<ScopeId, boolean> = {
   files: true,
   ignored: false,
   buffers: true,
   terminals: true,
   diagnostics: false,
+  workspaces: false,
 };
 
 // True only while our floating overlay is open. The scope-toggle
@@ -518,12 +545,33 @@ function updateOverlayTitle(provider: LiveGrepProvider | null): void {
 // `cycleProvider` make on their own.
 const providerAvailable = new Map<string, boolean>();
 
+/** Each window's machine, where its searches run (`lib/window_machines.ts`). */
+const machines = new WindowMachines(editor);
+editor.on("window_closed", ({ id }) => machines.close(id));
+
+/** The current workspace, as a provider sees it. */
+async function currentContext(): Promise<ProviderContext> {
+  return { machine: await machines.get(editor.activeWindow()), cwd: editor.getCwd() };
+}
+
+/** Whether `p` can run in `ctx`'s workspace; a probe that throws cannot. */
+async function canRun(p: LiveGrepProvider, ctx: ProviderContext): Promise<boolean> {
+  try {
+    return await Promise.resolve(p.isAvailable(ctx));
+  } catch (e) {
+    editor.debug(`[live-grep] ${p.name}.isAvailable threw: ${e}`);
+    return false;
+  }
+}
+
+/** Whether `p` can run in the current workspace, remembered for the
+ *  dropdown. */
 async function probeProvider(p: LiveGrepProvider): Promise<boolean> {
   let ok = false;
   try {
-    ok = await Promise.resolve(p.isAvailable());
+    ok = await canRun(p, await currentContext());
   } catch (e) {
-    editor.debug(`[live-grep] ${p.name}.isAvailable threw: ${e}`);
+    editor.debug(`[live-grep] no machine for the current workspace: ${e}`);
   }
   providerAvailable.set(p.name, ok);
   return ok;
@@ -593,46 +641,32 @@ async function selectProvider(): Promise<LiveGrepProvider | null> {
 registerProvider({
   name: "rg",
   priority: -1,
-  isAvailable: async () => {
-    try {
-      const r = await editor.spawnProcess("rg", ["--version"], editor.getCwd());
-      return r.exit_code === 0;
-    } catch {
-      return false;
-    }
-  },
+  isAvailable: async ({ machine, cwd }) => (await machine.run("rg", ["--version"], cwd)).code === 0,
   search: async (query, opts) => {
     const { cwd, maxResults } = opts;
     const args = rgArgs(query, opts);
-    const r = await spawnSearch("rg", args, cwd, opts);
+    const r = await runSearch("rg", args, cwd, opts);
     // 1 is "no matches", not a failure: throwing on it aborted the whole
     // search before buffers and terminals were searched
-    if (r.exit_code === 0 || r.exit_code === 1) {
+    if (r.code === 0 || r.code === 1) {
       return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg)) as GrepMatch[];
     }
-    throw new Error(`rg exited with code ${r.exit_code}: ${r.stderr}`);
+    throw new Error(`rg exited with code ${r.code}: ${r.stderr}`);
   },
 });
 
 registerProvider({
   name: "ag",
   priority: -2,
-  isAvailable: async () => {
-    try {
-      const r = await editor.spawnProcess("ag", ["--version"], editor.getCwd());
-      return r.exit_code === 0;
-    } catch {
-      return false;
-    }
-  },
+  isAvailable: async ({ machine, cwd }) => (await machine.run("ag", ["--version"], cwd)).code === 0,
   search: async (query, opts) => {
     const { cwd, maxResults } = opts;
     const args = agArgs(query, opts);
-    const r = await spawnSearch("ag", args, cwd, opts);
-    if (r.exit_code === 0 || r.exit_code === 1) {
+    const r = await runSearch("ag", args, cwd, opts);
+    if (r.code === 0 || r.code === 1) {
       return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg)) as GrepMatch[];
     }
-    throw new Error(`ag exited with code ${r.exit_code}: ${r.stderr}`);
+    throw new Error(`ag exited with code ${r.code}: ${r.stderr}`);
   },
 });
 
@@ -640,17 +674,16 @@ registerProvider({
  *  itself inside a repo, else the active buffer's dir (monorepo: the workspace
  *  root isn't a repo but the open file is). Returns null when neither is a
  *  repo. Used by both `isAvailable` and `search` so they can't disagree. */
-async function gitGrepCwd(preferred: string): Promise<string | null> {
-  const inRepo = await editor.spawnProcess(
-    "git", ["rev-parse", "--is-inside-work-tree"], preferred
-  );
-  if (inRepo.exit_code === 0) return preferred;
+async function gitGrepCwd(machine: FreshMachine, preferred: string): Promise<string | null> {
+  const inRepo = await machine.run("git", ["rev-parse", "--is-inside-work-tree"], preferred);
+  if (inRepo.code === 0) return preferred;
+  // The active buffer is in the current workspace: it says nothing about
+  // another workspace ("All workspaces"), whose machine is its own.
+  if (machine.id !== (await machines.get(editor.activeWindow())).id) return null;
   const cand = gitCwdCandidate(editor);
   if (cand !== preferred) {
-    const r = await editor.spawnProcess(
-      "git", ["rev-parse", "--is-inside-work-tree"], cand
-    );
-    if (r.exit_code === 0) return cand;
+    const r = await machine.run("git", ["rev-parse", "--is-inside-work-tree"], cand);
+    if (r.code === 0) return cand;
   }
   return null;
 }
@@ -662,33 +695,29 @@ registerProvider({
   // installed. `isAvailable` checks both, and outside a repo the
   // registry falls through to ripgrep / ag / ack / grep in order.
   priority: 0,
-  isAvailable: async () => {
-    try {
-      // git grep needs both `git` on PATH and a repo to run in. Resolve
-      // the repo cwd the *same way* search() does, so the two can never
-      // disagree (availability said yes but search runs in a non-repo).
-      const ver = await editor.spawnProcess("git", ["--version"], editor.getCwd());
-      if (ver.exit_code !== 0) return false;
-      return (await gitGrepCwd(editor.getCwd())) !== null;
-    } catch {
-      return false;
-    }
+  isAvailable: async ({ machine, cwd }) => {
+    // git grep needs both `git` on PATH and a repo to run in. Resolve
+    // the repo cwd the *same way* search() does, so the two can never
+    // disagree (availability said yes but search runs in a non-repo).
+    const ver = await machine.run("git", ["--version"], cwd);
+    if (ver.code !== 0) return false;
+    return (await gitGrepCwd(machine, cwd)) !== null;
   },
   search: async (query, opts) => {
     const { cwd, maxResults } = opts;
     // Run in the same repo cwd isAvailable() confirmed. Null means the
     // context is no longer a repo — return empty rather than throwing.
-    const gitCwd = await gitGrepCwd(cwd);
+    const gitCwd = await gitGrepCwd(opts.machine, cwd);
     if (!gitCwd) return [] as GrepMatch[];
     // The ignore patterns are relative to `cwd`; tell the builder where
     // the repo cwd sits below it so rooted ones can be rebased.
     const args = gitGrepArgs(query, opts, relativeUnder(cwd, gitCwd));
-    const r = await spawnSearch("git", args, gitCwd, opts);
+    const r = await runSearch("git", args, gitCwd, opts);
     // git grep exits 1 when no matches — treat as empty, not error.
-    if (r.exit_code === 0 || r.exit_code === 1) {
+    if (r.code === 0 || r.code === 1) {
       return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg)) as GrepMatch[];
     }
-    throw new Error(`git grep exited with code ${r.exit_code}: ${r.stderr}`);
+    throw new Error(`git grep exited with code ${r.code}: ${r.stderr}`);
   },
 });
 
@@ -698,22 +727,15 @@ registerProvider({
   // Note: ack/grep are kept at lower priority than ripgrep/ag/
   // git-grep because they're slower on large trees; the cycler
   // skips them automatically when a faster backend is available.
-  isAvailable: async () => {
-    try {
-      const r = await editor.spawnProcess("ack", ["--version"], editor.getCwd());
-      return r.exit_code === 0;
-    } catch {
-      return false;
-    }
-  },
+  isAvailable: async ({ machine, cwd }) => (await machine.run("ack", ["--version"], cwd)).code === 0,
   search: async (query, opts) => {
     const { cwd, maxResults } = opts;
     const args = ackArgs(query, opts);
-    const r = await spawnSearch("ack", args, cwd, opts);
-    if (r.exit_code === 0 || r.exit_code === 1) {
+    const r = await runSearch("ack", args, cwd, opts);
+    if (r.code === 0 || r.code === 1) {
       return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg)) as GrepMatch[];
     }
-    throw new Error(`ack exited with code ${r.exit_code}: ${r.stderr}`);
+    throw new Error(`ack exited with code ${r.code}: ${r.stderr}`);
   },
 });
 
@@ -730,25 +752,23 @@ registerProvider({
 registerProvider({
   name: "grep",
   priority: -4,
-  isAvailable: async () => {
-    try {
-      const r = await editor.spawnProcess("grep", ["--version"], editor.getCwd());
-      return r.exit_code === 0;
-    } catch {
-      return false;
-    }
-  },
+  isAvailable: async ({ machine, cwd }) => (await machine.run("grep", ["--version"], cwd)).code === 0,
   search: async (query, opts) => {
     const { cwd, maxResults } = opts;
     const args = grepArgs(query, opts);
-    const r = await spawnSearch("grep", args, cwd, opts);
-    if (r.exit_code === 0 || r.exit_code === 1) {
+    const r = await runSearch("grep", args, cwd, opts);
+    if (r.code === 0 || r.code === 1) {
       // grep emits `path:line:content` (no column; it defaults to 1).
       return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg), false) as GrepMatch[];
     }
-    throw new Error(`grep exited with code ${r.exit_code}: ${r.stderr}`);
+    throw new Error(`grep exited with code ${r.code}: ${r.stderr}`);
   },
 });
+
+/** The providers above: they run everything on the machine they are given.
+ *  One registered from init.ts may predate that and spawn on its own, on the
+ *  active window's machine. */
+const builtinProviders = new Set(providers);
 
 // ── Wiring ──────────────────────────────────────────────────────
 
@@ -758,24 +778,83 @@ function badgeFor(source: ScopeId | undefined): string {
   return def?.badge ? `[${def.badge}] ` : "";
 }
 
+/** What a match is, among all of them: the same hit can come from two
+ *  scopes (an open buffer and the file on disk), two terminals can share a
+ *  name, and two workspaces can hold the same relative path. */
+function matchId(match: GrepMatch): string {
+  const ws = match.workspace && !match.workspace.current ? `${match.workspace.id}|` : "";
+  const where = match.openPath ?? match.file;
+  const buffer = match.bufferId !== undefined ? `#${match.bufferId}` : "";
+  return `${ws}${match.source ?? ""}:${where}${buffer}:${match.line}:${match.column}`;
+}
+
+/** The file a match opens: its own `openPath`, else its row's path —
+ *  relative to the editor's cwd in this workspace, so resolved against
+ *  its workspace's root in another. */
+function openPathOf(match: GrepMatch): string {
+  if (match.openPath !== undefined) return match.openPath;
+  const ws = match.workspace;
+  if (!ws || ws.current || editor.pathIsAbsolute(match.file)) return match.file;
+  return editor.pathJoin(ws.root, match.file);
+}
+
+/** A group's header row under "All workspaces": `web · 3 matches`. */
+function headingLabel(ws: Workspace, count: number): string {
+  const n = count === 1
+    ? editor.t("group.match_count_one")
+    : editor.t("group.match_count", { count: String(count) });
+  return `── ${ws.name} · ${n}`;
+}
+
+/** Window ids top to bottom as the dock lists them, when the Orchestrator
+ *  is loaded; with it, the workspaces' dock names too. */
+function dockOrder(): { windowId: number; name: string }[] {
+  const orchestrator = editor.getPluginApi("orchestrator") as
+    | { workspaceOrder?: () => { windowId: number; name: string }[] }
+    | null;
+  try {
+    return orchestrator?.workspaceOrder?.() ?? [];
+  } catch (e) {
+    editor.debug(`[live_grep] workspaceOrder: ${e}`);
+    return [];
+  }
+}
+
+/** Go to workspace `ws` the way the dock does: an animated switch, wiping
+ *  in from the edge its row lies toward. */
+function switchToWorkspace(ws: Workspace): void {
+  const order = dockOrder().map((w) => w.windowId);
+  const from = order.indexOf(editor.activeWindow());
+  const to = order.indexOf(ws.id);
+  editor.setActiveWindowAnimated(ws.id, from >= 0 && to >= 0 && to < from ? "top" : "bottom");
+}
+
 const finder = new Finder<GrepMatch>(editor, {
   id: "live-grep",
-  format: (match) => ({
-    // The same hit can come from two scopes (an open buffer and the file on
-    // disk), so the scope is part of what a result is.
-    id: `${match.source ?? ""}:${match.file}:${match.line}:${match.column}`,
-    label: `${badgeFor(match.source)}${match.file}:${match.line}`,
-    description:
-      match.content.length > 60
-        ? match.content.substring(0, 57).trim() + "..."
-        : match.content.trim(),
-    // A line on a terminal's screen is in no file: picking it shows the
-    // terminal (`onSelect`), and there is nothing to preview
-    location:
-      match.bufferId === undefined
-        ? { file: match.file, line: match.line, column: match.column }
-        : undefined,
-  }),
+  format: (match) => {
+    if (match.heading !== undefined && match.workspace) {
+      return {
+        id: `workspace:${match.workspace.id}`,
+        label: headingLabel(match.workspace, match.heading),
+        heading: true,
+      };
+    }
+    return {
+      id: matchId(match),
+      label: `${badgeFor(match.source)}${match.file}:${match.line}`,
+      description:
+        match.content.length > 60
+          ? match.content.substring(0, 57).trim() + "..."
+          : match.content.trim(),
+      // A line on a terminal's screen is in no file: picking it shows the
+      // terminal (`onSelect`), and there is nothing to preview
+      location:
+        match.bufferId === undefined
+          ? { file: openPathOf(match), line: match.line, column: match.column }
+          : undefined,
+      preview: match.preview,
+    };
+  },
   onClose: () => {
     overlayActive = false;
   },
@@ -785,7 +864,12 @@ const finder = new Finder<GrepMatch>(editor, {
   // is open), but it's exactly what the user needs to know once
   // they've jumped to a result and want to keep browsing.
   onSelect: (item, entry) => {
-    if (item.bufferId !== undefined) {
+    // Another workspace's hit: go there first, then land on it as in this
+    // one. A header row just goes to its workspace.
+    if (item.workspace && !item.workspace.current) switchToWorkspace(item.workspace);
+    if (item.heading !== undefined) {
+      // nothing to open
+    } else if (item.bufferId !== undefined) {
       editor.showBuffer(item.bufferId);
     } else if (entry.location) {
       editor.openFile(
@@ -811,20 +895,34 @@ const finder = new Finder<GrepMatch>(editor, {
 const quickfixFinder = new Finder<GrepMatch>(editor, {
   id: "quickfix",
   format: (match) => ({
-    id: `${match.source ?? ""}:${match.file}:${match.line}:${match.column}`,
-    label: `${match.file}:${match.line}:${match.column}`,
+    id: matchId(match),
+    label: `${match.workspace && !match.workspace.current ? `${match.workspace.name}: ` : ""}${match.file}:${match.line}:${match.column}`,
     description: match.content.trim(),
     location: {
-      file: match.file,
+      file: openPathOf(match),
       line: match.line,
       column: match.column,
     },
+    preview: match.preview,
   }),
   useUtilityDock: true,
   // Keep the Quickfix list docked when jumping to an entry — like Vim's
   // quickfix and VS Code's results list — so the user can step through
   // matches. (Find References / Diagnostics keep the default close.)
   closeOnSelect: false,
+  // As in the overlay: another workspace's entry goes to that workspace
+  // first, and a line on a terminal's screen shows the terminal.
+  onSelect: (item, entry) => {
+    if (item.workspace && item.workspace.id !== editor.activeWindow()) {
+      switchToWorkspace(item.workspace);
+    }
+    if (item.bufferId !== undefined) {
+      editor.showBuffer(item.bufferId);
+    } else if (entry.location) {
+      editor.openFile(entry.location.file, entry.location.line, entry.location.column);
+      editor.setStatus(`Jumped to ${entry.location.file}:${entry.location.line}`);
+    }
+  },
 });
 
 // Snapshot the current Live Grep results into the Quickfix dock panel.
@@ -941,29 +1039,63 @@ function stripAnsi(s: string): string {
     .replace(/\x1b[@-Z\\-_]/g, "");
 }
 
+/** One workspace's content besides its files on disk, for a search of it. */
+interface WorkspaceContent {
+  workspace: Workspace;
+  /** Its open file buffers. */
+  buffers: { bufferId: number; path: string; modified: boolean }[];
+  /** Its terminals' screens. */
+  screens: TerminalScreen[];
+  /** The directory of its terminals' backing files. */
+  terminalDir: string;
+}
+
+/** What `workspace` has open: the active window's, or — for another
+ *  workspace — that window's, through the same calls with its id. A
+ *  workspace not opened yet this session has no buffers or terminals
+ *  running; its terminals' history is still in its directory. */
+async function workspaceContent(workspace: Workspace): Promise<WorkspaceContent> {
+  // No argument means the active window
+  const id: [] | [number] = workspace.current ? [] : [workspace.id];
+  return {
+    workspace,
+    // Virtual buffers (terminals, panels) and bufferless/unnamed buffers
+    // have no on-disk file to navigate to.
+    buffers: editor
+      .listBuffers(...id)
+      .filter((b) => !b.is_virtual && b.path)
+      .map((b) => ({ bufferId: b.id, path: b.path as string, modified: b.modified })),
+    screens: scopeEnabled.terminals ? await editor.getTerminalScreens(...id) : [],
+    terminalDir: editor.getTerminalDir(...id),
+  };
+}
+
 /** Search terminal scrollback. Terminal backing files live under the
- *  current working directory's terminal subdir
- *  (`getTerminalDir()` → `<data_dir>/terminals/<encoded-cwd>/`) — open
- *  terminals stream their scrollback there live, and closed terminals
- *  are retained there too (renamed `*-closed-*.txt`). Scoping to that
- *  subdir keeps the search to *this* project / worktree. We grep it
- *  with rg (falling back to grep), then strip ANSI for display.
- *  Opening a hit opens the backing file at the matched line. Those files
+ *  workspace's terminal subdir (`getTerminalDir()` →
+ *  `<data_dir>/terminals/<encoded-cwd>/`) — open terminals stream their
+ *  scrollback there live, and closed terminals are retained there too
+ *  (renamed `*-closed-*.txt`). Scoping to that subdir keeps the search to
+ *  *this* project / worktree; "All workspaces" searches each workspace's.
+ *  We grep it with rg (falling back to grep), then strip ANSI for display.
+ *  Opening a hit opens the backing file at the matched line; its row is
+ *  labelled with the terminal's name when the terminal is open, else with
+ *  the backing file's name. Those files
  *  are written as lines scroll off, and hold the screen only as of the last
  *  checkpoint, so what is on an open terminal's screen now is matched as it
  *  is in memory (`getTerminalScreens`, which writes nothing); opening such a
  *  hit shows the terminal. */
 async function searchTerminals(
   query: string,
+  content: WorkspaceContent,
   limit: number,
   cancellation?: SearchCancellation,
 ): Promise<GrepMatch[]> {
   if (limit <= 0) return [];
   const onScreen: GrepMatch[] = [];
   const matchCol = buildLineMatcher(query);
-  const screens = await editor.getTerminalScreens();
+  const screens = content.screens;
   for (const screen of screens) {
-    const name = editor.getBufferInfo(screen.bufferId)?.name ?? "terminal";
+    const name = screen.name || "terminal";
     screen.lines.forEach((line, i) => {
       const column = matchCol(line);
       if (column > 0 && onScreen.length < limit) {
@@ -980,8 +1112,10 @@ async function searchTerminals(
   }
   limit -= onScreen.length;
   if (limit <= 0) return onScreen;
-  const dir = editor.getTerminalDir();
-  const cwd = editor.getCwd();
+  // The terminal directory is in the editor's data dir, on this machine
+  if (!content.terminalDir || !editor.fileExists(editor.localPath(content.terminalDir))) {
+    return onScreen;
+  }
   let raw: GrepMatch[] = [];
   // The backing files as text (they hold ANSI escapes), only the rendered
   // `.txt` ones — not the raw `.log` replay logs, which would double every
@@ -994,16 +1128,22 @@ async function searchTerminals(
     caseSensitive: searchModes.case,
     text: true,
     include: "*.txt",
-    paths: [dir],
+    paths: [content.terminalDir],
   };
-  const spawnOpts = { cwd, maxResults: limit, cancellation };
+  // The backing files are in the editor's data dir: always on this computer,
+  // whichever machine the workspace's own files are on.
+  const hostSearch = (cmd: string, args: string[]) => {
+    const process = editor.spawnHostProcess(cmd, args, content.terminalDir);
+    cancellation?.onCancel(() => process.kill());
+    return process;
+  };
   try {
-    const r = await spawnSearch("rg", rgArgs(query, opts), cwd, spawnOpts);
+    const r = await hostSearch("rg", rgArgs(query, opts));
     if (r.exit_code === 0) {
       raw = parseGrepOutput(r.stdout, limit, (m) => editor.debug(m)) as GrepMatch[];
     } else if (r.exit_code !== 1) {
       // rg missing or path error → fall back to grep.
-      const g = await spawnSearch("grep", grepArgs(query, opts), cwd, spawnOpts);
+      const g = await hostSearch("grep", grepArgs(query, opts));
       if (g.exit_code === 0) {
         raw = parseGrepOutput(g.stdout, limit, (m) => editor.debug(m), false) as GrepMatch[];
       }
@@ -1021,11 +1161,16 @@ async function searchTerminals(
   );
   const fromFiles = raw
     .map((m) => ({ ...m, source: "terminals" as const, content: stripAnsi(m.content) }))
-    .filter((m) => !shown.get(baseName(m.file))?.has(m.content.trimEnd()));
+    .filter((m) => !shown.get(baseName(m.file))?.has(m.content.trimEnd()))
+    .map((m) => ({
+      ...m,
+      file: terminalRowName(m.file, screens),
+      openPath: m.file,
+    }));
   return onScreen.concat(fromFiles.slice(0, limit));
 }
 
-/** Search the text of currently-open, modified file buffers.
+/** Search the text of a workspace's open, modified file buffers.
  *  Scoped to *modified* buffers on purpose: unmodified buffers are
  *  already covered by the on-disk file scan, so this surfaces exactly
  *  the unsaved edits a disk grep would miss, without double-reporting.
@@ -1034,24 +1179,23 @@ async function searchTerminals(
  *  match, at its byte column. */
 async function searchOpenBuffers(
   query: string,
+  content: WorkspaceContent,
   limit: number,
   includeUnmodified: boolean,
   cancellation?: SearchCancellation,
 ): Promise<GrepMatch[]> {
   if (limit <= 0) return [];
   const out: GrepMatch[] = [];
-  for (const b of editor.listBuffers()) {
+  const cwd = content.workspace.root;
+  for (const b of content.buffers) {
     if (out.length >= limit) break;
-    // Virtual buffers (terminals, panels) and bufferless/unnamed buffers
-    // have no on-disk file to navigate to. When the file scan is also
-    // running, restrict to *modified* buffers so saved buffers aren't
-    // double-reported (the disk grep already covers them); when buffers is
-    // the only file-backed scope, search every open buffer so the user
-    // actually finds matches.
-    if (b.is_virtual || !b.path) continue;
+    // When the file scan is also running, restrict to *modified* buffers
+    // so saved buffers aren't double-reported (the disk grep already covers
+    // them); when buffers is the only file-backed scope, search every open
+    // buffer so the user actually finds matches.
     if (!includeUnmodified && !b.modified) continue;
     if (cancellation?.cancelled) break;
-    const search = editor.searchBuffer(b.id, query, {
+    const search = editor.searchBuffer(b.bufferId, query, {
       fixedString: !searchModes.regex,
       caseSensitive: searchModes.case,
       wholeWords: searchModes.word,
@@ -1068,9 +1212,9 @@ async function searchOpenBuffers(
       continue;
     }
     // Named like the file scan's rows: relative to the cwd when under it.
-    const file = relativeUnder(editor.getCwd(), b.path) || b.path;
+    const file = relativeUnder(cwd, b.path) || b.path;
     for (const m of matches) {
-      out.push({ file, line: m.line, column: m.column, content: m.context, source: "buffers" });
+      out.push({ file, line: m.line, column: m.column, content: m.context, source: "buffers", openPath: b.path });
     }
   }
   return out;
@@ -1114,17 +1258,58 @@ function customIgnorePatterns(): string[] {
   return Array.isArray(patterns) ? patterns.filter((p): p is string => typeof p === "string") : [];
 }
 
+/** The provider to search another workspace's files with: the first that
+ *  can run on that workspace's machine, the one selected here tried first.
+ *  On a machine other than the active window's, only the built-in ones,
+ *  which run where they are told. Decided once per workspace per overlay. */
+async function providerForOther(workspace: Workspace, ctx: ProviderContext): Promise<LiveGrepProvider | null> {
+  const known = otherProviders.get(workspace.id);
+  if (known !== undefined) return known;
+  const selected = cachedSelected !== undefined ? cachedSelected : await selectProvider();
+  const sameMachine = !workspace.remote && !currentWorkspace().remote;
+  let chosen: LiveGrepProvider | null = null;
+  for (const p of selected ? [selected, ...providers.filter((q) => q !== selected)] : providers) {
+    if (!sameMachine && !builtinProviders.has(p)) continue;
+    if (await canRun(p, ctx)) {
+      chosen = p;
+      break;
+    }
+  }
+  otherProviders.set(workspace.id, chosen);
+  return chosen;
+}
+
+/** `providerForOther`'s answers, by window, for one overlay. */
+const otherProviders = new Map<number, LiveGrepProvider | null>();
+
+/** The window list with every saved workspace in it, read once per
+ *  overlay rather than per keystroke. */
+let workspacesLoaded: Promise<void> | null = null;
+
 // Run the project-file grep for the enabled file-backed scopes
-// (`files` / `ignored`). Returns null when no provider is available so
-// the caller can decide whether that's fatal (no other scope on) or
-// merely a skipped source.
-async function searchFiles(query: string, cancellation?: SearchCancellation): Promise<GrepMatch[] | null> {
-  const provider = await selectProvider();
+// (`files` / `ignored`) in `workspace`'s root. Returns null when no
+// provider is available so the caller can decide whether that's fatal
+// (no other scope on) or merely a skipped source.
+async function searchFiles(
+  query: string,
+  workspace: Workspace,
+  cancellation?: SearchCancellation,
+): Promise<GrepMatch[] | null> {
+  let machine: FreshMachine;
+  try {
+    machine = await machines.get(workspace.id);
+  } catch (e) {
+    // A workspace that closed under the search has nothing to search.
+    editor.debug(`[live_grep] no machine for workspace ${workspace.id}: ${e}`);
+    return workspace.current ? null : [];
+  }
+  const ctx = { machine, cwd: workspace.root };
+  const provider = workspace.current ? await selectProvider() : await providerForOther(workspace, ctx);
   if (!provider) return null;
   try {
     const results = await provider.search(query, {
+      ...ctx,
       cancellation,
-      cwd: editor.getCwd(),
       maxResults: MAX_RESULTS,
       includeIgnored: scopeEnabled.ignored,
       ignorePatterns: scopeEnabled.ignored ? [] : customIgnorePatterns(),
@@ -1137,24 +1322,31 @@ async function searchFiles(query: string, cancellation?: SearchCancellation): Pr
     // A killed search fails with exit -1; it was superseded, not broken.
     if (cancellation?.cancelled) return [];
     editor.error(`[live_grep:${provider.name}] ${e}`);
+    // Another workspace's failure leaves its files out, not the search.
+    if (!workspace.current) return [];
     throw new Error(`${provider.name}: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
-// Fan the query out across every enabled scope and merge into one
-// capped, tagged result list. Order is files → buffers → diagnostics
-// so the most common hits lead.
-async function search(query: string, cancellation?: SearchCancellation): Promise<GrepMatch[]> {
-  lastQuery = query;
-  const wasTruncated = lastSearchTruncated;
+// Fan the query out across every enabled scope in one workspace and
+// merge into one capped, tagged result list. Order is files → buffers →
+// terminals → diagnostics so the most common hits lead.
+async function searchWorkspace(
+  query: string,
+  content: WorkspaceContent,
+  limit: number,
+  cancellation?: SearchCancellation,
+): Promise<GrepMatch[]> {
+  const { workspace } = content;
   const results: GrepMatch[] = [];
-  const remaining = () => MAX_RESULTS - results.length;
+  const remaining = () => limit - results.length;
 
   if (scopeEnabled.files || scopeEnabled.ignored) {
-    const fileMatches = await searchFiles(query, cancellation);
+    const fileMatches = await searchFiles(query, workspace, cancellation);
     if (fileMatches === null) {
       // No grep backend. Only fatal if there's nothing else to search.
-      if (!scopeEnabled.buffers && !scopeEnabled.diagnostics) {
+      const otherScopes = scopeEnabled.buffers || scopeEnabled.terminals || scopeEnabled.diagnostics;
+      if (workspace.current && !otherScopes && !scopeEnabled.workspaces) {
         throw new Error(
           "no search backend available — install ripgrep, or register a provider via init.ts (`editor.getPluginApi(\"live-grep\")?.registerProvider(...)`)."
         );
@@ -1162,15 +1354,12 @@ async function search(query: string, cancellation?: SearchCancellation): Promise
     } else {
       // A file open with unsaved edits is searched as its buffer below;
       // the disk's rows for it point at lines that are no longer there.
-      const cwd = editor.getCwd();
       const unsaved = new Set(
-        scopeEnabled.buffers
-          ? editor.listBuffers().filter((b) => b.modified && !b.is_virtual && b.path).map((b) => b.path)
-          : [],
+        scopeEnabled.buffers ? content.buffers.filter((b) => b.modified).map((b) => b.path) : [],
       );
       for (const m of fileMatches) {
-        if (results.length >= MAX_RESULTS) break;
-        if (unsaved.has(editor.pathJoin(cwd, m.file))) continue;
+        if (results.length >= limit) break;
+        if (unsaved.has(editor.pathJoin(workspace.root, m.file))) continue;
         results.push(m);
       }
     }
@@ -1178,24 +1367,104 @@ async function search(query: string, cancellation?: SearchCancellation): Promise
 
   if (scopeEnabled.buffers && remaining() > 0) {
     const filesActive = scopeEnabled.files || scopeEnabled.ignored;
-    results.push(...await searchOpenBuffers(query, remaining(), !filesActive, cancellation));
+    results.push(...await searchOpenBuffers(query, content, remaining(), !filesActive, cancellation));
   }
 
   if (scopeEnabled.terminals && remaining() > 0) {
-    results.push(...await searchTerminals(query, remaining(), cancellation));
+    results.push(...await searchTerminals(query, content, remaining(), cancellation));
   }
 
-  if (scopeEnabled.diagnostics && remaining() > 0) {
+  // Diagnostics are the current workspace's language servers' only.
+  if (scopeEnabled.diagnostics && workspace.current && remaining() > 0) {
     results.push(...searchDiagnostics(query, remaining()));
   }
 
-  lastSearchTruncated = results.length >= MAX_RESULTS;
+  return results;
+}
+
+/** The workspace the overlay was opened in. */
+function currentWorkspace(): Workspace {
+  const id = editor.activeWindow();
+  const here = editor.listWindows().filter((w) => w.id === id);
+  return orderWorkspaces({ id, root: editor.getCwd() }, here, [])[0];
+}
+
+/** Workspaces searched at once under "All workspaces", besides the current
+ *  one: each runs a search, and a terminal-history grep, per keystroke. */
+const WORKSPACES_AT_ONCE = 4;
+
+/** Whether the preview shows what matched for `match`, in another workspace
+ *  than `current`. The preview reads files through the current workspace's
+ *  machine, so it cannot show one on another machine; nor an unsaved
+ *  buffer's text, only its file on disk. A terminal's history is on this
+ *  computer. */
+function previewable(match: GrepMatch, current: Workspace): boolean {
+  if (current.remote) return false;
+  if (match.source === "terminals") return true;
+  return match.source !== "buffers" && !match.workspace?.remote;
+}
+
+/** "All workspaces": each workspace's matches as one group under a header
+ *  row — the current workspace first, then the others in dock order (window
+ *  order without the Orchestrator), each searched on its own machine. A
+ *  workspace with no matches is left out. */
+async function searchAllWorkspaces(query: string, cancellation?: SearchCancellation): Promise<GrepMatch[]> {
+  // The dock lists workspaces not opened yet this session; so does this.
+  workspacesLoaded ??= editor.loadWorkspaces();
+  await workspacesLoaded;
+  const [current, ...others] = orderWorkspaces(
+    { id: editor.activeWindow(), root: editor.getCwd() },
+    editor.listWindows(),
+    dockOrder(),
+  );
+  const own = await searchWorkspace(query, await workspaceContent(current), MAX_RESULTS, cancellation);
+  // The others share what is left of the cap, a few side by side, started in
+  // dock order; none is started once the cap is filled. Their groups keep
+  // dock order, cut at the cap in that order.
+  const theirs: GrepMatch[][] = others.map(() => []);
+  let found = own.length;
+  let next = 0;
+  const searchNext = async (): Promise<void> => {
+    while (next < others.length && found < MAX_RESULTS && !cancellation?.cancelled) {
+      const i = next++;
+      theirs[i] = await searchWorkspace(query, await workspaceContent(others[i]), MAX_RESULTS - found, cancellation);
+      found += theirs[i].length;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(WORKSPACES_AT_ONCE, others.length) }, searchNext));
+  const groups: { workspace: Workspace; matches: GrepMatch[] }[] = [{ workspace: current, matches: own }];
+  found = own.length;
+  theirs.forEach((matches, i) => {
+    const kept = matches.slice(0, MAX_RESULTS - found);
+    groups.push({ workspace: others[i], matches: kept });
+    found += kept.length;
+  });
+  return groupByWorkspace<GrepMatch>(
+    groups,
+    (workspace, count) => ({ file: "", line: 0, column: 0, content: "", workspace, heading: count }),
+    (match, workspace) => ({
+      ...match,
+      workspace,
+      ...(workspace.current ? {} : { preview: previewable({ ...match, workspace }, current) }),
+    }),
+  );
+}
+
+async function search(query: string, cancellation?: SearchCancellation): Promise<GrepMatch[]> {
+  lastQuery = query;
+  const wasTruncated = lastSearchTruncated;
+  const results = scopeEnabled.workspaces
+    ? await searchAllWorkspaces(query, cancellation)
+    : await searchWorkspace(query, await workspaceContent(currentWorkspace()), MAX_RESULTS, cancellation);
+  const matches = results.filter((m) => m.heading === undefined);
+
+  lastSearchTruncated = matches.length >= MAX_RESULTS;
   // Refresh the toolbar whenever the truncation indicator changes so
   // it appears (or disappears) alongside the new results.
   if (lastSearchTruncated !== wasTruncated) {
     updateOverlayTitle(cachedSelected ?? null);
   }
-  lastResults = results;
+  lastResults = matches;
   return results;
 }
 
@@ -1259,6 +1528,8 @@ for (const m of MODES) {
 // same flow with prepopulated data, no bespoke overlay.
 function openLiveGrep(initialQuery: string): void {
   overlayActive = true;
+  workspacesLoaded = null;
+  otherProviders.clear();
   finder.prompt({
     title: queryLabel(),
     source: {

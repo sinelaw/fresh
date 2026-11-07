@@ -209,6 +209,7 @@ impl super::Editor {
             borrowed_buffers: borrowed,
             opened_buffers: opened,
             representative_split: Some(group_leaf_id),
+            title: None,
         };
 
         // Register reverse mapping, which routes `showBuffer` to the group
@@ -739,6 +740,34 @@ impl super::Editor {
             .collect();
         for group_id in groups {
             self.close_buffer_group_leaving(group_id, Some(buffer_id));
+        }
+    }
+
+    /// Give group `group_id`'s tab the title `segments` (see
+    /// `setBufferGroupTitle`). The group's name becomes the segments' text,
+    /// for everything that names the group without marking it (the buffer
+    /// switcher, say); the tab strip reads the segments themselves.
+    #[cfg(feature = "plugins")]
+    pub(super) fn set_buffer_group_title(
+        &mut self,
+        group_id: usize,
+        segments: Vec<fresh_core::api::BufferGroupTitleSegment>,
+    ) {
+        use crate::view::split::SplitNode;
+
+        let text: String = segments.iter().map(|s| s.text.as_str()).collect();
+        let window = self.active_window_mut();
+        let Some(group) = window.buffer_groups.get_mut(&BufferGroupId(group_id)) else {
+            tracing::warn!("setBufferGroupTitle: group {} not found", group_id);
+            return;
+        };
+        group.name = text.clone();
+        group.title = Some(segments);
+        let Some(leaf) = group.representative_split else {
+            return;
+        };
+        if let Some(SplitNode::Grouped { name, .. }) = window.grouped_subtrees.get_mut(&leaf) {
+            *name = text;
         }
     }
 

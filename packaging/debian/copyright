@@ -47,6 +47,20 @@ License: Expat
 Comment: Based on https://github.com/beefsack/GDScript-sublime; the file
  carries the upstream notice.
 
+Files: crates/fresh-editor-core/src/grammars/bash.sublime-syntax
+Copyright: Sublime HQ Pty Ltd and the sublimehq/Packages contributors
+License: sublimehq-packages
+ Permission to copy, use, modify, sell and distribute this
+ software is granted. This software is provided "as is" without
+ express or implied warranty, and with no claim as to its
+ suitability for any purpose.
+Comment: ShellScript/Bash.sublime-syntax from
+ https://github.com/sublimehq/Packages at commit
+ fa6b8629c95041bf262d4c1dab95c456a0530122 (the revision syntect 5.3
+ bundles), with a local fix for subshell function bodies. The
+ ShellScript package has no license file of its own, so the
+ repository-wide grant above applies.
+
 Files: crates/fresh-editor-core/src/grammars/rust.sublime-syntax
        crates/fresh-editor-core/src/grammars/rust.sublime-syntax.LICENSE.txt
 Copyright: Sublime HQ Pty Ltd and the sublimehq/Packages contributors
@@ -54,6 +68,17 @@ License: Expat
 Comment: Rust/Rust.sublime-syntax from https://github.com/sublimehq/Packages
  at commit a83f263f2b1cfd65a25ad45b1b05441244cc9d34, with that package's
  LICENSE.txt alongside (which names no copyright holder).
+
+Files: crates/fresh-editor-core/src/grammars/csharp.sublime-syntax
+       crates/fresh-editor-core/src/grammars/csharp.sublime-syntax.LICENSE.txt
+Copyright: 2016 Sublime Text HQ Pty, @gwenzek, Matthew Winter @wintermi,
+           Adam Lickel @lickel
+License: Expat
+Comment: C#/C#.sublime-syntax from https://github.com/sublimehq/Packages
+ at commit fa6b8629c95041bf262d4c1dab95c456a0530122 (the grammar syntect
+ bundles), with one regex rewritten for #3667. The file's own header grants
+ the MIT license, which the Packages repository's LICENSE defers to; the MIT
+ notice is alongside as csharp.sublime-syntax.LICENSE.txt.
 
 Files: crates/fresh-editor-core/src/grammars/typst.sublime-syntax
 Copyright: 2026 the Fresh contributors

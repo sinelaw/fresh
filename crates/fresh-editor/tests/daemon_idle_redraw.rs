@@ -22,7 +22,7 @@
 //! one would hang to the harness timeout instead of failing.
 //!
 //! Linux-gated like the other binary-driving tests: `XDG_*` isolation of the
-//! config and socket trees works there, and `common::pty` is Linux-only.
+//! config and socket trees works there.
 #![cfg(target_os = "linux")]
 
 use crate::common::daemon::spawn_daemon;

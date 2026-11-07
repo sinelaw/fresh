@@ -1226,6 +1226,13 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub show_tab_bar: bool,
 
+    /// Hide the tab bar while the window shows a single file: one pane
+    /// holding one tab. It comes back as soon as a second tab or pane opens.
+    /// Has no effect while the tab bar is turned off. Default: false
+    #[serde(default)]
+    #[schemars(extend("x-section" = "Display"))]
+    pub auto_hide_tab_bar: bool,
+
     /// Show the status bar at the bottom. Can be toggled at any time.
     /// Default: true
     #[serde(default = "default_true")]
@@ -1589,8 +1596,9 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Recovery"))]
     pub auto_recovery_save_interval_secs: u32,
 
-    /// How often (ms) to check open files for outside changes when auto-revert is
-    /// on. Lower is faster but uses more CPU. Default: 2000
+    /// How often (ms) to check open files for outside changes. A buffer is
+    /// checked unless auto-revert is off for it ("Toggle Auto-Revert (Current
+    /// Buffer)"). Lower is faster but uses more CPU. Default: 2000
     #[serde(default = "default_auto_revert_poll_interval")]
     #[schemars(extend("x-section" = "Recovery"))]
     pub auto_revert_poll_interval_ms: u64,
@@ -1834,6 +1842,7 @@ impl Default for EditorConfig {
             screensaver_idle_minutes: default_screensaver_idle_minutes(),
             menu_bar_mnemonics: true,
             show_tab_bar: true,
+            auto_hide_tab_bar: false,
             show_status_bar: true,
             status_bar: StatusBarConfig::default(),
             search: SearchConfig::default(),
@@ -2301,6 +2310,13 @@ pub struct TerminalConfig {
     /// scrollback. Terminals running a command (agents, plugins) are kept.
     #[serde(default)]
     pub close_on_exit: bool,
+
+    /// When the system clipboard holds no text (an image, or nothing), terminal
+    /// paste sends Ctrl+V to the program instead of your last yank, so an agent
+    /// CLI can read an image from the clipboard itself. Turn off to paste the
+    /// yank as before. Default: true
+    #[serde(default = "default_true")]
+    pub pass_ctrl_v_without_text: bool,
 }
 
 /// When programs in the terminal get mouse events.
@@ -2324,6 +2340,7 @@ impl Default for TerminalConfig {
             mouse_drag_selects: true,
             mouse_forwarding: TerminalMouseForwarding::default(),
             close_on_exit: false,
+            pass_ctrl_v_without_text: true,
         }
     }
 }
@@ -3260,14 +3277,20 @@ impl MenuConfig {
                         label: t!("menu.view.line_numbers").to_string(),
                         action: "toggle_line_numbers".to_string(),
                         args: HashMap::new(),
-                        when: None,
+                        // Greyed out where the focused tab has no gutter or
+                        // wrapping of its own (a terminal, a plugin panel):
+                        // the box still shows the setting (#3550).
+                        when: Some(context_keys::HAS_TEXT_BUFFER.to_string()),
                         checkbox: Some(context_keys::LINE_NUMBERS.to_string()),
                     },
                     MenuItem::Action {
                         label: t!("menu.view.line_wrap").to_string(),
                         action: "toggle_line_wrap".to_string(),
                         args: HashMap::new(),
-                        when: None,
+                        // Greyed out where the focused tab has no gutter or
+                        // wrapping of its own (a terminal, a plugin panel):
+                        // the box still shows the setting (#3550).
+                        when: Some(context_keys::HAS_TEXT_BUFFER.to_string()),
                         checkbox: Some(context_keys::LINE_WRAP.to_string()),
                     },
                     MenuItem::Action {
@@ -3596,6 +3619,21 @@ impl MenuConfig {
                     MenuItem::Action {
                         label: t!("menu.go.goto_implementation").to_string(),
                         action: "lsp_implementation".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Separator { separator: true },
+                    MenuItem::Action {
+                        label: t!("menu.go.next_paragraph").to_string(),
+                        action: "move_to_paragraph_down".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.go.prev_paragraph").to_string(),
+                        action: "move_to_paragraph_up".to_string(),
                         args: HashMap::new(),
                         when: Some(context_keys::HAS_BUFFER.to_string()),
                         checkbox: None,

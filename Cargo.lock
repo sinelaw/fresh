@@ -1375,7 +1375,7 @@ checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
 
 [[package]]
 name = "fresh-core"
-version = "0.5.4"
+version = "0.5.8"
 dependencies = [
  "anyhow",
  "fresh-js",
@@ -1391,7 +1391,7 @@ dependencies = [
 
 [[package]]
 name = "fresh-editor"
-version = "0.5.4"
+version = "0.5.8"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
@@ -1458,7 +1458,7 @@ dependencies = [
 
 [[package]]
 name = "fresh-editor-core"
-version = "0.5.4"
+version = "0.5.8"
 dependencies = [
  "anyhow",
  "chardetng",
@@ -1473,6 +1473,7 @@ dependencies = [
  "libc",
  "nix 0.31.3",
  "once_cell",
+ "onig",
  "proptest",
  "pulldown-cmark",
  "ratatui",
@@ -1494,7 +1495,7 @@ dependencies = [
 
 [[package]]
 name = "fresh-gui"
-version = "0.5.4"
+version = "0.5.8"
 dependencies = [
  "anyhow",
  "block2",
@@ -1514,7 +1515,7 @@ dependencies = [
 
 [[package]]
 name = "fresh-i18n"
-version = "0.5.4"
+version = "0.5.8"
 dependencies = [
  "once_cell",
  "serde_json",
@@ -1522,7 +1523,7 @@ dependencies = [
 
 [[package]]
 name = "fresh-input-parser"
-version = "0.5.4"
+version = "0.5.8"
 dependencies = [
  "crossterm",
  "libloading",
@@ -1533,7 +1534,7 @@ dependencies = [
 
 [[package]]
 name = "fresh-js"
-version = "0.5.4"
+version = "0.5.8"
 dependencies = [
  "fresh-js-macros",
  "fresh-quickjs-sys",
@@ -1545,7 +1546,7 @@ dependencies = [
 
 [[package]]
 name = "fresh-js-macros"
-version = "0.5.4"
+version = "0.5.8"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1554,7 +1555,7 @@ dependencies = [
 
 [[package]]
 name = "fresh-languages"
-version = "0.5.4"
+version = "0.5.8"
 dependencies = [
  "tree-sitter",
  "tree-sitter-go",
@@ -1567,7 +1568,7 @@ dependencies = [
 
 [[package]]
 name = "fresh-parser-js"
-version = "0.5.4"
+version = "0.5.8"
 dependencies = [
  "anyhow",
  "oxc_allocator",
@@ -1584,7 +1585,7 @@ dependencies = [
 
 [[package]]
 name = "fresh-plugin-api-macros"
-version = "0.5.4"
+version = "0.5.8"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1593,7 +1594,7 @@ dependencies = [
 
 [[package]]
 name = "fresh-plugin-runtime"
-version = "0.5.4"
+version = "0.5.8"
 dependencies = [
  "anyhow",
  "fresh-core",
@@ -1618,7 +1619,7 @@ dependencies = [
 
 [[package]]
 name = "fresh-quickjs-sys"
-version = "0.5.4"
+version = "0.5.8"
 dependencies = [
  "bindgen",
  "cc",
@@ -1626,7 +1627,7 @@ dependencies = [
 
 [[package]]
 name = "fresh-ui"
-version = "0.5.4"
+version = "0.5.8"
 dependencies = [
  "crossterm",
  "proptest",
@@ -1637,7 +1638,7 @@ dependencies = [
 
 [[package]]
 name = "fresh-update"
-version = "0.5.4"
+version = "0.5.8"
 dependencies = [
  "base64",
  "flate2",
@@ -1657,7 +1658,7 @@ dependencies = [
 
 [[package]]
 name = "fresh-winterm"
-version = "0.5.4"
+version = "0.5.8"
 dependencies = [
  "tracing",
  "windows-sys 0.61.2",
@@ -2477,9 +2478,9 @@ dependencies = [
 
 [[package]]
 name = "jsonc-parser"
-version = "0.33.2"
+version = "0.34.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ff5a48f48971be8e762a6ff955725a0802b6e46c441057992da5a673db9fd3a"
+checksum = "0ecded084f9b9a718d39668a42657c32253663d1f6afb3fbb9134f0305f73f48"
 dependencies = [
  "serde",
  "serde_json",
@@ -4277,9 +4278,9 @@ dependencies = [
 
 [[package]]
 name = "pulldown-cmark"
-version = "0.13.5"
+version = "0.13.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "278e9268c93b9e498a2da46c34d90ba93a3255eb99009646398f34bc73ab36eb"
+checksum = "3db2be46835f013dd3f4fa7f5f7402c537787b54ebb6fe2b94bbdd7e2669bb7b"
 dependencies = [
  "bitflags 2.11.1",
  "memchr",

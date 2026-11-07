@@ -1249,6 +1249,92 @@ fn open_picker_covers_dock_fullscreen_and_esc_restores_it() {
     h.assert_screen_contains("+ New");
 }
 
+/// The picker opened while the keyboard was away from the dock (the user had
+/// left it for the editor or a terminal) gives the keyboard back to where it
+/// was on Esc, not to the dock.
+///
+/// Regression (#3136): closing the picker always focused the dock. The pane
+/// the user came from stayed on screen while the dock held the keys, so the
+/// next Alt+O — meant to focus the dock — blurred it instead, and the arrow
+/// keys that followed reached the terminal's shell (Up recalled the last
+/// command, which Enter would run).
+#[test]
+fn picker_opened_away_from_the_dock_leaves_the_keyboard_there() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(200, 40, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+    // Leave the dock for the editor.
+    h.send_key(KeyCode::Char('o'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| !h.editor().is_dock_focused()).unwrap();
+
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Orchestrator: Open").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: Open"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: Workspaces"))
+        .unwrap();
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("ORCHESTRATOR :: Workspaces"))
+        .unwrap();
+
+    // The keyboard is the editor's again: typing lands in the buffer.
+    assert!(!h.editor().is_dock_focused(), "the dock took the keyboard");
+    h.type_text("BACKINEDITOR").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("BACKINEDITOR"))
+        .unwrap();
+    // And Alt+O focuses the dock, rather than blurring a dock that had
+    // silently taken the keyboard.
+    h.send_key(KeyCode::Char('o'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| h.editor().is_dock_focused()).unwrap();
+}
+
+/// A palette opened from the dock and closed, then later another palette
+/// that opens the picker: the dock was left by then, so closing the picker
+/// leaves the keyboard in the editor. The dock's blur for the first Ctrl+P
+/// (a key it passed on) must not still count as the dock having the
+/// keyboard (#3136).
+#[test]
+fn picker_after_an_earlier_palette_from_the_dock_leaves_the_keyboard_in_the_editor() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(200, 40, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // Ctrl+P from the dock, and Esc: the keyboard is the editor's
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.editor().is_dock_focused()).unwrap();
+
+    // Later, from the editor: the picker, then Esc
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Orchestrator: Open").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: Open"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: Workspaces"))
+        .unwrap();
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("ORCHESTRATOR :: Workspaces"))
+        .unwrap();
+
+    assert!(!h.editor().is_dock_focused(), "the dock took the keyboard");
+    h.type_text("BACKINEDITOR").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("BACKINEDITOR"))
+        .unwrap();
+}
+
 /// The Quick Open hint bar (`file | >command | :line | #buffer`) must align
 /// with the suggestions popup above it — both sit in the chrome area to the
 /// right of the dock. The hint row used to hardcode `x: 0`, drawing the bar

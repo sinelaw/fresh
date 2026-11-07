@@ -1,8 +1,8 @@
 use crate::model::buffer::Buffer;
 use crate::model::cursor::{Cursor, Cursors};
 use crate::model::event::{
-    Event, MarginContentData, MarginPositionData, OverlayFace as EventOverlayFace, PopupData,
-    PopupPositionData,
+    EditText, Event, MarginContentData, MarginPositionData, OverlayFace as EventOverlayFace,
+    PopupData, PopupPositionData,
 };
 use crate::model::filesystem::FileSystem;
 use crate::model::marker::{MarkerId, MarkerList};
@@ -903,7 +903,7 @@ impl EditorState {
         &mut self,
         cursors: &mut Cursors,
         position: usize,
-        text: &str,
+        text: &[u8],
         cursor_id: crate::model::event::CursorId,
     ) {
         let (line_before, line_start_before, line_end_before) =
@@ -912,8 +912,8 @@ impl EditorState {
         // CRITICAL: Adjust markers BEFORE modifying buffer
         self.adjust_markers_for_insert(position, text.len());
 
-        // Insert text into buffer
-        self.buffer.insert(position, text);
+        // Insert the exact bytes: text an undo puts back need not be UTF-8.
+        self.buffer.insert_bytes(position, text.to_vec());
 
         self.repair_wrap_indices(crate::view::wrap_index::EditDamage {
             start: position,
@@ -1020,7 +1020,7 @@ impl EditorState {
                 position,
                 text,
                 cursor_id,
-            } => self.apply_insert(cursors, *position, text, *cursor_id),
+            } => self.apply_insert(cursors, *position, text.as_bytes(), *cursor_id),
 
             Event::Delete {
                 range, cursor_id, ..
@@ -1958,6 +1958,22 @@ impl EditorState {
         }
     }
 
+    /// The bytes in `start..end` exactly as the buffer holds them, for an
+    /// event that removes them: undo puts back these bytes, so a lossy
+    /// `String` would turn bytes that are not UTF-8 into U+FFFD (#3652).
+    pub fn get_edit_text(&mut self, start: usize, end: usize) -> EditText {
+        match self
+            .buffer
+            .get_text_range_mut(start, end.saturating_sub(start))
+        {
+            Ok(bytes) => EditText::from_bytes(bytes),
+            Err(e) => {
+                tracing::warn!("Failed to get text range {}..{}: {}", start, end, e);
+                EditText::default()
+            }
+        }
+    }
+
     /// Replace cached semantic tokens with a new store.
     pub fn set_semantic_tokens(&mut self, store: SemanticTokenStore) {
         self.semantic_tokens = Some(store);
@@ -2093,7 +2109,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "hello".to_string(),
+                text: "hello".to_string().into(),
                 cursor_id,
             },
         );
@@ -2119,7 +2135,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "hello world".to_string(),
+                text: "hello world".to_string().into(),
                 cursor_id,
             },
         );
@@ -2128,7 +2144,7 @@ mod tests {
             &mut cursors,
             &Event::Delete {
                 range: 5..11,
-                deleted_text: " world".to_string(),
+                deleted_text: " world".to_string().into(),
                 cursor_id,
             },
         );
@@ -2155,7 +2171,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "hello".to_string(),
+                text: "hello".to_string().into(),
                 cursor_id,
             },
         );
@@ -2166,7 +2182,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 5,
-                text: "!".to_string(),
+                text: "!".to_string().into(),
                 cursor_id,
             },
         );
@@ -2177,7 +2193,7 @@ mod tests {
             &mut cursors,
             &Event::Delete {
                 range: 5..6,
-                deleted_text: "!".to_string(),
+                deleted_text: "!".to_string().into(),
                 cursor_id,
             },
         );
@@ -2203,7 +2219,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "line0\nTARGET\n".to_string(),
+                text: "line0\nTARGET\n".to_string().into(),
                 cursor_id,
             },
         );
@@ -2226,7 +2242,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: above.to_string(),
+                text: above.to_string().into(),
                 cursor_id,
             },
         );
@@ -2248,7 +2264,7 @@ mod tests {
             &mut cursors,
             &Event::Delete {
                 range: 0..above.len(),
-                deleted_text: above.to_string(),
+                deleted_text: above.to_string().into(),
                 cursor_id,
             },
         );
@@ -2281,7 +2297,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "hello".to_string(),
+                text: "hello".to_string().into(),
                 cursor_id,
             },
         );
@@ -2351,7 +2367,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "abc".to_string(),
+                text: "abc".to_string().into(),
                 cursor_id,
             },
         );
@@ -2490,7 +2506,7 @@ mod tests {
                 &mut cursors,
                 &Event::Insert {
                     position: 6,
-                    text: "beautiful ".to_string(),
+                    text: "beautiful ".to_string().into(),
                     cursor_id,
                 },
             );
@@ -2537,7 +2553,7 @@ mod tests {
                 &mut cursors,
                 &Event::Insert {
                     position: 6,
-                    text: "beautiful ".to_string(),
+                    text: "beautiful ".to_string().into(),
                     cursor_id,
                 },
             );
@@ -2579,7 +2595,7 @@ mod tests {
                 &mut cursors,
                 &Event::Delete {
                     range: 6..16,
-                    deleted_text: "beautiful ".to_string(),
+                    deleted_text: "beautiful ".to_string().into(),
                     cursor_id,
                 },
             );

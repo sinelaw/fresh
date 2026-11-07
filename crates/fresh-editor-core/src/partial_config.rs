@@ -221,6 +221,7 @@ pub struct PartialEditorConfig {
     pub screensaver_idle_minutes: Option<u32>,
     pub menu_bar_mnemonics: Option<bool>,
     pub show_tab_bar: Option<bool>,
+    pub auto_hide_tab_bar: Option<bool>,
     pub show_status_bar: Option<bool>,
     pub status_bar: Option<crate::config::StatusBarConfig>,
     pub search: Option<PartialSearchConfig>,
@@ -348,6 +349,7 @@ impl Merge for PartialEditorConfig {
         self.menu_bar_mnemonics
             .merge_from(&other.menu_bar_mnemonics);
         self.show_tab_bar.merge_from(&other.show_tab_bar);
+        self.auto_hide_tab_bar.merge_from(&other.auto_hide_tab_bar);
         self.show_status_bar.merge_from(&other.show_status_bar);
         if other.status_bar.is_some() {
             self.status_bar = other.status_bar.clone();
@@ -505,6 +507,7 @@ pub struct PartialTerminalConfig {
     pub mouse_drag_selects: Option<bool>,
     pub mouse_forwarding: Option<crate::config::TerminalMouseForwarding>,
     pub close_on_exit: Option<bool>,
+    pub pass_ctrl_v_without_text: Option<bool>,
 }
 
 impl Merge for PartialTerminalConfig {
@@ -519,6 +522,8 @@ impl Merge for PartialTerminalConfig {
             .merge_from(&other.mouse_drag_selects);
         self.mouse_forwarding.merge_from(&other.mouse_forwarding);
         self.close_on_exit.merge_from(&other.close_on_exit);
+        self.pass_ctrl_v_without_text
+            .merge_from(&other.pass_ctrl_v_without_text);
     }
 }
 
@@ -740,6 +745,7 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             screensaver_idle_minutes: Some(cfg.screensaver_idle_minutes),
             menu_bar_mnemonics: Some(cfg.menu_bar_mnemonics),
             show_tab_bar: Some(cfg.show_tab_bar),
+            auto_hide_tab_bar: Some(cfg.auto_hide_tab_bar),
             show_status_bar: Some(cfg.show_status_bar),
             status_bar: Some(cfg.status_bar.clone()),
             search: Some(PartialSearchConfig::from(&cfg.search)),
@@ -919,6 +925,7 @@ impl PartialEditorConfig {
                 .menu_bar_mnemonics
                 .unwrap_or(defaults.menu_bar_mnemonics),
             show_tab_bar: self.show_tab_bar.unwrap_or(defaults.show_tab_bar),
+            auto_hide_tab_bar: self.auto_hide_tab_bar.unwrap_or(defaults.auto_hide_tab_bar),
             show_status_bar: self.show_status_bar.unwrap_or(defaults.show_status_bar),
             status_bar: self
                 .status_bar
@@ -1078,6 +1085,7 @@ impl From<&TerminalConfig> for PartialTerminalConfig {
             mouse_drag_selects: Some(cfg.mouse_drag_selects),
             mouse_forwarding: Some(cfg.mouse_forwarding),
             close_on_exit: Some(cfg.close_on_exit),
+            pass_ctrl_v_without_text: Some(cfg.pass_ctrl_v_without_text),
         }
     }
 }
@@ -1098,6 +1106,9 @@ impl PartialTerminalConfig {
                 .unwrap_or(defaults.mouse_drag_selects),
             mouse_forwarding: self.mouse_forwarding.unwrap_or(defaults.mouse_forwarding),
             close_on_exit: self.close_on_exit.unwrap_or(defaults.close_on_exit),
+            pass_ctrl_v_without_text: self
+                .pass_ctrl_v_without_text
+                .unwrap_or(defaults.pass_ctrl_v_without_text),
         }
     }
 }

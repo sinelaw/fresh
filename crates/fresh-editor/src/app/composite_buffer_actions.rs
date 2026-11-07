@@ -971,12 +971,13 @@ impl Editor {
             Action::SelectRight => {
                 self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::Right, true)
             }
-            Action::SelectLineStart => self.handle_cursor_movement_action(
-                split_id,
-                buffer_id,
-                CursorMovement::LineStart,
-                true,
-            ),
+            Action::SelectLineStart | Action::SelectSmartHome => self
+                .handle_cursor_movement_action(
+                    split_id,
+                    buffer_id,
+                    CursorMovement::LineStart,
+                    true,
+                ),
             Action::SelectLineEnd => self.handle_cursor_movement_action(
                 split_id,
                 buffer_id,

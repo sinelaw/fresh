@@ -27,7 +27,7 @@ impl EventHooks for Event {
                 buffer_id,
                 window_id,
                 position: *position,
-                text: text.clone(),
+                text: text.to_string(),
             }),
             Self::Delete { range, .. } => Some(HookArgs::BeforeDelete {
                 buffer_id,
@@ -49,7 +49,7 @@ impl EventHooks for Event {
                 buffer_id,
                 window_id,
                 position: *position,
-                text: text.clone(),
+                text: text.to_string(),
                 affected_start: *position,
                 affected_end: *position + text.len(),
                 // Line info placeholder - will be filled by caller with buffer access
@@ -66,7 +66,7 @@ impl EventHooks for Event {
                 window_id,
                 start: range.start,
                 end: range.end,
-                deleted_text: deleted_text.clone(),
+                deleted_text: deleted_text.to_string(),
                 affected_start: range.start,
                 deleted_len: deleted_text.len(),
                 // Line info placeholder - will be filled by caller with buffer access
@@ -104,7 +104,7 @@ mod tests {
     fn test_insert_event_has_hooks() {
         let event = Event::Insert {
             position: 0,
-            text: "test".to_string(),
+            text: "test".to_string().into(),
             cursor_id: CursorId(0),
         };
 
@@ -119,7 +119,7 @@ mod tests {
     fn test_delete_event_has_hooks() {
         let event = Event::Delete {
             range: 0..5,
-            deleted_text: "test".to_string(),
+            deleted_text: "test".to_string().into(),
             cursor_id: CursorId(0),
         };
 

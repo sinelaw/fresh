@@ -235,6 +235,25 @@ type BufferGroupResult = {
 };
 ```
 
+### `BufferGroupTitleSegment`
+
+One piece of a buffer group's tab title, for `setBufferGroupTitle`.
+
+```typescript
+type BufferGroupTitleSegment = {
+  /**
+  * The text this piece of the title shows.
+  */
+  text: string;
+  /**
+  * The panel this piece names, if any. While the file that panel shows
+  * has unsaved changes, the tab shows `*` right after this piece, as a
+  * file's own tab does after its name.
+  */
+  panel?: string;
+};
+```
+
 ### `BufferId`
 
 Buffer identifier
@@ -328,6 +347,18 @@ type BufferInfo = {
   * The detected language for this buffer (e.g., "rust", "markdown", "text")
   */
   language: string;
+  /**
+  * Columns per indentation level for this buffer: `editor.tab_size`,
+  * overridden by `languages.<language>.tab_size`, `.editorconfig`, or a
+  * per-buffer "Set Tab Size". A plugin that inserts indentation itself
+  * should use this rather than a fixed width.
+  */
+  tab_size: number;
+  /**
+  * Whether indentation in this buffer is a tab character rather than
+  * `tab_size` spaces, resolved the same way as `tab_size`.
+  */
+  use_tabs: boolean;
   /**
   * Whether this tab was opened in "preview" (ephemeral) mode — true when
   * opened via single-click in the file explorer and not yet committed
@@ -1538,6 +1569,14 @@ interface EditorConfig {
     */
     show_tab_bar?: boolean;
     /**
+    * Hide the tab bar while the window shows a single file: one pane
+    * holding one tab. It comes back as soon as a second tab or pane opens.
+    * Has no effect while the tab bar is turned off. Default: false
+    *
+    * Default: `false`
+    */
+    auto_hide_tab_bar?: boolean;
+    /**
     * Show the status bar at the bottom. Can be toggled at any time.
     * Default: true
     *
@@ -1946,8 +1985,9 @@ interface EditorConfig {
     */
     auto_recovery_save_interval_secs?: number;
     /**
-    * How often (ms) to check open files for outside changes when auto-revert is
-    * on. Lower is faster but uses more CPU. Default: 2000
+    * How often (ms) to check open files for outside changes. A buffer is
+    * checked unless auto-revert is off for it ("Toggle Auto-Revert (Current
+    * Buffer)"). Lower is faster but uses more CPU. Default: 2000
     *
     * Default: `2000`
     */
@@ -2823,6 +2863,15 @@ interface TerminalConfig {
     * Default: `false`
     */
     close_on_exit?: boolean;
+    /**
+    * When the system clipboard holds no text (an image, or nothing), terminal
+    * paste sends Ctrl+V to the program instead of your last yank, so an agent
+    * CLI can read an image from the clipboard itself. Turn off to paste the
+    * yank as before. Default: true
+    *
+    * Default: `true`
+    */
+    pass_ctrl_v_without_text?: boolean;
   }
 ```
 
@@ -2902,7 +2951,13 @@ interface FreshMachine {
     path: string;
     maxBytes: number;
   }[]): Promise<FilePrefix[]>;
-  run(program: string, args?: string[], cwd?: string): Promise<CommandResult>;
+  /** Run a command here, without a shell. `stdoutTo` streams stdout into
+  *  that file instead (`stdout` then resolves empty; this computer only).
+  *  Never rejects: a command that could not be started, or a machine that
+  *  is closed or whose window has closed, resolves with `code` -1 and the
+  *  reason in `stderr`. `kill()` stops it here, on an SSH host or in a
+  *  Kubernetes pod; in a container it runs to completion. */
+  run(program: string, args?: string[], cwd?: string, stdoutTo?: string): ProcessHandle<CommandResult>;
   /** Environment variables, for the names that are set. A remote machine is
   *  asked with `printenv`; never this computer's values for another machine. */
   env(names: string[]): Promise<Record<string, string>>;
@@ -4176,6 +4231,10 @@ type TerminalScreen = {
   * scrollback, until the next one replaces it.
   */
   file: string;
+  /**
+  * The terminal's tab label (e.g. `claude`, `Terminal 1`)
+  */
+  name: string;
 };
 ```
 

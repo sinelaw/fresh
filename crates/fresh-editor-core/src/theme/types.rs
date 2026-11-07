@@ -941,6 +941,18 @@ pub struct UiColors {
     /// File status: conflicted file color in file explorer (falls back to diagnostic.error_fg)
     #[serde(default)]
     pub file_status_conflicted_fg: Option<StyledColorDef>,
+    /// The ground of the file explorer's sticky-parent band: the expanded
+    /// ancestors the list holds above the run. Falls back to
+    /// `editor.current_line_bg`, but built-in themes set it apart from both
+    /// the panel and the unfocused cursor, so a pinned row and a cursor on a
+    /// pinned row do not read as the same thing.
+    #[serde(default)]
+    pub file_explorer_pinned_bg: Option<StyledColorDef>,
+    /// Name color of an ordinary directory in the file explorer. Falls back
+    /// to `syntax.keyword`, so a theme can give folders a neutral color
+    /// without also recoloring code keywords.
+    #[serde(default)]
+    pub file_explorer_directory_fg: Option<StyledColorDef>,
 }
 
 /// Search result highlighting colors
@@ -1247,6 +1259,11 @@ pub struct Theme {
     pub file_status_untracked_fg: Color,
     pub file_status_conflicted_fg: Color,
 
+    /// The ground of the file explorer's sticky-parent band.
+    pub file_explorer_pinned_bg: Color,
+    /// Name color of an ordinary directory in the file explorer.
+    pub file_explorer_directory_fg: Color,
+
     // Search colors
     pub search_match_bg: Color,
     pub search_match_fg: Color,
@@ -1474,6 +1491,8 @@ impl From<ThemeFile> for Theme {
             file_status_renamed_fg: styled_color(&file.ui.file_status_renamed_fg),
             file_status_untracked_fg: styled_color(&file.ui.file_status_untracked_fg),
             file_status_conflicted_fg: styled_color(&file.ui.file_status_conflicted_fg),
+            file_explorer_pinned_bg: styled_color(&file.ui.file_explorer_pinned_bg),
+            file_explorer_directory_fg: styled_color(&file.ui.file_explorer_directory_fg),
             search_match_bg: styled_color(&file.search.match_bg),
             search_match_fg: styled_color(&file.search.match_fg),
             search_current_match_bg: styled_color(&file.search.current_match_bg),
@@ -1663,6 +1682,8 @@ impl From<Theme> for ThemeFile {
                 file_status_renamed_fg: styled(&theme, "ui.file_status_renamed_fg"),
                 file_status_untracked_fg: styled(&theme, "ui.file_status_untracked_fg"),
                 file_status_conflicted_fg: styled(&theme, "ui.file_status_conflicted_fg"),
+                file_explorer_pinned_bg: styled(&theme, "ui.file_explorer_pinned_bg"),
+                file_explorer_directory_fg: styled(&theme, "ui.file_explorer_directory_fg"),
             },
             search: SearchColors {
                 match_bg: styled(&theme, "search.match_bg"),
@@ -1790,6 +1811,21 @@ fn apply_theme_overrides(theme: &mut Theme, theme_file: &ThemeFile, raw: &serde_
     // Name always comes from the user file — that's the theme's identity.
     theme.name = theme_file.name.clone();
 
+    // Keys added after themes could already extend one another, whose
+    // fallback was the only color they had: in the base they still hold that
+    // fallback's color, and must keep following it when the extending theme
+    // overrides it but not them, or the theme would change look (#3697).
+    let following: Vec<(&str, &str)> = KEYS_FOLLOWING_FALLBACK_ACROSS_EXTENDS
+        .iter()
+        .filter_map(|&key| {
+            let fallback = Theme::fallback_key(key)?;
+            (!names_key(raw, key)
+                && theme.resolve_theme_key(key) == theme.resolve_theme_key(fallback)
+                && theme.resolve_modifier_key(key) == theme.resolve_modifier_key(fallback))
+            .then_some((key, fallback))
+        })
+        .collect();
+
     for (key, value) in named_values(raw) {
         // A key that is only text attributes is applied after every color
         // key (below), so it wins over its color key's bundle whatever order
@@ -1816,7 +1852,19 @@ fn apply_theme_overrides(theme: &mut Theme, theme_file: &ThemeFile, raw: &serde_
         }
     }
     theme.apply_modifier_only_keys(raw);
+
+    for (key, fallback) in following {
+        if let Some(color) = theme.resolve_theme_key(fallback) {
+            theme.set_theme_key(key, color);
+            let modifier = theme.resolve_modifier_key(fallback);
+            theme.set_modifier_key(key, modifier);
+        }
+    }
 }
+
+/// See [`apply_theme_overrides`]: keys that track their fallback key through
+/// an `extends` override when the base theme gave them no color of their own.
+const KEYS_FOLLOWING_FALLBACK_ACROSS_EXTENDS: &[&str] = &["ui.file_explorer_directory_fg"];
 
 /// Every non-null `"section.field"` leaf of a theme JSON, under its canonical
 /// key (a serde alias such as `ui.popup_fg` is reported as the field it
@@ -2327,6 +2375,8 @@ theme_color_keys! {
         "blame_header_bg" => color blame_header_bg fallback "ui.menu_bg",
         "blame_header_fg" => color blame_header_fg fallback "ui.menu_fg",
         "compose_margin_bg" => color compose_margin_bg fallback "editor.after_eof_bg",
+        "file_explorer_directory_fg" => color file_explorer_directory_fg fallback "syntax.keyword",
+        "file_explorer_pinned_bg" => color file_explorer_pinned_bg fallback "editor.current_line_bg",
         "file_status_added_fg" => color file_status_added_fg fallback "diagnostic.info_fg",
         "file_status_conflicted_fg" => color file_status_conflicted_fg fallback "diagnostic.error_fg",
         "file_status_deleted_fg" => color file_status_deleted_fg fallback "diagnostic.error_fg",
@@ -3618,6 +3668,57 @@ mod tests {
                     key
                 );
             }
+        }
+    }
+
+    /// Every builtin theme must give the file explorer's pinned band a ground
+    /// of its own: not the panel, and not the unfocused cursor's
+    /// `current_line_bg`, or a cursor on a pinned row would vanish into the
+    /// band it sits in.
+    /// Explorer folder names have a key of their own (#3697): a theme that
+    /// leaves it out keeps the old look (`syntax.keyword`), and one that sets
+    /// it recolors folders without touching code keywords.
+    #[test]
+    fn file_explorer_directory_fg_falls_back_to_keyword() {
+        for builtin in BUILTIN_THEMES {
+            let theme = Theme::from_json(builtin.json).unwrap();
+            assert_eq!(
+                theme.file_explorer_directory_fg, theme.syntax_keyword,
+                "Theme '{}' changed its folder color",
+                builtin.name
+            );
+        }
+        let theme = Theme::from_json(
+            r#"{"name": "folders", "extends": "builtin://dark",
+                "syntax": {"keyword": [237, 65, 65]},
+                "ui": {"file_explorer_directory_fg": [200, 209, 217]}}"#,
+        )
+        .unwrap();
+        assert_eq!(theme.syntax_keyword, Color::Rgb(237, 65, 65));
+        assert_eq!(theme.file_explorer_directory_fg, Color::Rgb(200, 209, 217));
+        let theme = Theme::from_json(
+            r#"{"name": "kw", "extends": "builtin://dark",
+                "syntax": {"keyword": [237, 65, 65]}}"#,
+        )
+        .unwrap();
+        assert_eq!(theme.file_explorer_directory_fg, Color::Rgb(237, 65, 65));
+    }
+
+    #[test]
+    fn test_all_builtin_themes_set_a_distinct_pinned_band() {
+        for builtin in BUILTIN_THEMES {
+            let theme = Theme::from_json(builtin.json)
+                .unwrap_or_else(|e| panic!("Theme '{}' failed to parse: {}", builtin.name, e));
+            assert_ne!(
+                theme.file_explorer_pinned_bg, theme.editor_bg,
+                "Theme '{}' paints the pinned band on the panel ground",
+                builtin.name
+            );
+            assert_ne!(
+                theme.file_explorer_pinned_bg, theme.current_line_bg,
+                "Theme '{}' paints the pinned band on the unfocused cursor's ground",
+                builtin.name
+            );
         }
     }
 

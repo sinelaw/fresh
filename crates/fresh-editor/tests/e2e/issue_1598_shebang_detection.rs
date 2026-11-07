@@ -53,3 +53,45 @@ fn test_extensionless_file_with_zsh_shebang_is_detected_as_shell() {
         display_name
     );
 }
+
+/// A new, extensionless file still gets its language from the shebang typed
+/// into it when it is first saved, even with `default_language` set. Opening
+/// a not-yet-existing file detects its language from the name (#3713); a name
+/// that matches nothing must stay plain text until the save, or the save's
+/// shebang detection is skipped and the file keeps `default_language`.
+#[test]
+fn test_new_extensionless_file_with_default_language_detects_shebang_on_save() {
+    let temp_dir = TempDir::new().unwrap();
+    let working_dir = temp_dir.path().to_path_buf();
+    let script = working_dir.join("myscript");
+
+    let mut config = fresh::config::Config::default();
+    config.default_language = Some("markdown".to_string());
+    let mut harness = EditorTestHarness::create(
+        100,
+        30,
+        HarnessOptions::new()
+            .with_config(config)
+            .without_empty_plugins_dir()
+            .with_full_grammar_registry()
+            .with_working_dir(working_dir.clone()),
+    )
+    .unwrap();
+
+    harness.open_file(&script).unwrap();
+    harness.type_text("#!/bin/bash\necho hi\n").unwrap();
+    harness
+        .send_key(
+            crossterm::event::KeyCode::Char('s'),
+            crossterm::event::KeyModifiers::CONTROL,
+        )
+        .unwrap();
+    harness.wait_until(|_| script.exists()).unwrap();
+
+    let language = harness.editor().active_state().language.clone();
+    assert!(
+        language != "markdown" && language != "text",
+        "the shebang should decide the new script's language on save, not \
+         default_language (got {language:?})"
+    );
+}

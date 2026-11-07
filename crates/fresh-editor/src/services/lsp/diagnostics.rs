@@ -530,7 +530,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: text.to_string(),
+                text: text.to_string().into(),
                 cursor_id,
             },
         );
@@ -566,7 +566,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "xxx\n".to_string(),
+                text: "xxx\n".to_string().into(),
                 cursor_id,
             },
         );
@@ -586,7 +586,7 @@ mod tests {
             &mut cursors,
             &Event::Delete {
                 range: 0..4,
-                deleted_text: "aaa\n".to_string(),
+                deleted_text: "aaa\n".to_string().into(),
                 cursor_id,
             },
         );
@@ -607,7 +607,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: end,
-                text: "\nddd".to_string(),
+                text: "\nddd".to_string().into(),
                 cursor_id,
             },
         );
@@ -629,7 +629,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: "xxx\n".to_string(),
+                text: "xxx\n".to_string().into(),
                 cursor_id,
             },
         );

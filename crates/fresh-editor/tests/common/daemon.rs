@@ -7,9 +7,9 @@
 //! flags, and when two daemons start for one session only one keeps it:
 //! the client may be talking to its own.
 //!
-//! Linux-only, like its callers: the pid file sits in the `XDG_RUNTIME_DIR`
-//! tree they isolate.
-#![cfg(target_os = "linux")]
+//! Linux and macOS: the pid file sits in the `XDG_RUNTIME_DIR` tree the
+//! callers isolate, which Fresh reads from the environment on every Unix.
+#![cfg(any(target_os = "linux", target_os = "macos"))]
 
 use std::path::Path;
 use std::process::{Child, Command};

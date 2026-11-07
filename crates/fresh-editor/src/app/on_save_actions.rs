@@ -535,7 +535,15 @@ impl Editor {
             return Ok(());
         }
 
-        let buffer_len = buffer_content.len();
+        // The exact bytes the delete removes, for undo to put back: the
+        // lossy `buffer_content` is only for the comparison and the diff
+        // (#3652). Its length is the buffer's, not the lossy string's.
+        let deleted_text = {
+            let state = self.active_state_mut();
+            let len = state.buffer.len();
+            state.get_edit_text(0, len)
+        };
+        let buffer_len = deleted_text.len();
 
         // Capture cursor position and selection state before replacement
         let old_cursor_pos = self.active_cursors().primary().position;
@@ -554,12 +562,12 @@ impl Editor {
         // Delete all content and insert new
         let delete_event = Event::Delete {
             range: 0..buffer_len,
-            deleted_text: buffer_content,
+            deleted_text,
             cursor_id,
         };
         let insert_event = Event::Insert {
             position: 0,
-            text: output.to_string(),
+            text: output.to_string().into(),
             cursor_id,
         };
 
@@ -721,16 +729,26 @@ impl Editor {
         if old == output {
             return Ok(());
         }
+        // The exact bytes, for undo (#3652); `old` is lossy.
+        let deleted_text = self
+            .buffers_mut()
+            .get_mut(&buffer_id)
+            .map(|state| {
+                let len = state.buffer.len();
+                state.get_edit_text(0, len)
+            })
+            .unwrap_or_default();
+        let removed = deleted_text.len();
         let batch = Event::Batch {
             events: vec![
                 Event::Delete {
-                    range: 0..old.len(),
-                    deleted_text: old.clone(),
+                    range: 0..removed,
+                    deleted_text,
                     cursor_id: CursorId(0),
                 },
                 Event::Insert {
                     position: 0,
-                    text: output.to_string(),
+                    text: output.to_string().into(),
                     cursor_id: CursorId(0),
                 },
             ],
@@ -763,7 +781,7 @@ impl Editor {
         // Plugin edits and this one bypass `apply_event_to_active_buffer`,
         // so the plugin markers are shifted here, as for a plugin's edit
         #[cfg(feature = "plugins")]
-        self.shift_plugin_markers_for_edit(buffer_id, 0, old.len(), output.len());
+        self.shift_plugin_markers_for_edit(buffer_id, 0, removed, output.len());
         self.sync_lsp_after_recovery_replay(buffer_id);
         Ok(())
     }

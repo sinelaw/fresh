@@ -90,7 +90,7 @@ impl Editor {
         // buffer is no tab of it (it closes with the buffer), so it does not
         // count, as in `close_tab_in_split`.
         let collapsed = match hosts[..] {
-            [split_id] => self.close_split_if_sole_tab(split_id),
+            [split_id] => self.close_split_if_sole_tab(split_id, id),
             _ => false,
         };
         let closed = self.force_close_buffer(id);
@@ -103,7 +103,30 @@ impl Editor {
         closed
     }
 
-    /// Close `split_id` when it holds at most one buffer tab and another
+    /// How many of `split_id`'s tabs survive closing `closing`: every tab
+    /// but the buffer's own and those of the groups showing it in a panel,
+    /// which close with it (`close_groups_borrowing`). A group tab counts
+    /// otherwise: a pane holding the tab of a group that does not show the
+    /// buffer is not left empty by the close, and closing the pane would
+    /// close that group with it (issue #3688).
+    fn tabs_left_after_closing(&self, split_id: LeafId, closing: BufferId) -> usize {
+        use crate::view::split::TabTarget;
+        let window = self.active_window();
+        let Some(vs) = window.split_view_states().get(&split_id) else {
+            return 0;
+        };
+        vs.open_buffers
+            .iter()
+            .filter(|t| match t {
+                TabTarget::Buffer(b) => *b != closing,
+                TabTarget::Group(leaf) => !window.buffer_groups.values().any(|g| {
+                    g.representative_split == Some(*leaf) && g.borrowed_buffers.contains(&closing)
+                }),
+            })
+            .count()
+    }
+
+    /// Close `split_id` when it holds no tab that outlives closing `closing` and another
     /// EDITOR split exists to take its space. Returns whether it closed.
     ///
     /// The Utility Dock is a role-tagged leaf, NOT an editor split, so it
@@ -111,12 +134,8 @@ impl Editor {
     /// "close the whole split" path when the sole editor tab was closed,
     /// collapsing the editor leaf and promoting the dock's terminals into
     /// the main tab bar.
-    fn close_split_if_sole_tab(&mut self, split_id: LeafId) -> bool {
-        let sole_tab = self
-            .active_window()
-            .split_view_states()
-            .get(&split_id)
-            .is_none_or(|vs| vs.buffer_tab_ids_vec().len() <= 1);
+    fn close_split_if_sole_tab(&mut self, split_id: LeafId, closing: BufferId) -> bool {
+        let sole_tab = self.tabs_left_after_closing(split_id, closing) == 0;
         let has_other_editor_splits = self
             .windows
             .get(&self.active_window)
@@ -210,14 +229,24 @@ impl Editor {
         // Only needed when the closing buffer is the one the user is
         // looking at — otherwise the current active buffer stays.
         if closing_active {
+            // Whether the replacement already has a tab in the host split,
+            // read before `set_active_buffer` gives it one.
+            let was_tab = self
+                .active_window()
+                .split_view_states()
+                .get(&active_split)
+                .is_some_and(|vs| vs.has_buffer(replacement_buffer));
+
             self.set_active_buffer(replacement_buffer);
 
-            // If we landed on a hidden panel buffer to fill the Group-case
-            // housekeeping slot, scrub the *visible* side effects
-            // (`open_buffers`, `focus_history`) so the panel buffer doesn't
-            // appear as a tab. The view state `set_buffer_tab` inserted has
-            // to stay — the buffer tab always has one — but it's harmless
-            // as long as
+            // If we landed on a buffer that had no tab here to fill the
+            // Group-case housekeeping slot, scrub the *visible* side effects
+            // (`open_buffers`, `focus_history`) so it doesn't appear as a
+            // tab. That is a hidden panel buffer, or a file a group panel
+            // borrowed without a tab of its own — the files of a
+            // `--diff` comparison (issue #3688). The view state
+            // `set_buffer_tab` inserted has to stay — the buffer tab always
+            // has one — but it's harmless as long as
             // the plugin-snapshot lookup skips it; see
             // `snapshot_source_split` in `update_plugin_state_snapshot`.
             let hidden = self
@@ -225,7 +254,7 @@ impl Editor {
                 .buffer_metadata
                 .get(&replacement_buffer)
                 .is_some_and(|m| m.hidden_from_tabs);
-            if return_to_group.is_some() && hidden {
+            if return_to_group.is_some() && (hidden || !was_tab) {
                 use crate::view::split::TabTarget;
                 if let Some(vs) = self
                     .active_window_mut()
@@ -688,13 +717,8 @@ impl Editor {
             })
             .count();
 
-        // Get the split's open buffers
-        let split_tabs = self
-            .active_window()
-            .split_view_states()
-            .get(&split_id)
-            .map(|vs| vs.buffer_tab_ids_vec())
-            .unwrap_or_default();
+        // The tabs the close leaves in the split, group tabs included.
+        let tabs_left = self.tabs_left_after_closing(split_id, buffer_id);
 
         let is_last_viewport = buffer_in_other_splits == 0;
 
@@ -742,7 +766,7 @@ impl Editor {
             // Close Buffer/Close Tab commands behave the same — without
             // this, the × button leaves a leftover split showing some
             // unrelated buffer (observed with the Search/Replace panel).
-            if self.close_split_if_sole_tab(split_id) {
+            if self.close_split_if_sole_tab(split_id, buffer_id) {
                 // handle_close_split also disposes the buffer-less split;
                 // buffer lifetime cleanup happens via its own path.
                 if let Err(e) = self.close_buffer(buffer_id) {
@@ -774,7 +798,7 @@ impl Editor {
             // editor leaf alive but EMPTY (placeholder empty-state) instead of
             // collapsing it into the dock or adopting a dock terminal buffer
             // (issue #2283).
-            if split_tabs.len() <= 1 && dock_present && !this_is_dock {
+            if tabs_left == 0 && dock_present && !this_is_dock {
                 if let Err(e) = self.close_tab_keeping_editor_leaf_empty(buffer_id, split_id) {
                     self.set_status_message(
                         t!("file.cannot_close", error = e.to_string()).to_string(),

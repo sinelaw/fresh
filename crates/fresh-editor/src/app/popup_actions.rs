@@ -240,13 +240,13 @@ impl Editor {
             if *word_start < *pos {
                 events.push(Event::Delete {
                     range: *word_start..*pos,
-                    deleted_text: prefix.clone(),
+                    deleted_text: prefix.clone().into(),
                     cursor_id: *cursor_id,
                 });
             }
             events.push(Event::Insert {
                 position: *word_start,
-                text: insert_text.clone(),
+                text: insert_text.clone().into(),
                 cursor_id: *cursor_id,
             });
         }

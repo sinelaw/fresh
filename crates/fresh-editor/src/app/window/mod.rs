@@ -3034,6 +3034,47 @@ impl Window {
             .collect()
     }
 
+    /// The buffer group whose tab is `leaf` (`TabTarget::Group(leaf)`).
+    fn group_of_tab(&self, leaf: LeafId) -> Option<&crate::app::types::BufferGroup> {
+        self.buffer_groups
+            .values()
+            .find(|g| g.representative_split == Some(leaf))
+    }
+
+    /// Whether `id`, a buffer a group borrowed (a file one of its panels
+    /// shows), has unsaved changes. The buffers a group owns are the
+    /// plugin's own content, never saved, so only borrowed ones are asked.
+    fn borrowed_buffer_modified(&self, id: crate::model::event::BufferId) -> bool {
+        self.buffers
+            .get(&id)
+            .is_some_and(|s| s.buffer.is_modified())
+    }
+
+    /// `group`'s segmented title as tab-strip pieces, each marked when it
+    /// names a panel whose file has unsaved changes; `None` for a group with
+    /// no segmented title.
+    fn group_title_pieces(
+        &self,
+        group: &crate::app::types::BufferGroup,
+    ) -> Option<Vec<crate::view::shell::tabs::TitlePiece>> {
+        let segments = group.title.as_ref()?;
+        Some(
+            segments
+                .iter()
+                .map(|segment| crate::view::shell::tabs::TitlePiece {
+                    text: segment.text.clone(),
+                    names_panel: segment.panel.is_some(),
+                    modified: segment
+                        .panel
+                        .as_ref()
+                        .and_then(|panel| group.panel_buffers.get(panel))
+                        .filter(|id| group.borrowed_buffers.contains(id))
+                        .is_some_and(|id| self.borrowed_buffer_modified(*id)),
+                })
+                .collect(),
+        )
+    }
+
     /// Each pane's tab strip, as content — what the tab painter read off the
     /// window on its way to the cells, read once into a value the tree lays
     /// out (`shell::tabs::strip`) and the web reads back (`tab_bar_view`).
@@ -3094,7 +3135,29 @@ impl Window {
                                 && self.buffers.get(id).is_some_and(|s| s.buffer.is_modified()),
                             self.buffer_metadata.get(id).is_some_and(|m| m.binary),
                         ),
-                        TabTarget::Group(_) => (false, false),
+                        // A group without a segmented title is marked as a
+                        // whole when a file one of its panels shows is
+                        // modified; one with a title marks its pieces
+                        // instead (`group_title_pieces`).
+                        TabTarget::Group(leaf) => (
+                            self.group_of_tab(*leaf).is_some_and(|g| {
+                                g.title.is_none()
+                                    && g.borrowed_buffers
+                                        .iter()
+                                        .any(|id| self.borrowed_buffer_modified(*id))
+                            }),
+                            false,
+                        ),
+                    };
+                    // A group with a segmented title (`setBufferGroupTitle`)
+                    // shows a `*` after each piece naming a panel whose file
+                    // has unsaved changes, so a comparison says which side
+                    // is unsaved (issue #3691).
+                    let title = match t {
+                        TabTarget::Group(leaf) => self
+                            .group_of_tab(*leaf)
+                            .and_then(|g| self.group_title_pieces(g)),
+                        TabTarget::Buffer(_) => None,
                     };
                     Some(Tab {
                         target: *t,
@@ -3102,6 +3165,7 @@ impl Window {
                         modified,
                         preview: matches!(t, TabTarget::Buffer(id) if Some(*id) == preview),
                         binary,
+                        title,
                     })
                 })
                 .collect();
@@ -3226,10 +3290,92 @@ impl Window {
         }
     }
 
+    /// `split_id`'s rows as last drawn, brought up to the buffer as it is
+    /// now — the rows keyboard motion walks — and whether an edit since the
+    /// frame had to be mapped through to get there.
+    ///
+    /// Input is handled in batches between frames, so typing and a motion
+    /// that reads the rows can arrive with no frame drawn in between. The
+    /// rows then name the bytes as they were before the typing: Home went to
+    /// a byte of the line below and Down to the wrong column (#3642). Each
+    /// row's bytes are mapped forward through the edits since (the same
+    /// right-gravity shift markers take), which keeps a wrapped line's rows
+    /// rather than falling back to whole-line motion. `None` — no rows, or
+    /// edits that can no longer be mapped — sends the motion to the
+    /// buffer-based movers.
+    fn pane_view_now(
+        &self,
+        split_id: LeafId,
+    ) -> Option<(crate::view::shell::buffer_host::PaneView, bool)> {
+        let buffer = self.pane_buffer(split_id)?;
+        let state = self.buffers.get(&buffer)?;
+        let view = self.pane_view(split_id)?;
+        let (drawn_buffer, drawn_version) = view.drawn_from?;
+        if drawn_buffer != buffer {
+            return None;
+        }
+        if drawn_version == state.buffer.version() {
+            return Some((view.clone(), false));
+        }
+        let shifted = view.mapped(|byte| state.coord_map.map(byte, drawn_version))?;
+        Some((shifted, true))
+    }
+
+    /// [`Self::pane_view_now`]'s rows alone.
+    pub(crate) fn current_pane_view(
+        &self,
+        split_id: LeafId,
+    ) -> Option<crate::view::shell::buffer_host::PaneView> {
+        self.pane_view_now(split_id).map(|(view, _)| view)
+    }
+
     /// The visual column of a byte position within its visual row, in
     /// `split_id`'s rows as last drawn.
+    ///
+    /// When edits since the frame were mapped through, text typed into the
+    /// row has no cell yet, so the column is measured from the row's first
+    /// drawn byte through the buffer as it is now (except across a tab,
+    /// whose width the cells alone know).
     pub fn byte_to_visual_column(&self, split_id: LeafId, byte_pos: usize) -> Option<usize> {
-        self.pane_view(split_id)?.byte_to_visual_column(byte_pos)
+        let (view, mapped) = self.pane_view_now(split_id)?;
+        if mapped {
+            if let Some(col) = self.column_through_typed_text(split_id, &view, byte_pos) {
+                return Some(col);
+            }
+        }
+        view.byte_to_visual_column(byte_pos)
+    }
+
+    fn column_through_typed_text(
+        &self,
+        split_id: LeafId,
+        view: &crate::view::shell::buffer_host::PaneView,
+        byte_pos: usize,
+    ) -> Option<usize> {
+        let row = view.rows.get(view.find_visual_row(byte_pos)?)?;
+        let (first_col, first_byte) =
+            row.visual_to_char
+                .iter()
+                .enumerate()
+                .find_map(|(col, &char_idx)| {
+                    row.char_source_bytes
+                        .get(char_idx)
+                        .copied()
+                        .flatten()
+                        .map(|byte| (col, byte))
+                })?;
+        if first_byte > byte_pos {
+            return None;
+        }
+        let state = self.buffers.get(&self.pane_buffer(split_id)?)?;
+        let bytes = state.buffer.slice_bytes(first_byte..byte_pos);
+        if bytes.contains(&b'\t') || bytes.contains(&b'\n') {
+            return None;
+        }
+        Some(
+            first_col
+                + crate::primitives::display_width::str_width(&String::from_utf8_lossy(&bytes)),
+        )
     }
 
     /// Move by visual line using the pane's settled rows.
@@ -3241,7 +3387,7 @@ impl Window {
         goal_visual_col: usize,
         direction: i8, // -1 = up, 1 = down
     ) -> Option<(usize, usize)> {
-        self.pane_view(split_id)?
+        self.current_pane_view(split_id)?
             .move_visual_line(current_pos, goal_visual_col, direction)
     }
 
@@ -3254,7 +3400,7 @@ impl Window {
         byte_pos: usize,
         allow_advance: bool,
     ) -> Option<usize> {
-        self.pane_view(split_id)?
+        self.current_pane_view(split_id)?
             .visual_line_start(byte_pos, allow_advance)
     }
 
@@ -3267,7 +3413,7 @@ impl Window {
         byte_pos: usize,
         allow_advance: bool,
     ) -> Option<usize> {
-        self.pane_view(split_id)?
+        self.current_pane_view(split_id)?
             .visual_line_end(byte_pos, allow_advance)
     }
 
@@ -3609,6 +3755,13 @@ impl Window {
         let Some((mgr, vs_map)) = self.buffers.splits() else {
             return HashMap::new();
         };
+        // `editor.auto_hide_tab_bar`: a window showing one file — one pane
+        // holding one tab — offers no tab bar (#3696).
+        let window = PaneChrome {
+            tabs: window.tabs
+                && !(self.resources.config.editor.auto_hide_tab_bar && self.shows_a_single_tab()),
+            ..window
+        };
         // A group's panels are panes too — they sit inside their outer
         // pane's interior, which is what `inner_group_leaf` says about them.
         let outer: std::collections::HashSet<LeafId> =
@@ -3644,6 +3797,38 @@ impl Window {
                 (leaf, PaneChrome::resolve(window, kind))
             })
             .collect()
+    }
+
+    /// Whether this window shows exactly one pane with at most one tab in
+    /// it, counting tabs the way the tab bar does (hidden buffers and the
+    /// gone don't count).
+    fn shows_a_single_tab(&self) -> bool {
+        use crate::view::split::TabTarget;
+        let Some((mgr, vs_map)) = self.buffers.splits() else {
+            return false;
+        };
+        let leaves = mgr.visible_leaves();
+        let [(leaf, _)] = leaves.as_slice() else {
+            return false;
+        };
+        let Some(vs) = vs_map.get(leaf) else {
+            return true;
+        };
+        let tabs = vs
+            .open_buffers
+            .iter()
+            .filter(|t| match t {
+                TabTarget::Group(_) => true,
+                TabTarget::Buffer(id) => {
+                    (self.buffers.get(id).is_some() || self.composite_buffers.contains_key(id))
+                        && !self
+                            .buffer_metadata
+                            .get(id)
+                            .is_some_and(|m| m.hidden_from_tabs)
+                }
+            })
+            .count();
+        tabs <= 1
     }
 
     /// Whether `split` is viewing terminal `buffer_id` in read-only scrollback.
@@ -3724,6 +3909,10 @@ impl Window {
         let state = self.active_state_mut();
         state.overlays.clear_namespace(&ns, &mut state.marker_list);
         self.clear_current_search_match();
+        // Without the overlays, the stored snapshot is the match set again.
+        if let Some(ss) = self.search_state.as_mut() {
+            ss.overlays_track_matches = false;
+        }
     }
 
     /// Mark `range` as the current search match, replacing any previous one.
@@ -4447,6 +4636,22 @@ impl Window {
             .next_line_start_within(edit_end, CAP)
             .unwrap_or_else(|| edit_end.saturating_add(CAP).min(buf_len));
 
+        // Widen again over any match reaching past those lines: the swap
+        // below drops every overlay it touches, and the rescan can only
+        // re-add what it sees whole.
+        let span =
+            state
+                .overlays
+                .namespace_replacement_span(&ns, win_start..win_end, &state.marker_list);
+        let start_line = state.buffer.get_line_number(span.start.min(buf_len));
+        let end_line = state.buffer.get_line_number(span.end.min(buf_len));
+        let win_start = state.buffer.line_start_offset(start_line).unwrap_or(0);
+        let win_end = state
+            .buffer
+            .line_start_offset(end_line + 1)
+            .unwrap_or(buf_len)
+            .min(buf_len);
+
         let found = state
             .buffer
             .find_regex_matches(&search_query, win_start..win_end, usize::MAX)
@@ -4792,6 +4997,7 @@ impl Window {
         use crate::services::lsp::sync_policy::{decide_change_to_send, ChangeToSend, SyncState};
         let sync_state =
             |sh: &crate::services::lsp::manager::ServerHandle, text_available| SyncState {
+                server_sync: sh.capabilities.text_document_sync,
                 desynced: sh.handle.needs_full_resync(&path_for_resync),
                 has_capacity: sh.handle.has_command_capacity(),
                 text_available,
@@ -4814,11 +5020,13 @@ impl Window {
         for sh in lsp.get_handles_mut(&language) {
             let outgoing = match decide_change_to_send(sync_state(sh, resync_text.is_some())) {
                 ChangeToSend::FullText => {
-                    tracing::info!(
-                        "Resending full text of {} to '{}' after a dropped notification",
-                        uri.as_str(),
-                        sh.name
-                    );
+                    if sh.handle.needs_full_resync(&path_for_resync) {
+                        tracing::info!(
+                            "Resending full text of {} to '{}' after a dropped notification",
+                            uri.as_str(),
+                            sh.name
+                        );
+                    }
                     vec![lsp_types::TextDocumentContentChangeEvent {
                         range: None,
                         range_length: None,

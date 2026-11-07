@@ -171,6 +171,8 @@ pub enum Action {
 
     // Smart editing
     SmartHome,
+    /// `SmartHome` extending the selection instead of moving the cursor.
+    SelectSmartHome,
     DedentSelection,
     ToggleComment,
     /// Cycle through dabbrev completions (Emacs Alt+/ style).

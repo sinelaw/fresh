@@ -134,7 +134,7 @@ async function searchWithGitGrep(query: string, cancellation: SearchCancellation
   // "nothing matched" looked like a plugin crash (issue #2591). Mirror
   // live_grep's git-grep provider: accept 0 and 1, error only on a real
   // failure.
-  if (result.exit_code === 0 || result.exit_code === 1) {
+  if (result.code === 0 || result.code === 1) {
     const matches = parseGrepOutput(
       result.stdout,
       MAX_RESULTS,
@@ -146,9 +146,9 @@ async function searchWithGitGrep(query: string, cancellation: SearchCancellation
   }
   // A negative exit code means the search was superseded/killed as the user
   // kept typing (`cancellation` above) — stay quiet for that.
-  if (result.exit_code > 1) {
-    editor.error(`[git_grep] process exited with code ${result.exit_code}: ${result.stderr}`);
-    editor.setStatus(`git grep failed (exit ${result.exit_code})`);
+  if (result.code > 1) {
+    editor.error(`[git_grep] process exited with code ${result.code}: ${result.stderr}`);
+    editor.setStatus(`git grep failed (exit ${result.code})`);
   }
   return [];
 }

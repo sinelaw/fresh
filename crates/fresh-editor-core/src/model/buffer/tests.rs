@@ -1860,6 +1860,9 @@ mod line_ending_conversion {
                 if let Some(sudo_err) = e.downcast_ref::<SudoSaveRequired>() {
                     assert_eq!(sudo_err.dest_path, file_path);
                     assert!(sudo_err.temp_path().exists());
+                    // A new file has no mode or owner to restore (#3641)
+                    assert_eq!(sudo_err.mode, None);
+                    assert_eq!(sudo_err.owner, None);
                     // It should be in /tmp because the directory was not writable
                     assert!(sudo_err.temp_path().starts_with(std::env::temp_dir()));
                 } else {
@@ -2691,11 +2694,10 @@ mod rebuild_pristine_saved_root_tests {
                 &self,
                 path: &Path,
                 data: &[u8],
-                mode: u32,
-                uid: u32,
-                gid: u32,
+                mode: Option<u32>,
+                owner: Option<(u32, u32)>,
             ) -> std::io::Result<()> {
-                self.inner.sudo_write(path, data, mode, uid, gid)
+                self.inner.sudo_write(path, data, mode, owner)
             }
             fn search_file(
                 &self,
@@ -3840,4 +3842,32 @@ mod regex_matches_loading {
             vec![(8, 2)]
         );
     }
+}
+
+/// An undo snapshot shares the loaded chunks' bytes with the live buffer
+/// instead of copying them: a replace-all takes two snapshots, and copies
+/// held about three times a fully loaded file in memory (#3642). Editing
+/// after the snapshot leaves the snapshot's content as it was.
+#[test]
+fn snapshot_shares_loaded_chunks_and_survives_later_edits() {
+    let mut buffer = TextBuffer::from_bytes(b"hello\nworld\n".to_vec(), test_fs());
+    let snapshot = buffer.snapshot_buffer_state();
+
+    let mut shared = 0;
+    for (live, saved) in buffer.buffers.iter().zip(snapshot.buffers.iter()) {
+        if let (BufferData::Loaded { data: a, .. }, BufferData::Loaded { data: b, .. }) =
+            (&live.data, &saved.data)
+        {
+            assert!(Arc::ptr_eq(a, b), "buffer {} was copied", live.id);
+            shared += 1;
+        }
+    }
+    assert!(shared > 0, "no loaded buffer to share");
+
+    buffer.insert(5, " there");
+    buffer.insert(buffer.len(), "!");
+    assert_eq!(buffer.to_string().unwrap(), "hello there\nworld\n!");
+
+    buffer.restore_buffer_state(&snapshot);
+    assert_eq!(buffer.to_string().unwrap(), "hello\nworld\n");
 }

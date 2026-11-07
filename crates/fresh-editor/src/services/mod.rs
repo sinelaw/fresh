@@ -10,6 +10,8 @@ pub mod completion;
 pub use fresh_editor_core::counters;
 pub mod editorconfig;
 pub mod env_provider;
+#[cfg(unix)]
+pub mod fd_wait;
 pub mod file_watcher;
 pub mod fs;
 #[cfg(target_os = "linux")]
@@ -33,6 +35,7 @@ pub mod remote;
 pub mod runtime;
 pub mod signal_handler;
 pub mod status_log;
+pub mod stderr_redirect;
 pub mod stdin_spool;
 pub mod styled_html;
 pub mod telemetry;

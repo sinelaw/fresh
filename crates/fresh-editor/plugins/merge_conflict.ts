@@ -118,12 +118,12 @@ const detectionInFlight: Map<string, Promise<void>> = new Map();
 async function isInGitRepo(fileDir: string): Promise<boolean> {
   const cached = inGitRepoCache.get(fileDir);
   if (cached !== undefined) return cached;
-  const gitCheck = await editor.spawnProcess(
+  const gitCheck = await editor.runOnTarget(
     "git",
     ["rev-parse", "--is-inside-work-tree"],
     fileDir,
   );
-  const ok = gitCheck.exit_code === 0;
+  const ok = gitCheck.code === 0;
   inGitRepoCache.set(fileDir, ok);
   return ok;
 }
@@ -147,12 +147,12 @@ async function detectMergeConflictFor(
   const promise = (async () => {
     try {
       if (!(await isInGitRepo(fileDir))) return;
-      const lsFiles = await editor.spawnProcess(
+      const lsFiles = await editor.runOnTarget(
         "git",
         ["ls-files", "-u", path],
         fileDir,
       );
-      if (lsFiles.exit_code === 0 && lsFiles.stdout.trim().length > 0) {
+      if (lsFiles.code === 0 && lsFiles.stdout.trim().length > 0) {
         editor.setStatus(statusOnDetect());
       }
       detectionLastCheck.set(path, Date.now());
@@ -268,7 +268,15 @@ function parseConflicts(content: string): ConflictBlock[] {
   // Supports optional base section (||||||| marker)
   // Key: use ^ anchors to ensure markers are at start of lines (multiline mode)
   // Note: use \r?\n to handle both LF and CRLF line endings
-  const conflictRegex = /^<<<<<<<[^\r\n]*\r?\n([\s\S]*?)(?:^\|\|\|\|\|\|\|[^\r\n]*\r?\n([\s\S]*?))?^=======\r?\n([\s\S]*?)^>>>>>>>[^\r\n]*$/gm;
+  //
+  // The closing marker swallows its own line terminator, so endOffset lands on
+  // the first byte *after* the conflict rather than on the newline that ends
+  // the `>>>>>>>` line. Each side's capture already includes the newline that
+  // terminates its last line, so leaving that trailing newline out of the block
+  // left it behind on every splice and added a blank line per resolved
+  // conflict (#3702). `$` is kept as the last alternative so a conflict that
+  // ends at EOF without a trailing newline still matches.
+  const conflictRegex = /^<<<<<<<[^\r\n]*\r?\n([\s\S]*?)(?:^\|\|\|\|\|\|\|[^\r\n]*\r?\n([\s\S]*?))?^=======\r?\n([\s\S]*?)^>>>>>>>[^\r\n]*(?:\r?\n|$)/gm;
 
   let match;
   let index = 0;
@@ -343,20 +351,20 @@ async function fetchGitVersions(filePath: string): Promise<{
 
     // Get OURS version (--ours or :2:)
     const oursResult = await git(editor, repo, ["show", `:2:${relativePath}`]);
-    editor.debug(`fetchGitVersions: ours exit_code=${oursResult.exit_code}, stdout length=${oursResult.stdout.length}`);
+    editor.debug(`fetchGitVersions: ours exit_code=${oursResult.code}, stdout length=${oursResult.stdout.length}`);
 
     // Get THEIRS version (--theirs or :3:)
     const theirsResult = await git(editor, repo, ["show", `:3:${relativePath}`]);
-    editor.debug(`fetchGitVersions: theirs exit_code=${theirsResult.exit_code}, stdout length=${theirsResult.stdout.length}`);
+    editor.debug(`fetchGitVersions: theirs exit_code=${theirsResult.code}, stdout length=${theirsResult.stdout.length}`);
 
     // Get BASE version (common ancestor, :1:)
     const baseResult = await git(editor, repo, ["show", `:1:${relativePath}`]);
-    editor.debug(`fetchGitVersions: base exit_code=${baseResult.exit_code}, stdout length=${baseResult.stdout.length}`);
+    editor.debug(`fetchGitVersions: base exit_code=${baseResult.code}, stdout length=${baseResult.stdout.length}`);
 
     return {
-      base: baseResult.exit_code === 0 ? baseResult.stdout : "",
-      ours: oursResult.exit_code === 0 ? oursResult.stdout : "",
-      theirs: theirsResult.exit_code === 0 ? theirsResult.stdout : "",
+      base: baseResult.code === 0 ? baseResult.stdout : "",
+      ours: oursResult.code === 0 ? oursResult.stdout : "",
+      theirs: theirsResult.code === 0 ? theirsResult.stdout : "",
     };
   } catch (e) {
     editor.debug(`Failed to fetch git versions: ${e}`);
@@ -618,8 +626,10 @@ function buildResultFileEntries(): TextPropertyEntry[] {
     if (conflict.resolved && conflict.resolvedContent !== undefined) {
       replacement = conflict.resolvedContent;
     } else {
-      // Show unresolved conflict with markers
-      replacement = `<<<<<<< OURS\n${conflict.ours || ""}\n=======\n${conflict.theirs || ""}\n>>>>>>> THEIRS`;
+      // Show unresolved conflict with markers. Each side already ends with its
+      // own newline, and the block now owns the newline after `>>>>>>>`, so the
+      // replacement neither adds separators nor drops the closing terminator.
+      replacement = `<<<<<<< OURS\n${conflict.ours || ""}=======\n${conflict.theirs || ""}>>>>>>> THEIRS\n`;
     }
 
     // Replace the conflict region in the result
@@ -1229,9 +1239,9 @@ async function start_merge_conflict() : Promise<void> {
 
   // Check if file has unmerged entries using git
   const lsFilesResult = await git(editor, repo, ["ls-files", "-u", info.path]);
-  editor.debug(`Merge: git ls-files -u exit_code=${lsFilesResult.exit_code}, stdout length=${lsFilesResult.stdout.length}, stderr=${lsFilesResult.stderr}`);
+  editor.debug(`Merge: git ls-files -u exit_code=${lsFilesResult.code}, stdout length=${lsFilesResult.stdout.length}, stderr=${lsFilesResult.stderr}`);
 
-  const hasUnmergedEntries = lsFilesResult.exit_code === 0 && lsFilesResult.stdout.trim().length > 0;
+  const hasUnmergedEntries = lsFilesResult.code === 0 && lsFilesResult.stdout.trim().length > 0;
 
   if (!hasUnmergedEntries) {
     editor.setStatus(editor.t("status.no_unmerged"));
@@ -1243,7 +1253,7 @@ async function start_merge_conflict() : Promise<void> {
 
   // If :0: doesn't exist, read the working tree file directly
   let content: string;
-  if (catFileResult.exit_code !== 0) {
+  if (catFileResult.code !== 0) {
     editor.debug(`Merge: git show :0: failed, reading working tree file`);
     const fileContent = await editor.readFile(editor.authorityPath(info.path));
     if (!fileContent) {

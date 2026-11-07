@@ -756,7 +756,23 @@ impl crate::app::Editor {
         // store — crash leftovers the workspace snapshot doesn't cover. Per
         // workspace, on activation, so each buffer returns to where it was
         // edited; a workspace never visited is never touched (issue #3189).
+        //
+        // What comes back here opens as a tab, but the tab the user left in
+        // this workspace stays the one in front: they switched to their work,
+        // not to a crash leftover, and restoring an unnamed buffer used to
+        // make it the active one (#3633, B11). A startup restore still brings
+        // the restored work forward.
+        // The pane counts as well as the tab: opening a restored file moves
+        // the focus out of a utility-dock pane (a terminal there) into an
+        // editor pane, so the tab goes back into the pane it was in.
+        let focused_split = self.effective_active_split();
+        let focused = self.active_buffer();
         self.adopt_recovery_for_window(id, None, super::recovery_actions::AdoptScope::Workspace);
+        if (self.effective_active_split() != focused_split || self.active_buffer() != focused)
+            && self.buffers().contains_key(&focused)
+        {
+            self.focus_split(focused_split, focused);
+        }
 
         // If we just switched to a remote session that came back from disk
         // dormant (backend spec known, live authority still the local

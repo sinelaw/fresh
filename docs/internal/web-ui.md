@@ -10,7 +10,7 @@ This doc replaces the retired `UNIFIED_SCENE_DESIGN.md` and `NON_TERMINAL_UI_RES
 
 ## 1. What ships today — IMPLEMENTED
 
-The architecture is described operationally in `crates/fresh-editor/web-ui/README.md` and, for the render-pipeline side, in [rendering-and-layout.md](rendering-and-layout.md). The short version:
+The architecture is described operationally in `crates/fresh-editor/web-ui/README.md` and, for the render side, in [retained-mode-ui.md](retained-mode-ui.md) (the chrome both frontends consume) and [rendering-and-layout.md](rendering-and-layout.md) (the text inside panes and the `Scene` projections). The short version:
 
 - **One semantic model, two renderers.** Everything semantic — menu trees with enabled/checked state and accelerators, tabs, status segments, palette, popups, file explorer, the file browser behind Open File / Save As / Switch Project, trust dialog, plugin widget specs, context menus, the keybinding editor, the full Settings tree — is derived once in the core (`Scene` projections on `Editor`) and consumed by both the TUI cell renderer and the web bridge. A Rust parity test drives one editor through both and fails if they disagree on what the chrome *is*.
 - **Buffer interiors are the real pipeline's cells.** The bridge runs the actual `Editor::render` into an in-memory buffer with chrome-cell drawing suppressed (`suppress_chrome_cells`), slices pane interiors (line-number gutter as its own block), and the frontend draws them as SVG text with every glyph pinned to its exact cell column. Layout, wrapping, highlighting, folding, scrollbars and split geometry are all the pipeline's own.

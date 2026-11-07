@@ -154,7 +154,7 @@ impl crate::app::window::Window {
                 .cursors
                 .primary();
             let row = self
-                .pane_view(split_id)
+                .current_pane_view(split_id)
                 .and_then(|view| view.find_visual_row(primary.position));
             let col = primary
                 .sticky_column
@@ -678,7 +678,7 @@ impl crate::app::window::Window {
             // authoritative "end of current visual row" position that the
             // renderer itself uses.
             let cur_row_line_end = {
-                let view = self.pane_view(active_split)?;
+                let view = self.current_pane_view(active_split)?;
                 let row_idx = view.find_visual_row(from_pos)?;
                 view.rows.get(row_idx)?.line_end_byte
             };
@@ -770,7 +770,7 @@ impl crate::app::window::Window {
             // stepping back one byte lands on the previous line's
             // trailing newline — again the end of its last visual row.
             let (cur_row_anchor, row_is_empty) = {
-                let view = self.pane_view(active_split)?;
+                let view = self.current_pane_view(active_split)?;
                 let row_idx = view.find_visual_row(from_pos)?;
                 let row = view.rows.get(row_idx)?;
                 match row.char_source_bytes.iter().find_map(|b| *b) {

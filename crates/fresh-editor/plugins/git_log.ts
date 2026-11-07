@@ -91,7 +91,7 @@ interface GitLogState {
    * revisit while a commit is still streaming reuses the buffer instead
    * of starting a second spawn for the same sha.
    */
-  inFlightSpawns: Map<string, ProcessHandle<SpawnResult>>;
+  inFlightSpawns: Map<string, ProcessHandle<CommandResult>>;
   /**
    * Debounce token for List `select` events. Rapid selection moves
    * (PageDown, held j/k) shouldn't churn through buffer swaps + spawns;
@@ -380,21 +380,19 @@ const STREAM_POLL_MS = 200;
  * diff). Returns the handle; it's stashed in `inFlightSpawns` so the
  * view can `.kill()` it on close.
  */
-function spawnGitShow(hash: string, cwd: string): ProcessHandle<SpawnResult> {
+function spawnGitShow(hash: string, cwd: string): ProcessHandle<CommandResult> {
   // `--stat --patch` matches what the previous plugin used. The stat
   // header gives users a per-file changed-lines summary at the top
   // of the diff and is also what `git show` produces by default, so
   // its presence is what most readers (and tests) expect.
   //
-  // The generated d.ts shows `spawnProcess(cmd, args, cwd?, stdoutTo?)`
-  // as flat positional args. The runtime JS wrapper also accepts an
-  // `{stdoutTo}` options object in the 4th slot, but using the flat
-  // form keeps the call type-checked without a cast.
+  // `runOnTarget(cmd, args, cwd?, stdoutTo?)` streams stdout straight
+  // into the file.
   //
   // `diffArgs` pins the patch format: the fold ranges, `Enter` and the
   // host's `.diff` highlighting all read this file's `diff --git` /
   // `+++ b/` / `@@` rows, which user config can otherwise reshape.
-  return editor.spawnProcess(
+  return editor.runOnTarget(
     "git",
     diffArgs(["show"], "--stat", "--patch", hash),
     cwd,
@@ -415,7 +413,7 @@ function spawnGitShow(hash: string, cwd: string): ProcessHandle<SpawnResult> {
 async function pollUntilSpawnDone(
   hash: string,
   bufferId: number,
-  handle: ProcessHandle<SpawnResult>,
+  handle: ProcessHandle<CommandResult>,
 ): Promise<void> {
   // Wrap the handle's settlement so the poll loop can observe both that
   // it finished and whether it exited cleanly. The ProcessHandle is a
@@ -425,7 +423,7 @@ async function pollUntilSpawnDone(
   let cleanExit = false;
   void Promise.resolve(handle).then(
     (r) => {
-      cleanExit = r.exit_code === 0;
+      cleanExit = r.code === 0;
       done = true;
     },
     () => {
@@ -1106,8 +1104,8 @@ async function git_log_detail_open_file(): Promise<void> {
   );
   const result = state.repo
     ? await git(editor, state.repo, ["show", `${commit.hash}:${file}`])
-    : await editor.spawnProcess("git", ["show", `${commit.hash}:${file}`]);
-  if (result.exit_code !== 0) {
+    : await editor.runOnTarget("git", ["show", `${commit.hash}:${file}`]);
+  if (result.code !== 0) {
     editor.setStatus(
       editor.t("status.file_not_found", { file, hash: commit.shortHash })
     );

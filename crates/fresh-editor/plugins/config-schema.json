@@ -66,6 +66,7 @@
         "screensaver_idle_minutes": 5,
         "menu_bar_mnemonics": true,
         "show_tab_bar": true,
+        "auto_hide_tab_bar": false,
         "show_status_bar": true,
         "status_bar": {
           "left": [
@@ -218,7 +219,8 @@
         "resume_agents": true,
         "mouse_drag_selects": true,
         "mouse_forwarding": "requested",
-        "close_on_exit": false
+        "close_on_exit": false,
+        "pass_ctrl_v_without_text": true
       }
     },
     "keybindings": {
@@ -555,6 +557,12 @@
           "description": "Show the tab bar of open files in each pane. Can be toggled at any time.\nDefault: true",
           "type": "boolean",
           "default": true,
+          "x-section": "Display"
+        },
+        "auto_hide_tab_bar": {
+          "description": "Hide the tab bar while the window shows a single file: one pane\nholding one tab. It comes back as soon as a second tab or pane opens.\nHas no effect while the tab bar is turned off. Default: false",
+          "type": "boolean",
+          "default": false,
           "x-section": "Display"
         },
         "show_status_bar": {
@@ -976,7 +984,7 @@
           "x-section": "Recovery"
         },
         "auto_revert_poll_interval_ms": {
-          "description": "How often (ms) to check open files for outside changes when auto-revert is\non. Lower is faster but uses more CPU. Default: 2000",
+          "description": "How often (ms) to check open files for outside changes. A buffer is\nchecked unless auto-revert is off for it (\"Toggle Auto-Revert (Current\nBuffer)\"). Lower is faster but uses more CPU. Default: 2000",
           "type": "integer",
           "format": "uint64",
           "minimum": 0,
@@ -1438,6 +1446,11 @@
           "description": "Close a shell's tab (and its pane, if it was the only tab) when the\nshell exits (`exit`, Ctrl+D) instead of keeping it as read-only\nscrollback. Terminals running a command (agents, plugins) are kept.",
           "type": "boolean",
           "default": false
+        },
+        "pass_ctrl_v_without_text": {
+          "description": "When the system clipboard holds no text (an image, or nothing), terminal\npaste sends Ctrl+V to the program instead of your last yank, so an agent\nCLI can read an image from the clipboard itself. Turn off to paste the\nyank as before. Default: true",
+          "type": "boolean",
+          "default": true
         }
       }
     },

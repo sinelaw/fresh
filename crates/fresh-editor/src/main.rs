@@ -4888,12 +4888,13 @@ THE RUNTIME, IN FULL
     plugin published with `editor.exportPluginApi(...)` / read back with
     `getPluginApi("...")`. Nothing else crosses between realms.
   - Most `editor.*` calls that ask the host a question are async and return a
-    promise — `getBufferText`, `createVirtualBuffer`, `spawnProcess`,
+    promise — `getBufferText`, `createVirtualBuffer`, `runOnTarget`,
     `listCommands`. Await them.
   - Layout mutations are queued, not immediate. After creating/closing splits
     or buffers, `await editor.flush()` before reading state back, or you will
     read the layout as it was.
-  - `editor.spawnProcess(cmd, args, cwd)` runs the program directly — no
+  - `editor.runOnTarget(cmd, args, cwd)` runs the program directly, on the
+    active window's machine (its SSH host or container, if remote) — no
     shell. No pipes, globs, quoting or $VARS; pass args pre-split. It inherits
     the editor's PATH, so `git` and `gh` resolve by bare name. Do not wrap it
     in `/bin/sh -lc` — that sources the user's profile and can hang.
@@ -6018,6 +6019,10 @@ fn run_attach(
     // Enable raw mode - the server sends terminal setup sequences (alternate screen, etc.)
     // but we need raw mode so key presses are forwarded immediately
     enable_raw_mode()?;
+    // The client draws the server's frames on this tty, and copies to the
+    // host clipboard here too: keep fd 2 writes off the screen (#3662).
+    // `emergency_cleanup` below puts stderr back.
+    fresh::services::stderr_redirect::redirect_to_log();
 
     // Run the client relay loop (handshake already done)
     let result = client::run_client_relay(conn);
@@ -7199,6 +7204,9 @@ where
     const FRAME_DURATION: Duration = Duration::from_millis(16); // 60fps
     const LAUNCH_HOLD_POLL: Duration = Duration::from_millis(1);
     let mut last_render = Instant::now();
+    // When the last frame *began*. A periodic deadline at or before it has
+    // been served: that frame's render already ran past it.
+    let mut last_render_started = last_render;
     let mut needs_render = true;
     let mut pending_event: Option<InputEvent> = None;
     // Time of the last real input event, used to start the wave-animation
@@ -7261,6 +7269,26 @@ where
             needs_render = true;
         }
 
+        // Every other time-driven effect asks for its frame through
+        // `next_periodic_redraw_deadline` (the occurrence highlight's
+        // debounce, the async-paste fallback, a parked macro replay, ...).
+        // A deadline owes exactly one frame: the first one to begin at or
+        // after it. Once that frame has begun the deadline is served, whether
+        // or not its source cleared it — the occurrence-highlight debounce of
+        // a buffer that was switched away from before it fired is cleared
+        // only when that buffer next renders, and treating it as owed until
+        // then redrew every frame.
+        let periodic_deadline = |editor: &Editor, last_render_started: Instant| {
+            editor
+                .next_periodic_redraw_deadline()
+                .filter(|deadline| *deadline > last_render_started)
+        };
+        if periodic_deadline(editor, last_render_started)
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            needs_render = true;
+        }
+
         // Terminal tabs auto-name from the foreground process (tmux-style);
         // poll on an interval so a command that starts/exits while the UI is
         // idle is reflected without waiting for an unrelated event.
@@ -7274,6 +7302,7 @@ where
             && !editor.holds_launch_frames()
         {
             let r0 = Instant::now();
+            last_render_started = r0;
             let was_paste_pending = editor.is_paste_pending();
             {
                 let _span = tracing::info_span!("terminal_draw").entered();
@@ -7295,16 +7324,26 @@ where
             } else {
                 Duration::from_millis(50)
             };
-            // Cap the timeout for any time-driven UI element that needs
-            // periodic frames — animations and the LSP status-bar
-            // spinner. `next_periodic_redraw_deadline` rolls both into
-            // one Option<Instant>; when it's `Some`, we also bound the
-            // wait to the next frame so the render budget is respected.
-            if let Some(deadline) = editor.next_periodic_redraw_deadline() {
+            // Wake for the next time-driven frame
+            // (`next_periodic_redraw_deadline`), but never before the frame
+            // budget lets it be drawn. A deadline already due waits out the
+            // budget, not 0: bounding the wait by the time to the next frame
+            // whenever *any* deadline was pending meant that, with no frame
+            // owed and the last one more than a frame ago, the loop polled
+            // with a zero timeout until the deadline arrived — a full core for
+            // the 150 ms of every occurrence-highlight debounce, i.e. after
+            // every cursor move onto a word. Mirrors the daemon loop.
+            if let Some(deadline) = periodic_deadline(editor, last_render_started) {
                 let until_next_frame = FRAME_DURATION.saturating_sub(last_render.elapsed());
-                timeout = timeout.min(until_next_frame);
                 let until_deadline = deadline.saturating_duration_since(Instant::now());
-                timeout = timeout.min(until_deadline);
+                timeout = timeout.min(until_deadline.max(until_next_frame));
+            }
+            // Work the editor finishes on its own ticks rather than in a frame
+            // — draining an async paste, a macro replay parked on a plugin
+            // step — wants the loop back promptly, not at the next frame.
+            // Nothing wakes the wait when its answer arrives, so a short one.
+            if editor.is_paste_pending() || editor.macro_replay_parked() {
+                timeout = timeout.min(LAUNCH_HOLD_POLL);
             }
             // A `--diff` launch draws nothing until its plugin has the view up,
             // and the plugin gets there through a chain of calls the editor

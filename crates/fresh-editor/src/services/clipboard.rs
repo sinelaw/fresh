@@ -103,6 +103,38 @@ pub fn read_system_clipboard() -> Option<String> {
     termux_clipboard_get()
 }
 
+/// What the system clipboard holds, for a paste.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SystemClipboard {
+    /// It holds this text.
+    Text(String),
+    /// It was read and holds no text: an image, say, or nothing at all.
+    NoText,
+    /// It could not be read: no backend (Termux), no display, a backend
+    /// error.
+    Unavailable,
+}
+
+/// Read the system clipboard, telling a clipboard that holds no text apart
+/// from one that can't be read. [`read_system_clipboard`] answers `None` for
+/// both; a terminal paste must not, since only the second one is a reason to
+/// fall back to the internal clipboard (see [`Clipboard::paste_for_terminal`]).
+pub fn probe_system_clipboard() -> SystemClipboard {
+    if let Ok(mut cb) = arboard::Clipboard::new() {
+        match cb.get_text() {
+            Ok(text) if !text.is_empty() => return SystemClipboard::Text(text),
+            Ok(_) | Err(arboard::Error::ContentNotAvailable) => return SystemClipboard::NoText,
+            Err(e) => tracing::debug!("arboard clipboard read failed: {}", e),
+        }
+    }
+    // termux-clipboard-get answers nothing both for an empty clipboard and a
+    // missing helper, so it can only say there is text.
+    match termux_clipboard_get() {
+        Some(text) => SystemClipboard::Text(text),
+        None => SystemClipboard::Unavailable,
+    }
+}
+
 /// Global clipboard holder to maintain X11/Wayland clipboard ownership.
 ///
 /// On X11, the clipboard owner must stay alive to respond to paste requests.
@@ -120,7 +152,18 @@ static SYSTEM_CLIPBOARD: Mutex<Option<arboard::Clipboard>> = Mutex::new(None);
 /// The persistent handle is critical: a temporary arboard::Clipboard would take
 /// selection ownership from the terminal (clobbering OSC 52) then destroy the
 /// selection/data-source on drop, leaving the clipboard empty.
+///
+/// On macOS the arboard write goes first. A terminal that honours OSC 52
+/// (Ghostty, iTerm2, ...) writes the same `NSPasteboard`, asynchronously:
+/// sent first, its write could land between arboard's `clearContents` and
+/// `writeObjects`, which then fails and AppKit logs the failure to our
+/// stderr (#3662). Finishing ours before sending OSC 52 keeps the two apart.
 pub fn copy_to_system_clipboard(text: &str, use_osc52: bool, use_system_clipboard: bool) {
+    let system_first = cfg!(target_os = "macos");
+    if use_system_clipboard && system_first {
+        copy_with_system_backends(text);
+    }
+
     if use_osc52 {
         if let Err(e) = execute!(stdout(), CopyToClipboard::to_clipboard_from(text)) {
             tracing::debug!("OSC 52 clipboard copy failed: {}", e);
@@ -129,13 +172,18 @@ pub fn copy_to_system_clipboard(text: &str, use_osc52: bool, use_system_clipboar
         let _ = stdout().flush();
     }
 
-    if use_system_clipboard {
-        set_system_clipboard_text(text);
-        // On Termux arboard is a no-op (no Android backend), so also push to
-        // the Android clipboard via the termux-api helper. The call is gated
-        // on `is_termux()` inside, so it costs nothing on other platforms.
-        termux_clipboard_set(text);
+    if use_system_clipboard && !system_first {
+        copy_with_system_backends(text);
     }
+}
+
+/// Copy via the native clipboard backends (arboard, plus termux-api).
+fn copy_with_system_backends(text: &str) {
+    set_system_clipboard_text(text);
+    // On Termux arboard is a no-op (no Android backend), so also push to
+    // the Android clipboard via the termux-api helper. The call is gated
+    // on `is_termux()` inside, so it costs nothing on other platforms.
+    termux_clipboard_set(text);
 }
 
 /// Set text on the arboard system clipboard, creating it if needed.
@@ -336,6 +384,43 @@ impl Clipboard {
             None
         } else {
             Some(self.internal.clone())
+        }
+    }
+
+    /// The text a paste into a terminal pane sends, or `None` when there is
+    /// nothing to paste and the key should reach the terminal's program.
+    ///
+    /// Unlike [`Self::paste`], a system clipboard that can be read but holds
+    /// no text does not fall back to the internal clipboard. The user copied
+    /// something that is not text — an image for an agent CLI to read itself
+    /// on Ctrl+V — and pasting an old yank instead would both send the wrong
+    /// thing and keep the key from the program (#3129). Only a clipboard that
+    /// can't be read falls back.
+    ///
+    /// `pass_key_without_text` off (`terminal.pass_ctrl_v_without_text`)
+    /// keeps the old behavior: a clipboard with no text pastes the yank.
+    ///
+    /// `probe` stands in for the system clipboard in tests, where it is read
+    /// even in internal-only mode.
+    pub fn paste_for_terminal(
+        &mut self,
+        probe: Option<fn() -> SystemClipboard>,
+        pass_key_without_text: bool,
+    ) -> Option<String> {
+        let system = match probe {
+            Some(probe) => probe(),
+            None if self.internal_only || !self.use_system_clipboard => {
+                SystemClipboard::Unavailable
+            }
+            None => probe_system_clipboard(),
+        };
+        match system {
+            SystemClipboard::Text(text) => {
+                self.internal = text.clone();
+                Some(text)
+            }
+            SystemClipboard::NoText if pass_key_without_text => None,
+            SystemClipboard::NoText | SystemClipboard::Unavailable => self.paste_internal(),
         }
     }
 

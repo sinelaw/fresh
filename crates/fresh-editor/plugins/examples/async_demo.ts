@@ -10,8 +10,8 @@ async function async_git_status() : Promise<void> {
   editor.setStatus("Running git status...");
 
   try {
-    const result = await editor.spawnProcess("git", ["status", "--short"]);
-    if (result.exit_code === 0) {
+    const result = await editor.runOnTarget("git", ["status", "--short"]);
+    if (result.code === 0) {
       if (result.stdout === "" || result.stdout === "\n") {
         editor.setStatus("Git: Working tree clean");
       } else {
@@ -36,8 +36,8 @@ editor.registerCommand(
 // Current directory
 async function async_pwd() : Promise<void> {
   try {
-    const result = await editor.spawnProcess("pwd");
-    if (result.exit_code === 0) {
+    const result = await editor.runOnTarget("pwd");
+    if (result.code === 0) {
       const dir = result.stdout.trim();
       editor.setStatus(`Current directory: ${dir}`);
     } else {
@@ -60,8 +60,8 @@ async function async_ls() : Promise<void> {
   editor.setStatus("Listing files...");
 
   try {
-    const result = await editor.spawnProcess("ls", ["-1"]);
-    if (result.exit_code === 0) {
+    const result = await editor.runOnTarget("ls", ["-1"]);
+    if (result.code === 0) {
       const count = result.stdout.split("\n").filter(line => line.trim()).length;
       editor.setStatus(`Found ${count} files/directories`);
     } else {
@@ -82,8 +82,8 @@ editor.registerCommand(
 // Git branch
 async function async_git_branch() : Promise<void> {
   try {
-    const result = await editor.spawnProcess("git", ["branch", "--show-current"]);
-    if (result.exit_code === 0) {
+    const result = await editor.runOnTarget("git", ["branch", "--show-current"]);
+    if (result.code === 0) {
       const branch = result.stdout.trim();
       if (branch !== "") {
         editor.setStatus(`Git branch: ${branch}`);
@@ -108,7 +108,7 @@ editor.registerCommand(
 // Echo test
 async function async_echo() : Promise<void> {
   try {
-    const result = await editor.spawnProcess("echo", ["Hello from async process!"]);
+    const result = await editor.runOnTarget("echo", ["Hello from async process!"]);
     editor.setStatus(`Echo output: ${result.stdout.trim()}`);
   } catch (e) {
     editor.setStatus(`Echo error: ${e}`);
@@ -125,7 +125,7 @@ editor.registerCommand(
 // With working directory
 async function async_with_cwd() : Promise<void> {
   try {
-    const result = await editor.spawnProcess("pwd", [], "/tmp");
+    const result = await editor.runOnTarget("pwd", [], "/tmp");
     const dir = result.stdout.trim();
     editor.setStatus(`Working dir was: ${dir}`);
   } catch (e) {
@@ -143,9 +143,9 @@ editor.registerCommand(
 // Error handling
 async function async_error() : Promise<void> {
   try {
-    const result = await editor.spawnProcess("this_command_does_not_exist");
-    if (result.exit_code !== 0) {
-      editor.setStatus(`Command failed (as expected): exit ${result.exit_code}`);
+    const result = await editor.runOnTarget("this_command_does_not_exist");
+    if (result.code !== 0) {
+      editor.setStatus(`Command failed (as expected): exit ${result.code}`);
     } else {
       editor.setStatus("Unexpected success");
     }

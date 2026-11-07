@@ -111,8 +111,8 @@ Many API calls return `Promise`s. Use `async/await` to work with them:
 
 ```typescript
 globalThis.search_files = async function(): Promise<void> {
-  const result = await editor.spawnProcess("rg", ["TODO", "."]);
-  if (result.exit_code === 0) {
+  const result = await editor.runOnTarget("rg", ["TODO", "."], editor.getCwd());
+  if (result.code === 0) {
     editor.setStatus(`Found matches`);
   }
 };

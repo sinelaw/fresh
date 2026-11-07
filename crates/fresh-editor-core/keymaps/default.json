@@ -327,7 +327,7 @@
     {
       "key": "Home",
       "modifiers": ["shift"],
-      "action": "select_line_start",
+      "action": "select_smart_home",
       "args": {},
       "when": "normal"
     },
@@ -2003,6 +2003,14 @@
       "key": "d",
       "modifiers": ["alt"],
       "action": "live_grep_toggle_diagnostics",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Universal Search overlay — toggle 'All workspaces' (off by default): search every open workspace, results grouped by workspace. Mnemonic: 'a' for All. Alt+A in the normal context is start_search_replace; inside a prompt this binding wins.",
+      "key": "a",
+      "modifiers": ["alt"],
+      "action": "live_grep_toggle_workspaces",
       "args": {},
       "when": "prompt"
     },

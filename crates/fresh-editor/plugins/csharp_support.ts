@@ -90,8 +90,8 @@ async function isDotnetAvailable(): Promise<boolean> {
   }
 
   try {
-    const result = await editor.spawnProcess("dotnet", ["--version"]);
-    dotnetAvailable = result.exit_code === 0;
+    const result = await editor.runOnTarget("dotnet", ["--version"]);
+    dotnetAvailable = result.code === 0;
   } catch {
     dotnetAvailable = false;
   }
@@ -183,9 +183,9 @@ async function restoreProject(projectPath: string): Promise<void> {
   editor.debug(`csharp_support: Running dotnet restore for ${projectPath}`);
 
   try {
-    const result = await editor.spawnProcess("dotnet", ["restore", projectPath]);
+    const result = await editor.runOnTarget("dotnet", ["restore", projectPath]);
 
-    if (result.exit_code === 0) {
+    if (result.code === 0) {
       editor.setStatus(editor.t("status.restore_completed", { project: projectPath }));
       editor.debug(`csharp_support: dotnet restore succeeded`);
     } else {

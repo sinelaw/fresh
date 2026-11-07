@@ -1066,6 +1066,12 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
             }
         }
 
+        // For virtual rows (no source bytes), inherit from previous row
+        let prev_line_end_byte = view_line_mappings
+            .last()
+            .map(|prev: &ViewLineMapping| prev.line_end_byte)
+            .unwrap_or(0);
+
         // Paint trailing columns with the overlay-extend bg, or fall
         // back to the virtual-line bg. See `tail_fill` for the policy.
         let remaining_cols = content_width.saturating_sub(rendered_cols);
@@ -1077,6 +1083,11 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 syntax_extend_bg: cells.syntax_extend_bg,
                 first_line_byte_pos: cells.first_line_byte_pos,
                 last_line_byte_pos: cells.last_line_byte_pos,
+                row_end_byte: row_line_end_byte(
+                    current_view_line,
+                    prev_line_end_byte,
+                    state.buffer.len(),
+                ),
             }) {
                 push_span_with_map(
                     &mut line_spans,
@@ -1098,11 +1109,6 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
             ));
         }
 
-        // For virtual rows (no source bytes), inherit from previous row
-        let prev_line_end_byte = view_line_mappings
-            .last()
-            .map(|prev: &ViewLineMapping| prev.line_end_byte)
-            .unwrap_or(0);
         view_line_mappings.push(build_view_line_mapping(
             current_view_line,
             &line_view_map,
@@ -1631,15 +1637,12 @@ fn byte_at_is_whitespace(buffer: &crate::model::buffer::Buffer, pos: usize) -> b
         .is_some_and(char::is_whitespace)
 }
 
-fn build_view_line_mapping(
-    view_line: &ViewLine,
-    line_view_map: &[Option<usize>],
-    gutter_width: usize,
-    prev_line_end_byte: usize,
-    buffer_len: usize,
-    buffer: &crate::model::buffer::Buffer,
-) -> ViewLineMapping {
-    let line_end_byte = if view_line.ends_with_newline {
+/// The byte a click past the end of `view_line`'s content lands on: the
+/// row's newline, or the position just after its last character. A virtual
+/// row with no source bytes inherits `prev_line_end_byte`, the previous
+/// row's, so cursor movement through it lands at a valid source position.
+fn row_line_end_byte(view_line: &ViewLine, prev_line_end_byte: usize, buffer_len: usize) -> usize {
+    if view_line.ends_with_newline {
         // Position ON the newline - find the last source byte (the newline's position)
         view_line
             .char_source_bytes
@@ -1671,7 +1674,18 @@ fn build_view_line_mapping(
         // Inherit line_end_byte from the previous row so cursor movement
         // through virtual rows lands at a valid source position.
         prev_line_end_byte
-    };
+    }
+}
+
+fn build_view_line_mapping(
+    view_line: &ViewLine,
+    line_view_map: &[Option<usize>],
+    gutter_width: usize,
+    prev_line_end_byte: usize,
+    buffer_len: usize,
+    buffer: &crate::model::buffer::Buffer,
+) -> ViewLineMapping {
+    let line_end_byte = row_line_end_byte(view_line, prev_line_end_byte, buffer_len);
 
     let end_exclusive = row_end_exclusive(view_line, buffer).filter(|end| *end != line_end_byte);
 

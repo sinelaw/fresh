@@ -472,3 +472,46 @@ fn init_ts_is_loaded_as_a_plugin_named_init_ts() {
         "expected init.ts to set a status; got {status:?}"
     );
 }
+
+/// A `terminal.shell` set from init.ts is the shell the next terminal starts,
+/// not just the value Settings shows (#3712). `setSetting` used to replace
+/// the editor's config without handing it to the windows, and terminals are
+/// spawned from the window's copy.
+#[cfg(unix)]
+#[test]
+fn set_setting_terminal_shell_applies_to_new_terminals() {
+    use portable_pty::{native_pty_system, PtySize};
+    if native_pty_system()
+        .openpty(PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .is_err()
+    {
+        eprintln!("Skipping terminal test: PTY not available in this environment");
+        return;
+    }
+
+    let (mut harness, _tmp, config_dir) = harness_with_scratch_config_dir();
+    // The marker is assembled by the shell, so it can only appear on screen
+    // as the shell's output — never as the echo of a typed command.
+    write_init_ts(
+        &config_dir,
+        r#"
+        const editor = getEditor();
+        editor.setSetting("terminal.shell", {
+            command: "/bin/sh",
+            args: ["-c", "printf 'SHELL_FROM_%s\n' SETTING; exec cat"],
+        });
+        "#,
+    );
+    harness.editor_mut().load_init_script(true);
+    harness.editor_mut().process_async_messages();
+
+    harness.editor_mut().open_terminal();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("SHELL_FROM_SETTING"))
+        .unwrap();
+}

@@ -182,7 +182,7 @@ async function fetchGitBlame(repo: GitRepo, filePath: string, commit: string | n
   // sub-projects where the editor's cwd is not itself a git repo.
   const result = await git(editor, repo, args);
 
-  if (result.exit_code !== 0) {
+  if (result.code !== 0) {
     editor.setStatus(editor.t("status.git_error", { error: result.stderr }));
     return [];
   }
@@ -307,7 +307,7 @@ async function fetchFileContent(repo: GitRepo, filePath: string, commit: string 
     // non-zero exit falls through to the current working-tree content below.
     const rel = repoRelativePath(repo, filePath);
     const result = await git(editor, repo, ["show", `${commit}:${rel}`]);
-    if (result.exit_code === 0) {
+    if (result.code === 0) {
       return result.stdout;
     }
   }

@@ -54,7 +54,7 @@ function moduleFromUri(uri: string): string | null {
  */
 async function slangVersion(): Promise<string | null> {
   try {
-    const r = await editor.spawnProcess("slangc", ["-v"]);
+    const r = await editor.runOnTarget("slangc", ["-v"]);
     const v = (r.stdout || r.stderr || "").trim().split(/\s+/)[0];
     return v && /^[0-9]/.test(v) ? v : null;
   } catch (_e) {
@@ -107,15 +107,15 @@ editor.on("lsp_open_external_uri", async (data: LspOpenExternalUriData) => {
 
   if (!editor.fileExists(editor.localPath(path))) {
     editor.setStatus(`slang-lsp: loading builtin module '${module}'…`);
-    const res = await editor.spawnProcess(
+    const res = await editor.runOnTarget(
       "slangd",
       ["--print-builtin-module", module],
       undefined,
       path // stdoutTo: write the dump straight to the cache file
     );
-    if (res.exit_code !== 0 || !editor.fileExists(editor.localPath(path))) {
+    if (res.code !== 0 || !editor.fileExists(editor.localPath(path))) {
       editor.setStatus(
-        `slang-lsp: failed to load builtin module '${module}' (exit ${res.exit_code})`
+        `slang-lsp: failed to load builtin module '${module}' (exit ${res.code})`
       );
       return;
     }

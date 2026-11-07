@@ -299,6 +299,7 @@ In `config.json`, a keybinding takes the same `args` object next to its `"action
 | `select_page_down` | Select page down |
 | `select_page_up` | Select page up |
 | `select_right` | Select right |
+| `select_smart_home` | Smart select to line start (first non-whitespace / line start) |
 | `select_theme` | Select theme |
 | `select_to_paragraph_down` | Select to next empty line |
 | `select_to_paragraph_up` | Select to previous empty line |

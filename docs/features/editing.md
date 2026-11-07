@@ -6,7 +6,7 @@ Some keybindings may not work or may differ on your system due to differences in
 
 ## Smart Editing
 
-- **Smart Home** — Home toggles between first non-whitespace character and column 0.
+- **Smart Home** — Home toggles between first non-whitespace character and column 0; Shift+Home extends the selection the same way (`select_smart_home`).
 - **Smart Backspace** — Backspace in leading whitespace removes one indent level instead of a single character.
 - **Auto-indent** — Enter preserves the current indentation level. After `{`, `(`, or `:`, an extra indent level is added.
 - **Auto-close** — Typing an opening bracket or quote inserts the closing pair. Controlled by `auto_close` (default: on), independent of `auto_indent`. Per-language overrides via `languages.<lang>.auto_close`. Plain text files never auto-close quotes, only brackets.
@@ -14,6 +14,7 @@ Some keybindings may not work or may differ on your system due to differences in
 - **Markdown types delimiters literally** — Markdown ships with both `languages.markdown.auto_close` and `languages.markdown.auto_surround` set to `false`, because prose types backticks, quotes and brackets as literal text far more often than as pairs. Set either to `true` to opt back in.
 - **Smart quote suppression** — Quotes typed inside an existing string don't auto-close.
 - **Bracket matching** — Matching brackets are highlighted. Use "Go to Matching Bracket" from the command palette to jump. Enabled by default; toggle via `highlight_matching_brackets` in settings.
+- **Paragraph motion** — "Go to Next Paragraph" / "Go to Previous Paragraph" (command palette, or **Go → Next/Previous Paragraph**) move the cursor to the next or previous empty line. The default keymap gives them no key (the emacs keymap binds them to M-} / M-{); bind `move_to_paragraph_down` / `move_to_paragraph_up` in the [Keybinding Editor](./keybinding-editor.md) if you want one. Ctrl+Shift+Down/Up extend the selection the same way.
 
 ## Vertical Rulers
 
@@ -119,7 +120,7 @@ Edit multiple locations simultaneously:
 | `Ctrl+A` | Select all |
 | `Shift+Arrow` | Extend selection in direction |
 | `Ctrl+Shift+←/→` | Select word left/right |
-| `Shift+Home/End` | Select to line start/end |
+| `Shift+Home/End` | Select to line start (smart, like Home) / line end |
 | `Ctrl+Shift+Home/End` | Select to document start/end |
 | `Shift+PgUp/PgDn` | Select page up/down |
 | Double-click, then drag | Extend the selection a whole word at a time (a plain click-drag extends it by single characters) |

@@ -670,6 +670,7 @@ impl Editor {
             paste_slow_path_just_armed: false,
             paste_render_suppress_until: None,
             system_clipboard_reader: None,
+            system_clipboard_probe: None,
             local_filesystem: parts.local_filesystem,
             menu_state: crate::view::ui::MenuState::new(parts.dir_context.themes_dir()),
             windows: parts.windows,
@@ -807,6 +808,7 @@ impl Editor {
             widget_registry: crate::widgets::WidgetRegistry::new(),
             floating_widget_panel: None,
             dock_covered: false,
+            dock_passed_key_pending: false,
             dock: None,
             dock_reserved: false,
             dock_width_percent: None,
@@ -2068,7 +2070,10 @@ impl Editor {
         match serde_json::from_value::<crate::config::Config>(json) {
             Ok(new_config) => {
                 let old_theme = self.config.theme.clone();
-                self.config = Arc::new(new_config);
+                // Through `set_config`, not a bare assignment: windows read a
+                // copy of the config of their own (terminal shell, LSP, …),
+                // and only `set_config` hands them the new one (#3712).
+                self.set_config(new_config);
                 if old_theme != self.config.theme {
                     if let Some(theme) = self.theme_registry.get_cloned(&self.config.theme) {
                         *self.theme.write().unwrap() = theme;

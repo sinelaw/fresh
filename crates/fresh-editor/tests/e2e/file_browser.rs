@@ -501,6 +501,85 @@ fn test_file_browser_dot_reveals_hidden() {
     );
 }
 
+/// Test Enter on a partial dotfile name opens the highlighted entry
+#[test]
+fn test_file_browser_enter_completes_partial_dotted_name() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_root = temp_dir.path().to_path_buf();
+
+    fs::write(project_root.join("visible.txt"), "visible").unwrap();
+    let config_dir = project_root.join(".config");
+    fs::create_dir(&config_dir).unwrap();
+    fs::write(config_dir.join("nested.txt"), "nested").unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        80,
+        24,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("visible.txt"))
+        .expect("Visible file should appear");
+
+    harness.type_text(".conf").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains(".config/"))
+        .expect("Typing '.conf' should reveal .config/");
+
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("nested.txt"))
+        .expect("Enter should navigate into .config/");
+}
+
+/// Test Enter creates a new file whose name is a prefix of an existing file
+#[test]
+fn test_file_browser_enter_creates_file_named_as_prefix_of_existing_file() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_root = temp_dir.path().to_path_buf();
+
+    fs::write(project_root.join("visible.txt"), "visible").unwrap();
+    fs::write(project_root.join(".env.example"), "example").unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        80,
+        24,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("visible.txt"))
+        .expect("Visible file should appear");
+
+    harness.type_text(".env").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains(".env.example"))
+        .expect("Typing '.env' should reveal .env.example");
+
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains(".env") && !screen.contains(".env.example")
+        })
+        .expect("Enter should create .env as a new file");
+}
+
 /// Test backspace goes to parent directory when filter is empty
 #[test]
 fn test_file_browser_backspace_parent() {

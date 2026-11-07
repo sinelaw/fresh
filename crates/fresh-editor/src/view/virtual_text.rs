@@ -403,18 +403,39 @@ impl VirtualTextManager {
                 .map(|(marker, _)| marker)
                 .collect();
             store.markers.adjust_for_delete(position, length);
-            for marker in landing {
-                // Out and back in at the same spot: the tree files it by key.
-                store.markers.set_position(marker, position);
-            }
+            // Out and back in at the same spot, all together: re-filed one at
+            // a time, an entry can land on the wrong side of a same-position
+            // neighbour that is still waiting.
+            let moves: Vec<_> = landing.into_iter().map(|m| (m, position)).collect();
+            store.markers.set_positions(&moves);
         }
     }
 
     /// Move every entry for a batch of edits, as
     /// [`MarkerList::adjust_for_bulk_edits`] takes them.
+    ///
+    /// A shrinking edit lands entries on its start as
+    /// [`adjust_for_delete`](Self::adjust_for_delete) does, and they are
+    /// re-filed the same way. (The list re-sorts a batch of several edits
+    /// itself, but takes one edit at a time otherwise.)
     pub fn adjust_for_bulk_edits(&mut self, edits: &[(usize, usize, usize)]) {
         for store in &mut self.classes {
+            let landing: Vec<MarkerId> = edits
+                .iter()
+                .filter(|(_, deleted, inserted)| deleted > inserted)
+                .flat_map(|&(pos, deleted, inserted)| {
+                    store
+                        .markers
+                        .in_range(pos + 1, pos + (deleted - inserted) + 1)
+                })
+                .map(|(marker, _)| marker)
+                .collect();
             store.markers.adjust_for_bulk_edits(edits);
+            let moves: Vec<_> = landing
+                .into_iter()
+                .filter_map(|m| Some((m, store.markers.get_position(m)?)))
+                .collect();
+            store.markers.set_positions(&moves);
         }
     }
 
@@ -1216,6 +1237,9 @@ mod tests {
             /// A deletion that keeps the entries in the range, as a plugin's
             /// or the LSP's bulk edit does: they land on its start.
             DeleteKeeping(usize, usize),
+            /// The same, arriving as a one-edit bulk edit (an LSP or plugin
+            /// text edit), which takes the bulk path.
+            BulkDeleteKeeping(usize, usize),
             Clear,
         }
 
@@ -1231,6 +1255,7 @@ mod tests {
                 2 => (0..60usize, 1..10usize).prop_map(|(p, l)| Op::Insert(p, l)),
                 2 => (0..60usize, 1..10usize).prop_map(|(p, l)| Op::Delete(p, l)),
                 2 => (0..60usize, 1..10usize).prop_map(|(p, l)| Op::DeleteKeeping(p, l)),
+                2 => (0..60usize, 1..10usize).prop_map(|(p, l)| Op::BulkDeleteKeeping(p, l)),
                 1 => Just(Op::Clear),
             ]
         }
@@ -1358,8 +1383,12 @@ mod tests {
                                 }
                             }
                         }
-                        Op::DeleteKeeping(p, l) => {
-                            manager.adjust_for_delete(p, l);
+                        Op::DeleteKeeping(p, l) | Op::BulkDeleteKeeping(p, l) => {
+                            if matches!(op, Op::BulkDeleteKeeping(..)) {
+                                manager.adjust_for_bulk_edits(&[(p, l, 0)]);
+                            } else {
+                                manager.adjust_for_delete(p, l);
+                            }
                             for x in &mut model {
                                 if x.pos >= p + l {
                                     x.pos -= l;
@@ -1418,6 +1447,66 @@ mod tests {
                 prop_assert!(manager.is_empty() && manager.query_range(0, usize::MAX).is_empty());
             }
         }
+    }
+
+    /// A deletion that lands entries from two places on one position, beside
+    /// entries already there, keeps that position's entries in the order they
+    /// were added. Re-filing the landed entries one at a time put a later one
+    /// before an earlier one (the model test's minimal failing case). The
+    /// same holds when the deletion arrives as a one-edit bulk edit.
+    #[test]
+    fn a_deletion_landing_entries_on_one_position_keeps_them_in_added_order() {
+        for bulk in [false, true] {
+            a_deletion_landing_entries_keeps_added_order(bulk);
+        }
+    }
+
+    fn a_deletion_landing_entries_keeps_added_order(bulk: bool) {
+        let mut manager = VirtualTextManager::new();
+        let add = |m: &mut VirtualTextManager, pos: usize, text: &str| {
+            m.add_with_theme_keys(
+                pos,
+                text.to_string(),
+                hint_style(),
+                None,
+                None,
+                VirtualTextPosition::BeforeChar,
+                0,
+                MarkerGravity::Right,
+            );
+        };
+        add(&mut manager, 0, "#0");
+        add(&mut manager, 31, "#1");
+        add(&mut manager, 18, "#2");
+        add(&mut manager, 19, "#3");
+        add(&mut manager, 18, "#4");
+        manager.adjust_for_delete(0, 6);
+        manager.adjust_for_delete(13, 7);
+        add(&mut manager, 0, "#7");
+        // #3 (at 13) and #1 (at 18) both land on 12, where #2 and #4 are.
+        if bulk {
+            manager.adjust_for_bulk_edits(&[(12, 6, 0)]);
+        } else {
+            manager.adjust_for_delete(12, 6);
+        }
+
+        let order: Vec<(usize, String)> = manager
+            .query_range(0, usize::MAX)
+            .into_iter()
+            .map(|(p, v)| (p, v.text.clone()))
+            .collect();
+        let expected: Vec<(usize, String)> = [
+            (0, "#0"),
+            (0, "#7"),
+            (12, "#1"),
+            (12, "#2"),
+            (12, "#3"),
+            (12, "#4"),
+        ]
+        .into_iter()
+        .map(|(p, t)| (p, t.to_string()))
+        .collect();
+        assert_eq!(order, expected, "bulk: {bulk}");
     }
 
     #[test]

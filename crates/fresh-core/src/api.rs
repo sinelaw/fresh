@@ -167,6 +167,8 @@ pub struct TerminalScreen {
     /// has none. A checkpoint leaves the screen there too, after the
     /// scrollback, until the next one replaces it.
     pub file: String,
+    /// The terminal's tab label (e.g. `claude`, `Terminal 1`)
+    pub name: String,
 }
 
 /// Result of creating a virtual buffer
@@ -606,6 +608,16 @@ pub struct BufferInfo {
     pub compose_width: Option<u16>,
     /// The detected language for this buffer (e.g., "rust", "markdown", "text")
     pub language: String,
+    /// Columns per indentation level for this buffer: `editor.tab_size`,
+    /// overridden by `languages.<language>.tab_size`, `.editorconfig`, or a
+    /// per-buffer "Set Tab Size". A plugin that inserts indentation itself
+    /// should use this rather than a fixed width.
+    #[serde(default = "default_buffer_tab_size")]
+    pub tab_size: usize,
+    /// Whether indentation in this buffer is a tab character rather than
+    /// `tab_size` spaces, resolved the same way as `tab_size`.
+    #[serde(default)]
+    pub use_tabs: bool,
     /// Whether this tab was opened in "preview" (ephemeral) mode — true when
     /// opened via single-click in the file explorer and not yet committed
     /// (no edit, no double-click, no tab-click, no layout change). Plugins
@@ -623,6 +635,10 @@ pub struct BufferInfo {
     #[serde(default)]
     #[ts(type = "number[]")]
     pub splits: Vec<SplitId>,
+}
+
+fn default_buffer_tab_size() -> usize {
+    4
 }
 
 fn serialize_path<S: serde::Serializer>(path: &Option<PathBuf>, s: S) -> Result<S::Ok, S::Error> {
@@ -1682,6 +1698,11 @@ pub struct EditorStateSnapshot {
     pub active_split_id: usize,
     /// Information about all open buffers
     pub buffers: HashMap<BufferId, BufferInfo>,
+    /// The open buffers of every other window, by window, for
+    /// `listBuffers(windowId)`. Their view fields (`view_mode`, `splits`, …)
+    /// describe nothing on screen: only the active window is laid out.
+    #[serde(default)]
+    pub background_buffers: HashMap<WindowId, Vec<BufferInfo>>,
     /// Diff vs last saved snapshot for each buffer (line counts may be unknown)
     pub buffer_saved_diffs: HashMap<BufferId, BufferSavedDiff>,
     /// Primary cursor position for the active buffer
@@ -1949,6 +1970,7 @@ impl EditorStateSnapshot {
             active_buffer_id: BufferId(0),
             active_split_id: 0,
             buffers: HashMap::new(),
+            background_buffers: HashMap::new(),
             buffer_saved_diffs: HashMap::new(),
             primary_cursor: None,
             primary_cursor_line: None,
@@ -5203,6 +5225,13 @@ pub enum PluginCommand {
     /// commands eating the typing.
     SetBufferMode { buffer_id: BufferId, mode: String },
 
+    /// Give a buffer group's tab a title made of segments, each of which
+    /// may name the panel it stands for; see `BufferGroupTitleSegment`.
+    SetBufferGroupTitle {
+        group_id: usize,
+        segments: Vec<BufferGroupTitleSegment>,
+    },
+
     /// Show or hide one panel of a buffer group without tearing the
     /// group down. The panel's buffer and its scroll position survive
     /// while hidden; only the group's split tree changes.
@@ -6047,10 +6076,14 @@ pub enum PluginCommand {
         request_id: u64,
     },
 
-    /// The visible screen of each terminal open in the active window, read
-    /// from memory (a terminal's backing file holds only what has scrolled
-    /// off). Resolves the callback with `TerminalScreen[]`.
-    GetTerminalScreens { callback_id: JsCallbackId },
+    /// The visible screen of each terminal open in window `window_id` (the
+    /// active window when `None`), read from memory (a terminal's backing
+    /// file holds only what has scrolled off). Resolves the callback with
+    /// `TerminalScreen[]`; an unknown window has none.
+    GetTerminalScreens {
+        window_id: Option<WindowId>,
+        callback_id: JsCallbackId,
+    },
 
     /// Send input data to a terminal by its terminal ID
     SendTerminalInput {
@@ -6214,6 +6247,9 @@ pub enum PluginCommand {
         program: String,
         args: Vec<String>,
         cwd: Option<String>,
+        /// Stream stdout into this file instead of buffering it.
+        stdout_to: Option<PathBuf>,
+        /// Also the process id `KillHostProcess` kills it by.
         callback_id: JsCallbackId,
     },
 
@@ -7387,6 +7423,21 @@ pub struct CreateVirtualBufferInExistingSplitOptions {
     pub initial_cursor_line: Option<u32>,
 }
 
+/// One piece of a buffer group's tab title, for `setBufferGroupTitle`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct BufferGroupTitleSegment {
+    /// The text this piece of the title shows.
+    pub text: String,
+    /// The panel this piece names, if any. While the file that panel shows
+    /// has unsaved changes, the tab shows `*` right after this piece, as a
+    /// file's own tab does after its name.
+    #[serde(default)]
+    #[ts(optional)]
+    pub panel: Option<String>,
+}
+
 /// Options for createTerminal
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
@@ -7727,6 +7778,7 @@ mod fromjs_impls {
 
     impl_from_js_via_serde!(
         JsTextPropertyEntry,
+        BufferGroupTitleSegment,
         CreateVirtualBufferOptions,
         CreateVirtualBufferInSplitOptions,
         CreateVirtualBufferInExistingSplitOptions,
@@ -8848,6 +8900,8 @@ mod tests {
                 is_composing_in_any_split: false,
                 compose_width: None,
                 language: "text".to_string(),
+                tab_size: 4,
+                use_tabs: false,
                 is_preview: false,
                 splits: Vec::new(),
             };
@@ -8899,6 +8953,8 @@ mod tests {
                     is_composing_in_any_split: false,
                     compose_width: None,
                     language: "text".to_string(),
+                    tab_size: 4,
+                    use_tabs: false,
                     is_preview: false,
                     splits: Vec::new(),
                 },
@@ -8920,6 +8976,8 @@ mod tests {
                     is_composing_in_any_split: false,
                     compose_width: None,
                     language: "text".to_string(),
+                    tab_size: 4,
+                    use_tabs: false,
                     is_preview: false,
                     splits: Vec::new(),
                 },
@@ -8943,6 +9001,8 @@ mod tests {
                     is_composing_in_any_split: false,
                     compose_width: None,
                     language: "text".to_string(),
+                    tab_size: 4,
+                    use_tabs: false,
                     is_preview: false,
                     splits: Vec::new(),
                 },

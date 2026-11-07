@@ -49,12 +49,12 @@ export function gitCwdCandidate(editor: EditorAPI): string {
 /** Resolve the git repo containing `dir`, or null if `dir` is not inside one. */
 async function repoAt(editor: EditorAPI, dir: string): Promise<GitRepo | null> {
   try {
-    const r = await editor.spawnProcess(
+    const r = await editor.runOnTarget(
       "git",
       ["rev-parse", "--show-toplevel"],
       dir,
     );
-    if (r.exit_code !== 0) return null;
+    if (r.code !== 0) return null;
     const root = r.stdout.trim();
     return root ? { root } : null;
   } catch {
@@ -88,15 +88,15 @@ export function resolveGitRepoForPath(
  * Run a git command inside a resolved repository. This is the only sanctioned
  * way to spawn git for repo-scoped work: because it takes a `GitRepo` (not a
  * raw string) the command can never run in an unresolved / non-repo directory.
- * `stdoutTo` streams stdout to a file, matching `editor.spawnProcess`.
+ * `stdoutTo` streams stdout to a file, as `editor.runOnTarget` does.
  */
 export function git(
   editor: EditorAPI,
   repo: GitRepo,
   args: string[],
   stdoutTo?: string,
-): ProcessHandle<SpawnResult> {
-  return editor.spawnProcess("git", args, repo.root, stdoutTo);
+): ProcessHandle<CommandResult> {
+  return editor.runOnTarget("git", args, repo.root, stdoutTo);
 }
 
 /**

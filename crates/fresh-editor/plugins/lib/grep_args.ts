@@ -107,10 +107,14 @@ export function parseIgnoreLines(lines: readonly unknown[]): IgnoreRule[] {
 /** Where `dir` sits below `root`, as a `/`-separated relative path: `""` for
  *  `root` itself, null when `dir` is not inside it. */
 export function relativeUnder(root: string, dir: string): string | null {
-  // Windows drive letters compare without case (`C:` is `c:`).
+  // Windows drive letters compare without case (`C:` is `c:`), and a
+  // verbatim path (`\\?\C:\p`, what `canonicalize` returns there) is the
+  // same path as its plain form.
   const norm = (p: string) =>
     p
       .replace(/\\/g, "/")
+      .replace(/^\/\/\?\/UNC\//i, "//")
+      .replace(/^\/\/\?\//, "")
       .replace(/\/+$/, "")
       .replace(/^[A-Za-z]:/, (d) => d.toLowerCase());
   const r = norm(root);

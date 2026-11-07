@@ -376,7 +376,7 @@ fn theme(disabled: bool, st: RowState) -> String {
     match st {
         RowState::Selected | RowState::SelectedBlur => pair("ui.popup_selection_fg", bg),
         RowState::Hover => pair("ui.menu_hover_fg", bg),
-        RowState::Normal => pair("ui.popup_text_fg", bg),
+        RowState::Normal | RowState::Pinned => pair("ui.popup_text_fg", bg),
     }
 }
 
@@ -419,6 +419,7 @@ fn every_theme_name() -> Vec<String> {
         RowState::Hover,
         RowState::Selected,
         RowState::SelectedBlur,
+        RowState::Pinned,
     ];
     let mut out = Vec::new();
     for st in states {
@@ -428,6 +429,7 @@ fn every_theme_name() -> Vec<String> {
             out.push(source_theme(disabled, st));
         }
     }
+    out.push(hints_theme());
     out
 }
 
@@ -806,7 +808,7 @@ fn popup(s: &Suggestions) -> Node<UiMsg> {
 /// when it would not fit above — arithmetic that had to agree with a second
 /// copy in `chrome::Prompt::collect` for the click rail to hit the right
 /// cells. `Anchor::Node` names the row it sits on and `Place::Above` says
-/// which side, with `Fit::FLIP` for the case that used to be an `if`.
+/// which side, and `Fit::SHRINK` for a terminal too short to hold it all.
 pub fn suggestions_layer(s: &Suggestions) -> Node<UiMsg> {
     use fresh_ui::{layer, Anchor, Fit};
     let l = layer().key(LAYER_KEY.with(|k| k.clone()));
@@ -821,7 +823,11 @@ pub fn suggestions_layer(s: &Suggestions) -> Node<UiMsg> {
             // row's width is now something the tree knows rather than
             // something the caller measures and passes in.
             .stretch_to_anchor()
-            .fit(Fit::FLIP.or(Fit::CLAMP)),
+            // The prompt row is the bottom of the frame, so there is never
+            // room to flip into; on a short terminal the list gives up rows
+            // to the space above the row instead. Flip-then-clamp slid the
+            // full-height box back down over the hints and the input (#3578).
+            .fit(Fit::SHRINK),
         // The card's results band, by name. `Fill` takes its whole rectangle,
         // and no `Fit` — a band the card carved out of the frame is already
         // inside it.
@@ -836,9 +842,28 @@ pub fn suggestions_layer(s: &Suggestions) -> Node<UiMsg> {
     // than about this layer — see the ledger's withdrawn finding D.
     let card = popup(s);
     match &s.hints {
-        Some(h) => l.child(col().children([card, hints_row(h)])),
+        // The hints keep their row when the layer is short of room
+        // (`Fit::SHRINK` above): the list scrolls, the hints would just vanish.
+        Some(h) => l.child(col().children([card, hints_row(h).priority(1)])),
         None => l.child(card),
     }
+}
+
+/// The hints row wears the selected row's colours: it sits on the selection
+/// background, so its text has to be the ink a theme already pairs with that
+/// background, not a second one the theme must also suit (#3616).
+///
+/// Italic, not `dim`, is what sets it apart from a selected row. `dim` asks
+/// the terminal to fade that ink towards the background, which on the
+/// high-contrast theme's blue selection left the hints unreadable — the
+/// colours the theme chose for legibility have to reach the screen as they
+/// are.
+fn hints_theme() -> String {
+    attrs(
+        "ui.popup_selection_fg",
+        "ui.suggestion_selected_bg",
+        &["italic"],
+    )
 }
 
 /// The quick-open mode hints, as the row under the popup.
@@ -849,11 +874,7 @@ pub fn suggestions_layer(s: &Suggestions) -> Node<UiMsg> {
 /// and the margin is the same fixed cell the rows use, so what is left is the
 /// text and its name.
 fn hints_row(text_of: &str) -> Node<UiMsg> {
-    let t = attrs(
-        "editor.line_number_fg",
-        "ui.suggestion_selected_bg",
-        &["dim"],
-    );
+    let t = hints_theme();
     row().h(Sizing::Cells(1)).theme(t.clone()).children([
         row().w(Sizing::Cells(LEFT_MARGIN)),
         text(text_of).theme(t).elide(Elide::Tail),
@@ -1040,6 +1061,31 @@ mod tests {
         ui
     }
 
+    /// The list of `n` rows as a layer above a prompt row on the frame's last
+    /// line — the row it is anchored to. The row has to exist: `Fit::SHRINK`
+    /// sizes the box to the room above it.
+    fn above_prompt_in_frame(n: usize, size: Size) -> Ui<UiMsg> {
+        use crate::view::shell::frame::{region_key, HostRegion};
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(
+            col().children([
+                col().flex(1),
+                row()
+                    .key(region_key(HostRegion::PromptLine))
+                    .h(Sizing::Cells(1)),
+                suggestions_layer(&Suggestions {
+                    rows: rows(n).into(),
+                    selected: Some(0),
+                    place: Place::AbovePrompt,
+                    hints: None,
+                    pager: Default::default(),
+                }),
+            ]),
+            size,
+        );
+        ui
+    }
+
     /// **Every name is a real theme key.**
     ///
     /// `shell_theme::resolve` splits a name on `/`, sends each half through
@@ -1065,6 +1111,26 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The hints row shares its colours with the selected row, so a theme
+    /// that makes the selection readable makes the hints readable too.
+    #[test]
+    fn the_hints_row_uses_the_selected_rows_colours() {
+        use crate::app::shell_host::shell_theme::names;
+        assert_eq!(
+            names(&hints_theme()),
+            names(&theme(false, RowState::Selected))
+        );
+    }
+
+    /// ...and shows them at full strength: `dim` faded the hints into the
+    /// selection background until they could not be read (#3616).
+    #[test]
+    fn the_hints_row_is_not_dimmed() {
+        use crate::app::shell_host::shell_theme::{Attrs, Ink};
+        let ink = Ink::parse(&hints_theme()).expect("hints theme parses");
+        assert!(!ink.attrs.contains(Attrs::DIM), "{:?}", hints_theme());
     }
 
     /// **Ledger rule 2: clicking a row selects it — by index, not by
@@ -1586,17 +1652,7 @@ mod tests {
     #[test]
     fn the_popup_stops_at_the_visible_row_cap() {
         let tall = |n: usize| {
-            let mut ui: Ui<UiMsg> = Ui::new();
-            ui.frame(
-                col().child(suggestions_layer(&Suggestions {
-                    rows: rows(n).into(),
-                    selected: Some(0),
-                    place: Place::AbovePrompt,
-                    hints: None,
-                    pager: Default::default(),
-                })),
-                Size::new(60, 40),
-            );
+            let ui = above_prompt_in_frame(n, Size::new(60, 40));
             ui.rect_of(
                 ui.find_by_key(&POPUP_KEY.with(|k| k.clone()))
                     .expect("the box"),
@@ -1628,17 +1684,7 @@ mod tests {
     /// what kept the buffer's context menu from opening through the palette.
     #[test]
     fn a_press_on_the_popup_chrome_is_claimed_and_says_nothing() {
-        let mut ui: Ui<UiMsg> = Ui::new();
-        ui.frame(
-            col().child(suggestions_layer(&Suggestions {
-                rows: rows(3).into(),
-                selected: Some(0),
-                place: Place::AbovePrompt,
-                hints: None,
-                pager: Default::default(),
-            })),
-            Size::new(60, 20),
-        );
+        let mut ui = above_prompt_in_frame(3, Size::new(60, 20));
         let box_rect = ui.rect_of(
             ui.find_by_key(&POPUP_KEY.with(|k| k.clone()))
                 .expect("the box"),

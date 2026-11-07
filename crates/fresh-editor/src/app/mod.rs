@@ -846,6 +846,9 @@ pub struct Editor {
     /// so the internal-clipboard fallback can be exercised in isolation
     /// without touching the real host clipboard.
     pub(super) system_clipboard_reader: Option<fn() -> Option<String>>,
+    /// Test override for the system clipboard a terminal paste reads; see
+    /// `Clipboard::paste_for_terminal`. `None` reads the real one.
+    pub(super) system_clipboard_probe: Option<fn() -> crate::services::clipboard::SystemClipboard>,
 
     // split_manager and split_view_states moved onto `Window`. Access
     // via `Editor::split_manager()` / `split_manager_mut()` and
@@ -1627,6 +1630,11 @@ pub struct Editor {
     /// back is answered with the matching `focus` exactly once. See
     /// `Editor::panel_keyboard_changed`.
     pub(crate) dock_covered: bool,
+    /// The dock gave up the keyboard to pass a key on (Ctrl+P typed in it),
+    /// and that key's command may still hand it back: true until the next key
+    /// handled with no prompt open, when the command is over and the dock is
+    /// told with a plain `blur` (#3136). See `blur_floating_panel_passing_key`.
+    pub(crate) dock_passed_key_pending: bool,
 
     /// The editor-global left **dock** panel (`PanelSlot::Dock`), if
     /// shown. Independent of `floating_widget_panel` so the dock persists
@@ -2630,7 +2638,7 @@ mod tests {
         let cursor_id = editor.active_cursors().primary_id();
         editor.apply_event_to_active_buffer(&Event::Insert {
             position: 0,
-            text: "hello".to_string(),
+            text: "hello".to_string().into(),
             cursor_id,
         });
 
@@ -2674,7 +2682,7 @@ mod tests {
         let cursor_id = editor.active_cursors().primary_id();
         editor.apply_event_to_active_buffer(&Event::Insert {
             position: 0,
-            text: "line1\nline2\nline3".to_string(),
+            text: "line1\nline2\nline3".to_string().into(),
             cursor_id,
         });
 
@@ -2780,7 +2788,7 @@ mod tests {
         let cursor_id = editor.active_cursors().primary_id();
         editor.apply_event_to_active_buffer(&Event::Insert {
             position: 0,
-            text: "hello".to_string(),
+            text: "hello".to_string().into(),
             cursor_id,
         });
 
@@ -2823,7 +2831,7 @@ mod tests {
         let cursor_id = editor.active_cursors().primary_id();
         editor.apply_event_to_active_buffer(&Event::Insert {
             position: 0,
-            text: "hello".to_string(),
+            text: "hello".to_string().into(),
             cursor_id,
         });
 
@@ -2877,7 +2885,7 @@ mod tests {
         let cursor_id = editor.active_cursors().primary_id();
         editor.apply_event_to_active_buffer(&Event::Insert {
             position: 0,
-            text: "hello".to_string(),
+            text: "hello".to_string().into(),
             cursor_id,
         });
 
@@ -2931,7 +2939,7 @@ mod tests {
         let cursor_id = editor.active_cursors().primary_id();
         editor.apply_event_to_active_buffer(&Event::Insert {
             position: 0,
-            text: "hello world".to_string(),
+            text: "hello world".to_string().into(),
             cursor_id,
         });
 
@@ -2974,7 +2982,7 @@ mod tests {
         let cursor_id = editor.active_cursors().primary_id();
         editor.apply_event_to_active_buffer(&Event::Insert {
             position: 0,
-            text: "line1\nline2\nline3".to_string(),
+            text: "line1\nline2\nline3".to_string().into(),
             cursor_id,
         });
 
@@ -3025,7 +3033,7 @@ mod tests {
         let cursor_id = editor.active_cursors().primary_id();
         editor.apply_event_to_active_buffer(&Event::Insert {
             position: 0,
-            text: "hello world test".to_string(),
+            text: "hello world test".to_string().into(),
             cursor_id,
         });
 
@@ -3324,7 +3332,7 @@ mod tests {
         let cursor_id = editor.active_cursors().primary_id();
         editor.apply_event_to_active_buffer(&Event::Insert {
             position: 0,
-            text: "fn main() { let x = (1 + 2); }".to_string(),
+            text: ("fn main() { let x = (1 + 2); }".to_string()).into(),
             cursor_id,
         });
 
@@ -3369,7 +3377,7 @@ mod tests {
         let cursor_id = editor.active_cursors().primary_id();
         editor.apply_event_to_active_buffer(&Event::Insert {
             position: 0,
-            text: "fn main() { let x = (1 + 2); }".to_string(),
+            text: ("fn main() { let x = (1 + 2); }".to_string()).into(),
             cursor_id,
         });
 
@@ -3409,7 +3417,7 @@ mod tests {
         let cursor_id = editor.active_cursors().primary_id();
         editor.apply_event_to_active_buffer(&Event::Insert {
             position: 0,
-            text: "{a{b{c}d}e}".to_string(),
+            text: "{a{b{c}d}e}".to_string().into(),
             cursor_id,
         });
 
@@ -3449,7 +3457,7 @@ mod tests {
         let cursor_id = editor.active_cursors().primary_id();
         editor.apply_event_to_active_buffer(&Event::Insert {
             position: 0,
-            text: "Hello hello HELLO".to_string(),
+            text: "Hello hello HELLO".to_string().into(),
             cursor_id,
         });
 
@@ -3498,7 +3506,7 @@ mod tests {
         let cursor_id = editor.active_cursors().primary_id();
         editor.apply_event_to_active_buffer(&Event::Insert {
             position: 0,
-            text: "test testing tested attest test".to_string(),
+            text: "test testing tested attest test".to_string().into(),
             cursor_id,
         });
 
@@ -3551,7 +3559,7 @@ mod tests {
         let cursor_id = editor.active_cursors().primary_id();
         editor.apply_event_to_active_buffer(&Event::Insert {
             position: 0,
-            text: "<i>a</i> mid <i>b</i>\n<i>c</i>".to_string(),
+            text: ("<i>a</i> mid <i>b</i>\n<i>c</i>".to_string()).into(),
             cursor_id,
         });
 
@@ -3672,7 +3680,7 @@ mod tests {
         let cursor_id = editor.active_cursors().primary_id();
         editor.apply_event_to_active_buffer(&Event::Insert {
             position: 0,
-            text: "Line 1\nLine 2\nLine 3".to_string(),
+            text: "Line 1\nLine 2\nLine 3".to_string().into(),
             cursor_id,
         });
 
@@ -3886,23 +3894,23 @@ mod tests {
                 // Second occurrence first (reverse order for position preservation)
                 Event::Delete {
                     range: 23..26, // "val" on line 1
-                    deleted_text: "val".to_string(),
+                    deleted_text: "val".to_string().into(),
                     cursor_id,
                 },
                 Event::Insert {
                     position: 23,
-                    text: "value".to_string(),
+                    text: "value".to_string().into(),
                     cursor_id,
                 },
                 // First occurrence second
                 Event::Delete {
                     range: 7..10, // "val" on line 0
-                    deleted_text: "val".to_string(),
+                    deleted_text: "val".to_string().into(),
                     cursor_id,
                 },
                 Event::Insert {
                     position: 7,
-                    text: "value".to_string(),
+                    text: "value".to_string().into(),
                     cursor_id,
                 },
             ],
@@ -4042,23 +4050,23 @@ mod tests {
             // Second occurrence first (at position 23, line 1)
             Event::Delete {
                 range: 23..26, // "val" on line 1
-                deleted_text: "val".to_string(),
+                deleted_text: "val".to_string().into(),
                 cursor_id,
             },
             Event::Insert {
                 position: 23,
-                text: "value".to_string(),
+                text: "value".to_string().into(),
                 cursor_id,
             },
             // First occurrence second (at position 7, line 0)
             Event::Delete {
                 range: 7..10, // "val" on line 0
-                deleted_text: "val".to_string(),
+                deleted_text: "val".to_string().into(),
                 cursor_id,
             },
             Event::Insert {
                 position: 7,
-                text: "value".to_string(),
+                text: "value".to_string().into(),
                 cursor_id,
             },
         ];
@@ -4132,23 +4140,23 @@ mod tests {
             // Second occurrence first (at position 23, line 1, char 4)
             Event::Delete {
                 range: 23..26,
-                deleted_text: "val".to_string(),
+                deleted_text: "val".to_string().into(),
                 cursor_id,
             },
             Event::Insert {
                 position: 23,
-                text: "value".to_string(),
+                text: "value".to_string().into(),
                 cursor_id,
             },
             // First occurrence (at position 7, line 0, char 7)
             Event::Delete {
                 range: 7..10,
-                deleted_text: "val".to_string(),
+                deleted_text: "val".to_string().into(),
                 cursor_id,
             },
             Event::Insert {
                 position: 7,
-                text: "value".to_string(),
+                text: "value".to_string().into(),
                 cursor_id,
             },
         ];
@@ -4204,23 +4212,23 @@ mod tests {
             // Second occurrence first (at position 25, line 1, char 4)
             Event::Delete {
                 range: 25..30,
-                deleted_text: "value".to_string(),
+                deleted_text: "value".to_string().into(),
                 cursor_id,
             },
             Event::Insert {
                 position: 25,
-                text: "x".to_string(),
+                text: "x".to_string().into(),
                 cursor_id,
             },
             // First occurrence (at position 7, line 0, char 7)
             Event::Delete {
                 range: 7..12,
-                deleted_text: "value".to_string(),
+                deleted_text: "value".to_string().into(),
                 cursor_id,
             },
             Event::Insert {
                 position: 7,
-                text: "x".to_string(),
+                text: "x".to_string().into(),
                 cursor_id,
             },
         ];

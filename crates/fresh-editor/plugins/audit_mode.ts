@@ -979,12 +979,12 @@ async function getGitStatus(): Promise<GitStatusResult> {
     // is open (#3126), so without it the panel would periodically lose a
     // `git commit` or `git add` in the user's own terminal the race for that
     // lock.
-    const result = await editor.spawnProcess(
+    const result = await editor.runOnTarget(
         "git",
         ["--no-optional-locks", "status", "--porcelain", "-z", "-uall"],
         cwd,
     );
-    if (result.exit_code !== 0) {
+    if (result.code !== 0) {
         return { files: [], emptyReason: 'not_git' };
     }
     const files = parseGitStatusPorcelain(result.stdout);
@@ -1014,8 +1014,8 @@ async function fetchDiffsForFiles(files: FileEntry[]): Promise<Hunk[]> {
 
     // Staged diffs
     if (hasStaged) {
-        const result = await editor.spawnProcess("git", diffArgs(["diff"], "--cached", "--unified=3"), cwd);
-        if (result.exit_code === 0 && result.stdout.trim()) {
+        const result = await editor.runOnTarget("git", diffArgs(["diff"], "--cached", "--unified=3"), cwd);
+        if (result.code === 0 && result.stdout.trim()) {
             allHunks.push(...parseDiffOutput(result.stdout, 'staged'));
             for (const b of diffFileBlocks(result.stdout)) if (b.binary) binaryPaths.add(b.path);
         }
@@ -1023,8 +1023,8 @@ async function fetchDiffsForFiles(files: FileEntry[]): Promise<Hunk[]> {
 
     // Unstaged diffs
     if (hasUnstaged) {
-        const result = await editor.spawnProcess("git", diffArgs(["diff"], "--unified=3"), cwd);
-        if (result.exit_code === 0 && result.stdout.trim()) {
+        const result = await editor.runOnTarget("git", diffArgs(["diff"], "--unified=3"), cwd);
+        if (result.code === 0 && result.stdout.trim()) {
             allHunks.push(...parseDiffOutput(result.stdout, 'unstaged'));
             for (const b of diffFileBlocks(result.stdout)) if (b.binary) binaryPaths.add(b.path);
         }
@@ -1032,7 +1032,7 @@ async function fetchDiffsForFiles(files: FileEntry[]): Promise<Hunk[]> {
 
     // Untracked file diffs
     for (const f of untrackedFiles) {
-        const result = await editor.spawnProcess(
+        const result = await editor.runOnTarget(
             "git",
             diffArgs(["diff"], "--no-index", "--unified=3", "/dev/null", f.path),
             cwd,
@@ -4103,13 +4103,13 @@ async function applyHunkPatch(patch: string, flags: string[]): Promise<boolean> 
     try {
         const cwd = gitCwd();
         // Validate first
-        const check = await editor.spawnProcess("git", ["apply", "--check", ...flags, patchPath], cwd);
-        if (check.exit_code !== 0) {
+        const check = await editor.runOnTarget("git", ["apply", "--check", ...flags, patchPath], cwd);
+        if (check.code !== 0) {
             editor.setStatus("Patch failed: " + (check.stderr || "").trim());
             return false;
         }
-        const result = await editor.spawnProcess("git", ["apply", ...flags, patchPath], cwd);
-        return result.exit_code === 0;
+        const result = await editor.runOnTarget("git", ["apply", ...flags, patchPath], cwd);
+        return result.code === 0;
     } finally {
         editor.scratchDiscard(token);
     }
@@ -4228,14 +4228,14 @@ registerHandler("review_unstage_file", review_unstage_file);
 async function stageFileEntry(f: FileEntry) {
     rememberPendingHunkAnchor(null);
     const cwd = gitCwd();
-    await editor.spawnProcess("git", ["add", "--", f.path], cwd);
+    await editor.runOnTarget("git", ["add", "--", f.path], cwd);
     await refreshMagitData();
 }
 
 async function unstageFileEntry(f: FileEntry) {
     rememberPendingHunkAnchor(null);
     const cwd = gitCwd();
-    await editor.spawnProcess("git", ["reset", "HEAD", "--", f.path], cwd);
+    await editor.runOnTarget("git", ["reset", "HEAD", "--", f.path], cwd);
     await refreshMagitData();
 }
 
@@ -4244,7 +4244,7 @@ async function stageHunk(hunk: Hunk | null) {
     rememberPendingHunkAnchor(hunk.id);
     if (hunk.gitStatus === 'untracked') {
         const cwd = gitCwd();
-        await editor.spawnProcess("git", ["add", "--", hunk.file], cwd);
+        await editor.runOnTarget("git", ["add", "--", hunk.file], cwd);
     } else {
         const patch = buildHunkPatch(hunk.file, hunk);
         const ok = await applyHunkPatch(patch, ["--cached"]);
@@ -4307,12 +4307,12 @@ function firstErrorLine(raw: string): string {
  * had not performed.
  */
 async function fileIsClean(paths: string[]): Promise<boolean | null> {
-    const res = await editor.spawnProcess(
+    const res = await editor.runOnTarget(
         "git",
         ["--no-optional-locks", "status", "--porcelain", "-z", "-uall", "--", ...paths],
         gitCwd(),
     );
-    if (res.exit_code !== 0) return null;
+    if (res.code !== 0) return null;
     return res.stdout.split('\0').every(entry => entry.trim() === '');
 }
 
@@ -4337,15 +4337,15 @@ async function discardFileToHead(f: FileEntry): Promise<{ ok: boolean; detail: s
     const paths = discardPathsOf(f);
 
     if (f.category === 'untracked') {
-        const rm = await editor.spawnProcess("rm", ["--", ...paths], cwd);
-        if (rm.exit_code !== 0) return { ok: false, detail: firstErrorLine(rm.stderr) };
+        const rm = await editor.runOnTarget("rm", ["--", ...paths], cwd);
+        if (rm.code !== 0) return { ok: false, detail: firstErrorLine(rm.stderr) };
     } else {
-        const res = await editor.spawnProcess(
+        const res = await editor.runOnTarget(
             "git",
             ["restore", "--source=HEAD", "--staged", "--worktree", "--", ...paths],
             cwd,
         );
-        if (res.exit_code !== 0) return { ok: false, detail: firstErrorLine(res.stderr) };
+        if (res.code !== 0) return { ok: false, detail: firstErrorLine(res.stderr) };
     }
 
     const clean = await fileIsClean(paths);
@@ -5219,8 +5219,8 @@ async function fetchFileVersions(file: FileEntry): Promise<{ oldContent: string;
     const absPath = root ? editor.pathJoin(root, file.path) : file.path;
     const cwd = root || editor.getCwd();
     const gitShow = async (rev: string): Promise<string> => {
-        const shown = await editor.spawnProcess("git", ["show", `${rev}:${file.path}`], cwd);
-        return shown.exit_code === 0 ? shown.stdout : "";
+        const shown = await editor.runOnTarget("git", ["show", `${rev}:${file.path}`], cwd);
+        return shown.code === 0 ? shown.stdout : "";
     };
     if (state.mode === 'range' && state.range) {
         const [oldContent, newContent] = await Promise.all([
@@ -5536,8 +5536,8 @@ async function review_drill_down() {
 
     // Get git root to construct absolute path
     const cwd = gitCwd();
-    const gitRootResult = await editor.spawnProcess("git", ["rev-parse", "--show-toplevel"], cwd);
-    if (gitRootResult.exit_code !== 0) {
+    const gitRootResult = await editor.runOnTarget("git", ["rev-parse", "--show-toplevel"], cwd);
+    if (gitRootResult.code !== 0) {
         editor.setStatus(editor.t("status.not_git_repo"));
         return;
     }
@@ -5546,8 +5546,8 @@ async function review_drill_down() {
 
     // Get old (HEAD) and new (working) file content
     let oldContent: string;
-    const gitShow = await editor.spawnProcess("git", ["show", `HEAD:${h.file}`], cwd);
-    if (gitShow.exit_code !== 0) {
+    const gitShow = await editor.runOnTarget("git", ["show", `HEAD:${h.file}`], cwd);
+    if (gitShow.code !== 0) {
         oldContent = "";
     } else {
         oldContent = gitShow.stdout;
@@ -6687,8 +6687,8 @@ async function openHeadVersionReadOnly(st: CompositeDiffState, oldLine: number):
         editor.setStatus(editor.t("status.no_head_version") || "No HEAD version (file is untracked)");
         return;
     }
-    const gitShow = await editor.spawnProcess("git", ["-C", st.gitRoot, "show", `HEAD:${st.filePath}`]);
-    if (gitShow.exit_code !== 0) {
+    const gitShow = await editor.runOnTarget("git", ["-C", st.gitRoot, "show", `HEAD:${st.filePath}`]);
+    if (gitShow.code !== 0) {
         editor.setStatus(editor.t("status.no_head_version") || "No HEAD version of this file");
         return;
     }
@@ -7694,8 +7694,8 @@ async function fetchRangeDiff(range: ReviewRange): Promise<{ hunks: Hunk[]; file
     // otherwise has to remember the whole list for itself.
     const args = withDiffArgs(range.command || ["diff", "--unified=3", `${range.from}..${range.to}`]);
     const cwd = gitCwd();
-    const result = await editor.spawnProcess("git", args, cwd);
-    if (result.exit_code !== 0) {
+    const result = await editor.runOnTarget("git", args, cwd);
+    if (result.code !== 0) {
         state.binaryPaths = new Set();
         return { hunks: [], files: [] };
     }
@@ -7735,8 +7735,8 @@ async function buildRangeSuggestions(): Promise<PromptSuggestion[]> {
     // Current-branch-vs-main style ranges.
     const tryRange = async (base: string) => {
         const cwd = gitCwd();
-        const exists = await editor.spawnProcess("git", ["rev-parse", "--verify", base], cwd);
-        if (exists.exit_code === 0) {
+        const exists = await editor.runOnTarget("git", ["rev-parse", "--verify", base], cwd);
+        if (exists.code === 0) {
             suggestions.push({
                 id: `${base}..HEAD`,
                 text: `${base}..HEAD`,
@@ -7750,10 +7750,10 @@ async function buildRangeSuggestions(): Promise<PromptSuggestion[]> {
     // Recent commits for one-off review.
     try {
         const cwd = gitCwd();
-        const log = await editor.spawnProcess("git", [
+        const log = await editor.runOnTarget("git", [
             "log", "-n", "5", "--pretty=format:%h %s",
         ], cwd);
-        if (log.exit_code === 0) {
+        if (log.code === 0) {
             for (const line of log.stdout.split('\n')) {
                 const m = line.match(/^([0-9a-f]+)\s+(.*)$/);
                 if (m) {
@@ -8038,8 +8038,8 @@ async function side_by_side_diff_current_file() {
     const fileName = editor.pathBasename(absolutePath);
 
     // Run git commands from the file's directory to avoid path format issues on Windows
-    const gitRootResult = await editor.spawnProcess("git", ["-C", fileDir, "rev-parse", "--show-toplevel"]);
-    if (gitRootResult.exit_code !== 0) {
+    const gitRootResult = await editor.runOnTarget("git", ["-C", fileDir, "rev-parse", "--show-toplevel"]);
+    if (gitRootResult.code !== 0) {
         editor.setStatus(editor.t("status.not_git_repo"));
         return;
     }
@@ -8048,10 +8048,10 @@ async function side_by_side_diff_current_file() {
     // Get relative path from git root using git itself (handles Windows paths correctly)
     // `-z`: without it a path with non-ASCII (or `"`, `\`) bytes comes back
     // quoted and octal-escaped, and no later git call would match it.
-    const relPathResult = await editor.spawnProcess("git", ["-C", fileDir, "ls-files", "-z", "--full-name", fileName]);
+    const relPathResult = await editor.runOnTarget("git", ["-C", fileDir, "ls-files", "-z", "--full-name", fileName]);
     const relPath = relPathResult.stdout.split("\0")[0] ?? "";
     let filePath: string;
-    if (relPathResult.exit_code === 0 && relPath) {
+    if (relPathResult.code === 0 && relPath) {
         filePath = relPath;
     } else {
         // File might be untracked, compute relative path manually
@@ -8067,20 +8067,20 @@ async function side_by_side_diff_current_file() {
     }
 
     // Check if the file is untracked
-    const isTrackedResult = await editor.spawnProcess("git", ["-C", gitRoot, "ls-files", "--", filePath]);
-    const isUntracked = isTrackedResult.exit_code !== 0 || !isTrackedResult.stdout.trim();
+    const isTrackedResult = await editor.runOnTarget("git", ["-C", gitRoot, "ls-files", "--", filePath]);
+    const isUntracked = isTrackedResult.code !== 0 || !isTrackedResult.stdout.trim();
 
     // Get hunks for this specific file
     let diffOutput: string;
     if (isUntracked) {
         // For untracked files, use --no-index to diff against /dev/null
-        const result = await editor.spawnProcess("git", ["-C", gitRoot, ...diffArgs(["diff"], "--no-index", "--unified=3", "--", "/dev/null", filePath)]);
+        const result = await editor.runOnTarget("git", ["-C", gitRoot, ...diffArgs(["diff"], "--no-index", "--unified=3", "--", "/dev/null", filePath)]);
         // git diff --no-index exits with 1 when there are differences, which is expected
         diffOutput = result.stdout || "";
     } else {
         // For tracked files, use normal diff against HEAD
-        const result = await editor.spawnProcess("git", ["-C", gitRoot, ...diffArgs(["diff"], "HEAD", "--unified=3", "--", filePath)]);
-        if (result.exit_code !== 0) {
+        const result = await editor.runOnTarget("git", ["-C", gitRoot, ...diffArgs(["diff"], "HEAD", "--unified=3", "--", filePath)]);
+        if (result.code !== 0) {
             editor.setStatus(editor.t("status.failed_git_diff"));
             return;
         }
@@ -8124,8 +8124,8 @@ async function side_by_side_diff_current_file() {
         // For untracked files, old content is empty (file didn't exist before)
         oldContent = "";
     } else {
-        const gitShow = await editor.spawnProcess("git", ["-C", gitRoot, "show", `HEAD:${filePath}`]);
-        if (gitShow.exit_code !== 0) {
+        const gitShow = await editor.runOnTarget("git", ["-C", gitRoot, "show", `HEAD:${filePath}`]);
+        if (gitShow.code !== 0) {
             editor.setStatus(editor.t("status.failed_old_new_file"));
             return;
         }
@@ -8316,10 +8316,10 @@ const branchState: BranchLogState = {
 async function detectDefaultBranch(): Promise<string> {
     const cwd = gitCwd();
     try {
-        const r = await editor.spawnProcess("git", [
+        const r = await editor.runOnTarget("git", [
             "symbolic-ref", "--short", "refs/remotes/origin/HEAD",
         ], cwd);
-        if (r.exit_code === 0) {
+        if (r.code === 0) {
             const name = r.stdout.trim();
             // Output looks like "origin/main"; strip the remote prefix.
             const slash = name.indexOf("/");
@@ -8329,10 +8329,10 @@ async function detectDefaultBranch(): Promise<string> {
     } catch { /* fall through */ }
     for (const candidate of ["main", "master"]) {
         try {
-            const r = await editor.spawnProcess("git", [
+            const r = await editor.runOnTarget("git", [
                 "show-ref", "--verify", "--quiet", `refs/heads/${candidate}`,
             ], cwd);
-            if (r.exit_code === 0) return candidate;
+            if (r.code === 0) return candidate;
         } catch { /* fall through */ }
     }
     return "main";
@@ -8613,11 +8613,11 @@ async function branch_log_detail_open_file(): Promise<void> {
     editor.setStatus(
         editor.t("status.file_loading", { file, hash: commit.shortHash }),
     );
-    const result = await editor.spawnProcess("git", [
+    const result = await editor.runOnTarget("git", [
         "show",
         `${commit.hash}:${file}`,
     ], gitCwd());
-    if (result.exit_code !== 0) {
+    if (result.code !== 0) {
         editor.setStatus(
             editor.t("status.file_not_found", { file, hash: commit.shortHash }),
         );

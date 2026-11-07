@@ -592,8 +592,10 @@ pub fn find_text_in_row<'a, I: IntoIterator<Item = &'a str>>(
 /// Virtual editor environment for testing
 /// Captures all rendering output without displaying to actual terminal
 pub struct EditorTestHarness {
-    /// The editor instance
-    editor: Editor,
+    /// The editor instance. Dropped by hand in `Drop`, so a stalled
+    /// teardown can say whether it was the editor (plugin thread, async
+    /// runtime) or the temp dir that hung.
+    editor: std::mem::ManuallyDrop<Editor>,
 
     /// Virtual terminal backend
     terminal: Terminal<TestBackend>,
@@ -645,9 +647,9 @@ pub struct EditorTestHarness {
     term_width: u16,
     term_height: u16,
 
-    /// Reports a teardown that stalls. Armed by `Drop`, and declared after
-    /// `editor` and `_temp_dir` so it is still registered while they drop
-    /// (plugin-thread join, runtime shutdown, temp-dir removal).
+    /// Reports a teardown that stalls after the editor is gone. Armed by
+    /// `Drop`, and declared after `_temp_dir` so it is still registered
+    /// while that drops.
     _teardown_stall: Option<StallReport>,
 
     /// This harness's share of the config-globals read side, so a locale
@@ -658,7 +660,20 @@ pub struct EditorTestHarness {
 
 impl Drop for EditorTestHarness {
     fn drop(&mut self) {
-        self._teardown_stall = Some(StallReport::start("EditorTestHarness teardown"));
+        // Windows CI hangs here now and then until the 180s kill, in tests
+        // that have nothing in common; name the phase so the next one says
+        // which half it was.
+        {
+            let _stall = StallReport::start(
+                "EditorTestHarness teardown: dropping the editor (plugin thread join, async runtime shutdown)",
+            );
+            // SAFETY: `editor` is not used again: this is `drop`, and no
+            // field's own drop reaches it.
+            unsafe { std::mem::ManuallyDrop::drop(&mut self.editor) };
+        }
+        self._teardown_stall = Some(StallReport::start(
+            "EditorTestHarness teardown: removing the temp dir",
+        ));
     }
 }
 
@@ -930,7 +945,7 @@ impl EditorTestHarness {
         }
 
         let h = EditorTestHarness {
-            editor,
+            editor: std::mem::ManuallyDrop::new(editor),
             terminal,
             _temp_dir: temp_dir,
             #[cfg(unix)]
@@ -2266,7 +2281,7 @@ impl EditorTestHarness {
     /// `editor_mut()` or any other internal accessor — see
     /// `docs/internal/e2e-test-migration-design.md` §2.1.
     pub fn api_mut(&mut self) -> &mut dyn fresh::test_api::EditorTestApi {
-        &mut self.editor
+        &mut *self.editor
     }
 
     /// Check if editor wants to quit

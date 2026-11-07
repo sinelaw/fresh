@@ -2272,7 +2272,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: text.to_string(),
+                text: text.to_string().into(),
                 cursor_id,
             },
         );
@@ -2292,7 +2292,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 8,
-                text: "x".to_string(),
+                text: "x".to_string().into(),
                 cursor_id,
             },
         );
@@ -2351,7 +2351,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 0,
-                text: text.clone(),
+                text: text.clone().into(),
                 cursor_id,
             },
         );
@@ -2377,7 +2377,7 @@ mod tests {
             &mut cursors,
             &Event::Insert {
                 position: 148,
-                text: "xxx".to_string(),
+                text: "xxx".to_string().into(),
                 cursor_id,
             },
         );
@@ -2448,7 +2448,7 @@ mod tests {
                 &mut cursors,
                 &Event::Insert {
                     position: 0,
-                    text: text.clone(),
+                    text: text.clone().into(),
                     cursor_id,
                 },
             );
@@ -2484,7 +2484,7 @@ mod tests {
                         &mut cursors,
                         &Event::Insert {
                             position,
-                            text: inserted,
+                            text: inserted.into(),
                             cursor_id,
                         },
                     );
@@ -2497,7 +2497,7 @@ mod tests {
                         &mut cursors,
                         &Event::Delete {
                             range: position..position + removed,
-                            deleted_text,
+                            deleted_text: deleted_text.into(),
                             cursor_id,
                         },
                     );
@@ -2605,7 +2605,7 @@ mod tests {
                 &mut cursors,
                 &Event::Insert {
                     position: 0,
-                    text: text.clone(),
+                    text: text.clone().into(),
                     cursor_id,
                 },
             );
@@ -2628,7 +2628,7 @@ mod tests {
                     &mut cursors,
                     &Event::Insert {
                         position,
-                        text: "x".repeat(len),
+                        text: "x".repeat(len).into(),
                         cursor_id,
                     },
                 ),
@@ -2639,7 +2639,7 @@ mod tests {
                         &mut cursors,
                         &Event::Delete {
                             range: start..start + len,
-                            deleted_text,
+                            deleted_text: deleted_text.into(),
                             cursor_id,
                         },
                     )

@@ -23,8 +23,12 @@ getActiveBufferId(): number;
 List all open buffers - returns array of BufferInfo objects
 
 ```typescript
-listBuffers(): BufferInfo[];
+listBuffers(windowId?: number): BufferInfo[];
 ```
+
+| Parameter | Description |
+|-----------|-------------|
+| `windowId` | List this window's buffers (from `listWindows()`) instead of the active window's. A buffer of a window not on screen is in no split, so its `view_mode`, `splits` and the like describe nothing visible. An unknown window has none. Such a buffer's id works with `searchBuffer`, and with `showBuffer` once its window is active; `getBufferInfo` and the other buffer reads answer for the active window's buffers only. |
 
 ### `getBufferPath`
 
@@ -572,7 +576,8 @@ Search one buffer as it is now, unsaved edits included, with the
 editor's own search — the one Ctrl+F and `beginSearch` use. Resolves
 with its matches in order: each with its byte offset and length, its
 1-based line and byte column, and the text of its line. `bufferId` 0
-is the active buffer. Every match is found unless `maxResults` is
+is the active buffer; a buffer of any window (`listBuffers(windowId)`)
+can be searched. Every match is found unless `maxResults` is
 given; `fixedString` and `caseSensitive` default to true. `cancel()`
 stops it, resolving with no matches.
 

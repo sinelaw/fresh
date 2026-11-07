@@ -137,3 +137,34 @@ fn test_smart_home_runs_on_all_cursors() {
     harness.render().unwrap();
     harness.assert_buffer_content("Z    Xaaaaaa\nZ    Xbbbbbb");
 }
+
+/// Shift+Home is the selecting twin of Home (#3585): the first press selects
+/// back to the first non-whitespace character, the second extends the same
+/// selection to column 0. Typing over the selection shows which it covered.
+#[test]
+fn test_shift_home_selects_smartly() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.type_text("    indented text").unwrap();
+
+    // Cursor at end of line. One Shift+Home: the text, not the indentation.
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.type_text("Z").unwrap();
+    harness.render().unwrap();
+    harness.assert_buffer_content("    Z");
+
+    harness.type_text(" more").unwrap();
+    // Two Shift+Home presses: the first stops at the first non-whitespace
+    // character, the second extends the same selection to column 0.
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.type_text("Y").unwrap();
+    harness.render().unwrap();
+    harness.assert_buffer_content("Y");
+    harness.assert_screen_contains("Y");
+}

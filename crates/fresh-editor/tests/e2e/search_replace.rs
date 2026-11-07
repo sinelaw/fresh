@@ -3151,6 +3151,67 @@ fn test_search_replace_positions_track_column_edits() {
         .unwrap();
 }
 
+/// An edit to a file with results re-runs the search, so the panel lists what
+/// the file holds now. That re-search must not lose the user's place: stepping
+/// on after it goes to the match after the one they edited, not back to the
+/// first. It used to reset the selection to the top of the list, so stepping
+/// through and editing each match restarted after every edit that outlived the
+/// debounce — and the `positions_track_*` tests above passed only while their
+/// next step beat it.
+#[test]
+fn test_search_replace_stepping_continues_after_an_edit_re_runs_the_search() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+
+    fs::write(
+        project_root.join("alpha.txt"),
+        "ZZNEEDLE one\nZZNEEDLE two\nZZNEEDLE three\n",
+    )
+    .unwrap();
+
+    let start_file = project_root.join("alpha.txt");
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 30, Default::default(), project_root)
+            .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Search:"))
+        .unwrap();
+    harness.type_text("ZZNEEDLE").unwrap();
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("alpha.txt:3"))
+        .unwrap();
+
+    // Step onto the first match and edit in front of it.
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Ln 1, Col 1"))
+        .unwrap();
+    harness.type_text("xx").unwrap();
+
+    // The re-search has landed: its row shows the edited line, and it has
+    // replaced the step's "Match 1/3" with its own count.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("alpha.txt:1 - xxZZNEEDLE one") && s.contains("Found 3 matches")
+        })
+        .unwrap();
+
+    // The next step goes on to the second match.
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Ln 2, Col 1"))
+        .unwrap();
+}
+
 /// Issue #2583, the case the event-hook approach could not cover: **bulk**
 /// edits — multi-cursor typing, paste-over, type-over-selection,
 /// query-replace, LSP code-action rewrites — apply as a single `BulkEdit`
@@ -4041,4 +4102,430 @@ fn test_search_replace_pan_homes_on_a_new_search() {
         "a new search should open at the new match's resting window, not \
          where the last search was panned to. Row:\n{row}"
     );
+}
+
+/// Each window has its own Search/Replace panel (#3704). Opening it in a
+/// second window opens a panel there — before the fix, Alt+A silently
+/// re-ran the search in the first window's panel and drew nothing — and each
+/// window keeps its own query and results across switches.
+#[test]
+fn test_search_replace_panel_is_per_window() {
+    let (temp_dir, project_root) = setup_search_replace_project();
+    create_test_files(&project_root);
+    // A second workspace in a directory of its own (one window per root).
+    let other_root = temp_dir.path().join("other_root");
+    fs::create_dir(&other_root).unwrap();
+    // Canonical, like the harness's own root: on macOS the temp dir is behind
+    // a symlink (/var → /private/var), and a window rooted at the symlinked
+    // path lists an open buffer (canonical path) and its file twice.
+    let other_root = other_root.canonicalize().unwrap();
+    fs::write(
+        other_root.join("other.txt"),
+        "hello from the other window\nsecond line\n",
+    )
+    .unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&project_root.join("alpha.txt")).unwrap();
+    harness.render().unwrap();
+    let window_a = harness.editor().active_window_id();
+
+    // Window A: search for "hello".
+    open_search_replace_via_palette(&mut harness);
+    harness.type_text("hello").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("4 matches / 3 files"))
+        .unwrap();
+
+    let window_b = harness
+        .editor_mut()
+        .create_window_at(other_root.clone(), "other".to_string());
+    assert_ne!(window_a, window_b);
+    harness.editor_mut().set_active_window(window_b);
+    harness.open_file(&other_root.join("other.txt")).unwrap();
+    harness.render().unwrap();
+    assert!(
+        !harness.screen_to_string().contains("*Search/Replace*"),
+        "window B starts without a panel:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Window B: Alt+A opens B's own panel, and a search runs in B's files.
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("*Search/Replace*"))
+        .unwrap();
+    harness.type_text("second").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("other.txt:2 - second line"))
+        .unwrap();
+
+    // Back in A: A's panel is as it was left, with its own query and results.
+    harness.editor_mut().set_active_window(window_a);
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("Search: [hello") && s.contains("4 matches / 3 files")
+        })
+        .unwrap();
+    harness.assert_screen_not_contains("second line");
+
+    // Edit A's query and leave before its search has run: it runs for A, not
+    // for the window the user went to, and A shows it on return.
+    harness.type_text(" again").unwrap();
+    harness.editor_mut().set_active_window(window_b);
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("Search: [second") && s.contains("other.txt:2 - second line")
+        })
+        .unwrap();
+    harness.editor_mut().set_active_window(window_a);
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("Search: [hello again") && s.contains("1 matches / 1 files")
+        })
+        .unwrap();
+}
+
+/// A search keeps running for its own window's panel while the user works in
+/// another window, and what it finds meanwhile belongs to its window: paths
+/// relative to that window's root, not to the window the user is in (#3704).
+#[test]
+fn test_search_replace_search_continues_in_the_background() {
+    const FILES: usize = 5000;
+    // Result rows show paths with the platform's separator.
+    let sep = std::path::MAIN_SEPARATOR;
+    let (temp_dir, project_root) = setup_search_replace_project();
+    // Enough files that the streaming search spans many pump ticks.
+    let big = project_root.join("big");
+    fs::create_dir(&big).unwrap();
+    for i in 0..FILES {
+        fs::write(big.join(format!("f{i}.txt")), format!("zqxneedle {i}\n")).unwrap();
+    }
+    // Window B's project: as large, so B's own search keeps frames coming
+    // for a good while — the time A's search spends in the background.
+    let other_root = temp_dir.path().join("other_root");
+    fs::create_dir_all(other_root.join("many")).unwrap();
+    // Canonical, like the harness's own root: on macOS the temp dir is behind
+    // a symlink (/var → /private/var), and a window rooted at the symlinked
+    // path lists an open buffer (canonical path) and its file twice.
+    let other_root = other_root.canonicalize().unwrap();
+    let many = other_root.join("many");
+    for i in 0..FILES {
+        fs::write(many.join(format!("g{i}.txt")), format!("zqxneedle {i}\n")).unwrap();
+    }
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&big.join("f0.txt")).unwrap();
+    harness.render().unwrap();
+    let window_a = harness.editor().active_window_id();
+
+    open_search_replace_via_palette(&mut harness);
+    harness.type_text("zqxneedle").unwrap();
+    // Leave as soon as the search has results but before it has all of them.
+    let total = format!("({FILES} matches / {FILES} files)");
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains(" matches / ") && !s.contains(&total)
+        })
+        .unwrap();
+
+    let window_b = harness
+        .editor_mut()
+        .create_window_at(other_root.clone(), "other".to_string());
+    harness.editor_mut().set_active_window(window_b);
+    harness.open_file(&many.join("g0.txt")).unwrap();
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::ALT)
+        .unwrap();
+    harness.type_text("zqxneedle").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains(&total))
+        .unwrap();
+    let screen_b = harness.screen_to_string();
+    assert!(
+        !screen_b.contains(&format!("big{sep}")),
+        "B's panel shows only B's files:\n{screen_b}"
+    );
+
+    // Back in A: every match, under paths relative to A's root.
+    harness.editor_mut().set_active_window(window_a);
+    harness
+        .wait_until(|h| h.screen_to_string().contains(&total))
+        .unwrap();
+    let screen = harness.screen_to_string();
+    let abs_prefix = project_root.to_string_lossy().to_string();
+    assert!(
+        !screen.contains(&abs_prefix) && !screen.contains(&format!("many{sep}")),
+        "A's results should be A's files, relative to A's root:\n{screen}"
+    );
+    harness.assert_screen_contains(&format!("big{sep}f0.txt:1 - zqxneedle 0"));
+}
+
+/// In a window whose root is reached through a symlink, a file open in the
+/// editor is searched once, and Replace All rewrites it once (#3720). Open
+/// buffers carry their canonical path while the project walk spells files
+/// under the root as given; before the fix the two never matched, the open
+/// file was listed twice, and Replace All applied its edits twice, the second
+/// time at offsets the first had moved, corrupting the file.
+#[cfg(unix)]
+#[test]
+fn test_search_replace_window_root_through_a_symlink() {
+    let (temp_dir, project_root) = setup_search_replace_project();
+    let real = temp_dir.path().join("real");
+    fs::create_dir(&real).unwrap();
+    fs::write(real.join("a.txt"), "needle here\n").unwrap();
+    fs::write(real.join("b.txt"), "needle too\n").unwrap();
+    let link = temp_dir.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 30, Default::default(), project_root)
+            .unwrap();
+    // A window at the symlinked path, as `createWindow` makes one.
+    let window = harness
+        .editor_mut()
+        .create_window_at(link.clone(), "link".to_string());
+    harness.editor_mut().set_active_window(window);
+    harness.open_file(&link.join("a.txt")).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness.type_text("needle").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("(2 matches / 2 files)"))
+        .unwrap();
+    // The open file under its project-relative name, not its canonical path.
+    harness.assert_screen_contains("a.txt:1 - needle here");
+    harness.assert_screen_not_contains(&real.to_string_lossy());
+
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.type_text("PIN").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::ALT).unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("Replace 2 match(es) in 2 file(s)?")
+        })
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("Replaced 2 occurrences in 2 files")
+        })
+        .unwrap();
+    assert_eq!(fs::read_to_string(real.join("b.txt")).unwrap(), "PIN too\n");
+    // a.txt is open: the replace lands in its buffer and is saved.
+    harness
+        .wait_until(|_| fs::read_to_string(real.join("a.txt")).unwrap() == "PIN here\n")
+        .unwrap();
+}
+
+/// An open file with unsaved changes, in a window rooted through a symlink,
+/// is searched once, as it is in the buffer, and listed under its
+/// project-relative name like every other file (#3720).
+#[cfg(unix)]
+#[test]
+fn test_search_replace_modified_buffer_under_a_symlinked_root() {
+    let (temp_dir, project_root) = setup_search_replace_project();
+    let real = temp_dir.path().join("real");
+    fs::create_dir(&real).unwrap();
+    fs::write(real.join("a.txt"), "needle here\n").unwrap();
+    fs::write(real.join("b.txt"), "needle too\n").unwrap();
+    let link = temp_dir.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 30, Default::default(), project_root)
+            .unwrap();
+    let window = harness
+        .editor_mut()
+        .create_window_at(link.clone(), "link".to_string());
+    harness.editor_mut().set_active_window(window);
+    harness.open_file(&link.join("a.txt")).unwrap();
+    // An unsaved second match: only the buffer has it.
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("needle unsaved").unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness.type_text("needle").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("(3 matches / 2 files)"))
+        .unwrap();
+    harness.assert_screen_contains("a.txt:2 - needle unsaved");
+    harness.assert_screen_not_contains(&real.to_string_lossy());
+}
+
+/// "Search and Replace in Current File" names its matches as the project
+/// search does in a window rooted through a symlink: by the file's
+/// project-relative name, not its canonical path.
+#[cfg(unix)]
+#[test]
+fn test_search_replace_in_current_file_under_a_symlinked_root() {
+    let (temp_dir, project_root) = setup_search_replace_project();
+    let real = temp_dir.path().join("real");
+    fs::create_dir(&real).unwrap();
+    fs::write(real.join("a.txt"), "needle here\n").unwrap();
+    let link = temp_dir.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 30, Default::default(), project_root)
+            .unwrap();
+    let window = harness
+        .editor_mut()
+        .create_window_at(link.clone(), "link".to_string());
+    harness.editor_mut().set_active_window(window);
+    harness.open_file(&link.join("a.txt")).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness
+        .type_text("Search and Replace in Current File")
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("Search and Replace in Current File")
+        })
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Search:"))
+        .unwrap();
+    harness.type_text("needle").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("(1 matches / 1 files)"))
+        .unwrap();
+    // The match row, not the canonical `…/real/a.txt:1`.
+    harness.assert_screen_contains("[v] a.txt:1 - needle here");
+}
+
+/// A symlink git tracks is a second name for its target. The project search
+/// lists the file once, under its own name — through two links to a file
+/// outside the project, once too; through a link to a gitignored file,
+/// still — and a tracked link since replaced by a file is searched as that
+/// file. Replace All rewrites each file once,
+/// leaving the links links. Searched under both names, Replace All rewrote
+/// the file twice at offsets the first rewrite had moved.
+#[cfg(unix)]
+#[test]
+fn test_search_replace_tracked_symlinks_are_searched_once() {
+    let (temp_dir, project_root) = setup_search_replace_project();
+    fs::write(
+        project_root.join("real.txt"),
+        "zqxneedle here\nmore zqxneedle\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("real.txt", project_root.join("link.txt")).unwrap();
+    let outside = temp_dir.path().join("outside");
+    fs::create_dir(&outside).unwrap();
+    fs::write(outside.join("o.txt"), "zqxneedle outside\n").unwrap();
+    for name in ["out1.txt", "out2.txt"] {
+        std::os::unix::fs::symlink(outside.join("o.txt"), project_root.join(name)).unwrap();
+    }
+    // A link to a file the listing leaves out (gitignored): the link is
+    // the only way the search reaches it.
+    fs::write(project_root.join(".gitignore"), "*.log\n").unwrap();
+    fs::write(project_root.join("secret.log"), "zqxneedle ignored\n").unwrap();
+    std::os::unix::fs::symlink("secret.log", project_root.join("to_ignored.txt")).unwrap();
+    // A tracked link replaced by a file, not yet staged: the index still
+    // says link.
+    std::os::unix::fs::symlink("real.txt", project_root.join("was_link.txt")).unwrap();
+    for args in [&["init", "-q"][..], &["add", "-A"][..]] {
+        assert!(std::process::Command::new("git")
+            .args(args)
+            .current_dir(&project_root)
+            .status()
+            .unwrap()
+            .success());
+    }
+    fs::remove_file(project_root.join("was_link.txt")).unwrap();
+    fs::write(project_root.join("was_link.txt"), "zqxneedle now a file\n").unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness.type_text("zqxneedle").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("(5 matches / 4 files)"))
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("real.txt:1 - zqxneedle here"))
+        .unwrap();
+    harness.assert_screen_not_contains("link.txt");
+
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.type_text("PIN").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::ALT).unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("Replace 5 match(es) in 4 file(s)?")
+        })
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("Replaced 5 occurrences in 4 files")
+        })
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(project_root.join("real.txt")).unwrap(),
+        "PIN here\nmore PIN\n"
+    );
+    assert_eq!(
+        fs::read_to_string(outside.join("o.txt")).unwrap(),
+        "PIN outside\n"
+    );
+    assert_eq!(
+        fs::read_to_string(project_root.join("secret.log")).unwrap(),
+        "PIN ignored\n"
+    );
+    assert_eq!(
+        fs::read_to_string(project_root.join("was_link.txt")).unwrap(),
+        "PIN now a file\n"
+    );
+    for name in ["link.txt", "out1.txt", "out2.txt", "to_ignored.txt"] {
+        let meta = fs::symlink_metadata(project_root.join(name)).unwrap();
+        assert!(meta.file_type().is_symlink(), "{name} is still a link");
+    }
 }

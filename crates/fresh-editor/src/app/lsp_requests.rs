@@ -2727,7 +2727,7 @@ impl Editor {
 
             // Delete old text
             if start_pos < end_pos {
-                let deleted_text = state.get_text_range(start_pos, end_pos);
+                let deleted_text = state.get_edit_text(start_pos, end_pos);
                 let delete_event = Event::Delete {
                     range: start_pos..end_pos,
                     deleted_text,
@@ -2740,7 +2740,7 @@ impl Editor {
             if !edit.new_text.is_empty() {
                 let insert_event = Event::Insert {
                     position: start_pos,
-                    text: edit.new_text.clone(),
+                    text: edit.new_text.clone().into(),
                     cursor_id,
                 };
                 batch_events.push(insert_event);
@@ -3275,7 +3275,7 @@ impl Editor {
                 for event in &events {
                     match event {
                         Event::Insert { position, text, .. } => {
-                            edits.push((*position, 0, text.clone()));
+                            edits.push((*position, 0, text.to_string()));
                         }
                         Event::Delete { range, .. } => {
                             edits.push((range.start, range.len(), String::new()));

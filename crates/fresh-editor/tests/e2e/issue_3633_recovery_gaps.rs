@@ -319,3 +319,120 @@ fn a_file_edited_in_two_workspaces_keeps_each_ones_work() {
     a.render().unwrap();
     assert_eq!(tab_bar(&a).matches("F.txt").count(), 1, "{}", tab_bar(&a));
 }
+
+// =========================================================================
+// B11: a restore during a workspace switch takes focus
+// =========================================================================
+
+/// Switching to a workspace brings back the unsaved work a crashed editor
+/// left on its root, as a tab, but keeps the tab the user left there in
+/// front. Restoring an unnamed buffer opened a new buffer and made it the
+/// active one, so the switch landed on the leftover instead of the user's
+/// file.
+#[test]
+fn a_restore_during_a_switch_keeps_the_tab_the_user_left() {
+    let setup = TwoWorkspaces::new();
+    let b_file = setup.ws_b.join("b.txt");
+    std::fs::write(&b_file, "B FILE CONTENT\n").unwrap();
+
+    let mut daemon = setup.daemon_in(&setup.ws_a);
+    let home = daemon.editor().active_window_id();
+    let b = daemon
+        .editor_mut()
+        .create_window_at(setup.ws_b.clone(), "wsB".to_string());
+    daemon.editor_mut().set_active_window(b);
+    daemon.open_file(&b_file).unwrap();
+    daemon.render().unwrap();
+    daemon.assert_screen_contains("B FILE CONTENT");
+    daemon.editor_mut().set_active_window(home);
+    daemon.render().unwrap();
+
+    // Another editor on wsB leaves an unnamed buffer's work behind: it
+    // backs it up and is killed.
+    {
+        let mut crashed = launch(&setup.ws_b, &setup.dir_context, hot_exit_config());
+        crashed.new_buffer().unwrap();
+        crashed.type_text("LEFTOVER WORK").unwrap();
+        crashed.render().unwrap();
+        crashed
+            .editor_mut()
+            .auto_recovery_save_dirty_buffers()
+            .unwrap();
+        assert_eq!(backups_holding(&setup.dir_context, "LEFTOVER").len(), 1);
+    }
+
+    daemon.editor_mut().set_active_window(b);
+    daemon.render().unwrap();
+    // Restored, as a tab of its own...
+    assert_eq!(
+        tab_bar(&daemon).matches("[No Name]").count(),
+        1,
+        "{}",
+        tab_bar(&daemon)
+    );
+    // ...behind b.txt, which is still the one shown
+    daemon.assert_screen_contains("B FILE CONTENT");
+    daemon.assert_screen_not_contains("LEFTOVER WORK");
+}
+
+/// The same with the focus in a utility-dock pane (a terminal there), and a
+/// leftover for a file: opening the restored file moves the active pane to
+/// the editor pane, and putting the terminal back as the active buffer of
+/// *that* pane moved the terminal out of the dock. The terminal stays in its
+/// dock pane, which keeps the focus; the file opens in the editor pane.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // a terminal needs a PTY
+fn a_file_restored_during_a_switch_leaves_a_dock_terminal_where_it_was() {
+    use fresh::input::keybindings::Action;
+    use fresh::view::split::SplitRole;
+
+    let setup = TwoWorkspaces::new();
+    let b_file = setup.ws_b.join("b.txt");
+    let leftover = setup.ws_b.join("c.txt");
+    std::fs::write(&b_file, "B FILE CONTENT\n").unwrap();
+    std::fs::write(&leftover, "c\n").unwrap();
+
+    let mut daemon = setup.daemon_in(&setup.ws_a);
+    let home = daemon.editor().active_window_id();
+    let b = daemon
+        .editor_mut()
+        .create_window_at(setup.ws_b.clone(), "wsB".to_string());
+    daemon.editor_mut().set_active_window(b);
+    daemon.open_file(&b_file).unwrap();
+    daemon
+        .editor_mut()
+        .dispatch_action_for_tests(Action::OpenTerminalInDock);
+    daemon.render().unwrap();
+    let (dock_leaf, terminal) = {
+        let sm = daemon.editor().split_manager_for_tests();
+        let dock = sm
+            .find_leaf_by_role(SplitRole::UtilityDock)
+            .expect("a dock leaf");
+        (dock, sm.get_buffer_id(dock.into()).expect("its terminal"))
+    };
+    assert_eq!(daemon.editor().active_buffer(), terminal);
+    daemon.editor_mut().set_active_window(home);
+    daemon.render().unwrap();
+
+    // Another editor on wsB leaves unsaved work in c.txt behind
+    {
+        let mut crashed = launch(&setup.ws_b, &setup.dir_context, hot_exit_config());
+        crashed.open_file(&leftover).unwrap();
+        crashed.type_text("LEFTOVER ").unwrap();
+        crashed.render().unwrap();
+        crashed
+            .editor_mut()
+            .auto_recovery_save_dirty_buffers()
+            .unwrap();
+    }
+
+    daemon.editor_mut().set_active_window(b);
+    daemon.render().unwrap();
+    // c.txt came back, in the editor pane...
+    assert!(tab_bar(&daemon).contains("c.txt"), "{}", tab_bar(&daemon));
+    // ...and the terminal is still the dock's, and still focused
+    let sm = daemon.editor().split_manager_for_tests();
+    assert_eq!(sm.active_split(), dock_leaf);
+    assert_eq!(sm.get_buffer_id(dock_leaf.into()), Some(terminal));
+    assert_eq!(daemon.editor().active_buffer(), terminal);
+}

@@ -96,10 +96,10 @@ pack / bundle / plugin grammars; otherwise those layers are added on and the set
 is rebuilt. Grammar provenance is tracked (user, language pack, bundle, plugin).
 **[impl]**
 
-Most embedded grammars fill a gap syntect has no grammar for. **Rust is the
-exception: it replaces one.** syntect bundles a years-old Rust grammar that read
-an unspaced `<` before a string literal as the start of a generic argument list
-and then *consumed* the string's opening quote recovering from it, inverting
+Most embedded grammars fill a gap syntect has no grammar for. **Rust, C#, Bash
+and JavaScript (above) are the exceptions: they replace one.** syntect bundles a
+years-old Rust grammar that read an unspaced `<` before a string literal as the
+start of a generic argument list and then *consumed* the string's opening quote recovering from it, inverting
 quote parity for the rest of the buffer (#3325). Fresh vendors current
 sublimehq/Packages instead, at a pinned commit, in
 `src/grammars/rust.sublime-syntax` (MIT — the package ships its own
@@ -107,6 +107,28 @@ sublimehq/Packages instead, at a pinned commit, in
 which MIT requires us to keep). Measured against upstream's own syntax test
 suite (`Rust/tests`, 12117 assertions), syntect's bundled grammar fails 4904 of
 them; the vendored one fails 5. **[impl]**
+
+**Bash replaces one too, but with syntect's own grammar.**
+`src/grammars/bash.sublime-syntax` is `ShellScript/Bash.sublime-syntax` from
+sublimehq/Packages at fa6b8629c95041bf262d4c1dab95c456a0530122 — the revision
+syntect 5.3's `testdata/Packages` submodule pins, i.e. exactly what syntect
+bundles — plus one local fix marked `# FRESH:`. Upstream read the `(` of a
+subshell function body, `f() ( … )`, as a second parameter list and then waited
+for a `{` that never came, so highlighting died from there to the end of the
+file (#3473, #3201). The body is now chosen after the (empty, optional)
+parameter list: a brace group, a subshell, or any other compound command, which
+is left to `main`. Keeping the bundled revision rather than current upstream
+keeps every other Bash scope unchanged; refreshing to current Packages is a
+separate, larger change. **[impl]**
+
+The shadowing reaches lookups by name and extension, not the links syntect
+resolved when it built its defaults. The bundled `commands-builtin-shell-bash`
+grammar, which the vendored one includes for builtins like `echo`, includes
+`scope:source.shell.bash#…` for those commands' arguments, and those links still
+point at syntect's own Bash. So a subshell function defined *inside* a builtin's
+argument — `echo "$(f() ( … ); f)"` — is still read by the old rules. The damage
+stays inside that argument: the next line highlights normally. Vendoring that
+grammar too (1,223 lines) would close it, if it ever matters in practice.
 
 Because both grammars live in the set, the catalog keeps only the **last**
 syntax of any given name, matching syntect's own lookups, which scan in reverse
@@ -131,6 +153,29 @@ silently and compiles regexes lazily:
 
 When refreshing, re-run upstream's `Rust/tests` through a syntect-backed runner
 (syntect ships `examples/syntest.rs`) rather than trusting a clean load.
+
+**C#** (`src/grammars/csharp.sublime-syntax`, MIT, notice vendored alongside as
+`csharp.sublime-syntax.LICENSE.txt`) is *the same* grammar syntect bundles —
+sublimehq/Packages at syntect's pinned commit — with one regex rewritten
+(marked `# FRESH:`). The rule flagging an interpolation's format spec as
+unclosed, `([^}"\\]+(\\.)*)+(?="(?!"))`, nests a quantifier inside a
+quantifier, and syntect searches each candidate pattern from the cursor to the
+end of the line, so a line like
+`$"{v:F2} {F(v):F2} {G(v):F2}"` cost ~300 ms (release) to highlight and every
+keystroke on or above it stalled (#3667). The replacement
+`[^}"\\](?:[^}"\\]|\\.)*` matches the same strings with no nested quantifier,
+so each match attempt is linear (a search over a line can still be quadratic
+in the length of one format spec, as for any unanchored pattern); upstream's
+C# syntax tests parse to identical scope operations with either. A `# FRESH:`
+variable, `fresh_vendored`, marks the file so tests can check that `.cs`
+resolves to it rather than to the bundled grammar. **[impl]**
+
+`test_csharp_grammar_has_no_catastrophic_backtracking` guards this without
+timing anything: it runs every `match:` regex of the grammar through Oniguruma
+with a cap on backtracking steps per search
+(`MatchParam::set_retry_limit_in_match`). A healthy regex needs a few hundred steps on the
+test lines; the original rule needed over ten million. The same check is a
+cheap way to vet any other grammar suspected of a stall.
 
 ### `DetectedLanguage` — the per-buffer source of truth
 

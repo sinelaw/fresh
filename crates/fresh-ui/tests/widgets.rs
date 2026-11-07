@@ -478,6 +478,7 @@ fn a_host_can_name_each_row_state_itself() {
         fresh_ui::widgets::RowState::Selected => "mine.on".into(),
         fresh_ui::widgets::RowState::SelectedBlur => "mine.on.blur".into(),
         fresh_ui::widgets::RowState::Hover => "mine.hover".into(),
+        fresh_ui::widgets::RowState::Pinned => "mine.pinned".into(),
     })
     .node();
     let mut ui: Ui<Msg> = Ui::new();
@@ -942,6 +943,104 @@ fn a_reveal_lands_in_the_run_under_the_pins_it_brings() {
     assert_eq!(
         rows[9], "row 32",
         "the selection is the run's last row: {screen}"
+    );
+}
+
+/// **What is in the band is built knowing it is.** The pin rides with the
+/// row state: a row the window holds above the run is built as
+/// [`RowState::Pinned`], in the very frame it is pinned, and the same row
+/// inside the run is not. A host can therefore draw the band differently
+/// from the tree without reading a previous frame's scroll offset back —
+/// computed anywhere earlier, it would be one frame late whenever the
+/// window moves.
+#[test]
+fn the_band_builds_its_rows_knowing_they_are_pinned() {
+    use fresh_ui::widgets::{RowState, TreeRow};
+    use std::cell::RefCell;
+    use std::rc::Rc as StdRc;
+    // a/b/c, then 30 files in c: scrolling to the last row pins rows 0, 1, 2.
+    // Every build is recorded, not just the last one per index: a row built
+    // once pinned and once unpinned in the same frame would otherwise pass.
+    let seen: StdRc<RefCell<Vec<(usize, RowState)>>> = StdRc::default();
+    let tree = |sel: usize, start: usize| -> Node<Msg> {
+        seen.borrow_mut().clear();
+        fresh_ui::Tree::windowed(
+            33,
+            fresh_ui::Key::from,
+            |i| TreeRow {
+                depth: i.min(3),
+                has_children: i < 3,
+                open: true,
+            },
+            {
+                let seen = seen.clone();
+                move |i, _, st| {
+                    seen.borrow_mut().push((i, st));
+                    fresh_ui::text(format!("row {i}"))
+                }
+            },
+        )
+        .sticky(7, |i| i.checked_sub(1).map(|p| p.min(2)))
+        .list()
+        .selected(sel)
+        .start_at(start)
+        .focusable(false)
+        .node()
+    };
+    let mut ui: Ui<Msg> = Ui::new();
+    // At the top nothing is pinned: the run builds every row, none Pinned.
+    ui.frame(tree(0, 0), FRAME);
+    {
+        let seen = seen.borrow();
+        assert!(
+            seen.iter().all(|(_, st)| *st != RowState::Pinned),
+            "nothing is pinned at the top, got {seen:?}"
+        );
+    }
+    // The window starts at the last row's page: rows 0, 1 and 2 are pinned —
+    // and those rows are built Pinned in this frame, not the frame after.
+    ui.frame(tree(32, 23), FRAME);
+    let seen = seen.borrow();
+    // One frame can lay the window out more than once while it settles; the
+    // last pass is the one painted. Within a pass, an index appears once —
+    // so a row wrongly built as both a pin and a run row fails here.
+    let mut passes: Vec<Vec<(usize, RowState)>> = Vec::new();
+    for &(i, st) in seen.iter() {
+        let boundary = passes
+            .last()
+            .and_then(|pass| pass.last())
+            .is_some_and(|&(prev, _)| i <= prev);
+        if passes.is_empty() || boundary {
+            passes.push(Vec::new());
+        }
+        passes.last_mut().expect("a pass was started").push((i, st));
+    }
+    let last = passes.last().expect("the frame built rows");
+    for i in 0..=2 {
+        assert!(
+            last.contains(&(i, RowState::Pinned)),
+            "pinned row {i}, got {last:?}"
+        );
+        assert_eq!(
+            last.iter().filter(|(row, _)| *row == i).count(),
+            1,
+            "pinned row {i} is built once in the pass, got {last:?}"
+        );
+    }
+    // A ten-row window with three pinned rows shows the run from row 26:
+    // that row is on screen and is not in the band.
+    assert!(
+        last.contains(&(26, RowState::Normal)),
+        "the run's own first row, got {last:?}"
+    );
+    assert!(
+        !last.contains(&(26, RowState::Pinned)),
+        "the run's first row is not pinned, got {last:?}"
+    );
+    assert!(
+        last.iter()
+            .all(|(i, st)| *st != RowState::Pinned || (0..=2).contains(i)),
+        "only the ancestors are pinned, got {last:?}"
     );
 }
 

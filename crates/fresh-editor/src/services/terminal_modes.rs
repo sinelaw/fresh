@@ -144,6 +144,7 @@ pub struct TerminalModes {
     mouse_capture: bool,
     keyboard_enhancement: bool,
     bracketed_paste: bool,
+    stderr_redirected: bool,
 }
 
 impl TerminalModes {
@@ -255,6 +256,9 @@ impl TerminalModes {
             tracing::debug!("Enabled bracketed paste mode");
         }
 
+        // Keep anything written to fd 2 from painting over the frame (#3662).
+        modes.stderr_redirected = super::stderr_redirect::redirect_to_log();
+
         Ok(modes)
     }
 
@@ -264,6 +268,13 @@ impl TerminalModes {
     /// and only disables those modes.
     #[allow(clippy::let_underscore_must_use)]
     pub fn undo(&mut self) {
+        // Give stderr back first, so whatever is printed after teardown
+        // reaches the user's terminal.
+        if self.stderr_redirected {
+            super::stderr_redirect::restore();
+            self.stderr_redirected = false;
+        }
+
         // Best-effort terminal teardown — if stdout is broken, we can't recover.
         // Disable mouse capture
         // On Windows, skip crossterm's DisableMouseCapture (same reason as enable).
@@ -360,6 +371,10 @@ pub fn suspend_and_resume(
 /// regardless of whether they were actually enabled.
 #[allow(clippy::let_underscore_must_use)]
 pub fn emergency_cleanup() {
+    // Give stderr back first: the panic message printed after this hook
+    // must reach the user's terminal, not the log.
+    super::stderr_redirect::restore();
+
     // Best-effort emergency terminal restore — if stdout is broken, we can't recover.
     // Disable mouse capture
     let _ = stdout().execute(DisableMouseCapture);

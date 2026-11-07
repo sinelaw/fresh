@@ -4,7 +4,7 @@
 // - Enter: auto-continue list items (bullets, ordered, checkboxes) with matching
 //   indentation; on an empty list item, removes the marker instead
 // - Tab: on a blank list item, indents and cycles the bullet (* -> - -> + -> *);
-//   otherwise inserts spaces (always spaces, never literal tabs)
+//   otherwise inserts one indentation level (the buffer's tab_size / use_tabs)
 // - Shift+Tab: on a blank list item, de-indents and cycles the bullet in reverse
 //   (+ -> - -> * -> +); otherwise falls through to built-in dedent_selection
 //
@@ -19,7 +19,34 @@ const editor = getEditor();
 // Configuration
 // ---------------------------------------------------------------------------
 
-const TAB_SIZE = 4;
+// Indentation follows the buffer's own settings — `editor.tab_size` /
+// `editor.use_tabs`, overridden by `languages.markdown.*`, `.editorconfig`
+// or a per-buffer "Set Tab Size" — rather than a fixed width (#3713).
+const DEFAULT_TAB_SIZE = 4;
+
+interface Indent {
+  /** Text one indentation level inserts: a tab, or `width` spaces. */
+  unit: string;
+  /** Columns one level spans. */
+  width: number;
+}
+
+function indentFor(bufferId: number | null | undefined): Indent {
+  const info = bufferId ? editor.getBufferInfo(bufferId) : null;
+  const width = info && info.tab_size > 0 ? info.tab_size : DEFAULT_TAB_SIZE;
+  return { unit: info?.use_tabs ? "\t" : " ".repeat(width), width };
+}
+
+/** `indent` with one indentation level removed from its start, or null when
+ *  it holds less than a level. A leading tab is a level on its own; spaces
+ *  count as one level per `width` of them. */
+function dedentOnce(indent: string, ind: Indent): string | null {
+  if (indent.startsWith("\t")) return indent.substring(1);
+  if (indent.length >= ind.width && /^ +$/.test(indent.substring(0, ind.width))) {
+    return indent.substring(ind.width);
+  }
+  return null;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -212,8 +239,18 @@ registerHandler("md_src_enter", md_src_enter);
 
 async function md_src_tab() : Promise<void> {
   const bufferId = editor.getActiveBufferId();
+  const ind = indentFor(bufferId);
   if (!bufferId) {
-    editor.insertAtCursor(" ".repeat(TAB_SIZE));
+    editor.insertAtCursor(ind.unit);
+    return;
+  }
+
+  // A selection or several cursors: indent them the way plain Tab does.
+  // The list handling below only knows the primary cursor, and its fallback
+  // would replace the selection with spaces (#3666).
+  const cursors = editor.getAllCursors();
+  if (cursors.length > 1 || cursors.some((c) => c.selection && c.selection.start !== c.selection.end)) {
+    editor.executeAction("insert_tab");
     return;
   }
 
@@ -237,9 +274,9 @@ async function md_src_tab() : Promise<void> {
       let newLine: string;
       if (listMatch.type === "checkbox") {
         const check = listMatch.checked ? "x" : " ";
-        newLine = listMatch.indent + " ".repeat(TAB_SIZE) + newBullet + " [" + check + "] ";
+        newLine = listMatch.indent + ind.unit + newBullet + " [" + check + "] ";
       } else {
-        newLine = listMatch.indent + " ".repeat(TAB_SIZE) + newBullet + " ";
+        newLine = listMatch.indent + ind.unit + newBullet + " ";
       }
       editor.deleteRange(bufferId, lineStartByte, lineEndByte);
       editor.insertText(bufferId, lineStartByte, newLine);
@@ -248,8 +285,8 @@ async function md_src_tab() : Promise<void> {
     }
   }
 
-  // Default: insert spaces
-  editor.insertAtCursor(" ".repeat(TAB_SIZE));
+  // Default: insert one indentation level
+  editor.insertAtCursor(ind.unit);
 }
 registerHandler("md_src_tab", md_src_tab);
 
@@ -278,13 +315,12 @@ async function md_src_shift_tab() : Promise<void> {
 
     if (listMatch.content.trim() === "" && restOfLine.trim() === "") {
       // Blank list item — de-indent + reverse cycle bullet
-      const currentIndent = listMatch.indent;
-      // Only de-indent if there is indentation to remove
-      if (currentIndent.length >= TAB_SIZE) {
+      // Only de-indent if there is a whole level to remove
+      const newIndent = dedentOnce(listMatch.indent, indentFor(bufferId));
+      if (newIndent !== null) {
         const lineStartByte = cursorPos - editor.utf8ByteLength(lineText);
         const lineEndByte = cursorPos + editor.utf8ByteLength(restOfLine);
         const newBullet = reverseCycleBullet(listMatch.bullet!);
-        const newIndent = currentIndent.substring(TAB_SIZE);
         let newLine: string;
         if (listMatch.type === "checkbox") {
           const check = listMatch.checked ? "x" : " ";

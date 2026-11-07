@@ -1270,7 +1270,20 @@ impl Editor {
                         return Ok(());
                     }
                 }
-                self.smart_home();
+                self.smart_home(false);
+            }
+            Action::SelectSmartHome => {
+                // Composite (diff) views have no smart variant of the plain
+                // selection either; they select to the line start.
+                let buffer_id = self.active_buffer();
+                if self.active_window().is_composite_buffer(buffer_id) {
+                    if let Some(_handled) =
+                        self.handle_composite_action(buffer_id, &Action::SelectSmartHome)
+                    {
+                        return Ok(());
+                    }
+                }
+                self.smart_home(true);
             }
             Action::ToggleComment => {
                 self.toggle_comment();
@@ -1448,6 +1461,12 @@ impl Editor {
                     // (`getPanelFocusKey`); it must read the host's answer as
                     // of this key, not the last full snapshot's.
                     self.publish_panel_focus();
+                    // Likewise the rest of its state: a key handled earlier in
+                    // the same input batch (adding a cursor, moving the
+                    // selection) must be visible to `getAllCursors()` and the
+                    // like, or the handler acts on the frame before (#3666).
+                    // A no-op when nothing changed since the last rebuild.
+                    self.refresh_plugin_state_snapshot();
                     // A macro replay step runs as an answerable call, so the
                     // replay learns when the handler has settled.
                     let request_id = self.macro_replay.as_ref().and_then(|r| r.dispatch_request);
@@ -1665,9 +1684,23 @@ impl Editor {
                 // `paste_text`: CRLF/CR → LF, then wrapped in the paste
                 // markers when the child asked for DECSET 2004.
                 if self.active_window().focused_terminal_live() {
-                    if let Some(text) = self.clipboard.paste() {
-                        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
-                        self.active_window_mut().send_terminal_paste(&normalized);
+                    let pass_key = self.config.terminal.pass_ctrl_v_without_text;
+                    match self
+                        .clipboard
+                        .paste_for_terminal(self.system_clipboard_probe, pass_key)
+                    {
+                        Some(text) => {
+                            let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+                            self.active_window_mut().send_terminal_paste(&normalized);
+                        }
+                        // No text to paste: the key is the program's. An
+                        // agent CLI reads an image from the clipboard itself
+                        // when it gets Ctrl+V (#3129).
+                        None if pass_key => self.active_window_mut().send_terminal_key(
+                            crossterm::event::KeyCode::Char('v'),
+                            crossterm::event::KeyModifiers::CONTROL,
+                        ),
+                        None => {}
                     }
                 }
             }

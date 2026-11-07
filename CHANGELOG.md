@@ -1,5 +1,89 @@
 # Release Notes
 
+## 0.5.8
+
+For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
+
+> Most config options below can be changed in the **Settings UI** - run **Open Settings** from the command palette (`Ctrl+P`).
+
+### Features
+
+* **Auto-hide the tab bar** - **Auto Hide Tab Bar** (Settings > Editor > Display) hides it while a single file is open (#3696, requested by @garfunkel)
+* **Explorer folder colour can be themed** separately from syntax keywords (#3697, requested by @mommysgoodpuppy)
+* **Option+Backspace / Option+Delete delete words on macOS** (#3643, requested by @gaojunran)
+* **Go to Next / Previous Paragraph** are in the command palette and Go menu (#2122)
+* **Explorer sticky-parent band is shaded** so pinned rows read as a distinct strip (#3625, by @PavelLoparev)
+
+### Bug Fixes
+
+* **Search/Replace panel is per window** - Alt+A in a second window opens its own panel (#3704, reported by @alt-freem)
+* **Replace All no longer rewrites a file twice** under a symlinked root or tracked symlink (#3720)
+* **Find Next ignores matches an edit removed** instead of walking stale results (#3464, #3444, reported by @mandolyte)
+* **Markdown** - Tab honours the configured tab size (#3713, reported by @hbarel) and indents a selection or multiple cursors (#3666, reported by @dnikic)
+* **Python `match`/`case` and more C++ keywords are highlighted**; `.c` files use the C grammar (#3509, #3644, #3716, reported by @asukaminato0721)
+* **Bash highlighting survives `f() ( ... )` subshell functions** (#3473, #3201, reported by @asukaminato0721)
+* **C# typing lag** from slow highlighting of interpolated strings is gone (#3667, #3699, reported by @SONickode)
+* **LSP servers that declare full text sync** receive the whole document, so their diagnostics stay (#3436, reported by @dsvarela)
+* **Terminal Shell set from `init.ts`** applies to new terminals (#3712, reported by @brunnerh)
+* **Merge conflict resolution** no longer leaves an extra blank line per conflict (#3702, #3714, reported by @atk)
+* **`fresh --diff` fixes** - stray tab, click past line end, modified markers (#3688, #3689, #3691, #3694, reported by @Korkman)
+* **Keys work on macOS when stdin is `/dev/tty`** instead of hanging and spinning a core (#3683, #3693, reported by @StonesFromTheSky)
+* **Open File: Enter on a partial dotfile name** opens the highlighted directory (#3680, by @StonesFromTheSky)
+* **Scrolling Markdown is smoother** and idle CPU no longer spins during debounce (#3701)
+
+### Internals
+
+* Reduced flaky tests.
+
+## 0.5.7
+
+For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
+
+> Most config options below can be changed in the **Settings UI** - run **Open Settings** from the command palette (`Ctrl+P`).
+
+### Features
+
+* **Compare Files** - `fresh --diff A B` shows any two files side by side, both editable (#3611, requested by @cherio)
+* **Universal Search across all workspaces** - toggle **All workspaces** (`Alt+A`) to search every local workspace's files, unsaved buffers and terminals; Enter jumps there (#3654)
+* **`fresh --update`** - alias for `fresh --cmd update`, which now asks before installing instead of looking like a finished update (#3064, #3614, reported by @davidwooff)
+* **`Shift+Home` selects to the first non-blank character** first, then column 0, like `Home` - new `select_smart_home` action (#3585, #3669, requested by @notnout)
+* **Nix installation noted on the homepage** (#3635, by @dwt)
+
+### Bug Fixes
+
+* **Idle CPU, memory and log growth from `git_statusbar` on Linux** - file reads no longer count as changes, which re-ran `git` several times a second (#3607, #3659, reported by @naoto-anzai)
+* **Search & Replace honours Case Sensitive and Whole Word** (#3575, #3640, reported by @Korkman)
+* **Unsaved work is kept in one place whatever the launch mode** - one buffer per file, saves refuse to overwrite a file another Fresh has open, sudo saves are crash-safe, and switching workspaces keeps your tab in front (#3633, #3639, #3660)
+* **Hot exit entries are replaced atomically by a save** (#3626, #3627)
+* **Undo restores the exact bytes of a deleted non-UTF-8 byte** instead of writing U+FFFD on save (#3652, #3655)
+* **Sudo-saving a new file** no longer creates it with mode 000 (#3641, #3653, reported by @ViolinKaine)
+* **Files over SSH are writable** when the remote user owns them, even if local and remote UIDs differ (#2944, #3669, reported by @mommysgoodpuppy)
+* **Ctrl+V in a terminal pane reaches the program when the clipboard has no text**, so agent CLIs can paste images; turn off with `terminal.pass_ctrl_v_without_text` (#3129, #3658, reported by @andreivinca)
+* **Typing in long wrapped lines** is one frame per key and no longer stutters (#3631, #3632, reported by @jmote)
+* **Home, End, Up and Down after fast typing** land in the right place (#3642, #3656)
+* **Replace-all on huge files** uses far less memory (#3642, #3657)
+* **Orchestrator picker returns the keyboard to the dock only if it had it**, so arrow keys no longer reach a terminal shell (#3136, #3661)
+* **Terminal fixes**
+    * macOS clipboard errors no longer paint over the screen (#3662, #3664, reported by @mruff-aeq)
+    * kitty keyboard protocol is enabled for clients attached to the daemon, so Super shortcuts work (#3618, #3640, reported by @S-AM-I)
+* **Exported Bash functions survive environment capture** (#3586, #3640, reported by @warrenfalk)
+* **A workspace file that exists but can't be opened keeps its place in the layout** (#3532, #3640)
+* **Ctrl+P list fits on short terminals** instead of covering the input line (#3578, #3669)
+* **View menu Line Numbers / Line Wrap** show the real setting on terminal and Welcome tabs and are greyed out there (#3550, #3669, reported by @sjsepan3)
+* **Status bar shows "Bash"** instead of "Bourne Again Shell (bash)" (#2727, #3669, reported by @720720)
+* **Palette hint bar colors** follow the selected-row foreground, so themes are easier to style (#3616, #3653, reported by @Korkman)
+* **Search & replace polish** - Unicode word highlights, replace within a multi-line selection, cheaper recovery for large replace-alls, accurate Live Grep over terminals (#3645, #3648)
+* **Markdown Source/Compose scroll sync** no longer drifts or stalls (#3609)
+* **Plugin panels recolor** when rewritten to text of the same length (#3646, #3647)
+* **Macros with plugin-bound keys** replay once and in order, without timer ticks (#3595, #3597)
+* **`fresh --diff` opens without an empty-editor flash** and scrolls smoothly (#3630)
+* **Docs** - tabs vs spaces, `auto_revert_poll_interval_ms`, and the rendering architecture are corrected (#3114, #3272, #3599, #3669, #3653; #3114 reported by @sgon00)
+
+### Internals
+
+* **Plugin API** - `runOnTarget` / a machine's `run` replaces the deprecated `spawnProcess`; plugin calls can target another workspace; plugin commands from a hook apply as one batch (#3637, #3654)
+* Debian packaging, CI sharding and advisory fixes, dependency bumps, flaky-test fixes (#3593, #3596, #3604, #3605, #3606, #3629, #3650, #3651)
+
 ## 0.5.4
 
 For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).

@@ -816,6 +816,7 @@ fn every_theme_name() -> Vec<String> {
         RowState::Hover,
         RowState::Selected,
         RowState::SelectedBlur,
+        RowState::Pinned,
     ] {
         for matches in [true, false] {
             out.push(row_theme(matches, st));

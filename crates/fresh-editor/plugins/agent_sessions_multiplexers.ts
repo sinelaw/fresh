@@ -99,13 +99,9 @@ registerScanner({
     }
 
     // Asked even when the walk found nothing: a zellij that never ran has no runtime directory.
-    let listed;
-    try {
-      listed = await machine.run("zellij", ["list-sessions", "--no-formatting"]);
-    } catch {
-      // Could not spawn: zellij is not installed here. Not a problem.
-      return { sessions: [], installed, problems };
-    }
+    const listed = await machine.run("zellij", ["list-sessions", "--no-formatting"]);
+    // Could not spawn: zellij is not installed here. Not a problem.
+    if (listed.code === -1) return { sessions: [], installed, problems };
     if (listed.code !== 0) {
       // zellij exits non-zero with "no active sessions" when there is nothing to list.
       const err = listed.stderr.trim();

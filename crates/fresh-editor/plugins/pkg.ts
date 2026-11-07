@@ -366,7 +366,7 @@ function hashString(str: string): string {
  * Run a git command without prompting for credentials.
  * Uses git config options to prevent interactive prompts (cross-platform).
  */
-async function gitCommand(args: string[]): Promise<{ exit_code: number; stdout: string; stderr: string }> {
+async function gitCommand(args: string[]): Promise<CommandResult> {
   // Use git config options to disable credential prompts (works on Windows and Unix)
   // -c credential.helper= disables credential helper
   // -c core.askPass= disables askpass program
@@ -375,7 +375,7 @@ async function gitCommand(args: string[]): Promise<{ exit_code: number; stdout: 
     "-c", "core.askPass=",
     ...args
   ];
-  const result = await editor.spawnProcess("git", gitArgs);
+  const result = await editor.runOnTarget("git", gitArgs);
   return result;
 }
 
@@ -572,7 +572,7 @@ async function syncRegistry(): Promise<void> {
       // Update existing
       editor.setStatus(`Updating registry: ${source}...`);
       const result = await gitCommand(["-C", `${indexPath}`, "pull", "--ff-only"]);
-      if (result.exit_code === 0) {
+      if (result.code === 0) {
         synced++;
       } else {
         const errorMsg = result.stderr.includes("Could not resolve host")
@@ -587,7 +587,7 @@ async function syncRegistry(): Promise<void> {
       // Clone new
       editor.setStatus(`Cloning registry: ${source}...`);
       const result = await gitCommand(["clone", "--depth", "1", `${source}`, `${indexPath}`]);
-      if (result.exit_code === 0) {
+      if (result.code === 0) {
         synced++;
       } else {
         const errorMsg = result.stderr.includes("Could not resolve host")
@@ -1298,7 +1298,7 @@ async function installFromRepo(
 
   const result = await gitCommand(cloneArgs);
 
-  if (result.exit_code !== 0) {
+  if (result.code !== 0) {
     const errorMsg = gitErrorMessage(result.stderr, "Clone failed");
     packageFailure(`Failed to install ${packageName}: ${errorMsg}`);
     discardScratch(staging);
@@ -1536,7 +1536,7 @@ async function installFromMonorepo(
     cloneArgs.push(`${parsed.repoUrl}`, `${tempDir}`);
 
     const cloneResult = await gitCommand(cloneArgs);
-    if (cloneResult.exit_code !== 0) {
+    if (cloneResult.code !== 0) {
       const errorMsg = gitErrorMessage(cloneResult.stderr, "Clone failed");
       packageFailure(`Failed to clone repository: ${errorMsg}`);
       return false;
@@ -1793,7 +1793,7 @@ async function checkoutVersion(pkgPath: string, version: string): Promise<boolea
 
   // Checkout
   const result = await gitCommand(["-C", `${pkgPath}`, "checkout", target]);
-  return result.exit_code === 0;
+  return result.code === 0;
 }
 
 /**
@@ -1995,7 +1995,7 @@ async function installFromLockfile(): Promise<void> {
       const path = fsLocal.fileExists(pluginPath) ? pluginPath : themePath;
       await gitCommand(["-C", `${path}`, "fetch"]);
       const result = await gitCommand(["-C", `${path}`, "checkout", entry.commit]);
-      if (result.exit_code === 0) {
+      if (result.code === 0) {
         installed++;
       } else {
         failed++;
@@ -2005,7 +2005,7 @@ async function installFromLockfile(): Promise<void> {
       ensureDir(PACKAGES_DIR);
       const result = await gitCommand(["clone", `${entry.source}`, `${pluginPath}`]);
 
-      if (result.exit_code === 0) {
+      if (result.code === 0) {
         await gitCommand(["-C", `${pluginPath}`, "checkout", entry.commit]);
         installed++;
       } else {

@@ -1,39 +1,34 @@
 # Rendering & Layout
 
-Purpose: how Fresh turns buffer bytes into terminal cells — the per-frame render loop, the token→`ViewLine` pipeline, the line-wrap and visual-row caches that make huge files scroll cheaply, folding/wrapping/conceal/virtual-text decorations, split-pane layout, the `Scene` semantic projections shared with the web frontend, and mouse hit-testing.
+Purpose: how Fresh turns buffer bytes into terminal cells — the token→`ViewLine` pipeline, the line-wrap and visual-row caches that make huge files scroll cheaply, folding/wrapping/conceal/virtual-text decorations, split-pane layout, the `Scene` semantic projections shared with the web frontend, and mouse hit-testing of buffer text.
+
+**Scope.** This document covers the **text pipeline**: what goes *inside* a pane's content rectangle. Everything else on screen — menu bar, tab strips, status bar, prompt and its suggestions, popups, the file-explorer sidebar, modals, the dock — is the retained-mode UI built on `fresh-ui`, and is described in [retained-mode-ui.md](retained-mode-ui.md) (the as-built record) and `crates/fresh-ui/README.md` (the library contract). Where the two documents overlap, `retained-mode-ui.md` is authoritative.
 
 ---
 
 ## 1. The render loop
 
-Entry point: the editor's `render` method, taking a ratatui `Frame`.
+Entry point: the editor's `render` method, taking a ratatui `Frame`. The outer event loop decides *when* to call it (after input, async messages, animation ticks, or resize); the editor does not.
 
-Fresh is an **immediate-mode** TUI: there is no retained widget tree and no dirty-rectangle diffing inside the editor. Every frame re-derives the full screen from editor state. ratatui resets its back-buffer before each draw, then crossterm diffs back-buffer vs front-buffer and emits only the changed cells — so the terminal write is incremental even though the drawing is not. The editor does **not** decide *when* to redraw; the outer event loop (in the runtime/lifecycle layer) calls `render` after input, async messages, animation ticks, or resize.
+A frame, in outline:
+1. Drain pre-layout plugin commands, refresh the menu context flags, and carve the left dock column out of the screen.
+2. Prepare the visible buffers: scroll-sync groups, semantic-token requests, incremental-search highlights.
+3. **Describe and lay out the shell.** `Editor::shell_frame` builds one description of every surface; `frame_tree` turns it into a `fresh-ui` node tree, which is reconciled against the retained tree and laid out once. Every region's rectangle — including each pane's content slot — comes from that layout, not from a hand-written `Layout` split. See *The shape* in [retained-mode-ui.md](retained-mode-ui.md).
+4. Read the pane rectangles off the laid-out tree (`view::shell::geometry::PaneRects`) and fire the `lines_changed` plugin hooks for newly visible lines, so plugins can add overlays before content paints.
+5. **Paint.** The tree's display list is painted; each pane's content is a `Host` leaf, and the split renderer writes the buffer text (this document's pipeline) into exactly the rectangle layout gave that leaf. Its per-leaf caches (view-line mappings, scrollbar areas) are stored on the window for hit-testing.
+6. Post-passes over the finished buffer: animations, the software cursor, and terminal colour-capability conversion (256/16 fallback).
 
-`render()` flow:
-1. Drain pre-layout plugin commands; sync terminal titles; carve a left dock column so the orchestrator dock sits left of all chrome.
-2. Snapshot the previous frame for animations (ratatui clears the live buffer, so the animation runner keeps its own post-apply clone).
-3. Record the last frame's width/height and reset the per-cell theme map.
-4. Run scroll-sync groups, request semantic ranges for visible splits, prepare visible buffers.
-5. Build the vertical chrome layout with ratatui `Layout` constraints: menu bar, main content, status bar, search options, prompt line. Heights collapse to 0 when a region is hidden (e.g. status bar hidden under a suggestions popup; prompt row reclaimed for overlay prompts).
-6. Carve the file-explorer sidebar out of the main content area and paint it.
-7. Fire `lines_changed` plugin hooks for newly-visible lines (lets plugins add overlays *before* the content render).
-8. **Render split content**: a single split-borrow of the active window yields the buffers, the split manager, and the view states, and the split renderer paints every visible leaf into the frame buffer. It returns per-leaf layout caches (split areas, tab layouts, view-line mappings, scrollbar areas, …) stored on the window for the next frame's hit-testing.
-9. Post-content passes: cursor-jump animation, viewport-change hooks, popups, menu bar, status bar, context menus, software cursor, frame-buffer animations.
-10. Topmost layers, painted after everything above: the dock into its carved column; then the full-screen modals (settings, keybinding editor, event-debug dialog, calibration wizard), each dimming the *whole* frame behind it — the dock included — and centring in the full window rather than in the chrome beside the dock; then the floating widget panel, the theme-info popup, and the blocking workspace-trust prompt. Modals paint *after* the dock so the dock's own pass cannot overpaint their left edge.
-11. Terminal colour-capability conversion (256/16 fallback) over the finished buffer, so every layer — including the dock, the modals, and animation output — goes through it.
+ratatui still diffs back-buffer against front-buffer, so the bytes written to the terminal are incremental.
 
 ### `RenderStyle`, `EditorRenderConfig`, and rendering into an arbitrary buffer
 
-A sequence of render refactors tightened the render seam, with the goal of making the split renderer reusable and keeping borrow scopes narrow:
-
-- **`RenderStyle`** bundles the theme, an ANSI-background flag, and an `EditorRenderConfig` — the "how to render" group threaded *by reference* so the painters don't re-list a large parameter list. It is built *inside* the split-borrow closure so the theme read-guard is released before the post-render `&mut self` chrome updates.
+- **`RenderStyle`** bundles the theme, an ANSI-background flag, and an `EditorRenderConfig` — the "how to render" group threaded *by reference* so the painters don't re-list a large parameter list.
 - **`EditorRenderConfig`** is the immutable copy of the editor config flags — settings only, no buffers or geometry — so it copies freely.
-- **Rendering into an arbitrary buffer**: the split renderer and its whole callee tree only ever used the frame via widget rendering / buffer access, never the hardware cursor (deferred and applied later). They now take a mutable ratatui `Buffer` directly, so the split renderer is composable into any buffer — offscreen previews (the "phantom leaf"), tests, and the web bridge — and is decoupled from a live terminal draw.
+- **Rendering into an arbitrary buffer**: the split renderer and its callee tree take a mutable ratatui `Buffer` and a rectangle, never the hardware cursor, so they compose into any buffer — offscreen previews (the "phantom leaf", e.g. the live-grep preview), tests, and the web bridge.
 
 ### Chrome layout cache
 
-The chrome layout is the per-frame, screen-indexed hit-test/projection cache: popup areas, suggestions area, status-bar layout, menu layout, settings/trust-dialog layouts, the last frame's dimensions, and the flat cell-theme map (theme-key provenance per cell, indexed by row and column). The status-bar fields are grouped into a `StatusBarChrome` and the frame dimensions into a `FrameDimensions` value. Per-*window* layout (split-leaf rects, tab rects, view-line mappings) lives on the window layout cache, not here.
+Little remains here: `ChromeLayout` holds the last frame's dimensions and the flat per-cell theme map (theme-key provenance per cell, used by the theme inspector). Chrome geometry — popup, prompt, status-bar and menu rectangles — is read from the retained tree when an event needs it, not cached per frame; see *The keyed geometry index* in [retained-mode-ui.md](retained-mode-ui.md). Per-*window* text layout (view-line mappings, scrollbar areas) lives on the window layout cache.
 
 ---
 
@@ -219,7 +214,7 @@ Width is centralized so the editor, plugins, and wrap all measure identically.
 
 ## Implemented vs planned
 
-**Implemented:** the token IR pipeline and `ViewLine`; the tier-1 line-wrap cache (FIFO byte-budget); the tier-2 visual-row index; marker-backed folding/soft-break/conceal/virtual-text with version-keyed invalidation; the `Scene` semantic projections (menu/status/tabs/palette/popups/file-explorer/trust/widgets/keybinding/settings); the `RenderStyle`/`EditorRenderConfig` seam and rendering into an arbitrary buffer; the status-bar / frame-dimensions chrome grouping; the decomposition of content rendering into the orchestration layer; the per-cell-overlay performance optimization (pre-computed active-overlay sweep); split tree and composite views; O(1) visual-to-char hit-testing.
+**Implemented:** the token IR pipeline and `ViewLine`; the tier-1 line-wrap cache (FIFO byte-budget); the tier-2 visual-row index; marker-backed folding/soft-break/conceal/virtual-text with version-keyed invalidation; the `Scene` semantic projections (menu/status/tabs/palette/popups/file-explorer/trust/widgets/keybinding/settings); the `RenderStyle`/`EditorRenderConfig` seam and rendering into an arbitrary buffer; the decomposition of content rendering into the orchestration layer; the per-cell-overlay performance optimization (pre-computed active-overlay sweep); split tree and composite views; O(1) visual-to-char hit-testing.
 
 **Planned / aspirational (per source docs, not in code):** the transforms-module doc-comment pass order is *not* the executed order (the view-data driver is authoritative). The unified-scene design is largely realized — the keybinding editor and Settings ship full native models. (The auxiliary-modals projection deliberately omits the keybinding editor — it's Settings-grade, not a line list — but the dedicated keybinding-editor projection covers it.) A scrolling highlight cache is described as a design layered on the same versioning idea — verify against the highlight engine before relying on it as current.
 

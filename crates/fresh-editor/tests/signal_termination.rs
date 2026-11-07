@@ -13,7 +13,8 @@
 //! which *is* the diagnostic, and the terminal the editor was handed, which
 //! it has to give back on the way out.
 //!
-//! Linux-gated with `common::pty`, which needs `ptsname_r`.
+//! Linux-gated. (`common::pty` itself also runs on macOS, but these have
+//! only been run on Linux.)
 #![cfg(target_os = "linux")]
 
 use crate::common::pty::{pty_available, spawn_on_pty, ChildStdin, PtyChild};

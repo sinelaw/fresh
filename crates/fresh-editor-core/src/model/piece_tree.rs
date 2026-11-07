@@ -10,12 +10,18 @@ pub struct Position {
 }
 
 /// Data storage for a buffer - either loaded in memory or unloaded (file reference)
+///
+/// A loaded buffer's bytes and line index are shared, not copied, when the
+/// buffer list is cloned: an undo snapshot (`snapshot_buffer_state`) clones
+/// every buffer, and a replace-all takes two, so a plain `Vec` held three
+/// copies of a fully loaded file (#3642). Appending copies a buffer only
+/// while a snapshot still shares it (`Arc::make_mut`).
 #[derive(Debug, Clone)]
 pub enum BufferData {
     /// Loaded in memory with optional line indexing
     Loaded {
-        data: Vec<u8>,
-        line_starts: Option<Vec<usize>>, // None = not indexed (large file mode)
+        data: Arc<Vec<u8>>,
+        line_starts: Option<Arc<Vec<usize>>>, // None = not indexed (large file mode)
     },
     /// Not yet loaded from file
     Unloaded {
@@ -47,8 +53,8 @@ impl StringBuffer {
         StringBuffer {
             id,
             data: BufferData::Loaded {
-                data,
-                line_starts: Some(line_starts),
+                data: Arc::new(data),
+                line_starts: Some(Arc::new(line_starts)),
             },
             stored_file_offset: None,
         }
@@ -57,13 +63,16 @@ impl StringBuffer {
     /// Create a loaded buffer with optional line indexing
     pub fn new_loaded(id: usize, data: Vec<u8>, compute_lines: bool) -> Self {
         let line_starts = if compute_lines {
-            Some(Self::compute_line_starts(&data))
+            Some(Arc::new(Self::compute_line_starts(&data)))
         } else {
             None
         };
         StringBuffer {
             id,
-            data: BufferData::Loaded { data, line_starts },
+            data: BufferData::Loaded {
+                data: Arc::new(data),
+                line_starts,
+            },
             stored_file_offset: None,
         }
     }
@@ -141,7 +150,7 @@ impl StringBuffer {
     /// Get line starts if available
     pub fn get_line_starts(&self) -> Option<&[usize]> {
         match &self.data {
-            BufferData::Loaded { line_starts, .. } => line_starts.as_deref(),
+            BufferData::Loaded { line_starts, .. } => line_starts.as_deref().map(Vec::as_slice),
             BufferData::Unloaded { .. } => None,
         }
     }
@@ -178,8 +187,8 @@ impl StringBuffer {
                 // work on large-file chunks.
                 let line_starts = Self::compute_line_starts(&buffer);
                 self.data = BufferData::Loaded {
-                    data: buffer,
-                    line_starts: Some(line_starts),
+                    data: Arc::new(buffer),
+                    line_starts: Some(Arc::new(line_starts)),
                 };
 
                 Ok(())
@@ -258,10 +267,11 @@ impl StringBuffer {
         match &mut self.data {
             BufferData::Loaded { data, line_starts } => {
                 let start_offset = data.len();
-                data.extend_from_slice(data_to_append);
+                Arc::make_mut(data).extend_from_slice(data_to_append);
 
                 // Add new line starts if we're tracking them
-                if let Some(ref mut line_starts) = line_starts {
+                if let Some(line_starts) = line_starts {
+                    let line_starts = Arc::make_mut(line_starts);
                     for (i, &byte) in data_to_append.iter().enumerate() {
                         if byte == b'\n' {
                             line_starts.push(start_offset + i + 1);

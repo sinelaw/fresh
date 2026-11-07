@@ -1669,7 +1669,7 @@ fn row_surface(st: fresh_ui::widgets::RowState, plain: &Ink) -> Ink {
             Paint::key("ui.menu_hover_fg"),
             Paint::key("ui.menu_hover_bg"),
         ),
-        RowState::Normal => plain.clone(),
+        RowState::Normal | RowState::Pinned => plain.clone(),
     }
 }
 

@@ -173,6 +173,9 @@ def cmd_stat(id, p):
             "dir": stat.S_ISDIR(st.st_mode),
             "file": stat.S_ISREG(st.st_mode),
             "link": is_link,
+            # Asked here, as the remote user: the client's own uid/groups say
+            # nothing about who it is on this host.
+            "writable": os.access(path, os.W_OK),
         },
     )
 

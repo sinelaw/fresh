@@ -15,7 +15,7 @@
 //! thread can see, hand it to a handler here, return immediately.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -206,31 +206,45 @@ pub(crate) struct RunOnTargetRequest {
     pub program: String,
     pub args: Vec<String>,
     pub cwd: Option<String>,
+    /// Stream stdout into this file; `stdout` then resolves empty.
+    pub stdout_to: Option<PathBuf>,
+    /// Fired by the handle's `kill()`: the child is killed and the run
+    /// settles with its killed status.
+    pub kill_rx: tokio::sync::oneshot::Receiver<()>,
     pub spawner: Arc<dyn crate::services::remote::ProcessSpawner>,
     pub callback_id: JsCallbackId,
 }
 
 /// Run a command through the authority's spawner, so a remote machine runs it
-/// there. A non-zero exit is data, not an error.
+/// there. A non-zero exit is data, not an error, and so is a command that
+/// could not be started at all (the program missing, the cwd gone): it
+/// settles with code -1 and the reason as its stderr, as `spawnProcess` did,
+/// so a caller never has a rejection to forget to catch.
 pub(crate) fn run_on_target(runtime: &LiveRuntime, cap: OffLoop, req: RunOnTargetRequest) {
     runtime.spawn(async move {
         let RunOnTargetRequest {
             program,
             args,
             cwd,
+            stdout_to,
+            kill_rx,
             spawner,
             callback_id,
         } = req;
 
-        let result = match spawner.spawn(program.clone(), args, cwd).await {
-            Ok(out) => serde_json::to_string(&serde_json::json!({
-                "code": out.exit_code,
-                "stdout": out.stdout,
-                "stderr": out.stderr,
-            }))
-            .map_err(|err| format!("could not serialise command result: {err}")),
-            Err(err) => Err(format!("{program}: {err}")),
+        let (code, stdout, stderr) = match spawner
+            .spawn_cancellable(program.clone(), args, cwd, stdout_to, kill_rx)
+            .await
+        {
+            Ok(out) => (out.exit_code, out.stdout, out.stderr),
+            Err(err) => (-1, String::new(), format!("{program}: {err}")),
         };
+        let result = serde_json::to_string(&serde_json::json!({
+            "code": code,
+            "stdout": stdout,
+            "stderr": stderr,
+        }))
+        .map_err(|err| format!("could not serialise command result: {err}"));
         cap.settle(callback_id, result);
     });
 }
@@ -362,6 +376,53 @@ pub(crate) struct ProjectSearch {
     pub clean_buffers: HashMap<PathBuf, BufferId>,
 }
 
+/// `path` spelled under the root as the project walk spells it, when it lies
+/// under the root's canonical form: `reroot` is `(canonical root, root)`, set
+/// only when the two differ (#3720).
+fn rerooted(path: PathBuf, reroot: &Option<(PathBuf, PathBuf)>) -> PathBuf {
+    match reroot {
+        Some((canonical, root)) => match path.strip_prefix(canonical) {
+            Ok(rel) => root.join(rel),
+            Err(_) => path,
+        },
+        None => path,
+    }
+}
+
+/// An open buffer's (canonical) `path` spelled as a project search under
+/// `root` names it: a single-buffer search's matches then read like the
+/// project search's. Only a path outside `root` as spelled asks `fs` for the
+/// root's canonical form, so the usual case costs nothing. Runs on the
+/// editor thread: local filesystems only.
+pub(crate) fn rooted_like_the_walk(path: &Path, root: &Path, fs: &dyn FileSystem) -> PathBuf {
+    if path.starts_with(root) {
+        return path.to_path_buf();
+    }
+    let reroot = fs
+        .canonicalize(root)
+        .ok()
+        .filter(|canonical| canonical != root)
+        .map(|canonical| (canonical, root.to_path_buf()));
+    rerooted(path.to_path_buf(), &reroot)
+}
+
+/// The open buffers' matches carry the buffer's canonical path; name their
+/// file the way the walk names it, so a buffer's results read like every
+/// other file's (project-relative) and group with them.
+fn rerooted_matches(
+    mut matches: Vec<GrepMatch>,
+    reroot: &Option<(PathBuf, PathBuf)>,
+) -> Vec<GrepMatch> {
+    if reroot.is_some() {
+        for m in &mut matches {
+            m.file = rerooted(PathBuf::from(&m.file), reroot)
+                .to_string_lossy()
+                .into_owned();
+        }
+    }
+    matches
+}
+
 /// Add `matches` to a search's pending results, up to `max_results` in all.
 fn push_capped(
     handle: &SearchHandleState,
@@ -426,6 +487,42 @@ pub(crate) fn project_search(
             open_results,
             clean_buffers,
         } = search;
+        // Open buffers carry their canonical path; the walk yields
+        // `root.join(rel)`. With a root that is not canonical — reached
+        // through a symlink, or `C:\…` where buffers say `\\?\C:\…` — the two
+        // spellings of one file never compared equal: an open file was
+        // searched twice, and Replace All rewrote it twice at offsets the
+        // first rewrite had moved (#3720). Put the open buffers' paths in the
+        // walk's spelling, so the walk skips them and attributes their
+        // matches to the buffer. Off the editor thread: on a remote window
+        // this asks the remote host.
+        let canonical_root = {
+            let (fs, root) = (Arc::clone(&filesystem), root.clone());
+            tokio::task::spawn_blocking(move || fs.canonicalize(&root).ok())
+                .await
+                .ok()
+                .flatten()
+        };
+        // `(canonical root, root)` when they differ: what re-rooting needs.
+        let reroot = Arc::new(
+            canonical_root
+                .filter(|canonical| canonical != &root)
+                .map(|canonical| (canonical, root.clone())),
+        );
+        let (source_file, open_paths, clean_buffers) = {
+            let walk_form = |path: PathBuf| rerooted(path, &reroot);
+            (
+                source_file.map(walk_form),
+                open_paths
+                    .into_iter()
+                    .map(walk_form)
+                    .collect::<HashSet<_>>(),
+                clean_buffers
+                    .into_iter()
+                    .map(|(path, id)| (walk_form(path), id))
+                    .collect::<HashMap<_, _>>(),
+            )
+        };
         let cancelled = |handle: &SearchHandleState| handle.cancel.load(Ordering::Relaxed);
         let match_count = Arc::new(AtomicUsize::new(0));
         // The source buffer's matches go in when its search (on the editor
@@ -433,8 +530,9 @@ pub(crate) fn project_search(
         // be: they are the file the search was started from.
         let source_task = source_result.map(|receiver| {
             let (handle, match_count) = (Arc::clone(&handle), Arc::clone(&match_count));
+            let reroot = Arc::clone(&reroot);
             tokio::spawn(async move {
-                let matches = receiver.await.unwrap_or_default();
+                let matches = rerooted_matches(receiver.await.unwrap_or_default(), &reroot);
                 match_count.fetch_add(matches.len(), Ordering::Relaxed);
                 push_matches(&handle, matches);
             })
@@ -450,25 +548,59 @@ pub(crate) fn project_search(
         let walk_fs = Arc::clone(&filesystem);
         let walk_handle = Arc::clone(&handle);
         let walk_tx = path_tx.clone();
+        let walk_reroot = Arc::clone(&reroot);
         tokio::task::spawn_blocking(move || {
+            // A symlink git tracks is a second name for its target: searched
+            // under both, Replace All rewrote the one file twice, at offsets
+            // the first rewrite had moved. Each file goes out once, under its
+            // own name: a link's target waits for the end of the walk and
+            // goes only if nothing has sent it, so a target the listing
+            // leaves out (gitignored, hidden, outside the project) is still
+            // searched through its link.
+            let mut sent = HashSet::new();
+            let mut link_targets = Vec::new();
+            let skip =
+                |path: &Path| source_file.as_deref() == Some(path) || open_paths.contains(path);
             if let Err(e) = crate::services::project_files::for_each_file_blocking(
                 &spawner,
                 &*walk_fs,
                 &root,
                 &custom_ignore,
                 &walk_handle.cancel,
-                &mut |path, rel| {
-                    if source_file.as_deref() == Some(path) || open_paths.contains(path) {
-                        // Queued ahead of the walk, or searched as open.
-                        true
-                    } else if search_file_glob_matches(&file_glob, rel) {
-                        walk_tx.blocking_send(path.to_path_buf()).is_ok()
-                    } else {
-                        true
+                &mut |path, rel, is_link| {
+                    if skip(path) || !search_file_glob_matches(&file_glob, rel) {
+                        // Queued ahead of the walk, searched as open, or
+                        // filtered out.
+                        return true;
                     }
+                    if is_link {
+                        // Git lists the index's mode: a link replaced by a
+                        // file, not yet staged, resolves to itself.
+                        let Ok(resolved) = walk_fs.canonicalize(path) else {
+                            return true; // dangling: nothing to search
+                        };
+                        let target = rerooted(resolved, &walk_reroot);
+                        if target != path {
+                            link_targets.push(target);
+                            return true;
+                        }
+                    }
+                    sent.insert(path.to_path_buf());
+                    walk_tx.blocking_send(path.to_path_buf()).is_ok()
                 },
             ) {
                 tracing::warn!("Project search: listing project files failed: {}", e);
+            }
+            for target in link_targets {
+                if walk_handle.cancel.load(Ordering::Relaxed) {
+                    break;
+                }
+                if !skip(&target)
+                    && sent.insert(target.clone())
+                    && walk_tx.blocking_send(target).is_err()
+                {
+                    break;
+                }
             }
         });
         // Drop our retained sender so the receive loop terminates once the
@@ -514,7 +646,7 @@ pub(crate) fn project_search(
             drop(task.await);
         }
         for receiver in open_results {
-            let matches = receiver.await.unwrap_or_default();
+            let matches = rerooted_matches(receiver.await.unwrap_or_default(), &reroot);
             push_capped(&handle, &match_count, max_results, matches);
         }
 

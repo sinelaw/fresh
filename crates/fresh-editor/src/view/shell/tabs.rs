@@ -51,6 +51,21 @@ pub struct Tab {
     pub modified: bool,
     pub preview: bool,
     pub binary: bool,
+    /// A group's title in pieces (`setBufferGroupTitle`), when it gave one:
+    /// `name` is then their text joined, and the label is built from the
+    /// pieces so each file's `*` survives elision.
+    pub title: Option<Vec<TitlePiece>>,
+}
+
+/// One piece of a group tab's title.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TitlePiece {
+    pub text: String,
+    /// Whether the piece names a panel: its text is a file's name, which is
+    /// shortened on its own when the title does not fit.
+    pub names_panel: bool,
+    /// The file that panel shows has unsaved changes: `*` follows the piece.
+    pub modified: bool,
 }
 
 /// A pane's strip: its tabs and what the pane says about them.
@@ -170,7 +185,10 @@ pub fn tab_window_key(pane: LeafId) -> Key {
 /// What shares it now is [`natural_width`], which asks what these labels would
 /// measure uncapped so the strip can decide whether to cap them at all.
 pub fn label(t: &Tab, cap: usize, preview_label: &str) -> String {
-    let name = elided_tab_name(&t.name, cap);
+    let name = match &t.title {
+        Some(pieces) => elided_title(pieces, cap),
+        None => elided_tab_name(&t.name, cap),
+    };
     let modified = if t.modified { "*" } else { "" };
     let preview = if t.preview {
         format!(" {preview_label}")
@@ -179,6 +197,43 @@ pub fn label(t: &Tab, cap: usize, preview_label: &str) -> String {
     };
     let binary = if t.binary { " [BIN]" } else { "" };
     format!(" {name}{modified}{preview}{binary} ")
+}
+
+/// A group's pieced title in at most about `cap` columns, each modified
+/// file's `*` right after its name. The `*` is added after shortening, as a
+/// file tab's is, so it is never cut off (issue #3691). When the whole title
+/// does not fit, each piece that names a panel is shortened on its own, to
+/// an equal share of the columns the other pieces leave.
+fn elided_title(pieces: &[TitlePiece], cap: usize) -> String {
+    use crate::primitives::display_width::str_width;
+    let star = |p: &TitlePiece| if p.modified { "*" } else { "" };
+    let whole: String = pieces
+        .iter()
+        .map(|p| format!("{}{}", p.text, star(p)))
+        .collect();
+    if str_width(&whole) <= cap {
+        return whole;
+    }
+    let named = pieces.iter().filter(|p| p.names_panel).count();
+    let fixed: usize = pieces
+        .iter()
+        .map(|p| {
+            let text = if p.names_panel { 0 } else { str_width(&p.text) };
+            text + str_width(star(p))
+        })
+        .sum();
+    let share = cap.saturating_sub(fixed) / named.max(1);
+    pieces
+        .iter()
+        .map(|p| {
+            let text = if p.names_panel {
+                elided_tab_name(&p.text, share.max(1))
+            } else {
+                p.text.clone()
+            };
+            format!("{text}{}", star(p))
+        })
+        .collect()
 }
 
 /// Columns a press on the strip's `<` or `>` moves the window by.
@@ -647,6 +702,7 @@ mod tests {
                 modified: i == 1,
                 preview: false,
                 binary: false,
+                title: None,
             })
             .collect()
     }
@@ -1026,6 +1082,40 @@ mod tests {
     /// frame that narrowed the strip still showed whole names and the frame
     /// that widened it still capped them. The strip decides it at layout,
     /// where its width is known.
+    fn piece(text: &str, names_panel: bool, modified: bool) -> TitlePiece {
+        TitlePiece {
+            text: text.to_string(),
+            names_panel,
+            modified,
+        }
+    }
+
+    /// A pieced title that fits is shown whole, each modified piece marked.
+    #[test]
+    fn a_pieced_title_that_fits_marks_its_modified_pieces() {
+        let pieces = [
+            piece("a.txt", true, true),
+            piece(" ↔ ", false, false),
+            piece("b.txt", true, false),
+        ];
+        assert_eq!(elided_title(&pieces, 25), "a.txt* ↔ b.txt");
+    }
+
+    /// One too long is shortened name by name, and the marks survive: a
+    /// mark that was part of the name used to be cut off with it.
+    #[test]
+    fn a_shortened_pieced_title_keeps_every_mark() {
+        let pieces = [
+            piece("a_rather_long_name.txt", true, false),
+            piece(" ↔ ", false, false),
+            piece("another_long_name.txt", true, true),
+        ];
+        let title = elided_title(&pieces, 25);
+        let (left, right) = title.split_once(" ↔ ").expect("separator kept");
+        assert!(!left.contains('*') && right.ends_with('*'), "{title:?}");
+        assert!(str_width(&title) <= 25, "{title:?}");
+    }
+
     #[test]
     fn a_name_is_capped_only_when_the_names_do_not_fit() {
         let long = |n: usize| Tab {
@@ -1034,6 +1124,7 @@ mod tests {
             modified: false,
             preview: false,
             binary: false,
+            title: None,
         };
         let mut s = strip_of(0);
         s.tabs = vec![long(0)];

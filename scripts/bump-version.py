@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 
 import argparse
+import json
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -15,6 +17,8 @@ BLUE = "\033[0;34m"
 NC = "\033[0m"
 
 BumpType = Literal["patch", "minor", "major"]
+
+MAIN_BRANCH = "master"
 
 # A [workspace.dependencies] entry for a local crate: has both a version and a path.
 # Discovered rather than hardcoded so new workspace crates are never left behind.
@@ -42,7 +46,11 @@ def print_usage():
     print("  5. Update Cargo.lock")
     print("  6. Regenerate debian/changelog to match the new version")
     print("  7. Optionally generate release notes")
-    print("  8. Ask to commit, tag, and push the changes")
+    print("  8. Commit to a new branch, open a PR, and merge it, skipping required checks")
+    print("  9. Tag the merged commit and push the tag")
+    print("")
+    print("Options:")
+    print("  --skip-bump  Skip the bump and PR; tag current master and push the tag")
     print("")
     print("GitHub Actions will then automatically:")
     print("  - Build binaries for all platforms")
@@ -149,22 +157,48 @@ def get_previous_tag() -> Optional[str]:
         except subprocess.CalledProcessError:
             return None
 
-def tag_exists_at_head(tag_name: str) -> bool:
-    """Check if a tag exists and points to HEAD."""
-    try:
-        # Get the commit that the tag points to
-        tag_result = run_command(["git", "rev-parse", f"{tag_name}^{{commit}}"], capture_output=True, check=False)
-        if tag_result.returncode != 0:
-            return False  # Tag doesn't exist
-        tag_commit = tag_result.stdout.strip()
+def tag_exists_at(tag_name: str, commit: str) -> bool:
+    """Check if a tag exists and points to the given commit."""
+    tag_result = run_command(["git", "rev-parse", f"{tag_name}^{{commit}}"], capture_output=True, check=False)
+    if tag_result.returncode != 0:
+        return False  # Tag doesn't exist
+    return tag_result.stdout.strip() == commit
 
-        # Get HEAD commit
-        head_result = run_command(["git", "rev-parse", "HEAD"], capture_output=True)
-        head_commit = head_result.stdout.strip()
+def check_release_preconditions() -> None:
+    """Exits unless gh works and the checkout is a clean, up-to-date master."""
+    errors: List[str] = []
+    if shutil.which("gh") is None:
+        errors.append("'gh' command not found; it is needed to open the PR")
+    elif run_command(["gh", "auth", "status"], capture_output=True, check=False).returncode != 0:
+        errors.append("gh is not logged in; run 'gh auth login'")
 
-        return tag_commit == head_commit
-    except subprocess.CalledProcessError:
-        return False
+    branch = run_command(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True).stdout.strip()
+    if branch != MAIN_BRANCH:
+        errors.append(f"must run from {MAIN_BRANCH}, not {branch}")
+
+    if run_command(["git", "status", "--porcelain", "--untracked-files=no"], capture_output=True).stdout.strip():
+        errors.append("working tree has uncommitted changes to tracked files")
+
+    run_command(["git", "fetch", "--quiet", "origin", MAIN_BRANCH])
+    head = run_command(["git", "rev-parse", "HEAD"], capture_output=True).stdout.strip()
+    remote = run_command(["git", "rev-parse", f"origin/{MAIN_BRANCH}"], capture_output=True).stdout.strip()
+    if head != remote:
+        errors.append(f"HEAD differs from origin/{MAIN_BRANCH}; pull or reset first")
+
+    if errors:
+        for error in errors:
+            print(f"{RED}Error: {error}{NC}")
+        sys.exit(1)
+
+def get_merge_commit(pr_url: str) -> str:
+    """Returns the commit a merged PR landed as on the base branch."""
+    result = run_command(["gh", "pr", "view", pr_url, "--json", "state,mergeCommit"], capture_output=True)
+    pr = json.loads(result.stdout)
+    if pr["state"] != "MERGED":
+        print(f"{RED}Error: {pr_url} is {pr['state']}, not merged. Nothing was tagged.{NC}")
+        print(f"Once it is merged, run {YELLOW}./scripts/bump-version.py --skip-bump{NC} from an up-to-date {MAIN_BRANCH}.")
+        sys.exit(1)
+    return pr["mergeCommit"]["oid"]
 
 def main() -> None:
     """Main function."""
@@ -179,7 +213,7 @@ def main() -> None:
     parser.add_argument(
         "--skip-bump",
         action="store_true",
-        help="Skip version bump, just tag and push current version.",
+        help="Skip version bump and PR, just tag current master and push the tag.",
     )
     args = parser.parse_args()
     bump_type: BumpType = args.bump_type
@@ -197,12 +231,19 @@ def main() -> None:
         print(f"{RED}Error: {e}{NC}")
         sys.exit(1)
 
+    check_release_preconditions()
+
     if skip_bump:
         new_version = current_version
         print(f"{BLUE}Tag and Push (skipping bump){NC}")
         print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         print(f"Current version: {GREEN}{current_version}{NC}")
         print("")
+
+        reply = input(f"Tag current {MAIN_BRANCH} as v{new_version} and push the tag? (y/N) ").lower()
+        if reply != "y":
+            print("Aborted.")
+            sys.exit(0)
     else:
         new_version = calculate_new_version(current_version, bump_type)
 
@@ -212,7 +253,10 @@ def main() -> None:
         print(f"New version:     {GREEN}{new_version}{NC}")
         print("")
 
-        reply = input(f"Bump {bump_type} version {current_version} -> {new_version}? (y/N) ").lower()
+        reply = input(
+            f"Bump {bump_type} version {current_version} -> {new_version}, open a PR, "
+            "merge it skipping checks, then tag and push the tag? (y/N) "
+        ).lower()
         if reply != "y":
             print("Aborted.")
             sys.exit(0)
@@ -258,60 +302,60 @@ def main() -> None:
     else:
         print(f"{YELLOW}Warning: CHANGELOG.md not found. Tag will not include release notes.{NC}")
 
-    if skip_bump:
-        reply = input(f"Tag and push v{new_version}? (y/N) ").lower()
-    else:
-        reply = input(f"Commit, tag, and push v{new_version}? (y/N) ").lower()
-    if reply != "y":
-        print("")
-        if skip_bump:
-            print(f"{YELLOW}Tag not created.{NC}")
-        else:
-            print(f"{YELLOW}Changes made but not committed.{NC}")
-        print("")
-        print("To complete manually:")
-        step = 1
-        if not skip_bump:
-            print(f"  {step}. Commit changes: {YELLOW}git add Cargo.toml Cargo.lock debian/changelog && git commit -m 'Bump version to {new_version}'{NC}")
-            step += 1
-        if release_notes_content:
-            print(f"  {step}. Create tag:     {YELLOW}git tag -a v{new_version} -F CHANGELOG.md{NC}")
-        else:
-            print(f"  {step}. Create tag:     {YELLOW}git tag v{new_version}{NC}")
-        step += 1
-        print(f"  {step}. Push:           {YELLOW}git push && git push origin v{new_version}{NC}")
-        print("")
-        print("GitHub Actions will then automatically publish to all platforms.")
-        sys.exit(0)
-
     try:
-        current_branch_result = run_command(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True)
-        current_branch = current_branch_result.stdout.strip()
+        if skip_bump:
+            tag_commit = run_command(["git", "rev-parse", "HEAD"], capture_output=True).stdout.strip()
+        else:
+            bump_branch = f"bump-{new_version}"
+            commit_title = f"Bump version to {new_version}"
 
-        if not skip_bump:
             print("")
-            print(f"{BLUE}Step: commit changes{NC}")
+            print(f"{BLUE}Step: commit changes to {bump_branch}{NC}")
+            run_command(["git", "switch", "-c", bump_branch])
             run_command(["git", "add", "Cargo.toml", "Cargo.lock", "debian/changelog"])
-            run_command(["git", "commit", "-m", f"Bump version to {new_version}"])
+            run_command(["git", "commit", "-m", commit_title])
             print(f"{GREEN}✓{NC} Committed")
+
+            print("")
+            print(f"{BLUE}Step: open pull request{NC}")
+            run_command(["git", "push", "-u", "origin", bump_branch])
+            pr_result = run_command(
+                ["gh", "pr", "create", "--base", MAIN_BRANCH, "--head", bump_branch, "--title", commit_title, "--body", ""],
+                capture_output=True,
+            )
+            pr_url = pr_result.stdout.strip().splitlines()[-1]
+            print(f"{GREEN}✓{NC} Opened {pr_url}")
+
+            print("")
+            print(f"{BLUE}Step: merge pull request (skipping checks){NC}")
+            run_command(["gh", "pr", "merge", pr_url, "--admin", "--squash"])
+            # Squashing makes a new commit; tagging the branch commit would leave the tag off master.
+            tag_commit = get_merge_commit(pr_url)
+            print(f"{GREEN}✓{NC} Merged as {tag_commit[:12]}")
+
+            print("")
+            print(f"{BLUE}Step: update local {MAIN_BRANCH}{NC}")
+            run_command(["git", "switch", MAIN_BRANCH])
+            run_command(["git", "pull", "--ff-only", "origin", MAIN_BRANCH])
+            run_command(["git", "branch", "-D", bump_branch])
+            print(f"{GREEN}✓{NC} Updated")
 
         print("")
         tag_name = f"v{new_version}"
-        if tag_exists_at_head(tag_name):
-            print(f"{BLUE}Step: create tag {tag_name}{NC} — already exists at HEAD")
+        if tag_exists_at(tag_name, tag_commit):
+            print(f"{BLUE}Step: create tag {tag_name}{NC} — already exists at {tag_commit[:12]}")
             print(f"{GREEN}✓{NC} Skipped (already tagged)")
         else:
             print(f"{BLUE}Step: create tag {tag_name}{NC}")
             if release_notes_content:
-                run_command(["git", "tag", "-a", tag_name, "-F", "CHANGELOG.md"])
+                run_command(["git", "tag", "-a", tag_name, tag_commit, "-F", "CHANGELOG.md"])
             else:
-                run_command(["git", "tag", tag_name])
+                run_command(["git", "tag", tag_name, tag_commit])
             print(f"{GREEN}✓{NC} Tagged")
 
         print("")
-        print(f"{BLUE}Step: push to origin{NC}")
-        run_command(["git", "push", "origin", current_branch])
-        run_command(["git", "push", "origin", f"v{new_version}"])
+        print(f"{BLUE}Step: push tag to origin{NC}")
+        run_command(["git", "push", "origin", tag_name])
         print(f"{GREEN}✓{NC} Pushed")
 
         print("")
@@ -332,8 +376,8 @@ def main() -> None:
         print(f"{RED}An error occurred during git operations: {e}{NC}")
         print(e.stderr)
         sys.exit(1)
-    except FileNotFoundError:
-        print(f"{RED}Error: 'git' command not found. Is git installed and in your PATH?{NC}")
+    except FileNotFoundError as e:
+        print(f"{RED}Error: '{e.filename}' command not found. Is it installed and in your PATH?{NC}")
         sys.exit(1)
 
 if __name__ == "__main__":

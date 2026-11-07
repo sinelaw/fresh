@@ -66,6 +66,16 @@ export interface DisplayEntry {
   location?: Location;
   /** Severity for visual styling */
   severity?: "error" | "warning" | "info" | "hint";
+  /**
+   * A group's header row rather than a result (Live Grep's "All
+   * workspaces" groups). Still selectable — what Enter does on it is the
+   * finder's `onSelect` to say — but a fresh result list starts its
+   * selection on the first row that is not one.
+   */
+  heading?: boolean;
+  /** False when the file at `location` is not worth previewing — it would
+   *  not show what the entry is (the entry is opened all the same). */
+  preview?: boolean;
   /** Custom metadata */
   metadata?: unknown;
 }
@@ -1063,7 +1073,7 @@ export class Finder<T> {
         // `path:line:col` for the result. We must not rely on parsing the
         // user-facing label, which may carry source badges (e.g. "[term]")
         // that make the label unparseable as a path.
-        value: entry.location
+        value: entry.location && entry.preview !== false
           ? `${entry.location.file}:${entry.location.line}:${
             entry.location.column ?? 1
           }`
@@ -1072,7 +1082,14 @@ export class Finder<T> {
       })
     );
 
-    this.editor.setPromptSuggestions(suggestions, this.initialSelectedIndex);
+    // A list that opens on a header starts on its first result instead.
+    const firstResult = this.promptState.entries[0]?.heading
+      ? this.promptState.entries.findIndex((e) => !e.heading)
+      : -1;
+    this.editor.setPromptSuggestions(
+      suggestions,
+      this.initialSelectedIndex ?? (firstResult >= 0 ? firstResult : undefined),
+    );
     if (results.length > 0) {
       this.initialSelectedIndex = undefined;
     }
@@ -1197,7 +1214,7 @@ export class Finder<T> {
    *  file: syntax colours, gutter, folds, wrap, LSP decoration, and the
    *  rest of the file to scroll through. */
   private updatePreview(entry: DisplayEntry): void {
-    if (!entry.location) return;
+    if (!entry.location || entry.preview === false) return;
     const splitId = this.previewTargetSplit();
     if (splitId === null) return;
 
