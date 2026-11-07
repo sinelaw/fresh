@@ -59,6 +59,14 @@ release tag, debian/ from HEAD), signed with the maintainer's key:
 
     scripts/debian-mentors-upload.sh
 
+The Debian archive gets the package from the Salsa repository
+(https://salsa.debian.org/sinelaw/fresh-editor, git-buildpackage layout:
+debian/latest, upstream/latest, pristine-tar). To move it to a new release
+(import with uscan and pristine-tar, sync debian/ with this packaging/debian,
+push, wait for Salsa CI, then upload to mentors):
+
+    scripts/debian-salsa-update.sh --repo ../fresh-editor-salsa all <version>
+
 Copyright
 ---------
 
