@@ -108,10 +108,10 @@ fn an_exited_terminals_auto_derived_name_survives_a_restart() {
     let sentinel = temp_dir.path().join("quit-now");
     let script = write_script(
         temp_dir.path(),
-        "titled.sh",
+        "t.sh",
         &format!(
             "#!/bin/sh\n\
-             printf '\\033]0;TITLE-ALPHA\\007'\n\
+             printf '\\033]0;T-ALPHA\\007'\n\
              while [ ! -f '{s}' ]; do sleep 0.1; done\n\
              exit 0\n",
             s = sentinel.display()
@@ -130,7 +130,7 @@ fn an_exited_terminals_auto_derived_name_survives_a_restart() {
             args: Vec::new(),
         });
         let mut harness = EditorTestHarness::create(
-            120,
+            160,
             30,
             HarnessOptions::new()
                 .with_config(config)
@@ -150,7 +150,7 @@ fn an_exited_terminals_auto_derived_name_survives_a_restart() {
         harness
             .run_palette_command("Open Terminal to the Right")
             .unwrap();
-        wait_for_tab_name(&mut harness, "TITLE-ALPHA");
+        wait_for_tab_name(&mut harness, "T-ALPHA");
 
         // Only now let it exit, so the name is on the tab before the exit
         // path captures it.
@@ -161,7 +161,7 @@ fn an_exited_terminals_auto_derived_name_survives_a_restart() {
 
         let tabs = harness.get_tab_bar();
         assert!(
-            tabs.contains("TITLE-ALPHA"),
+            tabs.contains("T-ALPHA"),
             "an exited tab keeps its name within the session.\nTabs: {tabs}"
         );
         harness.shutdown(true).unwrap();
@@ -180,7 +180,7 @@ fn an_exited_terminals_auto_derived_name_survives_a_restart() {
 
     let tabs = harness.get_tab_bar();
     assert!(
-        tabs.contains("TITLE-ALPHA"),
+        tabs.contains("T-ALPHA"),
         "a restored exited terminal must keep its name.\n\
          before the restart: {before_restart}\n\
          after the restart:  {tabs}"
@@ -217,10 +217,10 @@ fn two_exited_terminals_stay_distinguishable_across_a_restart() {
     let claimed = temp_dir.path().join("claimed");
     let script = write_script(
         temp_dir.path(),
-        "titled.sh",
+        "t.sh",
         &format!(
             "#!/bin/sh\n\
-             if [ -f '{c}' ]; then name=TITLE-BETA; else name=TITLE-ALPHA; touch '{c}'; fi\n\
+             if [ -f '{c}' ]; then name=T-BETA; else name=T-ALPHA; touch '{c}'; fi\n\
              printf '\\033]0;%s\\007' \"$name\"\n\
              while [ ! -f '{s}' ]; do sleep 0.1; done\n\
              exit 0\n",
@@ -238,7 +238,7 @@ fn two_exited_terminals_stay_distinguishable_across_a_restart() {
             args: Vec::new(),
         });
         let mut harness = EditorTestHarness::create(
-            140,
+            180,
             30,
             HarnessOptions::new()
                 .with_config(config)
@@ -257,9 +257,9 @@ fn two_exited_terminals_stay_distinguishable_across_a_restart() {
         harness
             .run_palette_command("Open Terminal to the Right")
             .unwrap();
-        wait_for_tab_name(&mut harness, "TITLE-ALPHA");
+        wait_for_tab_name(&mut harness, "T-ALPHA");
         harness.run_palette_command("Open Terminal").unwrap();
-        wait_for_tab_name(&mut harness, "TITLE-BETA");
+        wait_for_tab_name(&mut harness, "T-BETA");
 
         std::fs::write(&sentinel, b"").unwrap();
         harness
@@ -276,7 +276,7 @@ fn two_exited_terminals_stay_distinguishable_across_a_restart() {
 
     let tabs = harness.get_tab_bar();
     assert!(
-        tabs.contains("TITLE-ALPHA") && tabs.contains("TITLE-BETA"),
+        tabs.contains("T-ALPHA") && tabs.contains("T-BETA"),
         "both restored terminals must keep their own names, or the two dead \
          transcripts cannot be told apart.\nTabs: {tabs}"
     );
