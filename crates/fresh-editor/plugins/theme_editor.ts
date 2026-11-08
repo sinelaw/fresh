@@ -820,6 +820,8 @@ function expandStyleBundles(themeData: Record<string, unknown>): void {
       // A bundle is a plain object; a bare color is an array or string.
       if (!value || typeof value !== "object" || Array.isArray(value)) continue;
       const bundle = value as Record<string, unknown>;
+      // Not every object is a bundle: `chrome.nerd_font` is a set of glyphs.
+      if (!("color" in bundle)) continue;
       obj[key] = bundle.color;
       if (Array.isArray(bundle.modifier) && bundle.modifier.length > 0) {
         obj[`${key}${MODIFIER_SUFFIX}`] = bundle.modifier;
@@ -2198,6 +2200,16 @@ function buildThemeFile(themeName: string): Record<string, unknown> {
       const value = getNestedValue(state.themeData, `${section.name}.${field.key}`);
       if (value !== undefined) {
         sectionData[field.key] = value;
+      }
+    }
+    // Keep what the editor has no field for — `chrome.nerd_font`, a set of
+    // glyphs — rather than dropping it on save.
+    const stored = state.themeData[section.name];
+    if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+      for (const [key, value] of Object.entries(stored as Record<string, unknown>)) {
+        if (!(key in sectionData) && value && typeof value === "object" && !Array.isArray(value)) {
+          sectionData[key] = value;
+        }
       }
     }
     // Re-bundle color + attributes into the single on-disk value.

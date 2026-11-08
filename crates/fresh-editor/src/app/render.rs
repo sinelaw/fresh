@@ -311,6 +311,15 @@ impl Editor {
             window.enforce_terminal_grid_wrap();
         }
 
+        // The theme's glyphs follow the user's font: its `chrome.nerd_font`
+        // set while `editor.nerd_font_icons` is on, its plain set otherwise.
+        // Settled once here, before anything is described, like the rest of
+        // the frame's inputs.
+        let nerd = self.config.editor.nerd_font_icons;
+        if self.theme.read().unwrap().chrome.nerd_font != nerd {
+            self.theme.write().unwrap().chrome.use_nerd_font(nerd);
+        }
+
         // The boolean state flags menu `when` conditions read. Refreshed
         // *before* anything is described, because the menu bar's labels are
         // now part of the frame's description, built at the top of this
@@ -3271,6 +3280,34 @@ impl Editor {
         })
     }
 
+    /// A folder's arrow in the explorer: the user's
+    /// `tree_indicator_collapsed` / `_expanded` when they changed it, else
+    /// the theme's `chrome.folder_collapsed` / `_expanded`.
+    fn explorer_indicator(&self, collapsed: bool) -> String {
+        let fe = &self.config.file_explorer;
+        let (setting, default) = if collapsed {
+            (
+                &fe.tree_indicator_collapsed,
+                crate::config::default_tree_indicator_collapsed(),
+            )
+        } else {
+            (
+                &fe.tree_indicator_expanded,
+                crate::config::default_tree_indicator_expanded(),
+            )
+        };
+        if *setting != default {
+            return setting.clone();
+        }
+        let theme = self.theme.read().unwrap();
+        let g = theme.chrome.glyphs();
+        if collapsed {
+            g.folder_collapsed.clone()
+        } else {
+            g.folder_expanded.clone()
+        }
+    }
+
     /// The explorer as a section: its chrome, and its rows.
     fn explorer_section(&self) -> ExplorerSection {
         use crate::view::shell::file_explorer as fe;
@@ -3391,8 +3428,8 @@ impl Editor {
             slot_overrides: win.file_explorer_slot_override_cache.clone(),
             slot_resolver: self.file_explorer_slot_resolver(),
             theme: self.theme.clone(),
-            collapsed: self.config.file_explorer.tree_indicator_collapsed.clone(),
-            expanded: self.config.file_explorer.tree_indicator_expanded.clone(),
+            collapsed: self.explorer_indicator(true),
+            expanded: self.explorer_indicator(false),
         });
         use crate::view::move_preview::Spot;
         // What window row `j` is: a projection row, or the `k`th preview row.
@@ -5751,9 +5788,9 @@ impl Editor {
             Some(crate::app::types::HoverTarget::NewTabButton(pane)) => Some(*pane),
             _ => None,
         };
-        let separator = self.theme.read().unwrap().chrome.tab_separator.clone();
+        let glyphs = self.theme.read().unwrap().chrome.glyphs().clone();
         self.active_window()
-            .pane_strips(chrome, hover, hover_plus, &separator)
+            .pane_strips(chrome, hover, hover_plus, &glyphs)
     }
 
     /// Each visible pane's leaf handle, for the frame's description — the
@@ -5866,8 +5903,8 @@ impl Editor {
             hscroll: false,
         });
         let groups = win.pane_groups();
-        let separator = self.theme.read().unwrap().chrome.tab_separator.clone();
-        let strips = win.pane_strips(&chrome, None, None, &separator);
+        let glyphs = self.theme.read().unwrap().chrome.glyphs().clone();
+        let strips = win.pane_strips(&chrome, None, None, &glyphs);
         let rowless: std::collections::HashSet<_> = groups.keys().copied().collect();
         let hosts = win.pane_hosts(&rowless);
         Some(std::rc::Rc::new(Splits {
@@ -6298,8 +6335,34 @@ impl Editor {
             .read()
             .unwrap()
             .chrome
+            .glyphs()
             .status_bar_separator
             .clone();
+        // The theme's section glyphs, and whether it colors sections at all
+        // (only then are items renamed onto the section keys).
+        let (section_glyphs, sectioned) = {
+            let theme = self.theme.read().unwrap();
+            let g = theme.chrome.glyphs();
+            (
+                sb::SectionGlyphs {
+                    left: g.status_bar_section_left.clone(),
+                    right: g.status_bar_section_right.clone(),
+                    cap_left: g.status_bar_cap_left.clone(),
+                    cap_right: g.status_bar_cap_right.clone(),
+                },
+                (
+                    theme.status_outer_bg,
+                    theme.status_outer_fg,
+                    theme.status_inner_bg,
+                    theme.status_inner_fg,
+                ) != (
+                    theme.status_bar_bg,
+                    theme.status_bar_fg,
+                    theme.status_bar_bg,
+                    theme.status_bar_fg,
+                ),
+            )
+        };
         // Single window borrow, split into buffers + cursors so the
         // status-bar context can hold both.
         let __active_id = self.active_window;
@@ -6389,12 +6452,17 @@ impl Editor {
 
                 // The left side is not pre-fitted: who yields and where the cut
                 // falls are layout's (`sb::yields_last`, `Elide::Tail`).
+                let mut left = left;
+                if sectioned {
+                    sb::assign_sections(&mut left, &mut right);
+                }
                 sb::StatusBar {
                     left,
                     right,
                     separator,
                     base_theme: pair("ui.status_bar_fg", "ui.status_bar_bg"),
                     sep_theme: pair("ui.status_separator_fg", "ui.status_separator_bg"),
+                    sections: section_glyphs.clone(),
                 }
             })
     }

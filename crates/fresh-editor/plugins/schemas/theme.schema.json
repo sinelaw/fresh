@@ -92,6 +92,10 @@
         "status_bar_bg": null,
         "status_palette_fg": null,
         "status_palette_bg": null,
+        "status_outer_fg": null,
+        "status_outer_bg": null,
+        "status_inner_fg": null,
+        "status_inner_bg": null,
         "status_separator_fg": null,
         "status_separator_bg": null,
         "status_lsp_on_fg": null,
@@ -1052,6 +1056,54 @@
         },
         "status_palette_bg": {
           "description": "Command palette shortcut hint background in status bar (falls back to status_bar_bg)",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status_outer_fg": {
+          "description": "The outermost status bar item on each side (lualine's sections a and\nz): its text. Falls back to `status_bar_fg`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status_outer_bg": {
+          "description": "The outermost item's background. Falls back to `status_bar_bg`.\nItems with colors of their own (warnings, LSP, the palette hint) keep\nthem.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status_inner_fg": {
+          "description": "The next item in on each side (lualine's b and y): its text. Falls\nback to `status_bar_fg`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status_inner_bg": {
+          "description": "The next item in: its background. Falls back to `status_bar_bg`.",
           "anyOf": [
             {
               "$ref": "#/$defs/StyledColorDef"
@@ -2211,7 +2263,7 @@
       }
     },
     "ChromeOptions": {
-      "description": "Structural options: which pieces of the editor's chrome exist.\n\nThe other sections are colors, and a color cannot give a cell back: a\nborder painted in its background's color still takes its column. These\nsay whether a piece is drawn *at all*, so a piece that is off takes no\ncells and the content moves into the space. Pair them with the colors\nthat mark the boundary another way — `editor.line_number_bg` for the\ngutter, `ui.file_explorer_bg` for the explorer.\n\nEvery option defaults to `true`, the look Fresh has always had. A theme\nthat `extends` another inherits the options it does not name.",
+      "description": "Structural options: which pieces of the editor's chrome exist, and the\nglyphs it is drawn with.\n\nThe other sections are colors, and a color cannot give a cell back: a\nborder painted in its background's color still takes its column. These\nsay whether a piece is drawn *at all*, so a piece that is off takes no\ncells and the content moves into the space. Pair them with the colors\nthat mark the boundary another way — `editor.line_number_bg` for the\ngutter, `ui.file_explorer_bg` for the explorer.\n\nEvery option defaults to the look Fresh has always had. A theme that\n`extends` another inherits the options it does not name.\n\n**Glyphs that need a Nerd Font go in `nerd_font`.** They are used only\nwhile the user's `editor.nerd_font_icons` is on, so a theme can carry\nPowerline caps and icons and still look right on a terminal without the\nfont: there, the plain glyphs beside them are drawn.",
       "type": "object",
       "properties": {
         "gutter_separator": {
@@ -2229,14 +2281,227 @@
           ]
         },
         "tab_separator": {
-          "description": "Text drawn between two tabs, in `ui.tab_separator_fg` on\n`ui.tab_separator_bg`. Any string, glyphs included (`\"│\"`, `\"▏\"`,\n`\"·\"`); empty puts the tabs side by side. Default: one space",
+          "description": "Between two tabs, in `ui.tab_separator_fg` on `ui.tab_separator_bg`. Empty puts the tabs side by side. Default: one space",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tab_cap_left": {
+          "description": "Before each tab, in the tab's background color on the strip's (`ui.tab_separator_bg`): with `tab_cap_right`, gives tabs a shape — rounded `` `` or slanted `` `` with a Nerd Font. Default: none",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tab_cap_right": {
+          "description": "After each tab; see `tab_cap_left`. Default: none",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tab_close": {
+          "description": "A tab's close button. One cell. Default: `×`",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tab_modified": {
+          "description": "After the name of a tab with unsaved changes. Default: `*`",
           "type": [
             "string",
             "null"
           ]
         },
         "status_bar_separator": {
-          "description": "Text drawn between status bar items, in `ui.status_separator_fg` on\n`ui.status_separator_bg`. Each item already has a one-space margin, so\n`\"·\"` shows as `LF · UTF-8`. A `status_bar.separator` set in the\nuser's config wins over the theme's. Default: none",
+          "description": "Between two status bar items on the same background, in `ui.status_separator_fg`. A `status_bar.separator` in the user's config wins. Default: none",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status_bar_section_left": {
+          "description": "Between two left-side status bar items on different backgrounds, drawn in the left one's background over the right one's — the transition `` or `` make with a Nerd Font. Default: none",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status_bar_section_right": {
+          "description": "The right side's transition, drawn in the right item's background over the left one's: `` or ``. Default: none",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status_bar_cap_left": {
+          "description": "Before the first left item when it has a background of its own, in that background over the bar's: `` rounds it. Default: none",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status_bar_cap_right": {
+          "description": "After the last right item when it has a background of its own: ``. Default: none",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fold_collapsed": {
+          "description": "The gutter's marker on a folded block. One cell. Default: `▸`",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fold_expanded": {
+          "description": "The gutter's marker on a block that can fold. One cell. Default: `▾`",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "diagnostic_marker": {
+          "description": "The gutter's marker on a line with a diagnostic. One cell. Default: `●`",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "folder_collapsed": {
+          "description": "Before a closed folder in the file explorer, while the user's `file_explorer.tree_indicator_collapsed` is at its default. Default: `>`",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "folder_expanded": {
+          "description": "Before an open folder in the file explorer, while the user's `file_explorer.tree_indicator_expanded` is at its default. Default: `▼`",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "nerd_font": {
+          "description": "Glyphs used instead of the ones above while `editor.nerd_font_icons`\nis on. Any glyph left out here falls back to the plain one.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GlyphOptions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "GlyphOptions": {
+      "description": "Chrome glyphs a theme file names; see [`ChromeOptions`].",
+      "type": "object",
+      "properties": {
+        "tab_separator": {
+          "description": "Between two tabs, in `ui.tab_separator_fg` on `ui.tab_separator_bg`. Empty puts the tabs side by side. Default: one space",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tab_cap_left": {
+          "description": "Before each tab, in the tab's background color on the strip's (`ui.tab_separator_bg`): with `tab_cap_right`, gives tabs a shape — rounded `` `` or slanted `` `` with a Nerd Font. Default: none",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tab_cap_right": {
+          "description": "After each tab; see `tab_cap_left`. Default: none",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tab_close": {
+          "description": "A tab's close button. One cell. Default: `×`",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tab_modified": {
+          "description": "After the name of a tab with unsaved changes. Default: `*`",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status_bar_separator": {
+          "description": "Between two status bar items on the same background, in `ui.status_separator_fg`. A `status_bar.separator` in the user's config wins. Default: none",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status_bar_section_left": {
+          "description": "Between two left-side status bar items on different backgrounds, drawn in the left one's background over the right one's — the transition `` or `` make with a Nerd Font. Default: none",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status_bar_section_right": {
+          "description": "The right side's transition, drawn in the right item's background over the left one's: `` or ``. Default: none",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status_bar_cap_left": {
+          "description": "Before the first left item when it has a background of its own, in that background over the bar's: `` rounds it. Default: none",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status_bar_cap_right": {
+          "description": "After the last right item when it has a background of its own: ``. Default: none",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fold_collapsed": {
+          "description": "The gutter's marker on a folded block. One cell. Default: `▸`",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fold_expanded": {
+          "description": "The gutter's marker on a block that can fold. One cell. Default: `▾`",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "diagnostic_marker": {
+          "description": "The gutter's marker on a line with a diagnostic. One cell. Default: `●`",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "folder_collapsed": {
+          "description": "Before a closed folder in the file explorer, while the user's `file_explorer.tree_indicator_collapsed` is at its default. Default: `>`",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "folder_expanded": {
+          "description": "Before an open folder in the file explorer, while the user's `file_explorer.tree_indicator_expanded` is at its default. Default: `▼`",
           "type": [
             "string",
             "null"

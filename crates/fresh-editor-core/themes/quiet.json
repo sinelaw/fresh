@@ -169,9 +169,9 @@
   },
   "ui": {
     "tab_active_fg": [
-      239,
-      243,
-      254
+      230,
+      234,
+      245
     ],
     "tab_active_bg": [
       39,
@@ -179,9 +179,9 @@
       54
     ],
     "tab_inactive_fg": [
+      105,
       109,
-      113,
-      125
+      124
     ],
     "tab_inactive_bg": [
       24,
@@ -199,9 +199,9 @@
       100
     ],
     "tab_hover_bg": [
+      32,
       34,
-      36,
-      46
+      44
     ],
     "menu_bg": [
       24,
@@ -209,89 +209,94 @@
       30
     ],
     "menu_fg": [
-      201,
-      205,
-      216
+      128,
+      132,
+      146
     ],
     "menu_active_bg": [
-      62,
-      71,
-      102
+      36,
+      38,
+      48
     ],
     "menu_active_fg": [
-      239,
-      243,
-      254
+      214,
+      218,
+      230
     ],
     "menu_dropdown_bg": [
-      30,
-      32,
-      40
+      27,
+      29,
+      35
     ],
     "menu_dropdown_fg": [
-      205,
-      208,
-      220
+      176,
+      180,
+      194
     ],
     "menu_highlight_bg": [
-      62,
-      71,
-      102
+      38,
+      41,
+      52
     ],
     "menu_highlight_fg": [
-      239,
-      243,
-      254
+      226,
+      229,
+      238
     ],
     "menu_border_fg": [
-      48,
-      51,
-      64
-    ],
-    "menu_separator_fg": [
-      42,
-      45,
-      56
-    ],
-    "menu_hover_bg": [
       40,
       43,
-      55
+      54
+    ],
+    "menu_separator_fg": [
+      36,
+      38,
+      48
+    ],
+    "menu_hover_bg": [
+      34,
+      36,
+      46
     ],
     "menu_hover_fg": [
-      239,
-      243,
-      254
+      214,
+      218,
+      230
     ],
     "menu_disabled_fg": [
-      80,
-      82,
-      94
+      76,
+      78,
+      90
     ],
     "menu_disabled_bg": [
-      30,
-      32,
-      40
+      27,
+      29,
+      35
     ],
     "status_bar_fg": [
-      180,
-      184,
-      196
-    ],
-    "status_bar_bg": [
-      28,
-      30,
-      36
-    ],
-    "status_palette_fg": [
       150,
       155,
       170
     ],
+    "status_bar_bg": [
+      24,
+      25,
+      30
+    ],
+    "status_palette_fg": {
+      "color": [
+        22,
+        23,
+        28
+      ],
+      "modifier": [
+        "bold"
+      ]
+    },
     "status_palette_bg": [
-      28,
-      30,
-      36
+      137,
+      155,
+      214
     ],
     "prompt_fg": [
       205,
@@ -464,9 +469,9 @@
       220
     ],
     "status_warning_indicator_bg": [
-      28,
-      30,
-      36
+      24,
+      25,
+      30
     ],
     "status_warning_indicator_fg": [
       226,
@@ -474,9 +479,9 @@
       120
     ],
     "status_error_indicator_bg": [
-      28,
-      30,
-      36
+      24,
+      25,
+      30
     ],
     "status_error_indicator_fg": [
       230,
@@ -524,14 +529,14 @@
       38
     ],
     "status_separator_fg": [
-      90,
-      93,
-      106
+      78,
+      81,
+      96
     ],
     "status_separator_bg": [
-      28,
-      30,
-      36
+      24,
+      25,
+      30
     ],
     "status_lsp_on_fg": [
       180,
@@ -539,9 +544,9 @@
       196
     ],
     "status_lsp_on_bg": [
-      28,
-      30,
-      36
+      24,
+      25,
+      30
     ],
     "status_lsp_actionable_fg": [
       226,
@@ -549,9 +554,9 @@
       120
     ],
     "status_lsp_actionable_bg": [
-      28,
-      30,
-      36
+      24,
+      25,
+      30
     ],
     "file_explorer_bg": [
       24,
@@ -587,6 +592,31 @@
       60,
       62,
       74
+    ],
+    "status_outer_bg": [
+      137,
+      155,
+      214
+    ],
+    "status_outer_fg": {
+      "color": [
+        22,
+        23,
+        28
+      ],
+      "modifier": [
+        "bold"
+      ]
+    },
+    "status_inner_bg": [
+      39,
+      41,
+      54
+    ],
+    "status_inner_fg": [
+      196,
+      200,
+      214
     ]
   },
   "search": {
@@ -749,6 +779,28 @@
     "gutter_separator": false,
     "file_explorer_border": false,
     "tab_separator": " ",
-    "status_bar_separator": "·"
+    "status_bar_separator": "·",
+    "tab_close": "×",
+    "tab_modified": " ●",
+    "fold_collapsed": "›",
+    "fold_expanded": "⌄",
+    "folder_collapsed": "›",
+    "folder_expanded": "⌄",
+    "nerd_font": {
+      "tab_cap_left": "",
+      "tab_cap_right": "",
+      "tab_close": "󰅖",
+      "tab_modified": " ",
+      "status_bar_cap_left": "",
+      "status_bar_section_left": "",
+      "status_bar_section_right": "",
+      "status_bar_cap_right": "",
+      "status_bar_separator": "",
+      "fold_collapsed": "",
+      "fold_expanded": "",
+      "diagnostic_marker": "",
+      "folder_collapsed": " ",
+      "folder_expanded": " "
+    }
   }
 }

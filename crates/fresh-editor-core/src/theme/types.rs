@@ -451,7 +451,120 @@ pub struct ThemeFile {
     pub chrome: ChromeOptions,
 }
 
-/// Structural options: which pieces of the editor's chrome exist.
+/// Generate the theme's chrome glyphs from one table: the file form (every
+/// glyph optional, so a theme inherits what it leaves out), the resolved form
+/// (every glyph decided) and its defaults, and the merge between them.
+///
+/// Each row is `name: "default", "doc"`. The defaults are the glyphs Fresh
+/// has always drawn, so a theme that names none looks as it always did.
+macro_rules! chrome_glyphs {
+    ($( $name:ident : $default:literal, $doc:literal; )*) => {
+        /// Chrome glyphs a theme file names; see [`ChromeOptions`].
+        #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+        pub struct GlyphOptions {
+            $(
+                #[doc = $doc]
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                pub $name: Option<String>,
+            )*
+        }
+
+        /// Every chrome glyph, decided.
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        pub struct Glyphs {
+            $( #[doc = $doc] pub $name: String, )*
+        }
+
+        impl Default for Glyphs {
+            fn default() -> Self {
+                Self { $( $name: $default.to_string(), )* }
+            }
+        }
+
+        impl Glyphs {
+            /// These glyphs with the ones `file` names put over them.
+            pub fn overridden_by(mut self, file: &GlyphOptions) -> Self {
+                $( if let Some(v) = &file.$name { self.$name = v.clone(); } )*
+                self
+            }
+
+            /// Every glyph, as a file names it.
+            pub fn to_options(&self) -> GlyphOptions {
+                GlyphOptions { $( $name: Some(self.$name.clone()), )* }
+            }
+
+            /// The glyphs that differ from `base`, as a file names them.
+            pub fn diff_from(&self, base: &Glyphs) -> GlyphOptions {
+                GlyphOptions {
+                    $( $name: (self.$name != base.$name).then(|| self.$name.clone()), )*
+                }
+            }
+        }
+
+        impl GlyphOptions {
+            /// The glyph names a theme file may use.
+            pub const KEYS: &'static [&'static str] = &[ $( stringify!($name), )* ];
+
+            /// Whether the file names no glyph.
+            pub fn is_empty(&self) -> bool {
+                self == &Self::default()
+            }
+        }
+    };
+}
+
+chrome_glyphs! {
+    tab_separator: " ",
+        "Between two tabs, in `ui.tab_separator_fg` on `ui.tab_separator_bg`. \
+         Empty puts the tabs side by side. Default: one space";
+    tab_cap_left: "",
+        "Before each tab, in the tab's background color on the strip's \
+         (`ui.tab_separator_bg`): with `tab_cap_right`, gives tabs a shape — \
+         rounded `\u{e0b6}` `\u{e0b4}` or slanted `\u{e0ba}` `\u{e0bc}` with a \
+         Nerd Font. Default: none";
+    tab_cap_right: "",
+        "After each tab; see `tab_cap_left`. Default: none";
+    tab_close: "×",
+        "A tab's close button. One cell. Default: `×`";
+    tab_modified: "*",
+        "After the name of a tab with unsaved changes. Default: `*`";
+    status_bar_separator: "",
+        "Between two status bar items on the same background, in \
+         `ui.status_separator_fg`. A `status_bar.separator` in the user's \
+         config wins. Default: none";
+    status_bar_section_left: "",
+        "Between two left-side status bar items on different backgrounds, \
+         drawn in the left one's background over the right one's — the \
+         transition `\u{e0b0}` or `\u{e0b4}` make with a Nerd Font. \
+         Default: none";
+    status_bar_section_right: "",
+        "The right side's transition, drawn in the right item's background \
+         over the left one's: `\u{e0b2}` or `\u{e0b6}`. Default: none";
+    status_bar_cap_left: "",
+        "Before the first left item when it has a background of its own, in \
+         that background over the bar's: `\u{e0b6}` rounds it. Default: none";
+    status_bar_cap_right: "",
+        "After the last right item when it has a background of its own: \
+         `\u{e0b4}`. Default: none";
+    fold_collapsed: "▸",
+        "The gutter's marker on a folded block. One cell. Default: `▸`";
+    fold_expanded: "▾",
+        "The gutter's marker on a block that can fold. One cell. Default: `▾`";
+    diagnostic_marker: "●",
+        "The gutter's marker on a line with a diagnostic. One cell. \
+         Default: `●`";
+    folder_collapsed: ">",
+        "Before a closed folder in the file explorer, while the user's \
+         `file_explorer.tree_indicator_collapsed` is at its default. \
+         Default: `>`";
+    folder_expanded: "▼",
+        "Before an open folder in the file explorer, while the user's \
+         `file_explorer.tree_indicator_expanded` is at its default. \
+         Default: `▼`";
+}
+
+/// Structural options: which pieces of the editor's chrome exist, and the
+/// glyphs it is drawn with.
 ///
 /// The other sections are colors, and a color cannot give a cell back: a
 /// border painted in its background's color still takes its column. These
@@ -460,8 +573,13 @@ pub struct ThemeFile {
 /// that mark the boundary another way — `editor.line_number_bg` for the
 /// gutter, `ui.file_explorer_bg` for the explorer.
 ///
-/// Every option defaults to `true`, the look Fresh has always had. A theme
-/// that `extends` another inherits the options it does not name.
+/// Every option defaults to the look Fresh has always had. A theme that
+/// `extends` another inherits the options it does not name.
+///
+/// **Glyphs that need a Nerd Font go in `nerd_font`.** They are used only
+/// while the user's `editor.nerd_font_icons` is on, so a theme can carry
+/// Powerline caps and icons and still look right on a terminal without the
+/// font: there, the plain glyphs beside them are drawn.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ChromeOptions {
     /// Draw the `│` column between the line numbers and the text. When
@@ -475,17 +593,13 @@ pub struct ChromeOptions {
     /// Default: true
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file_explorer_border: Option<bool>,
-    /// Text drawn between two tabs, in `ui.tab_separator_fg` on
-    /// `ui.tab_separator_bg`. Any string, glyphs included (`"│"`, `"▏"`,
-    /// `"·"`); empty puts the tabs side by side. Default: one space
+    /// The glyphs (see [`GlyphOptions`]).
+    #[serde(flatten)]
+    pub glyphs: GlyphOptions,
+    /// Glyphs used instead of the ones above while `editor.nerd_font_icons`
+    /// is on. Any glyph left out here falls back to the plain one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tab_separator: Option<String>,
-    /// Text drawn between status bar items, in `ui.status_separator_fg` on
-    /// `ui.status_separator_bg`. Each item already has a one-space margin, so
-    /// `"·"` shows as `LF · UTF-8`. A `status_bar.separator` set in the
-    /// user's config wins over the theme's. Default: none
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status_bar_separator: Option<String>,
+    pub nerd_font: Option<GlyphOptions>,
 }
 
 impl ChromeOptions {
@@ -494,13 +608,14 @@ impl ChromeOptions {
         self == &Self::default()
     }
 
-    /// The option names a theme file may use, for unknown-key warnings.
-    pub const KEYS: &'static [&'static str] = &[
-        "gutter_separator",
-        "file_explorer_border",
-        "tab_separator",
-        "status_bar_separator",
-    ];
+    /// The option names a theme file may use directly under `chrome`, for
+    /// unknown-key warnings.
+    pub fn is_key(name: &str) -> bool {
+        matches!(
+            name,
+            "gutter_separator" | "file_explorer_border" | "nerd_font"
+        ) || GlyphOptions::KEYS.contains(&name)
+    }
 }
 
 /// The resolved [`ChromeOptions`]: every option decided.
@@ -508,8 +623,13 @@ impl ChromeOptions {
 pub struct Chrome {
     pub gutter_separator: bool,
     pub file_explorer_border: bool,
-    pub tab_separator: String,
-    pub status_bar_separator: String,
+    /// The glyphs without a Nerd Font.
+    pub plain: Glyphs,
+    /// The glyphs with one: `plain` with the theme's `nerd_font` over them.
+    pub nerd: Glyphs,
+    /// Which of the two is drawn: the user's `editor.nerd_font_icons`,
+    /// settled before each frame (see [`Chrome::use_nerd_font`]).
+    pub nerd_font: bool,
 }
 
 impl Default for Chrome {
@@ -517,36 +637,57 @@ impl Default for Chrome {
         Self {
             gutter_separator: true,
             file_explorer_border: true,
-            tab_separator: " ".to_string(),
-            status_bar_separator: String::new(),
+            plain: Glyphs::default(),
+            nerd: Glyphs::default(),
+            nerd_font: false,
         }
     }
 }
 
 impl Chrome {
-    /// These options with the ones `file` names applied over them.
+    /// These options with the ones `file` names applied over them. A plain
+    /// glyph the file names replaces the inherited Nerd Font one too — the
+    /// file chose it — unless the file also names a Nerd Font one.
     pub fn overridden_by(self, file: &ChromeOptions) -> Self {
+        let nerd = self.nerd.overridden_by(&file.glyphs);
         Self {
             gutter_separator: file.gutter_separator.unwrap_or(self.gutter_separator),
             file_explorer_border: file
                 .file_explorer_border
                 .unwrap_or(self.file_explorer_border),
-            tab_separator: file.tab_separator.clone().unwrap_or(self.tab_separator),
-            status_bar_separator: file
-                .status_bar_separator
-                .clone()
-                .unwrap_or(self.status_bar_separator),
+            plain: self.plain.overridden_by(&file.glyphs),
+            nerd: match &file.nerd_font {
+                Some(n) => nerd.overridden_by(n),
+                None => nerd,
+            },
+            nerd_font: self.nerd_font,
         }
+    }
+
+    /// The glyphs to draw.
+    pub fn glyphs(&self) -> &Glyphs {
+        if self.nerd_font {
+            &self.nerd
+        } else {
+            &self.plain
+        }
+    }
+
+    /// Draw the Nerd Font glyphs or the plain ones. Returns whether that
+    /// changed anything.
+    pub fn use_nerd_font(&mut self, on: bool) -> bool {
+        std::mem::replace(&mut self.nerd_font, on) != on
     }
 }
 
 impl From<Chrome> for ChromeOptions {
     fn from(c: Chrome) -> Self {
+        let nerd = c.nerd.diff_from(&c.plain);
         Self {
             gutter_separator: Some(c.gutter_separator),
             file_explorer_border: Some(c.file_explorer_border),
-            tab_separator: Some(c.tab_separator),
-            status_bar_separator: Some(c.status_bar_separator),
+            glyphs: c.plain.to_options(),
+            nerd_font: (!nerd.is_empty()).then_some(nerd),
         }
     }
 }
@@ -842,6 +983,22 @@ pub struct UiColors {
     /// Command palette shortcut hint background in status bar (falls back to status_bar_bg)
     #[serde(default)]
     pub status_palette_bg: Option<StyledColorDef>,
+    /// The outermost status bar item on each side (lualine's sections a and
+    /// z): its text. Falls back to `status_bar_fg`.
+    #[serde(default)]
+    pub status_outer_fg: Option<StyledColorDef>,
+    /// The outermost item's background. Falls back to `status_bar_bg`.
+    /// Items with colors of their own (warnings, LSP, the palette hint) keep
+    /// them.
+    #[serde(default)]
+    pub status_outer_bg: Option<StyledColorDef>,
+    /// The next item in on each side (lualine's b and y): its text. Falls
+    /// back to `status_bar_fg`.
+    #[serde(default)]
+    pub status_inner_fg: Option<StyledColorDef>,
+    /// The next item in: its background. Falls back to `status_bar_bg`.
+    #[serde(default)]
+    pub status_inner_bg: Option<StyledColorDef>,
     /// Status bar separator glyph text color (falls back to status_bar_fg)
     #[serde(default)]
     pub status_separator_fg: Option<StyledColorDef>,
@@ -1317,6 +1474,11 @@ pub struct Theme {
     /// Status bar palette shortcut hint colors (default: same as status bar)
     pub status_palette_fg: Color,
     pub status_palette_bg: Color,
+    /// The status bar's outermost and next-in items (lualine's a/z, b/y).
+    pub status_outer_fg: Color,
+    pub status_outer_bg: Color,
+    pub status_inner_fg: Color,
+    pub status_inner_bg: Color,
     /// Status bar separator glyph colors (default: same as status bar)
     pub status_separator_fg: Color,
     pub status_separator_bg: Color,
@@ -1610,6 +1772,10 @@ impl From<ThemeFile> for Theme {
             status_bar_bg: styled_color(&file.ui.status_bar_bg),
             status_palette_fg: styled_color(&file.ui.status_palette_fg),
             status_palette_bg: styled_color(&file.ui.status_palette_bg),
+            status_outer_fg: styled_color(&file.ui.status_outer_fg),
+            status_outer_bg: styled_color(&file.ui.status_outer_bg),
+            status_inner_fg: styled_color(&file.ui.status_inner_fg),
+            status_inner_bg: styled_color(&file.ui.status_inner_bg),
             status_separator_fg: styled_color(&file.ui.status_separator_fg),
             status_separator_bg: styled_color(&file.ui.status_separator_bg),
             status_lsp_on_fg: styled_color(&file.ui.status_lsp_on_fg),
@@ -1808,6 +1974,10 @@ impl From<Theme> for ThemeFile {
                 status_bar_bg: styled(&theme, "ui.status_bar_bg"),
                 status_palette_fg: styled(&theme, "ui.status_palette_fg"),
                 status_palette_bg: styled(&theme, "ui.status_palette_bg"),
+                status_outer_fg: styled(&theme, "ui.status_outer_fg"),
+                status_outer_bg: styled(&theme, "ui.status_outer_bg"),
+                status_inner_fg: styled(&theme, "ui.status_inner_fg"),
+                status_inner_bg: styled(&theme, "ui.status_inner_bg"),
                 status_separator_fg: styled(&theme, "ui.status_separator_fg"),
                 status_separator_bg: styled(&theme, "ui.status_separator_bg"),
                 status_lsp_on_fg: styled(&theme, "ui.status_lsp_on_fg"),
@@ -2087,6 +2257,10 @@ const KEYS_FOLLOWING_FALLBACK_ACROSS_EXTENDS: &[&str] = &[
     "syntax.property",
     "syntax.attribute",
     "ui.tab_separator_fg",
+    "ui.status_outer_fg",
+    "ui.status_outer_bg",
+    "ui.status_inner_fg",
+    "ui.status_inner_bg",
 ];
 
 /// Every non-null `"section.field"` leaf of a theme JSON, under its canonical
@@ -2330,8 +2504,15 @@ impl Theme {
         }
         if let Some(obj) = raw.get("chrome").and_then(|v| v.as_object()) {
             for field in obj.keys() {
-                if !ChromeOptions::KEYS.contains(&field.as_str()) {
+                if !ChromeOptions::is_key(field) {
                     unknown.push(format!("chrome.{field}"));
+                }
+            }
+            if let Some(nerd) = obj.get("nerd_font").and_then(|v| v.as_object()) {
+                for field in nerd.keys() {
+                    if !GlyphOptions::KEYS.contains(&field.as_str()) {
+                        unknown.push(format!("chrome.nerd_font.{field}"));
+                    }
                 }
             }
         }
@@ -2671,6 +2852,10 @@ theme_color_keys! {
         "status_lsp_on_bg" => color status_lsp_on_bg fallback "ui.status_bar_bg",
         "status_lsp_on_fg" => color status_lsp_on_fg fallback "ui.status_bar_fg",
         "status_palette_bg" => color status_palette_bg fallback "ui.status_bar_bg",
+        "status_outer_bg" => color status_outer_bg fallback "ui.status_bar_bg",
+        "status_outer_fg" => color status_outer_fg fallback "ui.status_bar_fg",
+        "status_inner_bg" => color status_inner_bg fallback "ui.status_bar_bg",
+        "status_inner_fg" => color status_inner_fg fallback "ui.status_bar_fg",
         "status_palette_fg" => color status_palette_fg fallback "ui.status_bar_fg",
         "status_separator_bg" => color status_separator_bg fallback "ui.status_bar_bg",
         "status_separator_fg" => color status_separator_fg fallback "ui.status_bar_fg",
@@ -3925,8 +4110,9 @@ mod tests {
         let dark = Theme::load_builtin("dark").unwrap();
         assert_eq!(dark.chrome, Chrome::default());
         assert!(dark.chrome.gutter_separator && dark.chrome.file_explorer_border);
-        assert_eq!(dark.chrome.tab_separator, " ");
-        assert_eq!(dark.chrome.status_bar_separator, "");
+        assert_eq!(dark.chrome.glyphs(), &Glyphs::default());
+        assert_eq!(dark.chrome.glyphs().tab_separator, " ");
+        assert_eq!(dark.chrome.glyphs().status_bar_separator, "");
 
         let flat = Theme::load_builtin("flat").unwrap();
         assert!(!flat.chrome.gutter_separator);
@@ -3939,8 +4125,40 @@ mod tests {
         .unwrap();
         assert!(child.chrome.gutter_separator, "named: the child's");
         assert!(!child.chrome.file_explorer_border, "unnamed: the base's");
-        assert_eq!(child.chrome.status_bar_separator, " ◆ ");
-        assert_eq!(child.chrome.tab_separator, flat.chrome.tab_separator);
+        assert_eq!(child.chrome.plain.status_bar_separator, " ◆ ");
+        assert_eq!(
+            child.chrome.plain.tab_separator,
+            flat.chrome.plain.tab_separator
+        );
+    }
+
+    /// Nerd Font glyphs are drawn only while the user says they have the
+    /// font; a glyph the `nerd_font` set leaves out falls back to the plain
+    /// one.
+    #[test]
+    fn nerd_font_glyphs_are_used_only_when_asked_for() {
+        let mut theme = Theme::from_json(
+            r#"{"name": "n", "extends": "builtin://dark",
+                "chrome": {"tab_separator": "|",
+                           "nerd_font": {"tab_cap_left": "", "diagnostic_marker": ""}}}"#,
+        )
+        .unwrap();
+        assert_eq!(theme.chrome.glyphs().tab_cap_left, "");
+        assert_eq!(theme.chrome.glyphs().diagnostic_marker, "●");
+        assert!(theme.chrome.use_nerd_font(true));
+        assert!(
+            !theme.chrome.use_nerd_font(true),
+            "no change the second time"
+        );
+        let g = theme.chrome.glyphs();
+        assert_eq!(g.tab_cap_left, "\u{e0b6}");
+        assert_eq!(g.diagnostic_marker, "\u{f057}");
+        assert_eq!(g.tab_separator, "|", "left out of nerd_font: the plain one");
+
+        let raw: serde_json::Value =
+            serde_json::from_str(r#"{"name": "x", "chrome": {"nerd_font": {"tab_cap": "x"}}}"#)
+                .unwrap();
+        assert_eq!(Theme::unknown_keys(&raw), vec!["chrome.nerd_font.tab_cap"]);
     }
 
     /// The options round-trip through the file form, and a misspelled one

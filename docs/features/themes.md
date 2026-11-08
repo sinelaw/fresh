@@ -158,6 +158,54 @@ that is off takes no cells and the content moves into the space.
 "chrome": { "tab_separator": "▏", "status_bar_separator": "·" }
 ```
 
+#### Glyphs
+
+Every glyph the chrome draws can be changed. Defaults are what Fresh has
+always drawn; an empty string draws nothing and takes no space.
+
+| Glyph | Default | What it is |
+| ----- | ------- | ---------- |
+| `tab_cap_left`, `tab_cap_right` | none | Each tab's ends, in the tab's own background on the strip's: rounded or slanted tabs |
+| `tab_close` / `tab_modified` | `×` / `*` | A tab's close button / unsaved marker |
+| `status_bar_section_left`, `status_bar_section_right` | none | Where two status items' backgrounds meet: drawn in one's color over the other's |
+| `status_bar_cap_left`, `status_bar_cap_right` | none | The bar's outer ends, when the outermost item has its own background |
+| `fold_collapsed` / `fold_expanded` | `▸` / `▾` | The gutter's fold markers |
+| `diagnostic_marker` | `●` | The gutter's mark on a line with a diagnostic |
+| `folder_collapsed` / `folder_expanded` | `>` / `▼` | The explorer's folder arrows (your `file_explorer.tree_indicator_*` setting wins once you change it) |
+
+#### Nerd Font glyphs and status bar sections
+
+Status lines in Neovim (lualine) and tab lines (bufferline) get their look from
+Powerline glyphs drawn *between colors*: a section separator is painted in one
+segment's background over the next one's, so segments read as shapes. Fresh's
+status bar does the same:
+
+- `ui.status_outer_fg` / `_bg` color the outermost item on each side
+  (lualine's sections *a* and *z*), `ui.status_inner_fg` / `_bg` the next one
+  in (*b* and *y*). Both default to the bar's own colors.
+- `status_bar_section_left` / `_right` draw where two items' backgrounds
+  differ, `status_bar_cap_left` / `_right` round off the ends.
+
+Glyphs that need a [Nerd Font](https://www.nerdfonts.com) go under
+`nerd_font`. They are drawn only while `editor.nerd_font_icons` is on, so the
+same theme still looks right in a terminal without the font:
+
+```json
+"chrome": {
+  "status_bar_separator": "·",
+  "folder_collapsed": "›", "folder_expanded": "⌄",
+  "nerd_font": {
+    "status_bar_cap_left": "\ue0b6", "status_bar_section_left": "\ue0b4",
+    "status_bar_section_right": "\ue0b6", "status_bar_cap_right": "\ue0b4",
+    "tab_cap_left": "\ue0b6", "tab_cap_right": "\ue0b4",
+    "tab_close": "\udb80\udd56",
+    "folder_collapsed": "\uf460 \ue5ff", "folder_expanded": "\uf47c \ue5fe"
+  }
+}
+```
+
+The built-in `quiet` theme is a complete example.
+
 When a border goes, mark the edge with a background instead:
 `editor.line_number_bg` for the gutter, `ui.file_explorer_bg` for the
 explorer. The built-in `flat` and `quiet` themes do both.

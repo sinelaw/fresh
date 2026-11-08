@@ -954,7 +954,7 @@ mod tests {
             hover_plus: false,
             reveal: None,
             preview_label: String::new(),
-            separator: " ".into(),
+            glyphs: crate::view::theme::Glyphs::default(),
         };
         let s = Splits {
             root: root.clone(),

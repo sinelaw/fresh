@@ -3098,7 +3098,7 @@ impl Window {
         chrome: &HashMap<LeafId, crate::view::shell::splits::PaneChrome>,
         hover: Option<(crate::view::split::TabTarget, LeafId, bool)>,
         hover_plus: Option<LeafId>,
-        separator: &str,
+        glyphs: &crate::view::theme::Glyphs,
     ) -> HashMap<LeafId, crate::view::shell::tabs::Strip> {
         use crate::view::shell::tabs::{Strip, Tab};
         use crate::view::split::TabTarget;
@@ -3189,7 +3189,7 @@ impl Window {
                     hover_plus: hover_plus == Some(leaf),
                     reveal: Some(self.tab_reveal_for(leaf)),
                     preview_label: preview_label.clone(),
-                    separator: separator.to_string(),
+                    glyphs: glyphs.clone(),
                 },
             );
         }

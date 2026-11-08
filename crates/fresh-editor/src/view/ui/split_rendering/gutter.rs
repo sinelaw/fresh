@@ -160,7 +160,10 @@ pub(super) fn render_left_margin(
         .is_some_and(|k| ctx.diagnostic_lines.contains(&k))
     {
         // Diagnostic indicators have highest priority
-        ("●".to_string(), paint.diagnostic(false))
+        (
+            ctx.theme.chrome.glyphs().diagnostic_marker.clone(),
+            paint.diagnostic(false),
+        )
     } else if ctx.state.diff_gutter.is_none()
         && lookup_key.is_some_and(|k| {
             ctx.fold_indicators.contains_key(&k) && !ctx.line_indicators.contains_key(&k)
@@ -171,9 +174,14 @@ pub(super) fn render_left_margin(
         // would be a second, differently-placed answer to the same
         // question.
         let fold = ctx.fold_indicators.get(&lookup_key.unwrap()).unwrap();
-        let symbol = if fold.collapsed { "▸" } else { "▾" };
+        let chrome = ctx.theme.chrome.glyphs();
+        let symbol = if fold.collapsed {
+            &chrome.fold_collapsed
+        } else {
+            &chrome.fold_expanded
+        };
         (
-            symbol.to_string(),
+            symbol.clone(),
             Style::default().theme_fg(ctx.theme, "editor.line_number_fg"),
         )
     } else if let Some(indicator) = lookup_key.and_then(|k| ctx.line_indicators.get(&k)) {

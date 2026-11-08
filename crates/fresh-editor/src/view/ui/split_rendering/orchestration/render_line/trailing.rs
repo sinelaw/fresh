@@ -174,7 +174,10 @@ fn push_left_margin(
         .diagnostic_lines
         .contains(&implicit_line_byte)
     {
-        spans.push(Span::styled("●", paint.diagnostic(highlighted)));
+        spans.push(Span::styled(
+            ctx.theme.chrome.glyphs().diagnostic_marker.clone(),
+            paint.diagnostic(highlighted),
+        ));
     } else {
         spans.push(Span::styled(" ", paint.ground(highlighted)));
     }

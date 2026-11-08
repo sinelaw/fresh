@@ -1274,8 +1274,9 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub show_tilde: bool,
 
-    /// Use Nerd Font icons in the UI (e.g. settings category icons). Only turn on
-    /// if your terminal uses a Nerd Font, or icons show as `?` or boxes. Default: false
+    /// Use Nerd Font icons in the UI (e.g. settings category icons, and the
+    /// `chrome.nerd_font` glyphs a theme provides). Only turn on if your
+    /// terminal uses a Nerd Font, or icons show as `?` or boxes. Default: false
     #[serde(default = "default_false")]
     #[schemars(extend("x-section" = "Display"))]
     pub nerd_font_icons: bool,
@@ -2146,11 +2147,15 @@ fn default_explorer_side() -> FileExplorerSide {
     FileExplorerSide::default()
 }
 
-fn default_tree_indicator_collapsed() -> String {
+/// The default `tree_indicator_collapsed`; a theme's
+/// `chrome.folder_collapsed` is drawn while the setting is still this.
+pub fn default_tree_indicator_collapsed() -> String {
     ">".to_string()
 }
 
-fn default_tree_indicator_expanded() -> String {
+/// The default `tree_indicator_expanded`; see
+/// [`default_tree_indicator_collapsed`].
+pub fn default_tree_indicator_expanded() -> String {
     "▼".to_string()
 }
 
