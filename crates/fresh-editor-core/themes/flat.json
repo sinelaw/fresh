@@ -495,6 +495,21 @@
       143,
       170,
       220
+    ],
+    "tab_separator_fg": [
+      70,
+      75,
+      92
+    ],
+    "status_separator_fg": [
+      70,
+      75,
+      92
+    ],
+    "status_separator_bg": [
+      19,
+      20,
+      25
     ]
   },
   "search": {
@@ -639,6 +654,8 @@
   },
   "chrome": {
     "gutter_separator": false,
-    "file_explorer_border": false
+    "file_explorer_border": false,
+    "tab_separator": "▏",
+    "status_bar_separator": "│"
   }
 }

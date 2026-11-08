@@ -98,6 +98,8 @@ pub struct Strip {
     pub reveal: Option<Rc<fresh_ui::behavior::Anchor>>,
     /// The word a preview tab carries after its name, localized.
     pub preview_label: String,
+    /// What sits between two tabs: the theme's `chrome.tab_separator`.
+    pub separator: String,
 }
 
 impl Strip {
@@ -249,6 +251,11 @@ const PLUS: &str = " + ";
 /// The strip's ground.
 fn ground() -> String {
     pair("ui.tab_inactive_fg", "ui.tab_separator_bg")
+}
+
+/// The ink of the text between two tabs (`chrome.tab_separator`).
+fn separator_ink() -> String {
+    pair("ui.tab_separator_fg", "ui.tab_separator_bg")
 }
 
 /// A tab's own ink — `tab_styles`, in theme names.
@@ -545,8 +552,8 @@ pub fn strip(pane: LeafId, s: &Strip, c: Cluster) -> Node<UiMsg> {
 fn tab_window(pane: LeafId, s: &Strip, cap: usize) -> Node<UiMsg> {
     let mut cells: Vec<Node<UiMsg>> = Vec::new();
     for (i, t) in s.tabs.iter().enumerate() {
-        if i > 0 {
-            cells.push(text(" ").theme(ground()));
+        if i > 0 && !s.separator.is_empty() {
+            cells.push(text(s.separator.clone()).theme(separator_ink()));
         }
         let (name_ink, close_ink) = tab_ink(s, i);
         // The name and its `×` in one keyed span, so `reveal_key` brings the
@@ -719,6 +726,7 @@ mod tests {
             hover_plus: false,
             reveal: None,
             preview_label: "(preview)".into(),
+            separator: " ".into(),
         }
     }
 

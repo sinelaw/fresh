@@ -1707,7 +1707,13 @@
     "field.property": "Property",
     "field.property_desc": "Object properties, fields and keys (default: variable color)",
     "field.attribute": "Attribute",
-    "field.attribute_desc": "Attributes, decorators and annotations (default: constant color)"
+    "field.attribute_desc": "Attributes, decorators and annotations (default: constant color)",
+    "field.tab_separator": "Tab Separator",
+    "field.tab_separator_desc": "Text between two tabs, e.g. │ ▏ · (empty: tabs side by side)",
+    "field.status_bar_separator": "Status Bar Separator",
+    "field.status_bar_separator_desc": "Text between status bar items, e.g. · │ ◆ (a status_bar.separator in your config wins)",
+    "field.tab_separator_fg": "Tab Separator Text",
+    "field.tab_separator_fg_desc": "Color of the text between tabs (default: inactive tab text)"
   },
   "es": {
     "field.indent_rainbow": "Arcoíris de sangría %{level}",

@@ -59,6 +59,7 @@ const ALL_COLOR_NAMES = [...NAMED_COLOR_LIST, ...SPECIAL_COLORS];
 type ColorValue = RGB | string;
 type ModifierValue = string[];
 type ThemeFieldValue = ColorValue | ModifierValue | boolean;
+/** Note: a `text` field's value is a string, which `ColorValue` covers. */
 
 // =============================================================================
 // Layout Constants & Panel Types
@@ -173,9 +174,10 @@ interface ThemeFieldDef {
 
 /**
  * What a field edits: a color, a color's text attributes, or one of the
- * `chrome` section's on/off structural options.
+ * `chrome` section's structural options — an on/off toggle, or the text of a
+ * separator glyph.
  */
-type FieldKind = "color" | "modifier" | "toggle";
+type FieldKind = "color" | "modifier" | "toggle" | "text";
 
 /**
  * Theme field with current value
@@ -242,6 +244,13 @@ function fieldRefersToStyledColorDef(fieldObj: Record<string, unknown>): boolean
       : undefined;
     return typeof r === "string" && r.endsWith("/StyledColorDef");
   });
+}
+
+/** Whether a property schema entry is a string (possibly nullable). Theme
+ * colors are `$ref`s, so only the `chrome` section's separators match. */
+function fieldIsString(fieldObj: Record<string, unknown>): boolean {
+  const t = fieldObj["type"];
+  return t === "string" || (Array.isArray(t) && t.includes("string"));
 }
 
 /** Whether a property schema entry is a boolean (possibly nullable). */
@@ -346,6 +355,11 @@ function loadThemeSections(): ThemeSection[] {
       // schema types them `["boolean", "null"]`): edited as on/off toggles.
       if (fieldIsBoolean(fieldObj)) {
         fields.push(makeFieldDef(fieldName, "toggle", fieldDesc));
+        continue;
+      }
+      // Its separators are strings (glyphs), edited as text.
+      if (fieldIsString(fieldObj)) {
+        fields.push(makeFieldDef(fieldName, "text", fieldDesc));
         continue;
       }
 
@@ -932,7 +946,9 @@ function buildVisibleFields(): ThemeField[] {
         const storedValue = getNestedValue(state.themeData, path);
         const fallback: ThemeFieldValue = fieldDef.kind === "modifier"
           ? []
-          : fieldDef.kind === "toggle" ? true : [128, 128, 128];
+          : fieldDef.kind === "toggle"
+            ? true
+            : fieldDef.kind === "text" ? "" : [128, 128, 128];
         const value = (storedValue ?? fallback) as ThemeFieldValue;
 
         fields.push({
@@ -1022,11 +1038,15 @@ function buildTreeLines(): TreeLine[] {
         ? formatModifierValue(field.value as ModifierValue)
         : field.def.kind === "toggle"
           ? (field.value ? "on" : "off")
-          : formatColorValue(field.value as ColorValue);
+          : field.def.kind === "text"
+            ? JSON.stringify(field.value)
+            : formatColorValue(field.value as ColorValue);
       const valueStr = valueText.length > valueW ? valueText.slice(0, valueW - 1) + "…" : valueText;
       const marker = field.def.kind === "modifier"
         ? "Aa"
-        : field.def.kind === "toggle" ? (field.value ? " ●" : " ○") : "██";
+        : field.def.kind === "toggle"
+          ? (field.value ? " ●" : " ○")
+          : field.def.kind === "text" ? "Ab" : "██";
       lines.push({
         text: `  ${sel} ${name.padEnd(nameW)} ${marker} ${valueStr}`,
         type: "tree-field",
@@ -1083,6 +1103,15 @@ function buildPickerLines(): PickerLine[] {
     lines.push({ text: "Available: bold, italic, underlined, dim, reversed", type: "picker-label" });
     lines.push({ text: "Press Enter or Space to edit the comma-separated list.", type: "picker-desc" });
     lines.push({ text: "Use an empty value or 'normal' to clear attributes.", type: "picker-desc" });
+    return lines;
+  }
+
+  if (field.def.kind === "text") {
+    lines.push({ text: `Text: ${JSON.stringify(field.value)}`, type: "picker-hex" });
+    lines.push({ text: "", type: "picker-blank" });
+    lines.push({ text: "Press Enter or Space to type it, or pick a glyph:", type: "picker-desc" });
+    lines.push({ text: ` ${SEPARATOR_GLYPHS.map(g => g.value || "∅").join("  ")}`, type: "picker-label" });
+    lines.push({ text: "The editor shows each change live, before saving.", type: "picker-desc" });
     return lines;
   }
 
@@ -1668,6 +1697,10 @@ function editColorField(field: ThemeField): void {
     toggleField(field);
     return;
   }
+  if (field.def.kind === "text") {
+    editTextField(field);
+    return;
+  }
   const currentValue = formatColorValue(field.value as ColorValue);
   editor.startPromptWithInitial(
     editor.t("prompt.color_input", { field: field.def.displayName }),
@@ -1675,6 +1708,37 @@ function editColorField(field: ThemeField): void {
     currentValue
   );
   editor.setPromptSuggestions(buildColorSuggestions(field));
+}
+
+/** Separator glyphs offered for a `chrome` text option. */
+const SEPARATOR_GLYPHS: Array<{ value: string; description: string }> = [
+  { value: "│", description: "Thin vertical line" },
+  { value: "┃", description: "Heavy vertical line" },
+  { value: "▏", description: "Left one-eighth block" },
+  { value: "▕", description: "Right one-eighth block" },
+  { value: "·", description: "Middle dot" },
+  { value: "•", description: "Bullet" },
+  { value: "◆", description: "Diamond" },
+  { value: "╱", description: "Diagonal" },
+  { value: "⟩", description: "Angle bracket" },
+  { value: "\u{e0b1}", description: "Powerline thin arrow (needs a Nerd Font)" },
+  { value: " ", description: "One space" },
+  { value: "", description: "Nothing" },
+];
+
+/** Edit a `chrome` separator: free text, with glyphs to pick from. */
+function editTextField(field: ThemeField): void {
+  editor.startPromptWithInitial(
+    `${field.def.displayName} (any text):`,
+    `theme-text-${field.path}`,
+    String(field.value ?? ""),
+  );
+  editor.setPromptSuggestions(SEPARATOR_GLYPHS.map(g => ({
+    id: `glyph:${g.value}`,
+    text: g.value === "" ? "(none)" : g.value === " " ? "(space)" : g.value,
+    description: g.description,
+    value: g.value,
+  })));
 }
 
 /** Flip a `chrome` on/off option. */
@@ -1827,6 +1891,18 @@ function findMatchingColor(input: string): string | null {
 
 
 // Register prompt handlers
+editor.on("prompt_confirmed", (args) => {
+  if (!args.prompt_type.startsWith("theme-text-")) return true;
+  const path = args.prompt_type.replace("theme-text-", "");
+  // Taken as typed: a separator's spaces are part of it.
+  setNestedValue(state.themeData, path, args.input);
+  state.hasChanges = !deepEqual(state.themeData, state.originalThemeData);
+  updateDisplay();
+  moveCursorToField(path);
+  editor.setStatus(editor.t("status.updated", { path }));
+  return true;
+});
+
 editor.on("prompt_confirmed", (args) => {
   if (!args.prompt_type.startsWith("theme-modifier-")) return true;
 
@@ -2776,6 +2852,10 @@ function applyPickerColor(): void {
   }
   if (field.def.kind === "toggle") {
     toggleField(field);
+    return;
+  }
+  if (field.def.kind === "text") {
+    editTextField(field);
     return;
   }
 

@@ -71,6 +71,7 @@
         "tab_inactive_fg": null,
         "tab_inactive_bg": null,
         "tab_separator_bg": null,
+        "tab_separator_fg": null,
         "tab_close_hover_fg": null,
         "tab_hover_bg": null,
         "menu_bg": null,
@@ -799,6 +800,18 @@
         },
         "tab_separator_bg": {
           "description": "Tab bar separator color",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tab_separator_fg": {
+          "description": "Color of the `chrome.tab_separator` text between tabs. Falls back to\n`tab_inactive_fg`.",
           "anyOf": [
             {
               "$ref": "#/$defs/StyledColorDef"
@@ -2212,6 +2225,20 @@
           "description": "Draw the box around the file explorer. When false, the explorer keeps\nits title row (title, refresh and close buttons) but loses its side\nwalls and bottom border, and its rows use the full panel width.\nDefault: true",
           "type": [
             "boolean",
+            "null"
+          ]
+        },
+        "tab_separator": {
+          "description": "Text drawn between two tabs, in `ui.tab_separator_fg` on\n`ui.tab_separator_bg`. Any string, glyphs included (`\"│\"`, `\"▏\"`,\n`\"·\"`); empty puts the tabs side by side. Default: one space",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status_bar_separator": {
+          "description": "Text drawn between status bar items, in `ui.status_separator_fg` on\n`ui.status_separator_bg`. Each item already has a one-space margin, so\n`\"·\"` shows as `LF · UTF-8`. A `status_bar.separator` set in the\nuser's config wins over the theme's. Default: none",
+          "type": [
+            "string",
             "null"
           ]
         }

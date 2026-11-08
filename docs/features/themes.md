@@ -151,6 +151,13 @@ that is off takes no cells and the content moves into the space.
 | `gutter_separator` | `true` | The gutter ends in a one-cell pad instead of ` │ `. |
 | `file_explorer_border` | `true` | The explorer keeps its title row; its walls and bottom border go and its rows take the full width. The edge facing the editor stays as one blank column you can drag to resize. |
 
+| `tab_separator` | `" "` | Text between two tabs, in `ui.tab_separator_fg` on `ui.tab_separator_bg`. Any glyph: `"│"`, `"▏"`, `"·"`; `""` puts tabs side by side. |
+| `status_bar_separator` | `""` | Text between status bar items, in `ui.status_separator_fg`/`_bg`. Items already have a one-space margin, so `"·"` shows as `LF · UTF-8`. A `status_bar.separator` in your config wins over the theme's. |
+
+```json
+"chrome": { "tab_separator": "▏", "status_bar_separator": "·" }
+```
+
 When a border goes, mark the edge with a background instead:
 `editor.line_number_bg` for the gutter, `ui.file_explorer_bg` for the
 explorer. The built-in `flat` and `quiet` themes do both.

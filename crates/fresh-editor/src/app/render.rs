@@ -5751,7 +5751,9 @@ impl Editor {
             Some(crate::app::types::HoverTarget::NewTabButton(pane)) => Some(*pane),
             _ => None,
         };
-        self.active_window().pane_strips(chrome, hover, hover_plus)
+        let separator = self.theme.read().unwrap().chrome.tab_separator.clone();
+        self.active_window()
+            .pane_strips(chrome, hover, hover_plus, &separator)
     }
 
     /// Each visible pane's leaf handle, for the frame's description — the
@@ -5864,7 +5866,8 @@ impl Editor {
             hscroll: false,
         });
         let groups = win.pane_groups();
-        let strips = win.pane_strips(&chrome, None, None);
+        let separator = self.theme.read().unwrap().chrome.tab_separator.clone();
+        let strips = win.pane_strips(&chrome, None, None, &separator);
         let rowless: std::collections::HashSet<_> = groups.keys().copied().collect();
         let hosts = win.pane_hosts(&rowless);
         Some(std::rc::Rc::new(Splits {
@@ -6288,6 +6291,15 @@ impl Editor {
         // A field-level borrow, disjoint from the `self.windows` borrow below.
         let keybindings_guard = self.keybindings.read().unwrap();
         let keybindings = &*keybindings_guard;
+        // Between items: the user's `status_bar.separator` when they set
+        // one, else the theme's `chrome.status_bar_separator`.
+        let theme_separator = self
+            .theme
+            .read()
+            .unwrap()
+            .chrome
+            .status_bar_separator
+            .clone();
         // Single window borrow, split into buffers + cursors so the
         // status-bar context can hold both.
         let __active_id = self.active_window;
@@ -6348,7 +6360,12 @@ impl Editor {
                 // right element is never dropped, so a user who configured any
                 // right-side status keeps some of it.
                 let available = width as usize;
-                let sep_w = crate::primitives::display_width::str_width(&config.separator);
+                let separator = if config.separator.is_empty() {
+                    theme_separator.clone()
+                } else {
+                    config.separator.clone()
+                };
+                let sep_w = crate::primitives::display_width::str_width(&separator);
                 let width_of =
                     |it: &sb::Item| crate::primitives::display_width::str_width(&it.text());
                 let total_right: usize = right.iter().map(width_of).sum::<usize>()
@@ -6375,7 +6392,7 @@ impl Editor {
                 sb::StatusBar {
                     left,
                     right,
-                    separator: config.separator.clone(),
+                    separator,
                     base_theme: pair("ui.status_bar_fg", "ui.status_bar_bg"),
                     sep_theme: pair("ui.status_separator_fg", "ui.status_separator_bg"),
                 }

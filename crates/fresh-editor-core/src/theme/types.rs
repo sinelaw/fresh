@@ -475,6 +475,17 @@ pub struct ChromeOptions {
     /// Default: true
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file_explorer_border: Option<bool>,
+    /// Text drawn between two tabs, in `ui.tab_separator_fg` on
+    /// `ui.tab_separator_bg`. Any string, glyphs included (`"│"`, `"▏"`,
+    /// `"·"`); empty puts the tabs side by side. Default: one space
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_separator: Option<String>,
+    /// Text drawn between status bar items, in `ui.status_separator_fg` on
+    /// `ui.status_separator_bg`. Each item already has a one-space margin, so
+    /// `"·"` shows as `LF · UTF-8`. A `status_bar.separator` set in the
+    /// user's config wins over the theme's. Default: none
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_bar_separator: Option<String>,
 }
 
 impl ChromeOptions {
@@ -484,14 +495,21 @@ impl ChromeOptions {
     }
 
     /// The option names a theme file may use, for unknown-key warnings.
-    pub const KEYS: &'static [&'static str] = &["gutter_separator", "file_explorer_border"];
+    pub const KEYS: &'static [&'static str] = &[
+        "gutter_separator",
+        "file_explorer_border",
+        "tab_separator",
+        "status_bar_separator",
+    ];
 }
 
 /// The resolved [`ChromeOptions`]: every option decided.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Chrome {
     pub gutter_separator: bool,
     pub file_explorer_border: bool,
+    pub tab_separator: String,
+    pub status_bar_separator: String,
 }
 
 impl Default for Chrome {
@@ -499,6 +517,8 @@ impl Default for Chrome {
         Self {
             gutter_separator: true,
             file_explorer_border: true,
+            tab_separator: " ".to_string(),
+            status_bar_separator: String::new(),
         }
     }
 }
@@ -511,6 +531,11 @@ impl Chrome {
             file_explorer_border: file
                 .file_explorer_border
                 .unwrap_or(self.file_explorer_border),
+            tab_separator: file.tab_separator.clone().unwrap_or(self.tab_separator),
+            status_bar_separator: file
+                .status_bar_separator
+                .clone()
+                .unwrap_or(self.status_bar_separator),
         }
     }
 }
@@ -520,6 +545,8 @@ impl From<Chrome> for ChromeOptions {
         Self {
             gutter_separator: Some(c.gutter_separator),
             file_explorer_border: Some(c.file_explorer_border),
+            tab_separator: Some(c.tab_separator),
+            status_bar_separator: Some(c.status_bar_separator),
         }
     }
 }
@@ -751,6 +778,10 @@ pub struct UiColors {
     /// Tab bar separator color
     #[serde(default)]
     pub tab_separator_bg: Option<StyledColorDef>,
+    /// Color of the `chrome.tab_separator` text between tabs. Falls back to
+    /// `tab_inactive_fg`.
+    #[serde(default)]
+    pub tab_separator_fg: Option<StyledColorDef>,
     /// Tab close button hover color
     #[serde(default)]
     pub tab_close_hover_fg: Option<StyledColorDef>,
@@ -1260,6 +1291,8 @@ pub struct Theme {
     pub tab_inactive_fg: Color,
     pub tab_inactive_bg: Color,
     pub tab_separator_bg: Color,
+    /// Ink of the `chrome.tab_separator` text.
+    pub tab_separator_fg: Color,
     pub tab_close_hover_fg: Color,
     pub tab_hover_bg: Color,
 
@@ -1556,6 +1589,7 @@ impl From<ThemeFile> for Theme {
             tab_inactive_fg: styled_color(&file.ui.tab_inactive_fg),
             tab_inactive_bg: styled_color(&file.ui.tab_inactive_bg),
             tab_separator_bg: styled_color(&file.ui.tab_separator_bg),
+            tab_separator_fg: styled_color(&file.ui.tab_separator_fg),
             tab_close_hover_fg: styled_color(&file.ui.tab_close_hover_fg),
             tab_hover_bg: styled_color(&file.ui.tab_hover_bg),
             menu_bg: styled_color(&file.ui.menu_bg),
@@ -1753,6 +1787,7 @@ impl From<Theme> for ThemeFile {
                 tab_inactive_fg: styled(&theme, "ui.tab_inactive_fg"),
                 tab_inactive_bg: styled(&theme, "ui.tab_inactive_bg"),
                 tab_separator_bg: styled(&theme, "ui.tab_separator_bg"),
+                tab_separator_fg: styled(&theme, "ui.tab_separator_fg"),
                 tab_close_hover_fg: styled(&theme, "ui.tab_close_hover_fg"),
                 tab_hover_bg: styled(&theme, "ui.tab_hover_bg"),
                 menu_bg: styled(&theme, "ui.menu_bg"),
@@ -1889,7 +1924,7 @@ impl From<Theme> for ThemeFile {
                 property: styled(&theme, "syntax.property"),
                 attribute: styled(&theme, "syntax.attribute"),
             },
-            chrome: theme.chrome.into(),
+            chrome: theme.chrome.clone().into(),
         }
     }
 }
@@ -1984,7 +2019,7 @@ fn relative_luminance(r: u8, g: u8, b: u8) -> f64 {
 fn apply_theme_overrides(theme: &mut Theme, theme_file: &ThemeFile, raw: &serde_json::Value) {
     // Name always comes from the user file — that's the theme's identity.
     theme.name = theme_file.name.clone();
-    theme.chrome = theme.chrome.overridden_by(&theme_file.chrome);
+    theme.chrome = theme.chrome.clone().overridden_by(&theme_file.chrome);
 
     // Keys added after themes could already extend one another, whose
     // fallback was the only color they had: in the base they still hold that
@@ -2051,6 +2086,7 @@ const KEYS_FOLLOWING_FALLBACK_ACROSS_EXTENDS: &[&str] = &[
     "syntax.number",
     "syntax.property",
     "syntax.attribute",
+    "ui.tab_separator_fg",
 ];
 
 /// Every non-null `"section.field"` leaf of a theme JSON, under its canonical
@@ -2654,6 +2690,7 @@ theme_color_keys! {
         "tab_inactive_bg" => color tab_inactive_bg,
         "tab_inactive_fg" => color tab_inactive_fg,
         "tab_separator_bg" => color tab_separator_bg,
+        "tab_separator_fg" => color tab_separator_fg fallback "ui.tab_inactive_fg",
         "terminal_bg" => color terminal_bg fallback "editor.bg",
         "terminal_fg" => color terminal_fg fallback "editor.fg",
         "text_input_selection_bg" => color text_input_selection_bg fallback "ui.popup_selection_bg",
@@ -3881,6 +3918,90 @@ mod tests {
     /// of its own: not the panel, and not the unfocused cursor's
     /// `current_line_bg`, or a cursor on a pinned row would vanish into the
     /// band it sits in.
+    /// A theme that names no `chrome` option gets the look Fresh always had,
+    /// and one that `extends` another inherits the options it leaves out.
+    #[test]
+    fn chrome_defaults_and_inherits_through_extends() {
+        let dark = Theme::load_builtin("dark").unwrap();
+        assert_eq!(dark.chrome, Chrome::default());
+        assert!(dark.chrome.gutter_separator && dark.chrome.file_explorer_border);
+        assert_eq!(dark.chrome.tab_separator, " ");
+        assert_eq!(dark.chrome.status_bar_separator, "");
+
+        let flat = Theme::load_builtin("flat").unwrap();
+        assert!(!flat.chrome.gutter_separator);
+        assert!(!flat.chrome.file_explorer_border);
+
+        let child = Theme::from_json(
+            r#"{"name": "child", "extends": "builtin://flat",
+                "chrome": {"gutter_separator": true, "status_bar_separator": " ◆ "}}"#,
+        )
+        .unwrap();
+        assert!(child.chrome.gutter_separator, "named: the child's");
+        assert!(!child.chrome.file_explorer_border, "unnamed: the base's");
+        assert_eq!(child.chrome.status_bar_separator, " ◆ ");
+        assert_eq!(child.chrome.tab_separator, flat.chrome.tab_separator);
+    }
+
+    /// The options round-trip through the file form, and a misspelled one
+    /// is reported like a misspelled color key.
+    #[test]
+    fn chrome_round_trips_and_reports_unknown_options() {
+        let flat = Theme::load_builtin("flat").unwrap();
+        let file: ThemeFile = flat.clone().into();
+        let again = Theme::from_json(&serde_json::to_string(&file).unwrap()).unwrap();
+        assert_eq!(again.chrome, flat.chrome);
+
+        let raw: serde_json::Value =
+            serde_json::from_str(r#"{"name": "x", "chrome": {"gutter_seperator": false}}"#)
+                .unwrap();
+        assert_eq!(Theme::unknown_keys(&raw), vec!["chrome.gutter_seperator"]);
+    }
+
+    /// The new chrome color keys default to what painted those cells before,
+    /// and keep following it through `extends`: a theme that only recolors
+    /// `editor.bg` must not get a gutter and an explorer in its base's
+    /// background.
+    #[test]
+    fn chrome_colors_follow_their_fallbacks_through_extends() {
+        let dark = Theme::load_builtin("dark").unwrap();
+        assert_eq!(dark.file_explorer_bg, dark.editor_bg);
+        assert_eq!(dark.file_explorer_fg, dark.editor_fg);
+        assert_eq!(dark.file_explorer_border_fg, dark.split_separator_fg);
+        assert_eq!(dark.file_explorer_border_focused_fg, dark.cursor);
+        assert_eq!(dark.file_explorer_indicator_fg, dark.diagnostic_warning_fg);
+        assert_eq!(dark.gutter_separator_fg, dark.line_number_fg);
+        assert_eq!(dark.tab_separator_fg, dark.tab_inactive_fg);
+        assert_eq!(dark.syntax_number, dark.syntax_constant);
+        assert_eq!(dark.syntax_attribute, dark.syntax_constant);
+        assert_eq!(dark.syntax_property, dark.syntax_variable);
+        assert_eq!(
+            dark.current_line_number_fg, None,
+            "unset keeps the old look"
+        );
+
+        let child = Theme::from_json(
+            r#"{"name": "child", "extends": "builtin://dark",
+                "editor": {"bg": [1, 2, 3]}, "syntax": {"constant": [4, 5, 6]}}"#,
+        )
+        .unwrap();
+        assert_eq!(child.line_number_bg, Color::Rgb(1, 2, 3));
+        assert_eq!(child.file_explorer_bg, Color::Rgb(1, 2, 3));
+        assert_eq!(child.syntax_number, Color::Rgb(4, 5, 6));
+        assert_eq!(child.syntax_attribute, Color::Rgb(4, 5, 6));
+
+        let styled = Theme::from_json(
+            r#"{"name": "n", "extends": "builtin://dark",
+                "editor": {"current_line_number_fg": {"color": [9, 9, 9], "modifier": ["bold"]}}}"#,
+        )
+        .unwrap();
+        assert_eq!(styled.current_line_number_fg, Some(Color::Rgb(9, 9, 9)));
+        assert_eq!(
+            styled.resolve_modifier_key("editor.current_line_number_fg"),
+            Modifier::BOLD
+        );
+    }
+
     /// Explorer folder names have a key of their own (#3697): a theme that
     /// leaves it out keeps the old look (`syntax.keyword`), and one that sets
     /// it recolors folders without touching code keywords.
