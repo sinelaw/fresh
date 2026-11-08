@@ -103,6 +103,82 @@ fn setup_completion_popup(prefix: &str) -> anyhow::Result<EditorTestHarness> {
     Ok(harness)
 }
 
+/// textEdit supplies both replacement text and a range, including punctuation
+/// and a suffix after the cursor. Typing/backspace must keep that range valid.
+#[test]
+fn test_completion_accepts_text_edit_range() -> anyhow::Result<()> {
+    use lsp_types::{
+        CompletionItem, CompletionTextEdit, InsertReplaceEdit, Position, Range, TextEdit,
+    };
+
+    for insert_replace in [false, true] {
+        let input = "use @calXYZ!";
+        let mut h = setup_completion_popup(input)?;
+        h.editor_mut().handle_popup_cancel();
+        for _ in 0..4 {
+            h.send_key(KeyCode::Left, KeyModifiers::NONE)?;
+        }
+        let range = Range::new(Position::new(0, 4), Position::new(0, 11));
+        let edit = if insert_replace {
+            CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
+                new_text: "result".into(),
+                insert: Range::new(range.start, Position::new(0, 8)),
+                replace: range,
+            })
+        } else {
+            CompletionTextEdit::Edit(TextEdit::new(range, "result".into()))
+        };
+        h.editor_mut().set_completion_items(vec![CompletionItem {
+            label: "@calculate".into(),
+            insert_text: Some("wrong".into()),
+            text_edit: Some(edit),
+            ..Default::default()
+        }]);
+        // Directly invoke the popup handlers to rebuild its actual filtered
+        // rows and candidate mapping from these cached server results.
+        h.editor_mut().handle_popup_type_char('c');
+        h.editor_mut().handle_popup_backspace();
+        h.render()?;
+        h.send_key(KeyCode::Tab, KeyModifiers::NONE)?;
+        assert_eq!(h.get_buffer_content().unwrap(), "use result!");
+        assert_eq!(
+            h.editor().active_cursors().primary().position,
+            "use result".len()
+        );
+        h.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)?;
+        assert_eq!(h.get_buffer_content().unwrap(), input);
+    }
+    Ok(())
+}
+
+#[test]
+fn test_completion_text_edit_snippet_and_plain_text() -> anyhow::Result<()> {
+    use lsp_types::{
+        CompletionItem, CompletionTextEdit, InsertTextFormat, Position, Range, TextEdit,
+    };
+
+    for (text, format, expected, cursor) in [
+        ("$1", InsertTextFormat::PLAIN_TEXT, "$1", 2),
+        ("call($0)", InsertTextFormat::SNIPPET, "call()", 5),
+    ] {
+        let mut h = setup_completion_popup("calc")?;
+        h.editor_mut().set_completion_items(vec![CompletionItem {
+            label: "calculate".into(),
+            insert_text_format: Some(format),
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit::new(
+                Range::new(Position::new(0, 0), Position::new(0, 4)),
+                text.into(),
+            ))),
+            ..Default::default()
+        }]);
+        h.send_key(KeyCode::Char('u'), KeyModifiers::NONE)?;
+        h.send_key(KeyCode::Tab, KeyModifiers::NONE)?;
+        assert_eq!(h.get_buffer_content().unwrap(), expected);
+        assert_eq!(h.editor().active_cursors().primary().position, cursor);
+    }
+    Ok(())
+}
+
 // ============================================================================
 // Issue 1: Left/Right arrow keys are swallowed
 // ============================================================================
