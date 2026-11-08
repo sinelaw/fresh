@@ -76,7 +76,7 @@ fn enable_live_diff_globally(harness: &mut EditorTestHarness) {
 // =============================================================================
 
 /// vs HEAD: an added line shows `+` in the gutter once the file is opened.
-/// Live-diff fetches `git show HEAD:<path>` and diffs against the on-disk
+/// Live-diff fetches HEAD (`git cat-file --filters HEAD:<path>`) and diffs against the on-disk
 /// content (which has one new line vs HEAD), so the new line should be
 /// flagged with `+`.
 #[test]
@@ -1380,4 +1380,164 @@ fn test_live_diff_waits_for_a_background_windows_buffer() {
             screen.contains("line three ADDED") && !has_glyph(&screen, '+')
         })
         .unwrap();
+}
+
+/// Regression: a CRLF working-tree file whose blob is stored LF
+/// (`core.autocrlf=true`, the Windows default, or `eol=crlf`) diffed as
+/// one whole-file replacement — every old line as a deletion block above
+/// every new line as an addition block — because the HEAD baseline came
+/// from the raw blob (`git show`) and the line diff counts the terminator
+/// as part of the line. The baseline now comes from
+/// `git cat-file --filters`, in working-tree form, so only the inserted
+/// line is reported and unchanged lines are not repeated as deletions.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_live_diff_crlf_worktree_against_lf_blob_diffs_per_line() {
+    let repo = GitTestRepo::new();
+    repo.setup_live_diff_plugin();
+
+    // Pinned via attributes so the test doesn't depend on the host's
+    // core.autocrlf: the blob is stored LF, the checkout is CRLF.
+    repo.create_file(".gitattributes", "*.rs text eol=crlf\n");
+    repo.create_file(
+        "src/utils.rs",
+        "UNCHANGED_HEAD_MARKER\r\nsecond\r\nthird\r\nUNCHANGED_TAIL_MARKER\r\n",
+    );
+    repo.git_add_all();
+    repo.git_commit("init");
+
+    let _guard = repo.change_to_repo_dir();
+
+    // Insert one line in the middle, keeping CRLF like any Windows editor.
+    repo.modify_file(
+        "src/utils.rs",
+        "UNCHANGED_HEAD_MARKER\r\nsecond\r\nINSERTED_LINE_MARKER\r\nthird\r\nUNCHANGED_TAIL_MARKER\r\n",
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    enable_live_diff_globally(&mut harness);
+    open_file(&mut harness, &repo.path, "src/utils.rs");
+
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            has_glyph(&s, '+') && has_text(&s, "INSERTED_LINE_MARKER")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    for marker in ["UNCHANGED_HEAD_MARKER", "UNCHANGED_TAIL_MARKER"] {
+        let rows = content_lines(&screen)
+            .iter()
+            .filter(|l| l.contains(marker))
+            .count();
+        assert_eq!(
+            rows, 1,
+            "unchanged line {marker} must appear once (no deletion copy from a \
+             whole-file replacement); screen:\n{screen}"
+        );
+    }
+    assert!(
+        !has_glyph(&screen, '-'),
+        "a pure insertion must not render any deletion rows; screen:\n{screen}"
+    );
+}
+
+/// The converse of the CRLF case: the checkout form is CRLF (`eol=crlf`,
+/// or `core.autocrlf=true` on Windows) but a tool rewrote the file with
+/// LF, blanking one line. A baseline in checkout form must not make every
+/// LF line differ from its CRLF counterpart — only the blanked line is a
+/// change, so unchanged lines get no diff background and no deletion
+/// copy.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_live_diff_lf_worktree_in_crlf_checkout_diffs_per_line() {
+    let repo = GitTestRepo::new();
+    repo.setup_live_diff_plugin();
+
+    repo.create_file(".gitattributes", "*.rs text eol=crlf\n");
+    repo.create_file(
+        "src/utils.rs",
+        "UNCHANGED_HEAD_MARKER\r\nsecond\r\nREMOVED_LINE_MARKER\r\nUNCHANGED_TAIL_MARKER\r\n",
+    );
+    repo.git_add_all();
+    repo.git_commit("init");
+
+    let _guard = repo.change_to_repo_dir();
+
+    // Rewritten with LF by a tool, one line blanked.
+    repo.modify_file(
+        "src/utils.rs",
+        "UNCHANGED_HEAD_MARKER\nsecond\n\nUNCHANGED_TAIL_MARKER\n",
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    enable_live_diff_globally(&mut harness);
+    open_file(&mut harness, &repo.path, "src/utils.rs");
+
+    harness
+        .wait_until(|h| has_text(&h.screen_to_string(), "REMOVED_LINE_MARKER"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    for marker in ["UNCHANGED_HEAD_MARKER", "UNCHANGED_TAIL_MARKER"] {
+        let rows: Vec<&str> = content_lines(&screen)
+            .into_iter()
+            .filter(|l| l.contains(marker))
+            .collect();
+        assert_eq!(
+            rows.len(),
+            1,
+            "unchanged line {marker} must appear once; screen:\n{screen}"
+        );
+        assert!(
+            !rows[0].contains('~') && !rows[0].contains('+') && !rows[0].contains('-'),
+            "unchanged line {marker} must carry no diff glyph; screen:\n{screen}"
+        );
+    }
+    // Exactly one deletion row: the blanked line's old content.
+    let deletion_rows = content_lines(&screen)
+        .iter()
+        .filter(|l| l.contains("REMOVED_LINE_MARKER"))
+        .count();
+    assert_eq!(deletion_rows, 1, "screen:\n{screen}");
+
+    // The whole-file symptom painted unchanged lines with the "modified"
+    // background without any glyph, so check the background directly.
+    // `Config::default()` is the `high-contrast` theme.
+    use ratatui::style::Color;
+    let diff_bgs = [
+        Some(Color::Rgb(0, 80, 0)),  // diff_add_bg
+        Some(Color::Rgb(60, 55, 0)), // diff_modify_bg
+        Some(Color::Rgb(100, 0, 0)), // diff_remove_bg
+    ];
+    let buf = harness.buffer();
+    for marker in ["UNCHANGED_HEAD_MARKER", "UNCHANGED_TAIL_MARKER"] {
+        let y = (0..buf.area.height)
+            .find(|&y| {
+                let row: String = (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect();
+                row.contains(marker)
+            })
+            .unwrap_or_else(|| panic!("{marker} not on screen"));
+        let bg = buf[(40, y)].style().bg;
+        assert!(
+            !diff_bgs.contains(&bg),
+            "unchanged line {marker} must not carry a diff background, saw {bg:?}; \
+             screen:\n{screen}"
+        );
+    }
 }

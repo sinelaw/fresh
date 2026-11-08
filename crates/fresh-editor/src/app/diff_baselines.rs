@@ -9,7 +9,7 @@
 //! `docs/internal/host-diff-service-design.md`.
 //!
 //! Ownership: the editor thread allocates ids and runs diffs; content
-//! loading (filesystem read, `git show`) happens off-loop via
+//! loading (filesystem read, `git cat-file --filters`) happens off-loop via
 //! [`crate::app::plugin_offloop::load_diff_baseline`], which fills the
 //! shared store and settles the plugin's promise. The store is behind
 //! `Arc<Mutex<..>>` solely for that producer/consumer handoff — the
@@ -35,8 +35,9 @@ pub enum BaselineSpec {
     /// The file as currently on disk, read via the owning window's
     /// filesystem authority.
     Disk { path: PathBuf },
-    /// The file at a git revision: `git show <spec>` run in `cwd` on the
-    /// owning window's authority. `show_spec` is the full `<rev>:<path>`
+    /// The file at a git revision: `git cat-file --filters <spec>` run in
+    /// `cwd` on the owning window's authority. `--filters` yields the
+    /// working-tree form, so line endings match the buffer's. `show_spec` is the full `<rev>:<path>`
     /// (or `:0:<path>` for the index) argument; the repo-relative path is
     /// resolved off-loop at load time.
     Git {
@@ -122,12 +123,41 @@ impl BaselineStore {
     }
 }
 
-/// Diff two loaded baseline contents (e.g. disk vs HEAD).
-pub fn diff_contents(old: &BaselineContent, new: &BaselineContent) -> DiffBaselineResult {
+impl BaselineSpec {
+    /// True for git-revision baselines, whose diffs ignore line-ending
+    /// style (see [`diff_texts`]).
+    pub fn is_git(&self) -> bool {
+        matches!(self, BaselineSpec::Git { .. })
+    }
+}
+
+/// Line diff for a baseline comparison. Against a git baseline
+/// (`ignore_cr`), `\r\n` and `\n` terminators match, the way `git diff`
+/// compares in normalized form: under `core.autocrlf` / `eol=crlf` the
+/// working tree's line endings legitimately differ from the repository's
+/// — and from a fresh checkout's, when a tool wrote the file with LF — so
+/// an exact comparison flagged every line of such files as changed.
+/// Disk and saved baselines stay exact: there a line-ending change is a
+/// real change to the file.
+pub fn diff_texts(old: &str, new: &str, ignore_cr: bool) -> Vec<fresh_core::api::LineDiffHunk> {
+    if ignore_cr {
+        fresh_core::diff::compute_line_diff_ignoring_cr(old, new)
+    } else {
+        fresh_core::diff::compute_line_diff(old, new)
+    }
+}
+
+/// Diff two loaded baseline contents (e.g. disk vs HEAD). `ignore_cr`
+/// as for [`diff_texts`]: set when either side is a git baseline.
+pub fn diff_contents(
+    old: &BaselineContent,
+    new: &BaselineContent,
+    ignore_cr: bool,
+) -> DiffBaselineResult {
     DiffBaselineResult {
         revision: 0,
         fidelity: FIDELITY_EXACT.to_string(),
-        hunks: fresh_core::diff::compute_line_diff(&old.text, &new.text),
+        hunks: diff_texts(&old.text, &new.text, ignore_cr),
     }
 }
 

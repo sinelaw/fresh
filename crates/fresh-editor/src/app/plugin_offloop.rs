@@ -803,9 +803,17 @@ pub(crate) fn load_diff_baseline(runtime: &LiveRuntime, cap: OffLoop, req: Basel
 }
 
 /// Fetch a file's content at a git revision: resolve the repo-relative
-/// path, then `git show`. `git_ref` of `None` means the index (stage 0).
-/// Returns the raw bytes; the caller decodes them with the buffer's
-/// encoding.
+/// path, then `git cat-file --filters`. `git_ref` of `None` means the
+/// index (stage 0). Returns the raw bytes; the caller decodes them with
+/// the buffer's encoding.
+///
+/// `--filters` runs the same conversions a checkout would (`core.autocrlf`,
+/// `.gitattributes` `eol=`/`text`/`working-tree-encoding`, smudge
+/// filters), so the baseline is in checkout form rather than the blob's
+/// stored form. That alone can't settle line endings — the file on disk
+/// may not match a fresh checkout (a tool may have written LF into a CRLF
+/// checkout) — so diffs against git baselines also ignore `\r\n` vs `\n`
+/// (see `diff_baselines::diff_texts`).
 async fn load_git_baseline(
     spawner: &dyn crate::services::remote::ProcessSpawner,
     cwd: &std::path::Path,
@@ -847,13 +855,13 @@ async fn load_git_baseline(
     let show = spawner
         .spawn_raw(
             "git".to_string(),
-            vec!["show".to_string(), show_spec],
+            vec!["cat-file".to_string(), "--filters".to_string(), show_spec],
             Some(cwd_str),
         )
         .await
-        .map_err(|e| format!("git show failed to spawn: {e}"))?;
+        .map_err(|e| format!("git cat-file failed to spawn: {e}"))?;
     if show.exit_code != 0 {
-        return Err(format!("git show failed: {}", show.stderr.trim()));
+        return Err(format!("git cat-file failed: {}", show.stderr.trim()));
     }
     Ok(show.stdout)
 }
@@ -1128,6 +1136,110 @@ mod tests {
             inner.entries[&3].content.as_ref().map(|c| c.text.as_str()),
             Some(text)
         );
+    }
+
+    /// A git baseline is in the working tree's line-ending form, not the
+    /// blob's. With `core.autocrlf=true` (or `eol=crlf`) the blob is LF but
+    /// the checked-out file — and so the buffer — is CRLF; a baseline taken
+    /// from the raw blob made every line differ, and live diff vs HEAD
+    /// rendered the whole file as one removed block plus one added block.
+    #[test]
+    fn git_baseline_matches_the_working_tree_line_endings() {
+        use crate::app::diff_baselines::{BaselineEntry, BaselineSpec, BaselineStore};
+        use crate::services::env_provider::EnvProvider;
+        use crate::services::remote::LocalProcessSpawner;
+        use crate::services::workspace_trust::WorkspaceTrust;
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .current_dir(&root)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_GLOBAL", root.join("nonexistent-gitconfig"))
+                .args(["-c", "user.name=Test", "-c", "user.email=test@example.com"])
+                .args(["-c", "commit.gpgsign=false"])
+                .args(args)
+                .output()
+                .expect("git must be runnable");
+            assert!(
+                out.status.success(),
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        git(&["init", "-q"]);
+        // Pinned via attributes so the outcome doesn't depend on the host's
+        // core.autocrlf: the blob is stored LF, the checkout is CRLF.
+        std::fs::write(root.join(".gitattributes"), "*.cs text eol=crlf\n").unwrap();
+        let worktree = "using UnityEngine;\r\n\r\nnamespace X\r\n{\r\n}\r\n";
+        let path = root.join("A.cs");
+        std::fs::write(&path, worktree).unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "init"]);
+
+        // HEAD and the index (stage 0) both come back in working-tree form.
+        for (id, git_ref) in [(1u64, Some("HEAD".to_string())), (2u64, None)] {
+            let runtime = LiveRuntime::multi_thread("offloop-test", 2).unwrap();
+            let (tx, rx) = std::sync::mpsc::channel();
+            let store = BaselineStore::default();
+            let spec = BaselineSpec::Git {
+                cwd: root.clone(),
+                file_path: path.clone(),
+                git_ref: git_ref.clone(),
+            };
+            store.inner.lock().unwrap().entries.insert(
+                id,
+                BaselineEntry {
+                    buffer_id: BufferId(1),
+                    window_id: fresh_core::WindowId(1),
+                    spec: spec.clone(),
+                    generation: 0,
+                    content: None,
+                },
+            );
+            load_diff_baseline(
+                &runtime,
+                OffLoop {
+                    filesystem: Arc::new(StdFileSystem),
+                    sender: tx,
+                    cancel: Arc::default(),
+                },
+                BaselineLoadRequest {
+                    baseline_id: id,
+                    spec,
+                    spawner: Arc::new(LocalProcessSpawner::new(
+                        Arc::new(EnvProvider::inactive()),
+                        Arc::new(WorkspaceTrust::permissive()),
+                    )),
+                    store: store.clone(),
+                    callback_id: JsCallbackId::new(1),
+                    encoding: Default::default(),
+                    is_registration: true,
+                },
+            );
+            match rx.recv().expect("the load must settle exactly once") {
+                AsyncMessage::Plugin(PluginAsyncMessage::OffLoopSettled { result, .. }) => {
+                    result.expect("a tracked file's git baseline should resolve");
+                }
+                other => panic!("unexpected message: {other:?}"),
+            }
+            let inner = store.inner.lock().unwrap();
+            let baseline = inner.entries[&id]
+                .content
+                .as_ref()
+                .expect("content installed")
+                .text
+                .clone();
+            assert_eq!(
+                baseline, worktree,
+                "git baseline ({git_ref:?}) must be in the working tree's CRLF form"
+            );
+            assert!(
+                fresh_core::diff::compute_line_diff(&baseline, worktree).is_empty(),
+                "an unmodified CRLF file must diff as equal against {git_ref:?}"
+            );
+        }
     }
 
     /// A superseded grep stopped partway, so the matches it happened to collect
