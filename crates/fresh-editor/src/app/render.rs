@@ -3267,6 +3267,7 @@ impl Editor {
             grip_hovered,
             x0,
             sections,
+            bordered: self.theme.read().unwrap().chrome.file_explorer_border,
         })
     }
 

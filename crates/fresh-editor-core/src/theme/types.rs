@@ -446,6 +446,82 @@ pub struct ThemeFile {
     /// Syntax highlighting colors
     #[serde(default = "default_syntax_colors")]
     pub syntax: SyntaxColors,
+    /// Which pieces of chrome are drawn at all
+    #[serde(default, skip_serializing_if = "ChromeOptions::is_empty")]
+    pub chrome: ChromeOptions,
+}
+
+/// Structural options: which pieces of the editor's chrome exist.
+///
+/// The other sections are colors, and a color cannot give a cell back: a
+/// border painted in its background's color still takes its column. These
+/// say whether a piece is drawn *at all*, so a piece that is off takes no
+/// cells and the content moves into the space. Pair them with the colors
+/// that mark the boundary another way — `editor.line_number_bg` for the
+/// gutter, `ui.file_explorer_bg` for the explorer.
+///
+/// Every option defaults to `true`, the look Fresh has always had. A theme
+/// that `extends` another inherits the options it does not name.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ChromeOptions {
+    /// Draw the `│` column between the line numbers and the text. When
+    /// false, the gutter ends in a one-cell pad instead of ` │ `, two columns
+    /// narrower. Default: true
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gutter_separator: Option<bool>,
+    /// Draw the box around the file explorer. When false, the explorer keeps
+    /// its title row (title, refresh and close buttons) but loses its side
+    /// walls and bottom border, and its rows use the full panel width.
+    /// Default: true
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_explorer_border: Option<bool>,
+}
+
+impl ChromeOptions {
+    /// Whether the file names no option.
+    pub fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+
+    /// The option names a theme file may use, for unknown-key warnings.
+    pub const KEYS: &'static [&'static str] = &["gutter_separator", "file_explorer_border"];
+}
+
+/// The resolved [`ChromeOptions`]: every option decided.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Chrome {
+    pub gutter_separator: bool,
+    pub file_explorer_border: bool,
+}
+
+impl Default for Chrome {
+    fn default() -> Self {
+        Self {
+            gutter_separator: true,
+            file_explorer_border: true,
+        }
+    }
+}
+
+impl Chrome {
+    /// These options with the ones `file` names applied over them.
+    pub fn overridden_by(self, file: &ChromeOptions) -> Self {
+        Self {
+            gutter_separator: file.gutter_separator.unwrap_or(self.gutter_separator),
+            file_explorer_border: file
+                .file_explorer_border
+                .unwrap_or(self.file_explorer_border),
+        }
+    }
+}
+
+impl From<Chrome> for ChromeOptions {
+    fn from(c: Chrome) -> Self {
+        Self {
+            gutter_separator: Some(c.gutter_separator),
+            file_explorer_border: Some(c.file_explorer_border),
+        }
+    }
 }
 
 // Per-section defaults piggyback on the field-level `#[serde(default = "…")]`
@@ -519,9 +595,21 @@ pub struct EditorColors {
     /// Line number text color
     #[serde(default)]
     pub line_number_fg: Option<StyledColorDef>,
-    /// Line number gutter background
+    /// Line number gutter background. Falls back to `bg`, so the gutter
+    /// reads as part of the editor surface unless a theme names a shade.
     #[serde(default)]
     pub line_number_bg: Option<StyledColorDef>,
+    /// Line number of the line holding the cursor. Bundle attributes to
+    /// style it (`{"color": [255, 200, 0], "modifier": ["bold"]}`). When
+    /// omitted, the cursor's line number keeps the default look: dim like
+    /// the others with absolute numbers, `fg` with relative numbers.
+    #[serde(default)]
+    pub current_line_number_fg: Option<StyledColorDef>,
+    /// The vertical line between the gutter and the text. Falls back to
+    /// `line_number_fg`. To remove the line (and its column), set
+    /// `chrome.gutter_separator` to false.
+    #[serde(default)]
+    pub gutter_separator_fg: Option<StyledColorDef>,
     /// Diff added line background
     #[serde(default)]
     pub diff_add_bg: Option<StyledColorDef>,
@@ -953,6 +1041,27 @@ pub struct UiColors {
     /// without also recoloring code keywords.
     #[serde(default)]
     pub file_explorer_directory_fg: Option<StyledColorDef>,
+    /// Background of the file explorer panel: its rows, title row and
+    /// border. Falls back to `editor.bg`.
+    #[serde(default)]
+    pub file_explorer_bg: Option<StyledColorDef>,
+    /// Default text color in the file explorer (file names). Falls back to
+    /// `editor.fg`.
+    #[serde(default)]
+    pub file_explorer_fg: Option<StyledColorDef>,
+    /// The file explorer's border while the explorer is not focused. Falls
+    /// back to `ui.split_separator_fg`. To remove the border (and the cells
+    /// it takes), set `chrome.file_explorer_border` to false.
+    #[serde(default)]
+    pub file_explorer_border_fg: Option<StyledColorDef>,
+    /// The file explorer's border while the explorer has focus. Falls back
+    /// to `editor.cursor`.
+    #[serde(default)]
+    pub file_explorer_border_focused_fg: Option<StyledColorDef>,
+    /// Expand/collapse arrows (`>` / `▼`) in front of folders in the file
+    /// explorer. Falls back to `diagnostic.warning_fg`.
+    #[serde(default)]
+    pub file_explorer_indicator_fg: Option<StyledColorDef>,
 }
 
 /// Search result highlighting colors
@@ -1060,6 +1169,18 @@ pub struct SyntaxColors {
     /// Punctuation delimiters (;, ,, .)
     #[serde(default)]
     pub punctuation_delimiter: Option<StyledColorDef>,
+    /// Numeric and boolean literals (`42`, `0xff`, `true`). Falls back to
+    /// `constant`.
+    #[serde(default)]
+    pub number: Option<StyledColorDef>,
+    /// Object properties, fields and keys (`obj.prop`, `{ key: … }`, JSON
+    /// keys, HTML tags). Falls back to `variable`.
+    #[serde(default)]
+    pub property: Option<StyledColorDef>,
+    /// Attributes, decorators and annotations (`#[derive]`, `@Component`,
+    /// HTML attributes). Falls back to `constant`.
+    #[serde(default)]
+    pub attribute: Option<StyledColorDef>,
 }
 
 /// Comprehensive theme structure with all UI colors
@@ -1082,6 +1203,10 @@ pub struct Theme {
     pub current_line_bg: Color,
     pub line_number_fg: Color,
     pub line_number_bg: Color,
+    /// Line number on the cursor's line; `None` keeps the default look.
+    pub current_line_number_fg: Option<Color>,
+    /// The line between the gutter and the text.
+    pub gutter_separator_fg: Color,
 
     /// Background color for rows past end-of-file
     pub after_eof_bg: Color,
@@ -1263,6 +1388,14 @@ pub struct Theme {
     pub file_explorer_pinned_bg: Color,
     /// Name color of an ordinary directory in the file explorer.
     pub file_explorer_directory_fg: Color,
+    /// The file explorer panel's ground and default text color.
+    pub file_explorer_bg: Color,
+    pub file_explorer_fg: Color,
+    /// The file explorer's border, unfocused and focused.
+    pub file_explorer_border_fg: Color,
+    pub file_explorer_border_focused_fg: Color,
+    /// Folder expand/collapse arrows in the file explorer.
+    pub file_explorer_indicator_fg: Color,
 
     // Search colors
     pub search_match_bg: Color,
@@ -1306,6 +1439,12 @@ pub struct Theme {
     pub syntax_punctuation_bracket_modifier: Modifier,
     pub syntax_punctuation_delimiter: Color,
     pub syntax_punctuation_delimiter_modifier: Modifier,
+    pub syntax_number: Color,
+    pub syntax_number_modifier: Modifier,
+    pub syntax_property: Color,
+    pub syntax_property_modifier: Modifier,
+    pub syntax_attribute: Color,
+    pub syntax_attribute_modifier: Modifier,
 
     /// Text attributes of the color keys that have no `*_modifier` field of
     /// their own, by `"section.field"` key. Every color key may carry
@@ -1315,6 +1454,9 @@ pub struct Theme {
     /// them pays nothing to look one up. Read and write it through
     /// [`Theme::resolve_modifier_key`] and [`Theme::set_modifier_key`].
     pub key_modifiers: std::collections::BTreeMap<&'static str, Modifier>,
+
+    /// Which pieces of chrome are drawn at all (see [`ChromeOptions`]).
+    pub chrome: Chrome,
 }
 
 /// The color of a key a theme file may leave out, or a placeholder when it
@@ -1360,6 +1502,12 @@ impl From<ThemeFile> for Theme {
             current_line_bg: styled_color(&file.editor.current_line_bg),
             line_number_fg: styled_color(&file.editor.line_number_fg),
             line_number_bg: styled_color(&file.editor.line_number_bg),
+            current_line_number_fg: file
+                .editor
+                .current_line_number_fg
+                .as_ref()
+                .map(|c| c.color().clone().into()),
+            gutter_separator_fg: styled_color(&file.editor.gutter_separator_fg),
             after_eof_bg: styled_color(&file.editor.after_eof_bg),
             ruler_bg: styled_color(&file.editor.ruler_bg),
             indentation_guide_fg: styled_color(&file.editor.indentation_guide_fg),
@@ -1493,6 +1641,11 @@ impl From<ThemeFile> for Theme {
             file_status_conflicted_fg: styled_color(&file.ui.file_status_conflicted_fg),
             file_explorer_pinned_bg: styled_color(&file.ui.file_explorer_pinned_bg),
             file_explorer_directory_fg: styled_color(&file.ui.file_explorer_directory_fg),
+            file_explorer_bg: styled_color(&file.ui.file_explorer_bg),
+            file_explorer_fg: styled_color(&file.ui.file_explorer_fg),
+            file_explorer_border_fg: styled_color(&file.ui.file_explorer_border_fg),
+            file_explorer_border_focused_fg: styled_color(&file.ui.file_explorer_border_focused_fg),
+            file_explorer_indicator_fg: styled_color(&file.ui.file_explorer_indicator_fg),
             search_match_bg: styled_color(&file.search.match_bg),
             search_match_fg: styled_color(&file.search.match_fg),
             search_current_match_bg: styled_color(&file.search.current_match_bg),
@@ -1530,7 +1683,14 @@ impl From<ThemeFile> for Theme {
             syntax_punctuation_bracket_modifier: Modifier::empty(),
             syntax_punctuation_delimiter: styled_color(&file.syntax.punctuation_delimiter),
             syntax_punctuation_delimiter_modifier: Modifier::empty(),
+            syntax_number: styled_color(&file.syntax.number),
+            syntax_number_modifier: Modifier::empty(),
+            syntax_property: styled_color(&file.syntax.property),
+            syntax_property_modifier: Modifier::empty(),
+            syntax_attribute: styled_color(&file.syntax.attribute),
+            syntax_attribute_modifier: Modifier::empty(),
             key_modifiers: Default::default(),
+            chrome: Chrome::default().overridden_by(&file.chrome),
         };
         theme.apply_named_modifiers(&raw);
         theme
@@ -1554,6 +1714,8 @@ impl From<Theme> for ThemeFile {
                 current_line_bg: styled(&theme, "editor.current_line_bg"),
                 line_number_fg: styled(&theme, "editor.line_number_fg"),
                 line_number_bg: styled(&theme, "editor.line_number_bg"),
+                current_line_number_fg: styled(&theme, "editor.current_line_number_fg"),
+                gutter_separator_fg: styled(&theme, "editor.gutter_separator_fg"),
                 diff_add_bg: styled(&theme, "editor.diff_add_bg"),
                 diff_remove_bg: styled(&theme, "editor.diff_remove_bg"),
                 diff_add_highlight_bg: styled(&theme, "editor.diff_add_highlight_bg"),
@@ -1684,6 +1846,14 @@ impl From<Theme> for ThemeFile {
                 file_status_conflicted_fg: styled(&theme, "ui.file_status_conflicted_fg"),
                 file_explorer_pinned_bg: styled(&theme, "ui.file_explorer_pinned_bg"),
                 file_explorer_directory_fg: styled(&theme, "ui.file_explorer_directory_fg"),
+                file_explorer_bg: styled(&theme, "ui.file_explorer_bg"),
+                file_explorer_fg: styled(&theme, "ui.file_explorer_fg"),
+                file_explorer_border_fg: styled(&theme, "ui.file_explorer_border_fg"),
+                file_explorer_border_focused_fg: styled(
+                    &theme,
+                    "ui.file_explorer_border_focused_fg",
+                ),
+                file_explorer_indicator_fg: styled(&theme, "ui.file_explorer_indicator_fg"),
             },
             search: SearchColors {
                 match_bg: styled(&theme, "search.match_bg"),
@@ -1715,7 +1885,11 @@ impl From<Theme> for ThemeFile {
                 operator: styled(&theme, "syntax.operator"),
                 punctuation_bracket: styled(&theme, "syntax.punctuation_bracket"),
                 punctuation_delimiter: styled(&theme, "syntax.punctuation_delimiter"),
+                number: styled(&theme, "syntax.number"),
+                property: styled(&theme, "syntax.property"),
+                attribute: styled(&theme, "syntax.attribute"),
             },
+            chrome: theme.chrome.into(),
         }
     }
 }
@@ -1810,6 +1984,7 @@ fn relative_luminance(r: u8, g: u8, b: u8) -> f64 {
 fn apply_theme_overrides(theme: &mut Theme, theme_file: &ThemeFile, raw: &serde_json::Value) {
     // Name always comes from the user file — that's the theme's identity.
     theme.name = theme_file.name.clone();
+    theme.chrome = theme.chrome.overridden_by(&theme_file.chrome);
 
     // Keys added after themes could already extend one another, whose
     // fallback was the only color they had: in the base they still hold that
@@ -1864,7 +2039,19 @@ fn apply_theme_overrides(theme: &mut Theme, theme_file: &ThemeFile, raw: &serde_
 
 /// See [`apply_theme_overrides`]: keys that track their fallback key through
 /// an `extends` override when the base theme gave them no color of their own.
-const KEYS_FOLLOWING_FALLBACK_ACROSS_EXTENDS: &[&str] = &["ui.file_explorer_directory_fg"];
+const KEYS_FOLLOWING_FALLBACK_ACROSS_EXTENDS: &[&str] = &[
+    "ui.file_explorer_directory_fg",
+    "editor.line_number_bg",
+    "editor.gutter_separator_fg",
+    "ui.file_explorer_bg",
+    "ui.file_explorer_fg",
+    "ui.file_explorer_border_fg",
+    "ui.file_explorer_border_focused_fg",
+    "ui.file_explorer_indicator_fg",
+    "syntax.number",
+    "syntax.property",
+    "syntax.attribute",
+];
 
 /// Every non-null `"section.field"` leaf of a theme JSON, under its canonical
 /// key (a serde alias such as `ui.popup_fg` is reported as the field it
@@ -2102,6 +2289,13 @@ impl Theme {
                     && !Self::is_modifier_only_key(canonical)
                 {
                     unknown.push(key);
+                }
+            }
+        }
+        if let Some(obj) = raw.get("chrome").and_then(|v| v.as_object()) {
+            for field in obj.keys() {
+                if !ChromeOptions::KEYS.contains(&field.as_str()) {
+                    unknown.push(format!("chrome.{field}"));
                 }
             }
         }
@@ -2357,7 +2551,9 @@ theme_color_keys! {
         "indent_rainbow_4" => color indent_rainbow_4 fallback "editor.indentation_guide_fg",
         "indent_rainbow_5" => color indent_rainbow_5 fallback "editor.indentation_guide_fg",
         "indent_rainbow_6" => color indent_rainbow_6 fallback "editor.indentation_guide_fg",
-        "line_number_bg" => color line_number_bg,
+        "current_line_number_fg" => opt current_line_number_fg,
+        "gutter_separator_fg" => color gutter_separator_fg fallback "editor.line_number_fg",
+        "line_number_bg" => color line_number_bg fallback "editor.bg",
         "line_number_fg" => color line_number_fg,
         "ruler_bg" => color ruler_bg fallback "editor.current_line_bg",
         "selection_bg" => color selection_bg modifier selection_modifier,
@@ -2375,7 +2571,12 @@ theme_color_keys! {
         "blame_header_bg" => color blame_header_bg fallback "ui.menu_bg",
         "blame_header_fg" => color blame_header_fg fallback "ui.menu_fg",
         "compose_margin_bg" => color compose_margin_bg fallback "editor.after_eof_bg",
+        "file_explorer_bg" => color file_explorer_bg fallback "editor.bg",
+        "file_explorer_border_fg" => color file_explorer_border_fg fallback "ui.split_separator_fg",
+        "file_explorer_border_focused_fg" => color file_explorer_border_focused_fg fallback "editor.cursor",
         "file_explorer_directory_fg" => color file_explorer_directory_fg fallback "syntax.keyword",
+        "file_explorer_fg" => color file_explorer_fg fallback "editor.fg",
+        "file_explorer_indicator_fg" => color file_explorer_indicator_fg fallback "diagnostic.warning_fg",
         "file_explorer_pinned_bg" => color file_explorer_pinned_bg fallback "editor.current_line_bg",
         "file_status_added_fg" => color file_status_added_fg fallback "diagnostic.info_fg",
         "file_status_conflicted_fg" => color file_status_conflicted_fg fallback "diagnostic.error_fg",
@@ -2459,11 +2660,14 @@ theme_color_keys! {
         "tour_step_bg" => color tour_step_bg fallback "ui.popup_selection_bg",
     },
     "syntax" => {
+        "attribute" => color syntax_attribute modifier syntax_attribute_modifier fallback "syntax.constant",
         "comment" => color syntax_comment modifier syntax_comment_modifier,
         "constant" => color syntax_constant modifier syntax_constant_modifier,
         "function" => color syntax_function modifier syntax_function_modifier,
         "keyword" => color syntax_keyword modifier syntax_keyword_modifier,
+        "number" => color syntax_number modifier syntax_number_modifier fallback "syntax.constant",
         "operator" => color syntax_operator modifier syntax_operator_modifier,
+        "property" => color syntax_property modifier syntax_property_modifier fallback "syntax.variable",
         "punctuation_bracket" => color syntax_punctuation_bracket modifier syntax_punctuation_bracket_modifier fallback "syntax.operator",
         "punctuation_delimiter" => color syntax_punctuation_delimiter modifier syntax_punctuation_delimiter_modifier fallback "syntax.operator",
         "string" => color syntax_string modifier syntax_string_modifier,
@@ -2818,7 +3022,9 @@ mod tests {
             .iter()
             .filter(|k| Theme::is_required_key(k))
             .collect();
-        assert_eq!(required.len(), 49);
+        // 48: `editor.line_number_bg` falls back to `editor.bg` now that the
+        // gutter paints it.
+        assert_eq!(required.len(), 48);
         for &key in Theme::COLOR_KEYS {
             let mut current = key;
             let mut steps = 0;
@@ -3681,6 +3887,10 @@ mod tests {
     #[test]
     fn file_explorer_directory_fg_falls_back_to_keyword() {
         for builtin in BUILTIN_THEMES {
+            let raw: serde_json::Value = serde_json::from_str(builtin.json).unwrap();
+            if names_key(&raw, "ui.file_explorer_directory_fg") {
+                continue; // a theme that colors folders on purpose
+            }
             let theme = Theme::from_json(builtin.json).unwrap();
             assert_eq!(
                 theme.file_explorer_directory_fg, theme.syntax_keyword,

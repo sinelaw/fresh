@@ -1129,6 +1129,9 @@ impl Editor {
             PluginCommand::OverrideThemeColors { overrides } => {
                 self.handle_override_theme_colors(overrides);
             }
+            PluginCommand::PreviewTheme { json } => {
+                self.handle_preview_theme(&json);
+            }
             PluginCommand::ReloadConfig => {
                 self.reload_config();
             }
@@ -5176,6 +5179,20 @@ impl Editor {
             // Diagnostics / semantic overlays bake RGB at creation time — rebuild
             // them so the override is visible everywhere on the next frame.
             self.reapply_all_overlays();
+        }
+    }
+
+    /// Make an unsaved theme the running one: the theme editor's live
+    /// preview. Loaded with the same `Theme::from_json` a theme file goes
+    /// through, so the editor renders exactly what saving would give.
+    fn handle_preview_theme(&mut self, json: &str) {
+        match crate::view::theme::Theme::from_json(json) {
+            Ok(theme) => {
+                *self.theme.write().unwrap() = theme;
+                // Diagnostics / semantic overlays bake RGB at creation time.
+                self.reapply_all_overlays();
+            }
+            Err(e) => self.set_status_message(format!("Theme preview: {e}")),
         }
     }
 

@@ -201,6 +201,9 @@ impl SplitRenderer {
         // reconcile never saw it: place it here, immediately before its
         // text pass. Only the formatter's half — this pane never ran the
         // byte-oriented sync, and does not now.
+        state
+            .margins
+            .set_gutter_separator(style.theme.chrome.gutter_separator);
         orchestration::reconcile::place_pane(
             state,
             viewport,

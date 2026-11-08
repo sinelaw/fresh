@@ -303,6 +303,24 @@ applyTheme(themeName: string): boolean;
 |-----------|-------------|
 | `themeName` | Name of the theme to apply (e.g. "dark", "light", "my-custom-theme") |
 
+### `previewTheme`
+
+Render the whole editor with a theme that has not been saved.
+
+`json` is a theme file's contents. It is loaded the way a theme file
+is — `extends`, fallbacks, the `chrome` options — and becomes the
+running theme, without touching disk or config. The next
+`applyTheme` (or `reloadAndApplyTheme`) replaces it. Invalid JSON
+leaves the running theme as it was and reports why in the status bar.
+
+```typescript
+previewTheme(json: string): boolean;
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `json` | The theme, as theme-file JSON |
+
 ### `overrideThemeColors`
 
 Override theme colors in-memory for the running session. `overrides`

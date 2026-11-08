@@ -3995,6 +3995,14 @@ pub enum PluginCommand {
     /// registry.
     OverrideThemeColors { overrides: HashMap<String, [u8; 3]> },
 
+    /// Make a theme, given as theme-file JSON, the running theme without
+    /// saving it or persisting it to config — the theme editor's live
+    /// preview. The JSON is loaded exactly as a theme file is (`extends`,
+    /// fallbacks, `chrome`), so the whole editor renders it as it would the
+    /// saved file. Invalid JSON leaves the running theme alone and reports
+    /// the error in the status bar. `applyTheme` ends the preview.
+    PreviewTheme { json: String },
+
     /// Reload configuration from file
     /// After a plugin saves config changes, it should call this to reload the config
     ReloadConfig,

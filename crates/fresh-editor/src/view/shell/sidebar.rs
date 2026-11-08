@@ -23,6 +23,20 @@
 //! exactly the bordered box the explorer has always been — the same cells,
 //! the same rectangles — which is what the parity and e2e suites pin.
 //!
+//! **Borderless** (`chrome.file_explorer_border: false` in the theme): the
+//! same column without the box. Header rows keep their title and buttons on
+//! the panel's ground, with no `─` run; bodies lose their outer wall; the
+//! bottom border row is gone. The inner edge — the cell column that meets the
+//! editor — stays as one column of ground with no glyph, because it is where
+//! the width grip lives (it shows its `│` while hovered, as before), and the
+//! list's scrollbar must not share a column with a drag handle.
+//!
+//! ```text
+//!  File Explorer ─ ⟳ ×      title row on the panel's ground (no ─ run)
+//! ▼ demo                 ▏  rows from the outer edge; ▏ = the grip column
+//!   ▼ crates             ▏
+//! ```
+//!
 //! **The width grip is the column's, not a section's.** It spans every
 //! section's outer edge, as it always spanned the panel's, and it stays in an
 //! overlay over the whole column for the same reason the explorer's did: a
@@ -58,6 +72,10 @@ pub struct Sidebar {
     pub x0: u16,
     /// Top to bottom. Section 0 is the explorer.
     pub sections: Vec<Section>,
+    /// Whether the column wears its box (the theme's
+    /// `chrome.file_explorer_border`). See the module docs for the
+    /// borderless shape.
+    pub bordered: bool,
 }
 
 /// One section of the column: its content, and the chrome it wears.
@@ -131,6 +149,7 @@ impl Sidebar {
             grip_hovered: false,
             x0: 0,
             sections: vec![Section::explorer(e)],
+            bordered: true,
         }
     }
 
@@ -250,7 +269,9 @@ pub fn sidebar(s: &Sidebar) -> Node<UiMsg> {
                 .pointer_mode(PointerMode::Transparent),
         );
     }
-    column = column.child(border_line(bottom_theme, '└', '┘').h(Sizing::Cells(1)));
+    if s.bordered {
+        column = column.child(border_line(bottom_theme, '└', '┘').h(Sizing::Cells(1)));
+    }
     stack().children([column, overlay(s)])
 }
 
@@ -258,7 +279,7 @@ pub fn sidebar(s: &Sidebar) -> Node<UiMsg> {
 fn section(s: &Sidebar, i: usize, sec: &Section) -> Node<UiMsg> {
     let mut c = col().child(header_row(s, i, sec));
     if !sec.collapsed {
-        c = c.child(body(i, sec).flex(1));
+        c = c.child(body(s, i, sec).flex(1));
     }
     match &sec.kind {
         // **The union box.** The explorer's right-press menu and left-press
@@ -289,16 +310,33 @@ fn section(s: &Sidebar, i: usize, sec: &Section) -> Node<UiMsg> {
 /// while the row below it is the next section's header or the column's own
 /// bottom border. The content is laid at `cols - 2` and clipped to it, which
 /// is the inner rectangle a bordered box would have given it.
-fn body(i: usize, sec: &Section) -> Node<UiMsg> {
+fn body(s: &Sidebar, i: usize, sec: &Section) -> Node<UiMsg> {
     let content = match &sec.kind {
         SectionKind::Explorer(e) => file_explorer::rows(e),
         SectionKind::Panel(p) => panel_body(i, p),
         SectionKind::Unavailable(why) => col().child(
             text(why.clone())
-                .theme(pair("editor.line_number_fg", "editor.bg"))
+                .theme(pair("editor.line_number_fg", "ui.file_explorer_bg"))
                 .h(Sizing::Cells(1)),
         ),
     };
+    if !s.bordered {
+        // No walls: the content runs from the outer edge, and the inner
+        // edge is one column of bare ground for the grip.
+        let grip_column = row()
+            .w(Sizing::Cells(1))
+            .theme(sec.border_theme.clone())
+            .pointer_mode(PointerMode::Transparent);
+        let content = col().flex(1).clip(true).child(content);
+        return row()
+            .theme(sec.border_theme.clone())
+            .pointer_mode(PointerMode::Transparent)
+            .children(if s.on_left {
+                [content, grip_column]
+            } else {
+                [grip_column, content]
+            });
+    }
     stack().children([
         walls(&sec.border_theme),
         row().pointer_mode(PointerMode::Transparent).children([
@@ -480,7 +518,16 @@ fn header_row(s: &Sidebar, i: usize, sec: &Section) -> Node<UiMsg> {
         .h(Sizing::Cells(1))
         .pointer_mode(PointerMode::Transparent)
         .children(cells);
-    let mut layers = vec![border_line(sec.border_theme.clone(), l, r), strip];
+    // Borderless, the row is the panel's ground with the title on it.
+    let ground = if s.bordered {
+        border_line(sec.border_theme.clone(), l, r)
+    } else {
+        row()
+            .h(Sizing::Cells(1))
+            .theme(sec.border_theme.clone())
+            .pointer_mode(PointerMode::Transparent)
+    };
+    let mut layers = vec![ground, strip];
     if several {
         // **On top, and exactly as wide as the row less the `×`.** A hit
         // continues *behind* a transparent node but still runs that node's
@@ -638,7 +685,7 @@ fn grip_ink(hovered: bool) -> Node<UiMsg> {
     if !hovered {
         return row();
     }
-    let ink = pair("ui.split_separator_hover_fg", "editor.bg");
+    let ink = pair("ui.split_separator_hover_fg", "ui.file_explorer_bg");
     layout_reader(move |c: LayoutInfo| {
         col().children(
             (0..c.constraints.max_h).map(|_| text("│").theme(ink.clone()).h(Sizing::Cells(1))),
@@ -674,24 +721,29 @@ fn grip_strip(s: &Sidebar) -> Node<UiMsg> {
     // the grip runs from under the top border to above the bottom one — and
     // flex divides what is left, so a column that asked only for its natural
     // height had nothing to divide (rule L15) and the grip lost its rows.
-    col()
+    let band = row()
+        .flex(1)
+        .pointer_mode(PointerMode::Transparent)
+        .children(if s.on_left {
+            [row().flex(1).pointer_mode(PointerMode::Transparent), grip]
+        } else {
+            // On the right the column's inner edge — the one that
+            // meets the editor — is its left wall.
+            [grip, row().flex(1).pointer_mode(PointerMode::Transparent)]
+        });
+    let mut strip = col()
         .h(Sizing::Flex(1))
         .pointer_mode(PointerMode::Transparent)
-        .children([
-            row()
-                .flex(1)
-                .pointer_mode(PointerMode::Transparent)
-                .children(if s.on_left {
-                    [row().flex(1).pointer_mode(PointerMode::Transparent), grip]
-                } else {
-                    // On the right the column's inner edge — the one that
-                    // meets the editor — is its left wall.
-                    [grip, row().flex(1).pointer_mode(PointerMode::Transparent)]
-                }),
+        .child(band);
+    // A borderless column has no bottom border to stop above.
+    if s.bordered {
+        strip = strip.child(
             row()
                 .h(Sizing::Cells(1))
                 .pointer_mode(PointerMode::Transparent),
-        ])
+        );
+    }
+    strip
 }
 
 #[cfg(test)]
@@ -754,6 +806,7 @@ mod tests {
             grip_hovered: false,
             x0: 0,
             sections: vec![explorer_section(2), panel_section(0)],
+            bordered: true,
         }
     }
 
@@ -859,6 +912,7 @@ mod tests {
                 grip_hovered: false,
                 x0: 0,
                 sections: vec![explorer_section(0)],
+                bordered: true,
             },
             20,
             5,
@@ -1024,6 +1078,7 @@ mod tests {
             grip_hovered: false,
             x0: 0,
             sections: vec![explorer_section(2), sec],
+            bordered: true,
         }
     }
 

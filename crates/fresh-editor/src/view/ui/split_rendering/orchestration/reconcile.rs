@@ -53,6 +53,9 @@ pub(crate) struct ReconcileInputs {
     /// Whether the horizontal scrollbar is shown, which is what gates the
     /// `left_column` clamps against the longest line seen.
     pub show_horizontal_scrollbar: bool,
+    /// Whether the gutter draws its separator line (the theme's
+    /// `chrome.gutter_separator`).
+    pub gutter_separator: bool,
 }
 
 /// Reconcile one pane's view state for the frame about to be painted.
@@ -65,6 +68,8 @@ pub(crate) fn reconcile_pane(
     inputs: ReconcileInputs,
 ) {
     let _span = tracing::trace_span!("reconcile_pane").entered();
+    // First, so every width measured below is the gutter that will paint.
+    state.margins.set_gutter_separator(inputs.gutter_separator);
     let BufferViewState {
         viewport,
         cursors,

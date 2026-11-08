@@ -58,7 +58,7 @@ const ALL_COLOR_NAMES = [...NAMED_COLOR_LIST, ...SPECIAL_COLORS];
  */
 type ColorValue = RGB | string;
 type ModifierValue = string[];
-type ThemeFieldValue = ColorValue | ModifierValue;
+type ThemeFieldValue = ColorValue | ModifierValue | boolean;
 
 // =============================================================================
 // Layout Constants & Panel Types
@@ -150,41 +150,6 @@ function getExtendedPalette(): RGB[][] {
   return palette;
 }
 
-// =============================================================================
-// Preview Tokens
-// =============================================================================
-
-const PREVIEW_LINES: Array<Array<{ text: string; syntaxType: string }>> = [
-  [
-    { text: "fn", syntaxType: "keyword" },
-    { text: " ", syntaxType: "" },
-    { text: "main", syntaxType: "function" },
-    { text: "() {", syntaxType: "operator" },
-  ],
-  [
-    { text: "  ", syntaxType: "" },
-    { text: "let", syntaxType: "keyword" },
-    { text: " greeting = ", syntaxType: "" },
-    { text: "\"Hello\"", syntaxType: "string" },
-    { text: ";", syntaxType: "" },
-  ],
-  [
-    { text: "  ", syntaxType: "" },
-    { text: "// A comment", syntaxType: "comment" },
-  ],
-  [
-    { text: "  ", syntaxType: "" },
-    { text: "println!", syntaxType: "function" },
-    { text: "(", syntaxType: "" },
-    { text: "\"{}\", ", syntaxType: "string" },
-    { text: "greeting", syntaxType: "variable" },
-    { text: ");", syntaxType: "" },
-  ],
-  [
-    { text: "}", syntaxType: "" },
-  ],
-];
-
 /**
  * Theme section definition
  */
@@ -203,8 +168,14 @@ interface ThemeFieldDef {
   displayName: string;
   description: string;
   section: string;
-  kind: "color" | "modifier";
+  kind: FieldKind;
 }
+
+/**
+ * What a field edits: a color, a color's text attributes, or one of the
+ * `chrome` section's on/off structural options.
+ */
+type FieldKind = "color" | "modifier" | "toggle";
 
 /**
  * Theme field with current value
@@ -273,6 +244,12 @@ function fieldRefersToStyledColorDef(fieldObj: Record<string, unknown>): boolean
   });
 }
 
+/** Whether a property schema entry is a boolean (possibly nullable). */
+function fieldIsBoolean(fieldObj: Record<string, unknown>): boolean {
+  const t = fieldObj["type"];
+  return t === "boolean" || (Array.isArray(t) && t.includes("boolean"));
+}
+
 /**
  * Load theme sections from the Rust API.
  * Parses the raw JSON Schema and resolves $ref references.
@@ -304,7 +281,7 @@ function loadThemeSections(): ThemeSection[] {
   const properties = schema.properties || {};
 
   // Section ordering
-  const sectionOrder = ["editor", "ui", "search", "diagnostic", "syntax"];
+  const sectionOrder = ["editor", "ui", "chrome", "search", "diagnostic", "syntax"];
 
   for (const [sectionName, sectionSchema] of Object.entries(properties)) {
     // Skip top-level fields that aren't color sections: `name` is the
@@ -328,7 +305,7 @@ function loadThemeSections(): ThemeSection[] {
     // Build a field def from a field key + kind, resolving its i18n labels.
     const makeFieldDef = (
       key: string,
-      kind: "color" | "modifier",
+      kind: FieldKind,
       fallbackDesc: string,
     ): ThemeFieldDef => {
       // Numbered indent-rainbow fields share one translated template. Keeping
@@ -364,6 +341,13 @@ function loadThemeSections(): ThemeSection[] {
     for (const [fieldName, fieldSchema] of Object.entries(sectionProps)) {
       const fieldObj = fieldSchema as Record<string, unknown>;
       const fieldDesc = (fieldObj.description as string) || "";
+
+      // The `chrome` section's options are booleans (`Option<bool>`, so the
+      // schema types them `["boolean", "null"]`): edited as on/off toggles.
+      if (fieldIsBoolean(fieldObj)) {
+        fields.push(makeFieldDef(fieldName, "toggle", fieldDesc));
+        continue;
+      }
 
       const styled = fieldRefersToStyledColorDef(fieldObj);
       if (!styled && !fieldRefersToColorDef(fieldObj)) continue;
@@ -477,6 +461,15 @@ interface ThemeEditorState {
   footerPanel: WidgetPanel | null;
   /** Panel buffer IDs keyed by panel name */
   panelBuffers: Record<string, number>;
+  /** The theme the editor was running when the theme editor opened (its
+   * config key), restored when the editor closes without saving. */
+  runningThemeKey: string | null;
+  /** The theme JSON last handed to `previewTheme`, so an unchanged theme is
+   * not re-applied on every redraw. */
+  previewedJson: string | null;
+  /** The pane the theme editor opened beside the user's code, closed with
+   * the editor. */
+  editorPaneId: number | null;
 }
 
 /**
@@ -495,6 +488,7 @@ function isThemeEditorOpen(): boolean {
   // If buffer doesn't exist, reset our stale state
   if (!exists) {
     editor.debug(`Theme editor buffer ${state.bufferId} no longer exists, resetting state`);
+    endPreview();
     state.bufferId = null;
     state.splitId = null;
     state.themeData = {};
@@ -541,6 +535,9 @@ const state: ThemeEditorState = {
   groupId: null,
   footerPanel: null,
   panelBuffers: {},
+  runningThemeKey: null,
+  previewedJson: null,
+  editorPaneId: null,
 };
 
 // =============================================================================
@@ -933,7 +930,10 @@ function buildVisibleFields(): ThemeField[] {
 
         const path = `${section.name}.${fieldDef.key}`;
         const storedValue = getNestedValue(state.themeData, path);
-        const value = (storedValue ?? (fieldDef.kind === "modifier" ? [] : [128, 128, 128])) as ThemeFieldValue;
+        const fallback: ThemeFieldValue = fieldDef.kind === "modifier"
+          ? []
+          : fieldDef.kind === "toggle" ? true : [128, 128, 128];
+        const value = (storedValue ?? fallback) as ThemeFieldValue;
 
         fields.push({
           def: fieldDef,
@@ -964,7 +964,7 @@ interface TreeLine {
   path?: string;
   selected?: boolean;
   colorValue?: ColorValue;
-  fieldKind?: "color" | "modifier";
+  fieldKind?: FieldKind;
 }
 
 function buildTreeLines(): TreeLine[] {
@@ -1020,9 +1020,13 @@ function buildTreeLines(): TreeLine[] {
       const name = field.def.key.length > nameW ? field.def.key.slice(0, nameW - 1) + "…" : field.def.key;
       const valueText = field.def.kind === "modifier"
         ? formatModifierValue(field.value as ModifierValue)
-        : formatColorValue(field.value as ColorValue);
+        : field.def.kind === "toggle"
+          ? (field.value ? "on" : "off")
+          : formatColorValue(field.value as ColorValue);
       const valueStr = valueText.length > valueW ? valueText.slice(0, valueW - 1) + "…" : valueText;
-      const marker = field.def.kind === "modifier" ? "Aa" : "██";
+      const marker = field.def.kind === "modifier"
+        ? "Aa"
+        : field.def.kind === "toggle" ? (field.value ? " ●" : " ○") : "██";
       lines.push({
         text: `  ${sel} ${name.padEnd(nameW)} ${marker} ${valueStr}`,
         type: "tree-field",
@@ -1079,13 +1083,15 @@ function buildPickerLines(): PickerLine[] {
     lines.push({ text: "Available: bold, italic, underlined, dim, reversed", type: "picker-label" });
     lines.push({ text: "Press Enter or Space to edit the comma-separated list.", type: "picker-desc" });
     lines.push({ text: "Use an empty value or 'normal' to clear attributes.", type: "picker-desc" });
-    lines.push({ text: "─".repeat(RIGHT_WIDTH() - 2), type: "picker-separator" });
-    lines.push({ text: "Preview:", type: "picker-label" });
-    for (let i = 0; i < PREVIEW_LINES.length; i++) {
-      let lineText = " ";
-      for (const token of PREVIEW_LINES[i]) lineText += token.text;
-      lines.push({ text: lineText, type: "picker-preview-line", previewLineIdx: i });
-    }
+    return lines;
+  }
+
+  if (field.def.kind === "toggle") {
+    lines.push({ text: `Value: ${field.value ? "on" : "off"}`, type: "picker-hex" });
+    lines.push({ text: "", type: "picker-blank" });
+    lines.push({ text: "Press Enter or Space to toggle.", type: "picker-desc" });
+    lines.push({ text: "Off removes the element and the cells it takes.", type: "picker-desc" });
+    lines.push({ text: "The editor shows each change live, before saving.", type: "picker-desc" });
     return lines;
   }
 
@@ -1126,18 +1132,6 @@ function buildPickerLines(): PickerLine[] {
       rowText += (col === 0 ? " " : " ") + "██";
     }
     lines.push({ text: rowText, type: "picker-palette-row", paletteRow: row });
-  }
-
-  lines.push({ text: "─".repeat(RIGHT_WIDTH() - 2), type: "picker-separator" });
-
-  // Preview section
-  lines.push({ text: "Preview:", type: "picker-label" });
-  for (let i = 0; i < PREVIEW_LINES.length; i++) {
-    let lineText = " ";
-    for (const token of PREVIEW_LINES[i]) {
-      lineText += token.text;
-    }
-    lines.push({ text: lineText, type: "picker-preview-line", previewLineIdx: i });
   }
 
   return lines;
@@ -1253,51 +1247,6 @@ function styleForRightEntry(item: PickerLine | undefined): { style?: Partial<Ove
       innerPos += 2; // "██" is 2 JS chars
     }
     return { inlineOverlays: inlines.length > 0 ? inlines : undefined };
-  } else if (type === "picker-preview-line") {
-    const previewLineIdx = item.previewLineIdx!;
-    const tokens = PREVIEW_LINES[previewLineIdx];
-    if (!tokens) return {};
-    const inlines: InlineOverlay[] = [];
-    // entry text = " " + item.text
-    // item.text = " " + token texts concatenated
-    const editorBg = getNestedValue(state.themeData, "editor.bg") as ColorValue;
-    const bgSpec = colorValueToOverlaySpec(editorBg);
-    const entryText = " " + item.text;
-    const entryLen = getUtf8ByteLength(entryText);
-    const baseStyle: Partial<OverlayOptions> | undefined = bgSpec ? { bg: bgSpec } : undefined;
-
-    // Skip the leading " " + " " (from entry " " prefix + item.text leading " ")
-    let charPos = 2; // " " prefix + " " in item.text
-    let bytePos = getUtf8ByteLength("  ");
-    for (const token of tokens) {
-      const tokenLen = getUtf8ByteLength(token.text);
-      if (token.syntaxType) {
-        const syntaxPath = `syntax.${token.syntaxType}`;
-        const syntaxColor = getNestedValue(state.themeData, syntaxPath) as ColorValue;
-        const fgSpec = colorValueToOverlaySpec(syntaxColor);
-        const modifiers = (getNestedValue(state.themeData, `${syntaxPath}_modifier`) || []) as ModifierValue;
-        if (fgSpec || modifiers.length > 0) {
-          inlines.push({
-            start: bytePos,
-            end: bytePos + tokenLen,
-            style: {
-              ...(fgSpec ? { fg: fgSpec } : {}),
-              bold: modifiers.includes("bold"),
-              italic: modifiers.includes("italic"),
-              underline: modifiers.includes("underlined") || modifiers.includes("underline"),
-            },
-          });
-        }
-      } else {
-        const fgColor = getNestedValue(state.themeData, "editor.fg") as ColorValue;
-        const fgSpec = colorValueToOverlaySpec(fgColor);
-        if (fgSpec) {
-          inlines.push({ start: bytePos, end: bytePos + tokenLen, style: { fg: fgSpec } });
-        }
-      }
-      bytePos += tokenLen;
-    }
-    return { style: baseStyle, inlineOverlays: inlines.length > 0 ? inlines : undefined };
   }
   return {};
 }
@@ -1605,6 +1554,7 @@ function renderThemeEditorFooter(): void {
 
 function updateDisplay(): void {
   isUpdatingDisplay = true;
+  previewEdits();
 
   // Always refresh viewport dimensions
   const viewport = editor.getViewport();
@@ -1714,6 +1664,10 @@ function editColorField(field: ThemeField): void {
     editModifierField(field);
     return;
   }
+  if (field.def.kind === "toggle") {
+    toggleField(field);
+    return;
+  }
   const currentValue = formatColorValue(field.value as ColorValue);
   editor.startPromptWithInitial(
     editor.t("prompt.color_input", { field: field.def.displayName }),
@@ -1721,6 +1675,14 @@ function editColorField(field: ThemeField): void {
     currentValue
   );
   editor.setPromptSuggestions(buildColorSuggestions(field));
+}
+
+/** Flip a `chrome` on/off option. */
+function toggleField(field: ThemeField): void {
+  setNestedValue(state.themeData, field.path, !field.value);
+  state.hasChanges = !deepEqual(state.themeData, state.originalThemeData);
+  updateDisplay();
+  editor.setStatus(editor.t("status.updated", { path: field.path }));
 }
 
 const VALID_MODIFIERS = ["bold", "italic", "underlined", "dim", "reversed"] as const;
@@ -2144,6 +2106,64 @@ editor.on("prompt_cancelled", (args) => {
  * @param name - Theme name to save as
  * @param restorePath - Optional field path to restore cursor to after save
  */
+/**
+ * The theme being edited, in theme-file form: what Save writes and what the
+ * live preview loads.
+ *
+ * Built from every known field, so the file always carries every field even
+ * when `state.themeData` is missing some (e.g. a package theme that failed to
+ * load fully).
+ */
+function buildThemeFile(themeName: string): Record<string, unknown> {
+  const completeTheme: Record<string, unknown> = { name: themeName };
+  for (const section of getThemeSections()) {
+    const sectionData: Record<string, unknown> = {};
+    for (const field of section.fields) {
+      const value = getNestedValue(state.themeData, `${section.name}.${field.key}`);
+      if (value !== undefined) {
+        sectionData[field.key] = value;
+      }
+    }
+    // Re-bundle color + attributes into the single on-disk value.
+    completeTheme[section.name] = collapseStyleBundles(sectionData);
+  }
+  return completeTheme;
+}
+
+/**
+ * Live preview: render the whole editor — menu, explorer, tabs, gutter,
+ * status bar, the `chrome` options — with the theme as edited, through the
+ * editor's own renderer (`editor.previewTheme`). Nothing is saved; closing
+ * without saving restores `state.runningThemeKey`.
+ */
+function previewEdits(): void {
+  if (!state.themeName || Object.keys(state.themeData).length === 0) return;
+  const json = JSON.stringify(buildThemeFile(state.themeName));
+  if (json === state.previewedJson) return;
+  state.previewedJson = json;
+  editor.previewTheme(json);
+}
+
+/** End the live preview: put back the theme the editor was running —
+ * through `previewTheme` as well, so restoring it does not rewrite the
+ * user's config the way `applyTheme` (which persists its choice) would. */
+function endPreview(): void {
+  if (state.previewedJson !== null && state.runningThemeKey) {
+    // The config may spell the theme `builtin://dark` or `my-theme.json`;
+    // the registry knows it by key or by name.
+    const key = state.runningThemeKey;
+    const bare = key.replace(/^builtin:\/\//, "").replace(/^.*\//, "").replace(/\.json$/, "");
+    const running = editor.getThemeData(key) ?? editor.getThemeData(bare);
+    if (running) {
+      editor.previewTheme(JSON.stringify(running));
+    } else {
+      editor.applyTheme(state.runningThemeKey);
+    }
+  }
+  state.previewedJson = null;
+  state.runningThemeKey = null;
+}
+
 async function saveTheme(name?: string, restorePath?: string | null): Promise<boolean> {
   // Normalize theme name: lowercase, replace underscores/spaces with hyphens
   // (must match Rust's normalize_theme_name so config name matches filename)
@@ -2155,25 +2175,7 @@ async function saveTheme(name?: string, restorePath?: string | null): Promise<bo
   }
 
   try {
-    // Build a complete theme object from all known fields.
-    // This ensures we always write every field, even if state.themeData
-    // is missing some (e.g. package theme that failed to load fully).
-    const completeTheme: Record<string, unknown> = { name: themeName };
-    const sections = getThemeSections();
-    for (const section of sections) {
-      const sectionData: Record<string, unknown> = {};
-      for (const field of section.fields) {
-        const path = `${section.name}.${field.key}`;
-        const value = getNestedValue(state.themeData, path);
-        if (value !== undefined) {
-          sectionData[field.key] = value;
-        }
-      }
-      // Re-bundle color + attributes into the single on-disk value.
-      completeTheme[section.name] = collapseStyleBundles(sectionData);
-    }
-
-    const content = JSON.stringify(completeTheme, null, 2);
+    const content = JSON.stringify(buildThemeFile(themeName), null, 2);
     const savedPath = editor.saveThemeFile(themeName, content);
 
     state.themePath = savedPath;
@@ -2194,8 +2196,11 @@ async function saveTheme(name?: string, restorePath?: string | null): Promise<bo
       moveCursorToField(restorePath);
     }
 
-    // Reload themes and apply the new/updated theme atomically
+    // Reload themes and apply the new/updated theme atomically. The saved
+    // theme is now the running one, so closing keeps it.
     editor.reloadAndApplyTheme(themeName);
+    state.runningThemeKey = themeName;
+    state.previewedJson = null;
     editor.setStatus(editor.t("status.saved_and_applied", { name: themeName }));
 
     if (state.closeAfterSave) {
@@ -2769,6 +2774,10 @@ function applyPickerColor(): void {
     editModifierField(field);
     return;
   }
+  if (field.def.kind === "toggle") {
+    toggleField(field);
+    return;
+  }
 
   const pf = state.pickerFocus;
   let newColor: ColorValue | null = null;
@@ -2831,6 +2840,9 @@ async function open_theme_editor() : Promise<void> {
   // Get current theme key from config
   const config = editor.getConfig() as Record<string, unknown>;
   const currentThemeKey = (config?.theme as string) || "dark";
+  // What the live preview replaces until the theme is saved.
+  state.runningThemeKey = currentThemeKey;
+  state.previewedJson = null;
 
   // Prompt user to select which theme to edit
   editor.startPrompt(editor.t("prompt.select_theme_to_edit"), "theme-select-initial");
@@ -2879,6 +2891,19 @@ async function doOpenThemeEditor(): Promise<void> {
     state.viewportWidth = vp.width;
   }
   state.treeScrollOffset = 0;
+
+  // Open below the user's code rather than over it: the live preview
+  // (`previewEdits`) re-themes the real editor, so the code pane above is
+  // the preview of the gutter, syntax, tabs and explorer.
+  state.editorPaneId = null;
+  try {
+    // Stacked, not side by side: the editor's two panels need the width,
+    // and a dozen rows of code are enough to show what an edit does.
+    const pane = await editor.splitWindow({ direction: "horizontal", place: "after", ratio: 0.4 });
+    state.editorPaneId = pane.splitId;
+  } catch (e) {
+    editor.debug(`[theme_editor] could not open beside the code: ${e}`);
+  }
 
   // Create buffer group with layout: horizontal split (tree | picker) + footer
   const layout = JSON.stringify({
@@ -2944,6 +2969,7 @@ registerHandler("theme_editor_close", theme_editor_close);
  * Actually close the editor (called after confirmation or when no changes)
  */
 function doCloseEditor(): void {
+  endPreview();
   // Close the buffer group (or fall back to single buffer close).
   // Closing the buffer group tears down the footer buffer too,
   // implicitly dropping the widget panel rendering into it.
@@ -2954,6 +2980,11 @@ function doCloseEditor(): void {
     state.panelBuffers = {};
   } else if (state.bufferId !== null) {
     editor.closeBuffer(state.bufferId);
+  }
+
+  if (state.editorPaneId !== null) {
+    editor.closeSplit(state.editorPaneId);
+    state.editorPaneId = null;
   }
 
   // Reset state

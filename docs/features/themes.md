@@ -42,7 +42,10 @@ Fresh includes a visual Theme Editor for creating and customizing themes:
 3. **Editing Colors**:
    - Press `Enter` on any color field to edit it
    - Enter a hex color (`#RRGGBB`) or named color (e.g., `red`, `blue`)
-   - Colors are applied immediately as you edit
+   - The editor opens below your code and the whole editor (menu, explorer,
+     tabs, gutter, status bar) shows each edit immediately, before you save.
+     Closing without saving puts your theme back
+   - `chrome` options are on/off toggles: press `Enter` to flip one
    - Each color has an `Attributes` row accepting comma-separated text
      attributes: `bold`, `italic`, `underlined`, `dim`, and `reversed`
 
@@ -110,6 +113,55 @@ keywords look in code:
 
 Git status colors (`ui.file_status_*_fg`) and the selected row are still drawn
 on top of it.
+
+The explorer panel has its own colors too: `ui.file_explorer_bg` and
+`ui.file_explorer_fg` (the panel's ground and file names, default
+`editor.bg` / `editor.fg`), `ui.file_explorer_border_fg` and
+`ui.file_explorer_border_focused_fg` (the box, unfocused and focused), and
+`ui.file_explorer_indicator_fg` (the `>` / `▼` folder arrows).
+
+### Gutter colors
+
+- `editor.line_number_bg` is the gutter's background. When it differs from
+  `editor.bg` the gutter is painted in it, which marks where the text begins.
+- `editor.current_line_number_fg` styles the cursor's line number. Bundle
+  attributes to make it stand out:
+  `{"color": [255, 204, 102], "modifier": ["bold"]}`. Leave it out to keep
+  the default look.
+- `editor.gutter_separator_fg` colors the `│` between the numbers and the text.
+
+### Removing borders and separators (`chrome`)
+
+Colors cannot give a cell back: a border drawn in its background's color still
+takes its column. The `chrome` section says which pieces exist at all; a piece
+that is off takes no cells and the content moves into the space.
+
+```json
+{
+  "name": "borderless",
+  "extends": "builtin://dark",
+  "editor": { "line_number_bg": [22, 22, 22] },
+  "ui": { "file_explorer_bg": [36, 36, 40] },
+  "chrome": { "gutter_separator": false, "file_explorer_border": false }
+}
+```
+
+| Option | Default | Off |
+| ------ | ------- | --- |
+| `gutter_separator` | `true` | The gutter ends in a one-cell pad instead of ` │ `. |
+| `file_explorer_border` | `true` | The explorer keeps its title row; its walls and bottom border go and its rows take the full width. The edge facing the editor stays as one blank column you can drag to resize. |
+
+When a border goes, mark the edge with a background instead:
+`editor.line_number_bg` for the gutter, `ui.file_explorer_bg` for the
+explorer. The built-in `flat` and `quiet` themes do both.
+
+### More syntax categories
+
+`syntax.number` (numbers and booleans), `syntax.property` (fields, object keys,
+JSON keys, HTML tags) and `syntax.attribute` (attributes, decorators,
+annotations) can be colored separately. A theme that leaves them out keeps the
+old look: `number` and `attribute` follow `syntax.constant`, `property`
+follows `syntax.variable`.
 
 ### Text attributes
 

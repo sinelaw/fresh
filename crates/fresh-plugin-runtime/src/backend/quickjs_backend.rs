@@ -4194,6 +4194,21 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Render the whole editor with a theme that has not been saved.
+    ///
+    /// `json` is a theme file's contents. It is loaded the way a theme file
+    /// is — `extends`, fallbacks, the `chrome` options — and becomes the
+    /// running theme, without touching disk or config. The next
+    /// `applyTheme` (or `reloadAndApplyTheme`) replaces it. Invalid JSON
+    /// leaves the running theme as it was and reports why in the status bar.
+    ///
+    /// @param json - The theme, as theme-file JSON
+    pub fn preview_theme(&self, json: String) -> bool {
+        self.command_sender
+            .send(PluginCommand::PreviewTheme { json })
+            .is_ok()
+    }
+
     /// Override theme colors in-memory for the running session. `overrides`
     /// is a JS object mapping `"section.field"` keys (same namespace as
     /// `getThemeSchema`) to `[r, g, b]` triplets (0–255 each).

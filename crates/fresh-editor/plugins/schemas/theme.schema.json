@@ -28,6 +28,8 @@
         "current_line_bg": null,
         "line_number_fg": null,
         "line_number_bg": null,
+        "current_line_number_fg": null,
+        "gutter_separator_fg": null,
         "diff_add_bg": null,
         "diff_remove_bg": null,
         "diff_add_highlight_bg": null,
@@ -149,7 +151,12 @@
         "file_status_untracked_fg": null,
         "file_status_conflicted_fg": null,
         "file_explorer_pinned_bg": null,
-        "file_explorer_directory_fg": null
+        "file_explorer_directory_fg": null,
+        "file_explorer_bg": null,
+        "file_explorer_fg": null,
+        "file_explorer_border_fg": null,
+        "file_explorer_border_focused_fg": null,
+        "file_explorer_indicator_fg": null
       }
     },
     "search": {
@@ -192,8 +199,15 @@
         "constant": null,
         "operator": null,
         "punctuation_bracket": null,
-        "punctuation_delimiter": null
+        "punctuation_delimiter": null,
+        "number": null,
+        "property": null,
+        "attribute": null
       }
+    },
+    "chrome": {
+      "description": "Which pieces of chrome are drawn at all",
+      "$ref": "#/$defs/ChromeOptions"
     }
   },
   "required": [
@@ -301,7 +315,31 @@
           "default": null
         },
         "line_number_bg": {
-          "description": "Line number gutter background",
+          "description": "Line number gutter background. Falls back to `bg`, so the gutter\nreads as part of the editor surface unless a theme names a shade.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "current_line_number_fg": {
+          "description": "Line number of the line holding the cursor. Bundle attributes to\nstyle it (`{\"color\": [255, 200, 0], \"modifier\": [\"bold\"]}`). When\nomitted, the cursor's line number keeps the default look: dim like\nthe others with absolute numbers, `fg` with relative numbers.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "gutter_separator_fg": {
+          "description": "The vertical line between the gutter and the text. Falls back to\n`line_number_fg`. To remove the line (and its column), set\n`chrome.gutter_separator` to false.",
           "anyOf": [
             {
               "$ref": "#/$defs/StyledColorDef"
@@ -1742,6 +1780,66 @@
             }
           ],
           "default": null
+        },
+        "file_explorer_bg": {
+          "description": "Background of the file explorer panel: its rows, title row and\nborder. Falls back to `editor.bg`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "file_explorer_fg": {
+          "description": "Default text color in the file explorer (file names). Falls back to\n`editor.fg`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "file_explorer_border_fg": {
+          "description": "The file explorer's border while the explorer is not focused. Falls\nback to `ui.split_separator_fg`. To remove the border (and the cells\nit takes), set `chrome.file_explorer_border` to false.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "file_explorer_border_focused_fg": {
+          "description": "The file explorer's border while the explorer has focus. Falls back\nto `editor.cursor`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "file_explorer_indicator_fg": {
+          "description": "Expand/collapse arrows (`>` / `▼`) in front of folders in the file\nexplorer. Falls back to `diagnostic.warning_fg`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       }
     },
@@ -2060,6 +2158,62 @@
             }
           ],
           "default": null
+        },
+        "number": {
+          "description": "Numeric and boolean literals (`42`, `0xff`, `true`). Falls back to\n`constant`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "property": {
+          "description": "Object properties, fields and keys (`obj.prop`, `{ key: … }`, JSON\nkeys, HTML tags). Falls back to `variable`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "attribute": {
+          "description": "Attributes, decorators and annotations (`#[derive]`, `@Component`,\nHTML attributes). Falls back to `constant`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      }
+    },
+    "ChromeOptions": {
+      "description": "Structural options: which pieces of the editor's chrome exist.\n\nThe other sections are colors, and a color cannot give a cell back: a\nborder painted in its background's color still takes its column. These\nsay whether a piece is drawn *at all*, so a piece that is off takes no\ncells and the content moves into the space. Pair them with the colors\nthat mark the boundary another way — `editor.line_number_bg` for the\ngutter, `ui.file_explorer_bg` for the explorer.\n\nEvery option defaults to `true`, the look Fresh has always had. A theme\nthat `extends` another inherits the options it does not name.",
+      "type": "object",
+      "properties": {
+        "gutter_separator": {
+          "description": "Draw the `│` column between the line numbers and the text. When\nfalse, the gutter ends in a one-cell pad instead of ` │ `, two columns\nnarrower. Default: true",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "file_explorer_border": {
+          "description": "Draw the box around the file explorer. When false, the explorer keeps\nits title row (title, refresh and close buttons) but loses its side\nwalls and bottom border, and its rows use the full panel width.\nDefault: true",
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       }
     }
