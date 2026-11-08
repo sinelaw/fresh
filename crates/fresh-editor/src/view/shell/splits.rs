@@ -955,6 +955,7 @@ mod tests {
             reveal: None,
             preview_label: String::new(),
             glyphs: crate::view::theme::Glyphs::default(),
+            file_icons: None,
         };
         let s = Splits {
             root: root.clone(),

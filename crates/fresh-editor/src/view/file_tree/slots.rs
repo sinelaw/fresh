@@ -67,6 +67,8 @@ pub struct ExplorerSlotResolution {
 pub struct ExplorerSlotContext<'a> {
     pub path: &'a Path,
     pub is_dir: bool,
+    /// A directory drawn open (its file-type icon is the open folder).
+    pub is_expanded: bool,
     pub has_unsaved: bool,
     pub is_symlink: bool,
     pub is_hidden: bool,
@@ -272,21 +274,62 @@ pub static DEFAULT_LEADING_SLOT_PROVIDER: DefaultLeadingSlotProvider = DefaultLe
 
 impl ExplorerLeadingSlotProvider for DefaultLeadingSlotProvider {
     fn resolve(&self, context: &ExplorerSlotContext<'_>) -> Option<ExplorerLeadingSlotPayload> {
-        context
+        let Some(override_entry) = context
             .slot_overrides
             .leading_override_for_path(context.path)
-            .and_then(|override_entry| {
-                override_entry
-                    .slot
-                    .as_ref()
-                    .map(|slot| ExplorerLeadingSlotPayload {
-                        text: slot.text.clone(),
-                        fg: resolve_overlay_color(&slot.color, context.theme, context.neutral_fg),
-                        fg_key: overlay_color_key(&slot.color),
-                        min_width: slot.min_width,
-                    })
+        else {
+            return file_icon(context);
+        };
+        // A plugin that claimed the slot owns it, even to leave it empty.
+        override_entry
+            .slot
+            .as_ref()
+            .map(|slot| ExplorerLeadingSlotPayload {
+                text: slot.text.clone(),
+                fg: resolve_overlay_color(&slot.color, context.theme, context.neutral_fg),
+                fg_key: overlay_color_key(&slot.color),
+                min_width: slot.min_width,
             })
     }
+}
+
+/// A file's type icon, in the leading slot no plugin claimed: drawn while
+/// the user's `editor.nerd_font_icons` is on (the theme's chrome carries the
+/// flag, settled each frame). A folder's is the open or closed folder, in the
+/// explorer's directory color; a file's is its type's, in that type's color.
+/// Both give way to the theme's `ui.file_icon_fg` when it names one. Through
+/// the same slot, so folder and file icons at one depth share a column.
+fn file_icon(context: &ExplorerSlotContext<'_>) -> Option<ExplorerLeadingSlotPayload> {
+    if !context.theme.chrome.nerd_font {
+        return None;
+    }
+    let theme = context.theme;
+    let (glyph, own_color, own_key) = if context.is_dir {
+        let glyph = if context.is_expanded {
+            crate::view::file_icons::FOLDER_OPEN
+        } else {
+            crate::view::file_icons::FOLDER
+        };
+        (
+            glyph,
+            theme.file_explorer_directory_fg,
+            Some("ui.file_explorer_directory_fg"),
+        )
+    } else {
+        let name = context.path.file_name()?.to_string_lossy();
+        let icon = crate::view::file_icons::for_file(&name);
+        (icon.glyph, icon.color, None)
+    };
+    let (fg, fg_key) = match theme.file_icon_fg {
+        Some(c) => (c, Some("ui.file_icon_fg")),
+        None => (own_color, own_key),
+    };
+    Some(ExplorerLeadingSlotPayload {
+        text: glyph.to_string(),
+        fg,
+        fg_key: fg_key.map(str::to_string),
+        min_width: DEFAULT_LEADING_SLOT_MIN_WIDTH,
+    })
 }
 
 pub struct DefaultTrailingSlotProvider;
@@ -435,6 +478,7 @@ mod tests {
         let context = ExplorerSlotContext {
             path: &path,
             is_dir: false,
+            is_expanded: false,
             has_unsaved: false,
             is_symlink: false,
             is_hidden: false,

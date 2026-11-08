@@ -125,6 +125,7 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
     let slots = d.slot_resolver.resolve(&ExplorerSlotContext {
         path: &node.entry.path,
         is_dir: node.is_dir(),
+        is_expanded: node.state == crate::view::file_tree::NodeState::Expanded || d.opening,
         has_unsaved,
         is_symlink: node.entry.is_symlink(),
         is_hidden,

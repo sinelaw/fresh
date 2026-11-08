@@ -3280,6 +3280,22 @@ impl Editor {
         })
     }
 
+    /// What the tab strips take from the theme: its glyphs, and file-type
+    /// icons while the user's `editor.nerd_font_icons` is on (with the
+    /// theme's one icon color, if it sets one).
+    fn tab_chrome(
+        &self,
+    ) -> (
+        crate::view::theme::Glyphs,
+        Option<Option<ratatui::style::Color>>,
+    ) {
+        let theme = self.theme.read().unwrap();
+        (
+            theme.chrome.glyphs().clone(),
+            theme.chrome.nerd_font.then_some(theme.file_icon_fg),
+        )
+    }
+
     /// A folder's arrow in the explorer: the user's
     /// `tree_indicator_collapsed` / `_expanded` when they changed it, else
     /// the theme's `chrome.folder_collapsed` / `_expanded`.
@@ -5788,9 +5804,9 @@ impl Editor {
             Some(crate::app::types::HoverTarget::NewTabButton(pane)) => Some(*pane),
             _ => None,
         };
-        let glyphs = self.theme.read().unwrap().chrome.glyphs().clone();
+        let (glyphs, icons) = self.tab_chrome();
         self.active_window()
-            .pane_strips(chrome, hover, hover_plus, &glyphs)
+            .pane_strips(chrome, hover, hover_plus, &glyphs, icons)
     }
 
     /// Each visible pane's leaf handle, for the frame's description — the
@@ -5886,6 +5902,7 @@ impl Editor {
         window: fresh_core::WindowId,
     ) -> Option<std::rc::Rc<crate::view::shell::splits::Splits>> {
         use crate::view::shell::splits::{PaneChrome, PaneControls, Splits};
+        let (glyphs, icons) = self.tab_chrome();
         let win = self.windows.get_mut(&window)?;
         let (root, maximized, active, several, is_maximized) = {
             let (mgr, _) = win.buffers.splits()?;
@@ -5903,8 +5920,7 @@ impl Editor {
             hscroll: false,
         });
         let groups = win.pane_groups();
-        let glyphs = self.theme.read().unwrap().chrome.glyphs().clone();
-        let strips = win.pane_strips(&chrome, None, None, &glyphs);
+        let strips = win.pane_strips(&chrome, None, None, &glyphs, icons);
         let rowless: std::collections::HashSet<_> = groups.keys().copied().collect();
         let hosts = win.pane_hosts(&rowless);
         Some(std::rc::Rc::new(Splits {

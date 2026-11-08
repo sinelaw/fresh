@@ -1250,6 +1250,10 @@ pub struct UiColors {
     /// explorer. Falls back to `diagnostic.warning_fg`.
     #[serde(default)]
     pub file_explorer_indicator_fg: Option<StyledColorDef>,
+    /// One color for every file-type icon (drawn while `editor.nerd_font_icons`
+    /// is on). Unset, each kind of file keeps its own color.
+    #[serde(default)]
+    pub file_icon_fg: Option<StyledColorDef>,
 }
 
 /// Search result highlighting colors
@@ -1591,6 +1595,8 @@ pub struct Theme {
     pub file_explorer_border_focused_fg: Color,
     /// Folder expand/collapse arrows in the file explorer.
     pub file_explorer_indicator_fg: Color,
+    /// One color for every file-type icon; `None` keeps each kind's own.
+    pub file_icon_fg: Option<Color>,
 
     // Search colors
     pub search_match_bg: Color,
@@ -1846,6 +1852,11 @@ impl From<ThemeFile> for Theme {
             file_explorer_border_fg: styled_color(&file.ui.file_explorer_border_fg),
             file_explorer_border_focused_fg: styled_color(&file.ui.file_explorer_border_focused_fg),
             file_explorer_indicator_fg: styled_color(&file.ui.file_explorer_indicator_fg),
+            file_icon_fg: file
+                .ui
+                .file_icon_fg
+                .as_ref()
+                .map(|c| c.color().clone().into()),
             search_match_bg: styled_color(&file.search.match_bg),
             search_match_fg: styled_color(&file.search.match_fg),
             search_current_match_bg: styled_color(&file.search.current_match_bg),
@@ -2059,6 +2070,7 @@ impl From<Theme> for ThemeFile {
                     "ui.file_explorer_border_focused_fg",
                 ),
                 file_explorer_indicator_fg: styled(&theme, "ui.file_explorer_indicator_fg"),
+                file_icon_fg: styled(&theme, "ui.file_icon_fg"),
             },
             search: SearchColors {
                 match_bg: styled(&theme, "search.match_bg"),
@@ -2794,6 +2806,7 @@ theme_color_keys! {
         "file_explorer_directory_fg" => color file_explorer_directory_fg fallback "syntax.keyword",
         "file_explorer_fg" => color file_explorer_fg fallback "editor.fg",
         "file_explorer_indicator_fg" => color file_explorer_indicator_fg fallback "diagnostic.warning_fg",
+        "file_icon_fg" => opt file_icon_fg,
         "file_explorer_pinned_bg" => color file_explorer_pinned_bg fallback "editor.current_line_bg",
         "file_status_added_fg" => color file_status_added_fg fallback "diagnostic.info_fg",
         "file_status_conflicted_fg" => color file_status_conflicted_fg fallback "diagnostic.error_fg",

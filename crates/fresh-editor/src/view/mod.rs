@@ -27,6 +27,9 @@ pub mod conceal;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod dimming;
+/// File-type icons (Nerd Font glyphs) for the explorer and tabs.
+#[cfg(any(feature = "runtime", feature = "wasm"))]
+pub mod file_icons;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod flat_rows;
 #[cfg(any(feature = "runtime", feature = "wasm"))]

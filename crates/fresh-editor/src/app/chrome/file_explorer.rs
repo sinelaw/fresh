@@ -244,6 +244,9 @@ impl Editor {
         let slot_context = crate::view::file_tree::ExplorerSlotContext {
             path: &path,
             is_dir: is_directory,
+            // Read for the slot's tooltip and status, which do not depend on
+            // the folder's icon.
+            is_expanded: false,
             has_unsaved: has_unsaved_changes,
             is_symlink,
             is_hidden,

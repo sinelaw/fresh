@@ -161,7 +161,8 @@
         "file_explorer_fg": null,
         "file_explorer_border_fg": null,
         "file_explorer_border_focused_fg": null,
-        "file_explorer_indicator_fg": null
+        "file_explorer_indicator_fg": null,
+        "file_icon_fg": null
       }
     },
     "search": {
@@ -1896,6 +1897,18 @@
         },
         "file_explorer_indicator_fg": {
           "description": "Expand/collapse arrows (`>` / `▼`) in front of folders in the file\nexplorer. Falls back to `diagnostic.warning_fg`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyledColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "file_icon_fg": {
+          "description": "One color for every file-type icon (drawn while `editor.nerd_font_icons`\nis on). Unset, each kind of file keeps its own color.",
           "anyOf": [
             {
               "$ref": "#/$defs/StyledColorDef"

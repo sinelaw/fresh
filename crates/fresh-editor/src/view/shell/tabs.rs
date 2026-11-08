@@ -102,6 +102,10 @@ pub struct Strip {
     /// The theme's chrome glyphs: what sits between tabs and around them,
     /// the close button, the modified marker.
     pub glyphs: Glyphs,
+    /// File-type icons before file tabs' names: `Some` while the user's
+    /// `editor.nerd_font_icons` is on, holding the theme's one icon color
+    /// (`ui.file_icon_fg`) if it sets one.
+    pub file_icons: Option<Option<ratatui::style::Color>>,
 }
 
 impl Strip {
@@ -109,7 +113,13 @@ impl Strip {
     /// wide: `TAB_NAME_MAX_COLS` when the names do not fit, and no cap at all
     /// when they do.
     fn name_cap(&self, room: u16) -> usize {
-        match natural_width(&self.tabs, &self.preview_label, &self.glyphs) > usize::from(room) {
+        match natural_width(
+            &self.tabs,
+            &self.preview_label,
+            &self.glyphs,
+            self.file_icons.is_some(),
+        ) > usize::from(room)
+        {
             true => TAB_NAME_MAX_COLS,
             false => usize::MAX,
         }
@@ -263,6 +273,37 @@ fn separator_ink() -> String {
     pair("ui.tab_separator_fg", "ui.tab_separator_bg")
 }
 
+/// Cells a file-type icon adds to a tab: a space, then the glyph (the label's
+/// own leading space then separates it from the name).
+const ICON_COLS: usize = 2;
+
+/// Whether a tab shows a file-type icon: a file's tab, not a group's.
+fn has_icon(t: &Tab) -> bool {
+    matches!(t.target, TabTarget::Buffer(_)) && t.title.is_none()
+}
+
+/// A file tab's icon as runs: a space on the tab's ground, then the glyph in
+/// its type's color (or the theme's one icon color), on the tab's ground.
+fn icon_runs(
+    name: &str,
+    one_color: Option<ratatui::style::Color>,
+    tab_ink: &str,
+) -> Vec<(String, String)> {
+    let icon = crate::view::file_icons::for_file(name);
+    let fg = match one_color {
+        Some(_) => Paint::key("ui.file_icon_fg"),
+        None => Paint::Lit(icon.color),
+    };
+    let ink = match Ink::parse(tab_ink) {
+        Some(tab) => Ink::new(fg, tab.bg).with_attrs(tab.attrs).to_string(),
+        None => tab_ink.to_string(),
+    };
+    vec![
+        (" ".to_string(), tab_ink.to_string()),
+        (icon.glyph.to_string(), ink),
+    ]
+}
+
 /// A tab cap's ink: the tab's background as the glyph's color, on the strip's
 /// ground — what turns `\u{e0b6}` and `\u{e0b4}` into the tab's rounded ends.
 fn cap_ink(tab_ink: &str) -> String {
@@ -322,8 +363,22 @@ fn hover(t: Option<HoverTarget>) -> fresh_ui::Handler<UiMsg> {
 /// read on every motion report to route it to `handle_tab_drag`; the node
 /// that saw the press keeps the moves and the release, and the applier keeps
 /// the same threshold — a press that never moved past it is a click.
-fn name_node(pane: LeafId, t: TabTarget, s: String, ink: String) -> Node<UiMsg> {
-    gesture(text(s).theme(ink))
+fn name_node(
+    pane: LeafId,
+    t: TabTarget,
+    s: String,
+    ink: String,
+    icon: Option<Vec<(String, String)>>,
+) -> Node<UiMsg> {
+    let label = match icon {
+        Some(runs) => fresh_ui::text_runs(
+            runs.into_iter()
+                .map(|(text, theme)| fresh_ui::Run::themed(text, theme))
+                .chain([fresh_ui::Run::themed(s, ink)]),
+        ),
+        None => text(s).theme(ink),
+    };
+    gesture(label)
         .key(tab_key(pane, t))
         .on(
             GestureKind::Press,
@@ -512,7 +567,7 @@ fn cluster(pane: LeafId, c: Cluster) -> Node<UiMsg> {
 ///
 /// Counts what [`strip`] builds: each label plus its `×`, a cell between
 /// tabs, and a cell plus the `+` after the last one.
-pub fn natural_width(tabs: &[Tab], preview_label: &str, g: &Glyphs) -> usize {
+pub fn natural_width(tabs: &[Tab], preview_label: &str, g: &Glyphs, icons: bool) -> usize {
     use crate::primitives::display_width::str_width;
     if tabs.is_empty() {
         return str_width(PLUS);
@@ -521,7 +576,11 @@ pub fn natural_width(tabs: &[Tab], preview_label: &str, g: &Glyphs) -> usize {
         str_width(&close_text(g)) + str_width(&g.tab_cap_left) + str_width(&g.tab_cap_right);
     let names: usize = tabs
         .iter()
-        .map(|t| str_width(&label(t, usize::MAX, preview_label, &g.tab_modified)) + chrome)
+        .map(|t| {
+            str_width(&label(t, usize::MAX, preview_label, &g.tab_modified))
+                + chrome
+                + if icons && has_icon(t) { ICON_COLS } else { 0 }
+        })
         .sum();
     names + (tabs.len() - 1) * str_width(&g.tab_separator) + 1 + str_width(PLUS)
 }
@@ -581,11 +640,16 @@ fn tab_window(pane: LeafId, s: &Strip, cap: usize) -> Node<UiMsg> {
         if !g.tab_cap_left.is_empty() {
             span.push(text(g.tab_cap_left.clone()).theme(cap_ink(&name_ink)));
         }
+        let icon = s
+            .file_icons
+            .filter(|_| has_icon(t))
+            .map(|one_color| icon_runs(&t.name, one_color, &name_ink));
         span.push(name_node(
             pane,
             t.target,
             label(t, cap, &s.preview_label, &g.tab_modified),
             name_ink.clone(),
+            icon,
         ));
         span.push(close_node(pane, t.target, close_text(g), close_ink));
         if !g.tab_cap_right.is_empty() {
@@ -756,6 +820,7 @@ mod tests {
             reveal: None,
             preview_label: "(preview)".into(),
             glyphs: Glyphs::default(),
+            file_icons: None,
         }
     }
 
@@ -1197,7 +1262,10 @@ mod tests {
             + 2 // the cell between each pair of tabs
             + 1 // and the one before the `+`
             + str_width(PLUS);
-        assert_eq!(natural_width(&s.tabs, &s.preview_label, &s.glyphs), content);
+        assert_eq!(
+            natural_width(&s.tabs, &s.preview_label, &s.glyphs, false),
+            content
+        );
     }
 
     #[test]

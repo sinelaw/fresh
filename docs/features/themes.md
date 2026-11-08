@@ -206,6 +206,15 @@ same theme still looks right in a terminal without the font:
 
 The built-in `quiet` theme is a complete example.
 
+#### File-type icons
+
+With `editor.nerd_font_icons` on, the file explorer and the tabs show a
+file-type icon before each name — the Rust crab for `.rs`, the npm logo for
+`package.json`, open and closed folders — each in its type's familiar color.
+A theme that wants every icon in one color sets `ui.file_icon_fg`; folders
+use `ui.file_explorer_directory_fg`. A plugin that sets an explorer row's
+leading slot (`setFileExplorerSlots`) replaces the icon for that row.
+
 When a border goes, mark the edge with a background instead:
 `editor.line_number_bg` for the gutter, `ui.file_explorer_bg` for the
 explorer. The built-in `flat` and `quiet` themes do both.

@@ -1749,7 +1749,9 @@
     "field.status_inner_fg": "Status Inner Item Text",
     "field.status_inner_fg_desc": "The next status bar item in on each side (default: status bar text)",
     "field.status_inner_bg": "Status Inner Item Background",
-    "field.status_inner_bg_desc": "The next status bar item in on each side (default: status bar background)"
+    "field.status_inner_bg_desc": "The next status bar item in on each side (default: status bar background)",
+    "field.file_icon_fg": "File Icon Color",
+    "field.file_icon_fg_desc": "One color for every file-type icon (shown with editor.nerd_font_icons). Unset: each file type keeps its own color"
   },
   "es": {
     "field.indent_rainbow": "Arcoíris de sangría %{level}",
