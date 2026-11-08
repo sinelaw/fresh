@@ -2981,7 +2981,7 @@ impl Editor {
                 .ok_or_else(|| format!("unknown baseline id {baseline_id}"))?;
             match &entry.spec {
                 BaselineSpec::Saved => Ok(diff_against_saved(&mut state.buffer)),
-                _ => {
+                spec => {
                     let content = entry
                         .content
                         .as_ref()
@@ -2991,7 +2991,11 @@ impl Editor {
                     Ok(fresh_core::api::DiffBaselineResult {
                         revision: state.buffer.version(),
                         fidelity: FIDELITY_EXACT.to_string(),
-                        hunks: fresh_core::diff::compute_line_diff(&content.text, &new_text),
+                        hunks: super::diff_baselines::diff_texts(
+                            &content.text,
+                            &new_text,
+                            spec.is_git(),
+                        ),
                     })
                 }
             }
@@ -3028,21 +3032,24 @@ impl Editor {
                 .inner
                 .lock()
                 .map_err(|_| "baseline store poisoned".to_string())?;
-            let old = inner
+            let old_entry = inner
                 .entries
                 .get(&old_baseline_id)
-                .ok_or_else(|| format!("unknown baseline id {old_baseline_id}"))?
+                .ok_or_else(|| format!("unknown baseline id {old_baseline_id}"))?;
+            let new_entry = inner
+                .entries
+                .get(&new_baseline_id)
+                .ok_or_else(|| format!("unknown baseline id {new_baseline_id}"))?;
+            let old = old_entry
                 .content
                 .as_ref()
                 .ok_or_else(|| "old baseline content not loaded".to_string())?;
-            let new = inner
-                .entries
-                .get(&new_baseline_id)
-                .ok_or_else(|| format!("unknown baseline id {new_baseline_id}"))?
+            let new = new_entry
                 .content
                 .as_ref()
                 .ok_or_else(|| "new baseline content not loaded".to_string())?;
-            Ok(super::diff_baselines::diff_contents(old, new))
+            let ignore_cr = old_entry.spec.is_git() || new_entry.spec.is_git();
+            Ok(super::diff_baselines::diff_contents(old, new, ignore_cr))
         })();
         match result {
             Ok(value) => {
