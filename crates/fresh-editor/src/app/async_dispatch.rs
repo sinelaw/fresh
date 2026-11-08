@@ -1547,6 +1547,7 @@ impl Editor {
             ephemeral: window.ephemeral_terminals.contains(&terminal_id),
             script_access: window.terminal_has_script_access(terminal_id),
             title: None,
+            auto_title: None,
         }
     }
 
@@ -1751,6 +1752,20 @@ impl Editor {
                     .then(|| window.buffer_metadata.get(&buffer_id))
                     .flatten()
                     .map(|meta| meta.display_name.clone());
+                // The auto-named case, for the other side of the same
+                // problem: a *restart* re-derives the name, but a restore
+                // after the editor is quit has no process to read it from and
+                // showed `*Terminal N*` (#3074). This is the last name
+                // auto-naming resolved, kept only while it says more than
+                // that default would.
+                if record.title.is_none() {
+                    let default_name = format!("*Terminal {}*", terminal_id.0);
+                    record.auto_title = window
+                        .buffer_metadata
+                        .get(&buffer_id)
+                        .map(|meta| meta.display_name.clone())
+                        .filter(|name| !name.is_empty() && *name != default_name);
+                }
                 if let Some(meta) = window.buffer_metadata.get_mut(&buffer_id) {
                     meta.display_name =
                         t!("terminal.tab_exited", name = meta.display_name).to_string();

@@ -1147,6 +1147,13 @@ impl crate::app::window::Window {
         // the exit path does — the PTY this id names no longer exists.
         let buffer_id = self.create_terminal_buffer_detached(terminal_id);
         self.apply_restored_terminal_title(buffer_id, terminal.title.as_deref());
+        // An auto-named tab's name, for the case `apply_restored_terminal_title`
+        // cannot serve: this terminal is dead, so there is no foreground
+        // process to re-derive a name from and the tab read `*Terminal N*`
+        // (#3074). Applied only when there is no explicit title to prefer,
+        // and *without* marking the tab explicitly titled, so a restart still
+        // hands the name back to auto-naming.
+        self.apply_restored_terminal_auto_title(buffer_id, terminal.auto_title.as_deref());
         self.load_terminal_backing_file_as_buffer(buffer_id, &backing_path);
         // A restored-dead tab shows the same "(exited)" marker a tab that died
         // in this session does — the state is identical, so it must read
@@ -1174,6 +1181,10 @@ impl crate::app::window::Window {
                 // is carried so the restart (which does spawn) mints one.
                 script_access: terminal.script_access,
                 title: terminal.title.clone(),
+                // Carried so the next save re-persists it and the name
+                // survives any number of restarts of the editor, exactly as
+                // the launch/resume argv above do.
+                auto_title: terminal.auto_title.clone(),
             },
         );
         Some(buffer_id)
@@ -1195,6 +1206,33 @@ impl crate::app::window::Window {
         // Mark it explicit so `sync_terminal_titles` leaves it alone, exactly
         // as `create_plugin_terminal` does for a freshly-launched agent.
         self.terminal_explicit_titles.insert(buffer_id);
+    }
+
+    /// Re-apply an *auto-named* terminal tab's last name after restore, for a
+    /// terminal that comes back dead.
+    ///
+    /// Auto-naming reads the foreground process every frame, so a live
+    /// terminal needs nothing restored. A dead one has no process to read:
+    /// `sync_terminal_titles` never visits it (it walks live
+    /// `terminal_buffers` only), so the tab keeps whatever name it is given
+    /// here, and with nothing given it kept the `*Terminal N*` default —
+    /// which also made two dead terminals indistinguishable (#3074).
+    ///
+    /// Unlike [`Self::apply_restored_terminal_title`] this does **not** mark
+    /// the tab explicitly titled: the name is a remembered derivation, not a
+    /// choice, so restarting the terminal must hand naming back to the reborn
+    /// process. An explicit title, when there is one, is applied first and
+    /// wins — this leaves it alone.
+    fn apply_restored_terminal_auto_title(&mut self, buffer_id: BufferId, name: Option<&str>) {
+        let Some(name) = name.filter(|n| !n.is_empty()) else {
+            return;
+        };
+        if self.terminal_explicit_titles.contains(&buffer_id) {
+            return;
+        }
+        if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {
+            meta.display_name = name.to_string();
+        }
     }
 
     /// Load a terminal backing file directly as a read-only buffer.
@@ -2696,6 +2734,10 @@ impl crate::app::window::Window {
                     agent_resume,
                     exited: None,
                     title,
+                    // A live terminal is respawned by restore, so its
+                    // auto-named tab re-derives the name from the reborn
+                    // process — there is nothing to carry.
+                    auto_title: None,
                     script_access: self.terminal_has_script_access(terminal_id),
                 });
             }
@@ -2745,6 +2787,10 @@ impl crate::app::window::Window {
                 // The pre-exit tab title, not the "(exited)" form the tab is
                 // showing now — restore re-applies the marker itself.
                 title: exited.title.clone(),
+                // Same, for a tab that was auto-named: this terminal comes
+                // back dead, with no foreground process to re-derive a name
+                // from (#3074).
+                auto_title: exited.auto_title.clone(),
                 script_access: exited.script_access,
             });
         }
