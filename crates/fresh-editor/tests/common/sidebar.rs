@@ -18,16 +18,21 @@ pub fn screen_has(h: &EditorTestHarness, needle: &str) -> bool {
     h.screen_to_string().contains(needle)
 }
 
+/// The focus hint's start. In a narrow column the header's title elides
+/// (`File Explorer (Ctrl+…`) so its buttons keep their cells, so the hint is
+/// recognized by its start, not by the whole `(Ctrl+E)`.
+const HINT: &str = "File Explorer (Ctrl+";
+
 /// The explorer holds the keyboard: its header shows no focus hint.
 pub fn explorer_focused(h: &EditorTestHarness) -> bool {
     h.screen_to_string()
         .lines()
-        .any(|l| l.contains("File Explorer") && !l.contains("(Ctrl+E)"))
+        .any(|l| l.contains("File Explorer") && !l.contains(HINT))
 }
 
 /// Something other than the explorer holds the keyboard.
 pub fn explorer_hinted(h: &EditorTestHarness) -> bool {
-    screen_has(h, "File Explorer (Ctrl+E)")
+    screen_has(h, HINT)
 }
 
 /// The rows of the `Contents` section: everything between its header and

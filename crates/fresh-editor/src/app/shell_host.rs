@@ -4073,7 +4073,7 @@ mod shell_theme_tests {
                 Paint::key("ui.suggestion_bg"),
             )
         };
-        let unknown = asked("syntax.number");
+        let unknown = asked("syntax.no_such_category");
         let style = resolve(&unknown.to_string(), &t);
         assert_eq!(
             style.fg,
