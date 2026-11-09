@@ -19,3 +19,4 @@
 - [Keybinding Editor](./keybinding-editor.md) - Visual keybinding browser and editor
 - [Emacs Keymap](./emacs-keymap.md) - The Emacs keybinding style, key by key
 - [Dashboard](./dashboard.md) - Startup dashboard with weather, git, PRs, disk
+- [Workboard](./workboard.md) - Every Orchestrator workspace and agent on one board: an attention inbox, project and folder views, a self-sorting kanban

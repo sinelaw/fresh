@@ -81,6 +81,7 @@ export default defineConfig({
           { text: "Daemon Mode", link: "/features/session-persistence" },
           { text: "Keybinding Editor", link: "/features/keybinding-editor" },
           { text: "Dashboard", link: "/features/dashboard" },
+          { text: "Workboard", link: "/features/workboard" },
         ],
       },
       {

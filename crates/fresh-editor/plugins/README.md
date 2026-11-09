@@ -16,6 +16,13 @@ This directory contains production-ready plugins for the editor. Plugins are wri
 | `search_replace.ts` | Search and replace functionality |
 | `path_complete.ts` | Path completion in prompts |
 
+### Orchestrator
+
+| Plugin | Description |
+|--------|-------------|
+| `orchestrator.ts` | Parallel workspaces and coding-agent sessions: the dock, new-workspace dialog and lifecycle |
+| `workboard.ts` | Every Orchestrator workspace on one full-screen board: an attention inbox, project and folder lenses, a self-sorting kanban, and a status-bar beacon. See [`docs/features/workboard.md`](../../../docs/features/workboard.md) |
+
 ### Git Integration
 
 | Plugin | Description |
