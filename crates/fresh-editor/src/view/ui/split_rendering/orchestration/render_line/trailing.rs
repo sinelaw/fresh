@@ -166,7 +166,7 @@ fn push_left_margin(
     is_cursor_line: bool,
     highlighted: bool,
 ) {
-    let paint = GutterPaint::new(ctx.theme);
+    let paint = GutterPaint::new(ctx.theme, ctx.show_line_numbers);
 
     // Diagnostic indicator column.
     if ctx

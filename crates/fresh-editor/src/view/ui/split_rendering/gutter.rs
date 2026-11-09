@@ -64,8 +64,12 @@ pub(super) struct LeftMarginContext<'a> {
 ///
 /// - `editor.line_number_bg` is the gutter's ground. It is painted only when
 ///   the theme gives the gutter a shade of its own (one different from
-///   `editor.bg`); otherwise the gutter shows whatever the text area shows,
-///   which keeps `use_terminal_bg` and per-buffer backgrounds intact.
+///   `editor.bg`), and only while the gutter shows line numbers; otherwise
+///   the gutter shows whatever the text area shows, which keeps
+///   `use_terminal_bg` and per-buffer backgrounds intact. Without numbers
+///   the gutter is just its marker column, and a shade there is a stray
+///   one-cell stripe beside the text (Markdown's rendered mode hides the
+///   numbers but keeps that column).
 /// - The cursor's row wears `editor.current_line_bg` instead, across the
 ///   whole gutter, when the current line is highlighted.
 /// - `editor.current_line_number_fg` styles the cursor's line number when the
@@ -75,11 +79,13 @@ pub(super) struct LeftMarginContext<'a> {
 ///   width before the frame (`MarginManager::set_gutter_separator`).
 pub(super) struct GutterPaint<'a> {
     theme: &'a Theme,
+    /// Whether the gutter holds line numbers: its own shade marks them off.
+    numbered: bool,
 }
 
 impl<'a> GutterPaint<'a> {
-    pub(super) fn new(theme: &'a Theme) -> Self {
-        Self { theme }
+    pub(super) fn new(theme: &'a Theme, numbered: bool) -> Self {
+        Self { theme, numbered }
     }
 
     /// The ground of a gutter cell. `highlighted` is whether this row is the
@@ -87,7 +93,7 @@ impl<'a> GutterPaint<'a> {
     pub(super) fn ground(&self, highlighted: bool) -> Style {
         if highlighted {
             Style::default().theme_bg(self.theme, "editor.current_line_bg")
-        } else if self.theme.line_number_bg != self.theme.editor_bg {
+        } else if self.numbered && self.theme.line_number_bg != self.theme.editor_bg {
             Style::default().theme_bg(self.theme, "editor.line_number_bg")
         } else {
             Style::default()
@@ -139,7 +145,7 @@ pub(super) fn render_left_margin(
         return;
     }
 
-    let paint = GutterPaint::new(ctx.theme);
+    let paint = GutterPaint::new(ctx.theme, ctx.show_line_numbers);
     let lookup_key = ctx.line_start_byte;
     let is_cursor_line = lookup_key.is_some_and(|k| k == ctx.cursor_line_start_byte);
     let highlighted = is_cursor_line && ctx.highlight_current_line && ctx.is_active;

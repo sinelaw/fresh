@@ -40,7 +40,7 @@ fn open_file(width: u16, theme: &str, tweak: impl FnOnce(&mut Config), file: &st
     fs::create_dir_all(project_root.join("folder")).unwrap();
     fs::write(project_root.join("notes.txt"), "hello world\n").unwrap();
     if file.ends_with(".md") {
-        fs::write(project_root.join(file), "# Heading\n\ntext\n").unwrap();
+        fs::write(project_root.join(file), "# Heading\n\nparagraph\n").unwrap();
         install_markdown_plugins(&project_root);
     }
 
@@ -229,5 +229,52 @@ fn the_explorer_title_keeps_its_column_with_one_section_or_several() {
         "one section:\n{}\nseveral:\n{}",
         one.harness.screen_to_string(),
         several.harness.screen_to_string()
+    );
+}
+
+/// The gutter wears `editor.line_number_bg` only while it shows line
+/// numbers. Markdown's compose mode hides them but keeps the gutter's
+/// one-cell marker column beside the text, where the theme's gutter shade
+/// would be a stray stripe.
+#[test]
+fn the_gutter_shade_comes_only_with_line_numbers() {
+    let theme = r#"{"name": "t", "extends": "builtin://dark",
+        "editor": {"line_number_bg": [1, 2, 3]}}"#;
+    // The cells of the paragraph's row (not the cursor's, which wears
+    // `current_line_bg`) in the gutter's shade.
+    let shaded_cells = |h: &EditorTestHarness| {
+        let screen = h.screen_to_string();
+        let y = screen
+            .lines()
+            .position(|l| l.contains("paragraph"))
+            .unwrap() as u16;
+        (0..120u16)
+            .filter(|&x| h.get_cell_style(x, y).and_then(|st| st.bg) == Some(Color::Rgb(1, 2, 3)))
+            .count()
+    };
+    let mut s = open_file(120, theme, |_| {}, "doc.md");
+    let h = &mut s.harness;
+    assert!(
+        shaded_cells(h) > 0,
+        "the numbered gutter is shaded:\n{}",
+        h.screen_to_string()
+    );
+
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Toggle Compose").unwrap();
+    h.wait_for_screen_contains("Toggle Compose").unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_for_prompt_closed().unwrap();
+    // Composing: the paragraph's line number (3) is gone.
+    wait_for(h, "compose mode", |h| {
+        !line_with(h, "paragraph").contains("3 ")
+    });
+    assert_eq!(
+        shaded_cells(h),
+        0,
+        "no shade beside composed text:\n{}",
+        h.screen_to_string()
     );
 }
