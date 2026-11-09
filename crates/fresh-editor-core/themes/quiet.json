@@ -800,7 +800,13 @@
       "fold_expanded": "",
       "diagnostic_marker": "",
       "folder_collapsed": "",
-      "folder_expanded": ""
-    }
+      "folder_expanded": "",
+      "section_collapsed": "",
+      "section_expanded": "",
+      "panel_close": "󰅖",
+      "panel_refresh": "󰑐"
+    },
+    "section_collapsed": "›",
+    "section_expanded": "⌄"
   }
 }

@@ -185,6 +185,8 @@ always drawn; an empty string draws nothing and takes no space.
 | `fold_collapsed` / `fold_expanded` | `▸` / `▾` | The gutter's fold markers |
 | `diagnostic_marker` | `●` | The gutter's mark on a line with a diagnostic |
 | `folder_collapsed` / `folder_expanded` | `>` / `▼` | The explorer's folder arrows (your `file_explorer.tree_indicator_*` setting wins once you change it) |
+| `section_collapsed` / `section_expanded` | `▶` / `▼` | A sidebar section's header marker (with more than one section) |
+| `panel_close` / `panel_refresh` | `×` / `⟳` | The sidebar header's close and refresh buttons |
 
 #### Nerd Font glyphs and status bar sections
 

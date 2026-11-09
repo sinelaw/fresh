@@ -706,6 +706,16 @@ chrome_glyphs! {
         "Before an open folder in the file explorer, while the user's \
          `file_explorer.tree_indicator_expanded` is at its default. \
          Default: `▼`";
+    section_collapsed: "▶",
+        "A collapsed sidebar section's header marker (shown while the \
+         sidebar has more than one section). Default: `▶`";
+    section_expanded: "▼",
+        "An open sidebar section's header marker. Default: `▼`";
+    panel_close: "×",
+        "The close button on a sidebar section's header. One cell. \
+         Default: `×`";
+    panel_refresh: "⟳",
+        "The file explorer header's refresh button. One cell. Default: `⟳`";
 }
 
 /// Structural options: which pieces of the editor's chrome exist, and the

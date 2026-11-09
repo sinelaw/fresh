@@ -390,3 +390,24 @@ fn removing_an_entry_keeps_its_modifier_named_sibling() {
     assert!(by_name.get("notes").is_none(), "{by_name}");
     assert_eq!(by_name["notes_modifier"]["glyph"], "Q", "{by_name}");
 }
+
+/// A file name the built-in table has no entry for still draws an icon — its
+/// extension's — and the editor shows that one rather than "(unset)".
+#[test]
+fn name_entry_shows_the_icon_its_extension_draws() {
+    let mut s = open_editor();
+    let h = &mut s.harness;
+    filter(h, "by_name");
+    toggle(h, "File Icons");
+    select_row(h, "Add…");
+    key(h, KeyCode::Enter);
+    h.wait_until(|h| h.screen_to_string().contains("New entry in by_name"))
+        .unwrap();
+    answer(h, "Notes.MD");
+    select_row(h, "glyph");
+    let row = selected_row(h).unwrap();
+    assert!(
+        row.contains("\u{f48a}") && row.contains("(built-in)"),
+        "the Markdown glyph it draws: {row:?}"
+    );
+}

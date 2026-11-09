@@ -1175,6 +1175,20 @@ function builtinValue(path: string): unknown {
     builtinIcons = (editor.getBuiltinFileIcons() as Record<string, unknown>) ?? {};
   }
   const value = getNestedValue({ file_icons: builtinIcons }, path);
+  // An entry the built-in table has no icon for still draws one: a file
+  // name its extension's, then the default — as
+  // `view::file_icons::resolve` builds on `for_file`.
+  const entry = /^file_icons\.(by_name|by_extension)\.([^.]+)\.(glyph|color)$/.exec(path);
+  if (value === undefined && entry) {
+    const icons = builtinIcons as Record<string, Record<string, Record<string, unknown>>>;
+    const key = decodeKey(entry[2]);
+    const dot = key.lastIndexOf(".");
+    const ext = entry[1] === "by_name" && dot >= 0 ? key.slice(dot + 1) : undefined;
+    const half = entry[3];
+    return (ext !== undefined ? icons.by_extension?.[ext]?.[half] : undefined)
+      ?? (icons.default as unknown as Record<string, unknown> | undefined)?.[half]
+      ?? undefined;
+  }
   // A folder icon has no color of its own: it takes the explorer's
   // directory color (`view::file_icons::resolve_folder`).
   if (value === null && /^file_icons\.folder(_open)?\.color$/.test(path)) {

@@ -2419,6 +2419,38 @@
           ],
           "default": "▼"
         },
+        "section_collapsed": {
+          "description": "A collapsed sidebar section's header marker (shown while the sidebar has more than one section). Default: `▶`",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": "▶"
+        },
+        "section_expanded": {
+          "description": "An open sidebar section's header marker. Default: `▼`",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": "▼"
+        },
+        "panel_close": {
+          "description": "The close button on a sidebar section's header. One cell. Default: `×`",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": "×"
+        },
+        "panel_refresh": {
+          "description": "The file explorer header's refresh button. One cell. Default: `⟳`",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": "⟳"
+        },
         "nerd_font": {
           "description": "Glyphs used instead of the ones above while `editor.nerd_font_icons`\nis on. Any glyph left out here falls back to the plain one.",
           "anyOf": [
@@ -2555,6 +2587,38 @@
             "null"
           ],
           "default": "▼"
+        },
+        "section_collapsed": {
+          "description": "A collapsed sidebar section's header marker (shown while the sidebar has more than one section). Default: `▶`",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": "▶"
+        },
+        "section_expanded": {
+          "description": "An open sidebar section's header marker. Default: `▼`",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": "▼"
+        },
+        "panel_close": {
+          "description": "The close button on a sidebar section's header. One cell. Default: `×`",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": "×"
+        },
+        "panel_refresh": {
+          "description": "The file explorer header's refresh button. One cell. Default: `⟳`",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": "⟳"
         }
       }
     },

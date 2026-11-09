@@ -1763,7 +1763,15 @@
     "field.folder": "Folder Icon",
     "field.folder_desc": "A closed folder's icon",
     "field.folder_open": "Open Folder Icon",
-    "field.folder_open_desc": "An open folder's icon"
+    "field.folder_open_desc": "An open folder's icon",
+    "field.section_collapsed": "Sidebar Section (Collapsed)",
+    "field.section_collapsed_desc": "A collapsed sidebar section's header marker (default ▶)",
+    "field.section_expanded": "Sidebar Section (Open)",
+    "field.section_expanded_desc": "An open sidebar section's header marker (default ▼)",
+    "field.panel_close": "Sidebar Close Button",
+    "field.panel_close_desc": "The close button on a sidebar section's header (default ×)",
+    "field.panel_refresh": "Explorer Refresh Button",
+    "field.panel_refresh_desc": "The file explorer header's refresh button (default ⟳)"
   },
   "es": {
     "field.indent_rainbow": "Arcoíris de sangría %{level}",

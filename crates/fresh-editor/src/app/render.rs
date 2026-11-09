@@ -3277,6 +3277,7 @@ impl Editor {
             x0,
             sections,
             bordered: self.theme.read().unwrap().chrome.file_explorer_border,
+            glyphs: self.theme.read().unwrap().chrome.glyphs().clone(),
         })
     }
 

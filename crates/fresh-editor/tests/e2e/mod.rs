@@ -425,6 +425,7 @@ pub mod terminal_resume_mode_after_close;
 pub mod terminal_split_focus_live;
 pub mod test_scrollbar_keybinds_cursor;
 pub mod theme;
+pub mod theme_chrome;
 pub mod theme_screenshots;
 pub mod toggle_bars;
 pub mod toggle_comment;

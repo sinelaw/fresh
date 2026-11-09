@@ -46,8 +46,9 @@
 use std::rc::Rc;
 
 use fresh_ui::{
-    col, focusable, gesture, layer, layout_reader, row, stack, text, Align, Anchor, Event,
-    GestureKind, Key, KeyCode, LayoutInfo, Modality, Node, Place, PointerMode, Sizing,
+    col, focusable, gesture, layer, layout_reader, row, stack, text, text_runs, Align, Anchor,
+    Elide, Event, GestureKind, Key, KeyCode, LayoutInfo, Modality, Node, Place, PointerMode, Run,
+    Sizing,
 };
 
 use crate::app::shell_host::shell_theme::pair;
@@ -76,6 +77,9 @@ pub struct Sidebar {
     /// `chrome.file_explorer_border`). See the module docs for the
     /// borderless shape.
     pub bordered: bool,
+    /// The theme's chrome glyphs: the section markers and the header's
+    /// close and refresh buttons.
+    pub glyphs: crate::view::theme::Glyphs,
 }
 
 /// One section of the column: its content, and the chrome it wears.
@@ -150,6 +154,7 @@ impl Sidebar {
             x0: 0,
             sections: vec![Section::explorer(e)],
             bordered: true,
+            glyphs: Default::default(),
         }
     }
 
@@ -483,23 +488,47 @@ fn header_row(s: &Sidebar, i: usize, sec: &Section) -> Node<UiMsg> {
         ('├', '┤')
     };
     let several = s.sections.len() > 1;
-    let mut cells: Vec<Node<UiMsg>> = vec![
-        // One cell of border before the title, which is where ratatui's
-        // `Block` starts a left-aligned title.
-        row()
-            .w(Sizing::Cells(1))
-            .pointer_mode(PointerMode::Transparent),
-    ];
-    if several {
+    let mut cells: Vec<Node<UiMsg>> = Vec::new();
+    // Boxed, one cell of border before the title, which is where ratatui's
+    // `Block` starts a left-aligned title, and a space after it. Borderless
+    // there is no corner to step past: the header starts at the edge, like
+    // the rows under it.
+    let pad = if s.bordered { " " } else { "" };
+    if s.bordered {
         cells.push(
-            text(if sec.collapsed { " ▶" } else { " ▼" })
-                .theme(sec.title_theme.clone())
+            row()
+                .w(Sizing::Cells(1))
                 .pointer_mode(PointerMode::Transparent),
         );
     }
-    cells.push(
-        text(sec.title.clone())
+    // The title's own leading space separates it from what is before it: a
+    // corner or a chevron. With neither, it would only be padding.
+    let title = if s.bordered || several {
+        sec.title.clone()
+    } else {
+        sec.title.trim_start().to_string()
+    };
+    if several {
+        cells.push(
+            text(format!(
+                "{pad}{}",
+                if sec.collapsed {
+                    &s.glyphs.section_collapsed
+                } else {
+                    &s.glyphs.section_expanded
+                }
+            ))
             .theme(sec.title_theme.clone())
+            .pointer_mode(PointerMode::Transparent),
+        );
+    }
+    cells.push(
+        // **The title gives way, the buttons do not.** In a narrow column the
+        // title used to keep its full width and push the `⟳` and `×` out of
+        // the row, so the panel could not be closed with the pointer. It
+        // elides instead, and the buttons are sized first (`priority`).
+        text_runs([Run::themed(title, sec.title_theme.clone())])
+            .elide(Elide::Tail)
             // The title is decoration. Pressing it used to select the
             // panel's first row — `row.saturating_sub(area.y + 1)` clamps
             // to 0 on the title line — while the right-click and
@@ -509,10 +538,10 @@ fn header_row(s: &Sidebar, i: usize, sec: &Section) -> Node<UiMsg> {
     );
     cells.push(row().flex(1).pointer_mode(PointerMode::Transparent));
     if let Some(theme) = &sec.refresh_theme {
-        cells.push(refresh(i, theme.clone()));
+        cells.push(refresh(i, theme.clone(), &s.glyphs.panel_refresh).priority(BUTTONS_FIRST));
     }
     if sec.closable {
-        cells.push(close(i, sec));
+        cells.push(close(i, sec, &s.glyphs.panel_close).priority(BUTTONS_FIRST));
     }
     let strip = row()
         .h(Sizing::Cells(1))
@@ -599,7 +628,7 @@ fn header_row(s: &Sidebar, i: usize, sec: &Section) -> Node<UiMsg> {
 ///
 /// The explorer's `×` hides the sidebar, as it always has; any other
 /// section's removes that section.
-fn close(i: usize, sec: &Section) -> Node<UiMsg> {
+fn close(i: usize, sec: &Section, glyph: &str) -> Node<UiMsg> {
     let hover = if i == 0 {
         HoverTarget::FileExplorerCloseButton
     } else {
@@ -608,7 +637,7 @@ fn close(i: usize, sec: &Section) -> Node<UiMsg> {
     gesture(
         row()
             .w(Sizing::Cells(3))
-            .child(text("×").theme(sec.close_theme.clone())),
+            .child(text(glyph.to_string()).theme(sec.close_theme.clone())),
     )
     .key(close_key(i))
     .on(
@@ -628,6 +657,10 @@ fn close(i: usize, sec: &Section) -> Node<UiMsg> {
     .on_leave(hover_msg(None))
 }
 
+/// A header button's layout priority: sized before the title, which takes
+/// what is left and elides (see `header_row`).
+const BUTTONS_FIRST: u8 = 1;
+
 /// How many cells the `⟳` button occupies. Two: the glyph, and one cell of
 /// gap so it does not read as one word with the `×`.
 const REFRESH_COLS: u16 = 2;
@@ -637,11 +670,11 @@ const REFRESH_COLS: u16 = 2;
 /// Built like [`close`] — the glyph carries the theme, the cells around it stay
 /// transparent — and sized so the section handle above can stop short of it.
 /// `⟳` is already the explorer's glyph for a directory that is loading.
-fn refresh(i: usize, theme: String) -> Node<UiMsg> {
+fn refresh(i: usize, theme: String, glyph: &str) -> Node<UiMsg> {
     gesture(
         row()
             .w(Sizing::Cells(REFRESH_COLS))
-            .child(text("⟳").theme(theme)),
+            .child(text(glyph.to_string()).theme(theme)),
     )
     .key(refresh_key(i))
     .on(
@@ -807,6 +840,7 @@ mod tests {
             x0: 0,
             sections: vec![explorer_section(2), panel_section(0)],
             bordered: true,
+            glyphs: Default::default(),
         }
     }
 
@@ -913,6 +947,7 @@ mod tests {
                 x0: 0,
                 sections: vec![explorer_section(0)],
                 bordered: true,
+                glyphs: Default::default(),
             },
             20,
             5,
@@ -1079,6 +1114,7 @@ mod tests {
             x0: 0,
             sections: vec![explorer_section(2), sec],
             bordered: true,
+            glyphs: Default::default(),
         }
     }
 
