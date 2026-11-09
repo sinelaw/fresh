@@ -43,6 +43,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          persist-credentials: false
           submodules: recursive
 
       - name: Install Rust toolchain
@@ -297,6 +298,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          persist-credentials: false
           submodules: recursive
 
       - name: Download x86_64 binary

@@ -25,6 +25,8 @@ jobs:
       is_prerelease: ${{ steps.version.outputs.is_prerelease }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Extract version info
         id: version
         run: |
@@ -69,6 +71,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          persist-credentials: false
           submodules: recursive
 
       - name: Install Nix
@@ -121,6 +124,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          persist-credentials: false
           submodules: recursive
 
       - name: Install Rust toolchain
@@ -341,6 +345,8 @@ jobs:
       VERSION: ${{ needs.plan.outputs.version }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -390,6 +396,8 @@ jobs:
       VERSION: ${{ needs.plan.outputs.version }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Download artifacts for checksums
         uses: actions/download-artifact@v7
@@ -505,6 +513,8 @@ jobs:
       TAG: ${{ needs.plan.outputs.tag }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Download all artifacts
         uses: actions/download-artifact@v7
@@ -713,6 +723,8 @@ jobs:
       TAG: ${{ needs.plan.outputs.tag }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Mark it the latest release
         run: |
@@ -758,6 +770,8 @@ jobs:
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Say on the release that it failed validation
         run: python3 scripts/validation-notice.py add "$TAG" "$RUN_URL"

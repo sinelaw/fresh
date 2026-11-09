@@ -37,6 +37,8 @@ jobs:
       VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Download pre-built binary
         uses: actions/download-artifact@v7
