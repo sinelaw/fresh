@@ -136,6 +136,29 @@ impl<'a> GutterPaint<'a> {
 
 /// Render the left margin (indicators + line numbers + separator) to the
 /// provided span / column-map buffers.
+/// The indicator column's text, exactly one cell wide.
+///
+/// The margin is measured with one cell for it (`MarginConfig::total_width`),
+/// and the cursor and the mouse are mapped through that width, while its
+/// glyph comes from the theme (`chrome.fold_*`, `diagnostic_marker`) or a
+/// plugin. A wider glyph (an emoji) would push the row's numbers and text
+/// one column right of every other row; an empty one, one column left. Its
+/// first grapheme is kept when that is one cell, else the cell is blank.
+pub(super) fn one_cell(glyph: String) -> String {
+    use unicode_segmentation::UnicodeSegmentation;
+    use unicode_width::UnicodeWidthStr;
+    match glyph.graphemes(true).next() {
+        Some(first) if first.width() == 1 => {
+            if first.len() == glyph.len() {
+                glyph
+            } else {
+                first.to_string()
+            }
+        }
+        _ => " ".to_string(),
+    }
+}
+
 pub(super) fn render_left_margin(
     ctx: &LeftMarginContext,
     line_spans: &mut Vec<Span<'static>>,
@@ -201,7 +224,7 @@ pub(super) fn render_left_margin(
     push_span_with_map(
         line_spans,
         line_view_map,
-        indicator,
+        one_cell(indicator),
         paint.on_ground(indicator_style, highlighted),
         None,
     );

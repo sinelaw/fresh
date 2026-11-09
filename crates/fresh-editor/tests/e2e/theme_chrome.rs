@@ -341,3 +341,65 @@ fn scrolling_measures_the_gutter_without_its_separator() {
         "the line before it sits right above, on one row:\n{screen}"
     );
 }
+
+/// A theme's gutter glyphs take the indicator column's one cell, whatever
+/// their width: a two-cell fold marker or an empty one would move that
+/// row's numbers and text a column off every other row's.
+#[test]
+fn gutter_glyphs_keep_to_their_one_cell() {
+    for glyph in ["🔽", ""] {
+        let theme = format!(
+            r#"{{"name": "t", "extends": "builtin://dark",
+                "chrome": {{"fold_expanded": "{glyph}"}}}}"#
+        );
+        let dir = tempfile::TempDir::new().unwrap();
+        let dir_context = DirectoryContext::for_testing(dir.path());
+        let themes_dir = dir.path().join("config").join("themes");
+        fs::create_dir_all(&themes_dir).unwrap();
+        fs::write(themes_dir.join("t.json"), &theme).unwrap();
+        let project_root = dir.path().join("project_root");
+        fs::create_dir_all(&project_root).unwrap();
+        fs::write(
+            project_root.join("main.rs"),
+            "fn main() {\n    let a = 1;\n    let b = 2;\n}\n",
+        )
+        .unwrap();
+        let config = Config {
+            theme: "t".to_string().into(),
+            ..Default::default()
+        };
+        let mut h = EditorTestHarness::create(
+            80,
+            12,
+            HarnessOptions::new()
+                .with_config(config)
+                .with_working_dir(project_root.clone())
+                .with_shared_dir_context(dir_context)
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+        h.open_file(&project_root.join("main.rs")).unwrap();
+        // Folding ranges arrive from the indentation pass after a frame.
+        h.wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("fn main") && s.contains("let b")
+        })
+        .unwrap();
+        h.render().unwrap();
+        let screen = h.screen_to_string();
+        let text_col = |needle: &str| {
+            let line = screen.lines().find(|l| l.contains(needle)).unwrap();
+            line[..line.find(needle).unwrap()].chars().count()
+                + line[..line.find(needle).unwrap()]
+                    .chars()
+                    .filter(|c| unicode_width::UnicodeWidthChar::width(*c) == Some(2))
+                    .count()
+        };
+        // `fn` starts the first line at the text's column; `}` the last.
+        assert_eq!(
+            text_col("fn main"),
+            text_col("}"),
+            "fold glyph {glyph:?} keeps the text in its column:\n{screen}"
+        );
+    }
+}

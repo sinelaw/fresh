@@ -14,7 +14,7 @@
 //!   theme names a post-EOF shade of its own (see issues #779, #458,
 //!   ratatui #1606).
 
-use super::super::super::gutter::GutterPaint;
+use super::super::super::gutter::{one_cell, GutterPaint};
 use super::super::super::style::dim_color_for_tilde;
 use super::super::contexts::DecorationContext;
 use super::LastLineEnd;
@@ -175,7 +175,7 @@ fn push_left_margin(
         .contains(&implicit_line_byte)
     {
         spans.push(Span::styled(
-            ctx.theme.chrome.glyphs().diagnostic_marker.clone(),
+            one_cell(ctx.theme.chrome.glyphs().diagnostic_marker.clone()),
             paint.diagnostic(highlighted),
         ));
     } else {
