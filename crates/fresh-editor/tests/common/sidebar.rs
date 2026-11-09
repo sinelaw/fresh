@@ -19,9 +19,9 @@ pub fn screen_has(h: &EditorTestHarness, needle: &str) -> bool {
 }
 
 /// The focus hint's start. In a narrow column the header's title elides
-/// (`File Explorer (Ctrl+…`) so its buttons keep their cells, so the hint is
+/// (`File Explorer (Ctrl…`) so its buttons keep their cells, so the hint is
 /// recognized by its start, not by the whole `(Ctrl+E)`.
-const HINT: &str = "File Explorer (Ctrl+";
+const HINT: &str = "File Explorer (Ctrl";
 
 /// The explorer holds the keyboard: its header shows no focus hint.
 pub fn explorer_focused(h: &EditorTestHarness) -> bool {

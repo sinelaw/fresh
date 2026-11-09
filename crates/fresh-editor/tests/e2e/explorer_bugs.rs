@@ -914,7 +914,7 @@ fn test_shift_up_at_top_seeds_selection_before_escape_unfocuses() {
     harness.render().unwrap();
 
     // The hint's start: in a narrow column the title elides after it.
-    harness.assert_screen_not_contains("File Explorer (Ctrl+");
+    harness.assert_screen_not_contains("File Explorer (Ctrl");
     harness.assert_screen_contains("File Explorer");
 }
 

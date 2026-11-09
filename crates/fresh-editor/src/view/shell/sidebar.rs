@@ -536,6 +536,16 @@ fn header_row(s: &Sidebar, i: usize, sec: &Section) -> Node<UiMsg> {
             // Saying it is not a target makes all three agree.
             .pointer_mode(PointerMode::Transparent),
     );
+    // One cell between the title and the buttons, sized first like them, so
+    // an elided title (`…`) never runs into the `⟳`.
+    if sec.refresh_theme.is_some() || sec.closable {
+        cells.push(
+            row()
+                .w(Sizing::Cells(1))
+                .priority(BUTTONS_FIRST)
+                .pointer_mode(PointerMode::Transparent),
+        );
+    }
     cells.push(row().flex(1).pointer_mode(PointerMode::Transparent));
     if let Some(theme) = &sec.refresh_theme {
         cells.push(refresh(i, theme.clone(), &s.glyphs.panel_refresh).priority(BUTTONS_FIRST));
@@ -637,7 +647,7 @@ fn close(i: usize, sec: &Section, glyph: &str) -> Node<UiMsg> {
     gesture(
         row()
             .w(Sizing::Cells(3))
-            .child(text(glyph.to_string()).theme(sec.close_theme.clone())),
+            .child(text(glyph).theme(sec.close_theme.clone())),
     )
     .key(close_key(i))
     .on(
@@ -674,7 +684,7 @@ fn refresh(i: usize, theme: String, glyph: &str) -> Node<UiMsg> {
     gesture(
         row()
             .w(Sizing::Cells(REFRESH_COLS))
-            .child(text(glyph.to_string()).theme(theme)),
+            .child(text(glyph).theme(theme)),
     )
     .key(refresh_key(i))
     .on(

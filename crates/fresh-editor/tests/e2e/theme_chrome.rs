@@ -179,10 +179,15 @@ fn a_narrow_explorer_keeps_its_header_buttons() {
             "chrome": {"file_explorer_border": false}}"#,
     ] {
         let s = open_sized(70, theme, |_| {});
-        let header = line_with(&s.harness, "File Explorer");
+        let header = line_with(&s.harness, "File Explor");
         assert!(
             header.contains('…') && header.contains('×') && header.contains('⟳'),
             "title elided, buttons kept: {header:?}"
+        );
+        let after = header.split('…').nth(1).and_then(|r| r.chars().next());
+        assert!(
+            matches!(after, Some(' ' | '─')),
+            "a gap between the elided title and the buttons: {header:?}"
         );
     }
 }
