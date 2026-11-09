@@ -54,10 +54,122 @@ pub(super) struct LeftMarginContext<'a> {
     /// pass `None` and fall back to the existing
     /// diagnostic/fold/line-indicator lookup chain.
     pub virtual_gutter_glyph: Option<&'a (String, Color)>,
+    /// Whether the pane hands its background to the terminal
+    /// (`editor.use_terminal_bg`): the gutter then has no shade of its own
+    /// either, or it would be an opaque band beside transparent text.
+    pub terminal_bg: bool,
+}
+
+/// How every gutter cell is painted, decided in one place.
+///
+/// Both gutter painters — [`render_left_margin`] for buffer rows and the
+/// implicit row after a trailing newline — ask this, so a theme key means the
+/// same thing on every row:
+///
+/// - `editor.line_number_bg` is the gutter's ground. It is painted only when
+///   the theme gives the gutter a shade of its own (one different from
+///   `editor.bg`), and only while the gutter shows line numbers; otherwise
+///   the gutter shows whatever the text area shows, which keeps
+///   `use_terminal_bg` and per-buffer backgrounds intact (under
+///   `use_terminal_bg` it is not painted at all). Without numbers
+///   the gutter is just its marker column, and a shade there is a stray
+///   one-cell stripe beside the text (Markdown's rendered mode hides the
+///   numbers but keeps that column).
+/// - The cursor's row wears `editor.current_line_bg` instead, across the
+///   whole gutter, when the current line is highlighted.
+/// - `editor.current_line_number_fg` styles the cursor's line number when the
+///   theme names it; otherwise that number keeps its historical look.
+/// - `editor.gutter_separator_fg` draws the separator. Whether there is one
+///   is the theme's `chrome.gutter_separator`, settled into the margin's
+///   width before the frame (`MarginManager::set_gutter_separator`).
+pub(super) struct GutterPaint<'a> {
+    theme: &'a Theme,
+    /// Whether the gutter may wear its own shade: it holds line numbers, which
+    /// the shade marks off, and the pane paints its own background.
+    shaded: bool,
+}
+
+impl<'a> GutterPaint<'a> {
+    /// `numbered`: the gutter shows line numbers; `terminal_bg`: the pane
+    /// hands its background to the terminal.
+    pub(super) fn new(theme: &'a Theme, numbered: bool, terminal_bg: bool) -> Self {
+        Self {
+            theme,
+            shaded: numbered && !terminal_bg,
+        }
+    }
+
+    /// The ground of a gutter cell. `highlighted` is whether this row is the
+    /// cursor's row *and* the current line is being highlighted.
+    pub(super) fn ground(&self, highlighted: bool) -> Style {
+        if highlighted {
+            Style::default().theme_bg(self.theme, "editor.current_line_bg")
+        } else if self.shaded && self.theme.line_number_bg != self.theme.editor_bg {
+            Style::default().theme_bg(self.theme, "editor.line_number_bg")
+        } else {
+            Style::default()
+        }
+    }
+
+    /// `style` on this row's ground.
+    pub(super) fn on_ground(&self, style: Style, highlighted: bool) -> Style {
+        style.patch(self.ground(highlighted))
+    }
+
+    /// A line number's ink. `cursor_line` is whether it numbers the cursor's
+    /// line; `emphasized` is whether that number has historically been drawn
+    /// in `editor.fg` (relative numbers, byte offsets, diff numbering) rather
+    /// than in the gutter's dim color.
+    pub(super) fn number(&self, cursor_line: bool, emphasized: bool) -> Style {
+        if cursor_line && self.theme.current_line_number_fg.is_some() {
+            Style::default().theme_fg(self.theme, "editor.current_line_number_fg")
+        } else if cursor_line && emphasized {
+            Style::default().theme_fg(self.theme, "editor.fg")
+        } else {
+            Style::default().theme_fg(self.theme, "editor.line_number_fg")
+        }
+    }
+
+    /// The separator's text and style.
+    pub(super) fn separator(&self, separator: &str, highlighted: bool) -> (String, Style) {
+        let ink = Style::default().theme_fg(self.theme, "editor.gutter_separator_fg");
+        (separator.to_string(), self.on_ground(ink, highlighted))
+    }
+
+    /// The gutter's diagnostic marker.
+    pub(super) fn diagnostic(&self, highlighted: bool) -> Style {
+        self.on_ground(
+            Style::default().theme_fg(self.theme, "diagnostic.error_fg"),
+            highlighted,
+        )
+    }
 }
 
 /// Render the left margin (indicators + line numbers + separator) to the
 /// provided span / column-map buffers.
+/// The indicator column's text, exactly one cell wide.
+///
+/// The margin is measured with one cell for it (`MarginConfig::total_width`),
+/// and the cursor and the mouse are mapped through that width, while its
+/// glyph comes from the theme (`chrome.fold_*`, `diagnostic_marker`) or a
+/// plugin. A wider glyph (an emoji) would push the row's numbers and text
+/// one column right of every other row; an empty one, one column left. Its
+/// first grapheme is kept when that is one cell, else the cell is blank.
+pub(super) fn one_cell(glyph: String) -> String {
+    use unicode_segmentation::UnicodeSegmentation;
+    use unicode_width::UnicodeWidthStr;
+    match glyph.graphemes(true).next() {
+        Some(first) if first.width() == 1 => {
+            if first.len() == glyph.len() {
+                glyph
+            } else {
+                first.to_string()
+            }
+        }
+        _ => " ".to_string(),
+    }
+}
+
 pub(super) fn render_left_margin(
     ctx: &LeftMarginContext,
     line_spans: &mut Vec<Span<'static>>,
@@ -67,14 +179,10 @@ pub(super) fn render_left_margin(
         return;
     }
 
+    let paint = GutterPaint::new(ctx.theme, ctx.show_line_numbers, ctx.terminal_bg);
     let lookup_key = ctx.line_start_byte;
-    // Pre-compute indicator bg for cursor line highlighting
-    let indicator_is_cursor_line = lookup_key.is_some_and(|k| k == ctx.cursor_line_start_byte);
-    let indicator_bg = if indicator_is_cursor_line && ctx.highlight_current_line && ctx.is_active {
-        Some(Style::default().theme_bg(ctx.theme, "editor.current_line_bg"))
-    } else {
-        None
-    };
+    let is_cursor_line = lookup_key.is_some_and(|k| k == ctx.cursor_line_start_byte);
+    let highlighted = is_cursor_line && ctx.highlight_current_line && ctx.is_active;
 
     // Virtual lines whose source `VirtualText` carries a `gutter_glyph`
     // get their own indicator (e.g. live-diff's "-" on a deletion
@@ -82,29 +190,20 @@ pub(super) fn render_left_margin(
     // the glyph actually appears in the gutter; subsequent wrapped
     // rows of the same virtual line set `virtual_gutter_glyph` to
     // `None`, so they keep the blank fallback.
-    if let Some((glyph, color)) = ctx.virtual_gutter_glyph {
-        let mut style = Style::default().fg(*color);
-        if let Some(bg) = indicator_bg {
-            style = style.patch(bg);
-        }
-        push_span_with_map(line_spans, line_view_map, glyph.clone(), style, None);
+    let (indicator, indicator_style) = if let Some((glyph, color)) = ctx.virtual_gutter_glyph {
+        (glyph.clone(), Style::default().fg(*color))
     } else if ctx.is_continuation {
         // For continuation lines, don't show any indicators
-        let mut style = Style::default();
-        if let Some(bg) = indicator_bg {
-            style = style.patch(bg);
-        }
-        push_span_with_map(line_spans, line_view_map, " ".to_string(), style, None);
+        (" ".to_string(), Style::default())
     } else if ctx
         .diagnostic_anchor_byte
         .is_some_and(|k| ctx.diagnostic_lines.contains(&k))
     {
         // Diagnostic indicators have highest priority
-        let mut style = Style::default().fg(Color::Red);
-        if let Some(bg) = indicator_bg {
-            style = style.patch(bg);
-        }
-        push_span_with_map(line_spans, line_view_map, "●".to_string(), style, None);
+        (
+            ctx.theme.chrome.glyphs().diagnostic_marker.clone(),
+            paint.diagnostic(false),
+        )
     } else if ctx.state.diff_gutter.is_none()
         && lookup_key.is_some_and(|k| {
             ctx.fold_indicators.contains_key(&k) && !ctx.line_indicators.contains_key(&k)
@@ -115,82 +214,59 @@ pub(super) fn render_left_margin(
         // would be a second, differently-placed answer to the same
         // question.
         let fold = ctx.fold_indicators.get(&lookup_key.unwrap()).unwrap();
-        let symbol = if fold.collapsed { "▸" } else { "▾" };
-        let mut style = Style::default().theme_fg(ctx.theme, "editor.line_number_fg");
-        if let Some(bg) = indicator_bg {
-            style = style.patch(bg);
-        }
-        push_span_with_map(line_spans, line_view_map, symbol.to_string(), style, None);
+        let chrome = ctx.theme.chrome.glyphs();
+        let symbol = if fold.collapsed {
+            &chrome.fold_collapsed
+        } else {
+            &chrome.fold_expanded
+        };
+        (
+            symbol.clone(),
+            Style::default().theme_fg(ctx.theme, "editor.line_number_fg"),
+        )
     } else if let Some(indicator) = lookup_key.and_then(|k| ctx.line_indicators.get(&k)) {
-        let mut style = Style::default().fg(indicator.color);
-        if let Some(bg) = indicator_bg {
-            style = style.patch(bg);
-        }
-        push_span_with_map(
-            line_spans,
-            line_view_map,
+        (
             indicator.symbol.clone(),
-            style,
-            None,
-        );
+            Style::default().fg(indicator.color),
+        )
     } else {
-        let mut style = Style::default();
-        if let Some(bg) = indicator_bg {
-            style = style.patch(bg);
-        }
-        push_span_with_map(line_spans, line_view_map, " ".to_string(), style, None);
-    }
+        (" ".to_string(), Style::default())
+    };
+    push_span_with_map(
+        line_spans,
+        line_view_map,
+        one_cell(indicator),
+        paint.on_ground(indicator_style, highlighted),
+        None,
+    );
 
-    let is_cursor_line = lookup_key.is_some_and(|k| k == ctx.cursor_line_start_byte);
-    let use_cursor_line_bg = is_cursor_line && ctx.highlight_current_line && ctx.is_active;
-
-    if ctx.is_continuation {
-        let blank = " ".repeat(ctx.margin.width);
-        let mut style = Style::default().theme_fg(ctx.theme, "editor.line_number_fg");
-        if use_cursor_line_bg {
-            style = style.theme_bg(ctx.theme, "editor.current_line_bg");
-        }
-        push_span_with_map(line_spans, line_view_map, blank, style, None);
+    let (rendered_text, number_style) = if ctx.is_continuation {
+        (
+            " ".repeat(ctx.margin.width),
+            Style::default().theme_fg(ctx.theme, "editor.line_number_fg"),
+        )
     } else if let Some(gutter) = ctx.state.diff_gutter.as_ref() {
         // A diff stream numbers its rows from their hunk headers, not from
         // their position in the buffer.
-        let rendered_text = gutter.render(ctx.gutter_num);
-        let mut margin_style = if is_cursor_line {
-            Style::default().theme_fg(ctx.theme, "editor.fg")
-        } else {
-            Style::default().theme_fg(ctx.theme, "editor.line_number_fg")
-        };
-        if use_cursor_line_bg {
-            margin_style = margin_style.theme_bg(ctx.theme, "editor.current_line_bg");
-        }
-        push_span_with_map(line_spans, line_view_map, rendered_text, margin_style, None);
+        (
+            gutter.render(ctx.gutter_num),
+            paint.number(is_cursor_line, true),
+        )
     } else if ctx.byte_offset_mode && ctx.show_line_numbers {
-        let rendered_text = format!("{:>width$}", ctx.gutter_num, width = ctx.margin.width);
-        let mut margin_style = if is_cursor_line {
-            Style::default().theme_fg(ctx.theme, "editor.fg")
-        } else {
-            Style::default().theme_fg(ctx.theme, "editor.line_number_fg")
-        };
-        if use_cursor_line_bg {
-            margin_style = margin_style.theme_bg(ctx.theme, "editor.current_line_bg");
-        }
-        push_span_with_map(line_spans, line_view_map, rendered_text, margin_style, None);
+        (
+            format!("{:>width$}", ctx.gutter_num, width = ctx.margin.width),
+            paint.number(is_cursor_line, true),
+        )
     } else if ctx.relative_line_numbers {
         let display_num = if is_cursor_line {
             ctx.gutter_num + 1
         } else {
             ctx.gutter_num.abs_diff(ctx.cursor_line_number)
         };
-        let rendered_text = format!("{:>width$}", display_num, width = ctx.margin.width);
-        let mut margin_style = if is_cursor_line {
-            Style::default().theme_fg(ctx.theme, "editor.fg")
-        } else {
-            Style::default().theme_fg(ctx.theme, "editor.line_number_fg")
-        };
-        if use_cursor_line_bg {
-            margin_style = margin_style.theme_bg(ctx.theme, "editor.current_line_bg");
-        }
-        push_span_with_map(line_spans, line_view_map, rendered_text, margin_style, None);
+        (
+            format!("{:>width$}", display_num, width = ctx.margin.width),
+            paint.number(is_cursor_line, true),
+        )
     } else {
         let margin_content = ctx.state.margins.render_line(
             ctx.gutter_num,
@@ -199,28 +275,23 @@ pub(super) fn render_left_margin(
             ctx.show_line_numbers,
         );
         let (rendered_text, style_opt) = margin_content.render(ctx.margin.width);
-
-        let mut margin_style = style_opt
-            .unwrap_or_else(|| Style::default().theme_fg(ctx.theme, "editor.line_number_fg"));
-        if use_cursor_line_bg {
-            margin_style = margin_style.theme_bg(ctx.theme, "editor.current_line_bg");
-        }
-
-        push_span_with_map(line_spans, line_view_map, rendered_text, margin_style, None);
-    }
+        // A margin annotation's own style wins over the gutter's.
+        (
+            rendered_text,
+            style_opt.unwrap_or_else(|| paint.number(is_cursor_line, false)),
+        )
+    };
+    push_span_with_map(
+        line_spans,
+        line_view_map,
+        rendered_text,
+        paint.on_ground(number_style, highlighted),
+        None,
+    );
 
     if ctx.margin.show_separator {
-        let mut separator_style = Style::default().theme_fg(ctx.theme, "editor.line_number_fg");
-        if use_cursor_line_bg {
-            separator_style = separator_style.theme_bg(ctx.theme, "editor.current_line_bg");
-        }
-        push_span_with_map(
-            line_spans,
-            line_view_map,
-            ctx.margin.separator.clone(),
-            separator_style,
-            None,
-        );
+        let (text, style) = paint.separator(&ctx.margin.separator, highlighted);
+        push_span_with_map(line_spans, line_view_map, text, style, None);
     }
 }
 

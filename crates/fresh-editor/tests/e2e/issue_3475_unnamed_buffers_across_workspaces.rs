@@ -145,3 +145,106 @@ fn switching_back_does_not_adopt_the_same_unnamed_buffer_twice() {
     // The content is still there — deduplicating must not cost the buffer.
     harness.assert_screen_contains("UNNAMED-KEEP");
 }
+
+/// #3476 again, by the route the report took: the buffer is **restored from
+/// disk** at launch, and only then switched away from and back to.
+///
+/// The test above starts from a buffer live in the same session, so only
+/// adoption-on-activation can duplicate it. The reported flow has a quit and
+/// a relaunch in between, which brings a second placer into play:
+/// `Window::restore_unnamed_buffers` opens the tab from the workspace's
+/// `unnamed_buffers` reference, and adoption then runs over the same entry on
+/// every activation. One tab per entry has to hold across both.
+///
+/// Asserted on every round, not just at the end: the growth was one tab per
+/// switch, so a single round cannot tell a fix from an off-by-one. The store's
+/// entry count comes along because the tab count alone would not notice the
+/// entry being copied instead of shared.
+#[test]
+fn a_restored_unnamed_buffer_survives_repeated_switches() {
+    let temp_dir = TempDir::new().unwrap();
+    let folder_a = temp_dir.path().join("folder_a");
+    let folder_b = temp_dir.path().join("folder_b");
+    std::fs::create_dir(&folder_a).unwrap();
+    std::fs::create_dir(&folder_b).unwrap();
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    let harness_in = |dir: &std::path::Path| {
+        let mut config = Config::default();
+        config.editor.hot_exit = true;
+        // Back up on the next tick rather than waiting out the interval.
+        config.editor.auto_recovery_save_interval_secs = 0;
+        EditorTestHarness::create(
+            120,
+            24,
+            HarnessOptions::new()
+                .with_config(config)
+                .with_working_dir(dir.to_path_buf())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap()
+    };
+    let entries_for_a = || {
+        fresh::services::recovery::entries_for_root(&dir_context.recovery_dir(), &folder_a).len()
+    };
+
+    // Folder A: an unsaved unnamed buffer, kept by a clean exit.
+    {
+        let mut harness = harness_in(&folder_a);
+        harness.startup(true, &[]).unwrap();
+        harness.new_buffer().unwrap();
+        harness.type_text("RESTORED-KEEP").unwrap();
+        harness.render().unwrap();
+        harness
+            .editor_mut()
+            .auto_recovery_save_dirty_buffers()
+            .unwrap();
+        harness.shutdown(true).unwrap();
+    }
+    assert_eq!(
+        entries_for_a(),
+        1,
+        "the clean exit must leave the unsaved buffer as one entry"
+    );
+
+    // Relaunch in A: the restore brings it back, once.
+    let mut harness = harness_in(&folder_a);
+    harness.startup(true, &[]).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("RESTORED-KEEP");
+    let tabs_before = no_name_tabs(&harness);
+    assert_eq!(
+        tabs_before,
+        1,
+        "the restore must open one tab for the one entry.\nTabs: {}",
+        harness.screen_row_text(layout::TAB_BAR_ROW as u16)
+    );
+
+    // Somewhere to switch away to, over a different root.
+    let home = harness.editor().active_window_id();
+    let other = harness
+        .editor_mut()
+        .create_window_at(folder_b.clone(), "folder_b".to_string());
+
+    for round in 1..=3 {
+        harness.editor_mut().set_active_window(other);
+        harness.render().unwrap();
+        harness.editor_mut().set_active_window(home);
+        harness.render().unwrap();
+
+        assert_eq!(
+            no_name_tabs(&harness),
+            tabs_before,
+            "round {round}: switching back to the restored workspace opened \
+             another tab for the same unsaved buffer.\nTabs: {}",
+            harness.screen_row_text(layout::TAB_BAR_ROW as u16)
+        );
+        assert_eq!(
+            entries_for_a(),
+            1,
+            "round {round}: the store must still hold one entry for this root"
+        );
+        harness.assert_screen_contains("RESTORED-KEEP");
+    }
+}

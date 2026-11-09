@@ -303,6 +303,35 @@ applyTheme(themeName: string): boolean;
 |-----------|-------------|
 | `themeName` | Name of the theme to apply (e.g. "dark", "light", "my-custom-theme") |
 
+### `previewTheme`
+
+Render the whole editor with a theme that has not been saved.
+
+`json` is a theme file's contents. It is loaded the way a theme file
+is — `extends`, fallbacks, the `chrome` options — and becomes the
+running theme, without touching disk or config. The next
+`applyTheme` (or `reloadAndApplyTheme`) replaces it. Invalid JSON
+leaves the running theme as it was and reports why in the status bar.
+
+```typescript
+previewTheme(json: string): boolean;
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `json` | The theme, as theme-file JSON |
+
+### `endThemePreview`
+
+End the live preview `previewTheme` began: the theme that was running
+before it comes back, exactly as it was — no name is looked up and
+config is not touched. Does nothing when no preview is running, or
+after `applyTheme` has chosen a theme since.
+
+```typescript
+endThemePreview(): boolean;
+```
+
 ### `overrideThemeColors`
 
 Override theme colors in-memory for the running session. `overrides`
@@ -369,6 +398,17 @@ Get theme data (JSON) by name from the in-memory cache
 
 ```typescript
 getThemeData(name: string): unknown;
+```
+
+### `getBuiltinFileIcons`
+
+The built-in file-type icons a theme's `file_icons` section
+overrides, in that section's shape: `{by_name, by_extension, default,
+folder, folder_open}`, each icon `&#123;glyph, color: [r, g, b]}` (a
+folder's color is `null`: it takes `ui.file_explorer_directory_fg`).
+
+```typescript
+getBuiltinFileIcons(): unknown;
 ```
 
 ### `saveThemeFile`

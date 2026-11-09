@@ -4194,6 +4194,31 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Render the whole editor with a theme that has not been saved.
+    ///
+    /// `json` is a theme file's contents. It is loaded the way a theme file
+    /// is — `extends`, fallbacks, the `chrome` options — and becomes the
+    /// running theme, without touching disk or config. The next
+    /// `applyTheme` (or `reloadAndApplyTheme`) replaces it. Invalid JSON
+    /// leaves the running theme as it was and reports why in the status bar.
+    ///
+    /// @param json - The theme, as theme-file JSON
+    pub fn preview_theme(&self, json: String) -> bool {
+        self.command_sender
+            .send(PluginCommand::PreviewTheme { json })
+            .is_ok()
+    }
+
+    /// End the live preview `previewTheme` began: the theme that was running
+    /// before it comes back, exactly as it was — no name is looked up and
+    /// config is not touched. Does nothing when no preview is running, or
+    /// after `applyTheme` has chosen a theme since.
+    pub fn end_theme_preview(&self) -> bool {
+        self.command_sender
+            .send(PluginCommand::EndThemePreview)
+            .is_ok()
+    }
+
     /// Override theme colors in-memory for the running session. `overrides`
     /// is a JS object mapping `"section.field"` keys (same namespace as
     /// `getThemeSchema`) to `[r, g, b]` triplets (0–255 each).
@@ -4305,6 +4330,18 @@ impl JsEditorApi {
                 .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string())),
             None => Ok(Value::new_null(ctx)),
         }
+    }
+
+    /// The built-in file-type icons a theme's `file_icons` section
+    /// overrides, in that section's shape: `{by_name, by_extension, default,
+    /// folder, folder_open}`, each icon `{glyph, color: [r, g, b]}` (a
+    /// folder's color is `null`: it takes `ui.file_explorer_directory_fg`).
+    pub fn get_builtin_file_icons<'js>(
+        &self,
+        ctx: fresh_js::Ctx<'js>,
+    ) -> fresh_js::Result<Value<'js>> {
+        fresh_js::serde::to_value(ctx, &self.services.builtin_file_icons())
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     /// Save a theme file to the user themes directory, returns the saved path

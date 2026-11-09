@@ -20,6 +20,8 @@ use crate::app::types::HoverTarget;
 use crate::view::ui::status_bar::StatusBarClickable;
 
 use super::msg::{UiFact, UiMsg};
+use crate::app::shell_host::shell_theme::{Ink, Paint};
+use ratatui::style::Color;
 
 /// Which side an element was tiled on. Carried rather than re-derived from a
 /// midpoint of `x`, so the web orders segments exactly as the terminal does.
@@ -76,6 +78,66 @@ pub struct StatusBar {
     pub base_theme: String,
     /// The separator glyph's own colour, so it can be dimmed against the bar.
     pub sep_theme: String,
+    /// The theme's section glyphs (`chrome.status_bar_section_*`,
+    /// `chrome.status_bar_cap_*`). Empty, the default, draws nothing.
+    pub sections: SectionGlyphs,
+    /// What the bar's grounds resolve to ([`StatusBar::resolve_grounds`]):
+    /// two grounds meet as one when their colours do, whatever their names.
+    pub grounds: Vec<(Paint, Color)>,
+}
+
+impl StatusBar {
+    /// Resolve every ground on the bar — its own and each element's — under
+    /// `theme`, so neighbours are told apart by colour. Two names for one
+    /// colour (`ui.status_outer_bg` set to the bar's own background) are one
+    /// ground: a section glyph between them would be drawn in the colour it
+    /// sits on, an invisible cell where the separator used to be.
+    pub fn resolve_grounds(&mut self, theme: &crate::view::theme::Theme) {
+        let mut grounds: Vec<(Paint, Color)> = Vec::new();
+        let paints = base_ground(self).into_iter().chain(
+            self.left
+                .iter()
+                .chain(self.right.iter())
+                .flat_map(|it| it.runs.iter())
+                .filter_map(|(_, theme)| Ink::parse(theme))
+                .map(|ink| ink.bg),
+        );
+        for paint in paints {
+            if grounds.iter().any(|(p, _)| *p == paint) {
+                continue;
+            }
+            if let Some(color) = paint.color(theme) {
+                grounds.push((paint, color));
+            }
+        }
+        self.grounds = grounds;
+    }
+}
+
+/// Whether two grounds are one: the same colour once resolved, or — for one
+/// the bar has not resolved — the same name.
+fn same_ground(bar: &StatusBar, a: &Paint, b: &Paint) -> bool {
+    let color = |p: &Paint| bar.grounds.iter().find(|(q, _)| q == p).map(|(_, c)| *c);
+    match (color(a), color(b)) {
+        (Some(ca), Some(cb)) => ca == cb,
+        _ => a == b,
+    }
+}
+
+/// The glyphs drawn where the bar's background changes — lualine's section
+/// separators. Each is drawn in one neighbour's background over the
+/// other's, so the two segments read as one shape flowing into the next.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SectionGlyphs {
+    /// Between left items on different grounds, and after the last left
+    /// item when its ground is not the bar's (`\u{e0b0}`, `\u{e0b4}`).
+    pub left: String,
+    /// The mirror on the right side (`\u{e0b2}`, `\u{e0b6}`).
+    pub right: String,
+    /// Before the first left item, when its ground is not the bar's.
+    pub cap_left: String,
+    /// After the last right item, when its ground is not the bar's.
+    pub cap_right: String,
 }
 
 /// The key an inert element or a plugin token is looked up by: its side and
@@ -184,12 +246,119 @@ mod yields_last {
 /// it belongs to, or a right-hand separator would be sized after the left and
 /// come out narrower than the gap it fills.
 fn separator(bar: &StatusBar, side: Side) -> Node<UiMsg> {
-    text_runs([Run::themed(bar.separator.clone(), bar.sep_theme.clone())])
+    glyph(bar.separator.clone(), bar.sep_theme.clone(), side)
+}
+
+fn glyph(text: String, theme: String, side: Side) -> Node<UiMsg> {
+    text_runs([Run::themed(text, theme)])
         .h(Sizing::Cells(1))
         .priority(match side {
             Side::Left => yields_last::LEFT,
             Side::Right => yields_last::RIGHT,
         })
+}
+
+/// The ground an element's edge sits on: its first run's background
+/// (`first`), or its last run's.
+fn edge_ground(it: &Item, first: bool) -> Option<Paint> {
+    let run = if first {
+        it.runs.first()
+    } else {
+        it.runs.last()
+    };
+    run.and_then(|(_, theme)| Ink::parse(theme))
+        .map(|ink| ink.bg)
+}
+
+/// A glyph in `fg`'s ground color, over `bg`'s ground.
+fn transition(text: &str, fg: Paint, bg: Paint, side: Side) -> Node<UiMsg> {
+    glyph(text.to_string(), Ink::new(fg, bg).to_string(), side)
+}
+
+/// What goes between two neighbours on one side: a section glyph where their
+/// grounds differ and the theme has one, else the plain separator — on the
+/// neighbours' ground when they share one that is not the bar's.
+fn between(bar: &StatusBar, a: &Item, b: &Item, side: Side) -> Node<UiMsg> {
+    let (ga, gb) = (edge_ground(a, false), edge_ground(b, true));
+    let section = match side {
+        Side::Left => &bar.sections.left,
+        Side::Right => &bar.sections.right,
+    };
+    match (ga, gb) {
+        (Some(ga), Some(gb)) if !same_ground(bar, &ga, &gb) && !section.is_empty() => match side {
+            // The glyph points into the next segment: the left side's from
+            // `a`, the right side's from `b`.
+            Side::Left => transition(section, ga, gb, side),
+            Side::Right => transition(section, gb, ga, side),
+        },
+        (Some(ga), _) if !base_ground(bar).is_some_and(|base| same_ground(bar, &ga, &base)) => {
+            let sep = Ink::parse(&bar.sep_theme)
+                .map(|ink| ink.with_bg(ga).to_string())
+                .unwrap_or_else(|| bar.sep_theme.clone());
+            glyph(bar.separator.clone(), sep, side)
+        }
+        _ => separator(bar, side),
+    }
+}
+
+/// Give the bar lualine's sections: the outermost item on each side wears
+/// `ui.status_outer_*` (lualine's a and z), the next one in
+/// `ui.status_inner_*` (b and y). Only runs on the bar's own ground are
+/// recolored, so an item with colors of its own — a warning count, the LSP
+/// indicator — keeps them. Run after the right side has dropped what does not
+/// fit, so "outermost" is what is actually shown.
+pub fn assign_sections(left: &mut [Item], right: &mut [Item]) {
+    let n = right.len();
+    for (i, it) in left.iter_mut().enumerate() {
+        recolor(it, i);
+    }
+    for (i, it) in right.iter_mut().enumerate() {
+        recolor(it, n - 1 - i);
+    }
+}
+
+fn recolor(it: &mut Item, depth: usize) {
+    let (fg, bg) = match depth {
+        0 => ("ui.status_outer_fg", "ui.status_outer_bg"),
+        1 => ("ui.status_inner_fg", "ui.status_inner_bg"),
+        _ => return,
+    };
+    for (_, theme) in &mut it.runs {
+        let Some(ink) = Ink::parse(theme) else {
+            continue;
+        };
+        if ink.bg != Paint::key("ui.status_bar_bg") {
+            continue;
+        }
+        let ink_fg = if ink.fg == Paint::key("ui.status_bar_fg") {
+            Paint::key(fg)
+        } else {
+            ink.fg.clone()
+        };
+        *theme = Ink::new(ink_fg, Paint::key(bg))
+            .with_attrs(ink.attrs)
+            .to_string();
+    }
+}
+
+/// The bar's own ground.
+fn base_ground(bar: &StatusBar) -> Option<Paint> {
+    Ink::parse(&bar.base_theme).map(|ink| ink.bg)
+}
+
+/// An element's edge meeting the bar's own ground, when the element has a
+/// ground of its own and the theme a glyph for it.
+fn edge_to_bar(
+    bar: &StatusBar,
+    it: &Item,
+    first: bool,
+    text: &str,
+    side: Side,
+) -> Option<Node<UiMsg>> {
+    let ground = edge_ground(it, first)?;
+    let base = base_ground(bar)?;
+    (!text.is_empty() && !same_ground(bar, &ground, &base))
+        .then(|| transition(text, ground, base, side))
 }
 
 /// The bar's row.
@@ -211,19 +380,48 @@ pub fn status_bar(bar: &StatusBar) -> Node<UiMsg> {
 
 fn build(bar: &StatusBar) -> Node<UiMsg> {
     let mut kids: Vec<Node<UiMsg>> = Vec::new();
+    let g = &bar.sections;
+    if let Some(cap) = bar
+        .left
+        .first()
+        .and_then(|it| edge_to_bar(bar, it, true, &g.cap_left, Side::Left))
+    {
+        kids.push(cap);
+    }
     for (i, it) in bar.left.iter().enumerate() {
         if i > 0 {
-            kids.push(separator(bar, Side::Left));
+            kids.push(between(bar, &bar.left[i - 1], it, Side::Left));
         }
         kids.push(element(it, key_of(Side::Left, i, it), Side::Left));
     }
+    if let Some(end) = bar
+        .left
+        .last()
+        .and_then(|it| edge_to_bar(bar, it, false, &g.left, Side::Left))
+    {
+        kids.push(end);
+    }
     // The gap, which closes completely on a bar too narrow for both sides.
     kids.push(row().flex(1));
+    if let Some(start) = bar
+        .right
+        .first()
+        .and_then(|it| edge_to_bar(bar, it, true, &g.right, Side::Right))
+    {
+        kids.push(start);
+    }
     for (i, it) in bar.right.iter().enumerate() {
         if i > 0 {
-            kids.push(separator(bar, Side::Right));
+            kids.push(between(bar, &bar.right[i - 1], it, Side::Right));
         }
         kids.push(element(it, key_of(Side::Right, i, it), Side::Right));
+    }
+    if let Some(cap) = bar
+        .right
+        .last()
+        .and_then(|it| edge_to_bar(bar, it, false, &g.cap_right, Side::Right))
+    {
+        kids.push(cap);
     }
     // **The row claims its own gaps.** A press between elements means
     // nothing, and letting it through would put the caret in the buffer
@@ -436,6 +634,8 @@ mod tests {
             separator: " | ".to_string(),
             base_theme: base(),
             sep_theme: base(),
+            sections: SectionGlyphs::default(),
+            grounds: Vec::new(),
         }
     }
 

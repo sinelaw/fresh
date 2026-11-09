@@ -8,7 +8,6 @@
 
 use fresh::config::Config;
 use fresh::services::packages::PackageManifest;
-use fresh::view::theme::ThemeFile;
 use schemars::schema_for;
 use std::env;
 
@@ -32,10 +31,8 @@ fn main() {
             }
             json
         }
-        "theme" => {
-            let schema = schema_for!(ThemeFile);
-            serde_json::to_value(&schema).expect("Failed to serialize schema")
-        }
+        // The plugin API's schema, fallbacks (`x-fallback`) included.
+        "theme" => fresh::view::theme::get_theme_schema(),
         "package" => {
             let schema = schema_for!(PackageManifest);
             let mut json = serde_json::to_value(&schema).expect("Failed to serialize schema");

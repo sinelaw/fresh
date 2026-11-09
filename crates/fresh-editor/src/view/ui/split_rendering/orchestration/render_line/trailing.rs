@@ -14,6 +14,7 @@
 //!   theme names a post-EOF shade of its own (see issues #779, #458,
 //!   ratatui #1606).
 
+use super::super::super::gutter::{one_cell, GutterPaint};
 use super::super::super::style::dim_color_for_tilde;
 use super::super::contexts::DecorationContext;
 use super::LastLineEnd;
@@ -56,6 +57,9 @@ pub(super) struct PostRowContext<'a> {
     pub last_gutter_num: Option<usize>,
     pub visible_line_count: usize,
     pub trailing_empty_line_rendered: bool,
+    /// Whether the pane hands its background to the terminal; see
+    /// `LeftMarginContext::terminal_bg`.
+    pub terminal_bg: bool,
 }
 
 /// Render the implicit empty line that sits after the buffer's final
@@ -113,7 +117,8 @@ fn render_implicit_line_into(
             ctx,
             implicit_line_byte,
             implicit_gutter_num,
-            implicit_cursor_bg,
+            implicit_is_cursor_line,
+            implicit_cursor_bg.is_some(),
         );
     }
 
@@ -161,25 +166,23 @@ fn push_left_margin(
     ctx: &PostRowContext<'_>,
     implicit_line_byte: usize,
     implicit_gutter_num: usize,
-    implicit_cursor_bg: Option<Style>,
+    is_cursor_line: bool,
+    highlighted: bool,
 ) {
+    let paint = GutterPaint::new(ctx.theme, ctx.show_line_numbers, ctx.terminal_bg);
+
     // Diagnostic indicator column.
     if ctx
         .decorations
         .diagnostic_lines
         .contains(&implicit_line_byte)
     {
-        let mut style = Style::default().fg(Color::Red);
-        if let Some(bg) = implicit_cursor_bg {
-            style = style.patch(bg);
-        }
-        spans.push(Span::styled("●", style));
+        spans.push(Span::styled(
+            one_cell(ctx.theme.chrome.glyphs().diagnostic_marker.clone()),
+            paint.diagnostic(highlighted),
+        ));
     } else {
-        let mut style = Style::default();
-        if let Some(bg) = implicit_cursor_bg {
-            style = style.patch(bg);
-        }
-        spans.push(Span::styled(" ", style));
+        spans.push(Span::styled(" ", paint.ground(highlighted)));
     }
 
     // Line number (or byte offset in byte_offset_mode).
@@ -201,18 +204,15 @@ fn push_left_margin(
         );
         margin_content.render(ctx.margin.width).0
     };
-    let mut margin_style = Style::default().theme_fg(ctx.theme, "editor.line_number_fg");
-    if let Some(bg) = implicit_cursor_bg {
-        margin_style = margin_style.patch(bg);
-    }
-    spans.push(Span::styled(rendered_text, margin_style));
+    let number = paint.number(is_cursor_line, ctx.byte_offset_mode);
+    spans.push(Span::styled(
+        rendered_text,
+        paint.on_ground(number, highlighted),
+    ));
 
     if ctx.margin.show_separator {
-        let mut sep_style = Style::default().theme_fg(ctx.theme, "editor.line_number_fg");
-        if let Some(bg) = implicit_cursor_bg {
-            sep_style = sep_style.patch(bg);
-        }
-        spans.push(Span::styled(ctx.margin.separator.to_string(), sep_style));
+        let (text, style) = paint.separator(&ctx.margin.separator, highlighted);
+        spans.push(Span::styled(text, style));
     }
 }
 

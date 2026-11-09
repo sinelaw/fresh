@@ -33,16 +33,16 @@ const MAX_PARSE_BYTES: usize = 1024 * 1024; // 1 MB
 /// Get the color for a highlight category from the theme
 pub fn highlight_color(category: HighlightCategory, theme: &Theme) -> Color {
     match category {
-        HighlightCategory::Attribute => theme.syntax_constant, // No specific attribute color, use constant
+        HighlightCategory::Attribute => theme.syntax_attribute,
         HighlightCategory::Comment => theme.syntax_comment,
         HighlightCategory::Constant => theme.syntax_constant,
         HighlightCategory::Function => theme.syntax_function,
         HighlightCategory::Keyword => theme.syntax_keyword,
-        HighlightCategory::Number => theme.syntax_constant,
+        HighlightCategory::Number => theme.syntax_number,
         HighlightCategory::Operator => theme.syntax_operator,
         HighlightCategory::PunctuationBracket => theme.syntax_punctuation_bracket,
         HighlightCategory::PunctuationDelimiter => theme.syntax_punctuation_delimiter,
-        HighlightCategory::Property => theme.syntax_variable, // Properties are like variables
+        HighlightCategory::Property => theme.syntax_property,
         HighlightCategory::String => theme.syntax_string,
         HighlightCategory::Type => theme.syntax_type,
         HighlightCategory::Variable => theme.syntax_variable,

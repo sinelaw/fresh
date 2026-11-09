@@ -787,6 +787,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 highlight_current_line,
                 is_active,
                 virtual_gutter_glyph: current_view_line.virtual_gutter_glyph.as_ref(),
+                terminal_bg: effective_editor_bg == Color::Reset,
             },
             &mut line_spans,
             &mut line_view_map,
@@ -1220,6 +1221,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
             last_gutter_num,
             visible_line_count,
             trailing_empty_line_rendered,
+            terminal_bg: effective_editor_bg == Color::Reset,
         },
         &mut PostRowAccumulator {
             lines: &mut lines,

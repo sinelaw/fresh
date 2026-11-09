@@ -1129,6 +1129,12 @@ impl Editor {
             PluginCommand::OverrideThemeColors { overrides } => {
                 self.handle_override_theme_colors(overrides);
             }
+            PluginCommand::PreviewTheme { json } => {
+                self.handle_preview_theme(&json);
+            }
+            PluginCommand::EndThemePreview => {
+                self.handle_end_theme_preview();
+            }
             PluginCommand::ReloadConfig => {
                 self.reload_config();
             }
@@ -5175,6 +5181,35 @@ impl Editor {
         if applied > 0 {
             // Diagnostics / semantic overlays bake RGB at creation time — rebuild
             // them so the override is visible everywhere on the next frame.
+            self.reapply_all_overlays();
+        }
+    }
+
+    /// Make an unsaved theme the running one: the theme editor's live
+    /// preview. Loaded with the same `Theme::from_json` a theme file goes
+    /// through, so the editor renders exactly what saving would give.
+    fn handle_preview_theme(&mut self, json: &str) {
+        match crate::view::theme::Theme::from_json(json) {
+            Ok(theme) => {
+                let mut running = self.theme.write().unwrap();
+                let before = std::mem::replace(&mut *running, theme);
+                drop(running);
+                // The first preview keeps what it covers; later ones only
+                // replace the previewed theme.
+                if self.theme_before_preview.is_none() {
+                    self.theme_before_preview = Some(before);
+                }
+                // Diagnostics / semantic overlays bake RGB at creation time.
+                self.reapply_all_overlays();
+            }
+            Err(e) => self.set_status_message(format!("Theme preview: {e}")),
+        }
+    }
+
+    /// Put back the theme the live preview covered, if one is running.
+    fn handle_end_theme_preview(&mut self) {
+        if let Some(theme) = self.theme_before_preview.take() {
+            *self.theme.write().unwrap() = theme;
             self.reapply_all_overlays();
         }
     }

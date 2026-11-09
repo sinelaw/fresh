@@ -668,6 +668,13 @@ pub struct Editor {
     /// window without copying.
     pub(crate) theme: Arc<RwLock<crate::view::theme::Theme>>,
 
+    /// The theme that was running when a plugin's live preview
+    /// (`editor.previewTheme`) began — what `editor.endThemePreview` puts
+    /// back, exactly as it was, without resolving a name or touching config.
+    /// Cleared by any real theme change (`apply_theme`), which the preview
+    /// then no longer stands in front of.
+    pub(crate) theme_before_preview: Option<crate::view::theme::Theme>,
+
     /// All loaded themes (embedded + user). Held as `Arc` so
     /// `expanded_menus_cache` can detect a registry swap via `Arc::ptr_eq`.
     theme_registry: Arc<crate::view::theme::ThemeRegistry>,

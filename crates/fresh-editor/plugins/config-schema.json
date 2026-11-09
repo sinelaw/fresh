@@ -634,7 +634,7 @@
           "x-section": "Display"
         },
         "nerd_font_icons": {
-          "description": "Use Nerd Font icons in the UI (e.g. settings category icons). Only turn on\nif your terminal uses a Nerd Font, or icons show as `?` or boxes. Default: false",
+          "description": "Use Nerd Font icons in the UI (e.g. settings category icons, and the\n`chrome.nerd_font` glyphs a theme provides). Only turn on if your\nterminal uses a Nerd Font, or icons show as `?` or boxes. Default: false",
           "type": "boolean",
           "default": false,
           "x-section": "Display"

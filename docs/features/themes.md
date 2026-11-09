@@ -42,9 +42,24 @@ Fresh includes a visual Theme Editor for creating and customizing themes:
 3. **Editing Colors**:
    - Press `Enter` on any color field to edit it
    - Enter a hex color (`#RRGGBB`) or named color (e.g., `red`, `blue`)
-   - Colors are applied immediately as you edit
-   - Each color has an `Attributes` row accepting comma-separated text
-     attributes: `bold`, `italic`, `underlined`, `dim`, and `reversed`
+   - A color's text attributes (`bold`, `italic`, …) are on its picker
+     panel: `Tab` to the panel, `↑` to **Attributes**, `Enter`. The tree shows
+     them after the color (`#6E7080 +italic`)
+   - The editor opens below your code and the whole editor (menu, explorer,
+     tabs, gutter, status bar) shows each edit immediately, before you save.
+     Closing without saving puts your theme back
+   - **Chrome** holds the on/off options (toggle with `Enter`) and the glyphs,
+     with their **nerd_font** set beside them; a glyph prompt offers a list of
+     separators and caps to pick from
+   - **File Icons** lists the theme's icon overrides. `Enter` on **Add…**
+     adds one (the built-in names and extensions are suggested); an entry's
+     `glyph` and `color` show the built-in value until you set them
+   - An unset chrome or icon value shows what it draws — the option's
+     default, or the built-in icon — and edits start from it
+   - `Delete` resets a chrome or file-icon value to Fresh's default, or
+     removes a whole icon entry
+   - Attributes are comma-separated: `bold`, `italic`, `underlined`, `dim`,
+     `reversed`
 
 4. **Theme Editor Shortcuts**:
    | Action | Key |
@@ -53,6 +68,7 @@ Fresh includes a visual Theme Editor for creating and customizing themes:
    | Save | `Ctrl+S` |
    | Save As | `Ctrl+Shift+S` |
    | Delete theme | `Ctrl+D` |
+   | Reset value / remove icon entry | `Delete` |
    | Close | `Ctrl+Q` or `Escape` |
    | Help | `F1` |
 
@@ -110,6 +126,148 @@ keywords look in code:
 
 Git status colors (`ui.file_status_*_fg`) and the selected row are still drawn
 on top of it.
+
+The explorer panel has its own colors too: `ui.file_explorer_bg` and
+`ui.file_explorer_fg` (the panel's ground and file names, default
+`editor.bg` / `editor.fg`), `ui.file_explorer_border_fg` and
+`ui.file_explorer_border_focused_fg` (the box, unfocused and focused), and
+`ui.file_explorer_indicator_fg` (the `>` / `▼` folder arrows).
+
+### Gutter colors
+
+- `editor.line_number_bg` is the gutter's background. When it differs from
+  `editor.bg` the gutter is painted in it, which marks where the text begins.
+- `editor.current_line_number_fg` styles the cursor's line number. Bundle
+  attributes to make it stand out:
+  `{"color": [255, 204, 102], "modifier": ["bold"]}`. Leave it out to keep
+  the default look.
+- `editor.gutter_separator_fg` colors the `│` between the numbers and the text.
+
+### Removing borders and separators (`chrome`)
+
+Colors cannot give a cell back: a border drawn in its background's color still
+takes its column. The `chrome` section says which pieces exist at all; a piece
+that is off takes no cells and the content moves into the space.
+
+```json
+{
+  "name": "borderless",
+  "extends": "builtin://dark",
+  "editor": { "line_number_bg": [22, 22, 22] },
+  "ui": { "file_explorer_bg": [36, 36, 40] },
+  "chrome": { "gutter_separator": false, "file_explorer_border": false }
+}
+```
+
+| Option | Default | Off |
+| ------ | ------- | --- |
+| `gutter_separator` | `true` | The gutter ends in a one-cell pad instead of ` │ `. |
+| `file_explorer_border` | `true` | The explorer keeps its title row; its walls and bottom border go and its rows take the full width. The edge facing the editor stays as one blank column you can drag to resize. |
+
+| `tab_separator` | `" "` | Text between two tabs, in `ui.tab_separator_fg` on `ui.tab_separator_bg`. Any glyph: `"│"`, `"▏"`, `"·"`; `""` puts tabs side by side. |
+| `status_bar_separator` | `""` | Text between status bar items, in `ui.status_separator_fg`/`_bg`. Items already have a one-space margin, so `"·"` shows as `LF · UTF-8`. A `status_bar.separator` in your config wins over the theme's. |
+
+```json
+"chrome": { "tab_separator": "▏", "status_bar_separator": "·" }
+```
+
+#### Glyphs
+
+Every glyph the chrome draws can be changed. Defaults are what Fresh has
+always drawn; an empty string draws nothing and takes no space.
+
+| Glyph | Default | What it is |
+| ----- | ------- | ---------- |
+| `tab_cap_left`, `tab_cap_right` | none | Each tab's ends, in the tab's own background on the strip's: rounded or slanted tabs |
+| `tab_close` / `tab_modified` | `×` / `*` | A tab's close button / unsaved marker |
+| `status_bar_section_left`, `status_bar_section_right` | none | Where two status items' backgrounds meet: drawn in one's color over the other's |
+| `status_bar_cap_left`, `status_bar_cap_right` | none | The bar's outer ends, when the outermost item has its own background |
+| `fold_collapsed` / `fold_expanded` | `▸` / `▾` | The gutter's fold markers |
+| `diagnostic_marker` | `●` | The gutter's mark on a line with a diagnostic |
+| `folder_collapsed` / `folder_expanded` | `>` / `▼` | The explorer's folder arrows (your `file_explorer.tree_indicator_*` setting wins once you change it) |
+| `section_collapsed` / `section_expanded` | `▶` / `▼` | A sidebar section's header marker (with more than one section) |
+| `panel_close` / `panel_refresh` | `×` / `⟳` | The sidebar header's close and refresh buttons |
+
+#### Nerd Font glyphs and status bar sections
+
+Status lines in Neovim (lualine) and tab lines (bufferline) get their look from
+Powerline glyphs drawn *between colors*: a section separator is painted in one
+segment's background over the next one's, so segments read as shapes. Fresh's
+status bar does the same:
+
+- `ui.status_outer_fg` / `_bg` color the outermost item on each side
+  (lualine's sections *a* and *z*), `ui.status_inner_fg` / `_bg` the next one
+  in (*b* and *y*). Both default to the bar's own colors.
+- `status_bar_section_left` / `_right` draw where two items' backgrounds
+  differ, `status_bar_cap_left` / `_right` round off the ends.
+
+Glyphs that need a [Nerd Font](https://www.nerdfonts.com) go under
+`nerd_font`. They are drawn only while `editor.nerd_font_icons` is on, so the
+same theme still looks right in a terminal without the font:
+
+```json
+"chrome": {
+  "status_bar_separator": "·",
+  "folder_collapsed": "›", "folder_expanded": "⌄",
+  "nerd_font": {
+    "status_bar_cap_left": "\ue0b6", "status_bar_section_left": "\ue0b4",
+    "status_bar_section_right": "\ue0b6", "status_bar_cap_right": "\ue0b4",
+    "tab_cap_left": "\ue0b6", "tab_cap_right": "\ue0b4",
+    "tab_close": "\udb80\udd56",
+    "folder_collapsed": "\uf460 \ue5ff", "folder_expanded": "\uf47c \ue5fe"
+  }
+}
+```
+
+The built-in `quiet` theme is a complete example.
+
+### File-type icons
+
+With `editor.nerd_font_icons` on, the file explorer and the tabs show a
+file-type icon before each name — the Rust crab for `.rs`, the npm logo for
+`package.json`, open and closed folders. Fresh has built-in icons in each
+type's familiar color; a theme's `file_icons` section replaces or recolors
+any of them and adds its own:
+
+```json
+{
+  "name": "my-icons",
+  "extends": "builtin://quiet",
+  "file_icons": {
+    "by_extension": {
+      "md":  { "color": [255, 120, 160] },
+      "gif": { "glyph": "\udb83\udd78", "color": [80, 220, 120] }
+    },
+    "by_name": { "index.md": { "glyph": "\uf015" } },
+    "default": { "color": [110, 115, 130] },
+    "folder": { "color": [230, 190, 90] },
+    "folder_open": { "color": [230, 190, 90] }
+  }
+}
+```
+
+- An entry sets a `glyph`, a `color`, or both; what it leaves out comes from
+  the built-in icon it replaces.
+- The most specific match wins: a whole file name (case-insensitive), then
+  the extension (without the dot), then `default`. At each level the theme's
+  entry wins over the built-in one.
+- A theme that `extends` another inherits the entries it does not name.
+- `ui.file_icon_fg` draws every icon in one color; folders otherwise use
+  `ui.file_explorer_directory_fg`.
+- A plugin that sets an explorer row's leading slot (`setFileExplorerSlots`)
+  owns that row's slot.
+
+When a border goes, mark the edge with a background instead:
+`editor.line_number_bg` for the gutter, `ui.file_explorer_bg` for the
+explorer. The built-in `flat` and `quiet` themes do both.
+
+### More syntax categories
+
+`syntax.number` (numbers and booleans), `syntax.property` (fields, object keys,
+JSON keys, HTML tags) and `syntax.attribute` (attributes, decorators,
+annotations) can be colored separately. A theme that leaves them out keeps the
+old look: `number` and `attribute` follow `syntax.constant`, `property`
+follows `syntax.variable`.
 
 ### Text attributes
 

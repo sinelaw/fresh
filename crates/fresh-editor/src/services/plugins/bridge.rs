@@ -363,6 +363,10 @@ impl PluginServiceBridge for EditorServiceBridge {
         self.dir_context.working_data_dir_for(working_dir)
     }
 
+    fn builtin_file_icons(&self) -> serde_json::Value {
+        crate::view::file_icons::builtin_json()
+    }
+
     fn get_theme_data(&self, key_or_name: &str) -> Option<serde_json::Value> {
         let cache = self.theme_cache.read().unwrap();
         // Exact key match

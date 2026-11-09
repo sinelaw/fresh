@@ -143,6 +143,15 @@ pub struct ExitedTerminal {
     /// restart can put it back. `None` for an auto-named tab, which re-derives
     /// its name from the reborn process.
     pub title: Option<String>,
+    /// The name an auto-named tab last carried, for the opposite case to
+    /// [`Self::title`]: a *restart* re-derives the name from the reborn
+    /// process, but a restore across an editor restart has no process to read
+    /// and used to fall back to `*Terminal N*` (#3074). Persisted as
+    /// `SerializedTerminalWorkspace::auto_title` and re-applied without
+    /// marking the tab explicitly titled, so a later restart still hands the
+    /// name back to auto-naming. `None` for an explicitly-titled tab, and for
+    /// one that never resolved a name beyond the `*Terminal N*` default.
+    pub auto_title: Option<String>,
 }
 
 impl ExitedTerminal {
@@ -3089,6 +3098,8 @@ impl Window {
         chrome: &HashMap<LeafId, crate::view::shell::splits::PaneChrome>,
         hover: Option<(crate::view::split::TabTarget, LeafId, bool)>,
         hover_plus: Option<LeafId>,
+        glyphs: &crate::view::theme::Glyphs,
+        file_icons: Option<std::rc::Rc<crate::view::shell::tabs::TabIcons>>,
     ) -> HashMap<LeafId, crate::view::shell::tabs::Strip> {
         use crate::view::shell::tabs::{Strip, Tab};
         use crate::view::split::TabTarget;
@@ -3179,6 +3190,8 @@ impl Window {
                     hover_plus: hover_plus == Some(leaf),
                     reveal: Some(self.tab_reveal_for(leaf)),
                     preview_label: preview_label.clone(),
+                    glyphs: glyphs.clone(),
+                    file_icons: file_icons.clone(),
                 },
             );
         }
@@ -5613,6 +5626,7 @@ mod exited_terminal_tests {
             ephemeral: true,
             script_access: false,
             title: None,
+            auto_title: None,
         }
     }
 
