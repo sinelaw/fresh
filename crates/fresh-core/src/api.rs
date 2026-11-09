@@ -4003,6 +4003,11 @@ pub enum PluginCommand {
     /// the error in the status bar. `applyTheme` ends the preview.
     PreviewTheme { json: String },
 
+    /// End a live preview: put back the theme that was running when the
+    /// first `PreviewTheme` began, exactly as it was. Does nothing when no
+    /// preview is running, or after `applyTheme` has replaced it.
+    EndThemePreview,
+
     /// Reload configuration from file
     /// After a plugin saves config changes, it should call this to reload the config
     ReloadConfig,

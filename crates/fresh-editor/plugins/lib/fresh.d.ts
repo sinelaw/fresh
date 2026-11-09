@@ -6416,6 +6416,13 @@ interface EditorAPI {
 	*/
 	previewTheme(json: string): boolean;
 	/**
+	* End the live preview `previewTheme` began: the theme that was running
+	* before it comes back, exactly as it was — no name is looked up and
+	* config is not touched. Does nothing when no preview is running, or
+	* after `applyTheme` has chosen a theme since.
+	*/
+	endThemePreview(): boolean;
+	/**
 	* Override theme colors in-memory for the running session. `overrides`
 	* is a JS object mapping `"section.field"` keys (same namespace as
 	* `getThemeSchema`) to `[r, g, b]` triplets (0–255 each).

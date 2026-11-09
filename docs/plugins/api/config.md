@@ -321,6 +321,17 @@ previewTheme(json: string): boolean;
 |-----------|-------------|
 | `json` | The theme, as theme-file JSON |
 
+### `endThemePreview`
+
+End the live preview `previewTheme` began: the theme that was running
+before it comes back, exactly as it was — no name is looked up and
+config is not touched. Does nothing when no preview is running, or
+after `applyTheme` has chosen a theme since.
+
+```typescript
+endThemePreview(): boolean;
+```
+
 ### `overrideThemeColors`
 
 Override theme colors in-memory for the running session. `overrides`

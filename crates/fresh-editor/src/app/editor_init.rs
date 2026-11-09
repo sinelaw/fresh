@@ -653,6 +653,7 @@ impl Editor {
             pending_grammars: parts.pending_grammars,
             needs_full_grammar_build: parts.needs_full_grammar_build,
             theme: parts.theme,
+            theme_before_preview: None,
             theme_registry: parts.theme_registry,
             theme_cache: parts.theme_cache,
             keybindings: parts.keybindings,

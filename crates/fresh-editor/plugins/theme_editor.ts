@@ -511,9 +511,6 @@ interface ThemeEditorState {
   footerPanel: WidgetPanel | null;
   /** Panel buffer IDs keyed by panel name */
   panelBuffers: Record<string, number>;
-  /** The theme the editor was running when the theme editor opened (its
-   * config key), restored when the editor closes without saving. */
-  runningThemeKey: string | null;
   /** The theme JSON last handed to `previewTheme`, so an unchanged theme is
    * not re-applied on every redraw. */
   previewedJson: string | null;
@@ -585,7 +582,6 @@ const state: ThemeEditorState = {
   groupId: null,
   footerPanel: null,
   panelBuffers: {},
-  runningThemeKey: null,
   previewedJson: null,
   editorPaneId: null,
 };
@@ -2639,7 +2635,8 @@ function buildThemeFile(themeName: string): Record<string, unknown> {
  * Live preview: render the whole editor — menu, explorer, tabs, gutter,
  * status bar, the `chrome` options — with the theme as edited, through the
  * editor's own renderer (`editor.previewTheme`). Nothing is saved; closing
- * without saving restores `state.runningThemeKey`.
+ * without saving puts back the theme the editor was running
+ * (`editor.endThemePreview`).
  */
 function previewEdits(): void {
   if (!state.themeName || Object.keys(state.themeData).length === 0) return;
@@ -2649,24 +2646,15 @@ function previewEdits(): void {
   editor.previewTheme(json);
 }
 
-/** End the live preview: put back the theme the editor was running —
- * through `previewTheme` as well, so restoring it does not rewrite the
- * user's config the way `applyTheme` (which persists its choice) would. */
+/** End the live preview: the editor puts back the theme it was running
+ * before the first preview, exactly as it was — no name is resolved and
+ * config is not rewritten. After a save the saved theme is the running one,
+ * and there is nothing to put back. */
 function endPreview(): void {
-  if (state.previewedJson !== null && state.runningThemeKey) {
-    // The config may spell the theme `builtin://dark` or `my-theme.json`;
-    // the registry knows it by key or by name.
-    const key = state.runningThemeKey;
-    const bare = key.replace(/^builtin:\/\//, "").replace(/^.*\//, "").replace(/\.json$/, "");
-    const running = editor.getThemeData(key) ?? editor.getThemeData(bare);
-    if (running) {
-      editor.previewTheme(JSON.stringify(running));
-    } else {
-      editor.applyTheme(state.runningThemeKey);
-    }
+  if (state.previewedJson !== null) {
+    editor.endThemePreview();
   }
   state.previewedJson = null;
-  state.runningThemeKey = null;
 }
 
 async function saveTheme(name?: string, restorePath?: string | null): Promise<boolean> {
@@ -2704,7 +2692,6 @@ async function saveTheme(name?: string, restorePath?: string | null): Promise<bo
     // Reload themes and apply the new/updated theme atomically. The saved
     // theme is now the running one, so closing keeps it.
     editor.reloadAndApplyTheme(themeName);
-    state.runningThemeKey = themeName;
     state.previewedJson = null;
     editor.setStatus(editor.t("status.saved_and_applied", { name: themeName }));
 
@@ -2883,6 +2870,14 @@ editor.on("resize", (data) => {
 
 editor.on("buffer_closed", (data) => {
   if (state.bufferId !== null && data.buffer_id === state.bufferId) {
+    // Closed some other way than the editor's own close (Close Buffer, a
+    // tab's ×): the preview ends and the pane it opened goes with it, as on
+    // Esc — or the previewed theme would outlive its editor.
+    endPreview();
+    if (state.editorPaneId !== null) {
+      editor.closeSplit(state.editorPaneId);
+      state.editorPaneId = null;
+    }
     // Reset state when our buffer is closed
     state.bufferId = null;
     state.splitId = null;
@@ -3360,8 +3355,6 @@ async function open_theme_editor() : Promise<void> {
   // Get current theme key from config
   const config = editor.getConfig() as Record<string, unknown>;
   const currentThemeKey = (config?.theme as string) || "dark";
-  // What the live preview replaces until the theme is saved.
-  state.runningThemeKey = currentThemeKey;
   state.previewedJson = null;
 
   // Prompt user to select which theme to edit
