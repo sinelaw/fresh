@@ -2,13 +2,19 @@
 //!
 //! Drawn before a file's name in the file explorer and on its tab while the
 //! user's `editor.nerd_font_icons` is on — the glyphs are private-use code
-//! points that only a Nerd Font draws. The colors are the familiar ones
-//! (nvim-web-devicons'), so a Rust file reads as Rust at a glance; a theme
-//! that wants every icon in one color sets `ui.file_icon_fg`.
+//! points that only a Nerd Font draws. The tables here are the defaults, in
+//! the familiar colors (nvim-web-devicons'), so a Rust file reads as Rust at
+//! a glance.
+//!
+//! **A theme customizes them** in its `file_icons` section — a glyph, a
+//! color or both, by file name, by extension, for the default and for
+//! folders ([`resolve`], [`resolve_folder`]) — and can draw every icon in one
+//! color with `ui.file_icon_fg`.
 //!
 //! Every code point is the Nerd Fonts glyph named beside it (v3,
 //! `glyphnames.json`).
 
+use crate::view::theme::{FileIcons, IconOverride};
 use ratatui::style::Color;
 
 /// A file's icon: the glyph and its color.
@@ -162,6 +168,64 @@ pub fn for_file(name: &str) -> FileIcon {
         .unwrap_or(DEFAULT)
 }
 
+/// A file's icon as drawn: the glyph and color, after the theme's
+/// overrides.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Resolved {
+    pub glyph: String,
+    pub color: Color,
+}
+
+impl Resolved {
+    fn with(glyph: &str, color: Color, over: Option<&IconOverride>) -> Resolved {
+        Resolved {
+            glyph: over
+                .and_then(|o| o.glyph.clone())
+                .unwrap_or_else(|| glyph.to_string()),
+            color: over.and_then(|o| o.color).unwrap_or(color),
+        }
+    }
+}
+
+/// The icon for a file named `name`, with the theme's `file_icons` over the
+/// built-in tables. The most specific match wins — a whole name, then the
+/// extension, then the default — and at each of those the theme's entry wins
+/// over the built-in one, half by half: an entry with only a color keeps the
+/// built-in glyph.
+pub fn resolve(theme: &FileIcons, name: &str) -> Resolved {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    let lower = base.to_ascii_lowercase();
+    let builtin = for_file(name);
+    if let Some(over) = theme.by_name.get(&lower) {
+        return Resolved::with(builtin.glyph, builtin.color, Some(over));
+    }
+    if BY_NAME.iter().any(|(n, _)| *n == lower) {
+        return Resolved::with(builtin.glyph, builtin.color, None);
+    }
+    if let Some(over) = lower
+        .rsplit_once('.')
+        .and_then(|(_, ext)| theme.by_extension.get(ext))
+    {
+        return Resolved::with(builtin.glyph, builtin.color, Some(over));
+    }
+    let over = (builtin == DEFAULT)
+        .then_some(theme.default.as_ref())
+        .flatten();
+    Resolved::with(builtin.glyph, builtin.color, over)
+}
+
+/// A folder's icon, open or closed, with the theme's `file_icons.folder` /
+/// `folder_open` over the built-in glyph and `color` (the explorer's
+/// directory color).
+pub fn resolve_folder(theme: &FileIcons, open: bool, color: Color) -> Resolved {
+    let (glyph, over) = if open {
+        (FOLDER_OPEN, theme.folder_open.as_ref())
+    } else {
+        (FOLDER, theme.folder.as_ref())
+    };
+    Resolved::with(glyph, color, over)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,6 +249,63 @@ mod tests {
         assert_eq!(for_file("no_extension"), DEFAULT);
         assert_eq!(for_file("archive.unknownext"), DEFAULT);
         assert_eq!(for_file(".env.local").glyph, "\u{e615}");
+    }
+
+    /// A theme's entries win at their level and fill in only what they name;
+    /// a whole-name match outranks an extension override.
+    #[test]
+    fn theme_overrides_merge_over_the_builtin_icons() {
+        let theme = crate::view::theme::Theme::from_json(
+            r#"{"name": "t", "extends": "builtin://dark",
+                "file_icons": {
+                    "by_extension": {"rs": {"color": [1, 2, 3]}, ".toml": {"glyph": "T"},
+                                     "zz": {"glyph": "Z", "color": [9, 9, 9]}},
+                    "by_name": {"JUSTFILE": {"glyph": "J"}},
+                    "default": {"color": [4, 5, 6]},
+                    "folder_open": {"glyph": "O"}}}"#,
+        )
+        .unwrap();
+        let icons = &theme.file_icons;
+        let rs = resolve(icons, "main.rs");
+        assert_eq!(rs.glyph, "\u{e7a8}", "only the color was named");
+        assert_eq!(rs.color, Color::Rgb(1, 2, 3));
+        assert_eq!(
+            resolve(icons, "x.toml").glyph,
+            "T",
+            "a leading dot is ignored"
+        );
+        assert_eq!(
+            resolve(icons, "Cargo.toml").glyph,
+            "\u{e7a8}",
+            "the built-in name wins"
+        );
+        assert_eq!(
+            resolve(icons, "a.zz"),
+            Resolved {
+                glyph: "Z".into(),
+                color: Color::Rgb(9, 9, 9)
+            }
+        );
+        assert_eq!(
+            resolve(icons, "justfile").glyph,
+            "J",
+            "names match case-insensitively"
+        );
+        let unknown = resolve(icons, "data.unknown");
+        assert_eq!(unknown.glyph, DEFAULT.glyph);
+        assert_eq!(unknown.color, Color::Rgb(4, 5, 6));
+        assert_eq!(resolve_folder(icons, true, Color::Red).glyph, "O");
+        assert_eq!(
+            resolve_folder(icons, false, Color::Red),
+            Resolved {
+                glyph: FOLDER.into(),
+                color: Color::Red
+            }
+        );
+
+        // No overrides: the built-in tables.
+        let plain = FileIcons::default();
+        assert_eq!(resolve(&plain, "main.rs").color, for_file("main.rs").color);
     }
 
     /// Every glyph is one terminal cell, so the explorer's and the tab's

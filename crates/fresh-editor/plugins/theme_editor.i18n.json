@@ -1751,7 +1751,19 @@
     "field.status_inner_bg": "Status Inner Item Background",
     "field.status_inner_bg_desc": "The next status bar item in on each side (default: status bar background)",
     "field.file_icon_fg": "File Icon Color",
-    "field.file_icon_fg_desc": "One color for every file-type icon (shown with editor.nerd_font_icons). Unset: each file type keeps its own color"
+    "field.file_icon_fg_desc": "One color for every file-type icon (shown with editor.nerd_font_icons). Unset: each file type keeps its own color",
+    "section.file_icons": "File Icons",
+    "section.file_icons_desc": "File-type icons: replace or recolor the built-in ones (edit in the theme file)",
+    "field.by_name": "By File Name",
+    "field.by_name_desc": "Icons by whole file name, case-insensitive",
+    "field.by_extension": "By Extension",
+    "field.by_extension_desc": "Icons by extension, without the dot",
+    "field.default": "Default Icon",
+    "field.default_desc": "The icon of any file nothing else matches",
+    "field.folder": "Folder Icon",
+    "field.folder_desc": "A closed folder's icon",
+    "field.folder_open": "Open Folder Icon",
+    "field.folder_open_desc": "An open folder's icon"
   },
   "es": {
     "field.indent_rainbow": "Arcoíris de sangría %{level}",

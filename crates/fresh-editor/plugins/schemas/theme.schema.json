@@ -214,6 +214,10 @@
     "chrome": {
       "description": "Which pieces of chrome are drawn at all",
       "$ref": "#/$defs/ChromeOptions"
+    },
+    "file_icons": {
+      "description": "File-type icons: replace or recolor the built-in ones",
+      "$ref": "#/$defs/FileIconsFile"
     }
   },
   "required": [
@@ -2518,6 +2522,83 @@
           "type": [
             "string",
             "null"
+          ]
+        }
+      }
+    },
+    "FileIconsFile": {
+      "description": "File-type icons, drawn in the file explorer and on tabs while the user's\n`editor.nerd_font_icons` is on.\n\nFresh has a built-in icon for common files; a theme replaces or recolors\nany of them, and adds its own. The most specific match wins: a whole file\nname over an extension over `default`, and at each of those the theme's\nentry over the built-in one. A theme that `extends` another inherits the\nentries it does not name.",
+      "type": "object",
+      "properties": {
+        "by_name": {
+          "description": "By whole file name, case-insensitive: `\"Cargo.toml\"`, `\"Dockerfile\"`.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/FileIconDef"
+          }
+        },
+        "by_extension": {
+          "description": "By extension, case-insensitive, without the dot: `\"rs\"`, `\"md\"`.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/FileIconDef"
+          }
+        },
+        "default": {
+          "description": "Any file nothing else matches.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FileIconDef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "folder": {
+          "description": "A closed folder. Its color defaults to `ui.file_explorer_directory_fg`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FileIconDef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "folder_open": {
+          "description": "An open folder.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FileIconDef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "FileIconDef": {
+      "description": "One file-type icon a theme sets: its glyph, its color, or both. What an\nentry leaves out comes from the built-in icon it replaces, so\n`{\"color\": [255, 0, 0]}` recolors an icon and keeps its glyph.",
+      "type": "object",
+      "properties": {
+        "glyph": {
+          "description": "The glyph, usually a Nerd Font code point (`\"\\ue7a8\"`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "color": {
+          "description": "The glyph's color.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       }

@@ -907,6 +907,9 @@ function buildVisibleFields(): ThemeField[] {
   const filter = state.filterText.toLowerCase();
 
   for (const section of themeSections) {
+    // A section with nothing the editor can edit (`file_icons`, maps of
+    // icons) is left out of the tree; Save still writes it back untouched.
+    if (section.fields.length === 0) continue;
     const expanded = state.expandedSections.has(section.name);
 
     // When filtering, check if section or any of its fields match

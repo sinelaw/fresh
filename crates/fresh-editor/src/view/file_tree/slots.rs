@@ -304,28 +304,36 @@ fn file_icon(context: &ExplorerSlotContext<'_>) -> Option<ExplorerLeadingSlotPay
         return None;
     }
     let theme = context.theme;
-    let (glyph, own_color, own_key) = if context.is_dir {
-        let glyph = if context.is_expanded {
-            crate::view::file_icons::FOLDER_OPEN
-        } else {
-            crate::view::file_icons::FOLDER
-        };
+    let (icon, own_key) = if context.is_dir {
         (
-            glyph,
-            theme.file_explorer_directory_fg,
-            Some("ui.file_explorer_directory_fg"),
+            crate::view::file_icons::resolve_folder(
+                &theme.file_icons,
+                context.is_expanded,
+                theme.file_explorer_directory_fg,
+            ),
+            // Named only while the theme leaves the folder's color alone.
+            theme
+                .file_icons
+                .folder
+                .as_ref()
+                .and_then(|o| o.color)
+                .is_none()
+                .then_some("ui.file_explorer_directory_fg"),
         )
     } else {
         let name = context.path.file_name()?.to_string_lossy();
-        let icon = crate::view::file_icons::for_file(&name);
-        (icon.glyph, icon.color, None)
+        (
+            crate::view::file_icons::resolve(&theme.file_icons, &name),
+            None,
+        )
     };
+    let (glyph, own_color) = (icon.glyph, icon.color);
     let (fg, fg_key) = match theme.file_icon_fg {
         Some(c) => (c, Some("ui.file_icon_fg")),
         None => (own_color, own_key),
     };
     Some(ExplorerLeadingSlotPayload {
-        text: glyph.to_string(),
+        text: glyph,
         fg,
         fg_key: fg_key.map(str::to_string),
         min_width: DEFAULT_LEADING_SLOT_MIN_WIDTH,

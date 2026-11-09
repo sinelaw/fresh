@@ -103,9 +103,16 @@ pub struct Strip {
     /// the close button, the modified marker.
     pub glyphs: Glyphs,
     /// File-type icons before file tabs' names: `Some` while the user's
-    /// `editor.nerd_font_icons` is on, holding the theme's one icon color
-    /// (`ui.file_icon_fg`) if it sets one.
-    pub file_icons: Option<Option<ratatui::style::Color>>,
+    /// `editor.nerd_font_icons` is on.
+    pub file_icons: Option<Rc<TabIcons>>,
+}
+
+/// What tabs draw their file-type icons from: the theme's `file_icons`
+/// overrides, and its one icon color (`ui.file_icon_fg`) if it sets one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TabIcons {
+    pub table: crate::view::theme::FileIcons,
+    pub one_color: Option<ratatui::style::Color>,
 }
 
 impl Strip {
@@ -284,13 +291,9 @@ fn has_icon(t: &Tab) -> bool {
 
 /// A file tab's icon as runs: a space on the tab's ground, then the glyph in
 /// its type's color (or the theme's one icon color), on the tab's ground.
-fn icon_runs(
-    name: &str,
-    one_color: Option<ratatui::style::Color>,
-    tab_ink: &str,
-) -> Vec<(String, String)> {
-    let icon = crate::view::file_icons::for_file(name);
-    let fg = match one_color {
+fn icon_runs(name: &str, icons: &TabIcons, tab_ink: &str) -> Vec<(String, String)> {
+    let icon = crate::view::file_icons::resolve(&icons.table, name);
+    let fg = match icons.one_color {
         Some(_) => Paint::key("ui.file_icon_fg"),
         None => Paint::Lit(icon.color),
     };
@@ -298,10 +301,7 @@ fn icon_runs(
         Some(tab) => Ink::new(fg, tab.bg).with_attrs(tab.attrs).to_string(),
         None => tab_ink.to_string(),
     };
-    vec![
-        (" ".to_string(), tab_ink.to_string()),
-        (icon.glyph.to_string(), ink),
-    ]
+    vec![(" ".to_string(), tab_ink.to_string()), (icon.glyph, ink)]
 }
 
 /// A tab cap's ink: the tab's background as the glyph's color, on the strip's
@@ -642,8 +642,9 @@ fn tab_window(pane: LeafId, s: &Strip, cap: usize) -> Node<UiMsg> {
         }
         let icon = s
             .file_icons
+            .as_deref()
             .filter(|_| has_icon(t))
-            .map(|one_color| icon_runs(&t.name, one_color, &name_ink));
+            .map(|icons| icon_runs(&t.name, icons, &name_ink));
         span.push(name_node(
             pane,
             t.target,

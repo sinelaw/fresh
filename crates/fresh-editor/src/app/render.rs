@@ -3287,12 +3287,17 @@ impl Editor {
         &self,
     ) -> (
         crate::view::theme::Glyphs,
-        Option<Option<ratatui::style::Color>>,
+        Option<std::rc::Rc<crate::view::shell::tabs::TabIcons>>,
     ) {
         let theme = self.theme.read().unwrap();
         (
             theme.chrome.glyphs().clone(),
-            theme.chrome.nerd_font.then_some(theme.file_icon_fg),
+            theme.chrome.nerd_font.then(|| {
+                std::rc::Rc::new(crate::view::shell::tabs::TabIcons {
+                    table: theme.file_icons.clone(),
+                    one_color: theme.file_icon_fg,
+                })
+            }),
         )
     }
 

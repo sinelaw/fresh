@@ -206,14 +206,41 @@ same theme still looks right in a terminal without the font:
 
 The built-in `quiet` theme is a complete example.
 
-#### File-type icons
+### File-type icons
 
 With `editor.nerd_font_icons` on, the file explorer and the tabs show a
 file-type icon before each name — the Rust crab for `.rs`, the npm logo for
-`package.json`, open and closed folders — each in its type's familiar color.
-A theme that wants every icon in one color sets `ui.file_icon_fg`; folders
-use `ui.file_explorer_directory_fg`. A plugin that sets an explorer row's
-leading slot (`setFileExplorerSlots`) replaces the icon for that row.
+`package.json`, open and closed folders. Fresh has built-in icons in each
+type's familiar color; a theme's `file_icons` section replaces or recolors
+any of them and adds its own:
+
+```json
+{
+  "name": "my-icons",
+  "extends": "builtin://quiet",
+  "file_icons": {
+    "by_extension": {
+      "md":  { "color": [255, 120, 160] },
+      "gif": { "glyph": "\udb83\udd78", "color": [80, 220, 120] }
+    },
+    "by_name": { "index.md": { "glyph": "\uf015" } },
+    "default": { "color": [110, 115, 130] },
+    "folder": { "color": [230, 190, 90] },
+    "folder_open": { "color": [230, 190, 90] }
+  }
+}
+```
+
+- An entry sets a `glyph`, a `color`, or both; what it leaves out comes from
+  the built-in icon it replaces.
+- The most specific match wins: a whole file name (case-insensitive), then
+  the extension (without the dot), then `default`. At each level the theme's
+  entry wins over the built-in one.
+- A theme that `extends` another inherits the entries it does not name.
+- `ui.file_icon_fg` draws every icon in one color; folders otherwise use
+  `ui.file_explorer_directory_fg`.
+- A plugin that sets an explorer row's leading slot (`setFileExplorerSlots`)
+  owns that row's slot.
 
 When a border goes, mark the edge with a background instead:
 `editor.line_number_bg` for the gutter, `ui.file_explorer_bg` for the

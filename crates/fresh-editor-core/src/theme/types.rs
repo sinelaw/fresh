@@ -449,6 +449,144 @@ pub struct ThemeFile {
     /// Which pieces of chrome are drawn at all
     #[serde(default, skip_serializing_if = "ChromeOptions::is_empty")]
     pub chrome: ChromeOptions,
+    /// File-type icons: replace or recolor the built-in ones
+    #[serde(default, skip_serializing_if = "FileIconsFile::is_empty")]
+    pub file_icons: FileIconsFile,
+}
+
+/// One file-type icon a theme sets: its glyph, its color, or both. What an
+/// entry leaves out comes from the built-in icon it replaces, so
+/// `{"color": [255, 0, 0]}` recolors an icon and keeps its glyph.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct FileIconDef {
+    /// The glyph, usually a Nerd Font code point (`"\ue7a8"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glyph: Option<String>,
+    /// The glyph's color.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<ColorDef>,
+}
+
+/// File-type icons, drawn in the file explorer and on tabs while the user's
+/// `editor.nerd_font_icons` is on.
+///
+/// Fresh has a built-in icon for common files; a theme replaces or recolors
+/// any of them, and adds its own. The most specific match wins: a whole file
+/// name over an extension over `default`, and at each of those the theme's
+/// entry over the built-in one. A theme that `extends` another inherits the
+/// entries it does not name.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct FileIconsFile {
+    /// By whole file name, case-insensitive: `"Cargo.toml"`, `"Dockerfile"`.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub by_name: std::collections::BTreeMap<String, FileIconDef>,
+    /// By extension, case-insensitive, without the dot: `"rs"`, `"md"`.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub by_extension: std::collections::BTreeMap<String, FileIconDef>,
+    /// Any file nothing else matches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<FileIconDef>,
+    /// A closed folder. Its color defaults to `ui.file_explorer_directory_fg`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<FileIconDef>,
+    /// An open folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder_open: Option<FileIconDef>,
+}
+
+impl FileIconsFile {
+    /// Whether the file names no icon.
+    pub fn is_empty(&self) -> bool {
+        self.by_name.is_empty()
+            && self.by_extension.is_empty()
+            && self.default.is_none()
+            && self.folder.is_none()
+            && self.folder_open.is_none()
+    }
+}
+
+/// A theme's replacement for one icon, resolved: either half may be left to
+/// the built-in icon.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct IconOverride {
+    pub glyph: Option<String>,
+    pub color: Option<Color>,
+}
+
+impl IconOverride {
+    /// This with `file`'s halves over it.
+    fn overridden_by(mut self, file: &FileIconDef) -> Self {
+        if let Some(g) = &file.glyph {
+            self.glyph = Some(g.clone());
+        }
+        if let Some(c) = &file.color {
+            self.color = Some(c.clone().into());
+        }
+        self
+    }
+
+    fn to_file(&self) -> FileIconDef {
+        FileIconDef {
+            glyph: self.glyph.clone(),
+            color: self.color.map(ColorDef::from),
+        }
+    }
+}
+
+/// The resolved [`FileIconsFile`]: the theme's icon overrides, keys
+/// normalized (lower case; extensions without a dot). Looked up by
+/// `view::file_icons`, which holds the built-in table they override.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FileIcons {
+    pub by_name: std::collections::BTreeMap<String, IconOverride>,
+    pub by_extension: std::collections::BTreeMap<String, IconOverride>,
+    pub default: Option<IconOverride>,
+    pub folder: Option<IconOverride>,
+    pub folder_open: Option<IconOverride>,
+}
+
+impl FileIcons {
+    /// These overrides with the ones `file` names merged over them, entry by
+    /// entry and half by half.
+    pub fn overridden_by(mut self, file: &FileIconsFile) -> Self {
+        fn merge(
+            into: &mut std::collections::BTreeMap<String, IconOverride>,
+            from: &std::collections::BTreeMap<String, FileIconDef>,
+            normalize: fn(&str) -> String,
+        ) {
+            for (k, def) in from {
+                let slot = into.entry(normalize(k)).or_default();
+                *slot = std::mem::take(slot).overridden_by(def);
+            }
+        }
+        fn one(slot: &mut Option<IconOverride>, def: &Option<FileIconDef>) {
+            if let Some(def) = def {
+                *slot = Some(slot.take().unwrap_or_default().overridden_by(def));
+            }
+        }
+        merge(&mut self.by_name, &file.by_name, |k| k.to_ascii_lowercase());
+        merge(&mut self.by_extension, &file.by_extension, |k| {
+            k.trim_start_matches('.').to_ascii_lowercase()
+        });
+        one(&mut self.default, &file.default);
+        one(&mut self.folder, &file.folder);
+        one(&mut self.folder_open, &file.folder_open);
+        self
+    }
+
+    /// The overrides, as a theme file names them.
+    pub fn to_file(&self) -> FileIconsFile {
+        let map = |m: &std::collections::BTreeMap<String, IconOverride>| {
+            m.iter().map(|(k, v)| (k.clone(), v.to_file())).collect()
+        };
+        FileIconsFile {
+            by_name: map(&self.by_name),
+            by_extension: map(&self.by_extension),
+            default: self.default.as_ref().map(IconOverride::to_file),
+            folder: self.folder.as_ref().map(IconOverride::to_file),
+            folder_open: self.folder_open.as_ref().map(IconOverride::to_file),
+        }
+    }
 }
 
 /// Generate the theme's chrome glyphs from one table: the file form (every
@@ -1658,6 +1796,9 @@ pub struct Theme {
 
     /// Which pieces of chrome are drawn at all (see [`ChromeOptions`]).
     pub chrome: Chrome,
+
+    /// The theme's file-type icon overrides (see [`FileIconsFile`]).
+    pub file_icons: FileIcons,
 }
 
 /// The color of a key a theme file may leave out, or a placeholder when it
@@ -1902,6 +2043,7 @@ impl From<ThemeFile> for Theme {
             syntax_attribute_modifier: Modifier::empty(),
             key_modifiers: Default::default(),
             chrome: Chrome::default().overridden_by(&file.chrome),
+            file_icons: FileIcons::default().overridden_by(&file.file_icons),
         };
         theme.apply_named_modifiers(&raw);
         theme
@@ -2107,6 +2249,7 @@ impl From<Theme> for ThemeFile {
                 attribute: styled(&theme, "syntax.attribute"),
             },
             chrome: theme.chrome.clone().into(),
+            file_icons: theme.file_icons.to_file(),
         }
     }
 }
@@ -2202,6 +2345,10 @@ fn apply_theme_overrides(theme: &mut Theme, theme_file: &ThemeFile, raw: &serde_
     // Name always comes from the user file — that's the theme's identity.
     theme.name = theme_file.name.clone();
     theme.chrome = theme.chrome.clone().overridden_by(&theme_file.chrome);
+    theme.file_icons = theme
+        .file_icons
+        .clone()
+        .overridden_by(&theme_file.file_icons);
 
     // Keys added after themes could already extend one another, whose
     // fallback was the only color they had: in the base they still hold that
@@ -2524,6 +2671,28 @@ impl Theme {
                 for field in nerd.keys() {
                     if !GlyphOptions::KEYS.contains(&field.as_str()) {
                         unknown.push(format!("chrome.nerd_font.{field}"));
+                    }
+                }
+            }
+        }
+        if let Some(icons) = raw.get("file_icons").and_then(|v| v.as_object()) {
+            for (group, value) in icons {
+                let entries: Vec<(String, &serde_json::Value)> = match group.as_str() {
+                    "by_name" | "by_extension" => value
+                        .as_object()
+                        .map(|m| m.iter().map(|(k, v)| (format!("{group}.{k}"), v)).collect())
+                        .unwrap_or_default(),
+                    "default" | "folder" | "folder_open" => vec![(group.clone(), value)],
+                    _ => {
+                        unknown.push(format!("file_icons.{group}"));
+                        continue;
+                    }
+                };
+                for (path, entry) in entries {
+                    for field in entry.as_object().map(|o| o.keys()).into_iter().flatten() {
+                        if field != "glyph" && field != "color" {
+                            unknown.push(format!("file_icons.{path}.{field}"));
+                        }
                     }
                 }
             }
