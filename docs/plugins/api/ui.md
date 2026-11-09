@@ -731,7 +731,10 @@ re-sending its spec. `op`: "dock" (re-anchor as the left dock and
 focus; `arg` unused — the width is the editor's), "dock_width"
 (`arg` = width in columns; sticks like a drag, across resizes and
 launches), "center", "focus", "blur", "fullscreen" (`arg != 0` makes
-a centered panel cover the whole frame over the dock), "sidebar"
+a centered panel cover the whole frame over the dock), "fill" (`arg != 0`
+makes a centered panel `heightPct` tall instead of as tall as its
+rows, so a list or tree with `visibleRows` omitted has a height to
+fill — in a box that hugs its rows it draws nothing), "sidebar"
 (`arg` = requested rows; re-anchors the panel as a sidebar section
 under the file explorer — "dock" / "center" re-anchor it back out),
 "sidebar_rows" (`arg` = requested rows for a section; a divider the

@@ -3298,6 +3298,7 @@ mod tests {
             scrollbar_zone_hovered: false,
             scrollbar_flash_until: None,
             fullscreen: false,
+            fill: false,
             focus_marker: false,
             label_align: Default::default(),
             title: None,

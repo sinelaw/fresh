@@ -1658,6 +1658,7 @@ mod tests {
             closable: true,
             focused: true,
             fullscreen: false,
+            fill_height_pct: None,
             interior: Interior {
                 spec: std::rc::Rc::new(spec),
                 states: Default::default(),

@@ -1879,6 +1879,13 @@ pub(crate) struct FloatingWidgetState {
     /// dock, while other plugins' floating panels keep the default
     /// coexist-beside-the-dock layout. Ignored for `LeftDock`.
     pub fullscreen: bool,
+    /// When true, a `Centered` panel is `height_pct` of its bounds tall
+    /// instead of as tall as its rows. Set via `FloatingPanelControl{op:
+    /// "fill"}`. A box that hugs its rows gives an auto-sized list or tree
+    /// (`visibleRows` omitted, `Sizing::Flex(1)`) no leftover height, so it
+    /// draws nothing; a box with a height has height to fill. Ignored for
+    /// every other placement.
+    pub fill: bool,
     /// When true, every focusable control of this panel reserves a
     /// two-column gutter for the
     /// `▸ ` focus marker so focus is legible from a plain capture and
@@ -2340,6 +2347,7 @@ mod tests {
             scrollbar_zone_hovered: false,
             scrollbar_flash_until: None,
             fullscreen: false,
+            fill: false,
             focus_marker: false,
             label_align: Default::default(),
             title: None,

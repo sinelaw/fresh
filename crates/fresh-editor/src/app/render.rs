@@ -6145,6 +6145,8 @@ impl Editor {
             closable: p.closable,
             focused: p.focused,
             fullscreen: p.fullscreen,
+            fill_height_pct: (p.fill && p.placement == super::PanelPlacement::Centered)
+                .then_some(p.height_pct),
         })
     }
 }

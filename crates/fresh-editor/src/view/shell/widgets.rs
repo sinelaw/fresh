@@ -1386,7 +1386,15 @@ fn tree_rows_plain(p: &TreeRows) -> Node<UiMsg> {
     // way the rows fit their cells.
     match table {
         None => node,
-        Some(t) => col().children([t.header(&p.surface), node]),
+        // A tree left to size itself fills its container, and the header's
+        // column must too: hugging, it would hand the rows no height at all.
+        Some(t) => {
+            let table = col().children([t.header(&p.surface), node]);
+            match p.visible_rows {
+                Some(_) => table,
+                None => table.h(Sizing::Flex(1)),
+            }
+        }
     }
 }
 
@@ -2798,7 +2806,16 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 reveal: cx.scrollbar_reveal,
                 visible_rows: *visible_rows,
             };
-            keyed(fresh_ui::memo(props, tree_rows_cards), rows_key(key))
+            let rows = keyed(fresh_ui::memo(props, tree_rows_cards), rows_key(key));
+            // **The memo is what the enclosing column sizes**, not the window
+            // built inside it: a component node carries its own sizing. Left
+            // `Auto`, a tree that fills (`visibleRows` omitted) was measured
+            // as content and took every row still free when its turn came —
+            // the rows declared after it (a dialog's key hints) got none.
+            match visible_rows {
+                None => rows.h(Sizing::Flex(1)),
+                Some(_) => rows,
+            }
         }
         WidgetSpec::Tree {
             nodes,
@@ -2843,7 +2860,16 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 reveal: cx.scrollbar_reveal,
                 visible_rows: *visible_rows,
             };
-            keyed(fresh_ui::memo(props, tree_rows_plain), rows_key(key))
+            let rows = keyed(fresh_ui::memo(props, tree_rows_plain), rows_key(key));
+            // **The memo is what the enclosing column sizes**, not the window
+            // built inside it: a component node carries its own sizing. Left
+            // `Auto`, a tree that fills (`visibleRows` omitted) was measured
+            // as content and took every row still free when its turn came —
+            // the rows declared after it (a dialog's key hints) got none.
+            match visible_rows {
+                None => rows.h(Sizing::Flex(1)),
+                Some(_) => rows,
+            }
         }
         // **A multi-line field's rows are built one at a time, from lines.**
         //

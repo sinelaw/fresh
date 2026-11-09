@@ -66,6 +66,12 @@ pub struct Panel {
     /// beside the dock. The orchestrator's global modals opt into the former
     /// so they are not cramped into the region right of their own dock.
     pub fullscreen: bool,
+    /// A centred box this percentage of its bounds tall, rather than as tall
+    /// as its rows (`FloatingPanelControl` `"fill"`). This is what gives an
+    /// auto-sized list or tree in it a height to fill: it is `Flex(1)`, and
+    /// a box that hugs its contents has no leftover height to share out.
+    /// `None` — every dialog that sizes to its form — keeps the hug.
+    pub fill_height_pct: Option<u8>,
     /// **The interior: the spec, and the host state it reads.** Every
     /// mounted panel is described — `view::shell::widgets` has a node for
     /// every variant, a `WindowEmbed` included — so the box is as tall and
@@ -645,8 +651,14 @@ pub fn layer_for(p: &Panel) -> Node<UiMsg> {
                     frame_box(p)
                         .w(Sizing::Pct(*width_pct))
                         .min_w(20)
-                        // As tall as its rows: the interior measures itself.
-                        .h(Sizing::Auto)
+                        // As tall as its rows — the interior measures
+                        // itself — unless the panel asked to fill a share
+                        // of its bounds, which is what gives a list or tree
+                        // left to size itself the height it grows into.
+                        .h(match p.fill_height_pct {
+                            Some(pct) => Sizing::Pct(pct.clamp(1, 100)),
+                            None => Sizing::Auto,
+                        })
                         // The floor the arithmetic carried: a box is its two
                         // border rows and at least one row of content, even
                         // when the spec produced none.
@@ -696,6 +708,14 @@ pub fn layer_for(p: &Panel) -> Node<UiMsg> {
 fn frame_box(p: &Panel) -> Node<UiMsg> {
     let ring = ring_theme(p);
     let framed = col().theme(ring).border().child(body(p));
+    // A box with a height of its own (`fill_height_pct`) hands it down: the
+    // ring and the content area fill it, so the interior's flexible children
+    // — an auto-sized list or tree, a `flexSpacer` — share out what the rows
+    // leave. Hugging, a flexible child has no leftover to take.
+    let framed = match p.fill_height_pct {
+        Some(_) => framed.h(Sizing::Flex(1)),
+        None => framed,
+    };
     let claim = move |e: &Event| {
         e.stop();
         None
@@ -798,6 +818,10 @@ fn body(p: &Panel) -> Node<UiMsg> {
     // `Stretch` then widens the body to whatever the box settled on — which
     // for a centred panel's percentage width is exactly the fill this had.
     let area = row().w(Sizing::Auto).key(body_key());
+    let area = match p.fill_height_pct {
+        Some(_) => area.h(Sizing::Flex(1)),
+        None => area,
+    };
     let keymap = i.keymap.clone();
     // **The width the widgets are laid out at is layout's answer, not the
     // caller's.** A centred panel is a percentage of its bounds, so nobody
@@ -995,6 +1019,7 @@ mod tests {
             closable: true,
             focused: true,
             fullscreen: true,
+            fill_height_pct: None,
             interior,
         }
     }
@@ -1032,6 +1057,81 @@ mod tests {
                 "centred at {pct}% with {rows} rows"
             );
         }
+    }
+
+    /// **A panel asked to fill is that tall, and an auto-sized tree in it gets
+    /// the rows its siblings leave** (`FloatingPanelControl` `"fill"`).
+    /// Hugging its rows, the box had no height for a `visibleRows`-less tree
+    /// to fill and the tree drew nothing; filling, the tree takes the middle
+    /// and the key hints stay on the box's last row.
+    #[test]
+    fn a_filling_panel_gives_an_auto_sized_tree_the_rows_left_over() {
+        let spec: fresh_core::api::WidgetSpec = serde_json::from_value(serde_json::json!({
+            "kind": "col",
+            "children": [
+                { "kind": "label", "text": "header", "key": "top" },
+                {
+                    "kind": "tree",
+                    "key": "rows",
+                    "nodes": [
+                        { "text": { "text": "a" }, "depth": 0, "hasChildren": false },
+                        { "text": { "text": "b" }, "depth": 0, "hasChildren": false }
+                    ],
+                    "itemKeys": ["a", "b"],
+                    "selectedIndex": 0,
+                    "expandedKeys": [],
+                    "checkable": false,
+                    "itemHeight": 1,
+                    "cardBorders": false,
+                    "indentCols": 2,
+                    "toggleOnClick": false
+                },
+                { "kind": "hintBar", "entries": [{ "keys": "Esc", "label": "close" }], "key": "hints" }
+            ]
+        }))
+        .expect("a valid spec");
+        let mut p = panel(Spot::Centered { width_pct: 80 }, interior_of(spec.clone()));
+        p.fill_height_pct = Some(100);
+        let ui = laid_out(Some(p));
+        let box_rect = rect(&ui, &key()).expect("a box");
+        assert_eq!(
+            box_rect.height, FRAME.height,
+            "the box is the share it asked for"
+        );
+        // Which row each piece of text was painted on.
+        let row_of = |ui: &Ui<UiMsg>, needle: &str| {
+            ui.spec()
+                .items
+                .iter()
+                .find(|i| format!("{:?}", i.draw).contains(needle))
+                .map(|i| i.rect.y)
+        };
+        let last_inner = (box_rect.y + box_rect.height - 2) as i32;
+        assert_eq!(
+            row_of(&ui, "header"),
+            Some(box_rect.y as i32 + 1),
+            "the header is the first row"
+        );
+        assert_eq!(
+            row_of(&ui, "close"),
+            Some(last_inner),
+            "the hints are the last row inside the ring"
+        );
+        assert_eq!(
+            row_of(&ui, "\"  b\""),
+            Some(box_rect.y as i32 + 3),
+            "the tree's rows follow the header"
+        );
+
+        // Without "fill" the box hugs its rows, as every other dialog does.
+        let ui = laid_out(Some(panel(
+            Spot::Centered { width_pct: 80 },
+            interior_of(spec),
+        )));
+        assert!(
+            rect(&ui, &key()).expect("a box").height < FRAME.height,
+            "a box that did not ask to fill hugs its rows"
+        );
     }
 
     /// And an anchored popup, including both clamps — a cell near the right
