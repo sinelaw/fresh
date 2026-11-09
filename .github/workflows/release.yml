@@ -263,28 +263,24 @@ jobs:
     needs: plan
     if: ${{ needs.plan.outputs.publishing == 'true' }}
     uses: ./.github/workflows/freebsd-builds.yml
-    secrets: inherit
 
   # Build musl static binaries (with plugins)
   build-musl:
     needs: plan
     if: ${{ needs.plan.outputs.publishing == 'true' }}
     uses: ./.github/workflows/musl-builds.yml
-    secrets: inherit
 
   # Build the minimal-size static binary (min-size profile, trimmed features)
   build-min-size:
     needs: plan
     if: ${{ needs.plan.outputs.publishing == 'true' }}
     uses: ./.github/workflows/min-size-build.yml
-    secrets: inherit
 
   # Build Linux packages (.deb, .rpm) - builds from source, can run in parallel
   build-linux-packages:
     needs: [plan]
     if: ${{ needs.plan.outputs.publishing == 'true' }}
     uses: ./.github/workflows/linux-packages.yml
-    secrets: inherit
 
   # The Debian-archive build (packaging/debian): built on debian:testing from
   # Debian's own crates, QuickJS and esbuild, so it installs on Debian
@@ -304,7 +300,6 @@ jobs:
     uses: ./.github/workflows/flatpak-build.yml
     with:
       version: ${{ needs.plan.outputs.version }}
-    secrets: inherit
 
   # Build GUI variants (native window)
   build-gui:
@@ -313,7 +308,6 @@ jobs:
     uses: ./.github/workflows/gui-builds.yml
     with:
       version: ${{ needs.plan.outputs.version }}
-    secrets: inherit
 
   # Build Fresh Desktop (the web UI as a standalone Electron app with the
   # editor bundled) from the release binaries above.
@@ -337,7 +331,6 @@ jobs:
     uses: ./.github/workflows/appimage-build.yml
     with:
       version: ${{ needs.plan.outputs.version }}
-    secrets: inherit
 
   # Build npm package
   build-npm-package:
@@ -847,14 +840,18 @@ jobs:
     uses: ./.github/workflows/aur-publish.yml
     with:
       version: ${{ needs.plan.outputs.version }}
-    secrets: inherit
+    secrets:
+      AUR_USERNAME: ${{ secrets.AUR_USERNAME }}
+      AUR_EMAIL: ${{ secrets.AUR_EMAIL }}
+      AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
 
   # Publish to crates.io
   publish-cargo:
     needs: [plan, promote]
     if: ${{ !cancelled() && needs.promote.result == 'success' && needs.plan.outputs.publishing == 'true' }}
     uses: ./.github/workflows/cargo-publish.yml
-    secrets: inherit
+    secrets:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   # Publish to winget-pkgs
   publish-winget:
@@ -863,4 +860,5 @@ jobs:
     uses: ./.github/workflows/winget-publish.yml
     with:
       version: ${{ needs.plan.outputs.version }}
-    secrets: inherit
+    secrets:
+      WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}

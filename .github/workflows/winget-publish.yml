@@ -11,6 +11,9 @@ on:
       version:
         required: true
         type: string
+    secrets:
+      WINGET_TOKEN:
+        required: true
   workflow_dispatch:
     inputs:
       version:
