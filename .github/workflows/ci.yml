@@ -308,6 +308,20 @@ jobs:
         run: |
           curl -fsSL -o /tmp/Packages.xz https://deb.debian.org/debian/dists/testing/main/binary-amd64/Packages.xz
           python3 scripts/debian.py check /tmp/Packages.xz --features runtime,plugins,embed-plugins,precompiled-plugins
+      # The librust-*-dev Build-Depends are generated (packaging/debian/README.source).
+      # Without this, a new dependency reaches a Debian upload missing from them.
+      - name: packaging/debian/control lists what the generator does
+        run: |
+          for suite in oldstable stable; do
+            curl -fsSL -o "/tmp/$suite.Packages.xz" "https://deb.debian.org/debian/dists/$suite/main/binary-amd64/Packages.xz"
+          done
+          python3 scripts/debian.py packages --control /tmp/Packages.xz \
+            --baseline /tmp/oldstable.Packages.xz --baseline /tmp/stable.Packages.xz > /tmp/generated
+          grep '^ librust-' packaging/debian/control > /tmp/committed
+          diff -u /tmp/committed /tmp/generated || {
+            echo "::error::packaging/debian/control's librust-*-dev entries are out of date; replace them with the + lines above (scripts/debian.py packages --control, see packaging/debian/README.source)"
+            exit 1
+          }
 
   # The release pipeline gets one shot per tag: a typo in a workflow expression
   # or a `run:` block surfaces when a release is already half-published, where

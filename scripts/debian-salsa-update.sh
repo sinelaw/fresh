@@ -121,6 +121,9 @@ EOF
 
 version() { deb dpkg-parsechangelog -S Version; }
 
+# Set the date on debian/changelog's first trailer line.
+changelog_date() { sed -i "0,/^ -- /s/^\( -- .*>\)  .*/\1  $1/" "$REPO/debian/changelog"; }
+
 require_clean_debian_latest() {
   [ "$(g rev-parse --abbrev-ref HEAD)" = debian/latest ] || die "not on debian/latest"
   [ -z "$(g status --porcelain)" ] || die "working tree of $REPO is not clean"
@@ -228,11 +231,19 @@ cmd_prepare() {
     fi
   fi
 
-  # 4. Changelog: the release's entry, at VERSION-REVISION.
+  # 4. Changelog: the release's entry, at VERSION-REVISION, dated when debian/
+  # changes. The trailer keeps debian/latest's date while nothing else differs,
+  # so rerunning prepare commits nothing; otherwise it is stamped now, as
+  # `dch -r` would, rather than carrying whatever date packaging/debian had.
   sed -i "1s/^fresh-editor ([^)]*)/fresh-editor (${version}-${revision})/" "$REPO/debian/changelog"
   [ "$(version)" = "${version}-${revision}" ] || die "changelog version not set"
-
+  local dated; dated="$(g show HEAD:debian/changelog | sed -n 's/^ -- .*>  //p' | head -1)"
+  [ -n "$dated" ] && changelog_date "$dated"
   g add -A debian
+  if ! g diff --cached --quiet; then
+    changelog_date "$(date -R)"
+    g add debian/changelog
+  fi
   if g diff --cached --quiet; then
     say "debian/ already up to date"
   else

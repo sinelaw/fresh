@@ -30,8 +30,11 @@ FEATURES := runtime,plugins,embed-plugins,precompiled-plugins
 export FRESH_REQUIRE_PRECOMPILED_PLUGINS := 1
 TARGET_DIR := target/$(DEB_HOST_RUST_TYPE)/release
 
+# override_dh_auto_install installs straight into debian/fresh-editor, so the
+# single-binary add-on (whose implicit use compat 14 warns about) has nothing
+# to do here.
 %:
-	dh $@
+	dh $@ --without single-binary
 
 # The manifests name crates Debian does not package (oxc, ts-rs, three
 # tree-sitter grammars, fresh-gui's renderer), as optional or other-target
