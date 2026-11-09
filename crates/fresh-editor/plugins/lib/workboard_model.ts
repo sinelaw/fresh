@@ -29,6 +29,7 @@ export interface WorkspaceLike {
   title: string;
   git?: { branch?: string; dirty?: number; ahead?: number; behind?: number };
   backend?: string;
+  pending?: { phase: "creating" | "error" | "paused"; message: string };
 }
 
 /** The part of the Orchestrator's `FolderSummary` this needs. */

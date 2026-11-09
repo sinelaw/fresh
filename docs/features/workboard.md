@@ -7,26 +7,24 @@
 The Workboard puts every Orchestrator workspace and its coding agent on one full-screen board, so you can see at a glance which agents are waiting on you, which have finished, and which are still working. Press `Enter` on a card to open that workspace.
 
 ```
-┌ Workboard ─────────────────────────────────────────────────[×]┐
-│  Inbox   Projects   Folders   Board              ● 2  ✓ 1  * 2│
-│───────────────────────────────────────────────────────────────│
-│ NEEDS YOU  2                                                  │
-│  ● rate-limit                                             4m  │
-│    “Should I use Postgres or Redis? [y/n]”                    │
-│  ● login-fix                                              1m  │
-│    “Allow running cargo test? [y/n]”                          │
-│                                                               │
-│ READY TO REVIEW  1                                            │
-│  ✓ tab-names                                             12m  │
-│    claude · tab-names · 3 changed                             │
-│                                                               │
-│ WORKING  2                                                    │
-│  * billing-ui                                             2m  │
-│  …                                                            │
-└───────────────────────────────────────────────────────────────┘
+┌ Workboard ─────────────────────────────────────────────────────────────────[×]┐
+│[ 1 Inbox ][ 2 Projects ][ 3 Folders ][ 4 Board ]   ● 2 waiting  ✓ 1 done  * 2 working│
+│────────────────────────────────────────────────────────────────────────────────│
+│       Workspace      Status                         Project  Branch        For │
+│▼ NEEDS YOU  2                                                                  │
+│    ●  rate-limit     Should I use Postgres or Redis? api      rate-limit    4m │
+│    ●  login-fix      Allow running cargo test? (y/n) web      login-fix     1m │
+│▼ READY TO REVIEW  1                                                            │
+│    ✓  tab-names      finished, not looked at         web      tab-names · 3 changed │
+│▼ WORKING  2                                                                    │
+│    *  billing-ui                                     api      billing-ui    2m │
+│Enter open  n next waiting  Tab/1-4 lens  Esc close                             │
+└────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 The state symbols are the Orchestrator dock's own: **●** waiting on you, **✓** finished work you haven't looked at, **\*** working, **·** idle. The time on each card is how long it has been in that state, counted from when the Workboard first saw it.
+
+The list lenses are tables: a heading per group (`←` / `→` or a click fold it), then a row per workspace with its status, project, branch, working-tree changes and how long it has been in its state. The status is a waiting agent's question, "finished, not looked at", or a failed create's reason.
 
 ## Lenses
 
@@ -36,8 +34,8 @@ The state symbols are the Orchestrator dock's own: **●** waiting on you, **✓
 | --- | --- |
 | **Inbox** | Sorted by what needs you: **Needs you** (agent asked a question), **Ready to review** (finished, unseen), **Working**, **Parked**. In the first two, the one that has waited longest is on top. A waiting agent's question is shown under its name. |
 | **Projects** | One group per repository. Every git worktree of a repo lands in the same group. |
-| **Folders** | The Orchestrator dock's folders, in the dock's order, so an arrangement you made by hand is one key away. |
-| **Board** | A kanban board that fills itself: **Backlog**, **Needs me**, **Working**, **Review**, **Shipped**. |
+| **Folders** | The Orchestrator dock's folders, in the dock's order, so an arrangement you made by hand is one key away. Drag a workspace onto a folder (or onto a workspace in it) to file it there; drop it on **Not in a folder** to unfile it. |
+| **Board** | A kanban board that fills itself, one column of cards each: **Backlog**, **Needs me**, **Working**, **Review**, **Shipped**. |
 
 ### How the Board places cards
 
@@ -55,13 +53,13 @@ Nothing on a workspace says it was merged, so **Shipped** is reached only by han
 
 ## Keys
 
+The cards are ordinary lists and trees, so they answer the keys and the mouse the way every list in Fresh does: `↑` `↓` move, a click selects, the wheel scrolls, `Enter` opens. On the Board, `←` `→` move to the next column.
+
 | Key | Action |
 | --- | --- |
-| `↑` `↓` / `k` `j` | Move between cards |
-| `←` `→` / `h` `l` | Board: move between columns. Other lenses: jump to the previous or next group |
 | `Enter` | Open the workspace and close the board |
 | `n` | Move to the next card that needs you (waiting first, then finished) |
-| `Tab` / `Shift+Tab`, `1`–`4` | Change lens |
+| `Tab` / `Shift+Tab`, `1`–`4` | Change lens (or click a lens button) |
 | `<` `>` | Board: pin the card one column left or right |
 | `p` | Board: unpin the card |
 | `Esc` / `q` | Close |

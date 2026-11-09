@@ -16560,6 +16560,11 @@ export type WorkspaceSummary = {
   /** Backend kind for a remote workspace (`ssh`, `docker`, …), absent for
    *  a local one. */
   backend?: string;
+  /** For a `"pending"` row, how its create stands: `"creating"` while it
+   *  runs, `"error"` once it has failed (with the reason in `message`), or
+   *  `"paused"` for one restored from a previous run and not resumed yet.
+   *  The dock's retry / dismiss apply to the last two. Absent otherwise. */
+  pending?: { phase: "creating" | "error" | "paused"; message: string };
 };
 
 /// One archived workspace, as `listArchived()` reports it. An archived
@@ -17051,6 +17056,9 @@ function listWorkspaces(): WorkspaceSummary[] {
         }
         : undefined,
       backend: session.remote?.kind,
+      ...(session.pending
+        ? { pending: { phase: session.pending.phase, message: session.pending.message } }
+        : {}),
     };
   });
 }

@@ -212,7 +212,6 @@ function viewInput() {
     now: Date.now(),
     selected,
     collapsed,
-    screenRows: editor.getScreenSize().height,
   };
 }
 
@@ -261,8 +260,10 @@ function openBoard(): void {
   itemKeysByTree = treeItemKeys(spec);
   lastFrame = JSON.stringify(spec);
   panel.mount(spec, { widthPct: 100, heightPct: 100, title: "Workboard", closable: true, mode: MODE });
-  // Cover the whole frame, dock included: the board is the overview.
+  // Cover the whole frame, dock included: the board is the overview. And be
+  // that tall, not as tall as the rows, so the trees fill it and scroll.
   editor.floatingPanelControl(panel.id(), "fullscreen", 1);
+  editor.floatingPanelControl(panel.id(), "fill", 1);
   focusLensStart();
 }
 
@@ -412,9 +413,6 @@ editor.on("widget_event", (e) => {
       return;
   }
 });
-
-// The trees' row budgets come from the screen height.
-editor.on("resize", () => render());
 
 registerHandler("workboard_next_lens", () => cycleLens(1));
 registerHandler("workboard_prev_lens", () => cycleLens(-1));
