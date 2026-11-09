@@ -4101,8 +4101,9 @@ interface EditorConfig {
 		*/
 		show_tilde?: boolean;
 		/**
-		* Use Nerd Font icons in the UI (e.g. settings category icons). Only turn on
-		* if your terminal uses a Nerd Font, or icons show as `?` or boxes. Default: false
+		* Use Nerd Font icons in the UI (e.g. settings category icons, and the
+		* `chrome.nerd_font` glyphs a theme provides). Only turn on if your
+		* terminal uses a Nerd Font, or icons show as `?` or boxes. Default: false
 		*
 		* Default: `false`
 		*/
@@ -6403,6 +6404,25 @@ interface EditorAPI {
 	*/
 	applyTheme(themeName: string): boolean;
 	/**
+	* Render the whole editor with a theme that has not been saved.
+	* 
+	* `json` is a theme file's contents. It is loaded the way a theme file
+	* is — `extends`, fallbacks, the `chrome` options — and becomes the
+	* running theme, without touching disk or config. The next
+	* `applyTheme` (or `reloadAndApplyTheme`) replaces it. Invalid JSON
+	* leaves the running theme as it was and reports why in the status bar.
+	* 
+	* @param json - The theme, as theme-file JSON
+	*/
+	previewTheme(json: string): boolean;
+	/**
+	* End the live preview `previewTheme` began: the theme that was running
+	* before it comes back, exactly as it was — no name is looked up and
+	* config is not touched. Does nothing when no preview is running, or
+	* after `applyTheme` has chosen a theme since.
+	*/
+	endThemePreview(): boolean;
+	/**
 	* Override theme colors in-memory for the running session. `overrides`
 	* is a JS object mapping `"section.field"` keys (same namespace as
 	* `getThemeSchema`) to `[r, g, b]` triplets (0–255 each).
@@ -6444,6 +6464,13 @@ interface EditorAPI {
 	* Get theme data (JSON) by name from the in-memory cache
 	*/
 	getThemeData(name: string): unknown;
+	/**
+	* The built-in file-type icons a theme's `file_icons` section
+	* overrides, in that section's shape: `{by_name, by_extension, default,
+	* folder, folder_open}`, each icon `{glyph, color: [r, g, b]}` (a
+	* folder's color is `null`: it takes `ui.file_explorer_directory_fg`).
+	*/
+	getBuiltinFileIcons(): unknown;
 	/**
 	* Save a theme file to the user themes directory, returns the saved path
 	*/

@@ -31,10 +31,11 @@ use std::rc::Rc;
 
 use fresh_ui::{gesture, row, text, Event, GestureKind, Key, MouseButton, Node, Sizing};
 
-use crate::app::shell_host::shell_theme::{attrs, pair};
+use crate::app::shell_host::shell_theme::{attrs, pair, Ink, Paint};
 use crate::app::types::HoverTarget;
 use crate::model::event::LeafId;
 use crate::view::split::TabTarget;
+use crate::view::theme::Glyphs;
 use crate::view::ui::tabs::{elided_tab_name, NEW_TAB_BUTTON_WIDTH, TAB_NAME_MAX_COLS};
 
 use super::msg::{UiFact, UiMsg};
@@ -98,6 +99,20 @@ pub struct Strip {
     pub reveal: Option<Rc<fresh_ui::behavior::Anchor>>,
     /// The word a preview tab carries after its name, localized.
     pub preview_label: String,
+    /// The theme's chrome glyphs: what sits between tabs and around them,
+    /// the close button, the modified marker.
+    pub glyphs: Glyphs,
+    /// File-type icons before file tabs' names: `Some` while the user's
+    /// `editor.nerd_font_icons` is on.
+    pub file_icons: Option<Rc<TabIcons>>,
+}
+
+/// What tabs draw their file-type icons from: the theme's `file_icons`
+/// overrides, and its one icon color (`ui.file_icon_fg`) if it sets one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TabIcons {
+    pub table: crate::view::theme::FileIcons,
+    pub one_color: Option<ratatui::style::Color>,
 }
 
 impl Strip {
@@ -105,7 +120,13 @@ impl Strip {
     /// wide: `TAB_NAME_MAX_COLS` when the names do not fit, and no cap at all
     /// when they do.
     fn name_cap(&self, room: u16) -> usize {
-        match natural_width(&self.tabs, &self.preview_label) > usize::from(room) {
+        match natural_width(
+            &self.tabs,
+            &self.preview_label,
+            &self.glyphs,
+            self.file_icons.is_some(),
+        ) > usize::from(room)
+        {
             true => TAB_NAME_MAX_COLS,
             false => usize::MAX,
         }
@@ -184,12 +205,12 @@ pub fn tab_window_key(pane: LeafId) -> Key {
 /// and `ensure_active_tab_visible` — both deleted with the strip's hand layout.
 /// What shares it now is [`natural_width`], which asks what these labels would
 /// measure uncapped so the strip can decide whether to cap them at all.
-pub fn label(t: &Tab, cap: usize, preview_label: &str) -> String {
+pub fn label(t: &Tab, cap: usize, preview_label: &str, modified_glyph: &str) -> String {
     let name = match &t.title {
-        Some(pieces) => elided_title(pieces, cap),
+        Some(pieces) => elided_title(pieces, cap, modified_glyph),
         None => elided_tab_name(&t.name, cap),
     };
-    let modified = if t.modified { "*" } else { "" };
+    let modified = if t.modified { modified_glyph } else { "" };
     let preview = if t.preview {
         format!(" {preview_label}")
     } else {
@@ -204,9 +225,9 @@ pub fn label(t: &Tab, cap: usize, preview_label: &str) -> String {
 /// file tab's is, so it is never cut off (issue #3691). When the whole title
 /// does not fit, each piece that names a panel is shortened on its own, to
 /// an equal share of the columns the other pieces leave.
-fn elided_title(pieces: &[TitlePiece], cap: usize) -> String {
+fn elided_title(pieces: &[TitlePiece], cap: usize, modified_glyph: &str) -> String {
     use crate::primitives::display_width::str_width;
-    let star = |p: &TitlePiece| if p.modified { "*" } else { "" };
+    let star = |p: &TitlePiece| if p.modified { modified_glyph } else { "" };
     let whole: String = pieces
         .iter()
         .map(|p| format!("{}{}", p.text, star(p)))
@@ -243,12 +264,53 @@ fn elided_title(pieces: &[TitlePiece], cap: usize) -> String {
 /// scrollbar's track gives — would skip past every tab you were looking for.
 pub const TAB_SCROLL_STEP_COLUMNS: u16 = 10;
 
-const CLOSE: &str = "× ";
+/// A tab's close button: the theme's glyph and a cell of air after it.
+fn close_text(g: &Glyphs) -> String {
+    format!("{} ", g.tab_close)
+}
 const PLUS: &str = " + ";
 
 /// The strip's ground.
 fn ground() -> String {
     pair("ui.tab_inactive_fg", "ui.tab_separator_bg")
+}
+
+/// The ink of the text between two tabs (`chrome.tab_separator`).
+fn separator_ink() -> String {
+    pair("ui.tab_separator_fg", "ui.tab_separator_bg")
+}
+
+/// Cells a file-type icon adds to a tab: a space, then the glyph (the label's
+/// own leading space then separates it from the name).
+const ICON_COLS: usize = 2;
+
+/// Whether a tab shows a file-type icon: a file's tab, not a group's.
+fn has_icon(t: &Tab) -> bool {
+    matches!(t.target, TabTarget::Buffer(_)) && t.title.is_none()
+}
+
+/// A file tab's icon as runs: a space on the tab's ground, then the glyph in
+/// its type's color (or the theme's one icon color), on the tab's ground.
+fn icon_runs(name: &str, icons: &TabIcons, tab_ink: &str) -> Vec<(String, String)> {
+    let icon = crate::view::file_icons::resolve(&icons.table, name);
+    let fg = match icons.one_color {
+        Some(_) => Paint::key("ui.file_icon_fg"),
+        None => Paint::Lit(icon.color),
+    };
+    let ink = match Ink::parse(tab_ink) {
+        Some(tab) => Ink::new(fg, tab.bg).with_attrs(tab.attrs).to_string(),
+        None => tab_ink.to_string(),
+    };
+    vec![(" ".to_string(), tab_ink.to_string()), (icon.glyph, ink)]
+}
+
+/// A tab cap's ink: the tab's background as the glyph's color, on the strip's
+/// ground — what turns `\u{e0b6}` and `\u{e0b4}` into the tab's rounded ends.
+fn cap_ink(tab_ink: &str) -> String {
+    match Ink::parse(tab_ink) {
+        Some(ink) => Ink::new(ink.bg, Paint::key("ui.tab_separator_bg")).to_string(),
+        None => ground(),
+    }
 }
 
 /// A tab's own ink — `tab_styles`, in theme names.
@@ -301,8 +363,22 @@ fn hover(t: Option<HoverTarget>) -> fresh_ui::Handler<UiMsg> {
 /// read on every motion report to route it to `handle_tab_drag`; the node
 /// that saw the press keeps the moves and the release, and the applier keeps
 /// the same threshold — a press that never moved past it is a click.
-fn name_node(pane: LeafId, t: TabTarget, s: String, ink: String) -> Node<UiMsg> {
-    gesture(text(s).theme(ink))
+fn name_node(
+    pane: LeafId,
+    t: TabTarget,
+    s: String,
+    ink: String,
+    icon: Option<Vec<(String, String)>>,
+) -> Node<UiMsg> {
+    let label = match icon {
+        Some(runs) => fresh_ui::text_runs(
+            runs.into_iter()
+                .map(|(text, theme)| fresh_ui::Run::themed(text, theme))
+                .chain([fresh_ui::Run::themed(s, ink)]),
+        ),
+        None => text(s).theme(ink),
+    };
+    gesture(label)
         .key(tab_key(pane, t))
         .on(
             GestureKind::Press,
@@ -491,16 +567,22 @@ fn cluster(pane: LeafId, c: Cluster) -> Node<UiMsg> {
 ///
 /// Counts what [`strip`] builds: each label plus its `×`, a cell between
 /// tabs, and a cell plus the `+` after the last one.
-pub fn natural_width(tabs: &[Tab], preview_label: &str) -> usize {
+pub fn natural_width(tabs: &[Tab], preview_label: &str, g: &Glyphs, icons: bool) -> usize {
     use crate::primitives::display_width::str_width;
     if tabs.is_empty() {
         return str_width(PLUS);
     }
+    let chrome =
+        str_width(&close_text(g)) + str_width(&g.tab_cap_left) + str_width(&g.tab_cap_right);
     let names: usize = tabs
         .iter()
-        .map(|t| str_width(&label(t, usize::MAX, preview_label)) + str_width(CLOSE))
+        .map(|t| {
+            str_width(&label(t, usize::MAX, preview_label, &g.tab_modified))
+                + chrome
+                + if icons && has_icon(t) { ICON_COLS } else { 0 }
+        })
         .sum();
-    names + (tabs.len() - 1) + 1 + str_width(PLUS)
+    names + (tabs.len() - 1) * str_width(&g.tab_separator) + 1 + str_width(PLUS)
 }
 
 /// The strip: the tabs in a window that scrolls across, then the cluster.
@@ -545,17 +627,36 @@ pub fn strip(pane: LeafId, s: &Strip, c: Cluster) -> Node<UiMsg> {
 fn tab_window(pane: LeafId, s: &Strip, cap: usize) -> Node<UiMsg> {
     let mut cells: Vec<Node<UiMsg>> = Vec::new();
     for (i, t) in s.tabs.iter().enumerate() {
-        if i > 0 {
-            cells.push(text(" ").theme(ground()));
+        let g = &s.glyphs;
+        if i > 0 && !g.tab_separator.is_empty() {
+            cells.push(text(g.tab_separator.clone()).theme(separator_ink()));
         }
         let (name_ink, close_ink) = tab_ink(s, i);
         // The name and its `×` in one keyed span, so `reveal_key` brings the
         // whole tab into the window rather than stopping with its label flush
-        // against the edge. The two keep their own keys inside it.
-        cells.push(row().key(tab_span_key(pane, t.target)).children([
-            name_node(pane, t.target, label(t, cap, &s.preview_label), name_ink),
-            close_node(pane, t.target, CLOSE.to_string(), close_ink),
-        ]));
+        // against the edge. The two keep their own keys inside it. The caps,
+        // when the theme has them, are the tab's own ends.
+        let mut span: Vec<Node<UiMsg>> = Vec::new();
+        if !g.tab_cap_left.is_empty() {
+            span.push(text(g.tab_cap_left.clone()).theme(cap_ink(&name_ink)));
+        }
+        let icon = s
+            .file_icons
+            .as_deref()
+            .filter(|_| has_icon(t))
+            .map(|icons| icon_runs(&t.name, icons, &name_ink));
+        span.push(name_node(
+            pane,
+            t.target,
+            label(t, cap, &s.preview_label, &g.tab_modified),
+            name_ink.clone(),
+            icon,
+        ));
+        span.push(close_node(pane, t.target, close_text(g), close_ink));
+        if !g.tab_cap_right.is_empty() {
+            span.push(text(g.tab_cap_right.clone()).theme(cap_ink(&name_ink)));
+        }
+        cells.push(row().key(tab_span_key(pane, t.target)).children(span));
     }
 
     // **The `+` is the last thing on the strip, after the last tab.** It rides
@@ -719,6 +820,8 @@ mod tests {
             hover_plus: false,
             reveal: None,
             preview_label: "(preview)".into(),
+            glyphs: Glyphs::default(),
+            file_icons: None,
         }
     }
 
@@ -1098,7 +1201,7 @@ mod tests {
             piece(" ↔ ", false, false),
             piece("b.txt", true, false),
         ];
-        assert_eq!(elided_title(&pieces, 25), "a.txt* ↔ b.txt");
+        assert_eq!(elided_title(&pieces, 25, "*"), "a.txt* ↔ b.txt");
     }
 
     /// One too long is shortened name by name, and the marks survive: a
@@ -1110,7 +1213,7 @@ mod tests {
             piece(" ↔ ", false, false),
             piece("another_long_name.txt", true, true),
         ];
-        let title = elided_title(&pieces, 25);
+        let title = elided_title(&pieces, 25, "*");
         let (left, right) = title.split_once(" ↔ ").expect("separator kept");
         assert!(!left.contains('*') && right.ends_with('*'), "{title:?}");
         assert!(str_width(&title) <= 25, "{title:?}");
@@ -1128,7 +1231,7 @@ mod tests {
         };
         let mut s = strip_of(0);
         s.tabs = vec![long(0)];
-        let whole = str_width(&label(&long(0), usize::MAX, "(preview)"));
+        let whole = str_width(&label(&long(0), usize::MAX, "(preview)", "*"));
         let capped = TAB_NAME_MAX_COLS + 2;
 
         let mut ui: Ui<UiMsg> = Ui::new();
@@ -1160,7 +1263,10 @@ mod tests {
             + 2 // the cell between each pair of tabs
             + 1 // and the one before the `+`
             + str_width(PLUS);
-        assert_eq!(natural_width(&s.tabs, &s.preview_label), content);
+        assert_eq!(
+            natural_width(&s.tabs, &s.preview_label, &s.glyphs, false),
+            content
+        );
     }
 
     #[test]

@@ -1,0 +1,458 @@
+//! A theme's `chrome` section and `file_icons`, as the screen shows them:
+//! which borders exist, the glyphs the chrome is drawn with (and their Nerd
+//! Font set, used only while the user says they have the font), and the
+//! file-type icons.
+
+use crate::common::harness::{EditorTestHarness, HarnessOptions};
+use crate::common::sidebar::{install_markdown_plugins, wait_for};
+use crossterm::event::{KeyCode, KeyModifiers};
+use fresh::config::Config;
+use fresh::config_io::DirectoryContext;
+use ratatui::style::Color;
+use std::fs;
+
+struct Session {
+    harness: EditorTestHarness,
+    _dir: tempfile::TempDir,
+}
+
+/// The editor on `theme` (a theme file's JSON, named "t"), with `config`
+/// adjusted by `tweak`, showing `notes.txt` and the file explorer.
+fn open(theme: &str, tweak: impl FnOnce(&mut Config)) -> Session {
+    open_sized(120, theme, tweak)
+}
+
+fn open_sized(width: u16, theme: &str, tweak: impl FnOnce(&mut Config)) -> Session {
+    open_file(width, theme, tweak, "notes.txt")
+}
+
+/// As `open_sized`, showing `file`: a `.md` one comes with the Markdown
+/// plugins, whose outline is a second sidebar section under the explorer.
+fn open_file(width: u16, theme: &str, tweak: impl FnOnce(&mut Config), file: &str) -> Session {
+    let dir = tempfile::TempDir::new().unwrap();
+    let dir_context = DirectoryContext::for_testing(dir.path());
+    let themes_dir = dir.path().join("config").join("themes");
+    fs::create_dir_all(&themes_dir).unwrap();
+    fs::write(themes_dir.join("t.json"), theme).unwrap();
+
+    let project_root = dir.path().join("project_root");
+    fs::create_dir_all(project_root.join("plugins")).unwrap();
+    fs::create_dir_all(project_root.join("folder")).unwrap();
+    fs::write(project_root.join("notes.txt"), "hello world\n").unwrap();
+    if file.ends_with(".md") {
+        fs::write(project_root.join(file), "# Heading\n\nparagraph\n").unwrap();
+        install_markdown_plugins(&project_root);
+    }
+
+    let mut config = Config {
+        theme: "t".to_string().into(),
+        ..Default::default()
+    };
+    tweak(&mut config);
+    let mut harness = EditorTestHarness::create(
+        width,
+        30,
+        HarnessOptions::new()
+            .with_config(config)
+            .with_working_dir(project_root.clone())
+            .with_shared_dir_context(dir_context)
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
+    harness.open_file(&project_root.join(file)).unwrap();
+    harness
+        .send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
+        .unwrap();
+    // A folder row: it carries its `>` with or without the explorer's box,
+    // which is what the helper recognizes a tree row by.
+    harness.wait_for_file_explorer_item("folder").unwrap();
+    // Leave the explorer, so the editor's own chrome is what is focused.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    Session { harness, _dir: dir }
+}
+
+fn line_with(h: &EditorTestHarness, needle: &str) -> String {
+    h.screen_to_string()
+        .lines()
+        .find(|l| l.contains(needle))
+        .unwrap_or_else(|| panic!("no line with {needle:?}:\n{}", h.screen_to_string()))
+        .to_string()
+}
+
+/// With `gutter_separator` and `file_explorer_border` off, the `│` column
+/// and the explorer's box are gone, and the cells with them: the text
+/// starts two columns sooner, and the explorer's rows at the screen's edge.
+#[test]
+fn borderless_chrome_gives_the_cells_back() {
+    let boxed = open(r#"{"name": "t", "extends": "builtin://dark"}"#, |_| {});
+    let flat = open(
+        r#"{"name": "t", "extends": "builtin://dark",
+            "chrome": {"gutter_separator": false, "file_explorer_border": false}}"#,
+        |_| {},
+    );
+    let boxed_row = line_with(&boxed.harness, "hello world");
+    let flat_row = line_with(&flat.harness, "hello world");
+    assert!(boxed_row.contains("│ hello"), "{boxed_row:?}");
+    assert!(!flat_row.contains("1 │"), "no separator: {flat_row:?}");
+    // From the line number to the text: ` │ ` boxed, one pad cell flat.
+    // In cells (characters), not bytes: `│` is three bytes.
+    let gap = |row: &str| {
+        let text = row.find("hello").unwrap();
+        row[row[..text].rfind('1').unwrap()..text].chars().count()
+    };
+    assert_eq!(
+        gap(&flat_row) + 2,
+        gap(&boxed_row),
+        "the text moves into the separator's two columns: {boxed_row:?} / {flat_row:?}"
+    );
+
+    let boxed_explorer = line_with(&boxed.harness, "folder");
+    let flat_explorer = line_with(&flat.harness, "folder");
+    assert!(boxed_explorer.starts_with('│'), "{boxed_explorer:?}");
+    assert!(
+        !flat_explorer.starts_with('│') && !flat_explorer.contains("│ "),
+        "no explorer walls: {flat_explorer:?}"
+    );
+}
+
+/// The theme's separators are drawn between tabs and status items, and the
+/// user's own `status_bar.separator` wins over the theme's.
+#[test]
+fn separators_come_from_the_theme_unless_the_user_set_one() {
+    let theme = r#"{"name": "t", "extends": "builtin://dark",
+        "chrome": {"tab_separator": "¦", "status_bar_separator": "•"}}"#;
+    let s = open(theme, |_| {});
+    let status = line_with(&s.harness, "Ln 1");
+    assert!(status.contains(" • "), "theme separator: {status:?}");
+
+    let mine = open(theme, |c| c.editor.status_bar.separator = "|".into());
+    let status = line_with(&mine.harness, "Ln 1");
+    assert!(
+        status.contains(" | ") && !status.contains('•'),
+        "user's wins: {status:?}"
+    );
+}
+
+/// The `nerd_font` glyphs are drawn only while `editor.nerd_font_icons` is
+/// on; without it the plain glyphs beside them are.
+#[test]
+fn nerd_font_glyphs_follow_the_user_setting() {
+    let theme = r#"{"name": "t", "extends": "builtin://dark",
+        "chrome": {"panel_refresh": "®", "nerd_font": {"panel_refresh": "Ꞧ"}}}"#;
+    let plain = open(theme, |_| {});
+    let header = line_with(&plain.harness, "File Explorer");
+    assert!(header.contains('®') && !header.contains('Ꞧ'), "{header:?}");
+
+    let nerd = open(theme, |c| c.editor.nerd_font_icons = true);
+    let header = line_with(&nerd.harness, "File Explorer");
+    assert!(header.contains('Ꞧ') && !header.contains('®'), "{header:?}");
+}
+
+/// With the Nerd Font setting on, explorer rows and tabs show the theme's
+/// file icons: its glyph, in its color.
+#[test]
+fn file_icons_follow_the_theme() {
+    let theme = r#"{"name": "t", "extends": "builtin://dark",
+        "file_icons": {"by_extension": {"txt": {"glyph": "Ŧ", "color": [1, 2, 3]}}}}"#;
+    let s = open(theme, |c| c.editor.nerd_font_icons = true);
+    let h = &s.harness;
+    let screen = h.screen_to_string();
+    // The explorer row (the one with the tree's indent) and the tab both
+    // carry the icon before the name.
+    let rows: Vec<(usize, &str)> = screen
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains('Ŧ') && l.contains("notes.txt"))
+        .collect();
+    assert!(
+        rows.len() >= 2,
+        "on the tab as well as in the explorer:\n{screen}"
+    );
+    for (y, line) in rows {
+        let x = line.chars().position(|c| c == 'Ŧ').unwrap() as u16;
+        assert_eq!(
+            h.get_cell_style(x, y as u16).and_then(|s| s.fg),
+            Some(Color::Rgb(1, 2, 3)),
+            "the icon in the theme's color on {line:?}"
+        );
+    }
+}
+
+/// In a column too narrow for the explorer's whole title, the title gives
+/// way (`…`) and the header keeps its refresh and close buttons — boxed or
+/// not — so the panel can still be closed with the pointer.
+#[test]
+fn a_narrow_explorer_keeps_its_header_buttons() {
+    for theme in [
+        r#"{"name": "t", "extends": "builtin://dark"}"#,
+        r#"{"name": "t", "extends": "builtin://dark",
+            "chrome": {"file_explorer_border": false}}"#,
+    ] {
+        let s = open_sized(70, theme, |_| {});
+        let header = line_with(&s.harness, "⟳");
+        assert!(
+            header.contains('…') && header.contains('×') && header.contains('⟳'),
+            "title elided, buttons kept: {header:?}"
+        );
+        let after = header.split('…').nth(1).and_then(|r| r.chars().next());
+        assert!(
+            matches!(after, Some(' ' | '─')),
+            "a gap between the elided title and the buttons: {header:?}"
+        );
+    }
+}
+
+/// The explorer's title is in the same column whether the sidebar has one
+/// section or several: the collapse glyph's column is kept, blank, while
+/// there is nothing to collapse — so the title does not jump when the
+/// Markdown outline comes and goes. Borderless; boxed, one section keeps
+/// the default look (no chevron, design §4.6) and the corner anchors it.
+#[test]
+fn the_explorer_title_keeps_its_column_with_one_section_or_several() {
+    let theme = r#"{"name": "t", "extends": "builtin://dark",
+        "chrome": {"file_explorer_border": false}}"#;
+    let column = |h: &EditorTestHarness| {
+        let header = line_with(h, "File Explorer");
+        header[..header.find("File Explorer").unwrap()]
+            .chars()
+            .count()
+    };
+    let one = open(theme, |_| {});
+    let mut several = open_file(120, theme, |_| {}, "doc.md");
+    wait_for(&mut several.harness, "the outline section", |h| {
+        h.screen_to_string().contains("Contents")
+    });
+    assert_eq!(
+        column(&one.harness),
+        column(&several.harness),
+        "one section:\n{}\nseveral:\n{}",
+        one.harness.screen_to_string(),
+        several.harness.screen_to_string()
+    );
+}
+
+/// The gutter wears `editor.line_number_bg` only while it shows line
+/// numbers. Markdown's compose mode hides them but keeps the gutter's
+/// one-cell marker column beside the text, where the theme's gutter shade
+/// would be a stray stripe.
+#[test]
+fn the_gutter_shade_comes_only_with_line_numbers() {
+    let theme = r#"{"name": "t", "extends": "builtin://dark",
+        "editor": {"line_number_bg": [1, 2, 3]}}"#;
+    // The cells of the paragraph's row (not the cursor's, which wears
+    // `current_line_bg`) in the gutter's shade.
+    let shaded_cells = |h: &EditorTestHarness| {
+        let screen = h.screen_to_string();
+        let y = screen
+            .lines()
+            .position(|l| l.contains("paragraph"))
+            .unwrap() as u16;
+        (0..120u16)
+            .filter(|&x| h.get_cell_style(x, y).and_then(|st| st.bg) == Some(Color::Rgb(1, 2, 3)))
+            .count()
+    };
+    let mut s = open_file(120, theme, |_| {}, "doc.md");
+    let h = &mut s.harness;
+    assert!(
+        shaded_cells(h) > 0,
+        "the numbered gutter is shaded:\n{}",
+        h.screen_to_string()
+    );
+
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Toggle Compose").unwrap();
+    h.wait_for_screen_contains("Toggle Compose").unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_for_prompt_closed().unwrap();
+    // Composing: the paragraph's line number (3) is gone.
+    wait_for(h, "compose mode", |h| {
+        !line_with(h, "paragraph").contains("3 ")
+    });
+    assert_eq!(
+        shaded_cells(h),
+        0,
+        "no shade beside composed text:\n{}",
+        h.screen_to_string()
+    );
+
+    // With the terminal's own background under the text, a shaded gutter
+    // would be an opaque band beside it: the gutter takes the terminal's too.
+    let s = open_file(120, theme, |c| c.editor.use_terminal_bg = true, "doc.md");
+    assert_eq!(
+        shaded_cells(&s.harness),
+        0,
+        "no shade on the terminal's background:\n{}",
+        s.harness.screen_to_string()
+    );
+}
+
+/// Without the separator the gutter is two columns narrower, and the wrap
+/// and scroll math must know it: lines that fit beside the slimmer gutter are
+/// one row each, so jumping to the end shows the last line on the pane's
+/// last row — not the rows below it left empty, as when the scroll math still
+/// measured the ` │ ` and counted every line as wrapping onto two rows.
+#[test]
+fn scrolling_measures_the_gutter_without_its_separator() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let dir_context = DirectoryContext::for_testing(dir.path());
+    let themes_dir = dir.path().join("config").join("themes");
+    fs::create_dir_all(&themes_dir).unwrap();
+    fs::write(
+        themes_dir.join("t.json"),
+        r#"{"name": "t", "extends": "builtin://dark",
+            "chrome": {"gutter_separator": false}}"#,
+    )
+    .unwrap();
+    let project_root = dir.path().join("project_root");
+    fs::create_dir_all(&project_root).unwrap();
+    // 56 characters: one row beside the 4-column gutter in a 62-column
+    // terminal, two beside the 6-column one with the separator.
+    let text: String = (1..=60)
+        .map(|i| format!("w{i:05}{}\n", "x".repeat(50)))
+        .collect();
+    fs::write(project_root.join("long.txt"), text).unwrap();
+
+    let mut config = Config {
+        theme: "t".to_string().into(),
+        ..Default::default()
+    };
+    config.editor.line_wrap = true;
+    let mut h = EditorTestHarness::create(
+        62,
+        20,
+        HarnessOptions::new()
+            .with_config(config)
+            .with_working_dir(project_root.clone())
+            .with_shared_dir_context(dir_context)
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
+    h.open_file(&project_root.join("long.txt")).unwrap();
+    h.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
+    h.render().unwrap();
+
+    let screen = h.screen_to_string();
+    let rows: Vec<&str> = screen.lines().collect();
+    let last = rows
+        .iter()
+        .position(|l| l.contains("w00060"))
+        .unwrap_or_else(|| panic!("the last line is on screen:\n{screen}"));
+    // Every line is one row, and the pane is full down to the last line.
+    assert!(
+        rows.iter()
+            .all(|l| !l.contains("xxxxx w") && !l.trim_start().starts_with('~')),
+        "no empty rows under the end:\n{screen}"
+    );
+    assert!(
+        rows[last - 1].contains("w00059"),
+        "the line before it sits right above, on one row:\n{screen}"
+    );
+}
+
+/// A theme's gutter glyphs take the indicator column's one cell, whatever
+/// their width: a two-cell fold marker or an empty one would move that
+/// row's numbers and text a column off every other row's.
+#[test]
+fn gutter_glyphs_keep_to_their_one_cell() {
+    for glyph in ["🔽", ""] {
+        let theme = format!(
+            r#"{{"name": "t", "extends": "builtin://dark",
+                "chrome": {{"fold_expanded": "{glyph}"}}}}"#
+        );
+        let dir = tempfile::TempDir::new().unwrap();
+        let dir_context = DirectoryContext::for_testing(dir.path());
+        let themes_dir = dir.path().join("config").join("themes");
+        fs::create_dir_all(&themes_dir).unwrap();
+        fs::write(themes_dir.join("t.json"), &theme).unwrap();
+        let project_root = dir.path().join("project_root");
+        fs::create_dir_all(&project_root).unwrap();
+        fs::write(
+            project_root.join("main.rs"),
+            "fn main() {\n    let a = 1;\n    let b = 2;\n}\n",
+        )
+        .unwrap();
+        let config = Config {
+            theme: "t".to_string().into(),
+            ..Default::default()
+        };
+        let mut h = EditorTestHarness::create(
+            80,
+            12,
+            HarnessOptions::new()
+                .with_config(config)
+                .with_working_dir(project_root.clone())
+                .with_shared_dir_context(dir_context)
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+        h.open_file(&project_root.join("main.rs")).unwrap();
+        // Folding ranges arrive from the indentation pass after a frame.
+        h.wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("fn main") && s.contains("let b")
+        })
+        .unwrap();
+        h.render().unwrap();
+        let screen = h.screen_to_string();
+        let text_col = |needle: &str| {
+            let line = screen.lines().find(|l| l.contains(needle)).unwrap();
+            line[..line.find(needle).unwrap()].chars().count()
+                + line[..line.find(needle).unwrap()]
+                    .chars()
+                    .filter(|c| unicode_width::UnicodeWidthChar::width(*c) == Some(2))
+                    .count()
+        };
+        // `fn` starts the first line at the text's column; `}` the last.
+        assert_eq!(
+            text_col("fn main"),
+            text_col("}"),
+            "fold glyph {glyph:?} keeps the text in its column:\n{screen}"
+        );
+    }
+}
+
+/// Sections are told apart by colour, not by name: a theme whose section
+/// backgrounds are the bar's own (sections in a different ink only) has no
+/// edge to mark, so the bar keeps its separators — a section glyph there
+/// would be drawn in the colour it sits on, an invisible cell in place of
+/// the separator.
+#[test]
+fn sections_on_the_bar_s_own_ground_keep_the_separators() {
+    let theme = r#"{"name": "t", "extends": "builtin://dark",
+        "ui": {"status_outer_bg": [30, 30, 30], "status_outer_fg": [255, 0, 0],
+               "status_inner_bg": [30, 30, 30], "status_inner_fg": [0, 255, 0]},
+        "chrome": {"status_bar_separator": "•",
+                   "status_bar_section_left": "▶", "status_bar_section_right": "◀",
+                   "status_bar_cap_left": "▐", "status_bar_cap_right": "▌"}}"#;
+    let s = open(theme, |_| {});
+    let status = line_with(&s.harness, "Ln 1");
+    // Up to the palette hint, whose pill has a ground of its own (and so a
+    // section glyph in front of it).
+    let same_ground = &status[..status.find("Text").unwrap() + "Text".len()];
+    assert!(
+        same_ground.contains("Trusted • Local")
+            && same_ground.contains("ASCII • Text")
+            && !same_ground.contains(['▶', '◀', '▐']),
+        "separators, no section glyphs: {status:?}"
+    );
+}
+
+/// The right side is fitted with everything it draws: on a sectioned bar its
+/// section glyphs and cap count against its budget, so it gives up elements
+/// rather than squeezing out the left side's message.
+#[test]
+fn the_status_bar_fits_its_section_glyphs() {
+    let theme = r#"{"name": "t", "extends": "builtin://dark",
+        "ui": {"status_outer_bg": [90, 0, 0], "status_inner_bg": [0, 90, 0]},
+        "chrome": {"status_bar_section_left": "▶▶▶▶▶▶", "status_bar_section_right": "◀◀◀◀◀◀",
+                   "status_bar_cap_left": "▐", "status_bar_cap_right": "▌▌▌▌▌▌▌▌▌▌"}}"#;
+    let s = open_sized(100, theme, |_| {});
+    let status = line_with(&s.harness, "Ln 1");
+    assert!(
+        status.contains("Editor focused"),
+        "the left side keeps its message: {status:?}"
+    );
+}

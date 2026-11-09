@@ -204,9 +204,12 @@ pub(crate) struct Extent {
 }
 
 /// How many body rows a column `height` tall has to share out among
-/// `sections` sections: one header row each, and the bottom border.
-pub(crate) fn body_rows(height: u16, sections: usize) -> u16 {
-    height.saturating_sub(sections as u16).saturating_sub(1)
+/// `sections` sections: one header row each, and the bottom border when the
+/// column is `bordered`.
+pub(crate) fn body_rows(height: u16, sections: usize, bordered: bool) -> u16 {
+    height
+        .saturating_sub(sections as u16)
+        .saturating_sub(u16::from(bordered))
 }
 
 /// Collapse from the bottom up until the open sections fit, and restore what
@@ -328,7 +331,8 @@ impl super::Editor {
     /// a caller who cares picks its own order. The sidebar cares: the top
     /// section is the tree.
     pub(crate) fn resolve_sidebar_sections(&mut self, height: u16) -> Vec<u16> {
-        let body = body_rows(height, self.sidebar_sections.len());
+        let bordered = self.theme.read().unwrap().chrome.file_explorer_border;
+        let body = body_rows(height, self.sidebar_sections.len(), bordered);
         let mut extents: Vec<Extent> = self.sidebar_sections.iter().map(|s| s.extent()).collect();
         squeeze(body, &mut extents);
         let rows = distribute(body, &extents);
@@ -1077,10 +1081,15 @@ mod tests {
 
     #[test]
     fn a_column_spends_one_row_per_header_and_one_on_the_bottom_border() {
-        assert_eq!(body_rows(20, 1), 18, "the bordered box the explorer was");
-        assert_eq!(body_rows(20, 3), 16);
-        assert_eq!(body_rows(3, 3), 0, "nothing left, nothing negative");
-        assert_eq!(body_rows(0, 1), 0);
+        assert_eq!(
+            body_rows(20, 1, true),
+            18,
+            "the bordered box the explorer was"
+        );
+        assert_eq!(body_rows(20, 3, true), 16);
+        assert_eq!(body_rows(3, 3, true), 0, "nothing left, nothing negative");
+        assert_eq!(body_rows(0, 1, true), 0);
+        assert_eq!(body_rows(20, 1, false), 19, "no bottom border to reserve");
     }
 
     /// One section, no request: it is the whole column. This is the

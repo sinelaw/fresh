@@ -244,7 +244,7 @@ pub struct Explorer {
 impl Explorer {
     /// The panel's ground — the background every row and the border sit on.
     pub fn panel() -> String {
-        pair("editor.fg", "editor.bg")
+        pair("ui.file_explorer_fg", "ui.file_explorer_bg")
     }
 }
 
@@ -347,7 +347,7 @@ pub fn rows(e: &Explorer) -> Node<UiMsg> {
         Body::Loading(text_) => {
             return col().child(
                 text(text_.clone())
-                    .theme(pair("editor.line_number_fg", "editor.bg"))
+                    .theme(pair("editor.line_number_fg", "ui.file_explorer_bg"))
                     .h(Sizing::Cells(1)),
             )
         }
@@ -653,17 +653,17 @@ pub fn chrome_themes(remote_disconnected: bool, focused: bool) -> (String, Strin
                 "ui.status_error_indicator_bg",
                 &["bold"],
             ),
-            pair("ui.status_error_indicator_bg", "editor.bg"),
+            pair("ui.status_error_indicator_bg", "ui.file_explorer_bg"),
         )
     } else if focused {
         (
-            attrs("editor.bg", "editor.fg", &["bold"]),
-            pair("editor.cursor", "editor.bg"),
+            attrs("ui.file_explorer_bg", "ui.file_explorer_fg", &["bold"]),
+            pair("ui.file_explorer_border_focused_fg", "ui.file_explorer_bg"),
         )
     } else {
         (
-            pair("editor.line_number_fg", "editor.bg"),
-            pair("ui.split_separator_fg", "editor.bg"),
+            pair("editor.line_number_fg", "ui.file_explorer_bg"),
+            pair("ui.file_explorer_border_fg", "ui.file_explorer_bg"),
         )
     }
 }
@@ -671,9 +671,9 @@ pub fn chrome_themes(remote_disconnected: bool, focused: bool) -> (String, Strin
 /// A header button's own colour — the `×` and the `⟳` alike.
 pub fn close_theme(hovered: bool) -> String {
     if hovered {
-        pair("ui.tab_close_hover_fg", "editor.bg")
+        pair("ui.tab_close_hover_fg", "ui.file_explorer_bg")
     } else {
-        pair("editor.line_number_fg", "editor.bg")
+        pair("editor.line_number_fg", "ui.file_explorer_bg")
     }
 }
 
@@ -706,7 +706,7 @@ pub fn neutral_key(is_hidden: bool, is_symlink: bool, is_dir: bool) -> &'static 
     } else if is_dir {
         "ui.file_explorer_directory_fg"
     } else {
-        "editor.fg"
+        "ui.file_explorer_fg"
     }
 }
 

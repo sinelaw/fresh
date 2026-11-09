@@ -439,6 +439,8 @@ impl Editor {
         if !key_or_name.is_empty() {
             if let Some(theme) = self.theme_registry.get_cloned(key_or_name) {
                 *self.theme.write().unwrap() = theme;
+                // A chosen theme ends any live preview for good.
+                self.theme_before_preview = None;
                 self.start_theme_transition_animation();
 
                 // Re-apply all overlays so colors match the new theme

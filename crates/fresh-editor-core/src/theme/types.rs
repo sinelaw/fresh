@@ -446,6 +446,407 @@ pub struct ThemeFile {
     /// Syntax highlighting colors
     #[serde(default = "default_syntax_colors")]
     pub syntax: SyntaxColors,
+    /// Which pieces of chrome are drawn at all
+    #[serde(default, skip_serializing_if = "ChromeOptions::is_empty")]
+    pub chrome: ChromeOptions,
+    /// File-type icons: replace or recolor the built-in ones
+    #[serde(default, skip_serializing_if = "FileIconsFile::is_empty")]
+    pub file_icons: FileIconsFile,
+}
+
+/// One file-type icon a theme sets: its glyph, its color, or both. What an
+/// entry leaves out comes from the built-in icon it replaces, so
+/// `{"color": [255, 0, 0]}` recolors an icon and keeps its glyph.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct FileIconDef {
+    /// The glyph, usually a Nerd Font code point (`"\ue7a8"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glyph: Option<String>,
+    /// The glyph's color.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<ColorDef>,
+}
+
+/// File-type icons, drawn in the file explorer and on tabs while the user's
+/// `editor.nerd_font_icons` is on.
+///
+/// Fresh has a built-in icon for common files; a theme replaces or recolors
+/// any of them, and adds its own. The most specific match wins: a whole file
+/// name over an extension over `default`, and at each of those the theme's
+/// entry over the built-in one. A theme that `extends` another inherits the
+/// entries it does not name.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct FileIconsFile {
+    /// By whole file name, case-insensitive: `"Cargo.toml"`, `"Dockerfile"`.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    // How [`FileIcons::overridden_by`] reads the keys, published so an editor
+    // writes them the way they are read.
+    #[schemars(extend("x-key-normalize" = "lowercase"))]
+    pub by_name: std::collections::BTreeMap<String, FileIconDef>,
+    /// By extension, case-insensitive, without the dot: `"rs"`, `"md"`.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[schemars(extend("x-key-normalize" = "extension"))]
+    pub by_extension: std::collections::BTreeMap<String, FileIconDef>,
+    /// Any file nothing else matches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<FileIconDef>,
+    /// A closed folder. Its color defaults to `ui.file_explorer_directory_fg`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<FileIconDef>,
+    /// An open folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder_open: Option<FileIconDef>,
+}
+
+impl FileIconsFile {
+    /// Whether the file names no icon.
+    pub fn is_empty(&self) -> bool {
+        self.by_name.is_empty()
+            && self.by_extension.is_empty()
+            && self.default.is_none()
+            && self.folder.is_none()
+            && self.folder_open.is_none()
+    }
+}
+
+/// A theme's replacement for one icon, resolved: either half may be left to
+/// the built-in icon.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct IconOverride {
+    pub glyph: Option<String>,
+    pub color: Option<Color>,
+}
+
+impl IconOverride {
+    /// This with `file`'s halves over it.
+    fn overridden_by(mut self, file: &FileIconDef) -> Self {
+        if let Some(g) = &file.glyph {
+            self.glyph = Some(g.clone());
+        }
+        if let Some(c) = &file.color {
+            self.color = Some(c.clone().into());
+        }
+        self
+    }
+
+    fn to_file(&self) -> FileIconDef {
+        FileIconDef {
+            glyph: self.glyph.clone(),
+            color: self.color.map(ColorDef::from),
+        }
+    }
+}
+
+/// The resolved [`FileIconsFile`]: the theme's icon overrides, keys
+/// normalized (lower case; extensions without a dot). Looked up by
+/// `view::file_icons`, which holds the built-in table they override.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FileIcons {
+    pub by_name: std::collections::BTreeMap<String, IconOverride>,
+    pub by_extension: std::collections::BTreeMap<String, IconOverride>,
+    pub default: Option<IconOverride>,
+    pub folder: Option<IconOverride>,
+    pub folder_open: Option<IconOverride>,
+}
+
+impl FileIcons {
+    /// These overrides with the ones `file` names merged over them, entry by
+    /// entry and half by half.
+    pub fn overridden_by(mut self, file: &FileIconsFile) -> Self {
+        fn merge(
+            into: &mut std::collections::BTreeMap<String, IconOverride>,
+            from: &std::collections::BTreeMap<String, FileIconDef>,
+            normalize: fn(&str) -> String,
+        ) {
+            for (k, def) in from {
+                let slot = into.entry(normalize(k)).or_default();
+                *slot = std::mem::take(slot).overridden_by(def);
+            }
+        }
+        fn one(slot: &mut Option<IconOverride>, def: &Option<FileIconDef>) {
+            if let Some(def) = def {
+                *slot = Some(slot.take().unwrap_or_default().overridden_by(def));
+            }
+        }
+        merge(&mut self.by_name, &file.by_name, |k| k.to_ascii_lowercase());
+        merge(&mut self.by_extension, &file.by_extension, |k| {
+            k.trim_start_matches('.').to_ascii_lowercase()
+        });
+        one(&mut self.default, &file.default);
+        one(&mut self.folder, &file.folder);
+        one(&mut self.folder_open, &file.folder_open);
+        self
+    }
+
+    /// The overrides, as a theme file names them.
+    pub fn to_file(&self) -> FileIconsFile {
+        let map = |m: &std::collections::BTreeMap<String, IconOverride>| {
+            m.iter().map(|(k, v)| (k.clone(), v.to_file())).collect()
+        };
+        FileIconsFile {
+            by_name: map(&self.by_name),
+            by_extension: map(&self.by_extension),
+            default: self.default.as_ref().map(IconOverride::to_file),
+            folder: self.folder.as_ref().map(IconOverride::to_file),
+            folder_open: self.folder_open.as_ref().map(IconOverride::to_file),
+        }
+    }
+}
+
+/// Generate the theme's chrome glyphs from one table: the file form (every
+/// glyph optional, so a theme inherits what it leaves out), the resolved form
+/// (every glyph decided) and its defaults, and the merge between them.
+///
+/// Each row is `name: "default", "doc"`. The defaults are the glyphs Fresh
+/// has always drawn, so a theme that names none looks as it always did.
+macro_rules! chrome_glyphs {
+    ($( $name:ident : $default:literal, $doc:literal; )*) => {
+        /// Chrome glyphs a theme file names; see [`ChromeOptions`].
+        #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+        pub struct GlyphOptions {
+            $(
+                #[doc = $doc]
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                // The default in the schema too, so an editor can show what
+                // an unset glyph draws.
+                #[schemars(extend("default" = $default))]
+                pub $name: Option<String>,
+            )*
+        }
+
+        /// Every chrome glyph, decided.
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        pub struct Glyphs {
+            $( #[doc = $doc] pub $name: String, )*
+        }
+
+        impl Default for Glyphs {
+            fn default() -> Self {
+                Self { $( $name: $default.to_string(), )* }
+            }
+        }
+
+        impl Glyphs {
+            /// These glyphs with the ones `file` names put over them.
+            pub fn overridden_by(mut self, file: &GlyphOptions) -> Self {
+                $( if let Some(v) = &file.$name { self.$name = v.clone(); } )*
+                self
+            }
+
+            /// Every glyph, as a file names it.
+            pub fn to_options(&self) -> GlyphOptions {
+                GlyphOptions { $( $name: Some(self.$name.clone()), )* }
+            }
+
+            /// The glyphs that differ from `base`, as a file names them.
+            pub fn diff_from(&self, base: &Glyphs) -> GlyphOptions {
+                GlyphOptions {
+                    $( $name: (self.$name != base.$name).then(|| self.$name.clone()), )*
+                }
+            }
+        }
+
+        impl GlyphOptions {
+            /// The glyph names a theme file may use.
+            pub const KEYS: &'static [&'static str] = &[ $( stringify!($name), )* ];
+
+            /// Whether the file names no glyph.
+            pub fn is_empty(&self) -> bool {
+                self == &Self::default()
+            }
+        }
+    };
+}
+
+chrome_glyphs! {
+    tab_separator: " ",
+        "Between two tabs, in `ui.tab_separator_fg` on `ui.tab_separator_bg`. \
+         Empty puts the tabs side by side. Default: one space";
+    tab_cap_left: "",
+        "Before each tab, in the tab's background color on the strip's \
+         (`ui.tab_separator_bg`): with `tab_cap_right`, gives tabs a shape — \
+         rounded `\u{e0b6}` `\u{e0b4}` or slanted `\u{e0ba}` `\u{e0bc}` with a \
+         Nerd Font. Default: none";
+    tab_cap_right: "",
+        "After each tab; see `tab_cap_left`. Default: none";
+    tab_close: "×",
+        "A tab's close button. One cell. Default: `×`";
+    tab_modified: "*",
+        "After the name of a tab with unsaved changes. Default: `*`";
+    status_bar_separator: "",
+        "Between two status bar items on the same background, in \
+         `ui.status_separator_fg`. A `status_bar.separator` in the user's \
+         config wins. Default: none";
+    status_bar_section_left: "",
+        "Between two left-side status bar items on different backgrounds, \
+         drawn in the left one's background over the right one's — the \
+         transition `\u{e0b0}` or `\u{e0b4}` make with a Nerd Font. \
+         Default: none";
+    status_bar_section_right: "",
+        "The right side's transition, drawn in the right item's background \
+         over the left one's: `\u{e0b2}` or `\u{e0b6}`. Default: none";
+    status_bar_cap_left: "",
+        "Before the first left item when it has a background of its own, in \
+         that background over the bar's: `\u{e0b6}` rounds it. Default: none";
+    status_bar_cap_right: "",
+        "After the last right item when it has a background of its own: \
+         `\u{e0b4}`. Default: none";
+    fold_collapsed: "▸",
+        "The gutter's marker on a folded block. One cell. Default: `▸`";
+    fold_expanded: "▾",
+        "The gutter's marker on a block that can fold. One cell. Default: `▾`";
+    diagnostic_marker: "●",
+        "The gutter's marker on a line with a diagnostic. One cell. \
+         Default: `●`";
+    folder_collapsed: ">",
+        "Before a closed folder in the file explorer, while the user's \
+         `file_explorer.tree_indicator_collapsed` is at its default. \
+         Default: `>`";
+    folder_expanded: "▼",
+        "Before an open folder in the file explorer, while the user's \
+         `file_explorer.tree_indicator_expanded` is at its default. \
+         Default: `▼`";
+    section_collapsed: "▶",
+        "A collapsed sidebar section's header marker (shown while the \
+         sidebar has more than one section). Default: `▶`";
+    section_expanded: "▼",
+        "An open sidebar section's header marker. Default: `▼`";
+    panel_close: "×",
+        "The close button on a sidebar section's header. One cell. \
+         Default: `×`";
+    panel_refresh: "⟳",
+        "The file explorer header's refresh button. One cell. Default: `⟳`";
+}
+
+/// Structural options: which pieces of the editor's chrome exist, and the
+/// glyphs it is drawn with.
+///
+/// The other sections are colors, and a color cannot give a cell back: a
+/// border painted in its background's color still takes its column. These
+/// say whether a piece is drawn *at all*, so a piece that is off takes no
+/// cells and the content moves into the space. Pair them with the colors
+/// that mark the boundary another way — `editor.line_number_bg` for the
+/// gutter, `ui.file_explorer_bg` for the explorer.
+///
+/// Every option defaults to the look Fresh has always had. A theme that
+/// `extends` another inherits the options it does not name.
+///
+/// **Glyphs that need a Nerd Font go in `nerd_font`.** They are used only
+/// while the user's `editor.nerd_font_icons` is on, so a theme can carry
+/// Powerline caps and icons and still look right on a terminal without the
+/// font: there, the plain glyphs beside them are drawn.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ChromeOptions {
+    /// Draw the `│` column between the line numbers and the text. When
+    /// false, the gutter ends in a one-cell pad instead of ` │ `, two columns
+    /// narrower. Default: true
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = true))]
+    pub gutter_separator: Option<bool>,
+    /// Draw the box around the file explorer. When false, the explorer keeps
+    /// its title row (title, refresh and close buttons) but loses its side
+    /// walls and bottom border, and its rows use the full panel width.
+    /// Default: true
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = true))]
+    pub file_explorer_border: Option<bool>,
+    /// The glyphs (see [`GlyphOptions`]).
+    #[serde(flatten)]
+    pub glyphs: GlyphOptions,
+    /// Glyphs used instead of the ones above while `editor.nerd_font_icons`
+    /// is on. Any glyph left out here falls back to the plain one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nerd_font: Option<GlyphOptions>,
+}
+
+impl ChromeOptions {
+    /// Whether the file names no option.
+    pub fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+
+    /// The option names a theme file may use directly under `chrome`, for
+    /// unknown-key warnings.
+    pub fn is_key(name: &str) -> bool {
+        matches!(
+            name,
+            "gutter_separator" | "file_explorer_border" | "nerd_font"
+        ) || GlyphOptions::KEYS.contains(&name)
+    }
+}
+
+/// The resolved [`ChromeOptions`]: every option decided.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Chrome {
+    pub gutter_separator: bool,
+    pub file_explorer_border: bool,
+    /// The glyphs without a Nerd Font.
+    pub plain: Glyphs,
+    /// The glyphs with one: `plain` with the theme's `nerd_font` over them.
+    pub nerd: Glyphs,
+    /// Which of the two is drawn: the user's `editor.nerd_font_icons`,
+    /// settled before each frame (see [`Chrome::use_nerd_font`]).
+    pub nerd_font: bool,
+}
+
+impl Default for Chrome {
+    fn default() -> Self {
+        Self {
+            gutter_separator: true,
+            file_explorer_border: true,
+            plain: Glyphs::default(),
+            nerd: Glyphs::default(),
+            nerd_font: false,
+        }
+    }
+}
+
+impl Chrome {
+    /// These options with the ones `file` names applied over them. A plain
+    /// glyph the file names replaces the inherited Nerd Font one too — the
+    /// file chose it — unless the file also names a Nerd Font one.
+    pub fn overridden_by(self, file: &ChromeOptions) -> Self {
+        let nerd = self.nerd.overridden_by(&file.glyphs);
+        Self {
+            gutter_separator: file.gutter_separator.unwrap_or(self.gutter_separator),
+            file_explorer_border: file
+                .file_explorer_border
+                .unwrap_or(self.file_explorer_border),
+            plain: self.plain.overridden_by(&file.glyphs),
+            nerd: match &file.nerd_font {
+                Some(n) => nerd.overridden_by(n),
+                None => nerd,
+            },
+            nerd_font: self.nerd_font,
+        }
+    }
+
+    /// The glyphs to draw.
+    pub fn glyphs(&self) -> &Glyphs {
+        if self.nerd_font {
+            &self.nerd
+        } else {
+            &self.plain
+        }
+    }
+
+    /// Draw the Nerd Font glyphs or the plain ones. Returns whether that
+    /// changed anything.
+    pub fn use_nerd_font(&mut self, on: bool) -> bool {
+        std::mem::replace(&mut self.nerd_font, on) != on
+    }
+}
+
+impl From<Chrome> for ChromeOptions {
+    fn from(c: Chrome) -> Self {
+        let nerd = c.nerd.diff_from(&c.plain);
+        Self {
+            gutter_separator: Some(c.gutter_separator),
+            file_explorer_border: Some(c.file_explorer_border),
+            glyphs: c.plain.to_options(),
+            nerd_font: (!nerd.is_empty()).then_some(nerd),
+        }
+    }
 }
 
 // Per-section defaults piggyback on the field-level `#[serde(default = "…")]`
@@ -519,9 +920,21 @@ pub struct EditorColors {
     /// Line number text color
     #[serde(default)]
     pub line_number_fg: Option<StyledColorDef>,
-    /// Line number gutter background
+    /// Line number gutter background. Falls back to `bg`, so the gutter
+    /// reads as part of the editor surface unless a theme names a shade.
     #[serde(default)]
     pub line_number_bg: Option<StyledColorDef>,
+    /// Line number of the line holding the cursor. Bundle attributes to
+    /// style it (`{"color": [255, 200, 0], "modifier": ["bold"]}`). When
+    /// omitted, the cursor's line number keeps the default look: dim like
+    /// the others with absolute numbers, `fg` with relative numbers.
+    #[serde(default)]
+    pub current_line_number_fg: Option<StyledColorDef>,
+    /// The vertical line between the gutter and the text. Falls back to
+    /// `line_number_fg`. To remove the line (and its column), set
+    /// `chrome.gutter_separator` to false.
+    #[serde(default)]
+    pub gutter_separator_fg: Option<StyledColorDef>,
     /// Diff added line background
     #[serde(default)]
     pub diff_add_bg: Option<StyledColorDef>,
@@ -663,6 +1076,10 @@ pub struct UiColors {
     /// Tab bar separator color
     #[serde(default)]
     pub tab_separator_bg: Option<StyledColorDef>,
+    /// Color of the `chrome.tab_separator` text between tabs. Falls back to
+    /// `tab_inactive_fg`.
+    #[serde(default)]
+    pub tab_separator_fg: Option<StyledColorDef>,
     /// Tab close button hover color
     #[serde(default)]
     pub tab_close_hover_fg: Option<StyledColorDef>,
@@ -723,6 +1140,22 @@ pub struct UiColors {
     /// Command palette shortcut hint background in status bar (falls back to status_bar_bg)
     #[serde(default)]
     pub status_palette_bg: Option<StyledColorDef>,
+    /// The outermost status bar item on each side (lualine's sections a and
+    /// z): its text. Falls back to `status_bar_fg`.
+    #[serde(default)]
+    pub status_outer_fg: Option<StyledColorDef>,
+    /// The outermost item's background. Falls back to `status_bar_bg`.
+    /// Items with colors of their own (warnings, LSP, the palette hint) keep
+    /// them.
+    #[serde(default)]
+    pub status_outer_bg: Option<StyledColorDef>,
+    /// The next item in on each side (lualine's b and y): its text. Falls
+    /// back to `status_bar_fg`.
+    #[serde(default)]
+    pub status_inner_fg: Option<StyledColorDef>,
+    /// The next item in: its background. Falls back to `status_bar_bg`.
+    #[serde(default)]
+    pub status_inner_bg: Option<StyledColorDef>,
     /// Status bar separator glyph text color (falls back to status_bar_fg)
     #[serde(default)]
     pub status_separator_fg: Option<StyledColorDef>,
@@ -953,6 +1386,31 @@ pub struct UiColors {
     /// without also recoloring code keywords.
     #[serde(default)]
     pub file_explorer_directory_fg: Option<StyledColorDef>,
+    /// Background of the file explorer panel: its rows, title row and
+    /// border. Falls back to `editor.bg`.
+    #[serde(default)]
+    pub file_explorer_bg: Option<StyledColorDef>,
+    /// Default text color in the file explorer (file names). Falls back to
+    /// `editor.fg`.
+    #[serde(default)]
+    pub file_explorer_fg: Option<StyledColorDef>,
+    /// The file explorer's border while the explorer is not focused. Falls
+    /// back to `ui.split_separator_fg`. To remove the border (and the cells
+    /// it takes), set `chrome.file_explorer_border` to false.
+    #[serde(default)]
+    pub file_explorer_border_fg: Option<StyledColorDef>,
+    /// The file explorer's border while the explorer has focus. Falls back
+    /// to `editor.cursor`.
+    #[serde(default)]
+    pub file_explorer_border_focused_fg: Option<StyledColorDef>,
+    /// Expand/collapse arrows (`>` / `▼`) in front of folders in the file
+    /// explorer. Falls back to `diagnostic.warning_fg`.
+    #[serde(default)]
+    pub file_explorer_indicator_fg: Option<StyledColorDef>,
+    /// One color for every file-type icon (drawn while `editor.nerd_font_icons`
+    /// is on). Unset, each kind of file keeps its own color.
+    #[serde(default)]
+    pub file_icon_fg: Option<StyledColorDef>,
 }
 
 /// Search result highlighting colors
@@ -1060,6 +1518,18 @@ pub struct SyntaxColors {
     /// Punctuation delimiters (;, ,, .)
     #[serde(default)]
     pub punctuation_delimiter: Option<StyledColorDef>,
+    /// Numeric and boolean literals (`42`, `0xff`, `true`). Falls back to
+    /// `constant`.
+    #[serde(default)]
+    pub number: Option<StyledColorDef>,
+    /// Object properties, fields and keys (`obj.prop`, `{ key: … }`, JSON
+    /// keys, HTML tags). Falls back to `variable`.
+    #[serde(default)]
+    pub property: Option<StyledColorDef>,
+    /// Attributes, decorators and annotations (`#[derive]`, `@Component`,
+    /// HTML attributes). Falls back to `constant`.
+    #[serde(default)]
+    pub attribute: Option<StyledColorDef>,
 }
 
 /// Comprehensive theme structure with all UI colors
@@ -1082,6 +1552,10 @@ pub struct Theme {
     pub current_line_bg: Color,
     pub line_number_fg: Color,
     pub line_number_bg: Color,
+    /// Line number on the cursor's line; `None` keeps the default look.
+    pub current_line_number_fg: Option<Color>,
+    /// The line between the gutter and the text.
+    pub gutter_separator_fg: Color,
 
     /// Background color for rows past end-of-file
     pub after_eof_bg: Color,
@@ -1135,6 +1609,8 @@ pub struct Theme {
     pub tab_inactive_fg: Color,
     pub tab_inactive_bg: Color,
     pub tab_separator_bg: Color,
+    /// Ink of the `chrome.tab_separator` text.
+    pub tab_separator_fg: Color,
     pub tab_close_hover_fg: Color,
     pub tab_hover_bg: Color,
 
@@ -1159,6 +1635,11 @@ pub struct Theme {
     /// Status bar palette shortcut hint colors (default: same as status bar)
     pub status_palette_fg: Color,
     pub status_palette_bg: Color,
+    /// The status bar's outermost and next-in items (lualine's a/z, b/y).
+    pub status_outer_fg: Color,
+    pub status_outer_bg: Color,
+    pub status_inner_fg: Color,
+    pub status_inner_bg: Color,
     /// Status bar separator glyph colors (default: same as status bar)
     pub status_separator_fg: Color,
     pub status_separator_bg: Color,
@@ -1263,6 +1744,16 @@ pub struct Theme {
     pub file_explorer_pinned_bg: Color,
     /// Name color of an ordinary directory in the file explorer.
     pub file_explorer_directory_fg: Color,
+    /// The file explorer panel's ground and default text color.
+    pub file_explorer_bg: Color,
+    pub file_explorer_fg: Color,
+    /// The file explorer's border, unfocused and focused.
+    pub file_explorer_border_fg: Color,
+    pub file_explorer_border_focused_fg: Color,
+    /// Folder expand/collapse arrows in the file explorer.
+    pub file_explorer_indicator_fg: Color,
+    /// One color for every file-type icon; `None` keeps each kind's own.
+    pub file_icon_fg: Option<Color>,
 
     // Search colors
     pub search_match_bg: Color,
@@ -1306,6 +1797,12 @@ pub struct Theme {
     pub syntax_punctuation_bracket_modifier: Modifier,
     pub syntax_punctuation_delimiter: Color,
     pub syntax_punctuation_delimiter_modifier: Modifier,
+    pub syntax_number: Color,
+    pub syntax_number_modifier: Modifier,
+    pub syntax_property: Color,
+    pub syntax_property_modifier: Modifier,
+    pub syntax_attribute: Color,
+    pub syntax_attribute_modifier: Modifier,
 
     /// Text attributes of the color keys that have no `*_modifier` field of
     /// their own, by `"section.field"` key. Every color key may carry
@@ -1315,6 +1812,12 @@ pub struct Theme {
     /// them pays nothing to look one up. Read and write it through
     /// [`Theme::resolve_modifier_key`] and [`Theme::set_modifier_key`].
     pub key_modifiers: std::collections::BTreeMap<&'static str, Modifier>,
+
+    /// Which pieces of chrome are drawn at all (see [`ChromeOptions`]).
+    pub chrome: Chrome,
+
+    /// The theme's file-type icon overrides (see [`FileIconsFile`]).
+    pub file_icons: FileIcons,
 }
 
 /// The color of a key a theme file may leave out, or a placeholder when it
@@ -1360,6 +1863,12 @@ impl From<ThemeFile> for Theme {
             current_line_bg: styled_color(&file.editor.current_line_bg),
             line_number_fg: styled_color(&file.editor.line_number_fg),
             line_number_bg: styled_color(&file.editor.line_number_bg),
+            current_line_number_fg: file
+                .editor
+                .current_line_number_fg
+                .as_ref()
+                .map(|c| c.color().clone().into()),
+            gutter_separator_fg: styled_color(&file.editor.gutter_separator_fg),
             after_eof_bg: styled_color(&file.editor.after_eof_bg),
             ruler_bg: styled_color(&file.editor.ruler_bg),
             indentation_guide_fg: styled_color(&file.editor.indentation_guide_fg),
@@ -1408,6 +1917,7 @@ impl From<ThemeFile> for Theme {
             tab_inactive_fg: styled_color(&file.ui.tab_inactive_fg),
             tab_inactive_bg: styled_color(&file.ui.tab_inactive_bg),
             tab_separator_bg: styled_color(&file.ui.tab_separator_bg),
+            tab_separator_fg: styled_color(&file.ui.tab_separator_fg),
             tab_close_hover_fg: styled_color(&file.ui.tab_close_hover_fg),
             tab_hover_bg: styled_color(&file.ui.tab_hover_bg),
             menu_bg: styled_color(&file.ui.menu_bg),
@@ -1428,6 +1938,10 @@ impl From<ThemeFile> for Theme {
             status_bar_bg: styled_color(&file.ui.status_bar_bg),
             status_palette_fg: styled_color(&file.ui.status_palette_fg),
             status_palette_bg: styled_color(&file.ui.status_palette_bg),
+            status_outer_fg: styled_color(&file.ui.status_outer_fg),
+            status_outer_bg: styled_color(&file.ui.status_outer_bg),
+            status_inner_fg: styled_color(&file.ui.status_inner_fg),
+            status_inner_bg: styled_color(&file.ui.status_inner_bg),
             status_separator_fg: styled_color(&file.ui.status_separator_fg),
             status_separator_bg: styled_color(&file.ui.status_separator_bg),
             status_lsp_on_fg: styled_color(&file.ui.status_lsp_on_fg),
@@ -1493,6 +2007,16 @@ impl From<ThemeFile> for Theme {
             file_status_conflicted_fg: styled_color(&file.ui.file_status_conflicted_fg),
             file_explorer_pinned_bg: styled_color(&file.ui.file_explorer_pinned_bg),
             file_explorer_directory_fg: styled_color(&file.ui.file_explorer_directory_fg),
+            file_explorer_bg: styled_color(&file.ui.file_explorer_bg),
+            file_explorer_fg: styled_color(&file.ui.file_explorer_fg),
+            file_explorer_border_fg: styled_color(&file.ui.file_explorer_border_fg),
+            file_explorer_border_focused_fg: styled_color(&file.ui.file_explorer_border_focused_fg),
+            file_explorer_indicator_fg: styled_color(&file.ui.file_explorer_indicator_fg),
+            file_icon_fg: file
+                .ui
+                .file_icon_fg
+                .as_ref()
+                .map(|c| c.color().clone().into()),
             search_match_bg: styled_color(&file.search.match_bg),
             search_match_fg: styled_color(&file.search.match_fg),
             search_current_match_bg: styled_color(&file.search.current_match_bg),
@@ -1530,7 +2054,15 @@ impl From<ThemeFile> for Theme {
             syntax_punctuation_bracket_modifier: Modifier::empty(),
             syntax_punctuation_delimiter: styled_color(&file.syntax.punctuation_delimiter),
             syntax_punctuation_delimiter_modifier: Modifier::empty(),
+            syntax_number: styled_color(&file.syntax.number),
+            syntax_number_modifier: Modifier::empty(),
+            syntax_property: styled_color(&file.syntax.property),
+            syntax_property_modifier: Modifier::empty(),
+            syntax_attribute: styled_color(&file.syntax.attribute),
+            syntax_attribute_modifier: Modifier::empty(),
             key_modifiers: Default::default(),
+            chrome: Chrome::default().overridden_by(&file.chrome),
+            file_icons: FileIcons::default().overridden_by(&file.file_icons),
         };
         theme.apply_named_modifiers(&raw);
         theme
@@ -1554,6 +2086,8 @@ impl From<Theme> for ThemeFile {
                 current_line_bg: styled(&theme, "editor.current_line_bg"),
                 line_number_fg: styled(&theme, "editor.line_number_fg"),
                 line_number_bg: styled(&theme, "editor.line_number_bg"),
+                current_line_number_fg: styled(&theme, "editor.current_line_number_fg"),
+                gutter_separator_fg: styled(&theme, "editor.gutter_separator_fg"),
                 diff_add_bg: styled(&theme, "editor.diff_add_bg"),
                 diff_remove_bg: styled(&theme, "editor.diff_remove_bg"),
                 diff_add_highlight_bg: styled(&theme, "editor.diff_add_highlight_bg"),
@@ -1591,6 +2125,7 @@ impl From<Theme> for ThemeFile {
                 tab_inactive_fg: styled(&theme, "ui.tab_inactive_fg"),
                 tab_inactive_bg: styled(&theme, "ui.tab_inactive_bg"),
                 tab_separator_bg: styled(&theme, "ui.tab_separator_bg"),
+                tab_separator_fg: styled(&theme, "ui.tab_separator_fg"),
                 tab_close_hover_fg: styled(&theme, "ui.tab_close_hover_fg"),
                 tab_hover_bg: styled(&theme, "ui.tab_hover_bg"),
                 menu_bg: styled(&theme, "ui.menu_bg"),
@@ -1611,6 +2146,10 @@ impl From<Theme> for ThemeFile {
                 status_bar_bg: styled(&theme, "ui.status_bar_bg"),
                 status_palette_fg: styled(&theme, "ui.status_palette_fg"),
                 status_palette_bg: styled(&theme, "ui.status_palette_bg"),
+                status_outer_fg: styled(&theme, "ui.status_outer_fg"),
+                status_outer_bg: styled(&theme, "ui.status_outer_bg"),
+                status_inner_fg: styled(&theme, "ui.status_inner_fg"),
+                status_inner_bg: styled(&theme, "ui.status_inner_bg"),
                 status_separator_fg: styled(&theme, "ui.status_separator_fg"),
                 status_separator_bg: styled(&theme, "ui.status_separator_bg"),
                 status_lsp_on_fg: styled(&theme, "ui.status_lsp_on_fg"),
@@ -1684,6 +2223,15 @@ impl From<Theme> for ThemeFile {
                 file_status_conflicted_fg: styled(&theme, "ui.file_status_conflicted_fg"),
                 file_explorer_pinned_bg: styled(&theme, "ui.file_explorer_pinned_bg"),
                 file_explorer_directory_fg: styled(&theme, "ui.file_explorer_directory_fg"),
+                file_explorer_bg: styled(&theme, "ui.file_explorer_bg"),
+                file_explorer_fg: styled(&theme, "ui.file_explorer_fg"),
+                file_explorer_border_fg: styled(&theme, "ui.file_explorer_border_fg"),
+                file_explorer_border_focused_fg: styled(
+                    &theme,
+                    "ui.file_explorer_border_focused_fg",
+                ),
+                file_explorer_indicator_fg: styled(&theme, "ui.file_explorer_indicator_fg"),
+                file_icon_fg: styled(&theme, "ui.file_icon_fg"),
             },
             search: SearchColors {
                 match_bg: styled(&theme, "search.match_bg"),
@@ -1715,7 +2263,12 @@ impl From<Theme> for ThemeFile {
                 operator: styled(&theme, "syntax.operator"),
                 punctuation_bracket: styled(&theme, "syntax.punctuation_bracket"),
                 punctuation_delimiter: styled(&theme, "syntax.punctuation_delimiter"),
+                number: styled(&theme, "syntax.number"),
+                property: styled(&theme, "syntax.property"),
+                attribute: styled(&theme, "syntax.attribute"),
             },
+            chrome: theme.chrome.clone().into(),
+            file_icons: theme.file_icons.to_file(),
         }
     }
 }
@@ -1810,6 +2363,11 @@ fn relative_luminance(r: u8, g: u8, b: u8) -> f64 {
 fn apply_theme_overrides(theme: &mut Theme, theme_file: &ThemeFile, raw: &serde_json::Value) {
     // Name always comes from the user file — that's the theme's identity.
     theme.name = theme_file.name.clone();
+    theme.chrome = theme.chrome.clone().overridden_by(&theme_file.chrome);
+    theme.file_icons = theme
+        .file_icons
+        .clone()
+        .overridden_by(&theme_file.file_icons);
 
     // Keys added after themes could already extend one another, whose
     // fallback was the only color they had: in the base they still hold that
@@ -1864,7 +2422,24 @@ fn apply_theme_overrides(theme: &mut Theme, theme_file: &ThemeFile, raw: &serde_
 
 /// See [`apply_theme_overrides`]: keys that track their fallback key through
 /// an `extends` override when the base theme gave them no color of their own.
-const KEYS_FOLLOWING_FALLBACK_ACROSS_EXTENDS: &[&str] = &["ui.file_explorer_directory_fg"];
+const KEYS_FOLLOWING_FALLBACK_ACROSS_EXTENDS: &[&str] = &[
+    "ui.file_explorer_directory_fg",
+    "editor.line_number_bg",
+    "editor.gutter_separator_fg",
+    "ui.file_explorer_bg",
+    "ui.file_explorer_fg",
+    "ui.file_explorer_border_fg",
+    "ui.file_explorer_border_focused_fg",
+    "ui.file_explorer_indicator_fg",
+    "syntax.number",
+    "syntax.property",
+    "syntax.attribute",
+    "ui.tab_separator_fg",
+    "ui.status_outer_fg",
+    "ui.status_outer_bg",
+    "ui.status_inner_fg",
+    "ui.status_inner_bg",
+];
 
 /// Every non-null `"section.field"` leaf of a theme JSON, under its canonical
 /// key (a serde alias such as `ui.popup_fg` is reported as the field it
@@ -2102,6 +2677,42 @@ impl Theme {
                     && !Self::is_modifier_only_key(canonical)
                 {
                     unknown.push(key);
+                }
+            }
+        }
+        if let Some(obj) = raw.get("chrome").and_then(|v| v.as_object()) {
+            for field in obj.keys() {
+                if !ChromeOptions::is_key(field) {
+                    unknown.push(format!("chrome.{field}"));
+                }
+            }
+            if let Some(nerd) = obj.get("nerd_font").and_then(|v| v.as_object()) {
+                for field in nerd.keys() {
+                    if !GlyphOptions::KEYS.contains(&field.as_str()) {
+                        unknown.push(format!("chrome.nerd_font.{field}"));
+                    }
+                }
+            }
+        }
+        if let Some(icons) = raw.get("file_icons").and_then(|v| v.as_object()) {
+            for (group, value) in icons {
+                let entries: Vec<(String, &serde_json::Value)> = match group.as_str() {
+                    "by_name" | "by_extension" => value
+                        .as_object()
+                        .map(|m| m.iter().map(|(k, v)| (format!("{group}.{k}"), v)).collect())
+                        .unwrap_or_default(),
+                    "default" | "folder" | "folder_open" => vec![(group.clone(), value)],
+                    _ => {
+                        unknown.push(format!("file_icons.{group}"));
+                        continue;
+                    }
+                };
+                for (path, entry) in entries {
+                    for field in entry.as_object().map(|o| o.keys()).into_iter().flatten() {
+                        if field != "glyph" && field != "color" {
+                            unknown.push(format!("file_icons.{path}.{field}"));
+                        }
+                    }
                 }
             }
         }
@@ -2357,7 +2968,9 @@ theme_color_keys! {
         "indent_rainbow_4" => color indent_rainbow_4 fallback "editor.indentation_guide_fg",
         "indent_rainbow_5" => color indent_rainbow_5 fallback "editor.indentation_guide_fg",
         "indent_rainbow_6" => color indent_rainbow_6 fallback "editor.indentation_guide_fg",
-        "line_number_bg" => color line_number_bg,
+        "current_line_number_fg" => opt current_line_number_fg,
+        "gutter_separator_fg" => color gutter_separator_fg fallback "editor.line_number_fg",
+        "line_number_bg" => color line_number_bg fallback "editor.bg",
         "line_number_fg" => color line_number_fg,
         "ruler_bg" => color ruler_bg fallback "editor.current_line_bg",
         "selection_bg" => color selection_bg modifier selection_modifier,
@@ -2375,7 +2988,13 @@ theme_color_keys! {
         "blame_header_bg" => color blame_header_bg fallback "ui.menu_bg",
         "blame_header_fg" => color blame_header_fg fallback "ui.menu_fg",
         "compose_margin_bg" => color compose_margin_bg fallback "editor.after_eof_bg",
+        "file_explorer_bg" => color file_explorer_bg fallback "editor.bg",
+        "file_explorer_border_fg" => color file_explorer_border_fg fallback "ui.split_separator_fg",
+        "file_explorer_border_focused_fg" => color file_explorer_border_focused_fg fallback "editor.cursor",
         "file_explorer_directory_fg" => color file_explorer_directory_fg fallback "syntax.keyword",
+        "file_explorer_fg" => color file_explorer_fg fallback "editor.fg",
+        "file_explorer_indicator_fg" => color file_explorer_indicator_fg fallback "diagnostic.warning_fg",
+        "file_icon_fg" => opt file_icon_fg,
         "file_explorer_pinned_bg" => color file_explorer_pinned_bg fallback "editor.current_line_bg",
         "file_status_added_fg" => color file_status_added_fg fallback "diagnostic.info_fg",
         "file_status_conflicted_fg" => color file_status_conflicted_fg fallback "diagnostic.error_fg",
@@ -2434,6 +3053,10 @@ theme_color_keys! {
         "status_lsp_on_bg" => color status_lsp_on_bg fallback "ui.status_bar_bg",
         "status_lsp_on_fg" => color status_lsp_on_fg fallback "ui.status_bar_fg",
         "status_palette_bg" => color status_palette_bg fallback "ui.status_bar_bg",
+        "status_outer_bg" => color status_outer_bg fallback "ui.status_bar_bg",
+        "status_outer_fg" => color status_outer_fg fallback "ui.status_bar_fg",
+        "status_inner_bg" => color status_inner_bg fallback "ui.status_bar_bg",
+        "status_inner_fg" => color status_inner_fg fallback "ui.status_bar_fg",
         "status_palette_fg" => color status_palette_fg fallback "ui.status_bar_fg",
         "status_separator_bg" => color status_separator_bg fallback "ui.status_bar_bg",
         "status_separator_fg" => color status_separator_fg fallback "ui.status_bar_fg",
@@ -2453,17 +3076,21 @@ theme_color_keys! {
         "tab_inactive_bg" => color tab_inactive_bg,
         "tab_inactive_fg" => color tab_inactive_fg,
         "tab_separator_bg" => color tab_separator_bg,
+        "tab_separator_fg" => color tab_separator_fg fallback "ui.tab_inactive_fg",
         "terminal_bg" => color terminal_bg fallback "editor.bg",
         "terminal_fg" => color terminal_fg fallback "editor.fg",
         "text_input_selection_bg" => color text_input_selection_bg fallback "ui.popup_selection_bg",
         "tour_step_bg" => color tour_step_bg fallback "ui.popup_selection_bg",
     },
     "syntax" => {
+        "attribute" => color syntax_attribute modifier syntax_attribute_modifier fallback "syntax.constant",
         "comment" => color syntax_comment modifier syntax_comment_modifier,
         "constant" => color syntax_constant modifier syntax_constant_modifier,
         "function" => color syntax_function modifier syntax_function_modifier,
         "keyword" => color syntax_keyword modifier syntax_keyword_modifier,
+        "number" => color syntax_number modifier syntax_number_modifier fallback "syntax.constant",
         "operator" => color syntax_operator modifier syntax_operator_modifier,
+        "property" => color syntax_property modifier syntax_property_modifier fallback "syntax.variable",
         "punctuation_bracket" => color syntax_punctuation_bracket modifier syntax_punctuation_bracket_modifier fallback "syntax.operator",
         "punctuation_delimiter" => color syntax_punctuation_delimiter modifier syntax_punctuation_delimiter_modifier fallback "syntax.operator",
         "string" => color syntax_string modifier syntax_string_modifier,
@@ -2587,10 +3214,40 @@ impl ThemeStyle for ratatui::style::Style {
 /// Returns the raw JSON Schema for ThemeFile, generated by schemars.
 /// The schema uses standard JSON Schema format with $ref for type references.
 /// Plugins are responsible for parsing and resolving $ref references.
+///
+/// Each color field with a fallback carries it as `x-fallback` (the
+/// `"section.field"` it takes its color from when a theme leaves it out),
+/// from the same table the loader fills fallbacks from, so an editor can keep
+/// a key that follows its fallback following it.
 pub fn get_theme_schema() -> serde_json::Value {
     use schemars::schema_for;
     let schema = schema_for!(ThemeFile);
-    serde_json::to_value(&schema).unwrap_or_default()
+    let mut json = serde_json::to_value(&schema).unwrap_or_default();
+    publish_fallbacks(&mut json);
+    json
+}
+
+/// Write each color key's fallback into its field's schema (`x-fallback`).
+fn publish_fallbacks(schema: &mut serde_json::Value) {
+    for key in Theme::COLOR_KEYS {
+        let (Some(fallback), Some((section, field))) =
+            (Theme::fallback_key(key), split_theme_key(key))
+        else {
+            continue;
+        };
+        let def = schema
+            .pointer(&format!("/properties/{section}/$ref"))
+            .and_then(|r| r.as_str())
+            .and_then(|r| r.strip_prefix("#/$defs/"))
+            .map(str::to_string);
+        let Some(def) = def else { continue };
+        if let Some(field) = schema
+            .pointer_mut(&format!("/$defs/{def}/properties/{field}"))
+            .and_then(|f| f.as_object_mut())
+        {
+            field.insert("x-fallback".into(), fallback.into());
+        }
+    }
 }
 
 /// Returns a map of built-in theme names to their JSON content.
@@ -2818,7 +3475,9 @@ mod tests {
             .iter()
             .filter(|k| Theme::is_required_key(k))
             .collect();
-        assert_eq!(required.len(), 49);
+        // 48: `editor.line_number_bg` falls back to `editor.bg` now that the
+        // gutter paints it.
+        assert_eq!(required.len(), 48);
         for &key in Theme::COLOR_KEYS {
             let mut current = key;
             let mut steps = 0;
@@ -3675,12 +4334,133 @@ mod tests {
     /// of its own: not the panel, and not the unfocused cursor's
     /// `current_line_bg`, or a cursor on a pinned row would vanish into the
     /// band it sits in.
+    /// A theme that names no `chrome` option gets the look Fresh always had,
+    /// and one that `extends` another inherits the options it leaves out.
+    #[test]
+    fn chrome_defaults_and_inherits_through_extends() {
+        let dark = Theme::load_builtin("dark").unwrap();
+        assert_eq!(dark.chrome, Chrome::default());
+        assert!(dark.chrome.gutter_separator && dark.chrome.file_explorer_border);
+        assert_eq!(dark.chrome.glyphs(), &Glyphs::default());
+        assert_eq!(dark.chrome.glyphs().tab_separator, " ");
+        assert_eq!(dark.chrome.glyphs().status_bar_separator, "");
+
+        let flat = Theme::load_builtin("flat").unwrap();
+        assert!(!flat.chrome.gutter_separator);
+        assert!(!flat.chrome.file_explorer_border);
+
+        let child = Theme::from_json(
+            r#"{"name": "child", "extends": "builtin://flat",
+                "chrome": {"gutter_separator": true, "status_bar_separator": " ◆ "}}"#,
+        )
+        .unwrap();
+        assert!(child.chrome.gutter_separator, "named: the child's");
+        assert!(!child.chrome.file_explorer_border, "unnamed: the base's");
+        assert_eq!(child.chrome.plain.status_bar_separator, " ◆ ");
+        assert_eq!(
+            child.chrome.plain.tab_separator,
+            flat.chrome.plain.tab_separator
+        );
+    }
+
+    /// Nerd Font glyphs are drawn only while the user says they have the
+    /// font; a glyph the `nerd_font` set leaves out falls back to the plain
+    /// one.
+    #[test]
+    fn nerd_font_glyphs_are_used_only_when_asked_for() {
+        let mut theme = Theme::from_json(
+            r#"{"name": "n", "extends": "builtin://dark",
+                "chrome": {"tab_separator": "|",
+                           "nerd_font": {"tab_cap_left": "", "diagnostic_marker": ""}}}"#,
+        )
+        .unwrap();
+        assert_eq!(theme.chrome.glyphs().tab_cap_left, "");
+        assert_eq!(theme.chrome.glyphs().diagnostic_marker, "●");
+        assert!(theme.chrome.use_nerd_font(true));
+        assert!(
+            !theme.chrome.use_nerd_font(true),
+            "no change the second time"
+        );
+        let g = theme.chrome.glyphs();
+        assert_eq!(g.tab_cap_left, "\u{e0b6}");
+        assert_eq!(g.diagnostic_marker, "\u{f057}");
+        assert_eq!(g.tab_separator, "|", "left out of nerd_font: the plain one");
+
+        let raw: serde_json::Value =
+            serde_json::from_str(r#"{"name": "x", "chrome": {"nerd_font": {"tab_cap": "x"}}}"#)
+                .unwrap();
+        assert_eq!(Theme::unknown_keys(&raw), vec!["chrome.nerd_font.tab_cap"]);
+    }
+
+    /// The options round-trip through the file form, and a misspelled one
+    /// is reported like a misspelled color key.
+    #[test]
+    fn chrome_round_trips_and_reports_unknown_options() {
+        let flat = Theme::load_builtin("flat").unwrap();
+        let file: ThemeFile = flat.clone().into();
+        let again = Theme::from_json(&serde_json::to_string(&file).unwrap()).unwrap();
+        assert_eq!(again.chrome, flat.chrome);
+
+        let raw: serde_json::Value =
+            serde_json::from_str(r#"{"name": "x", "chrome": {"gutter_seperator": false}}"#)
+                .unwrap();
+        assert_eq!(Theme::unknown_keys(&raw), vec!["chrome.gutter_seperator"]);
+    }
+
+    /// The new chrome color keys default to what painted those cells before,
+    /// and keep following it through `extends`: a theme that only recolors
+    /// `editor.bg` must not get a gutter and an explorer in its base's
+    /// background.
+    #[test]
+    fn chrome_colors_follow_their_fallbacks_through_extends() {
+        let dark = Theme::load_builtin("dark").unwrap();
+        assert_eq!(dark.file_explorer_bg, dark.editor_bg);
+        assert_eq!(dark.file_explorer_fg, dark.editor_fg);
+        assert_eq!(dark.file_explorer_border_fg, dark.split_separator_fg);
+        assert_eq!(dark.file_explorer_border_focused_fg, dark.cursor);
+        assert_eq!(dark.file_explorer_indicator_fg, dark.diagnostic_warning_fg);
+        assert_eq!(dark.gutter_separator_fg, dark.line_number_fg);
+        assert_eq!(dark.tab_separator_fg, dark.tab_inactive_fg);
+        assert_eq!(dark.syntax_number, dark.syntax_constant);
+        assert_eq!(dark.syntax_attribute, dark.syntax_constant);
+        assert_eq!(dark.syntax_property, dark.syntax_variable);
+        assert_eq!(
+            dark.current_line_number_fg, None,
+            "unset keeps the old look"
+        );
+
+        let child = Theme::from_json(
+            r#"{"name": "child", "extends": "builtin://dark",
+                "editor": {"bg": [1, 2, 3]}, "syntax": {"constant": [4, 5, 6]}}"#,
+        )
+        .unwrap();
+        assert_eq!(child.line_number_bg, Color::Rgb(1, 2, 3));
+        assert_eq!(child.file_explorer_bg, Color::Rgb(1, 2, 3));
+        assert_eq!(child.syntax_number, Color::Rgb(4, 5, 6));
+        assert_eq!(child.syntax_attribute, Color::Rgb(4, 5, 6));
+
+        let styled = Theme::from_json(
+            r#"{"name": "n", "extends": "builtin://dark",
+                "editor": {"current_line_number_fg": {"color": [9, 9, 9], "modifier": ["bold"]}}}"#,
+        )
+        .unwrap();
+        assert_eq!(styled.current_line_number_fg, Some(Color::Rgb(9, 9, 9)));
+        assert_eq!(
+            styled.resolve_modifier_key("editor.current_line_number_fg"),
+            Modifier::BOLD
+        );
+    }
+
     /// Explorer folder names have a key of their own (#3697): a theme that
     /// leaves it out keeps the old look (`syntax.keyword`), and one that sets
     /// it recolors folders without touching code keywords.
     #[test]
     fn file_explorer_directory_fg_falls_back_to_keyword() {
         for builtin in BUILTIN_THEMES {
+            let raw: serde_json::Value = serde_json::from_str(builtin.json).unwrap();
+            if names_key(&raw, "ui.file_explorer_directory_fg") {
+                continue; // a theme that colors folders on purpose
+            }
             let theme = Theme::from_json(builtin.json).unwrap();
             assert_eq!(
                 theme.file_explorer_directory_fg, theme.syntax_keyword,

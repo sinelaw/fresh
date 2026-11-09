@@ -113,6 +113,26 @@ impl MarginContent {
     }
 }
 
+/// The left margin's separator: the line, with a space before it (for the
+/// indicators) and one after it (for readability).
+pub const GUTTER_SEPARATOR: &str = " │ ";
+
+/// What separates the line numbers from the text when the theme draws no
+/// line there (`chrome.gutter_separator: false`): one cell of the gutter's
+/// own ground.
+pub const GUTTER_PAD: &str = " ";
+
+/// The separator's width in cells, drawn or not. One statement, read by the
+/// margin and by [`crate::view::viewport::gutter_width`], so the wrap and
+/// scroll math measure the gutter the renderer paints.
+pub fn gutter_separator_cols(drawn: bool) -> usize {
+    if drawn {
+        GUTTER_SEPARATOR.chars().count()
+    } else {
+        GUTTER_PAD.chars().count()
+    }
+}
+
 /// Configuration for a margin
 #[derive(Debug, Clone, PartialEq)]
 pub struct MarginConfig {
@@ -147,7 +167,7 @@ impl MarginConfig {
             width: MIN_LINE_NUMBER_DIGITS,
             enabled: true,
             show_separator: true,
-            separator: " │ ".to_string(), // Separator with spaces: " │ " (space before for indicators, space after for readability)
+            separator: GUTTER_SEPARATOR.to_string(),
             style: Style::default().fg(Color::DarkGray),
             separator_style: Style::default().fg(Color::DarkGray),
         }
@@ -564,6 +584,23 @@ impl MarginManager {
         configure_left_for_line_numbers(&mut cfg, show_line_numbers);
         update_left_width_for_buffer(&mut cfg, buffer_total_lines, show_line_numbers);
         cfg
+    }
+
+    /// Whether the left margin draws its separator line, as the theme's
+    /// `chrome.gutter_separator` says. Settled before each frame with the
+    /// rest of the pane's gutter, so the width every reader measures — the
+    /// render, the cursor, mouse mapping — is the one painted.
+    pub fn set_gutter_separator(&mut self, drawn: bool) {
+        let separator = if drawn { GUTTER_SEPARATOR } else { GUTTER_PAD };
+        if self.left_config.separator != separator {
+            self.left_config.separator = separator.to_string();
+        }
+    }
+
+    /// Whether the left margin draws its separator line (the last
+    /// [`Self::set_gutter_separator`]).
+    pub fn gutter_separator_drawn(&self) -> bool {
+        self.left_config.separator == GUTTER_SEPARATOR
     }
 
     /// Get the total width of the left margin (including separator)

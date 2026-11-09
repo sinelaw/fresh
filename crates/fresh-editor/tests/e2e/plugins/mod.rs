@@ -90,6 +90,8 @@ pub mod set_split_ratio_leaf;
 pub mod tab_actions;
 pub mod terminal_hooks;
 pub mod theme_editor;
+pub mod theme_editor_preview;
+pub mod theme_editor_structured;
 pub mod timer_macro_recording;
 pub mod trust_lockdown;
 pub mod unified_keybindings;

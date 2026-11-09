@@ -288,6 +288,14 @@ pub trait PluginServiceBridge: Send + Sync + 'static {
         None
     }
 
+    /// The built-in file-type icons a theme's `file_icons` overrides, in the
+    /// theme file's shape: `{by_name, by_extension, default, folder,
+    /// folder_open}`, each icon `{glyph, color: [r, g, b]}`. For the theme
+    /// editor, which shows what an override replaces.
+    fn builtin_file_icons(&self) -> serde_json::Value {
+        serde_json::Value::Null
+    }
+
     /// Save a theme file to the user themes directory.
     /// Returns the path where the file was written.
     fn save_theme_file(&self, _name: &str, _content: &str) -> Result<String, String> {

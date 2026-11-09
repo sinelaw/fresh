@@ -47,7 +47,10 @@ fn scroll_geometry(
         // `split_rendering::scrollbar` build their `WrapConfig` around this
         // same number, and a gutter one cell off here wraps the scroll math at
         // a different column than the pane.
-        let gutter_width = crate::view::viewport::gutter_width(&state.buffer);
+        let gutter_width = crate::view::viewport::gutter_width(
+            &state.buffer,
+            state.margins.gutter_separator_drawn(),
+        );
         let wrap_config = WrapConfig::new(wrap_width, gutter_width, true, true);
         let effective_width = wrap_config
             .first_line_width

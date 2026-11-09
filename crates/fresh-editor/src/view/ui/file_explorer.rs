@@ -114,7 +114,7 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
     } else if d.pinned {
         "ui.file_explorer_pinned_bg"
     } else {
-        "editor.bg"
+        "ui.file_explorer_bg"
     };
 
     let has_unsaved = if node.is_dir() {
@@ -125,6 +125,7 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
     let slots = d.slot_resolver.resolve(&ExplorerSlotContext {
         path: &node.entry.path,
         is_dir: node.is_dir(),
+        is_expanded: node.state == crate::view::file_tree::NodeState::Expanded || d.opening,
         has_unsaved,
         is_symlink: node.entry.is_symlink(),
         is_hidden,
@@ -162,16 +163,26 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
     let indicator_width = collapsed_w.max(expanded_w).max(1) + 1;
     if node.is_dir() {
         use crate::view::file_tree::NodeState;
-        let (glyph, w) = if node.state == NodeState::Expanded || d.opening {
-            (format!("{} ", d.expanded), expanded_w + 1)
+        // The arrows take the explorer's own indicator key; the loading and
+        // error marks stay warnings.
+        let (glyph, w, ink) = if node.state == NodeState::Expanded || d.opening {
+            (
+                format!("{} ", d.expanded),
+                expanded_w + 1,
+                "ui.file_explorer_indicator_fg",
+            )
         } else if node.state == NodeState::Collapsed {
-            (format!("{} ", d.collapsed), collapsed_w + 1)
+            (
+                format!("{} ", d.collapsed),
+                collapsed_w + 1,
+                "ui.file_explorer_indicator_fg",
+            )
         } else if node.state == NodeState::Loading {
-            ("⟳ ".to_string(), 2)
+            ("⟳ ".to_string(), 2, "diagnostic.warning_fg")
         } else {
-            ("! ".to_string(), 2)
+            ("! ".to_string(), 2, "diagnostic.warning_fg")
         };
-        left.push((glyph, pair("diagnostic.warning_fg", ground)));
+        left.push((glyph, pair(ink, ground)));
         let pad = indicator_width.saturating_sub(w);
         if pad > 0 {
             left.push((" ".repeat(pad), pair(neutral, ground)));
@@ -271,7 +282,7 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
 
     fe::Row {
         index: d.row,
-        theme: pair("editor.fg", ground),
+        theme: pair("ui.file_explorer_fg", ground),
         left,
         chain,
         name,
@@ -304,19 +315,19 @@ pub fn describe_preview_row(
     expanded: &str,
 ) -> crate::view::shell::file_explorer::Row {
     use crate::app::shell_host::shell_theme::pair;
-    let ground = "editor.bg";
+    let ground = "ui.file_explorer_bg";
     // The same head a file row at this depth has, so the typed name starts
     // in the column the real one will.
     let indicator_width = str_width(collapsed).max(str_width(expanded)).max(1) + 1;
     let head = " ".repeat(indent * 2 + indicator_width);
     crate::view::shell::file_explorer::Row {
         index,
-        theme: pair("editor.fg", ground),
-        left: vec![(head, pair("editor.fg", ground))],
+        theme: pair("ui.file_explorer_fg", ground),
+        left: vec![(head, pair("ui.file_explorer_fg", ground))],
         chain: Vec::new(),
         name: crate::view::move_preview::typed_runs(name, typed)
             .into_iter()
-            .map(|(text, bg)| (text.to_string(), pair("editor.fg", bg)))
+            .map(|(text, bg)| (text.to_string(), pair("ui.file_explorer_fg", bg)))
             .collect(),
         trailing: None,
         error: None,
@@ -788,11 +799,11 @@ mod tests {
         }
         assert_eq!(
             plain.theme.split('/').next_back().unwrap_or(&plain.theme),
-            "editor.bg",
+            "ui.file_explorer_bg",
             "an unpinned row sits on the panel"
         );
         for ground in ground_of(&plain) {
-            assert_eq!(ground, "editor.bg", "the plain row's ground");
+            assert_eq!(ground, "ui.file_explorer_bg", "the plain row's ground");
         }
     }
 

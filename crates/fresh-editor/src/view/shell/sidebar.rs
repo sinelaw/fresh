@@ -23,6 +23,20 @@
 //! exactly the bordered box the explorer has always been — the same cells,
 //! the same rectangles — which is what the parity and e2e suites pin.
 //!
+//! **Borderless** (`chrome.file_explorer_border: false` in the theme): the
+//! same column without the box. Header rows keep their title and buttons on
+//! the panel's ground, with no `─` run; bodies lose their outer wall; the
+//! bottom border row is gone. The inner edge — the cell column that meets the
+//! editor — stays as one column of ground with no glyph, because it is where
+//! the width grip lives (it shows its `│` while hovered, as before), and the
+//! list's scrollbar must not share a column with a drag handle.
+//!
+//! ```text
+//!  File Explorer ─ ⟳ ×      title row on the panel's ground (no ─ run)
+//! ▼ demo                 ▏  rows from the outer edge; ▏ = the grip column
+//!   ▼ crates             ▏
+//! ```
+//!
 //! **The width grip is the column's, not a section's.** It spans every
 //! section's outer edge, as it always spanned the panel's, and it stays in an
 //! overlay over the whole column for the same reason the explorer's did: a
@@ -30,10 +44,12 @@
 //! cell take the pointer without covering the rows beside it.
 
 use std::rc::Rc;
+use unicode_width::UnicodeWidthStr;
 
 use fresh_ui::{
-    col, focusable, gesture, layer, layout_reader, row, stack, text, Align, Anchor, Event,
-    GestureKind, Key, KeyCode, LayoutInfo, Modality, Node, Place, PointerMode, Sizing,
+    col, focusable, gesture, layer, layout_reader, row, stack, text, text_runs, Align, Anchor,
+    Elide, Event, GestureKind, Key, KeyCode, LayoutInfo, Modality, Node, Place, PointerMode, Run,
+    Sizing,
 };
 
 use crate::app::shell_host::shell_theme::pair;
@@ -58,6 +74,13 @@ pub struct Sidebar {
     pub x0: u16,
     /// Top to bottom. Section 0 is the explorer.
     pub sections: Vec<Section>,
+    /// Whether the column wears its box (the theme's
+    /// `chrome.file_explorer_border`). See the module docs for the
+    /// borderless shape.
+    pub bordered: bool,
+    /// The theme's chrome glyphs: the section markers and the header's
+    /// close and refresh buttons.
+    pub glyphs: crate::view::theme::Glyphs,
 }
 
 /// One section of the column: its content, and the chrome it wears.
@@ -131,6 +154,8 @@ impl Sidebar {
             grip_hovered: false,
             x0: 0,
             sections: vec![Section::explorer(e)],
+            bordered: true,
+            glyphs: Default::default(),
         }
     }
 
@@ -250,7 +275,9 @@ pub fn sidebar(s: &Sidebar) -> Node<UiMsg> {
                 .pointer_mode(PointerMode::Transparent),
         );
     }
-    column = column.child(border_line(bottom_theme, '└', '┘').h(Sizing::Cells(1)));
+    if s.bordered {
+        column = column.child(border_line(bottom_theme, '└', '┘').h(Sizing::Cells(1)));
+    }
     stack().children([column, overlay(s)])
 }
 
@@ -258,7 +285,7 @@ pub fn sidebar(s: &Sidebar) -> Node<UiMsg> {
 fn section(s: &Sidebar, i: usize, sec: &Section) -> Node<UiMsg> {
     let mut c = col().child(header_row(s, i, sec));
     if !sec.collapsed {
-        c = c.child(body(i, sec).flex(1));
+        c = c.child(body(s, i, sec).flex(1));
     }
     match &sec.kind {
         // **The union box.** The explorer's right-press menu and left-press
@@ -289,16 +316,33 @@ fn section(s: &Sidebar, i: usize, sec: &Section) -> Node<UiMsg> {
 /// while the row below it is the next section's header or the column's own
 /// bottom border. The content is laid at `cols - 2` and clipped to it, which
 /// is the inner rectangle a bordered box would have given it.
-fn body(i: usize, sec: &Section) -> Node<UiMsg> {
+fn body(s: &Sidebar, i: usize, sec: &Section) -> Node<UiMsg> {
     let content = match &sec.kind {
         SectionKind::Explorer(e) => file_explorer::rows(e),
         SectionKind::Panel(p) => panel_body(i, p),
         SectionKind::Unavailable(why) => col().child(
             text(why.clone())
-                .theme(pair("editor.line_number_fg", "editor.bg"))
+                .theme(pair("editor.line_number_fg", "ui.file_explorer_bg"))
                 .h(Sizing::Cells(1)),
         ),
     };
+    if !s.bordered {
+        // No walls: the content runs from the outer edge, and the inner
+        // edge is one column of bare ground for the grip.
+        let grip_column = row()
+            .w(Sizing::Cells(1))
+            .theme(sec.border_theme.clone())
+            .pointer_mode(PointerMode::Transparent);
+        let content = col().flex(1).clip(true).child(content);
+        return row()
+            .theme(sec.border_theme.clone())
+            .pointer_mode(PointerMode::Transparent)
+            .children(if s.on_left {
+                [content, grip_column]
+            } else {
+                [grip_column, content]
+            });
+    }
     stack().children([
         walls(&sec.border_theme),
         row().pointer_mode(PointerMode::Transparent).children([
@@ -445,23 +489,56 @@ fn header_row(s: &Sidebar, i: usize, sec: &Section) -> Node<UiMsg> {
         ('├', '┤')
     };
     let several = s.sections.len() > 1;
-    let mut cells: Vec<Node<UiMsg>> = vec![
-        // One cell of border before the title, which is where ratatui's
-        // `Block` starts a left-aligned title.
-        row()
-            .w(Sizing::Cells(1))
-            .pointer_mode(PointerMode::Transparent),
-    ];
-    if several {
+    let mut cells: Vec<Node<UiMsg>> = Vec::new();
+    // Boxed, one cell of border before the title, which is where ratatui's
+    // `Block` starts a left-aligned title, and a space after it. Borderless
+    // there is no corner to step past: the header starts at the edge, like
+    // the rows under it.
+    let pad = if s.bordered { " " } else { "" };
+    if s.bordered {
         cells.push(
-            text(if sec.collapsed { " ▶" } else { " ▼" })
+            row()
+                .w(Sizing::Cells(1))
+                .pointer_mode(PointerMode::Transparent),
+        );
+    }
+    // **Borderless, the chevron's column is always there.** With several
+    // sections it holds the collapse glyph; with one there is nothing to
+    // collapse and it is left blank — so the title starts in the same column
+    // either way, and does not jump when a second section comes or goes.
+    // Boxed, one section wears no chevron at all (the default sidebar is
+    // unchanged, design §4.6); the corner anchors the title there. The
+    // title's own leading space separates it from what is before it. Its
+    // trailing space is the gap cell before the buttons below, which, unlike
+    // a space inside the title, survives the title's elision.
+    let title = sec.title.trim_end().to_string();
+    let chevron = if several {
+        Some(if sec.collapsed {
+            s.glyphs.section_collapsed.clone()
+        } else {
+            s.glyphs.section_expanded.clone()
+        })
+    } else if !s.bordered {
+        let cols = UnicodeWidthStr::width(s.glyphs.section_expanded.as_str())
+            .max(UnicodeWidthStr::width(s.glyphs.section_collapsed.as_str()));
+        Some(" ".repeat(cols))
+    } else {
+        None
+    };
+    if let Some(chevron) = chevron {
+        cells.push(
+            text(format!("{pad}{chevron}"))
                 .theme(sec.title_theme.clone())
                 .pointer_mode(PointerMode::Transparent),
         );
     }
     cells.push(
-        text(sec.title.clone())
-            .theme(sec.title_theme.clone())
+        // **The title gives way, the buttons do not.** In a narrow column the
+        // title used to keep its full width and push the `⟳` and `×` out of
+        // the row, so the panel could not be closed with the pointer. It
+        // elides instead, and the buttons are sized first (`priority`).
+        text_runs([Run::themed(title, sec.title_theme.clone())])
+            .elide(Elide::Tail)
             // The title is decoration. Pressing it used to select the
             // panel's first row — `row.saturating_sub(area.y + 1)` clamps
             // to 0 on the title line — while the right-click and
@@ -469,18 +546,37 @@ fn header_row(s: &Sidebar, i: usize, sec: &Section) -> Node<UiMsg> {
             // Saying it is not a target makes all three agree.
             .pointer_mode(PointerMode::Transparent),
     );
+    // One cell between the title and the buttons, sized first like them, so
+    // an elided title (`…`) never runs into the `⟳`.
+    if sec.refresh_theme.is_some() || sec.closable {
+        cells.push(
+            text(" ")
+                .theme(sec.title_theme.clone())
+                .priority(BUTTONS_FIRST)
+                .pointer_mode(PointerMode::Transparent),
+        );
+    }
     cells.push(row().flex(1).pointer_mode(PointerMode::Transparent));
     if let Some(theme) = &sec.refresh_theme {
-        cells.push(refresh(i, theme.clone()));
+        cells.push(refresh(i, theme.clone(), &s.glyphs.panel_refresh).priority(BUTTONS_FIRST));
     }
     if sec.closable {
-        cells.push(close(i, sec));
+        cells.push(close(i, sec, &s.glyphs.panel_close).priority(BUTTONS_FIRST));
     }
     let strip = row()
         .h(Sizing::Cells(1))
         .pointer_mode(PointerMode::Transparent)
         .children(cells);
-    let mut layers = vec![border_line(sec.border_theme.clone(), l, r), strip];
+    // Borderless, the row is the panel's ground with the title on it.
+    let ground = if s.bordered {
+        border_line(sec.border_theme.clone(), l, r)
+    } else {
+        row()
+            .h(Sizing::Cells(1))
+            .theme(sec.border_theme.clone())
+            .pointer_mode(PointerMode::Transparent)
+    };
+    let mut layers = vec![ground, strip];
     if several {
         // **On top, and exactly as wide as the row less the `×`.** A hit
         // continues *behind* a transparent node but still runs that node's
@@ -552,7 +648,7 @@ fn header_row(s: &Sidebar, i: usize, sec: &Section) -> Node<UiMsg> {
 ///
 /// The explorer's `×` hides the sidebar, as it always has; any other
 /// section's removes that section.
-fn close(i: usize, sec: &Section) -> Node<UiMsg> {
+fn close(i: usize, sec: &Section, glyph: &str) -> Node<UiMsg> {
     let hover = if i == 0 {
         HoverTarget::FileExplorerCloseButton
     } else {
@@ -561,7 +657,7 @@ fn close(i: usize, sec: &Section) -> Node<UiMsg> {
     gesture(
         row()
             .w(Sizing::Cells(3))
-            .child(text("×").theme(sec.close_theme.clone())),
+            .child(text(glyph).theme(sec.close_theme.clone())),
     )
     .key(close_key(i))
     .on(
@@ -581,6 +677,10 @@ fn close(i: usize, sec: &Section) -> Node<UiMsg> {
     .on_leave(hover_msg(None))
 }
 
+/// A header button's layout priority: sized before the title, which takes
+/// what is left and elides (see `header_row`).
+const BUTTONS_FIRST: u8 = 1;
+
 /// How many cells the `⟳` button occupies. Two: the glyph, and one cell of
 /// gap so it does not read as one word with the `×`.
 const REFRESH_COLS: u16 = 2;
@@ -590,11 +690,11 @@ const REFRESH_COLS: u16 = 2;
 /// Built like [`close`] — the glyph carries the theme, the cells around it stay
 /// transparent — and sized so the section handle above can stop short of it.
 /// `⟳` is already the explorer's glyph for a directory that is loading.
-fn refresh(i: usize, theme: String) -> Node<UiMsg> {
+fn refresh(i: usize, theme: String, glyph: &str) -> Node<UiMsg> {
     gesture(
         row()
             .w(Sizing::Cells(REFRESH_COLS))
-            .child(text("⟳").theme(theme)),
+            .child(text(glyph).theme(theme)),
     )
     .key(refresh_key(i))
     .on(
@@ -638,7 +738,7 @@ fn grip_ink(hovered: bool) -> Node<UiMsg> {
     if !hovered {
         return row();
     }
-    let ink = pair("ui.split_separator_hover_fg", "editor.bg");
+    let ink = pair("ui.split_separator_hover_fg", "ui.file_explorer_bg");
     layout_reader(move |c: LayoutInfo| {
         col().children(
             (0..c.constraints.max_h).map(|_| text("│").theme(ink.clone()).h(Sizing::Cells(1))),
@@ -674,24 +774,29 @@ fn grip_strip(s: &Sidebar) -> Node<UiMsg> {
     // the grip runs from under the top border to above the bottom one — and
     // flex divides what is left, so a column that asked only for its natural
     // height had nothing to divide (rule L15) and the grip lost its rows.
-    col()
+    let band = row()
+        .flex(1)
+        .pointer_mode(PointerMode::Transparent)
+        .children(if s.on_left {
+            [row().flex(1).pointer_mode(PointerMode::Transparent), grip]
+        } else {
+            // On the right the column's inner edge — the one that
+            // meets the editor — is its left wall.
+            [grip, row().flex(1).pointer_mode(PointerMode::Transparent)]
+        });
+    let mut strip = col()
         .h(Sizing::Flex(1))
         .pointer_mode(PointerMode::Transparent)
-        .children([
-            row()
-                .flex(1)
-                .pointer_mode(PointerMode::Transparent)
-                .children(if s.on_left {
-                    [row().flex(1).pointer_mode(PointerMode::Transparent), grip]
-                } else {
-                    // On the right the column's inner edge — the one that
-                    // meets the editor — is its left wall.
-                    [grip, row().flex(1).pointer_mode(PointerMode::Transparent)]
-                }),
+        .child(band);
+    // A borderless column has no bottom border to stop above.
+    if s.bordered {
+        strip = strip.child(
             row()
                 .h(Sizing::Cells(1))
                 .pointer_mode(PointerMode::Transparent),
-        ])
+        );
+    }
+    strip
 }
 
 #[cfg(test)]
@@ -754,6 +859,8 @@ mod tests {
             grip_hovered: false,
             x0: 0,
             sections: vec![explorer_section(2), panel_section(0)],
+            bordered: true,
+            glyphs: Default::default(),
         }
     }
 
@@ -859,6 +966,8 @@ mod tests {
                 grip_hovered: false,
                 x0: 0,
                 sections: vec![explorer_section(0)],
+                bordered: true,
+                glyphs: Default::default(),
             },
             20,
             5,
@@ -1024,6 +1133,8 @@ mod tests {
             grip_hovered: false,
             x0: 0,
             sections: vec![explorer_section(2), sec],
+            bordered: true,
+            glyphs: Default::default(),
         }
     }
 

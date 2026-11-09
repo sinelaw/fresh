@@ -311,6 +311,15 @@ impl Editor {
             window.enforce_terminal_grid_wrap();
         }
 
+        // The theme's glyphs follow the user's font: its `chrome.nerd_font`
+        // set while `editor.nerd_font_icons` is on, its plain set otherwise.
+        // Settled once here, before anything is described, like the rest of
+        // the frame's inputs.
+        let nerd = self.config.editor.nerd_font_icons;
+        if self.theme.read().unwrap().chrome.nerd_font != nerd {
+            self.theme.write().unwrap().chrome.use_nerd_font(nerd);
+        }
+
         // The boolean state flags menu `when` conditions read. Refreshed
         // *before* anything is described, because the menu bar's labels are
         // now part of the frame's description, built at the top of this
@@ -3267,7 +3276,58 @@ impl Editor {
             grip_hovered,
             x0,
             sections,
+            bordered: self.theme.read().unwrap().chrome.file_explorer_border,
+            glyphs: self.theme.read().unwrap().chrome.glyphs().clone(),
         })
+    }
+
+    /// What the tab strips take from the theme: its glyphs, and file-type
+    /// icons while the user's `editor.nerd_font_icons` is on (with the
+    /// theme's one icon color, if it sets one).
+    fn tab_chrome(
+        &self,
+    ) -> (
+        crate::view::theme::Glyphs,
+        Option<std::rc::Rc<crate::view::shell::tabs::TabIcons>>,
+    ) {
+        let theme = self.theme.read().unwrap();
+        (
+            theme.chrome.glyphs().clone(),
+            theme.chrome.nerd_font.then(|| {
+                std::rc::Rc::new(crate::view::shell::tabs::TabIcons {
+                    table: theme.file_icons.clone(),
+                    one_color: theme.file_icon_fg,
+                })
+            }),
+        )
+    }
+
+    /// A folder's arrow in the explorer: the user's
+    /// `tree_indicator_collapsed` / `_expanded` when they changed it, else
+    /// the theme's `chrome.folder_collapsed` / `_expanded`.
+    fn explorer_indicator(&self, collapsed: bool) -> String {
+        let fe = &self.config.file_explorer;
+        let (setting, default) = if collapsed {
+            (
+                &fe.tree_indicator_collapsed,
+                crate::config::default_tree_indicator_collapsed(),
+            )
+        } else {
+            (
+                &fe.tree_indicator_expanded,
+                crate::config::default_tree_indicator_expanded(),
+            )
+        };
+        if *setting != default {
+            return setting.clone();
+        }
+        let theme = self.theme.read().unwrap();
+        let g = theme.chrome.glyphs();
+        if collapsed {
+            g.folder_collapsed.clone()
+        } else {
+            g.folder_expanded.clone()
+        }
     }
 
     /// The explorer as a section: its chrome, and its rows.
@@ -3390,8 +3450,8 @@ impl Editor {
             slot_overrides: win.file_explorer_slot_override_cache.clone(),
             slot_resolver: self.file_explorer_slot_resolver(),
             theme: self.theme.clone(),
-            collapsed: self.config.file_explorer.tree_indicator_collapsed.clone(),
-            expanded: self.config.file_explorer.tree_indicator_expanded.clone(),
+            collapsed: self.explorer_indicator(true),
+            expanded: self.explorer_indicator(false),
         });
         use crate::view::move_preview::Spot;
         // What window row `j` is: a projection row, or the `k`th preview row.
@@ -5750,7 +5810,9 @@ impl Editor {
             Some(crate::app::types::HoverTarget::NewTabButton(pane)) => Some(*pane),
             _ => None,
         };
-        self.active_window().pane_strips(chrome, hover, hover_plus)
+        let (glyphs, icons) = self.tab_chrome();
+        self.active_window()
+            .pane_strips(chrome, hover, hover_plus, &glyphs, icons)
     }
 
     /// Each visible pane's leaf handle, for the frame's description — the
@@ -5846,6 +5908,7 @@ impl Editor {
         window: fresh_core::WindowId,
     ) -> Option<std::rc::Rc<crate::view::shell::splits::Splits>> {
         use crate::view::shell::splits::{PaneChrome, PaneControls, Splits};
+        let (glyphs, icons) = self.tab_chrome();
         let win = self.windows.get_mut(&window)?;
         let (root, maximized, active, several, is_maximized) = {
             let (mgr, _) = win.buffers.splits()?;
@@ -5863,7 +5926,7 @@ impl Editor {
             hscroll: false,
         });
         let groups = win.pane_groups();
-        let strips = win.pane_strips(&chrome, None, None);
+        let strips = win.pane_strips(&chrome, None, None, &glyphs, icons);
         let rowless: std::collections::HashSet<_> = groups.keys().copied().collect();
         let hosts = win.pane_hosts(&rowless);
         Some(std::rc::Rc::new(Splits {
@@ -6287,6 +6350,41 @@ impl Editor {
         // A field-level borrow, disjoint from the `self.windows` borrow below.
         let keybindings_guard = self.keybindings.read().unwrap();
         let keybindings = &*keybindings_guard;
+        // Between items: the user's `status_bar.separator` when they set
+        // one, else the theme's `chrome.status_bar_separator`.
+        let theme_separator = self
+            .theme
+            .read()
+            .unwrap()
+            .chrome
+            .glyphs()
+            .status_bar_separator
+            .clone();
+        // The theme's section glyphs, and whether it colors sections at all
+        // (only then are items renamed onto the section keys).
+        let (section_glyphs, sectioned) = {
+            let theme = self.theme.read().unwrap();
+            let g = theme.chrome.glyphs();
+            (
+                sb::SectionGlyphs {
+                    left: g.status_bar_section_left.clone(),
+                    right: g.status_bar_section_right.clone(),
+                    cap_left: g.status_bar_cap_left.clone(),
+                    cap_right: g.status_bar_cap_right.clone(),
+                },
+                (
+                    theme.status_outer_bg,
+                    theme.status_outer_fg,
+                    theme.status_inner_bg,
+                    theme.status_inner_fg,
+                ) != (
+                    theme.status_bar_bg,
+                    theme.status_bar_fg,
+                    theme.status_bar_bg,
+                    theme.status_bar_fg,
+                ),
+            )
+        };
         // Single window borrow, split into buffers + cursors so the
         // status-bar context can hold both.
         let __active_id = self.active_window;
@@ -6347,11 +6445,31 @@ impl Editor {
                 // right element is never dropped, so a user who configured any
                 // right-side status keeps some of it.
                 let available = width as usize;
-                let sep_w = crate::primitives::display_width::str_width(&config.separator);
-                let width_of =
-                    |it: &sb::Item| crate::primitives::display_width::str_width(&it.text());
+                let separator = if config.separator.is_empty() {
+                    theme_separator.clone()
+                } else {
+                    config.separator.clone()
+                };
+                let str_w = crate::primitives::display_width::str_width;
+                // What stands between two right elements: the separator, or
+                // — on a sectioned bar, where neighbours on different grounds
+                // meet — the section glyph instead, whichever is wider.
+                let sep_w = if sectioned {
+                    str_w(&separator).max(str_w(&section_glyphs.right))
+                } else {
+                    str_w(&separator)
+                };
+                // A sectioned right side also opens with a section glyph out
+                // of the bar's ground, and closes with its cap.
+                let edges_w = if sectioned {
+                    str_w(&section_glyphs.right) + str_w(&section_glyphs.cap_right)
+                } else {
+                    0
+                };
+                let width_of = |it: &sb::Item| str_w(&it.text());
                 let total_right: usize = right.iter().map(width_of).sum::<usize>()
-                    + sep_w * right.len().saturating_sub(1);
+                    + sep_w * right.len().saturating_sub(1)
+                    + edges_w;
                 let left_min_target = available.saturating_mul(2).saturating_div(5).min(40);
                 let right_budget = available.saturating_sub(left_min_target + 1);
                 // How many right elements are kept whatever happens. Normally one,
@@ -6371,13 +6489,21 @@ impl Editor {
 
                 // The left side is not pre-fitted: who yields and where the cut
                 // falls are layout's (`sb::yields_last`, `Elide::Tail`).
-                sb::StatusBar {
+                let mut left = left;
+                if sectioned {
+                    sb::assign_sections(&mut left, &mut right);
+                }
+                let mut bar = sb::StatusBar {
                     left,
                     right,
-                    separator: config.separator.clone(),
+                    separator,
                     base_theme: pair("ui.status_bar_fg", "ui.status_bar_bg"),
                     sep_theme: pair("ui.status_separator_fg", "ui.status_separator_bg"),
-                }
+                    sections: section_glyphs.clone(),
+                    grounds: Vec::new(),
+                };
+                bar.resolve_grounds(&self.theme.read().unwrap());
+                bar
             })
     }
 }

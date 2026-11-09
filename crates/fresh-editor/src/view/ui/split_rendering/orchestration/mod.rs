@@ -527,6 +527,7 @@ fn text_pane_content(
                     content_rect,
                     pin_to_top: is_non_scrollable,
                     show_horizontal_scrollbar,
+                    gutter_separator: theme.chrome.gutter_separator,
                 },
             );
             fresh
@@ -691,6 +692,7 @@ pub(crate) fn reconcile_panes(pass: &ContentPass, f: &FrameFacts<'_>, s: &mut St
                 // to follow the cursor.
                 pin_to_top: !state.scrollable,
                 show_horizontal_scrollbar,
+                gutter_separator: f.style.theme.chrome.gutter_separator,
             },
         );
     }
