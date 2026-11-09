@@ -479,9 +479,13 @@ pub struct FileIconDef {
 pub struct FileIconsFile {
     /// By whole file name, case-insensitive: `"Cargo.toml"`, `"Dockerfile"`.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    // How [`FileIcons::overridden_by`] reads the keys, published so an editor
+    // writes them the way they are read.
+    #[schemars(extend("x-key-normalize" = "lowercase"))]
     pub by_name: std::collections::BTreeMap<String, FileIconDef>,
     /// By extension, case-insensitive, without the dot: `"rs"`, `"md"`.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[schemars(extend("x-key-normalize" = "extension"))]
     pub by_extension: std::collections::BTreeMap<String, FileIconDef>,
     /// Any file nothing else matches.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -603,6 +607,9 @@ macro_rules! chrome_glyphs {
             $(
                 #[doc = $doc]
                 #[serde(default, skip_serializing_if = "Option::is_none")]
+                // The default in the schema too, so an editor can show what
+                // an unset glyph draws.
+                #[schemars(extend("default" = $default))]
                 pub $name: Option<String>,
             )*
         }
@@ -724,12 +731,14 @@ pub struct ChromeOptions {
     /// false, the gutter ends in a one-cell pad instead of ` │ `, two columns
     /// narrower. Default: true
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = true))]
     pub gutter_separator: Option<bool>,
     /// Draw the box around the file explorer. When false, the explorer keeps
     /// its title row (title, refresh and close buttons) but loses its side
     /// walls and bottom border, and its rows use the full panel width.
     /// Default: true
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = true))]
     pub file_explorer_border: Option<bool>,
     /// The glyphs (see [`GlyphOptions`]).
     #[serde(flatten)]

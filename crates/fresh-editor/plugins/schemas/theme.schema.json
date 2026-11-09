@@ -2288,119 +2288,136 @@
           "type": [
             "boolean",
             "null"
-          ]
+          ],
+          "default": true
         },
         "file_explorer_border": {
           "description": "Draw the box around the file explorer. When false, the explorer keeps\nits title row (title, refresh and close buttons) but loses its side\nwalls and bottom border, and its rows use the full panel width.\nDefault: true",
           "type": [
             "boolean",
             "null"
-          ]
+          ],
+          "default": true
         },
         "tab_separator": {
           "description": "Between two tabs, in `ui.tab_separator_fg` on `ui.tab_separator_bg`. Empty puts the tabs side by side. Default: one space",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": " "
         },
         "tab_cap_left": {
           "description": "Before each tab, in the tab's background color on the strip's (`ui.tab_separator_bg`): with `tab_cap_right`, gives tabs a shape — rounded `` `` or slanted `` `` with a Nerd Font. Default: none",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": ""
         },
         "tab_cap_right": {
           "description": "After each tab; see `tab_cap_left`. Default: none",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": ""
         },
         "tab_close": {
           "description": "A tab's close button. One cell. Default: `×`",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": "×"
         },
         "tab_modified": {
           "description": "After the name of a tab with unsaved changes. Default: `*`",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": "*"
         },
         "status_bar_separator": {
           "description": "Between two status bar items on the same background, in `ui.status_separator_fg`. A `status_bar.separator` in the user's config wins. Default: none",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": ""
         },
         "status_bar_section_left": {
           "description": "Between two left-side status bar items on different backgrounds, drawn in the left one's background over the right one's — the transition `` or `` make with a Nerd Font. Default: none",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": ""
         },
         "status_bar_section_right": {
           "description": "The right side's transition, drawn in the right item's background over the left one's: `` or ``. Default: none",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": ""
         },
         "status_bar_cap_left": {
           "description": "Before the first left item when it has a background of its own, in that background over the bar's: `` rounds it. Default: none",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": ""
         },
         "status_bar_cap_right": {
           "description": "After the last right item when it has a background of its own: ``. Default: none",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": ""
         },
         "fold_collapsed": {
           "description": "The gutter's marker on a folded block. One cell. Default: `▸`",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": "▸"
         },
         "fold_expanded": {
           "description": "The gutter's marker on a block that can fold. One cell. Default: `▾`",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": "▾"
         },
         "diagnostic_marker": {
           "description": "The gutter's marker on a line with a diagnostic. One cell. Default: `●`",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": "●"
         },
         "folder_collapsed": {
           "description": "Before a closed folder in the file explorer, while the user's `file_explorer.tree_indicator_collapsed` is at its default. Default: `>`",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": ">"
         },
         "folder_expanded": {
           "description": "Before an open folder in the file explorer, while the user's `file_explorer.tree_indicator_expanded` is at its default. Default: `▼`",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": "▼"
         },
         "nerd_font": {
           "description": "Glyphs used instead of the ones above while `editor.nerd_font_icons`\nis on. Any glyph left out here falls back to the plain one.",
@@ -2424,105 +2441,120 @@
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": " "
         },
         "tab_cap_left": {
           "description": "Before each tab, in the tab's background color on the strip's (`ui.tab_separator_bg`): with `tab_cap_right`, gives tabs a shape — rounded `` `` or slanted `` `` with a Nerd Font. Default: none",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": ""
         },
         "tab_cap_right": {
           "description": "After each tab; see `tab_cap_left`. Default: none",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": ""
         },
         "tab_close": {
           "description": "A tab's close button. One cell. Default: `×`",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": "×"
         },
         "tab_modified": {
           "description": "After the name of a tab with unsaved changes. Default: `*`",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": "*"
         },
         "status_bar_separator": {
           "description": "Between two status bar items on the same background, in `ui.status_separator_fg`. A `status_bar.separator` in the user's config wins. Default: none",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": ""
         },
         "status_bar_section_left": {
           "description": "Between two left-side status bar items on different backgrounds, drawn in the left one's background over the right one's — the transition `` or `` make with a Nerd Font. Default: none",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": ""
         },
         "status_bar_section_right": {
           "description": "The right side's transition, drawn in the right item's background over the left one's: `` or ``. Default: none",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": ""
         },
         "status_bar_cap_left": {
           "description": "Before the first left item when it has a background of its own, in that background over the bar's: `` rounds it. Default: none",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": ""
         },
         "status_bar_cap_right": {
           "description": "After the last right item when it has a background of its own: ``. Default: none",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": ""
         },
         "fold_collapsed": {
           "description": "The gutter's marker on a folded block. One cell. Default: `▸`",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": "▸"
         },
         "fold_expanded": {
           "description": "The gutter's marker on a block that can fold. One cell. Default: `▾`",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": "▾"
         },
         "diagnostic_marker": {
           "description": "The gutter's marker on a line with a diagnostic. One cell. Default: `●`",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": "●"
         },
         "folder_collapsed": {
           "description": "Before a closed folder in the file explorer, while the user's `file_explorer.tree_indicator_collapsed` is at its default. Default: `>`",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": ">"
         },
         "folder_expanded": {
           "description": "Before an open folder in the file explorer, while the user's `file_explorer.tree_indicator_expanded` is at its default. Default: `▼`",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": "▼"
         }
       }
     },
@@ -2535,14 +2567,16 @@
           "type": "object",
           "additionalProperties": {
             "$ref": "#/$defs/FileIconDef"
-          }
+          },
+          "x-key-normalize": "lowercase"
         },
         "by_extension": {
           "description": "By extension, case-insensitive, without the dot: `\"rs\"`, `\"md\"`.",
           "type": "object",
           "additionalProperties": {
             "$ref": "#/$defs/FileIconDef"
-          }
+          },
+          "x-key-normalize": "extension"
         },
         "default": {
           "description": "Any file nothing else matches.",

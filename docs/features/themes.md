@@ -54,7 +54,9 @@ Fresh includes a visual Theme Editor for creating and customizing themes:
    - **File Icons** lists the theme's icon overrides. `Enter` on **Add…**
      adds one (the built-in names and extensions are suggested); an entry's
      `glyph` and `color` show the built-in value until you set them
-   - `Delete` resets a chrome or file-icon value so it inherits again, or
+   - An unset chrome or icon value shows what it draws — the option's
+     default, or the built-in icon — and edits start from it
+   - `Delete` resets a chrome or file-icon value to Fresh's default, or
      removes a whole icon entry
    - Attributes are comma-separated: `bold`, `italic`, `underlined`, `dim`,
      `reversed`

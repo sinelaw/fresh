@@ -185,6 +185,11 @@ interface ThemeFieldDef {
   /** Which built-in table a map's or group's values fall back to, for
    * showing what an unset value inherits (`file_icons` only). */
   builtin?: string;
+  /** What an unset value draws: the schema's `default`. */
+  defaultValue?: unknown;
+  /** How a map's keys are read when the theme loads (the schema's
+   * `x-key-normalize`), so the editor writes them the same way. */
+  keyNormalize?: string;
 }
 
 /**
@@ -227,42 +232,18 @@ let cachedThemeSections: ThemeSection[] | null = null;
  * Returns false for unrelated $refs such as `ModifierDef`.
  */
 function fieldRefersToColorDef(fieldObj: Record<string, unknown>): boolean {
-  const refStr = fieldObj["$ref"];
-  if (typeof refStr === "string" && refStr.endsWith("/ColorDef")) {
-    return true;
-  }
-  const anyOf = fieldObj["anyOf"];
-  if (Array.isArray(anyOf)) {
-    for (const variant of anyOf) {
-      if (variant && typeof variant === "object") {
-        const v = variant as Record<string, unknown>;
-        const r = v["$ref"];
-        if (typeof r === "string" && r.endsWith("/ColorDef")) return true;
-      }
-    }
-  }
-  return false;
+  return refOf(fieldObj)?.endsWith("/ColorDef") ?? false;
 }
 
 /**
  * Whether a property schema refers to `StyledColorDef` — a value that is
  * either a bare color or a `{color, modifier}` bundle — directly or wrapped
  * in an `anyOf` (every theme key is optional, so the schema generator wraps
- * it as `anyOf: [{$ref: StyledColorDef}, {type: null}]`). Such a field is
- * edited as a color plus a synthetic sibling `<name>_modifier` attributes row.
+ * it as `anyOf: [{$ref: StyledColorDef}, {type: null}]`). Such a field is a
+ * color whose attributes are edited on its picker panel.
  */
 function fieldRefersToStyledColorDef(fieldObj: Record<string, unknown>): boolean {
-  const refStr = fieldObj["$ref"];
-  if (typeof refStr === "string" && refStr.endsWith("/StyledColorDef")) {
-    return true;
-  }
-  const anyOf = fieldObj["anyOf"];
-  return Array.isArray(anyOf) && anyOf.some((variant) => {
-    const r = variant && typeof variant === "object"
-      ? (variant as Record<string, unknown>)["$ref"]
-      : undefined;
-    return typeof r === "string" && r.endsWith("/StyledColorDef");
-  });
+  return refOf(fieldObj)?.endsWith("/StyledColorDef") ?? false;
 }
 
 /** The `$ref` a property schema entry points at, directly or as the
@@ -390,11 +371,11 @@ function loadThemeSections(): ThemeSection[] {
         const fieldDesc = (fieldObj.description as string) || "";
         // The chrome options: booleans are toggles, strings are glyphs.
         if (fieldIsBoolean(fieldObj)) {
-          out.push(makeFieldDef(fieldName, "toggle", fieldDesc));
+          out.push({ ...makeFieldDef(fieldName, "toggle", fieldDesc), defaultValue: fieldObj["default"] });
           continue;
         }
         if (fieldIsString(fieldObj)) {
-          out.push(makeFieldDef(fieldName, "text", fieldDesc));
+          out.push({ ...makeFieldDef(fieldName, "text", fieldDesc), defaultValue: fieldObj["default"] });
           continue;
         }
         const styled = fieldRefersToStyledColorDef(fieldObj);
@@ -412,6 +393,7 @@ function loadThemeSections(): ThemeSection[] {
             ...makeFieldDef(fieldName, "map", fieldDesc),
             entry: fieldsOf(entryRef.properties as Record<string, unknown>, table),
             builtin: table,
+            keyNormalize: fieldObj["x-key-normalize"] as string | undefined,
           });
           continue;
         }
@@ -892,15 +874,20 @@ function setNestedValue(obj: Record<string, unknown>, path: string, value: unkno
 
 const MODIFIER_SUFFIX = "_modifier";
 
-/** Expand on-disk `{color, modifier}` bundles into flat color + `_modifier`,
- * in every section. */
 /** The sections whose values are colors (bare, or `{color, modifier}`
- * bundles). `chrome` and `file_icons` hold other shapes — a `file_icons`
- * entry has a `color` too, and is not a bundle. */
-const COLOR_SECTIONS = ["editor", "ui", "search", "diagnostic", "syntax"];
+ * bundles), read off the schema: a section every field of which is a color.
+ * Only these are bundled — `chrome` and `file_icons` hold other shapes, and
+ * a `file_icons` entry has a `color` of its own without being a bundle. */
+function colorSections(): string[] {
+  return getThemeSections()
+    .filter(sec => sec.fields.length > 0 && sec.fields.every(f => f.kind === "color"))
+    .map(sec => sec.name);
+}
 
+/** Expand on-disk `{color, modifier}` bundles into flat color + `_modifier`,
+ * in the color sections. */
 function expandStyleBundles(themeData: Record<string, unknown>): void {
-  for (const name of COLOR_SECTIONS) {
+  for (const name of colorSections()) {
     const section = themeData[name];
     if (!section || typeof section !== "object" || Array.isArray(section)) continue;
     const obj = section as Record<string, unknown>;
@@ -908,7 +895,6 @@ function expandStyleBundles(themeData: Record<string, unknown>): void {
       // A bundle is a plain object; a bare color is an array or string.
       if (!value || typeof value !== "object" || Array.isArray(value)) continue;
       const bundle = value as Record<string, unknown>;
-      // Not every object is a bundle: `chrome.nerd_font` is a set of glyphs.
       if (!("color" in bundle)) continue;
       obj[key] = bundle.color;
       if (Array.isArray(bundle.modifier) && bundle.modifier.length > 0) {
@@ -1000,14 +986,37 @@ function isResettable(field: ThemeField): boolean {
   return /^(chrome|file_icons)\./.test(field.path) && field.def.kind !== "add" && field.def.kind !== "map";
 }
 
-/** Whether a field or anything under it matches the filter. */
-function defMatches(def: ThemeFieldDef, filter: string): boolean {
-  return def.key.toLowerCase().includes(filter)
-    || def.displayName.toLowerCase().includes(filter)
-    || (def.children ?? []).some(c => defMatches(c, filter));
+/** Whether a field's own name matches the filter. */
+function nameMatches(def: ThemeFieldDef, filter: string): boolean {
+  return def.key.toLowerCase().includes(filter) || def.displayName.toLowerCase().includes(filter);
 }
 
-/** The default a leaf shows while its theme value is unset. */
+/** Whether a field at `path`, or anything under it, matches the filter: a
+ * group's children, a map's entries by key. */
+function treeMatches(def: ThemeFieldDef, path: string, filter: string): boolean {
+  if (nameMatches(def, filter)) return true;
+  if (def.kind === "group") {
+    return (def.children ?? []).some(c => treeMatches(c, `${path}.${encodeKey(c.key)}`, filter));
+  }
+  if (def.kind === "map") {
+    return mapKeys(path).some(k => k.toLowerCase().includes(filter));
+  }
+  return false;
+}
+
+/** The keys a map holds in the theme being edited. */
+function mapKeys(path: string): string[] {
+  const stored = getNestedValue(state.themeData, path);
+  return stored && typeof stored === "object" ? Object.keys(stored as object).sort() : [];
+}
+
+/** What an unset value draws: the built-in icon's glyph or color at the
+ * same path, or the schema's default for the option. */
+function inheritedValue(def: ThemeFieldDef, path: string): unknown {
+  return builtinValue(path) ?? def.defaultValue;
+}
+
+/** The default a leaf falls back to when nothing names it at all. */
 function fallbackValue(def: ThemeFieldDef): ThemeFieldValue {
   return def.kind === "modifier" ? [] : def.kind === "toggle" ? true : def.kind === "text" ? "" : [128, 128, 128];
 }
@@ -1021,19 +1030,22 @@ function fallbackValue(def: ThemeFieldDef): ThemeFieldValue {
  */
 function pushFields(out: ThemeField[], defs: ThemeFieldDef[], parent: string, depth: number, filter: string): void {
   for (const def of defs) {
-    if (filter && !defMatches(def, filter)) continue;
     const path = `${parent}.${encodeKey(def.key)}`;
+    if (filter && !treeMatches(def, path, filter)) continue;
     const stored = getNestedValue(state.themeData, path);
     if (def.kind === "group" || def.kind === "map") {
       const expanded = state.expandedSections.has(path) || !!filter;
       out.push({ def, value: [], path, depth, isSection: false, expanded });
       if (!expanded) continue;
+      // A container whose own name matched shows all it holds; otherwise
+      // only what matched inside it.
+      const inner = filter && !nameMatches(def, filter) ? filter : "";
       if (def.kind === "group") {
-        pushFields(out, def.children ?? [], path, depth + 1, filter);
+        pushFields(out, def.children ?? [], path, depth + 1, inner);
         continue;
       }
       // A map: one header per entry the theme has, then the row that adds one.
-      const entries = stored && typeof stored === "object" ? Object.keys(stored as object).sort() : [];
+      const entries = mapKeys(path).filter(k => !inner || k.toLowerCase().includes(inner));
       for (const key of entries) {
         const entryPath = `${path}.${encodeKey(key)}`;
         const entryDef: ThemeFieldDef = {
@@ -1058,7 +1070,11 @@ function pushFields(out: ThemeField[], defs: ThemeFieldDef[], parent: string, de
       });
       continue;
     }
-    out.push({ def, value: (stored ?? fallbackValue(def)) as ThemeFieldValue, path, depth, isSection: false });
+    // An unset value edits from what it draws — the built-in icon's glyph
+    // or color, the option's default — so confirming a prompt or a picker
+    // unchanged never writes something else.
+    const value = stored ?? inheritedValue(def, path) ?? fallbackValue(def);
+    out.push({ def, value: value as ThemeFieldValue, path, depth, isSection: false });
   }
 }
 
@@ -1080,7 +1096,8 @@ function buildVisibleFields(): ThemeField[] {
     if (filter) {
       const sectionMatches = section.name.toLowerCase().includes(filter) ||
         section.displayName.toLowerCase().includes(filter);
-      const anyFieldMatches = section.fields.some(f => defMatches(f, filter));
+      const anyFieldMatches = section.fields.some(f =>
+        treeMatches(f, `${section.name}.${encodeKey(f.key)}`, filter));
       if (!sectionMatches && !anyFieldMatches) continue;
     }
 
@@ -1100,9 +1117,11 @@ function buildVisibleFields(): ThemeField[] {
       expanded,
     });
 
-    // Section fields
+    // Section fields: all of them when the section's own name matched.
     if (expanded) {
-      pushFields(fields, section.fields, section.name, 1, filter);
+      const sectionMatches = section.name.toLowerCase().includes(filter)
+        || section.displayName.toLowerCase().includes(filter);
+      pushFields(fields, section.fields, section.name, 1, filter && !sectionMatches ? filter : "");
     }
   }
 
@@ -1155,11 +1174,17 @@ function builtinValue(path: string): unknown {
   if (builtinIcons === null) {
     builtinIcons = (editor.getBuiltinFileIcons() as Record<string, unknown>) ?? {};
   }
-  return getNestedValue({ file_icons: builtinIcons }, path);
+  const value = getNestedValue({ file_icons: builtinIcons }, path);
+  // A folder icon has no color of its own: it takes the explorer's
+  // directory color (`view::file_icons::resolve_folder`).
+  if (value === null && /^file_icons\.folder(_open)?\.color$/.test(path)) {
+    return getNestedValue(state.themeData, "ui.file_explorer_directory_fg") ?? undefined;
+  }
+  return value ?? undefined;
 }
 
 /** One row of the tree for a field below a section header. */
-function fieldLine(field: ThemeField, i: number, isSelected: boolean): TreeLine {
+function fieldLine(field: ThemeField, i: number, isSelected: boolean, width: number): TreeLine {
   const sel = isSelected && state.focusPanel === "tree" ? "▸" : " ";
   const indent = "  ".repeat(Math.max(0, field.depth - 1));
   const kind = field.def.kind;
@@ -1189,21 +1214,23 @@ function fieldLine(field: ThemeField, i: number, isSelected: boolean): TreeLine 
 
   // A leaf. Layout: indent, marker, name padded, swatch/marker, value.
   // The name takes what the value (`#RRGGBB +bold,italic`) leaves.
-  const width = treeWidth();
   const valueW = Math.max(9, Math.min(24, Math.floor(width * 0.35)));
   const nameW = Math.max(8, width - valueW - 9 - indent.length);
   const name = field.def.key.length > nameW ? field.def.key.slice(0, nameW - 1) + "…" : field.def.key;
   const stored = getNestedValue(state.themeData, field.path);
-  const inherited = stored === undefined ? builtinValue(field.path) : undefined;
+  const inherited = stored === undefined ? inheritedValue(field.def, field.path) : undefined;
+  // Where an unset value's draw comes from: a built-in icon, or the
+  // option's default.
+  const source = builtinValue(field.path) !== undefined ? "built-in" : "default";
   let valueText: string;
   if (kind === "toggle") {
-    valueText = field.value ? "on" : "off";
+    valueText = (field.value ? "on" : "off") + (stored === undefined ? ` (${source})` : "");
   } else if (kind === "text") {
     valueText = stored === undefined
-      ? (inherited !== undefined ? `${inherited} (built-in)` : "(unset)")
+      ? (inherited !== undefined ? `${JSON.stringify(inherited)} (${source})` : "(unset)")
       : JSON.stringify(field.value);
   } else if (stored === undefined && kind === "color") {
-    valueText = inherited ? `${formatColorValue(inherited as ColorValue)} (built-in)` : "(unset)";
+    valueText = inherited ? `${formatColorValue(inherited as ColorValue)} (${source})` : "(unset)";
   } else {
     valueText = formatColorValue(field.value as ColorValue);
     // A styled color's attributes ride on its row: `#RRGGBB +bold,italic`.
@@ -1229,6 +1256,8 @@ function fieldLine(field: ThemeField, i: number, isSelected: boolean): TreeLine 
 
 function buildTreeLines(): TreeLine[] {
   const lines: TreeLine[] = [];
+  // Asked of the host once per build, not once per row.
+  const width = treeWidth();
 
   // Header
   const modMarker = state.hasChanges ? " [*]" : "";
@@ -1238,7 +1267,7 @@ function buildTreeLines(): TreeLine[] {
   });
 
   // Separator (adapt to panel width)
-  lines.push({ text: "─".repeat(Math.max(10, LEFT_WIDTH - 2)), type: "separator" });
+  lines.push({ text: "─".repeat(Math.max(10, width - 2)), type: "separator" });
 
   // Filter
   if (state.filterText) {
@@ -1246,7 +1275,7 @@ function buildTreeLines(): TreeLine[] {
       text: `Filter: [${state.filterText}]`,
       type: "filter",
     });
-    lines.push({ text: "─".repeat(Math.max(10, LEFT_WIDTH - 2)), type: "separator" });
+    lines.push({ text: "─".repeat(Math.max(10, width - 2)), type: "separator" });
   }
 
   // Build visible fields
@@ -1272,7 +1301,7 @@ function buildTreeLines(): TreeLine[] {
         selected: isSelected,
       });
     } else {
-      lines.push(fieldLine(field, i, isSelected));
+      lines.push(fieldLine(field, i, isSelected, width));
     }
   }
 
@@ -1306,13 +1335,13 @@ function buildPickerLines(): PickerLine[] {
     }
     lines.push({ text: "─".repeat(RIGHT_WIDTH() - 2), type: "picker-separator" });
     const hint = !field || field.isSection
-      ? "Select a field to edit"
+      ? "Select a color field to edit"
       : field.def.kind === "add"
         ? "Enter: add an entry (built-in names are suggested)"
         : field.def.kind === "entry"
           ? "Enter: open. Delete: remove this entry"
           : isResettable(field)
-            ? "Enter: open. Delete: reset all of it to inherited"
+            ? "Enter: open. Delete: reset all of it to Fresh's defaults"
             : "Enter: open";
     lines.push({ text: hint, type: "picker-desc" });
     return lines;
@@ -1443,7 +1472,9 @@ function styleForLeftEntry(item: TreeLine | undefined): { style?: Partial<Overla
   } else if (type === "tree-field") {
     const inlines: InlineOverlay[] = [];
     const text = " " + item.text; // matches leftText construction below
-    const paddedLen = getUtf8ByteLength(text.padEnd(LEFT_WIDTH));
+    // The value runs to the end of the row's own text: rows are as wide as
+    // the tree panel, which is not a fixed width.
+    const paddedLen = getUtf8ByteLength(text);
     const colorValue = item.colorValue;
     const swatchIdx = colorValue !== undefined ? text.indexOf("██") : -1;
 
@@ -2044,22 +2075,51 @@ function builtinGlyphSuggestions(): PromptSuggestion[] {
   }));
 }
 
+/** The map definition a map path names, from the schema. */
+function mapDefAt(mapPath: string): ThemeFieldDef | undefined {
+  const [sectionName, ...rest] = pathParts(mapPath);
+  let defs = getThemeSections().find(sec => sec.name === sectionName)?.fields ?? [];
+  let def: ThemeFieldDef | undefined;
+  for (const part of rest) {
+    def = defs.find(d => d.key === part);
+    defs = def?.children ?? [];
+  }
+  return def?.kind === "map" ? def : undefined;
+}
+
+/** A map key the way the theme loader reads it (the schema's
+ * `x-key-normalize`): file names in lower case, extensions in lower case
+ * without their dot. Writing it that way keeps two spellings of one key
+ * from being two entries that collapse into one on load. */
+function normalizeMapKey(mapPath: string, key: string): string {
+  switch (mapDefAt(mapPath)?.keyNormalize) {
+    case "lowercase":
+      return key.toLowerCase();
+    case "extension":
+      return key.replace(/^\.+/, "").toLowerCase();
+    default:
+      return key;
+  }
+}
+
 /** Add an entry to a keyed map (`file_icons.by_extension`): ask for its
  * key, offering the built-in table's keys the theme does not override yet. */
 function addMapEntry(field: ThemeField): void {
   const mapPath = field.path.slice(0, -2); // drop ".+"
   editor.startPrompt(`New entry in ${pathParts(mapPath).slice(-1)[0]}:`, `theme-add-${mapPath}`);
-  const existing = (getNestedValue(state.themeData, mapPath) ?? {}) as Record<string, unknown>;
+  const existing = new Set(mapKeys(mapPath).map(k => normalizeMapKey(mapPath, k)));
   const table = (builtinValue(mapPath) ?? {}) as Record<string, { glyph?: string }>;
   editor.setPromptSuggestions(
     Object.entries(table)
-      .filter(([k]) => !(k in existing))
+      .filter(([k]) => !existing.has(normalizeMapKey(mapPath, k)))
       .map(([k, v]) => ({ id: `key:${k}`, text: k, description: `${v.glyph ?? ""} built-in`, value: k })),
   );
 }
 
-/** Remove the selected value so it inherits again — from the theme this
- * one extends, or the built-in default. A map entry or a group goes whole. */
+/** Remove the selected value, so Fresh's default draws it again — the
+ * option's default, or the built-in icon. A map entry or a group goes
+ * whole. (The editor works on the fully resolved theme and saves it whole,
+ * so a removed value does not fall back to another theme's.) */
 function theme_editor_reset(): void {
   if (state.focusPanel !== "tree") return;
   const field = getFieldAtCursor();
@@ -2067,8 +2127,9 @@ function theme_editor_reset(): void {
     editor.setStatus("Only chrome and file icon values can be reset");
     return;
   }
+  // Only the value itself: resettable values have no `_modifier` companion,
+  // and in a map that name is another, user-named entry.
   deleteNestedValue(state.themeData, field.path);
-  deleteNestedValue(state.themeData, `${field.path}${MODIFIER_SUFFIX}`);
   state.hasChanges = !deepEqual(state.themeData, state.originalThemeData);
   updateDisplay();
   editor.setStatus(`Reset ${field.path.split(".").map(decodeKey).join(".")}`);
@@ -2228,7 +2289,7 @@ function findMatchingColor(input: string): string | null {
 editor.on("prompt_confirmed", (args) => {
   if (!args.prompt_type.startsWith("theme-add-")) return true;
   const mapPath = args.prompt_type.replace("theme-add-", "");
-  const key = args.input.trim();
+  const key = normalizeMapKey(mapPath, args.input.trim());
   if (!key) return true;
   const entryPath = `${mapPath}.${encodeKey(key)}`;
   if (getNestedValue(state.themeData, entryPath) === undefined) {
@@ -2268,9 +2329,11 @@ editor.on("prompt_confirmed", (args) => {
     moveCursorToField(path.replace(/_modifier$/, ""));
     editor.setStatus(editor.t("status.updated", { path }));
   } else {
-    const field = getFieldByPath(path);
+    // Ask again, on the color the attributes belong to (they have no row
+    // of their own).
+    const color = getFieldByPath(path.replace(/_modifier$/, ""));
     editor.setStatus(`Unknown text attribute '${result.error}'`);
-    if (field) editModifierField(field);
+    if (color) editModifierField(attributesField(color));
   }
   return true;
 });
@@ -2543,6 +2606,7 @@ editor.on("prompt_cancelled", (args) => {
  */
 function buildThemeFile(themeName: string): Record<string, unknown> {
   const completeTheme: Record<string, unknown> = { name: themeName };
+  const colors = colorSections();
   for (const section of getThemeSections()) {
     const stored = state.themeData[section.name];
     if (!stored || typeof stored !== "object" || Array.isArray(stored)) continue;
@@ -2550,7 +2614,7 @@ function buildThemeFile(themeName: string): Record<string, unknown> {
     // options and glyph sets, icon maps — as edited. Only the color
     // sections re-bundle color + attributes into one on-disk value.
     const data = deepClone(stored as Record<string, unknown>);
-    completeTheme[section.name] = COLOR_SECTIONS.includes(section.name)
+    completeTheme[section.name] = colors.includes(section.name)
       ? collapseStyleBundles(data)
       : data;
   }
