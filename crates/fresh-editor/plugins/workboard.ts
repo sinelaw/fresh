@@ -33,6 +33,7 @@ import {
   LENSES,
   type LensId,
   nextAttention,
+  normalizeRemote,
   normalizeSaved,
   repoFromCommonDir,
   type SavedState,
@@ -44,8 +45,10 @@ import {
   cardItemKey,
   cardKeyOf,
   COLUMN_KEY_PREFIX,
+  COLUMN_KEYS,
   columnKey,
   groupIdOf,
+  groupItemKey,
   LENS_KEY_PREFIX,
   LIST_KEY_PREFIX,
   listKey,
@@ -85,7 +88,7 @@ let folders: FolderLike[] = [];
 /** Each local workspace root's repository, as git reports it (see
  *  `resolveRepo`). The Orchestrator's own `projectPath` is used until — or
  *  unless — git answers. */
-const repoOf = new Map<string, string | null>();
+const repoOf = new Map<string, { repo: string | null; remote: string | null } | null>();
 
 let panel: FloatingWidgetPanel | null = null;
 /** Where each tree's cursor is (tree key → card key), as the host reported
@@ -127,8 +130,12 @@ function refresh(): void {
   since = trackSince(since, list, now);
   for (const ws of list) if (!ws.backend && !repoOf.has(ws.root)) void resolveRepo(ws.root);
   cards = list.map((raw) => {
-    const repo = repoOf.get(raw.root);
-    const ws = repo ? { ...raw, projectPath: repo } : raw;
+    const git = repoOf.get(raw.root);
+    const ws = {
+      ...raw,
+      ...(git?.repo ? { projectPath: git.repo } : {}),
+      ...(git?.remote ? { remote: git.remote } : {}),
+    };
     const key = cardKey(ws);
     let question: string | null = null;
     if (effectiveState(ws) === "blocked") {
@@ -146,9 +153,21 @@ function refresh(): void {
  *  every worktree of a repo lands in the same Projects group. */
 async function resolveRepo(root: string): Promise<void> {
   repoOf.set(root, null);
+  const git = (...args: string[]) => editor.spawnHostProcess("git", ["-C", root, ...args]);
   try {
-    const r = await editor.spawnHostProcess("git", ["-C", root, "rev-parse", "--path-format=absolute", "--git-common-dir"]);
-    if (r.exit_code === 0) repoOf.set(root, repoFromCommonDir(r.stdout));
+    const dir = await git("rev-parse", "--path-format=absolute", "--git-common-dir");
+    if (dir.exit_code !== 0) return;
+    // `origin` when there is one, else the first remote: clones of one
+    // project share it wherever they sit on disk.
+    let url = await git("remote", "get-url", "origin");
+    if (url.exit_code !== 0) {
+      const first = (await git("remote")).stdout.split("\n")[0]?.trim();
+      url = first ? await git("remote", "get-url", first) : url;
+    }
+    repoOf.set(root, {
+      repo: repoFromCommonDir(dir.stdout),
+      remote: url.exit_code === 0 ? normalizeRemote(url.stdout) : null,
+    });
   } catch {
     // Not a git checkout, or no git: the Orchestrator's projectPath stands.
   }
@@ -225,11 +244,30 @@ function render(): void {
   panel.update(spec);
 }
 
-/** Put the cursor on `card` in the tree that shows it, and focus that tree. */
+/** The workspace the cursor is on, whichever lens shows it: what a lens
+ *  switch keeps the cursor on. Set from every `select` the host reports
+ *  and by `reveal`. */
+let current: string | null = null;
+
+/** Put the cursor on `card` in the tree that shows it, unfold the group it
+ *  sits in, and focus that tree — the host scrolls the selection into view. */
 function reveal(card: Card): void {
   if (!panel) return;
   const tree = saved.lens === "board" ? columnKey(columnOf(card)) : listKey(saved.lens);
   selected.set(tree, card.key);
+  current = card.key;
+  if (saved.lens !== "board") {
+    const groups = groupsFor(saved.lens, cards, folders);
+    const home = groups.find((g) => g.cards.some((c) => c.key === card.key));
+    if (home && collapsed.delete(home.id)) {
+      render();
+      panel.mutate({
+        kind: "setExpandedKeys",
+        widgetKey: tree,
+        keys: groups.filter((g) => !collapsed.has(g.id)).map((g) => groupItemKey(g.id)),
+      });
+    }
+  }
   render();
   const index = itemKeysByTree.get(tree)?.indexOf(cardItemKey(card.key)) ?? -1;
   if (index >= 0) panel.setSelectedIndex(tree, index);
@@ -288,7 +326,10 @@ function setLens(lens: LensId): void {
   saved.lens = lens;
   save();
   render();
-  focusLensStart();
+  // The same workspace stays under the cursor, wherever this lens files it.
+  const keep = cardByKey(current);
+  if (keep) reveal(keep);
+  else focusLensStart();
 }
 
 function cycleLens(delta: number): void {
@@ -388,12 +429,22 @@ editor.on("widget_event", (e) => {
     if (e.event_type === "activate") setLens(e.widget_key.slice(LENS_KEY_PREFIX.length) as LensId);
     return;
   }
+  // Focus moving into another tree (←/→ between the Board's columns) moves
+  // the cursor without a `select`: the card it lands on is current now.
+  if (e.event_type === "focus" && isTree(e.focus_key)) {
+    const landed = selected.get(e.focus_key) ??
+      cardKeyOf(itemKeysByTree.get(e.focus_key)?.find((k) => cardKeyOf(k) !== null) ?? "");
+    if (landed) current = landed;
+  }
   if (!isTree(e.widget_key)) return;
   const item = eventItem(e.widget_key, payload);
   switch (e.event_type) {
     case "select": {
       const key = item && cardKeyOf(item);
-      if (key) selected.set(e.widget_key, key);
+      if (key) {
+        selected.set(e.widget_key, key);
+        current = key;
+      }
       return;
     }
     case "activate": {
@@ -442,6 +493,11 @@ editor.defineMode(
     ["4", "workboard_lens_4"],
     ["<", "workboard_pin_left"],
     [">", "workboard_pin_right"],
+    // Shift+←/→ move the card under the cursor, on the Board's columns only:
+    // there a card's text never pans (the tree passes the chord on), and in
+    // the list lenses Shift+←/→ keep panning a long row.
+    ["S-Left", "workboard_pin_left", `on:${COLUMN_KEYS.join(",")}`],
+    ["S-Right", "workboard_pin_right", `on:${COLUMN_KEYS.join(",")}`],
     ["p", "workboard_unpin"],
     ["n", "workboard_select_next_waiting"],
     ["q", "workboard_close"],

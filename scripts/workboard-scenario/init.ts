@@ -94,6 +94,49 @@ async function churn(): Promise<void> {
 }
 registerHandler("scenario_churn", () => void churn());
 editor.registerCommand("Scenario: Churn", "Rename, archive, delete and create under an open board", "scenario_churn");
+// Many more workspaces — about thirty, across the repos, plus the second
+// clone of api opened as itself — so lists scroll, Board columns overflow, and the Projects lens has
+// two clones of one remote to group. Agents mix asking, working, finishing
+// and idle; a third of them are filed in folders.
+async function many(): Promise<void> {
+  const orch = editor.getPluginApi("orchestrator") as any;
+  const repos = ["api", "web", "docs"];
+  const kinds = [
+    (i: number) => ask(`Apply migration ${i}? [y/n]`, 3 + (i % 4)),
+    (i: number) => loop(`task-${i} step`, 0.5 + (i % 3) * 0.3),
+    (i: number) => sh(`echo working on ${i}; sleep ${1 + (i % 3)}; echo change >> README.md; echo Done ${i}.; sleep 100000`),
+    () => "",
+  ];
+  const folder = orch.createFolder("Sprint 42");
+  const log: string[] = [];
+  for (let i = 1; i <= 30; i++) {
+    const repo = repos[i % repos.length];
+    const agent = kinds[i % kinds.length](i);
+    try {
+      const name = `${repo}-task-${String(i).padStart(2, "0")}`;
+      const ids = await orch.newWorkspace({
+        path: `${R}/${repo}`, name, newBranch: name,
+        teach: false, wait: false, ...(agent ? { agent } : {}),
+      });
+      if (i % 3 === 0) orch.moveWorkspace(ids.workspaceId, folder);
+      log.push(`ok ${i}`);
+    } catch (e) {
+      log.push(`FAIL ${i}: ${e}`);
+    }
+  }
+  // The second clone, opened as itself: same remote as api, other directory.
+  try {
+    await orch.newWorkspace({ path: `${R}/api-clone`, name: "api-clone", worktree: false, teach: false, wait: false,
+      agent: loop("clone work", 0.9) });
+    log.push("ok api-clone");
+  } catch (e) {
+    log.push(`FAIL api-clone: ${e}`);
+  }
+  editor.writeFile(`${R}/../many.log`, log.join("\n") + "\n");
+  editor.setStatus(`scenario: ${log.filter((l) => l.startsWith("ok")).length} more workspaces`);
+}
+registerHandler("scenario_many", () => void many());
+editor.registerCommand("Scenario: Many", "Create about thirty more workspaces", "scenario_many");
 registerHandler("scenario_dump", () => {
   const orch = editor.getPluginApi("orchestrator") as any;
   const ws = orch.listWorkspaces();

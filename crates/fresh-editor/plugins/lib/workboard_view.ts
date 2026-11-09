@@ -10,8 +10,8 @@
  *
  *   * the list lenses are one `tree` drawn as a table — group headings span
  *     the row, cards are cells the host fits to the panel;
- *   * the Board is a `row` of `labeledSection` columns that split the width
- *     between them, each holding a `tree` of two-line cards;
+ *   * the Board is a `row` of columns (a heading over a tree) that split the width
+ *     between them, its cards bordered as the dock draws them;
  *   * the lens switch is a row of buttons, the counts a styled label.
  */
 
@@ -22,8 +22,8 @@ import {
   flexSpacer,
   hintBar,
   label,
-  labeledSection,
   row,
+  spacer,
   styledRow,
   tree,
   treeNode,
@@ -230,8 +230,7 @@ export function listSpec(lens: LensId, groups: readonly Group[], input: ViewInpu
   });
 }
 
-/** One Board column: a section titled with its name and count, holding a
- *  tree of two-line cards. */
+/** One Board column: its name and count over a tree of two-line cards. */
 export function columnSpec(group: Group, input: ViewInput): WidgetSpec {
   const key = columnKey(group.id);
   const chosen = input.selected.get(key);
@@ -258,9 +257,14 @@ export function columnSpec(group: Group, input: ViewInput): WidgetSpec {
     )
   );
   const index = group.cards.findIndex((c) => c.key === chosen);
-  return labeledSection({
-    label: `${group.label} ${group.cards.length}`,
-    child: tree({
+  // A heading over the cards, no frame: the cards are the boxes, and a
+  // frame around each column on top of them was a border too many.
+  return col(
+    label([
+      { text: group.label, style: { bold: true } },
+      { text: `  ${group.cards.length}`, style: { fg: DIM } },
+    ]),
+    tree({
       key,
       nodes,
       itemKeys: group.cards.map((c) => cardItemKey(c.key)),
@@ -271,11 +275,12 @@ export function columnSpec(group: Group, input: ViewInput): WidgetSpec {
       cardBorders: true,
       indentCols: 1,
     }),
-  });
+  );
 }
 
 export function boardSpec(groups: readonly Group[], input: ViewInput): WidgetSpec {
-  return row(...groups.map((g) => columnSpec(g, input)));
+  // A gutter between columns stands in for the frames that used to part them.
+  return row(...groups.flatMap((g, i) => (i === 0 ? [columnSpec(g, input)] : [spacer(2), columnSpec(g, input)])));
 }
 
 export function hints(lens: LensId): HintEntry[] {
@@ -284,7 +289,7 @@ export function hints(lens: LensId): HintEntry[] {
     { keys: "n", label: "next waiting" },
     { keys: "Tab/1-4", label: "lens" },
   ];
-  if (lens === "board") out.push({ keys: "< >", label: "pin" }, { keys: "p", label: "unpin" });
+  if (lens === "board") out.push({ keys: "S-←/→", label: "move" }, { keys: "p", label: "unpin" });
   if (lens === "folders") out.push({ keys: "drag", label: "file in folder" });
   out.push({ keys: "Esc", label: "close" });
   return out;

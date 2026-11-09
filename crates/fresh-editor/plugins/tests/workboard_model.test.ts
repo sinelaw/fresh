@@ -10,6 +10,7 @@ import {
   formatAge,
   inboxGroups,
   nextAttention,
+  normalizeRemote,
   normalizeSaved,
   projectGroups,
   projectLabel,
@@ -91,6 +92,27 @@ eq(repoFromCommonDir("/srv/api.git\n"), "/srv/api.git", "repo: a bare repo is it
 eq(repoFromCommonDir(".git\n"), null, "repo: a relative answer is not trusted");
 eq(repoFromCommonDir(""), null, "repo: no answer, no repo");
 eq(repoFromCommonDir("C:\\code\\api\\.git"), "C:\\code\\api", "repo: Windows paths");
+
+// ── Projects by remote ─────────────────────────────────────────────────────
+
+eq(
+  [
+    "git@github.com:Acme/api.git",
+    "https://github.com/Acme/api",
+    "ssh://git@GitHub.com:22/Acme/api.git",
+    "https://user@github.com/Acme/api.git/",
+  ].map(normalizeRemote),
+  ["github.com/Acme/api", "github.com/Acme/api", "github.com/Acme/api", "github.com/Acme/api"],
+  "remote: ssh, scp-style and https forms of one repo are one project",
+);
+eq(normalizeRemote("/srv/git/api.git"), "/srv/git/api", "remote: a local path remote stays a path");
+eq(normalizeRemote(""), null, "remote: none");
+const cloneA = card(ws("feature-a", "working", { projectPath: "/home/me/api", remote: "github.com/acme/api" }));
+const cloneB = card(ws("feature-b", "idle", { projectPath: "/tmp/api-copy", remote: "github.com/acme/api" }));
+const other = card(ws("x", "idle", { projectPath: "/home/me/api", remote: "github.com/other/api" }));
+const local = card(ws("y", "idle", { projectPath: "/home/me/notes" }));
+const byRemote = projectGroups([cloneA, cloneB, other, local]);
+eq(byRemote.map((g) => [g.label, g.cards.length]), [["acme/api", 2], ["notes", 1], ["other/api", 1]], "projects: clones share a remote, same-named projects keep their owner");
 
 // ── Folders ────────────────────────────────────────────────────────────────
 

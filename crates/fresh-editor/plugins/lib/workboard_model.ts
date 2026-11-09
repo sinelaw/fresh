@@ -30,6 +30,10 @@ export interface WorkspaceLike {
   git?: { branch?: string; dirty?: number; ahead?: number; behind?: number };
   backend?: string;
   pending?: { phase: "creating" | "error" | "paused"; message: string };
+  /** The repo's remote, normalized (`normalizeRemote`), when it has one:
+   *  what makes two clones of one project the same project. Filled in by
+   *  the Workboard from git, not by the Orchestrator. */
+  remote?: string;
 }
 
 /** The part of the Orchestrator's `FolderSummary` this needs. */
@@ -183,14 +187,44 @@ export function projectLabel(path: string, all: readonly string[]): string {
   return parent ? `${parent}/${own}` : own;
 }
 
-/** Projects: one group per repo, alphabetical, each sorted by urgency. */
+/** A git remote URL as an identity: scheme, user, port, `.git` and case of
+ *  the host dropped, so `git@github.com:o/r.git`, `ssh://git@github.com/o/r`
+ *  and `https://github.com/o/r` are one project. `null` for a URL with no
+ *  host and path to compare (a local path remote stays a path). */
+export function normalizeRemote(url: string): string | null {
+  let u = url.trim();
+  if (u === "") return null;
+  let host = "";
+  let path = "";
+  const scheme = u.match(/^[a-z][a-z0-9+.-]*:\/\/(?:[^@/]*@)?([^/:]+)(?::\d+)?\/(.*)$/i);
+  const scp = u.match(/^(?:[^@/]*@)?([^/:]+):(?!\/)(.*)$/);
+  if (scheme) [host, path] = [scheme[1], scheme[2]];
+  else if (scp && !/^[A-Za-z]$/.test(scp[1])) [host, path] = [scp[1], scp[2]];
+  else return u.replace(/\.git\/?$/, "").replace(/\/+$/, "");
+  path = path.replace(/\/+$/, "").replace(/\.git$/, "").replace(/^\/+/, "");
+  if (path === "") return null;
+  return `${host.toLowerCase()}/${path}`;
+}
+
+/** What a workspace's project is, for grouping: its remote when it has
+ *  one — clones of one project anywhere on disk are one project — else the
+ *  repository directory. */
+export function projectKey(ws: WorkspaceLike): string {
+  return ws.remote ? `remote:${ws.remote}` : `path:${ws.projectPath || ws.root}`;
+}
+
+/** Projects: one group per project, alphabetical, each sorted by urgency.
+ *  A project with a remote is named for it (`owner/repo`, or just `repo`
+ *  when no other project shares the name); one without, for its directory. */
 export function projectGroups(cards: readonly Card[]): Group[] {
-  const paths = [...new Set(cards.map((c) => c.ws.projectPath || c.ws.root))];
-  const groups = paths.map((p) => ({
-    id: `project:${p}`,
-    label: projectLabel(p, paths),
+  const keys = [...new Set(cards.map((c) => projectKey(c.ws)))];
+  const pathOf = (k: string) => k.replace(/^(remote|path):/, "");
+  const all = keys.map(pathOf);
+  const groups = keys.map((k) => ({
+    id: `project:${k}`,
+    label: projectLabel(pathOf(k), all),
     tone: null,
-    cards: cards.filter((c) => (c.ws.projectPath || c.ws.root) === p).sort(byUrgency),
+    cards: cards.filter((c) => projectKey(c.ws) === k).sort(byUrgency),
   }));
   return groups.sort((a, b) => a.label.localeCompare(b.label));
 }

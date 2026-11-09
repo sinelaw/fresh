@@ -105,8 +105,13 @@ eq(table.nodes.some((x: Any) => x.draggable), false, "inbox: cards are not dragg
 // ── The Board: a row of sections, a card tree in each ──────────────────────
 
 const board = panelSpec(input({ lens: "board" }));
-const sections = all(board, "labeledSection");
-eq(sections.map((s: Any) => s.label), ["Backlog 1", "Needs me 1", "Working 1", "Review 1", "Shipped 0"], "board: five columns with counts");
+eq(all(board, "labeledSection").length, 0, "board: no frame around a column (the cards are the boxes)");
+const headings = all(board, "label").filter((l: Any) => l.segments?.length === 2 && /^  \d+$/.test(l.segments[1].text));
+eq(
+  headings.map((l: Any) => `${l.segments[0].text}${l.segments[1].text}`),
+  ["Backlog  1", "Needs me  1", "Working  1", "Review  1", "Shipped  0"],
+  "board: five columns, each headed by its name and count",
+);
 const trees = all(board, "tree");
 eq(trees.map((t: Any) => t.key), ["backlog", "needs", "working", "review", "shipped"].map(columnKey), "board: one tree per column");
 eq(trees.every((t: Any) => t.cardBorders && t.itemHeight === 2), true, "board: two-line bordered cards");

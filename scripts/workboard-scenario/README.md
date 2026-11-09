@@ -31,6 +31,11 @@ It also files workspaces into nested dock folders (Backend › Payments,
 Frontend) and leaves an empty one (Someday), so the Folders lens has
 something to show and to drag between.
 
+"Scenario: Many" adds about thirty more workspaces across the repos and one
+on a second clone of `api` (same remote, so the Projects lens groups both), with
+a mix of asking, working, finishing and idle agents, a third of them in a
+"Sprint 42" folder — enough to scroll every lens and overflow Board columns.
+
 "Scenario: Churn" — run it, then open the board within three seconds —
 renames `lsp-cache`, archives `old-spike`, deletes `crashed` and creates a
 `hotfix` agent that asks a question, a step every 1.5 s, all under the open
