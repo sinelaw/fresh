@@ -277,6 +277,16 @@ fn the_gutter_shade_comes_only_with_line_numbers() {
         "no shade beside composed text:\n{}",
         h.screen_to_string()
     );
+
+    // With the terminal's own background under the text, a shaded gutter
+    // would be an opaque band beside it: the gutter takes the terminal's too.
+    let s = open_file(120, theme, |c| c.editor.use_terminal_bg = true, "doc.md");
+    assert_eq!(
+        shaded_cells(&s.harness),
+        0,
+        "no shade on the terminal's background:\n{}",
+        s.harness.screen_to_string()
+    );
 }
 
 /// Without the separator the gutter is two columns narrower, and the wrap

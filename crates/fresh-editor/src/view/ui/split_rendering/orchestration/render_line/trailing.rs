@@ -57,6 +57,9 @@ pub(super) struct PostRowContext<'a> {
     pub last_gutter_num: Option<usize>,
     pub visible_line_count: usize,
     pub trailing_empty_line_rendered: bool,
+    /// Whether the pane hands its background to the terminal; see
+    /// `LeftMarginContext::terminal_bg`.
+    pub terminal_bg: bool,
 }
 
 /// Render the implicit empty line that sits after the buffer's final
@@ -166,7 +169,7 @@ fn push_left_margin(
     is_cursor_line: bool,
     highlighted: bool,
 ) {
-    let paint = GutterPaint::new(ctx.theme, ctx.show_line_numbers);
+    let paint = GutterPaint::new(ctx.theme, ctx.show_line_numbers, ctx.terminal_bg);
 
     // Diagnostic indicator column.
     if ctx
