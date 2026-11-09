@@ -4101,8 +4101,9 @@ interface EditorConfig {
 		*/
 		show_tilde?: boolean;
 		/**
-		* Use Nerd Font icons in the UI (e.g. settings category icons). Only turn on
-		* if your terminal uses a Nerd Font, or icons show as `?` or boxes. Default: false
+		* Use Nerd Font icons in the UI (e.g. settings category icons, and the
+		* `chrome.nerd_font` glyphs a theme provides). Only turn on if your
+		* terminal uses a Nerd Font, or icons show as `?` or boxes. Default: false
 		*
 		* Default: `false`
 		*/
