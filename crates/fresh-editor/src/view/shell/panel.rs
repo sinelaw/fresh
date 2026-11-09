@@ -1134,6 +1134,61 @@ mod tests {
         );
     }
 
+    /// **The fill reaches trees inside framed columns** — a board: a row of
+    /// labelled sections, each holding a tree left to size itself. A frame
+    /// or a row that hugged its content handed such a tree no rows; one
+    /// around a filler fills, so every column reaches down to the hints.
+    #[test]
+    fn a_filling_panel_reaches_trees_in_a_row_of_sections() {
+        let column = |label: &str, item: &str| {
+            serde_json::json!({
+                "kind": "labeledSection",
+                "label": label,
+                "child": {
+                    "kind": "tree",
+                    "key": format!("col-{label}"),
+                    "nodes": [{ "text": { "text": item }, "depth": 0, "hasChildren": false }],
+                    "itemKeys": [item],
+                    "selectedIndex": 0,
+                    "expandedKeys": [],
+                    "checkable": false,
+                    "itemHeight": 1,
+                    "cardBorders": false,
+                    "indentCols": 2,
+                    "toggleOnClick": false
+                }
+            })
+        };
+        let spec: fresh_core::api::WidgetSpec = serde_json::from_value(serde_json::json!({
+            "kind": "col",
+            "children": [
+                { "kind": "row", "children": [column("Todo", "first-card"), column("Done", "other-card")], "wrap": false, "justifyEnd": false },
+                { "kind": "hintBar", "entries": [{ "keys": "Esc", "label": "close" }] }
+            ]
+        }))
+        .expect("a valid spec");
+        let mut p = panel(Spot::Centered { width_pct: 80 }, interior_of(spec));
+        p.fill_height_pct = Some(100);
+        let ui = laid_out(Some(p));
+        let box_rect = rect(&ui, &key()).expect("a box");
+        let row_of = |needle: &str| {
+            ui.spec()
+                .items
+                .iter()
+                .find(|i| format!("{:?}", i.draw).contains(needle))
+                .map(|i| i.rect.y)
+        };
+        assert!(
+            row_of("first-card").is_some() && row_of("other-card").is_some(),
+            "both columns' cards are drawn"
+        );
+        assert_eq!(
+            row_of("close"),
+            Some((box_rect.y + box_rect.height - 2) as i32),
+            "the hints stay on the last row inside the ring"
+        );
+    }
+
     /// And an anchored popup, including both clamps — a cell near the right
     /// edge and one near the bottom, where the box would otherwise hang off.
     #[test]

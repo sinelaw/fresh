@@ -799,6 +799,14 @@ fn keyed(node: Node<UiMsg>, key: Option<fresh_ui::Key>) -> Node<UiMsg> {
     }
 }
 
+/// Whether `n` takes the rows its container leaves (`Sizing::Flex` down) —
+/// an auto-sized list or tree, or a box around one. A container that hugs
+/// its content has no leftover to give such a child, so a frame or a row
+/// holding one fills too, and the height reaches it.
+fn fills_down(n: &Node<UiMsg>) -> bool {
+    matches!(n.h, Sizing::Flex(_))
+}
+
 /// **A tree's `visibleRows` is a window, not a height** — and a list's is a
 /// height.
 ///
@@ -1931,23 +1939,29 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 reveal: cx.reveal.clone(),
                 ..*cx
             };
-            let r = row().children(
-                children
-                    .iter()
-                    .zip(widths)
-                    .map(|(c, w)| {
-                        let w = (w as u16).max(1);
-                        let n = node_in(c, w, &inner, site.across());
-                        match crate::widgets::kinds::containers::predicts_block(c) {
-                            true => n.w(Sizing::Cells(w)),
-                            // A field that fills its row takes what the
-                            // row's other children leave (R5).
-                            false if fills_row(c) => n.w(Sizing::Flex(1)),
-                            false => n,
-                        }
-                    })
-                    .collect::<Vec<_>>(),
-            );
+            let kids = children
+                .iter()
+                .zip(widths)
+                .map(|(c, w)| {
+                    let w = (w as u16).max(1);
+                    let n = node_in(c, w, &inner, site.across());
+                    match crate::widgets::kinds::containers::predicts_block(c) {
+                        true => n.w(Sizing::Cells(w)),
+                        // A field that fills its row takes what the
+                        // row's other children leave (R5).
+                        false if fills_row(c) => n.w(Sizing::Flex(1)),
+                        false => n,
+                    }
+                })
+                .collect::<Vec<_>>();
+            // A row holding a block that fills down (a board of columns, each
+            // an auto-sized tree) fills down too, or its columns get no rows.
+            let fills = kids.iter().any(fills_down);
+            let r = row().children(kids);
+            let r = match fills {
+                true => r.h(Sizing::Flex(1)),
+                false => r,
+            };
             let r = match &band {
                 Some(ink) => r.theme(ink.to_string()),
                 None => r,
@@ -2462,20 +2476,30 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             // when it widens a completion popup back out by four. Two of those
             // columns are on this side, so an overlay the child floats starts
             // two left of where the child does.
+            let inner = node_in(
+                child,
+                width.saturating_sub(4).max(1),
+                cx,
+                Site {
+                    axis: Axis::Down,
+                    escape: 2,
+                    ..site
+                },
+            );
+            // **A frame around a filler fills.** A child that takes the rows
+            // left over (an auto-sized tree) inside a box that hugs it gets
+            // none: the box asks for its content, and the content's answer is
+            // "whatever I am given". See `fills_down`.
+            let fills = fills_down(&inner);
             let framed = col()
                 .theme(ring.clone())
                 .border_style(corners)
                 .pad(1, 0)
-                .child(node_in(
-                    child,
-                    width.saturating_sub(4).max(1),
-                    cx,
-                    Site {
-                        axis: Axis::Down,
-                        escape: 2,
-                        ..site
-                    },
-                ));
+                .child(inner);
+            let framed = match fills {
+                true => framed.h(Sizing::Flex(1)),
+                false => framed,
+            };
             match label.is_empty() {
                 true => framed,
                 // The legend rides the top edge, the way every other titled
@@ -2486,16 +2510,22 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 // stack's children start anyway — made the legend column ask
                 // for every row left in the form, and the box it labels is
                 // three.
-                false => fresh_ui::stack().children([
-                    framed,
-                    col()
-                        .pointer_mode(fresh_ui::PointerMode::Transparent)
-                        .h(Sizing::Cells(1))
-                        .children([row().h(Sizing::Cells(1)).children([
-                            row().w(Sizing::Cells(2)),
-                            text_runs([Run::themed(format!(" {label} "), ring)]),
-                        ])]),
-                ]),
+                false => {
+                    let labelled = fresh_ui::stack().children([
+                        framed,
+                        col()
+                            .pointer_mode(fresh_ui::PointerMode::Transparent)
+                            .h(Sizing::Cells(1))
+                            .children([row().h(Sizing::Cells(1)).children([
+                                row().w(Sizing::Cells(2)),
+                                text_runs([Run::themed(format!(" {label} "), ring)]),
+                            ])]),
+                    ]);
+                    match fills {
+                        true => labelled.h(Sizing::Flex(1)),
+                        false => labelled,
+                    }
+                }
             }
         }
         // **The first kind whose state the tree owns** (C.2), and the reason
@@ -2788,6 +2818,18 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             let (visible, expanded) = cx
                 .projections
                 .visible(&tree_key, nodes, item_keys, expanded);
+            // **One marked card per panel.** Outside the dock — where the
+            // selected card is the open tab, there whatever has focus — a
+            // card tree whose panel has its focus on *another* control does
+            // not mark its cursor. A panel of several card trees side by side
+            // (a board of columns) otherwise wore a heavy frame in every
+            // column, and which one the keys would act on was anyone's guess.
+            // With nothing focused at all, the selection still shows.
+            let focus_elsewhere = !cx.focus_key.is_empty() && !cx.is_focused(key.as_deref());
+            let sel_abs = match cx.slot != Slot::Dock && focus_elsewhere {
+                true => -1,
+                false => sel_abs,
+            };
             let props = CardTreeRows {
                 nodes: Same(nodes.clone()),
                 keys: Same(item_keys.clone()),
