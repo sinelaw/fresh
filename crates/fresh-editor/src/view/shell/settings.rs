@@ -961,6 +961,7 @@ fn control(c: &Card, band: &str) -> Node<UiMsg> {
             hovered_popup_row: hovered_popup_row.clone(),
             reveal: fresh_ui::behavior::anchor::Anchor::new(),
             avail_height: None,
+            fill: false,
             scrollbar_reveal: None,
             surface: surface.clone(),
             // As in `entry.rs`: a settings control is never a markdown

@@ -111,10 +111,23 @@ export function urgency(state: AgentState): number {
   }
 }
 
-/** The state a card is shown in. A workspace still being created counts as
- *  working: something is happening and it is not waiting on anyone. */
+/** The state a card is shown in. A workspace still being created counts
+ *  as working: something is happening and nobody is waiting on it. One
+ *  whose create failed counts as needing you: it waits for a retry or a
+ *  dismiss, and nothing else will move it. One restored but not resumed is
+ *  parked. The Orchestrator reports a pending row's agent state as idle, so
+ *  the kind and phase decide, not the agent state. */
 export function effectiveState(ws: WorkspaceLike): AgentState {
-  if (ws.kind === "pending" && ws.agentState === "unknown") return "working";
+  if (ws.kind === "pending") {
+    switch (ws.pending?.phase) {
+      case "error":
+        return "blocked";
+      case "paused":
+        return "idle";
+      default:
+        return "working";
+    }
+  }
   return ws.agentState;
 }
 
@@ -177,33 +190,66 @@ function basename(path: string): string {
   return trimmed.slice(Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\")) + 1) || trimmed;
 }
 
-/** A project's short name: its directory's name, with the parent directory
- *  added when two projects would otherwise read the same. */
+/** A project's short name: the last segment of its path (a directory, or
+ *  a remote's `host/owner/repo`), with as many segments before it as it
+ *  takes to tell it from every other project's — so `api`, then
+ *  `acme/api` beside `other/api`, then `github.com/acme/api` beside
+ *  `gitlab.com/acme/api`. */
 export function projectLabel(path: string, all: readonly string[]): string {
-  const own = basename(path);
-  const clash = all.some((p) => p !== path && basename(p) === own);
-  if (!clash) return own;
-  const parent = basename(path.replace(/[\\/]+$/, "").replace(/[\\/][^\\/]*$/, ""));
-  return parent ? `${parent}/${own}` : own;
+  const parts = (p: string) => p.replace(/[\\/]+$/, "").split(/[\\/]+/).filter(Boolean);
+  const own = parts(path);
+  const others = all.filter((p) => p !== path).map(parts);
+  for (let n = 1; n <= own.length; n++) {
+    const tail = own.slice(-n).join("/");
+    if (!others.some((o) => o.slice(-n).join("/") === tail)) return tail;
+  }
+  return own.join("/") || path;
 }
 
-/** A git remote URL as an identity: scheme, user, port, `.git` and case of
- *  the host dropped, so `git@github.com:o/r.git`, `ssh://git@github.com/o/r`
- *  and `https://github.com/o/r` are one project. `null` for a URL with no
- *  host and path to compare (a local path remote stays a path). */
-export function normalizeRemote(url: string): string | null {
-  let u = url.trim();
+/** Hosts whose paths are case-insensitive: `Acme/Api` and `acme/api` there
+ *  are one repository. */
+const CASELESS_HOSTS = new Set(["github.com", "gitlab.com", "bitbucket.org"]);
+
+/** `path` with `.` and `..` segments resolved (POSIX or Windows separators). */
+function resolvePath(path: string): string {
+  const sep = path.includes("\\") && !path.includes("/") ? "\\" : "/";
+  const lead = path.match(/^([A-Za-z]:)?[\\/]/)?.[0] ?? "";
+  const out: string[] = [];
+  for (const part of path.slice(lead.length).split(/[\\/]+/)) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") out.pop();
+    else out.push(part);
+  }
+  return lead + out.join(sep);
+}
+
+/** A git remote URL as an identity: scheme, user, port, `.git` and the
+ *  host's case dropped, so `git@github.com:o/r.git`, `ssh://git@github.com/o/r`
+ *  and `https://github.com/o/r` are one project. A path remote is a path:
+ *  a relative one (`../api.git`) is resolved against `base`, the checkout it
+ *  was read in, so two unrelated repos that both say `../api.git` stay
+ *  apart. `null` when there is nothing to compare. */
+export function normalizeRemote(url: string, base?: string): string | null {
+  const u = url.trim();
   if (u === "") return null;
   let host = "";
   let path = "";
   const scheme = u.match(/^[a-z][a-z0-9+.-]*:\/\/(?:[^@/]*@)?([^/:]+)(?::\d+)?\/(.*)$/i);
   const scp = u.match(/^(?:[^@/]*@)?([^/:]+):(?!\/)(.*)$/);
-  if (scheme) [host, path] = [scheme[1], scheme[2]];
+  if (/^file:\/\//i.test(u)) {
+    return resolvePath(u.replace(/^file:\/\//i, "")).replace(/\.git$/, "");
+  } else if (scheme) [host, path] = [scheme[1], scheme[2]];
   else if (scp && !/^[A-Za-z]$/.test(scp[1])) [host, path] = [scp[1], scp[2]];
-  else return u.replace(/\.git\/?$/, "").replace(/\/+$/, "");
+  else {
+    const absolute = /^([A-Za-z]:)?[\\/]/.test(u);
+    const full = absolute || !base ? u : `${base.replace(/[\\/]+$/, "")}/${u}`;
+    return resolvePath(full).replace(/\.git$/, "") || null;
+  }
+  host = host.toLowerCase();
   path = path.replace(/\/+$/, "").replace(/\.git$/, "").replace(/^\/+/, "");
+  if (CASELESS_HOSTS.has(host)) path = path.toLowerCase();
   if (path === "") return null;
-  return `${host.toLowerCase()}/${path}`;
+  return `${host}/${path}`;
 }
 
 /** What a workspace's project is, for grouping: its remote when it has

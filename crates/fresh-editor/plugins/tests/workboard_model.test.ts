@@ -71,11 +71,14 @@ eq(inbox.map((g) => g.id), ["needs", "review", "working", "parked"], "inbox: sec
 eq(names(inbox[0].cards), ["login-fix", "rate-limit"], "inbox: the agent that has waited longest comes first");
 eq(names(inbox[2].cards), ["lsp-cache", "billing-ui"], "inbox: working keeps the dock's order");
 eq(inboxGroups([lsp]).map((g) => g.id), ["working"], "inbox: empty sections are left out");
-eq(
-  inboxGroups([card(ws("new", "unknown", { kind: "pending" }))]).map((g) => g.id),
-  ["working"],
-  "inbox: a workspace still being created counts as working",
-);
+// The Orchestrator reports a pending row's agent state as "idle"; the phase
+// is what says where it stands.
+const pending = (phase: "creating" | "error" | "paused") =>
+  card(ws(`p-${phase}`, "idle", { kind: "pending", pending: { phase, message: "x" } }));
+eq(inboxGroups([pending("creating")]).map((g) => g.id), ["working"], "inbox: a workspace being created counts as working");
+eq(inboxGroups([pending("error")]).map((g) => g.id), ["needs"], "inbox: a failed create needs you (retry or dismiss)");
+eq(inboxGroups([pending("paused")]).map((g) => g.id), ["parked"], "inbox: a paused create is parked");
+eq(autoColumn(pending("creating").ws), "working", "board: a create in flight is Working");
 
 // ── Projects ───────────────────────────────────────────────────────────────
 
@@ -85,6 +88,11 @@ const projects = projectGroups([rate, web1, tabs, web2]);
 eq(projects.map((g) => g.label), ["api", "web"], "projects: one group per repo, alphabetical");
 eq(names(projects[1].cards), ["w2", "w1"], "projects: each group sorted by urgency");
 eq(projectLabel("/a/app", ["/a/app", "/b/app", "/c/web"]), "a/app", "projects: a clashing name gets its parent");
+eq(
+  projectLabel("github.com/acme/api", ["github.com/acme/api", "gitlab.com/acme/api"]),
+  "github.com/acme/api",
+  "projects: the host tells same-named projects apart when the owner does not",
+);
 eq(projectLabel("/c/web", ["/a/app", "/b/app", "/c/web"]), "web", "projects: a unique name stays short");
 
 eq(repoFromCommonDir("/home/me/api/.git\n"), "/home/me/api", "repo: a worktree's common dir names its repo");
@@ -102,10 +110,15 @@ eq(
     "ssh://git@GitHub.com:22/Acme/api.git",
     "https://user@github.com/Acme/api.git/",
   ].map(normalizeRemote),
-  ["github.com/Acme/api", "github.com/Acme/api", "github.com/Acme/api", "github.com/Acme/api"],
+  ["github.com/acme/api", "github.com/acme/api", "github.com/acme/api", "github.com/acme/api"],
   "remote: ssh, scp-style and https forms of one repo are one project",
 );
 eq(normalizeRemote("/srv/git/api.git"), "/srv/git/api", "remote: a local path remote stays a path");
+eq(normalizeRemote("../api.git", "/home/me/web"), "/home/me/api", "remote: a relative remote resolves against the checkout");
+eq(normalizeRemote("../api.git", "/srv/other/x"), "/srv/other/api", "remote: the same relative remote elsewhere is another project");
+eq(normalizeRemote("file:///srv/git/api.git"), "/srv/git/api", "remote: file:// is a path");
+eq(normalizeRemote("https://GitHub.com/Acme/Api.git"), "github.com/acme/api", "remote: case does not split a repo on a caseless host");
+eq(normalizeRemote("https://git.example.com/Acme/Api"), "git.example.com/Acme/Api", "remote: elsewhere, path case is kept");
 eq(normalizeRemote(""), null, "remote: none");
 const cloneA = card(ws("feature-a", "working", { projectPath: "/home/me/api", remote: "github.com/acme/api" }));
 const cloneB = card(ws("feature-b", "idle", { projectPath: "/tmp/api-copy", remote: "github.com/acme/api" }));

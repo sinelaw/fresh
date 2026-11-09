@@ -481,6 +481,7 @@ fn toolbar_band(c: &Card) -> Node<UiMsg> {
                 hovered_popup_row: i.hovered_popup_row.clone(),
                 reveal: i.reveal.clone(),
                 avail_height: None,
+                fill: false,
                 scrollbar_reveal: None,
                 surface: super::widgets::panel_surface(),
                 markdown: i.markdown.as_ref().map(|m| m.ctx()),

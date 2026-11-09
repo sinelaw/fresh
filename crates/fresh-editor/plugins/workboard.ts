@@ -48,7 +48,6 @@ import {
   COLUMN_KEYS,
   columnKey,
   groupIdOf,
-  groupItemKey,
   LENS_KEY_PREFIX,
   LIST_KEY_PREFIX,
   listKey,
@@ -91,11 +90,18 @@ let folders: FolderLike[] = [];
 const repoOf = new Map<string, { repo: string | null; remote: string | null } | null>();
 
 let panel: FloatingWidgetPanel | null = null;
-/** Where each tree's cursor is (tree key → card key), as the host reported
- *  it in `select` events. The host owns the selection; this is only so the
- *  pin and jump keys know which card they act on, and so a re-render keeps
- *  the cursor on the same card when cards move between rows. */
+/** Which card each tree's cursor is on (tree key → card key), from the
+ *  host's `select` events and from `reveal`. The host keeps a tree's cursor
+ *  as a row *index*, so when cards move between rows (one starts waiting and
+ *  jumps up the Inbox) the host's cursor stays on the row and lands on
+ *  another card. `syncHost` puts it back on this card after every render;
+ *  it is the card, not the row, that the keys act on. */
 const selected = new Map<string, string>();
+/** What `syncHost` last told the host, per tree: the cursor's row and the
+ *  open groups. A host-side change (an arrow key, a fold) arrives as an
+ *  event and updates these too, so nothing is pushed back needlessly. */
+const pushedRow = new Map<string, number>();
+const pushedOpen = new Map<string, string>();
 /** Groups the user folded, from `expand` events, so a group appearing
  *  later does not reset the others. */
 const collapsed = new Set<string>();
@@ -128,7 +134,7 @@ function refresh(): void {
   }
   const now = Date.now();
   since = trackSince(since, list, now);
-  for (const ws of list) if (!ws.backend && !repoOf.has(ws.root)) void resolveRepo(ws.root);
+  for (const ws of list) if (!ws.backend && ws.kind !== "pending") probeRepo(ws.root);
   cards = list.map((raw) => {
     const git = repoOf.get(raw.root);
     const ws = {
@@ -138,7 +144,9 @@ function refresh(): void {
     };
     const key = cardKey(ws);
     let question: string | null = null;
-    if (effectiveState(ws) === "blocked") {
+    // Only the open board shows questions, and each one costs the
+    // Orchestrator a full listing: the beacon needs none.
+    if (panel && ws.kind !== "pending" && effectiveState(ws) === "blocked") {
       try {
         question = orch.getWorkspace(ws.workspaceId || ws.windowId)?.explain?.question?.trim() || null;
       } catch {
@@ -149,14 +157,60 @@ function refresh(): void {
   });
 }
 
-/** Ask git which repository `root` is a checkout of, once per root, so
- *  every worktree of a repo lands in the same Projects group. */
+/** Git probes waiting to run, and how many are running: a board with a
+ *  hundred workspaces must not start four hundred processes at once. */
+const probeQueue: string[] = [];
+let probesRunning = 0;
+const MAX_PROBES = 4;
+/** When a root whose probe found nothing may be asked again: git may have
+ *  been busy, or the remote added since. */
+const retryAt = new Map<string, number>();
+const RETRY_MS = 60_000;
+
+/** Roots queued or being probed, so a slow probe is not started twice. */
+const probing = new Set<string>();
+
+/** Queue a probe of `root` unless it is in hand, answered for good, or
+ *  waiting out a retry. */
+function probeRepo(root: string): void {
+  if (probing.has(root)) return;
+  const retry = retryAt.get(root);
+  if (retry === undefined ? repoOf.has(root) : retry > Date.now()) return;
+  retryAt.delete(root);
+  probing.add(root);
+  probeQueue.push(root);
+  pumpProbes();
+}
+
+function pumpProbes(): void {
+  while (probesRunning < MAX_PROBES && probeQueue.length > 0) {
+    const root = probeQueue.shift()!;
+    probesRunning++;
+    void resolveRepo(root).finally(() => {
+      probing.delete(root);
+      probesRunning--;
+      pumpProbes();
+    });
+  }
+}
+
+/** Ask git which repository `root` is a checkout of and where its remote
+ *  points, so every worktree of a repo — and every clone of a project —
+ *  lands in the same Projects group. A root git says nothing useful about
+ *  is asked again after `RETRY_MS`. */
 async function resolveRepo(root: string): Promise<void> {
-  repoOf.set(root, null);
   const git = (...args: string[]) => editor.spawnHostProcess("git", ["-C", root, ...args]);
   try {
-    const dir = await git("rev-parse", "--path-format=absolute", "--git-common-dir");
-    if (dir.exit_code !== 0) return;
+    let dir = await git("rev-parse", "--path-format=absolute", "--git-common-dir");
+    // Git before 2.31 has no --path-format: the common dir then comes back
+    // relative to the checkout.
+    if (dir.exit_code !== 0) dir = await git("rev-parse", "--git-common-dir");
+    if (dir.exit_code !== 0) {
+      retryAt.set(root, Date.now() + RETRY_MS);
+      return;
+    }
+    const common = dir.stdout.trim();
+    const absolute = /^([A-Za-z]:)?[\\/]/.test(common) ? common : editor.pathJoin(root, common);
     // `origin` when there is one, else the first remote: clones of one
     // project share it wherever they sit on disk.
     let url = await git("remote", "get-url", "origin");
@@ -164,12 +218,13 @@ async function resolveRepo(root: string): Promise<void> {
       const first = (await git("remote")).stdout.split("\n")[0]?.trim();
       url = first ? await git("remote", "get-url", first) : url;
     }
-    repoOf.set(root, {
-      repo: repoFromCommonDir(dir.stdout),
-      remote: url.exit_code === 0 ? normalizeRemote(url.stdout) : null,
-    });
+    const remote = url.exit_code === 0 ? normalizeRemote(url.stdout, root) : null;
+    repoOf.set(root, { repo: repoFromCommonDir(absolute), remote });
+    // No remote yet is an answer, but one that may change: look again later.
+    if (remote === null) retryAt.set(root, Date.now() + RETRY_MS);
   } catch {
-    // Not a git checkout, or no git: the Orchestrator's projectPath stands.
+    // No git at all: the Orchestrator's projectPath stands. Try again later.
+    retryAt.set(root, Date.now() + RETRY_MS);
   }
 }
 
@@ -242,6 +297,57 @@ function render(): void {
   lastFrame = frame;
   itemKeysByTree = treeItemKeys(spec);
   panel.update(spec);
+  syncHost();
+}
+
+/** Bring each tree's host-side cursor and folds into line with the cards.
+ *
+ *  Once a tree has state of its own the host keeps it and stops reading the
+ *  spec's `selectedIndex` / `expandedKeys` (as `pkg.ts` documents), so a
+ *  re-render alone cannot move them: a cursor stays on its row while the
+ *  cards move under it, and a group that appears later stays folded. Each
+ *  tree's cursor goes back on its card — the first card when its card has
+ *  left the tree — and its folds are pushed when the groups change. */
+function syncHost(): void {
+  if (!panel) return;
+  for (const [tree, keys] of itemKeysByTree) {
+    const list = tree.startsWith(LIST_KEY_PREFIX);
+    if (list) {
+      const open = keys.filter((k) => {
+        const g = groupIdOf(k);
+        return g !== null && !collapsed.has(g);
+      });
+      const sig = open.join("\n");
+      if (pushedOpen.get(tree) !== sig) {
+        panel.mutate({ kind: "setExpandedKeys", widgetKey: tree, keys: open });
+        pushedOpen.set(tree, sig);
+      }
+    }
+    const want = selected.get(tree);
+    let row = want ? keys.indexOf(cardItemKey(want)) : -1;
+    if (row < 0) {
+      selected.delete(tree);
+      row = keys.findIndex((k) => cardKeyOf(k) !== null);
+      if (row < 0) continue;
+      selected.set(tree, cardKeyOf(keys[row])!);
+    }
+    // A card inside a folded group is not on screen: leave the cursor where
+    // the host has it rather than put it on a hidden row.
+    if (list && insideFolded(keys, row)) continue;
+    if (pushedRow.get(tree) !== row) {
+      panel.setSelectedIndex(tree, row);
+      pushedRow.set(tree, row);
+    }
+  }
+}
+
+/** Whether row `row` of a list tree sits under a folded group heading. */
+function insideFolded(keys: readonly string[], row: number): boolean {
+  for (let i = row; i >= 0; i--) {
+    const g = groupIdOf(keys[i]);
+    if (g !== null) return collapsed.has(g);
+  }
+  return false;
 }
 
 /** The workspace the cursor is on, whichever lens shows it: what a lens
@@ -257,29 +363,31 @@ function reveal(card: Card): void {
   selected.set(tree, card.key);
   current = card.key;
   if (saved.lens !== "board") {
-    const groups = groupsFor(saved.lens, cards, folders);
-    const home = groups.find((g) => g.cards.some((c) => c.key === card.key));
-    if (home && collapsed.delete(home.id)) {
-      render();
-      panel.mutate({
-        kind: "setExpandedKeys",
-        widgetKey: tree,
-        keys: groups.filter((g) => !collapsed.has(g.id)).map((g) => groupItemKey(g.id)),
-      });
-    }
+    const home = groupsFor(saved.lens, cards, folders).find((g) => g.cards.some((c) => c.key === card.key));
+    if (home) collapsed.delete(home.id);
   }
   render();
-  const index = itemKeysByTree.get(tree)?.indexOf(cardItemKey(card.key)) ?? -1;
-  if (index >= 0) panel.setSelectedIndex(tree, index);
+  // The spec may be unchanged (the card was already the tree's), but the
+  // host's cursor may not be on it: push it regardless.
+  pushedRow.delete(tree);
+  pushedOpen.delete(tree);
+  syncHost();
   panel.mutate({ kind: "setFocusKey", widgetKey: tree });
 }
 
-/** The card under the cursor of the focused tree. */
+/** The card under the cursor of the focused tree: its recorded card while
+ *  that card is still in the tree, else the first card (where `syncHost`
+ *  puts the host's cursor too). */
 function focusedCard(): Card | null {
   if (!panel) return null;
-  const tree = panel.focusKey();
-  return cardByKey(selected.get(tree)) ??
-    cardByKey(cardKeyOf(itemKeysByTree.get(tree)?.find((k) => cardKeyOf(k) !== null) ?? ""));
+  return cardInTree(panel.focusKey());
+}
+
+function cardInTree(tree: string): Card | null {
+  const keys = itemKeysByTree.get(tree) ?? [];
+  const want = selected.get(tree);
+  if (want && keys.includes(cardItemKey(want))) return cardByKey(want);
+  return cardByKey(cardKeyOf(keys.find((k) => cardKeyOf(k) !== null) ?? ""));
 }
 
 function openBoard(): void {
@@ -294,6 +402,9 @@ function openBoard(): void {
   refresh();
   lastFrame = "";
   panel = new FloatingWidgetPanel();
+  // A fresh panel has no host-side state yet: everything is pushed anew.
+  pushedRow.clear();
+  pushedOpen.clear();
   const spec = panelSpec(viewInput());
   itemKeysByTree = treeItemKeys(spec);
   lastFrame = JSON.stringify(spec);
@@ -432,9 +543,8 @@ editor.on("widget_event", (e) => {
   // Focus moving into another tree (←/→ between the Board's columns) moves
   // the cursor without a `select`: the card it lands on is current now.
   if (e.event_type === "focus" && isTree(e.focus_key)) {
-    const landed = selected.get(e.focus_key) ??
-      cardKeyOf(itemKeysByTree.get(e.focus_key)?.find((k) => cardKeyOf(k) !== null) ?? "");
-    if (landed) current = landed;
+    const landed = cardInTree(e.focus_key);
+    if (landed) current = landed.key;
   }
   if (!isTree(e.widget_key)) return;
   const item = eventItem(e.widget_key, payload);
@@ -445,6 +555,7 @@ editor.on("widget_event", (e) => {
         selected.set(e.widget_key, key);
         current = key;
       }
+      if (typeof payload.index === "number") pushedRow.set(e.widget_key, payload.index);
       return;
     }
     case "activate": {
@@ -455,6 +566,16 @@ editor.on("widget_event", (e) => {
     case "expand": {
       const gid = item && groupIdOf(item);
       if (gid) payload.expanded === false ? collapsed.add(gid) : collapsed.delete(gid);
+      // The host made this change itself; record it as already told.
+      pushedOpen.set(
+        e.widget_key,
+        (itemKeysByTree.get(e.widget_key) ?? [])
+          .filter((k) => {
+            const g = groupIdOf(k);
+            return g !== null && !collapsed.has(g);
+          })
+          .join("\n"),
+      );
       return;
     }
     case "drop":
@@ -508,7 +629,14 @@ editor.defineMode(
 
 // ── Wiring ────────────────────────────────────────────────────────────────
 
+/** With the board closed only the beacon needs fresh counts, and a few
+ *  seconds' lag there costs nothing: listing every workspace is the
+ *  Orchestrator's work, so it is done every `IDLE_TICKS`th tick. */
+const IDLE_TICKS = 3;
+let ticks = 0;
 registerHandler("workboard_tick", () => {
+  ticks++;
+  if (!panel && ticks % IDLE_TICKS !== 0) return;
   refresh();
   paintBeacon();
   render();

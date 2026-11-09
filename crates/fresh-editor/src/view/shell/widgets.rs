@@ -196,6 +196,12 @@ pub struct Ctx<'a> {
     /// Row budget for auto-sized `List`/`Tree` widgets, when the host knows
     /// the surface's inner height.
     pub avail_height: Option<u32>,
+    /// Whether the surface was asked to fill a height of its own — a
+    /// floating panel opened with `FloatingPanelControl` `"fill"`. Only then
+    /// does a column, row or frame around a filler fill too, and a table take
+    /// the width it is given: in a box that hugs its content those would make
+    /// the box as tall (or as wide) as its bounds instead.
+    pub fill: bool,
     /// Whether this panel's scrollbars are *overlay* bars, and if so whether
     /// they are being revealed right now.
     ///
@@ -474,6 +480,7 @@ impl Ctx<'static> {
             hovered_popup_row: String::new(),
             reveal: fresh_ui::behavior::anchor::Anchor::new(),
             avail_height: None,
+            fill: false,
             scrollbar_reveal: None,
             surface: panel_surface(),
             markdown: None,
@@ -1140,6 +1147,8 @@ struct TreeRows {
     columns: Vec<fresh_core::api::TableColumn>,
     reveal: Option<bool>,
     visible_rows: Option<u32>,
+    /// The surface fills (`Ctx::fill`): a table takes the width it is given.
+    fill: bool,
 }
 
 /// The key a memoised rows subtree reconciles under among its siblings.
@@ -1402,9 +1411,11 @@ fn tree_rows_plain(p: &TreeRows) -> Node<UiMsg> {
             // its cells stopped at their natural widths wherever its siblings
             // left it room — at the left of a wide panel, and narrower again
             // as scrolling changed what was being measured.
-            let table = col()
-                .children([t.header(&p.surface), node])
-                .w(Sizing::Flex(1));
+            let table = col().children([t.header(&p.surface), node]);
+            let table = match p.fill {
+                true => table.w(Sizing::Flex(1)),
+                false => table,
+            };
             match p.visible_rows {
                 Some(_) => table,
                 None => table.h(Sizing::Flex(1)),
@@ -1981,7 +1992,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 .collect::<Vec<_>>();
             // A row holding a block that fills down (a board of columns, each
             // an auto-sized tree) fills down too, or its columns get no rows.
-            let fills = kids.iter().any(fills_down);
+            let fills = cx.fill && kids.iter().any(fills_down);
             let r = row().children(kids);
             let r = match fills {
                 true => r.h(Sizing::Flex(1)),
@@ -2005,7 +2016,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             // A column holding a filler fills, like a frame or a row around
             // one (see `fills_down`): a heading over a tree left to size
             // itself is a column of a board.
-            let fills = kids.iter().any(fills_down);
+            let fills = cx.fill && kids.iter().any(fills_down);
             let c = col().children(kids);
             match fills {
                 true => c.h(Sizing::Flex(1)),
@@ -2524,7 +2535,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             // left over (an auto-sized tree) inside a box that hugs it gets
             // none: the box asks for its content, and the content's answer is
             // "whatever I am given". See `fills_down`.
-            let fills = fills_down(&inner);
+            let fills = cx.fill && fills_down(&inner);
             let framed = col()
                 .theme(ring.clone())
                 .border_style(corners)
@@ -2854,12 +2865,18 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 .visible(&tree_key, nodes, item_keys, expanded);
             // **One marked card per panel.** Outside the dock — where the
             // selected card is the open tab, there whatever has focus — a
-            // card tree whose panel has its focus on *another* control does
-            // not mark its cursor. A panel of several card trees side by side
-            // (a board of columns) otherwise wore a heavy frame in every
-            // column, and which one the keys would act on was anyone's guess.
-            // With nothing focused at all, the selection still shows.
-            let focus_elsewhere = !cx.focus_key.is_empty() && !cx.is_focused(key.as_deref());
+            // card tree whose panel has its focus on *another tree* does not
+            // mark its cursor. A panel of several card trees side by side (a
+            // board of columns) otherwise wore a heavy frame in every column,
+            // and which one the keys would act on was anyone's guess. Focus on
+            // any other control (a filter field over the cards) leaves the
+            // cursor showing.
+            let focus_elsewhere = !cx.focus_key.is_empty()
+                && !cx.is_focused(key.as_deref())
+                && matches!(
+                    cx.states.get(&cx.focus_key),
+                    Some(crate::widgets::WidgetInstanceState::Tree { .. })
+                );
             let sel_abs = match cx.slot != Slot::Dock && focus_elsewhere {
                 true => -1,
                 false => sel_abs,
@@ -2935,6 +2952,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 columns: columns.clone(),
                 reveal: cx.scrollbar_reveal,
                 visible_rows: *visible_rows,
+                fill: cx.fill,
             };
             let rows = keyed(fresh_ui::memo(props, tree_rows_plain), rows_key(key));
             // **The memo is what the enclosing column sizes**, not the window
@@ -5168,6 +5186,7 @@ pub(crate) mod tests {
             hovered_popup_row: String::new(),
             reveal: fresh_ui::behavior::anchor::Anchor::new(),
             avail_height: None,
+            fill: false,
             scrollbar_reveal: None,
             surface: panel_surface(),
             // No theme here: the collector's markdown arm answers a missing
@@ -7410,6 +7429,61 @@ pub(crate) mod tests {
         assert!(
             !plain.iter().any(|r| r.contains('┏')),
             "and only when something is selected: {plain:?}"
+        );
+    }
+
+    /// **One marked card per panel, outside the dock.** A card tree keeps its
+    /// cursor's heavy frame while nothing else, or a control that is not a
+    /// tree (a filter field over the cards), holds focus — and drops it while
+    /// *another tree* does: a board of card columns marks only the column the
+    /// keys act on.
+    #[test]
+    fn a_card_tree_unmarks_its_cursor_only_while_another_tree_has_focus() {
+        let spec = card_tree(3, 1, 20);
+        let filter = Ctx {
+            focus_key: "filter".into(),
+            ..cx()
+        };
+        assert!(
+            tree_text(&spec, &filter).iter().any(|r| r.contains('┏')),
+            "a field above the cards keeps the cursor visible"
+        );
+        let states: &'static std::collections::HashMap<
+            String,
+            crate::widgets::WidgetInstanceState,
+        > = Box::leak(Box::new(std::collections::HashMap::from([(
+            "other-column".to_string(),
+            crate::widgets::WidgetInstanceState::Tree {
+                selected_index: 0,
+                expanded_keys: Default::default(),
+            },
+        )])));
+        let beside = Ctx {
+            focus_key: "other-column".into(),
+            states,
+            ..cx()
+        };
+        assert!(
+            !tree_text(&spec, &beside).iter().any(|r| r.contains('┏')),
+            "focus in the column beside it takes the mark there"
+        );
+    }
+
+    /// **Outside the dock, cards end before the scrollbar's column.** An
+    /// overlay bar in the last column painted over every card's right border;
+    /// the cards are one column narrower and the column is the bar's.
+    #[test]
+    fn cards_leave_the_last_column_to_the_scrollbar() {
+        let rows = tree_rows(&card_tree(3, -1, 20));
+        let longest = rows
+            .iter()
+            .map(|r| r.trim_end().chars().count())
+            .max()
+            .unwrap_or(0);
+        assert_eq!(
+            longest,
+            WIDTH as usize - 1,
+            "the widest card row stops one column short of the tree's width: {rows:?}"
         );
     }
 

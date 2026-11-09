@@ -836,6 +836,7 @@ fn body(p: &Panel) -> Node<UiMsg> {
     // itself, which is the second layout this migration exists to remove.
     let rests_empty = i.keyboard && i.focus_key.is_empty();
     let fill = p.fill_height_pct.is_some();
+    let fill = p.fill_height_pct.is_some();
     // **A dialog's right margin mirrors its left.** A panel that reserves the
     // `▸ ` gutter starts every control two columns in from the ring; without
     // the same two on the right, full-width fields and section rules ran
@@ -864,6 +865,7 @@ fn body(p: &Panel) -> Node<UiMsg> {
                 hovered_item_key: i.hovered_item_key.clone(),
                 hovered_popup_row: i.hovered_popup_row.clone(),
                 avail_height: i.avail_height,
+                fill: fill,
                 scrollbar_reveal: i.scrollbar_reveal,
                 surface: super::widgets::panel_surface(),
                 markdown: i.markdown.as_ref().map(|m| m.ctx()),
@@ -1139,8 +1141,18 @@ mod tests {
             "the tree's rows follow the header"
         );
 
-        // Without "fill", a dialog of fixed rows still hugs them, as every
-        // other dialog does.
+        // Without "fill" nothing propagates: the same spec — an auto-sized
+        // tree inside a column — leaves the box hugging its rows rather than
+        // growing to its bounds.
+        let ui = laid_out(Some(panel(
+            Spot::Centered { width_pct: 80 },
+            interior_of(spec.clone()),
+        )));
+        assert!(
+            rect(&ui, &key()).expect("a box").height < FRAME.height,
+            "a box that did not ask to fill does not grow because a tree could"
+        );
+        // And a dialog of fixed rows hugs them, as every other dialog does.
         let ui = laid_out(Some(panel(
             Spot::Centered { width_pct: 80 },
             rows_of(5, 10),

@@ -202,6 +202,14 @@ one special case: ↑/↓ from its single-line filter field reach the picker (a
 List moves its selection, a Tree takes focus). The `arrows_advance_focus`
 capability (Button/Toggle/Radio walking the Tab ring on ↑/↓) is gone.
 
+**A tree's ←/→ are the tree's only while they do something.** Right on a
+collapsed node expands it, Left on an open node folds it and Left on a child
+climbs to its parent; an arrow with none of those to do — Right on a leaf or
+an open node, Left on a top-level node — passes (`kinds::tree::lateral`
+reports whether it acted), and the spatial move above answers it. A row of
+trees side by side (the Workboard's Board columns) is walked with ←/→ that
+way. Shift+←/→ already passed when there was nothing to pan.
+
 **Bindings scoped to a control.** A binding whose third element is
 `"on:a,b"` applies only while one of the named widgets has focus; on any
 other control the key is unbound, so the panel's defaults — the spatial move —

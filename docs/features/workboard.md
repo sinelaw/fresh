@@ -8,7 +8,7 @@ The Workboard puts every Orchestrator workspace and its coding agent on one full
 
 ```
 ┌ Workboard ─────────────────────────────────────────────────────────────────[×]┐
-│[ 1 Inbox ][ 2 Projects ][ 3 Folders ][ 4 Board ]   ● 2 waiting  ✓ 1 done  * 2 working│
+│[ 1 Inbox ][ 2 Projects ][ 3 Folders ][ 4 Board ]                ● 2   ✓ 1   * 2  │
 │────────────────────────────────────────────────────────────────────────────────│
 │       Workspace      Status                         Project  Branch        For │
 │▼ NEEDS YOU  2                                                                  │
@@ -28,12 +28,12 @@ The list lenses are tables: a heading per group (`←` / `→` or a click fold i
 
 ## Lenses
 
-`Tab` / `Shift+Tab` cycle through four ways of arranging the same workspaces, and `1`–`4` pick one directly. The board reopens on the lens you used last.
+`Tab` / `Shift+Tab` cycle through four ways of arranging the same workspaces, and `1`–`4` pick one directly. The workspace under the cursor stays under it when you switch, scrolled into view. The board reopens on the lens you used last.
 
 | Lens | What it shows |
 | --- | --- |
-| **Inbox** | Sorted by what needs you: **Needs you** (agent asked a question), **Ready to review** (finished, unseen), **Working**, **Parked**. In the first two, the one that has waited longest is on top. A waiting agent's question is shown under its name. |
-| **Projects** | One group per repository. Every git worktree of a repo lands in the same group. |
+| **Inbox** | Sorted by what needs you: **Needs you** (agent asked a question), **Ready to review** (finished, unseen), **Working**, **Parked**. In the first two, the one that has waited longest is on top. A waiting agent's question is its status; a workspace whose create failed waits here too, with the reason. |
+| **Projects** | One group per project. A project is its git remote (`origin`, else the first remote), so every worktree of a repo and every clone of it, wherever it sits on disk, lands in the same group; the ssh and https forms of one URL match. A repository with no remote is grouped by its directory. |
 | **Folders** | The Orchestrator dock's folders, in the dock's order, so an arrangement you made by hand is one key away. Drag a workspace onto a folder (or onto a workspace in it) to file it there; drop it on **Not in a folder** to unfile it. |
 | **Board** | A kanban board that fills itself, one column of cards each: **Backlog**, **Needs me**, **Working**, **Review**, **Shipped**. |
 
@@ -44,12 +44,13 @@ Each card goes to a column from its agent's state:
 | State | Column |
 | --- | --- |
 | Waiting on you | Needs me |
-| Working (or still being created) | Working |
+| Working, or still being created | Working |
+| A create that failed (retry or dismiss it from the dock) | Needs me |
 | Finished, not yet looked at | Review |
 | Idle, with uncommitted or unpushed work | Review |
 | Idle and clean | Backlog |
 
-Nothing on a workspace says it was merged, so **Shipped** is reached only by hand. Press `<` or `>` to pin a card one column left or right. A pinned card shows **⊙** and stays where you put it while its agent's state changes. Press `p` to unpin it. Moving a card back onto its automatic column removes the pin. Pins are saved and survive restarts.
+Nothing on a workspace says it was merged, so **Shipped** is reached only by hand. Press `Shift+←` / `Shift+→` (or `<` / `>`) to pin a card one column left or right. A pinned card shows **⊙** and stays where you put it while its agent's state changes. Press `p` to unpin it. Moving a card back onto its automatic column removes the pin. Pins are saved and survive restarts.
 
 ## Keys
 
@@ -60,7 +61,7 @@ The cards are ordinary lists and trees, so they answer the keys and the mouse th
 | `Enter` | Open the workspace and close the board |
 | `n` | Move to the next card that needs you (waiting first, then finished) |
 | `Tab` / `Shift+Tab`, `1`–`4` | Change lens (or click a lens button) |
-| `<` `>` | Board: pin the card one column left or right |
+| `Shift+←` `Shift+→`, `<` `>` | Board: move (pin) the card one column left or right |
 | `p` | Board: unpin the card |
 | `Esc` / `q` | Close |
 
