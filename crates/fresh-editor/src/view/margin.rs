@@ -122,6 +122,17 @@ pub const GUTTER_SEPARATOR: &str = " │ ";
 /// own ground.
 pub const GUTTER_PAD: &str = " ";
 
+/// The separator's width in cells, drawn or not. One statement, read by the
+/// margin and by [`crate::view::viewport::gutter_width`], so the wrap and
+/// scroll math measure the gutter the renderer paints.
+pub fn gutter_separator_cols(drawn: bool) -> usize {
+    if drawn {
+        GUTTER_SEPARATOR.chars().count()
+    } else {
+        GUTTER_PAD.chars().count()
+    }
+}
+
 /// Configuration for a margin
 #[derive(Debug, Clone, PartialEq)]
 pub struct MarginConfig {
@@ -584,6 +595,12 @@ impl MarginManager {
         if self.left_config.separator != separator {
             self.left_config.separator = separator.to_string();
         }
+    }
+
+    /// Whether the left margin draws its separator line (the last
+    /// [`Self::set_gutter_separator`]).
+    pub fn gutter_separator_drawn(&self) -> bool {
+        self.left_config.separator == GUTTER_SEPARATOR
     }
 
     /// Get the total width of the left margin (including separator)

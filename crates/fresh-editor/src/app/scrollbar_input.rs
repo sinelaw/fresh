@@ -204,7 +204,10 @@ impl crate::app::window::Window {
         // wide terminals with `composeWidth` set (mouse-wheel /
         // scrollbar-drag stop short of the buffer's tail).
         let gutter_width = self.buffers.get(&buffer_id).map_or(0, |state| {
-            crate::view::viewport::gutter_width(&state.buffer)
+            crate::view::viewport::gutter_width(
+                &state.buffer,
+                state.margins.gutter_separator_drawn(),
+            )
         });
         let (wrap_width, grid_cols) = self
             .split_view_states()
@@ -427,7 +430,10 @@ impl crate::app::window::Window {
             .unwrap_or(CacheViewMode::Source);
 
         let gutter_width = self.buffers.get(&buffer_id).map_or(0, |state| {
-            crate::view::viewport::gutter_width(&state.buffer)
+            crate::view::viewport::gutter_width(
+                &state.buffer,
+                state.margins.gutter_separator_drawn(),
+            )
         });
         let (wrap_width, grid_cols) = self
             .split_view_states()

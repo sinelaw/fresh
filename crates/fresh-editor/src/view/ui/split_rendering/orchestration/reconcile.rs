@@ -79,6 +79,7 @@ pub(crate) fn reconcile_pane(
         show_line_numbers,
         ..
     } = view;
+    viewport.gutter_separator = inputs.gutter_separator;
 
     // Resolve hidden fold byte ranges so ensure_visible can skip folded
     // lines when counting distance to the cursor.

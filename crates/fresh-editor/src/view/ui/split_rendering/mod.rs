@@ -204,6 +204,7 @@ impl SplitRenderer {
         state
             .margins
             .set_gutter_separator(style.theme.chrome.gutter_separator);
+        viewport.gutter_separator = style.theme.chrome.gutter_separator;
         orchestration::reconcile::place_pane(
             state,
             viewport,

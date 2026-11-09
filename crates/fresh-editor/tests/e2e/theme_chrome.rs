@@ -278,3 +278,66 @@ fn the_gutter_shade_comes_only_with_line_numbers() {
         h.screen_to_string()
     );
 }
+
+/// Without the separator the gutter is two columns narrower, and the wrap
+/// and scroll math must know it: lines that fit beside the slimmer gutter are
+/// one row each, so jumping to the end shows the last line on the pane's
+/// last row — not the rows below it left empty, as when the scroll math still
+/// measured the ` │ ` and counted every line as wrapping onto two rows.
+#[test]
+fn scrolling_measures_the_gutter_without_its_separator() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let dir_context = DirectoryContext::for_testing(dir.path());
+    let themes_dir = dir.path().join("config").join("themes");
+    fs::create_dir_all(&themes_dir).unwrap();
+    fs::write(
+        themes_dir.join("t.json"),
+        r#"{"name": "t", "extends": "builtin://dark",
+            "chrome": {"gutter_separator": false}}"#,
+    )
+    .unwrap();
+    let project_root = dir.path().join("project_root");
+    fs::create_dir_all(&project_root).unwrap();
+    // 56 characters: one row beside the 4-column gutter in a 62-column
+    // terminal, two beside the 6-column one with the separator.
+    let text: String = (1..=60)
+        .map(|i| format!("w{i:05}{}\n", "x".repeat(50)))
+        .collect();
+    fs::write(project_root.join("long.txt"), text).unwrap();
+
+    let mut config = Config {
+        theme: "t".to_string().into(),
+        ..Default::default()
+    };
+    config.editor.line_wrap = true;
+    let mut h = EditorTestHarness::create(
+        62,
+        20,
+        HarnessOptions::new()
+            .with_config(config)
+            .with_working_dir(project_root.clone())
+            .with_shared_dir_context(dir_context)
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
+    h.open_file(&project_root.join("long.txt")).unwrap();
+    h.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
+    h.render().unwrap();
+
+    let screen = h.screen_to_string();
+    let rows: Vec<&str> = screen.lines().collect();
+    let last = rows
+        .iter()
+        .position(|l| l.contains("w00060"))
+        .unwrap_or_else(|| panic!("the last line is on screen:\n{screen}"));
+    // Every line is one row, and the pane is full down to the last line.
+    assert!(
+        rows.iter()
+            .all(|l| !l.contains("xxxxx w") && !l.trim_start().starts_with('~')),
+        "no empty rows under the end:\n{screen}"
+    );
+    assert!(
+        rows[last - 1].contains("w00059"),
+        "the line before it sits right above, on one row:\n{screen}"
+    );
+}

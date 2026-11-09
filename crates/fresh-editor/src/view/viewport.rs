@@ -152,6 +152,10 @@ pub struct Viewport {
     /// number column is suppressed.  Mirrors
     /// `SplitViewState::show_line_numbers`.
     pub show_line_numbers: bool,
+    /// Whether the gutter draws its separator line (the theme's
+    /// `chrome.gutter_separator`), settled with the pane's margins before each
+    /// frame. The wrap and scroll math measure the gutter with it.
+    pub gutter_separator: bool,
 
     /// Whether viewport needs synchronization with cursor positions
     /// When true, ensure_visible needs to be called before rendering
@@ -258,7 +262,11 @@ fn previous_line_start(buffer: &mut Buffer, byte: usize) -> Option<usize> {
 /// than the renderer, and the scrollbar then points at a row the pane does not
 /// have. `app::scrollbar_math` kept its own copy of the formula — one that
 /// missed the byte-offset case — under a doc admitting exactly that risk.
-pub fn gutter_width(buffer: &Buffer) -> usize {
+///
+/// `separator_drawn` is the theme's `chrome.gutter_separator`: without the
+/// line the separator is one cell of padding, and every reader has to know,
+/// or it wraps two columns narrower than the pane paints.
+pub fn gutter_width(buffer: &Buffer, separator_drawn: bool) -> usize {
     let byte_offset_mode = buffer.line_count().is_none();
     let gutter_estimate = if byte_offset_mode {
         // In byte offset mode, gutter shows byte offsets up to file size
@@ -271,7 +279,8 @@ pub fn gutter_width(buffer: &Buffer) -> usize {
     } else {
         ((gutter_estimate as f64).log10().floor() as usize) + 1
     };
-    1 + digits.max(crate::view::margin::MIN_LINE_NUMBER_DIGITS) + 3
+    1 + digits.max(crate::view::margin::MIN_LINE_NUMBER_DIGITS)
+        + crate::view::margin::gutter_separator_cols(separator_drawn)
 }
 
 impl Viewport {
@@ -318,6 +327,7 @@ impl Viewport {
             wrap_column: None,
             compose_width: None,
             show_line_numbers: true,
+            gutter_separator: true,
             needs_sync: false,
             skip_resize_sync: false,
             ensure_visible: EnsureVisible::Follow,
@@ -540,10 +550,9 @@ impl Viewport {
     }
 
     /// The gutter's width for `buffer` — see the free [`gutter_width`], which
-    /// is the one statement of it. This reads nothing off the viewport and is
-    /// kept for the callers that have one in hand.
+    /// is the one statement of it — with this pane's separator setting.
     pub fn gutter_width(&self, buffer: &Buffer) -> usize {
-        gutter_width(buffer)
+        gutter_width(buffer, self.gutter_separator)
     }
 
     /// Smallest read budget [`row_budget_bytes`](Self::row_budget_bytes) will
