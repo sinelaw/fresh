@@ -1786,6 +1786,11 @@ pub struct EditorStateSnapshot {
     /// for every other launch. Read via `editor.diffLaunch()`.
     #[serde(default)]
     pub diff_launch: Vec<PathBuf>,
+    /// The latest release's notes, compiled in from `CHANGELOG.md` at build
+    /// time; `None` for a build without the changelog. Read via
+    /// `editor.releaseNotes()`.
+    #[serde(default)]
+    pub release_notes: Option<ReleaseNotes>,
     /// The left dock slot is open: a panel is in it, or the host is holding
     /// the column for one its manifest declared. The plugin mounts at
     /// `ready` iff this is set. Read via `editor.dockOpen()`.
@@ -1955,6 +1960,17 @@ pub struct MacroSnapshot {
     pub steps: Vec<ActionSpec>,
 }
 
+/// The latest release's notes. Returned by `editor.releaseNotes()`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct ReleaseNotes {
+    /// The release's version, e.g. `"0.5.8"`.
+    pub version: String,
+    /// One short plain-text line per change, features first.
+    pub items: Vec<String>,
+}
+
 /// Total terminal size in cells. Returned by `editor.getScreenSize()`.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -1990,6 +2006,7 @@ impl EditorStateSnapshot {
             orchestrator_mode: false,
             file_launch: false,
             diff_launch: Vec::new(),
+            release_notes: None,
             dock_open: false,
             dock_cols: 0,
             detected_env: String::new(),

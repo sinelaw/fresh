@@ -24,8 +24,8 @@ use fresh_core::api::{
     GrammarInfoSnapshot, GrepMatch, JsDiagnostic, JsPosition, JsRange, JsTextPropertyEntry,
     KeyEventPayload, LanguagePackConfig, LayoutHints, LineDiffHunk, LspServerPackConfig,
     OverlayColorSpec, OverlayOptions, PluginAnimationEdge, PluginAnimationKind,
-    ProcessLimitsPackConfig, RemoteBackendInfo, ReplaceResult, ScreenSize, ScrollbarMarker,
-    SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult, TerminalScreen,
+    ProcessLimitsPackConfig, ReleaseNotes, RemoteBackendInfo, ReplaceResult, ScreenSize,
+    ScrollbarMarker, SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult, TerminalScreen,
     TextPropertiesAtCursor, TokenColor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire,
     ViewTokenWireKind, ViewportInfo, VirtualBufferResult, WindowInfo,
 };
@@ -62,6 +62,7 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "CursorInfo" => Some(decl_with_docs::<CursorInfo>(&cfg)),
         "ViewportInfo" => Some(decl_with_docs::<ViewportInfo>(&cfg)),
         "ScreenSize" => Some(decl_with_docs::<ScreenSize>(&cfg)),
+        "ReleaseNotes" => Some(decl_with_docs::<ReleaseNotes>(&cfg)),
         "KeyEventPayload" => Some(decl_with_docs::<KeyEventPayload>(&cfg)),
         "SplitSnapshot" => Some(decl_with_docs::<SplitSnapshot>(&cfg)),
         "SplitCreated" => Some(decl_with_docs::<fresh_core::api::SplitCreated>(&cfg)),
@@ -376,6 +377,7 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "TsCreateCompositeBufferOptions",  // Options for createCompositeBuffer
     "ViewportInfo",                    // Used by plugins for viewport queries
     "ScreenSize",                      // Used by editor.getScreenSize()
+    "ReleaseNotes",                    // Used by editor.releaseNotes()
     "KeyEventPayload",                 // Used by editor.getNextKey()
     "SplitSnapshot",                   // Used by editor.listSplits()
     "SplitCreated",                    // Resolved by editor.splitWindow()

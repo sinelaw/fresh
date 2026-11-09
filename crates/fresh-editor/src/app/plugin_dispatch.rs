@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use anyhow::Result as AnyhowResult;
 
-use fresh_core::api::{BufferSavedDiff, JsCallbackId, PluginCommand};
+use fresh_core::api::{BufferSavedDiff, JsCallbackId, PluginCommand, ReleaseNotes};
 
 use crate::model::event::{BufferId, LeafId, SplitId};
 use crate::services::async_bridge::AsyncMessage;
@@ -420,6 +420,13 @@ impl Editor {
         snapshot.env_active = self.authority().env_provider.is_active();
         snapshot.orchestrator_mode = self.orchestrator_mode();
         snapshot.file_launch = self.file_launch();
+        if snapshot.release_notes.is_none() {
+            snapshot.release_notes =
+                crate::release_notes::latest().map(|(version, items)| ReleaseNotes {
+                    version: version.to_string(),
+                    items: items.iter().map(|i| i.to_string()).collect(),
+                });
+        }
         snapshot.diff_launch = self
             .diff_launch()
             .map(|(left, right)| vec![left.to_path_buf(), right.to_path_buf()])

@@ -244,51 +244,6 @@ as startup pages.
 fileLaunch(): boolean;
 ```
 
-### `diffLaunch`
-
-The two files of a `fresh --diff LEFT RIGHT` launch, as absolute paths
-`[left, right]`; empty for any other launch. The editor doesn't open
-them: the plugin that reads this at `ready` does (the bundled
-`compare_files` plugin, into the panels of one tab, with a
-buffer-group `path` leaf).
-
-```typescript
-diffLaunch(): string[];
-```
-
-### `diffLaunchShown`
-
-Tell the editor the files of a `fresh --diff` launch are on screen, or
-that they won't be (the comparison failed). Until then, or for at most
-a few seconds, the editor draws nothing, so the launch doesn't flash
-the empty editor it starts with. Call it once the view is complete,
-decorations and all, from the plugin that read `diffLaunch()`.
-
-```typescript
-diffLaunchShown(): boolean;
-```
-
-### `dockOpen`
-
-Whether the left dock slot is open: a panel is in it, or the host is
-holding the column for one its manifest declared. The plugin that
-fills the dock mounts it at
-`ready` iff this is true.
-
-```typescript
-dockOpen(): boolean;
-```
-
-### `dockCols`
-
-The dock column's width in cells, open or not; `0` when the terminal
-is too narrow for a dock. Lay dock content out to this: the host owns the width and re-fits it on
-resize.
-
-```typescript
-dockCols(): number;
-```
-
 ### `describeWorkspace`
 
 Describe the editor as it is right now: the panes of the active
