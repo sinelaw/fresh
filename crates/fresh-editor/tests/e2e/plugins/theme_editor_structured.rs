@@ -434,3 +434,26 @@ fn editing_a_color_carries_it_to_the_keys_that_follow_it() {
     assert_eq!(theme["syntax"]["number"], edited, "{}", theme["syntax"]);
     assert_ne!(theme["syntax"]["keyword"], edited, "{}", theme["syntax"]);
 }
+
+/// Keys are lowered the way the loader and the icon lookup lower them —
+/// ASCII letters only — so an entry for `Ärger.TXT` is the key a file of that
+/// name is looked up by, not `ärger.txt`.
+#[test]
+fn added_keys_lower_only_ascii_letters() {
+    let mut s = open_editor();
+    let h = &mut s.harness;
+    filter(h, "by_");
+    toggle(h, "File Icons");
+    select_row(h, "by_name");
+    select_row(h, "Add…");
+    key(h, KeyCode::Enter);
+    h.wait_until(|h| h.screen_to_string().contains("New entry in by_name"))
+        .unwrap();
+    answer(h, "Ärger.TXT");
+    h.wait_until(|h| h.screen_to_string().contains("Ärger.txt"))
+        .unwrap();
+
+    let theme = save(&mut s);
+    let by_name = &theme["file_icons"]["by_name"];
+    assert!(by_name.get("Ärger.txt").is_some(), "{by_name}");
+}

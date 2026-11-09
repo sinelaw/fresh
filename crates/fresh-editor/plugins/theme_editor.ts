@@ -2158,12 +2158,19 @@ function mapDefAt(mapPath: string): ThemeFieldDef | undefined {
 function normalizeMapKey(mapPath: string, key: string): string {
   switch (mapDefAt(mapPath)?.keyNormalize) {
     case "lowercase":
-      return key.toLowerCase();
+      return asciiLower(key);
     case "extension":
-      return key.replace(/^\.+/, "").toLowerCase();
+      return asciiLower(key.replace(/^\.+/, ""));
     default:
       return key;
   }
+}
+
+/** Lower case the way the loader and the icon lookup do
+ * (`to_ascii_lowercase`): `A`–`Z` only. `toLowerCase` would also fold
+ * `Ä` to `ä`, a key no file named `Ä.txt` is ever looked up by. */
+function asciiLower(key: string): string {
+  return key.replace(/[A-Z]/g, c => c.toLowerCase());
 }
 
 /** Add an entry to a keyed map (`file_icons.by_extension`): ask for its
