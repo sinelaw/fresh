@@ -225,6 +225,60 @@ interface ThemeField {
  */
 let cachedThemeSections: ThemeSection[] | null = null;
 
+let cachedFallbacks: Record<string, string> | null = null;
+
+/**
+ * Each color key's fallback (`"section.field"` → `"section.field"`), as the
+ * schema publishes it (`x-fallback`): the key whose color it takes when a
+ * theme leaves it out.
+ */
+function themeFallbacks(): Record<string, string> {
+  if (cachedFallbacks !== null) return cachedFallbacks;
+  const schema = editor.getThemeSchema() as {
+    $defs?: Record<string, { properties?: Record<string, Record<string, unknown>> }>;
+    properties?: Record<string, { $ref?: string }>;
+  };
+  const map: Record<string, string> = {};
+  for (const [section, sectionSchema] of Object.entries(schema.properties || {})) {
+    const ref = sectionSchema?.$ref;
+    const def = ref?.startsWith("#/$defs/") ? schema.$defs?.[ref.slice("#/$defs/".length)] : undefined;
+    for (const [field, fieldSchema] of Object.entries(def?.properties || {})) {
+      const fallback = fieldSchema["x-fallback"];
+      if (typeof fallback === "string") map[`${section}.${field}`] = fallback;
+    }
+  }
+  cachedFallbacks = map;
+  return map;
+}
+
+/**
+ * Set a color, and carry it to the keys that follow it.
+ *
+ * The editor edits the theme as loaded — every key resolved — so a key the
+ * theme left to its fallback (`ui.file_explorer_bg` following `editor.bg`)
+ * holds a copy of that color. Without this, editing `editor.bg` would leave
+ * the explorer and the gutter on the old one. A key still holding its
+ * fallback's value is following it, and takes the new value too (and so on
+ * down the chain); a key the user gave its own color does not.
+ */
+function setColor(path: string, value: unknown): void {
+  const fallbacks = themeFallbacks();
+  const followers: string[] = [];
+  const collect = (from: string): void => {
+    const old = getNestedValue(state.themeData, from);
+    for (const [key, fallback] of Object.entries(fallbacks)) {
+      if (fallback !== from || followers.includes(key)) continue;
+      if (old !== undefined && deepEqual(getNestedValue(state.themeData, key), old)) {
+        followers.push(key);
+        collect(key);
+      }
+    }
+  };
+  collect(path);
+  setNestedValue(state.themeData, path, value);
+  for (const key of followers) setNestedValue(state.themeData, key, deepClone(value));
+}
+
 /**
  * Whether a property schema entry refers to `ColorDef` — directly via
  * `$ref` or wrapped inside an `anyOf` (the schema generator wraps
@@ -2395,7 +2449,7 @@ editor.on("prompt_confirmed", (args) => {
 
   if (result.value !== undefined) {
     // Valid color - apply it
-    setNestedValue(state.themeData, path, result.value);
+    setColor(path, result.value);
     state.hasChanges = !deepEqual(state.themeData, state.originalThemeData);
 
     updateDisplay();
@@ -3315,7 +3369,7 @@ function applyPickerColor(): void {
   }
 
   if (newColor !== null) {
-    setNestedValue(state.themeData, field.path, newColor);
+    setColor(field.path, newColor);
     state.hasChanges = !deepEqual(state.themeData, state.originalThemeData);
     updateDisplay();
     editor.setStatus(editor.t("status.updated", { path: field.path }));

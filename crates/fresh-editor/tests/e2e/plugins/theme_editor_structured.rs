@@ -411,3 +411,26 @@ fn name_entry_shows_the_icon_its_extension_draws() {
         "the Markdown glyph it draws: {row:?}"
     );
 }
+
+/// A key left to its fallback follows it through an edit: setting
+/// `syntax.constant` sets `syntax.number`, which the theme never named, to
+/// the same color — as the loader would — while a key with a color of its
+/// own keeps it.
+#[test]
+fn editing_a_color_carries_it_to_the_keys_that_follow_it() {
+    let mut s = open_editor();
+    let h = &mut s.harness;
+    filter(h, "constant");
+    select_row(h, "constant");
+    key(h, KeyCode::Enter);
+    h.wait_until(|h| h.screen_to_string().contains("#RRGGBB"))
+        .unwrap();
+    answer(h, "#102030");
+    h.wait_until(|h| h.screen_to_string().contains("#102030"))
+        .unwrap();
+
+    let theme = save(&mut s);
+    let edited = theme["syntax"]["constant"].clone();
+    assert_eq!(theme["syntax"]["number"], edited, "{}", theme["syntax"]);
+    assert_ne!(theme["syntax"]["keyword"], edited, "{}", theme["syntax"]);
+}

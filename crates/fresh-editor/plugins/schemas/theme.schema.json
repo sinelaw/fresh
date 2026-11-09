@@ -274,7 +274,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.line_number_fg"
         },
         "selection_bg": {
           "description": "Selected text background",
@@ -334,7 +335,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.bg"
         },
         "current_line_number_fg": {
           "description": "Line number of the line holding the cursor. Bundle attributes to\nstyle it (`{\"color\": [255, 200, 0], \"modifier\": [\"bold\"]}`). When\nomitted, the cursor's line number keeps the default look: dim like\nthe others with absolute numbers, `fg` with relative numbers.",
@@ -358,7 +360,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.line_number_fg"
         },
         "diff_add_bg": {
           "description": "Diff added line background",
@@ -370,7 +373,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "diagnostic.info_bg"
         },
         "diff_remove_bg": {
           "description": "Diff removed line background",
@@ -382,7 +386,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "diagnostic.error_bg"
         },
         "diff_add_highlight_bg": {
           "description": "Diff added word-level highlight background (optional override)\nWhen not set, computed by brightening diff_add_bg",
@@ -394,7 +399,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.diff_add_bg"
         },
         "diff_remove_highlight_bg": {
           "description": "Diff removed word-level highlight background (optional override)\nWhen not set, computed by brightening diff_remove_bg",
@@ -406,7 +412,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.diff_remove_bg"
         },
         "diff_modify_bg": {
           "description": "Diff modified line background",
@@ -418,7 +425,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "diagnostic.warning_bg"
         },
         "diff_add_collision_fg": {
           "description": "Fallback fg for cells whose existing fg matches `diff_add_bg`\n(e.g. ANSI Green-on-Green). Only applied on collision; other\ntokens keep their syntax colour.",
@@ -466,7 +474,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.current_line_bg"
         },
         "indentation_guide_fg": {
           "description": "Indentation guide foreground color. When omitted, inherits\n`whitespace_indicator_fg` so guides remain subtle in both dark and\nlight themes while still allowing a dedicated override.",
@@ -478,7 +487,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.whitespace_indicator_fg"
         },
         "indent_rainbow_1": {
           "description": "Rainbow indentation-guide color (nesting level 1)",
@@ -490,7 +500,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.indentation_guide_fg"
         },
         "indent_rainbow_2": {
           "description": "Rainbow indentation-guide color (nesting level 2)",
@@ -502,7 +513,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.indentation_guide_fg"
         },
         "indent_rainbow_3": {
           "description": "Rainbow indentation-guide color (nesting level 3)",
@@ -514,7 +526,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.indentation_guide_fg"
         },
         "indent_rainbow_4": {
           "description": "Rainbow indentation-guide color (nesting level 4)",
@@ -526,7 +539,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.indentation_guide_fg"
         },
         "indent_rainbow_5": {
           "description": "Rainbow indentation-guide color (nesting level 5)",
@@ -538,7 +552,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.indentation_guide_fg"
         },
         "indent_rainbow_6": {
           "description": "Rainbow indentation-guide color (nesting level 6)",
@@ -550,7 +565,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.indentation_guide_fg"
         },
         "whitespace_indicator_fg": {
           "description": "Whitespace indicator foreground color (for tab arrows and space dots)",
@@ -562,7 +578,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.line_number_fg"
         },
         "whitespace_indicator_selected_fg": {
           "description": "Whitespace indicator foreground color *inside a selection*. Selected\ncells keep their own foreground, so the plain\n`whitespace_indicator_fg` — picked to sit on the editor background —\nis often invisible on `selection_bg` (several themes use the very\nsame color for both). When omitted, this is derived from\n`selection_bg` by shifting it toward contrast: legible against the\nselection, still clearly dimmer than the selected text.",
@@ -574,7 +591,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.whitespace_indicator_fg"
         },
         "bracket_match_fg": {
           "description": "Bracket match highlight color (used when rainbow is disabled)",
@@ -586,7 +604,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.cursor"
         },
         "bracket_rainbow_match_modifier": {
           "description": "Text attributes that mark the matched bracket pair when rainbow\nbrackets are on. The pair keeps its depth color there, so the match\nis shown by these attributes instead. Default `[\"bold\", \"underlined\"]`.",
@@ -606,7 +625,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "syntax.keyword"
         },
         "bracket_rainbow_2": {
           "description": "Rainbow bracket color (nesting level 2)",
@@ -618,7 +638,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "syntax.function"
         },
         "bracket_rainbow_3": {
           "description": "Rainbow bracket color (nesting level 3)",
@@ -630,7 +651,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "syntax.type"
         },
         "bracket_rainbow_4": {
           "description": "Rainbow bracket color (nesting level 4)",
@@ -642,7 +664,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "syntax.string"
         },
         "bracket_rainbow_5": {
           "description": "Rainbow bracket color (nesting level 5)",
@@ -654,7 +677,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "syntax.constant"
         },
         "bracket_rainbow_6": {
           "description": "Rainbow bracket color (nesting level 6)",
@@ -666,7 +690,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "syntax.variable"
         },
         "after_eof_bg": {
           "description": "Background color for lines after end-of-file (optional override).\nWhen not set, post-EOF rows keep the theme's editor `bg`, so the\nspace below a short buffer reads as part of the same surface as the\ntext. Themes that want the post-EOF area called out (issue #779) can\nname a shade here; `~` markers (`editor.show_tilde`) mark the end of\nthe buffer either way.",
@@ -678,7 +703,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.bg"
         }
       }
     },
@@ -829,7 +855,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.tab_inactive_fg"
         },
         "tab_close_hover_fg": {
           "description": "Tab close button hover color",
@@ -841,7 +868,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "diagnostic.error_fg"
         },
         "tab_hover_bg": {
           "description": "Tab hover background color",
@@ -853,7 +881,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.tab_inactive_bg"
         },
         "menu_bg": {
           "description": "Menu bar background",
@@ -865,7 +894,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.tab_inactive_bg"
         },
         "menu_fg": {
           "description": "Menu bar text color",
@@ -877,7 +907,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.tab_inactive_fg"
         },
         "menu_active_bg": {
           "description": "Active menu item background",
@@ -889,7 +920,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.popup_selection_bg"
         },
         "menu_active_fg": {
           "description": "Active menu item text color",
@@ -901,7 +933,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.popup_selection_fg"
         },
         "menu_dropdown_bg": {
           "description": "Dropdown menu background",
@@ -913,7 +946,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.popup_bg"
         },
         "menu_dropdown_fg": {
           "description": "Dropdown menu text color",
@@ -925,7 +959,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.popup_text_fg"
         },
         "menu_highlight_bg": {
           "description": "Highlighted menu item background",
@@ -937,7 +972,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.popup_selection_bg"
         },
         "menu_highlight_fg": {
           "description": "Highlighted menu item text color",
@@ -949,7 +985,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.popup_selection_fg"
         },
         "menu_border_fg": {
           "description": "Menu border color",
@@ -961,7 +998,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.popup_border_fg"
         },
         "menu_separator_fg": {
           "description": "Menu separator line color",
@@ -973,7 +1011,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.menu_border_fg"
         },
         "menu_hover_bg": {
           "description": "Menu item hover background",
@@ -985,7 +1024,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.menu_highlight_bg"
         },
         "menu_hover_fg": {
           "description": "Menu item hover text color",
@@ -997,7 +1037,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.menu_highlight_fg"
         },
         "menu_disabled_fg": {
           "description": "Disabled menu item text color",
@@ -1009,7 +1050,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.line_number_fg"
         },
         "menu_disabled_bg": {
           "description": "Disabled menu item background",
@@ -1021,7 +1063,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.menu_dropdown_bg"
         },
         "status_bar_fg": {
           "description": "Status bar text color",
@@ -1057,7 +1100,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.status_bar_fg"
         },
         "status_palette_bg": {
           "description": "Command palette shortcut hint background in status bar (falls back to status_bar_bg)",
@@ -1069,7 +1113,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.status_bar_bg"
         },
         "status_outer_fg": {
           "description": "The outermost status bar item on each side (lualine's sections a and\nz): its text. Falls back to `status_bar_fg`.",
@@ -1081,7 +1126,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.status_bar_fg"
         },
         "status_outer_bg": {
           "description": "The outermost item's background. Falls back to `status_bar_bg`.\nItems with colors of their own (warnings, LSP, the palette hint) keep\nthem.",
@@ -1093,7 +1139,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.status_bar_bg"
         },
         "status_inner_fg": {
           "description": "The next item in on each side (lualine's b and y): its text. Falls\nback to `status_bar_fg`.",
@@ -1105,7 +1152,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.status_bar_fg"
         },
         "status_inner_bg": {
           "description": "The next item in: its background. Falls back to `status_bar_bg`.",
@@ -1117,7 +1165,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.status_bar_bg"
         },
         "status_separator_fg": {
           "description": "Status bar separator glyph text color (falls back to status_bar_fg)",
@@ -1129,7 +1178,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.status_bar_fg"
         },
         "status_separator_bg": {
           "description": "Status bar separator glyph background (falls back to status_bar_bg)",
@@ -1141,7 +1191,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.status_bar_bg"
         },
         "status_lsp_on_fg": {
           "description": "Status bar LSP indicator text color when LSP is running (falls back to status_bar_fg)",
@@ -1153,7 +1204,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.status_bar_fg"
         },
         "status_lsp_on_bg": {
           "description": "Status bar LSP indicator background when LSP is running (falls back to status_bar_bg)",
@@ -1165,7 +1217,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.status_bar_bg"
         },
         "status_lsp_actionable_fg": {
           "description": "Status bar LSP indicator text color when LSP options are available\nto act on (configured-but-not-running). Drawn prominently to signal\n\"click here to enable\". Falls back to `status_warning_indicator_fg`.",
@@ -1177,7 +1230,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.status_warning_indicator_fg"
         },
         "status_lsp_actionable_bg": {
           "description": "Status bar LSP indicator background when LSP options are available\nto act on. Falls back to `status_warning_indicator_bg`.",
@@ -1189,7 +1243,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.status_warning_indicator_bg"
         },
         "prompt_fg": {
           "description": "Command prompt text color",
@@ -1285,7 +1340,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.popup_selection_bg"
         },
         "popup_selection_fg": {
           "description": "Popup selected item text color",
@@ -1297,7 +1353,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.popup_text_fg"
         },
         "popup_text_fg": {
           "description": "Popup window text color. Per the `*_bg`/`*_fg` convention this\nis the foreground for `popup_bg`; `popup_fg` is accepted as an\nalias so theme JSON can use the convention-consistent name.",
@@ -1333,7 +1390,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.popup_text_fg"
         },
         "suggestion_selected_bg": {
           "description": "Selected suggestion background",
@@ -1429,7 +1487,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.current_line_bg"
         },
         "split_separator_fg": {
           "description": "Split pane separator color",
@@ -1453,7 +1512,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.split_separator_fg"
         },
         "scrollbar_track_fg": {
           "description": "Scrollbar track color",
@@ -1465,7 +1525,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.current_line_bg"
         },
         "scrollbar_thumb_fg": {
           "description": "Scrollbar thumb color",
@@ -1477,7 +1538,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.line_number_fg"
         },
         "scrollbar_track_hover_fg": {
           "description": "Scrollbar track hover color",
@@ -1489,7 +1551,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.scrollbar_track_fg"
         },
         "scrollbar_thumb_hover_fg": {
           "description": "Scrollbar thumb hover color",
@@ -1501,7 +1564,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.scrollbar_thumb_fg"
         },
         "compose_margin_bg": {
           "description": "Compose mode margin background",
@@ -1513,7 +1577,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.after_eof_bg"
         },
         "blame_header_fg": {
           "description": "Text color of a git-blame block header band. Falls back to\n`ui.menu_fg` — see `blame_header_bg` for why that pair.",
@@ -1525,7 +1590,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.menu_fg"
         },
         "blame_header_bg": {
           "description": "Background of a git-blame block header band. Falls back to\n`ui.menu_bg` (and the text to its `ui.menu_fg`): a menu is the\nclosest thing a theme already names to what a blame header is — a\nchrome band carrying its own text over the editor — so an\nunspecified header borrows a surface a theme has already made\nlegible rather than a color computed from another one.\n\nEvery shipped theme names both keys explicitly (a test enforces it),\nso this fallback only ever serves user themes. It is exact, not\nderived: a theme whose menu shares the editor background hands the\nheader that background too, and the fix is for it to name the keys.\n\nThe band used to borrow `ui.status_bar_bg`, which several themes set\nto their editor background (`dark` sets exactly it; `high-contrast`\npairs `[20, 20, 20]` with a black editor) — so the header that is\nmeant to separate one commit's block from the next drew on an\neffectively invisible background.",
@@ -1537,7 +1603,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.menu_bg"
         },
         "semantic_highlight_bg": {
           "description": "Occurrence highlight (word under cursor, or the selected text)",
@@ -1549,7 +1616,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.current_line_bg"
         },
         "semantic_highlight_modifier": {
           "description": "Optional text-attribute modifiers (e.g. `[\"bold\"]` or\n`[\"reversed\"]`) layered on top of `semantic_highlight_bg`.\nPer the canonical native-palette pattern, current-word\nhighlights are often shown via `Bold` (so the word stands\nout against other variables without altering its color slot)\nor `Reversed`. See `EditorColors::selection_modifier`.\n\nThe same as bundling the attributes with `semantic_highlight_bg`\n(`{\"color\": …, \"modifier\": […]}`), the form every other key uses;\nwhen a theme gives both, this key wins.",
@@ -1573,7 +1641,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.popup_selection_bg"
         },
         "terminal_bg": {
           "description": "Embedded terminal background (use Default for transparency)",
@@ -1585,7 +1654,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.bg"
         },
         "terminal_fg": {
           "description": "Embedded terminal default text color",
@@ -1597,7 +1667,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.fg"
         },
         "status_warning_indicator_bg": {
           "description": "Warning indicator background in status bar",
@@ -1609,7 +1680,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "diagnostic.warning_bg"
         },
         "status_warning_indicator_fg": {
           "description": "Warning indicator text color in status bar",
@@ -1621,7 +1693,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "diagnostic.warning_fg"
         },
         "status_error_indicator_bg": {
           "description": "Error indicator background in status bar",
@@ -1633,7 +1706,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "diagnostic.error_bg"
         },
         "status_error_indicator_fg": {
           "description": "Error indicator text color in status bar",
@@ -1645,7 +1719,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "diagnostic.error_fg"
         },
         "status_warning_indicator_hover_bg": {
           "description": "Warning indicator hover background",
@@ -1657,7 +1732,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.status_warning_indicator_bg"
         },
         "status_warning_indicator_hover_fg": {
           "description": "Warning indicator hover text color",
@@ -1669,7 +1745,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.status_warning_indicator_fg"
         },
         "status_error_indicator_hover_bg": {
           "description": "Error indicator hover background",
@@ -1681,7 +1758,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.status_error_indicator_bg"
         },
         "status_error_indicator_hover_fg": {
           "description": "Error indicator hover text color",
@@ -1693,7 +1771,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.status_error_indicator_fg"
         },
         "tab_drop_zone_bg": {
           "description": "Tab drop zone background during drag",
@@ -1705,7 +1784,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.selection_bg"
         },
         "tab_drop_zone_border": {
           "description": "Tab drop zone border during drag",
@@ -1717,7 +1797,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.tab_active_fg"
         },
         "list_drop_target_bg": {
           "description": "A list row a drag would drop into (the Orchestrator dock's target\nfolder). Must read apart from the selection and hover bands, which\nare on screen at the same time.",
@@ -1729,7 +1810,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.tab_drop_zone_bg"
         },
         "settings_selected_bg": {
           "description": "Settings UI selected item background",
@@ -1741,7 +1823,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.popup_selection_bg"
         },
         "settings_selected_fg": {
           "description": "Settings UI selected item foreground (text on selected background)",
@@ -1753,7 +1836,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.popup_selection_fg"
         },
         "file_status_added_fg": {
           "description": "File status: added file color in file explorer (falls back to diagnostic.info_fg)",
@@ -1765,7 +1849,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "diagnostic.info_fg"
         },
         "file_status_modified_fg": {
           "description": "File status: modified file color in file explorer (falls back to diagnostic.warning_fg)",
@@ -1777,7 +1862,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "diagnostic.warning_fg"
         },
         "file_status_deleted_fg": {
           "description": "File status: deleted file color in file explorer (falls back to diagnostic.error_fg)",
@@ -1789,7 +1875,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "diagnostic.error_fg"
         },
         "file_status_renamed_fg": {
           "description": "File status: renamed file color in file explorer (falls back to diagnostic.info_fg)",
@@ -1801,7 +1888,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "diagnostic.info_fg"
         },
         "file_status_untracked_fg": {
           "description": "File status: untracked file color in file explorer (falls back to diagnostic.hint_fg)",
@@ -1813,7 +1901,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "diagnostic.hint_fg"
         },
         "file_status_conflicted_fg": {
           "description": "File status: conflicted file color in file explorer (falls back to diagnostic.error_fg)",
@@ -1825,7 +1914,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "diagnostic.error_fg"
         },
         "file_explorer_pinned_bg": {
           "description": "The ground of the file explorer's sticky-parent band: the expanded\nancestors the list holds above the run. Falls back to\n`editor.current_line_bg`, but built-in themes set it apart from both\nthe panel and the unfocused cursor, so a pinned row and a cursor on a\npinned row do not read as the same thing.",
@@ -1837,7 +1927,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.current_line_bg"
         },
         "file_explorer_directory_fg": {
           "description": "Name color of an ordinary directory in the file explorer. Falls back\nto `syntax.keyword`, so a theme can give folders a neutral color\nwithout also recoloring code keywords.",
@@ -1849,7 +1940,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "syntax.keyword"
         },
         "file_explorer_bg": {
           "description": "Background of the file explorer panel: its rows, title row and\nborder. Falls back to `editor.bg`.",
@@ -1861,7 +1953,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.bg"
         },
         "file_explorer_fg": {
           "description": "Default text color in the file explorer (file names). Falls back to\n`editor.fg`.",
@@ -1873,7 +1966,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.fg"
         },
         "file_explorer_border_fg": {
           "description": "The file explorer's border while the explorer is not focused. Falls\nback to `ui.split_separator_fg`. To remove the border (and the cells\nit takes), set `chrome.file_explorer_border` to false.",
@@ -1885,7 +1979,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "ui.split_separator_fg"
         },
         "file_explorer_border_focused_fg": {
           "description": "The file explorer's border while the explorer has focus. Falls back\nto `editor.cursor`.",
@@ -1897,7 +1992,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.cursor"
         },
         "file_explorer_indicator_fg": {
           "description": "Expand/collapse arrows (`>` / `▼`) in front of folders in the file\nexplorer. Falls back to `diagnostic.warning_fg`.",
@@ -1909,7 +2005,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "diagnostic.warning_fg"
         },
         "file_icon_fg": {
           "description": "One color for every file-type icon (drawn while `editor.nerd_font_icons`\nis on). Unset, each kind of file keeps its own color.",
@@ -1963,7 +2060,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.selection_bg"
         },
         "current_match_fg": {
           "description": "Text color of the current search match, optionally bundled with text\nattributes (`{\"color\": [255, 255, 255], \"modifier\": [\"bold\"]}`).",
@@ -1975,7 +2073,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.fg"
         },
         "label_bg": {
           "description": "Background color for jump labels (e.g. flash plugin labels).\nShould be visually distinct from `match_bg` so labels stand\nout against highlighted matches.  Default: bright magenta.",
@@ -1987,7 +2086,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "syntax.keyword"
         },
         "label_fg": {
           "description": "Foreground color for jump labels.  Should be high contrast\nagainst `label_bg` so the single label letter is unambiguous\neven on small terminal cells.  Default: white.",
@@ -1999,7 +2099,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "editor.bg"
         }
       }
     },
@@ -2191,7 +2292,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "syntax.keyword"
         },
         "constant": {
           "description": "Constants and literals",
@@ -2227,7 +2329,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "syntax.operator"
         },
         "punctuation_delimiter": {
           "description": "Punctuation delimiters (;, ,, .)",
@@ -2239,7 +2342,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "syntax.operator"
         },
         "number": {
           "description": "Numeric and boolean literals (`42`, `0xff`, `true`). Falls back to\n`constant`.",
@@ -2251,7 +2355,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "syntax.constant"
         },
         "property": {
           "description": "Object properties, fields and keys (`obj.prop`, `{ key: … }`, JSON\nkeys, HTML tags). Falls back to `variable`.",
@@ -2263,7 +2368,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "syntax.variable"
         },
         "attribute": {
           "description": "Attributes, decorators and annotations (`#[derive]`, `@Component`,\nHTML attributes). Falls back to `constant`.",
@@ -2275,7 +2381,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-fallback": "syntax.constant"
         }
       }
     },
