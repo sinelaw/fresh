@@ -818,8 +818,12 @@ fn body(p: &Panel) -> Node<UiMsg> {
     // `Stretch` then widens the body to whatever the box settled on — which
     // for a centred panel's percentage width is exactly the fill this had.
     let area = row().w(Sizing::Auto).key(body_key());
+    // A panel that fills has a definite box on both axes, so its content
+    // area takes the whole of it — width too. Hugging, the area was as wide
+    // as its widest row, and a table (whose columns fit the width they are
+    // given) settled at whatever its siblings happened to need.
     let area = match p.fill_height_pct {
-        Some(_) => area.h(Sizing::Flex(1)),
+        Some(_) => area.h(Sizing::Flex(1)).w(Sizing::Flex(1)),
         None => area,
     };
     let keymap = i.keymap.clone();
@@ -831,6 +835,7 @@ fn body(p: &Panel) -> Node<UiMsg> {
     // node was given. The alternative is the caller computing the percentage
     // itself, which is the second layout this migration exists to remove.
     let rests_empty = i.keyboard && i.focus_key.is_empty();
+    let fill = p.fill_height_pct.is_some();
     // **A dialog's right margin mirrors its left.** A panel that reserves the
     // `▸ ` gutter starts every control two columns in from the ring; without
     // the same two on the right, full-width fields and section rules ran
@@ -841,7 +846,7 @@ fn body(p: &Panel) -> Node<UiMsg> {
         _ => 0,
     };
     let inner = fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
-        super::widgets::node(
+        let node = super::widgets::node(
             &i.spec,
             info.constraints.max_w.max(1),
             &super::widgets::Ctx {
@@ -863,8 +868,19 @@ fn body(p: &Panel) -> Node<UiMsg> {
                 surface: super::widgets::panel_surface(),
                 markdown: i.markdown.as_ref().map(|m| m.ctx()),
             },
-        )
+        );
+        // Filling, the spec's root spans the area it was laid into, so its
+        // rows (and a table's columns) spread across the panel rather than
+        // stopping at the widest sibling's natural width.
+        match fill {
+            true => node.w(Sizing::Flex(1)),
+            false => node,
+        }
     });
+    let inner = match fill {
+        true => inner.w(Sizing::Flex(1)),
+        false => inner,
+    };
     // The scope its keyboard layer names, and the fallback for what its
     // widgets decline — see `interior`. Every described interior is one,
     // whether or not anything in it is a Tab stop: an interior with no
@@ -1123,10 +1139,11 @@ mod tests {
             "the tree's rows follow the header"
         );
 
-        // Without "fill" the box hugs its rows, as every other dialog does.
+        // Without "fill", a dialog of fixed rows still hugs them, as every
+        // other dialog does.
         let ui = laid_out(Some(panel(
             Spot::Centered { width_pct: 80 },
-            interior_of(spec),
+            rows_of(5, 10),
         )));
         assert!(
             rect(&ui, &key()).expect("a box").height < FRAME.height,
@@ -1186,6 +1203,76 @@ mod tests {
             row_of("close"),
             Some((box_rect.y + box_rect.height - 2) as i32),
             "the hints stay on the last row inside the ring"
+        );
+    }
+
+    /// **A table is as wide as the panel that fills, whatever its cells.** A
+    /// filling panel holding a table tree with more rows than fit: the rows'
+    /// band and the scrollbar reach the panel's right edge. The table used
+    /// to hug its siblings' natural width, so the bar sat mid-panel and moved
+    /// as scrolling changed what was measured.
+    #[test]
+    fn a_scrolling_table_keeps_the_panel_width() {
+        const ROWS: usize = 60;
+        let rows: Vec<serde_json::Value> = (0..ROWS)
+            .map(|i| {
+                serde_json::json!({
+                    "text": { "text": "" }, "depth": 1, "hasChildren": false,
+                    "cells": [{ "text": format!("ws-{i}") }, { "text": "status" }, { "text": "1m" }]
+                })
+            })
+            .collect();
+        let keys: Vec<String> = (0..ROWS).map(|i| format!("k{i}")).collect();
+        let spec: fresh_core::api::WidgetSpec = serde_json::from_value(serde_json::json!({
+            "kind": "col",
+            "children": [
+                {
+                    "kind": "tree", "key": "rows", "nodes": rows, "itemKeys": keys,
+                    "selectedIndex": 0, "expandedKeys": [], "checkable": false, "itemHeight": 1,
+                    "cardBorders": false, "indentCols": 2, "toggleOnClick": false,
+                    "columns": [
+                        { "title": "Workspace", "elide": "tail", "maxWidth": 0 },
+                        { "title": "Status", "elide": "tail", "maxWidth": 0 },
+                        { "title": "For", "elide": "tail", "maxWidth": 4 }
+                    ]
+                },
+                { "kind": "hintBar", "entries": [{ "keys": "Esc", "label": "close" }] }
+            ]
+        }))
+        .expect("a valid spec");
+        let mut p = panel(Spot::Centered { width_pct: 100 }, interior_of(spec));
+        p.fill_height_pct = Some(100);
+        let ui = laid_out(Some(p));
+        let box_rect = rect(&ui, &key()).expect("a box");
+        // The inner right edge: the box less its ring.
+        let inner_right = (box_rect.x + box_rect.width - 1) as i32;
+        let bar = ui
+            .spec()
+            .items
+            .iter()
+            .find(|i| matches!(i.draw, fresh_ui::Draw::Scrollbar { .. }))
+            .expect("sixty rows scroll, so the table has a scrollbar");
+        assert_eq!(
+            bar.rect.x + bar.rect.w as i32,
+            inner_right,
+            "the scrollbar is flush with the panel's right edge, not where the cells end"
+        );
+        let band = ui
+            .spec()
+            .items
+            .iter()
+            .filter(|i| {
+                matches!(i.draw, fresh_ui::Draw::Fill)
+                    && i.rect.h == 1
+                    && i.rect.y == box_rect.y as i32 + 2
+            })
+            .map(|i| i.rect.w)
+            .max()
+            .expect("a row band");
+        assert!(
+            band >= box_rect.width - 3,
+            "a row's band spans the panel ({band} of {}), however narrow its cells",
+            box_rect.width
         );
     }
 

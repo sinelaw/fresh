@@ -1397,7 +1397,14 @@ fn tree_rows_plain(p: &TreeRows) -> Node<UiMsg> {
         // A tree left to size itself fills its container, and the header's
         // column must too: hugging, it would hand the rows no height at all.
         Some(t) => {
-            let table = col().children([t.header(&p.surface), node]);
+            // As wide as it is given: the columns fit the width the table
+            // is laid out at (the widest gives first), so a table that hugged
+            // its cells stopped at their natural widths wherever its siblings
+            // left it room — at the left of a wide panel, and narrower again
+            // as scrolling changed what was being measured.
+            let table = col()
+                .children([t.header(&p.surface), node])
+                .w(Sizing::Flex(1));
             match p.visible_rows {
                 Some(_) => table,
                 None => table.h(Sizing::Flex(1)),
@@ -1436,10 +1443,19 @@ struct CardTreeRows {
 /// ([`crate::widgets::tree_row_rows`]), so the tree places every row without
 /// rendering any and builds only the blocks that overlap the window. It was
 /// every visible node's block, rendered whenever the tree rebuilt.
+/// The width a bordered card is drawn at: the tree's, less the scrollbar's
+/// column outside the dock (see the gutter in [`tree_rows_cards`]).
+fn card_width(width: u16, slot: Slot) -> u16 {
+    match slot == Slot::Dock {
+        true => width,
+        false => width.saturating_sub(PANEL_BAR_COLS).max(1),
+    }
+}
+
 fn tree_rows_cards(p: &CardTreeRows) -> Node<UiMsg> {
     use std::rc::Rc;
     let key = &p.key;
-    let (sel_abs, width) = (p.sel_abs, p.width);
+    let (sel_abs, width) = (p.sel_abs, card_width(p.width, p.slot));
     let (checkable, indent_cols, item_height) = (p.checkable, p.indent_cols, p.item_height);
     let (nodes, item_keys) = (p.nodes.0.clone(), p.keys.0.clone());
     let (visible, expanded) = (p.visible.0.clone(), p.expanded.0.clone());
@@ -1652,6 +1668,15 @@ fn tree_rows_cards(p: &CardTreeRows) -> Node<UiMsg> {
     .selection(selected)
     .scrollbar_when(p.reveal)
     .scrollbar_theme(bar_ink());
+    // **The bar has a column of its own, outside the dock.** An overlay bar
+    // in the last column painted over every card's right border. The cards
+    // are rendered one column narrower (`card_width`) and the list keeps
+    // that column for its bar, as a table does. The dock keeps the overlay:
+    // its selected card opens onto the editor across that edge.
+    let list = match p.slot == Slot::Dock {
+        true => list,
+        false => list.scrollbar_gutter(),
+    };
     let node = keyed(fresh_ui::ComponentExt::node(list), state_key(key));
     // **As wide as the panel, not as wide as its rows.** The rows
     // arrive pre-rendered at the runtime's wrap width, so a window
@@ -1972,12 +1997,21 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 _ => r,
             }
         }
-        WidgetSpec::Col { children, .. } => col().children(
-            children
+        WidgetSpec::Col { children, .. } => {
+            let kids = children
                 .iter()
                 .map(|c| node_in(c, width, cx, site.down()))
-                .collect::<Vec<_>>(),
-        ),
+                .collect::<Vec<_>>();
+            // A column holding a filler fills, like a frame or a row around
+            // one (see `fills_down`): a heading over a tree left to size
+            // itself is a column of a board.
+            let fills = kids.iter().any(fills_down);
+            let c = col().children(kids);
+            match fills {
+                true => c.h(Sizing::Flex(1)),
+                false => c,
+            }
+        }
         // `flex` fills the container's remainder *on its own axis*. A fixed
         // spacer is `cols` blank cells in a row and **one blank line** in a
         // column, however wide it says it is: `kinds::spacer` pushes exactly
