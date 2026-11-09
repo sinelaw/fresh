@@ -51,16 +51,6 @@ the editor supports the features they need.
 apiVersion(): number;
 ```
 
-### `pluginName`
-
-The name of the plugin this `editor` handle belongs to. Used by the
-M3 plugin-API plane (`exportPluginApi` tags the exporter). Plugin
-authors generally don't call this directly.
-
-```typescript
-pluginName(): string;
-```
-
 ### `releaseNotes`
 
 The latest release's notes — its version and one short line per
@@ -72,49 +62,14 @@ lists them as "What's new".
 releaseNotes(): ReleaseNotes | null;
 ```
 
-### `diffLaunch`
+### `pluginName`
 
-The two files of a `fresh --diff LEFT RIGHT` launch, as absolute paths
-`[left, right]`; empty for any other launch. The editor doesn't open
-them: the plugin that reads this at `ready` does (the bundled
-`compare_files` plugin, into the panels of one tab, with a
-buffer-group `path` leaf).
+The name of the plugin this `editor` handle belongs to. Used by the
+M3 plugin-API plane (`exportPluginApi` tags the exporter). Plugin
+authors generally don't call this directly.
 
 ```typescript
-diffLaunch(): string[];
-```
-
-### `diffLaunchShown`
-
-Tell the editor the files of a `fresh --diff` launch are on screen, or
-that they won't be (the comparison failed). Until then, or for at most
-a few seconds, the editor draws nothing, so the launch doesn't flash
-the empty editor it starts with. Call it once the view is complete,
-decorations and all, from the plugin that read `diffLaunch()`.
-
-```typescript
-diffLaunchShown(): boolean;
-```
-
-### `dockOpen`
-
-Whether the left dock slot is open: a panel is in it, or the host is
-holding the column for one its manifest declared. The plugin that
-fills the dock mounts it at
-`ready` iff this is true.
-
-```typescript
-dockOpen(): boolean;
-```
-
-### `dockCols`
-
-The dock column's width in cells, open or not; `0` when the terminal
-is too narrow for a dock. Lay dock content out to this: the host owns the width and re-fits it on
-resize.
-
-```typescript
-dockCols(): number;
+pluginName(): string;
 ```
 
 ## Plugin APIs
