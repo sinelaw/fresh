@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import datetime
 import json
 import re
 import shutil
@@ -45,9 +46,10 @@ def print_usage():
     print("  4. Update Cargo.toml (workspace.package and workspace.dependencies)")
     print("  5. Update Cargo.lock")
     print("  6. Regenerate debian/changelog to match the new version")
-    print("  7. Optionally generate release notes")
-    print("  8. Commit to a new branch, open a PR, and merge it, skipping required checks")
-    print("  9. Tag the merged commit and push the tag")
+    print("  7. Stamp the man page's version and date")
+    print("  8. Optionally generate release notes")
+    print("  9. Commit to a new branch, open a PR, and merge it, skipping required checks")
+    print(" 10. Tag the merged commit and push the tag")
     print("")
     print("Options:")
     print("  --skip-bump  Skip the bump and PR; tag current master and push the tag")
@@ -143,6 +145,19 @@ def update_debian_changelog(repo_root: Path) -> None:
         print(f"{YELLOW}Warning:{NC} {script} not found; skipping debian/changelog regen")
         return
     run_command([str(script)])
+
+MAN_PAGE = Path("crates/fresh-editor/resources/fresh.1")
+MAN_TH_RE = re.compile(r'^(\.TH FRESH 1 )"[^"]*" "fresh [^"]*"', re.MULTILINE)
+
+def update_man_page(new_version: str) -> None:
+    """Stamps the man page's .TH line with the new version and today's date, which
+    nothing else keeps current (it said 0.3.10 at 0.5.8)."""
+    text = MAN_PAGE.read_text()
+    today = datetime.date.today().isoformat()
+    new_text, count = MAN_TH_RE.subn(rf'\g<1>"{today}" "fresh {new_version}"', text)
+    if count != 1:
+        raise ValueError(f"Could not find the .TH line in {MAN_PAGE}")
+    MAN_PAGE.write_text(new_text)
 
 def get_previous_tag() -> Optional[str]:
     """Gets the previous git tag."""
@@ -277,10 +292,15 @@ def main() -> None:
         print(f"{GREEN}✓{NC} Updated debian/changelog")
 
         print("")
+        print(f"{BLUE}Step: stamp the man page{NC}")
+        update_man_page(new_version)
+        print(f"{GREEN}✓{NC} Updated {MAN_PAGE}")
+
+        print("")
         print(f"{BLUE}Step: summary of changes{NC}")
         print("")
         try:
-            diff_result = run_command(["git", "diff", "Cargo.toml", "Cargo.lock", "debian/changelog"], capture_output=True)
+            diff_result = run_command(["git", "diff", "Cargo.toml", "Cargo.lock", "debian/changelog", str(MAN_PAGE)], capture_output=True)
             print("Git diff:")
             print(diff_result.stdout)
         except subprocess.CalledProcessError:
@@ -312,7 +332,7 @@ def main() -> None:
             print("")
             print(f"{BLUE}Step: commit changes to {bump_branch}{NC}")
             run_command(["git", "switch", "-c", bump_branch])
-            run_command(["git", "add", "Cargo.toml", "Cargo.lock", "debian/changelog"])
+            run_command(["git", "add", "Cargo.toml", "Cargo.lock", "debian/changelog", str(MAN_PAGE)])
             run_command(["git", "commit", "-m", commit_title])
             print(f"{GREEN}✓{NC} Committed")
 

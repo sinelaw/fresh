@@ -31,9 +31,14 @@ other-target dependencies, and cargo resolves those too. debian/rules runs
 workspace resolves from /usr/share/cargo/registry alone (and `clean` puts
 the originals back). It prints each dependency it drops and why.
 
-The librust-*-dev Build-Depends are generated from Debian testing's index:
+The librust-*-dev Build-Depends are generated from Debian testing's index,
+with oldstable's and stable's as baselines:
 
-    scripts/debian.py packages --control Packages.xz
+    scripts/debian.py packages --control testing/Packages.xz \
+        --baseline oldstable/Packages.xz --baseline stable/Packages.xz
+
+A minimum version is written only where some suite ships a version too old
+for Fresh; one the package name already implies (-0.26 and 0.26) never is.
 
 and `scripts/debian.py check Packages.xz` checks that the archive can supply
 every dependency of the build. Upstream CI runs the check, and the

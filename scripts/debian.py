@@ -16,13 +16,15 @@ build. Run it from the workspace root; see docs/internal/debian-quickjs-spike.md
       so they are not followed; a crate it lacks would have to be packaged, so
       its dependencies are checked too. Exits 1 if anything is missing.
 
-  packages PACKAGES [--control]
+  packages PACKAGES [--control [--baseline PACKAGES ...]]
       Print the librust-*-dev packages to install: those providing every
       dependency of every workspace crate, optional and dev ones included,
       that the archive can satisfy (cargo resolves the whole workspace before
       building). With --control, print them as debcargo-style Build-Depends
       entries (librust-<crate>-<semver>+<feature>-dev), dev-only ones marked
-      <!nocheck>.
+      <!nocheck>. A minimum version is left out when every version of the
+      package, in PACKAGES and in each --baseline index (oldstable, stable),
+      already meets it.
 
   patch-manifests [REGISTRY]
       Rewrite the workspace's manifests in place so cargo can resolve them
@@ -169,6 +171,7 @@ class Archive:
             text = fh.read()
         self.crates = defaultdict(list)  # crate -> [(version, package, provides)]
         self.providers = defaultdict(list)  # package or virtual name -> [package]
+        self.versions = {}  # package -> upstream version
         for stanza in text.split("\n\n"):
             m = re.search(r"^Package: (librust-\S+-dev)$", stanza, re.M)
             if not m:
@@ -178,6 +181,7 @@ class Archive:
             version = re.sub(r"^\d+:", "", version)  # epoch
             version = re.sub(r"-[^-]+$", "", version)  # Debian revision
             version = re.sub(r"[+~].*$", "", version)
+            self.versions[package] = version
             provides = {package}
             line = re.search(r"^Provides: (.*)$", stanza, re.M)
             if line:
@@ -187,6 +191,10 @@ class Archive:
             crate = re.match(r"librust-(.+?)(-\d+(?:\.\d+)*)?-dev$", package)
             if crate:
                 self.crates[crate.group(1)].append((version, package, provides))
+
+    def provider_versions(self, name):
+        """The versions of every package that provides `name`."""
+        return [self.versions[p] for p in self.providers.get(name, [])]
 
     def lookup(self, crate_name, req, features):
         """("ok", version, [packages]) or ("missing"|"version"|"feature", detail)."""
@@ -402,8 +410,14 @@ def cmd_packages(args):
             continue
         for name, (low, dev) in found.items():
             merge(wanted, name, low, dev)
+    baselines = [archive] + [Archive(p) for p in args.baseline] if args.baseline else []
     for name in sorted(wanted):
         low, dev = wanted[name]
+        if low and baselines and all(
+            parse_version(v) >= parse_version(low)
+            for index in baselines for v in index.provider_versions(name)
+        ):
+            low = None  # nothing any of these suites ships is too old
         if args.control:
             constraint = f" (>= {low}-~~)" if low else ""
             print(f" {name}{constraint}{' <!nocheck>' if dev else ''},")
@@ -571,6 +585,9 @@ def main():
     p.add_argument("packages", help="Debian Packages index (plain or .xz)")
     p.add_argument("--control", action="store_true",
                    help="print debcargo-style Build-Depends entries for debian/control")
+    p.add_argument("--baseline", action="append", default=[], metavar="PACKAGES",
+                   help="with --control, also an older suite's index (oldstable, stable): "
+                        "a minimum every version in these and PACKAGES meets is left out")
     p = sub.add_parser("patch-manifests")
     p.add_argument("registry", nargs="?", default="/usr/share/cargo/registry")
     args = parser.parse_args()
