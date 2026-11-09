@@ -413,3 +413,46 @@ fn gutter_glyphs_keep_to_their_one_cell() {
         );
     }
 }
+
+/// Sections are told apart by colour, not by name: a theme whose section
+/// backgrounds are the bar's own (sections in a different ink only) has no
+/// edge to mark, so the bar keeps its separators — a section glyph there
+/// would be drawn in the colour it sits on, an invisible cell in place of
+/// the separator.
+#[test]
+fn sections_on_the_bar_s_own_ground_keep_the_separators() {
+    let theme = r#"{"name": "t", "extends": "builtin://dark",
+        "ui": {"status_outer_bg": [30, 30, 30], "status_outer_fg": [255, 0, 0],
+               "status_inner_bg": [30, 30, 30], "status_inner_fg": [0, 255, 0]},
+        "chrome": {"status_bar_separator": "•",
+                   "status_bar_section_left": "▶", "status_bar_section_right": "◀",
+                   "status_bar_cap_left": "▐", "status_bar_cap_right": "▌"}}"#;
+    let s = open(theme, |_| {});
+    let status = line_with(&s.harness, "Ln 1");
+    // Up to the palette hint, whose pill has a ground of its own (and so a
+    // section glyph in front of it).
+    let same_ground = &status[..status.find("Text").unwrap() + "Text".len()];
+    assert!(
+        same_ground.contains("Trusted • Local")
+            && same_ground.contains("ASCII • Text")
+            && !same_ground.contains(['▶', '◀', '▐']),
+        "separators, no section glyphs: {status:?}"
+    );
+}
+
+/// The right side is fitted with everything it draws: on a sectioned bar its
+/// section glyphs and cap count against its budget, so it gives up elements
+/// rather than squeezing out the left side's message.
+#[test]
+fn the_status_bar_fits_its_section_glyphs() {
+    let theme = r#"{"name": "t", "extends": "builtin://dark",
+        "ui": {"status_outer_bg": [90, 0, 0], "status_inner_bg": [0, 90, 0]},
+        "chrome": {"status_bar_section_left": "▶▶▶▶▶▶", "status_bar_section_right": "◀◀◀◀◀◀",
+                   "status_bar_cap_left": "▐", "status_bar_cap_right": "▌▌▌▌▌▌▌▌▌▌"}}"#;
+    let s = open_sized(100, theme, |_| {});
+    let status = line_with(&s.harness, "Ln 1");
+    assert!(
+        status.contains("Editor focused"),
+        "the left side keeps its message: {status:?}"
+    );
+}

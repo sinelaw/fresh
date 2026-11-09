@@ -21,6 +21,7 @@ use crate::view::ui::status_bar::StatusBarClickable;
 
 use super::msg::{UiFact, UiMsg};
 use crate::app::shell_host::shell_theme::{Ink, Paint};
+use ratatui::style::Color;
 
 /// Which side an element was tiled on. Carried rather than re-derived from a
 /// midpoint of `x`, so the web orders segments exactly as the terminal does.
@@ -80,6 +81,47 @@ pub struct StatusBar {
     /// The theme's section glyphs (`chrome.status_bar_section_*`,
     /// `chrome.status_bar_cap_*`). Empty, the default, draws nothing.
     pub sections: SectionGlyphs,
+    /// What the bar's grounds resolve to ([`StatusBar::resolve_grounds`]):
+    /// two grounds meet as one when their colours do, whatever their names.
+    pub grounds: Vec<(Paint, Color)>,
+}
+
+impl StatusBar {
+    /// Resolve every ground on the bar — its own and each element's — under
+    /// `theme`, so neighbours are told apart by colour. Two names for one
+    /// colour (`ui.status_outer_bg` set to the bar's own background) are one
+    /// ground: a section glyph between them would be drawn in the colour it
+    /// sits on, an invisible cell where the separator used to be.
+    pub fn resolve_grounds(&mut self, theme: &crate::view::theme::Theme) {
+        let mut grounds: Vec<(Paint, Color)> = Vec::new();
+        let paints = base_ground(self).into_iter().chain(
+            self.left
+                .iter()
+                .chain(self.right.iter())
+                .flat_map(|it| it.runs.iter())
+                .filter_map(|(_, theme)| Ink::parse(theme))
+                .map(|ink| ink.bg),
+        );
+        for paint in paints {
+            if grounds.iter().any(|(p, _)| *p == paint) {
+                continue;
+            }
+            if let Some(color) = paint.color(theme) {
+                grounds.push((paint, color));
+            }
+        }
+        self.grounds = grounds;
+    }
+}
+
+/// Whether two grounds are one: the same colour once resolved, or — for one
+/// the bar has not resolved — the same name.
+fn same_ground(bar: &StatusBar, a: &Paint, b: &Paint) -> bool {
+    let color = |p: &Paint| bar.grounds.iter().find(|(q, _)| q == p).map(|(_, c)| *c);
+    match (color(a), color(b)) {
+        (Some(ca), Some(cb)) => ca == cb,
+        _ => a == b,
+    }
 }
 
 /// The glyphs drawn where the bar's background changes — lualine's section
@@ -243,13 +285,13 @@ fn between(bar: &StatusBar, a: &Item, b: &Item, side: Side) -> Node<UiMsg> {
         Side::Right => &bar.sections.right,
     };
     match (ga, gb) {
-        (Some(ga), Some(gb)) if ga != gb && !section.is_empty() => match side {
+        (Some(ga), Some(gb)) if !same_ground(bar, &ga, &gb) && !section.is_empty() => match side {
             // The glyph points into the next segment: the left side's from
             // `a`, the right side's from `b`.
             Side::Left => transition(section, ga, gb, side),
             Side::Right => transition(section, gb, ga, side),
         },
-        (Some(ga), _) if Some(&ga) != base_ground(bar).as_ref() => {
+        (Some(ga), _) if !base_ground(bar).is_some_and(|base| same_ground(bar, &ga, &base)) => {
             let sep = Ink::parse(&bar.sep_theme)
                 .map(|ink| ink.with_bg(ga).to_string())
                 .unwrap_or_else(|| bar.sep_theme.clone());
@@ -315,7 +357,8 @@ fn edge_to_bar(
 ) -> Option<Node<UiMsg>> {
     let ground = edge_ground(it, first)?;
     let base = base_ground(bar)?;
-    (!text.is_empty() && ground != base).then(|| transition(text, ground, base, side))
+    (!text.is_empty() && !same_ground(bar, &ground, &base))
+        .then(|| transition(text, ground, base, side))
 }
 
 /// The bar's row.
@@ -592,6 +635,7 @@ mod tests {
             base_theme: base(),
             sep_theme: base(),
             sections: SectionGlyphs::default(),
+            grounds: Vec::new(),
         }
     }
 

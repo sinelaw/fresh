@@ -6450,11 +6450,26 @@ impl Editor {
                 } else {
                     config.separator.clone()
                 };
-                let sep_w = crate::primitives::display_width::str_width(&separator);
-                let width_of =
-                    |it: &sb::Item| crate::primitives::display_width::str_width(&it.text());
+                let str_w = crate::primitives::display_width::str_width;
+                // What stands between two right elements: the separator, or
+                // — on a sectioned bar, where neighbours on different grounds
+                // meet — the section glyph instead, whichever is wider.
+                let sep_w = if sectioned {
+                    str_w(&separator).max(str_w(&section_glyphs.right))
+                } else {
+                    str_w(&separator)
+                };
+                // A sectioned right side also opens with a section glyph out
+                // of the bar's ground, and closes with its cap.
+                let edges_w = if sectioned {
+                    str_w(&section_glyphs.right) + str_w(&section_glyphs.cap_right)
+                } else {
+                    0
+                };
+                let width_of = |it: &sb::Item| str_w(&it.text());
                 let total_right: usize = right.iter().map(width_of).sum::<usize>()
-                    + sep_w * right.len().saturating_sub(1);
+                    + sep_w * right.len().saturating_sub(1)
+                    + edges_w;
                 let left_min_target = available.saturating_mul(2).saturating_div(5).min(40);
                 let right_budget = available.saturating_sub(left_min_target + 1);
                 // How many right elements are kept whatever happens. Normally one,
@@ -6478,14 +6493,17 @@ impl Editor {
                 if sectioned {
                     sb::assign_sections(&mut left, &mut right);
                 }
-                sb::StatusBar {
+                let mut bar = sb::StatusBar {
                     left,
                     right,
                     separator,
                     base_theme: pair("ui.status_bar_fg", "ui.status_bar_bg"),
                     sep_theme: pair("ui.status_separator_fg", "ui.status_separator_bg"),
                     sections: section_glyphs.clone(),
-                }
+                    grounds: Vec::new(),
+                };
+                bar.resolve_grounds(&self.theme.read().unwrap());
+                bar
             })
     }
 }

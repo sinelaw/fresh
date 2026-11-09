@@ -1185,7 +1185,8 @@ pub mod shell_theme {
             }
         }
 
-        fn color(&self, theme: &Theme) -> Option<Color> {
+        /// The colour this half resolves to under `theme`.
+        pub(crate) fn color(&self, theme: &Theme) -> Option<Color> {
             match self {
                 Paint::Key(k) => theme.resolve_theme_key(k),
                 Paint::Lit(c) => Some(*c),
