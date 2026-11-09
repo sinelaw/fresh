@@ -3704,6 +3704,23 @@ type PromptSuggestion = {
 };
 ```
 
+### `ReleaseNotes`
+
+The latest release's notes. Returned by `editor.releaseNotes()`.
+
+```typescript
+type ReleaseNotes = {
+  /**
+  * The release's version, e.g. `"0.5.8"`.
+  */
+  version: string;
+  /**
+  * One short plain-text line per change, features first.
+  */
+  items: Array<string>;
+};
+```
+
 ### `RemoteAgentSpec`
 
 ```typescript

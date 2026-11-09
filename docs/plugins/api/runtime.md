@@ -51,6 +51,17 @@ the editor supports the features they need.
 apiVersion(): number;
 ```
 
+### `releaseNotes`
+
+The latest release's notes — its version and one short line per
+change — compiled in from the changelog when the editor was built.
+`null` for a build made without the changelog. The welcome screen
+lists them as "What's new".
+
+```typescript
+releaseNotes(): ReleaseNotes | null;
+```
+
 ### `pluginName`
 
 The name of the plugin this `editor` handle belongs to. Used by the

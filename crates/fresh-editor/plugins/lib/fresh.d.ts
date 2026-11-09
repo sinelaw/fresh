@@ -433,6 +433,19 @@ type ScreenSize = {
 	height: number;
 };
 /**
+* The latest release's notes. Returned by `editor.releaseNotes()`.
+*/
+type ReleaseNotes = {
+	/**
+	* The release's version, e.g. `"0.5.8"`.
+	*/
+	version: string;
+	/**
+	* One short plain-text line per change, features first.
+	*/
+	items: Array<string>;
+};
+/**
 * Payload delivered to a plugin's `editor.getNextKey()` Promise when
 * the next keypress arrives in the editor's input dispatch.
 *
@@ -5282,6 +5295,13 @@ interface EditorAPI {
 	* the editor supports the features they need.
 	*/
 	apiVersion(): number;
+	/**
+	* The latest release's notes — its version and one short line per
+	* change — compiled in from the changelog when the editor was built.
+	* `null` for a build made without the changelog. The welcome screen
+	* lists them as "What's new".
+	*/
+	releaseNotes(): ReleaseNotes | null;
 	/**
 	* The name of the plugin this `editor` handle belongs to. Used by the
 	* M3 plugin-API plane (`exportPluginApi` tags the exporter). Plugin

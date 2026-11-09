@@ -3,6 +3,7 @@
 // Editor library - exposes all core modules for testing
 
 pub mod i18n;
+pub mod release_notes;
 
 // The data / presentation-primitives layer lives in `fresh-editor-core` and
 // is re-exported here under its original paths, so `fresh::config`,

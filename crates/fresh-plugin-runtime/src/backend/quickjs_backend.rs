@@ -1244,6 +1244,21 @@ impl JsEditorApi {
         2
     }
 
+    /// The latest release's notes — its version and one short line per
+    /// change — compiled in from the changelog when the editor was built.
+    /// `null` for a build made without the changelog. The welcome screen
+    /// lists them as "What's new".
+    #[plugin_api(ts_return = "ReleaseNotes | null")]
+    pub fn release_notes<'js>(&self, ctx: fresh_js::Ctx<'js>) -> fresh_js::Result<Value<'js>> {
+        let notes = self
+            .state_snapshot
+            .read()
+            .ok()
+            .and_then(|s| s.release_notes.clone());
+        fresh_js::serde::to_value(ctx, &notes)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
+    }
+
     /// The name of the plugin this `editor` handle belongs to. Used by the
     /// M3 plugin-API plane (`exportPluginApi` tags the exporter). Plugin
     /// authors generally don't call this directly.
