@@ -89,6 +89,27 @@ export interface ViewInput {
   selected: ReadonlyMap<string, string>;
   /** Group ids the user folded in the list lenses. */
   collapsed: ReadonlySet<string>;
+  /** The screen's height. A tree in a centred panel must be told its row
+   *  budget — auto-sized, it draws nothing there (as Import sessions found,
+   *  `agent_discovery.ts`) — so this is the one size the board passes. */
+  screenRows: number;
+}
+
+/** Rows the panel spends around the cards: its frame (2), the lens row,
+ *  the rule under it and the key hints. */
+const PANEL_CHROME_ROWS = 5;
+/** The list lens's table adds its header row. */
+const TABLE_HEADER_ROWS = 1;
+/** A Board column's section frame (2). */
+const SECTION_FRAME_ROWS = 2;
+const MIN_TREE_ROWS = 4;
+
+export function listRows(screenRows: number): number {
+  return Math.max(MIN_TREE_ROWS, screenRows - PANEL_CHROME_ROWS - TABLE_HEADER_ROWS);
+}
+
+export function columnRows(screenRows: number): number {
+  return Math.max(MIN_TREE_ROWS, screenRows - PANEL_CHROME_ROWS - SECTION_FRAME_ROWS);
 }
 
 /** What a card says about itself, one short phrase. */
@@ -199,6 +220,7 @@ export function listSpec(lens: LensId, groups: readonly Group[], input: ViewInpu
     nodes,
     itemKeys,
     selectedIndex,
+    visibleRows: listRows(input.screenRows),
     expandedKeys: groups.filter((g) => !input.collapsed.has(g.id)).map((g) => groupItemKey(g.id)),
     toggleOnClick: true,
     columns: [
@@ -247,6 +269,7 @@ export function columnSpec(group: Group, input: ViewInput): WidgetSpec {
       nodes,
       itemKeys: group.cards.map((c) => cardItemKey(c.key)),
       selectedIndex: index >= 0 ? index : group.cards.length > 0 ? 0 : -1,
+      visibleRows: columnRows(input.screenRows),
       itemHeight: 2,
       indentCols: 1,
     }),

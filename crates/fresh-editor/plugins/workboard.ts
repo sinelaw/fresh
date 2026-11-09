@@ -204,9 +204,21 @@ function cardByKey(key: string | null | undefined): Card | null {
   return key ? cards.find((c) => c.key === key) ?? null : null;
 }
 
+function viewInput() {
+  return {
+    lens: saved.lens,
+    cards,
+    folders,
+    now: Date.now(),
+    selected,
+    collapsed,
+    screenRows: editor.getScreenSize().height,
+  };
+}
+
 function render(): void {
   if (!panel) return;
-  const spec: WidgetSpec = panelSpec({ lens: saved.lens, cards, folders, now: Date.now(), selected, collapsed });
+  const spec: WidgetSpec = panelSpec(viewInput());
   const frame = JSON.stringify(spec);
   if (frame === lastFrame) return;
   lastFrame = frame;
@@ -245,7 +257,7 @@ function openBoard(): void {
   refresh();
   lastFrame = "";
   panel = new FloatingWidgetPanel();
-  const spec = panelSpec({ lens: saved.lens, cards, folders, now: Date.now(), selected, collapsed });
+  const spec = panelSpec(viewInput());
   itemKeysByTree = treeItemKeys(spec);
   lastFrame = JSON.stringify(spec);
   panel.mount(spec, { widthPct: 100, heightPct: 100, title: "Workboard", closable: true, mode: MODE });
@@ -400,6 +412,9 @@ editor.on("widget_event", (e) => {
       return;
   }
 });
+
+// The trees' row budgets come from the screen height.
+editor.on("resize", () => render());
 
 registerHandler("workboard_next_lens", () => cycleLens(1));
 registerHandler("workboard_prev_lens", () => cycleLens(-1));
