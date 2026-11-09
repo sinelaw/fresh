@@ -338,6 +338,8 @@ def build_depends(archive, crate_name, req, features, version, packages):
     `librust-<crate>-<semver prefix>[+<feature>]-dev`, versioned by the
     requirement's minimum, so the entry says which API and features Fresh
     needs rather than naming whichever binary package provides them today.
+    A minimum the package name already implies (`-0.26` and 0.26) is left out:
+    every version of that package satisfies it.
     """
     crate = debian_name(crate_name)
     prefix = semver_prefix(version)
@@ -346,7 +348,7 @@ def build_depends(archive, crate_name, req, features, version, packages):
     if not all(n in archive.providers for n in names):
         return [(p, "") for p in packages]
     low = minimum_version(req)
-    if not (low and semver_prefix(low) == prefix):
+    if not (low and semver_prefix(low) == prefix) or parse_version(low) == parse_version(prefix):
         low = None
     return [(n, low) for n in names]
 
