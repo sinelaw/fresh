@@ -17019,6 +17019,11 @@ async function newWorkspace(
 }
 
 function listWorkspaces(): WorkspaceSummary[] {
+  // Every workspace means the ones saved by earlier runs too, which the
+  // dock and the picker load on first open. A caller that lists before
+  // either has opened (a script, the Workboard) asks for the same load;
+  // it is requested once, and its rows land on a later call.
+  requestAllWorkspaces();
   // Reconcile first: a workspace created seconds ago (by a script, or by
   // the dialog) is only in the model once the host's window list has been
   // folded in, and a caller listing right after creating should see it.

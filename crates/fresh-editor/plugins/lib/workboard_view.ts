@@ -119,6 +119,9 @@ function alarming(card: Card): boolean {
 
 /** Branch and working-tree state: `feat/x · 2 changed ↑1`. */
 export function gitText(card: Card): string {
+  // A create that failed has no checkout of its own yet: what git reports
+  // is the placeholder's surroundings, not this workspace.
+  if (card.ws.pending?.phase === "error") return "";
   const g = card.ws.git;
   const parts: string[] = [];
   const branch = g?.branch ?? card.ws.branch;
@@ -132,6 +135,7 @@ export function gitText(card: Card): string {
 }
 
 export function projectName(card: Card): string {
+  if (card.ws.pending?.phase === "error") return "";
   const p = (card.ws.projectPath || card.ws.root).replace(/[\\/]+$/, "");
   return p.slice(Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\")) + 1) || p;
 }
@@ -158,7 +162,9 @@ export function headerSpec(lens: LensId, cards: readonly Card[]): WidgetSpec {
     if (n === 0) continue;
     const m = STATE_MARK[st];
     if (counts.length > 0) counts.push({ text: "   " });
-    counts.push({ text: `${m.glyph} ${n} ${st === "blocked" ? "waiting" : st}`, style: { fg: m.fg, bold: true } });
+    // Compact — the glyphs and colours are the dock's, and the Inbox's
+    // sections spell them out — so the lens buttons keep their room.
+    counts.push({ text: `${m.glyph} ${n}`, style: { fg: m.fg, bold: true } });
   }
   if (counts.length === 0) counts.push({ text: "nothing needs you", style: { fg: DIM } });
   return row(...lensButtons, flexSpacer(), label(counts));
@@ -278,8 +284,8 @@ export function hints(lens: LensId): HintEntry[] {
     { keys: "n", label: "next waiting" },
     { keys: "Tab/1-4", label: "lens" },
   ];
-  if (lens === "board") out.push({ keys: "< >", label: "pin to column" }, { keys: "p", label: "unpin" });
-  if (lens === "folders") out.push({ keys: "drag", label: "file in a folder" });
+  if (lens === "board") out.push({ keys: "< >", label: "pin" }, { keys: "p", label: "unpin" });
+  if (lens === "folders") out.push({ keys: "drag", label: "file in folder" });
   out.push({ keys: "Esc", label: "close" });
   return out;
 }
