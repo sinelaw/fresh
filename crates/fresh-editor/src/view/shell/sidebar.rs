@@ -44,6 +44,7 @@
 //! cell take the pointer without covering the rows beside it.
 
 use std::rc::Rc;
+use unicode_width::UnicodeWidthStr;
 
 use fresh_ui::{
     col, focusable, gesture, layer, layout_reader, row, stack, text, text_runs, Align, Anchor,
@@ -501,25 +502,34 @@ fn header_row(s: &Sidebar, i: usize, sec: &Section) -> Node<UiMsg> {
                 .pointer_mode(PointerMode::Transparent),
         );
     }
-    // The title's own leading space separates it from what is before it: a
-    // corner or a chevron. With neither, it would only be padding.
-    let title = if s.bordered || several {
-        sec.title.clone()
+    // **Borderless, the chevron's column is always there.** With several
+    // sections it holds the collapse glyph; with one there is nothing to
+    // collapse and it is left blank — so the title starts in the same column
+    // either way, and does not jump when a second section comes or goes.
+    // Boxed, one section wears no chevron at all (the default sidebar is
+    // unchanged, design §4.6); the corner anchors the title there. The
+    // title's own leading space separates it from what is before it. Its
+    // trailing space is the gap cell before the buttons below, which, unlike
+    // a space inside the title, survives the title's elision.
+    let title = sec.title.trim_end().to_string();
+    let chevron = if several {
+        Some(if sec.collapsed {
+            s.glyphs.section_collapsed.clone()
+        } else {
+            s.glyphs.section_expanded.clone()
+        })
+    } else if !s.bordered {
+        let cols = UnicodeWidthStr::width(s.glyphs.section_expanded.as_str())
+            .max(UnicodeWidthStr::width(s.glyphs.section_collapsed.as_str()));
+        Some(" ".repeat(cols))
     } else {
-        sec.title.trim_start().to_string()
+        None
     };
-    if several {
+    if let Some(chevron) = chevron {
         cells.push(
-            text(format!(
-                "{pad}{}",
-                if sec.collapsed {
-                    &s.glyphs.section_collapsed
-                } else {
-                    &s.glyphs.section_expanded
-                }
-            ))
-            .theme(sec.title_theme.clone())
-            .pointer_mode(PointerMode::Transparent),
+            text(format!("{pad}{chevron}"))
+                .theme(sec.title_theme.clone())
+                .pointer_mode(PointerMode::Transparent),
         );
     }
     cells.push(
@@ -540,8 +550,8 @@ fn header_row(s: &Sidebar, i: usize, sec: &Section) -> Node<UiMsg> {
     // an elided title (`…`) never runs into the `⟳`.
     if sec.refresh_theme.is_some() || sec.closable {
         cells.push(
-            row()
-                .w(Sizing::Cells(1))
+            text(" ")
+                .theme(sec.title_theme.clone())
                 .priority(BUTTONS_FIRST)
                 .pointer_mode(PointerMode::Transparent),
         );

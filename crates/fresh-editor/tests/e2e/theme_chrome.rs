@@ -4,6 +4,7 @@
 //! file-type icons.
 
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
+use crate::common::sidebar::{install_markdown_plugins, wait_for};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 use fresh::config_io::DirectoryContext;
@@ -22,6 +23,12 @@ fn open(theme: &str, tweak: impl FnOnce(&mut Config)) -> Session {
 }
 
 fn open_sized(width: u16, theme: &str, tweak: impl FnOnce(&mut Config)) -> Session {
+    open_file(width, theme, tweak, "notes.txt")
+}
+
+/// As `open_sized`, showing `file`: a `.md` one comes with the Markdown
+/// plugins, whose outline is a second sidebar section under the explorer.
+fn open_file(width: u16, theme: &str, tweak: impl FnOnce(&mut Config), file: &str) -> Session {
     let dir = tempfile::TempDir::new().unwrap();
     let dir_context = DirectoryContext::for_testing(dir.path());
     let themes_dir = dir.path().join("config").join("themes");
@@ -32,6 +39,10 @@ fn open_sized(width: u16, theme: &str, tweak: impl FnOnce(&mut Config)) -> Sessi
     fs::create_dir_all(project_root.join("plugins")).unwrap();
     fs::create_dir_all(project_root.join("folder")).unwrap();
     fs::write(project_root.join("notes.txt"), "hello world\n").unwrap();
+    if file.ends_with(".md") {
+        fs::write(project_root.join(file), "# Heading\n\ntext\n").unwrap();
+        install_markdown_plugins(&project_root);
+    }
 
     let mut config = Config {
         theme: "t".to_string().into(),
@@ -48,7 +59,7 @@ fn open_sized(width: u16, theme: &str, tweak: impl FnOnce(&mut Config)) -> Sessi
             .without_empty_plugins_dir(),
     )
     .unwrap();
-    harness.open_file(&project_root.join("notes.txt")).unwrap();
+    harness.open_file(&project_root.join(file)).unwrap();
     harness
         .send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
         .unwrap();
@@ -179,7 +190,7 @@ fn a_narrow_explorer_keeps_its_header_buttons() {
             "chrome": {"file_explorer_border": false}}"#,
     ] {
         let s = open_sized(70, theme, |_| {});
-        let header = line_with(&s.harness, "File Explor");
+        let header = line_with(&s.harness, "⟳");
         assert!(
             header.contains('…') && header.contains('×') && header.contains('⟳'),
             "title elided, buttons kept: {header:?}"
@@ -192,15 +203,31 @@ fn a_narrow_explorer_keeps_its_header_buttons() {
     }
 }
 
-/// Borderless, the explorer's title starts at the edge like the rows under
-/// it: there is no box corner to step past.
+/// The explorer's title is in the same column whether the sidebar has one
+/// section or several: the collapse glyph's column is kept, blank, while
+/// there is nothing to collapse — so the title does not jump when the
+/// Markdown outline comes and goes. Borderless; boxed, one section keeps
+/// the default look (no chevron, design §4.6) and the corner anchors it.
 #[test]
-fn a_borderless_explorer_title_has_no_left_padding() {
-    let s = open(
-        r#"{"name": "t", "extends": "builtin://dark",
-            "chrome": {"file_explorer_border": false}}"#,
-        |_| {},
+fn the_explorer_title_keeps_its_column_with_one_section_or_several() {
+    let theme = r#"{"name": "t", "extends": "builtin://dark",
+        "chrome": {"file_explorer_border": false}}"#;
+    let column = |h: &EditorTestHarness| {
+        let header = line_with(h, "File Explorer");
+        header[..header.find("File Explorer").unwrap()]
+            .chars()
+            .count()
+    };
+    let one = open(theme, |_| {});
+    let mut several = open_file(120, theme, |_| {}, "doc.md");
+    wait_for(&mut several.harness, "the outline section", |h| {
+        h.screen_to_string().contains("Contents")
+    });
+    assert_eq!(
+        column(&one.harness),
+        column(&several.harness),
+        "one section:\n{}\nseveral:\n{}",
+        one.harness.screen_to_string(),
+        several.harness.screen_to_string()
     );
-    let header = line_with(&s.harness, "File Explorer");
-    assert!(header.starts_with("File Explorer"), "{header:?}");
 }
