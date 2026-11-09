@@ -389,6 +389,17 @@ Get theme data (JSON) by name from the in-memory cache
 getThemeData(name: string): unknown;
 ```
 
+### `getBuiltinFileIcons`
+
+The built-in file-type icons a theme's `file_icons` section
+overrides, in that section's shape: `{by_name, by_extension, default,
+folder, folder_open}`, each icon `&#123;glyph, color: [r, g, b]}` (a
+folder's color is `null`: it takes `ui.file_explorer_directory_fg`).
+
+```typescript
+getBuiltinFileIcons(): unknown;
+```
+
 ### `saveThemeFile`
 
 Save a theme file to the user themes directory, returns the saved path

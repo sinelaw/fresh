@@ -6457,6 +6457,13 @@ interface EditorAPI {
 	*/
 	getThemeData(name: string): unknown;
 	/**
+	* The built-in file-type icons a theme's `file_icons` section
+	* overrides, in that section's shape: `{by_name, by_extension, default,
+	* folder, folder_open}`, each icon `{glyph, color: [r, g, b]}` (a
+	* folder's color is `null`: it takes `ui.file_explorer_directory_fg`).
+	*/
+	getBuiltinFileIcons(): unknown;
+	/**
 	* Save a theme file to the user themes directory, returns the saved path
 	*/
 	saveThemeFile(name: string, content: string): string;

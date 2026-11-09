@@ -66,10 +66,13 @@ type ThemeFieldValue = ColorValue | ModifierValue | boolean;
 // =============================================================================
 
 const LEFT_WIDTH = 38;
+/** The tree panel's share of the editor's width. */
+const TREE_RATIO = 0.45;
 const RIGHT_WIDTH_CONST = 61;
 function RIGHT_WIDTH(): number { return RIGHT_WIDTH_CONST; }
 
 type PickerFocusTarget =
+  | { type: "attributes" }
   | { type: "hex-input" }
   | { type: "named-colors"; index: number }
   | { type: "palette"; row: number; col: number };
@@ -170,6 +173,18 @@ interface ThemeFieldDef {
   description: string;
   section: string;
   kind: FieldKind;
+  /** A color that carries text attributes (`{color, modifier}` on disk),
+   * edited from the picker's Attributes row. */
+  styled?: boolean;
+  /** A `group`'s fields: a nested object with fixed keys
+   * (`chrome.nerd_font`, `file_icons.default`). */
+  children?: ThemeFieldDef[];
+  /** A `map`'s per-entry fields: an object keyed by the user
+   * (`file_icons.by_extension`), each entry the same shape. */
+  entry?: ThemeFieldDef[];
+  /** Which built-in table a map's or group's values fall back to, for
+   * showing what an unset value inherits (`file_icons` only). */
+  builtin?: string;
 }
 
 /**
@@ -177,7 +192,11 @@ interface ThemeFieldDef {
  * `chrome` section's structural options — an on/off toggle, or the text of a
  * separator glyph.
  */
-type FieldKind = "color" | "modifier" | "toggle" | "text";
+type FieldKind =
+  | "color" | "modifier" | "toggle" | "text"
+  // Containers: a nested object with fixed keys, a user-keyed map, one of
+  // a map's entries, and the row that adds one.
+  | "group" | "map" | "entry" | "add";
 
 /**
  * Theme field with current value
@@ -246,6 +265,20 @@ function fieldRefersToStyledColorDef(fieldObj: Record<string, unknown>): boolean
   });
 }
 
+/** The `$ref` a property schema entry points at, directly or as the
+ * non-null half of an `anyOf`. */
+function refOf(fieldObj: Record<string, unknown>): string | null {
+  if (typeof fieldObj["$ref"] === "string") return fieldObj["$ref"] as string;
+  const anyOf = fieldObj["anyOf"];
+  if (Array.isArray(anyOf)) {
+    for (const v of anyOf) {
+      const r = v && typeof v === "object" ? (v as Record<string, unknown>)["$ref"] : undefined;
+      if (typeof r === "string") return r;
+    }
+  }
+  return null;
+}
+
 /** Whether a property schema entry is a string (possibly nullable). Theme
  * colors are `$ref`s, so only the `chrome` section's separators match. */
 function fieldIsString(fieldObj: Record<string, unknown>): boolean {
@@ -290,7 +323,7 @@ function loadThemeSections(): ThemeSection[] {
   const properties = schema.properties || {};
 
   // Section ordering
-  const sectionOrder = ["editor", "ui", "chrome", "search", "diagnostic", "syntax"];
+  const sectionOrder = ["editor", "ui", "chrome", "file_icons", "search", "diagnostic", "syntax"];
 
   for (const [sectionName, sectionSchema] of Object.entries(properties)) {
     // Skip top-level fields that aren't color sections: `name` is the
@@ -347,38 +380,59 @@ function loadThemeSections(): ThemeSection[] {
       };
     };
 
-    for (const [fieldName, fieldSchema] of Object.entries(sectionProps)) {
-      const fieldObj = fieldSchema as Record<string, unknown>;
-      const fieldDesc = (fieldObj.description as string) || "";
-
-      // The `chrome` section's options are booleans (`Option<bool>`, so the
-      // schema types them `["boolean", "null"]`): edited as on/off toggles.
-      if (fieldIsBoolean(fieldObj)) {
-        fields.push(makeFieldDef(fieldName, "toggle", fieldDesc));
-        continue;
+    // The fields of one object schema, recursing into nested objects
+    // (groups) and keyed maps. Everything the editor can edit is found here
+    // from the schema, so a new theme option needs no plugin change.
+    const fieldsOf = (props: Record<string, unknown>, builtin?: string): ThemeFieldDef[] => {
+      const out: ThemeFieldDef[] = [];
+      for (const [fieldName, fieldSchema] of Object.entries(props)) {
+        const fieldObj = fieldSchema as Record<string, unknown>;
+        const fieldDesc = (fieldObj.description as string) || "";
+        // The chrome options: booleans are toggles, strings are glyphs.
+        if (fieldIsBoolean(fieldObj)) {
+          out.push(makeFieldDef(fieldName, "toggle", fieldDesc));
+          continue;
+        }
+        if (fieldIsString(fieldObj)) {
+          out.push(makeFieldDef(fieldName, "text", fieldDesc));
+          continue;
+        }
+        const styled = fieldRefersToStyledColorDef(fieldObj);
+        if (styled || fieldRefersToColorDef(fieldObj)) {
+          out.push({ ...makeFieldDef(fieldName, "color", fieldDesc), styled, builtin });
+          continue;
+        }
+        // A keyed map: `{type: object, additionalProperties: {$ref: T}}`.
+        const additional = fieldObj["additionalProperties"] as Record<string, unknown> | undefined;
+        const entryRef = additional && typeof additional["$ref"] === "string"
+          ? resolveRef(additional["$ref"] as string) : null;
+        if (entryRef && entryRef.properties) {
+          const table = builtin ? `${builtin}.${fieldName}` : undefined;
+          out.push({
+            ...makeFieldDef(fieldName, "map", fieldDesc),
+            entry: fieldsOf(entryRef.properties as Record<string, unknown>, table),
+            builtin: table,
+          });
+          continue;
+        }
+        // A nested object: `$ref` to a struct, possibly `anyOf [.., null]`.
+        const nested = refOf(fieldObj);
+        const nestedSchema = nested ? resolveRef(nested) : null;
+        if (nestedSchema && nestedSchema.properties) {
+          const table = builtin ? `${builtin}.${fieldName}` : undefined;
+          out.push({
+            ...makeFieldDef(fieldName, "group", fieldDesc),
+            children: fieldsOf(nestedSchema.properties as Record<string, unknown>, table),
+            builtin: table,
+          });
+        }
       }
-      // Its separators are strings (glyphs), edited as text.
-      if (fieldIsString(fieldObj)) {
-        fields.push(makeFieldDef(fieldName, "text", fieldDesc));
-        continue;
-      }
+      // Sorted for a stable tree (simple comparison: no ICU in QuickJS).
+      out.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+      return out;
+    };
+    fields.push(...fieldsOf(sectionProps, sectionName === "file_icons" ? "file_icons" : undefined));
 
-      const styled = fieldRefersToStyledColorDef(fieldObj);
-      if (!styled && !fieldRefersToColorDef(fieldObj)) continue;
-
-      fields.push(makeFieldDef(fieldName, "color", fieldDesc));
-
-      // A styled color bundles text attributes with the color. The editor
-      // stores color and attributes as separate keys internally, so expose
-      // the attributes as a synthetic `<name>_modifier` row; both fold back
-      // into the one bundled value on save.
-      if (styled) {
-        fields.push(makeFieldDef(`${fieldName}_modifier`, "modifier", fieldDesc));
-      }
-    }
-
-    // Sort fields alphabetically (use simple comparison to avoid ICU issues in QuickJS)
-    fields.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 
     // Generate i18n keys for section
     const sectionI18nName = `section.${sectionName}`;
@@ -646,6 +700,7 @@ editor.defineMode(
     [SHORTCUTS.save_as, "theme_editor_save_as"],
     [SHORTCUTS.delete, "theme_editor_delete"],
     [SHORTCUTS.reload, "theme_editor_reload"],
+    ["Delete", "theme_editor_reset"],
     ["C-h", "theme_editor_show_help"],  // Alternative help key
   ],
   true // read-only
@@ -768,11 +823,38 @@ function isNamedColor(value: ColorValue): boolean {
   return typeof value === "string" && (value in NAMED_COLORS || SPECIAL_COLORS.includes(value));
 }
 
+/** A map key as one path segment: map keys are the user's (`Cargo.toml`)
+ * and may hold the dot paths are split on. */
+function encodeKey(key: string): string {
+  return key.replace(/%/g, "%25").replace(/\./g, "%2E");
+}
+
+function decodeKey(part: string): string {
+  return part.replace(/%2E/g, ".").replace(/%25/g, "%");
+}
+
+function pathParts(path: string): string[] {
+  return path.split(".").map(decodeKey);
+}
+
+/** Remove a value, leaving its parents in place. */
+function deleteNestedValue(obj: Record<string, unknown>, path: string): void {
+  const parts = pathParts(path);
+  let current: unknown = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (!current || typeof current !== "object") return;
+    current = (current as Record<string, unknown>)[parts[i]];
+  }
+  if (current && typeof current === "object") {
+    delete (current as Record<string, unknown>)[parts[parts.length - 1]];
+  }
+}
+
 /**
  * Get nested value from object
  */
 function getNestedValue(obj: Record<string, unknown>, path: string): unknown {
-  const parts = path.split(".");
+  const parts = pathParts(path);
   let current: unknown = obj;
   for (const part of parts) {
     if (current === null || current === undefined) return undefined;
@@ -785,7 +867,7 @@ function getNestedValue(obj: Record<string, unknown>, path: string): unknown {
  * Set nested value in object
  */
 function setNestedValue(obj: Record<string, unknown>, path: string, value: unknown): void {
-  const parts = path.split(".");
+  const parts = pathParts(path);
   let current: Record<string, unknown> = obj;
   for (let i = 0; i < parts.length - 1; i++) {
     const part = parts[i];
@@ -812,8 +894,14 @@ const MODIFIER_SUFFIX = "_modifier";
 
 /** Expand on-disk `{color, modifier}` bundles into flat color + `_modifier`,
  * in every section. */
+/** The sections whose values are colors (bare, or `{color, modifier}`
+ * bundles). `chrome` and `file_icons` hold other shapes — a `file_icons`
+ * entry has a `color` too, and is not a bundle. */
+const COLOR_SECTIONS = ["editor", "ui", "search", "diagnostic", "syntax"];
+
 function expandStyleBundles(themeData: Record<string, unknown>): void {
-  for (const section of Object.values(themeData)) {
+  for (const name of COLOR_SECTIONS) {
+    const section = themeData[name];
     if (!section || typeof section !== "object" || Array.isArray(section)) continue;
     const obj = section as Record<string, unknown>;
     for (const [key, value] of Object.entries(obj)) {
@@ -898,6 +986,82 @@ function loadThemeFile(key: string): Record<string, unknown> | null {
 // Field Building
 // =============================================================================
 
+const TREE_ROW_TYPES = ["tree-field", "tree-section", "tree-group", "tree-entry", "tree-add"];
+
+/** Whether a row is a header that expands and collapses. */
+function isContainer(field: ThemeField): boolean {
+  return field.isSection || ["group", "map", "entry"].includes(field.def.kind);
+}
+
+/** Whether a field's value may be removed, so it inherits again: anything
+ * under `chrome` or `file_icons`, which a theme names only to change. The
+ * color sections' keys stay, so a saved theme keeps naming them all. */
+function isResettable(field: ThemeField): boolean {
+  return /^(chrome|file_icons)\./.test(field.path) && field.def.kind !== "add" && field.def.kind !== "map";
+}
+
+/** Whether a field or anything under it matches the filter. */
+function defMatches(def: ThemeFieldDef, filter: string): boolean {
+  return def.key.toLowerCase().includes(filter)
+    || def.displayName.toLowerCase().includes(filter)
+    || (def.children ?? []).some(c => defMatches(c, filter));
+}
+
+/** The default a leaf shows while its theme value is unset. */
+function fallbackValue(def: ThemeFieldDef): ThemeFieldValue {
+  return def.kind === "modifier" ? [] : def.kind === "toggle" ? true : def.kind === "text" ? "" : [128, 128, 128];
+}
+
+/**
+ * Append the rows for `defs` under `parent`: leaves with their values, and
+ * containers (groups, maps, map entries) as headers whose rows follow while
+ * they are expanded. Expansion is remembered by path in
+ * `state.expandedSections`; a filter opens every container on its way to a
+ * match.
+ */
+function pushFields(out: ThemeField[], defs: ThemeFieldDef[], parent: string, depth: number, filter: string): void {
+  for (const def of defs) {
+    if (filter && !defMatches(def, filter)) continue;
+    const path = `${parent}.${encodeKey(def.key)}`;
+    const stored = getNestedValue(state.themeData, path);
+    if (def.kind === "group" || def.kind === "map") {
+      const expanded = state.expandedSections.has(path) || !!filter;
+      out.push({ def, value: [], path, depth, isSection: false, expanded });
+      if (!expanded) continue;
+      if (def.kind === "group") {
+        pushFields(out, def.children ?? [], path, depth + 1, filter);
+        continue;
+      }
+      // A map: one header per entry the theme has, then the row that adds one.
+      const entries = stored && typeof stored === "object" ? Object.keys(stored as object).sort() : [];
+      for (const key of entries) {
+        const entryPath = `${path}.${encodeKey(key)}`;
+        const entryDef: ThemeFieldDef = {
+          key,
+          displayName: key,
+          description: def.description,
+          section: def.section,
+          kind: "entry",
+          children: def.entry,
+          builtin: def.builtin,
+        };
+        const open = state.expandedSections.has(entryPath);
+        out.push({ def: entryDef, value: [], path: entryPath, depth: depth + 1, isSection: false, expanded: open });
+        if (open) pushFields(out, def.entry ?? [], entryPath, depth + 2, "");
+      }
+      out.push({
+        def: { key: "+", displayName: "Add…", description: def.description, section: def.section, kind: "add", builtin: def.builtin },
+        value: [],
+        path: `${path}.+`,
+        depth: depth + 1,
+        isSection: false,
+      });
+      continue;
+    }
+    out.push({ def, value: (stored ?? fallbackValue(def)) as ThemeFieldValue, path, depth, isSection: false });
+  }
+}
+
 /**
  * Build visible fields list based on expanded sections
  */
@@ -907,8 +1071,8 @@ function buildVisibleFields(): ThemeField[] {
   const filter = state.filterText.toLowerCase();
 
   for (const section of themeSections) {
-    // A section with nothing the editor can edit (`file_icons`, maps of
-    // icons) is left out of the tree; Save still writes it back untouched.
+    // A section with nothing the editor can edit is left out of the tree;
+    // Save still writes it back untouched.
     if (section.fields.length === 0) continue;
     const expanded = state.expandedSections.has(section.name);
 
@@ -916,8 +1080,7 @@ function buildVisibleFields(): ThemeField[] {
     if (filter) {
       const sectionMatches = section.name.toLowerCase().includes(filter) ||
         section.displayName.toLowerCase().includes(filter);
-      const anyFieldMatches = section.fields.some(f =>
-        f.key.toLowerCase().includes(filter) || f.displayName.toLowerCase().includes(filter));
+      const anyFieldMatches = section.fields.some(f => defMatches(f, filter));
       if (!sectionMatches && !anyFieldMatches) continue;
     }
 
@@ -939,31 +1102,7 @@ function buildVisibleFields(): ThemeField[] {
 
     // Section fields
     if (expanded) {
-      for (const fieldDef of section.fields) {
-        // Filter individual fields
-        if (filter) {
-          const fieldMatches = fieldDef.key.toLowerCase().includes(filter) ||
-            fieldDef.displayName.toLowerCase().includes(filter);
-          if (!fieldMatches) continue;
-        }
-
-        const path = `${section.name}.${fieldDef.key}`;
-        const storedValue = getNestedValue(state.themeData, path);
-        const fallback: ThemeFieldValue = fieldDef.kind === "modifier"
-          ? []
-          : fieldDef.kind === "toggle"
-            ? true
-            : fieldDef.kind === "text" ? "" : [128, 128, 128];
-        const value = (storedValue ?? fallback) as ThemeFieldValue;
-
-        fields.push({
-          def: fieldDef,
-          value,
-          path,
-          depth: 1,
-          isSection: false,
-        });
-      }
+      pushFields(fields, section.fields, section.name, 1, filter);
     }
   }
 
@@ -986,6 +1125,106 @@ interface TreeLine {
   selected?: boolean;
   colorValue?: ColorValue;
   fieldKind?: FieldKind;
+  /** A map entry's icon glyph, drawn in `colorValue`. */
+  glyph?: string;
+}
+
+/** The tree panel's width: its share of the pane the editor opened in
+ * (`listSplits` knows that pane's width; the viewport is the terminal's). */
+function treeWidth(): number {
+  const splits = editor.listSplits();
+  // The tree panel itself, when the group's panels are listed; else the
+  // pane the editor opened in, of which the tree takes its share.
+  const tree = splits.find(sp => sp.bufferId === state.panelBuffers["tree"]);
+  if (tree) return Math.max(30, tree.width - 2);
+  // The editor opens in a horizontal split, as wide as the pane it split
+  // from — which the snapshot may hold before it holds the new pane.
+  const pane = splits.find(sp => sp.splitId === state.editorPaneId)
+    ?? splits.find(sp => sp.splitId === state.sourceSplitId);
+  const width = pane ? pane.width : state.viewportWidth;
+  return Math.max(30, Math.floor(width * TREE_RATIO) - 2);
+}
+
+/** The built-in file icons (`editor.getBuiltinFileIcons`), fetched once. */
+let builtinIcons: Record<string, unknown> | null = null;
+
+/** What an unset `file_icons` value falls back to: the built-in icon's
+ * glyph or color at the same path, if the table has one. */
+function builtinValue(path: string): unknown {
+  if (!path.startsWith("file_icons.")) return undefined;
+  if (builtinIcons === null) {
+    builtinIcons = (editor.getBuiltinFileIcons() as Record<string, unknown>) ?? {};
+  }
+  return getNestedValue({ file_icons: builtinIcons }, path);
+}
+
+/** One row of the tree for a field below a section header. */
+function fieldLine(field: ThemeField, i: number, isSelected: boolean): TreeLine {
+  const sel = isSelected && state.focusPanel === "tree" ? "▸" : " ";
+  const indent = "  ".repeat(Math.max(0, field.depth - 1));
+  const kind = field.def.kind;
+  const base = { index: i, path: field.path, selected: isSelected, fieldKind: kind };
+  if (kind === "group" || kind === "map") {
+    const icon = field.expanded ? "▼" : ">";
+    return { ...base, text: `  ${indent}${sel}${icon} ${field.def.key}`, type: "tree-group" };
+  }
+  if (kind === "entry") {
+    const icon = field.expanded ? "▼" : ">";
+    // The entry's icon as it will be drawn: its own glyph or the built-in.
+    const glyph = (getNestedValue(state.themeData, `${field.path}.glyph`) as string | undefined)
+      ?? (builtinValue(`${field.path}.glyph`) as string | undefined) ?? "";
+    const color = (getNestedValue(state.themeData, `${field.path}.color`) as ColorValue | undefined)
+      ?? (builtinValue(`${field.path}.color`) as ColorValue | undefined);
+    return {
+      ...base,
+      text: `  ${indent}${sel}${icon} ${field.def.key}  ${glyph}`,
+      type: "tree-entry",
+      glyph,
+      colorValue: color ?? undefined,
+    };
+  }
+  if (kind === "add") {
+    return { ...base, text: `  ${indent}${sel} + Add…`, type: "tree-add" };
+  }
+
+  // A leaf. Layout: indent, marker, name padded, swatch/marker, value.
+  // The name takes what the value (`#RRGGBB +bold,italic`) leaves.
+  const width = treeWidth();
+  const valueW = Math.max(9, Math.min(24, Math.floor(width * 0.35)));
+  const nameW = Math.max(8, width - valueW - 9 - indent.length);
+  const name = field.def.key.length > nameW ? field.def.key.slice(0, nameW - 1) + "…" : field.def.key;
+  const stored = getNestedValue(state.themeData, field.path);
+  const inherited = stored === undefined ? builtinValue(field.path) : undefined;
+  let valueText: string;
+  if (kind === "toggle") {
+    valueText = field.value ? "on" : "off";
+  } else if (kind === "text") {
+    valueText = stored === undefined
+      ? (inherited !== undefined ? `${inherited} (built-in)` : "(unset)")
+      : JSON.stringify(field.value);
+  } else if (stored === undefined && kind === "color") {
+    valueText = inherited ? `${formatColorValue(inherited as ColorValue)} (built-in)` : "(unset)";
+  } else {
+    valueText = formatColorValue(field.value as ColorValue);
+    // A styled color's attributes ride on its row: `#RRGGBB +bold,italic`.
+    const mods = getNestedValue(state.themeData, `${field.path}${MODIFIER_SUFFIX}`) as ModifierValue | undefined;
+    if (field.def.styled && mods && mods.length > 0) valueText += ` +${mods.join(",")}`;
+  }
+  const valueStr = valueText.length > valueW ? valueText.slice(0, valueW - 1) + "…" : valueText;
+  const swatch = kind === "color"
+    ? (stored !== undefined ? field.value as ColorValue : (inherited as ColorValue | undefined))
+    : undefined;
+  // No swatch for a color with nothing to show: a gray block would read as
+  // a color the theme picked.
+  const marker = kind === "toggle"
+    ? (field.value ? " ●" : " ○")
+    : kind === "text" ? "Ab" : swatch === undefined || swatch === null ? "··" : "██";
+  return {
+    ...base,
+    text: `  ${indent}${sel} ${name.padEnd(nameW)} ${marker} ${valueStr}`,
+    type: "tree-field",
+    colorValue: swatch ?? undefined,
+  };
 }
 
 function buildTreeLines(): TreeLine[] {
@@ -1033,34 +1272,7 @@ function buildTreeLines(): TreeLine[] {
         selected: isSelected,
       });
     } else {
-      const sel = isSelected && state.focusPanel === "tree" ? "▸" : " ";
-      // Adapt name/value truncation to panel width
-      // Layout: "  ▸ name.padEnd(nameW) ██ value" = 6 + nameW + 3 + valueW
-      const nameW = Math.max(8, LEFT_WIDTH - 18);
-      const valueW = Math.max(5, LEFT_WIDTH - nameW - 9);
-      const name = field.def.key.length > nameW ? field.def.key.slice(0, nameW - 1) + "…" : field.def.key;
-      const valueText = field.def.kind === "modifier"
-        ? formatModifierValue(field.value as ModifierValue)
-        : field.def.kind === "toggle"
-          ? (field.value ? "on" : "off")
-          : field.def.kind === "text"
-            ? JSON.stringify(field.value)
-            : formatColorValue(field.value as ColorValue);
-      const valueStr = valueText.length > valueW ? valueText.slice(0, valueW - 1) + "…" : valueText;
-      const marker = field.def.kind === "modifier"
-        ? "Aa"
-        : field.def.kind === "toggle"
-          ? (field.value ? " ●" : " ○")
-          : field.def.kind === "text" ? "Ab" : "██";
-      lines.push({
-        text: `  ${sel} ${name.padEnd(nameW)} ${marker} ${valueStr}`,
-        type: "tree-field",
-        index: i,
-        path: field.path,
-        selected: isSelected,
-        colorValue: field.def.kind === "color" ? field.value as ColorValue : undefined,
-        fieldKind: field.def.kind,
-      });
+      lines.push(fieldLine(field, i, isSelected));
     }
   }
 
@@ -1083,8 +1295,9 @@ function buildPickerLines(): PickerLine[] {
   const lines: PickerLine[] = [];
   const field = state.visibleFields[state.selectedIndex];
 
-  if (!field || field.isSection) {
-    // Section selected - show section info
+  if (!field || isContainer(field) || field.def.kind === "add") {
+    // A header (section, group, map, map entry) or the add row: what it is,
+    // and what Enter and Delete do there.
     if (field) {
       lines.push({ text: `${field.def.displayName}`, type: "picker-title" });
       lines.push({ text: `"${field.def.description}"`, type: "picker-desc" });
@@ -1092,7 +1305,16 @@ function buildPickerLines(): PickerLine[] {
       lines.push({ text: "No field selected", type: "picker-title" });
     }
     lines.push({ text: "─".repeat(RIGHT_WIDTH() - 2), type: "picker-separator" });
-    lines.push({ text: "Select a color field to edit", type: "picker-desc" });
+    const hint = !field || field.isSection
+      ? "Select a field to edit"
+      : field.def.kind === "add"
+        ? "Enter: add an entry (built-in names are suggested)"
+        : field.def.kind === "entry"
+          ? "Enter: open. Delete: remove this entry"
+          : isResettable(field)
+            ? "Enter: open. Delete: reset all of it to inherited"
+            : "Enter: open";
+    lines.push({ text: hint, type: "picker-desc" });
     return lines;
   }
 
@@ -1115,7 +1337,12 @@ function buildPickerLines(): PickerLine[] {
     lines.push({ text: `Text: ${JSON.stringify(field.value)}`, type: "picker-hex" });
     lines.push({ text: "", type: "picker-blank" });
     lines.push({ text: "Press Enter or Space to type it, or pick a glyph:", type: "picker-desc" });
-    lines.push({ text: ` ${SEPARATOR_GLYPHS.map(g => g.value || "∅").join("  ")}`, type: "picker-label" });
+    // An icon's glyph is picked from the built-in icons; a chrome glyph
+    // from separators and caps.
+    const choices = field.path.startsWith("file_icons.")
+      ? builtinGlyphSuggestions().slice(0, 24).map(sg => sg.value ?? "")
+      : SEPARATOR_GLYPHS.map(g => g.value || "∅");
+    lines.push({ text: ` ${choices.join("  ")}`, type: "picker-label" });
     lines.push({ text: "The editor shows each change live, before saving.", type: "picker-desc" });
     return lines;
   }
@@ -1141,6 +1368,12 @@ function buildPickerLines(): PickerLine[] {
       valueLine += `     RGB: ${rgb[0]}, ${rgb[1]}, ${rgb[2]}`;
     }
     lines.push({ text: valueLine, type: "picker-hex" });
+  }
+  // A styled color's attributes, on the color's own panel rather than a
+  // second row in the tree (↑ from the value, Enter to edit).
+  if (field.def.styled) {
+    const mods = (getNestedValue(state.themeData, `${field.path}${MODIFIER_SUFFIX}`) ?? []) as ModifierValue;
+    lines.push({ text: `Attributes: ${formatModifierValue(mods)}`, type: "picker-attrs" });
   }
 
   lines.push({ text: "", type: "picker-blank" });
@@ -1189,6 +1422,24 @@ function styleForLeftEntry(item: TreeLine | undefined): { style?: Partial<Overla
     return { style: { fg: colors.filterText } };
   } else if (type === "tree-section") {
     return { style: { fg: colors.sectionHeader, bold: true } };
+  } else if (type === "tree-group") {
+    return { style: { fg: colors.sectionHeader } };
+  } else if (type === "tree-add") {
+    return { style: { fg: colors.description } };
+  } else if (type === "tree-entry") {
+    // The entry's icon in the color it will be drawn in.
+    const text = " " + item.text;
+    const glyph = item.glyph ?? "";
+    const at = glyph ? text.lastIndexOf(glyph) : -1;
+    const spec = item.colorValue !== undefined ? colorValueToOverlaySpec(item.colorValue) : null;
+    if (at < 0 || !spec) return { style: { fg: colors.fieldName } };
+    const start = getUtf8ByteLength(text.substring(0, at));
+    return {
+      inlineOverlays: [
+        { start: 0, end: start, style: { fg: colors.fieldName } },
+        { start, end: start + getUtf8ByteLength(glyph), style: { fg: spec } },
+      ],
+    };
   } else if (type === "tree-field") {
     const inlines: InlineOverlay[] = [];
     const text = " " + item.text; // matches leftText construction below
@@ -1237,6 +1488,8 @@ function styleForRightEntry(item: PickerLine | undefined): { style?: Partial<Ove
     return { style: { fg: colors.divider } };
   } else if (type === "picker-hex") {
     return { style: { fg: colors.pickerValue } };
+  } else if (type === "picker-attrs") {
+    return { style: { fg: colors.pickerLabel } };
   } else if (type === "picker-label") {
     return { style: { fg: colors.pickerLabel } };
   } else if (type === "picker-named-row") {
@@ -1460,7 +1713,7 @@ function applySelectionHighlighting(cachedEntries?: TextPropertyEntry[]): void {
     const props = entry.properties as Record<string, unknown>;
     const entryType = props.type as string;
 
-    if (entryType === "tree-section" || entryType === "tree-field") {
+    if (TREE_ROW_TYPES.includes(entryType)) {
       if (props.selected as boolean) {
         // For tree-field entries, split the highlight around the swatch (██) bytes
         // so the inline swatch color overlay (fg+bg) isn't overridden by selection bg
@@ -1476,6 +1729,10 @@ function applySelectionHighlighting(cachedEntries?: TextPropertyEntry[]): void {
       }
     } else if (entryType === "picker-hex") {
       if (state.focusPanel === "picker" && state.pickerFocus.type === "hex-input") {
+        addBackgroundHighlight(bufferId, byteOffset, byteOffset + textLen, colors.pickerFocusBg);
+      }
+    } else if (entryType === "picker-attrs") {
+      if (state.focusPanel === "picker" && state.pickerFocus.type === "attributes") {
         addBackgroundHighlight(bufferId, byteOffset, byteOffset + textLen, colors.pickerFocusBg);
       }
     } else if (entryType === "picker-named-row") {
@@ -1582,7 +1839,7 @@ function buildPickerPanelEntries(): TextPropertyEntry[] {
 function renderThemeEditorFooter(): void {
   if (state.footerPanel === null) return;
   const hintString =
-    "↑↓:Navigate  Tab:Switch Panel  Enter:Edit  /:Filter  Ctrl+S:Save  Esc:Close";
+    "↑↓:Navigate  Tab:Switch Panel  Enter:Edit  Del:Reset  /:Filter  Ctrl+S:Save  Esc:Close";
   state.footerPanel.set(hintBar(parseHintString(hintString)));
 }
 
@@ -1715,6 +1972,18 @@ function editColorField(field: ThemeField): void {
   editor.setPromptSuggestions(buildColorSuggestions(field));
 }
 
+/** The attributes of a styled color, as the field the modifier prompt
+ * edits (`<path>_modifier`). */
+function attributesField(field: ThemeField): ThemeField {
+  return {
+    def: { ...field.def, key: `${field.def.key}${MODIFIER_SUFFIX}`, kind: "modifier" },
+    value: (getNestedValue(state.themeData, `${field.path}${MODIFIER_SUFFIX}`) ?? []) as ModifierValue,
+    path: `${field.path}${MODIFIER_SUFFIX}`,
+    depth: field.depth,
+    isSection: false,
+  };
+}
+
 /** Separator glyphs offered for a `chrome` text option. */
 const SEPARATOR_GLYPHS: Array<{ value: string; description: string }> = [
   { value: "│", description: "Thin vertical line" },
@@ -1738,13 +2007,73 @@ function editTextField(field: ThemeField): void {
     `theme-text-${field.path}`,
     String(field.value ?? ""),
   );
-  editor.setPromptSuggestions(SEPARATOR_GLYPHS.map(g => ({
-    id: `glyph:${g.value}`,
-    text: g.value === "" ? "(none)" : g.value === " " ? "(space)" : g.value,
-    description: g.description,
-    value: g.value,
-  })));
+  // An icon's glyph: the built-in icons' glyphs, named by what uses them.
+  // A chrome glyph: separators and caps.
+  const suggestions = field.path.startsWith("file_icons.")
+    ? builtinGlyphSuggestions()
+    : SEPARATOR_GLYPHS.map(g => ({
+      id: `glyph:${g.value}`,
+      text: g.value === "" ? "(none)" : g.value === " " ? "(space)" : g.value,
+      description: g.description,
+      value: g.value,
+    }));
+  editor.setPromptSuggestions(suggestions);
 }
+
+/** Every distinct built-in icon glyph, described by the files it marks. */
+function builtinGlyphSuggestions(): PromptSuggestion[] {
+  builtinValue("file_icons.default");
+  const users = new Map<string, string[]>();
+  const add = (glyph: unknown, who: string) => {
+    if (typeof glyph !== "string" || !glyph) return;
+    users.set(glyph, [...(users.get(glyph) ?? []), who]);
+  };
+  const icons = builtinIcons ?? {};
+  for (const table of ["by_extension", "by_name"]) {
+    const t = (icons[table] ?? {}) as Record<string, { glyph?: string }>;
+    for (const [k, v] of Object.entries(t)) add(v.glyph, table === "by_extension" ? `.${k}` : k);
+  }
+  for (const one of ["default", "folder", "folder_open"]) {
+    add((icons[one] as { glyph?: string } | undefined)?.glyph, one);
+  }
+  return [...users.entries()].map(([glyph, who]) => ({
+    id: `icon:${glyph}`,
+    text: glyph,
+    description: who.slice(0, 6).join(" ") + (who.length > 6 ? " …" : ""),
+    value: glyph,
+  }));
+}
+
+/** Add an entry to a keyed map (`file_icons.by_extension`): ask for its
+ * key, offering the built-in table's keys the theme does not override yet. */
+function addMapEntry(field: ThemeField): void {
+  const mapPath = field.path.slice(0, -2); // drop ".+"
+  editor.startPrompt(`New entry in ${pathParts(mapPath).slice(-1)[0]}:`, `theme-add-${mapPath}`);
+  const existing = (getNestedValue(state.themeData, mapPath) ?? {}) as Record<string, unknown>;
+  const table = (builtinValue(mapPath) ?? {}) as Record<string, { glyph?: string }>;
+  editor.setPromptSuggestions(
+    Object.entries(table)
+      .filter(([k]) => !(k in existing))
+      .map(([k, v]) => ({ id: `key:${k}`, text: k, description: `${v.glyph ?? ""} built-in`, value: k })),
+  );
+}
+
+/** Remove the selected value so it inherits again — from the theme this
+ * one extends, or the built-in default. A map entry or a group goes whole. */
+function theme_editor_reset(): void {
+  if (state.focusPanel !== "tree") return;
+  const field = getFieldAtCursor();
+  if (!field || !isResettable(field)) {
+    editor.setStatus("Only chrome and file icon values can be reset");
+    return;
+  }
+  deleteNestedValue(state.themeData, field.path);
+  deleteNestedValue(state.themeData, `${field.path}${MODIFIER_SUFFIX}`);
+  state.hasChanges = !deepEqual(state.themeData, state.originalThemeData);
+  updateDisplay();
+  editor.setStatus(`Reset ${field.path.split(".").map(decodeKey).join(".")}`);
+}
+registerHandler("theme_editor_reset", theme_editor_reset);
 
 /** Flip a `chrome` on/off option. */
 function toggleField(field: ThemeField): void {
@@ -1897,6 +2226,24 @@ function findMatchingColor(input: string): string | null {
 
 // Register prompt handlers
 editor.on("prompt_confirmed", (args) => {
+  if (!args.prompt_type.startsWith("theme-add-")) return true;
+  const mapPath = args.prompt_type.replace("theme-add-", "");
+  const key = args.input.trim();
+  if (!key) return true;
+  const entryPath = `${mapPath}.${encodeKey(key)}`;
+  if (getNestedValue(state.themeData, entryPath) === undefined) {
+    setNestedValue(state.themeData, entryPath, {});
+  }
+  // Open the new entry, so its glyph and color are the next rows.
+  state.expandedSections.add(mapPath);
+  state.expandedSections.add(entryPath);
+  state.hasChanges = !deepEqual(state.themeData, state.originalThemeData);
+  updateDisplay();
+  moveCursorToField(entryPath);
+  return true;
+});
+
+editor.on("prompt_confirmed", (args) => {
   if (!args.prompt_type.startsWith("theme-text-")) return true;
   const path = args.prompt_type.replace("theme-text-", "");
   // Taken as typed: a separator's spaces are part of it.
@@ -1917,7 +2264,8 @@ editor.on("prompt_confirmed", (args) => {
     setNestedValue(state.themeData, path, result.value);
     state.hasChanges = !deepEqual(state.themeData, state.originalThemeData);
     updateDisplay();
-    moveCursorToField(path);
+    // The attributes ride on their color's row.
+    moveCursorToField(path.replace(/_modifier$/, ""));
     editor.setStatus(editor.t("status.updated", { path }));
   } else {
     const field = getFieldByPath(path);
@@ -2189,34 +2537,22 @@ editor.on("prompt_cancelled", (args) => {
  */
 /**
  * The theme being edited, in theme-file form: what Save writes and what the
- * live preview loads.
- *
- * Built from every known field, so the file always carries every field even
- * when `state.themeData` is missing some (e.g. a package theme that failed to
- * load fully).
+ * live preview loads. `state.themeData` comes from the registry fully
+ * resolved, so it already names every key; sections the schema does not
+ * know are left out.
  */
 function buildThemeFile(themeName: string): Record<string, unknown> {
   const completeTheme: Record<string, unknown> = { name: themeName };
   for (const section of getThemeSections()) {
-    const sectionData: Record<string, unknown> = {};
-    for (const field of section.fields) {
-      const value = getNestedValue(state.themeData, `${section.name}.${field.key}`);
-      if (value !== undefined) {
-        sectionData[field.key] = value;
-      }
-    }
-    // Keep what the editor has no field for — `chrome.nerd_font`, a set of
-    // glyphs — rather than dropping it on save.
     const stored = state.themeData[section.name];
-    if (stored && typeof stored === "object" && !Array.isArray(stored)) {
-      for (const [key, value] of Object.entries(stored as Record<string, unknown>)) {
-        if (!(key in sectionData) && value && typeof value === "object" && !Array.isArray(value)) {
-          sectionData[key] = value;
-        }
-      }
-    }
-    // Re-bundle color + attributes into the single on-disk value.
-    completeTheme[section.name] = collapseStyleBundles(sectionData);
+    if (!stored || typeof stored !== "object" || Array.isArray(stored)) continue;
+    // Every value the section holds — colors and their attributes, chrome
+    // options and glyph sets, icon maps — as edited. Only the color
+    // sections re-bundle color + attributes into one on-disk value.
+    const data = deepClone(stored as Record<string, unknown>);
+    completeTheme[section.name] = COLOR_SECTIONS.includes(section.name)
+      ? collapseStyleBundles(data)
+      : data;
   }
   return completeTheme;
 }
@@ -2404,13 +2740,13 @@ editor.on("cursor_moved", (data) => {
   const entryType = props[0].type as string | undefined;
 
   // Tree field/section click — update selection and refresh display
-  if ((entryType === "tree-field" || entryType === "tree-section") && typeof props[0].index === "number") {
+  if (TREE_ROW_TYPES.includes(entryType ?? "") && typeof props[0].index === "number") {
     const index = props[0].index as number;
     if (index >= 0 && index < state.visibleFields.length) {
       state.selectedIndex = index;
       state.focusPanel = "tree";
-      // Click on section header always toggles expand/collapse
-      if (entryType === "tree-section") {
+      // A click on any header (section, group, map, entry) toggles it.
+      if (entryType === "tree-section" || entryType === "tree-group" || entryType === "tree-entry") {
         theme_editor_toggle_section();
         return;
       }
@@ -2561,8 +2897,8 @@ function getSelectableEntries(): SelectableEntry[] {
     const entryType = props.type as string;
     const path = (props.path as string) || "";
 
-    // Only tree fields and sections are selectable (they have index property)
-    if ((entryType === "tree-field" || entryType === "tree-section") && typeof props.index === "number") {
+    // Only tree rows are selectable (they have index property)
+    if (TREE_ROW_TYPES.includes(entryType) && typeof props.index === "number") {
       selectableEntries.push({
         byteOffset,
         valueByteOffset: byteOffset,
@@ -2731,8 +3067,10 @@ function theme_editor_enter() : void {
   if (state.focusPanel === "tree") {
     const field = getFieldAtCursor();
     if (!field) return;
-    if (field.isSection) {
+    if (isContainer(field)) {
       theme_editor_toggle_section();
+    } else if (field.def.kind === "add") {
+      addMapEntry(field);
     } else {
       editColorField(field);
     }
@@ -2794,7 +3132,9 @@ editor.on("prompt_confirmed", (args) => {
 function navigatePickerVertical(dir: number): void {
   const pf = state.pickerFocus;
   if (dir > 0) {
-    if (pf.type === "hex-input") {
+    if (pf.type === "attributes") {
+      state.pickerFocus = { type: "hex-input" };
+    } else if (pf.type === "hex-input") {
       state.pickerFocus = { type: "named-colors", index: 0 };
     } else if (pf.type === "named-colors") {
       const row = Math.floor(pf.index / NAMED_COLORS_PER_ROW);
@@ -2810,7 +3150,10 @@ function navigatePickerVertical(dir: number): void {
       }
     }
   } else {
-    if (pf.type === "palette") {
+    if (pf.type === "hex-input") {
+      const field = getFieldAtCursor();
+      if (field && field.def.styled) state.pickerFocus = { type: "attributes" };
+    } else if (pf.type === "palette") {
       if (pf.row > 0) {
         state.pickerFocus = { type: "palette", row: pf.row - 1, col: pf.col };
       } else {
@@ -2877,6 +3220,10 @@ function applyPickerColor(): void {
   const pf = state.pickerFocus;
   let newColor: ColorValue | null = null;
 
+  if (pf.type === "attributes") {
+    editModifierField(attributesField(field));
+    return;
+  }
   if (pf.type === "hex-input") {
     editColorField(field);
     return;
@@ -3008,7 +3355,7 @@ async function doOpenThemeEditor(): Promise<void> {
     first: {
       type: "split",
       direction: "h",
-      ratio: 0.38,
+      ratio: TREE_RATIO,
       first: { type: "scrollable", id: "tree" },
       second: { type: "scrollable", id: "picker" },
     },
@@ -3112,8 +3459,12 @@ function theme_editor_edit_color() : void {
     return;
   }
 
-  if (field.isSection) {
+  if (isContainer(field)) {
     theme_editor_toggle_section();
+    return;
+  }
+  if (field.def.kind === "add") {
+    addMapEntry(field);
     return;
   }
 
@@ -3126,7 +3477,7 @@ registerHandler("theme_editor_edit_color", theme_editor_edit_color);
  */
 function theme_editor_toggle_section() : void {
   const field = getFieldAtCursor();
-  if (!field || !field.isSection) {
+  if (!field || !isContainer(field)) {
     editor.debug(editor.t("status.not_section"));
     return;
   }

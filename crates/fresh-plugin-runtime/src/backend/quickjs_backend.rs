@@ -4322,6 +4322,18 @@ impl JsEditorApi {
         }
     }
 
+    /// The built-in file-type icons a theme's `file_icons` section
+    /// overrides, in that section's shape: `{by_name, by_extension, default,
+    /// folder, folder_open}`, each icon `{glyph, color: [r, g, b]}` (a
+    /// folder's color is `null`: it takes `ui.file_explorer_directory_fg`).
+    pub fn get_builtin_file_icons<'js>(
+        &self,
+        ctx: fresh_js::Ctx<'js>,
+    ) -> fresh_js::Result<Value<'js>> {
+        fresh_js::serde::to_value(ctx, &self.services.builtin_file_icons())
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
+    }
+
     /// Save a theme file to the user themes directory, returns the saved path
     pub fn save_theme_file(&self, name: String, content: String) -> fresh_js::Result<String> {
         self.services

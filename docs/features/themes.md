@@ -42,12 +42,22 @@ Fresh includes a visual Theme Editor for creating and customizing themes:
 3. **Editing Colors**:
    - Press `Enter` on any color field to edit it
    - Enter a hex color (`#RRGGBB`) or named color (e.g., `red`, `blue`)
+   - A color's text attributes (`bold`, `italic`, …) are on its picker
+     panel: `Tab` to the panel, `↑` to **Attributes**, `Enter`. The tree shows
+     them after the color (`#6E7080 +italic`)
    - The editor opens below your code and the whole editor (menu, explorer,
      tabs, gutter, status bar) shows each edit immediately, before you save.
      Closing without saving puts your theme back
-   - `chrome` options are on/off toggles: press `Enter` to flip one
-   - Each color has an `Attributes` row accepting comma-separated text
-     attributes: `bold`, `italic`, `underlined`, `dim`, and `reversed`
+   - **Chrome** holds the on/off options (toggle with `Enter`) and the glyphs,
+     with their **nerd_font** set beside them; a glyph prompt offers a list of
+     separators and caps to pick from
+   - **File Icons** lists the theme's icon overrides. `Enter` on **Add…**
+     adds one (the built-in names and extensions are suggested); an entry's
+     `glyph` and `color` show the built-in value until you set them
+   - `Delete` resets a chrome or file-icon value so it inherits again, or
+     removes a whole icon entry
+   - Attributes are comma-separated: `bold`, `italic`, `underlined`, `dim`,
+     `reversed`
 
 4. **Theme Editor Shortcuts**:
    | Action | Key |
@@ -56,6 +66,7 @@ Fresh includes a visual Theme Editor for creating and customizing themes:
    | Save | `Ctrl+S` |
    | Save As | `Ctrl+Shift+S` |
    | Delete theme | `Ctrl+D` |
+   | Reset value / remove icon entry | `Delete` |
    | Close | `Ctrl+Q` or `Escape` |
    | Help | `F1` |
 

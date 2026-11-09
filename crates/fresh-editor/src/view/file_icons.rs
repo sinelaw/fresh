@@ -168,6 +168,29 @@ pub fn for_file(name: &str) -> FileIcon {
         .unwrap_or(DEFAULT)
 }
 
+/// The built-in tables in a theme file's `file_icons` shape, for the theme
+/// editor: what each override replaces.
+pub fn builtin_json() -> serde_json::Value {
+    use serde_json::{json, Map, Value};
+    let one = |i: &FileIcon| {
+        let rgb = match i.color {
+            Color::Rgb(r, g, b) => json!([r, g, b]),
+            _ => Value::Null,
+        };
+        json!({ "glyph": i.glyph, "color": rgb })
+    };
+    let table = |t: &[(&str, FileIcon)]| -> Map<String, Value> {
+        t.iter().map(|(k, i)| (k.to_string(), one(i))).collect()
+    };
+    json!({
+        "by_name": table(BY_NAME),
+        "by_extension": table(BY_EXTENSION),
+        "default": one(&DEFAULT),
+        "folder": { "glyph": FOLDER, "color": Value::Null },
+        "folder_open": { "glyph": FOLDER_OPEN, "color": Value::Null },
+    })
+}
+
 /// A file's icon as drawn: the glyph and color, after the theme's
 /// overrides.
 #[derive(Clone, Debug, PartialEq, Eq)]
