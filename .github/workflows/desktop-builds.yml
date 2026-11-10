@@ -153,7 +153,9 @@ jobs:
       # ── …or, on a pull request, built from source with the release flags ─
       - name: Install Rust toolchain (pull request)
         if: github.event_name == 'pull_request'
-        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
 
       - name: Cache Cargo dependencies (pull request)
         if: github.event_name == 'pull_request'
