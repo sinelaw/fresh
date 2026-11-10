@@ -576,6 +576,10 @@ interface NewSessionForm {
   // (checkbox disabled, branch field inert). `null`: probe
   // in flight (keep checkbox in its last-known state).
   projectPathIsGit: boolean | null;
+  // The resolved Project Path is not on disk: a project whose folder was
+  // moved, renamed or deleted since it was added. Launch is held back and the
+  // form says so, instead of a workspace whose terminal opens elsewhere.
+  projectPathMissing: boolean;
   // `true` when the resolved Project Path is itself an existing
   // *linked* worktree (created by `git worktree add`). In that
   // case leaving "Create a new git worktree" unchecked attaches
@@ -10390,6 +10394,12 @@ function formNeedsPlace(f: NewSessionForm): boolean {
   return !!formRepo(f) && !!formMachineKey(f) && !formMainClone(f);
 }
 
+// The local folder the form would launch in is not on disk. A project with no
+// folder on this machine yet is not missing: Launch asks where it is (§4.17).
+function formFolderMissing(f: NewSessionForm): boolean {
+  return f.backend === "local" && f.projectPathMissing && !formNeedsPlace(f);
+}
+
 // What stops a project launch outright: a machine typed by hand, which has
 // no identity to remember a folder under.
 function formRepoBlocker(f: NewSessionForm): string {
@@ -13844,6 +13854,7 @@ function formIsSubmittable(): boolean {
   // opens a bare terminal here, which is always possible.
   if (form.target === "current") return true;
   if (formRepoBlocker(form)) return false;
+  if (formFolderMissing(form)) return false;
   switch (form.backend) {
     case "local":
       // Mirror `captureCreateSpec`'s fallback chain EXACTLY: a local
@@ -14040,14 +14051,26 @@ function whereFields(f: NewSessionForm): WidgetSpec[] {
   const r = formRepo(f);
   if (r) out.push(...repoWhereRows(f, r));
   else out.push(...projectPathFields(), ...folderRepoRows(f));
+  const missing = formFolderMissing(f);
+  if (missing) {
+    out.push(label(`✗ ${editor.t("form.folder_missing")}`, {
+      labelWidth: FORM_LABEL_W,
+      style: { fg: "diagnostic.error_fg" },
+      wrap: true,
+    }));
+    // A project's folder is fixed where the project keeps it (details open
+    // already shows this button beside the path).
+    if (r && !f.detailsOpen) out.push(fieldColumnRow(actionButton(editor.t("form.change_clone"), "change_clone")));
+  }
   if (f.detailsOpen) {
     out.push(...field(formLabel("form.workspace_short"), f.name, {
       key: "name",
       placeholder: formDefaultSessionName(f) || editor.t("form.auto_generating"),
     }));
   } else {
-    // A blocked project has no plan to show; its blocker says why.
-    const plan = r && formRepoBlocker(f)
+    // A blocked project has no plan to show; its blocker says why. Nor does a
+    // folder that isn't there; the line above says so.
+    const plan = (r && formRepoBlocker(f)) || missing
       ? null
       : r && formNeedsPlace(f)
       ? (r.kind === "folder" ? null : { text: editor.t("form.plan_after_place", { name: plannedWorkspaceName(f) }) })
@@ -14374,6 +14397,7 @@ function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): 
     lastError: null,
     defaultProjectPath: "",
     projectPathIsGit: null,
+    projectPathMissing: false,
     projectPathIsLinkedWorktree: null,
     defaultSessionName: "",
     defaultBranch: "",
@@ -14541,6 +14565,9 @@ async function probeProjectPathDefaults(): Promise<void> {
   const isGit = await pathIsInsideGitWorkTree(effectivePath);
   if (!form || form.probeToken !== token) return;
   form.projectPathIsGit = isGit;
+  // A missing folder also reads as "not git", which would show the plan for a
+  // plain folder; this is what tells the two apart.
+  form.projectPathMissing = !editor.fileExists(editor.localPath(effectivePath));
   // The folder's origin, so a clone of a known repository can say so.
   if (isGit) {
     const o = await editor.spawnHostProcess("git", ["-C", effectivePath, "remote", "get-url", "origin"]);

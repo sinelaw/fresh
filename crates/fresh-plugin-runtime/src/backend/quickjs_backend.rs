@@ -8743,11 +8743,22 @@ impl JsEditorApi {
         cwd: fresh_js::function::Opt<String>,
     ) -> u64 {
         let id = self.alloc_request_id();
+        // The default is only a convenience: the active window's folder.
+        // That folder can be gone (renamed or deleted, e.g. while Fresh was
+        // closed), and a spawn there fails with ENOENT before the program
+        // even starts — which broke every host probe made from such a
+        // window, including the Projects dialog's check of the folder the
+        // user picked to repair it. This always runs on this computer, so
+        // test it on the local filesystem and leave the default out when it
+        // is not a folder.
         let effective_cwd = cwd.0.or_else(|| {
+            let local = self.services.local_filesystem();
             self.state_snapshot
                 .read()
                 .ok()
-                .map(|s| s.working_dir.to_string_lossy().to_string())
+                .map(|s| s.working_dir.clone())
+                .filter(|d| local.stat(d).is_some_and(|st| st.is_dir))
+                .map(|d| d.to_string_lossy().to_string())
         });
         let _ = self.command_sender.send(PluginCommand::SpawnHostProcess {
             callback_id: JsCallbackId::new(id),

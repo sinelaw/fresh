@@ -456,6 +456,52 @@ fn launch_asks_and_uses_a_folder_that_is_already_there() {
     launched(&mut w.h);
 }
 
+/// The project's folder was renamed on disk after it was added: the form says
+/// the folder is gone (not "plain folder · opens as is", which is what a
+/// missing path used to read as, before a launch opened its terminal in the
+/// home folder instead), and `Change…` points the project at where it is now,
+/// after which the form is back to its plan and Launch opens there.
+#[test]
+fn a_projects_moved_folder_is_flagged_and_changed_from_the_form() {
+    let mut w = world(Setup::default());
+    open_add_project(&mut w.h);
+    add_from(&mut w.h, false);
+    stop(&mut w.h, "Folder:");
+    w.h.type_text("~/notes").unwrap();
+    wait_for(&mut w.h, "folder · not a git repository");
+    press(&mut w.h, "[   Add");
+    wait_for(&mut w.h, "Known projects (1)");
+
+    let home = w._tmp.path().canonicalize().unwrap().join("home");
+    fs::rename(home.join("notes"), home.join("notes-moved")).unwrap();
+
+    press(&mut w.h, "[ New workspace here");
+    wait_for(&mut w.h, FORM_TITLE);
+    choose_terminal_agent(&mut w.h);
+    wait_for(&mut w.h, "This folder doesn't exist");
+    let s = screen(&w.h);
+    assert!(s.contains("at ~/notes"), "{s}");
+    assert!(!s.contains("opens as is"), "a missing folder is not a plain folder:\n{s}");
+
+    press(&mut w.h, "[ Change…");
+    wait_for(&mut w.h, "doesn't exist on Local.");
+    stop(&mut w.h, "Folder:");
+    retype(&mut w.h, "~/notes-moved");
+    wait_for(&mut w.h, "folder · not a git repository");
+    press(&mut w.h, "[   Use this folder");
+    wait_for(&mut w.h, "Back to New Workspace");
+    press(&mut w.h, "[   Back to New Workspace");
+    wait_for(&mut w.h, "at ~/notes-moved");
+    wait_for(&mut w.h, "opens as is");
+    assert!(!screen(&w.h).contains("This folder doesn't exist"), "{}", screen(&w.h));
+
+    if !pty_available() {
+        return;
+    }
+    press(&mut w.h, "[ Launch ]");
+    launched(&mut w.h);
+}
+
 // --- Projects dialog ---------------------------------------------------------
 
 /// The per-machine rows: forget where the project is, then pick the folder
