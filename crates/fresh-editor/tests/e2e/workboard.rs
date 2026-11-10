@@ -2,8 +2,9 @@
 //! Orchestrator's workspaces. One local workspace (the project itself) is
 //! enough to drive the wiring — the palette command, the lens keys, pinning
 //! a card on the Board, the pin and lens surviving a close and reopen, the
-//! mouse (a click selects, a double click opens), and the jump command with
-//! nothing to jump to. Sorting and layout are covered
+//! mouse (a click selects, a double click opens), the jump command with
+//! nothing to jump to, and another plugin adding sessions through the
+//! exported `registerSource`. Sorting and layout are covered
 //! by the plugin's own unit tests (`plugins/tests/workboard_*.test.ts`).
 //!
 //! Driven through the keyboard, asserted on rendered output.
@@ -188,5 +189,53 @@ fn a_click_selects_a_card_and_a_double_click_opens_it() {
     h.mouse_click(col, row).unwrap();
     h.mouse_click(col, row).unwrap();
     h.wait_until(|h| !h.screen_to_string().contains("1 Inbox"))
+        .unwrap();
+}
+
+/// A plugin that adds one waiting cloud session through the Workboard's
+/// exported API, and says which item it was asked to open.
+const SOURCE_PLUGIN: &str = r#"/// <reference path="./lib/fresh.d.ts" />
+const editor = getEditor();
+function register(): void {
+  editor.getPluginApi("workboard")?.registerSource({
+    id: "test-source",
+    label: "Test",
+    kind: "running",
+    list: () => [{ id: "s1", title: "cloud-agent", state: "blocked", where: "cloud", question: "Ship it?" }],
+    open: (id: string) => {
+      editor.setStatus(`test-source opened ${id}`);
+      return null;
+    },
+  });
+}
+register();
+registerHandler("test_source_register", register);
+editor.on("ready", "test_source_register");
+"#;
+
+/// A session another plugin registers is listed by its state — waiting,
+/// with its question — and Enter on it hands it back to that plugin.
+#[test]
+fn a_registered_source_is_listed_and_opened_through_its_plugin() {
+    let (_tmp, root) = setup();
+    fs::write(
+        root.join("plugins").join("zz_test_source.ts"),
+        SOURCE_PLUGIN,
+    )
+    .unwrap();
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 30, Config::default(), root).unwrap();
+    h.render().unwrap();
+    open_board(&mut h);
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("NEEDS YOU") && s.contains("cloud-agent") && s.contains("Ship it?")
+    })
+    .unwrap();
+
+    // Nothing in the editor is waiting, so the board starts on the first
+    // card: the waiting session, at the top of the Inbox.
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("test-source opened s1"))
         .unwrap();
 }

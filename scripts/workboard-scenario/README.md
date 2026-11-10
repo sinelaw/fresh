@@ -31,6 +31,19 @@ It also files workspaces into nested dock folders (Backend › Payments,
 Frontend) and leaves an empty one (Someday), so the Folders lens has
 something to show and to drag between.
 
+`run.sh` also seeds agent transcripts (`sessions.sh`) for the session scan to
+find: Claude Code and Codex sessions in a third checkout of web
+(`web-spike`), a scratch folder and `api-clone` (listed under Detected), one
+in `notes` (hidden: the notes workspace covers it) and one a month old
+(hidden: too old). A running session outside the editor can be faked through
+the Claude CLI's registry, with any live pid:
+
+```sh
+sleep 3000 & mkdir -p "$HOME/.claude/sessions"
+printf '{"pid":%s,"sessionId":"s-1","cwd":"%s","kind":"sdk-ts","entrypoint":"claude-desktop","status":"waiting","name":"canvas spike"}' \
+  $! "$DIR/repos/web-spike" > "$HOME/.claude/sessions/$!.json"
+```
+
 "Scenario: Many" adds about thirty more workspaces across the repos and one
 on a second clone of `api` (same remote, so the Projects lens groups both), with
 a mix of asking, working, finishing and idle agents, a third of them in a

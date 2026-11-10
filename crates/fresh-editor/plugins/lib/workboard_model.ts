@@ -1,12 +1,14 @@
 /**
- * Workboard's model: how the Orchestrator's workspaces are sorted, grouped
- * and placed on the board. Pure — no `editor` — so it is unit-tested without
- * one (`tests/workboard_model.test.ts`); `workboard.ts` feeds it
- * `listWorkspaces()` and draws what it returns.
+ * Workboard's model: how workspaces and sessions are sorted, grouped and
+ * placed on the board. Pure — no `editor` — so it is unit-tested without one
+ * (`tests/workboard_model.test.ts`); `workboard.ts` feeds it the
+ * Orchestrator's `listWorkspaces()` and every registered session source's
+ * items, and draws what it returns.
  *
  * Four lenses over one list of cards:
- *   * Inbox    — urgency first: needs you, ready to review, working, parked.
- *   * Projects — one group per repo the workspace was cut from.
+ *   * Inbox    — urgency first: needs you, ready to review, working, parked,
+ *                then sessions found in history.
+ *   * Projects — one group per project (`lib/project_identity.ts`).
  *   * Folders  — the dock's own folders, so a hand-made arrangement is a lens.
  *   * Board    — columns derived from agent state; a card can be pinned to a
  *                column by hand, and the pin wins until it is removed.
@@ -14,9 +16,14 @@
 
 export type AgentState = "working" | "blocked" | "done" | "idle" | "unknown";
 
-/** The part of the Orchestrator's `WorkspaceSummary` this needs. */
+/** One card's subject: a workspace (the part of the Orchestrator's
+ *  `WorkspaceSummary` this needs), or a session from a registered source in
+ *  the same shape. */
 export interface WorkspaceLike {
-  kind: "live" | "discovered" | "pending";
+  /** `live`, `discovered`, `pending`: an Orchestrator workspace. `external`:
+   *  a session running outside the editor. `detected`: one found in an
+   *  agent's history. */
+  kind: "live" | "discovered" | "pending" | "external" | "detected";
   workspaceId: string;
   windowId: number;
   active: boolean;
@@ -30,10 +37,126 @@ export interface WorkspaceLike {
   git?: { branch?: string; dirty?: number; ahead?: number; behind?: number };
   backend?: string;
   pending?: { phase: "creating" | "error" | "paused"; message: string };
-  /** The repo's remote, normalized (`normalizeRemote`), when it has one:
-   *  what makes two clones of one project the same project. Filled in by
-   *  the Workboard from git, not by the Orchestrator. */
-  remote?: string;
+  /** The project, as `lib/project_identity.ts` resolves it: `id` groups
+   *  every checkout of one repository, `label` names it. */
+  project?: { id: string; label: string };
+  /** A source's session: which source, and its item id there. */
+  source?: { id: string; item: string };
+  /** Where a source's session runs, when not on this computer. */
+  where?: string;
+  /** A source's session: its last activity, epoch ms. */
+  updatedAt?: number;
+  /** A source's session: one line about it (`claude.ai`, `codex · devbox`). */
+  note?: string;
+}
+
+/** Whether `ws` is a workspace in this editor, rather than a session found
+ *  outside it. */
+export function inEditor(ws: WorkspaceLike): boolean {
+  return ws.kind === "live" || ws.kind === "pending" || ws.kind === "discovered";
+}
+
+// ── Session sources: what other plugins add to the board ───────────────────
+
+/** One session a source reports. */
+export interface WorkboardItem {
+  /** Unique within its source, stable across `list()` calls. */
+  id: string;
+  title: string;
+  /** Running sessions are placed by it, as workspaces are. */
+  state: AgentState;
+  /** The agent (`claude`, `codex`) or tool that runs it. */
+  agent?: string;
+  /** Its working directory, when it has one on a machine. */
+  cwd?: string;
+  /** Its git branch, when known. */
+  branch?: string;
+  /** Its project, as `lib/project_identity.ts` names one; without it, the
+   *  board resolves `cwd` itself, on this computer, when `where` is unset. */
+  project?: { id: string; label: string };
+  /** Where it runs when not on this computer: `cloud`, an SSH host, an app. */
+  where?: string;
+  /** What it is waiting for, when it is waiting. */
+  question?: string;
+  /** One line about it when it is not waiting (`stopped`, `offline`). */
+  status?: string;
+  /** Last activity, epoch ms. */
+  updatedAt?: number;
+}
+
+/** A source of sessions for the board: the editor's own (`external`,
+ *  `detected`) are registered this way too. */
+export interface WorkboardSource {
+  /** Unique among sources; part of each card's key, so keep it stable. */
+  id: string;
+  label: string;
+  /** `running`: live sessions, placed by state like workspaces. `history`:
+   *  sessions found on disk, listed apart and parked on the Board. */
+  kind: "running" | "history";
+  /** The items now. Called on every board refresh, so answer from what is
+   *  in hand; fetch in `refresh`. */
+  list(): WorkboardItem[];
+  /** Ask for fresh items: when the board opens, and every `refreshMs` while
+   *  it stays open. */
+  refresh?(): void | Promise<void>;
+  /** How often `refresh` runs while the board is open. Default 30 s. */
+  refreshMs?: number;
+  /** Enter or a double click on the item. Return a reason to show when it
+   *  could not be opened. */
+  open(id: string): void | string | null | Promise<void | string | null>;
+}
+
+/** The Workboard's surface, reachable through
+ *  `editor.getPluginApi("workboard")`. */
+export interface WorkboardApi {
+  open(): void;
+  close(): void;
+  /** The lens the board shows (and opens on next time). */
+  setLens(lens: LensId): void;
+  /** Add a source of sessions; returns a function that removes it. A source
+   *  with the id of one already registered replaces it. */
+  registerSource(source: WorkboardSource): () => void;
+}
+
+declare global {
+  interface FreshPluginRegistry {
+    workboard: WorkboardApi;
+  }
+}
+
+/** A source's item as a card's subject. */
+export function itemSubject(source: WorkboardSource, item: WorkboardItem): WorkspaceLike {
+  return {
+    kind: source.kind === "running" ? "external" : "detected",
+    workspaceId: "",
+    windowId: -1,
+    active: false,
+    folderId: null,
+    name: item.title,
+    root: item.cwd ?? "",
+    projectPath: item.cwd ?? "",
+    agentState: source.kind === "running" ? item.state : "idle",
+    ...(item.branch ? { branch: item.branch } : {}),
+    title: item.agent ?? source.label,
+    ...(item.project ? { project: item.project } : {}),
+    source: { id: source.id, item: item.id },
+    ...(item.where ? { where: item.where } : {}),
+    ...(item.updatedAt !== undefined ? { updatedAt: item.updatedAt } : {}),
+    ...(item.status ? { note: item.status } : {}),
+  };
+}
+
+/** Drop the sessions found in history whose directory is already on the
+ *  board — a workspace's root, or where a running session works: that
+ *  workspace or session is the card for that work. */
+export function withoutCovered(subjects: readonly WorkspaceLike[]): WorkspaceLike[] {
+  const trim = (p: string) => p.replace(/[\\/]+$/, "");
+  const covered = new Set<string>();
+  for (const ws of subjects) {
+    if (ws.kind === "detected" || ws.where) continue;
+    if (ws.root) covered.add(trim(ws.root));
+  }
+  return subjects.filter((ws) => ws.kind !== "detected" || ws.where !== undefined || !covered.has(trim(ws.root)));
 }
 
 /** The part of the Orchestrator's `FolderSummary` this needs. */
@@ -91,7 +214,8 @@ export interface SavedState {
   pins: Record<string, ColumnId>;
 }
 
-export function cardKey(ws: { workspaceId: string; root: string }): string {
+export function cardKey(ws: { workspaceId: string; root: string; source?: { id: string; item: string } }): string {
+  if (ws.source) return `src:${ws.source.id}:${ws.source.item}`;
   return ws.workspaceId !== "" ? ws.workspaceId : `root:${ws.root}`;
 }
 
@@ -175,13 +299,19 @@ export function inboxGroups(cards: readonly Card[]): Group[] {
     { id: "working", label: "Working", tone: "working", states: ["working"], oldestFirst: false },
     { id: "parked", label: "Parked", tone: "idle", states: ["idle", "unknown"], oldestFirst: false },
   ];
+  const live = cards.filter((c) => c.ws.kind !== "detected");
   const groups: Group[] = [];
   for (const s of sections) {
-    const members = cards.filter((c) => s.states.includes(effectiveState(c.ws)));
+    const members = live.filter((c) => s.states.includes(effectiveState(c.ws)));
     if (members.length === 0) continue;
     if (s.oldestFirst) members.sort((a, b) => a.since - b.since);
     groups.push({ id: s.id, label: s.label, tone: s.tone, cards: members });
   }
+  // Sessions found in history are not waiting on anyone: last, newest first.
+  const history = cards
+    .filter((c) => c.ws.kind === "detected")
+    .sort((a, b) => (b.ws.updatedAt ?? 0) - (a.ws.updatedAt ?? 0));
+  if (history.length > 0) groups.push({ id: "detected", label: "Detected", tone: null, cards: history });
   return groups;
 }
 
@@ -190,87 +320,38 @@ function basename(path: string): string {
   return trimmed.slice(Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\")) + 1) || trimmed;
 }
 
-/** A project's short name: the last segment of its path (a directory, or
- *  a remote's `host/owner/repo`), with as many segments before it as it
- *  takes to tell it from every other project's — so `api`, then
- *  `acme/api` beside `other/api`, then `github.com/acme/api` beside
- *  `gitlab.com/acme/api`. */
-export function projectLabel(path: string, all: readonly string[]): string {
-  const parts = (p: string) => p.replace(/[\\/]+$/, "").split(/[\\/]+/).filter(Boolean);
-  const own = parts(path);
-  const others = all.filter((p) => p !== path).map(parts);
-  for (let n = 1; n <= own.length; n++) {
-    const tail = own.slice(-n).join("/");
-    if (!others.some((o) => o.slice(-n).join("/") === tail)) return tail;
-  }
-  return own.join("/") || path;
-}
-
-/** Hosts whose paths are case-insensitive: `Acme/Api` and `acme/api` there
- *  are one repository. */
-const CASELESS_HOSTS = new Set(["github.com", "gitlab.com", "bitbucket.org"]);
-
-/** `path` with `.` and `..` segments resolved (POSIX or Windows separators). */
-function resolvePath(path: string): string {
-  const sep = path.includes("\\") && !path.includes("/") ? "\\" : "/";
-  const lead = path.match(/^([A-Za-z]:)?[\\/]/)?.[0] ?? "";
-  const out: string[] = [];
-  for (const part of path.slice(lead.length).split(/[\\/]+/)) {
-    if (part === "" || part === ".") continue;
-    if (part === "..") out.pop();
-    else out.push(part);
-  }
-  return lead + out.join(sep);
-}
-
-/** A git remote URL as an identity: scheme, user, port, `.git` and the
- *  host's case dropped, so `git@github.com:o/r.git`, `ssh://git@github.com/o/r`
- *  and `https://github.com/o/r` are one project. A path remote is a path:
- *  a relative one (`../api.git`) is resolved against `base`, the checkout it
- *  was read in, so two unrelated repos that both say `../api.git` stay
- *  apart. `null` when there is nothing to compare. */
-export function normalizeRemote(url: string, base?: string): string | null {
-  const u = url.trim();
-  if (u === "") return null;
-  let host = "";
-  let path = "";
-  const scheme = u.match(/^[a-z][a-z0-9+.-]*:\/\/(?:[^@/]*@)?([^/:]+)(?::\d+)?\/(.*)$/i);
-  const scp = u.match(/^(?:[^@/]*@)?([^/:]+):(?!\/)(.*)$/);
-  if (/^file:\/\//i.test(u)) {
-    return resolvePath(u.replace(/^file:\/\//i, "")).replace(/\.git$/, "");
-  } else if (scheme) [host, path] = [scheme[1], scheme[2]];
-  else if (scp && !/^[A-Za-z]$/.test(scp[1])) [host, path] = [scp[1], scp[2]];
-  else {
-    const absolute = /^([A-Za-z]:)?[\\/]/.test(u);
-    const full = absolute || !base ? u : `${base.replace(/[\\/]+$/, "")}/${u}`;
-    return resolvePath(full).replace(/\.git$/, "") || null;
-  }
-  host = host.toLowerCase();
-  path = path.replace(/\/+$/, "").replace(/\.git$/, "").replace(/^\/+/, "");
-  if (CASELESS_HOSTS.has(host)) path = path.toLowerCase();
-  if (path === "") return null;
-  return `${host}/${path}`;
-}
-
-/** What a workspace's project is, for grouping: its remote when it has
- *  one — clones of one project anywhere on disk are one project — else the
- *  repository directory. */
+/** What a card's project is, for grouping: its resolved identity when it
+ *  has one, else its directory. */
 export function projectKey(ws: WorkspaceLike): string {
-  return ws.remote ? `remote:${ws.remote}` : `path:${ws.projectPath || ws.root}`;
+  return ws.project?.id ?? `path:${ws.projectPath || ws.root}`;
+}
+
+/** A card's project, as a heading or a cell names it. */
+export function projectOf(ws: WorkspaceLike): string {
+  return ws.project?.label ?? (basename(ws.projectPath || ws.root) || "No directory");
+}
+
+/** How long a card's age reads: a found session's since its last activity,
+ *  anything else's since it entered its state. */
+export function cardAge(card: Card, now: number): number {
+  return card.ws.kind === "detected" && card.ws.updatedAt !== undefined ? now - card.ws.updatedAt : now - card.since;
 }
 
 /** Projects: one group per project, alphabetical, each sorted by urgency.
- *  A project with a remote is named for it (`owner/repo`, or just `repo`
- *  when no other project shares the name); one without, for its directory. */
+ *  Two projects that would read the same (`api` here and `api` there) are
+ *  told apart by their identity, which names the host or the path. */
 export function projectGroups(cards: readonly Card[]): Group[] {
-  const keys = [...new Set(cards.map((c) => projectKey(c.ws)))];
-  const pathOf = (k: string) => k.replace(/^(remote|path):/, "");
-  const all = keys.map(pathOf);
-  const groups = keys.map((k) => ({
+  const byKey = new Map<string, Card[]>();
+  for (const c of cards) {
+    const k = projectKey(c.ws);
+    byKey.set(k, [...(byKey.get(k) ?? []), c]);
+  }
+  const named = [...byKey].map(([k, members]) => ({ k, label: projectOf(members[0].ws), members }));
+  const groups = named.map(({ k, label, members }) => ({
     id: `project:${k}`,
-    label: projectLabel(pathOf(k), all),
+    label: named.some((o) => o.k !== k && o.label === label) ? k.replace(/^(repo|root|path):/, "") : label,
     tone: null,
-    cards: cards.filter((c) => projectKey(c.ws) === k).sort(byUrgency),
+    cards: members.sort(byUrgency),
   }));
   return groups.sort((a, b) => a.label.localeCompare(b.label));
 }
@@ -301,8 +382,11 @@ export function folderGroups(cards: readonly Card[], folders: readonly FolderLik
     if (members.length === 0) continue;
     groups.push({ id: `folder:${f.folderId}`, label: folderPath(f.folderId, folders), tone: null, cards: members });
   }
-  const loose = cards.filter((c) => c.ws.folderId === null || !known.has(c.ws.folderId));
+  const loose = cards.filter((c) => inEditor(c.ws) && (c.ws.folderId === null || !known.has(c.ws.folderId)));
   if (loose.length > 0) groups.push({ id: "folder:", label: "Not in a folder", tone: null, cards: loose });
+  // Sessions outside the editor are in no dock folder; they have their own.
+  const outside = cards.filter((c) => !inEditor(c.ws));
+  if (outside.length > 0) groups.push({ id: "outside", label: "Outside the editor", tone: null, cards: outside });
   return groups;
 }
 
@@ -346,7 +430,10 @@ export function shiftPin(card: Card, delta: number): ColumnId | null {
 export function beaconText(cards: readonly Card[]): string {
   let blocked = 0;
   let done = 0;
+  // Only what the editor holds: a session outside it is the board's to
+  // show, not the status bar's to count — there is nowhere to jump to.
   for (const c of cards) {
+    if (!inEditor(c.ws)) continue;
     const s = effectiveState(c.ws);
     if (s === "blocked") blocked++;
     else if (s === "done") done++;
@@ -360,7 +447,9 @@ export function beaconText(cards: readonly Card[]): string {
 /** The card to visit next: the longest-waiting agent that needs you, else
  *  the oldest unseen finished work — never the workspace already open. */
 export function nextAttention(cards: readonly Card[], activeWindowId: number): Card | null {
-  const open = cards.filter((c) => c.ws.windowId !== activeWindowId && c.ws.kind !== "discovered");
+  const open = cards.filter(
+    (c) => c.ws.windowId !== activeWindowId && (c.ws.kind === "live" || c.ws.kind === "pending"),
+  );
   for (const state of ["blocked", "done"] as const) {
     const hit = open.filter((c) => effectiveState(c.ws) === state).sort((a, b) => a.since - b.since)[0];
     if (hit) return hit;
@@ -412,16 +501,4 @@ export function normalizeSaved(raw: unknown): SavedState {
     }
   }
   return out;
-}
-
-/** The repository a worktree belongs to, from `git rev-parse
- *  --path-format=absolute --git-common-dir` run in it: the directory that
- *  holds the shared `.git`, or the bare repo itself. `null` when git said
- *  nothing usable. Every worktree of one repo answers the same, which is
- *  what lets the Projects lens group them. */
-export function repoFromCommonDir(stdout: string): string | null {
-  const dir = stdout.trim().replace(/[\\/]+$/, "");
-  if (dir === "" || !/^([A-Za-z]:)?[\\/]/.test(dir)) return null;
-  const m = dir.match(/^(.*)[\\/]\.git$/);
-  return m ? m[1] || "/" : dir;
 }

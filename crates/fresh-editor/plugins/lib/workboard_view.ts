@@ -36,11 +36,14 @@ import {
   COLUMNS,
   effectiveState,
   type FolderLike,
+  cardAge,
   formatAge,
   type Group,
   groupsFor,
+  inEditor,
   LENSES,
   type LensId,
+  projectOf,
 } from "./workboard_model.ts";
 
 /** The glyph and colour for each state — the Orchestrator dock's own, so a
@@ -101,6 +104,11 @@ export function statusText(card: Card): string {
     if (p?.phase === "paused") return "not resumed (retry from the dock)";
     return p?.message || "starting…";
   }
+  // A session outside the editor: its agent and where it runs.
+  if (!inEditor(card.ws)) {
+    const { title, note } = card.ws;
+    return note && title && !note.includes(title) ? `${title} · ${note}` : note || title;
+  }
   switch (effectiveState(card.ws)) {
     case "done":
       return "finished, not looked at";
@@ -136,8 +144,7 @@ export function gitText(card: Card): string {
 
 export function projectName(card: Card): string {
   if (card.ws.pending?.phase === "error") return "";
-  const p = (card.ws.projectPath || card.ws.root).replace(/[\\/]+$/, "");
-  return p.slice(Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\")) + 1) || p;
+  return projectOf(card.ws);
 }
 
 function mark(card: Card): { text: string; style: Partial<OverlayOptions> } {
@@ -197,14 +204,15 @@ export function listSpec(lens: LensId, groups: readonly Group[], input: ViewInpu
           depth: 1,
           // Folders is the lens you arrange by hand: drag a card onto
           // another folder (or onto a card in it) to file it there.
-          draggable: lens === "folders",
+          // Only a workspace has a folder to be filed in.
+          draggable: lens === "folders" && inEditor(card.ws),
           cells: [
             mark(card),
             { text: card.ws.name, style: card.ws.active ? { bold: true } : {} },
             { text: statusText(card), style: { fg: alarming(card) ? STATE_MARK.blocked.fg : DIM } },
             { text: projectName(card), style: { fg: DIM } },
             { text: gitText(card), style: { fg: DIM } },
-            { text: formatAge(input.now - card.since), style: { fg: DIM } },
+            { text: formatAge(cardAge(card, input.now)), style: { fg: DIM } },
           ],
         }),
       );
@@ -246,7 +254,7 @@ export function columnSpec(group: Group, input: ViewInput): WidgetSpec {
         extraLines: [
           styledRow([
             {
-              text: [projectName(card), card.question ? "asking" : gitText(card), formatAge(input.now - card.since)]
+              text: [projectName(card), card.question ? "asking" : inEditor(card.ws) ? gitText(card) : card.ws.title, formatAge(cardAge(card, input.now))]
                 .filter(Boolean)
                 .join(" · "),
               style: { fg: card.question ? STATE_MARK.blocked.fg : DIM },

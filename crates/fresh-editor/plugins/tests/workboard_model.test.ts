@@ -4,20 +4,21 @@ import {
   beaconText,
   boardColumns,
   type Card,
+  cardAge,
   cardKey,
   type ColumnId,
   folderGroups,
   formatAge,
   inboxGroups,
+  itemSubject,
   nextAttention,
-  normalizeRemote,
   normalizeSaved,
   projectGroups,
-  projectLabel,
-  repoFromCommonDir,
   shiftPin,
   trackSince,
+  type WorkboardSource,
   type WorkspaceLike,
+  withoutCovered,
 } from "../lib/workboard_model.ts";
 
 let failures = 0;
@@ -87,45 +88,19 @@ const web2 = card(ws("w2", "blocked", { projectPath: "/r/web" }));
 const projects = projectGroups([rate, web1, tabs, web2]);
 eq(projects.map((g) => g.label), ["api", "web"], "projects: one group per repo, alphabetical");
 eq(names(projects[1].cards), ["w2", "w1"], "projects: each group sorted by urgency");
-eq(projectLabel("/a/app", ["/a/app", "/b/app", "/c/web"]), "a/app", "projects: a clashing name gets its parent");
-eq(
-  projectLabel("github.com/acme/api", ["github.com/acme/api", "gitlab.com/acme/api"]),
-  "github.com/acme/api",
-  "projects: the host tells same-named projects apart when the owner does not",
-);
-eq(projectLabel("/c/web", ["/a/app", "/b/app", "/c/web"]), "web", "projects: a unique name stays short");
 
-eq(repoFromCommonDir("/home/me/api/.git\n"), "/home/me/api", "repo: a worktree's common dir names its repo");
-eq(repoFromCommonDir("/srv/api.git\n"), "/srv/api.git", "repo: a bare repo is its own project");
-eq(repoFromCommonDir(".git\n"), null, "repo: a relative answer is not trusted");
-eq(repoFromCommonDir(""), null, "repo: no answer, no repo");
-eq(repoFromCommonDir("C:\\code\\api\\.git"), "C:\\code\\api", "repo: Windows paths");
+// ── Projects by identity ───────────────────────────────────────────────────
 
-// ── Projects by remote ─────────────────────────────────────────────────────
-
-eq(
-  [
-    "git@github.com:Acme/api.git",
-    "https://github.com/Acme/api",
-    "ssh://git@GitHub.com:22/Acme/api.git",
-    "https://user@github.com/Acme/api.git/",
-  ].map(normalizeRemote),
-  ["github.com/acme/api", "github.com/acme/api", "github.com/acme/api", "github.com/acme/api"],
-  "remote: ssh, scp-style and https forms of one repo are one project",
-);
-eq(normalizeRemote("/srv/git/api.git"), "/srv/git/api", "remote: a local path remote stays a path");
-eq(normalizeRemote("../api.git", "/home/me/web"), "/home/me/api", "remote: a relative remote resolves against the checkout");
-eq(normalizeRemote("../api.git", "/srv/other/x"), "/srv/other/api", "remote: the same relative remote elsewhere is another project");
-eq(normalizeRemote("file:///srv/git/api.git"), "/srv/git/api", "remote: file:// is a path");
-eq(normalizeRemote("https://GitHub.com/Acme/Api.git"), "github.com/acme/api", "remote: case does not split a repo on a caseless host");
-eq(normalizeRemote("https://git.example.com/Acme/Api"), "git.example.com/Acme/Api", "remote: elsewhere, path case is kept");
-eq(normalizeRemote(""), null, "remote: none");
-const cloneA = card(ws("feature-a", "working", { projectPath: "/home/me/api", remote: "github.com/acme/api" }));
-const cloneB = card(ws("feature-b", "idle", { projectPath: "/tmp/api-copy", remote: "github.com/acme/api" }));
-const other = card(ws("x", "idle", { projectPath: "/home/me/api", remote: "github.com/other/api" }));
+const acme = { id: "repo:github.com/acme/api", label: "acme/api" };
+const cloneA = card(ws("feature-a", "working", { projectPath: "/home/me/api", project: acme }));
+const cloneB = card(ws("feature-b", "idle", { projectPath: "/tmp/api-copy", project: acme }));
+const other = card(ws("x", "idle", { projectPath: "/home/me/api", project: { id: "repo:github.com/other/api", label: "other/api" } }));
 const local = card(ws("y", "idle", { projectPath: "/home/me/notes" }));
 const byRemote = projectGroups([cloneA, cloneB, other, local]);
-eq(byRemote.map((g) => [g.label, g.cards.length]), [["acme/api", 2], ["notes", 1], ["other/api", 1]], "projects: clones share a remote, same-named projects keep their owner");
+eq(byRemote.map((g) => [g.label, g.cards.length]), [["acme/api", 2], ["notes", 1], ["other/api", 1]], "projects: clones share an identity, wherever they sit");
+const twinA = card(ws("ta", "idle", { project: { id: "root:/a/app", label: "app" } }));
+const twinB = card(ws("tb", "idle", { project: { id: "root:/b/app", label: "app" } }));
+eq(projectGroups([twinA, twinB]).map((g) => g.label), ["/a/app", "/b/app"], "projects: two projects that read the same are told apart by their identity");
 
 // ── Folders ────────────────────────────────────────────────────────────────
 
@@ -201,6 +176,39 @@ eq(
   "saved: malformed pins are dropped",
 );
 eq(normalizeSaved({ lens: "timeline" }).lens, "inbox", "saved: an unknown lens falls back to Inbox");
+
+// ── Sources ────────────────────────────────────────────────────────────────
+
+const running: WorkboardSource = { id: "ext", label: "Running", kind: "running", list: () => [], open: () => null };
+const history: WorkboardSource = { id: "hist", label: "Found", kind: "history", list: () => [], open: () => null };
+const ext = itemSubject(running, { id: "claude-local/1", title: "fix-ci", state: "blocked", agent: "claude", cwd: "/home/me/ci", status: "local" });
+const extCard = card(ext, 0, null, "Run the tests?");
+eq([ext.kind, ext.agentState, ext.root, ext.title], ["external", "blocked", "/home/me/ci", "claude"], "source: a running session is placed by its state");
+eq(cardKey(ext), "src:ext:claude-local/1", "source: its key names the source");
+const old1 = itemSubject(history, { id: "a", title: "old", state: "working", cwd: "/home/me/old", updatedAt: 1000 });
+const old2 = itemSubject(history, { id: "b", title: "older", state: "idle", cwd: "/home/me/older", updatedAt: 500 });
+eq(old1.agentState, "idle", "source: a session in history is idle whatever it says");
+const mixed = inboxGroups([card(old2), extCard, card(old1), blog]);
+eq(mixed.map((g) => g.id), ["needs", "parked", "detected"], "inbox: a waiting outside session needs you; history comes last");
+eq(names(mixed[2].cards), ["old", "older"], "inbox: history newest first");
+eq(autoColumn(old1), "backlog", "board: history is Backlog");
+eq(cardAge(card(old1, 9000), 10_000), 9000, "age: a found session counts from its last activity");
+eq(cardAge(extCard, 10_000), 10_000, "age: a running one from when it entered its state");
+
+const fgOut = folderGroups([inWork, extCard, card(old1)], folders);
+eq(fgOut.map((g) => g.label), ["Work", "Outside the editor"], "folders: sessions outside the editor have their own group");
+
+eq(beaconText([extCard]), "", "beacon: counts only what the editor holds");
+eq(nextAttention([extCard, tabs], -1)?.ws.name, "tab-names", "jump: never to a session outside the editor");
+
+const atHome = ws("home", "idle", { root: "/home/me/old/" });
+const coveredByRun = itemSubject(history, { id: "c", title: "ci", state: "idle", cwd: "/home/me/ci" });
+const away = itemSubject(history, { id: "d", title: "remote", state: "idle", cwd: "/home/me/old", where: "devbox" });
+eq(
+  withoutCovered([atHome, ext, old1, old2, coveredByRun, away]).map((w) => w.name),
+  ["home", "fix-ci", "older", "remote"],
+  "covered: a found session where a workspace or running session already is drops out; another machine's stays",
+);
 
 // ── Keys ───────────────────────────────────────────────────────────────────
 

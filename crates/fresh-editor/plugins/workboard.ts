@@ -14,13 +14,21 @@
  * Plus a status-bar beacon (`● 2 waiting  ✓ 1 done`) that is empty while
  * nothing needs you; clicking it jumps to the agent that has waited longest.
  *
- * Everything it knows comes from the Orchestrator's plugin API
- * (`editor.getPluginApi("orchestrator")`); it keeps only its own lens and
- * pins. Sorting, grouping and layout are pure and live in
- * `lib/workboard_model.ts` and `lib/workboard_view.ts`.
+ * Everything it shows comes from other plugins' APIs: the workspaces from
+ * the Orchestrator's, and sessions from registered sources — the editor's
+ * own two (agents running outside the editor, from `live-sessions` through
+ * the Orchestrator; sessions found by a scan, from `agent-discovery`) and any
+ * a plugin adds with `registerSource` on this plugin's API. Projects are
+ * resolved by `lib/project_identity.ts`, as the session scan resolves them.
+ * It keeps only its own lens and pins. Sorting, grouping and layout are pure
+ * and live in `lib/workboard_model.ts`, `lib/workboard_view.ts` and
+ * `lib/workboard_sources.ts`.
  */
 
+import type { LiveSession } from "./lib/live_sessions.ts";
+import { resolveProjects } from "./lib/project_identity.ts";
 import { FloatingWidgetPanel, type WidgetSpec } from "./lib/widgets.ts";
+import { WindowMachines } from "./lib/window_machines.ts";
 import {
   type AgentState,
   beaconText,
@@ -30,17 +38,21 @@ import {
   effectiveState,
   type FolderLike,
   groupsFor,
+  inEditor,
+  itemSubject,
   LENSES,
   type LensId,
   nextAttention,
-  normalizeRemote,
   normalizeSaved,
-  repoFromCommonDir,
   type SavedState,
   shiftPin,
   trackSince,
+  type WorkboardApi,
+  type WorkboardSource,
   type WorkspaceLike,
+  withoutCovered,
 } from "./lib/workboard_model.ts";
+import { detectedItems, liveSessionItem, parseDetectedItemId } from "./lib/workboard_sources.ts";
 import {
   cardItemKey,
   cardKeyOf,
@@ -65,6 +77,9 @@ interface OrchestratorLike {
   getWorkspace(target: string | number): { explain?: { question?: string | null } } | null;
   focusWorkspace(target: string | number): Promise<boolean>;
   moveWorkspace(target: string | number, folderId: string | null): boolean;
+  /** Agents running outside the editor that no workspace stands for. */
+  listExternalSessions?(): LiveSession[];
+  openExternalSession?(key: string): Promise<boolean>;
 }
 
 /** Looked up on every use: plugins load in no fixed order, and the
@@ -84,11 +99,6 @@ let saved: SavedState = normalizeSaved(editor.getGlobalState(STATE_KEY));
 let since = new Map<string, { state: AgentState; since: number }>();
 let cards: Card[] = [];
 let folders: FolderLike[] = [];
-/** Each local workspace root's repository, as git reports it (see
- *  `resolveRepo`). The Orchestrator's own `projectPath` is used until — or
- *  unless — git answers. */
-const repoOf = new Map<string, { repo: string | null; remote: string | null } | null>();
-
 let panel: FloatingWidgetPanel | null = null;
 /** Which card each tree's cursor is on (tree key → card key), from the
  *  host's `select` events and from `reveal`. The host keeps a tree's cursor
@@ -115,38 +125,44 @@ function save(): void {
   editor.setGlobalState(STATE_KEY, saved);
 }
 
-/** Refresh `cards` from the Orchestrator. Questions are asked only of the
- *  workspaces that are waiting — the only ones that have one. */
+/** Refresh `cards` from the Orchestrator and the sources. Questions are
+ *  asked only of the workspaces that are waiting — the only ones that have
+ *  one. */
 function refresh(): void {
   const orch = orchestrator();
-  if (!orch) {
-    cards = [];
-    folders = [];
-    return;
-  }
-  let list: WorkspaceLike[];
+  let list: WorkspaceLike[] = [];
+  folders = [];
   try {
-    list = orch.listWorkspaces().filter((w) => w.kind !== "discovered");
-    folders = orch.listFolders();
+    list = orch?.listWorkspaces().filter((w) => w.kind !== "discovered") ?? [];
+    folders = orch?.listFolders() ?? [];
   } catch (e) {
     editor.debug(`workboard: listWorkspaces failed: ${e}`);
     return;
   }
+  const questions = new Map<string, string>();
+  for (const src of sources.values()) {
+    let items;
+    try {
+      items = src.list();
+    } catch (e) {
+      editor.debug(`workboard: source ${src.id} failed to list: ${e}`);
+      continue;
+    }
+    for (const item of items) {
+      const ws = itemSubject(src, item);
+      list.push(ws);
+      if (item.question) questions.set(cardKey(ws), item.question);
+    }
+  }
+  list = withoutCovered(list.map(withProject));
   const now = Date.now();
   since = trackSince(since, list, now);
-  for (const ws of list) if (!ws.backend && ws.kind !== "pending") probeRepo(ws.root);
-  cards = list.map((raw) => {
-    const git = repoOf.get(raw.root);
-    const ws = {
-      ...raw,
-      ...(git?.repo ? { projectPath: git.repo } : {}),
-      ...(git?.remote ? { remote: git.remote } : {}),
-    };
+  cards = list.map((ws) => {
     const key = cardKey(ws);
-    let question: string | null = null;
+    let question = questions.get(key) ?? null;
     // Only the open board shows questions, and each one costs the
     // Orchestrator a full listing: the beacon needs none.
-    if (panel && ws.kind !== "pending" && effectiveState(ws) === "blocked") {
+    if (orch && panel && inEditor(ws) && ws.kind !== "pending" && effectiveState(ws) === "blocked") {
       try {
         question = orch.getWorkspace(ws.workspaceId || ws.windowId)?.explain?.question?.trim() || null;
       } catch {
@@ -157,76 +173,180 @@ function refresh(): void {
   });
 }
 
-/** Git probes waiting to run, and how many are running: a board with a
- *  hundred workspaces must not start four hundred processes at once. */
-const probeQueue: string[] = [];
-let probesRunning = 0;
-const MAX_PROBES = 4;
-/** When a root whose probe found nothing may be asked again: git may have
- *  been busy, or the remote added since. */
-const retryAt = new Map<string, number>();
-const RETRY_MS = 60_000;
+// ── Projects ──────────────────────────────────────────────────────────────
 
-/** Roots queued or being probed, so a slow probe is not started twice. */
-const probing = new Set<string>();
+/** Each directory's project, by `machine\ndirectory`, as
+ *  `lib/project_identity.ts` resolves it: every checkout of a repository,
+ *  wherever it sits, under its remote. Until it answers, a card is grouped
+ *  by its directory. */
+const projects = new Map<string, { id: string; label: string }>();
+/** When each `machine\ndirectory` was last asked: a repository can gain a
+ *  remote, so the answer is asked for again after `RESOLVE_AGAIN_MS`. */
+const askedAt = new Map<string, number>();
+const RESOLVE_AGAIN_MS = 60_000;
+/** Machines with a resolution in flight: one at a time per machine. */
+const resolving = new Set<string>();
+const windowMachines = new WindowMachines(editor);
+editor.on("window_closed", ({ id }) => windowMachines.close(id));
+let localMachine: Promise<FreshMachine> | null = null;
 
-/** Queue a probe of `root` unless it is in hand, answered for good, or
- *  waiting out a retry. */
-function probeRepo(root: string): void {
-  if (probing.has(root)) return;
-  const retry = retryAt.get(root);
-  if (retry === undefined ? repoOf.has(root) : retry > Date.now()) return;
-  retryAt.delete(root);
-  probing.add(root);
-  probeQueue.push(root);
-  pumpProbes();
+/** The machine `ws`'s directory is on: this computer, or for a workspace on
+ *  a remote backend, its window's. Null for a directory elsewhere (a cloud
+ *  session, an SSH host's) — its source names its project, if anyone does. */
+function machineOf(ws: WorkspaceLike): string | null {
+  if (inEditor(ws)) return ws.backend ? (ws.windowId >= 0 ? `window:${ws.windowId}` : null) : "local";
+  return ws.where ? null : "local";
 }
 
-function pumpProbes(): void {
-  while (probesRunning < MAX_PROBES && probeQueue.length > 0) {
-    const root = probeQueue.shift()!;
-    probesRunning++;
-    void resolveRepo(root).finally(() => {
-      probing.delete(root);
-      probesRunning--;
-      pumpProbes();
+function openMachine(machine: string): Promise<FreshMachine> {
+  if (machine.startsWith("window:")) return windowMachines.get(Number(machine.slice("window:".length)));
+  if (!localMachine) {
+    localMachine = editor.openMachine({
+      filesystem: { kind: "local" },
+      spawner: { kind: "local" },
+      terminal_wrapper: { kind: "host-shell" },
     });
+    localMachine.catch(() => (localMachine = null));
+  }
+  return localMachine;
+}
+
+/** `ws` with its project, when resolved; a resolution is started for its
+ *  directory when it is due. A source's own project stands. */
+function withProject(ws: WorkspaceLike): WorkspaceLike {
+  if (ws.project || ws.root === "") return ws;
+  const machine = machineOf(ws);
+  if (machine === null) return ws;
+  const project = projects.get(`${machine}\n${ws.root}`);
+  if (!project) queueResolve(machine, ws.root);
+  return project ? { ...ws, project } : ws;
+}
+
+const dueByMachine = new Map<string, Set<string>>();
+
+function queueResolve(machine: string, dir: string): void {
+  const k = `${machine}\n${dir}`;
+  if ((askedAt.get(k) ?? -Infinity) + RESOLVE_AGAIN_MS > Date.now()) return;
+  const due = dueByMachine.get(machine) ?? new Set<string>();
+  due.add(dir);
+  dueByMachine.set(machine, due);
+  pumpResolve(machine);
+}
+
+/** Resolve every directory due on `machine` in one batch: one round of
+ *  file reads, two for linked worktrees. */
+function pumpResolve(machine: string): void {
+  const due = dueByMachine.get(machine);
+  if (resolving.has(machine) || !due || due.size === 0) return;
+  dueByMachine.delete(machine);
+  const dirs = [...due];
+  const now = Date.now();
+  for (const d of dirs) askedAt.set(`${machine}\n${d}`, now);
+  resolving.add(machine);
+  void openMachine(machine)
+    .then((m) => resolveProjects(m, dirs))
+    .then((found) => {
+      for (const [dir, p] of found) projects.set(`${machine}\n${dir}`, { id: p.id, label: p.label });
+      refresh();
+      render();
+    })
+    .catch((e) => editor.debug(`workboard: resolving projects on ${machine} failed: ${e}`))
+    .finally(() => {
+      resolving.delete(machine);
+      pumpResolve(machine);
+    });
+}
+
+// ── Sources ───────────────────────────────────────────────────────────────
+
+const sources = new Map<string, WorkboardSource>();
+/** When each source last had `refresh` called. */
+const refreshedAt = new Map<string, number>();
+const DEFAULT_REFRESH_MS = 30_000;
+/** Opening the board refreshes any source this stale. */
+const OPEN_REFRESH_MS = 10_000;
+
+function registerSource(source: WorkboardSource): () => void {
+  sources.set(source.id, source);
+  refreshedAt.delete(source.id);
+  if (panel) refreshSources();
+  return () => {
+    if (sources.get(source.id) !== source) return;
+    sources.delete(source.id);
+    refreshedAt.delete(source.id);
+    refresh();
+    render();
+  };
+}
+
+/** Ask each source for fresh items once its interval (or `maxAge`, when
+ *  given) has passed; redraw as each answers. */
+function refreshSources(maxAge?: number): void {
+  const now = Date.now();
+  for (const src of sources.values()) {
+    if (!src.refresh) continue;
+    const last = refreshedAt.get(src.id);
+    if (last !== undefined && now - last < (maxAge ?? src.refreshMs ?? DEFAULT_REFRESH_MS)) continue;
+    refreshedAt.set(src.id, now);
+    void Promise.resolve()
+      .then(() => src.refresh!())
+      .catch((e) => editor.debug(`workboard: source ${src.id} failed to refresh: ${e}`))
+      .finally(() => {
+        refresh();
+        paintBeacon();
+        render();
+      });
   }
 }
 
-/** Ask git which repository `root` is a checkout of and where its remote
- *  points, so every worktree of a repo — and every clone of a project —
- *  lands in the same Projects group. A root git says nothing useful about
- *  is asked again after `RETRY_MS`. */
-async function resolveRepo(root: string): Promise<void> {
-  const git = (...args: string[]) => editor.spawnHostProcess("git", ["-C", root, ...args]);
-  try {
-    let dir = await git("rev-parse", "--path-format=absolute", "--git-common-dir");
-    // Git before 2.31 has no --path-format: the common dir then comes back
-    // relative to the checkout.
-    if (dir.exit_code !== 0) dir = await git("rev-parse", "--git-common-dir");
-    if (dir.exit_code !== 0) {
-      retryAt.set(root, Date.now() + RETRY_MS);
-      return;
+/** Open a source's card; a reason it could not open goes to the status bar. */
+async function openSourceCard(card: Card): Promise<void> {
+  const ref = card.ws.source!;
+  const src = sources.get(ref.id);
+  let why: string | null = src ? null : "its source is gone";
+  if (src) {
+    try {
+      why = (await src.open(ref.item)) || null;
+    } catch (e) {
+      why = e instanceof Error ? e.message : String(e);
     }
-    const common = dir.stdout.trim();
-    const absolute = /^([A-Za-z]:)?[\\/]/.test(common) ? common : editor.pathJoin(root, common);
-    // `origin` when there is one, else the first remote: clones of one
-    // project share it wherever they sit on disk.
-    let url = await git("remote", "get-url", "origin");
-    if (url.exit_code !== 0) {
-      const first = (await git("remote")).stdout.split("\n")[0]?.trim();
-      url = first ? await git("remote", "get-url", first) : url;
-    }
-    const remote = url.exit_code === 0 ? normalizeRemote(url.stdout, root) : null;
-    repoOf.set(root, { repo: repoFromCommonDir(absolute), remote });
-    // No remote yet is an answer, but one that may change: look again later.
-    if (remote === null) retryAt.set(root, Date.now() + RETRY_MS);
-  } catch {
-    // No git at all: the Orchestrator's projectPath stands. Try again later.
-    retryAt.set(root, Date.now() + RETRY_MS);
   }
+  if (why) editor.setStatus(`Workboard: could not open ${card.ws.name}: ${why}`);
 }
+
+/** Agents running outside the editor: the `live-sessions` plugin finds them
+ *  and the Orchestrator keeps those no workspace stands for, as its dock
+ *  lists them. Opening one does what the dock row's Open does. */
+registerSource({
+  id: "external",
+  label: "Running outside the editor",
+  kind: "running",
+  list: () => (orchestrator()?.listExternalSessions?.() ?? []).map(liveSessionItem),
+  refresh: () => (editor.getPluginApi("live-sessions") as { refresh(): Promise<void> } | null)?.refresh(),
+  refreshMs: 60_000,
+  open: async (key) => {
+    const ok = await orchestrator()?.openExternalSession?.(key);
+    return ok ? null : "it is no longer running";
+  },
+});
+
+/** Sessions the `agent-discovery` scan found on disk or in a multiplexer,
+ *  on every reachable machine. Opening one imports it, as the Import
+ *  sessions dialog's Enter does. */
+registerSource({
+  id: "detected",
+  label: "Detected",
+  kind: "history",
+  list: () => detectedItems(editor.getPluginApi("agent-discovery")?.detectedSessions() ?? [], Date.now()),
+  refresh: () => editor.getPluginApi("agent-discovery")?.scan(),
+  refreshMs: 5 * 60_000,
+  open: (id) => {
+    const api = editor.getPluginApi("agent-discovery");
+    const ref = parseDetectedItemId(id);
+    if (!api || !ref) return "session import is not available";
+    return api.importSession(ref.machineKey, ref.sessionId, ref.tool || undefined);
+  },
+});
 
 // ── Beacon ─────────────────────────────────────────────────────────────────
 
@@ -399,6 +519,7 @@ function openBoard(): void {
     editor.setStatus("Workboard needs the Orchestrator plugin, which is not loaded");
     return;
   }
+  refreshSources(OPEN_REFRESH_MS);
   refresh();
   lastFrame = "";
   panel = new FloatingWidgetPanel();
@@ -471,6 +592,7 @@ function selectNextWaiting(): void {
 
 async function openCard(card: Card): Promise<void> {
   closeBoard();
+  if (card.ws.source) return openSourceCard(card);
   const ok = await orchestrator()?.focusWorkspace(card.ws.workspaceId || card.ws.windowId);
   if (!ok) editor.setStatus(`Workboard: could not open ${card.ws.name}`);
 }
@@ -503,7 +625,7 @@ function unpin(): void {
  *  one, is filed in that folder ("Not in a folder" unfiles it). */
 function fileDropped(itemKey: string, target: string): void {
   const card = cardByKey(cardKeyOf(itemKey));
-  if (!card) return;
+  if (!card || !inEditor(card.ws)) return;
   const gid = groupIdOf(target);
   let folderId: string | null | undefined;
   if (gid !== null) {
@@ -642,6 +764,9 @@ let ticks = 0;
 registerHandler("workboard_tick", () => {
   ticks++;
   if (!panel && ticks % IDLE_TICKS !== 0) return;
+  // Sources are asked only while the board shows them: the beacon counts
+  // workspaces alone.
+  if (panel) refreshSources();
   refresh();
   paintBeacon();
   render();
@@ -684,6 +809,6 @@ editor.exportPluginApi("workboard", {
     if (!panel) openBoard();
   },
   close: closeBoard,
-  /** The lens the board shows (and opens on next time). */
   setLens: (lens: LensId) => setLens(lens),
-});
+  registerSource,
+} satisfies WorkboardApi);

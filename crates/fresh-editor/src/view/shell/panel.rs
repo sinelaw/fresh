@@ -836,7 +836,6 @@ fn body(p: &Panel) -> Node<UiMsg> {
     // itself, which is the second layout this migration exists to remove.
     let rests_empty = i.keyboard && i.focus_key.is_empty();
     let fill = p.fill_height_pct.is_some();
-    let fill = p.fill_height_pct.is_some();
     // **A dialog's right margin mirrors its left.** A panel that reserves the
     // `▸ ` gutter starts every control two columns in from the ring; without
     // the same two on the right, full-width fields and section rules ran

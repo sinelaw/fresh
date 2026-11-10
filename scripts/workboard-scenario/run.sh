@@ -17,6 +17,7 @@ mkdir -p "$DIR/home/.config/fresh" "$DIR/repos"
 export HOME="$DIR/home" XDG_CONFIG_HOME="$DIR/home/.config" XDG_DATA_HOME="$DIR/home/.local/share"
 export XDG_CACHE_HOME="$DIR/home/.cache" XDG_STATE_HOME="$DIR/home/.local/state"
 "$HERE/repos.sh" "$DIR/repos"
+"$HERE/sessions.sh" "$HOME" "$DIR/repos"
 sed "s#__REPOS__#$DIR/repos#" "$HERE/init.ts" > "$DIR/home/.config/fresh/init.ts"
 cd "$DIR/repos/api"
 tmux new-session -d -s wb -x "${W:-150}" -y "${H:-42}" \
