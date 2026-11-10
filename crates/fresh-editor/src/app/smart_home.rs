@@ -52,9 +52,47 @@ pub(crate) fn smart_home_target(
     }
 }
 
+/// Byte offset of the first non-whitespace character in `text`, looking
+/// only at characters that start before `limit` and before the first `\n`.
+///
+/// Both smart-home paths add the result to a byte position (the physical
+/// line start, the visual row start), so it is a byte offset rather than a
+/// character count: the two differ as soon as the indent holds anything
+/// but ASCII, such as U+3000 IDEOGRAPHIC SPACE. Keeping the scan in one
+/// place keeps the two paths from disagreeing about that again.
+///
+/// `limit` is the length of the region the caller is scanning (a visual
+/// row). A character is counted if it *starts* inside it; visual rows break
+/// on character boundaries, so such a character also ends inside it.
+pub(crate) fn first_non_whitespace_offset(text: &str, limit: usize) -> Option<usize> {
+    text.char_indices()
+        .take_while(|(offset, c)| *offset < limit && *c != '\n')
+        .find(|(_, c)| !c.is_whitespace())
+        .map(|(offset, _)| offset)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn first_non_whitespace_offset_is_in_bytes() {
+        // U+3000 is one character but three bytes.
+        assert_eq!(
+            first_non_whitespace_offset("\u{3000}abc", usize::MAX),
+            Some(3)
+        );
+        assert_eq!(first_non_whitespace_offset("  \tx", usize::MAX), Some(3));
+        assert_eq!(first_non_whitespace_offset("x", usize::MAX), Some(0));
+    }
+
+    #[test]
+    fn first_non_whitespace_offset_stops_at_newline_and_limit() {
+        assert_eq!(first_non_whitespace_offset("   \nabc", usize::MAX), None);
+        assert_eq!(first_non_whitespace_offset("    abc", 4), None);
+        assert_eq!(first_non_whitespace_offset("    abc", 5), Some(4));
+        assert_eq!(first_non_whitespace_offset("", usize::MAX), None);
+    }
 
     #[test]
     fn first_row_at_line_start_jumps_to_first_non_ws() {

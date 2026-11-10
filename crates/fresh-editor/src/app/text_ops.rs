@@ -71,15 +71,9 @@ impl Editor {
                     .get_text_range_mut(line_start, head_len)
                     .unwrap_or_default();
                 let head = String::from_utf8_lossy(&head);
-                // Byte offsets, not character counts: the two differ the moment
-                // a line is indented with anything but ASCII, and this is added
-                // to a byte position.
-                let first_non_ws = head
-                    .char_indices()
-                    .take_while(|(_, c)| *c != '\n')
-                    .find(|(_, c)| !c.is_whitespace())
-                    .map(|(offset, _)| line_start + offset)
-                    .unwrap_or(line_start);
+                let first_non_ws =
+                    super::smart_home::first_non_whitespace_offset(&head, usize::MAX)
+                        .map_or(line_start, |offset| line_start + offset);
                 if cursor.position == first_non_ws {
                     line_start
                 } else {
@@ -140,7 +134,7 @@ impl Editor {
         cursor_pos: usize,
         estimated_line_length: usize,
     ) -> Option<usize> {
-        use super::smart_home::{smart_home_target, SmartHomeTarget};
+        use super::smart_home::{first_non_whitespace_offset, smart_home_target, SmartHomeTarget};
 
         let visual_start = self
             .active_window()
@@ -172,13 +166,8 @@ impl Editor {
                 .visual_line_end(split_id, cursor_pos, false)
                 .unwrap_or(visual_start);
             let visual_len = visual_end.saturating_sub(visual_start);
-            content
-                .chars()
-                .take(visual_len)
-                .take_while(|c| *c != '\n')
-                .position(|c| !c.is_whitespace())
-                .map(|offset| visual_start + offset)
-                .unwrap_or(visual_start)
+            first_non_whitespace_offset(&content, visual_len)
+                .map_or(visual_start, |offset| visual_start + offset)
         } else {
             visual_start
         };
