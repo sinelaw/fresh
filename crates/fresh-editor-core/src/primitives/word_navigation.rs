@@ -1,7 +1,9 @@
 //! Word boundary detection and navigation helpers
 
 use crate::model::buffer::Buffer;
-use crate::primitives::grapheme::{next_grapheme_boundary, prev_grapheme_boundary};
+use crate::primitives::grapheme::{
+    next_grapheme_boundary, prev_grapheme_boundary, snap_to_grapheme_boundary,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CharClass {
@@ -58,153 +60,129 @@ pub fn is_word_char(byte: u8) -> bool {
 }
 
 // ============================================================================
-// Core byte-level word navigation (shared by Buffer and String operations)
+// Core string word navigation (shared by prompts and text fields)
 // ============================================================================
 //
-// These functions contain the pure logic for finding word boundaries in byte
-// slices. They are used by both:
-// - Buffer operations (which extract windowed byte slices from the rope)
-// - String/prompt operations (which use the string's byte array directly)
-//
-// This eliminates code duplication while maintaining identical behavior across
-// buffer editing and prompt input contexts.
+// These functions contain the pure logic for finding word boundaries in a
+// `&str`. Words are made of whole grapheme clusters, classified with
+// [`is_unicode_word_char`], so accented, decomposed, Greek, CJK, ... text
+// behaves the same as ASCII and results always land on grapheme boundaries.
 
-/// Find the start of the word at or before the given position in a byte slice.
-///
-/// This is the core logic shared by both Buffer and String word navigation.
-/// When `bytes` is valid UTF-8, words are made of whole characters, so letters
-/// outside ASCII (accents, Greek, CJK, ...) belong to words and the result
-/// always lands on a character boundary.
-///
-/// # Arguments
-/// * `bytes` - The byte slice to search in
-/// * `pos` - Position within the bytes (0-indexed)
+/// Whether the grapheme cluster `g` belongs to a word.
+fn is_word_grapheme(g: &str) -> bool {
+    g.chars().any(is_unicode_word_char)
+}
+
+/// The grapheme ending at `pos`, if any, with its start offset.
+fn grapheme_before(text: &str, pos: usize) -> Option<(usize, &str)> {
+    (pos > 0).then(|| {
+        let start = prev_grapheme_boundary(text, pos);
+        (start, &text[start..pos])
+    })
+}
+
+/// The grapheme starting at `pos`, if any, with its end offset.
+fn grapheme_after(text: &str, pos: usize) -> Option<(usize, &str)> {
+    (pos < text.len()).then(|| {
+        let end = next_grapheme_boundary(text, pos);
+        (end, &text[pos..end])
+    })
+}
+
+/// Clamp `pos` to the text and snap it back to a grapheme boundary.
+fn snap_pos(text: &str, pos: usize) -> usize {
+    snap_to_grapheme_boundary(text, pos.min(text.len()))
+}
+
+/// Find the start of the word at or before `pos` in `text`.
 ///
 /// # Returns
 /// Position of the word start (always <= pos)
-pub fn find_word_start_bytes(bytes: &[u8], pos: usize) -> usize {
-    if pos == 0 {
-        return 0;
+pub fn find_word_start_str(text: &str, pos: usize) -> usize {
+    let mut new_pos = snap_pos(text, pos);
+
+    // If we're at the end or on a non-word grapheme, step left once
+    let on_word = grapheme_after(text, new_pos).is_some_and(|(_, g)| is_word_grapheme(g));
+    if !on_word {
+        if let Some((start, _)) = grapheme_before(text, new_pos) {
+            new_pos = start;
+        }
     }
 
-    let pos = pos.min(bytes.len());
-    if let Ok(text) = std::str::from_utf8(bytes) {
-        return find_word_start_str(text, pos);
-    }
-    let mut new_pos = pos;
-
-    // If we're at the end or at a non-word character, scan left
-    if (new_pos >= bytes.len()
-        || bytes
-            .get(new_pos)
-            .map(|&b| !is_word_char(b))
-            .unwrap_or(true))
-        && new_pos > 0
-    {
-        new_pos = new_pos.saturating_sub(1);
-    }
-
-    // Find start of current word by scanning backwards
-    while new_pos > 0 {
-        if let Some(&prev_byte) = bytes.get(new_pos.saturating_sub(1)) {
-            if !is_word_char(prev_byte) {
-                break;
-            }
-            new_pos = new_pos.saturating_sub(1);
-        } else {
+    // Scan left while the preceding grapheme is a word grapheme
+    while let Some((start, g)) = grapheme_before(text, new_pos) {
+        if !is_word_grapheme(g) {
             break;
         }
+        new_pos = start;
     }
 
     new_pos
 }
 
-/// Find the end of the word at or after the given position in a byte slice.
-///
-/// This is the core logic shared by both Buffer and String word navigation.
-/// When `bytes` is valid UTF-8, words are made of whole characters, so letters
-/// outside ASCII belong to words and the result always lands on a character
-/// boundary.
-///
-/// # Arguments
-/// * `bytes` - The byte slice to search in
-/// * `pos` - Position within the bytes (0-indexed)
+/// Find the end of the word at or after `pos` in `text`.
 ///
 /// # Returns
 /// Position of the word end (always >= pos)
-pub fn find_word_end_bytes(bytes: &[u8], pos: usize) -> usize {
-    let pos = pos.min(bytes.len());
-    if let Ok(text) = std::str::from_utf8(bytes) {
-        return find_word_end_str(text, pos);
-    }
-    let mut new_pos = pos;
+pub fn find_word_end_str(text: &str, pos: usize) -> usize {
+    let mut new_pos = snap_pos(text, pos);
 
-    // Skip to start of next word if we're at non-word character
-    while new_pos < bytes.len() && !is_word_char(bytes[new_pos]) {
-        new_pos += 1;
-    }
-
-    // Find end of word
-    while new_pos < bytes.len() && is_word_char(bytes[new_pos]) {
-        new_pos += 1;
-    }
-
-    new_pos
-}
-
-fn is_word_str_char(c: char) -> bool {
-    c.is_alphanumeric() || c == '_'
-}
-
-/// Character-aware version of [`find_word_start_bytes`]. `pos` is snapped
-/// back to a character boundary first.
-fn find_word_start_str(text: &str, pos: usize) -> usize {
-    let mut new_pos = pos.min(text.len());
-    while !text.is_char_boundary(new_pos) {
-        new_pos -= 1;
-    }
-
-    // If we're at the end or on a non-word character, step left one character
-    let on_word = text[new_pos..].chars().next().is_some_and(is_word_str_char);
-    if !on_word {
-        if let Some(prev) = text[..new_pos].chars().next_back() {
-            new_pos -= prev.len_utf8();
-        }
-    }
-
-    // Scan left while the preceding character is a word character
-    while let Some(prev) = text[..new_pos].chars().next_back() {
-        if !is_word_str_char(prev) {
+    // Skip to the start of the next word if we're on a non-word grapheme
+    while let Some((end, g)) = grapheme_after(text, new_pos) {
+        if is_word_grapheme(g) {
             break;
         }
-        new_pos -= prev.len_utf8();
-    }
-
-    new_pos
-}
-
-/// Character-aware version of [`find_word_end_bytes`]. `pos` is snapped
-/// back to a character boundary first.
-fn find_word_end_str(text: &str, pos: usize) -> usize {
-    let mut new_pos = pos.min(text.len());
-    while !text.is_char_boundary(new_pos) {
-        new_pos -= 1;
-    }
-
-    // Skip to the start of the next word if we're on a non-word character
-    for c in text[new_pos..].chars() {
-        if is_word_str_char(c) {
-            break;
-        }
-        new_pos += c.len_utf8();
+        new_pos = end;
     }
 
     // Find the end of the word
-    for c in text[new_pos..].chars() {
-        if !is_word_str_char(c) {
+    while let Some((end, g)) = grapheme_after(text, new_pos) {
+        if !is_word_grapheme(g) {
             break;
         }
-        new_pos += c.len_utf8();
+        new_pos = end;
+    }
+
+    new_pos
+}
+
+/// Start of the previous word: skip non-word graphemes before `pos`, then the
+/// word graphemes before those (the Ctrl+Left motion).
+pub fn find_prev_word_start_str(text: &str, pos: usize) -> usize {
+    let mut new_pos = snap_pos(text, pos);
+
+    while let Some((start, g)) = grapheme_before(text, new_pos) {
+        if is_word_grapheme(g) {
+            break;
+        }
+        new_pos = start;
+    }
+    while let Some((start, g)) = grapheme_before(text, new_pos) {
+        if !is_word_grapheme(g) {
+            break;
+        }
+        new_pos = start;
+    }
+
+    new_pos
+}
+
+/// Start of the next word: skip the word graphemes at `pos`, then the
+/// non-word graphemes after them (the Ctrl+Right motion).
+pub fn find_next_word_start_str(text: &str, pos: usize) -> usize {
+    let mut new_pos = snap_pos(text, pos);
+
+    while let Some((end, g)) = grapheme_after(text, new_pos) {
+        if !is_word_grapheme(g) {
+            break;
+        }
+        new_pos = end;
+    }
+    while let Some((end, g)) = grapheme_after(text, new_pos) {
+        if is_word_grapheme(g) {
+            break;
+        }
+        new_pos = end;
     }
 
     new_pos
@@ -220,60 +198,27 @@ fn find_word_end_str(text: &str, pos: usize) -> usize {
 /// - "hello|" returns position of 'h' (start of word)
 /// - "args.|" returns cursor position (no partial word to delete)
 pub fn find_completion_word_start(buffer: &Buffer, pos: usize) -> usize {
-    if pos == 0 {
-        return 0;
-    }
+    let pos = pos.min(buffer.len());
 
-    let buf_len = buffer.len();
-    let pos = pos.min(buf_len);
-
-    // Only read a small window around the position for efficiency
+    // Only read a small window before the cursor for efficiency
     let start = pos.saturating_sub(1000);
-    let end = (pos + 1).min(buf_len);
-    let bytes = buffer.slice_bytes(start..end);
-    let offset = pos - start;
+    let bytes = buffer.slice_bytes(start..pos);
+    // A window start that splits a multi-byte character decodes to U+FFFD,
+    // which is not a word character, so the scan stops before it and the
+    // distance moved is measured from the end of the text.
+    let text = String::from_utf8_lossy(&bytes);
 
-    if offset == 0 {
-        return pos;
-    }
-
-    // Check the character immediately before the cursor
-    if let Some(&prev_byte) = bytes.get(offset.saturating_sub(1)) {
-        // If the previous character is not a word character (e.g., '.', ':', ' '),
-        // then there's no partial word to delete - return cursor position
-        if !is_word_char(prev_byte) {
-            return pos;
-        }
-    }
-
-    let mut new_pos = offset;
-
-    // If we're at the end of the buffer or at a non-word character, scan left
-    if (new_pos >= bytes.len()
-        || bytes
-            .get(new_pos)
-            .map(|&b| !is_word_char(b))
-            .unwrap_or(true))
-        && new_pos > 0
-    {
-        new_pos = new_pos.saturating_sub(1);
-    }
-
-    // Find start of current identifier segment by scanning backwards
-    // Stop at delimiters like '.' or ':'
-    while new_pos > 0 {
-        if let Some(&prev_byte) = bytes.get(new_pos.saturating_sub(1)) {
-            if !is_word_char(prev_byte) {
-                // Stop here - don't include the delimiter
-                break;
-            }
-            new_pos = new_pos.saturating_sub(1);
-        } else {
+    // Scan left over the word graphemes before the cursor, stopping at
+    // delimiters like '.' or ':' without including them
+    let mut idx = text.len();
+    while let Some((prev, g)) = grapheme_before(&text, idx) {
+        if !is_word_grapheme(g) {
             break;
         }
+        idx = prev;
     }
 
-    start + new_pos
+    pos - (text.len() - idx)
 }
 
 /// Returns true if the grapheme at `pos` is a word character
@@ -757,119 +702,161 @@ mod tests {
     }
 
     // ========================================================================
-    // Tests for byte-level word navigation (shared by Buffer and String)
+    // Tests for string word navigation
     // ========================================================================
 
     #[test]
-    fn test_find_word_start_bytes_basic() {
+    fn test_find_word_start_str_basic() {
         let s = "hello world test";
-        let bytes = s.as_bytes();
-        assert_eq!(find_word_start_bytes(bytes, 0), 0); // Start of "hello"
-        assert_eq!(find_word_start_bytes(bytes, 3), 0); // Middle of "hello"
-        assert_eq!(find_word_start_bytes(bytes, 5), 0); // End of "hello"
-        assert_eq!(find_word_start_bytes(bytes, 6), 6); // Start of "world"
-        assert_eq!(find_word_start_bytes(bytes, 8), 6); // Middle of "world"
-        assert_eq!(find_word_start_bytes(bytes, 11), 6); // End of "world"
-        assert_eq!(find_word_start_bytes(bytes, 12), 12); // Start of "test"
+        assert_eq!(find_word_start_str(s, 0), 0); // Start of "hello"
+        assert_eq!(find_word_start_str(s, 3), 0); // Middle of "hello"
+        assert_eq!(find_word_start_str(s, 5), 0); // End of "hello"
+        assert_eq!(find_word_start_str(s, 6), 6); // Start of "world"
+        assert_eq!(find_word_start_str(s, 8), 6); // Middle of "world"
+        assert_eq!(find_word_start_str(s, 11), 6); // End of "world"
+        assert_eq!(find_word_start_str(s, 12), 12); // Start of "test"
     }
 
     #[test]
-    fn test_find_word_end_bytes_basic() {
+    fn test_find_word_end_str_basic() {
         let s = "hello world test";
-        let bytes = s.as_bytes();
-        assert_eq!(find_word_end_bytes(bytes, 0), 5); // End of "hello"
-        assert_eq!(find_word_end_bytes(bytes, 3), 5); // Middle of "hello"
-        assert_eq!(find_word_end_bytes(bytes, 6), 11); // End of "world"
-        assert_eq!(find_word_end_bytes(bytes, 8), 11); // Middle of "world"
-        assert_eq!(find_word_end_bytes(bytes, 12), 16); // End of "test"
+        assert_eq!(find_word_end_str(s, 0), 5); // End of "hello"
+        assert_eq!(find_word_end_str(s, 3), 5); // Middle of "hello"
+        assert_eq!(find_word_end_str(s, 6), 11); // End of "world"
+        assert_eq!(find_word_end_str(s, 8), 11); // Middle of "world"
+        assert_eq!(find_word_end_str(s, 12), 16); // End of "test"
     }
 
     #[test]
-    fn test_find_word_start_bytes_special_chars() {
+    fn test_find_word_start_str_special_chars() {
         let s = "save-file-as";
-        let bytes = s.as_bytes();
-        assert_eq!(find_word_start_bytes(bytes, 4), 0); // "save"
-        assert_eq!(find_word_start_bytes(bytes, 5), 5); // hyphen stops word
-        assert_eq!(find_word_start_bytes(bytes, 9), 5); // "file"
-        assert_eq!(find_word_start_bytes(bytes, 10), 10); // hyphen stops word
-        assert_eq!(find_word_start_bytes(bytes, 12), 10); // "as"
+        assert_eq!(find_word_start_str(s, 4), 0); // "save"
+        assert_eq!(find_word_start_str(s, 5), 5); // hyphen stops word
+        assert_eq!(find_word_start_str(s, 9), 5); // "file"
+        assert_eq!(find_word_start_str(s, 10), 10); // hyphen stops word
+        assert_eq!(find_word_start_str(s, 12), 10); // "as"
     }
 
     #[test]
-    fn test_find_word_end_bytes_special_chars() {
+    fn test_find_word_end_str_special_chars() {
         let s = "open.file.now";
-        let bytes = s.as_bytes();
-        assert_eq!(find_word_end_bytes(bytes, 0), 4); // "open"
-        assert_eq!(find_word_end_bytes(bytes, 4), 9); // skip '.', then "file"
-        assert_eq!(find_word_end_bytes(bytes, 5), 9); // "file"
-        assert_eq!(find_word_end_bytes(bytes, 10), 13); // "now"
+        assert_eq!(find_word_end_str(s, 0), 4); // "open"
+        assert_eq!(find_word_end_str(s, 4), 9); // skip '.', then "file"
+        assert_eq!(find_word_end_str(s, 5), 9); // "file"
+        assert_eq!(find_word_end_str(s, 10), 13); // "now"
     }
 
     #[test]
-    fn test_find_word_start_bytes_whitespace() {
+    fn test_find_word_start_str_whitespace() {
         let s = "  hello  world  ";
-        let bytes = s.as_bytes();
-        assert_eq!(find_word_start_bytes(bytes, 4), 2); // "hello"
-        assert_eq!(find_word_start_bytes(bytes, 7), 2); // After "hello"
-        assert_eq!(find_word_start_bytes(bytes, 9), 9); // "world"
-        assert_eq!(find_word_start_bytes(bytes, 14), 9); // After "world"
+        assert_eq!(find_word_start_str(s, 4), 2); // "hello"
+        assert_eq!(find_word_start_str(s, 7), 2); // After "hello"
+        assert_eq!(find_word_start_str(s, 9), 9); // "world"
+        assert_eq!(find_word_start_str(s, 14), 9); // After "world"
     }
 
     #[test]
-    fn test_find_word_end_bytes_whitespace() {
+    fn test_find_word_end_str_whitespace() {
         let s = "  hello  world  ";
-        let bytes = s.as_bytes();
-        assert_eq!(find_word_end_bytes(bytes, 0), 7); // Skip spaces, end of "hello"
-        assert_eq!(find_word_end_bytes(bytes, 2), 7); // End of "hello"
-        assert_eq!(find_word_end_bytes(bytes, 7), 14); // Skip spaces, end of "world"
-        assert_eq!(find_word_end_bytes(bytes, 9), 14); // End of "world"
+        assert_eq!(find_word_end_str(s, 0), 7); // Skip spaces, end of "hello"
+        assert_eq!(find_word_end_str(s, 2), 7); // End of "hello"
+        assert_eq!(find_word_end_str(s, 7), 14); // Skip spaces, end of "world"
+        assert_eq!(find_word_end_str(s, 9), 14); // End of "world"
     }
 
     #[test]
-    fn test_find_word_start_bytes_edge_cases() {
+    fn test_find_word_start_str_edge_cases() {
         // Empty string
-        assert_eq!(find_word_start_bytes(b"", 0), 0);
+        assert_eq!(find_word_start_str("", 0), 0);
 
         // Single character
-        assert_eq!(find_word_start_bytes(b"a", 0), 0);
-        assert_eq!(find_word_start_bytes(b"a", 1), 0);
+        assert_eq!(find_word_start_str("a", 0), 0);
+        assert_eq!(find_word_start_str("a", 1), 0);
 
         // No words (all special chars) - scans back but finds no word
-        assert_eq!(find_word_start_bytes(b"...", 2), 1);
+        assert_eq!(find_word_start_str("...", 2), 1);
 
         // Position beyond string length
-        assert_eq!(find_word_start_bytes(b"hello", 100), 0);
+        assert_eq!(find_word_start_str("hello", 100), 0);
     }
 
     #[test]
-    fn test_find_word_end_bytes_edge_cases() {
+    fn test_find_word_end_str_edge_cases() {
         // Empty string
-        assert_eq!(find_word_end_bytes(b"", 0), 0);
+        assert_eq!(find_word_end_str("", 0), 0);
 
         // Single character
-        assert_eq!(find_word_end_bytes(b"a", 0), 1);
+        assert_eq!(find_word_end_str("a", 0), 1);
 
         // No words (all special chars)
-        assert_eq!(find_word_end_bytes(b"...", 0), 3);
+        assert_eq!(find_word_end_str("...", 0), 3);
 
         // Position beyond string length
-        assert_eq!(find_word_end_bytes(b"hello", 100), 5);
+        assert_eq!(find_word_end_str("hello", 100), 5);
     }
 
     #[test]
-    fn test_find_word_start_bytes_underscores() {
+    fn test_find_word_start_str_underscores() {
         let s = "some_variable_name";
-        let bytes = s.as_bytes();
-        assert_eq!(find_word_start_bytes(bytes, 7), 0); // Underscores are word chars
-        assert_eq!(find_word_start_bytes(bytes, 18), 0);
+        assert_eq!(find_word_start_str(s, 7), 0); // Underscores are word chars
+        assert_eq!(find_word_start_str(s, 18), 0);
     }
 
     #[test]
-    fn test_find_word_end_bytes_underscores() {
+    fn test_find_word_end_str_underscores() {
         let s = "some_variable_name";
-        let bytes = s.as_bytes();
-        assert_eq!(find_word_end_bytes(bytes, 0), 18); // Underscores are word chars
-        assert_eq!(find_word_end_bytes(bytes, 7), 18);
+        assert_eq!(find_word_end_str(s, 0), 18); // Underscores are word chars
+        assert_eq!(find_word_end_str(s, 7), 18);
+    }
+
+    #[test]
+    fn test_completion_word_start_non_ascii_partial_word() {
+        let text = "args.αβ";
+        let buffer = Buffer::from_str_test(text);
+        assert_eq!(find_completion_word_start(&buffer, text.len()), 5);
+        assert_eq!(find_completion_word_start(&buffer, 5), 5);
+    }
+
+    #[test]
+    fn test_word_str_non_ascii_words() {
+        let s = "αβγ δεζ";
+        assert_eq!(find_word_start_str(s, 13), 7);
+        assert_eq!(find_word_start_str(s, 6), 0);
+        assert_eq!(find_word_end_str(s, 0), 6);
+        assert_eq!(find_word_end_str(s, 6), 13);
+        assert_eq!(find_prev_word_start_str(s, 13), 7);
+        assert_eq!(find_prev_word_start_str(s, 7), 0);
+        assert_eq!(find_next_word_start_str(s, 0), 7);
+        assert_eq!(find_next_word_start_str(s, 7), 13);
+    }
+
+    #[test]
+    fn test_word_str_keeps_combining_marks_whole() {
+        // Decomposed "café": the acute accent (2 bytes) is part of the word.
+        let s = "cafe\u{301} x";
+        let word_end = "cafe\u{301}".len();
+        assert_eq!(find_word_end_str(s, 0), word_end);
+        assert_eq!(find_word_start_str(s, word_end), 0);
+        assert_eq!(find_next_word_start_str(s, 0), word_end + 1);
+        assert_eq!(find_prev_word_start_str(s, word_end), 0);
+        // A position inside the cluster snaps to its start.
+        assert_eq!(find_word_end_str(s, 4), word_end);
+    }
+
+    #[test]
+    fn test_word_str_positions_never_split_graphemes() {
+        let s = "a 👍🏽 e\u{301}x";
+        for pos in 0..=s.len() + 2 {
+            for f in [
+                find_word_start_str,
+                find_word_end_str,
+                find_prev_word_start_str,
+                find_next_word_start_str,
+            ] {
+                let r = f(s, pos);
+                assert_eq!(snap_to_grapheme_boundary(s, r), r, "pos {pos}");
+            }
+        }
     }
 
     // Property-based tests
@@ -884,52 +871,46 @@ mod tests {
         }
 
         proptest! {
-            /// Property: find_word_start_bytes should always return a position <= input position
+            /// Property: find_word_start_str should always return a position <= input position
             #[test]
             fn prop_word_start_not_after_position(s in ascii_string(), pos in 0usize..100) {
-                let bytes = s.as_bytes();
-                let result = find_word_start_bytes(bytes, pos);
+                let result = find_word_start_str(&s, pos);
                 prop_assert!(result <= pos.min(s.len()));
             }
 
-            /// Property: find_word_end_bytes should always return a position >= input position
+            /// Property: find_word_end_str should always return a position >= input position
             #[test]
             fn prop_word_end_not_before_position(s in ascii_string(), pos in 0usize..100) {
-                let bytes = s.as_bytes();
-                let result = find_word_end_bytes(bytes, pos);
+                let result = find_word_end_str(&s, pos);
                 prop_assert!(result >= pos.min(s.len()));
             }
 
-            /// Property: find_word_end_bytes should never exceed string length
+            /// Property: find_word_end_str should never exceed string length
             #[test]
             fn prop_word_end_within_bounds(s in ascii_string(), pos in 0usize..100) {
-                let bytes = s.as_bytes();
-                let result = find_word_end_bytes(bytes, pos);
+                let result = find_word_end_str(&s, pos);
                 prop_assert!(result <= s.len());
             }
 
-            /// Property: find_word_start_bytes at position 0 should return 0
+            /// Property: find_word_start_str at position 0 should return 0
             #[test]
             fn prop_word_start_at_zero(s in ascii_string()) {
-                let bytes = s.as_bytes();
-                let result = find_word_start_bytes(bytes, 0);
+                let result = find_word_start_str(&s, 0);
                 prop_assert_eq!(result, 0);
             }
 
-            /// Property: find_word_end_bytes at end should return end
+            /// Property: find_word_end_str at end should return end
             #[test]
             fn prop_word_end_at_end(s in ascii_string()) {
-                let bytes = s.as_bytes();
-                let result = find_word_end_bytes(bytes, s.len());
+                let result = find_word_end_str(&s, s.len());
                 prop_assert_eq!(result, s.len());
             }
 
-            /// Property: Applying find_word_start_bytes should move towards the start
+            /// Property: Applying find_word_start_str should move towards the start
             #[test]
             fn prop_word_start_monotonic(s in ascii_string(), pos in 0usize..100) {
-                let bytes = s.as_bytes();
-                let first = find_word_start_bytes(bytes, pos);
-                let second = find_word_start_bytes(bytes, first);
+                let first = find_word_start_str(&s, pos);
+                let second = find_word_start_str(&s, first);
                 // Second application should not move forward
                 prop_assert!(second <= first);
             }
@@ -937,24 +918,21 @@ mod tests {
             /// Property: The result should always be at a word boundary or start
             #[test]
             fn prop_word_start_at_boundary(s in ascii_string(), pos in 0usize..100) {
-                let bytes = s.as_bytes();
-                let result = find_word_start_bytes(bytes, pos.min(s.len()));
+                let result = find_word_start_str(&s, pos.min(s.len()));
 
                 // Either at start of string, or previous char is not a word char
                 prop_assert!(
                     result == 0 ||
-                    result > bytes.len() ||
-                    !is_word_char(bytes[result.saturating_sub(1)])
+                    !is_word_char(s.as_bytes()[result - 1])
                 );
             }
 
             /// Property: Word start and end should define a valid range
             #[test]
             fn prop_word_range_valid(s in ascii_string(), pos in 0usize..100) {
-                let bytes = s.as_bytes();
                 let pos = pos.min(s.len());
-                let start = find_word_start_bytes(bytes, pos);
-                let end = find_word_end_bytes(bytes, pos);
+                let start = find_word_start_str(&s, pos);
+                let end = find_word_end_str(&s, pos);
 
                 // Start should be <= pos, end should be >= pos
                 prop_assert!(start <= pos);

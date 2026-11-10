@@ -8,7 +8,7 @@
 //!
 //! Single-line editing is a special case (one line, newlines disallowed).
 
-use crate::primitives::word_navigation::{find_word_end_bytes, find_word_start_bytes};
+use crate::primitives::word_navigation::{find_word_end_str, find_word_start_str};
 
 /// Compute the flat UTF-8 byte offset of `(row, col)` into the
 /// `\n`-joined view of `lines`. Used by both `flat_cursor_byte` and
@@ -319,7 +319,7 @@ impl TextEdit {
     fn move_word_left_internal(&mut self) {
         let line = &self.lines[self.cursor_row];
         if self.cursor_col > 0 {
-            let new_col = find_word_start_bytes(line.as_bytes(), self.cursor_col);
+            let new_col = find_word_start_str(line, self.cursor_col);
             if new_col < self.cursor_col {
                 self.cursor_col = new_col;
                 return;
@@ -341,7 +341,7 @@ impl TextEdit {
     fn move_word_right_internal(&mut self) {
         let line = &self.lines[self.cursor_row];
         if self.cursor_col < line.len() {
-            let new_col = find_word_end_bytes(line.as_bytes(), self.cursor_col);
+            let new_col = find_word_end_str(line, self.cursor_col);
             if new_col > self.cursor_col {
                 self.cursor_col = new_col;
                 return;
@@ -686,7 +686,7 @@ impl TextEdit {
         }
 
         let line = &self.lines[self.cursor_row];
-        let word_end = find_word_end_bytes(line.as_bytes(), self.cursor_col);
+        let word_end = find_word_end_str(line, self.cursor_col);
         if word_end > self.cursor_col {
             let line = &mut self.lines[self.cursor_row];
             line.drain(self.cursor_col..word_end);
@@ -706,7 +706,7 @@ impl TextEdit {
         }
 
         let line = &self.lines[self.cursor_row];
-        let word_start = find_word_start_bytes(line.as_bytes(), self.cursor_col);
+        let word_start = find_word_start_str(line, self.cursor_col);
         if word_start < self.cursor_col {
             let line = &mut self.lines[self.cursor_row];
             line.drain(word_start..self.cursor_col);
@@ -968,6 +968,27 @@ mod tests {
 
         edit.move_word_left();
         assert_eq!(edit.cursor_col, "café ".len());
+    }
+
+    #[test]
+    fn test_word_navigation_keeps_combining_marks_in_word() {
+        // Decomposed "café" (what macOS filenames and many IMEs produce):
+        // the combining acute belongs to the word and the cursor must
+        // never be left between it and its base letter.
+        let text = "cafe\u{301} x";
+        let mut edit = TextEdit::single_line_with_text(text);
+        edit.cursor_col = 0;
+        edit.move_word_right();
+        assert_eq!(edit.cursor_col, "cafe\u{301}".len());
+
+        edit.cursor_col = 0;
+        edit.delete_word_forward();
+        assert_eq!(edit.value(), " x");
+
+        let mut edit = TextEdit::single_line_with_text("x cafe\u{301}");
+        edit.cursor_col = edit.value().len();
+        edit.delete_word_backward();
+        assert_eq!(edit.value(), "x ");
     }
 
     #[test]
