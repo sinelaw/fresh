@@ -75,7 +75,9 @@ fn run_command(h: &mut EditorTestHarness, name: &str) {
     h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
     h.wait_for_prompt().unwrap();
     h.type_text(name).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains(name)).unwrap();
+    // Twice: the prompt's own input line, and the command's row under it.
+    h.wait_until(|h| h.screen_to_string().matches(name).count() >= 2)
+        .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
 }
 

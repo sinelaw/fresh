@@ -576,10 +576,13 @@ interface NewSessionForm {
   // (checkbox disabled, branch field inert). `null`: probe
   // in flight (keep checkbox in its last-known state).
   projectPathIsGit: boolean | null;
-  // The resolved Project Path is not on disk: a project whose folder was
-  // moved, renamed or deleted since it was added. Launch is held back and the
-  // form says so, instead of a workspace whose terminal opens elsewhere.
-  projectPathMissing: boolean;
+  // The resolved Project Path is not a folder on disk: a project whose folder
+  // was moved, renamed or deleted since it was added, or a path typed wrong.
+  // Launch is held back and the form says so, instead of a workspace whose
+  // terminal opens elsewhere. `null`: the path changed and its probe hasn't
+  // landed yet, so nothing is claimed either way (the create itself refuses a
+  // missing folder, so a launch in that window still can't go astray).
+  projectPathMissing: boolean | null;
   // `true` when the resolved Project Path is itself an existing
   // *linked* worktree (created by `git worktree add`). In that
   // case leaving "Create a new git worktree" unchecked attaches
@@ -7878,8 +7881,13 @@ function liveWindowCount(): number {
 // window becomes active, so the caller can then close the old one
 // normally. No-op when another live window already exists (the caller
 // just switches to it instead). Returns true when a replacement opened.
-async function ensureReplacementWindow(projectRoot: string): Promise<boolean> {
+async function ensureReplacementWindow(projectPath: string): Promise<boolean> {
   if (liveWindowCount() > 1) return false;
+  // The replacement is a local window, and its terminal needs a folder that
+  // is here: the project's, unless that is on another machine (a remote
+  // workspace's path) or gone (moved or deleted), in which case the home
+  // folder — a window that can't open would leave the last one unclosable.
+  const projectRoot = isLocalDir(projectPath) ? projectPath : homeDir();
   const label = editor.pathBasename(projectRoot) || "session";
   try {
     const result = await editor.createWindowWithTerminal({
@@ -10397,7 +10405,7 @@ function formNeedsPlace(f: NewSessionForm): boolean {
 // The local folder the form would launch in is not on disk. A project with no
 // folder on this machine yet is not missing: Launch asks where it is (§4.17).
 function formFolderMissing(f: NewSessionForm): boolean {
-  return f.backend === "local" && f.projectPathMissing && !formNeedsPlace(f);
+  return f.backend === "local" && f.projectPathMissing === true && !formNeedsPlace(f);
 }
 
 // What stops a project launch outright: a machine typed by hand, which has
@@ -12965,6 +12973,14 @@ function homeDir(): string {
   return editor.getHomeDir() || editor.getEnv("HOME") || editor.getEnv("USERPROFILE") || "";
 }
 
+// Whether `p` is a folder on this computer (`fileExists` is true for a file
+// too). A workspace's terminal can only start in one of these.
+function isLocalDir(p: string): boolean {
+  if (!p) return false;
+  const st = editor.fileStat(editor.localPath(p)) as { isDir?: boolean } | null;
+  return !!st?.isDir;
+}
+
 // Expand a leading `~` and resolve a relative path against `~/.ssh`, which
 // is what ssh does for `Include` and identity files.
 function sshPath(p: string): string {
@@ -14053,7 +14069,8 @@ function whereFields(f: NewSessionForm): WidgetSpec[] {
   else out.push(...projectPathFields(), ...folderRepoRows(f));
   const missing = formFolderMissing(f);
   if (missing) {
-    out.push(label(`✗ ${editor.t("form.folder_missing")}`, {
+    // A project's folder was there once; a typed path may never have been.
+    out.push(label(`✗ ${editor.t(r ? "form.folder_missing" : "form.folder_missing_path")}`, {
       labelWidth: FORM_LABEL_W,
       style: { fg: "diagnostic.error_fg" },
       wrap: true,
@@ -14397,7 +14414,7 @@ function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): 
     lastError: null,
     defaultProjectPath: "",
     projectPathIsGit: null,
-    projectPathMissing: false,
+    projectPathMissing: null,
     projectPathIsLinkedWorktree: null,
     defaultSessionName: "",
     defaultBranch: "",
@@ -14520,14 +14537,16 @@ function localProjectDefault(): string {
   if (!activeIsRemote) return cwd;
   // Active window is remote: pick the lowest-id local (non-remote, non-
   // discovered) session's root — in practice the launch/base window. If there
-  // is no local session at all, leave cwd as the last-resort value rather than
-  // an empty default.
+  // is no local session at all, the remote cwd is only usable if the same
+  // folder happens to exist here; otherwise the home folder, rather than a
+  // default the form would flag as missing.
   let base: AgentSession | null = null;
   for (const s of orchestratorSessions.values()) {
     if (s.remote || s.discovered) continue;
     if (base === null || s.id < base.id) base = s;
   }
-  return base ? base.root : cwd;
+  if (base) return base.root;
+  return isLocalDir(cwd) ? cwd : homeDir() || cwd;
 }
 
 /// Resolve placeholders for the Project Path / Session Name /
@@ -14567,7 +14586,7 @@ async function probeProjectPathDefaults(): Promise<void> {
   form.projectPathIsGit = isGit;
   // A missing folder also reads as "not git", which would show the plan for a
   // plain folder; this is what tells the two apart.
-  form.projectPathMissing = !editor.fileExists(editor.localPath(effectivePath));
+  form.projectPathMissing = !isLocalDir(effectivePath);
   // The folder's origin, so a clone of a known repository can say so.
   if (isGit) {
     const o = await editor.spawnHostProcess("git", ["-C", effectivePath, "remote", "get-url", "origin"]);
@@ -14631,6 +14650,8 @@ async function probeProjectPathDefaults(): Promise<void> {
 /// collapse cleanly without an explicit timer handle.
 function scheduleProjectPathReprobe(): void {
   if (!form) return;
+  // Whatever the last probe said was about the previous path.
+  form.projectPathMissing = null;
   const token = ++form.probeToken;
   void editor.delay(200).then(() => {
     if (!form || form.probeToken !== token) return;

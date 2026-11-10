@@ -4941,15 +4941,18 @@ impl Editor {
         // missing one — it quietly starts the shell in $HOME — so a project
         // whose folder was renamed or deleted produced a workspace that looked
         // fine but ran its agent in the wrong place. Refuse instead, naming the
-        // folder, so the caller can say so.
+        // folder, so the caller can say so. Each way it can fail says what it
+        // is: gone, a file, or the error reading it (e.g. no permission).
         let spawn_dir = cwd_buf.clone().unwrap_or_else(|| root.clone());
-        if !new_connection
-            .authority
-            .filesystem
-            .is_dir(&spawn_dir)
-            .unwrap_or(false)
-        {
-            let msg = format!("{} doesn't exist", spawn_dir.display());
+        let refusal = match new_connection.authority.filesystem.is_dir(&spawn_dir) {
+            Ok(true) => None,
+            Ok(false) => Some(format!("{} is not a folder", spawn_dir.display())),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                Some(format!("{} doesn't exist", spawn_dir.display()))
+            }
+            Err(e) => Some(format!("{}: {e}", spawn_dir.display())),
+        };
+        if let Some(msg) = refusal {
             tracing::warn!("createWindowWithTerminal: {}", msg);
             self.plugin_manager
                 .read()

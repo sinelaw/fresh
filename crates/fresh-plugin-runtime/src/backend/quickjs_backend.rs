@@ -8728,7 +8728,9 @@ impl JsEditorApi {
     /// Intended for plugin internals that must run host-side work
     /// (e.g. `devcontainer up`) before installing an authority that
     /// would otherwise route the spawn elsewhere. Same calling shape
-    /// as `spawnProcess`.
+    /// as `spawnProcess`. With no `cwd`, it runs in the active window's
+    /// folder — or, when that folder no longer exists, in the folder
+    /// the editor itself was started in.
     #[plugin_api(
         async_thenable,
         js_name = "spawnHostProcess",

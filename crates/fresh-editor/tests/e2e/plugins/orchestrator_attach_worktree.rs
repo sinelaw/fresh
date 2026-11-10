@@ -1139,6 +1139,23 @@ fn dock_opening_worktree_keeps_its_row_position() {
 #[test]
 #[cfg_attr(target_os = "windows", ignore)] // replacement spawns a Unix shell terminal.
 fn archive_last_in_place_session_opens_replacement() {
+    archive_the_only_workspace(false);
+}
+
+/// The same, after the workspace's folder was moved away (renamed while the
+/// editor had it open): the replacement can't open in the project's folder,
+/// so it opens in the home folder rather than being refused — a refusal
+/// would leave the last window impossible to close, with its row archived
+/// out from under it.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // replacement spawns a Unix shell terminal.
+fn archive_last_session_whose_folder_moved_still_opens_replacement() {
+    archive_the_only_workspace(true);
+}
+
+/// Archive the launch workspace — the only window — and expect a replacement
+/// terminal session. `move_folder_away` renames its folder first.
+fn archive_the_only_workspace(move_folder_away: bool) {
     if !pty_available() {
         eprintln!("skipping: no PTY available in this environment");
         return;
@@ -1149,6 +1166,15 @@ fn archive_last_in_place_session_opens_replacement() {
     let mut harness = EditorTestHarness::with_working_dir(160, 50, repo.clone()).unwrap();
     harness.tick_and_render().unwrap();
     wait_for_command(&mut harness, "Orchestrator: Open");
+    if move_folder_away {
+        // Where the replacement goes instead. A real home folder exists; the
+        // test harness only names one.
+        let home = harness.editor().dir_context().home_dir.clone().unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        let mut moved = repo.clone().into_os_string();
+        moved.push("-moved");
+        std::fs::rename(&repo, &moved).unwrap();
+    }
 
     open_orchestrator_dialog(&mut harness);
     // The launch workspace is a trivial (empty) session, hidden by default;
