@@ -35,56 +35,99 @@ pub fn expand_tilde(path: &str) -> PathBuf {
 /// parsing it: a path at or past `MAX_PATH`, or one with a component ending in
 /// a dot or space, a DOS device name (`NUL.txt`), `.`/`..`, or a character a
 /// plain path cannot hold. See [`component_keeps_meaning_unprefixed`].
+///
+/// Since the prefix may stay on one path and go from another, don't strip two
+/// paths and then relativize one against the other; use
+/// [`relative_to_or_absolute`].
 pub fn strip_verbatim_prefix(path: &Path) -> Cow<'_, Path> {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
-        use std::path::{Component, Prefix};
+        use std::path::Component;
 
-        /// Longest path most programs can open without the verbatim prefix,
-        /// in UTF-16 units including the terminating NUL.
+        /// Win32's `MAX_PATH`, which counts the terminating NUL: a plain path
+        /// most programs can open is at most 259 UTF-16 units long.
         const MAX_PATH: usize = 260;
 
-        let mut components = path.components();
-        let prefix = match components.next() {
-            Some(Component::Prefix(p)) => p,
-            _ => return Cow::Borrowed(path),
+        let Some(plain) = verbatim_prefix_removed(path) else {
+            return Cow::Borrowed(path);
         };
-
-        let mut rebuilt = PathBuf::new();
-        match prefix.kind() {
-            Prefix::VerbatimDisk(drive) => {
-                rebuilt.push(format!("{}:\\", drive as char));
-            }
-            Prefix::VerbatimUNC(server, share) => {
-                rebuilt.push(format!(
-                    r"\\{}\{}\",
-                    server.to_string_lossy(),
-                    share.to_string_lossy()
-                ));
-            }
-            _ => return Cow::Borrowed(path),
-        }
-        // Skip the original RootDir (which the rebuilt prefix already includes)
-        // and append the rest of the components.
-        for component in components {
-            match component {
-                Component::RootDir => continue,
-                Component::Normal(name)
-                    if component_keeps_meaning_unprefixed(&name.to_string_lossy()) => {}
-                // `.` and `..` stay literal only in a verbatim path.
-                _ => return Cow::Borrowed(path),
-            }
-            rebuilt.push(component.as_os_str());
-        }
-        if rebuilt.as_os_str().encode_wide().count() >= MAX_PATH {
+        // `components` yields `.` (`CurDir`) here only because the path is
+        // verbatim; in a plain path std drops it. Either way `.` and `..` fall
+        // to the last arm: they stay literal only in a verbatim path.
+        let keeps_meaning = path.components().all(|component| match component {
+            Component::Prefix(_) | Component::RootDir => true,
+            Component::Normal(name) => component_keeps_meaning_unprefixed(&name.to_string_lossy()),
+            _ => false,
+        });
+        if !keeps_meaning || plain.as_os_str().encode_wide().count() >= MAX_PATH {
             return Cow::Borrowed(path);
         }
-        Cow::Owned(rebuilt)
+        Cow::Owned(plain)
     }
     #[cfg(not(windows))]
     {
         Cow::Borrowed(path)
+    }
+}
+
+/// `path` relative to `base` when it lies under `base`, and otherwise `path`
+/// as [`strip_verbatim_prefix`] shows it.
+///
+/// For Copy Relative Path and the like. Relativize first and decide about the
+/// prefix only for what is left: a relative path never carries one, so it
+/// needs no check, while stripping both sides first can leave the prefix on
+/// one of them only (`notes.`, a long path) and make `strip_prefix` fail.
+/// The two sides are compared as given and then both without the prefix, so
+/// a verbatim file under a plain base, or the other way round, still matches.
+pub fn relative_to_or_absolute<'a>(path: &'a Path, base: &Path) -> Cow<'a, Path> {
+    if let Ok(relative) = path.strip_prefix(base) {
+        return Cow::Borrowed(relative);
+    }
+    let plain_path = verbatim_prefix_removed(path);
+    let plain_base = verbatim_prefix_removed(base);
+    if plain_path.is_some() || plain_base.is_some() {
+        let plain_path = plain_path.as_deref().unwrap_or(path);
+        let plain_base = plain_base.as_deref().unwrap_or(base);
+        if let Ok(relative) = plain_path.strip_prefix(plain_base) {
+            return Cow::Owned(relative.to_path_buf());
+        }
+    }
+    strip_verbatim_prefix(path)
+}
+
+/// `path` with its `\\?\` or `\\?\UNC\` prefix spelled the plain way,
+/// whether or not that keeps its meaning; `None` when it has neither (and
+/// always off Windows). For comparing paths, not for showing them.
+#[cfg_attr(not(windows), allow(unused_variables))]
+fn verbatim_prefix_removed(path: &Path) -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        use std::path::{Component, Prefix};
+
+        let mut components = path.components();
+        let Some(Component::Prefix(prefix)) = components.next() else {
+            return None;
+        };
+        let mut rebuilt = PathBuf::new();
+        match prefix.kind() {
+            Prefix::VerbatimDisk(drive) => rebuilt.push(format!("{}:\\", drive as char)),
+            Prefix::VerbatimUNC(server, share) => rebuilt.push(format!(
+                r"\\{}\{}\",
+                server.to_string_lossy(),
+                share.to_string_lossy()
+            )),
+            _ => return None,
+        }
+        // The rebuilt prefix already includes the root.
+        for component in components.filter(|c| !matches!(c, Component::RootDir)) {
+            rebuilt.push(component.as_os_str());
+        }
+        Some(rebuilt)
+    }
+    #[cfg(not(windows))]
+    {
+        None
     }
 }
 
@@ -248,6 +291,69 @@ mod tests {
                 "{component:?}"
             );
         }
+    }
+
+    #[test]
+    fn relative_to_or_absolute_relativizes_under_the_base_only() {
+        let base = std::env::temp_dir().join("project");
+        assert_eq!(
+            relative_to_or_absolute(&base.join("src").join("main.rs"), &base).as_ref(),
+            Path::new("src").join("main.rs")
+        );
+        let outside = std::env::temp_dir().join("elsewhere").join("f.txt");
+        assert_eq!(
+            relative_to_or_absolute(&outside, &base).as_ref(),
+            strip_verbatim_prefix(&outside).as_ref()
+        );
+    }
+
+    /// Relativizing must not depend on whether the file and the base agree
+    /// about keeping the prefix: the relative part never needs it.
+    #[cfg(windows)]
+    #[test]
+    fn relative_to_or_absolute_ignores_which_side_keeps_the_prefix() {
+        let verbatim_base = Path::new(r"\\?\C:\work\project");
+        let plain_base = Path::new(r"C:\work\project");
+        // The file keeps its prefix, the base would lose it.
+        let notes = Path::new(r"\\?\C:\work\project\notes.");
+        assert_eq!(
+            relative_to_or_absolute(notes, verbatim_base).as_ref(),
+            Path::new("notes.")
+        );
+        assert_eq!(
+            relative_to_or_absolute(notes, plain_base).as_ref(),
+            Path::new("notes.")
+        );
+        // A plain file under a verbatim base.
+        assert_eq!(
+            relative_to_or_absolute(Path::new(r"C:\work\project\a.txt"), verbatim_base).as_ref(),
+            Path::new("a.txt")
+        );
+        // Long enough that only the file keeps the prefix.
+        let long_base = format!(r"\\?\C:\{}", "b".repeat(240));
+        let long_file = format!(r"{long_base}\{}", "c".repeat(30));
+        assert_eq!(
+            relative_to_or_absolute(Path::new(&long_file), Path::new(&long_base)).as_ref(),
+            Path::new(&"c".repeat(30))
+        );
+        assert_eq!(
+            relative_to_or_absolute(
+                Path::new(&long_file),
+                strip_verbatim_prefix(Path::new(&long_base)).as_ref()
+            )
+            .as_ref(),
+            Path::new(&"c".repeat(30))
+        );
+        // Outside the base, the absolute path as `strip_verbatim_prefix` shows it.
+        let outside = Path::new(r"\\?\C:\other\notes.");
+        assert_eq!(
+            relative_to_or_absolute(outside, verbatim_base).as_ref(),
+            outside
+        );
+        assert_eq!(
+            relative_to_or_absolute(Path::new(r"\\?\C:\other\f.txt"), verbatim_base).as_ref(),
+            Path::new(r"C:\other\f.txt")
+        );
     }
 
     #[cfg(windows)]

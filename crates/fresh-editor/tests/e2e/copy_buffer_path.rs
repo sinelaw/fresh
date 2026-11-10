@@ -136,6 +136,27 @@ fn copy_file_path_on_windows_keeps_the_prefix_when_the_plain_path_differs() {
     );
 }
 
+/// The same `notes.` through Copy Relative File Path. The answer is the bare
+/// name, which needs no prefix; the workspace root itself has an ordinary
+/// spelling, so stripping both paths before relativizing left the prefix on
+/// the file only, and the relative copy fell back to the verbatim absolute
+/// path.
+#[cfg(windows)]
+#[test]
+fn copy_relative_file_path_on_windows_relativizes_a_file_that_keeps_the_prefix() {
+    let mut harness = wide_temp_project_harness();
+    let project_root = std::fs::canonicalize(harness.project_dir().unwrap()).unwrap();
+
+    let file_path = project_root.join("notes.");
+    fs::write(&file_path, "x\n").unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    run_command_palette(&mut harness, "Copy Relative File Path");
+
+    harness.assert_screen_contains("Copied path: notes.");
+}
+
 #[test]
 fn copy_relative_file_path_falls_back_to_absolute_outside_workspace() {
     // When the buffer's file lives outside the workspace, strip_prefix fails
