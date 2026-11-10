@@ -1058,7 +1058,7 @@ fn test_terminal_resize_when_settings_are_saved() {
     harness
         .wait_until(|h| !h.screen_to_string().contains(MENU_BAR_ROW))
         .unwrap();
-    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    // Ctrl+S both saves and closes Settings; an Esc here would reach the PTY.
     harness
         .wait_until(|h| !h.screen_to_string().contains("Settings ["))
         .unwrap();
