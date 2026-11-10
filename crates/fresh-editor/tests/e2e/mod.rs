@@ -459,4 +459,5 @@ pub mod window_switch_explorer_first_frame;
 pub mod word_drag_selection;
 #[cfg(feature = "plugins")]
 pub mod workboard;
+#[cfg(feature = "plugins")]
 pub mod workspace;
