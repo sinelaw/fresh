@@ -210,6 +210,15 @@ reports whether it acted), and the spatial move above answers it. A row of
 trees side by side (the Workboard's Board columns) is walked with ←/→ that
 way. Shift+←/→ already passed when there was nothing to pan.
 
+**Into the tree beside, level with the row left.** The move above picks the
+next tree by the trees' rectangles, but the cursor it lands on is the new
+tree's row nearest the height of the row the cursor left, among the rows on
+screen (`Editor::land_tree_level`), announced to the plugin as a `select`.
+Seeding the first visible row instead — what `on_focus_change` does for a
+tree entered any other way — made ←/→ across a board's columns jump to the
+top of each column. An empty tree is a stop that can show no cursor, so a
+board draws an empty column without one.
+
 **Bindings scoped to a control.** A binding whose third element is
 `"on:a,b"` applies only while one of the named widgets has focus; on any
 other control the key is unbound, so the panel's defaults — the spatial move —

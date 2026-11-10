@@ -113,11 +113,16 @@ eq(
   "board: five columns, each headed by its name and count",
 );
 const trees = all(board, "tree");
-eq(trees.map((t: Any) => t.key), ["backlog", "needs", "working", "review", "shipped"].map(columnKey), "board: one tree per column");
+eq(trees.map((t: Any) => t.key), ["backlog", "needs", "working", "review"].map(columnKey), "board: one tree per column with cards");
+eq(
+  all(board, "label").some((l: Any) => l.segments?.[0]?.text === "empty"),
+  true,
+  "board: an empty column has no list to focus, only a word",
+);
 eq(trees.every((t: Any) => t.cardBorders && t.itemHeight === 2), true, "board: two-line bordered cards");
 eq(trees[1].nodes[0].extraLines[0].segments[0].text, "api · asking · <1m", "board: a card's second line says where and how long");
 const pinned = panelSpec(input({ lens: "board", cards: [{ ...cards[3], pin: "shipped" }] }));
-eq(all(pinned, "tree")[4].nodes[0].text.segments.some((s: Any) => s.text.includes("⊙")), true, "board: a pinned card wears the pin");
+eq(all(pinned, "tree").find((t: Any) => t.key === columnKey("shipped")).nodes[0].text.segments.some((s: Any) => s.text.includes("⊙")), true, "board: a pinned card wears the pin");
 
 // ── Sizes are the host's ───────────────────────────────────────────────────
 

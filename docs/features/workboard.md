@@ -64,7 +64,7 @@ Both are refreshed when the board opens and periodically while it is open. The s
 
 ## Keys
 
-The cards are ordinary lists and trees, so they answer the keys and the mouse the way every list in Fresh does: `↑` `↓` move, a click selects, the wheel scrolls, `Enter` opens. On the Board, `←` `→` move to the next column.
+The cards are ordinary lists and trees, so they answer the keys and the mouse the way every list in Fresh does: `↑` `↓` move, a click selects, the wheel scrolls, `Enter` opens. On the Board, `←` `→` move to the card beside, in the next column that has cards: empty columns are skipped.
 
 | Key | Action |
 | --- | --- |

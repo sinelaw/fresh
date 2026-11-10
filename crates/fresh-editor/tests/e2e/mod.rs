@@ -431,6 +431,8 @@ pub mod toggle_comment;
 pub mod torn_save_not_changed_on_disk;
 #[cfg(feature = "plugins")]
 pub mod tree_expansion_owner;
+#[cfg(feature = "plugins")]
+pub mod tree_lateral_landing;
 pub mod trust_activation_cancellable;
 pub mod undo_bulk_edit_after_save;
 pub mod undo_redo_marker_roundtrip;

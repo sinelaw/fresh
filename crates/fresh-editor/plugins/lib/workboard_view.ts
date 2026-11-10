@@ -240,6 +240,15 @@ export function listSpec(lens: LensId, groups: readonly Group[], input: ViewInpu
 
 /** One Board column: its name and count over a tree of two-line cards. */
 export function columnSpec(group: Group, input: ViewInput): WidgetSpec {
+  const heading = label([
+    { text: group.label, style: { bold: true } },
+    { text: `  ${group.cards.length}`, style: { fg: DIM } },
+  ]);
+  // An empty column is a heading and a word, not an empty list: a list
+  // with no rows takes focus and shows nothing selected, so ←/→ across the
+  // board stopped there with the cursor nowhere to be seen. With nothing to
+  // focus, the arrow goes on to the next column that has cards.
+  if (group.cards.length === 0) return col(heading, label([{ text: "empty", style: { fg: DIM } }]));
   const key = columnKey(group.id);
   const chosen = input.selected.get(key);
   const nodes = group.cards.map((card) =>
@@ -268,10 +277,7 @@ export function columnSpec(group: Group, input: ViewInput): WidgetSpec {
   // A heading over the cards, no frame: the cards are the boxes, and a
   // frame around each column on top of them was a border too many.
   return col(
-    label([
-      { text: group.label, style: { bold: true } },
-      { text: `  ${group.cards.length}`, style: { fg: DIM } },
-    ]),
+    heading,
     tree({
       key,
       nodes,

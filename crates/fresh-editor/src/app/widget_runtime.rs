@@ -1255,6 +1255,18 @@ impl Editor {
         // applying messages in the middle of one. Anything else that ever
         // lands in this queue would have to be reconsidered here.
         let _superseded = ui.take_messages();
+        // **←/→ out of a tree's row land level with it** (R4, below the
+        // control): where the arrow came from is the row the cursor was on,
+        // not the whole tree, so it is read before the move.
+        let lateral = matches!(dir, fresh_ui::FocusDir::Left | fresh_ui::FocusDir::Right);
+        let from_key = self
+            .widget_registry
+            .focus_key(panel_key)
+            .map(str::to_string)
+            .unwrap_or_default();
+        let origin = lateral
+            .then(|| self.tree_cursor_row(&ui, panel_key, &from_key))
+            .flatten();
         // `steps` is a count of stops — a zero stays put — so the tree is
         // stepped exactly that many times. `WidgetAction::FocusAdvance`'s own
         // doc only defines ±1, and nothing bundled sends more.
@@ -1286,7 +1298,120 @@ impl Editor {
         // Nothing on this path reads them (`WidgetFocus`'s applier does not),
         // and inventing a cell would be worse than saying there was none.
         self.apply_shell_messages(msgs, Default::default());
+        if let Some(origin) = origin {
+            self.land_tree_level(panel_key, &from_key, origin);
+        }
         true
+    }
+
+    /// The rows the selected row of tree `key` covers on screen, as
+    /// `(top, bottom)`: `None` when `key` is not a tree, nothing is selected,
+    /// or the row is not laid out.
+    fn tree_cursor_row(
+        &self,
+        ui: &fresh_ui::Ui<crate::view::shell::msg::UiMsg>,
+        panel_key: &crate::widgets::PanelKey,
+        key: &str,
+    ) -> Option<(i32, i32)> {
+        let panel = self.widget_registry.get(panel_key)?;
+        let spec = crate::widgets::find_widget_by_key(&panel.spec, key)?;
+        let fresh_core::api::WidgetSpec::Tree { item_keys, .. } = spec else {
+            return None;
+        };
+        let sel = crate::widgets::kinds::tree::resolve(spec, key, &panel.instance_states).selected;
+        let item = item_keys.get(usize::try_from(sel).ok()?)?;
+        let tree = ui.find_by_key_in(
+            self.panel_subtree_root(ui, panel_key)?,
+            &crate::view::shell::widgets::widget_focus_key(key),
+        )?;
+        let row = ui.find_by_key_in(tree, &fresh_ui::Key::Str(item.clone().into()))?;
+        let r = ui.rect(row);
+        (r.h > 0).then_some((r.y, r.y + r.h as i32))
+    }
+
+    /// After ←/→ moved focus from tree `from_key` into another tree, put the
+    /// new tree's cursor on its row nearest `origin` — the rows the cursor
+    /// left — rather than wherever that tree's cursor last was, or its first
+    /// row: across a board's columns the arrow goes to the card beside the
+    /// one you were on. The plugin hears it as a `select`, as from a key.
+    fn land_tree_level(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        from_key: &str,
+        origin: (i32, i32),
+    ) {
+        let Some(to_key) = self
+            .widget_registry
+            .focus_key(panel_key)
+            .map(str::to_string)
+            .filter(|k| k != from_key)
+        else {
+            return;
+        };
+        let Some(item_keys) = self
+            .widget_registry
+            .get(panel_key)
+            .and_then(|p| crate::widgets::find_widget_by_key(&p.spec, &to_key))
+            .and_then(|w| match w {
+                fresh_core::api::WidgetSpec::Tree { item_keys, .. } => Some(item_keys.to_vec()),
+                _ => None,
+            })
+        else {
+            return;
+        };
+        let best = {
+            let Some(ui) = self.shell_ui.as_ref() else {
+                return;
+            };
+            let Some(tree) = self.panel_subtree_root(ui, panel_key).and_then(|root| {
+                ui.find_by_key_in(
+                    root,
+                    &crate::view::shell::widgets::widget_focus_key(&to_key),
+                )
+            }) else {
+                return;
+            };
+            let view = ui.rect(tree);
+            let (view_top, view_bottom) = (view.y, view.y + view.h as i32);
+            // Twice each coordinate, so the midpoint stays an integer.
+            let mid = origin.0 + origin.1;
+            item_keys
+                .iter()
+                .enumerate()
+                .filter_map(|(i, k)| {
+                    let row = ui.find_by_key_in(tree, &fresh_ui::Key::Str(k.clone().into()))?;
+                    let r = ui.rect(row);
+                    let (top, bottom) = (r.y, r.y + r.h as i32);
+                    // Only the rows on screen: a windowed list may lay out a
+                    // row or two past its edges.
+                    if r.h == 0 || bottom <= view_top || top >= view_bottom {
+                        return None;
+                    }
+                    let gap = if mid < 2 * top {
+                        2 * top - mid
+                    } else if mid >= 2 * bottom {
+                        mid - 2 * bottom + 1
+                    } else {
+                        0
+                    };
+                    Some((gap, i))
+                })
+                .min()
+                .map(|(_, i)| i)
+        };
+        let Some(index) = best else {
+            return;
+        };
+        if let Some(panel) = self.widget_registry.get_mut(panel_key) {
+            panel.set_selected_index(&to_key, index as i32);
+        }
+        self.fire_widget_event(
+            panel_key,
+            to_key,
+            "select".to_string(),
+            serde_json::json!({ "index": index, "key": item_keys[index] }),
+        );
+        self.rerender_widget_panel(panel_key);
     }
 
     /// Update the panel's focused widget AND fire a
