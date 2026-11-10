@@ -47,13 +47,13 @@ jobs:
             fakeroot \
             lintian
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
           submodules: recursive
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
@@ -164,7 +164,7 @@ jobs:
           ls -la packages/
 
       - name: Upload Linux packages
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: artifacts-linux-packages-${{ matrix.arch }}
           path: packages/*
@@ -190,7 +190,7 @@ jobs:
       DEBIAN_FRONTEND: noninteractive
     steps:
       - name: Download .deb package
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v7.0.0
         with:
           name: artifacts-linux-packages-amd64
           path: packages/
@@ -285,7 +285,7 @@ jobs:
       image: ${{ matrix.distro }}
     steps:
       - name: Download .rpm package
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v7.0.0
         with:
           name: artifacts-linux-packages-amd64
           path: packages/
@@ -370,7 +370,7 @@ jobs:
       DEBIAN_FRONTEND: noninteractive
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
 
@@ -425,7 +425,7 @@ jobs:
 
       - name: Download new .deb package
         if: steps.prev.outputs.skip != 'true'
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v7.0.0
         with:
           name: artifacts-linux-packages-amd64
           path: packages/
@@ -463,7 +463,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
 
@@ -517,7 +517,7 @@ jobs:
 
       - name: Download new .rpm package
         if: steps.prev.outputs.skip != 'true'
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v7.0.0
         with:
           name: artifacts-linux-packages-amd64
           path: packages/
@@ -575,13 +575,13 @@ jobs:
             rsync \
             xz-utils
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
           submodules: recursive
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
 
@@ -668,7 +668,7 @@ jobs:
           ls -la source-package/
 
       - name: Upload source package
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: artifacts-deb-source
           path: source-package/*

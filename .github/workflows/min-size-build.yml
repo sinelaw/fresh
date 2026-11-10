@@ -33,13 +33,13 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
           submodules: recursive
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
@@ -106,7 +106,7 @@ jobs:
           ls -la "${ARCHIVE_NAME}.tar.xz"*
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: artifacts-min-size-${{ matrix.target }}
           path: |

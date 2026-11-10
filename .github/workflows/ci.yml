@@ -60,11 +60,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
       - name: Cache Cargo dependencies
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        uses: Swatinem/rust-cache@v2.9.2
       - name: check formatting
         run: cargo fmt -- --check
   clippy:
@@ -72,11 +72,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
       - name: Cache Cargo dependencies
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        uses: Swatinem/rust-cache@v2.9.2
       # Plain `cargo clippy` fails the build only on error-level diagnostics
       # (deny-by-default lints, the crate's `#![deny(clippy::let_underscore_must_use)]`,
       # or compile errors) — clippy *warnings* do not fail it. The previous
@@ -92,11 +92,11 @@ jobs:
     name: doc
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
       - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: nightly
       - name: Run cargo doc
@@ -107,11 +107,11 @@ jobs:
     name: schema
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
       - name: Cache Cargo dependencies
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        uses: Swatinem/rust-cache@v2.9.2
       - name: Generate schema
         run: cargo run --features dev-bins --bin generate_schema > /tmp/config-schema.json
       - name: Check schema is up-to-date
@@ -123,11 +123,11 @@ jobs:
     name: plugin API types and docs
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
       - name: Cache Cargo dependencies
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        uses: Swatinem/rust-cache@v2.9.2
       - name: Regenerate fresh.d.ts and the API reference
         run: cargo test -p fresh-plugin-runtime --lib write_fresh_dts_file -- --ignored
       - name: Check they are up-to-date
@@ -146,11 +146,11 @@ jobs:
     name: check (no plugins)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
       - name: Cache Cargo dependencies
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        uses: Swatinem/rust-cache@v2.9.2
       - name: Check build without plugins feature
         run: cargo check --no-default-features --features runtime --all-targets
 
@@ -165,15 +165,15 @@ jobs:
     env:
       RUSTUP_TOOLCHAIN: "1.98"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
       - name: Install Rust 1.98
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: "1.98"
       - name: Cache Cargo dependencies
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        uses: Swatinem/rust-cache@v2.9.2
       - name: Check
         run: cargo check --workspace --all-targets --all-features
 
@@ -186,7 +186,7 @@ jobs:
     name: installer
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
       - name: Lint install.sh
@@ -214,20 +214,20 @@ jobs:
       #   if: runner.os == 'Windows'
       # - run: vcpkg install openssl:x64-windows-static-md
       #   if: runner.os == 'Windows'
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
       # Both shards build the same thing; one saving the cache is enough.
       - name: Cache Cargo dependencies
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        uses: Swatinem/rust-cache@v2.9.2
         with:
           save-if: ${{ matrix.shard == 1 }}
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@c3ec0de9ae7f1019cea21aa96aa0a895b9552063 # v2
+        uses: taiki-e/install-action@v2.87.9
         with:
           tool: cargo-nextest
       # Install Vulkan + Xvfb for headless GPU testing (Linux only).
@@ -289,15 +289,15 @@ jobs:
           apt-get update
           # python3: the e2e tests' fake LSP server and devcontainer helpers.
           apt-get install -y --no-install-recommends ca-certificates curl git build-essential pkg-config libclang-dev libquickjs esbuild python3
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
       - name: Cache Cargo dependencies
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        uses: Swatinem/rust-cache@v2.9.2
       - name: Engine boundary, TypeScript (esbuild) and plugin runtime
         run: cargo test --locked -p fresh-js -p fresh-core -p fresh-parser-js -p fresh-plugin-runtime --no-default-features --features fresh-core/plugins
       - name: Editor plugin tests (Debian package features)
@@ -342,7 +342,7 @@ jobs:
     name: actionlint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
       - name: Install actionlint
@@ -363,11 +363,11 @@ jobs:
     name: supply-chain audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
       - name: Install cargo-deny
-        uses: taiki-e/install-action@c3ec0de9ae7f1019cea21aa96aa0a895b9552063 # v2
+        uses: taiki-e/install-action@v2.87.9
         with:
           tool: cargo-deny
       - name: Check sources and licenses
@@ -379,11 +379,11 @@ jobs:
     name: advisories
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
       - name: Install cargo-deny
-        uses: taiki-e/install-action@c3ec0de9ae7f1019cea21aa96aa0a895b9552063 # v2
+        uses: taiki-e/install-action@v2.87.9
         with:
           tool: cargo-deny
       - name: Check advisories

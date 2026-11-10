@@ -24,7 +24,7 @@ jobs:
       publishing: ${{ steps.version.outputs.publishing }}
       is_prerelease: ${{ steps.version.outputs.is_prerelease }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
       - name: Extract version info
@@ -69,13 +69,13 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
           submodules: recursive
 
       - name: Install Nix
-        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        uses: cachix/install-nix-action@v31.11.1
         with:
           nix_path: nixpkgs=channel:nixos-unstable
 
@@ -122,13 +122,13 @@ jobs:
     env:
       VERSION: ${{ needs.plan.outputs.version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
           submodules: recursive
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
@@ -256,7 +256,7 @@ jobs:
           Set-Content -Path "$ARCHIVE_NAME.zip.sha256" -Encoding ascii -NoNewline -Value "$hash  $ARCHIVE_NAME.zip`n"
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: artifacts-${{ matrix.target }}
           path: |
@@ -345,17 +345,17 @@ jobs:
     env:
       VERSION: ${{ needs.plan.outputs.version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v6.5.0
         with:
           node-version: '24.x'
 
       - name: Download all build artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v7.0.0
         with:
           pattern: artifacts-*
           path: artifacts/
@@ -383,7 +383,7 @@ jobs:
           cd ..
 
       - name: Upload npm package artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: artifacts-npm-package
           path: fresh-editor-npm-package.tar.gz
@@ -396,12 +396,12 @@ jobs:
     env:
       VERSION: ${{ needs.plan.outputs.version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
 
       - name: Download artifacts for checksums
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v7.0.0
         with:
           pattern: artifacts-*
           path: artifacts/
@@ -475,7 +475,7 @@ jobs:
           cat fresh.rb
 
       - name: Upload Homebrew formula
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: artifacts-homebrew-formula
           path: fresh.rb
@@ -513,12 +513,12 @@ jobs:
       VERSION: ${{ needs.plan.outputs.version }}
       TAG: ${{ needs.plan.outputs.tag }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v7.0.0
         with:
           pattern: artifacts-*
           path: artifacts/
@@ -653,7 +653,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
 
@@ -669,7 +669,7 @@ jobs:
     if: ${{ !cancelled() && needs.release.result == 'success' && needs.plan.outputs.publishing == 'true' }}
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
 
@@ -691,7 +691,7 @@ jobs:
     if: ${{ !cancelled() && needs.release.result == 'success' && needs.plan.outputs.publishing == 'true' }}
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
 
@@ -723,7 +723,7 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: ${{ needs.plan.outputs.tag }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
 
@@ -770,7 +770,7 @@ jobs:
       TAG: ${{ needs.plan.outputs.tag }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
 
@@ -787,12 +787,12 @@ jobs:
       VERSION: ${{ needs.plan.outputs.version }}
     steps:
       - name: Download Homebrew formula
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v7.0.0
         with:
           name: artifacts-homebrew-formula
           path: formula/
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           repository: sinelaw/homebrew-fresh
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}

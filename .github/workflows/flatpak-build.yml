@@ -21,12 +21,12 @@ jobs:
       image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-24.08
       options: --privileged
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
 
       - name: Download pre-built binary
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v7.0.0
         with:
           name: artifacts-x86_64-unknown-linux-gnu
           path: artifacts/
@@ -65,7 +65,7 @@ jobs:
           cp scripts/write-install-receipt.sh crates/fresh-editor/scripts/
 
       - name: Build Flatpak
-        uses: flatpak/flatpak-github-actions/flatpak-builder@79327416609af08178ad73b352877e51450790b3 # v6
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6.8
         with:
           manifest-path: crates/fresh-editor/flatpak/io.github.sinelaw.fresh.yml
           bundle: fresh-editor-${{ inputs.version }}-x86_64.flatpak
@@ -77,7 +77,7 @@ jobs:
           sha256sum fresh-editor-${VERSION}-x86_64.flatpak > fresh-editor-${VERSION}-x86_64.flatpak.sha256
 
       - name: Upload Flatpak bundle
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: artifacts-flatpak
           path: |

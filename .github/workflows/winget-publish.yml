@@ -28,12 +28,12 @@ jobs:
       VERSION: ${{ inputs.version }}
       GH_TOKEN: ${{ secrets.WINGET_TOKEN }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v6.3.0
         with:
           python-version: '3.12'
 

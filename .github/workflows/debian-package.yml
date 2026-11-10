@@ -75,7 +75,7 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates git dpkg-dev lintian xz-utils
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
 
@@ -148,14 +148,14 @@ jobs:
           for f in *; do sha256sum "$f" > "$f.sha256"; done
           ls -la
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v6.0.0
         if: ${{ inputs.release && matrix.suite == 'testing' }}
         with:
           name: artifacts-debian-testing-${{ matrix.arch }}
           if-no-files-found: error
           path: /release/*
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v6.0.0
         with:
           name: fresh-editor-debian-${{ matrix.suite }}-${{ matrix.arch }}
           if-no-files-found: error
