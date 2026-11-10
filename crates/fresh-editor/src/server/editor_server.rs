@@ -209,6 +209,10 @@ struct ConnectedClient {
     needs_terminal_setup: bool,
     /// SuspendClient was sent; withhold output until this client says Resumed.
     suspended: bool,
+    /// The client's Hello said it stops on SuspendClient and says Resumed
+    /// when back (`ClientHello::can_suspend`). Only such a client is marked
+    /// `suspended`, since nothing else ever clears the mark.
+    can_suspend: bool,
     /// If set, this client is waiting for a --wait completion signal
     wait_id: Option<u64>,
     /// Control-socket bytes not yet ending in a newline.
@@ -514,8 +518,13 @@ impl EditorServer {
                         // Best-effort: client may already be disconnected
                         #[allow(clippy::let_underscore_must_use)]
                         let _ = self.clients[idx].conn.write_control(&suspend_msg);
-                        self.clients[idx].suspended = true;
-                        self.clients[idx].needs_terminal_setup = false;
+                        // A client that cannot suspend (the Windows relay)
+                        // logs the request and keeps its terminal as it is,
+                        // so it is neither withheld from nor set up again.
+                        if self.clients[idx].can_suspend {
+                            self.clients[idx].suspended = true;
+                            self.clients[idx].needs_terminal_setup = false;
+                        }
                     }
                 } else {
                     tracing::warn!("Suspend requested but no input source; ignoring");
@@ -1055,6 +1064,7 @@ impl EditorServer {
             // The setup sequences were just written above.
             needs_terminal_setup: false,
             suspended: false,
+            can_suspend: hello.can_suspend,
             wait_id: None,
             gpm_pointer: false,
             control_buf: Vec::new(),

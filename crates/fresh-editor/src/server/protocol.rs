@@ -63,6 +63,13 @@ pub struct ClientHello {
     /// client older than protocol v5.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pair_token: Option<String>,
+    /// Whether this client acts on `SuspendClient`: it tears its terminal
+    /// down, stops, and sends `Resumed` once it is back. The Unix relay does;
+    /// the Windows relay cannot (there is no SIGTSTP) and keeps running. The
+    /// daemon withholds output only from a client that will say `Resumed`,
+    /// so one that cannot is not frozen waiting for it.
+    #[serde(default)]
+    pub can_suspend: bool,
 }
 
 impl ClientHello {
@@ -93,6 +100,9 @@ impl ClientHello {
                 .ok()
                 .filter(|t| !t.is_empty()),
             pair_token: None,
+            // The relay that handles `SuspendClient` by stopping is
+            // `client/relay_unix.rs`.
+            can_suspend: cfg!(unix),
         }
     }
 

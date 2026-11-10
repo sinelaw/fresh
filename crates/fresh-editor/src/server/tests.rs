@@ -1901,6 +1901,92 @@ mod integration_tests {
         check_suspend_resume(true);
     }
 
+    /// Wait, without a deadline, for the server to tell this client to
+    /// suspend. The read timeout only paces the loop: `read_line_timeout`
+    /// reports a quiet interval as `TimedOut`, which is not a closed stream,
+    /// so it goes round again (a busy machine can take longer than one
+    /// interval to handle the key).
+    fn wait_for_suspend(control: &mut crate::server::ipc::ControlReader) {
+        loop {
+            match control.read_line_timeout(Duration::from_millis(100)) {
+                Ok(Some(line)) => {
+                    if matches!(
+                        serde_json::from_str::<ServerControl>(&line),
+                        Ok(ServerControl::SuspendClient)
+                    ) {
+                        return;
+                    }
+                }
+                Ok(None) => panic!("control stream closed before SuspendClient"),
+                Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {}
+                Err(e) => panic!("control stream failed: {e}"),
+            }
+        }
+    }
+
+    /// A client that cannot suspend (the Windows relay has no SIGTSTP, so its
+    /// Hello says `can_suspend: false`) only logs SuspendClient and keeps its
+    /// terminal in the foreground. It never sends Resumed, so it must keep
+    /// receiving frames rather than being withheld from for good, and nothing
+    /// may set its terminal up again on top of the setup it still has.
+    #[test]
+    fn a_client_that_cannot_suspend_keeps_receiving_frames() {
+        use crate::server::editor_server::EditorServer;
+        use crate::server::ipc::ControlReader;
+
+        const SETUP: &str = "\x1b[?1049h";
+
+        let temp_dir = test_temp_dir("nosuspend");
+        let name = unique_session_name("nosuspend");
+        let mut config = editor_server_config(&temp_dir, &name, None);
+        config
+            .editor_config
+            .keybindings
+            .push(serde_json::from_str(r#"{"key":"F12","action":"suspend_process"}"#).unwrap());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handle = thread::spawn(move || {
+            let mut server = EditorServer::new(config).unwrap();
+            tx.send((server.socket_paths().clone(), server.shutdown_handle()))
+                .unwrap();
+            server.run()
+        });
+        let (paths, shutdown) = rx.recv().unwrap();
+        let conn = ClientConnection::connect(&paths).unwrap();
+        let mut hello = ClientHello::new(TermSize::new(80, 24));
+        hello.can_suspend = false;
+        conn.send_hello(hello).unwrap();
+        let response = conn.read_control().unwrap().unwrap();
+        assert!(matches!(
+            serde_json::from_str::<ServerControl>(&response).unwrap(),
+            ServerControl::Hello(_)
+        ));
+        let mut output = Vec::new();
+        read_until_contains(&conn, &mut output, "\x1b[?25l");
+        let mut control = ControlReader::new(&conn.control);
+
+        // Ask for a suspend, and wait for SuspendClient: the daemon still
+        // tells the client, which is what makes it log the limitation.
+        conn.write_data(b"\x1b[24~").unwrap();
+        wait_for_suspend(&mut control);
+        let suspended_at = output.len();
+
+        // Typing after SuspendClient, with no Resumed ever sent, still shows
+        // up on this client's screen. Before the fix it waited here forever.
+        conn.write_data(b"still-painted").unwrap();
+        read_until_contains(&conn, &mut output, "still-painted");
+        let after = String::from_utf8_lossy(&output[suspended_at..]).into_owned();
+        assert_eq!(
+            after.matches(SETUP).count(),
+            0,
+            "a client that did not suspend must not be set up again: {after:?}"
+        );
+
+        shutdown.store(true, Ordering::SeqCst);
+        drop(handle.join());
+        drop(paths.cleanup());
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
     fn check_suspend_resume(keyboard_disabled: bool) {
         use crate::server::editor_server::EditorServer;
         use crate::server::ipc::ControlReader;
@@ -1908,25 +1994,6 @@ mod integration_tests {
 
         const SETUP: &str = "\x1b[?1049h";
         const PUSH: &str = "\x1b[>5u";
-
-        /// Wait, without a deadline, for the server to tell this client to
-        /// suspend. The read timeout only paces the loop.
-        fn wait_for_suspend(control: &mut ControlReader) {
-            loop {
-                match control.read_line_timeout(Duration::from_millis(100)) {
-                    Ok(Some(line)) => {
-                        if matches!(
-                            serde_json::from_str::<ServerControl>(&line),
-                            Ok(ServerControl::SuspendClient)
-                        ) {
-                            return;
-                        }
-                    }
-                    Ok(None) => {}
-                    Err(e) => panic!("control stream closed: {e}"),
-                }
-            }
-        }
 
         let temp_dir = test_temp_dir("resume");
         let name = unique_session_name("resume");
