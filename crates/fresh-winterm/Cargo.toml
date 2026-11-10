@@ -5,9 +5,10 @@ authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Windows terminal I/O helpers for fresh editor (VT input, console relay, terminal size)"
+description = "Windows terminal I/O helpers for fresh editor (VT input, win32-input-mode reports, console relay, terminal size)"
 
 [dependencies]
+crossterm.workspace = true
 tracing.workspace = true
 
 [target.'cfg(windows)'.dependencies]

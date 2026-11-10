@@ -42,6 +42,7 @@ use std::ops::Deref;
 use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
+use fresh_winterm::win32_input::{self, Utf16Joiner, Win32Key};
 
 mod encode;
 #[cfg(target_os = "linux")]
@@ -299,6 +300,9 @@ pub struct InputParser {
     /// Accumulated bracketed-paste content (including the trailing end marker
     /// until it is recognised and stripped).
     paste: Vec<u8>,
+    /// The characters of successive win32-input-mode reports, which may split
+    /// one character into a surrogate pair.
+    win32_text: Utf16Joiner,
 }
 
 impl Default for InputParser {
@@ -313,6 +317,7 @@ impl InputParser {
             state: State::Ground,
             buffer: Vec::with_capacity(32),
             paste: Vec::new(),
+            win32_text: Utf16Joiner::default(),
         }
     }
 
@@ -756,7 +761,7 @@ impl InputParser {
         // paste pays for a full marker comparison.
         if byte == b'~' && self.paste.ends_with(PASTE_END) {
             let content_len = self.paste.len() - PASTE_END.len();
-            let text = sanitize_paste(&self.paste[..content_len]);
+            let text = sanitize_paste(&win32_input::decode_text(&self.paste[..content_len]));
             self.paste.clear();
             self.state = State::Ground;
             out.push(Event::Paste(text));
@@ -768,7 +773,7 @@ impl InputParser {
             // Emitting here bounds memory; discarding rather than returning to
             // ground keeps the tail from being sprayed out as keystrokes.
             tracing::trace!("InputParser: paste exceeded {} bytes, flushing", MAX_PASTE);
-            let text = sanitize_paste(&self.paste);
+            let text = sanitize_paste(&win32_input::decode_text(&self.paste));
             self.paste.clear();
             self.state = State::PasteOverflow;
             out.push(Event::Paste(text));
@@ -871,6 +876,7 @@ impl InputParser {
             b'I' => out.push(Event::FocusGained),
             b'O' => out.push(Event::FocusLost),
             b'u' => self.dispatch_csi_u(&params, out),
+            b'_' => self.dispatch_win32_input(&params, out),
             other => {
                 tracing::trace!("InputParser: unknown CSI final {:#04x}, dropping", other);
             }
@@ -981,6 +987,123 @@ impl InputParser {
             )));
         }
     }
+
+    /// Dispatch a win32-input-mode key report, `CSI Vk ; Sc ; Uc ; Kd ; Cs ; Rc _`.
+    ///
+    /// On Windows the console hands fresh its input as VT text
+    /// (`ENABLE_VIRTUAL_TERMINAL_INPUT`), and ConPTY's VT encoding drops every
+    /// modifier the legacy encoding has no spelling for: Ctrl+Tab arrives as a
+    /// plain Tab and Ctrl+Shift+E as Ctrl+E. With win32-input-mode
+    /// (`CSI ? 9001 h`) the terminal reports each key as the console's own
+    /// KEY_EVENT record instead — virtual key, scan code, UTF-16 unit, key-down
+    /// flag, control-key state and repeat count — so the modifiers survive.
+    ///
+    /// Key-ups and keys that type nothing (a bare Shift or Ctrl, the IME's
+    /// Hankaku/Zenkaku toggle) are dropped. What remains is spelled the way the
+    /// same chord arrives over the kitty protocol, so a keymap cannot tell which
+    /// encoding the terminal spoke.
+    fn dispatch_win32_input(&mut self, params: &[u8], out: &mut Vec<Event>) {
+        let Some(key) = Win32Key::parse(params) else {
+            tracing::trace!("InputParser: malformed win32-input-mode report, dropping");
+            return;
+        };
+        if !key.down {
+            return;
+        }
+        let Some((event, layout_char)) = self.win32_key_event(&key) else {
+            return;
+        };
+        for _ in 0..key.repeat.clamp(1, win32_input::MAX_REPEAT) {
+            out.push(Event::Key(KeyPress::with_layout_char(event, layout_char)));
+        }
+    }
+
+    /// The key event a win32-input-mode key-down stands for, together with the
+    /// character it types when the chord keeps its base spelling (`Ctrl+Shift+1`
+    /// is the digit key, and `!` is what it types), or `None` for a key that
+    /// types nothing (or the first half of a surrogate pair).
+    fn win32_key_event(&mut self, key: &Win32Key) -> Option<(KeyEvent, Option<char>)> {
+        let mut modifiers = key.modifiers();
+        if let Some(code) = key.functional_key() {
+            self.win32_text.reset();
+            // Shift+Tab is BackTab, as over the legacy encoding (`CSI Z`).
+            let code = if code == KeyCode::Tab && modifiers == KeyModifiers::SHIFT {
+                KeyCode::BackTab
+            } else {
+                code
+            };
+            return Some((KeyEvent::new(code, modifiers), None));
+        }
+        // An IME commits text, and an emoji picker types a character outside
+        // the BMP, one UTF-16 unit per report.
+        let ch = self.win32_text.push(key.unicode)?;
+        if key.unicode == 0 || ch.is_control() {
+            // Ctrl turns a letter's character into its C0 code (Ctrl+E types
+            // 0x05), and some layouts report no character at all for a Ctrl or
+            // Alt chord. The virtual key still names the key, and naming it is
+            // what keeps Shift: Ctrl+Shift+E stays Ctrl+Shift+e rather than
+            // collapsing onto Ctrl+E.
+            if let Some(base) = key.letter_or_digit() {
+                return Some((KeyEvent::new(KeyCode::Char(base), modifiers), None));
+            }
+            // Any other key: read its C0 code the way the legacy encoding would
+            // (Ctrl+[ is Escape), keeping Alt.
+            if key.unicode == 0 || key.unicode >= 0x20 {
+                return None;
+            }
+            let byte = key.unicode as u8;
+            return Some((
+                KeyEvent::new(
+                    byte_to_keycode(byte),
+                    c0_control_modifier(byte) | (modifiers & KeyModifiers::ALT),
+                ),
+                None,
+            ));
+        }
+        // A printable character. Windows reports AltGr as Ctrl+Alt; when that
+        // chord types a character, the character is what the user pressed for.
+        if modifiers.contains(KeyModifiers::CONTROL | KeyModifiers::ALT) {
+            modifiers.remove(KeyModifiers::CONTROL | KeyModifiers::ALT);
+        }
+        // Ctrl+Shift+1 types `!`, but the binding is on the digit key: keep the
+        // base spelling the kitty protocol reports for the same chord and carry
+        // the typed character alongside, the way `dispatch_csi_u` does. Without
+        // this the win32 and kitty spellings of one chord disagree, and a
+        // `ctrl+shift+1` binding fires only from one of them.
+        if modifiers.contains(KeyModifiers::CONTROL) {
+            if let Some(base) = key.letter_or_digit() {
+                return Some((
+                    KeyEvent::new(KeyCode::Char(base), modifiers),
+                    win32_layout_char(base, ch, modifiers),
+                ));
+            }
+        }
+        // Without Ctrl the character already carries the shift (Shift+E types
+        // `E`), exactly as over the legacy encoding.
+        if !modifiers.contains(KeyModifiers::CONTROL) {
+            modifiers.remove(KeyModifiers::SHIFT);
+        }
+        Some((KeyEvent::new(KeyCode::Char(ch), modifiers), None))
+    }
+}
+
+/// The character a Ctrl chord types on the current layout, when the chord's own
+/// spelling does not say so — the win32 form of [`hidden_layout_char`].
+///
+/// Windows fills `Uc` with the character the key types, so `Ctrl+Shift+1`
+/// arrives as `!` on a US layout and as `/` on a German one (`Shift+7`). The
+/// chord keeps its base key either way; this is the typed character the keymap
+/// gets to look at.
+fn win32_layout_char(base: char, typed: char, modifiers: KeyModifiers) -> Option<char> {
+    if !modifiers.contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT) {
+        return None;
+    }
+    // Same rule as the kitty path: a letter's shifted character is its
+    // uppercase, which the chord's SHIFT bit already says.
+    if typed == base || uppercase_letter(base) == Some(typed) {
+        return None;
+    }
+    Some(typed)
 }
 
 /// The event type encoded in the second sub-parameter of a kitty modifier field
