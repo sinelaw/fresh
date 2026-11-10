@@ -6142,7 +6142,7 @@ pub enum PluginCommand {
     /// Register a diff baseline for `buffer_id` (async). `kind` is one of
     /// "saved" | "disk" | "gitRef" | "gitIndex"; `git_ref` carries the ref
     /// for "gitRef". Disk and git baselines load their content off-loop
-    /// (filesystem read / `git cat-file --filters` on the window's authority); the
+    /// (filesystem read / `git show` on the window's authority); the
     /// promise resolves with the baseline id once content is ready.
     RegisterDiffBaseline {
         buffer_id: BufferId,

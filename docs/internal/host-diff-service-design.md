@@ -136,7 +136,7 @@ pub enum BaselineSource {
     Saved,                       // Persistence::saved_root — free
     Disk,                        // buffer.filesystem().read — file watcher invalidates
     GitRef { ref_spec: String }, // resolved to an OID at registration
-    GitIndex,                    // `git cat-file --filters :0:<path>` — .git/index watch invalidates
+    GitIndex,                    // `git show :0:<path>` — .git/index watch invalidates
 }
 ```
 

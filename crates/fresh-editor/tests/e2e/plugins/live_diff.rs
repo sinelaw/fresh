@@ -1387,8 +1387,8 @@ fn test_live_diff_waits_for_a_background_windows_buffer() {
 /// one whole-file replacement — every old line as a deletion block above
 /// every new line as an addition block — because the HEAD baseline came
 /// from the raw blob (`git show`) and the line diff counts the terminator
-/// as part of the line. The baseline now comes from
-/// `git cat-file --filters`, in working-tree form, so only the inserted
+/// as part of the line. For a path git line-ending-normalizes, the diff
+/// now ignores CRLF vs LF the way `git diff` does, so only the inserted
 /// line is reported and unchanged lines are not repeated as deletions.
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
@@ -1450,32 +1450,33 @@ fn test_live_diff_crlf_worktree_against_lf_blob_diffs_per_line() {
     );
 }
 
-/// The converse of the CRLF case: the checkout form is CRLF (`eol=crlf`,
-/// or `core.autocrlf=true` on Windows) but a tool rewrote the file with
-/// LF, blanking one line. A baseline in checkout form must not make every
-/// LF line differ from its CRLF counterpart — only the blanked line is a
-/// change, so unchanged lines get no diff background and no deletion
-/// copy.
+/// A working tree that mixes CRLF and LF (an agent writing LF lines into
+/// a CRLF checkout) over an LF blob, in a path git normalizes
+/// (`eol=crlf`). No single form of the baseline matches every line, so
+/// before this fix each CRLF line diffed against its LF blob line and
+/// unchanged lines were flagged. Like `git diff`, only the inserted line
+/// may be reported: unchanged lines carry no glyph, no deletion copy and
+/// no diff background.
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
-fn test_live_diff_lf_worktree_in_crlf_checkout_diffs_per_line() {
+fn test_live_diff_mixed_line_endings_diff_per_line() {
     let repo = GitTestRepo::new();
     repo.setup_live_diff_plugin();
 
     repo.create_file(".gitattributes", "*.rs text eol=crlf\n");
     repo.create_file(
         "src/utils.rs",
-        "UNCHANGED_HEAD_MARKER\r\nsecond\r\nREMOVED_LINE_MARKER\r\nUNCHANGED_TAIL_MARKER\r\n",
+        "UNCHANGED_HEAD_MARKER\nsecond\nthird\nUNCHANGED_TAIL_MARKER\n",
     );
     repo.git_add_all();
     repo.git_commit("init");
 
     let _guard = repo.change_to_repo_dir();
 
-    // Rewritten with LF by a tool, one line blanked.
+    // Mixed endings, one inserted line.
     repo.modify_file(
         "src/utils.rs",
-        "UNCHANGED_HEAD_MARKER\nsecond\n\nUNCHANGED_TAIL_MARKER\n",
+        "UNCHANGED_HEAD_MARKER\r\nsecond\nINSERTED_LINE_MARKER\r\nthird\nUNCHANGED_TAIL_MARKER\r\n",
     );
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
@@ -1490,7 +1491,10 @@ fn test_live_diff_lf_worktree_in_crlf_checkout_diffs_per_line() {
     open_file(&mut harness, &repo.path, "src/utils.rs");
 
     harness
-        .wait_until(|h| has_text(&h.screen_to_string(), "REMOVED_LINE_MARKER"))
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            has_glyph(&s, '+') && has_text(&s, "INSERTED_LINE_MARKER")
+        })
         .unwrap();
 
     let screen = harness.screen_to_string();
@@ -1509,15 +1513,13 @@ fn test_live_diff_lf_worktree_in_crlf_checkout_diffs_per_line() {
             "unchanged line {marker} must carry no diff glyph; screen:\n{screen}"
         );
     }
-    // Exactly one deletion row: the blanked line's old content.
-    let deletion_rows = content_lines(&screen)
-        .iter()
-        .filter(|l| l.contains("REMOVED_LINE_MARKER"))
-        .count();
-    assert_eq!(deletion_rows, 1, "screen:\n{screen}");
+    assert!(
+        !has_glyph(&screen, '-'),
+        "a pure insertion must not render any deletion rows; screen:\n{screen}"
+    );
 
-    // The whole-file symptom painted unchanged lines with the "modified"
-    // background without any glyph, so check the background directly.
+    // A whole-file mismatch can also show as the "modified" background
+    // without a glyph, so check the background directly.
     // `Config::default()` is the `high-contrast` theme.
     use ratatui::style::Color;
     let diff_bgs = [
@@ -1540,4 +1542,63 @@ fn test_live_diff_lf_worktree_in_crlf_checkout_diffs_per_line() {
              screen:\n{screen}"
         );
     }
+}
+
+/// Where git does not normalize line endings (`core.autocrlf=false`, no
+/// eol attributes), converting a CRLF file to LF is a real change: `git
+/// diff` reports every line. Live diff must too, rather than ignoring CR
+/// for every git baseline and showing nothing.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_live_diff_shows_genuine_line_ending_change() {
+    let repo = GitTestRepo::new();
+    repo.setup_live_diff_plugin();
+
+    // Pin locally: local config beats the host's global/system
+    // core.autocrlf (true by default on Windows).
+    let out = crate::common::git_test_helper::git_command(&repo.path)
+        .args(["config", "--local", "core.autocrlf", "false"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "git config failed");
+
+    repo.create_file(
+        "src/utils.rs",
+        "FIRST_MARKER\r\nSECOND_MARKER\r\nTHIRD_MARKER\r\n",
+    );
+    repo.git_add_all();
+    repo.git_commit("init");
+
+    let _guard = repo.change_to_repo_dir();
+
+    // Same text, converted to LF.
+    repo.modify_file(
+        "src/utils.rs",
+        "FIRST_MARKER\nSECOND_MARKER\nTHIRD_MARKER\n",
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    enable_live_diff_globally(&mut harness);
+    open_file(&mut harness, &repo.path, "src/utils.rs");
+
+    let flagged = |screen: &str, marker: &str| {
+        content_lines(screen)
+            .iter()
+            .any(|l| l.contains(marker) && (l.starts_with('~') || l.starts_with('+')))
+    };
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            ["FIRST_MARKER", "SECOND_MARKER", "THIRD_MARKER"]
+                .iter()
+                .all(|m| flagged(&s, m))
+        })
+        .unwrap();
 }

@@ -58,12 +58,13 @@ pub fn compute_line_diff(old_text: &str, new_text: &str) -> Vec<LineDiffHunk> {
 /// Whether a line is terminated at all still counts, so a
 /// "\ No newline at end of file" change is still a hunk.
 ///
-/// This is how `git diff` sees a text file: it compares in normalized
-/// form, so under `core.autocrlf` / `eol=crlf` a working tree whose line
-/// endings differ from the checkout's (an LF file written by a tool in a
-/// CRLF checkout, a CRLF file over an LF blob, or a mix) shows only its
-/// real edits. Use it for diffs against git baselines; an exact
-/// comparison would report every line of such a file as changed.
+/// This is how `git diff` sees a path it line-ending-normalizes (e.g.
+/// under `core.autocrlf` or `eol=crlf`): it compares in normalized form,
+/// so a working tree whose line endings differ from the blob's or the
+/// checkout's (a CRLF file over an LF blob, an LF file written by a tool
+/// in a CRLF checkout, or a mix) shows only its real edits. Use it only
+/// where git normalizes; elsewhere a line-ending change is a real change
+/// and the exact [`compute_line_diff`] must report it.
 pub fn compute_line_diff_ignoring_cr(old_text: &str, new_text: &str) -> Vec<LineDiffHunk> {
     fn intern<'a>(map: &mut HashMap<(&'a str, bool), u32>, line: &'a str) -> u32 {
         let key = match line.strip_suffix('\n') {
