@@ -91,15 +91,30 @@ impl Editor {
     /// buffer holds, and seat the buffer's cursor on the tree's caret.
     fn apply_pane_mirror(&mut self, key: &PanelKey, buffer: BufferId, mirror: Mirror) {
         if self.pane_mirrors.get(key) != Some(&mirror.rows) {
-            // One entry per row, each ending in the newline that makes it a
+            // One entry per row, separated by the newline that makes each a
             // line of the buffer: the buffer's line model is byte-driven, so
             // without it the rows would run together into one line and a
             // reading row would be a column count.
+            //
+            // **Separated, not terminated.** A newline after the last row
+            // gives the buffer one more, empty line than the tree has rows,
+            // and on a page that line feeds itself: the caret steps onto it,
+            // the caret layer (`page_layers`) is a column as tall as the
+            // caret's row, so the page's content grows by a row, the next
+            // mirror writes one more row and newline — and Down scrolled the
+            // page away into blank space forever.
+            let last = mirror.rows.len().saturating_sub(1);
             let entries = mirror
                 .rows
                 .iter()
-                .map(|r| {
-                    crate::primitives::text_property::TextPropertyEntry::text(format!("{r}\n"))
+                .enumerate()
+                .map(|(i, r)| {
+                    let text = if i < last {
+                        format!("{r}\n")
+                    } else {
+                        r.clone()
+                    };
+                    crate::primitives::text_property::TextPropertyEntry::text(text)
                 })
                 .collect();
             if let Err(e) = self

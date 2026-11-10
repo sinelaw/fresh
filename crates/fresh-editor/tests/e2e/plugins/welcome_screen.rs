@@ -585,3 +585,22 @@ fn the_essentials_show_their_keybindings() {
         harness.screen_row_text(row)
     );
 }
+
+/// **Down stops at the page's last row.** The page's mirror buffer used to
+/// end in a newline, so it had one empty line more than the page had rows;
+/// the caret stepping onto it grew the page by a row, which made another
+/// empty line, and holding Down scrolled the page away into blank space.
+#[test]
+fn holding_down_does_not_scroll_past_the_end_of_the_page() {
+    let (mut harness, _tmp) = harness_with_welcome();
+    open_welcome(&mut harness);
+    for _ in 0..120 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.wait_for_async_quiescence(4).unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("closes this page") && screen.contains(PAGE_MARKER),
+        "Down scrolled the page's end off the screen:\n{screen}"
+    );
+}
