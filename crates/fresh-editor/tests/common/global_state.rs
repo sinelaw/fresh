@@ -274,6 +274,23 @@ impl PathPin {
         self.extra.push((key, std::env::var_os(key)));
         std::env::set_var(key, value);
     }
+
+    /// Put another directory in front of `$PATH` for the rest of the pin's
+    /// life. The drop restores the `$PATH` from before the pin, so this one
+    /// goes too.
+    ///
+    /// For a test that already holds a pin (through
+    /// [`EditorTestHarness::fake_devcontainer_env`](super::harness::EditorTestHarness::fake_devcontainer_env),
+    /// say) and needs one more shim: taking a second pin would wait on the
+    /// lock the first one holds.
+    pub fn prepend_dir(&mut self, dir: &std::path::Path) {
+        let mut joined = std::ffi::OsString::from(dir);
+        if let Some(existing) = std::env::var_os("PATH") {
+            joined.push(if cfg!(windows) { ";" } else { ":" });
+            joined.push(existing);
+        }
+        std::env::set_var("PATH", joined);
+    }
 }
 
 impl Drop for PathPin {
