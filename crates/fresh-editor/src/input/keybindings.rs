@@ -4319,6 +4319,41 @@ mod tests {
         );
     }
 
+    /// Issue #2673: terminals without the kitty keyboard protocol cannot
+    /// report Shift together with Ctrl, so Ctrl+Shift+D arrives as
+    /// `Char('D')` + CONTROL or as the bare 0x04 byte (`Char('d')` + CONTROL).
+    /// Both are indistinguishable from Ctrl+D (see `normalize_key`) and
+    /// resolve to `add_cursor_next_match`. Alt+Shift+D is the companion
+    /// binding that works in those terminals: the Shift is carried by the
+    /// uppercase letter.
+    #[test]
+    fn test_duplicate_line_companion_binding_without_kitty_protocol() {
+        let config = Config::default();
+        let resolver = KeybindingResolver::new(&config);
+
+        for code in ['D', 'd'] {
+            let event = KeyEvent::new(KeyCode::Char(code), KeyModifiers::CONTROL);
+            assert_eq!(
+                resolver.resolve(&event, KeyContext::Normal),
+                Action::AddCursorNextMatch,
+                "Char({code:?})+CONTROL is Ctrl+D, not Ctrl+Shift+D, without the kitty protocol"
+            );
+        }
+
+        let encodings = [
+            KeyEvent::new(KeyCode::Char('D'), KeyModifiers::ALT),
+            KeyEvent::new(KeyCode::Char('D'), KeyModifiers::ALT | KeyModifiers::SHIFT),
+            KeyEvent::new(KeyCode::Char('d'), KeyModifiers::ALT | KeyModifiers::SHIFT),
+        ];
+        for event in encodings {
+            assert_eq!(
+                resolver.resolve(&event, KeyContext::Normal),
+                Action::DuplicateLine,
+                "{event:?} should duplicate the line/selection"
+            );
+        }
+    }
+
     #[test]
     fn test_shift_letter_binding_works_without_terminal_shift_modifier() {
         // Regression test for https://github.com/sinelaw/fresh/issues/1899

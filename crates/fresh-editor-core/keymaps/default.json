@@ -699,9 +699,17 @@
       "when": "normal"
     },
     {
-      "comment": "Duplicate the current line (or selected lines) — VS Code Ctrl+Shift+D (issue #2673)",
+      "comment": "Duplicate the current line (or selected lines) — VS Code Ctrl+Shift+D (issue #2673). Needs a terminal that reports Shift together with Ctrl (kitty keyboard protocol); elsewhere it arrives as Ctrl+D, so Alt+Shift+D below is the binding that works everywhere.",
       "key": "d",
       "modifiers": ["ctrl", "shift"],
+      "action": "duplicate_line",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Duplicate the current line (or selected lines) — companion to Ctrl+Shift+D for terminals without the kitty keyboard protocol, where Alt+Shift+D arrives as Alt plus the uppercase letter (issue #2673)",
+      "key": "d",
+      "modifiers": ["alt", "shift"],
       "action": "duplicate_line",
       "args": {},
       "when": "normal"

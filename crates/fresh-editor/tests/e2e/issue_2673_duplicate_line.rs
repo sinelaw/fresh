@@ -67,3 +67,23 @@ fn test_ctrl_shift_d_duplicates_selected_lines() {
     // The two selected lines are duplicated as a block below.
     harness.assert_buffer_content("one\ntwo\none\ntwo\nthree\n");
 }
+
+#[test]
+fn test_alt_shift_d_duplicates_current_line_without_kitty_protocol() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("dup.txt");
+    std::fs::write(&file_path, "alpha\nbeta\ngamma\n").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // A terminal without the kitty protocol sends Alt+Shift+D as ESC 'D':
+    // the uppercase letter plus ALT, with no SHIFT modifier.
+    harness
+        .send_key(KeyCode::Char('D'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    harness.assert_buffer_content("alpha\nalpha\nbeta\ngamma\n");
+}
