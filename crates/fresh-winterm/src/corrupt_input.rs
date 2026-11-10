@@ -3,6 +3,8 @@
 //! Plain byte matching, so it builds — and its tests run — on every platform;
 //! only the Windows reader (`vt_input`) uses it.
 
+use crate::win32_input::{split_report, Win32Key};
+
 /// Strip corrupt mouse sequences from a VT byte buffer.
 ///
 /// ## Why this exists (the full horror story)
@@ -73,38 +75,14 @@ fn strip_corrupt_mouse(mut bytes: Vec<u8>, win32_reports: bool) -> Vec<u8> {
 /// its ESC, `[Vk;Sc;Uc;Kd;Cs;Rc_`, and return its length.
 ///
 /// What the stripper deletes has to be a key report and not text that merely
-/// looks like one, so this asks for more than the parser does: all six fields
-/// present, and each in the range a KEY_EVENT record can hold — a virtual-key
-/// code from 1 to 254, a key-down flag of 0 or 1, only the nine control-key
-/// state bits, and a repeat count of at least 1. `[1;2;3;4;5;6_` and
-/// `[;;;;;_` are text by these rules; a real report such as
-/// `[69;18;5;1;24;1_` (Ctrl+Shift+E) is not.
+/// looks like one, so this asks for more than the parser does: the fields of
+/// a KEY_EVENT record, each in its range ([`Win32Key::parse_exact`]).
+/// `[1;2;3;4;5;6_` and `[;;;;;_` are text by these rules; a real report such
+/// as `[69;18;5;1;24;1_` (Ctrl+Shift+E) is not.
 fn match_win32_input(data: &[u8]) -> Option<usize> {
-    let rest = data.strip_prefix(b"[")?;
-    let end = rest
-        .iter()
-        .position(|&b| !(b.is_ascii_digit() || b == b';'))?; // None: incomplete
-    if rest[end] != b'_' {
-        return None;
-    }
-    let mut fields = [0u32; 6];
-    let mut count = 0;
-    for field in rest[..end].split(|&b| b == b';') {
-        if field.is_empty() || count == fields.len() {
-            return None;
-        }
-        fields[count] = std::str::from_utf8(field).ok()?.parse().ok()?;
-        count += 1;
-    }
-    let [vk, scan, unicode, down, state, repeat] = fields;
-    let plausible = count == fields.len()
-        && (1..=0xFE).contains(&vk)
-        && scan <= 0xFFFF
-        && unicode <= 0xFFFF
-        && down <= 1
-        && state <= 0x1FF
-        && (1..=0xFFFF).contains(&repeat);
-    plausible.then_some(1 + end + 1)
+    let (params, len) = split_report(data.strip_prefix(b"[")?)?;
+    Win32Key::parse_exact(params)?;
+    Some(1 + len)
 }
 
 /// Whether `bytes` holds an intact win32-input-mode key report, ESC included.

@@ -1526,6 +1526,7 @@ name = "fresh-input-parser"
 version = "0.5.8"
 dependencies = [
  "crossterm",
+ "fresh-winterm",
  "libloading",
  "nix 0.31.3",
  "proptest",
@@ -1660,6 +1661,7 @@ dependencies = [
 name = "fresh-winterm"
 version = "0.5.8"
 dependencies = [
+ "crossterm",
  "tracing",
  "windows-sys 0.61.2",
 ]

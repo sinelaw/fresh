@@ -6,10 +6,11 @@
 //! - Client/server relay loop (trait-based, decoupled from IPC details)
 //! - Terminal size queries via console screen buffer
 //! - Detection of MSYS2/Cygwin ptys (mintty), which have no console
+//! - The win32-input-mode key report format ([`win32_input`])
 //!
-//! On non-Windows platforms, this crate compiles as empty apart from the
-//! platform-independent matching in `corrupt_input`, kept there so its tests
-//! run everywhere.
+//! On non-Windows platforms, only the platform-independent byte matching is
+//! built: [`win32_input`], which the input parser uses on every platform, and
+//! `corrupt_input`, kept there so its tests run everywhere.
 
 // Plain byte matching used by `vt_input`; built everywhere so its tests run
 // on every platform.
@@ -23,6 +24,7 @@ mod relay;
 mod terminal_size;
 #[cfg(windows)]
 mod vt_input;
+pub mod win32_input;
 
 #[cfg(windows)]
 pub use vt_input::{

@@ -16,6 +16,8 @@ path = "src/lib.rs"
 
 [dependencies]
 crossterm.workspace = true
+# The win32-input-mode key report format.
+fresh-winterm.workspace = true
 tracing.workspace = true
 
 # The Linux console mouse (`gpm`): libgpm is loaded at runtime. Both accept
