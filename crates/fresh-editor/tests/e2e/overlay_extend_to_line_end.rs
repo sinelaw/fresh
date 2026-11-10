@@ -364,3 +364,96 @@ fn overlay_extend_to_line_end_leaves_the_next_line_s_hints_alone() {
         );
     }
 }
+
+#[test]
+fn conceal_replacement_keeps_overlay_foreground_and_underline() {
+    use fresh::model::event::UnderlineStyle;
+    use ratatui::style::Modifier;
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.type_text("[Fresh](url) end").unwrap();
+    let namespace = OverlayNamespace::from_string("repro".into());
+    {
+        let state = harness.editor_mut().active_state_mut();
+        state.conceals.add(
+            &mut state.marker_list,
+            namespace.clone(),
+            0..12,
+            Some("Fresh".into()),
+        );
+    }
+    harness
+        .apply_event(Event::AddOverlay {
+            namespace: Some(namespace),
+            range: 0..12,
+            face: OverlayFace::Underline {
+                color: (10, 200, 100),
+                style: UnderlineStyle::Straight,
+            },
+            priority: 50,
+            message: None,
+            extend_to_line_end: false,
+            url: None,
+        })
+        .unwrap();
+    harness.render().unwrap();
+
+    let (start, row) = harness
+        .find_text_on_screen("Fresh end")
+        .expect("conceal replacement is visible");
+    let buf = harness.buffer();
+    for x in start..start + 5 {
+        let cell = &buf[(x, row)];
+        assert_eq!(cell.fg, Color::Rgb(10, 200, 100), "column {x}");
+        assert!(cell.modifier.contains(Modifier::UNDERLINED), "column {x}");
+    }
+}
+
+#[test]
+fn inline_plugin_annotation_keeps_collision_fallback() {
+    use fresh::view::virtual_text::VirtualTextPosition;
+    use fresh_core::api::{OverlayColorSpec, OverlayOptions};
+    use ratatui::style::Style;
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.type_text("changed line").unwrap();
+    let diff_bg = Color::Rgb(32, 48, 64);
+    {
+        let state = harness.editor_mut().active_state_mut();
+        state.virtual_texts.add_with_id_and_theme_keys(
+            &mut state.marker_list,
+            11,
+            "no final newline".into(),
+            Style::default().fg(diff_bg).italic(),
+            None,
+            None,
+            VirtualTextPosition::AfterChar,
+            0,
+            "compare-eol-note".into(),
+            None,
+            false,
+        );
+    }
+    harness
+        .apply_event(Event::AddOverlay {
+            namespace: None,
+            range: 0..12,
+            face: OverlayFace::from_options(OverlayOptions {
+                fg: Some(OverlayColorSpec::ThemeKey("editor.fg".into())),
+                bg: Some(OverlayColorSpec::Rgb(32, 48, 64)),
+                fg_on_collision_only: true,
+                ..OverlayOptions::default()
+            }),
+            priority: 50,
+            message: None,
+            extend_to_line_end: true,
+            url: None,
+        })
+        .unwrap();
+    harness.render().unwrap();
+
+    let (x, y) = harness.find_text_on_screen("no final newline").unwrap();
+    let style = harness.get_cell_style(x, y).unwrap();
+    assert_eq!(style.bg, Some(diff_bg));
+    assert_ne!(style.fg, style.bg, "the end-of-line note must stay legible");
+}
