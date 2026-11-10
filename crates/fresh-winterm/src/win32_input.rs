@@ -137,7 +137,8 @@ impl Win32Key {
 }
 
 /// The six fields of a report's parameters. `exact` asks for all six, none
-/// empty; otherwise a missing or empty field takes its default.
+/// empty; otherwise a missing or empty field takes its default, and the scan
+/// code, which nothing reads, is not parsed at all.
 fn fields(params: &[u8], exact: bool) -> Option<[u32; 6]> {
     let params = std::str::from_utf8(params).ok()?;
     let mut fields = [0, 0, 0, 0, 0, 1];
@@ -146,10 +147,12 @@ fn fields(params: &[u8], exact: bool) -> Option<[u32; 6]> {
         if count == fields.len() {
             return None;
         }
-        if !field.is_empty() {
+        if field.is_empty() {
+            if exact {
+                return None;
+            }
+        } else if exact || count != 1 {
             fields[count] = field.parse().ok()?;
-        } else if exact {
-            return None;
         }
         count += 1;
     }
@@ -266,6 +269,12 @@ mod tests {
         );
         assert_eq!(Win32Key::parse(b"1;2;3;4;5;6;7"), None);
         assert_eq!(Win32Key::parse(b"70000"), None);
+        // The scan code is not read, so not checked either.
+        assert_eq!(
+            Win32Key::parse(b"65;4294967296;97;1;0;1"),
+            Win32Key::parse(b"65;30;97;1;0;1")
+        );
+        assert_eq!(Win32Key::parse_exact(b"65;4294967296;97;1;0;1"), None);
     }
 
     #[test]
