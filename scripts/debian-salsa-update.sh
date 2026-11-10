@@ -23,7 +23,13 @@
 #   upload            Build the source package (pristine-tar orig, -sa), run
 #                     lintian, sign with the mentors key, dput to mentors,
 #                     then tag debian/<version> (signed) and push the tag.
-#       --no-upload          stop after signing
+#                     Re-uploading a version moves its tag to debian/latest;
+#                     the old tag is kept locally as debian/<version>_<date>.
+#       --no-upload          sign and tag, but upload and push nothing; run
+#                            `publish` later (say, once wait-ci passes)
+#   publish           Upload the .changes that `upload --no-upload` signed and
+#                     push its tag. Needs no key, so the key can be unlocked
+#                     once, while CI is still running.
 #   all VERSION       prepare, push, wait-ci and upload in one go.
 #
 # Each release's packaging/debian is the source of truth; Salsa keeps its own
@@ -294,6 +300,51 @@ cmd_wait_ci() {
   [ "$status" = success ]
 }
 
+release_tag() { local v; v="$(version)"; echo "debian/${v//\~/_}"; }
+
+# Tag debian/latest as debian/<version>, signed. When the tag is already on
+# an older commit (a re-upload of the same version), keep the old tag object
+# as debian/<version>_<its date> and move the tag.
+tag_release() {
+  local tag; tag="$(release_tag)"
+  local head; head="$(g rev-parse debian/latest)"
+  if g rev-parse --verify --quiet "refs/tags/$tag" >/dev/null; then
+    [ "$(g rev-parse "$tag^{commit}")" = "$head" ] && return
+    local when; when="$(g for-each-ref --format='%(taggerdate:unix)' "refs/tags/$tag")"
+    [ -n "$when" ] || when="$(g log -1 --format=%ct "$tag")"
+    say "re-upload: moving $tag to ${head:0:9}, keeping the old one locally as ${tag}_${when}"
+    g update-ref "refs/tags/${tag}_${when}" "$(g rev-parse "refs/tags/$tag")"
+    g tag -d "$tag" >/dev/null
+  fi
+  g tag -s -u "$(keyid)" -m "fresh-editor Debian release $(version)" "$tag" debian/latest
+}
+
+# Push debian/<version>, replacing Salsa's copy when a re-upload moved it.
+push_release_tag() {
+  local tag; tag="$(release_tag)"
+  local remote; remote="$(g ls-remote --tags origin "refs/tags/$tag" | cut -f1)"
+  if [ -n "$remote" ] && [ "$remote" != "$(g rev-parse "refs/tags/$tag")" ]; then
+    say "replacing $tag on Salsa (re-upload)"
+    g push --force-with-lease="refs/tags/$tag:$remote" origin "refs/tags/$tag"
+  else
+    g push origin "refs/tags/$tag"
+  fi
+}
+
+dput_mentors() {
+  say "uploading ${1##*/} to mentors"
+  deb sh -c 'cat > /tmp/.dput.cf <<EOF
+[mentors]
+fqdn = mentors.debian.net
+incoming = /upload
+method = https
+allow_unsigned_uploads = 0
+progress_indicator = 0
+allowed_distributions = .*
+EOF
+exec dput -f mentors "$1"' sh "$1"
+}
+
 cmd_upload() {
   local upload=1
   [ "${1:-}" = --no-upload ] && upload=0
@@ -304,24 +355,29 @@ cmd_upload() {
   local changes="../build-area/fresh-editor_${v}_source.changes"
   say "signing ${changes##*/} with $(keyid)"
   deb debsign -k"$(keyid)" "$changes"
-  if [ "$upload" = 1 ]; then
-    say "uploading to mentors"
-    deb sh -c 'cat > /tmp/.dput.cf <<EOF
-[mentors]
-fqdn = mentors.debian.net
-incoming = /upload
-method = https
-allow_unsigned_uploads = 0
-progress_indicator = 0
-allowed_distributions = .*
-EOF
-exec dput -f mentors "$1"' sh "$changes"
+  tag_release
+  if [ "$upload" = 0 ]; then
+    say "signed and tagged $(release_tag); after CI passes: $0 --repo $REPO publish"
+    return
   fi
-  local tag="debian/${v//\~/_}"
-  if ! g rev-parse --verify --quiet "refs/tags/$tag" >/dev/null; then
-    g tag -s -u "$(keyid)" -m "fresh-editor Debian release ${v}" "$tag" debian/latest
-  fi
-  g push origin "refs/tags/$tag"
+  dput_mentors "$changes"
+  push_release_tag
+  say "done: https://mentors.debian.net/package/fresh-editor/"
+}
+
+cmd_publish() {
+  require_clean_debian_latest
+  local v; v="$(version)"
+  local changes="../build-area/fresh-editor_${v}_source.changes"
+  [ -f "${TOP}/build-area/${changes##*/}" ] || die "no ${changes##*/}; run upload --no-upload first"
+  grep -q 'BEGIN PGP SIGNATURE' "${TOP}/build-area/${changes##*/}" || die "${changes##*/} is not signed"
+  # The tag was made with the signature, so it pins what was signed.
+  local tag; tag="$(release_tag)"
+  g rev-parse --verify --quiet "refs/tags/$tag" >/dev/null || die "no tag $tag; run upload --no-upload first"
+  [ "$(g rev-parse "$tag^{commit}")" = "$(g rev-parse debian/latest)" ] \
+    || die "debian/latest moved since ${changes##*/} was signed; run upload again"
+  dput_mentors "$changes"
+  push_release_tag
   say "done: https://mentors.debian.net/package/fresh-editor/"
 }
 
@@ -332,6 +388,7 @@ case "$cmd" in
   push) cmd_push ;;
   wait-ci) cmd_wait_ci ;;
   upload) cmd_upload "$@" ;;
+  publish) cmd_publish ;;
   all) cmd_prepare "$@" && cmd_push && cmd_wait_ci && cmd_upload ;;
   *) die "unknown command $cmd (see --help)" ;;
 esac
