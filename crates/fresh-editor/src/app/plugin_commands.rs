@@ -2981,7 +2981,7 @@ impl Editor {
                 .ok_or_else(|| format!("unknown baseline id {baseline_id}"))?;
             match &entry.spec {
                 BaselineSpec::Saved => Ok(diff_against_saved(&mut state.buffer)),
-                spec => {
+                _ => {
                     let content = entry
                         .content
                         .as_ref()
@@ -2994,7 +2994,7 @@ impl Editor {
                         hunks: super::diff_baselines::diff_texts(
                             &content.text,
                             &new_text,
-                            spec.is_git(),
+                            content.ignore_cr,
                         ),
                     })
                 }
@@ -3032,23 +3032,21 @@ impl Editor {
                 .inner
                 .lock()
                 .map_err(|_| "baseline store poisoned".to_string())?;
-            let old_entry = inner
+            let old = inner
                 .entries
                 .get(&old_baseline_id)
-                .ok_or_else(|| format!("unknown baseline id {old_baseline_id}"))?;
-            let new_entry = inner
-                .entries
-                .get(&new_baseline_id)
-                .ok_or_else(|| format!("unknown baseline id {new_baseline_id}"))?;
-            let old = old_entry
+                .ok_or_else(|| format!("unknown baseline id {old_baseline_id}"))?
                 .content
                 .as_ref()
                 .ok_or_else(|| "old baseline content not loaded".to_string())?;
-            let new = new_entry
+            let new = inner
+                .entries
+                .get(&new_baseline_id)
+                .ok_or_else(|| format!("unknown baseline id {new_baseline_id}"))?
                 .content
                 .as_ref()
                 .ok_or_else(|| "new baseline content not loaded".to_string())?;
-            let ignore_cr = old_entry.spec.is_git() || new_entry.spec.is_git();
+            let ignore_cr = old.ignore_cr || new.ignore_cr;
             Ok(super::diff_baselines::diff_contents(old, new, ignore_cr))
         })();
         match result {
