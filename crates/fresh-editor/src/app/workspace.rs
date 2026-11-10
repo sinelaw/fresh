@@ -1051,10 +1051,17 @@ impl crate::app::window::Window {
         } else {
             std::collections::HashMap::new()
         };
+        // A saved cwd that has since been removed would otherwise land the
+        // shell in $HOME (portable-pty's fallback); the workspace root is
+        // the better guess. `manages_cwd` wrappers ignore this value.
+        let cwd = match terminal.cwd.as_ref() {
+            Some(dir) if !dir.is_dir() => Some(self.root.clone()),
+            other => other.cloned(),
+        };
         let terminal_id = match self.terminal_manager.spawn(
             terminal.cols,
             terminal.rows,
-            terminal.cwd.clone(),
+            cwd,
             Some(log_path.clone()),
             Some(backing_path.clone()),
             // Restore: this terminal's own saved transcript — keep streaming
@@ -2686,7 +2693,9 @@ impl crate::app::window::Window {
                 let (cols, rows) = handle
                     .map(|h| h.size())
                     .unwrap_or((self.terminal_width, self.terminal_height));
-                let cwd = handle.and_then(|h| h.cwd());
+                // Where the shell is *now*, not where it was spawned: a
+                // terminal the user `cd`'d elsewhere must come back there.
+                let cwd = handle.and_then(|h| h.current_working_dir());
                 let shell = handle
                     .map(|h| h.shell().to_string())
                     .unwrap_or_else(crate::services::terminal::detect_shell);
