@@ -93,23 +93,31 @@ impl Editor {
     ///
     /// `None` when the press carries no byte at all — the web's by-index
     /// route, and a keyboard activation.
-    /// **A double-click on a list row activates it**, the way Enter does:
-    /// the first press selected the row (its `select`), the second fires the
-    /// list's `activate` for the selection — opening a folder in a file
-    /// browser, choosing an entry in a picker. Other widgets take a second
-    /// press as another single one.
+    /// **A double-click on a list or tree row activates it**, the way Enter
+    /// does: the first press selected the row (its `select`), the second
+    /// fires the widget's `activate` for the selection — opening a folder in
+    /// a file browser, choosing an entry in a picker, opening a workspace on
+    /// a board. Other widgets take a second press as another single one.
     pub(crate) fn activate_on_double_click(
         &mut self,
         panel_key: &crate::widgets::PanelKey,
         hit: &crate::widgets::WidgetEvent,
     ) {
-        if hit.widget_kind != "list" || hit.event_type != "select" {
+        // A row's body, not its disclosure glyph or checkbox: those report
+        // `expand` / `toggle`, and a double click on them is two of those.
+        if hit.event_type != "select" {
             return;
         }
         let owner = hit.owner().to_string();
         let ev = self.widget_registry.get(panel_key).and_then(|p| {
             let spec = crate::widgets::find_widget_by_key(&p.spec, &owner)?;
-            crate::widgets::kinds::list::activate_event(spec, &owner, p)
+            // A tree row opens on a double click as a list row does: the same
+            // `activate` Enter fires, on the row the first click selected.
+            match hit.widget_kind {
+                "list" => crate::widgets::kinds::list::activate_event(spec, &owner, p),
+                "tree" => crate::widgets::kinds::tree::activate_event(spec, &owner, p),
+                _ => None,
+            }
         });
         if let Some((event_type, payload)) = ev {
             self.fire_widget_event(panel_key, owner, event_type, payload);

@@ -419,7 +419,12 @@ function openBoard(): void {
 /** On opening a lens, start on what needs you: the first waiting card,
  *  else the first card. */
 function focusLensStart(): void {
-  const start = nextAttention(cards, -1) ?? null;
+  // What needs you first; with nothing waiting, the lens's first card — a
+  // tree must hold the focus, or the board's keys (pin, unpin, next) would
+  // have no card to act on.
+  const start = nextAttention(cards, -1) ??
+    groupsFor(saved.lens, cards, folders).flatMap((g) => g.cards)[0] ??
+    null;
   if (start) reveal(start);
   else if (saved.lens !== "board") panel?.mutate({ kind: "setFocusKey", widgetKey: listKey(saved.lens) });
 }
