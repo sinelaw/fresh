@@ -369,6 +369,28 @@ fn shift_tab_csi_z() {
 }
 
 #[test]
+fn shift_tab_csi_z_keeps_the_other_modifiers() {
+    // `CSI 1 ; <mods> Z`: WezTerm's legacy encoding of Ctrl+Shift+Tab is
+    // `CSI 1 ; 5 Z`, and a terminal may also report the Shift it implies
+    // (`CSI 1 ; 6 Z`). Either way the key is the shifted Tab; Ctrl and Alt
+    // must survive.
+    let cases: &[(&[u8], KeyModifiers)] = &[
+        (b"\x1b[1;2Z", KeyModifiers::SHIFT),
+        (b"\x1b[1;5Z", KeyModifiers::SHIFT | KeyModifiers::CONTROL),
+        (b"\x1b[1;6Z", KeyModifiers::SHIFT | KeyModifiers::CONTROL),
+        (b"\x1b[1;3Z", KeyModifiers::SHIFT | KeyModifiers::ALT),
+    ];
+    for (bytes, mods) in cases {
+        let mut p = InputParser::new();
+        assert_eq!(
+            keys(&p.parse(bytes)),
+            vec![(KeyCode::BackTab, *mods)],
+            "{bytes:?}"
+        );
+    }
+}
+
+#[test]
 fn focus_events() {
     let mut p = InputParser::new();
     assert!(matches!(p.parse(b"\x1b[I")[0], Event::FocusGained));
