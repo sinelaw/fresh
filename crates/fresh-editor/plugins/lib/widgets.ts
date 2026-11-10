@@ -693,7 +693,10 @@ export function treeNode(
  * (depth-first); the host filters out descendants of collapsed
  * nodes at render time. **Toggling expansion is host-owned** —
  * `Right`/`Left` arrow keys and disclosure clicks update host
- * instance state without the plugin re-emitting. Plugins that
+ * instance state without the plugin re-emitting. An arrow with
+ * nothing to expand, fold or climb to (Right on a leaf, Left on a
+ * top-level node) is not the tree's: it passes, and the panel moves
+ * focus to the control beside the tree that way. Plugins that
  * need to react to expansion changes listen for
  * `widget_event` `eventType: "expand"`.
  *

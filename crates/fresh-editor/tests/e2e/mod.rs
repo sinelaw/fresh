@@ -432,6 +432,8 @@ pub mod toggle_comment;
 pub mod torn_save_not_changed_on_disk;
 #[cfg(feature = "plugins")]
 pub mod tree_expansion_owner;
+#[cfg(feature = "plugins")]
+pub mod tree_lateral_landing;
 pub mod trust_activation_cancellable;
 pub mod undo_bulk_edit_after_save;
 pub mod undo_redo_marker_roundtrip;
@@ -458,5 +460,7 @@ pub mod warning_indicators;
 pub mod widget_panel_ownership;
 pub mod window_switch_explorer_first_frame;
 pub mod word_drag_selection;
+#[cfg(feature = "plugins")]
+pub mod workboard;
 #[cfg(feature = "plugins")]
 pub mod workspace;

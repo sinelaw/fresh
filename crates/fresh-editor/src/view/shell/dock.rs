@@ -164,6 +164,7 @@ fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
                     hovered_popup_row: i.hovered_popup_row.clone(),
                     reveal: i.reveal.clone(),
                     avail_height: i.avail_height,
+                    fill: false,
                     scrollbar_reveal: i.scrollbar_reveal,
                     surface: super::widgets::panel_surface(),
                     markdown: i.markdown.as_ref().map(|m| m.ctx()),

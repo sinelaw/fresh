@@ -1837,11 +1837,11 @@ function refreshExternal(): void {
   void feed.refresh();
 }
 
-// The group's rows: sessions not already a workspace here, matching the
-// dock's search, in first-seen order. Only workspaces on this machine can
-// stand for a local session, and one on its host for a session over SSH; a
-// cloud one is matched by the directory it materializes into.
-function externalVisible(): LiveSession[] {
+// Sessions open outside this editor that no workspace here stands for, in
+// first-seen order. Only workspaces on this machine can stand for a local
+// session, and one on its host for a session over SSH; a cloud one is
+// matched by the directory it materializes into.
+function externalUnrepresented(): LiveSession[] {
   const roots: string[] = [];
   const remoteRoots: { host: string; root: string }[] = [];
   for (const s of orchestratorSessions.values()) {
@@ -1849,13 +1849,17 @@ function externalVisible(): LiveSession[] {
     // A session taken over on its SSH host is that host's workspace now.
     if (s.id > 0 && s.remote?.kind === "ssh") remoteRoots.push({ host: s.remote.detail, root: s.root });
   }
-  const needle = (openDialog?.filter.value ?? "").trim().toLowerCase();
   return unrepresented(externalSessions, roots, editor.getDataDir(), remoteRoots)
-    .filter((s) =>
-      needle === "" ||
-      `${s.title} ${liveTail(s)} ${s.agent}`.toLowerCase().includes(needle)
-    )
     .sort((a, b) => (externalOrder.get(a.key) ?? 0) - (externalOrder.get(b.key) ?? 0));
+}
+
+// The group's rows: those, matching the dock's search.
+function externalVisible(): LiveSession[] {
+  const needle = (openDialog?.filter.value ?? "").trim().toLowerCase();
+  return externalUnrepresented().filter((s) =>
+    needle === "" ||
+    `${s.title} ${liveTail(s)} ${s.agent}`.toLowerCase().includes(needle)
+  );
 }
 
 function liveByKey(key: string): LiveSession | undefined {
@@ -16560,6 +16564,11 @@ export type WorkspaceSummary = {
   /** Backend kind for a remote workspace (`ssh`, `docker`, …), absent for
    *  a local one. */
   backend?: string;
+  /** For a `"pending"` row, how its create stands: `"creating"` while it
+   *  runs, `"error"` once it has failed (with the reason in `message`), or
+   *  `"paused"` for one restored from a previous run and not resumed yet.
+   *  The dock's retry / dismiss apply to the last two. Absent otherwise. */
+  pending?: { phase: "creating" | "error" | "paused"; message: string };
 };
 
 /// One archived workspace, as `listArchived()` reports it. An archived
@@ -16779,6 +16788,19 @@ export type OrchestratorApi = DiscoveryHost & {
   setDockView(view: "card" | "compact"): void;
   /** Set any of the dock's filter controls. See `DockFilterOptions`. */
   setDockFilter(options?: DockFilterOptions): void;
+
+  // ── sessions outside the editor ────────────────────────────────────────
+  // What the dock's external sessions group lists (fed by `live-sessions`;
+  // its `refresh()` asks for a fresh answer) and what Enter on a row does.
+
+  /** Claude and Codex sessions open outside this editor that no workspace
+   *  here stands for — the dock's external group, without its search. */
+  listExternalSessions(): LiveSession[];
+  /** Open one of `listExternalSessions()` by its `key`, as its dock row's
+   *  Open does: attach or take it over in a workspace, open a cloud
+   *  session's page, or start teleporting it (the checkout is asked for).
+   *  Resolves `false` when no session has that key. */
+  openExternalSession(key: string): Promise<boolean>;
 };
 
 declare global {
@@ -17014,6 +17036,11 @@ async function newWorkspace(
 }
 
 function listWorkspaces(): WorkspaceSummary[] {
+  // Every workspace means the ones saved by earlier runs too, which the
+  // dock and the picker load on first open. A caller that lists before
+  // either has opened (a script, the Workboard) asks for the same load;
+  // it is requested once, and its rows land on a later call.
+  requestAllWorkspaces();
   // Reconcile first: a workspace created seconds ago (by a script, or by
   // the dialog) is only in the model once the host's window list has been
   // folded in, and a caller listing right after creating should see it.
@@ -17051,6 +17078,9 @@ function listWorkspaces(): WorkspaceSummary[] {
         }
         : undefined,
       backend: session.remote?.kind,
+      ...(session.pending
+        ? { pending: { phase: session.pending.phase, message: session.pending.message } }
+        : {}),
     };
   });
 }
@@ -17450,6 +17480,12 @@ editor.exportPluginApi("orchestrator", {
   unarchiveWorkspace: apiUnarchiveWorkspace,
   setDockView: apiSetDockView,
   setDockFilter: apiSetDockFilter,
+  listExternalSessions: externalUnrepresented,
+  openExternalSession: async (key: string): Promise<boolean> => {
+    if (!liveByKey(key)) return false;
+    await openLiveSession(key, { dive: true });
+    return true;
+  },
 });
 
 // Form key bindings. The focused control answers a key first — a field

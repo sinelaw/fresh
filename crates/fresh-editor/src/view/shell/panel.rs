@@ -66,6 +66,12 @@ pub struct Panel {
     /// beside the dock. The orchestrator's global modals opt into the former
     /// so they are not cramped into the region right of their own dock.
     pub fullscreen: bool,
+    /// A centred box this percentage of its bounds tall, rather than as tall
+    /// as its rows (`FloatingPanelControl` `"fill"`). This is what gives an
+    /// auto-sized list or tree in it a height to fill: it is `Flex(1)`, and
+    /// a box that hugs its contents has no leftover height to share out.
+    /// `None` — every dialog that sizes to its form — keeps the hug.
+    pub fill_height_pct: Option<u8>,
     /// **The interior: the spec, and the host state it reads.** Every
     /// mounted panel is described — `view::shell::widgets` has a node for
     /// every variant, a `WindowEmbed` included — so the box is as tall and
@@ -645,8 +651,14 @@ pub fn layer_for(p: &Panel) -> Node<UiMsg> {
                     frame_box(p)
                         .w(Sizing::Pct(*width_pct))
                         .min_w(20)
-                        // As tall as its rows: the interior measures itself.
-                        .h(Sizing::Auto)
+                        // As tall as its rows — the interior measures
+                        // itself — unless the panel asked to fill a share
+                        // of its bounds, which is what gives a list or tree
+                        // left to size itself the height it grows into.
+                        .h(match p.fill_height_pct {
+                            Some(pct) => Sizing::Pct(pct.clamp(1, 100)),
+                            None => Sizing::Auto,
+                        })
                         // The floor the arithmetic carried: a box is its two
                         // border rows and at least one row of content, even
                         // when the spec produced none.
@@ -696,6 +708,14 @@ pub fn layer_for(p: &Panel) -> Node<UiMsg> {
 fn frame_box(p: &Panel) -> Node<UiMsg> {
     let ring = ring_theme(p);
     let framed = col().theme(ring).border().child(body(p));
+    // A box with a height of its own (`fill_height_pct`) hands it down: the
+    // ring and the content area fill it, so the interior's flexible children
+    // — an auto-sized list or tree, a `flexSpacer` — share out what the rows
+    // leave. Hugging, a flexible child has no leftover to take.
+    let framed = match p.fill_height_pct {
+        Some(_) => framed.h(Sizing::Flex(1)),
+        None => framed,
+    };
     let claim = move |e: &Event| {
         e.stop();
         None
@@ -798,6 +818,14 @@ fn body(p: &Panel) -> Node<UiMsg> {
     // `Stretch` then widens the body to whatever the box settled on — which
     // for a centred panel's percentage width is exactly the fill this had.
     let area = row().w(Sizing::Auto).key(body_key());
+    // A panel that fills has a definite box on both axes, so its content
+    // area takes the whole of it — width too. Hugging, the area was as wide
+    // as its widest row, and a table (whose columns fit the width they are
+    // given) settled at whatever its siblings happened to need.
+    let area = match p.fill_height_pct {
+        Some(_) => area.h(Sizing::Flex(1)).w(Sizing::Flex(1)),
+        None => area,
+    };
     let keymap = i.keymap.clone();
     // **The width the widgets are laid out at is layout's answer, not the
     // caller's.** A centred panel is a percentage of its bounds, so nobody
@@ -807,6 +835,7 @@ fn body(p: &Panel) -> Node<UiMsg> {
     // node was given. The alternative is the caller computing the percentage
     // itself, which is the second layout this migration exists to remove.
     let rests_empty = i.keyboard && i.focus_key.is_empty();
+    let fill = p.fill_height_pct.is_some();
     // **A dialog's right margin mirrors its left.** A panel that reserves the
     // `▸ ` gutter starts every control two columns in from the ring; without
     // the same two on the right, full-width fields and section rules ran
@@ -817,7 +846,7 @@ fn body(p: &Panel) -> Node<UiMsg> {
         _ => 0,
     };
     let inner = fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
-        super::widgets::node(
+        let node = super::widgets::node(
             &i.spec,
             info.constraints.max_w.max(1),
             &super::widgets::Ctx {
@@ -835,12 +864,24 @@ fn body(p: &Panel) -> Node<UiMsg> {
                 hovered_item_key: i.hovered_item_key.clone(),
                 hovered_popup_row: i.hovered_popup_row.clone(),
                 avail_height: i.avail_height,
+                fill: fill,
                 scrollbar_reveal: i.scrollbar_reveal,
                 surface: super::widgets::panel_surface(),
                 markdown: i.markdown.as_ref().map(|m| m.ctx()),
             },
-        )
+        );
+        // Filling, the spec's root spans the area it was laid into, so its
+        // rows (and a table's columns) spread across the panel rather than
+        // stopping at the widest sibling's natural width.
+        match fill {
+            true => node.w(Sizing::Flex(1)),
+            false => node,
+        }
     });
+    let inner = match fill {
+        true => inner.w(Sizing::Flex(1)),
+        false => inner,
+    };
     // The scope its keyboard layer names, and the fallback for what its
     // widgets decline — see `interior`. Every described interior is one,
     // whether or not anything in it is a Tab stop: an interior with no
@@ -995,6 +1036,7 @@ mod tests {
             closable: true,
             focused: true,
             fullscreen: true,
+            fill_height_pct: None,
             interior,
         }
     }
@@ -1032,6 +1074,217 @@ mod tests {
                 "centred at {pct}% with {rows} rows"
             );
         }
+    }
+
+    /// **A panel asked to fill is that tall, and an auto-sized tree in it gets
+    /// the rows its siblings leave** (`FloatingPanelControl` `"fill"`).
+    /// Hugging its rows, the box had no height for a `visibleRows`-less tree
+    /// to fill and the tree drew nothing; filling, the tree takes the middle
+    /// and the key hints stay on the box's last row.
+    #[test]
+    fn a_filling_panel_gives_an_auto_sized_tree_the_rows_left_over() {
+        let spec: fresh_core::api::WidgetSpec = serde_json::from_value(serde_json::json!({
+            "kind": "col",
+            "children": [
+                { "kind": "label", "text": "header", "key": "top" },
+                {
+                    "kind": "tree",
+                    "key": "rows",
+                    "nodes": [
+                        { "text": { "text": "a" }, "depth": 0, "hasChildren": false },
+                        { "text": { "text": "b" }, "depth": 0, "hasChildren": false }
+                    ],
+                    "itemKeys": ["a", "b"],
+                    "selectedIndex": 0,
+                    "expandedKeys": [],
+                    "checkable": false,
+                    "itemHeight": 1,
+                    "cardBorders": false,
+                    "indentCols": 2,
+                    "toggleOnClick": false
+                },
+                { "kind": "hintBar", "entries": [{ "keys": "Esc", "label": "close" }], "key": "hints" }
+            ]
+        }))
+        .expect("a valid spec");
+        let mut p = panel(Spot::Centered { width_pct: 80 }, interior_of(spec.clone()));
+        p.fill_height_pct = Some(100);
+        let ui = laid_out(Some(p));
+        let box_rect = rect(&ui, &key()).expect("a box");
+        assert_eq!(
+            box_rect.height, FRAME.height,
+            "the box is the share it asked for"
+        );
+        // Which row each piece of text was painted on.
+        let row_of = |ui: &Ui<UiMsg>, needle: &str| {
+            ui.spec()
+                .items
+                .iter()
+                .find(|i| format!("{:?}", i.draw).contains(needle))
+                .map(|i| i.rect.y)
+        };
+        let last_inner = (box_rect.y + box_rect.height - 2) as i32;
+        assert_eq!(
+            row_of(&ui, "header"),
+            Some(box_rect.y as i32 + 1),
+            "the header is the first row"
+        );
+        assert_eq!(
+            row_of(&ui, "close"),
+            Some(last_inner),
+            "the hints are the last row inside the ring"
+        );
+        assert_eq!(
+            row_of(&ui, "\"  b\""),
+            Some(box_rect.y as i32 + 3),
+            "the tree's rows follow the header"
+        );
+
+        // Without "fill" nothing propagates: the same spec — an auto-sized
+        // tree inside a column — leaves the box hugging its rows rather than
+        // growing to its bounds.
+        let ui = laid_out(Some(panel(
+            Spot::Centered { width_pct: 80 },
+            interior_of(spec.clone()),
+        )));
+        assert!(
+            rect(&ui, &key()).expect("a box").height < FRAME.height,
+            "a box that did not ask to fill does not grow because a tree could"
+        );
+        // And a dialog of fixed rows hugs them, as every other dialog does.
+        let ui = laid_out(Some(panel(
+            Spot::Centered { width_pct: 80 },
+            rows_of(5, 10),
+        )));
+        assert!(
+            rect(&ui, &key()).expect("a box").height < FRAME.height,
+            "a box that did not ask to fill hugs its rows"
+        );
+    }
+
+    /// **The fill reaches trees inside framed columns** — a board: a row of
+    /// labelled sections, each holding a tree left to size itself. A frame
+    /// or a row that hugged its content handed such a tree no rows; one
+    /// around a filler fills, so every column reaches down to the hints.
+    #[test]
+    fn a_filling_panel_reaches_trees_in_a_row_of_sections() {
+        let column = |label: &str, item: &str| {
+            serde_json::json!({
+                "kind": "labeledSection",
+                "label": label,
+                "child": {
+                    "kind": "tree",
+                    "key": format!("col-{label}"),
+                    "nodes": [{ "text": { "text": item }, "depth": 0, "hasChildren": false }],
+                    "itemKeys": [item],
+                    "selectedIndex": 0,
+                    "expandedKeys": [],
+                    "checkable": false,
+                    "itemHeight": 1,
+                    "cardBorders": false,
+                    "indentCols": 2,
+                    "toggleOnClick": false
+                }
+            })
+        };
+        let spec: fresh_core::api::WidgetSpec = serde_json::from_value(serde_json::json!({
+            "kind": "col",
+            "children": [
+                { "kind": "row", "children": [column("Todo", "first-card"), column("Done", "other-card")], "wrap": false, "justifyEnd": false },
+                { "kind": "hintBar", "entries": [{ "keys": "Esc", "label": "close" }] }
+            ]
+        }))
+        .expect("a valid spec");
+        let mut p = panel(Spot::Centered { width_pct: 80 }, interior_of(spec));
+        p.fill_height_pct = Some(100);
+        let ui = laid_out(Some(p));
+        let box_rect = rect(&ui, &key()).expect("a box");
+        let row_of = |needle: &str| {
+            ui.spec()
+                .items
+                .iter()
+                .find(|i| format!("{:?}", i.draw).contains(needle))
+                .map(|i| i.rect.y)
+        };
+        assert!(
+            row_of("first-card").is_some() && row_of("other-card").is_some(),
+            "both columns' cards are drawn"
+        );
+        assert_eq!(
+            row_of("close"),
+            Some((box_rect.y + box_rect.height - 2) as i32),
+            "the hints stay on the last row inside the ring"
+        );
+    }
+
+    /// **A table is as wide as the panel that fills, whatever its cells.** A
+    /// filling panel holding a table tree with more rows than fit: the rows'
+    /// band and the scrollbar reach the panel's right edge. The table used
+    /// to hug its siblings' natural width, so the bar sat mid-panel and moved
+    /// as scrolling changed what was measured.
+    #[test]
+    fn a_scrolling_table_keeps_the_panel_width() {
+        const ROWS: usize = 60;
+        let rows: Vec<serde_json::Value> = (0..ROWS)
+            .map(|i| {
+                serde_json::json!({
+                    "text": { "text": "" }, "depth": 1, "hasChildren": false,
+                    "cells": [{ "text": format!("ws-{i}") }, { "text": "status" }, { "text": "1m" }]
+                })
+            })
+            .collect();
+        let keys: Vec<String> = (0..ROWS).map(|i| format!("k{i}")).collect();
+        let spec: fresh_core::api::WidgetSpec = serde_json::from_value(serde_json::json!({
+            "kind": "col",
+            "children": [
+                {
+                    "kind": "tree", "key": "rows", "nodes": rows, "itemKeys": keys,
+                    "selectedIndex": 0, "expandedKeys": [], "checkable": false, "itemHeight": 1,
+                    "cardBorders": false, "indentCols": 2, "toggleOnClick": false,
+                    "columns": [
+                        { "title": "Workspace", "elide": "tail", "maxWidth": 0 },
+                        { "title": "Status", "elide": "tail", "maxWidth": 0 },
+                        { "title": "For", "elide": "tail", "maxWidth": 4 }
+                    ]
+                },
+                { "kind": "hintBar", "entries": [{ "keys": "Esc", "label": "close" }] }
+            ]
+        }))
+        .expect("a valid spec");
+        let mut p = panel(Spot::Centered { width_pct: 100 }, interior_of(spec));
+        p.fill_height_pct = Some(100);
+        let ui = laid_out(Some(p));
+        let box_rect = rect(&ui, &key()).expect("a box");
+        // The inner right edge: the box less its ring.
+        let inner_right = (box_rect.x + box_rect.width - 1) as i32;
+        let bar = ui
+            .spec()
+            .items
+            .iter()
+            .find(|i| matches!(i.draw, fresh_ui::Draw::Scrollbar { .. }))
+            .expect("sixty rows scroll, so the table has a scrollbar");
+        assert_eq!(
+            bar.rect.x + bar.rect.w as i32,
+            inner_right,
+            "the scrollbar is flush with the panel's right edge, not where the cells end"
+        );
+        let band = ui
+            .spec()
+            .items
+            .iter()
+            .filter(|i| {
+                matches!(i.draw, fresh_ui::Draw::Fill)
+                    && i.rect.h == 1
+                    && i.rect.y == box_rect.y as i32 + 2
+            })
+            .map(|i| i.rect.w)
+            .max()
+            .expect("a row band");
+        assert!(
+            band >= box_rect.width - 3,
+            "a row's band spans the panel ({band} of {}), however narrow its cells",
+            box_rect.width
+        );
     }
 
     /// And an anchored popup, including both clamps — a cell near the right

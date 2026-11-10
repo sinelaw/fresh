@@ -146,8 +146,15 @@ impl WidgetImpl for Tree {
                 };
                 select_move(spec, widget_key, panel, delta, fx);
             }
+            // An arrow that expands, collapses or climbs to a parent is the
+            // tree's; one with nothing to do here — a leaf with no parent,
+            // or nothing selected — is not, and passes, so the panel moves
+            // focus to the control beside the tree (R4). A board of trees
+            // side by side is walked with ←/→ that way.
             (KeyCode::Left, m) | (KeyCode::Right, m) if m.is_empty() => {
-                lateral(spec, widget_key, panel, key.code() == KeyCode::Right, fx);
+                if !lateral(spec, widget_key, panel, key.code() == KeyCode::Right, fx) {
+                    return super::KeyDisposition::Pass;
+                }
             }
             // Panning. `Left`/`Right` are collapse/expand — the tree meaning
             // every OS tree widget and the ARIA tree pattern give them — so
@@ -482,33 +489,34 @@ pub fn select_move(
 ///   collapse it. Else move selection up to the parent.
 ///
 /// Updates host instance state and (when a change happened) queues
-/// `expand` or `select`.
+/// `expand` or `select`. Returns whether anything changed — `false` is an
+/// arrow the tree had no use for.
 pub fn lateral(
     spec: &WidgetSpec,
     widget_key: &str,
     panel: &mut crate::widgets::WidgetPanelState,
     is_right: bool,
     fx: &mut super::KeyFx,
-) {
+) -> bool {
     let WidgetSpec::Tree {
         nodes, item_keys, ..
     } = spec
     else {
-        return;
+        return false;
     };
     if nodes.is_empty() {
-        return;
+        return false;
     }
     let Resolved {
         selected: cur_sel,
         mut expanded,
     } = resolve(spec, widget_key, &panel.instance_states);
     if cur_sel < 0 {
-        return;
+        return false;
     }
     let sel_idx = cur_sel as usize;
     let Some(node) = nodes.get(sel_idx) else {
-        return;
+        return false;
     };
     let key = item_keys[sel_idx].clone();
     let was_expanded = expanded.contains(&key);
@@ -528,7 +536,7 @@ pub fn lateral(
     }
     // No change → bail (don't fire spurious select/expand).
     if expansion_changed.is_none() && new_sel == cur_sel {
-        return;
+        return false;
     }
     let final_key = item_keys[new_sel as usize].clone();
     panel.instance_states.insert(
@@ -556,6 +564,7 @@ pub fn lateral(
             }),
         ));
     }
+    true
 }
 
 /// The `activate` event for the currently-selected node, if any.
@@ -713,6 +722,34 @@ mod tests {
             &mut fx,
         );
         (d, fx)
+    }
+
+    /// ←/→ belong to the tree only while they do something — expand, fold,
+    /// or climb to a parent. One with nothing to do here reports so, and the
+    /// key passes on (R4: an unused arrow moves focus by screen position),
+    /// which is how a row of trees is walked with ←/→.
+    #[test]
+    fn a_lateral_arrow_with_nothing_to_do_is_not_the_trees() {
+        let spec = tree(false);
+        let mut panel = panel_of(&spec);
+        click(&spec, &mut panel, 0, "g");
+        let mut fx = super::super::KeyFx::default();
+        assert!(
+            lateral(&spec, "t", &mut panel, true, &mut fx),
+            "→ opens the heading"
+        );
+        assert!(
+            !lateral(&spec, "t", &mut panel, true, &mut fx),
+            "→ on an open heading does nothing"
+        );
+        assert!(
+            lateral(&spec, "t", &mut panel, false, &mut fx),
+            "← folds it"
+        );
+        assert!(
+            !lateral(&spec, "t", &mut panel, false, &mut fx),
+            "← on a folded top-level heading has no parent to climb to"
+        );
     }
 
     #[test]

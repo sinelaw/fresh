@@ -6330,6 +6330,7 @@ impl Editor {
             scrollbar_zone_hovered: false,
             scrollbar_flash_until: None,
             fullscreen: false,
+            fill: false,
             focus_marker,
             label_align,
             // The native modal frame is a centered-modal affordance; the dock
@@ -6442,6 +6443,7 @@ impl Editor {
             scrollbar_zone_hovered: false,
             scrollbar_flash_until: None,
             fullscreen: false,
+            fill: false,
             focus_marker: false,
             label_align: Default::default(),
             title: None,
@@ -6741,6 +6743,7 @@ impl Editor {
                 fwp.placement = super::PanelPlacement::Anchored { x, y };
                 fwp.focused = true;
                 fwp.fullscreen = false;
+                fwp.fill = false;
                 false
             }
             "focus" => {
@@ -6754,6 +6757,14 @@ impl Editor {
             // paints), so no relayout; the next frame reads the flag.
             "fullscreen" => {
                 fwp.fullscreen = arg != 0.0;
+                false
+            }
+            // Make a centered panel `height_pct` tall instead of as tall as
+            // its rows, so a list or tree left to size itself has a height
+            // to fill. `arg != 0` enables it. Only where the box paints
+            // changes, so no relayout.
+            "fill" => {
+                fwp.fill = arg != 0.0;
                 false
             }
             other => {

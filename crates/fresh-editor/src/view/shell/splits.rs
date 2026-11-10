@@ -1869,6 +1869,7 @@ fn panel_content(id: LeafId, i: super::panel::Interior, active: bool) -> Node<Ui
                     Some(_) => None,
                     None => Some(info.constraints.max_h as u32),
                 },
+                fill: false,
                 scrollbar_reveal: i.scrollbar_reveal,
                 // Not `panel_surface`: a mounted panel's rows were buffer
                 // text on the editor's own ground. See `widgets::pane_surface`.

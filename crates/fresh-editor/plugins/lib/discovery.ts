@@ -34,6 +34,40 @@ export interface DiscoveryHost {
   addMachine(done: (savedKey: string | null) => void): void;
 }
 
+/** One session a scan found, with the machine it was found on. */
+export interface DetectedSession {
+  /** The machine's key in `DiscoveryHost.scanTargets()`. */
+  machineKey: string;
+  machineLabel: string;
+  session: CollectedSession;
+  /** When that machine was last scanned, epoch ms. */
+  scannedAt: number;
+}
+
+/** The Import sessions plugin's surface, reachable through
+ *  `editor.getPluginApi("agent-discovery")`. */
+export interface AgentDiscoveryApi {
+  /** Open the Import sessions dialog. */
+  open(): void;
+  /** Every session the latest scan of each machine found — the dialog's
+   *  scans and `scan()`'s alike. Empty until something has scanned. */
+  detectedSessions(): DetectedSession[];
+  /** Scan every reachable machine, as the dialog's "All machines" does;
+   *  resolves once every machine has answered. A scan already running is
+   *  joined, not restarted. */
+  scan(): Promise<void>;
+  /** Rejoin one of `detectedSessions()`: the New Workspace form opens filled
+   *  in with the attach or resume command, as Enter in the dialog does.
+   *  Null once it opens, else why it could not. */
+  importSession(machineKey: string, sessionId: string, tool?: string): string | null;
+}
+
+declare global {
+  interface FreshPluginRegistry {
+    "agent-discovery": AgentDiscoveryApi;
+  }
+}
+
 /** One column of a row, and which end of it survives a cut. A path keeps
  *  its tail — the directory it ends in is what tells two checkouts of one
  *  repository apart — and everything else keeps its head. */

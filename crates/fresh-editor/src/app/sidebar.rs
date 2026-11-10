@@ -649,6 +649,7 @@ impl super::Editor {
     ) -> usize {
         panel.placement = super::PanelPlacement::SidebarSection { rows };
         panel.fullscreen = false;
+        panel.fill = false;
         let key = panel.panel_key.clone();
         // A section parked out of scope comes back as itself — rows,
         // collapsed state and all — rather than as a new one.

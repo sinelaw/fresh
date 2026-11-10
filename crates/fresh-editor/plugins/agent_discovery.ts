@@ -23,7 +23,10 @@ import {
   discoverRowsFrom,
   discoverVisibleRowCount,
   quoteForAgentCmd,
+  discoverVerbFor,
   DISCOVER_INDENT_COLS,
+  type AgentDiscoveryApi,
+  type DetectedSession,
   type DiscoverGrouping,
   type DiscoverVerb,
   type DiscoverRow,
@@ -420,6 +423,51 @@ function closeDiscoverDialog(): void {
 
 // Scan the selected machine through the `agent-sessions` hub. A machine with
 // an open window is read through it; one without is dialled and hung up after.
+/** Each machine's latest answer, by machine key — from the dialog's scans and
+ *  from `scan()` on the plugin API alike, so a session found either way is
+ *  in `detectedSessions()`. */
+const latestScans = new Map<string, { label: string; scan: ScanResult; at: number }>();
+
+/** Scan `members` in parallel, each on its own connection and budget, and
+ *  record each machine's answer. A machine that fails becomes a problem line
+ *  for that machine, not a rejection that throws away every other answer.
+ *  `stops` collects a stop per scan that starts. */
+async function scanMembers(
+  api: NonNullable<ReturnType<typeof hub>>,
+  members: DiscoverTarget[],
+  stops: (() => void)[],
+): Promise<DiscoverScan[]> {
+  const answers = await Promise.all(
+    members.map(async (m): Promise<DiscoverScan> => {
+      try {
+        const scan = await api.scan(m.spec, {
+          onStarted: (stop) => stops.push(stop),
+          // A connection we dialled ourselves runs no commands, so asking
+          // would only produce a refusal per scanner. Transcripts are still
+          // found; only the live listing (tmux, zellij) is lost.
+          allowCommands: !m.connects,
+        });
+        return { key: m.key, label: m.label, scan };
+      } catch (err) {
+        return {
+          key: m.key,
+          label: m.label,
+          scan: {
+            machine: m.label,
+            sessions: [],
+            links: [],
+            tools: [],
+            problems: [editor.t("discover.failed", { error: String(err) })],
+          },
+        };
+      }
+    }),
+  );
+  const at = Date.now();
+  for (const a of answers) latestScans.set(a.key, { label: a.label, scan: a.scan, at });
+  return answers;
+}
+
 async function runDiscoverScan(): Promise<void> {
   const st = discoverState;
   if (!st || st.scanning) return;
@@ -461,34 +509,7 @@ async function runDiscoverScan(): Promise<void> {
     for (const stop of stops) stop();
   };
   try {
-    const answers = await Promise.all(
-      members.map(async (m): Promise<DiscoverScan> => {
-        try {
-          const scan = await api.scan(m.spec, {
-            onStarted: (stop) => stops.push(stop),
-            // A connection we dialled ourselves runs no commands, so asking
-            // would only produce a refusal per scanner. Transcripts are still
-            // found; only the live listing (tmux, zellij) is lost.
-            allowCommands: !m.connects,
-          });
-          return { key: m.key, label: m.label, scan };
-        } catch (err) {
-          // One machine failing becomes a problem line for that machine, not
-          // a rejection that throws away every other machine's answer.
-          return {
-            key: m.key,
-            label: m.label,
-            scan: {
-              machine: m.label,
-              sessions: [],
-              links: [],
-              tools: [],
-              problems: [editor.t("discover.failed", { error: String(err) })],
-            },
-          };
-        }
-      }),
-    );
+    const answers = await scanMembers(api, members, stops);
     // An abandoned scan still settles. Write nothing unless this is still the
     // current scan, or a stale answer would be shown under another machine's
     // name.
@@ -521,33 +542,29 @@ async function runDiscoverScan(): Promise<void> {
 
 /** Hand a discovered session to the New Workspace form, filled in. The form
  *  rather than a silent launch: it shows what will run and where, and dials
- *  an unattached machine with the usual trust decision in front of it. */
-function openWorkspaceForDiscovered(
+ *  an unattached machine with the usual trust decision in front of it.
+ *
+ *  Returns null once the form is open, else why it could not be.
+ *  `beforeOpen` runs just before the form opens (the dialog closes there). */
+function importDiscovered(
   session: CollectedSession,
   verb: DiscoverVerb,
   machineKey: string | undefined,
-): void {
-  const st = discoverState;
-  if (!st || verb.kind === "none") return;
+  machineLabel: string | undefined,
+  beforeOpen?: () => void,
+): string | null {
+  if (verb.kind === "none") return verb.why;
   const quoted = verb.argv.map(quoteForAgentCmd);
   const bad = quoted.indexOf(null);
-  if (bad >= 0) {
-    st.note = editor.t("discover.unquotable", { arg: verb.argv[bad] });
-    refreshDiscoverDialog();
-    return;
-  }
-  // The row's machine, not the picker's: under "All machines" the picker is
-  // not a machine, and it can change after a scan.
+  if (bad >= 0) return editor.t("discover.unquotable", { arg: verb.argv[bad] });
+  // The session's machine, not the picker's: under "All machines" the picker
+  // is not a machine, and it can change after a scan.
   const target = scanTargets().find((t) => t.key === machineKey) ?? null;
   if (!target?.reach) {
-    st.note = editor.t("discover.machine_gone", {
-      machine: st.scans?.find((s) => s.key === machineKey)?.label ?? machineKey ?? "",
-    });
-    refreshDiscoverDialog();
-    return;
+    return editor.t("discover.machine_gone", { machine: machineLabel ?? machineKey ?? "" });
   }
   const reach = target.reach;
-  closeDiscoverDialog();
+  beforeOpen?.();
   host()?.openWorkspaceForm(reach, {
     projectPath: session.cwd ?? "",
     cmd: quoted.join(" "),
@@ -555,7 +572,7 @@ function openWorkspaceForDiscovered(
     ...(session.title ? { label: session.title } : {}),
   });
   // An inexact resume rejoins the newest session in the directory, which may
-  // not be this row. Said after the form opens so its status does not overwrite it.
+  // not be this one. Said after the form opens so its status does not overwrite it.
   if (verb.kind === "resume" && !verb.exact) {
     editor.setStatus(
       editor.t("discover.status_prefix", {
@@ -565,6 +582,23 @@ function openWorkspaceForDiscovered(
         }),
       }),
     );
+  }
+  return null;
+}
+
+/** The dialog's Enter on a session row: import it, or say why not. */
+function openWorkspaceForDiscovered(
+  session: CollectedSession,
+  verb: DiscoverVerb,
+  machineKey: string | undefined,
+): void {
+  const st = discoverState;
+  if (!st || verb.kind === "none") return;
+  const machine = st.scans?.find((s) => s.key === machineKey)?.label;
+  const why = importDiscovered(session, verb, machineKey, machine, closeDiscoverDialog);
+  if (why !== null) {
+    st.note = why;
+    refreshDiscoverDialog();
   }
 }
 
@@ -723,6 +757,36 @@ editor.registerCommand("%cmd.import_sessions", "%cmd.import_sessions_desc", "age
   terminalBypass: true,
 });
 
-editor.exportPluginApi("agent-discovery", { open: openAgentDiscovery });
+// A scan of every reachable machine started through the API; a second call
+// while it runs joins it rather than starting another.
+let apiScan: Promise<void> | null = null;
+
+function scanAllMachines(): Promise<void> {
+  if (apiScan) return apiScan;
+  const api = hub();
+  const members = discoverAllMembers();
+  if (!api || members.length === 0) return Promise.resolve();
+  apiScan = scanMembers(api, members, [])
+    .then(() => undefined)
+    .finally(() => {
+      apiScan = null;
+    });
+  return apiScan;
+}
+
+editor.exportPluginApi("agent-discovery", {
+  open: openAgentDiscovery,
+  detectedSessions: (): DetectedSession[] =>
+    [...latestScans].flatMap(([machineKey, m]) =>
+      m.scan.sessions.map((session) => ({ machineKey, machineLabel: m.label, session, scannedAt: m.at }))
+    ),
+  scan: scanAllMachines,
+  importSession: (machineKey: string, sessionId: string, tool?: string): string | null => {
+    const m = latestScans.get(machineKey);
+    const session = m?.scan.sessions.find((x) => x.id === sessionId && (tool === undefined || x.tool === tool));
+    if (!m || !session) return editor.t("discover.machine_gone", { machine: m?.label ?? machineKey });
+    return importDiscovered(session, discoverVerbFor(session, resumeArgv, t), machineKey, m.label);
+  },
+} satisfies AgentDiscoveryApi);
 
 editor.debug("agent-discovery: Import sessions dialog registered");

@@ -387,6 +387,7 @@ fn control(it: &Item, band: &str) -> Node<UiMsg> {
             hovered_popup_row: String::new(),
             reveal: fresh_ui::behavior::anchor::Anchor::new(),
             avail_height: None,
+            fill: false,
             scrollbar_reveal: None,
             surface: surface.clone(),
             // No markdown document view in a settings control: the settings

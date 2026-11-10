@@ -391,6 +391,7 @@ fn panel_body(i: usize, p: &super::panel::Interior) -> Node<UiMsg> {
                 hovered_popup_row: interior.hovered_popup_row.clone(),
                 reveal: interior.reveal.clone(),
                 avail_height: interior.avail_height,
+                fill: false,
                 scrollbar_reveal: interior.scrollbar_reveal,
                 surface: super::widgets::panel_surface(),
                 markdown: interior.markdown.as_ref().map(|m| m.ctx()),
