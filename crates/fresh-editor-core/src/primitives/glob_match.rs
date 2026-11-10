@@ -1,8 +1,9 @@
 //! Glob pattern matching for filename and path detection.
 //!
-//! Supports `*` (matches any sequence of characters) and `?` (matches exactly one character)
-//! for filename matching, plus `**` (matches across directory boundaries) for path matching.
+//! Supports `*` (matches any sequence of characters) and `?` (matches exactly one character,
+//! i.e. one grapheme cluster) for filename matching, plus `**` (matches across directory boundaries) for path matching.
 
+use crate::primitives::grapheme::next_grapheme_boundary;
 use std::path::Path;
 
 /// Check if a pattern string contains glob characters (`*` or `?`).
@@ -22,8 +23,8 @@ pub fn is_path_pattern(pattern: &str) -> bool {
 
 /// Match a glob pattern against a filename (not a full path).
 ///
-/// Supports `*` (matches any sequence of characters) and `?` (matches exactly one character).
-/// The match is performed against the entire filename.
+/// Supports `*` (matches any sequence of characters) and `?` (matches exactly one character, i.e. one grapheme cluster, so decomposed
+/// `e` + U+0301 counts as one). The match is performed against the entire filename.
 ///
 /// Examples:
 /// - `"*.conf"` matches `"nftables.conf"`, `"resolv.conf"`
@@ -31,7 +32,7 @@ pub fn is_path_pattern(pattern: &str) -> bool {
 /// - `"Dockerfile*"` matches `"Dockerfile"`, `"Dockerfile.dev"`
 /// - `".env.*"` matches `".env.local"`, `".env.production"`
 pub fn filename_glob_matches(pattern: &str, filename: &str) -> bool {
-    glob_match_bytes(pattern.as_bytes(), filename.as_bytes())
+    glob_match_bytes(pattern.as_bytes(), filename)
 }
 
 /// Match a glob pattern against a full file path.
@@ -39,7 +40,7 @@ pub fn filename_glob_matches(pattern: &str, filename: &str) -> bool {
 /// In path mode:
 /// - `*` matches any sequence of characters **except** `/`
 /// - `**` matches any sequence of characters **including** `/` (crosses directory boundaries)
-/// - `?` matches exactly one character that is not `/`
+/// - `?` matches exactly one character (grapheme cluster) that is not `/`
 /// - `**/` is treated as a unit that matches zero or more directory levels
 ///
 /// Examples:
@@ -47,7 +48,7 @@ pub fn filename_glob_matches(pattern: &str, filename: &str) -> bool {
 /// - `"/etc/*.conf"` matches `"/etc/nftables.conf"` but not `"/etc/sub/nftables.conf"`
 /// - `"**/rc.*"` matches `"/etc/rc.conf"`, `"rc.conf"`
 pub fn path_glob_matches(pattern: &str, path: &str) -> bool {
-    path_glob_match_bytes(pattern.as_bytes(), path.as_bytes())
+    path_glob_match_bytes(pattern.as_bytes(), path)
 }
 
 // ---------------------------------------------------------------------------
@@ -92,17 +93,41 @@ pub fn matches_any_entry(patterns: &[String], path: &Path) -> bool {
         .any(|p| literal_entry_matches(p, &filename) || glob_entry_matches(p, &path_str, &filename))
 }
 
+/// Length in bytes of the character starting at byte `pos` of `text`.
+///
+/// Globs are matched on the bytes of a `&str`, so the backtracking of `*` has
+/// to step over a whole character, not a single byte, or a literal could be
+/// compared against the middle of a multi-byte character.
+#[inline]
+fn char_len_at(text: &str, pos: usize) -> usize {
+    text.get(pos..)
+        .and_then(|rest| rest.chars().next())
+        .map_or(1, char::len_utf8)
+}
+
+/// End of the grapheme cluster starting at byte `pos` of `text`: what one `?`
+/// consumes, so a decomposed `e` + U+0301 or an emoji with a skin-tone
+/// modifier counts as a single character.
+#[inline]
+fn grapheme_end(text: &str, pos: usize) -> usize {
+    next_grapheme_boundary(text, pos)
+}
+
 /// Iterative glob matching on byte slices using a backtracking algorithm.
 /// Used for filename matching where `*` matches any character.
-fn glob_match_bytes(pattern: &[u8], text: &[u8]) -> bool {
+fn glob_match_bytes(pattern: &[u8], text: &str) -> bool {
+    let text_bytes = text.as_bytes();
     let mut p = 0;
     let mut t = 0;
     // Track the last `*` position for backtracking
     let mut star_p = usize::MAX;
     let mut star_t = 0;
 
-    while t < text.len() {
-        if p < pattern.len() && (pattern[p] == b'?' || pattern[p] == text[t]) {
+    while t < text_bytes.len() {
+        if p < pattern.len() && pattern[p] == b'?' {
+            p += 1;
+            t = grapheme_end(text, t);
+        } else if p < pattern.len() && pattern[p] == text_bytes[t] {
             p += 1;
             t += 1;
         } else if p < pattern.len() && pattern[p] == b'*' {
@@ -112,7 +137,7 @@ fn glob_match_bytes(pattern: &[u8], text: &[u8]) -> bool {
         } else if star_p != usize::MAX {
             // Backtrack: consume one more char with the last `*`
             p = star_p + 1;
-            star_t += 1;
+            star_t += char_len_at(text, star_t);
             t = star_t;
         } else {
             return false;
@@ -154,7 +179,8 @@ fn path_chars_match(pattern_byte: u8, text_byte: u8) -> bool {
 /// When `**` is followed by `/` (or `\`), the trailing separator is consumed
 /// as part of the `**` token, allowing `**/` to match zero or more complete
 /// directory levels.
-fn path_glob_match_bytes(pattern: &[u8], text: &[u8]) -> bool {
+fn path_glob_match_bytes(pattern: &[u8], text: &str) -> bool {
+    let text_bytes = text.as_bytes();
     let mut p = 0;
     let mut t = 0;
     // Track the last `**` position for backtracking
@@ -164,7 +190,7 @@ fn path_glob_match_bytes(pattern: &[u8], text: &[u8]) -> bool {
     let mut star_p: Option<usize> = None;
     let mut star_t: usize = 0;
 
-    while t < text.len() {
+    while t < text_bytes.len() {
         // Check for `**` (double star)
         if p + 1 < pattern.len() && pattern[p] == b'*' && pattern[p + 1] == b'*' {
             let mut next_p = p + 2;
@@ -193,14 +219,14 @@ fn path_glob_match_bytes(pattern: &[u8], text: &[u8]) -> bool {
         }
 
         // Check for `?` (matches one non-separator character)
-        if p < pattern.len() && pattern[p] == b'?' && !is_path_sep(text[t]) {
+        if p < pattern.len() && pattern[p] == b'?' && !is_path_sep(text_bytes[t]) {
             p += 1;
-            t += 1;
+            t = grapheme_end(text, t);
             continue;
         }
 
         // Literal character match (treating `/` and `\` as equivalent)
-        if p < pattern.len() && path_chars_match(pattern[p], text[t]) {
+        if p < pattern.len() && path_chars_match(pattern[p], text_bytes[t]) {
             p += 1;
             t += 1;
             continue;
@@ -208,8 +234,8 @@ fn path_glob_match_bytes(pattern: &[u8], text: &[u8]) -> bool {
 
         // Mismatch — try backtracking to single `*` first (if it won't cross a separator)
         if let Some(sp) = star_p {
-            if !is_path_sep(text[star_t]) {
-                star_t += 1;
+            if !is_path_sep(text_bytes[star_t]) {
+                star_t += char_len_at(text, star_t);
                 t = star_t;
                 p = sp;
                 continue;
@@ -219,7 +245,7 @@ fn path_glob_match_bytes(pattern: &[u8], text: &[u8]) -> bool {
 
         // Backtrack to `**` (can cross anything including separators)
         if let Some(dp) = dstar_p {
-            dstar_t += 1;
+            dstar_t += char_len_at(text, dstar_t);
             t = dstar_t;
             p = dp;
             star_p = None;
@@ -458,5 +484,56 @@ mod tests {
         // `?` should not match `\`
         assert!(path_glob_matches("C:\\etc\\rc.?", "C:\\etc\\rc.d"));
         assert!(!path_glob_matches("C:\\etc\\?", "C:\\etc\\ab"));
+    }
+
+    #[test]
+    fn test_question_mark_matches_one_multibyte_character() {
+        assert!(filename_glob_matches("caf?.txt", "café.txt"));
+        assert!(filename_glob_matches("?.md", "日.md"));
+        assert!(filename_glob_matches("a?c", "a😀c"));
+        assert!(!filename_glob_matches("caf?.txt", "caf.txt"));
+        // Two question marks are two characters, not the two bytes of one.
+        assert!(!filename_glob_matches("caf??.txt", "café.txt"));
+        assert!(filename_glob_matches("caf??.txt", "cafés.txt"));
+        // A star in front must not let `?` land inside a character either.
+        assert!(!filename_glob_matches("*??", "é"));
+        assert!(filename_glob_matches("*?", "é"));
+    }
+
+    #[test]
+    fn test_question_mark_matches_one_grapheme() {
+        // Decomposed "café" (what macOS returns for filenames) is the same
+        // visible name as the precomposed one, so `?` covers both.
+        assert!(filename_glob_matches("caf?.txt", "cafe\u{301}.txt"));
+        assert!(!filename_glob_matches("caf??.txt", "cafe\u{301}.txt"));
+        // Emoji with a skin-tone modifier is one character.
+        assert!(filename_glob_matches("?.png", "\u{1F44D}\u{1F3FD}.png"));
+        assert!(!filename_glob_matches("??.png", "\u{1F44D}\u{1F3FD}.png"));
+        // `*` may still stop between code points, so a literal mark matches.
+        assert!(filename_glob_matches("caf*\u{301}.txt", "cafe\u{301}.txt"));
+    }
+
+    #[test]
+    fn test_path_question_mark_matches_one_grapheme() {
+        assert!(path_glob_matches("/docs/caf?.md", "/docs/cafe\u{301}.md"));
+        assert!(!path_glob_matches("/docs/caf??.md", "/docs/cafe\u{301}.md"));
+        assert!(path_glob_matches(
+            "/docs/?.png",
+            "/docs/\u{1F44D}\u{1F3FD}.png"
+        ));
+        assert!(!path_glob_matches(
+            "/docs/??.png",
+            "/docs/\u{1F44D}\u{1F3FD}.png"
+        ));
+    }
+
+    #[test]
+    fn test_path_question_mark_matches_one_multibyte_character() {
+        assert!(path_glob_matches("/docs/caf?.md", "/docs/café.md"));
+        assert!(path_glob_matches("/docs/?/readme", "/docs/日/readme"));
+        assert!(!path_glob_matches("/docs/caf??.md", "/docs/café.md"));
+        assert!(!path_glob_matches("/docs/?", "/docs/é/x"));
+        assert!(!path_glob_matches("/docs/**/??", "/docs/a/é"));
+        assert!(path_glob_matches("/docs/**/?", "/docs/a/é"));
     }
 }
