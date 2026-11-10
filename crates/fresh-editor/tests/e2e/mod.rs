@@ -418,6 +418,7 @@ pub mod terminal;
 pub mod terminal_child_keys;
 pub mod terminal_child_wheel;
 pub mod terminal_close;
+pub mod terminal_cwd_restore;
 pub mod terminal_link;
 pub mod terminal_pane_navigation_live;
 pub mod terminal_resize;

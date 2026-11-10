@@ -102,6 +102,11 @@ pub struct TerminalHandle {
     rows: u16,
     /// Working directory used for the terminal
     cwd: Option<std::path::PathBuf>,
+    /// Whether the PTY child runs on this host in `cwd` (the local
+    /// authority). `false` for `manages_cwd` wrappers (docker/ssh): their
+    /// child is the local `docker`/`ssh` client, so its `/proc` cwd and any
+    /// cwd it reports say nothing about the shell on the other side.
+    cwd_is_local: bool,
     /// Shell executable used to spawn the terminal
     shell: String,
     /// PID of the shell child process at the head of the pty's
@@ -213,8 +218,14 @@ impl TerminalHandle {
 
     /// The shell's *live* working directory — where the user has `cd`'d to,
     /// not where the terminal was spawned. Read from `/proc/<pid>/cwd` on
-    /// Linux; other platforms (and dead pids) fall back to the spawn cwd.
+    /// Linux, else from the shell's last OSC 7 report; falls back to the
+    /// spawn cwd for a dead pid, a shell that reports nothing, or a
+    /// `manages_cwd` wrapper (docker/ssh), whose child is a local client
+    /// and not the shell.
     pub fn current_working_dir(&self) -> Option<std::path::PathBuf> {
+        if !self.cwd_is_local {
+            return self.cwd.clone();
+        }
         #[cfg(target_os = "linux")]
         {
             if let Some(pid) = self.pid {
@@ -225,6 +236,14 @@ impl TerminalHandle {
                     return Some(cwd);
                 }
             }
+        }
+        if let Some(reported) = self
+            .state
+            .lock()
+            .ok()
+            .and_then(|s| s.cwd().map(std::path::Path::to_path_buf))
+        {
+            return Some(reported);
         }
         self.cwd.clone()
     }
@@ -382,6 +401,7 @@ impl TerminalManager {
         extra_env: HashMap<String, String>,
     ) -> Result<TerminalHandle, String> {
         let pty_pair = open_pty(cols, rows)?;
+        let cwd_is_local = !terminal_wrapper.manages_cwd;
 
         // The active authority's terminal wrapper drives the shell command
         // unconditionally — local wraps `detect_shell()` with no args;
@@ -513,6 +533,7 @@ impl TerminalManager {
             cols,
             rows,
             cwd,
+            cwd_is_local,
             shell,
             pid: child_pid,
             master_fd,
