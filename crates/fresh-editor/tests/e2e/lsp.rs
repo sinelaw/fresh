@@ -3945,10 +3945,9 @@ fn test_inlay_hint_cleared_when_range_deleted() -> anyhow::Result<()> {
 ///
 /// Injected hint cells borrow the overlays standing at the byte before them
 /// so a band's background continues behind them (see
-/// `overlay_extend_to_line_end_covers_inlay_hints`). They must borrow only the
-/// ground: the `(` in `package(...)` carries the bracket-colourisation
-/// `Foreground` overlay, so `name:` used to render in the bracket's colour
-/// while the `version:` hint after a plain space stayed grey.
+/// `overlay_extend_to_line_end_covers_inlay_hints`). The `(` in `package(...)`
+/// carries a bracket-colourisation overlay. That colour belongs to the
+/// bracket glyph, while both parameter hints keep their own colour.
 #[test]
 fn test_inlay_hint_keeps_its_colour_next_to_a_colourised_bracket() -> anyhow::Result<()> {
     use crate::common::harness::HarnessOptions;

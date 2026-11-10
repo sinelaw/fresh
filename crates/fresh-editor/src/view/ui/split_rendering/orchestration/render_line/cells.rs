@@ -687,15 +687,8 @@ impl CellPass<'_, '_, '_> {
             None => None,
         };
 
-        // Pre-resolved active overlays for this cell. A cell with no source
-        // byte of its own — a spliced inlay hint — borrows the *ground* of the
-        // text it was spliced into, so it does not punch a hole through the
-        // band an `extend_to_line_end` overlay paints across the row. Its ink
-        // stays its own: `compute_char_style` drops foreground effects for
-        // such a cell (a hint beside a colourised bracket is still grey).
-        // Before the row's first glyph the sweep still stands on the previous
-        // row, so move it onto this one; after it, it is already on the
-        // hint's neighbour.
+        // Injected cells can inherit overlays from adjacent source text.
+        // Advance the sweep first when the cell precedes this row's first byte.
         let row_start_byte = input.view_line.source_start_byte;
         let before_first_glyph = self.first_line_byte_pos.is_none();
         if byte_pos.is_none() && before_first_glyph {
@@ -733,7 +726,6 @@ impl CellPass<'_, '_, '_> {
             highlight_bg_theme_key,
             semantic_token_color,
             active_overlays: cell_overlays,
-            injected_cell: byte_pos.is_none(),
             primary_cursor_position: input.selection.primary_cursor_position,
             is_active: input.is_active,
             skip_primary_cursor_reverse: input.session_mode,
