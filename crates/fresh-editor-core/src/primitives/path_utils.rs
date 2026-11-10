@@ -43,7 +43,6 @@ pub fn strip_verbatim_prefix(path: &Path) -> Cow<'_, Path> {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
-        use std::path::Component;
 
         /// Win32's `MAX_PATH`, which counts the terminating NUL: a plain path
         /// most programs can open is at most 259 UTF-16 units long.
@@ -52,15 +51,9 @@ pub fn strip_verbatim_prefix(path: &Path) -> Cow<'_, Path> {
         let Some(plain) = verbatim_prefix_removed(path) else {
             return Cow::Borrowed(path);
         };
-        // `components` yields `.` (`CurDir`) here only because the path is
-        // verbatim; in a plain path std drops it. Either way `.` and `..` fall
-        // to the last arm: they stay literal only in a verbatim path.
-        let keeps_meaning = path.components().all(|component| match component {
-            Component::Prefix(_) | Component::RootDir => true,
-            Component::Normal(name) => component_keeps_meaning_unprefixed(&name.to_string_lossy()),
-            _ => false,
-        });
-        if !keeps_meaning || plain.as_os_str().encode_wide().count() >= MAX_PATH {
+        if !components_keep_meaning_unprefixed(path)
+            || plain.as_os_str().encode_wide().count() >= MAX_PATH
+        {
             return Cow::Borrowed(path);
         }
         Cow::Owned(plain)
@@ -80,13 +73,16 @@ pub fn strip_verbatim_prefix(path: &Path) -> Cow<'_, Path> {
 /// one of them only (`notes.`, a long path) and make `strip_prefix` fail.
 /// The two sides are compared as given and then both without the prefix, so
 /// a verbatim file under a plain base, or the other way round, still matches.
+/// The second comparison is only made when every component of `base` reads
+/// the same with and without the prefix: `C:\work\project.` is the directory
+/// `project`, so `\\?\C:\work\project.\f` (inside `project.`) is not under it.
 pub fn relative_to_or_absolute<'a>(path: &'a Path, base: &Path) -> Cow<'a, Path> {
     if let Ok(relative) = path.strip_prefix(base) {
         return Cow::Borrowed(relative);
     }
     let plain_path = verbatim_prefix_removed(path);
     let plain_base = verbatim_prefix_removed(base);
-    if plain_path.is_some() || plain_base.is_some() {
+    if (plain_path.is_some() || plain_base.is_some()) && components_keep_meaning_unprefixed(base) {
         let plain_path = plain_path.as_deref().unwrap_or(path);
         let plain_base = plain_base.as_deref().unwrap_or(base);
         if let Ok(relative) = plain_path.strip_prefix(plain_base) {
@@ -129,6 +125,22 @@ fn verbatim_prefix_removed(path: &Path) -> Option<PathBuf> {
     {
         None
     }
+}
+
+/// Whether every component of `path` reads the same with and without the
+/// verbatim prefix ([`component_keeps_meaning_unprefixed`]); `.` and `..`
+/// never do, since only a verbatim path keeps them literal.
+///
+/// `components` yields `.` (`CurDir`) in the middle of a path only because
+/// the path is verbatim; std drops it from a plain one. That is what lets
+/// `\\?\C:\dir\.\f.txt` reach the `CurDir` arm here.
+fn components_keep_meaning_unprefixed(path: &Path) -> bool {
+    use std::path::Component;
+    path.components().all(|component| match component {
+        Component::Prefix(_) | Component::RootDir => true,
+        Component::Normal(name) => component_keeps_meaning_unprefixed(&name.to_string_lossy()),
+        Component::CurDir | Component::ParentDir => false,
+    })
 }
 
 /// Whether Win32 reads one path component the same without the verbatim
@@ -343,6 +355,18 @@ mod tests {
             )
             .as_ref(),
             Path::new(&"c".repeat(30))
+        );
+        // A plain base that Win32 reads as another directory: `project.` is
+        // `project`, so a file inside the real `project.` is not under it.
+        let dotted = Path::new(r"\\?\C:\work\project.\notes.txt");
+        assert_eq!(
+            relative_to_or_absolute(dotted, Path::new(r"C:\work\project.")).as_ref(),
+            dotted
+        );
+        // Under the verbatim spelling of the same base it is relative.
+        assert_eq!(
+            relative_to_or_absolute(dotted, Path::new(r"\\?\C:\work\project.")).as_ref(),
+            Path::new("notes.txt")
         );
         // Outside the base, the absolute path as `strip_verbatim_prefix` shows it.
         let outside = Path::new(r"\\?\C:\other\notes.");
