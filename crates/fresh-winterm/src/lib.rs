@@ -7,8 +7,14 @@
 //! - Terminal size queries via console screen buffer
 //! - Detection of MSYS2/Cygwin ptys (mintty), which have no console
 //!
-//! On non-Windows platforms, this crate compiles as empty.
+//! On non-Windows platforms, this crate compiles as empty apart from the
+//! platform-independent matching in `corrupt_input`, kept there so its tests
+//! run everywhere.
 
+// Plain byte matching used by `vt_input`; built everywhere so its tests run
+// on every platform.
+#[cfg_attr(not(windows), allow(dead_code))]
+mod corrupt_input;
 #[cfg(windows)]
 mod msys_pty;
 #[cfg(windows)]
