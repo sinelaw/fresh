@@ -68,8 +68,7 @@ pub fn key_to_pty_bytes(
         KeyCode::Enter => Some(maybe_esc(alt, vec![b'\r'])),
         KeyCode::Tab => {
             if shift {
-                // Shift+Tab (backtab)
-                Some(vec![0x1b, b'[', b'Z'])
+                Some(back_tab(modifiers))
             } else {
                 Some(maybe_esc(alt, vec![b'\t']))
             }
@@ -80,7 +79,7 @@ pub fn key_to_pty_bytes(
         // fell into the `_ => None` catch-all below and Shift+Tab was
         // silently dropped before reaching the PTY (issue #2029,
         // sub-bug 2).
-        KeyCode::BackTab => Some(vec![0x1b, b'[', b'Z']),
+        KeyCode::BackTab => Some(back_tab(modifiers)),
         KeyCode::Backspace => {
             if ctrl {
                 // Ctrl+Backspace - delete word
@@ -491,6 +490,22 @@ fn xterm_modifier_param(modifiers: KeyModifiers) -> Option<u8> {
     (bits != 0).then_some(1 + bits)
 }
 
+/// Shift+Tab: `CSI Z`, and `CSI 1 ; <mods> Z` when anything besides Shift is
+/// held.
+///
+/// `Z` already says Shift, so Shift is left out of the parameter and the rest
+/// is encoded as for the cursor keys — WezTerm's Ctrl+Shift+Tab, `CSI 1 ; 5 Z`,
+/// is what comes out for the same chord, and it is what the input parser
+/// decodes back to `BackTab` with Ctrl and Shift. A fixed `CSI Z` would turn
+/// Ctrl+Shift+Tab into plain Shift+Tab for a child that has not turned on the
+/// kitty protocol.
+fn back_tab(modifiers: KeyModifiers) -> Vec<u8> {
+    match xterm_modifier_param(modifiers - KeyModifiers::SHIFT) {
+        Some(param) => csi(&format!("1;{param}"), b'Z'),
+        None => vec![0x1b, b'[', b'Z'],
+    }
+}
+
 /// A cursor-style key: `CSI 1 ; <mods> <final>` when modified, and
 /// `CSI <final>` — or `SS3 <final>` under DECCKM — when not.
 fn cursor_key(final_byte: u8, modifiers: KeyModifiers, app_cursor: bool) -> Vec<u8> {
@@ -578,6 +593,31 @@ mod tests {
     fn test_shift_tab_via_backtab_variant() {
         let bytes = key_to_pty_bytes(KeyCode::BackTab, KeyModifiers::NONE, false);
         assert_eq!(bytes, Some(vec![0x1b, b'[', b'Z']));
+    }
+
+    /// Ctrl and Alt on Shift+Tab reach a child without the kitty protocol as
+    /// `CSI 1 ; <mods> Z`, the form the input parser reads them back from,
+    /// whichever variant crossterm used and whether or not SHIFT is still set.
+    #[test]
+    fn test_modified_shift_tab_keeps_its_modifiers() {
+        let ctrl = KeyModifiers::CONTROL;
+        let shift = KeyModifiers::SHIFT;
+        let alt = KeyModifiers::ALT;
+        for (code, modifiers, expected) in [
+            (KeyCode::BackTab, ctrl, "\x1b[1;5Z"),
+            (KeyCode::BackTab, ctrl | shift, "\x1b[1;5Z"),
+            (KeyCode::Tab, ctrl | shift, "\x1b[1;5Z"),
+            (KeyCode::BackTab, alt, "\x1b[1;3Z"),
+            (KeyCode::Tab, alt | shift, "\x1b[1;3Z"),
+            (KeyCode::BackTab, ctrl | alt, "\x1b[1;7Z"),
+            (KeyCode::BackTab, shift, "\x1b[Z"),
+        ] {
+            assert_eq!(
+                key_to_pty_bytes(code, modifiers, false),
+                Some(expected.as_bytes().to_vec()),
+                "{code:?} {modifiers:?}"
+            );
+        }
     }
 
     #[test]
