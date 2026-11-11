@@ -265,6 +265,22 @@ pub struct Prompt {
     /// the allocation's identity is "these suggestions" and
     /// [`Prompt::names_are_paths`] can be kept against it.
     pub suggestions: std::rc::Rc<Vec<Suggestion>>,
+    /// Whether [`Self::suggestions`] is the provider's complete answer for
+    /// the current input, or was cut off at the provider's row cap.
+    ///
+    /// Tab's path completion in Quick Open's file finder reasons about the
+    /// match set as a whole — it extends the query to the longest prefix
+    /// every matching path shares — and a capped list is not that set. The
+    /// rows that survived the cap are the top-scoring ones, ordered by fuzzy
+    /// score and frecency rather than by the path tree, so they can share a
+    /// directory that the rows dropped on the floor do not. Completing there
+    /// would overwrite the query with a directory the user never chose and
+    /// make every dropped sibling unreachable from that input, so the
+    /// completion declines and Tab accepts the highlighted row instead.
+    ///
+    /// [`Self::set_suggestions`] clears it, so the flag can only ever
+    /// describe the list it was set for.
+    suggestions_capped: bool,
     /// [`Prompt::names_are_paths`]'s answer, and the list it was worked out
     /// for (held, so its address cannot be reused by another list).
     names_are_paths_of: std::cell::RefCell<Option<(std::rc::Rc<Vec<Suggestion>>, bool)>>,
@@ -367,6 +383,21 @@ impl Prompt {
             Suggestion::duplicate_id(&suggestions)
         );
         self.suggestions = std::rc::Rc::new(suggestions);
+        // A fresh list is the whole answer until its producer says otherwise,
+        // so the cap flag can never outlive the list it was set for.
+        self.suggestions_capped = false;
+    }
+
+    /// Mark the current list as cut off at the producer's row cap. Call it
+    /// right after [`Self::set_suggestions`], which clears the flag.
+    pub fn set_suggestions_capped(&mut self, capped: bool) {
+        self.suggestions_capped = capped;
+    }
+
+    /// Whether the current list was cut off at the producer's row cap — see
+    /// the field's docs for why Tab completion has to care.
+    pub fn suggestions_capped(&self) -> bool {
+        self.suggestions_capped
     }
 
     /// Where the selected suggestion is in the current list: `None` when
@@ -415,6 +446,7 @@ impl Prompt {
             prompt_type,
             suggestions: Default::default(),
             names_are_paths_of: Default::default(),
+            suggestions_capped: false,
             original_suggestions: None,
             selection: Default::default(),
             pager: fresh_ui::behavior::Pager::new(),
@@ -457,6 +489,7 @@ impl Prompt {
                 suggestions.into()
             },
             names_are_paths_of: Default::default(),
+            suggestions_capped: false,
             selection,
             pager: fresh_ui::behavior::Pager::new(),
             suggestions_set_for_input: None,
@@ -510,6 +543,7 @@ impl Prompt {
             prompt_type,
             suggestions: Default::default(),
             names_are_paths_of: Default::default(),
+            suggestions_capped: false,
             original_suggestions: None,
             selection: Default::default(),
             pager: fresh_ui::behavior::Pager::new(),

@@ -372,16 +372,22 @@ impl Editor {
     /// Update Quick Open suggestions based on current input, dispatching through the registry
     pub(super) fn update_quick_open_suggestions(&mut self, input: &str) {
         let context = self.build_quick_open_context();
-        let suggestions = if let Some((provider, query)) =
+        // `capped` travels with the list: the file provider cuts its matches
+        // off at a row cap, and Tab's path completion must not read a prefix
+        // shared by the survivors as one the whole match set shares.
+        let (suggestions, capped) = if let Some((provider, query)) =
             self.quick_open_registry.get_provider_for_input(input)
         {
-            provider.suggestions(query, &context)
+            let suggestions = provider.suggestions(query, &context);
+            let capped = provider.suggestions_capped(&suggestions);
+            (suggestions, capped)
         } else {
-            vec![]
+            (vec![], false)
         };
 
         if let Some(prompt) = &mut self.active_window_mut().prompt {
             prompt.set_suggestions(suggestions);
+            prompt.set_suggestions_capped(capped);
             prompt.select_suggestion(if prompt.suggestions.is_empty() {
                 None
             } else {
