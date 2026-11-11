@@ -122,35 +122,21 @@ impl BaselineStore {
     }
 }
 
-/// Line diff for a baseline comparison: `\r\n` and `\n` terminators
-/// match, so only line content is compared and never line-ending style.
-/// This is the single policy point for every baseline comparison — the
-/// git gutter and live diff both reach it — and it is deliberately
-/// unconditional, for two reasons.
+/// The one line diff every baseline comparison goes through.
 ///
-/// It is what the user wants to see. A working tree whose line endings
-/// differ from the repository's, from a fresh checkout's, or from each
-/// other (a CRLF file over an LF blob, an LF file written by a tool into
-/// a CRLF checkout, a mix) is otherwise rendered as a whole-file
-/// replacement in which nothing real is legible.
-///
-/// And it keeps the two comparisons in agreement. They diff different
-/// pairs — live diff the buffer against HEAD, a branch or the file on
-/// disk; the gutter the file on disk against HEAD — so any rule that
-/// held for some baselines and not others made them contradict each
-/// other on the same file: one marking every line, the other nothing.
-///
-/// The cost, accepted: a change that is *only* line-ending style is now
-/// invisible here. `git diff` and `git status` will still call such a
-/// file modified, and the editor will show no marks on it. Whether a
-/// line is terminated at all is still compared, so a lost or gained
-/// final newline remains a hunk, as it is for git.
+/// Ignoring line-ending style is unconditional on purpose: live diff and
+/// the gutter diff different pairs (buffer vs HEAD, a branch or disk;
+/// disk vs HEAD), so a rule that held for some baselines and not others
+/// made them contradict each other on the same file — one marking every
+/// line, the other nothing. Cost accepted: a change that is only
+/// line-ending style is invisible here, though `git status` still calls
+/// the file modified.
 pub fn diff_texts(old: &str, new: &str) -> Vec<fresh_core::api::LineDiffHunk> {
     fresh_core::diff::compute_line_diff_ignoring_cr(old, new)
 }
 
 /// Diff two loaded baseline contents (e.g. disk vs HEAD, the git-gutter
-/// comparison). Line-ending style is ignored, as for [`diff_texts`].
+/// comparison).
 pub fn diff_contents(old: &BaselineContent, new: &BaselineContent) -> DiffBaselineResult {
     DiffBaselineResult {
         revision: 0,

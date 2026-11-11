@@ -53,24 +53,13 @@ pub fn compute_line_diff(old_text: &str, new_text: &str) -> Vec<LineDiffHunk> {
     diff_interned_lines(&old_ids, &new_ids)
 }
 
-/// [`compute_line_diff`], but a `\r\n` line terminator matches a bare
-/// `\n`: only content changes are reported, not line-ending style.
-/// Whether a line is terminated at all still counts, so a
-/// "\ No newline at end of file" change is still a hunk.
+/// [`compute_line_diff`], but a `\r\n` terminator matches a bare `\n`.
+/// Whether a line is terminated at all still counts, so a lost final
+/// newline is still a hunk.
 ///
-/// This is close to how `git diff` sees a path it line-ending-normalizes
-/// (e.g. under `core.autocrlf` or `eol=crlf`): it compares in normalized
-/// form, so a working tree whose line endings differ from the blob's or
-/// the checkout's (a CRLF file over an LF blob, an LF file written by a
-/// tool in a CRLF checkout, or a mix) shows only its real edits.
-///
-/// Only close, because this is symmetric while git's cleaning is
-/// one-sided — git strips CR from the working tree and compares against
-/// the blob verbatim. The two coincide exactly when `old_text` holds no
-/// CRLF; against an `old_text` that does hold CRLF this reports less
-/// than git would, which is a policy choice for the caller to make, not
-/// this function. Use [`compute_line_diff`] where a line-ending change
-/// must itself be reported.
+/// Symmetric, where git's own eol handling is one-sided (it strips CR
+/// from the working tree and compares the blob verbatim), so against an
+/// `old_text` that holds CRLF this reports less than `git diff` would.
 pub fn compute_line_diff_ignoring_cr(old_text: &str, new_text: &str) -> Vec<LineDiffHunk> {
     fn intern<'a>(map: &mut HashMap<(&'a str, bool), u32>, line: &'a str) -> u32 {
         let key = match line.strip_suffix('\n') {

@@ -1382,23 +1382,18 @@ fn test_live_diff_waits_for_a_background_windows_buffer() {
         .unwrap();
 }
 
-/// Regression: a CRLF working-tree file whose blob is stored LF
-/// (`core.autocrlf=true`, the Windows default, or `eol=crlf`) diffed as
-/// one whole-file replacement — every old line as a deletion block above
-/// every new line as an addition block — because the HEAD baseline came
-/// from the raw blob (`git show`) and the line diff counts the terminator
-/// as part of the line. Against a blob that holds no CRLF the diff now
-/// ignores CRLF vs LF the way `git diff` does, so only the inserted line
-/// is reported and unchanged lines are not repeated as deletions.
+/// Guards the whole-file replacement: a CRLF working tree over an LF
+/// blob (`core.autocrlf=true`, or `eol=crlf`) diffed as every old line
+/// deleted above every new line added, because the line diff counts the
+/// terminator as part of the line.
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
 fn test_live_diff_crlf_worktree_against_lf_blob_diffs_per_line() {
     let repo = GitTestRepo::new();
     repo.setup_live_diff_plugin();
 
-    // The attribute is here only to build the fixture: it makes `git add`
-    // store an LF blob whatever the host's core.autocrlf is, so the
-    // committed blob is LF while the checkout stays CRLF.
+    // Only to build the fixture: makes `git add` store an LF blob
+    // whatever the host's core.autocrlf is.
     repo.create_file(".gitattributes", "*.rs text eol=crlf\n");
     repo.create_file(
         "src/utils.rs",
@@ -1409,7 +1404,6 @@ fn test_live_diff_crlf_worktree_against_lf_blob_diffs_per_line() {
 
     let _guard = repo.change_to_repo_dir();
 
-    // Insert one line in the middle, keeping CRLF like any Windows editor.
     repo.modify_file(
         "src/utils.rs",
         "UNCHANGED_HEAD_MARKER\r\nsecond\r\nINSERTED_LINE_MARKER\r\nthird\r\nUNCHANGED_TAIL_MARKER\r\n",
@@ -1451,12 +1445,9 @@ fn test_live_diff_crlf_worktree_against_lf_blob_diffs_per_line() {
     );
 }
 
-/// A working tree that mixes CRLF and LF (an agent writing LF lines into
-/// a CRLF checkout) over an LF blob. No single form of the baseline
-/// matches every line, so before this fix each CRLF line diffed against
-/// its LF blob line and unchanged lines were flagged. Like `git diff`,
-/// only the inserted line may be reported: unchanged lines carry no
-/// glyph, no deletion copy and no diff background.
+/// Same, for a working tree that mixes CRLF and LF (a tool writing LF
+/// lines into a CRLF checkout): no single form of the baseline matches
+/// every line, so an exact comparison flagged unchanged ones.
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
 fn test_live_diff_mixed_line_endings_diff_per_line() {
@@ -1473,7 +1464,6 @@ fn test_live_diff_mixed_line_endings_diff_per_line() {
 
     let _guard = repo.change_to_repo_dir();
 
-    // Mixed endings, one inserted line.
     repo.modify_file(
         "src/utils.rs",
         "UNCHANGED_HEAD_MARKER\r\nsecond\nINSERTED_LINE_MARKER\r\nthird\nUNCHANGED_TAIL_MARKER\r\n",
@@ -1519,8 +1509,8 @@ fn test_live_diff_mixed_line_endings_diff_per_line() {
     );
 
     // A whole-file mismatch can also show as the "modified" background
-    // without a glyph, so check the background directly.
-    // `Config::default()` is the `high-contrast` theme.
+    // with no glyph, so check the background too. `Config::default()` is
+    // the `high-contrast` theme.
     use ratatui::style::Color;
     let diff_bgs = [
         Some(Color::Rgb(0, 80, 0)),  // diff_add_bg
@@ -1544,13 +1534,10 @@ fn test_live_diff_mixed_line_endings_diff_per_line() {
     }
 }
 
-/// The mirror of the CRLF-worktree case: a blob stored CRLF under a
-/// working copy converted to LF. `git diff` reports every line of this
-/// until `git add --renormalize` rewrites the blob, but the editor
-/// compares line content only, so the one inserted line is all that may
-/// be marked. This is the direction an earlier revision got wrong by
-/// keying the decision off the blob's own line endings, and the
-/// direction master gets wrong by comparing terminators exactly.
+/// The mirror: a CRLF blob under a working copy converted to LF. `git
+/// diff` reports every line of this until `git add --renormalize`
+/// rewrites the blob; the editor compares content only. An earlier
+/// revision got this direction wrong by keying off the blob's endings.
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
 fn test_live_diff_crlf_blob_against_lf_worktree_diffs_per_line() {
@@ -1574,9 +1561,8 @@ fn test_live_diff_crlf_blob_against_lf_worktree_diffs_per_line() {
 
     let _guard = repo.change_to_repo_dir();
 
-    // Converted to LF, plus one inserted line. The insertion is what the
-    // test waits on, so "nothing else is marked" is never asserted before
-    // live diff has actually produced a result.
+    // The insertion is what the test waits on, so "nothing else is
+    // marked" is never asserted before live diff has produced a result.
     repo.modify_file(
         "src/utils.rs",
         "UNCHANGED_HEAD_MARKER\nsecond\nINSERTED_LINE_MARKER\nthird\nUNCHANGED_TAIL_MARKER\n",

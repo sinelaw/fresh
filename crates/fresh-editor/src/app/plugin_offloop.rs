@@ -807,11 +807,9 @@ pub(crate) fn load_diff_baseline(runtime: &LiveRuntime, cap: OffLoop, req: Basel
 /// Returns the raw bytes; the caller decodes them with the buffer's
 /// encoding.
 ///
-/// The blob is read as stored (`git show`), not in checkout form (`git
-/// cat-file --filters`): `--filters` runs the repository's smudge filters,
-/// i.e. commands configured by the workspace, which opening a file must
-/// not execute. Line endings are reconciled at diff time instead, by
-/// comparing line content only (see `diff_baselines::diff_texts`).
+/// Not `git cat-file --filters`: that runs the repository's smudge
+/// filters, i.e. commands the workspace configures, which opening a file
+/// must not execute.
 async fn load_git_baseline(
     spawner: &dyn crate::services::remote::ProcessSpawner,
     cwd: &std::path::Path,
