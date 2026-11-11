@@ -1092,13 +1092,23 @@ impl DirectoryContext {
 
     /// Get the default config directory path (static/internal version).
     ///
-    /// This is used internally by `from_system()` to determine the config directory.
+    /// This is used internally by `from_system()` to determine the config
+    /// directory, and by `Config::system_config_paths()` on every config load.
+    /// Those two must never disagree, so the answer is resolved once per
+    /// process and frozen — see [`crate::data_dir::OnceDir`].
     ///
     /// On macOS, an absolute `XDG_CONFIG_HOME` selects `$XDG_CONFIG_HOME/fresh`,
     /// unless the install is still on `~/.config/fresh` — see
     /// [`crate::data_dir::xdg_dir_with_continuity`]. A relative or empty value is
     /// ignored. Linux already follows the variable through `dirs::config_dir()`.
     fn default_config_dir() -> Option<PathBuf> {
+        static RESOLVED: crate::data_dir::OnceDir = crate::data_dir::OnceDir::new();
+        RESOLVED.get(Self::resolve_default_config_dir)
+    }
+
+    /// The resolution [`DirectoryContext::default_config_dir`] freezes. Call it
+    /// through that, not here: two calls can answer differently.
+    fn resolve_default_config_dir() -> Option<PathBuf> {
         #[cfg(target_os = "macos")]
         {
             Self::macos_config_dir(
