@@ -85,7 +85,9 @@ Spawn a process on the host regardless of the active authority.
 Intended for plugin internals that must run host-side work
 (e.g. `devcontainer up`) before installing an authority that
 would otherwise route the spawn elsewhere. Same calling shape
-as `spawnProcess`.
+as `spawnProcess`. With no `cwd`, it runs in the active window's
+folder — or, when that folder no longer exists, in the folder
+the editor itself was started in.
 
 ```typescript
 spawnHostProcess(command: string, args: string[], cwd?: string): ProcessHandle<SpawnResult>;

@@ -7593,7 +7593,9 @@ pub struct CreateWindowWithTerminalOptions {
     #[serde(default)]
     pub label: String,
     /// Working directory for the spawned terminal. Defaults to
-    /// `root` when omitted.
+    /// `root` when omitted. It must be a folder that exists on this
+    /// computer: when it is not, the call is rejected with a message
+    /// naming it, and no window is created.
     #[serde(default)]
     #[ts(optional)]
     pub cwd: Option<String>,

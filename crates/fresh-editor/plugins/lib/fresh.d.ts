@@ -1419,7 +1419,9 @@ type CreateWindowWithTerminalOptions = {
 	label: string;
 	/**
 	* Working directory for the spawned terminal. Defaults to
-	* `root` when omitted.
+	* `root` when omitted. It must be a folder that exists on this
+	* computer: when it is not, the call is rejected with a message
+	* naming it, and no window is created.
 	*/
 	cwd?: string;
 	/**
@@ -8198,7 +8200,9 @@ interface EditorAPI {
 	* Intended for plugin internals that must run host-side work
 	* (e.g. `devcontainer up`) before installing an authority that
 	* would otherwise route the spawn elsewhere. Same calling shape
-	* as `spawnProcess`.
+	* as `spawnProcess`. With no `cwd`, it runs in the active window's
+	* folder — or, when that folder no longer exists, in the folder
+	* the editor itself was started in.
 	*/
 	spawnHostProcess(command: string, args: string[], cwd?: string): ProcessHandle<SpawnResult>;
 	/**
