@@ -56,8 +56,8 @@ pub struct BaselineContent {
     /// plus one past-the-end entry.
     pub line_starts: Vec<usize>,
     /// Diffs against this content treat `\r\n` and `\n` as the same line
-    /// terminator. Set only for git baselines whose path git itself
-    /// line-ending-normalizes (see [`git_normalizes_eol`]); disk and saved
+    /// terminator. Set only for a git baseline whose blob holds no CRLF,
+    /// which is the form git stores a path it eol-converts; disk and saved
     /// baselines stay exact.
     pub ignore_cr: bool,
 }
@@ -131,72 +131,26 @@ impl BaselineStore {
     }
 }
 
-/// Whether git line-ending-normalizes this path when it diffs the working
-/// tree, i.e. whether `git diff` would ignore a CRLF-vs-LF difference.
-/// Mirrors the crlf_action logic of git's `convert.c`:
-///
-/// - `attr` is the `attr/` field of `git ls-files --eol` (e.g. `""`,
-///   `"text"`, `"-text"`, `"text=auto"`, `"text eol=crlf"`, `"eol=lf"`).
-/// - `autocrlf` is `core.autocrlf`, `None` when unset.
-/// - `blob_has_crlf`: whether the baseline blob still contains CRLF.
-///
-/// When this is false, a line-ending change is a real change to the file
-/// as far as git is concerned, and must stay visible in the diff.
-///
-/// `blob_has_crlf` gates *every* mode, not just the "auto" ones, because
-/// the normalization git applies is one-sided: it compares the working
-/// tree **cleaned** (CRLF -> LF) against the blob exactly as stored. That
-/// comparison only ignores CRLF vs LF while the blob is itself
-/// LF-normalized. A blob that still holds CRLF — committed before the
-/// attribute or the setting arrived, the state `git add --renormalize`
-/// exists to fix — differs from the cleaned working tree on every CRLF
-/// line, and `git diff` reports exactly that however the conversion was
-/// asked for: verified against git 2.43 for `text`, `eol=crlf`,
-/// `text=auto` and `core.autocrlf=true|input` over a CRLF blob, all of
-/// which report every line changed. (For the "auto" modes this doubles as
-/// git's own "safe autocrlf" check, which git makes against the index;
-/// here it is made against the baseline blob actually being diffed.)
-///
-/// Known imprecision, both in the direction of showing a change rather
-/// than hiding one: against an un-renormalized CRLF blob the comparison
-/// falls back to exact, so a working tree that still matches that blob
-/// byte-for-byte reads as unmodified here while `git diff` already
-/// reports the whole file. Matching that would mean diffing
-/// `clean(working tree)` against the blob rather than choosing between
-/// two symmetric comparisons.
-pub fn git_normalizes_eol(attr: &str, autocrlf: Option<&str>, blob_has_crlf: bool) -> bool {
-    if blob_has_crlf {
-        return false;
-    }
-    let mut text: Option<&str> = None;
-    let mut has_eol = false;
-    for token in attr.split_whitespace() {
-        match token {
-            "text" | "-text" | "text=auto" => text = Some(token),
-            t if t.starts_with("eol=") => has_eol = true,
-            _ => {}
-        }
-    }
-    match text {
-        Some("-text") => false,
-        Some(_) => true,         // text, text=auto
-        None if has_eol => true, // `eol` implies `text`
-        None => {
-            let auto = autocrlf.map(|v| v.trim().to_ascii_lowercase());
-            matches!(auto.as_deref(), Some("true" | "yes" | "on" | "1" | "input"))
-        }
-    }
-}
-
 /// Line diff for a baseline comparison. With `ignore_cr`, `\r\n` and `\n`
-/// terminators match — the way `git diff` compares a path git normalizes
-/// (see [`git_normalizes_eol`]): there the working tree's line endings
-/// legitimately differ from the repository's, and even from a fresh
-/// checkout's when a tool wrote the file with LF or mixed endings, so an
-/// exact comparison flagged every line of such files as changed.
-/// Everywhere else (disk and saved baselines, git paths git does not
-/// normalize) the comparison stays exact: a line-ending change is a real
-/// change to the file.
+/// terminators match — the way `git diff` compares a path git
+/// eol-converts: there the working tree's line endings legitimately
+/// differ from the repository's, and even from a fresh checkout's when a
+/// tool wrote the file with LF or mixed endings, so an exact comparison
+/// flagged every line of such files as changed. The caller sets it from
+/// the baseline alone: a blob holding no CRLF is the only one against
+/// which ignoring CRLF vs LF is ever right, and ignoring it on both
+/// sides is then the same answer as cleaning only the working-tree side,
+/// which is what git does. Everywhere else (disk and saved baselines, a
+/// blob that still holds CRLF) the comparison stays exact.
+///
+/// Known divergence from `git diff`, the only one, and it under-reports:
+/// where git is configured to convert nothing — `core.autocrlf` false or
+/// unset and no `text`/`eol` attribute — a CRLF or mixed working tree
+/// over an LF blob is a real change that git reports line by line, and
+/// this comparison hides it. Telling that case apart needs the path's
+/// attributes and `core.autocrlf`, i.e. two more child processes per
+/// baseline load and a parser for git's crlf_action rules; that was
+/// measured against this at ~330 lines and deliberately traded away.
 pub fn diff_texts(old: &str, new: &str, ignore_cr: bool) -> Vec<fresh_core::api::LineDiffHunk> {
     if ignore_cr {
         fresh_core::diff::compute_line_diff_ignoring_cr(old, new)
@@ -366,82 +320,6 @@ mod tests {
         assert_eq!(c.line(3), None);
         let sliced = slice_lines(&c, &[(0, 2), (2, 5)]);
         assert_eq!(sliced, vec![vec!["alpha", "beta"], vec!["gamma"]]);
-    }
-
-    /// The cases checked against `git diff`: `true` exactly where `git
-    /// diff` reports no change for a CRLF-vs-LF-only edit. The
-    /// blob-has-CRLF rows were re-checked against git 2.43.
-    #[test]
-    fn git_normalizes_eol_matches_git_diff() {
-        // (case, attr, core.autocrlf, blob has CRLF, git ignores CR)
-        let cases: &[(&str, &str, Option<&str>, bool, bool)] = &[
-            (
-                "A: autocrlf=false, CRLF blob",
-                "",
-                Some("false"),
-                true,
-                false,
-            ),
-            (
-                "B: autocrlf=false, LF blob",
-                "",
-                Some("false"),
-                false,
-                false,
-            ),
-            ("B': autocrlf unset, LF blob", "", None, false, false),
-            ("C: autocrlf=true, LF blob", "", Some("true"), false, true),
-            ("D: autocrlf=input, LF blob", "", Some("input"), false, true),
-            (
-                "E: autocrlf=true, CRLF blob (safe)",
-                "",
-                Some("true"),
-                true,
-                false,
-            ),
-            (
-                "F: text eol=crlf",
-                "text eol=crlf",
-                Some("false"),
-                false,
-                true,
-            ),
-            (
-                "G: -text beats autocrlf",
-                "-text",
-                Some("true"),
-                false,
-                false,
-            ),
-            (
-                "H: text=auto, LF blob",
-                "text=auto",
-                Some("false"),
-                false,
-                true,
-            ),
-            ("H': text=auto, CRLF blob", "text=auto", None, true, false),
-            // An un-renormalized blob keeps the comparison exact whichever
-            // mode asked for the conversion: `git diff` reports every line
-            // of these until `git add --renormalize` rewrites the blob.
-            ("explicit text, CRLF blob", "text", None, true, false),
-            (
-                "eol=crlf, CRLF blob",
-                "text eol=crlf",
-                Some("false"),
-                true,
-                false,
-            ),
-            ("eol alone implies text", "eol=lf", None, false, true),
-            ("autocrlf spelled as git bool", "", Some("Yes"), false, true),
-        ];
-        for &(name, attr, autocrlf, blob_has_crlf, expected) in cases {
-            assert_eq!(
-                git_normalizes_eol(attr, autocrlf, blob_has_crlf),
-                expected,
-                "{name}"
-            );
-        }
     }
 
     #[test]

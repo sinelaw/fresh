@@ -1387,17 +1387,18 @@ fn test_live_diff_waits_for_a_background_windows_buffer() {
 /// one whole-file replacement — every old line as a deletion block above
 /// every new line as an addition block — because the HEAD baseline came
 /// from the raw blob (`git show`) and the line diff counts the terminator
-/// as part of the line. For a path git line-ending-normalizes, the diff
-/// now ignores CRLF vs LF the way `git diff` does, so only the inserted
-/// line is reported and unchanged lines are not repeated as deletions.
+/// as part of the line. Against a blob that holds no CRLF the diff now
+/// ignores CRLF vs LF the way `git diff` does, so only the inserted line
+/// is reported and unchanged lines are not repeated as deletions.
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
 fn test_live_diff_crlf_worktree_against_lf_blob_diffs_per_line() {
     let repo = GitTestRepo::new();
     repo.setup_live_diff_plugin();
 
-    // Pinned via attributes so the test doesn't depend on the host's
-    // core.autocrlf: the blob is stored LF, the checkout is CRLF.
+    // The attribute is here only to build the fixture: it makes `git add`
+    // store an LF blob whatever the host's core.autocrlf is, so the
+    // committed blob is LF while the checkout stays CRLF.
     repo.create_file(".gitattributes", "*.rs text eol=crlf\n");
     repo.create_file(
         "src/utils.rs",
@@ -1451,19 +1452,18 @@ fn test_live_diff_crlf_worktree_against_lf_blob_diffs_per_line() {
 }
 
 /// A working tree that mixes CRLF and LF (an agent writing LF lines into
-/// a CRLF checkout) over an LF blob, in a path git normalizes
-/// (`eol=crlf`). No single form of the baseline matches every line, so
-/// before this fix each CRLF line diffed against its LF blob line and
-/// unchanged lines were flagged. Like `git diff`, only the inserted line
-/// may be reported: unchanged lines carry no glyph, no deletion copy and
-/// no diff background.
+/// a CRLF checkout) over an LF blob. No single form of the baseline
+/// matches every line, so before this fix each CRLF line diffed against
+/// its LF blob line and unchanged lines were flagged. Like `git diff`,
+/// only the inserted line may be reported: unchanged lines carry no
+/// glyph, no deletion copy and no diff background.
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
 fn test_live_diff_mixed_line_endings_diff_per_line() {
     let repo = GitTestRepo::new();
     repo.setup_live_diff_plugin();
 
-    repo.create_file(".gitattributes", "*.rs text eol=crlf\n");
+    // LF content commits as an LF blob, so no attribute is needed here.
     repo.create_file(
         "src/utils.rs",
         "UNCHANGED_HEAD_MARKER\nsecond\nthird\nUNCHANGED_TAIL_MARKER\n",
@@ -1544,10 +1544,12 @@ fn test_live_diff_mixed_line_endings_diff_per_line() {
     }
 }
 
-/// Where git does not normalize line endings (`core.autocrlf=false`, no
-/// eol attributes), converting a CRLF file to LF is a real change: `git
-/// diff` reports every line. Live diff must too, rather than ignoring CR
-/// for every git baseline and showing nothing.
+/// A blob that holds CRLF is not in the form git stores an eol-converted
+/// path, so converting the working copy to LF is a real change that `git
+/// diff` reports line by line — and it stays one until `git add
+/// --renormalize` rewrites the blob, whatever the attributes say. Live
+/// diff must report it too, rather than ignoring CR for every git
+/// baseline and showing nothing.
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
 fn test_live_diff_shows_genuine_line_ending_change() {
@@ -1592,74 +1594,6 @@ fn test_live_diff_shows_genuine_line_ending_change() {
         content_lines(screen)
             .iter()
             .any(|l| l.contains(marker) && (l.starts_with('~') || l.starts_with('+')))
-    };
-    harness
-        .wait_until(|h| {
-            let s = h.screen_to_string();
-            ["FIRST_MARKER", "SECOND_MARKER", "THIRD_MARKER"]
-                .iter()
-                .all(|m| flagged(&s, m))
-        })
-        .unwrap();
-}
-
-/// A repository that gains `* text` (or `text=auto`, or `core.autocrlf`)
-/// only *after* its files were committed with CRLF has blobs that were
-/// never line-ending-normalized. git's normalization is one-sided — it
-/// compares the working tree *cleaned* to LF against the blob exactly as
-/// stored — so for such a path `git diff` reports every line as changed
-/// until `git add --renormalize` rewrites the blob. Live diff must agree:
-/// treating the `text` attribute on its own as "line endings don't
-/// matter here" hid a whole-file change the user is about to commit.
-#[test]
-#[cfg_attr(target_os = "windows", ignore)]
-fn test_live_diff_shows_change_against_an_unnormalized_crlf_blob() {
-    let repo = GitTestRepo::new();
-    repo.setup_live_diff_plugin();
-
-    // Pin locally so the host's global/system core.autocrlf cannot clean
-    // the file on the way in: the blob must be stored CRLF.
-    let out = crate::common::git_test_helper::git_command(&repo.path)
-        .args(["config", "--local", "core.autocrlf", "false"])
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "git config failed");
-
-    repo.create_file(
-        "src/utils.rs",
-        "FIRST_MARKER\r\nSECOND_MARKER\r\nTHIRD_MARKER\r\n",
-    );
-    repo.git_add_all();
-    repo.git_commit("init");
-
-    // The attribute arrives only now, so HEAD's blob still holds CRLF.
-    repo.create_file(".gitattributes", "*.rs text\n");
-
-    let _guard = repo.change_to_repo_dir();
-
-    // Same text with LF endings, as a reformatting tool would leave it.
-    repo.modify_file(
-        "src/utils.rs",
-        "FIRST_MARKER\nSECOND_MARKER\nTHIRD_MARKER\n",
-    );
-
-    let mut harness = EditorTestHarness::with_config_and_working_dir(
-        120,
-        30,
-        Config::default(),
-        repo.path.clone(),
-    )
-    .unwrap();
-
-    enable_live_diff_globally(&mut harness);
-    open_file(&mut harness, &repo.path, "src/utils.rs");
-
-    // Scan the whole row for the glyph rather than assuming a gutter
-    // column, as `has_glyph` does: none of the markers contain `~`/`+`.
-    let flagged = |screen: &str, marker: &str| {
-        content_lines(screen)
-            .iter()
-            .any(|l| l.contains(marker) && (l.contains('~') || l.contains('+')))
     };
     harness
         .wait_until(|h| {

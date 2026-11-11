@@ -65,6 +65,11 @@ pub fn compute_line_diff(old_text: &str, new_text: &str) -> Vec<LineDiffHunk> {
 /// in a CRLF checkout, or a mix) shows only its real edits. Use it only
 /// where git normalizes; elsewhere a line-ending change is a real change
 /// and the exact [`compute_line_diff`] must report it.
+///
+/// Ignoring CR on both sides is symmetric, while git's cleaning is
+/// one-sided — it strips CR from the working tree and compares against
+/// the blob verbatim. The two agree exactly when `old_text` holds no
+/// CRLF, so that is the condition callers should gate on.
 pub fn compute_line_diff_ignoring_cr(old_text: &str, new_text: &str) -> Vec<LineDiffHunk> {
     fn intern<'a>(map: &mut HashMap<(&'a str, bool), u32>, line: &'a str) -> u32 {
         let key = match line.strip_suffix('\n') {
