@@ -4786,3 +4786,157 @@ fn test_respect_gitignore_true_hides_ignored_files() {
         screen
     );
 }
+
+/// Where a tree row's name starts: the column of its first character, and the
+/// row. Looked up inside the sidebar's border (see [`explorer_panel_rect`]) so
+/// that nothing outside the panel — the tab strip, the editor pane, the status
+/// line, each of which can echo a file name — can answer for it.
+///
+/// Cell by cell rather than by indexing into a joined row string, because a
+/// double-width glyph occupies two cells and would put every column after it
+/// one off.
+fn explorer_name_cell(harness: &EditorTestHarness, name: &str) -> Option<(u16, u16)> {
+    let (x0, x1, y0, y1) = explorer_panel_rect(harness)?;
+    let want: Vec<String> = name.chars().map(|c| c.to_string()).collect();
+    let span = want.len() as u16;
+    for y in y0..y1 {
+        for x in x0..=x1.saturating_sub(span) {
+            let hit = want
+                .iter()
+                .enumerate()
+                .all(|(i, c)| harness.get_cell(x + i as u16, y).as_ref() == Some(c));
+            if hit {
+                return Some((x, y));
+            }
+        }
+    }
+    None
+}
+
+/// The foreground the sidebar painted `name`'s first character in.
+///
+/// Debug-formatted, as [`explorer_highlighted_rows`] does it, so comparing
+/// colours needs no colour type imported here. Rendered output: the colour
+/// comes off the painted cell.
+fn explorer_name_fg(harness: &EditorTestHarness, name: &str) -> String {
+    let (x, y) = explorer_name_cell(harness, name).unwrap_or_else(|| {
+        panic!(
+            "no tree row for {name}.\nScreen:\n{}",
+            harness.screen_to_string()
+        )
+    });
+    format!(
+        "{:?}",
+        harness.get_cell_style(x, y).and_then(|style| style.fg)
+    )
+}
+
+/// `editor.line_number_fg`, the recessed foreground cut rows already use.
+///
+/// Named rather than sampled from elsewhere on screen, because *which*
+/// recessed key the explorer reuses is the open question on #3283: the issue
+/// also floats a dedicated `file_explorer.gitignored_fg`, and this is the line
+/// that would have to change if one is ever added.
+fn recessed_fg(harness: &EditorTestHarness) -> String {
+    format!(
+        "{:?}",
+        harness
+            .editor()
+            .theme()
+            .resolve_theme_key("editor.line_number_fg")
+    )
+}
+
+/// Issue #3283: an ignored entry the tree *shows* is drawn recessed, not in
+/// the same ink as everything else.
+///
+/// `respect_gitignore = false` already put `build_output.txt` on screen — that
+/// is `test_respect_gitignore_false_shows_ignored_files` above. What it did not
+/// do was make it distinguishable: the row came out in exactly the foreground
+/// its un-ignored sibling gets, so "show everything" on a real project is a
+/// wall of `target/` and `node_modules/` rows with nothing to say which ones
+/// git does not track. The name must now be painted in `editor.line_number_fg`
+/// while the un-ignored sibling keeps the ordinary one.
+#[test]
+fn test_shown_gitignored_entry_is_dimmed() {
+    let mut config = Config::default();
+    config.file_explorer.respect_gitignore = false;
+
+    let mut harness = EditorTestHarness::with_temp_project_and_config(120, 40, config).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    fs::write(project_root.join(".gitignore"), "build_output.txt\n").unwrap();
+    fs::write(project_root.join("build_output.txt"), "generated").unwrap();
+    fs::write(project_root.join("visible_file.txt"), "visible").unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    // Both rows, then one paint: the two foregrounds below are read off the
+    // same buffer, so they cannot come from different frames.
+    harness
+        .wait_for_file_explorer_item("visible_file.txt")
+        .unwrap();
+    harness
+        .wait_for_file_explorer_item("build_output.txt")
+        .unwrap();
+    harness.render().unwrap();
+
+    let ignored_fg = explorer_name_fg(&harness, "build_output.txt");
+    let plain_fg = explorer_name_fg(&harness, "visible_file.txt");
+    let recessed = recessed_fg(&harness);
+    let screen = harness.screen_to_string();
+
+    assert_eq!(
+        ignored_fg, recessed,
+        "a shown-but-gitignored row should draw its name in \
+         editor.line_number_fg.\nScreen:\n{screen}"
+    );
+    assert_ne!(
+        plain_fg, ignored_fg,
+        "the un-ignored sibling must keep the ordinary explorer foreground, \
+         or the dimming distinguishes nothing.\nScreen:\n{screen}"
+    );
+}
+
+/// The other half of #3283's case: `show_gitignored` on, `respect_gitignore`
+/// left at its default. The rules *are* consulted here, so the entry was
+/// always reportable as ignored — what was missing was anyone asking at render
+/// time. Same recessed foreground, reached down the other path.
+#[test]
+fn test_gitignored_entry_is_dimmed_when_show_gitignored_is_on() {
+    let mut config = Config::default();
+    config.file_explorer.show_gitignored = true;
+
+    let mut harness = EditorTestHarness::with_temp_project_and_config(120, 40, config).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    fs::write(project_root.join(".gitignore"), "build_output.txt\n").unwrap();
+    fs::write(project_root.join("build_output.txt"), "generated").unwrap();
+    fs::write(project_root.join("visible_file.txt"), "visible").unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness
+        .wait_for_file_explorer_item("visible_file.txt")
+        .unwrap();
+    harness
+        .wait_for_file_explorer_item("build_output.txt")
+        .unwrap();
+    harness.render().unwrap();
+
+    let ignored_fg = explorer_name_fg(&harness, "build_output.txt");
+    let plain_fg = explorer_name_fg(&harness, "visible_file.txt");
+    let recessed = recessed_fg(&harness);
+    let screen = harness.screen_to_string();
+
+    assert_eq!(
+        ignored_fg, recessed,
+        "a gitignored row shown by 'Show Gitignored Files' should draw its \
+         name in editor.line_number_fg.\nScreen:\n{screen}"
+    );
+    assert_ne!(
+        plain_fg, ignored_fg,
+        "the un-ignored sibling must keep the ordinary explorer \
+         foreground.\nScreen:\n{screen}"
+    );
+}
