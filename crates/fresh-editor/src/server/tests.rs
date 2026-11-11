@@ -1906,9 +1906,26 @@ mod integration_tests {
     /// reports a quiet interval as `TimedOut`, which is not a closed stream,
     /// so it goes round again (a busy machine can take longer than one
     /// interval to handle the key).
-    fn wait_for_suspend(control: &mut crate::server::ipc::ControlReader) {
+    ///
+    /// Meanwhile it keeps reading the client's data stream into `output`, as
+    /// a real relay does. A frame the client leaves unread can fill a Windows
+    /// pipe; the server's writer thread then blocks holding the stream that
+    /// the server also reads this client's keys from, so the key asking for
+    /// the suspend would never be read.
+    fn wait_for_suspend(
+        conn: &ClientConnection,
+        output: &mut Vec<u8>,
+        control: &mut crate::server::ipc::ControlReader,
+    ) {
+        let mut buf = [0u8; 8192];
         loop {
-            match control.read_line_timeout(Duration::from_millis(100)) {
+            loop {
+                match conn.data.try_read(&mut buf) {
+                    Ok(n) if n > 0 => output.extend_from_slice(&buf[..n]),
+                    _ => break,
+                }
+            }
+            match control.read_line_timeout(Duration::from_millis(20)) {
                 Ok(Some(line)) => {
                     if matches!(
                         serde_json::from_str::<ServerControl>(&line),
@@ -1967,7 +1984,7 @@ mod integration_tests {
         // Ask for a suspend, and wait for SuspendClient: the daemon still
         // tells the client, which is what makes it log the limitation.
         conn.write_data(b"\x1b[24~").unwrap();
-        wait_for_suspend(&mut control);
+        wait_for_suspend(&conn, &mut output, &mut control);
         let suspended_at = output.len();
 
         // Typing after SuspendClient, with no Resumed ever sent, still shows
@@ -2023,7 +2040,18 @@ mod integration_tests {
         });
         let (paths, shutdown) = rx.recv().unwrap();
         let conn = ClientConnection::connect(&paths).unwrap();
-        assert!(matches!(client_hello(&conn), ServerControl::Hello(_)));
+        // This client plays the Unix relay, which stops on SuspendClient and
+        // sends Resumed when it is back. Say so explicitly: the default is
+        // `cfg!(unix)`, and on Windows the daemon would treat it as a client
+        // that cannot suspend and never withhold its frames.
+        let mut hello = ClientHello::new(TermSize::new(80, 24));
+        hello.can_suspend = true;
+        conn.send_hello(hello).unwrap();
+        let response = conn.read_control().unwrap().unwrap();
+        assert!(matches!(
+            serde_json::from_str::<ServerControl>(&response).unwrap(),
+            ServerControl::Hello(_)
+        ));
         let mut output = Vec::new();
         read_until_contains(&conn, &mut output, "\x1b[?25l");
         let mut control = ControlReader::new(&conn.control);
@@ -2034,7 +2062,7 @@ mod integration_tests {
         for round in 1..=2 {
             // Suspend the first client (F12 is bound to suspend_process above).
             conn.write_data(b"\x1b[24~").unwrap();
-            wait_for_suspend(&mut control);
+            wait_for_suspend(&conn, &mut output, &mut control);
             let suspended_at = output.len();
 
             // While it is suspended, the other client types two markers, and
