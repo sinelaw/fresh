@@ -1602,3 +1602,71 @@ fn test_live_diff_shows_genuine_line_ending_change() {
         })
         .unwrap();
 }
+
+/// A repository that gains `* text` (or `text=auto`, or `core.autocrlf`)
+/// only *after* its files were committed with CRLF has blobs that were
+/// never line-ending-normalized. git's normalization is one-sided — it
+/// compares the working tree *cleaned* to LF against the blob exactly as
+/// stored — so for such a path `git diff` reports every line as changed
+/// until `git add --renormalize` rewrites the blob. Live diff must agree:
+/// treating the `text` attribute on its own as "line endings don't
+/// matter here" hid a whole-file change the user is about to commit.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_live_diff_shows_change_against_an_unnormalized_crlf_blob() {
+    let repo = GitTestRepo::new();
+    repo.setup_live_diff_plugin();
+
+    // Pin locally so the host's global/system core.autocrlf cannot clean
+    // the file on the way in: the blob must be stored CRLF.
+    let out = crate::common::git_test_helper::git_command(&repo.path)
+        .args(["config", "--local", "core.autocrlf", "false"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "git config failed");
+
+    repo.create_file(
+        "src/utils.rs",
+        "FIRST_MARKER\r\nSECOND_MARKER\r\nTHIRD_MARKER\r\n",
+    );
+    repo.git_add_all();
+    repo.git_commit("init");
+
+    // The attribute arrives only now, so HEAD's blob still holds CRLF.
+    repo.create_file(".gitattributes", "*.rs text\n");
+
+    let _guard = repo.change_to_repo_dir();
+
+    // Same text with LF endings, as a reformatting tool would leave it.
+    repo.modify_file(
+        "src/utils.rs",
+        "FIRST_MARKER\nSECOND_MARKER\nTHIRD_MARKER\n",
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    enable_live_diff_globally(&mut harness);
+    open_file(&mut harness, &repo.path, "src/utils.rs");
+
+    // Scan the whole row for the glyph rather than assuming a gutter
+    // column, as `has_glyph` does: none of the markers contain `~`/`+`.
+    let flagged = |screen: &str, marker: &str| {
+        content_lines(screen)
+            .iter()
+            .any(|l| l.contains(marker) && (l.contains('~') || l.contains('+')))
+    };
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            ["FIRST_MARKER", "SECOND_MARKER", "THIRD_MARKER"]
+                .iter()
+                .all(|m| flagged(&s, m))
+        })
+        .unwrap();
+}

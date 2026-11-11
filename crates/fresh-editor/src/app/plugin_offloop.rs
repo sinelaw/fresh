@@ -1305,6 +1305,19 @@ mod tests {
         // `-text` opts the path out even under autocrlf=true.
         let (_, ignore_cr) = load_head_baseline(Some("*.txt -text\n"), "true", "a\nb\n");
         assert!(!ignore_cr, "-text: line endings must stay exact");
+
+        // `text` over a blob that is still CRLF: the attribute arrived
+        // after the commit, so the blob was never renormalized. git
+        // compares the working tree cleaned to LF against that blob and
+        // reports every line changed, so the comparison must stay exact
+        // here too — the `text`/`eol=` attributes are not on their own a
+        // licence to ignore line endings.
+        let (text, ignore_cr) = load_head_baseline(Some("*.txt text\n"), "false", "a\r\nb\r\n");
+        assert_eq!(text, "a\r\nb\r\n", "baseline must be the blob as stored");
+        assert!(
+            !ignore_cr,
+            "text over an un-renormalized CRLF blob: line endings must stay exact"
+        );
     }
 
     /// A superseded grep stopped partway, so the matches it happened to collect

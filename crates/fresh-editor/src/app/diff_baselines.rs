@@ -138,12 +138,36 @@ impl BaselineStore {
 /// - `attr` is the `attr/` field of `git ls-files --eol` (e.g. `""`,
 ///   `"text"`, `"-text"`, `"text=auto"`, `"text eol=crlf"`, `"eol=lf"`).
 /// - `autocrlf` is `core.autocrlf`, `None` when unset.
-/// - `blob_has_crlf`: the "auto" modes leave a path alone when the
-///   repository copy already contains CRLF (git's "safe autocrlf").
+/// - `blob_has_crlf`: whether the baseline blob still contains CRLF.
 ///
 /// When this is false, a line-ending change is a real change to the file
 /// as far as git is concerned, and must stay visible in the diff.
+///
+/// `blob_has_crlf` gates *every* mode, not just the "auto" ones, because
+/// the normalization git applies is one-sided: it compares the working
+/// tree **cleaned** (CRLF -> LF) against the blob exactly as stored. That
+/// comparison only ignores CRLF vs LF while the blob is itself
+/// LF-normalized. A blob that still holds CRLF — committed before the
+/// attribute or the setting arrived, the state `git add --renormalize`
+/// exists to fix — differs from the cleaned working tree on every CRLF
+/// line, and `git diff` reports exactly that however the conversion was
+/// asked for: verified against git 2.43 for `text`, `eol=crlf`,
+/// `text=auto` and `core.autocrlf=true|input` over a CRLF blob, all of
+/// which report every line changed. (For the "auto" modes this doubles as
+/// git's own "safe autocrlf" check, which git makes against the index;
+/// here it is made against the baseline blob actually being diffed.)
+///
+/// Known imprecision, both in the direction of showing a change rather
+/// than hiding one: against an un-renormalized CRLF blob the comparison
+/// falls back to exact, so a working tree that still matches that blob
+/// byte-for-byte reads as unmodified here while `git diff` already
+/// reports the whole file. Matching that would mean diffing
+/// `clean(working tree)` against the blob rather than choosing between
+/// two symmetric comparisons.
 pub fn git_normalizes_eol(attr: &str, autocrlf: Option<&str>, blob_has_crlf: bool) -> bool {
+    if blob_has_crlf {
+        return false;
+    }
     let mut text: Option<&str> = None;
     let mut has_eol = false;
     for token in attr.split_whitespace() {
@@ -155,15 +179,11 @@ pub fn git_normalizes_eol(attr: &str, autocrlf: Option<&str>, blob_has_crlf: boo
     }
     match text {
         Some("-text") => false,
-        Some("text") => true,
-        Some(_) => !blob_has_crlf, // text=auto
-        None if has_eol => true,   // `eol` implies `text`
+        Some(_) => true,         // text, text=auto
+        None if has_eol => true, // `eol` implies `text`
         None => {
             let auto = autocrlf.map(|v| v.trim().to_ascii_lowercase());
-            match auto.as_deref() {
-                Some("true" | "yes" | "on" | "1" | "input") => !blob_has_crlf,
-                _ => false,
-            }
+            matches!(auto.as_deref(), Some("true" | "yes" | "on" | "1" | "input"))
         }
     }
 }
@@ -186,7 +206,14 @@ pub fn diff_texts(old: &str, new: &str, ignore_cr: bool) -> Vec<fresh_core::api:
 }
 
 /// Diff two loaded baseline contents (e.g. disk vs HEAD). `ignore_cr`
-/// as for [`diff_texts`]: set when either side's content asks for it.
+/// as for [`diff_texts`]: the caller sets it when either side's content
+/// asks for it, which is right for the shipped comparison — a git
+/// baseline against the working tree on disk, where the disk side is the
+/// one git would clean. Two *git* baselines are two blobs, which git
+/// compares byte-for-byte (`git diff <ref>..<ref>` applies no eol
+/// conversion), so a pair of those should compare exactly even when one
+/// of them came from a normalized path; no shipped plugin registers such
+/// a pair.
 pub fn diff_contents(
     old: &BaselineContent,
     new: &BaselineContent,
@@ -341,8 +368,9 @@ mod tests {
         assert_eq!(sliced, vec![vec!["alpha", "beta"], vec!["gamma"]]);
     }
 
-    /// The cases checked against `git diff` (git 2.56): `true` exactly
-    /// where `git diff` reports no change for a CRLF-vs-LF-only edit.
+    /// The cases checked against `git diff`: `true` exactly where `git
+    /// diff` reports no change for a CRLF-vs-LF-only edit. The
+    /// blob-has-CRLF rows were re-checked against git 2.43.
     #[test]
     fn git_normalizes_eol_matches_git_diff() {
         // (case, attr, core.autocrlf, blob has CRLF, git ignores CR)
@@ -393,7 +421,17 @@ mod tests {
                 true,
             ),
             ("H': text=auto, CRLF blob", "text=auto", None, true, false),
-            ("explicit text, CRLF blob", "text", None, true, true),
+            // An un-renormalized blob keeps the comparison exact whichever
+            // mode asked for the conversion: `git diff` reports every line
+            // of these until `git add --renormalize` rewrites the blob.
+            ("explicit text, CRLF blob", "text", None, true, false),
+            (
+                "eol=crlf, CRLF blob",
+                "text eol=crlf",
+                Some("false"),
+                true,
+                false,
+            ),
             ("eol alone implies text", "eol=lf", None, false, true),
             ("autocrlf spelled as git bool", "", Some("Yes"), false, true),
         ];
