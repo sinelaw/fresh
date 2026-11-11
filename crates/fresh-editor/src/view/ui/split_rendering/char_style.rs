@@ -278,61 +278,20 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
                 fg_on_collision_only,
                 fg_on_low_contrast,
             } => {
-                if is_styled_inline_cell {
-                    let mut inherited = Style::default();
-
-                    // Preserve the overlay's ground, resolving the theme key
-                    // over its fallback, but do not copy its ordinary ink.
-                    if let Some(bg) = fallback_style.bg {
-                        inherited = inherited.bg(bg);
-                    }
-                    if let Some(bg_key) = bg_theme {
-                        if let Some(color) = ctx.theme.resolve_theme_key(bg_key) {
-                            inherited = inherited.bg(color);
-                        }
-                        let modifier = ctx.theme.resolve_modifier_key(bg_key);
-                        if !modifier.is_empty() {
-                            inherited = inherited.add_modifier(modifier);
-                        }
-                    }
-
-                    let new_bg = inherited.bg.or(style.bg);
-
-                    // A collision-only foreground is a legibility fallback,
-                    // not the band's ordinary foreground. Keep it when the
-                    // inline cell would otherwise disappear into the ground.
-                    if *fg_on_collision_only
-                        && matches!((style.fg, new_bg), (Some(f), Some(b)) if f == b)
-                    {
-                        let mut collision_fg = fallback_style.fg;
-                        if let Some(fg_key) = fg_theme {
-                            if let Some(color) = ctx.theme.resolve_theme_key(fg_key) {
-                                collision_fg = Some(color);
-                                inherited =
-                                    inherited.add_modifier(ctx.theme.resolve_modifier_key(fg_key));
-                            }
-                        }
-                        if let Some(color) = collision_fg {
-                            inherited = inherited.fg(color);
-                        }
-                    }
-
-                    // Likewise, repair the inline cell's own foreground when
-                    // it has insufficient contrast against the inherited bg.
-                    if *fg_on_low_contrast {
-                        if let (Some(fg), Some(bg)) = (inherited.fg.or(style.fg), new_bg) {
-                            if let Some(repaired) = crate::view::color_support::repaired_fg(fg, bg)
-                            {
-                                inherited = inherited.fg(repaired);
-                            }
-                        }
-                    }
-
-                    style = style.patch(inherited);
-                    continue;
-                }
-
                 let mut themed_style = *fallback_style;
+                // An injected cell — a spliced inlay hint or plugin
+                // annotation — takes the band's *ground* and not its ink: the
+                // band's own foreground and attributes belong to the source
+                // character it actually covers. The two legibility rules
+                // below are not ordinary ink, so they still reach such a
+                // cell; losing them is what left a hint unreadable on an
+                // occurrence highlight. Sharing one path with ordinary cells
+                // is what keeps that from coming apart again.
+                if is_styled_inline_cell {
+                    themed_style.fg = None;
+                    themed_style.add_modifier = Modifier::empty();
+                    themed_style.sub_modifier = Modifier::empty();
+                }
                 // Resolve bg first so the collision check below sees it.
                 if let Some(bg_key) = bg_theme {
                     if let Some(color) = ctx.theme.resolve_theme_key(bg_key) {
@@ -343,13 +302,22 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
                         themed_style = themed_style.add_modifier(m);
                     }
                 }
+                let collides = {
+                    let new_bg = themed_style.bg.or(style.bg);
+                    matches!((style.fg, new_bg), (Some(f), Some(b)) if f == b)
+                };
+                // A collision foreground is a legibility fallback, so an
+                // injected cell keeps it. The band's literal colour stands in
+                // when no `fg_theme` key resolves below.
+                if *fg_on_collision_only && collides {
+                    themed_style.fg = fallback_style.fg;
+                }
                 if let Some(fg_key) = fg_theme {
                     if let Some(color) = ctx.theme.resolve_theme_key(fg_key) {
                         let apply = if *fg_on_collision_only {
-                            let new_bg = themed_style.bg.or(style.bg);
-                            matches!((style.fg, new_bg), (Some(f), Some(b)) if f == b)
+                            collides
                         } else {
-                            true
+                            !is_styled_inline_cell
                         };
                         if apply {
                             themed_style = themed_style
