@@ -2991,11 +2991,7 @@ impl Editor {
                     Ok(fresh_core::api::DiffBaselineResult {
                         revision: state.buffer.version(),
                         fidelity: FIDELITY_EXACT.to_string(),
-                        hunks: super::diff_baselines::diff_texts(
-                            &content.text,
-                            &new_text,
-                            content.ignore_cr,
-                        ),
+                        hunks: super::diff_baselines::diff_texts(&content.text, &new_text),
                     })
                 }
             }
@@ -3046,8 +3042,7 @@ impl Editor {
                 .content
                 .as_ref()
                 .ok_or_else(|| "new baseline content not loaded".to_string())?;
-            let ignore_cr = old.ignore_cr || new.ignore_cr;
-            Ok(super::diff_baselines::diff_contents(old, new, ignore_cr))
+            Ok(super::diff_baselines::diff_contents(old, new))
         })();
         match result {
             Ok(value) => {

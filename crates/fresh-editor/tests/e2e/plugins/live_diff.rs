@@ -1544,20 +1544,21 @@ fn test_live_diff_mixed_line_endings_diff_per_line() {
     }
 }
 
-/// A blob that holds CRLF is not in the form git stores an eol-converted
-/// path, so converting the working copy to LF is a real change that `git
-/// diff` reports line by line — and it stays one until `git add
-/// --renormalize` rewrites the blob, whatever the attributes say. Live
-/// diff must report it too, rather than ignoring CR for every git
-/// baseline and showing nothing.
+/// The mirror of the CRLF-worktree case: a blob stored CRLF under a
+/// working copy converted to LF. `git diff` reports every line of this
+/// until `git add --renormalize` rewrites the blob, but the editor
+/// compares line content only, so the one inserted line is all that may
+/// be marked. This is the direction an earlier revision got wrong by
+/// keying the decision off the blob's own line endings, and the
+/// direction master gets wrong by comparing terminators exactly.
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
-fn test_live_diff_shows_genuine_line_ending_change() {
+fn test_live_diff_crlf_blob_against_lf_worktree_diffs_per_line() {
     let repo = GitTestRepo::new();
     repo.setup_live_diff_plugin();
 
-    // Pin locally: local config beats the host's global/system
-    // core.autocrlf (true by default on Windows).
+    // Pin locally so the blob is stored CRLF whatever the host's
+    // global/system core.autocrlf is (true by default on Windows).
     let out = crate::common::git_test_helper::git_command(&repo.path)
         .args(["config", "--local", "core.autocrlf", "false"])
         .output()
@@ -1566,17 +1567,19 @@ fn test_live_diff_shows_genuine_line_ending_change() {
 
     repo.create_file(
         "src/utils.rs",
-        "FIRST_MARKER\r\nSECOND_MARKER\r\nTHIRD_MARKER\r\n",
+        "UNCHANGED_HEAD_MARKER\r\nsecond\r\nthird\r\nUNCHANGED_TAIL_MARKER\r\n",
     );
     repo.git_add_all();
     repo.git_commit("init");
 
     let _guard = repo.change_to_repo_dir();
 
-    // Same text, converted to LF.
+    // Converted to LF, plus one inserted line. The insertion is what the
+    // test waits on, so "nothing else is marked" is never asserted before
+    // live diff has actually produced a result.
     repo.modify_file(
         "src/utils.rs",
-        "FIRST_MARKER\nSECOND_MARKER\nTHIRD_MARKER\n",
+        "UNCHANGED_HEAD_MARKER\nsecond\nINSERTED_LINE_MARKER\nthird\nUNCHANGED_TAIL_MARKER\n",
     );
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
@@ -1590,17 +1593,32 @@ fn test_live_diff_shows_genuine_line_ending_change() {
     enable_live_diff_globally(&mut harness);
     open_file(&mut harness, &repo.path, "src/utils.rs");
 
-    let flagged = |screen: &str, marker: &str| {
-        content_lines(screen)
-            .iter()
-            .any(|l| l.contains(marker) && (l.starts_with('~') || l.starts_with('+')))
-    };
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
-            ["FIRST_MARKER", "SECOND_MARKER", "THIRD_MARKER"]
-                .iter()
-                .all(|m| flagged(&s, m))
+            has_glyph(&s, '+') && has_text(&s, "INSERTED_LINE_MARKER")
         })
         .unwrap();
+
+    let screen = harness.screen_to_string();
+    for marker in ["UNCHANGED_HEAD_MARKER", "UNCHANGED_TAIL_MARKER"] {
+        let rows: Vec<&str> = content_lines(&screen)
+            .into_iter()
+            .filter(|l| l.contains(marker))
+            .collect();
+        assert_eq!(
+            rows.len(),
+            1,
+            "unchanged line {marker} must appear once (no deletion copy from a \
+             whole-file replacement); screen:\n{screen}"
+        );
+        assert!(
+            !rows[0].contains('~') && !rows[0].contains('+') && !rows[0].contains('-'),
+            "unchanged line {marker} must carry no diff glyph; screen:\n{screen}"
+        );
+    }
+    assert!(
+        !has_glyph(&screen, '-'),
+        "a pure insertion must not render any deletion rows; screen:\n{screen}"
+    );
 }

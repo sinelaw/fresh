@@ -737,12 +737,10 @@ pub(crate) fn load_diff_baseline(runtime: &LiveRuntime, cap: OffLoop, req: Basel
             ))
             .into_owned()
         };
-        // (text, ignore_cr): only a git baseline whose blob is already
-        // LF-normalized is diffed ignoring CRLF vs LF.
-        let loaded: Result<(String, bool), String> = match &req.spec {
+        let text: Result<String, String> = match &req.spec {
             // Saved baselines never load content; the editor thread
             // resolves them synchronously and never sends them here.
-            BaselineSpec::Saved => Ok((String::new(), false)),
+            BaselineSpec::Saved => Ok(String::new()),
             BaselineSpec::Disk { path } => {
                 let path = path.clone();
                 let fs = Arc::clone(&cap.filesystem);
@@ -750,7 +748,7 @@ pub(crate) fn load_diff_baseline(runtime: &LiveRuntime, cap: OffLoop, req: Basel
                     .await
                     .map_err(|e| format!("baseline read task failed: {e}"))
                     .and_then(|r| {
-                        r.map(|bytes| (decode(bytes), false))
+                        r.map(decode)
                             .map_err(|e| format!("failed to read baseline file: {e}"))
                     })
             }
@@ -760,24 +758,12 @@ pub(crate) fn load_diff_baseline(runtime: &LiveRuntime, cap: OffLoop, req: Basel
                 git_ref,
             } => load_git_baseline(req.spawner.as_ref(), cwd, file_path, git_ref.as_deref())
                 .await
-                .map(|bytes| {
-                    let text = decode(bytes);
-                    // A blob with no CRLF is the form git stores a path it
-                    // eol-converts, and the only form against which
-                    // ignoring CRLF vs LF is ever right. Reading that off
-                    // the blob costs nothing; asking git whether it would
-                    // convert this path costs two more child processes and
-                    // an attribute parser, and agrees with this answer
-                    // except where no conversion is configured at all.
-                    let ignore_cr = !text.contains("\r\n");
-                    (text, ignore_cr)
-                }),
+                .map(decode),
         };
 
-        match loaded {
-            Ok((text, ignore_cr)) => {
-                let mut content = BaselineContent::new(text);
-                content.ignore_cr = ignore_cr;
+        match text {
+            Ok(text) => {
+                let content = BaselineContent::new(text);
                 let installed = match req.store.inner.lock() {
                     Ok(mut inner) => match inner.entries.get_mut(&req.baseline_id) {
                         Some(entry) => {
@@ -824,8 +810,8 @@ pub(crate) fn load_diff_baseline(runtime: &LiveRuntime, cap: OffLoop, req: Basel
 /// The blob is read as stored (`git show`), not in checkout form (`git
 /// cat-file --filters`): `--filters` runs the repository's smudge filters,
 /// i.e. commands configured by the workspace, which opening a file must
-/// not execute. Line endings are reconciled at diff time instead, the way
-/// `git diff` does, by ignoring CRLF vs LF against an LF-only blob.
+/// not execute. Line endings are reconciled at diff time instead, by
+/// comparing line content only (see `diff_baselines::diff_texts`).
 async fn load_git_baseline(
     spawner: &dyn crate::services::remote::ProcessSpawner,
     cwd: &std::path::Path,

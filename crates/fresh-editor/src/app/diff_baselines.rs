@@ -55,11 +55,6 @@ pub struct BaselineContent {
     /// Byte offset of each line start (split_inclusive('\n') boundaries),
     /// plus one past-the-end entry.
     pub line_starts: Vec<usize>,
-    /// Diffs against this content treat `\r\n` and `\n` as the same line
-    /// terminator. Set only for a git baseline whose blob holds no CRLF,
-    /// which is the form git stores a path it eol-converts; disk and saved
-    /// baselines stay exact.
-    pub ignore_cr: bool,
 }
 
 impl BaselineContent {
@@ -70,11 +65,7 @@ impl BaselineContent {
             pos += seg.len();
             line_starts.push(pos);
         }
-        Self {
-            text,
-            line_starts,
-            ignore_cr: false,
-        }
+        Self { text, line_starts }
     }
 
     /// Line `idx` without its trailing newline (`\n` or `\r\n`).
@@ -131,52 +122,40 @@ impl BaselineStore {
     }
 }
 
-/// Line diff for a baseline comparison. With `ignore_cr`, `\r\n` and `\n`
-/// terminators match — the way `git diff` compares a path git
-/// eol-converts: there the working tree's line endings legitimately
-/// differ from the repository's, and even from a fresh checkout's when a
-/// tool wrote the file with LF or mixed endings, so an exact comparison
-/// flagged every line of such files as changed. The caller sets it from
-/// the baseline alone: a blob holding no CRLF is the only one against
-/// which ignoring CRLF vs LF is ever right, and ignoring it on both
-/// sides is then the same answer as cleaning only the working-tree side,
-/// which is what git does. Everywhere else (disk and saved baselines, a
-/// blob that still holds CRLF) the comparison stays exact.
+/// Line diff for a baseline comparison: `\r\n` and `\n` terminators
+/// match, so only line content is compared and never line-ending style.
+/// This is the single policy point for every baseline comparison — the
+/// git gutter and live diff both reach it — and it is deliberately
+/// unconditional, for two reasons.
 ///
-/// Known divergence from `git diff`, the only one, and it under-reports:
-/// where git is configured to convert nothing — `core.autocrlf` false or
-/// unset and no `text`/`eol` attribute — a CRLF or mixed working tree
-/// over an LF blob is a real change that git reports line by line, and
-/// this comparison hides it. Telling that case apart needs the path's
-/// attributes and `core.autocrlf`, i.e. two more child processes per
-/// baseline load and a parser for git's crlf_action rules; that was
-/// measured against this at ~330 lines and deliberately traded away.
-pub fn diff_texts(old: &str, new: &str, ignore_cr: bool) -> Vec<fresh_core::api::LineDiffHunk> {
-    if ignore_cr {
-        fresh_core::diff::compute_line_diff_ignoring_cr(old, new)
-    } else {
-        fresh_core::diff::compute_line_diff(old, new)
-    }
+/// It is what the user wants to see. A working tree whose line endings
+/// differ from the repository's, from a fresh checkout's, or from each
+/// other (a CRLF file over an LF blob, an LF file written by a tool into
+/// a CRLF checkout, a mix) is otherwise rendered as a whole-file
+/// replacement in which nothing real is legible.
+///
+/// And it keeps the two comparisons in agreement. They diff different
+/// pairs — live diff the buffer against HEAD, a branch or the file on
+/// disk; the gutter the file on disk against HEAD — so any rule that
+/// held for some baselines and not others made them contradict each
+/// other on the same file: one marking every line, the other nothing.
+///
+/// The cost, accepted: a change that is *only* line-ending style is now
+/// invisible here. `git diff` and `git status` will still call such a
+/// file modified, and the editor will show no marks on it. Whether a
+/// line is terminated at all is still compared, so a lost or gained
+/// final newline remains a hunk, as it is for git.
+pub fn diff_texts(old: &str, new: &str) -> Vec<fresh_core::api::LineDiffHunk> {
+    fresh_core::diff::compute_line_diff_ignoring_cr(old, new)
 }
 
-/// Diff two loaded baseline contents (e.g. disk vs HEAD). `ignore_cr`
-/// as for [`diff_texts`]: the caller sets it when either side's content
-/// asks for it, which is right for the shipped comparison — a git
-/// baseline against the working tree on disk, where the disk side is the
-/// one git would clean. Two *git* baselines are two blobs, which git
-/// compares byte-for-byte (`git diff <ref>..<ref>` applies no eol
-/// conversion), so a pair of those should compare exactly even when one
-/// of them came from a normalized path; no shipped plugin registers such
-/// a pair.
-pub fn diff_contents(
-    old: &BaselineContent,
-    new: &BaselineContent,
-    ignore_cr: bool,
-) -> DiffBaselineResult {
+/// Diff two loaded baseline contents (e.g. disk vs HEAD, the git-gutter
+/// comparison). Line-ending style is ignored, as for [`diff_texts`].
+pub fn diff_contents(old: &BaselineContent, new: &BaselineContent) -> DiffBaselineResult {
     DiffBaselineResult {
         revision: 0,
         fidelity: FIDELITY_EXACT.to_string(),
-        hunks: diff_texts(&old.text, &new.text, ignore_cr),
+        hunks: diff_texts(&old.text, &new.text),
     }
 }
 
