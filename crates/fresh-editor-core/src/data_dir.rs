@@ -170,9 +170,9 @@ mod tests {
 
     #[test]
     fn absolute_xdg_dir_selects_fresh_subdirectory() {
-        let base = std::env::temp_dir().join("xdg-base");
-        let resolved = fresh_dir_from_xdg(Some(base.as_os_str())).unwrap();
-        assert_eq!(resolved, base.join("fresh"));
+        let base = TempDir::new().unwrap();
+        let resolved = fresh_dir_from_xdg(Some(base.path().as_os_str())).unwrap();
+        assert_eq!(resolved, base.path().join("fresh"));
     }
 
     #[test]
