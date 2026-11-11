@@ -76,7 +76,7 @@ fn enable_live_diff_globally(harness: &mut EditorTestHarness) {
 // =============================================================================
 
 /// vs HEAD: an added line shows `+` in the gutter once the file is opened.
-/// Live-diff fetches HEAD (`git cat-file --filters HEAD:<path>`) and diffs against the on-disk
+/// Live-diff fetches `git show HEAD:<path>` and diffs against the on-disk
 /// content (which has one new line vs HEAD), so the new line should be
 /// flagged with `+`.
 #[test]
