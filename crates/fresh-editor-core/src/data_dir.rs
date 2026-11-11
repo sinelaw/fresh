@@ -8,6 +8,7 @@ use std::cell::RefCell;
 #[cfg(any(target_os = "macos", test))]
 use std::ffi::OsStr;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 thread_local! {
     /// Per-thread redirection of [`get_data_dir`], installed by
@@ -48,6 +49,36 @@ pub fn set_data_dir_override(dir: Option<PathBuf>) -> Option<PathBuf> {
     DATA_DIR_OVERRIDE.with(|slot| std::mem::replace(&mut *slot.borrow_mut(), dir))
 }
 
+/// A directory resolved once and then frozen for the life of the process.
+///
+/// Resolution reads the environment *and probes the filesystem* (see
+/// [`xdg_dir_with_continuity`]), so running it twice can give two different
+/// answers. Both of Fresh's user directories are resolved from two places
+/// each: once into the [`crate::config_io::DirectoryContext`] that `main`
+/// snapshots, and again — live — by [`get_data_dir`] (for the data dir) and
+/// `Config::system_config_paths` (for the config dir). A directory that
+/// changes under a running process puts the two out of step: with
+/// `$XDG_DATA_HOME/fresh` appearing mid-session,
+/// `workspace::get_workspaces_dir()` moved onto the new directory while
+/// `dir_context.workspaces_dir()` stayed on the old one, so a session saved
+/// through one path was looked for through the other and the restore silently
+/// found nothing — the very stranding the continuity rule exists to prevent.
+///
+/// Freezing the answer is what keeps the two equal; it also drops the
+/// `stat`/`read_dir` that every single lookup used to cost on macOS.
+pub(crate) struct OnceDir(OnceLock<Option<PathBuf>>);
+
+impl OnceDir {
+    pub(crate) const fn new() -> Self {
+        Self(OnceLock::new())
+    }
+
+    /// The resolved directory, running `resolve` only on the first call.
+    pub(crate) fn get(&self, resolve: impl FnOnce() -> Option<PathBuf>) -> Option<PathBuf> {
+        self.0.get_or_init(resolve).clone()
+    }
+}
+
 /// The `fresh` data directory (`$XDG_DATA_HOME/fresh`, or the platform equivalent).
 pub fn get_data_dir() -> std::io::Result<PathBuf> {
     if let Some(dir) = DATA_DIR_OVERRIDE.with(|slot| slot.borrow().clone()) {
@@ -63,11 +94,21 @@ pub fn get_data_dir() -> std::io::Result<PathBuf> {
 
 /// The system `fresh` data directory, ignoring any test override.
 ///
+/// Resolved once per process and frozen from then on — see [`OnceDir`] for why
+/// the snapshot `main` takes and this function must never be able to disagree.
+///
 /// On macOS, an absolute `XDG_DATA_HOME` selects `$XDG_DATA_HOME/fresh`; see
 /// [`xdg_dir_with_continuity`] for why an install that predates that may still
 /// be on `~/Library/Application Support/fresh`. Otherwise this is
 /// `dirs::data_dir()/fresh`. A relative or empty value is ignored.
 pub(crate) fn system_data_dir() -> Option<PathBuf> {
+    static RESOLVED: OnceDir = OnceDir::new();
+    RESOLVED.get(resolve_system_data_dir)
+}
+
+/// The resolution [`system_data_dir`] freezes. Call it through that, not here:
+/// two calls can answer differently.
+fn resolve_system_data_dir() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
         xdg_dir_with_continuity(
@@ -169,6 +210,59 @@ mod tests {
             Some(new),
             "with nothing to continue, the variable is what the user asked for"
         );
+    }
+
+    /// The resolution used to run on *every* `get_data_dir()` call while
+    /// `DirectoryContext::from_system()` snapshotted it once, so a
+    /// `$XDG_DATA_HOME/fresh` that appeared mid-session — created by the user
+    /// following the migration docs, by a pre-creating launcher, or by a second
+    /// `fresh` — moved `workspace::get_workspaces_dir()` onto the new directory
+    /// while `dir_context.workspaces_dir()` stayed on the old one. The session
+    /// was then written through one path and looked for through the other.
+    #[test]
+    fn a_resolved_dir_is_frozen_for_the_process_even_as_the_answer_changes() {
+        let base = TempDir::new().unwrap();
+        let xdg = base.path().join("xdg");
+        let previous = base.path().join("Library/Application Support/fresh");
+        std::fs::create_dir_all(&previous).unwrap();
+
+        let resolve = || {
+            xdg_dir_with_continuity(
+                fresh_dir_from_xdg(Some(xdg.as_os_str())),
+                Some(previous.clone()),
+            )
+        };
+
+        let resolved = OnceDir::new();
+        assert_eq!(resolved.get(resolve), Some(previous.clone()));
+
+        std::fs::create_dir_all(xdg.join("fresh")).unwrap();
+
+        assert_eq!(
+            resolve(),
+            Some(xdg.join("fresh")),
+            "re-resolving now answers differently — this is the divergence"
+        );
+        assert_eq!(
+            resolved.get(resolve),
+            Some(previous),
+            "but a process keeps the directory it started on"
+        );
+    }
+
+    /// The thread-local test override has to keep taking precedence over the
+    /// frozen resolution: `tests/common/global_state.rs` and the recovery store
+    /// both redirect the data dir through it.
+    #[test]
+    fn the_test_override_still_wins_over_the_frozen_resolution() {
+        let base = TempDir::new().unwrap();
+        let pinned = base.path().join("pinned");
+
+        let system = get_data_dir().ok();
+        let previous = set_data_dir_override(Some(pinned.clone()));
+        assert_eq!(get_data_dir().ok(), Some(pinned));
+        set_data_dir_override(previous);
+        assert_eq!(get_data_dir().ok(), system);
     }
 
     #[test]
