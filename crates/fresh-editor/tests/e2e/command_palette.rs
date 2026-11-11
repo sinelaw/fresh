@@ -2332,8 +2332,6 @@ fn test_quick_open_follows_show_hidden_files_of_active_window() {
 /// Waits for every file `input` should match to be on screen, so Tab sees
 /// the whole list rather than a partially scanned one.
 fn quick_open_files(input: &str, expected: &[&str]) -> EditorTestHarness {
-    use crossterm::event::{KeyCode, KeyModifiers};
-
     let mut harness =
         EditorTestHarness::with_temp_project_and_config(100, 24, Default::default()).unwrap();
     let project_root = harness.project_dir().unwrap();
@@ -2351,7 +2349,16 @@ fn quick_open_files(input: &str, expected: &[&str]) -> EditorTestHarness {
     .unwrap();
     fs::write(project_root.join("notes.txt"), "first\nsecond line\n").unwrap();
 
-    // Open Quick Open (command mode), then switch to file mode
+    type_in_quick_open_file_mode(&mut harness, input, expected);
+    harness
+}
+
+/// Open Quick Open (it starts in command mode), switch to file mode, type
+/// `input`, and wait until every path in `expected` is listed — so Tab sees
+/// the whole list rather than a partially scanned one.
+fn type_in_quick_open_file_mode(harness: &mut EditorTestHarness, input: &str, expected: &[&str]) {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
@@ -2365,7 +2372,6 @@ fn quick_open_files(input: &str, expected: &[&str]) -> EditorTestHarness {
             expected.iter().all(|path| screen.contains(path))
         })
         .expect("Quick Open should list the matching files");
-    harness
 }
 
 const QUICK_OPEN_CRATES: &[&str] = &["crates/fresh-editor/src/main.rs", "crates/fresh-gui/lib.rs"];
@@ -2452,4 +2458,30 @@ fn test_quick_open_tab_keeps_line_suffix_and_opens_file() {
             screen.contains("Ln 2") && screen.contains("second line")
         })
         .expect("Enter should open notes.txt at line 2");
+}
+
+/// Off Windows a backslash is an ordinary filename character, not a
+/// directory boundary: two files really named `a\b1.txt` and `a\b2.txt`
+/// share the prefix `a\b`, and Tab completes the whole of it rather than
+/// stopping at `a\` as if `a` were a directory.
+#[test]
+#[cfg(not(windows))]
+fn test_quick_open_tab_completes_across_a_backslash_in_a_name() {
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(100, 24, Default::default()).unwrap();
+    let project_root = harness.project_dir().unwrap();
+    fs::write(project_root.join("a\\b1.txt"), "one\n").unwrap();
+    fs::write(project_root.join("a\\b2.txt"), "two\n").unwrap();
+
+    type_in_quick_open_file_mode(&mut harness, "a", &["a\\b1.txt", "a\\b2.txt"]);
+
+    let prompt = tab_and_read_prompt(&mut harness);
+    assert!(
+        prompt.contains("a\\b"),
+        "Tab should complete past the backslash: {prompt}"
+    );
+    assert!(
+        !prompt.contains("a\\b1") && !prompt.contains("a\\b2"),
+        "Tab should stop where the two names diverge: {prompt}"
+    );
 }
