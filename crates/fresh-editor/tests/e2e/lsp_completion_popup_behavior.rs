@@ -232,6 +232,88 @@ fn test_completion_accepts_item_with_stale_text_edit_range() -> anyhow::Result<(
     Ok(())
 }
 
+/// A cursor the server's range cannot be translated to must not cancel the
+/// completion at the other cursors. Here the primary sits mid-buffer and a
+/// second cursor sits at the end of the file, where a range that extends past
+/// the cursor runs off the end of the buffer. Both cursors still receive the
+/// completion, each replacing what it can (#1901, accept path).
+#[test]
+fn test_completion_accepts_at_every_cursor_when_range_runs_past_buffer_end() -> anyhow::Result<()> {
+    use fresh::model::event::CursorId;
+    use lsp_types::{Position, Range};
+
+    let mut h = EditorTestHarness::new(80, 24)?;
+    h.type_text("calXYZ\ncal")?;
+    // The cursor that typed stays at the end of the file; the added one
+    // becomes the primary, after `cal` on the first line.
+    h.apply_event(Event::AddCursor {
+        cursor_id: CursorId(1),
+        position: 3,
+        anchor: None,
+    })?;
+    assert_eq!(
+        h.editor().active_cursors().iter().count(),
+        2,
+        "test precondition: two cursors set up"
+    );
+    assert_eq!(
+        h.editor().active_cursors().primary().position,
+        3,
+        "test precondition: the added cursor is the primary one"
+    );
+
+    // Replace semantics: the range covers `calXYZ`, three bytes past the
+    // primary cursor — and three bytes past the end of the buffer at the
+    // cursor on the last line.
+    cache_calculate_text_edit(&mut h, Range::new(Position::new(0, 0), Position::new(0, 6)));
+    h.render()?;
+
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE)?;
+    assert_eq!(h.get_buffer_content().unwrap(), "calculate\ncalculate");
+    Ok(())
+}
+
+/// The same abort reached the other way: the translated range lands inside a
+/// multi-byte character at the secondary cursor, which happens as soon as the
+/// cursors' surroundings differ in byte width.
+#[test]
+fn test_completion_accepts_at_every_cursor_when_range_splits_a_codepoint() -> anyhow::Result<()> {
+    use fresh::model::event::CursorId;
+    use lsp_types::{Position, Range};
+
+    let mut h = EditorTestHarness::new(80, 24)?;
+    h.type_text("calz\ncal\u{e9}")?;
+    // Put the typing cursor between `cal` and the two-byte `\u{e9}`, so the one
+    // byte the range reaches past the primary cursor lands mid-codepoint here.
+    h.send_key(KeyCode::Left, KeyModifiers::NONE)?;
+    h.apply_event(Event::AddCursor {
+        cursor_id: CursorId(1),
+        position: 3,
+        anchor: None,
+    })?;
+    assert_eq!(
+        h.editor().active_cursors().iter().count(),
+        2,
+        "test precondition: two cursors set up"
+    );
+    assert_eq!(
+        h.editor().active_cursors().primary().position,
+        3,
+        "test precondition: the added cursor is the primary one"
+    );
+
+    // The range covers `calz`: one byte past the primary cursor.
+    cache_calculate_text_edit(&mut h, Range::new(Position::new(0, 0), Position::new(0, 4)));
+    h.render()?;
+
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE)?;
+    assert_eq!(
+        h.get_buffer_content().unwrap(),
+        "calculate\ncalculate\u{e9}"
+    );
+    Ok(())
+}
+
 // ============================================================================
 // Issue 1: Left/Right arrow keys are swallowed
 // ============================================================================

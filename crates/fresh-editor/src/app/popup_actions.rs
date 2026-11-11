@@ -206,11 +206,12 @@ impl Editor {
     /// Multi-cursor: translate the edit relative to each cursor, or replace
     /// each word prefix when no range is supplied. Apply as one undo step.
     ///
-    /// A server range that no longer fits the buffer falls back to the word
-    /// prefix at the cursor instead of cancelling the accept: accepting a
-    /// completion always inserts something. Returns `false` only when the
-    /// edit could not be applied at all, so the caller can skip the
-    /// additional edits that go with it.
+    /// A server range that no longer fits the buffer, and a translation that
+    /// no secondary cursor can take, both fall back to the word prefix at that
+    /// one cursor instead of cancelling the accept: accepting a completion
+    /// always inserts something. Returns `false` only when the edit could not
+    /// be applied at all, so the caller can skip the additional edits that go
+    /// with it.
     fn insert_completion_text(
         &mut self,
         text: String,
@@ -255,26 +256,17 @@ impl Editor {
         });
 
         // Keep multicursor completion working by translating the primary edit
-        // relative to each cursor. Validate all ranges before applying any edit.
+        // relative to each cursor. A cursor the translation cannot serve
+        // replaces its own word prefix, so one unusable secondary cursor no
+        // longer cancels the accept at every cursor -- each one still receives
+        // the completion in lock-step (#1901, accept path).
         let mut cursor_data: Vec<(CursorId, usize, usize, String)> = Vec::new();
         for (cursor_id, cursor) in self.active_cursors().iter() {
             let pos = cursor.position;
-            let range = if let Some(range) = &primary_range {
-                let Some(start) = pos.checked_sub(primary_pos - range.start) else {
-                    return false;
-                };
-                let Some(end) = pos.checked_add(range.end - primary_pos) else {
-                    return false;
-                };
-                if end > buffer.len()
-                    || std::str::from_utf8(&buffer.slice_bytes(start..end)).is_err()
-                {
-                    return false;
-                }
-                start..end
-            } else {
-                find_completion_word_start(buffer, pos)..pos
-            };
+            let range = primary_range
+                .as_ref()
+                .and_then(|range| translate_completion_range(buffer, range, primary_pos, pos))
+                .unwrap_or_else(|| find_completion_word_start(buffer, pos)..pos);
             let prefix = String::from_utf8_lossy(&buffer.slice_bytes(range.clone())).into_owned();
             cursor_data.push((cursor_id, range.end, range.start, prefix));
         }
@@ -789,6 +781,30 @@ pub(crate) fn completion_matches_prefix(item: &lsp_types::CompletionItem, prefix
             .as_ref()
             .map(|ft| ft.to_lowercase().starts_with(prefix))
             .unwrap_or(false)
+}
+
+/// Translate the primary cursor's edit range to another cursor, keeping the
+/// same byte distance on each side so every cursor replaces the same shape of
+/// text.
+///
+/// `None` when the translated range cannot be used at that cursor: it would
+/// run past the end of the buffer, or it would split a codepoint -- likely
+/// whenever the cursors' surroundings differ in byte width, e.g. one cursor
+/// sits after a multi-byte character where the primary sits after an ASCII
+/// one. The caller falls back to that cursor's own word prefix rather than
+/// abandoning the accept at every cursor.
+fn translate_completion_range(
+    buffer: &crate::model::buffer::Buffer,
+    primary_range: &std::ops::Range<usize>,
+    primary_pos: usize,
+    pos: usize,
+) -> Option<std::ops::Range<usize>> {
+    let start = pos.checked_sub(primary_pos - primary_range.start)?;
+    let end = pos.checked_add(primary_range.end - primary_pos)?;
+    if end > buffer.len() || std::str::from_utf8(&buffer.slice_bytes(start..end)).is_err() {
+        return None;
+    }
+    Some(start..end)
 }
 
 fn completion_edit_range(item: &lsp_types::CompletionItem) -> Option<lsp_types::Range> {
