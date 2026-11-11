@@ -1138,19 +1138,26 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    // These resolve against paths the function under test *probes*, so each
+    // needs a workdir of its own: on shared `std::env::temp_dir()` paths a
+    // leftover `real-home/.config/fresh` from any earlier run decides the
+    // branch, and the assertion fails for a reason that has nothing to do with
+    // the code (CONTRIBUTING, "Testing" #4).
     #[test]
     fn macos_config_dir_uses_xdg_without_changing_home() {
-        let base = std::env::temp_dir().join("config-home");
-        let home = std::env::temp_dir().join("real-home");
+        let base = TempDir::new().unwrap();
+        let xdg = base.path().join("config-home");
+        let home = base.path().join("real-home");
         let resolved =
-            DirectoryContext::macos_config_dir(Some(base.as_os_str()), Some(&home)).unwrap();
-        assert_eq!(resolved, base.join("fresh"));
+            DirectoryContext::macos_config_dir(Some(xdg.as_os_str()), Some(&home)).unwrap();
+        assert_eq!(resolved, xdg.join("fresh"));
         assert_ne!(resolved, home.join(".config").join("fresh"));
     }
 
     #[test]
     fn macos_config_dir_keeps_dot_config_when_xdg_is_unset() {
-        let home = std::env::temp_dir().join("real-home");
+        let base = TempDir::new().unwrap();
+        let home = base.path().join("real-home");
         let resolved = DirectoryContext::macos_config_dir(None, Some(&home)).unwrap();
         assert_eq!(resolved, home.join(".config").join("fresh"));
     }
