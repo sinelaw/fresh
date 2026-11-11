@@ -303,9 +303,12 @@ impl Prompt {
         let mut end = crate::primitives::grapheme::snap_to_grapheme_boundary(first, shared_bytes);
         // Complete one directory level per Tab: stop just past the first
         // path separator after the typed path.
+        // `std::path::is_separator`, not a literal pair: `\` separates on
+        // Windows and is an ordinary filename character everywhere else, and
+        // reading one as a boundary would stop the completion inside a name.
         if let Some(sep) = first
             .get(query.len()..end)
-            .and_then(|rest| rest.find(['/', '\\']))
+            .and_then(|rest| rest.find(std::path::is_separator))
         {
             end = query.len() + sep + 1;
         }
@@ -620,7 +623,11 @@ mod tests {
         assert_eq!(quick_open_tab("crat:42:5", CRATES), "crates/:42:5");
     }
 
+    /// Only Windows reads `\` as a directory boundary — see
+    /// `test_quick_open_tab_treats_backslash_as_a_name_character` for the
+    /// same two paths elsewhere.
     #[test]
+    #[cfg(windows)]
     fn test_quick_open_tab_follows_backslash_separators() {
         let paths = &["src\\app\\main.rs", "src\\app\\lib.rs"];
         assert_eq!(quick_open_tab("src\\a", paths), "src\\app\\");
@@ -698,6 +705,16 @@ mod tests {
     fn test_tab_in_other_prompts_accepts_selection() {
         let mut prompt = prompt_with_paths(PromptType::Search, "crat", CRATES);
         assert_eq!(press_tab(&mut prompt), "crates/fresh-editor/src/main.rs");
+    }
+
+    /// Off Windows, `\` is an ordinary filename character: two files really
+    /// named `a\b1.txt` and `a\b2.txt` share the prefix `a\b`, and Tab must
+    /// not read the backslash as a directory boundary and stop at `a\`.
+    #[test]
+    #[cfg(not(windows))]
+    fn test_quick_open_tab_treats_backslash_as_a_name_character() {
+        let paths = &["a\\b1.txt", "a\\b2.txt"];
+        assert_eq!(quick_open_tab("a", paths), "a\\b");
     }
 
     /// The file provider caps its matches at a row limit ranked by fuzzy
