@@ -179,6 +179,59 @@ fn test_completion_text_edit_snippet_and_plain_text() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Cache one `textEdit` completion item in the `cal` / `calculate` shape the
+/// tests here use, and rebuild the popup's rows — and with them the
+/// row -> candidate mapping the accept path reads back.
+///
+/// `set_completion_items` only stores what the server sent; the rows and the
+/// mapping are rebuilt by the popup's own typing handlers, so the item is put
+/// through one keystroke and one Backspace. `u` is the next letter of
+/// `calculate`, so the item still matches in between, and the round trip
+/// leaves the buffer, every cursor and the cached range where they were: both
+/// ends of a range that sits before the typed character are left alone, and
+/// one that reaches past it is widened and narrowed back.
+fn cache_calculate_text_edit(h: &mut EditorTestHarness, range: lsp_types::Range) {
+    h.editor_mut()
+        .set_completion_items(vec![lsp_types::CompletionItem {
+            label: "calculate".into(),
+            text_edit: Some(lsp_types::CompletionTextEdit::Edit(
+                lsp_types::TextEdit::new(range, "calculate".into()),
+            )),
+            ..Default::default()
+        }]);
+    h.editor_mut().handle_popup_type_char('u');
+    h.editor_mut().handle_popup_backspace();
+}
+
+/// A keystroke that lands between a completion request going out and its
+/// response coming back leaves the server's `textEdit` range ending behind the
+/// cursor. Accepting must still insert — falling back to the word prefix at
+/// the cursor — instead of dismissing the popup and inserting nothing.
+#[test]
+fn test_completion_accepts_item_with_stale_text_edit_range() -> anyhow::Result<()> {
+    use lsp_types::{Position, Range};
+
+    let mut h = setup_completion_popup("cal")?;
+
+    // The keystroke the server never saw: the request went out with the
+    // cursor after `cal`, and `c` was typed before the answer arrived.
+    h.send_key(KeyCode::Char('c'), KeyModifiers::NONE)?;
+    assert_eq!(h.get_buffer_content().unwrap(), "calc");
+
+    // The response, computed against `cal`: its range stops at character 3,
+    // one byte behind the cursor, which now sits after `calc`.
+    cache_calculate_text_edit(&mut h, Range::new(Position::new(0, 0), Position::new(0, 3)));
+    h.render()?;
+
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE)?;
+    assert_eq!(h.get_buffer_content().unwrap(), "calculate");
+    assert_eq!(
+        h.editor().active_cursors().primary().position,
+        "calculate".len()
+    );
+    Ok(())
+}
+
 // ============================================================================
 // Issue 1: Left/Right arrow keys are swallowed
 // ============================================================================

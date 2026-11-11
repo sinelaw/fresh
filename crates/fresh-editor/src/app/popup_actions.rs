@@ -205,6 +205,12 @@ impl Editor {
     ///
     /// Multi-cursor: translate the edit relative to each cursor, or replace
     /// each word prefix when no range is supplied. Apply as one undo step.
+    ///
+    /// A server range that no longer fits the buffer falls back to the word
+    /// prefix at the cursor instead of cancelling the accept: accepting a
+    /// completion always inserts something. Returns `false` only when the
+    /// edit could not be applied at all, so the caller can skip the
+    /// additional edits that go with it.
     fn insert_completion_text(
         &mut self,
         text: String,
@@ -226,25 +232,27 @@ impl Editor {
 
         let buffer = &self.active_state().buffer;
         let primary_pos = self.active_cursors().primary().position;
-        let primary_range = if let Some(range) = item.and_then(completion_edit_range) {
+        // A server range is only usable while the document it was computed
+        // against still agrees with it: the conversion clamps positions that
+        // no longer exist, and a keystroke that landed between the request and
+        // the response leaves the range ending behind the cursor.
+        // `rebase_completion_edits` moves the cached ranges for edits made
+        // while the popup is open, but nothing accounts for the
+        // request -> response window, so an unusable range falls back to the
+        // word prefix below -- the accept does what it did before textEdit
+        // ranges were honoured, instead of inserting nothing at all.
+        let primary_range = item.and_then(completion_edit_range).and_then(|range| {
             let start = buffer
                 .lsp_position_to_byte(range.start.line as usize, range.start.character as usize);
             let end =
                 buffer.lsp_position_to_byte(range.end.line as usize, range.end.character as usize);
-            // Conversion clamps invalid positions; reject them instead.
-            if start > primary_pos
-                || end < primary_pos
-                || buffer.position_to_lsp_position(start)
-                    != (range.start.line as usize, range.start.character as usize)
-                || buffer.position_to_lsp_position(end)
-                    != (range.end.line as usize, range.end.character as usize)
-            {
-                return false;
-            }
-            Some(start..end)
-        } else {
-            None
-        };
+            let brackets_cursor = start <= primary_pos && end >= primary_pos;
+            let converted_exactly = buffer.position_to_lsp_position(start)
+                == (range.start.line as usize, range.start.character as usize)
+                && buffer.position_to_lsp_position(end)
+                    == (range.end.line as usize, range.end.character as usize);
+            (brackets_cursor && converted_exactly).then_some(start..end)
+        });
 
         // Keep multicursor completion working by translating the primary edit
         // relative to each cursor. Validate all ranges before applying any edit.
@@ -579,6 +587,13 @@ impl Editor {
     /// Popup typing filters cached results. Move their ranges through the same
     /// edits as the buffer, in descending order so all positions refer to the
     /// pre-edit document (including edits made at secondary cursors).
+    ///
+    /// Two kinds of cached position are deliberately left alone, and
+    /// `insert_completion_text` copes with both by falling back to the word
+    /// prefix: edits made between a completion request going out and its
+    /// response landing (this runs on the popup's own keystrokes, so it never
+    /// sees them), and each item's `additional_text_edits`, which the accept
+    /// path applies where the server put them.
     fn rebase_completion_edits(&mut self, events: &[Event]) {
         let mut changes: Vec<_> = events
             .iter()
