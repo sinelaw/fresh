@@ -247,11 +247,20 @@ impl Prompt {
     /// (one directory level per Tab, like a shell), and keeps any
     /// `:line:col` suffix. When those paths share nothing beyond the typed
     /// path, the input comes back unchanged. Returns `None` when this does
-    /// not apply (other prompts, other providers, a selection moved off the
-    /// first row, an empty path, or only fuzzy matches), so the caller falls
-    /// back to accepting the selection.
+    /// not apply (other prompts, other providers, a capped suggestion list,
+    /// a selection moved off the first row, an empty path, or only fuzzy
+    /// matches), so the caller falls back to accepting the selection.
     fn quick_open_file_completion(&self) -> Option<String> {
         if !matches!(self.prompt_type, crate::view::prompt::PromptType::QuickOpen) {
+            return None;
+        }
+        // A prefix is only worth committing to when the list is every match.
+        // The file provider cuts its matches off at a row cap, ranked by
+        // fuzzy score and frecency, so the survivors can agree on a
+        // directory that the dropped matches do not — completing to it would
+        // overwrite the query with a directory the user never chose and put
+        // the dropped siblings out of reach of that input.
+        if self.suggestions_capped() {
             return None;
         }
         let input = self.input_str();
@@ -689,5 +698,37 @@ mod tests {
     fn test_tab_in_other_prompts_accepts_selection() {
         let mut prompt = prompt_with_paths(PromptType::Search, "crat", CRATES);
         assert_eq!(press_tab(&mut prompt), "crates/fresh-editor/src/main.rs");
+    }
+
+    /// The file provider caps its matches at a row limit ranked by fuzzy
+    /// score and frecency, so the paths on the list can share a directory
+    /// the dropped matches do not. Tab must not commit to that prefix: it
+    /// accepts the highlighted row instead, as it did before completion
+    /// existed. The on-screen list cannot show this (a capped list looks
+    /// like any other), which is why it is covered here and not e2e.
+    #[test]
+    fn test_quick_open_tab_declines_on_a_capped_list() {
+        let mut prompt = prompt_with_paths(PromptType::QuickOpen, "crates/fre", CRATES);
+        prompt.set_suggestions_capped(true);
+        assert_eq!(press_tab(&mut prompt), "crates/fresh-editor/src/main.rs");
+    }
+
+    /// The cap flag describes one list, so the next list must not inherit
+    /// it: a narrower query whose matches all fit completes again.
+    #[test]
+    fn test_quick_open_tab_completes_again_once_the_list_fits() {
+        let mut prompt = prompt_with_paths(PromptType::QuickOpen, "crates/fre", CRATES);
+        prompt.set_suggestions_capped(true);
+        // What the next keystroke does: a fresh list, and no cap reported.
+        prompt.set_suggestions(
+            CRATES
+                .iter()
+                .map(|p| {
+                    Suggestion::new(format!("file:{p}"), p.to_string()).with_value(p.to_string())
+                })
+                .collect(),
+        );
+        prompt.select_suggestion(Some(0));
+        assert_eq!(press_tab(&mut prompt), "crates/fresh-");
     }
 }
