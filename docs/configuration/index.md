@@ -56,7 +56,7 @@ Settings are loaded from multiple layers, with higher layers overriding lower on
 
 **Path Notes:**
 - On Windows, User config is at `%APPDATA%\fresh\config.json`
-- On macOS, an existing `~/.config/fresh` keeps being used until `$XDG_CONFIG_HOME/fresh` exists; create that directory (and move your files into it) to switch. The same applies to `XDG_DATA_HOME` and `~/Library/Application Support/fresh`, where sessions and recovery files live
+- On macOS, an existing `~/.config/fresh` keeps being used until your files are in `$XDG_CONFIG_HOME/fresh`: move them there (`mv ~/.config/fresh/* "$XDG_CONFIG_HOME/fresh/"`) to switch. Creating the directory on its own changes nothing, so there is no window in which Fresh reads neither. The same applies to `XDG_DATA_HOME` and `~/Library/Application Support/fresh`, where sessions and recovery files live. A new install with no files in either place follows `$XDG_CONFIG_HOME` straight away
 - Project config is found by searching up from the current directory for `.fresh/config.json`
 
 ### Per-Buffer Overrides

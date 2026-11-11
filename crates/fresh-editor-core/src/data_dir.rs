@@ -7,6 +7,8 @@
 use std::cell::RefCell;
 #[cfg(any(target_os = "macos", test))]
 use std::ffi::OsStr;
+#[cfg(any(target_os = "macos", test))]
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
@@ -143,11 +145,22 @@ pub(crate) fn fresh_dir_from_xdg(value: Option<&OsStr>) -> Option<PathBuf> {
 /// it honoured the variable.
 ///
 /// Honouring the variable is a change on Fresh's side, not the user's, so an
-/// install that already keeps its files at `previous` stays there until the new
-/// directory exists: upgrading must not silently strand its sessions, workspace
-/// trust decisions and crash-recovery files. The new directory wins as soon as
-/// it is there, which makes the whole migration "create it" — and a launcher
-/// that pre-creates the directory is always on the new path from its first run.
+/// install whose files are already at `previous` stays there until the new
+/// directory is the one in use: upgrading must not silently strand its
+/// sessions, workspace trust decisions and crash-recovery files.
+///
+/// "In use" means **holding files**, not merely existing, and that distinction
+/// is the whole point. Keying on existence made `mkdir -p
+/// $XDG_CONFIG_HOME/fresh` — the first half of the one migration step the docs
+/// ask for — switch `config_dir` onto the still-empty new directory, and
+/// everything hanging off it with no files to read: `config.json`, `themes/`,
+/// `grammars/` and `plugins/` all read as absent while they sat untouched in
+/// `~/.config/fresh`. Creating the directory now changes nothing; **moving the
+/// files in** is what completes the migration, which is also the only order in
+/// which no step loses anything.
+///
+/// A new install has nothing at `previous`, so an absolute `$XDG_*` is honoured
+/// from the first run, pre-created directory or not.
 ///
 /// `previous` is `$HOME`-derived, so a redirected `HOME` never resolves to the
 /// real user's directory behind it.
@@ -157,9 +170,23 @@ pub(crate) fn xdg_dir_with_continuity(
     previous: Option<PathBuf>,
 ) -> Option<PathBuf> {
     match new {
-        Some(new) if !new.exists() => previous.filter(|p| p.exists()).or(Some(new)),
+        Some(new) if !holds_files(&new) => previous.filter(|p| holds_files(p)).or(Some(new)),
         Some(new) => Some(new),
         None => previous,
+    }
+}
+
+/// Whether `dir` is a directory an install is actually keeping files in.
+///
+/// A directory that exists but cannot be listed (permissions) counts: we can
+/// see it is there, and abandoning a directory we cannot look into is the one
+/// answer that could lose data. A `dir` that is not there at all does not —
+/// `read_dir` fails and `exists()` is false.
+#[cfg(any(target_os = "macos", test))]
+fn holds_files(dir: &Path) -> bool {
+    match std::fs::read_dir(dir) {
+        Ok(mut entries) => entries.next().is_some(),
+        Err(_) => dir.exists(),
     }
 }
 
@@ -187,8 +214,8 @@ mod tests {
         let base = TempDir::new().unwrap();
         let new = base.path().join("xdg").join("fresh");
         let previous = base.path().join("Library/Application Support/fresh");
-        std::fs::create_dir_all(&previous).unwrap();
-        std::fs::create_dir_all(&new).unwrap();
+        std::fs::create_dir_all(previous.join("workspaces")).unwrap();
+        std::fs::create_dir_all(new.join("workspaces")).unwrap();
         assert_eq!(
             xdg_dir_with_continuity(Some(new.clone()), Some(previous)),
             Some(new)
@@ -196,15 +223,32 @@ mod tests {
     }
 
     #[test]
-    fn an_existing_install_outlives_the_xdg_variable_until_the_new_dir_exists() {
+    fn an_existing_install_outlives_the_xdg_variable_until_its_files_move() {
         let base = TempDir::new().unwrap();
         let new = base.path().join("xdg").join("fresh");
         let previous = base.path().join("Library/Application Support/fresh");
-        std::fs::create_dir_all(&previous).unwrap();
+        std::fs::create_dir_all(previous.join("workspaces")).unwrap();
         assert_eq!(
             xdg_dir_with_continuity(Some(new.clone()), Some(previous.clone())),
-            Some(previous)
+            Some(previous.clone())
         );
+
+        // Creating the new directory is not the migration: an empty directory
+        // holds none of the files the install is still reading.
+        std::fs::create_dir_all(&new).unwrap();
+        assert_eq!(
+            xdg_dir_with_continuity(Some(new.clone()), Some(previous.clone())),
+            Some(previous.clone()),
+            "an empty new directory leaves the install where its files are"
+        );
+
+        std::fs::rename(previous.join("workspaces"), new.join("workspaces")).unwrap();
+        assert_eq!(
+            xdg_dir_with_continuity(Some(new.clone()), Some(previous)),
+            Some(new.clone()),
+            "once the files are there, the new directory is the one in use"
+        );
+
         assert_eq!(
             xdg_dir_with_continuity(Some(new.clone()), None),
             Some(new),
@@ -224,7 +268,7 @@ mod tests {
         let base = TempDir::new().unwrap();
         let xdg = base.path().join("xdg");
         let previous = base.path().join("Library/Application Support/fresh");
-        std::fs::create_dir_all(&previous).unwrap();
+        std::fs::create_dir_all(previous.join("workspaces")).unwrap();
 
         let resolve = || {
             xdg_dir_with_continuity(
@@ -236,7 +280,7 @@ mod tests {
         let resolved = OnceDir::new();
         assert_eq!(resolved.get(resolve), Some(previous.clone()));
 
-        std::fs::create_dir_all(xdg.join("fresh")).unwrap();
+        std::fs::create_dir_all(xdg.join("fresh").join("workspaces")).unwrap();
 
         assert_eq!(
             resolve(),

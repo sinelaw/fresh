@@ -788,20 +788,22 @@ fn diff_partial_config(current: &PartialConfig, parent: &PartialConfig) -> Parti
 impl Config {
     /// Get the system config file paths (without local/working directory).
     ///
-    /// On macOS, prioritizes the resolved config directory (`$XDG_CONFIG_HOME/fresh`
-    /// when that variable is absolute, otherwise `~/.config/fresh`) if its file
-    /// exists, then the standard system config directory. An install that predates
+    /// On macOS, prioritizes the user's `config.json` — in the resolved config
+    /// directory (`$XDG_CONFIG_HOME/fresh` when that variable is absolute,
+    /// otherwise `~/.config/fresh`), else still in `~/.config/fresh` — then the
+    /// standard system config directory. An install that predates
     /// `XDG_CONFIG_HOME` therefore still finds the config it wrote before the
-    /// upgrade — see [`crate::data_dir::xdg_dir_with_continuity`].
+    /// upgrade — see [`Config::macos_config_path`] and
+    /// [`crate::data_dir::xdg_dir_with_continuity`].
     fn system_config_paths() -> Vec<PathBuf> {
         let mut paths = Vec::with_capacity(2);
 
         #[cfg(target_os = "macos")]
-        if let Some(config_dir) = DirectoryContext::default_config_dir() {
-            let path = config_dir.join(Config::FILENAME);
-            if path.exists() {
-                paths.push(path);
-            }
+        if let Some(path) = Self::macos_config_path(
+            DirectoryContext::default_config_dir().as_deref(),
+            dirs::home_dir().as_deref(),
+        ) {
+            paths.push(path);
         }
 
         // Standard system paths (XDG on Linux, AppSupport on macOS, Roaming on Windows)
@@ -813,6 +815,31 @@ impl Config {
         }
 
         paths
+    }
+
+    /// The user's `config.json` on macOS: in `resolved` if it is there, else in
+    /// `~/.config/fresh` if it is there, else nowhere.
+    ///
+    /// Keyed on the *file*, not on the directory `resolved` names. The
+    /// continuity rule hands back a directory, and a half-finished move can
+    /// leave `$XDG_CONFIG_HOME/fresh` holding themes or plugins — enough to be
+    /// the directory in use — while `config.json` is still in `~/.config/fresh`.
+    /// Only the `config.json` that exists can be read, so this follows the file.
+    /// Without the second candidate the next stop is
+    /// `dirs::config_dir()/fresh/config.json` (`~/Library/Application
+    /// Support/fresh`), which a `~/.config` install has never written, and
+    /// `find_config_path` returns `None` — the user's settings read as absent
+    /// while the file sits in plain sight.
+    #[cfg(any(target_os = "macos", test))]
+    fn macos_config_path(resolved: Option<&Path>, home: Option<&Path>) -> Option<PathBuf> {
+        [
+            resolved.map(Path::to_path_buf),
+            home.map(|p| p.join(".config").join("fresh")),
+        ]
+        .into_iter()
+        .flatten()
+        .map(|dir| dir.join(Config::FILENAME))
+        .find(|path| path.exists())
     }
 
     /// Get all config search paths, checking local (working directory) first.
@@ -950,12 +977,14 @@ fn is_empty_diff(value: &serde_json::Value) -> bool {
 pub struct DirectoryContext {
     /// Data directory for persistent state (recovery, workspaces, history)
     /// e.g., ~/.local/share/fresh on Linux, ~/Library/Application Support/fresh on macOS
-    /// (or `$XDG_DATA_HOME/fresh`; see `data_dir::system_data_dir`)
+    /// (or `$XDG_DATA_HOME/fresh` once that directory holds the install's
+    /// files; see `data_dir::system_data_dir`)
     pub data_dir: std::path::PathBuf,
 
     /// Config directory for user configuration
-    /// e.g., ~/.config/fresh on Linux and macOS (or `$XDG_CONFIG_HOME/fresh`;
-    /// see `DirectoryContext::default_config_dir`)
+    /// e.g., ~/.config/fresh on Linux and macOS (or `$XDG_CONFIG_HOME/fresh`
+    /// once that directory holds the install's files; see
+    /// `DirectoryContext::default_config_dir`)
     pub config_dir: std::path::PathBuf,
 
     /// User's home directory (for file open dialog shortcuts)
@@ -1098,7 +1127,7 @@ impl DirectoryContext {
     /// process and frozen — see [`crate::data_dir::OnceDir`].
     ///
     /// On macOS, an absolute `XDG_CONFIG_HOME` selects `$XDG_CONFIG_HOME/fresh`,
-    /// unless the install is still on `~/.config/fresh` — see
+    /// unless the install's config files are still in `~/.config/fresh` — see
     /// [`crate::data_dir::xdg_dir_with_continuity`]. A relative or empty value is
     /// ignored. Linux already follows the variable through `dirs::config_dir()`.
     fn default_config_dir() -> Option<PathBuf> {
@@ -1123,7 +1152,15 @@ impl DirectoryContext {
         }
     }
 
-    /// macOS config directory: the XDG override, or `home/.config/fresh`.
+    /// macOS config directory: the XDG override once its files are there, or
+    /// `home/.config/fresh`.
+    ///
+    /// Everything the editor reads and writes under the config directory —
+    /// [`Self::config_path`], [`Self::themes_dir`], [`Self::grammars_dir`],
+    /// [`Self::plugins_dir`] — follows this one answer, which is why the
+    /// continuity rule keys on the directory's contents rather than on it
+    /// merely existing: `mkdir` alone would move all four onto an empty
+    /// directory at once.
     #[cfg(any(target_os = "macos", test))]
     fn macos_config_dir(xdg_config_home: Option<&OsStr>, home: Option<&Path>) -> Option<PathBuf> {
         crate::data_dir::xdg_dir_with_continuity(
@@ -1169,6 +1206,7 @@ mod tests {
         let xdg = base.path().join("xdg");
         let dot_config = home.join(".config").join("fresh");
         std::fs::create_dir_all(&dot_config).unwrap();
+        std::fs::write(dot_config.join(Config::FILENAME), r#"{"theme": "monokai"}"#).unwrap();
 
         assert_eq!(
             DirectoryContext::macos_config_dir(Some(xdg.as_os_str()), Some(&home)),
@@ -1176,11 +1214,70 @@ mod tests {
             "an existing config keeps being read after the upgrade"
         );
 
+        // `docs/configuration/index.md` tells the user to create the directory
+        // and move their files into it. Between the two halves of that step the
+        // new directory is empty, and `config_dir` drives `config.json`,
+        // `themes/`, `grammars/` and `plugins/` alike — so switching on `mkdir`
+        // alone took all four away at once while the files sat in `~/.config`.
         std::fs::create_dir_all(xdg.join("fresh")).unwrap();
         assert_eq!(
             DirectoryContext::macos_config_dir(Some(xdg.as_os_str()), Some(&home)),
+            Some(dot_config.clone()),
+            "an empty new directory is not where the settings are"
+        );
+
+        std::fs::rename(
+            dot_config.join(Config::FILENAME),
+            xdg.join("fresh").join(Config::FILENAME),
+        )
+        .unwrap();
+        assert_eq!(
+            DirectoryContext::macos_config_dir(Some(xdg.as_os_str()), Some(&home)),
             Some(xdg.join("fresh")),
-            "once the new directory exists it wins"
+            "moving the files in is what switches it"
+        );
+    }
+
+    /// A half-finished move can make `$XDG_CONFIG_HOME/fresh` the directory in
+    /// use (it holds themes) while `config.json` is still in `~/.config/fresh`.
+    /// Keying the candidate on the directory left that `config.json` unread and
+    /// `find_config_path` falling through to `~/Library/Application
+    /// Support/fresh/config.json`, which a `~/.config` install never wrote.
+    #[test]
+    fn macos_config_path_follows_the_file_not_the_directory() {
+        let base = TempDir::new().unwrap();
+        let home = base.path().join("home");
+        let resolved = base.path().join("xdg").join("fresh");
+        let dot_config = home.join(".config").join("fresh");
+        std::fs::create_dir_all(resolved.join("themes")).unwrap();
+        std::fs::create_dir_all(&dot_config).unwrap();
+        std::fs::write(dot_config.join(Config::FILENAME), r#"{"theme": "monokai"}"#).unwrap();
+
+        assert_eq!(
+            Config::macos_config_path(Some(&resolved), Some(&home)),
+            Some(dot_config.join(Config::FILENAME)),
+            "the only config.json there is, is the one that gets read"
+        );
+
+        std::fs::write(resolved.join(Config::FILENAME), "{}").unwrap();
+        assert_eq!(
+            Config::macos_config_path(Some(&resolved), Some(&home)),
+            Some(resolved.join(Config::FILENAME)),
+            "the resolved directory wins once it has a config.json of its own"
+        );
+    }
+
+    #[test]
+    fn macos_config_path_is_none_when_no_config_json_exists() {
+        let base = TempDir::new().unwrap();
+        let home = base.path().join("home");
+        let resolved = home.join(".config").join("fresh");
+        std::fs::create_dir_all(&resolved).unwrap();
+
+        assert_eq!(
+            Config::macos_config_path(Some(&resolved), Some(&home)),
+            None,
+            "nothing to read here: fall through to the platform config dir"
         );
     }
 

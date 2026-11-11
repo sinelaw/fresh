@@ -8,7 +8,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Bug Fixes
 
-* **macOS honors `XDG_CONFIG_HOME` and `XDG_DATA_HOME`** - an absolute `XDG_CONFIG_HOME` now selects `$XDG_CONFIG_HOME/fresh` instead of `~/.config/fresh`, and an absolute `XDG_DATA_HOME` does the same for sessions, workspace trust and crash recovery. An existing install keeps reading the files it already has until you move them (#3496, #3497 by @LuisAlejandro)
+* **macOS honors `XDG_CONFIG_HOME` and `XDG_DATA_HOME`** - an absolute `XDG_CONFIG_HOME` now selects `$XDG_CONFIG_HOME/fresh` instead of `~/.config/fresh`, and an absolute `XDG_DATA_HOME` does the same for sessions, workspace trust and crash recovery. An existing install keeps reading the files it already has until you move them into the new directory, so an upgrade does not look like a fresh start (#3496, #3497 by @LuisAlejandro)
 
 ## 0.5.8
 
