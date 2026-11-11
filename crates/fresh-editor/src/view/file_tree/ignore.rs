@@ -147,10 +147,16 @@ impl IgnorePatterns {
         false
     }
 
-    /// Get the ignore status of a path
+    /// How an entry stands with the ignore rules, for the row that draws it.
     ///
-    /// This is useful for rendering (e.g., gray out ignored files)
-    #[cfg(test)]
+    /// This is the render-time counterpart of [`is_ignored`](Self::is_ignored):
+    /// that one answers *whether the tree shows the entry*, this one answers
+    /// *what the entry is*, so a row can draw an entry differently without the
+    /// tree having to hide it.
+    ///
+    /// It was `#[cfg(test)]` for as long as nothing but the tests asked, which
+    /// made the one thing it exists for — rendering — the one thing it could
+    /// not be used for.
     pub fn get_status(&self, path: &Path, is_dir: bool) -> IgnoreStatus {
         if is_hidden_name(path) {
             return IgnoreStatus::Hidden;
