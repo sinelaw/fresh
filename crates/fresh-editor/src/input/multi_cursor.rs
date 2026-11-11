@@ -93,21 +93,15 @@ pub fn add_cursor_at_next_match(state: &mut EditorState, cursors: &Cursors) -> A
             // word_start < cursor_pos), use cursor_pos as the end. This handles the
             // case where cursor is at the space right after a word.
             let word_end = if word_start < cursor_pos {
-                // Check if we're at a word character
-                let at_word_char = if cursor_pos < state.buffer.len() {
-                    if let Ok(bytes) = state.buffer.get_text_range_mut(cursor_pos, 1) {
-                        bytes
-                            .first()
-                            .map(|&b| crate::primitives::word_navigation::is_word_char(b))
-                            .unwrap_or(false)
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-
-                if at_word_char {
+                // Whether we're at a word character has to be asked about the
+                // *character* at the cursor, not the byte there: the lead byte
+                // of a multi-byte letter is not a word byte, so the byte test
+                // this replaced reported "not a word char" in the middle of a
+                // non-ASCII word and ended the word at the cursor -- `αβγ` with
+                // the caret after `α` selected just `α`. `is_word_char_at` reads a
+                // whole character and is false past the buffer end, which is
+                // what the length check here used to be for.
+                if crate::primitives::word_navigation::is_word_char_at(&state.buffer, cursor_pos) {
                     // We're in the middle of a word, find the actual end
                     find_word_end(&state.buffer, cursor_pos)
                 } else {

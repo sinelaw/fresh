@@ -1,8 +1,9 @@
 //! Prompt/minibuffer system for user input
 
 use crate::input::commands::Suggestion;
+use crate::primitives::grapheme::next_grapheme_boundary;
 use crate::primitives::word_navigation::{
-    find_word_end_bytes, find_word_start_bytes, is_word_char,
+    find_next_word_start_str, find_prev_word_start_str, find_word_end_str, find_word_start_str,
 };
 
 /// Type of prompt - determines what action to take when user confirms
@@ -797,8 +798,7 @@ impl Prompt {
     /// assert_eq!(prompt.cursor_byte(), 0);
     /// ```
     pub fn delete_word_forward(&mut self) {
-        if find_word_end_bytes(self.input_str().as_bytes(), self.cursor_byte()) > self.cursor_byte()
-        {
+        if find_word_end_str(self.input_str(), self.cursor_byte()) > self.cursor_byte() {
             self.apply_edit(|e| e.delete_word_forward());
         }
     }
@@ -819,9 +819,7 @@ impl Prompt {
     /// assert_eq!(prompt.cursor_byte(), 0);
     /// ```
     pub fn delete_word_backward(&mut self) {
-        if find_word_start_bytes(self.input_str().as_bytes(), self.cursor_byte())
-            < self.cursor_byte()
-        {
+        if find_word_start_str(self.input_str(), self.cursor_byte()) < self.cursor_byte() {
             self.apply_edit(|e| e.delete_word_backward());
         }
     }
@@ -975,25 +973,7 @@ impl Prompt {
             .selection_anchor
             .map(|(_, col)| col)
             .unwrap_or_else(|| self.edit.flat_cursor_byte());
-        let value = self.edit.value();
-        let bytes = value.as_bytes();
-        let cursor = self.edit.flat_cursor_byte();
-        if cursor == 0 {
-            self.edit.selection_anchor = Some((0, anchor));
-            return;
-        }
-
-        let mut new_pos = cursor.saturating_sub(1);
-
-        // Skip non-word characters (spaces) backwards
-        while new_pos > 0 && !is_word_char(bytes[new_pos]) {
-            new_pos = new_pos.saturating_sub(1);
-        }
-
-        // Find start of word
-        while new_pos > 0 && is_word_char(bytes[new_pos.saturating_sub(1)]) {
-            new_pos = new_pos.saturating_sub(1);
-        }
+        let new_pos = find_prev_word_start_str(&self.edit.value(), self.edit.flat_cursor_byte());
 
         // `set_cursor_from_flat` clears the anchor; re-attach it after.
         self.edit.set_cursor_from_flat(new_pos);
@@ -1008,16 +988,13 @@ impl Prompt {
             .selection_anchor
             .map(|(_, col)| col)
             .unwrap_or_else(|| self.edit.flat_cursor_byte());
-        // Use find_word_end_bytes which moves to the END of words
         let value = self.edit.value();
-        let bytes = value.as_bytes();
         let cursor = self.edit.flat_cursor_byte();
-        let mut new_pos = find_word_end_bytes(bytes, cursor);
+        let mut new_pos = find_word_end_str(&value, cursor);
 
         // If we didn't move (already at word end), move forward to next word end
-        if new_pos == cursor && new_pos < bytes.len() {
-            new_pos = (new_pos + 1).min(bytes.len());
-            new_pos = find_word_end_bytes(bytes, new_pos);
+        if new_pos == cursor && new_pos < value.len() {
+            new_pos = find_word_end_str(&value, next_grapheme_boundary(&value, new_pos));
         }
 
         // `set_cursor_from_flat` clears the anchor; re-attach it after.
@@ -1030,25 +1007,7 @@ impl Prompt {
     pub fn move_word_left(&mut self) {
         self.clear_selection();
 
-        let value = self.edit.value();
-        let bytes = value.as_bytes();
-        let cursor = self.edit.flat_cursor_byte();
-        if cursor == 0 {
-            return;
-        }
-
-        let mut new_pos = cursor.saturating_sub(1);
-
-        // Skip non-word characters (spaces) backwards
-        while new_pos > 0 && !is_word_char(bytes[new_pos]) {
-            new_pos = new_pos.saturating_sub(1);
-        }
-
-        // Find start of word
-        while new_pos > 0 && is_word_char(bytes[new_pos.saturating_sub(1)]) {
-            new_pos = new_pos.saturating_sub(1);
-        }
-
+        let new_pos = find_prev_word_start_str(&self.edit.value(), self.edit.flat_cursor_byte());
         self.edit.set_cursor_from_flat(new_pos);
     }
 
@@ -1057,25 +1016,7 @@ impl Prompt {
     pub fn move_word_right(&mut self) {
         self.clear_selection();
 
-        let value = self.edit.value();
-        let bytes = value.as_bytes();
-        let cursor = self.edit.flat_cursor_byte();
-        if cursor >= bytes.len() {
-            return;
-        }
-
-        let mut new_pos = cursor;
-
-        // Skip current word
-        while new_pos < bytes.len() && is_word_char(bytes[new_pos]) {
-            new_pos += 1;
-        }
-
-        // Skip non-word characters (spaces)
-        while new_pos < bytes.len() && !is_word_char(bytes[new_pos]) {
-            new_pos += 1;
-        }
-
+        let new_pos = find_next_word_start_str(&self.edit.value(), self.edit.flat_cursor_byte());
         self.edit.set_cursor_from_flat(new_pos);
     }
 }
@@ -1083,6 +1024,58 @@ impl Prompt {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_word_movement_non_ascii_words() {
+        // "αβγ" is bytes 0..6, the space is 6..7, "δεζ" is 7..13.
+        let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
+        prompt.set_input_plain("αβγ δεζ".to_string());
+
+        prompt.set_cursor_byte(13);
+        prompt.move_word_left();
+        assert_eq!(prompt.cursor_byte(), 7);
+        prompt.move_word_left();
+        assert_eq!(prompt.cursor_byte(), 0);
+
+        prompt.move_word_right();
+        assert_eq!(prompt.cursor_byte(), 7);
+        prompt.move_word_right();
+        assert_eq!(prompt.cursor_byte(), 13);
+    }
+
+    #[test]
+    fn test_word_selection_non_ascii_words() {
+        let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
+        prompt.set_input_plain("αβγ δεζ".to_string());
+
+        prompt.set_cursor_byte(0);
+        prompt.move_word_right_selecting();
+        assert_eq!(prompt.cursor_byte(), 6);
+
+        prompt.set_cursor_byte(13);
+        prompt.move_word_left_selecting();
+        assert_eq!(prompt.cursor_byte(), 7);
+    }
+
+    #[test]
+    fn test_word_movement_keeps_combining_marks_in_word() {
+        let text = "cafe\u{301} bar";
+        let mut prompt = Prompt::new("Test: ".to_string(), PromptType::Search);
+        prompt.set_input_plain(text.to_string());
+
+        prompt.set_cursor_byte(0);
+        prompt.move_word_right();
+        assert_eq!(prompt.cursor_byte(), "cafe\u{301} ".len());
+
+        prompt.set_cursor_byte(0);
+        prompt.move_word_right_selecting();
+        assert_eq!(prompt.cursor_byte(), "cafe\u{301}".len());
+
+        prompt.set_cursor_byte(text.len());
+        prompt.move_word_left();
+        prompt.move_word_left();
+        assert_eq!(prompt.cursor_byte(), 0);
+    }
 
     #[test]
     fn test_delete_word_forward_basic() {
@@ -1389,7 +1382,7 @@ mod tests {
 
         // Note: Currently, calling move_word_left_selecting again when already
         // at a word boundary doesn't move further back. This matches the behavior
-        // of find_word_start_bytes which finds the start of the current word.
+        // of find_word_start_str which finds the start of the current word.
         // For multi-word backward selection, move cursor backward first, then select.
     }
 

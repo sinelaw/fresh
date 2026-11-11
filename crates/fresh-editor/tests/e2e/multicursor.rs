@@ -2426,3 +2426,49 @@ fn test_status_bar_line_follows_added_and_removed_cursors() {
     );
     harness.assert_screen_contains("Ln 2, Col 1");
 }
+
+/// Ctrl+D with nothing selected selects the word under the caret, so the
+/// next press goes looking for that whole word. Asking whether the caret
+/// is on a word character used to read a single byte out of the buffer: in
+/// the middle of a multi-byte word that byte is a UTF-8 lead byte and not a
+/// word byte, so the word was ended at the caret and Ctrl+D selected only
+/// the letters before it -- the search then matched a fragment.
+///
+/// Puts the caret inside the first `αβγ` and types over both matches. With
+/// the whole word selected the line reads `X x X`; with one letter selected
+/// it reads `Xβγ x Xβγ`, which is what this used to render.
+#[test]
+fn test_ctrl_d_selects_whole_non_ascii_word_under_caret() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    // Keep this test off the host clipboard (CONTRIBUTING: test isolation).
+    harness.editor_mut().set_clipboard_for_test(String::new());
+
+    harness.type_text("αβγ x αβγ").unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("αβγ x αβγ");
+
+    // Caret between `α` and `β`: inside the first word, on a character
+    // whose leading byte is not a word byte.
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+
+    // The first Ctrl+D selects the word under the caret; the second adds a
+    // cursor on the next occurrence of whatever that selection holds.
+    harness
+        .send_key(KeyCode::Char('d'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('d'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Typing replaces both selections. Both are whole words, so both words go.
+    harness.type_text("X").unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("X x X");
+    harness.assert_screen_not_contains("βγ");
+}
