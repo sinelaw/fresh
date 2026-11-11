@@ -109,6 +109,10 @@ EOF
     : > "$WORK/requests.log"
 }
 
+# Which os-release install.sh reads, for the cases that need a specific distro.
+# Empty means the real /etc/os-release, so every other case is unaffected.
+OS_RELEASE_OVERRIDE=""
+
 run_install() {
     local home="$WORK/home.$1"
     mkdir -p "$home"
@@ -117,8 +121,24 @@ run_install() {
     # the anonymity assertions would stop meaning anything.
     env -i PATH="$BINDIR" HOME="$home" SHELL=/bin/sh \
         GITHUB_TOKEN=must-not-be-used GH_TOKEN=must-not-be-used \
+        FRESH_OS_RELEASE="$OS_RELEASE_OVERRIDE" \
         timeout 60 sh "$INSTALL_SH" "${@:2}" 2>&1
 }
+
+# Replace the uname shim so `uname -s` reports $1, leaving every other query
+# (notably -m, which the tarball path needs) answered by the real uname.
+REAL_UNAME="$(command -v uname)"
+fake_uname_s() {
+    cat > "$BINDIR/uname" <<EOF
+#!/bin/sh
+case "\$1" in
+  -s) echo "$1" ;;
+  *)  exec "$REAL_UNAME" "\$@" ;;
+esac
+EOF
+    chmod +x "$BINDIR/uname"
+}
+restore_uname() { ln -sf "$REAL_UNAME" "$BINDIR/uname"; }
 
 # Most assertions below are negative -- that some bad string is *absent* -- and
 # those pass for free if the script never ran. Every case is gated on this
@@ -239,8 +259,12 @@ fi
 
 # --- The nix method must install the nixpkgs package, not the flake: the flake
 # --- has no binary cache, so it compiles the whole toolchain from source, while
-# --- nixpkgs is served from cache.nixos.org. The shim is added only now so the
-# --- fallback runs above stay nix-free, as the header comment promises. ---
+# --- nixpkgs is served from cache.nixos.org. It must name the nixpkgs-unstable
+# --- channel tarball rather than a bare `nixpkgs#`, which resolves through the
+# --- user's flake registry to the system's own nixpkgs: that trails by a
+# --- release on 26.05 and has no fresh-editor at all on 25.11, where the
+# --- install then fails outright. The shim is added only now so the fallback
+# --- runs above stay nix-free, as the header comment promises. ---
 cat > "$BINDIR/nix" <<EOF
 #!/bin/sh
 echo "\$*" >> "$WORK/nix.log"
@@ -250,15 +274,30 @@ chmod +x "$BINDIR/nix"
 : > "$WORK/nix.log"
 OUT="$(run_install nix-method --method=nix)"
 assert_ran "nix method" "$OUT"
-if grep -q -- '--extra-experimental-features nix-command flakes profile install nixpkgs#fresh-editor' "$WORK/nix.log"; then
-    pass "nix method installs nixpkgs#fresh-editor with the features enabled"
+if grep -q -- '--extra-experimental-features nix-command flakes profile install https://channels.nixos.org/nixpkgs-unstable/nixexprs.tar.xz#fresh-editor' "$WORK/nix.log"; then
+    pass "nix method installs fresh-editor from the nixpkgs-unstable channel"
 else
-    fail "nix method did not install nixpkgs#fresh-editor: $(cat "$WORK/nix.log")"
+    fail "nix method did not install the channel tarball: $(cat "$WORK/nix.log")"
 fi
 if grep -q 'github:sinelaw/fresh' "$WORK/nix.log"; then
     fail "nix method still installs the flake"
 else
     pass "nix method does not build the flake"
+fi
+# A bare `nixpkgs#` is what resolves through the user's registry to whichever
+# nixpkgs their system pins, so its absence is the whole point of the tarball.
+if grep -q 'nixpkgs#fresh-editor' "$WORK/nix.log"; then
+    fail "nix method resolves nixpkgs through the user's flake registry"
+else
+    pass "nix method does not depend on the user's nixpkgs registry entry"
+fi
+# `nix profile upgrade` matches element names, and nixpkgs' element is
+# fresh-editor. Printing the flake's `fresh` here matches nothing and exits 0,
+# so the upgrade the user was told to run silently does nothing.
+if grep -q 'Update later with: nix profile upgrade fresh-editor$' <<<"$OUT"; then
+    pass "nix method names the nixpkgs profile element in the upgrade command"
+else
+    fail "nix method prints an upgrade command for the wrong profile element"
 fi
 if grep -q 'declaring it in your config' <<<"$OUT"; then
     pass "nix method points at declarative management"
@@ -277,17 +316,74 @@ if grep -q -- '--extra-experimental-features nix-command flakes profile install 
 else
     fail "nix --head did not install the flake: $(cat "$WORK/nix.log")"
 fi
-if grep -q 'nixpkgs#fresh-editor' "$WORK/nix.log"; then
-    fail "nix --head still installs nixpkgs"
+# Matched on the bare `#fresh-editor` fragment, not on `nixpkgs#fresh-editor`:
+# the default installable is a channel-tarball URL and no longer contains the
+# string "nixpkgs#", so looking for that would pass vacuously.
+if grep -q '#fresh-editor' "$WORK/nix.log"; then
+    fail "nix --head still installs the nixpkgs package"
 else
-    pass "nix --head does not install nixpkgs"
+    pass "nix --head does not install the nixpkgs package"
 fi
-OUT="$(run_install head-alone --head)"
+if grep -q 'Update later with: nix profile upgrade fresh$' <<<"$OUT"; then
+    pass "nix --head names the flake's profile element in the upgrade command"
+else
+    fail "nix --head prints an upgrade command for the wrong profile element"
+fi
+OUT="$(run_install head-wrong-method --method=cargo --head)"
 if grep -q 'only supports --method=nix' <<<"$OUT"; then
-    pass "--head without nix is refused with a pointer at the method"
+    pass "--head with an explicitly non-nix method is refused"
 else
-    fail "--head without nix is not explained"
+    fail "--head with an explicitly non-nix method is not explained"
 fi
+
+# --- The --head guard reads METHOD, so it has to run *after* `auto` has been
+# --- resolved. While it ran during argument parsing, METHOD was still the
+# --- literal "auto" and a plain `--head` was refused on NixOS -- the one
+# --- platform where auto picks nix and the flake can actually deliver master.
+# --- os-release and `uname -s` are both faked here so the resolution is the
+# --- same on every host, NixOS included. ---
+printf 'ID=nixos\n' > "$WORK/os-release.nixos"
+: > "$WORK/nix.log"
+fake_uname_s Linux
+OS_RELEASE_OVERRIDE="$WORK/os-release.nixos"
+OUT="$(run_install head-auto-nix --head)"
+OS_RELEASE_OVERRIDE=""
+assert_ran "--head on NixOS" "$OUT"
+if grep -q 'only supports --method=nix' <<<"$OUT"; then
+    fail "--head is refused on NixOS, where auto already resolves to nix"
+else
+    pass "--head is not refused when auto resolves to nix"
+fi
+if grep -q -- 'profile install github:sinelaw/fresh' "$WORK/nix.log"; then
+    pass "--head reaches the flake install through auto-resolved nix"
+else
+    fail "--head on NixOS did not install the flake: $(cat "$WORK/nix.log")"
+fi
+
+# --- ...and a method that genuinely cannot deliver master is still refused,
+# --- with the same pointer at the method. "TestOS" matches neither branch of
+# --- resolve_auto_method, so auto lands on the universal build on every host. ---
+: > "$WORK/nix.log"
+fake_uname_s TestOS
+OUT="$(run_install head-auto-other --head)"
+if grep -q 'only supports --method=nix' <<<"$OUT"; then
+    pass "--head is still refused when auto resolves to a non-nix method"
+else
+    fail "--head was accepted for a method that cannot deliver master"
+fi
+# The refusal must come after resolution, not instead of it: this notice is
+# printed by the auto-resolution block the old guard exited before reaching.
+if grep -q 'Installing the universal build' <<<"$OUT"; then
+    pass "the --head guard is evaluated after auto was resolved"
+else
+    fail "the --head guard ran before auto was resolved"
+fi
+if [ -s "$WORK/nix.log" ]; then
+    fail "--head installed something before the method was checked"
+else
+    pass "--head is refused before any install work"
+fi
+restore_uname
 
 echo
 if [ "$FAILED" -eq 0 ]; then
