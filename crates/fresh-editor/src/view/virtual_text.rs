@@ -1509,6 +1509,88 @@ mod tests {
         assert_eq!(order, expected, "bulk: {bulk}");
     }
 
+    /// The same, for entries whose priorities disagree with the order they
+    /// reach the position. This is the model proptest's own minimal failing
+    /// input, from the CI run that first caught it: ops ending
+    /// `DeleteKeeping(14, 4)`, `DeleteKeeping(13, 2)`.
+    ///
+    /// `#6` is added last but carries the lowest priority, so a list kept by
+    /// position-then-priority-then-added has to put it *before* the `#5`
+    /// already sitting on 13. Re-filing the landed entries one at a time
+    /// (`set_position` in a loop, as before #3710) instead left them in the
+    /// order they arrived: `query_inline_in_range` handed back
+    /// `#0, #5, #6`. The entries already on the position are never re-filed,
+    /// so only a case where priority and arrival order disagree catches it —
+    /// the all-priority-0 case above cannot.
+    #[test]
+    fn a_deletion_landing_entries_on_one_position_orders_them_by_priority() {
+        for bulk in [false, true] {
+            a_deletion_landing_entries_orders_by_priority(bulk);
+        }
+    }
+
+    fn a_deletion_landing_entries_orders_by_priority(bulk: bool) {
+        let add_inline = |m: &mut VirtualTextManager, pos: usize, text: &str, priority: i32| {
+            m.add_with_theme_keys(
+                pos,
+                text.to_string(),
+                hint_style(),
+                None,
+                None,
+                VirtualTextPosition::BeforeChar,
+                priority,
+                MarkerGravity::Right,
+            );
+        };
+        let add_line = |m: &mut VirtualTextManager, pos: usize, text: &str| {
+            m.add_line_with_theme_keys(
+                pos,
+                text.to_string(),
+                hint_style(),
+                None,
+                None,
+                VirtualTextPosition::LineAbove,
+                VirtualTextNamespace::from_string("ns".to_string()),
+                0,
+                None,
+                None,
+                Vec::new(),
+                false,
+            );
+        };
+
+        let mut manager = VirtualTextManager::new();
+        add_inline(&mut manager, 20, "#0", 0);
+        manager.adjust_for_delete(0, 1);
+        // Virtual lines live in classes of their own, so these three take no
+        // part in the inline list's ordering; they are kept so the case is
+        // the proptest's minimal input rather than a hand-trimmed cousin.
+        add_line(&mut manager, 0, "#2");
+        add_line(&mut manager, 0, "#3");
+        add_line(&mut manager, 0, "#4");
+        add_inline(&mut manager, 13, "#5", 1);
+        add_inline(&mut manager, 14, "#6", 0);
+        manager.adjust_for_delete(14, 4);
+        // #0 (now at 15) and #6 (at 14) both land on 13, where #5 sits with
+        // a higher priority than either.
+        if bulk {
+            manager.adjust_for_bulk_edits(&[(13, 2, 0)]);
+        } else {
+            manager.adjust_for_delete(13, 2);
+        }
+
+        let order: Vec<(usize, String)> = manager
+            .query_inline_in_range(10, 40)
+            .into_iter()
+            .map(|(p, v)| (p, v.text.clone()))
+            .collect();
+        let expected: Vec<(usize, String)> = [(13, "#0"), (13, "#6"), (13, "#5")]
+            .into_iter()
+            .map(|(p, t)| (p, t.to_string()))
+            .collect();
+        assert_eq!(order, expected, "bulk: {bulk}");
+    }
+
     #[test]
     fn test_query_range() {
         let mut manager = VirtualTextManager::new();
