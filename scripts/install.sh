@@ -202,12 +202,6 @@ for arg in "$@"; do
     esac
 done
 
-# --head asks for the current master, which today only the nix flake can
-# deliver; other methods may grow head support later.
-if [ "${HEAD:-0}" = 1 ] && [ "$METHOD" != "nix" ]; then
-    log_error "--head currently only supports --method=nix (this may change as other methods gain head support)"
-fi
-
 # --- Privilege, staging, and verification ---
 
 # Run a command with elevated privileges if needed
@@ -731,12 +725,27 @@ do_install_nix() {
         # The flake builds the current master, at the cost of compiling the
         # whole toolchain from source: the flake has no binary cache.
         nix --extra-experimental-features 'nix-command flakes' profile install "github:${REPO_OWNER}/${REPO_NAME}"
+        # flake.nix sets `pname = "fresh"`, and that is the profile element name.
+        NIX_PKG=fresh
     else
         # nixpkgs ships fresh as fresh-editor, binary-cached via
         # cache.nixos.org; it tracks releases rather than master.
-        nix --extra-experimental-features 'nix-command flakes' profile install nixpkgs#fresh-editor
+        #
+        # The installable names the nixpkgs-unstable channel tarball rather
+        # than a bare `nixpkgs#`: `nixpkgs#` resolves through the user's flake
+        # registry, which on flake-based NixOS points at the *system's*
+        # nixpkgs. That trails (26.05 installs 0.3.6) and on 25.11 there is no
+        # fresh-editor at all, so the install fails outright. The channel
+        # tarball is always current, is served from cache.nixos.org and calls
+        # no GitHub API.
+        nix --extra-experimental-features 'nix-command flakes' profile install 'https://channels.nixos.org/nixpkgs-unstable/nixexprs.tar.xz#fresh-editor'
+        # nixpkgs names the package fresh-editor, so that is the element name.
+        NIX_PKG=fresh-editor
     fi
-    log_info "Update later with: nix profile upgrade fresh"
+    # `nix profile upgrade` matches profile *element* names, which differ
+    # between the two installables above: naming the wrong one matches nothing
+    # and exits 0 with a warning, so the user's upgrade quietly does nothing.
+    log_info "Update later with: nix profile upgrade $NIX_PKG"
     # Imperative profile installs are fine for trying fresh out, but a Nix
     # system stays healthy when its packages are declared in its config.
     log_info "Installed 'fresh' into your nix profile. On a Nix system, declaring it in your config is the more robust path:"
@@ -801,13 +810,19 @@ run_fallbacks() {
 
 # --- Method selection ---
 
+# Which distro we are on. The only environment input the hermetic installer
+# tests cannot shim, because it is read by absolute path rather than through
+# PATH — so it is overridable, the way systemd itself offers
+# $SYSTEMD_OS_RELEASE. Nothing but the tests sets it.
+OS_RELEASE="${FRESH_OS_RELEASE:-/etc/os-release}"
+
 # The distro-native method a user on this system might prefer, if any. Used
 # only to point it out — it is never selected automatically, because a package
 # install needs root and moves updates to the distro's package manager.
 native_method_for_distro() {
-    [ -f /etc/os-release ] || return 1
-    # shellcheck disable=SC1091
-    . /etc/os-release
+    [ -f "$OS_RELEASE" ] || return 1
+    # shellcheck disable=SC1090
+    . "$OS_RELEASE"
     case "$ID" in
         ubuntu|debian|linuxmint|pop|kali)  echo deb; return 0 ;;
         fedora|rhel|centos)                echo rpm; return 0 ;;
@@ -823,9 +838,9 @@ native_method_for_distro() {
 }
 
 is_nixos() {
-    [ -f /etc/os-release ] || return 1
-    # shellcheck disable=SC1091
-    . /etc/os-release
+    [ -f "$OS_RELEASE" ] || return 1
+    # shellcheck disable=SC1090
+    . "$OS_RELEASE"
     [ "$ID" = "nixos" ]
 }
 
@@ -849,6 +864,18 @@ if [ "$METHOD" = "auto" ]; then
             log_info "Prefer your distro's package manager? Re-run with --method=$native"
         fi
     fi
+fi
+
+# --head asks for the current master, which today only the nix flake can
+# deliver; other methods may grow head support later.
+#
+# Checked here rather than during argument parsing, because METHOD is only the
+# real method once `auto` has been resolved above. On NixOS auto resolves to
+# nix, so rejecting a `--head` whose METHOD was still the literal "auto"
+# refused the flag on the one platform that can honour it. This still runs
+# before any install work: the dispatch below is the first thing that installs.
+if [ "${HEAD:-0}" = 1 ] && [ "$METHOD" != "nix" ]; then
+    log_error "--head currently only supports --method=nix (this may change as other methods gain head support)"
 fi
 
 # --- Dispatch ---
