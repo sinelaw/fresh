@@ -53,6 +53,16 @@ fn assert_arrows_at_line(harness: &EditorTestHarness, line: usize) {
     );
 }
 
+/// The status bar carries the arrows, wherever the cursor is.
+fn assert_arrows(harness: &EditorTestHarness) {
+    let row = status_row(harness);
+    assert!(
+        row.contains(ARROWS),
+        "status bar should show the arrows, got {row:?}\nscreen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
 fn assert_no_arrows(harness: &EditorTestHarness) {
     let row = status_row(harness);
     assert!(
@@ -206,12 +216,14 @@ fn replace_shows_the_arrows_and_drops_them_after_replacing() {
     assert_no_arrows(&harness);
 }
 
-/// Query replace: the arrows are hidden while the y/n/a/c prompt walks the
-/// matches (a click would move off the match it asks about), and the
-/// finished replace ends the search instead of leaving the old positions
-/// for the arrows to step through.
+/// Query replace: the arrows are hidden only while the y/n/a/c prompt is up
+/// — a click there would move the cursor and the mark off the match the
+/// prompt is still asking about, and the prompt is modal over the keyboard,
+/// so the bar is the one way in. Once the replace is over the arrows are
+/// back, and a click re-searches the text the replacements left: two
+/// `alpha`s, not the three the search was collected with.
 #[test]
-fn query_replace_hides_the_arrows_and_ends_the_search() {
+fn query_replace_hides_the_arrows_only_while_it_asks() {
     let dir = TempDir::new().unwrap();
     let mut harness = harness_with(CONTENT, &dir);
     harness
@@ -228,6 +240,8 @@ fn query_replace_hides_the_arrows_and_ends_the_search() {
     harness
         .wait_for_screen_contains("Query replace 'alpha' with: ")
         .unwrap();
+    // The search step has run: the arrows are on the bar while the
+    // replacement is typed, as they are for plain Replace.
     assert_arrows_at_line(&harness, 2);
 
     harness.type_text("omega").unwrap();
@@ -239,19 +253,31 @@ fn query_replace_hides_the_arrows_and_ends_the_search() {
         .unwrap();
     assert_no_arrows(&harness);
 
+    // One replacement, and the prompt moves on to the next match: still
+    // asking, so still no arrows.
     harness
         .send_key(KeyCode::Char('y'), KeyModifiers::NONE)
         .unwrap();
     harness.wait_for_screen_contains("omega one").unwrap();
     assert_no_arrows(&harness);
 
-    // Cancel after one replacement: the search ended with it.
+    // Cancel. The replace is over, so the arrows come back: the search is
+    // still the window's, and stepping it is the job Find Next does.
     harness
         .send_key(KeyCode::Char('c'), KeyModifiers::NONE)
         .unwrap();
     harness.wait_for_prompt_closed().unwrap();
     harness.assert_screen_contains("alpha two");
-    assert_no_arrows(&harness);
+    assert_arrows(&harness);
+
+    // And the click lands on a real match: the replacement changed the
+    // buffer under the collected offsets, so Find Next searches again and
+    // reports what is there now — two `alpha`s, the first on line 4.
+    click_status(&mut harness, NEXT);
+    harness
+        .wait_for_screen_contains("Found 2 matches for 'alpha'")
+        .unwrap();
+    assert_arrows_at_line(&harness, 4);
 }
 
 /// Escape on a search bar whose query F3 ran cancels the search with it.
@@ -312,11 +338,12 @@ fn another_buffer_does_not_show_the_arrows() {
     assert_arrows_at_line(&harness, 2);
 }
 
-/// Leaving a query replace part-way by switching tabs ends its search, as
-/// finishing it does: the replacements already made left the search's
-/// positions stale, and the arrows would step through them.
+/// Leaving a query replace part-way by switching tabs drops its prompt but
+/// not its search: the other tab shows no arrows for it, and back on the
+/// searched buffer they are there again and step through the text the
+/// replacements left.
 #[test]
-fn switching_tabs_during_query_replace_ends_the_search() {
+fn switching_tabs_during_query_replace_keeps_the_search() {
     let dir = TempDir::new().unwrap();
     let other = dir.path().join("other.txt");
     std::fs::write(&other, "nothing here\n").unwrap();
@@ -353,13 +380,24 @@ fn switching_tabs_during_query_replace_ends_the_search() {
         .unwrap();
     harness.wait_for_screen_contains("omega one").unwrap();
 
-    // Over to the other tab, which drops the replace prompt, and back.
+    // Over to the other tab, which drops the replace prompt. No arrows
+    // there: the search was collected on the other buffer.
     let (col, row) = harness.find_text_on_screen("other.txt").unwrap();
     harness.mouse_click(col, row).unwrap();
     harness.wait_for_screen_contains("nothing here").unwrap();
+    assert_no_arrows(&harness);
+
+    // And back: the prompt is gone for good, the search is not.
     let (col, row) = harness.find_text_on_screen("test.txt").unwrap();
     harness.mouse_click(col, row).unwrap();
     harness.wait_for_screen_contains("omega one").unwrap();
     harness.assert_screen_not_contains("Replace? (y)es");
-    assert_no_arrows(&harness);
+    assert_arrows(&harness);
+
+    // The one replacement left two `alpha`s, and that is what a click finds.
+    click_status(&mut harness, NEXT);
+    harness
+        .wait_for_screen_contains("Found 2 matches for 'alpha'")
+        .unwrap();
+    assert_arrows_at_line(&harness, 4);
 }
