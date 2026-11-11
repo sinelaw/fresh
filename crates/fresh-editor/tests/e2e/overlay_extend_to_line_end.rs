@@ -421,7 +421,6 @@ fn inline_plugin_annotation_keeps_collision_fallback() {
     {
         let state = harness.editor_mut().active_state_mut();
         state.virtual_texts.add_with_id_and_theme_keys(
-            &mut state.marker_list,
             11,
             "no final newline".into(),
             Style::default().fg(diff_bg).italic(),
