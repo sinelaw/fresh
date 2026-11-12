@@ -354,6 +354,7 @@ pub mod search_replace;
 pub mod search_selection_on_punctuation;
 pub mod search_viewport_stall_after_wrap;
 pub mod selection;
+pub mod semantic_tokens_overlay_order;
 #[cfg(feature = "plugins")]
 pub mod send_key_settles_plugin_work;
 pub mod server_session_lifecycle;
