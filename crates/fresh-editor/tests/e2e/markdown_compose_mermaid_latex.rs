@@ -126,7 +126,73 @@ fn multiline_bracket_display_math_is_drawn_in_a_math_frame() {
 fn an_escaped_bracket_in_prose_is_not_math() {
     let md = "# Title\n\n\\[citation needed\\] and $\\alpha$.\n\nTail.\n";
     let (mut h, _tmp) = compose_harness(md);
-    h.wait_until(|h| screen_has(h, "α.") && !screen_has(h, "Math")).unwrap();
+    h.wait_until(|h| screen_has(h, "α.") && !screen_has(h, "Math"))
+        .unwrap();
+}
+
+/// Prices are not math: "$10 (basic) and $" is not a formula.
+#[test]
+fn prices_stay_text() {
+    let md = "# Title\n\nPlans cost $10 (basic) and $20 (pro), or $5-$10. Also $x^2$.\n\nTail.\n";
+    let (mut h, _tmp) = compose_harness(md);
+    h.wait_until(|h| screen_has(h, "x²") && screen_has(h, "$10 (basic) and $20 (pro), or $5-$10."))
+        .unwrap();
+}
+
+/// `$$` in an ordinary code block is code: the block keeps its rails and
+/// its text.
+#[test]
+fn display_math_delimiters_in_a_code_block_are_code() {
+    let md = "# Title\n\n```markdown\n$$\nE = mc^2\n$$\n```\n\nTail.\n";
+    let (mut h, _tmp) = compose_harness(md);
+    h.wait_until(|h| screen_has(h, "E = mc^2") && !screen_has(h, "Math") && !screen_has(h, "mc²"))
+        .unwrap();
+}
+
+/// A formula on the line that opens a block is drawn, not hidden behind
+/// the frame.
+#[test]
+fn a_formula_on_the_opening_line_is_drawn() {
+    let md = "# Title\n\nIntro.\n\n$$ E = mc^2\n+ \\alpha\n$$\n\nTail.\n";
+    let (mut h, _tmp) = compose_harness(md);
+    h.wait_until(|h| screen_has(h, "Math") && screen_has(h, "E = mc²") && screen_has(h, "+ α"))
+        .unwrap();
+    // `+ α` is a formula's line, not a list item: no spacer row after it.
+    let screen = h.screen_to_string();
+    let rows: Vec<&str> = screen.lines().collect();
+    let at = rows.iter().position(|r| r.contains("+ α")).unwrap();
+    assert!(
+        rows[at + 1].contains('└'),
+        "frame bottom right below the last row:\n{screen}"
+    );
+}
+
+/// A `$$` that is never closed ends at the next blank line, and the prose
+/// after it stays prose.
+#[test]
+fn an_unclosed_display_math_block_does_not_swallow_the_document() {
+    let md = "# Title\n\n$$\nx^2\n\nSome *prose* here with \\alpha.\n\nTail.\n";
+    let (mut h, _tmp) = compose_harness(md);
+    h.wait_until(|h| screen_has(h, "Some prose here with \\alpha.") && !screen_has(h, "Math"))
+        .unwrap();
+}
+
+/// The cursor moving past a one-line `$$…$$` leaves it drawn with its whole
+/// frame. (At the very start of the next line it still counts as on the
+/// line, as for every other conceal.)
+#[test]
+fn the_cursor_after_a_one_line_block_leaves_it_drawn() {
+    let md = "# Title\n\n$$E = mc^2$$\nTail.\n";
+    let (mut h, _tmp) = compose_harness(md);
+    h.wait_until(|h| screen_has(h, "E = mc²")).unwrap();
+    for _ in 0..3 {
+        h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    h.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| {
+        screen_has(h, "E = mc²") && screen_has(h, "── Math ──") && screen_has(h, "└──")
+    })
+    .unwrap();
 }
 
 #[test]

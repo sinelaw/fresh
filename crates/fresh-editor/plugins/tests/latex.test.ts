@@ -49,6 +49,15 @@ eq(renderLatexMath("x &= a + b \\\\"), "x = a + b", "alignment points and row br
 eq(renderLatexMath("\\begin{aligned}"), "", "an environment's delimiter draws nothing");
 eq(renderLatexMath("\\left\\{ x \\mid x > 0 \\right\\}"), "{ x | x > 0 }", "sized delimiters");
 eq(renderLatexMath("\\binom{n}{k}"), "C(n,k)", "a binomial coefficient");
+eq(renderLatexMath("\\frac12 + y_{i}"), "½ + yᵢ", "\\frac takes single-character arguments without braces");
+eq(renderLatexMath("\\sqrt2 + x^{3}"), "√(2) + x³", "so does \\sqrt, leaving later groups alone");
+eq(renderLatexMath("\\frac\\alpha\\beta"), "α/β", "a command is an argument too");
+eq(
+  renderLatexMath(Array.from({ length: 12 }, (_, i) => `a_{${i}}`).join("+")),
+  "a₀+a₁+a₂+a₃+a₄+a₅+a₆+a₇+a₈+a₉+a₁₀+a₁₁",
+  "every one of many scripts is drawn",
+);
+eq(renderLatexMath("\\frac{a}"), "\\frac{a}", "a fraction missing its denominator is left as written");
 eq(renderLatexMath("\\unknown{y}"), "\\unknown{y}", "an unknown command is left as written");
 
 if (failures > 0) {

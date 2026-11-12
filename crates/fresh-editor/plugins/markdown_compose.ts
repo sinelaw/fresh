@@ -357,12 +357,67 @@ function displayMathOpener(trimmed: string): "$$" | "\\]" | null {
   return null;
 }
 
+/**
+ * The display-math blocks among a batch's lines, as [opener, closer] indices
+ * (a one-line `$$ … $$` is a block whose opener is its closer).
+ *
+ * Nothing classifies `$$` lines the way the editor classifies fences (see
+ * "Fenced code blocks" below), so a batch that starts inside a block sees its
+ * closer first and would pair it with the next block's opener, drawing the
+ * prose between them as math. A blank line settles it: no markdown engine
+ * lets display math run across one, so a "block" that reaches a blank line
+ * was never one, and its lines are left as written. The same rule stops a
+ * `$$` that is never closed from swallowing the rest of the document.
+ * Lines in a code fence, and a gap in the batch, end any block in progress.
+ */
+function displayMathBlocks(lines: LineInfoLike[]): Array<[number, number]> {
+  const blocks: Array<[number, number]> = [];
+  let open = -1;
+  let closer: string | null = null;
+  let prevLineNumber: number | null = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const text = line.content;
+    const gap = prevLineNumber !== null && line.line_number !== prevLineNumber + 1;
+    prevLineNumber = line.line_number;
+    if (gap || isCodeRegion(line.region) || looksLikeFence(text)) {
+      closer = null;
+      continue;
+    }
+    const trimmed = text.trim();
+    if (closer !== null) {
+      if (trimmed === "") closer = null;
+      else if (trimmed.endsWith(closer)) {
+        blocks.push([open, i]);
+        closer = null;
+      }
+      continue;
+    }
+    if (singleLineDisplayMath(trimmed) !== null) {
+      blocks.push([i, i]);
+      continue;
+    }
+    closer = displayMathOpener(trimmed);
+    if (closer !== null) open = i;
+  }
+  return blocks;
+}
+
 const specialBlockRangesByBuffer = new Map<number, Array<{ start: number; end: number }>>();
 
 /** Formats a single rendered diagram row with side rails matching code frame width */
 function buildDiagramRow(content: string, blockMeasure: number, blockIndent: number): string {
   const innerW = codeInnerWidth(blockMeasure);
-  const clamped = displayWidth(content) > innerW ? content.slice(0, innerW) : content;
+  // Cut to the row's width in columns, a whole character at a time (a wide
+  // CJK character is two columns; an astral symbol is two UTF-16 units).
+  let clamped = content;
+  if (displayWidth(content) > innerW) {
+    clamped = "";
+    for (const ch of content) {
+      if (displayWidth(clamped + ch) > innerW) break;
+      clamped += ch;
+    }
+  }
   const contentW = displayWidth(clamped);
   const padRight = Math.max(0, innerW - contentW);
   return " ".repeat(blockIndent) + RAIL_GLYPH + " " + clamped + " ".repeat(padRight) + " " + RAIL_GLYPH;
@@ -1082,11 +1137,12 @@ function parseMarkdownBlocks(text: string): ParsedBlock[] {
     // re-flowed into the paragraph around it.
     const inDisplayMath = mathCloser !== null;
     if (inDisplayMath) {
-      if (trimmed.endsWith(mathCloser!)) mathCloser = null;
+      // A blank line ends it either way, as in `displayMathBlocks`.
+      if (trimmed === "" || trimmed.endsWith(mathCloser!)) mathCloser = null;
     } else if (singleLineDisplayMath(trimmed) === null) {
       mathCloser = displayMathOpener(trimmed);
     }
-    if (inDisplayMath || mathCloser !== null || singleLineDisplayMath(trimmed) !== null) {
+    if ((inDisplayMath && trimmed !== "") || mathCloser !== null || singleLineDisplayMath(trimmed) !== null) {
       blocks.push({
         type: 'code-content',
         startByte: lineStart,
@@ -1755,25 +1811,33 @@ function findInlineSpans(text: string): InlineSpan[] {
     }
     return false;
   }
+  function overlapsCode(start: number, end: number): boolean {
+    for (const [s, e] of codeSpanCharRanges) {
+      if (start < e && end > s) return true;
+    }
+    return false;
+  }
 
   // 1.5 Inline math: $...$, and MathJax/KaTeX's \(...\)
-  const mathRe = /(?<![\\$])\$(?!\$)([^$\n]+?)(?<![\\$])\$(?!\$)/g;
+  // Pandoc's rule, which keeps prices from pairing up: the formula neither
+  // starts nor ends with a space, and the closing `$` is not followed by a
+  // digit. "$10 and $20", "$5-$10" and "$20/month or $200/year" are text.
+  const mathRe = /(?<![\\$])\$(?![$\s])([^$\n]*?[^$\s\\])\$(?![$\d])/g;
   while ((m = mathRe.exec(text)) !== null) {
-    if (inCodeSpan(m.index)) continue;
-    const inner = m[1];
-    // Guard against currency like "$10 and $20"
-    const isMath = (!inner.startsWith(' ') && !inner.endsWith(' ')) || /[=+\-*\/\\^_{}()<>]/.test(inner);
-    if (!isMath) continue;
     const ms = m.index;
     const me = ms + m[0].length;
-    if (overlapsMath(ms, me)) continue;
-    pushMath(ms, me, 1, inner);
+    if (overlapsCode(ms, me) || overlapsMath(ms, me)) {
+      // Not this pair; the closing `$` may still open the next one.
+      mathRe.lastIndex = me - 1;
+      continue;
+    }
+    pushMath(ms, me, 1, m[1]);
   }
   const parenMathRe = /(?<!\\)\\\(([^\n]+?)\\\)/g;
   while ((m = parenMathRe.exec(text)) !== null) {
     const ms = m.index;
     const me = ms + m[0].length;
-    if (inCodeSpan(ms) || overlapsMath(ms, me)) continue;
+    if (overlapsCode(ms, me) || overlapsMath(ms, me)) continue;
     pushMath(ms, me, 2, m[1]);
   }
 
@@ -2226,7 +2290,8 @@ function processLineConceals(
     const rowReplacement = buildDiagramRow(rendered, blockMeasure, blockIndent);
 
     const cursorPos = editor.getCursorPosition();
-    const cursorOnLine = cursorPos >= byteStart && cursorPos <= lineScopeInclEnd;
+    // Half-open, like the conceal's scope below.
+    const cursorOnLine = cursorPos >= byteStart && cursorPos < lineScopeInclEnd;
 
     if (!cursorOnLine) {
       editor.addVirtualLine(
@@ -2877,14 +2942,17 @@ function verbatimStates(lines: LineInfoLike[]): Array<boolean | null> {
   // what is being read as "no fence is in play here", and it is the same
   // reading the pre-scan makes of the whole document.
   const noFenceInSight = !lines.some(
-    (line) => isCodeRegion(line.region) || looksLikeFence(lineText(line)) || lineText(line).trim().startsWith("$$") || lineText(line).trim() === "\\[",
+    (line) => isCodeRegion(line.region) || looksLikeFence(lineText(line)),
   );
   let inFence: boolean | null = noFenceInSight ? false : null;
   let fenceChar = "";
   let inHtml = false;
   let inIndentedCode = false;
   let inFrontMatter = false;
-  let mathCloser: string | null = null;
+  const mathLines = new Set<number>();
+  for (const [open, close] of displayMathBlocks(lines)) {
+    for (let k = open; k <= close; k++) mathLines.add(k);
+  }
   // The next non-blank line opens a block, so it is the one that may open an
   // indented code block. True for the batch's own first line: the walk that
   // built it backed up to the run's start.
@@ -2898,7 +2966,6 @@ function verbatimStates(lines: LineInfoLike[]): Array<boolean | null> {
       inHtml = false;
       inIndentedCode = false;
       inFrontMatter = false;
-      mathCloser = null;
       atRunStart = true;
     }
     prevLineNumber = line.line_number;
@@ -2947,19 +3014,9 @@ function verbatimStates(lines: LineInfoLike[]): Array<boolean | null> {
       continue;
     }
 
-    const trimmed = text.trim();
-    if (mathCloser !== null) {
-      out.push(true);
-      if (trimmed.endsWith(mathCloser)) mathCloser = null;
-      continue;
-    }
-    if (singleLineDisplayMath(trimmed) !== null) {
-      out.push(true);
-      continue;
-    }
-    const opener = displayMathOpener(trimmed);
-    if (opener !== null) {
-      mathCloser = opener;
+    // Display math is kept as written (`out` has one entry per line so far,
+    // so its length is this line's index).
+    if (mathLines.has(out.length)) {
       out.push(true);
       continue;
     }
@@ -3604,6 +3661,10 @@ editor.on("lines_changed", (data) => {
     closeLine: LineInfoLike;
     bodyLines: LineInfoLike[];
     blockIndent: number;
+    // Display math only: a formula written on the delimiter lines themselves
+    // (`$$ E = mc^2` opening a block, `x^2 $$` closing one).
+    openFormula?: string;
+    closeFormula?: string;
   }
 
   const specialBlocks: SpecialBlock[] = [];
@@ -3616,17 +3677,13 @@ editor.on("lines_changed", (data) => {
       openLine: LineInfoLike;
       bodyLines: LineInfoLike[];
       blockIndent: number;
-      isFenced: boolean;
-      // For an unfenced display-math block, the delimiter that closes it.
-      closer?: string;
     } | null = null;
 
     for (let i = 0; i < data.lines.length; i++) {
       const line = data.lines[i];
-      const trimmed = line.content.trim();
-
       if (currentSpecial === null) {
-        if (line.region === "open" || looksLikeFence(line.content)) {
+        // A fence line inside another fence's body is that block's content.
+        if (line.region === "open" || (line.region !== "body" && looksLikeFence(line.content))) {
           const lang = getFenceLanguage(line.content);
           if (lang === "mermaid") {
             currentSpecial = {
@@ -3635,7 +3692,6 @@ editor.on("lines_changed", (data) => {
               openLine: line,
               bodyLines: [],
               blockIndent: leadingIndent(line.content),
-              isFenced: true,
             };
             continue;
           } else if (lang === "math" || lang === "latex" || lang === "katex") {
@@ -3645,55 +3701,50 @@ editor.on("lines_changed", (data) => {
               openLine: line,
               bodyLines: [],
               blockIndent: leadingIndent(line.content),
-              isFenced: true,
             };
             continue;
           }
         }
-        const closer = displayMathOpener(trimmed);
-        if (closer !== null) {
-          currentSpecial = {
-            kind: "math",
-            lang: "math",
-            openLine: line,
-            bodyLines: [],
-            blockIndent: leadingIndent(line.content),
-            isFenced: false,
-            closer,
-          };
-          continue;
-        }
+      } else if (line.region === "close" || (line.region !== "body" && looksLikeFence(line.content))) {
+        specialBlocks.push({
+          kind: currentSpecial.kind,
+          lang: currentSpecial.lang,
+          openLine: currentSpecial.openLine,
+          closeLine: line,
+          bodyLines: currentSpecial.bodyLines,
+          blockIndent: currentSpecial.blockIndent,
+        });
+        currentSpecial = null;
       } else {
-        if (currentSpecial.isFenced) {
-          if (line.region === "close" || (line.region !== "body" && looksLikeFence(line.content))) {
-            specialBlocks.push({
-              kind: currentSpecial.kind,
-              lang: currentSpecial.lang,
-              openLine: currentSpecial.openLine,
-              closeLine: line,
-              bodyLines: currentSpecial.bodyLines,
-              blockIndent: currentSpecial.blockIndent,
-            });
-            currentSpecial = null;
-          } else {
-            currentSpecial.bodyLines.push(line);
-          }
-        } else {
-          if (trimmed.endsWith(currentSpecial.closer!)) {
-            specialBlocks.push({
-              kind: "math",
-              lang: "math",
-              openLine: currentSpecial.openLine,
-              closeLine: line,
-              bodyLines: currentSpecial.bodyLines,
-              blockIndent: currentSpecial.blockIndent,
-            });
-            currentSpecial = null;
-          } else {
-            currentSpecial.bodyLines.push(line);
-          }
-        }
+        currentSpecial.bodyLines.push(line);
       }
+    }
+
+    // Display math over several lines (`$$` / `\[` blocks). One on a single
+    // line is drawn by the per-line pass.
+    const fencedLines = new Set<number>();
+    for (const sb of specialBlocks) {
+      fencedLines.add(sb.openLine.byte_start).add(sb.closeLine.byte_start);
+      for (const bl of sb.bodyLines) fencedLines.add(bl.byte_start);
+    }
+    for (const [open, close] of displayMathBlocks(data.lines)) {
+      if (open === close) continue;
+      const openLine = data.lines[open];
+      const closeLine = data.lines[close];
+      if (fencedLines.has(openLine.byte_start) || fencedLines.has(closeLine.byte_start)) continue;
+      const openTrimmed = openLine.content.trim();
+      const closeTrimmed = closeLine.content.trim();
+      const closer = displayMathOpener(openTrimmed)!;
+      specialBlocks.push({
+        kind: "math",
+        lang: "math",
+        openLine,
+        closeLine,
+        bodyLines: data.lines.slice(open + 1, close),
+        blockIndent: leadingIndent(openLine.content),
+        openFormula: openTrimmed.slice(2).trim(),
+        closeFormula: closeTrimmed.slice(0, closeTrimmed.length - closer.length).trim(),
+      });
     }
 
     for (const sb of specialBlocks) {
@@ -3761,8 +3812,12 @@ editor.on("lines_changed", (data) => {
     // Inside a fence none of this applies: `- foo` in a shell block is not a
     // list item and `| a | b |` in a code sample is not a table row, so both
     // the spacer and the frame are skipped (the clears above already ran, so a
-    // line that becomes code loses whichever it had).
-    if (!isCodeRegion(line.region) && isListItemContent(line.content)) {
+    // line that becomes code loses whichever it had). The same goes for a
+    // line of a math block or a diagram: `+ x` there is a formula.
+    if (
+      !isCodeRegion(line.region) && !specialBlockLineStarts.has(line.byte_start)
+      && isListItemContent(line.content)
+    ) {
       editor.addVirtualLine(
         data.buffer_id, line.byte_start, "",
         listSpacingOptions, false, LIST_SPACING_NS, 0,
@@ -3836,7 +3891,9 @@ editor.on("lines_changed", (data) => {
 
     const blockIndent = sb.blockIndent;
     const blockMeasure = Math.max(4, measure - blockIndent);
-    const cursorInBlock = cursorPos >= scopeStart && cursorPos <= scopeEnd;
+    // Half-open, like the conceals' own scope: a cursor at the start of the
+    // next line is outside the block.
+    const cursorInBlock = cursorPos >= scopeStart && cursorPos < scopeEnd;
 
     if (sb.kind === "mermaid") {
       const source = sb.bodyLines.map((l) => l.content.replace(/\r?\n$/, "")).join("\n");
@@ -3897,25 +3954,58 @@ editor.on("lines_changed", (data) => {
     } else if (sb.kind === "math") {
       const label = (sb.lang === "latex" || sb.lang === "katex") ? "LaTeX" : "Math";
 
-      // Open fence
+      const mathStyle = { fg: "syntax.constant", italic: true };
+
+      // Open fence. A formula on the delimiter line is drawn as the block's
+      // first row, with the frame's top as a virtual line above it.
       const openStart = charToByte(sb.openLine.content, blockIndent, sb.openLine.byte_start);
       const openEnd = lineContentEndByte(sb.openLine.content, sb.openLine.byte_start);
       const openFrame = buildCodeFrameLineWithLabel(blockMeasure, "┌", "┐", label);
-      addComposeConceal(
-        data.buffer_id, "md-syntax", openStart, openEnd, openFrame,
-        "unless-cursor-in", scopeStart, scopeEnd,
-      );
-      addComposeOverlay(data.buffer_id, "md-emphasis", openStart, openEnd, codeFrameStyle);
+      if (sb.openFormula) {
+        if (!cursorInBlock) {
+          editor.addVirtualLine(
+            data.buffer_id, sb.openLine.byte_start, " ".repeat(blockIndent) + openFrame,
+            codeFrameStyle, true, MATH_VIRTUAL_LINE_NS, 0,
+          );
+        }
+        addComposeConceal(
+          data.buffer_id, "md-syntax", openStart, openEnd,
+          buildDiagramRow(renderLatexMath(sb.openFormula), blockMeasure, 0).trimStart(),
+          "unless-cursor-in", scopeStart, scopeEnd,
+        );
+        addComposeOverlay(data.buffer_id, "md-emphasis", openStart, openEnd, mathStyle);
+      } else {
+        addComposeConceal(
+          data.buffer_id, "md-syntax", openStart, openEnd, openFrame,
+          "unless-cursor-in", scopeStart, scopeEnd,
+        );
+        addComposeOverlay(data.buffer_id, "md-emphasis", openStart, openEnd, codeFrameStyle);
+      }
 
-      // Close fence
+      // Close fence, likewise.
       const closeStart = charToByte(sb.closeLine.content, blockIndent, sb.closeLine.byte_start);
       const closeEnd = lineContentEndByte(sb.closeLine.content, sb.closeLine.byte_start);
       const closeFrame = buildCodeFrameLine(blockMeasure, "└", "┘");
-      addComposeConceal(
-        data.buffer_id, "md-syntax", closeStart, closeEnd, closeFrame,
-        "unless-cursor-in", scopeStart, scopeEnd,
-      );
-      addComposeOverlay(data.buffer_id, "md-emphasis", closeStart, closeEnd, codeFrameStyle);
+      if (sb.closeFormula) {
+        addComposeConceal(
+          data.buffer_id, "md-syntax", closeStart, closeEnd,
+          buildDiagramRow(renderLatexMath(sb.closeFormula), blockMeasure, 0).trimStart(),
+          "unless-cursor-in", scopeStart, scopeEnd,
+        );
+        addComposeOverlay(data.buffer_id, "md-emphasis", closeStart, closeEnd, mathStyle);
+        if (!cursorInBlock) {
+          editor.addVirtualLine(
+            data.buffer_id, sb.closeLine.byte_start, " ".repeat(blockIndent) + closeFrame,
+            codeFrameStyle, false, MATH_VIRTUAL_LINE_NS, 0,
+          );
+        }
+      } else {
+        addComposeConceal(
+          data.buffer_id, "md-syntax", closeStart, closeEnd, closeFrame,
+          "unless-cursor-in", scopeStart, scopeEnd,
+        );
+        addComposeOverlay(data.buffer_id, "md-emphasis", closeStart, closeEnd, codeFrameStyle);
+      }
 
       // Body lines
       for (const bodyLine of sb.bodyLines) {
@@ -3932,7 +4022,15 @@ editor.on("lines_changed", (data) => {
     }
   }
 
-  specialBlockRangesByBuffer.set(data.buffer_id, rangesForBuf);
+  // A batch covers only some of the document: keep the blocks found by
+  // earlier batches outside its span, and replace those inside it.
+  if (data.lines.length > 0) {
+    const batchStart = data.lines[0].byte_start;
+    const batchEnd = data.lines[data.lines.length - 1].byte_end;
+    const kept = (specialBlockRangesByBuffer.get(data.buffer_id) ?? [])
+      .filter((r) => r.end <= batchStart || r.start > batchEnd);
+    specialBlockRangesByBuffer.set(data.buffer_id, [...kept, ...rangesForBuf]);
+  }
 
   // Publish this batch's heading marks. Range-scoped to the batch's byte span
   // so headings outside it — the rest of the document, marked by the pre-scan
@@ -4028,8 +4126,8 @@ editor.on("cursor_moved", (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;
   const ranges = specialBlockRangesByBuffer.get(data.buffer_id);
   if (!ranges || ranges.length === 0) return;
-  const oldIdx = ranges.findIndex((r) => data.old_position >= r.start && data.old_position <= r.end);
-  const newIdx = ranges.findIndex((r) => data.new_position >= r.start && data.new_position <= r.end);
+  const oldIdx = ranges.findIndex((r) => data.old_position >= r.start && data.old_position < r.end);
+  const newIdx = ranges.findIndex((r) => data.new_position >= r.start && data.new_position < r.end);
   if (oldIdx !== newIdx) {
     editor.refreshLines(data.buffer_id);
   }

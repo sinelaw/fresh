@@ -99,6 +99,30 @@ eq(seq.some(l => /3\. Bye ─+x│/.test(l)), true, "-x ends in a cross");
 eq(render("graph LR\n    A --> B\n    A --> C").title, "Mermaid Flowchart (LR, drawn top-down)",
   "a left-to-right graph that branches is drawn top-down rather than as a misleading chain");
 
+eq(render("graph LR\n    B --> C\n    A --> B").lines[1], "│ A │ ──────> │ B │ ──────> │ C │",
+  "a chain is drawn in link order, whatever order its lines come in");
+eq(render("graph LR\n    A[(DB)] --> B").lines, [
+  "╭────╮",
+  "├────┤         ┌───┐",
+  "│ DB │ ──────> │ B │",
+  "╰────╯         └───┘",
+], "a taller box in a row keeps all its rows, its arrow on the label row");
+eq(render("graph TD; A-->B").lines.some(l => l.includes("│ B │")), true, "statements after the header's `;`");
+eq(render("graph TD\n    style-1 --> B[\"a;b\"]").lines.some(l => l.includes("│ style-1 │")), true,
+  "a node id that starts with a keyword is a node");
+eq(render("graph TD\n    A --> B[\"a;b\"]").lines.some(l => l.includes("│ a;b │")), true,
+  "a quoted label loses its quotes and keeps its `;`");
+eq(render("sequenceDiagram\n    participant Customer\n    participant B\n    Customer->>B: hi").lines.slice(0, 4), [
+  "┌──────────┐                ┌──────┐",
+  "│ Customer │                │ B    │",
+  "└────┬─────┘                └──┬───┘",
+  "     │                         │",
+], "a long first name: the box starts at the edge and its lifeline meets the ┬");
+eq(render("sequenceDiagram\n    A->>B: " + "x".repeat(60)).lines.some(l => l.includes("…") && l.endsWith(">│")), true,
+  "a message too long for its arrow is shortened");
+eq(render("stateDiagram-v2\n    [*] --> M\n    state \"Moving fast\" as M {\n      [*] --> Slow\n    }").lines.join("\n").match(/Moving fast[\s\S]*Slow/) !== null, true,
+  "a described composite state scopes its inner start");
+
 const edgesOf = (src: string) => render(src).lines.join("\n");
 for (const [src, name] of [
   ["graph LR\n    A -- yes --> B", "-- label -->"],

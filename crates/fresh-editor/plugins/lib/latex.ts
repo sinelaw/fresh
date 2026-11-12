@@ -178,6 +178,34 @@ function extractBalancedBraced(str: string, startIndex: number): { content: stri
   return null;
 }
 
+/**
+ * Each rewriting loop below replaces one command per pass. The cap only
+ * guards against a loop that stops making progress; a formula has far fewer
+ * commands than this.
+ */
+const MAX_PASSES = 1000;
+
+/**
+ * The argument of a command, starting at `i`: a `{…}` group, or — as TeX
+ * reads `\frac12` or `\sqrt2` — a single command or character. Spaces before
+ * it are skipped. Null when nothing follows.
+ */
+function commandArg(str: string, i: number): { content: string; end: number } | null {
+  while (i < str.length && /\s/.test(str[i])) i++;
+  if (i >= str.length || str[i] === "}") return null;
+  if (str[i] === "{") {
+    const group = extractBalancedBraced(str, i);
+    return group ? { content: group.content, end: group.end } : null;
+  }
+  if (str[i] === "\\") {
+    const name = str.slice(i + 1).match(/^([A-Za-z]+|.)/);
+    const len = name ? name[0].length : 0;
+    return { content: str.slice(i, i + 1 + len), end: i + 1 + len };
+  }
+  const ch = String.fromCodePoint(str.codePointAt(i)!);
+  return { content: ch, end: i + ch.length };
+}
+
 /** Render a LaTeX math formula to clear, readable Unicode mathematical notation */
 export function renderLatexMath(latex: string): string {
   let s = latex.trim();
@@ -185,13 +213,13 @@ export function renderLatexMath(latex: string): string {
   // 1. Fractions (\frac{a}{b}) with balanced braces
   let changed = true;
   let passes = 0;
-  while (changed && passes++ < 10) {
+  while (changed && passes++ < MAX_PASSES) {
     changed = false;
     const idx = s.indexOf("\\frac");
     if (idx === -1) break;
-    const num = extractBalancedBraced(s, idx + 5);
+    const num = commandArg(s, idx + 5);
     if (!num) break;
-    const den = extractBalancedBraced(s, num.end);
+    const den = commandArg(s, num.end);
     if (!den) break;
     const rNum = renderLatexMath(num.content);
     const rDen = renderLatexMath(den.content);
@@ -213,12 +241,12 @@ export function renderLatexMath(latex: string): string {
 
   // 1b. Binomials: \binom{n}{k} → C(n,k)
   passes = 0;
-  while (passes++ < 10) {
+  while (passes++ < MAX_PASSES) {
     const idx = s.indexOf("\\binom");
     if (idx === -1) break;
-    const top = extractBalancedBraced(s, idx + 6);
+    const top = commandArg(s, idx + 6);
     if (!top) break;
-    const bottom = extractBalancedBraced(s, top.end);
+    const bottom = commandArg(s, top.end);
     if (!bottom) break;
     s = s.slice(0, idx) + `C(${renderLatexMath(top.content)},${renderLatexMath(bottom.content)})` + s.slice(bottom.end);
   }
@@ -226,7 +254,7 @@ export function renderLatexMath(latex: string): string {
   // 2. Square roots: \sqrt[n]{x} or \sqrt{x} with balanced braces
   changed = true;
   passes = 0;
-  while (changed && passes++ < 10) {
+  while (changed && passes++ < MAX_PASSES) {
     changed = false;
     const idx = s.indexOf("\\sqrt");
     if (idx === -1) break;
@@ -240,7 +268,7 @@ export function renderLatexMath(latex: string): string {
         after = closeB + 1;
       }
     }
-    const inner = extractBalancedBraced(s, after);
+    const inner = commandArg(s, after);
     if (!inner) break;
     const rInner = renderLatexMath(inner.content);
     const degPrefix = degree ? toSuperscript(degree) : "";
@@ -253,7 +281,7 @@ export function renderLatexMath(latex: string): string {
   changed = true;
   passes = 0;
   const macroRe = /\\(mathbf|mathrm|mathit|mathsf|mathtt|text|textbf|textit|mathbb|mathcal|boldsymbol)\s*\{/;
-  while (changed && passes++ < 10) {
+  while (changed && passes++ < MAX_PASSES) {
     changed = false;
     const m = s.match(macroRe);
     if (!m || m.index === undefined) break;
@@ -268,7 +296,7 @@ export function renderLatexMath(latex: string): string {
   changed = true;
   passes = 0;
   const accentRe = new RegExp(`\\\\(${Object.keys(ACCENT_MAP).join("|")})\\s*\\{`);
-  while (changed && passes++ < 10) {
+  while (changed && passes++ < MAX_PASSES) {
     changed = false;
     const m = s.match(accentRe);
     if (!m || m.index === undefined) break;
@@ -312,7 +340,7 @@ export function renderLatexMath(latex: string): string {
   // 7. Superscripts with balanced braces
   changed = true;
   passes = 0;
-  while (changed && passes++ < 10) {
+  while (changed && passes++ < MAX_PASSES) {
     changed = false;
     const idx = s.indexOf("^{");
     if (idx === -1) break;
@@ -329,7 +357,7 @@ export function renderLatexMath(latex: string): string {
   // 8. Subscripts with balanced braces
   changed = true;
   passes = 0;
-  while (changed && passes++ < 10) {
+  while (changed && passes++ < MAX_PASSES) {
     changed = false;
     const idx = s.indexOf("_{");
     if (idx === -1) break;

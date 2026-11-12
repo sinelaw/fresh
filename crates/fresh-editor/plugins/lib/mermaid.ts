@@ -39,6 +39,10 @@ function parseNodeDef(raw: string): FlowNode {
   const m = raw.match(/^([A-Za-z0-9_\-]+)\s*(?:\(\[([^\]]+)\]\)|\(\(([^)]+)\)\)|\[\(([^)]+)\)\]|\{\{([^}]+)\}\}|\[([^[\]]+)\]|\(([^(]+)\)|\{([^{}]+)\}|>([^\]]+)\])?$/);
   if (!m) return { id: raw, label: raw, shape: "box" };
   const id = m[1];
+  // A label may be quoted, to hold characters Mermaid would otherwise read.
+  for (let k = 2; k <= 9; k++) {
+    if (m[k] !== undefined) m[k] = m[k].trim().replace(/^"(.*)"$/, "$1");
+  }
   if (m[2] !== undefined) return { id, label: m[2].trim(), shape: "stadium" };
   if (m[3] !== undefined) return { id, label: m[3].trim(), shape: "circle" };
   if (m[4] !== undefined) return { id, label: m[4].trim(), shape: "cylinder" };
@@ -306,9 +310,32 @@ function layoutTopDown(nodes: Map<string, FlowNode>, edges: FlowEdge[], width: W
   return outLines;
 }
 
-function renderMermaidFlowchart(rawLines: string[], maxWidth: number, width: Width): MermaidRenderResult {
+/** A line's statements: Mermaid lets `;` separate them, even after the
+ * header (`graph TD; A-->B`). A `;` inside a label or quotes is text. */
+function splitStatements(line: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let quoted = false;
+  let start = 0;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') quoted = !quoted;
+    else if (quoted) continue;
+    else if ("[({".includes(ch)) depth++;
+    else if ("])}".includes(ch)) depth = Math.max(0, depth - 1);
+    else if (ch === ";" && depth === 0) {
+      out.push(line.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(line.slice(start));
+  return out.map(t => t.trim()).filter(Boolean);
+}
+
+function renderMermaidFlowchart(sourceLines: string[], maxWidth: number, width: Width): MermaidRenderResult {
+  const rawLines = sourceLines.flatMap(splitStatements);
   const first = rawLines[0].toLowerCase();
-  const isLR = first.includes("lr") || first.includes("rl");
+  const isLR = /^\S+\s+(lr|rl)\b/.test(first);
   const nodes = new Map<string, FlowNode>();
   const edges: FlowEdge[] = [];
 
@@ -323,12 +350,12 @@ function renderMermaidFlowchart(rawLines: string[], maxWidth: number, width: Wid
   );
 
   for (let i = 1; i < rawLines.length; i++) {
-    const line = rawLines[i].trim().replace(/;$/, "");
+    const line = rawLines[i];
     if (!line || line.startsWith("%%")) continue;
     // Grouping and styling lines say nothing about nodes or edges: `subgraph`
     // and its `end` (the grouping itself is not drawn), `style`, `classDef`,
     // `class`, `click`, `linkStyle`, `direction`.
-    if (/^(subgraph|end|style|classDef|class|click|linkStyle|direction)\b/.test(line)) continue;
+    if (/^(subgraph|end|style|classDef|class|click|linkStyle|direction)(?=\s|$)/.test(line)) continue;
 
     // Handle chained connections e.g. A --> B --> C
     const parts: string[] = [];
@@ -386,62 +413,45 @@ function renderMermaidFlowchart(rawLines: string[], maxWidth: number, width: Wid
     outDeg.set(e.from, (outDeg.get(e.from) ?? 0) + 1);
     inDeg.set(e.to, (inDeg.get(e.to) ?? 0) + 1);
   }
-  const isChain = edges.length === nodes.size - 1
-    && [...nodes.keys()].every(id => (outDeg.get(id) ?? 0) <= 1 && (inDeg.get(id) ?? 0) <= 1);
+  // The chain in order, from the node nothing links to; null when the graph
+  // is not one.
+  const chain = ((): FlowNode[] | null => {
+    if (edges.length !== nodes.size - 1) return null;
+    if ([...nodes.keys()].some(id => (outDeg.get(id) ?? 0) > 1 || (inDeg.get(id) ?? 0) > 1)) return null;
+    const startId = [...nodes.keys()].find(id => !inDeg.get(id));
+    if (startId === undefined) return null;
+    const order: FlowNode[] = [];
+    for (let id: string | undefined = startId; id !== undefined; id = edges.find(e => e.from === id)?.to) {
+      if (order.some(n => n.id === id)) return null;
+      order.push(nodes.get(id)!);
+    }
+    return order.length === nodes.size ? order : null;
+  })();
   const rowWidth = [...nodes.values()].reduce((w, n) => w + width(renderNodeBox(n, width)[0]) + 9, 0);
-  if (isLR && (!isChain || rowWidth > maxWidth)) {
+  if (isLR && (chain === null || rowWidth > maxWidth)) {
     return { title: "Mermaid Flowchart (LR, drawn top-down)", lines: layoutTopDown(nodes, edges, width) };
   }
 
-  if (isLR) {
-    // Horizontal layout
-    const orderedNodes: Array<{ node: FlowNode; edgeLabel?: string }> = [];
-    const seenNodeIds = new Set<string>();
-
-    for (let eIdx = 0; eIdx < edges.length; eIdx++) {
-      const e = edges[eIdx];
-      const fn = nodes.get(e.from) || { id: e.from, label: e.from, shape: "box" };
-      const tn = nodes.get(e.to) || { id: e.to, label: e.to, shape: "box" };
-      if (!seenNodeIds.has(fn.id)) {
-        orderedNodes.push({ node: fn, edgeLabel: e.label });
-        seenNodeIds.add(fn.id);
-      } else if (orderedNodes.length > 0 && orderedNodes[orderedNodes.length - 1].node.id === fn.id) {
-        orderedNodes[orderedNodes.length - 1].edgeLabel = e.label;
-      }
-      if (!seenNodeIds.has(tn.id)) {
-        orderedNodes.push({ node: tn });
-        seenNodeIds.add(tn.id);
-      }
-    }
-
-    if (orderedNodes.length === 0) {
-      for (const node of nodes.values()) {
-        orderedNodes.push({ node });
+  if (isLR && chain !== null) {
+    // A row of boxes, each link an arrow on the boxes' label row. Boxes of
+    // different heights (a cylinder has four rows) share that middle row.
+    const boxes = chain.map(n => renderNodeBox(n, width));
+    const labelRow = (box: string[]) => Math.max(0, box.findIndex(r => r.startsWith("│") || r.startsWith("(") || r.startsWith("<")));
+    const above = Math.max(...boxes.map(labelRow));
+    const height = Math.max(...boxes.map((b, k) => b.length - labelRow(b) + above));
+    const rows: string[] = Array(height).fill("");
+    for (let i = 0; i < chain.length; i++) {
+      const box = boxes[i];
+      const boxW = Math.max(...box.map(width));
+      const top = above - labelRow(box);
+      for (let r = 0; r < height; r++) rows[r] += padTo(box[r - top] ?? "", boxW, width);
+      if (i < chain.length - 1) {
+        const label = edges.find(e => e.from === chain[i].id)?.label;
+        const arrowText = label ? ` ── ${label} ──> ` : " ──────> ";
+        for (let r = 0; r < height; r++) rows[r] += r === above ? arrowText : " ".repeat(width(arrowText));
       }
     }
-
-    const row0: string[] = [];
-    const row1: string[] = [];
-    const row2: string[] = [];
-
-    for (let i = 0; i < orderedNodes.length; i++) {
-      const item = orderedNodes[i];
-      const box = renderNodeBox(item.node, width);
-      const boxW = Math.max(width(box[0]), width(box[1]), width(box[2] || ""));
-
-      row0.push(padTo(box[0], boxW, width));
-      row1.push(padTo(box[1], boxW, width));
-      row2.push(padTo((box[2] || ""), boxW, width));
-
-      if (i < orderedNodes.length - 1) {
-        const arrowText = item.edgeLabel ? ` ── ${item.edgeLabel} ──> ` : " ──────> ";
-        const arrowW = width(arrowText);
-        row0.push(" ".repeat(arrowW));
-        row1.push(arrowText);
-        row2.push(" ".repeat(arrowW));
-      }
-    }
-    outLines.push(row0.join(""), row1.join(""), row2.join(""));
+    outLines.push(...rows.map(r => r.trimEnd()));
   } else {
     outLines.push(...layoutTopDown(nodes, edges, width));
   }
@@ -528,7 +538,31 @@ function renderMermaidSequence(rawLines: string[], maxWidth: number, width: Widt
   if (participants.length === 0) return { title: "Mermaid Sequence", lines: ["(empty sequence diagram)"] };
 
   const spacing = Math.max(16, Math.min(26, Math.floor((maxWidth - 8) / participants.length)));
-  const colCenters = participants.map((_, i) => 4 + i * spacing);
+  // Each lifeline is where its box's centre falls, and a box never starts
+  // left of the block or runs into the box before it, however long the name.
+  const boxWidthOf = (id: string) => Math.max(6, width(aliasMap.get(id) || id) + 2);
+  const colCenters: number[] = [];
+  for (let i = 0; i < participants.length; i++) {
+    const half = Math.floor(boxWidthOf(participants[i]) / 2);
+    if (i === 0) {
+      colCenters.push(Math.max(4, half));
+    } else {
+      const prev = participants[i - 1];
+      const prevEnd = colCenters[i - 1] - Math.floor(boxWidthOf(prev) / 2) + boxWidthOf(prev) + 2;
+      colCenters.push(Math.max(colCenters[i - 1] + spacing, prevEnd + 2 + half));
+    }
+  }
+
+  // A message's text shortened with … to leave room for its arrow.
+  const fitLabel = (text: string, cols: number): string => {
+    if (width(text) <= cols) return text;
+    let out = "";
+    for (const ch of text) {
+      if (width(out + ch) > cols - 1) break;
+      out += ch;
+    }
+    return out + "…";
+  };
 
   const outLines: string[] = [];
 
@@ -598,7 +632,7 @@ function renderMermaidSequence(rawLines: string[], maxWidth: number, width: Widt
       row = padTo(row, c1, width) + "│";
       const span = c2 - c1 - 1;
       const isDashed = item.arrow.startsWith("--");
-      const label = ` ${item.text} `;
+      const label = ` ${fitLabel(item.text, Math.max(1, span - 6))} `;
       const dash = isDashed ? "- " : "─";
       let shaft = "";
       while (shaft.length < Math.max(0, span - width(label) - 1)) shaft += dash;
@@ -614,7 +648,7 @@ function renderMermaidSequence(rawLines: string[], maxWidth: number, width: Widt
       row = padTo(row, c2, width) + (item.arrow.endsWith("x") ? "│x" : "│<");
       const span = c1 - c2 - 1;
       const isDashed = item.arrow.startsWith("--");
-      const label = ` ${item.text} `;
+      const label = ` ${fitLabel(item.text, Math.max(1, span - 6))} `;
       const dash = isDashed ? "- " : "─";
       let shaft = "";
       while (shaft.length < Math.max(0, span - width(label) - 2)) shaft += dash;
@@ -724,14 +758,11 @@ function renderMermaidState(rawLines: string[], _maxWidth: number, width: Width)
     const line = rawLines[i].trim();
     if (!line || line.startsWith("%%")) continue;
 
-    const descMatch = line.match(/^state\s+"([^"]+)"\s+as\s+([A-Za-z0-9_\-]+)/i);
-    if (descMatch) {
-      stateLabels.set(descMatch[2], descMatch[1]);
-      continue;
-    }
-    const compositeMatch = line.match(/^state\s+(?:"[^"]+"\s+as\s+)?([A-Za-z0-9_\-]+)\s*\{$/i);
-    if (compositeMatch) {
-      scopes.push(compositeMatch[1]);
+    // `state "Description" as Id`, optionally opening a composite (`{`).
+    const stateMatch = line.match(/^state\s+(?:"([^"]+)"\s+as\s+)?([A-Za-z0-9_\-]+)\s*(\{)?$/i);
+    if (stateMatch) {
+      if (stateMatch[1]) stateLabels.set(stateMatch[2], stateMatch[1]);
+      if (stateMatch[3]) scopes.push(stateMatch[2]);
       continue;
     }
     if (line === "}") {
