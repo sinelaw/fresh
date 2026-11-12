@@ -165,8 +165,16 @@ impl Editor {
                         .zip(p.selected_item().map(|item| item.data.clone()))
                 });
                 if let Some((row, insert_text)) = selection {
+                    let item = self
+                        .active_window()
+                        .completion_popup_lsp_items
+                        .get(row)
+                        .map(|candidate| candidate.item.clone());
                     if let Some(text) = insert_text {
-                        self.insert_completion_text(text);
+                        if !self.insert_completion_text(text, item.as_ref()) {
+                            self.hide_popup();
+                            return PopupConfirmResult::Done;
+                        }
                     }
                     self.apply_completion_additional_edits(row);
                 }
@@ -191,47 +199,77 @@ impl Editor {
         }
     }
 
-    /// Insert completion text, replacing the word prefix at *every* cursor.
-    /// If the text contains LSP snippet syntax, it will be expanded.
+    /// Insert a completion using its server-supplied range, or the word prefix
+    /// for completions without a textEdit. LSP snippets are expanded only when
+    /// the server declares snippet format.
     ///
-    /// Multi-cursor: each cursor's own word prefix is replaced, so cursors
-    /// stay in lock-step after the accept (issue #1901, accept path). All
-    /// per-cursor edits go through `apply_events_as_bulk_edit` so undo is
-    /// atomic.
-    fn insert_completion_text(&mut self, text: String) {
+    /// Multi-cursor: translate the edit relative to each cursor, or replace
+    /// each word prefix when no range is supplied. Apply as one undo step.
+    ///
+    /// A server range that no longer fits the buffer, and a translation that
+    /// no secondary cursor can take, both fall back to the word prefix at that
+    /// one cursor instead of cancelling the accept: accepting a completion
+    /// always inserts something. Returns `false` only when the edit could not
+    /// be applied at all, so the caller can skip the additional edits that go
+    /// with it.
+    fn insert_completion_text(
+        &mut self,
+        text: String,
+        item: Option<&lsp_types::CompletionItem>,
+    ) -> bool {
         use crate::model::event::CursorId;
 
         // Check if this is a snippet and expand it
-        let (insert_text, cursor_offset) = if is_snippet(&text) {
+        let snippet = item.map_or_else(
+            || is_snippet(&text),
+            |item| item.insert_text_format == Some(lsp_types::InsertTextFormat::SNIPPET),
+        );
+        let (insert_text, cursor_offset) = if snippet {
             let expanded = expand_snippet(&text);
             (expanded.text, Some(expanded.cursor_offset))
         } else {
             (text, None)
         };
 
-        // Collect per-cursor data: id, current position, word_start, prefix text.
-        let cursor_data: Vec<(CursorId, usize, usize, String)> = {
-            let positions: Vec<(CursorId, usize)> = self
-                .active_cursors()
-                .iter()
-                .map(|(id, c)| (id, c.position))
-                .collect();
-            positions
-                .into_iter()
-                .map(|(id, pos)| {
-                    let word_start = {
-                        let state = self.active_state();
-                        find_completion_word_start(&state.buffer, pos)
-                    };
-                    let prefix = if word_start < pos {
-                        self.active_state_mut().get_text_range(word_start, pos)
-                    } else {
-                        String::new()
-                    };
-                    (id, pos, word_start, prefix)
-                })
-                .collect()
-        };
+        let buffer = &self.active_state().buffer;
+        let primary_pos = self.active_cursors().primary().position;
+        // A server range is only usable while the document it was computed
+        // against still agrees with it: the conversion clamps positions that
+        // no longer exist, and a keystroke that landed between the request and
+        // the response leaves the range ending behind the cursor.
+        // `rebase_completion_edits` moves the cached ranges for edits made
+        // while the popup is open, but nothing accounts for the
+        // request -> response window, so an unusable range falls back to the
+        // word prefix below -- the accept does what it did before textEdit
+        // ranges were honoured, instead of inserting nothing at all.
+        let primary_range = item.and_then(completion_edit_range).and_then(|range| {
+            let start = buffer
+                .lsp_position_to_byte(range.start.line as usize, range.start.character as usize);
+            let end =
+                buffer.lsp_position_to_byte(range.end.line as usize, range.end.character as usize);
+            let brackets_cursor = start <= primary_pos && end >= primary_pos;
+            let converted_exactly = buffer.position_to_lsp_position(start)
+                == (range.start.line as usize, range.start.character as usize)
+                && buffer.position_to_lsp_position(end)
+                    == (range.end.line as usize, range.end.character as usize);
+            (brackets_cursor && converted_exactly).then_some(start..end)
+        });
+
+        // Keep multicursor completion working by translating the primary edit
+        // relative to each cursor. A cursor the translation cannot serve
+        // replaces its own word prefix, so one unusable secondary cursor no
+        // longer cancels the accept at every cursor -- each one still receives
+        // the completion in lock-step (#1901, accept path).
+        let mut cursor_data: Vec<(CursorId, usize, usize, String)> = Vec::new();
+        for (cursor_id, cursor) in self.active_cursors().iter() {
+            let pos = cursor.position;
+            let range = primary_range
+                .as_ref()
+                .and_then(|range| translate_completion_range(buffer, range, primary_pos, pos))
+                .unwrap_or_else(|| find_completion_word_start(buffer, pos)..pos);
+            let prefix = String::from_utf8_lossy(&buffer.slice_bytes(range.clone())).into_owned();
+            cursor_data.push((cursor_id, range.end, range.start, prefix));
+        }
 
         // Build delete+insert events. `apply_events_as_bulk_edit` sorts by
         // descending position internally, so emission order doesn't matter.
@@ -252,7 +290,7 @@ impl Editor {
         }
 
         if events.is_empty() {
-            return;
+            return false;
         }
 
         let description = "Accept completion".to_string();
@@ -260,6 +298,8 @@ impl Editor {
             // Multi-cursor (or replacement = delete+insert): one atomic bulk edit.
             if let Some(applied) = self.apply_events_as_bulk_edit(events, description) {
                 self.active_event_log_mut().append(applied);
+            } else {
+                return false;
             }
         } else {
             for event in events {
@@ -294,6 +334,7 @@ impl Editor {
                 }
             }
         }
+        true
     }
 
     /// Apply additional_text_edits from the accepted completion item (e.g. auto-imports).
@@ -488,6 +529,7 @@ impl Editor {
             .active_window_mut()
             .action_to_events(Action::InsertChar(c))
         {
+            self.rebase_completion_edits(&events);
             if events.len() > 1 {
                 let description = format!("Insert '{}'", c);
                 if let Some(applied) = self.apply_events_as_bulk_edit(events, description) {
@@ -517,6 +559,7 @@ impl Editor {
             .active_window_mut()
             .action_to_events(Action::DeleteBackward)
         {
+            self.rebase_completion_edits(&events);
             if events.len() > 1 {
                 if let Some(applied) =
                     self.apply_events_as_bulk_edit(events, "Backspace".to_string())
@@ -531,6 +574,45 @@ impl Editor {
         }
 
         self.refilter_completion_popup();
+    }
+
+    /// Popup typing filters cached results. Move their ranges through the same
+    /// edits as the buffer, in descending order so all positions refer to the
+    /// pre-edit document (including edits made at secondary cursors).
+    ///
+    /// Two kinds of cached position are deliberately left alone, and
+    /// `insert_completion_text` copes with both by falling back to the word
+    /// prefix: edits made between a completion request going out and its
+    /// response landing (this runs on the popup's own keystrokes, so it never
+    /// sees them), and each item's `additional_text_edits`, which the accept
+    /// path applies where the server put them.
+    fn rebase_completion_edits(&mut self, events: &[Event]) {
+        let mut changes: Vec<_> = events
+            .iter()
+            .flat_map(|event| self.active_window().collect_lsp_changes(event))
+            .collect();
+        changes.sort_by(|a, b| {
+            b.range
+                .map(|r| (r.start, r.end))
+                .cmp(&a.range.map(|r| (r.start, r.end)))
+        });
+        if let Some(items) = &mut self.active_window_mut().completion_items {
+            for change in changes {
+                let Some(range) = change.range else { continue };
+                for candidate in items.iter_mut() {
+                    match candidate.item.text_edit.as_mut() {
+                        Some(lsp_types::CompletionTextEdit::Edit(edit)) => {
+                            rebase_completion_range(&mut edit.range, range, &change.text);
+                        }
+                        Some(lsp_types::CompletionTextEdit::InsertAndReplace(edit)) => {
+                            rebase_completion_range(&mut edit.insert, range, &change.text);
+                            rebase_completion_range(&mut edit.replace, range, &change.text);
+                        }
+                        None => {}
+                    }
+                }
+            }
+        }
     }
 
     /// Lowercased word prefix at the primary cursor — what completion
@@ -552,6 +634,26 @@ impl Editor {
         }
     }
 
+    pub(crate) fn completion_item_matches(&self, item: &lsp_types::CompletionItem) -> bool {
+        let buffer = &self.active_state().buffer;
+        let cursor = self.active_cursors().primary().position;
+        let start = completion_edit_range(item)
+            .map(|range| {
+                buffer
+                    .lsp_position_to_byte(range.start.line as usize, range.start.character as usize)
+            })
+            .unwrap_or_else(|| find_completion_word_start(buffer, cursor));
+        if start > cursor {
+            return false;
+        }
+        // Include punctuation such as a command's backslash when the server's
+        // edit includes it, rather than filtering against just the word.
+        completion_matches_prefix(
+            item,
+            &String::from_utf8_lossy(&buffer.slice_bytes(start..cursor)).to_lowercase(),
+        )
+    }
+
     /// Build the rows of the completion popup for the word prefix at the
     /// cursor: the stored LSP candidates that still match, followed by
     /// buffer-word candidates the server didn't already offer.
@@ -565,14 +667,12 @@ impl Editor {
     pub(crate) fn build_completion_popup_rows(
         &mut self,
     ) -> Vec<crate::model::event::PopupListItemData> {
-        let prefix = self.completion_word_prefix();
-
         let matching: Vec<LspCompletionCandidate> = self
             .active_window()
             .completion_items
             .iter()
             .flatten()
-            .filter(|candidate| completion_matches_prefix(&candidate.item, &prefix))
+            .filter(|candidate| self.completion_item_matches(&candidate.item))
             .cloned()
             .collect();
 
@@ -683,6 +783,67 @@ pub(crate) fn completion_matches_prefix(item: &lsp_types::CompletionItem, prefix
             .unwrap_or(false)
 }
 
+/// Translate the primary cursor's edit range to another cursor, keeping the
+/// same byte distance on each side so every cursor replaces the same shape of
+/// text.
+///
+/// `None` when the translated range cannot be used at that cursor: it would
+/// run past the end of the buffer, or it would split a codepoint -- likely
+/// whenever the cursors' surroundings differ in byte width, e.g. one cursor
+/// sits after a multi-byte character where the primary sits after an ASCII
+/// one. The caller falls back to that cursor's own word prefix rather than
+/// abandoning the accept at every cursor.
+fn translate_completion_range(
+    buffer: &crate::model::buffer::Buffer,
+    primary_range: &std::ops::Range<usize>,
+    primary_pos: usize,
+    pos: usize,
+) -> Option<std::ops::Range<usize>> {
+    let start = pos.checked_sub(primary_pos - primary_range.start)?;
+    let end = pos.checked_add(primary_range.end - primary_pos)?;
+    if end > buffer.len() || std::str::from_utf8(&buffer.slice_bytes(start..end)).is_err() {
+        return None;
+    }
+    Some(start..end)
+}
+
+fn completion_edit_range(item: &lsp_types::CompletionItem) -> Option<lsp_types::Range> {
+    item.text_edit.as_ref().map(|edit| match edit {
+        lsp_types::CompletionTextEdit::Edit(edit) => edit.range,
+        // Explicitly use replace semantics when accepting an InsertReplaceEdit.
+        lsp_types::CompletionTextEdit::InsertAndReplace(edit) => edit.replace,
+    })
+}
+
+/// Expand a cached completion range to include typed text, and shift positions
+/// after the change. Starts stick left; ends stick right.
+fn rebase_completion_range(range: &mut lsp_types::Range, change: lsp_types::Range, text: &str) {
+    let mut new_end = change.start;
+    for c in text.chars() {
+        if c == '\n' {
+            new_end.line += 1;
+            new_end.character = 0;
+        } else {
+            new_end.character += c.len_utf16() as u32;
+        }
+    }
+    for (position, right_bias) in [(&mut range.start, false), (&mut range.end, true)] {
+        if *position < change.start || (*position == change.start && !right_bias) {
+            continue;
+        }
+        if *position <= change.end {
+            *position = if right_bias { new_end } else { change.start };
+        } else if position.line == change.end.line {
+            *position = lsp_types::Position::new(
+                new_end.line,
+                new_end.character + position.character - change.end.character,
+            );
+        } else {
+            position.line = new_end.line + position.line - change.end.line;
+        }
+    }
+}
+
 /// Convert LSP `CompletionItem`s to `PopupListItemData`s.
 pub(crate) fn lsp_items_to_popup_items(
     candidates: &[&LspCompletionCandidate],
@@ -730,8 +891,15 @@ pub(crate) fn lsp_items_to_popup_items(
                 detail,
                 icon,
                 data: item
-                    .insert_text
-                    .clone()
+                    .text_edit
+                    .as_ref()
+                    .map(|edit| match edit {
+                        lsp_types::CompletionTextEdit::Edit(edit) => edit.new_text.clone(),
+                        lsp_types::CompletionTextEdit::InsertAndReplace(edit) => {
+                            edit.new_text.clone()
+                        }
+                    })
+                    .or_else(|| item.insert_text.clone())
                     .or_else(|| Some(item.label.clone())),
             }
         })
@@ -757,7 +925,7 @@ mod tests {
             kind: Some(lsp_types::CompletionItemKind::STRUCT),
             ..Default::default()
         };
-        let candidate = LspCompletionCandidate::unattributed("lsp:0:0".into(), item);
+        let mut candidate = LspCompletionCandidate::unattributed("lsp:0:0".into(), item);
         let popup_items = lsp_items_to_popup_items(&[&candidate]);
         assert_eq!(popup_items.len(), 1);
         assert_eq!(popup_items[0].text, "HashMap");
@@ -767,6 +935,16 @@ mod tests {
         );
         // The accepted insert text must stay the bare identifier.
         assert_eq!(popup_items[0].data.as_deref(), Some("HashMap"));
+
+        // A textEdit overrides insertText without changing the displayed label.
+        candidate.item.insert_text = Some("fallback".to_string());
+        candidate.item.text_edit = Some(lsp_types::CompletionTextEdit::Edit(lsp_types::TextEdit {
+            range: Default::default(),
+            new_text: "replacement".to_string(),
+        }));
+        let popup_items = lsp_items_to_popup_items(&[&candidate]);
+        assert_eq!(popup_items[0].text, "HashMap");
+        assert_eq!(popup_items[0].data.as_deref(), Some("replacement"));
     }
 
     /// Servers that don't use `labelDetails` keep their `detail` rendering.

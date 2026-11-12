@@ -159,12 +159,9 @@ impl Editor {
         }
 
         // Get the partial word at cursor to filter completions
-        use crate::app::popup_actions::completion_matches_prefix;
         let prefix = self.completion_word_prefix();
 
-        let any_new_match = items
-            .iter()
-            .any(|item| completion_matches_prefix(item, &prefix));
+        let any_new_match = items.iter().any(|item| self.completion_item_matches(item));
 
         if !any_new_match && self.active_window().completion_items.is_none() {
             tracing::debug!("No completion items match prefix '{}'", prefix);
@@ -206,7 +203,7 @@ impl Editor {
             .completion_items
             .iter()
             .flatten()
-            .any(|candidate| completion_matches_prefix(&candidate.item, &prefix));
+            .any(|candidate| self.completion_item_matches(&candidate.item));
         if !any_stored_match {
             tracing::debug!("No completion items match prefix '{}'", prefix);
             return Ok(());

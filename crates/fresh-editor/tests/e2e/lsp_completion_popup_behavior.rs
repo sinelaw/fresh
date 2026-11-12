@@ -103,6 +103,217 @@ fn setup_completion_popup(prefix: &str) -> anyhow::Result<EditorTestHarness> {
     Ok(harness)
 }
 
+/// textEdit supplies both replacement text and a range, including punctuation
+/// and a suffix after the cursor. Typing/backspace must keep that range valid.
+#[test]
+fn test_completion_accepts_text_edit_range() -> anyhow::Result<()> {
+    use lsp_types::{
+        CompletionItem, CompletionTextEdit, InsertReplaceEdit, Position, Range, TextEdit,
+    };
+
+    for insert_replace in [false, true] {
+        let input = "use @calXYZ!";
+        let mut h = setup_completion_popup(input)?;
+        h.editor_mut().handle_popup_cancel();
+        for _ in 0..4 {
+            h.send_key(KeyCode::Left, KeyModifiers::NONE)?;
+        }
+        let range = Range::new(Position::new(0, 4), Position::new(0, 11));
+        let edit = if insert_replace {
+            CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
+                new_text: "result".into(),
+                insert: Range::new(range.start, Position::new(0, 8)),
+                replace: range,
+            })
+        } else {
+            CompletionTextEdit::Edit(TextEdit::new(range, "result".into()))
+        };
+        h.editor_mut().set_completion_items(vec![CompletionItem {
+            label: "@calculate".into(),
+            insert_text: Some("wrong".into()),
+            text_edit: Some(edit),
+            ..Default::default()
+        }]);
+        // Directly invoke the popup handlers to rebuild its actual filtered
+        // rows and candidate mapping from these cached server results.
+        h.editor_mut().handle_popup_type_char('c');
+        h.editor_mut().handle_popup_backspace();
+        h.render()?;
+        h.send_key(KeyCode::Tab, KeyModifiers::NONE)?;
+        assert_eq!(h.get_buffer_content().unwrap(), "use result!");
+        assert_eq!(
+            h.editor().active_cursors().primary().position,
+            "use result".len()
+        );
+        h.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)?;
+        assert_eq!(h.get_buffer_content().unwrap(), input);
+    }
+    Ok(())
+}
+
+#[test]
+fn test_completion_text_edit_snippet_and_plain_text() -> anyhow::Result<()> {
+    use lsp_types::{
+        CompletionItem, CompletionTextEdit, InsertTextFormat, Position, Range, TextEdit,
+    };
+
+    for (text, format, expected, cursor) in [
+        ("$1", InsertTextFormat::PLAIN_TEXT, "$1", 2),
+        ("call($0)", InsertTextFormat::SNIPPET, "call()", 5),
+    ] {
+        let mut h = setup_completion_popup("calc")?;
+        h.editor_mut().set_completion_items(vec![CompletionItem {
+            label: "calculate".into(),
+            insert_text_format: Some(format),
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit::new(
+                Range::new(Position::new(0, 0), Position::new(0, 4)),
+                text.into(),
+            ))),
+            ..Default::default()
+        }]);
+        h.send_key(KeyCode::Char('u'), KeyModifiers::NONE)?;
+        h.send_key(KeyCode::Tab, KeyModifiers::NONE)?;
+        assert_eq!(h.get_buffer_content().unwrap(), expected);
+        assert_eq!(h.editor().active_cursors().primary().position, cursor);
+    }
+    Ok(())
+}
+
+/// Cache one `textEdit` completion item in the `cal` / `calculate` shape the
+/// tests here use, and rebuild the popup's rows — and with them the
+/// row -> candidate mapping the accept path reads back.
+///
+/// `set_completion_items` only stores what the server sent; the rows and the
+/// mapping are rebuilt by the popup's own typing handlers, so the item is put
+/// through one keystroke and one Backspace. `u` is the next letter of
+/// `calculate`, so the item still matches in between, and the round trip
+/// leaves the buffer, every cursor and the cached range where they were: both
+/// ends of a range that sits before the typed character are left alone, and
+/// one that reaches past it is widened and narrowed back.
+fn cache_calculate_text_edit(h: &mut EditorTestHarness, range: lsp_types::Range) {
+    h.editor_mut()
+        .set_completion_items(vec![lsp_types::CompletionItem {
+            label: "calculate".into(),
+            text_edit: Some(lsp_types::CompletionTextEdit::Edit(
+                lsp_types::TextEdit::new(range, "calculate".into()),
+            )),
+            ..Default::default()
+        }]);
+    h.editor_mut().handle_popup_type_char('u');
+    h.editor_mut().handle_popup_backspace();
+}
+
+/// A keystroke that lands between a completion request going out and its
+/// response coming back leaves the server's `textEdit` range ending behind the
+/// cursor. Accepting must still insert — falling back to the word prefix at
+/// the cursor — instead of dismissing the popup and inserting nothing.
+#[test]
+fn test_completion_accepts_item_with_stale_text_edit_range() -> anyhow::Result<()> {
+    use lsp_types::{Position, Range};
+
+    let mut h = setup_completion_popup("cal")?;
+
+    // The keystroke the server never saw: the request went out with the
+    // cursor after `cal`, and `c` was typed before the answer arrived.
+    h.send_key(KeyCode::Char('c'), KeyModifiers::NONE)?;
+    assert_eq!(h.get_buffer_content().unwrap(), "calc");
+
+    // The response, computed against `cal`: its range stops at character 3,
+    // one byte behind the cursor, which now sits after `calc`.
+    cache_calculate_text_edit(&mut h, Range::new(Position::new(0, 0), Position::new(0, 3)));
+    h.render()?;
+
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE)?;
+    assert_eq!(h.get_buffer_content().unwrap(), "calculate");
+    assert_eq!(
+        h.editor().active_cursors().primary().position,
+        "calculate".len()
+    );
+    Ok(())
+}
+
+/// A cursor the server's range cannot be translated to must not cancel the
+/// completion at the other cursors. Here the primary sits mid-buffer and a
+/// second cursor sits at the end of the file, where a range that extends past
+/// the cursor runs off the end of the buffer. Both cursors still receive the
+/// completion, each replacing what it can (#1901, accept path).
+#[test]
+fn test_completion_accepts_at_every_cursor_when_range_runs_past_buffer_end() -> anyhow::Result<()> {
+    use fresh::model::event::CursorId;
+    use lsp_types::{Position, Range};
+
+    let mut h = EditorTestHarness::new(80, 24)?;
+    h.type_text("calXYZ\ncal")?;
+    // The cursor that typed stays at the end of the file; the added one
+    // becomes the primary, after `cal` on the first line.
+    h.apply_event(Event::AddCursor {
+        cursor_id: CursorId(1),
+        position: 3,
+        anchor: None,
+    })?;
+    assert_eq!(
+        h.editor().active_cursors().iter().count(),
+        2,
+        "test precondition: two cursors set up"
+    );
+    assert_eq!(
+        h.editor().active_cursors().primary().position,
+        3,
+        "test precondition: the added cursor is the primary one"
+    );
+
+    // Replace semantics: the range covers `calXYZ`, three bytes past the
+    // primary cursor — and three bytes past the end of the buffer at the
+    // cursor on the last line.
+    cache_calculate_text_edit(&mut h, Range::new(Position::new(0, 0), Position::new(0, 6)));
+    h.render()?;
+
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE)?;
+    assert_eq!(h.get_buffer_content().unwrap(), "calculate\ncalculate");
+    Ok(())
+}
+
+/// The same abort reached the other way: the translated range lands inside a
+/// multi-byte character at the secondary cursor, which happens as soon as the
+/// cursors' surroundings differ in byte width.
+#[test]
+fn test_completion_accepts_at_every_cursor_when_range_splits_a_codepoint() -> anyhow::Result<()> {
+    use fresh::model::event::CursorId;
+    use lsp_types::{Position, Range};
+
+    let mut h = EditorTestHarness::new(80, 24)?;
+    h.type_text("calz\ncal\u{e9}")?;
+    // Put the typing cursor between `cal` and the two-byte `\u{e9}`, so the one
+    // byte the range reaches past the primary cursor lands mid-codepoint here.
+    h.send_key(KeyCode::Left, KeyModifiers::NONE)?;
+    h.apply_event(Event::AddCursor {
+        cursor_id: CursorId(1),
+        position: 3,
+        anchor: None,
+    })?;
+    assert_eq!(
+        h.editor().active_cursors().iter().count(),
+        2,
+        "test precondition: two cursors set up"
+    );
+    assert_eq!(
+        h.editor().active_cursors().primary().position,
+        3,
+        "test precondition: the added cursor is the primary one"
+    );
+
+    // The range covers `calz`: one byte past the primary cursor.
+    cache_calculate_text_edit(&mut h, Range::new(Position::new(0, 0), Position::new(0, 4)));
+    h.render()?;
+
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE)?;
+    assert_eq!(
+        h.get_buffer_content().unwrap(),
+        "calculate\ncalculate\u{e9}"
+    );
+    Ok(())
+}
+
 // ============================================================================
 // Issue 1: Left/Right arrow keys are swallowed
 // ============================================================================
