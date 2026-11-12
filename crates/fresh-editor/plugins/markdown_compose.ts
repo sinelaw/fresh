@@ -403,6 +403,157 @@ function displayMathBlocks(lines: LineInfoLike[]): Array<[number, number]> {
   return blocks;
 }
 
+// =============================================================================
+// External renderers (optional)
+// =============================================================================
+//
+// The built-in renderers (`lib/latex.ts`, `lib/mermaid.ts`) always work and
+// need nothing installed. When a command-line tool that renders to terminal
+// text is installed, its output is drawn instead:
+//
+//   * Mermaid: `mermaid-ascii` (github.com/AlexanderGrooff/mermaid-ascii), a
+//     real graph layout for flowcharts and sequence diagrams;
+//   * display math: `utftex` (github.com/bartp5/libtexprintf), which lays a
+//     formula out in two dimensions — fractions stacked, limits under ∑.
+//
+// Both are settings (`mermaidCommand` / `mathCommand`, with argument
+// templates), so another tool with the same shape can be named instead, and
+// an empty command turns one off. Inline math always uses the built-in
+// renderer: a tool's multi-row output cannot sit inside a line of prose.
+//
+// Drawing is synchronous and a tool is not, so the first time a block is
+// seen it is drawn by the built-in renderer while the tool runs; its output
+// is cached by command, width and source, and the lines are redrawn when it
+// arrives. A tool that cannot be started is remembered and not retried this
+// session; one that fails on a block (an unsupported diagram type, a syntax
+// it does not know) leaves that block to the built-in renderer.
+
+editor.defineConfigString("mermaidCommand", {
+  default: "mermaid-ascii",
+  description:
+    "Command that draws a ```mermaid block as text, used when it is installed (otherwise the built-in renderer draws it). Empty to always use the built-in renderer.",
+});
+editor.defineConfigStringArray("mermaidArgs", {
+  default: ["-f", "{file}", "--max-width", "{width}"],
+  description:
+    "Arguments for mermaidCommand. {file} is a temporary file holding the diagram's source, {source} the source itself, {width} the columns available.",
+});
+editor.defineConfigString("mathCommand", {
+  default: "utftex",
+  description:
+    "Command that draws display math ($$ … $$, \\[ … \\], ```math) as text, used when it is installed (otherwise the built-in renderer draws it). Empty to always use the built-in renderer.",
+});
+editor.defineConfigStringArray("mathArgs", {
+  default: ["--line-width", "{width}", "{source}"],
+  description:
+    "Arguments for mathCommand. {source} is the formula, {file} a temporary file holding it, {width} the columns available.",
+});
+
+interface ComposeSettings {
+  mermaidCommand?: string;
+  mermaidArgs?: string[];
+  mathCommand?: string;
+  mathArgs?: string[];
+}
+
+/** Off for the session after "Markdown: Toggle External Renderers", to
+ * compare a tool's drawing with the built-in one. */
+let externalRenderersOn = true;
+
+type ExternalKind = "mermaid" | "math";
+const EXTERNAL_DEFAULTS: Record<ExternalKind, { command: string; args: string[] }> = {
+  mermaid: { command: "mermaid-ascii", args: ["-f", "{file}", "--max-width", "{width}"] },
+  math: { command: "utftex", args: ["--line-width", "{width}", "{source}"] },
+};
+
+/** Rendered rows by request key; "pending" while the tool runs, null when it failed. */
+const externalCache = new Map<string, string[] | null | "pending">();
+const EXTERNAL_CACHE_LIMIT = 500;
+/** Commands that could not be started (not installed): not retried. */
+const missingCommands = new Set<string>();
+
+/** The program's own name, for a frame's title: `utftex`, not its path. */
+function toolName(kind: ExternalKind): string {
+  return (externalTool(kind)?.command ?? "").split(/[\\/]/).pop() ?? "";
+}
+
+function externalTool(kind: ExternalKind): { command: string; args: string[] } | null {
+  if (!externalRenderersOn) return null;
+  const cfg = (editor.getPluginConfig() ?? {}) as ComposeSettings;
+  const command = (kind === "mermaid" ? cfg.mermaidCommand : cfg.mathCommand) ?? EXTERNAL_DEFAULTS[kind].command;
+  const args = (kind === "mermaid" ? cfg.mermaidArgs : cfg.mathArgs) ?? EXTERNAL_DEFAULTS[kind].args;
+  if (!command.trim() || missingCommands.has(command)) return null;
+  return { command, args };
+}
+
+/** A short stable name for a temporary file, from the request it serves. */
+function hashKey(key: string): string {
+  let h = 5381;
+  for (let i = 0; i < key.length; i++) h = ((h * 33) ^ key.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
+
+/**
+ * The rows an external tool draws for `source`, or null when there is no
+ * tool, it failed, or its output has not arrived yet (it is then started,
+ * and `bufferId`'s lines are redrawn when it is in).
+ */
+function externalRows(kind: ExternalKind, source: string, width: number, bufferId: number): string[] | null {
+  const tool = externalTool(kind);
+  if (!tool) return null;
+  const key = [kind, tool.command, tool.args.join("\u0001"), String(width), source].join("\u0000");
+  const hit = externalCache.get(key);
+  if (hit !== undefined) return hit === "pending" ? null : hit;
+  if (externalCache.size >= EXTERNAL_CACHE_LIMIT) externalCache.clear();
+  externalCache.set(key, "pending");
+  void runExternal(kind, tool, source, width, key).then(async (rows) => {
+    externalCache.set(key, rows);
+    if (!rows) return;
+    editor.refreshLines(bufferId);
+    // Several tools finishing together ask for several refreshes, and one
+    // asked for while another is being drawn can be folded into it before
+    // this result is read. Asking once more a moment later draws it.
+    await editor.delay(100);
+    editor.refreshLines(bufferId);
+  });
+  return null;
+}
+
+async function runExternal(
+  kind: ExternalKind,
+  tool: { command: string; args: string[] },
+  source: string,
+  width: number,
+  key: string,
+): Promise<string[] | null> {
+  let file = "";
+  if (tool.args.some((a) => a.includes("{file}"))) {
+    file = editor.pathJoin(editor.getTempDir(), `fresh-md-${kind}-${hashKey(key)}.txt`);
+    if (!editor.writeFile(file, source)) return null;
+  }
+  const args = tool.args.map((a) =>
+    a.replace(/\{file\}/g, file).replace(/\{width\}/g, String(width)).replace(/\{source\}/g, source)
+  );
+  try {
+    const result = await editor.spawnHostProcess(tool.command, args);
+    if (result.exit_code === -1) {
+      // Could not be started: not installed, or not on PATH.
+      missingCommands.add(tool.command);
+      editor.debug(`markdown_compose: ${tool.command} unavailable (${result.stderr.trim()}); using the built-in renderer`);
+      return null;
+    }
+    if (result.exit_code !== 0) return null;
+    const rows = result.stdout.replace(/\s+$/, "").split(/\r?\n/).map((r) => r.replace(/\s+$/, ""));
+    // A tool that prints nothing, or only blank rows, has not drawn anything.
+    while (rows.length > 0 && rows[0] === "") rows.shift();
+    return rows.length > 0 ? rows : null;
+  } catch (e) {
+    missingCommands.add(tool.command);
+    editor.debug(`markdown_compose: ${tool.command} failed to run: ${e}`);
+    return null;
+  }
+}
+
 const specialBlockRangesByBuffer = new Map<number, Array<{ start: number; end: number }>>();
 
 /** Formats a single rendered diagram row with side rails matching code frame width */
@@ -2282,12 +2433,16 @@ function processLineConceals(
   const singleLineMath = singleLineDisplayMath(trimmed);
   if (singleLineMath !== null) {
     const content = singleLineMath;
-    const rendered = renderLatexMath(content);
     const blockIndent = leadingIndent(lineContent);
     const blockMeasure = Math.max(4, measure - blockIndent);
+    // A tool's drawing can take several rows: the first replaces the line,
+    // the rest are virtual lines under it, above the frame's bottom.
+    const toolRows = externalRows("math", content, codeInnerWidth(blockMeasure), bufferId);
+    const rows = toolRows ?? [renderLatexMath(content)];
+    const mathLabel = toolRows ? `Math · ${toolName("math")}` : "Math";
     const frameStart = byteStart;
     const frameEnd = lineContentEndByte(lineContent, byteStart);
-    const rowReplacement = buildDiagramRow(rendered, blockMeasure, blockIndent);
+    const rowReplacement = buildDiagramRow(rows[0], blockMeasure, blockIndent);
 
     const cursorPos = editor.getCursorPosition();
     // Half-open, like the conceal's scope below.
@@ -2296,20 +2451,27 @@ function processLineConceals(
     if (!cursorOnLine) {
       editor.addVirtualLine(
         bufferId, byteStart,
-        " ".repeat(blockIndent) + buildCodeFrameLineWithLabel(blockMeasure, "┌", "┐", "Math"),
+        " ".repeat(blockIndent) + buildCodeFrameLineWithLabel(blockMeasure, "┌", "┐", mathLabel),
         codeFrameStyle, true, MATH_VIRTUAL_LINE_NS, 0,
       );
     }
+    const mathStyle = { fg: "syntax.constant", italic: true };
     addComposeConceal(
       bufferId, "md-syntax", frameStart, frameEnd, rowReplacement,
       "unless-cursor-in", byteStart, lineScopeInclEnd,
     );
-    addComposeOverlay(bufferId, "md-emphasis", frameStart, frameEnd, { fg: "syntax.constant", italic: true });
+    addComposeOverlay(bufferId, "md-emphasis", frameStart, frameEnd, mathStyle);
     if (!cursorOnLine) {
+      for (let i = 1; i < rows.length; i++) {
+        editor.addVirtualLine(
+          bufferId, byteStart, buildDiagramRow(rows[i], blockMeasure, blockIndent),
+          mathStyle, false, MATH_VIRTUAL_LINE_NS, i - 1,
+        );
+      }
       editor.addVirtualLine(
         bufferId, byteStart,
         " ".repeat(blockIndent) + buildCodeFrameLine(blockMeasure, "└", "┘"),
-        codeFrameStyle, false, MATH_VIRTUAL_LINE_NS, 0,
+        codeFrameStyle, false, MATH_VIRTUAL_LINE_NS, rows.length,
       );
     }
     return;
@@ -3897,7 +4059,10 @@ editor.on("lines_changed", (data) => {
 
     if (sb.kind === "mermaid") {
       const source = sb.bodyLines.map((l) => l.content.replace(/\r?\n$/, "")).join("\n");
-      const rendered = renderMermaidDiagram(source, blockMeasure, displayWidth);
+      const toolRows = externalRows("mermaid", source, codeInnerWidth(blockMeasure), data.buffer_id);
+      const rendered = toolRows
+        ? { title: `Mermaid · ${toolName("mermaid")}`, lines: toolRows }
+        : renderMermaidDiagram(source, blockMeasure, displayWidth);
 
       // Open fence
       const openStart = charToByte(sb.openLine.content, blockIndent, sb.openLine.byte_start);
@@ -3956,11 +4121,28 @@ editor.on("lines_changed", (data) => {
 
       const mathStyle = { fg: "syntax.constant", italic: true };
 
-      // Open fence. A formula on the delimiter line is drawn as the block's
-      // first row, with the frame's top as a virtual line above it.
+      // The rows to draw, and the lines that hold them ("slots"): the body
+      // lines, and a delimiter line that carries a formula of its own
+      // (`$$ E = mc^2`). The built-in renderer draws each slot's formula on
+      // its own row; an external tool draws the whole formula, in as many
+      // rows as it needs — fewer than the slots leaves the rest blank, more
+      // spills into virtual lines above the frame's bottom.
+      const slots: Array<{ line: LineInfoLike; formula: string; delimiter: boolean }> = [];
+      if (sb.openFormula) slots.push({ line: sb.openLine, formula: sb.openFormula, delimiter: true });
+      for (const bodyLine of sb.bodyLines) slots.push({ line: bodyLine, formula: bodyLine.content.trim(), delimiter: false });
+      if (sb.closeFormula) slots.push({ line: sb.closeLine, formula: sb.closeFormula, delimiter: true });
+      const toolRows = externalRows(
+        "math", slots.map((sl) => sl.formula).join("\n"), codeInnerWidth(blockMeasure), data.buffer_id,
+      );
+      const rows = toolRows ?? slots.map((sl) => renderLatexMath(sl.formula));
+      const overflow = Math.max(0, rows.length - slots.length);
+      const titled = toolRows ? `${label} · ${toolName("math")}` : label;
+
+      // Open fence: the frame's top, concealing the delimiter — or, when the
+      // delimiter line is a slot, a virtual line above it.
       const openStart = charToByte(sb.openLine.content, blockIndent, sb.openLine.byte_start);
       const openEnd = lineContentEndByte(sb.openLine.content, sb.openLine.byte_start);
-      const openFrame = buildCodeFrameLineWithLabel(blockMeasure, "┌", "┐", label);
+      const openFrame = buildCodeFrameLineWithLabel(blockMeasure, "┌", "┐", titled);
       if (sb.openFormula) {
         if (!cursorInBlock) {
           editor.addVirtualLine(
@@ -3968,12 +4150,6 @@ editor.on("lines_changed", (data) => {
             codeFrameStyle, true, MATH_VIRTUAL_LINE_NS, 0,
           );
         }
-        addComposeConceal(
-          data.buffer_id, "md-syntax", openStart, openEnd,
-          buildDiagramRow(renderLatexMath(sb.openFormula), blockMeasure, 0).trimStart(),
-          "unless-cursor-in", scopeStart, scopeEnd,
-        );
-        addComposeOverlay(data.buffer_id, "md-emphasis", openStart, openEnd, mathStyle);
       } else {
         addComposeConceal(
           data.buffer_id, "md-syntax", openStart, openEnd, openFrame,
@@ -3982,21 +4158,24 @@ editor.on("lines_changed", (data) => {
         addComposeOverlay(data.buffer_id, "md-emphasis", openStart, openEnd, codeFrameStyle);
       }
 
-      // Close fence, likewise.
+      // Close fence, likewise; rows that did not fit the slots go above it.
       const closeStart = charToByte(sb.closeLine.content, blockIndent, sb.closeLine.byte_start);
       const closeEnd = lineContentEndByte(sb.closeLine.content, sb.closeLine.byte_start);
       const closeFrame = buildCodeFrameLine(blockMeasure, "└", "┘");
+      if (!cursorInBlock) {
+        for (let i = 0; i < overflow; i++) {
+          editor.addVirtualLine(
+            data.buffer_id, sb.closeLine.byte_start,
+            buildDiagramRow(rows[slots.length + i], blockMeasure, blockIndent),
+            mathStyle, !sb.closeFormula, MATH_VIRTUAL_LINE_NS, i,
+          );
+        }
+      }
       if (sb.closeFormula) {
-        addComposeConceal(
-          data.buffer_id, "md-syntax", closeStart, closeEnd,
-          buildDiagramRow(renderLatexMath(sb.closeFormula), blockMeasure, 0).trimStart(),
-          "unless-cursor-in", scopeStart, scopeEnd,
-        );
-        addComposeOverlay(data.buffer_id, "md-emphasis", closeStart, closeEnd, mathStyle);
         if (!cursorInBlock) {
           editor.addVirtualLine(
             data.buffer_id, sb.closeLine.byte_start, " ".repeat(blockIndent) + closeFrame,
-            codeFrameStyle, false, MATH_VIRTUAL_LINE_NS, 0,
+            codeFrameStyle, false, MATH_VIRTUAL_LINE_NS, overflow,
           );
         }
       } else {
@@ -4007,18 +4186,19 @@ editor.on("lines_changed", (data) => {
         addComposeOverlay(data.buffer_id, "md-emphasis", closeStart, closeEnd, codeFrameStyle);
       }
 
-      // Body lines
-      for (const bodyLine of sb.bodyLines) {
-        const lineStart = bodyLine.byte_start;
-        const lineEnd = lineContentEndByte(bodyLine.content, bodyLine.byte_start);
-        const rendered = renderLatexMath(bodyLine.content.trim());
-        const row = buildDiagramRow(rendered, blockMeasure, blockIndent);
+      // The slots. A delimiter line is concealed from the block's indent
+      // (its own rows carry none); a body line from its start.
+      slots.forEach((slot, i) => {
+        const line = slot.line;
+        const start = slot.delimiter ? charToByte(line.content, blockIndent, line.byte_start) : line.byte_start;
+        const end = lineContentEndByte(line.content, line.byte_start);
+        const row = buildDiagramRow(rows[i] ?? "", blockMeasure, slot.delimiter ? 0 : blockIndent);
         addComposeConceal(
-          data.buffer_id, "md-syntax", lineStart, lineEnd, row,
+          data.buffer_id, "md-syntax", start, end, slot.delimiter ? row.trimStart() : row,
           "unless-cursor-in", scopeStart, scopeEnd,
         );
-        addComposeOverlay(data.buffer_id, "md-emphasis", lineStart, lineEnd, { fg: "syntax.constant", italic: true });
-      }
+        addComposeOverlay(data.buffer_id, "md-emphasis", start, end, mathStyle);
+      });
     }
   }
 
@@ -4218,7 +4398,35 @@ registerHandler("markdownSetComposeWidth", markdownSetComposeWidth);
 // Handle compose width prompt confirmation
 
 
+/** Switch the external renderers off (or back on) for this session, to
+ * compare their drawing with the built-in renderers'. */
+function markdownToggleExternalRenderers(): void {
+  externalRenderersOn = !externalRenderersOn;
+  if (externalRenderersOn) missingCommands.clear();
+  const tools = (["mermaid", "math"] as const)
+    .map((k) => {
+      const t = externalTool(k);
+      return t ? t.command : null;
+    })
+    .filter((c): c is string => c !== null);
+  editor.setStatus(
+    externalRenderersOn
+      ? editor.t("status.external_on", { tools: tools.join(", ") || "-" })
+      : editor.t("status.external_off"),
+  );
+  const bufferId = editor.getActiveBufferId();
+  if (bufferId !== null && bufferId !== undefined) editor.refreshLines(bufferId);
+}
+registerHandler("markdownToggleExternalRenderers", markdownToggleExternalRenderers);
+
 // Register commands
+editor.registerCommand(
+  "%cmd.toggle_external_renderers",
+  "%cmd.toggle_external_renderers_desc",
+  "markdownToggleExternalRenderers",
+  null
+);
+
 editor.registerCommand(
   "%cmd.toggle_compose",
   "%cmd.toggle_compose_desc",

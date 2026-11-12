@@ -14,10 +14,40 @@
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
+use fresh::config::{Config, PluginConfig};
 
 const WIDTH: u16 = 140;
 
+/// The plugin's settings: external renderers off unless a test names one,
+/// so a machine with `mermaid-ascii` or `utftex` installed draws what these
+/// tests expect from the built-in renderers.
+fn compose_config(settings: serde_json::Value) -> Config {
+    let mut defaults = serde_json::json!({ "mermaidCommand": "", "mathCommand": "" });
+    if let (Some(d), Some(s)) = (defaults.as_object_mut(), settings.as_object()) {
+        for (k, v) in s {
+            d.insert(k.clone(), v.clone());
+        }
+    }
+    let mut config = Config::default();
+    config.plugins.insert(
+        "markdown_compose".to_string(),
+        PluginConfig {
+            enabled: true,
+            path: None,
+            settings: defaults,
+        },
+    );
+    config
+}
+
 fn harness_with(md: &str) -> (EditorTestHarness, tempfile::TempDir) {
+    harness_with_settings(md, serde_json::json!({}))
+}
+
+fn harness_with_settings(
+    md: &str,
+    settings: serde_json::Value,
+) -> (EditorTestHarness, tempfile::TempDir) {
     init_tracing_from_env();
 
     let temp_dir = tempfile::TempDir::new().unwrap();
@@ -37,7 +67,8 @@ fn harness_with(md: &str) -> (EditorTestHarness, tempfile::TempDir) {
         HarnessOptions::new()
             .with_working_dir(project_root.clone())
             .without_empty_plugins_dir()
-            .with_full_grammar_registry(),
+            .with_full_grammar_registry()
+            .with_config(compose_config(settings)),
     )
     .unwrap();
 
@@ -289,6 +320,74 @@ fn dual_mode_draws_diagrams_and_math_in_the_composed_panel_only() {
             && right.contains("x²")
             && right.contains("Mermaid Flowchart")
             && !right.contains("```mermaid")
+    })
+    .unwrap();
+}
+
+/// A stand-in renderer: a script that prints a few rows naming what it was
+/// given, so the test can tell its drawing from the built-in one.
+#[cfg(unix)]
+fn stub_renderer(dir: &std::path::Path, name: &str, body: &str) -> String {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join(name);
+    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path.to_string_lossy().into_owned()
+}
+
+/// With a renderer configured, display math and Mermaid are drawn from its
+/// output (in as many rows as it prints), the frame names it, and inline math
+/// keeps the built-in renderer.
+#[cfg(unix)]
+#[test]
+fn a_configured_external_renderer_draws_display_math_and_diagrams() {
+    let tools = tempfile::TempDir::new().unwrap();
+    let math = stub_renderer(
+        tools.path(),
+        "stub-math",
+        r#"printf 'TOP ROW\nMATH[%s] w=%s\nLAST ROW\n' "$3" "$2""#,
+    );
+    let mermaid = stub_renderer(
+        tools.path(),
+        "stub-mermaid",
+        r#"printf 'DIAGRAM ROW 1\nDIAGRAM %s lines\nDIAGRAM ROW 3\n' "$(wc -l < "$2" | tr -d ' ')""#,
+    );
+    let md = "# Title\n\nInline $x^2$ here.\n\n$$E = mc^2$$\n\n```mermaid\ngraph TD\n    A --> B\n```\n\nTail.\n";
+    let (mut h, _tmp) = harness_with_settings(
+        md,
+        serde_json::json!({ "mathCommand": math, "mermaidCommand": mermaid }),
+    );
+    run(&mut h, "Markdown: Toggle Compose");
+    h.wait_until(|h| {
+        screen_has(h, "MATH[E = mc^2]")
+            && screen_has(h, "TOP ROW")
+            && screen_has(h, "LAST ROW")
+            && screen_has(h, "Math · stub-math")
+            && screen_has(h, "DIAGRAM ROW 3")
+            && screen_has(h, "Mermaid · stub-mermaid")
+            && screen_has(h, "Inline x² here.")
+    })
+    .unwrap();
+}
+
+/// A renderer that is not installed leaves the built-in drawing in place.
+#[test]
+fn a_missing_external_renderer_falls_back_to_the_built_in_one() {
+    let md =
+        "# Title\n\n$$E = mc^2$$\n\n```mermaid\ngraph TD\n    A[Start Node] --> B\n```\n\nTail.\n";
+    let (mut h, _tmp) = harness_with_settings(
+        md,
+        serde_json::json!({
+            "mathCommand": "fresh-test-no-such-renderer",
+            "mermaidCommand": "fresh-test-no-such-renderer",
+        }),
+    );
+    run(&mut h, "Markdown: Toggle Compose");
+    h.wait_until(|h| {
+        screen_has(h, "E = mc²")
+            && screen_has(h, "│ Start Node │")
+            && screen_has(h, "── Math ──")
+            && screen_has(h, "Mermaid Flowchart")
     })
     .unwrap();
 }

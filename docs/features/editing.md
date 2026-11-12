@@ -285,6 +285,24 @@ Compose mode also draws math and diagrams:
 
 Put the cursor in a math block or a diagram to edit its source; it is drawn again when the cursor leaves.
 
+The built-in renderers need nothing installed. When one of these tools is installed, it draws instead, and the frame's title names it:
+
+| Tool | Draws | Gives you |
+|---|---|---|
+| [`mermaid-ascii`](https://github.com/AlexanderGrooff/mermaid-ascii) | ` ```mermaid ` blocks | a full graph layout for flowcharts and sequence diagrams |
+| [`utftex`](https://github.com/bartp5/libtexprintf) | display math | two-dimensional layout: fractions stacked, limits under ∑ |
+
+Inline math always uses the built-in renderer, since a tool's multi-row drawing cannot sit inside a line of text. A block a tool cannot draw (a diagram type it does not know, say) is drawn by the built-in renderer. The tools are settings under *Plugins → markdown_compose* (`plugins.markdown_compose.settings`):
+
+| Setting | Default | |
+|---|---|---|
+| `mermaidCommand` | `"mermaid-ascii"` | The Mermaid tool; `""` to always use the built-in renderer |
+| `mermaidArgs` | `["-f", "{file}", "--max-width", "{width}"]` | Its arguments: `{file}` is a temporary file holding the source, `{source}` the source itself, `{width}` the columns available |
+| `mathCommand` | `"utftex"` | The display-math tool; `""` to always use the built-in renderer |
+| `mathArgs` | `["--line-width", "{width}", "{source}"]` | Its arguments, as above |
+
+"Markdown: Toggle External Renderers" switches between the tools and the built-in renderers for the session, to compare them.
+
 Compose mode reads the document the way markdown defines it, so a paragraph, list item or quote written across several source lines is re-flowed into one block at the page width — a hard-wrapped file reads as prose rather than as its source layout. The things markdown treats as their own block still are: a blank line, a heading, a thematic break, a table row, a fenced code block, a new list marker, and a hard break (two trailing spaces or a trailing backslash).
 
 ### Contents Panel
