@@ -2369,6 +2369,82 @@ fn test_plain_click_collapses_multiple_cursors() {
     harness.assert_screen_contains("2 cursors");
 }
 
+/// Alt-click (Option-click on macOS) toggles a cursor at the click, as in VS
+/// Code: it adds one without collapsing the others, removes the cursor already
+/// at the click, and never removes the last one.
+#[test]
+fn test_alt_click_toggles_cursor() {
+    use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+    fn alt_click(harness: &mut EditorTestHarness, column: u16, row: u16) {
+        for kind in [
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::Up(MouseButton::Left),
+        ] {
+            harness
+                .send_mouse(MouseEvent {
+                    kind,
+                    column,
+                    row,
+                    modifiers: KeyModifiers::ALT,
+                })
+                .unwrap();
+        }
+        harness.render().unwrap();
+    }
+
+    // ≥100 columns so the status bar has room for "N cursors".
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    harness
+        .load_buffer_from_text("foo bar\nfoo baz\nfoo qux\n")
+        .unwrap();
+
+    let (col, row) = harness.find_text_on_screen("foo bar").unwrap();
+    harness.mouse_click(col + 3, row).unwrap();
+
+    // Alt-click adds a cursor on each clicked line and keeps the others.
+    let (col, row) = harness.find_text_on_screen("foo baz").unwrap();
+    alt_click(&mut harness, col + 3, row);
+    harness.assert_screen_contains("2 cursors");
+    let (col, row) = harness.find_text_on_screen("foo qux").unwrap();
+    alt_click(&mut harness, col + 3, row);
+    harness.assert_screen_contains("3 cursors");
+
+    harness.type_text("Z").unwrap();
+    harness.assert_buffer_content("fooZ bar\nfooZ baz\nfooZ qux\n");
+
+    // Alt-click on an existing cursor removes just that one.
+    let (col, row) = harness.find_text_on_screen("fooZ baz").unwrap();
+    alt_click(&mut harness, col + 4, row);
+    harness.assert_screen_contains("2 cursors");
+    harness.type_text("Y").unwrap();
+    harness.assert_buffer_content("fooZY bar\nfooZ baz\nfooZY qux\n");
+
+    // A keyboard add after that removal must not reuse a live cursor's id
+    // (which would overwrite that cursor instead of adding one).
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+    harness.assert_screen_contains("3 cursors");
+
+    // The last cursor is never removed.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("cursors"),
+        "expected one cursor:\n{screen}"
+    );
+    let pos = harness.cursor_position();
+    let (col, row) = harness.screen_cursor_position();
+    alt_click(&mut harness, col, row);
+    assert_eq!(harness.cursor_position(), pos);
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("cursors"),
+        "expected one cursor:\n{screen}"
+    );
+}
+
 /// The status bar's line number must follow the primary cursor when cursors
 /// are added or removed, not only when one is moved (#3167).
 ///
