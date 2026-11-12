@@ -411,8 +411,10 @@ function displayMathBlocks(lines: LineInfoLike[]): Array<[number, number]> {
 // need nothing installed. When a command-line tool that renders to terminal
 // text is installed, its output is drawn instead:
 //
-//   * Mermaid: `mermaid-ascii` (github.com/AlexanderGrooff/mermaid-ascii), a
-//     real graph layout for flowcharts and sequence diagrams;
+//   * Mermaid: `termaid` (github.com/fasouto/termaid), a real graph layout
+//     for 18 diagram types — loops drawn as edges back up, class relations
+//     as arrows. Of the terminal Mermaid renderers compared for this, it was
+//     the one that drew every diagram tried correctly;
 //   * display math: `utftex` (github.com/bartp5/libtexprintf), which lays a
 //     formula out in two dimensions — fractions stacked, limits under ∑.
 //
@@ -429,12 +431,12 @@ function displayMathBlocks(lines: LineInfoLike[]): Array<[number, number]> {
 // it does not know) leaves that block to the built-in renderer.
 
 editor.defineConfigString("mermaidCommand", {
-  default: "mermaid-ascii",
+  default: "termaid",
   description:
     "Command that draws a ```mermaid block as text, used when it is installed (otherwise the built-in renderer draws it). Empty to always use the built-in renderer.",
 });
 editor.defineConfigStringArray("mermaidArgs", {
-  default: ["-f", "{file}", "--max-width", "{width}"],
+  default: ["{file}", "--width", "{width}"],
   description:
     "Arguments for mermaidCommand. {file} is a temporary file holding the diagram's source, {source} the source itself, {width} the columns available.",
 });
@@ -462,7 +464,7 @@ let externalRenderersOn = true;
 
 type ExternalKind = "mermaid" | "math";
 const EXTERNAL_DEFAULTS: Record<ExternalKind, { command: string; args: string[] }> = {
-  mermaid: { command: "mermaid-ascii", args: ["-f", "{file}", "--max-width", "{width}"] },
+  mermaid: { command: "termaid", args: ["{file}", "--width", "{width}"] },
   math: { command: "utftex", args: ["--line-width", "{width}", "{source}"] },
 };
 

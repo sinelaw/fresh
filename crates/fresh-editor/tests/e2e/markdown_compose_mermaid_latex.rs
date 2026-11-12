@@ -19,7 +19,7 @@ use fresh::config::{Config, PluginConfig};
 const WIDTH: u16 = 140;
 
 /// The plugin's settings: external renderers off unless a test names one,
-/// so a machine with `mermaid-ascii` or `utftex` installed draws what these
+/// so a machine with `termaid` or `utftex` installed draws what these
 /// tests expect from the built-in renderers.
 fn compose_config(settings: serde_json::Value) -> Config {
     let mut defaults = serde_json::json!({ "mermaidCommand": "", "mathCommand": "" });
