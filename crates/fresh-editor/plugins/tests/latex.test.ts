@@ -21,9 +21,34 @@ eq(renderLatexMath("\\sum_{i=1}^{n} i"), "∑ᵢ₌₁ⁿ i", "a symbol with lim
 eq(renderLatexMath("\\frac{a}{b} + \\sqrt{x}"), "a/b + √(x)", "a fraction and a root");
 eq(
   renderLatexMath("\\frac{\\sqrt{a}}{\\sqrt{b + \\sqrt{c}}}"),
-  "√(a)/(√(b + √(c)))",
-  "nested: a denominator with more than one term is parenthesised",
+  "√(a)/√(b + √(c))",
+  "nested: a root is one term, so it needs no parentheses",
 );
+eq(renderLatexMath("\\frac{a+b}{c}"), "(a+b)/c", "a sum over something is parenthesised");
+eq(
+  renderLatexMath("\\frac{1}{\\sigma\\sqrt{2\\pi}}"),
+  "1/(σ√(2π))",
+  "a product in the denominator is parenthesised",
+);
+eq(renderLatexMath("\\frac{x^k}{k!}"), "xᵏ/k!", "scripts and a factorial stay one term");
+eq(renderLatexMath("\\frac{\\partial f}{\\partial x}"), "∂f/∂x", "a partial derivative");
+eq(renderLatexMath("e^{i\\pi}"), "e^(iπ)", "a script Unicode cannot raise is written with ^( )");
+eq(renderLatexMath("\\sum_{k=0}^{\\infty} a_k"), "∑ₖ₌₀^∞ aₖ", "one character that cannot be raised");
+eq(
+  renderLatexMath("e^{-\\frac{(x-\\mu)^2}{2\\sigma^2}}"),
+  "e^(-(x-μ)²/(2σ²))",
+  "a fraction in an exponent",
+);
+eq(renderLatexMath("\\lim_{n \\to \\infty} x_n"), "lim_(n → ∞) xₙ", "a function name with a subscript");
+eq(renderLatexMath("\\mathbb{R} \\subset \\mathbb{C}"), "ℝ ⊂ ℂ", "double-struck letters");
+eq(renderLatexMath("\\mathcal{O}(n \\log n)"), "𝒪(n log n)", "script letters");
+eq(renderLatexMath("\\hat{x} + \\vec{v}"), "x̂ + v⃗", "accents as combining marks");
+eq(renderLatexMath("\\pi r^2"), "πr²", "no space after a Greek letter, as in LaTeX");
+eq(renderLatexMath("\\nabla \\cdot E"), "∇ · E", "an operator after a letter-like symbol keeps its spacing");
+eq(renderLatexMath("x &= a + b \\\\"), "x = a + b", "alignment points and row breaks of an environment line");
+eq(renderLatexMath("\\begin{aligned}"), "", "an environment's delimiter draws nothing");
+eq(renderLatexMath("\\left\\{ x \\mid x > 0 \\right\\}"), "{ x | x > 0 }", "sized delimiters");
+eq(renderLatexMath("\\binom{n}{k}"), "C(n,k)", "a binomial coefficient");
 eq(renderLatexMath("\\unknown{y}"), "\\unknown{y}", "an unknown command is left as written");
 
 if (failures > 0) {

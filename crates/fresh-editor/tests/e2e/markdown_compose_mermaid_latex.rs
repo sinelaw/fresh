@@ -93,6 +93,42 @@ fn multiline_display_math_is_drawn_in_a_math_frame() {
         .unwrap();
 }
 
+/// MathJax and KaTeX's own delimiters, `\\(…\\)` inline and `\\[…\\]` for
+/// display, and GitLab's inline $`…`$, are drawn like `$…$` and `$$…$$`.
+#[test]
+fn mathjax_and_gitlab_delimiters_are_drawn() {
+    let md = "# Title\n\nParen: \\(\\pi r^2\\) here. GitLab: $`\\beta_1`$ here.\n\n\\[ \\frac{\\rho}{\\varepsilon_0} \\]\n\nTail.\n";
+    let (mut h, _tmp) = compose_harness(md);
+    h.wait_until(|h| {
+        screen_has(h, "Paren: πr² here.")
+            && screen_has(h, "GitLab: β₁ here.")
+            && screen_has(h, "ρ/ε₀")
+            && screen_has(h, "Math")
+            && !screen_has(h, "\\(")
+            && !screen_has(h, "\\[")
+            && !screen_has(h, "$`")
+    })
+    .unwrap();
+}
+
+/// A `\\[` alone on its line opens display math that runs to the `\\]`; its
+/// lines are drawn in a math frame, not re-flowed into one paragraph.
+#[test]
+fn multiline_bracket_display_math_is_drawn_in_a_math_frame() {
+    let md = "# Title\n\nIntro.\n\n\\[\n\\alpha^2\n\\]\n\nTail.\n";
+    let (mut h, _tmp) = compose_harness(md);
+    h.wait_until(|h| screen_has(h, "Math") && screen_has(h, "α²") && !screen_has(h, "\\["))
+        .unwrap();
+}
+
+/// `\\[` followed by text is markdown's escaped bracket, not math.
+#[test]
+fn an_escaped_bracket_in_prose_is_not_math() {
+    let md = "# Title\n\n\\[citation needed\\] and $\\alpha$.\n\nTail.\n";
+    let (mut h, _tmp) = compose_harness(md);
+    h.wait_until(|h| screen_has(h, "α.") && !screen_has(h, "Math")).unwrap();
+}
+
 #[test]
 fn a_fenced_latex_block_is_drawn_in_a_latex_frame() {
     let md = "# Title\n\nIntro.\n\n```latex\n\\alpha + \\beta = \\gamma\n```\n\nTail.\n";

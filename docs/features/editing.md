@@ -276,8 +276,12 @@ Three commands switch the pane in focus between views of a Markdown file:
 
 Compose mode also draws math and diagrams:
 
-- LaTeX math, inline (`$x^2$`) or in display blocks (`$$ … $$`, or a ` ```math ` / ` ```latex ` fence), is drawn with Unicode symbols: Greek letters, operators, superscripts and subscripts, fractions and roots.
-- A ` ```mermaid ` fence is drawn as a diagram: flowcharts, sequence diagrams, pie charts, and state and class diagrams. Other diagram types are shown as written.
+- LaTeX math is drawn with Unicode symbols: Greek letters, operators, superscripts and subscripts, fractions and roots, `\mathbb` letters (ℝ, ℤ) and accents (x̂, v⃗). It is found in the delimiters MathJax, KaTeX, GitHub and GitLab use:
+  - inline: `$x^2$`, `\(x^2\)`, or GitLab's ``$`x^2`$``;
+  - display: `$$ … $$`, `\[ … \]` (on one line, or with `\[` and `\]` on lines of their own), or a ` ```math `, ` ```latex ` or ` ```katex ` fence.
+
+  An environment such as `aligned` is drawn a line at a time. A superscript or subscript Unicode has no raised or lowered form for is written `^(…)` / `_(…)`.
+- A ` ```mermaid ` fence is drawn as a diagram: flowcharts (with labelled links, `A & B` groups and the usual node shapes), sequence diagrams (with `loop`/`alt`/`opt`/`par` blocks and `autonumber`), pie charts, and state and class diagrams. A left-to-right flowchart that branches is drawn top-down. Other diagram types are shown as written, with the type named in the frame.
 
 Put the cursor in a math block or a diagram to edit its source; it is drawn again when the cursor leaves.
 

@@ -38,6 +38,48 @@ const SYMBOL_MAP: Record<string, string> = {
   parallel: "∥", Vert: "‖", vert: "|",
   langle: "⟨", rangle: "⟩", lfloor: "⌊", rfloor: "⌋", lceil: "⌈", rceil: "⌉",
   quad: "  ", qquad: "    ",
+  dots: "…", therefore: "∴", because: "∵", degree: "°", lnot: "¬",
+  mid: "|", colon: ":", lbrace: "{", rbrace: "}", lvert: "|", rvert: "|",
+  longrightarrow: "⟶", longleftarrow: "⟵", Longrightarrow: "⟹", Longleftarrow: "⟸",
+  longmapsto: "⟼", hookrightarrow: "↪", rightleftharpoons: "⇌",
+  top: "⊤", bot: "⊥", vdash: "⊢", models: "⊨", triangle: "△", square: "□",
+  checkmark: "✓", sqcup: "⊔", sqcap: "⊓", wp: "℘", varnothing: "∅",
+  omicron: "ο", varkappa: "ϰ", digamma: "ϝ",
+};
+
+/** Symbols that read as part of the term after them, like a letter does. */
+const LETTER_LIKE = new Set(["partial", "nabla", "hbar", "ell", "aleph", "wp", "Re", "Im"]);
+
+/** Letters Unicode gives their own code point outside the math-alphanumeric block. */
+const DOUBLE_STRUCK_HOLES: Record<string, string> = {
+  C: "ℂ", H: "ℍ", N: "ℕ", P: "ℙ", Q: "ℚ", R: "ℝ", Z: "ℤ",
+};
+const SCRIPT_HOLES: Record<string, string> = {
+  B: "ℬ", E: "ℰ", F: "ℱ", H: "ℋ", I: "ℐ", L: "ℒ", M: "ℳ", R: "ℛ",
+  e: "ℯ", g: "ℊ", o: "ℴ",
+};
+
+/** `\mathbb` and `\mathcal` letters: ℝ, ℤ, 𝔽, 𝒪 … Anything else is left as it is. */
+function mathAlphabet(str: string, font: "mathbb" | "mathcal"): string {
+  let res = "";
+  for (const ch of str) {
+    const holes = font === "mathbb" ? DOUBLE_STRUCK_HOLES : SCRIPT_HOLES;
+    if (holes[ch]) { res += holes[ch]; continue; }
+    const upper = font === "mathbb" ? 0x1d538 : 0x1d49c;
+    const lower = font === "mathbb" ? 0x1d552 : 0x1d4b6;
+    if (ch >= "A" && ch <= "Z") res += String.fromCodePoint(upper + ch.charCodeAt(0) - 65);
+    else if (ch >= "a" && ch <= "z") res += String.fromCodePoint(lower + ch.charCodeAt(0) - 97);
+    else if (font === "mathbb" && ch >= "0" && ch <= "9") res += String.fromCodePoint(0x1d7d8 + ch.charCodeAt(0) - 48);
+    else res += ch;
+  }
+  return res;
+}
+
+/** Accents drawn as a combining mark after each character of their argument. */
+const ACCENT_MAP: Record<string, string> = {
+  hat: "\u0302", widehat: "\u0302", bar: "\u0304", overline: "\u0305", vec: "\u20d7",
+  dot: "\u0307", ddot: "\u0308", tilde: "\u0303", widetilde: "\u0303", check: "\u030c",
+  acute: "\u0301", grave: "\u0300", breve: "\u0306", underline: "\u0332",
 };
 
 const SUPERSCRIPT_MAP: Record<string, string> = {
@@ -63,16 +105,59 @@ const SUBSCRIPT_MAP: Record<string, string> = {
   "u": "ᵤ", "v": "ᵥ", "x": "ₓ",
 };
 
-function toSuperscript(str: string): string {
+/**
+ * A script written with Unicode's raised or lowered characters when every
+ * character has one; otherwise `^x` / `^(…)` (`_x` / `_(…)`), since a mix of
+ * raised and level characters reads as a different formula.
+ */
+function toScript(str: string, map: Record<string, string>, mark: string): string {
   let res = "";
-  for (const ch of str) res += SUPERSCRIPT_MAP[ch] ?? ch;
+  for (const ch of str) {
+    const mapped = map[ch];
+    if (mapped === undefined) {
+      return [...str].length === 1 ? mark + str : `${mark}(${str})`;
+    }
+    res += mapped;
+  }
   return res;
 }
 
+function toSuperscript(str: string): string {
+  return toScript(str, SUPERSCRIPT_MAP, "^");
+}
+
 function toSubscript(str: string): string {
-  let res = "";
-  for (const ch of str) res += SUBSCRIPT_MAP[ch] ?? ch;
-  return res;
+  return toScript(str, SUBSCRIPT_MAP, "_");
+}
+
+const SCRIPT_CHARS = new Set([...Object.values(SUPERSCRIPT_MAP), ...Object.values(SUBSCRIPT_MAP), "′"]);
+
+/** Index of the parenthesis closing the one at `open`, or -1. */
+function matchingParen(str: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < str.length; i++) {
+    if (str[i] === "(") depth++;
+    else if (str[i] === ")" && --depth === 0) return i;
+  }
+  return -1;
+}
+
+/**
+ * Whether a rendered fraction part reads as one term, so `a/b` needs no
+ * parentheses around it: a number, a run of letters, a single symbol, or one
+ * parenthesised group or root — each optionally followed by scripts, primes
+ * or a factorial. `σ√(2π)` or `2σ²` is a product and gets parentheses.
+ */
+function isSingleTerm(str: string): boolean {
+  const chars = [...str];
+  while (chars.length > 1 && (SCRIPT_CHARS.has(chars[chars.length - 1]) || chars[chars.length - 1] === "!")) {
+    chars.pop();
+  }
+  const core = chars.join("");
+  if (chars.length <= 1) return true;
+  if (/^[0-9]+(\.[0-9]+)?$/.test(core) || /^[\p{L}∂∇ℏℓ]+$/u.test(core)) return true;
+  const open = core.startsWith("√(") ? 1 : core.startsWith("(") ? 0 : -1;
+  return open >= 0 && matchingParen(core, open) === core.length - 1;
 }
 
 function extractBalancedBraced(str: string, startIndex: number): { content: string; start: number; end: number } | null {
@@ -117,12 +202,25 @@ export function renderLatexMath(latex: string): string {
     else if (rNum === "1" && rDen === "3") repl = "⅓";
     else if (rNum === "2" && rDen === "3") repl = "⅔";
     else {
-      const wrapNum = /[+\-=\s/]/.test(rNum) ? `(${rNum})` : rNum;
-      const wrapDen = /[+\-=\s/]/.test(rDen) ? `(${rDen})` : rDen;
+      const wrap = (part: string) => (isSingleTerm(part) ? part : `(${part})`);
+      const wrapNum = wrap(rNum);
+      const wrapDen = wrap(rDen);
       repl = `${wrapNum}/${wrapDen}`;
     }
     s = s.slice(0, idx) + repl + s.slice(den.end);
     changed = true;
+  }
+
+  // 1b. Binomials: \binom{n}{k} → C(n,k)
+  passes = 0;
+  while (passes++ < 10) {
+    const idx = s.indexOf("\\binom");
+    if (idx === -1) break;
+    const top = extractBalancedBraced(s, idx + 6);
+    if (!top) break;
+    const bottom = extractBalancedBraced(s, top.end);
+    if (!bottom) break;
+    s = s.slice(0, idx) + `C(${renderLatexMath(top.content)},${renderLatexMath(bottom.content)})` + s.slice(bottom.end);
   }
 
   // 2. Square roots: \sqrt[n]{x} or \sqrt{x} with balanced braces
@@ -161,25 +259,55 @@ export function renderLatexMath(latex: string): string {
     if (!m || m.index === undefined) break;
     const inner = extractBalancedBraced(s, m.index + m[0].length - 1);
     if (!inner) break;
-    const rInner = renderLatexMath(inner.content);
+    let rInner = renderLatexMath(inner.content);
+    if (m[1] === "mathbb" || m[1] === "mathcal") rInner = mathAlphabet(rInner, m[1]);
+    s = s.slice(0, m.index) + rInner + s.slice(inner.end);
+    changed = true;
+  }
+  // Accents: \hat{x} → x̂, \vec{v} → v⃗
+  changed = true;
+  passes = 0;
+  const accentRe = new RegExp(`\\\\(${Object.keys(ACCENT_MAP).join("|")})\\s*\\{`);
+  while (changed && passes++ < 10) {
+    changed = false;
+    const m = s.match(accentRe);
+    if (!m || m.index === undefined) break;
+    const inner = extractBalancedBraced(s, m.index + m[0].length - 1);
+    if (!inner) break;
+    const mark = ACCENT_MAP[m[1]];
+    let rInner = "";
+    for (const ch of renderLatexMath(inner.content)) rInner += ch === " " ? ch : ch + mark;
     s = s.slice(0, m.index) + rInner + s.slice(inner.end);
     changed = true;
   }
   s = s.replace(/\\operatorname\*?\s*\{([^{}]+)\}/g, "$1");
 
-  // 4. Parens / spacing
-  s = s.replace(/\\(left|right)\b/g, "");
+  // 4. Parens / spacing / layout. Environments (`aligned`, `cases`, …) are
+  //    drawn a line at a time, so their delimiters, `&` alignment points and
+  //    `\\` row breaks have nothing to draw.
+  s = s.replace(/\\(begin|end)\s*\{[^{}]*\}(\{[^{}]*\})?/g, "");
+  s = s.replace(/\\\\(\[[^\]]*\])?/g, " ");
+  s = s.replace(/(?<!\\)&/g, " ");
+  s = s.replace(/\\(displaystyle|textstyle|scriptstyle|limits|nolimits)\b/g, "");
+  s = s.replace(/\\(left|right)\./g, "");
+  s = s.replace(/\\(left|right|big|Big|bigg|Bigg)[lr]?\b/g, "");
   s = s.replace(/\\([,;:!])/g, " ");
   s = s.replace(/\\quad\b/g, "  ");
   s = s.replace(/\\qquad\b/g, "    ");
   s = s.replace(/\\\{/g, "{");
   s = s.replace(/\\\}/g, "}");
+  s = s.replace(/\\([&%#$])/g, "$1");
 
   // 5. Functions
-  s = s.replace(/\\(sin|cos|tan|arcsin|arccos|arctan|sinh|cosh|tanh|log|ln|exp|lim|min|max|deg|det|dim|gcd|ker|inf|sup)\b/g, "$1");
+  s = s.replace(/\\(sin|cos|tan|arcsin|arccos|arctan|sinh|cosh|tanh|log|ln|exp|lim|min|max|deg|det|dim|gcd|ker|inf|sup)(?![A-Za-z])/g, "$1");
 
-  // 6. Greek letters and symbols
-  s = s.replace(/\\([A-Za-z]+)(?![A-Za-z])/g, (match, word) => GREEK_MAP[word] || SYMBOL_MAP[word] || match);
+  // 6. Greek letters and symbols. A letter-like symbol joins the term it
+  //    starts, as LaTeX ignores the space after a command: `\pi r` is πr,
+  //    `\partial f` is ∂f.
+  s = s.replace(/\\([A-Za-z]+)(?![A-Za-z])( (?=[\p{L}\p{N}]))?/gu, (match, word, space) => {
+    if (GREEK_MAP[word] || LETTER_LIKE.has(word)) return GREEK_MAP[word] ?? SYMBOL_MAP[word];
+    return (SYMBOL_MAP[word] ?? `\\${word}`) + (space ?? "");
+  });
 
   // 7. Superscripts with balanced braces
   changed = true;
@@ -195,7 +323,8 @@ export function renderLatexMath(latex: string): string {
     s = s.slice(0, idx) + repl + s.slice(inner.end);
     changed = true;
   }
-  s = s.replace(/\^([0-9a-zA-Z+\-=()])/g, (_m, ch) => SUPERSCRIPT_MAP[ch] ?? ("^" + ch));
+  // A bare `^(` is the fallback written above, not a script to raise again.
+  s = s.replace(/\^([0-9a-zA-Z+\-=])/g, (_m, ch) => SUPERSCRIPT_MAP[ch] ?? ("^" + ch));
 
   // 8. Subscripts with balanced braces
   changed = true;
@@ -211,7 +340,7 @@ export function renderLatexMath(latex: string): string {
     s = s.slice(0, idx) + repl + s.slice(inner.end);
     changed = true;
   }
-  s = s.replace(/_([0-9a-zA-Z+\-=()])/g, (_m, ch) => SUBSCRIPT_MAP[ch] ?? ("_" + ch));
+  s = s.replace(/_([0-9a-zA-Z+\-=])/g, (_m, ch) => SUBSCRIPT_MAP[ch] ?? ("_" + ch));
 
   // 9. Clean up multiple spaces
   s = s.replace(/ {2,}/g, " ");

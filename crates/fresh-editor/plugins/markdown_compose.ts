@@ -336,6 +336,27 @@ const codeFrameStyle = { fg: "editor.fg", composeOnly: true };
 
 const MATH_VIRTUAL_LINE_NS = "md-math";
 const MERMAID_VIRTUAL_LINE_NS = "md-mermaid";
+/**
+ * Display math written on one line, `$$ … $$` or MathJax/KaTeX's `\[ … \]`:
+ * the formula between the delimiters, or null for any other line.
+ */
+function singleLineDisplayMath(trimmed: string): string | null {
+  const m = trimmed.match(/^\$\$(.+)\$\$$/) ?? trimmed.match(/^\\\[(.+)\\\]$/);
+  return m ? m[1].trim() : null;
+}
+
+/**
+ * A line that opens display math running over several lines, and the
+ * delimiter that closes it: `$$` (with or without a formula after it), or a
+ * `\[` alone on its line. A `\[` followed by text is not taken as an opener,
+ * since markdown also uses `\[` to write a literal bracket (`\[citation]`).
+ */
+function displayMathOpener(trimmed: string): "$$" | "\\]" | null {
+  if (trimmed.startsWith("$$") && !trimmed.slice(2).includes("$$")) return "$$";
+  if (trimmed === "\\[") return "\\]";
+  return null;
+}
+
 const specialBlockRangesByBuffer = new Map<number, Array<{ start: number; end: number }>>();
 
 /** Formats a single rendered diagram row with side rails matching code frame width */
@@ -1012,7 +1033,8 @@ function parseMarkdownBlocks(text: string): ParsedBlock[] {
   const lines = text.split('\n');
   let byteOffset = 0;
   let inCodeBlock = false;
-  let inMathBlock = false;
+  // The delimiter that closes the display-math block we are in, or null.
+  let mathCloser: string | null = null;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -1056,28 +1078,15 @@ function parseMarkdownBlocks(text: string): ParsedBlock[] {
       continue;
     }
 
-    // Math block ($$)
-    if (trimmed.startsWith('$$')) {
-      if (trimmed === '$$' || !trimmed.slice(2).includes('$$')) {
-        inMathBlock = !inMathBlock;
-      }
-      blocks.push({
-        type: 'code-content',
-        startByte: lineStart,
-        endByte: lineEnd,
-        leadingIndent: line.length - line.trimStart().length,
-        marker: '',
-        markerStartByte: lineStart,
-        contentStartByte: lineStart,
-        content: line,
-        hangingIndent: 0,
-        forceHardBreak: true,
-      });
-      byteOffset = lineEnd + 1;
-      continue;
+    // Display math (`$$ … $$`, `\[ … \]`): each line kept as written, never
+    // re-flowed into the paragraph around it.
+    const inDisplayMath = mathCloser !== null;
+    if (inDisplayMath) {
+      if (trimmed.endsWith(mathCloser!)) mathCloser = null;
+    } else if (singleLineDisplayMath(trimmed) === null) {
+      mathCloser = displayMathOpener(trimmed);
     }
-
-    if (inMathBlock) {
+    if (inDisplayMath || mathCloser !== null || singleLineDisplayMath(trimmed) !== null) {
       blocks.push({
         type: 'code-content',
         startByte: lineStart,
@@ -1694,12 +1703,40 @@ function findInlineSpans(text: string): InlineSpan[] {
   const spans: InlineSpan[] = [];
   let m: RegExpExecArray | null;
 
+  // Inline math, as `[start, end)` character ranges. Filled by step 0 and 1.5.
+  const mathSpanCharRanges: [number, number][] = [];
+  function overlapsMath(start: number, end: number): boolean {
+    for (const [s, e] of mathSpanCharRanges) {
+      if (start < e && end > s) return true;
+    }
+    return false;
+  }
+  function pushMath(ms: number, me: number, delimLen: number, formula: string): void {
+    mathSpanCharRanges.push([ms, me]);
+    spans.push({
+      type: 'math',
+      matchStart: ms, matchEnd: me,
+      contentStart: ms + delimLen, contentEnd: me - delimLen,
+      concealRanges: [
+        { start: ms, end: me, replacement: renderLatexMath(formula) },
+      ],
+    });
+  }
+
+  // 0. GitLab's inline math, $`...`$. Taken before code spans, which would
+  //    otherwise claim the backticked part and leave the dollars around it.
+  const gitlabMathRe = /\$`([^`\n]+)`\$/g;
+  while ((m = gitlabMathRe.exec(text)) !== null) {
+    pushMath(m.index, m.index + m[0].length, 2, m[1]);
+  }
+
   // 1. Code spans (also builds exclusion set)
   const codeSpanCharRanges: [number, number][] = [];
   const codeRe = /(?<!`)(`)((?:[^`]|(?<=\\)`)+)\1(?!`)/g;
   while ((m = codeRe.exec(text)) !== null) {
     const ms = m.index;
     const me = ms + m[0].length;
+    if (overlapsMath(ms, me)) continue;
     codeSpanCharRanges.push([ms, me]);
     spans.push({
       type: 'code',
@@ -1719,8 +1756,7 @@ function findInlineSpans(text: string): InlineSpan[] {
     return false;
   }
 
-  // 1.5 Inline math ($...$)
-  const mathSpanCharRanges: [number, number][] = [];
+  // 1.5 Inline math: $...$, and MathJax/KaTeX's \(...\)
   const mathRe = /(?<![\\$])\$(?!\$)([^$\n]+?)(?<![\\$])\$(?!\$)/g;
   while ((m = mathRe.exec(text)) !== null) {
     if (inCodeSpan(m.index)) continue;
@@ -1730,16 +1766,15 @@ function findInlineSpans(text: string): InlineSpan[] {
     if (!isMath) continue;
     const ms = m.index;
     const me = ms + m[0].length;
-    mathSpanCharRanges.push([ms, me]);
-    const rendered = renderLatexMath(inner);
-    spans.push({
-      type: 'math',
-      matchStart: ms, matchEnd: me,
-      contentStart: ms + 1, contentEnd: me - 1,
-      concealRanges: [
-        { start: ms, end: me, replacement: rendered },
-      ],
-    });
+    if (overlapsMath(ms, me)) continue;
+    pushMath(ms, me, 1, inner);
+  }
+  const parenMathRe = /(?<!\\)\\\(([^\n]+?)\\\)/g;
+  while ((m = parenMathRe.exec(text)) !== null) {
+    const ms = m.index;
+    const me = ms + m[0].length;
+    if (inCodeSpan(ms) || overlapsMath(ms, me)) continue;
+    pushMath(ms, me, 2, m[1]);
   }
 
   function inMathSpan(charPos: number): boolean {
@@ -2179,10 +2214,10 @@ function processLineConceals(
   // makes for a row whose neighbour is off-screen.
   if (looksLikeFence(lineContent)) return;
 
-  // --- Display math: `$$formula$$` on a single line ---
-  const singleLineMath = trimmed.match(/^\$\$(.+)\$\$$/);
-  if (singleLineMath) {
-    const content = singleLineMath[1].trim();
+  // --- Display math on a single line: `$$formula$$` or `\[formula\]` ---
+  const singleLineMath = singleLineDisplayMath(trimmed);
+  if (singleLineMath !== null) {
+    const content = singleLineMath;
     const rendered = renderLatexMath(content);
     const blockIndent = leadingIndent(lineContent);
     const blockMeasure = Math.max(4, measure - blockIndent);
@@ -2842,14 +2877,14 @@ function verbatimStates(lines: LineInfoLike[]): Array<boolean | null> {
   // what is being read as "no fence is in play here", and it is the same
   // reading the pre-scan makes of the whole document.
   const noFenceInSight = !lines.some(
-    (line) => isCodeRegion(line.region) || looksLikeFence(lineText(line)) || lineText(line).trim().startsWith("$$"),
+    (line) => isCodeRegion(line.region) || looksLikeFence(lineText(line)) || lineText(line).trim().startsWith("$$") || lineText(line).trim() === "\\[",
   );
   let inFence: boolean | null = noFenceInSight ? false : null;
   let fenceChar = "";
   let inHtml = false;
   let inIndentedCode = false;
   let inFrontMatter = false;
-  let inMath = false;
+  let mathCloser: string | null = null;
   // The next non-blank line opens a block, so it is the one that may open an
   // indented code block. True for the batch's own first line: the walk that
   // built it backed up to the run's start.
@@ -2863,7 +2898,7 @@ function verbatimStates(lines: LineInfoLike[]): Array<boolean | null> {
       inHtml = false;
       inIndentedCode = false;
       inFrontMatter = false;
-      inMath = false;
+      mathCloser = null;
       atRunStart = true;
     }
     prevLineNumber = line.line_number;
@@ -2913,19 +2948,18 @@ function verbatimStates(lines: LineInfoLike[]): Array<boolean | null> {
     }
 
     const trimmed = text.trim();
-    if (trimmed.match(/^\$\$.+\$\$$/)) {
+    if (mathCloser !== null) {
+      out.push(true);
+      if (trimmed.endsWith(mathCloser)) mathCloser = null;
+      continue;
+    }
+    if (singleLineDisplayMath(trimmed) !== null) {
       out.push(true);
       continue;
     }
-    if (inMath) {
-      out.push(true);
-      if (trimmed === "$$" || trimmed.endsWith("$$")) {
-        inMath = false;
-      }
-      continue;
-    }
-    if (trimmed === "$$" || trimmed.startsWith("$$")) {
-      inMath = true;
+    const opener = displayMathOpener(trimmed);
+    if (opener !== null) {
+      mathCloser = opener;
       out.push(true);
       continue;
     }
@@ -3583,6 +3617,8 @@ editor.on("lines_changed", (data) => {
       bodyLines: LineInfoLike[];
       blockIndent: number;
       isFenced: boolean;
+      // For an unfenced display-math block, the delimiter that closes it.
+      closer?: string;
     } | null = null;
 
     for (let i = 0; i < data.lines.length; i++) {
@@ -3614,7 +3650,8 @@ editor.on("lines_changed", (data) => {
             continue;
           }
         }
-        if (trimmed === "$$" || (trimmed.startsWith("$$") && !trimmed.slice(2).includes("$$"))) {
+        const closer = displayMathOpener(trimmed);
+        if (closer !== null) {
           currentSpecial = {
             kind: "math",
             lang: "math",
@@ -3622,6 +3659,7 @@ editor.on("lines_changed", (data) => {
             bodyLines: [],
             blockIndent: leadingIndent(line.content),
             isFenced: false,
+            closer,
           };
           continue;
         }
@@ -3641,7 +3679,7 @@ editor.on("lines_changed", (data) => {
             currentSpecial.bodyLines.push(line);
           }
         } else {
-          if (trimmed === "$$" || trimmed.endsWith("$$")) {
+          if (trimmed.endsWith(currentSpecial.closer!)) {
             specialBlocks.push({
               kind: "math",
               lang: "math",
@@ -3786,7 +3824,7 @@ editor.on("lines_changed", (data) => {
 
   for (const line of data.lines) {
     const trimmed = line.content.trim();
-    if (trimmed.match(/^\$\$(.+)\$\$$/)) {
+    if (singleLineDisplayMath(trimmed) !== null) {
       rangesForBuf.push({ start: line.byte_start, end: line.byte_end + 1 });
     }
   }
