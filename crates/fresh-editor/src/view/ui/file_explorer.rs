@@ -98,6 +98,12 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
         .map(|m| m.is_hidden)
         .unwrap_or(false);
     let neutral = fe::neutral_key(is_hidden, node.entry.is_symlink(), node.is_dir());
+    // An entry an ignore rule matched, but which the tree shows anyway
+    // (`respect_gitignore` off, or `show_gitignored` on): it recedes like a
+    // cut file, VS Code-style, so "show everything" stays scannable
+    // (issue #3283). The projection settled this when it was made; the row
+    // does not re-ask the rules per frame.
+    let is_ignored = node.ignored;
     // Three ways to wear the selected ground: the keyboard is on this row, the
     // row is in the reader's set, or a held drag would land here. The drop
     // target comes first because it outranks a cursor sitting elsewhere — it
@@ -141,7 +147,7 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
     });
 
     let is_cut = d.cut.iter().any(|p| p == &node.entry.path);
-    let name_fg = if is_cut {
+    let name_fg = if is_cut || is_ignored {
         "editor.line_number_fg".to_string()
     } else if let Some(c) = slots.name_color_hint {
         slot_paint(c, &slots.name_color_key)

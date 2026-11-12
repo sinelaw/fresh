@@ -25,6 +25,13 @@ pub struct VisibleRow {
     pub parent: Option<usize>,
     pub entry: DirEntry,
     pub state: NodeState,
+    /// An ignore rule matched this entry even though the tree shows it:
+    /// `.gitignore` with `respect_gitignore` off, or either kind of ignore
+    /// with its `show_*` switch on. The row draws it recessed rather than
+    /// not at all (issue #3283), so settling it here — once per projection,
+    /// while the rules are at hand — keeps the per-frame row description
+    /// from re-asking them.
+    pub ignored: bool,
     /// The ancestors compact mode folded into this row, outermost first.
     pub chain: Vec<ChainSegment>,
 }
@@ -202,6 +209,12 @@ impl FileTreeView {
                     parent,
                     entry: node.entry.clone(),
                     state: node.state.clone(),
+                    ignored: matches!(
+                        self.ignore_patterns
+                            .get_status(&node.entry.path, node.entry.is_dir()),
+                        super::ignore::IgnoreStatus::GitIgnored
+                            | super::ignore::IgnoreStatus::CustomIgnored
+                    ),
                     chain: self
                         .compact_chain_for_anchor(id)
                         .into_iter()

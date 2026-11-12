@@ -46,9 +46,9 @@ pub struct IgnorePatterns {
     /// Whether to show gitignored files
     show_gitignored: bool,
 
-    /// Whether `.gitignore` rules apply at all (`file_explorer.respect_gitignore`).
-    /// When false the loaded rules are kept but never consulted, so gitignored
-    /// entries are neither hidden nor marked, whatever `show_gitignored` says.
+    /// Whether `.gitignore` rules hide entries at all (`file_explorer.respect_gitignore`).
+    /// When false the rules are not consulted for visibility, but the render
+    /// status still reports `GitIgnored` so shown entries are dimmed (#3283).
     respect_gitignore: bool,
 
     /// Whether to show custom ignored files
@@ -147,10 +147,18 @@ impl IgnorePatterns {
         false
     }
 
-    /// Get the ignore status of a path
+    /// How an entry stands with the ignore rules, for the row that draws it.
     ///
-    /// This is useful for rendering (e.g., gray out ignored files)
-    #[cfg(test)]
+    /// This is the render-time counterpart of [`is_ignored`](Self::is_ignored):
+    /// that one answers *whether the tree shows the entry*, this one answers
+    /// *what the entry is*, so a shown entry can still be reported as
+    /// `GitIgnored` or `CustomIgnored` and drawn recessed (issue #3283). It
+    /// therefore reads the `.gitignore` rules directly, past the
+    /// `respect_gitignore` visibility gate that `is_ignored` honours.
+    ///
+    /// It was `#[cfg(test)]` for as long as nothing but the tests asked, which
+    /// made the one thing it exists for — rendering — the one thing it could
+    /// not be used for.
     pub fn get_status(&self, path: &Path, is_dir: bool) -> IgnoreStatus {
         if is_hidden_name(path) {
             return IgnoreStatus::Hidden;
@@ -161,8 +169,9 @@ impl IgnorePatterns {
             return IgnoreStatus::CustomIgnored;
         }
 
-        // Check gitignore
-        if self.matches_gitignore(path, is_dir) {
+        // Check gitignore — always against the real rules, whatever the
+        // visibility gate says, so a shown entry can be rendered dimmed.
+        if self.matches_gitignore_rules(path, is_dir) {
             return IgnoreStatus::GitIgnored;
         }
 
@@ -171,11 +180,16 @@ impl IgnorePatterns {
 
     /// Check if path matches any .gitignore rules
     fn matches_gitignore(&self, path: &Path, is_dir: bool) -> bool {
-        // Single gate for the whole feature: with `respect_gitignore` off, both
-        // the visibility filter and the render status see "no rules matched".
-        if !self.respect_gitignore {
-            return false;
-        }
+        // Visibility gate: with `respect_gitignore` off the rules are not
+        // consulted for hiding. The render status deliberately bypasses this
+        // gate via `matches_gitignore_rules` so ignored entries can still be
+        // dimmed when shown (issue #3283).
+        self.respect_gitignore && self.matches_gitignore_rules(path, is_dir)
+    }
+
+    /// Consult the loaded `.gitignore` rules, independent of the
+    /// `respect_gitignore` visibility gate.
+    fn matches_gitignore_rules(&self, path: &Path, is_dir: bool) -> bool {
         // Find the most specific .gitignore (deepest directory)
         // that could apply to this path
         for (gitignore_dir, gitignore) in &self.gitignores {
