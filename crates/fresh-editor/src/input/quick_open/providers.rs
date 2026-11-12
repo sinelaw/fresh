@@ -370,6 +370,15 @@ pub struct FileProvider {
 }
 
 impl FileProvider {
+    /// Rows the file finder hands to the palette for one keystroke. The
+    /// palette shows ten at a time and the list is re-ranked on every
+    /// keystroke, so scoring more than this buys nothing a user can see.
+    ///
+    /// The cap is a *ranking* cut (fuzzy score + frecency), not a slice of
+    /// the path tree, which is why [`QuickOpenProvider::suggestions_capped`]
+    /// has to report when it bit.
+    const MAX_RESULTS: usize = 100;
+
     pub fn new(
         filesystem: std::sync::Arc<dyn crate::model::filesystem::FileSystem + Send + Sync>,
         process_spawner: std::sync::Arc<dyn crate::services::remote::ProcessSpawner>,
@@ -1015,7 +1024,7 @@ impl QuickOpenProvider for FileProvider {
             }
         }
 
-        let max_results = 100;
+        let max_results = Self::MAX_RESULTS;
 
         // Collect prefix-probe paths for deduplication.
         let prefix_set: std::collections::HashSet<&str> = prefix_entries
@@ -1099,6 +1108,15 @@ impl QuickOpenProvider for FileProvider {
         }
 
         suggestions
+    }
+
+    /// The selectable rows are the survivors of `scored.truncate(MAX_RESULTS)`
+    /// in [`Self::suggestions`], so a full house means matches may have been
+    /// dropped. A query with exactly `MAX_RESULTS` matches reports capped
+    /// although nothing was lost: the count cannot tell the two apart, and
+    /// erring towards "capped" only costs the caller its prefix completion.
+    fn suggestions_capped(&self, suggestions: &[Suggestion]) -> bool {
+        suggestions.iter().filter(|s| !s.disabled).count() >= Self::MAX_RESULTS
     }
 
     fn on_select(
