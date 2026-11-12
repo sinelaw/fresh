@@ -129,6 +129,9 @@ run_install() {
 # (notably -m, which the tarball path needs) answered by the real uname.
 REAL_UNAME="$(command -v uname)"
 fake_uname_s() {
+    # The shim is a symlink to the real uname; writing through it would
+    # overwrite the system binary, so replace the link instead.
+    rm -f "$BINDIR/uname"
     cat > "$BINDIR/uname" <<EOF
 #!/bin/sh
 case "\$1" in
