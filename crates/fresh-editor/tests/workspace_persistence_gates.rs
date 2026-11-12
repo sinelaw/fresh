@@ -1,13 +1,15 @@
-//! What the editor is allowed to write into a workspace file, for two
-//! bugs whose whole symptom is on disk: `--no-restore` sessions leaving
-//! workspace files behind (#2735) and per-file state being remembered for
-//! files something else rewrites (#2761).
+//! What the editor is allowed to write into a workspace file, for bugs
+//! whose whole symptom is on disk: `--no-restore` sessions leaving
+//! workspace files behind (#2735), per-file state being remembered for
+//! files something else rewrites (#2761), and a quit that writes no
+//! workspace dropping per-file state with it (#3748).
 //!
 //! Like `workspace_virtual_buffer_clobber.rs`, these drive the Editor and
 //! assert against the saved workspace rather than the screen — nothing
 //! here is visible in a single session, so it does not belong in an e2e
 //! test (CONTRIBUTING.md Testing §2). The user-visible halves live in
-//! `e2e/issue_2761_git_commit_msg_state.rs`.
+//! `e2e/issue_2761_git_commit_msg_state.rs` and
+//! `e2e/issue_3748_file_launch_cursor_restore.rs`.
 
 use crate::common::harness::EditorTestHarness;
 use fresh::config::Config;
@@ -167,5 +169,57 @@ fn test_workspace_file_states_follow_configured_patterns() {
     assert!(
         keys.iter().any(|k| k.ends_with("COMMIT_EDITMSG")),
         "replacing the defaults must stop excluding git's files, got {keys:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// #3748 — a quit that writes no workspace still flushes per-file state
+// ---------------------------------------------------------------------------
+
+/// `persist_on_exit(false)` is the quit of a `fresh FILE` launch (and of
+/// `--no-restore`): it must keep its hands off the workspace file while
+/// still recording each open file's cursor in the global per-file store.
+#[test]
+fn test_quit_without_workspace_save_flushes_file_state_only() {
+    use crate::common::global_state::isolated_dir_context;
+    use crate::common::harness::HarnessOptions;
+    use fresh::workspace::PersistedFileWorkspace;
+
+    let temp = tempfile::TempDir::new().unwrap();
+    let base = temp.path().canonicalize().unwrap();
+    let (dir_context, _data_pin) = isolated_dir_context(&base);
+    let root = base.join("proj");
+    fs::create_dir(&root).unwrap();
+    let file = root.join("notes.txt");
+    fs::write(&file, "one\ntwo\nthree\n").unwrap();
+
+    let mut harness = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_working_dir(root.clone())
+            .with_shared_dir_context(dir_context),
+    )
+    .unwrap();
+    harness.open_file(&file).unwrap();
+    harness
+        .send_key(
+            crossterm::event::KeyCode::Down,
+            crossterm::event::KeyModifiers::NONE,
+        )
+        .unwrap();
+    harness.render().unwrap();
+    harness.shutdown(false).unwrap();
+
+    assert_eq!(
+        find_workspace_file_by_root(&root).unwrap(),
+        None,
+        "a quit that skips workspace saves must not write a workspace file"
+    );
+    let state = PersistedFileWorkspace::load(&file, &[])
+        .expect("the open file's cursor must be in the per-file store after quit");
+    assert_eq!(
+        state.cursor.position, 4,
+        "the persisted cursor is where the user left it (start of line 2)"
     );
 }
