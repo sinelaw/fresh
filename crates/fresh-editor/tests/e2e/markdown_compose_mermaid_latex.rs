@@ -150,6 +150,21 @@ fn a_mermaid_flowchart_is_drawn_in_place_of_its_source() {
     .unwrap();
 }
 
+/// `A -->|label| B` labels the link: the label is drawn by its arrow, and
+/// is not taken for part of the node after it.
+#[test]
+fn a_mermaid_edge_label_is_drawn_by_its_arrow() {
+    let md = "# Title\n\nIntro.\n\n```mermaid\nflowchart TD\n    A{Ready?} -->|Yes| B[Ship it]\n    A -->|No| C[Wait]\n```\n\nTail.\n";
+    let (mut h, _tmp) = compose_harness(md);
+    h.wait_until(|h| {
+        screen_has(h, "▼ Yes")
+            && screen_has(h, "▼ No")
+            && screen_has(h, "│ Ship it │")
+            && !screen_has(h, "|Yes|")
+    })
+    .unwrap();
+}
+
 #[test]
 fn a_mermaid_sequence_diagram_is_drawn_in_place_of_its_source() {
     let md = "# Title\n\nIntro.\n\n```mermaid\nsequenceDiagram\n    Alice->>Bob: Hello World\n```\n\nTail.\n";

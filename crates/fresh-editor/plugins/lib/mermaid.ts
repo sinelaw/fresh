@@ -24,7 +24,7 @@ export interface MermaidRenderResult {
 interface FlowNode {
   id: string;
   label: string;
-  shape: "box" | "round" | "stadium" | "cylinder" | "diamond" | "circle" | "hexagon" | "flag";
+  shape: "box" | "round" | "stadium" | "cylinder" | "diamond" | "circle" | "hexagon" | "flag" | "start" | "end";
 }
 
 interface FlowEdge {
@@ -34,6 +34,8 @@ interface FlowEdge {
 }
 
 function parseNodeDef(raw: string): FlowNode {
+  // A `:::className` suffix styles the node; it is not part of its text.
+  raw = raw.replace(/:::[\w-]+$/, "").trim();
   const m = raw.match(/^([A-Za-z0-9_\-]+)\s*(?:\(\[([^\]]+)\]\)|\(\(([^)]+)\)\)|\[\(([^)]+)\)\]|\{\{([^}]+)\}\}|\[([^[\]]+)\]|\(([^(]+)\)|\{([^{}]+)\}|>([^\]]+)\])?$/);
   if (!m) return { id: raw, label: raw, shape: "box" };
   const id = m[1];
@@ -49,6 +51,9 @@ function parseNodeDef(raw: string): FlowNode {
 }
 
 function renderNodeBox(node: FlowNode, width: Width): string[] {
+  // A state diagram's start and end are a dot, not a box.
+  if (node.shape === "start") return ["●"];
+  if (node.shape === "end") return ["◉"];
   const lbl = node.label;
   const w = width(lbl);
   const pad = 1;
@@ -70,23 +75,32 @@ function renderNodeBox(node: FlowNode, width: Width): string[] {
   }
   if (node.shape === "stadium") {
     return [
-      "([" + "─".repeat(innerW) + "])",
-      "│" + spaces + lbl + spaces + "│",
-      "([" + "─".repeat(innerW) + "])",
+      "╭" + "─".repeat(innerW) + "╮",
+      "(" + spaces + lbl + spaces + ")",
+      "╰" + "─".repeat(innerW) + "╯",
     ];
   }
   if (node.shape === "circle") {
     return [
-      "((" + "─".repeat(innerW) + "))",
-      "│" + spaces + lbl + spaces + "│",
-      "((" + "─".repeat(innerW) + "))",
+      "╭─" + "─".repeat(innerW) + "─╮",
+      "( " + spaces + lbl + spaces + " )",
+      "╰─" + "─".repeat(innerW) + "─╯",
     ];
   }
   if (node.shape === "cylinder") {
+    // A database: the top's rim drawn as a second line.
     return [
-      "⌠" + "─".repeat(innerW) + "⌡",
+      "╭" + "─".repeat(innerW) + "╮",
+      "├" + "─".repeat(innerW) + "┤",
       "│" + spaces + lbl + spaces + "│",
-      "⌡" + "─".repeat(innerW) + "⌠",
+      "╰" + "─".repeat(innerW) + "╯",
+    ];
+  }
+  if (node.shape === "hexagon") {
+    return [
+      "╱" + "─".repeat(innerW) + "╲",
+      "<" + spaces + lbl + spaces + ">",
+      "╲" + "─".repeat(innerW) + "╱",
     ];
   }
   return [
@@ -102,9 +116,9 @@ const BOX_GAP = "    ";
 
 /** The columns each of a level's boxes spans, as laid out with
  * `BOX_ROW_INDENT` and `BOX_GAP`. */
-function boxSpans(boxes: string[][], width: Width): Array<{ start: number; end: number }> {
+function boxSpans(boxes: string[][], width: Width, indent = 0): Array<{ start: number; end: number }> {
   const spans: Array<{ start: number; end: number }> = [];
-  let x = BOX_ROW_INDENT.length;
+  let x = BOX_ROW_INDENT.length + indent;
   for (const box of boxes) {
     const w = width(box[0]);
     spans.push({ start: x, end: x + w });
@@ -118,9 +132,10 @@ const centerOf = (span: { start: number; end: number }): number =>
 
 /** The rows joining boxes centred at the `from` columns to boxes centred at
  * the `to` columns below: a stem down from each source, a bus across when
- * the columns differ, and an arrow down into each target. `label` follows
- * the stems. */
-function connectorRows(from: number[], to: number[], label: string): string[] {
+ * the columns differ, and an arrow down into each target. An edge's label
+ * (`labels[i]` for `to[i]`) is written beside its arrowhead, cut short with
+ * `…` where it would run into the next arrow. */
+function connectorRows(from: number[], to: number[], labels: Array<string | undefined>, width: Width): string[] {
   const all = [...from, ...to];
   const lo = Math.min(...all);
   const hi = Math.max(...all);
@@ -129,7 +144,29 @@ function connectorRows(from: number[], to: number[], label: string): string[] {
     for (const c of cols) row[c] = ch;
     return row.join("").trimEnd();
   };
-  if (lo === hi) return [marks(from, "│") + label, marks(to, "▼")];
+  const arrows = (): string => {
+    let row = "";
+    const order = to.map((c, i) => ({ c, label: labels[i] })).sort((a, b) => a.c - b.c);
+    for (let i = 0; i < order.length; i++) {
+      const { c, label } = order[i];
+      row = padTo(row, c, width) + "▼";
+      if (!label) continue;
+      const room = i + 1 < order.length ? order[i + 1].c - c - 3 : Infinity;
+      if (room < 2) continue;
+      let text = label;
+      if (width(text) > room) {
+        text = "";
+        for (const ch of label) {
+          if (width(text + ch) > room - 1) break;
+          text += ch;
+        }
+        text += "…";
+      }
+      row += " " + text;
+    }
+    return row;
+  };
+  if (lo === hi) return [marks(from, "│"), arrows()];
   const bus = Array<string>(hi + 1).fill(" ");
   for (let c = lo; c <= hi; c++) {
     const up = from.includes(c);
@@ -141,7 +178,132 @@ function connectorRows(from: number[], to: number[], label: string): string[] {
     else if (down) bus[c] = left ? "┌" : right ? "┐" : "┬";
     else bus[c] = "─";
   }
-  return [marks(from, "│") + label, bus.join(""), marks(to, "▼")];
+  return [marks(from, "│"), bus.join(""), arrows()];
+}
+
+/**
+ * Nodes laid out top to bottom, a level per row of boxes: each node goes on
+ * the level after the first node that links to it, and the links between
+ * neighbouring levels are drawn as connectors. A link back up (a cycle) or
+ * across is listed below the diagram with ↺.
+ */
+function layoutTopDown(nodes: Map<string, FlowNode>, edges: FlowEdge[], width: Width): string[] {
+  const outLines: string[] = [];
+  // Vertical Top-Down layout: assign levels to prevent node duplication
+  const inDegree = new Map<string, number>();
+  const outMap = new Map<string, FlowEdge[]>();
+  for (const [id] of nodes) {
+    inDegree.set(id, 0);
+    outMap.set(id, []);
+  }
+  for (const e of edges) {
+    inDegree.set(e.to, (inDegree.get(e.to) || 0) + 1);
+    outMap.get(e.from)?.push(e);
+  }
+
+  const levels: string[][] = [];
+  const levelOf = new Map<string, number>();
+  const visited = new Set<string>();
+
+  let currentLevel: string[] = [];
+  for (const [id] of nodes) {
+    if ((inDegree.get(id) || 0) === 0) {
+      currentLevel.push(id);
+      visited.add(id);
+      levelOf.set(id, 0);
+    }
+  }
+  if (currentLevel.length === 0 && nodes.size > 0) {
+    const first = nodes.keys().next().value!;
+    currentLevel.push(first);
+    visited.add(first);
+    levelOf.set(first, 0);
+  }
+
+  while (currentLevel.length > 0) {
+    levels.push(currentLevel);
+    const nextLevel: string[] = [];
+    for (const u of currentLevel) {
+      for (const e of outMap.get(u) || []) {
+        if (!visited.has(e.to)) {
+          visited.add(e.to);
+          levelOf.set(e.to, levels.length);
+          nextLevel.push(e.to);
+        }
+      }
+    }
+    if (nextLevel.length === 0 && visited.size < nodes.size) {
+      for (const [id] of nodes) {
+        if (!visited.has(id)) {
+          visited.add(id);
+          levelOf.set(id, levels.length);
+          nextLevel.push(id);
+          break;
+        }
+      }
+    }
+    currentLevel = nextLevel;
+  }
+
+  // Every level is centred on one axis, so a chain of single nodes runs
+  // straight down and a branch spreads evenly under the node it leaves.
+  const boxesOf = (ids: string[]) => ids.map(id => renderNodeBox(nodes.get(id)!, width));
+  const levelWidth = (ids: string[]) => {
+    const spans = boxSpans(boxesOf(ids), width);
+    return spans[spans.length - 1].end - BOX_ROW_INDENT.length;
+  };
+  const axis = Math.floor(Math.max(...levels.map(levelWidth)) / 2);
+  const indentOf = (ids: string[]) => axis - Math.floor(levelWidth(ids) / 2);
+
+  for (let lvl = 0; lvl < levels.length; lvl++) {
+    const nodeIds = levels[lvl];
+    const boxes = boxesOf(nodeIds);
+    const maxBoxH = Math.max(...boxes.map(b => b.length));
+    const indent = indentOf(nodeIds);
+
+    for (let r = 0; r < maxBoxH; r++) {
+      let rowStr = BOX_ROW_INDENT + " ".repeat(indent);
+      for (let b = 0; b < boxes.length; b++) {
+        const box = boxes[b];
+        const line = box[r] || " ".repeat(width(box[0]));
+        rowStr += line + (b < boxes.length - 1 ? BOX_GAP : "");
+      }
+      outLines.push(rowStr);
+    }
+
+    if (lvl < levels.length - 1) {
+      const nextNodeIds = levels[lvl + 1];
+      const crossEdges = edges.filter(e => nodeIds.includes(e.from) && nextNodeIds.includes(e.to));
+      const fromSpans = boxSpans(boxes, width, indent);
+      const toSpans = boxSpans(boxesOf(nextNodeIds), width, indentOf(nextNodeIds));
+      const from = nodeIds.flatMap((id, k) =>
+        crossEdges.some(e => e.from === id) ? [centerOf(fromSpans[k])] : []);
+      const targetIds = nextNodeIds.filter(id => crossEdges.some(e => e.to === id));
+      const targets = nextNodeIds.flatMap((id, k) =>
+        crossEdges.some(e => e.to === id) ? [toSpans[k]] : []);
+      const labels = targetIds.map(id => crossEdges.find(e => e.to === id && e.label)?.label);
+      // One box into one box that lies under its stem: straight down,
+      // rather than a jog of a column or two between their centres.
+      const to = from.length === 1 && targets.length === 1
+        && targets[0].start < from[0] && from[0] < targets[0].end - 1
+        ? from
+        : targets.map(centerOf);
+      if (from.length > 0 && to.length > 0) outLines.push(...connectorRows(from, to, labels, width));
+    }
+  }
+
+  // Back-edges (cycles or cross-level edges)
+  const crossOrBack = edges.filter(e => {
+    const lFrom = levelOf.get(e.from);
+    const lTo = levelOf.get(e.to);
+    return lFrom !== undefined && lTo !== undefined && lTo <= lFrom;
+  });
+  for (const e of crossOrBack) {
+    const lbl = e.label ? ` [${e.label}]` : "";
+    const name = (id: string) => nodes.get(id)?.label ?? id;
+    outLines.push(`  ↺ ${name(e.from)} ──> ${name(e.to)}${lbl}`);
+  }
+  return outLines;
 }
 
 function renderMermaidFlowchart(rawLines: string[], maxWidth: number, width: Width): MermaidRenderResult {
@@ -150,12 +312,23 @@ function renderMermaidFlowchart(rawLines: string[], maxWidth: number, width: Wid
   const nodes = new Map<string, FlowNode>();
   const edges: FlowEdge[] = [];
 
-  // Connector regex: -->|label|, -- label -->, -->, ---, -.->, ==>
-  const connRe = /(-->|---|-.->|==>|--\s*([^-]+?)\s*-->|-->\|([^|]+)\|)/;
+  // A link: an arrow (`-->`, `--->`, `---`, `-.->`, `==>`, `--o`, `--x`,
+  // `<-->` …) with an optional `|label|` after it, or a label written
+  // inside the link, `-- label -->` / `== label ==>` / `-. label .->`.
+  // The inline-label form is tried first, so `-- yes -->` is not read as
+  // `--` followed by a node named `yes`.
+  const ARROW = "<?(?:-{2,}>|-{3,}|={2,}>|={3,}|-\\.+->|-\\.+-|--[ox]|==[ox])";
+  const connRe = new RegExp(
+    `(?:--|==|-\\.)\\s+([^|>\\s][^|>]*?)\\s+(?:${ARROW}|\\.-+>|\\.-+)|(?:${ARROW})(?:\\s*\\|([^|]*)\\|)?`,
+  );
 
   for (let i = 1; i < rawLines.length; i++) {
-    const line = rawLines[i].trim();
+    const line = rawLines[i].trim().replace(/;$/, "");
     if (!line || line.startsWith("%%")) continue;
+    // Grouping and styling lines say nothing about nodes or edges: `subgraph`
+    // and its `end` (the grouping itself is not drawn), `style`, `classDef`,
+    // `class`, `click`, `linkStyle`, `direction`.
+    if (/^(subgraph|end|style|classDef|class|click|linkStyle|direction)\b/.test(line)) continue;
 
     // Handle chained connections e.g. A --> B --> C
     const parts: string[] = [];
@@ -169,22 +342,31 @@ function renderMermaidFlowchart(rawLines: string[], maxWidth: number, width: Wid
         break;
       }
       parts.push(rem.slice(0, match.index).trim());
-      const label = match[2] || match[3] || undefined;
+      const label = match[1] || match[2] || undefined;
       edgeLabels.push(label ? label.trim() : undefined);
       rem = rem.slice(match.index + match[0].length).trim();
     }
 
+    // `A & B --> C`: each side of a link can name several nodes.
+    const group = (part: string): FlowNode[] =>
+      part.split(/\s+&\s+/).filter(Boolean).map(parseNodeDef);
+    const remember = (node: FlowNode): void => {
+      if (!nodes.has(node.id) || node.label !== node.id) nodes.set(node.id, node);
+    };
     if (parts.length >= 2) {
       for (let p = 0; p < parts.length - 1; p++) {
-        const fromNode = parseNodeDef(parts[p]);
-        const toNode = parseNodeDef(parts[p + 1]);
-        if (!nodes.has(fromNode.id) || fromNode.label !== fromNode.id) nodes.set(fromNode.id, fromNode);
-        if (!nodes.has(toNode.id) || toNode.label !== toNode.id) nodes.set(toNode.id, toNode);
-        edges.push({ from: fromNode.id, to: toNode.id, label: edgeLabels[p] });
+        const fromNodes = group(parts[p]);
+        const toNodes = group(parts[p + 1]);
+        fromNodes.forEach(remember);
+        toNodes.forEach(remember);
+        for (const f of fromNodes) {
+          for (const t of toNodes) edges.push({ from: f.id, to: t.id, label: edgeLabels[p] });
+        }
       }
     } else if (parts.length === 1 && parts[0]) {
-      const single = parseNodeDef(parts[0]);
-      if (!nodes.has(single.id)) nodes.set(single.id, single);
+      for (const single of group(parts[0])) {
+        if (!nodes.has(single.id)) nodes.set(single.id, single);
+      }
     }
   }
 
@@ -193,6 +375,23 @@ function renderMermaidFlowchart(rawLines: string[], maxWidth: number, width: Wid
   }
 
   const outLines: string[] = [];
+
+  // A row of boxes can only show a chain: every node with at most one link
+  // in and one out, each link going on to the next box. A branch or a merge
+  // drawn as a row would read as a chain it is not, so such a graph is drawn
+  // top-down instead, as is a chain too wide for the block.
+  const outDeg = new Map<string, number>();
+  const inDeg = new Map<string, number>();
+  for (const e of edges) {
+    outDeg.set(e.from, (outDeg.get(e.from) ?? 0) + 1);
+    inDeg.set(e.to, (inDeg.get(e.to) ?? 0) + 1);
+  }
+  const isChain = edges.length === nodes.size - 1
+    && [...nodes.keys()].every(id => (outDeg.get(id) ?? 0) <= 1 && (inDeg.get(id) ?? 0) <= 1);
+  const rowWidth = [...nodes.values()].reduce((w, n) => w + width(renderNodeBox(n, width)[0]) + 9, 0);
+  if (isLR && (!isChain || rowWidth > maxWidth)) {
+    return { title: "Mermaid Flowchart (LR, drawn top-down)", lines: layoutTopDown(nodes, edges, width) };
+  }
 
   if (isLR) {
     // Horizontal layout
@@ -244,108 +443,7 @@ function renderMermaidFlowchart(rawLines: string[], maxWidth: number, width: Wid
     }
     outLines.push(row0.join(""), row1.join(""), row2.join(""));
   } else {
-    // Vertical Top-Down layout: assign levels to prevent node duplication
-    const inDegree = new Map<string, number>();
-    const outMap = new Map<string, FlowEdge[]>();
-    for (const [id] of nodes) {
-      inDegree.set(id, 0);
-      outMap.set(id, []);
-    }
-    for (const e of edges) {
-      inDegree.set(e.to, (inDegree.get(e.to) || 0) + 1);
-      outMap.get(e.from)?.push(e);
-    }
-
-    const levels: string[][] = [];
-    const levelOf = new Map<string, number>();
-    const visited = new Set<string>();
-
-    let currentLevel: string[] = [];
-    for (const [id] of nodes) {
-      if ((inDegree.get(id) || 0) === 0) {
-        currentLevel.push(id);
-        visited.add(id);
-        levelOf.set(id, 0);
-      }
-    }
-    if (currentLevel.length === 0 && nodes.size > 0) {
-      const first = nodes.keys().next().value!;
-      currentLevel.push(first);
-      visited.add(first);
-      levelOf.set(first, 0);
-    }
-
-    while (currentLevel.length > 0) {
-      levels.push(currentLevel);
-      const nextLevel: string[] = [];
-      for (const u of currentLevel) {
-        for (const e of outMap.get(u) || []) {
-          if (!visited.has(e.to)) {
-            visited.add(e.to);
-            levelOf.set(e.to, levels.length);
-            nextLevel.push(e.to);
-          }
-        }
-      }
-      if (nextLevel.length === 0 && visited.size < nodes.size) {
-        for (const [id] of nodes) {
-          if (!visited.has(id)) {
-            visited.add(id);
-            levelOf.set(id, levels.length);
-            nextLevel.push(id);
-            break;
-          }
-        }
-      }
-      currentLevel = nextLevel;
-    }
-
-    for (let lvl = 0; lvl < levels.length; lvl++) {
-      const nodeIds = levels[lvl];
-      const boxes = nodeIds.map(id => renderNodeBox(nodes.get(id)!, width));
-      const maxBoxH = Math.max(...boxes.map(b => b.length));
-
-      for (let r = 0; r < maxBoxH; r++) {
-        let rowStr = BOX_ROW_INDENT;
-        for (let b = 0; b < boxes.length; b++) {
-          const box = boxes[b];
-          const line = box[r] || " ".repeat(width(box[0]));
-          rowStr += line + (b < boxes.length - 1 ? BOX_GAP : "");
-        }
-        outLines.push(rowStr);
-      }
-
-      if (lvl < levels.length - 1) {
-        const nextNodeIds = levels[lvl + 1];
-        const crossEdges = edges.filter(e => nodeIds.includes(e.from) && nextNodeIds.includes(e.to));
-        const label = crossEdges.find(e => e.label)?.label;
-        const lblStr = label ? ` [${label}]` : "";
-        const fromSpans = boxSpans(boxes, width);
-        const toSpans = boxSpans(nextNodeIds.map(id => renderNodeBox(nodes.get(id)!, width)), width);
-        const from = nodeIds.flatMap((id, k) =>
-          crossEdges.some(e => e.from === id) ? [centerOf(fromSpans[k])] : []);
-        const targets = nextNodeIds.flatMap((id, k) =>
-          crossEdges.some(e => e.to === id) ? [toSpans[k]] : []);
-        // One box into one box that lies under its stem: straight down,
-        // rather than a jog of a column or two between their centres.
-        const to = from.length === 1 && targets.length === 1
-          && targets[0].start < from[0] && from[0] < targets[0].end - 1
-          ? from
-          : targets.map(centerOf);
-        if (from.length > 0 && to.length > 0) outLines.push(...connectorRows(from, to, lblStr));
-      }
-    }
-
-    // Back-edges (cycles or cross-level edges)
-    const crossOrBack = edges.filter(e => {
-      const lFrom = levelOf.get(e.from);
-      const lTo = levelOf.get(e.to);
-      return lFrom !== undefined && lTo !== undefined && lTo <= lFrom;
-    });
-    for (const e of crossOrBack) {
-      const lbl = e.label ? ` [${e.label}]` : "";
-      outLines.push(`  ↺ ${e.from} ──> ${e.to}${lbl}`);
-    }
+    outLines.push(...layoutTopDown(nodes, edges, width));
   }
 
   return { title: isLR ? "Mermaid Flowchart (LR)" : "Mermaid Flowchart (TD)", lines: outLines };
@@ -358,7 +456,12 @@ function renderMermaidSequence(rawLines: string[], maxWidth: number, width: Widt
   const messages: Array<
     | { type: "msg"; from: string; arrow: string; to: string; text: string }
     | { type: "note"; participants: string[]; text: string }
+    | { type: "section"; text: string }
   > = [];
+  // Open `loop`/`alt`/… blocks, so each `end` closes the right one; a
+  // `rect` or `box` only colours or groups and draws nothing.
+  const openBlocks: boolean[] = [];
+  let autonumber = 0;
 
   function addPart(id: string, label?: string): void {
     const cleanId = id.trim();
@@ -370,22 +473,43 @@ function renderMermaidSequence(rawLines: string[], maxWidth: number, width: Widt
     if (label) aliasMap.set(cleanId, label.trim());
   }
 
-  for (const line of rawLines) {
+  for (const line of rawLines.slice(1)) {
+    if (/^autonumber\b/i.test(line)) { autonumber = 1; continue; }
+    if (/^(activate|deactivate|create|destroy|links?|properties|details)\b/i.test(line)) continue;
+    const blockMatch = line.match(/^(loop|alt|opt|par|critical|break|rect|box)\b\s*(.*)$/i);
+    if (blockMatch) {
+      const drawn = !/^(rect|box)$/i.test(blockMatch[1]);
+      openBlocks.push(drawn);
+      if (drawn) messages.push({ type: "section", text: `${blockMatch[1].toLowerCase()} ${blockMatch[2]}`.trim() });
+      continue;
+    }
+    const branchMatch = line.match(/^(else|and|option)\b\s*(.*)$/i);
+    if (branchMatch) {
+      messages.push({ type: "section", text: `${branchMatch[1].toLowerCase()} ${branchMatch[2]}`.trim() });
+      continue;
+    }
+    if (/^end$/i.test(line)) {
+      if (openBlocks.pop()) messages.push({ type: "section", text: "" });
+      continue;
+    }
     const pMatch = line.match(/^(?:participant|actor)\s+([A-Za-z0-9_\-]+)(?:\s+as\s+(.+))?/i);
     if (pMatch) {
       addPart(pMatch[1].trim(), pMatch[2] ? pMatch[2].trim() : undefined);
       continue;
     }
-    const mMatch = line.match(/^([A-Za-z0-9_]+)\s*(-->>|->>|-->|->|-\)|--\))\s*([A-Za-z0-9_]+)\s*:\s*(.+)$/);
+    // `A->>B: text`, with any of Mermaid's arrows, and an optional `+`/`-`
+    // before the target that activates or deactivates it (not drawn).
+    const mMatch = line.match(/^([A-Za-z0-9_\-]+?)\s*(<<-->>|<<->>|-->>|->>|--x|-x|--\)|-\)|-->|->)\s*[+-]?\s*([A-Za-z0-9_\-]+)\s*:\s*(.*)$/);
     if (mMatch) {
       addPart(mMatch[1]);
       addPart(mMatch[3]);
+      const text = mMatch[4].trim();
       messages.push({
         type: "msg",
         from: mMatch[1],
         arrow: mMatch[2],
         to: mMatch[3],
-        text: mMatch[4].trim(),
+        text: autonumber > 0 ? `${autonumber++}. ${text}`.trim() : text,
       });
       continue;
     }
@@ -439,6 +563,17 @@ function renderMermaidSequence(rawLines: string[], maxWidth: number, width: Widt
   }
 
   for (const item of messages) {
+    if (item.type === "section") {
+      // A dotted rule across the lifelines, labelled with the block it opens
+      // (`loop Every minute`, `else is well`), or bare where a block ends.
+      const start = Math.max(0, colCenters[0] - 3);
+      const end = colCenters[participants.length - 1] + 3;
+      const label = item.text ? `┄ ${item.text} ` : "";
+      const rule = label + "┄".repeat(Math.max(0, end - start - width(label)));
+      outLines.push(makeLifelineRow());
+      outLines.push(" ".repeat(start) + rule);
+      continue;
+    }
     outLines.push(makeLifelineRow());
     if (item.type === "note") {
       const indices = item.participants.map(p => partMap.get(p) ?? 0);
@@ -468,14 +603,15 @@ function renderMermaidSequence(rawLines: string[], maxWidth: number, width: Widt
       let shaft = "";
       while (shaft.length < Math.max(0, span - width(label) - 1)) shaft += dash;
       const half = Math.floor(shaft.length / 2);
-      const arrowStr = shaft.slice(0, half) + label + shaft.slice(half) + ">";
+      // `-x` / `--x` is a message that is lost: a cross for a head.
+      const arrowStr = shaft.slice(0, half) + label + shaft.slice(half) + (item.arrow.endsWith("x") ? "x" : ">");
       row += padTo(arrowStr, span, width) + "│";
       for (let i = toIdx + 1; i < participants.length; i++) row = padTo(row, colCenters[i], width) + "│";
       outLines.push(row);
     } else if (c1 > c2) {
       let row = "";
       for (let i = 0; i < toIdx; i++) row = padTo(row, colCenters[i], width) + "│";
-      row = padTo(row, c2, width) + "│<";
+      row = padTo(row, c2, width) + (item.arrow.endsWith("x") ? "│x" : "│<");
       const span = c1 - c2 - 1;
       const isDashed = item.arrow.startsWith("--");
       const label = ` ${item.text} `;
@@ -562,9 +698,27 @@ function renderMermaidPie(rawLines: string[], maxWidth: number, width: Width): M
   return { title: `Mermaid: ${title}`, lines: outLines };
 }
 
-function renderMermaidState(rawLines: string[], maxWidth: number, width: Width): MermaidRenderResult {
-  const transitions: Array<{ from: string; to: string; event?: string }> = [];
+function renderMermaidState(rawLines: string[], _maxWidth: number, width: Width): MermaidRenderResult {
+  const nodes = new Map<string, FlowNode>();
+  const edges: FlowEdge[] = [];
   const stateLabels = new Map<string, string>();
+  // The composite states (`state Name {`) the line is inside, innermost last.
+  const scopes: string[] = [];
+
+  // `[*]` is where its scope starts (as a source) or ends (as a target).
+  // Inside a composite state, its start is the state itself, so the
+  // diagram reads "Moving → Slow"; each end is a dot of its own.
+  const stateNode = (raw: string, asTarget: boolean): FlowNode => {
+    const scope = scopes[scopes.length - 1];
+    if (raw === "[*]") {
+      if (!asTarget) {
+        return scope ? { id: scope, label: scope, shape: "box" } : { id: "[*]start", label: "●", shape: "start" };
+      }
+      const id = `[*]end${scope ? ":" + scope : ""}`;
+      return { id, label: "◉", shape: "end" };
+    }
+    return { id: raw, label: raw, shape: "box" };
+  };
 
   for (let i = 1; i < rawLines.length; i++) {
     const line = rawLines[i].trim();
@@ -575,52 +729,38 @@ function renderMermaidState(rawLines: string[], maxWidth: number, width: Width):
       stateLabels.set(descMatch[2], descMatch[1]);
       continue;
     }
+    const compositeMatch = line.match(/^state\s+(?:"[^"]+"\s+as\s+)?([A-Za-z0-9_\-]+)\s*\{$/i);
+    if (compositeMatch) {
+      scopes.push(compositeMatch[1]);
+      continue;
+    }
+    if (line === "}") {
+      scopes.pop();
+      continue;
+    }
+    const labelMatch = line.match(/^([A-Za-z0-9_\-]+)\s*:\s*(.+)$/);
+    if (labelMatch && !line.includes("-->")) {
+      stateLabels.set(labelMatch[1], labelMatch[2].trim());
+      continue;
+    }
 
     const m = line.match(/^(\[\*\]|[A-Za-z0-9_\-]+)\s*-->\s*(\[\*\]|[A-Za-z0-9_\-]+)(?:\s*:\s*(.+))?/);
     if (m) {
-      transitions.push({
-        from: m[1],
-        to: m[2],
-        event: m[3] ? m[3].trim() : undefined,
-      });
+      const from = stateNode(m[1], false);
+      const to = stateNode(m[2], true);
+      for (const n of [from, to]) if (!nodes.has(n.id)) nodes.set(n.id, n);
+      edges.push({ from: from.id, to: to.id, label: m[3] ? m[3].trim() : undefined });
     }
   }
 
-  const outLines: string[] = [];
-  const visited = new Set<string>();
-
-  for (let i = 0; i < transitions.length; i++) {
-    const tr = transitions[i];
-    if (!visited.has(tr.from)) {
-      if (tr.from === "[*]") {
-        outLines.push("   ● (Start)");
-      } else {
-        const lbl = stateLabels.get(tr.from) || tr.from;
-        outLines.push(...renderNodeBox({ id: tr.from, label: lbl, shape: "box" }, width));
-      }
-      visited.add(tr.from);
-    }
-
-    const eventText = tr.event ? ` [${tr.event}]` : "";
-    outLines.push("   │" + eventText);
-    outLines.push("   ▼");
-
-    if (i === transitions.length - 1 || !visited.has(tr.to)) {
-      if (tr.to === "[*]") {
-        outLines.push("   ◎ (End)");
-      } else {
-        const lbl = stateLabels.get(tr.to) || tr.to;
-        outLines.push(...renderNodeBox({ id: tr.to, label: lbl, shape: "box" }, width));
-      }
-      visited.add(tr.to);
-    }
+  if (edges.length === 0) {
+    return { title: "Mermaid State Diagram", lines: ["(empty state diagram)"] };
   }
-
-  if (transitions.length === 0) {
-    outLines.push("(empty state diagram)");
+  for (const [id, label] of stateLabels) {
+    const node = nodes.get(id);
+    if (node) node.label = label;
   }
-
-  return { title: "Mermaid State Diagram", lines: outLines };
+  return { title: "Mermaid State Diagram", lines: layoutTopDown(nodes, edges, width) };
 }
 
 function renderMermaidClass(rawLines: string[], maxWidth: number, width: Width): MermaidRenderResult {
@@ -690,7 +830,12 @@ function renderMermaidClass(rawLines: string[], maxWidth: number, width: Width):
 }
 
 export function renderMermaidDiagram(source: string, maxWidth: number, width: Width): MermaidRenderResult {
-  const rawLines = source.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0 && !l.startsWith("%%"));
+  let rawLines = source.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0 && !l.startsWith("%%"));
+  // Front matter (`---` / `title: …` / `---`) configures the diagram; skip it.
+  if (rawLines[0] === "---") {
+    const close = rawLines.indexOf("---", 1);
+    if (close > 0) rawLines = rawLines.slice(close + 1);
+  }
   if (rawLines.length === 0) {
     return { title: "Mermaid", lines: ["(empty diagram)"] };
   }
@@ -712,8 +857,11 @@ export function renderMermaidDiagram(source: string, maxWidth: number, width: Wi
     return renderMermaidClass(rawLines, maxWidth, width);
   }
 
+  // A kind this file cannot draw (gantt, erDiagram, journey, …): its source,
+  // all of it, under a title that says so.
+  const kind = rawLines[0].split(/\s+/)[0];
   return {
-    title: "Mermaid Diagram",
-    lines: rawLines.slice(0, 15).map(l => "  " + l),
+    title: `Mermaid ${kind} (not drawn)`,
+    lines: rawLines.map(l => "  " + l),
   };
 }
