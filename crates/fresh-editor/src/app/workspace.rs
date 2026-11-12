@@ -615,21 +615,8 @@ impl Editor {
     /// past per-window failures so a single bad window can't block the
     /// other quits.
     pub fn save_all_windows_workspaces(&mut self) -> Result<(), WorkspaceError> {
-        let targets: Vec<fresh_core::WindowId> = self
-            .windows
-            .iter()
-            // Never overwrite a window we never materialized: it still
-            // holds only its empty seed layout, while its on-disk
-            // workspace is the authoritative copy. Saving the seed would
-            // clobber the real file (issue: lazy restore + per-dir save).
-            .filter(|(id, w)| {
-                w.buffers.splits().is_some() && !self.materialize_pending.contains(id)
-            })
-            .map(|(id, _)| *id)
-            .collect();
-
         let mut first_err = None;
-        for id in targets {
+        for id in self.windows_to_persist() {
             if let Err(e) = self.save_workspace_for(id) {
                 tracing::warn!("Failed to save workspace for window {id}: {e}");
                 if first_err.is_none() {
@@ -641,6 +628,40 @@ impl Editor {
         match first_err {
             Some(e) => Err(e),
             None => Ok(()),
+        }
+    }
+
+    /// The windows a quit-time save visits: those whose split layout is
+    /// populated.
+    fn windows_to_persist(&self) -> Vec<fresh_core::WindowId> {
+        self.windows
+            .iter()
+            // Never overwrite a window we never materialized: it still
+            // holds only its empty seed layout, while its on-disk
+            // workspace is the authoritative copy. Saving the seed would
+            // clobber the real file (issue: lazy restore + per-dir save).
+            .filter(|(id, w)| {
+                w.buffers.splits().is_some() && !self.materialize_pending.contains(id)
+            })
+            .map(|(id, _)| *id)
+            .collect()
+    }
+
+    /// Flush every window's per-file cursor/scroll state to the global
+    /// per-file store, and write no workspace file. The same windows
+    /// [`Self::save_workspace_for`] would flush, for a quit that saves no
+    /// workspaces.
+    fn save_all_windows_file_states(&self) {
+        for id in self.windows_to_persist() {
+            // `save_workspace_for` returns before its own flush for these:
+            // a dormant remote's window is only a disconnected shell, and a
+            // preparing window's contents are still being built.
+            if self.dormant_remote.contains_key(&id) || self.preparing_windows.contains_key(&id) {
+                continue;
+            }
+            if let Some(win) = self.windows.get(&id) {
+                win.save_all_global_file_states();
+            }
         }
     }
 
@@ -664,7 +685,8 @@ impl Editor {
     ///
     /// `save_workspaces` is the front end's own gate on the per-window
     /// workspace files; `--no-restore` is honoured separately, inside every
-    /// write, through `workspace_persistence_enabled`. Best-effort: every
+    /// write, through `workspace_persistence_enabled`. Neither gates the
+    /// per-file cursor/scroll store, which is written either way. Best-effort: every
     /// step runs even when an earlier one failed, each failure is logged and
     /// the first is returned.
     pub fn persist_on_exit(&mut self, save_workspaces: bool) -> anyhow::Result<()> {
@@ -683,8 +705,15 @@ impl Editor {
         if save_workspaces {
             // Every window, not just the active one, so an Orchestrator
             // restart paints each session's preview without diving in.
+            // Each window's save flushes its per-file states as well.
             let saved = self.save_all_windows_workspaces().map_err(Into::into);
             record("save workspaces", saved);
+        } else {
+            // Per-file cursor/scroll state is not a workspace file, so a
+            // launch that writes none (`fresh FILE`, `--no-restore`, a GUI
+            // run given files) still records it. Without this a file left
+            // open at quit reopened at line 1 (#3748).
+            self.save_all_windows_file_states();
         }
         self.save_histories();
         self.save_orchestrator_state();

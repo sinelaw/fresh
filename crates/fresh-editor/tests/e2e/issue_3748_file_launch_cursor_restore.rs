@@ -98,7 +98,11 @@ fn file_launch_reopens_where_the_cursor_was_left() {
 
     let mut h = launch(&p);
     h.startup(false, std::slice::from_ref(&p.series)).unwrap();
-    assert_on_line(&mut h, 50, "a file launch must reopen on the line it quit on");
+    assert_on_line(
+        &mut h,
+        50,
+        "a file launch must reopen on the line it quit on",
+    );
     h.assert_screen_contains("# patch-50.diff");
 }
 
@@ -119,7 +123,11 @@ fn no_restore_session_still_remembers_the_cursor() {
 
     let mut h = launch(&p);
     h.startup(false, std::slice::from_ref(&p.series)).unwrap();
-    assert_on_line(&mut h, 30, "a --no-restore session must still save per-file state");
+    assert_on_line(
+        &mut h,
+        30,
+        "a --no-restore session must still save per-file state",
+    );
 }
 
 /// Files rewritten behind the editor's back (`.git/COMMIT_EDITMSG`, #2761)
@@ -138,7 +146,11 @@ fn file_launch_quit_still_skips_ephemeral_files() {
 
     let mut h = launch(&p);
     h.startup(false, std::slice::from_ref(&msg)).unwrap();
-    assert_on_line(&mut h, 1, ".git/COMMIT_EDITMSG must not have its cursor restored");
+    assert_on_line(
+        &mut h,
+        1,
+        ".git/COMMIT_EDITMSG must not have its cursor restored",
+    );
 }
 
 fn git_commit_editmsg(root: &Path, content: &str) -> PathBuf {
