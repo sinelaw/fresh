@@ -7,8 +7,6 @@
 //
 // Syntax highlighting is handled by the TextMate grammar (built-in to the editor)
 // This plugin only adds the compose mode layout features.
-import { renderLatexMath } from "./lib/latex.ts";
-import { renderMermaidDiagram } from "./lib/mermaid.ts";
 import { wrapToWidth } from "./lib/text.ts";
 
 const editor = getEditor();
@@ -404,69 +402,85 @@ function displayMathBlocks(lines: LineInfoLike[]): Array<[number, number]> {
 }
 
 // =============================================================================
-// External renderers (optional)
+// Previews of code blocks and math: drawn by external tools
 // =============================================================================
 //
-// The built-in renderers (`lib/latex.ts`, `lib/mermaid.ts`) always work and
-// need nothing installed. When a command-line tool that renders to terminal
-// text is installed, its output is drawn instead:
+// Compose draws no diagram or formula itself. A table, the `renderers`
+// setting, names a command for each code-block language; a fenced block in a
+// language that has one is handed to it, and what it prints is drawn in a
+// frame in place of the source. Math written with `$…$`, `$$…$$`, `\(…\)`
+// or `\[…\]` uses the `math` entry.
 //
-//   * Mermaid: `termaid` (github.com/fasouto/termaid), a real graph layout
-//     for 18 diagram types — loops drawn as edges back up, class relations
-//     as arrows. Of the terminal Mermaid renderers compared for this, it was
-//     the one that drew every diagram tried correctly;
-//   * display math: `utftex` (github.com/bartp5/libtexprintf), which lays a
-//     formula out in two dimensions — fractions stacked, limits under ∑.
+// The defaults:
 //
-// Both are settings (`mermaidCommand` / `mathCommand`, with argument
-// templates), so another tool with the same shape can be named instead, and
-// an empty command turns one off. Inline math always uses the built-in
-// renderer: a tool's multi-row output cannot sit inside a line of prose.
+//   * `mermaid` → `termaid` (github.com/fasouto/termaid), a graph layout for
+//     18 diagram types; of the terminal Mermaid renderers compared for this,
+//     it drew every diagram tried correctly;
+//   * `math`, `latex`, `katex` → `utftex` (github.com/bartp5/libtexprintf),
+//     which lays a formula out in two dimensions.
 //
-// Drawing is synchronous and a tool is not, so the first time a block is
-// seen it is drawn by the built-in renderer while the tool runs; its output
-// is cached by command, width and source, and the lines are redrawn when it
-// arrives. A tool that cannot be started is remembered and not retried this
-// session; one that fails on a block (an unsupported diagram type, a syntax
-// it does not know) leaves that block to the built-in renderer.
+// Any program that prints a drawing as text can be added for any language
+// (`dot = graph-easy --as=boxart {file}`), and `lang =` with no command turns
+// one off. Without a command — none set, not installed, or failing on a
+// block — the source is shown as written: a fenced block as a code block,
+// display math as its lines. Inline math is replaced only when the command
+// draws it on one row; a stacked fraction cannot sit in a sentence.
+//
+// Drawing is synchronous and a command is not, so a block shows its source
+// the first time it is seen while the command runs; the output is cached by
+// command, width and source, and the lines are redrawn when it arrives. A
+// command that cannot be started is noted once (with a status message saying
+// what to install) and not retried this session.
 
-editor.defineConfigString("mermaidCommand", {
-  default: "termaid",
+const DEFAULT_RENDERERS = [
+  "mermaid = termaid {file} --width {width}",
+  "math = utftex --line-width {width} {source}",
+  "latex = utftex --line-width {width} {source}",
+  "katex = utftex --line-width {width} {source}",
+];
+
+editor.defineConfigStringArray("renderers", {
+  default: DEFAULT_RENDERERS,
   description:
-    "Command that draws a ```mermaid block as text, used when it is installed (otherwise the built-in renderer draws it). Empty to always use the built-in renderer.",
-});
-editor.defineConfigStringArray("mermaidArgs", {
-  default: ["{file}", "--width", "{width}"],
-  description:
-    "Arguments for mermaidCommand. {file} is a temporary file holding the diagram's source, {source} the source itself, {width} the columns available.",
-});
-editor.defineConfigString("mathCommand", {
-  default: "utftex",
-  description:
-    "Command that draws display math ($$ … $$, \\[ … \\], ```math) as text, used when it is installed (otherwise the built-in renderer draws it). Empty to always use the built-in renderer.",
-});
-editor.defineConfigStringArray("mathArgs", {
-  default: ["--line-width", "{width}", "{source}"],
-  description:
-    "Arguments for mathCommand. {source} is the formula, {file} a temporary file holding it, {width} the columns available.",
+    "Commands that draw a preview of a code block, by its language: `language = command arguments`. " +
+    "In the arguments, {file} is a temporary file holding the block's text, {source} the text itself, " +
+    "{width} the columns available, {lang} the language. The `math` entry also draws $…$, $$…$$, \\(…\\) and \\[…\\]. " +
+    "A language with no command (`mermaid =`) is shown as code. Example: `dot = graph-easy --as=boxart {file}`.",
 });
 
-interface ComposeSettings {
-  mermaidCommand?: string;
-  mermaidArgs?: string[];
-  mathCommand?: string;
-  mathArgs?: string[];
+interface Renderer {
+  command: string;
+  args: string[];
 }
 
-/** Off for the session after "Markdown: Toggle External Renderers", to
- * compare a tool's drawing with the built-in one. */
-let externalRenderersOn = true;
+/** A command line split into words; "double quotes" keep spaces in a word. */
+function splitCommandLine(line: string): string[] {
+  const words: string[] = [];
+  const re = /"([^"]*)"|(\S+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(line)) !== null) words.push(m[1] ?? m[2]);
+  return words;
+}
 
-type ExternalKind = "mermaid" | "math";
-const EXTERNAL_DEFAULTS: Record<ExternalKind, { command: string; args: string[] }> = {
-  mermaid: { command: "termaid", args: ["{file}", "--width", "{width}"] },
-  math: { command: "utftex", args: ["--line-width", "{width}", "{source}"] },
-};
+/**
+ * The `renderers` table: language → command. A later entry for a language
+ * replaces an earlier one, and one with no command removes it.
+ */
+function renderers(): Map<string, Renderer> {
+  const cfg = (editor.getPluginConfig() ?? {}) as { renderers?: unknown };
+  const entries = Array.isArray(cfg.renderers) ? cfg.renderers : DEFAULT_RENDERERS;
+  const table = new Map<string, Renderer>();
+  for (const entry of entries) {
+    if (typeof entry !== "string") continue;
+    const eq = entry.indexOf("=");
+    if (eq <= 0) continue;
+    const lang = entry.slice(0, eq).trim().toLowerCase();
+    const [command, ...args] = splitCommandLine(entry.slice(eq + 1));
+    if (command) table.set(lang, { command, args });
+    else table.delete(lang);
+  }
+  return table;
+}
 
 /** Rendered rows by request key; "pending" while the tool runs, null when it failed. */
 const externalCache = new Map<string, string[] | null | "pending">();
@@ -474,18 +488,21 @@ const EXTERNAL_CACHE_LIMIT = 500;
 /** Commands that could not be started (not installed): not retried. */
 const missingCommands = new Set<string>();
 
-/** The program's own name, for a frame's title: `utftex`, not its path. */
-function toolName(kind: ExternalKind): string {
-  return (externalTool(kind)?.command ?? "").split(/[\\/]/).pop() ?? "";
+/** The command that draws `lang`, unless none is set or it is not installed. */
+function rendererFor(lang: string): Renderer | null {
+  const r = renderers().get(lang.toLowerCase());
+  if (!r || missingCommands.has(r.command)) return null;
+  return r;
 }
 
-function externalTool(kind: ExternalKind): { command: string; args: string[] } | null {
-  if (!externalRenderersOn) return null;
-  const cfg = (editor.getPluginConfig() ?? {}) as ComposeSettings;
-  const command = (kind === "mermaid" ? cfg.mermaidCommand : cfg.mathCommand) ?? EXTERNAL_DEFAULTS[kind].command;
-  const args = (kind === "mermaid" ? cfg.mermaidArgs : cfg.mathArgs) ?? EXTERNAL_DEFAULTS[kind].args;
-  if (!command.trim() || missingCommands.has(command)) return null;
-  return { command, args };
+/** Whether `lang` has a command (installed or not yet known not to be). */
+function hasRenderer(lang: string): boolean {
+  return rendererFor(lang) !== null;
+}
+
+/** The program's own name, for a frame's title: `utftex`, not its path. */
+function toolName(lang: string): string {
+  return (rendererFor(lang)?.command ?? "").split(/[\\/]/).pop() ?? "";
 }
 
 /** A short stable name for a temporary file, from the request it serves. */
@@ -500,15 +517,17 @@ function hashKey(key: string): string {
  * tool, it failed, or its output has not arrived yet (it is then started,
  * and `bufferId`'s lines are redrawn when it is in).
  */
-function externalRows(kind: ExternalKind, source: string, width: number, bufferId: number): string[] | null {
-  const tool = externalTool(kind);
+function externalRows(lang: string, source: string, width: number, bufferId: number | null): string[] | null {
+  const tool = rendererFor(lang);
   if (!tool) return null;
-  const key = [kind, tool.command, tool.args.join("\u0001"), String(width), source].join("\u0000");
+  const key = [lang, tool.command, tool.args.join("\u0001"), String(width), source].join("\u0000");
   const hit = externalCache.get(key);
   if (hit !== undefined) return hit === "pending" ? null : hit;
+  // A caller with no buffer to redraw (measuring text) only reads the cache.
+  if (bufferId === null) return null;
   if (externalCache.size >= EXTERNAL_CACHE_LIMIT) externalCache.clear();
   externalCache.set(key, "pending");
-  void runExternal(kind, tool, source, width, key).then(async (rows) => {
+  void runExternal(lang, tool, source, width, key).then(async (rows) => {
     externalCache.set(key, rows);
     if (!rows) return;
     editor.refreshLines(bufferId);
@@ -522,26 +541,30 @@ function externalRows(kind: ExternalKind, source: string, width: number, bufferI
 }
 
 async function runExternal(
-  kind: ExternalKind,
-  tool: { command: string; args: string[] },
+  lang: string,
+  tool: Renderer,
   source: string,
   width: number,
   key: string,
 ): Promise<string[] | null> {
   let file = "";
   if (tool.args.some((a) => a.includes("{file}"))) {
-    file = editor.pathJoin(editor.getTempDir(), `fresh-md-${kind}-${hashKey(key)}.txt`);
+    // Named for the language, for a tool that reads the kind from the name.
+    const ext = lang.replace(/[^a-z0-9_+-]/gi, "") || "txt";
+    file = editor.pathJoin(editor.getTempDir(), `fresh-md-${hashKey(key)}.${ext}`);
     if (!editor.writeFile(file, source)) return null;
   }
   const args = tool.args.map((a) =>
-    a.replace(/\{file\}/g, file).replace(/\{width\}/g, String(width)).replace(/\{source\}/g, source)
+    a.replace(/\{file\}/g, file).replace(/\{width\}/g, String(width)).replace(/\{lang\}/g, lang)
+      .replace(/\{source\}/g, source)
   );
   try {
     const result = await editor.spawnHostProcess(tool.command, args);
     if (result.exit_code === -1) {
       // Could not be started: not installed, or not on PATH.
       missingCommands.add(tool.command);
-      editor.debug(`markdown_compose: ${tool.command} unavailable (${result.stderr.trim()}); using the built-in renderer`);
+      editor.debug(`markdown_compose: ${tool.command} unavailable (${result.stderr.trim()})`);
+      editor.setStatus(editor.t("status.no_renderer", { command: tool.command, lang }));
       return null;
     }
     if (result.exit_code !== 0) return null;
@@ -1908,7 +1931,16 @@ interface InlineSpan {
 }
 
 /** Find all inline spans that would produce conceals in the given text. */
-function findInlineSpans(text: string): InlineSpan[] {
+/** Columns given to the math tool for an inline formula: enough that it
+ * never wraps one, so its output is one row when the formula fits on one. */
+const INLINE_MATH_WIDTH = 1000;
+
+/**
+ * `bufferId` is the buffer to redraw when the math tool's drawing of an
+ * inline formula arrives; without one (measuring text) only drawings already
+ * in hand are used.
+ */
+function findInlineSpans(text: string, bufferId: number | null = null): InlineSpan[] {
   const spans: InlineSpan[] = [];
   let m: RegExpExecArray | null;
 
@@ -1922,13 +1954,15 @@ function findInlineSpans(text: string): InlineSpan[] {
   }
   function pushMath(ms: number, me: number, delimLen: number, formula: string): void {
     mathSpanCharRanges.push([ms, me]);
+    // The tool's drawing replaces the formula when it is one row; otherwise
+    // the source stays, still styled (and still kept from emphasis) as math.
+    const rows = externalRows("math", formula, INLINE_MATH_WIDTH, bufferId);
+    const drawn = rows !== null && rows.length === 1 ? rows[0].trim() : null;
     spans.push({
       type: 'math',
       matchStart: ms, matchEnd: me,
       contentStart: ms + delimLen, contentEnd: me - delimLen,
-      concealRanges: [
-        { start: ms, end: me, replacement: renderLatexMath(formula) },
-      ],
+      concealRanges: drawn !== null ? [{ start: ms, end: me, replacement: drawn }] : [],
     });
   }
 
@@ -2406,16 +2440,7 @@ function processLineConceals(
     const blockMeasure = Math.max(4, measure - blockIndent);
     let frame: string;
     if (region === "open") {
-      const lang = getFenceLanguage(lineContent);
-      if (lang === "mermaid") {
-        frame = buildCodeFrameLineWithLabel(blockMeasure, "┌", "┐", "Mermaid");
-      } else if (lang === "math") {
-        frame = buildCodeFrameLineWithLabel(blockMeasure, "┌", "┐", "Math");
-      } else if (lang === "latex" || lang === "katex") {
-        frame = buildCodeFrameLineWithLabel(blockMeasure, "┌", "┐", "LaTeX");
-      } else {
-        frame = buildCodeFrameLine(blockMeasure, "┌", "┐");
-      }
+      frame = buildCodeFrameLine(blockMeasure, "┌", "┐");
     } else {
       frame = buildCodeFrameLine(blockMeasure, "└", "┘");
     }
@@ -2440,8 +2465,10 @@ function processLineConceals(
     // A tool's drawing can take several rows: the first replaces the line,
     // the rest are virtual lines under it, above the frame's bottom.
     const toolRows = externalRows("math", content, codeInnerWidth(blockMeasure), bufferId);
-    const rows = toolRows ?? [renderLatexMath(content)];
-    const mathLabel = toolRows ? `Math · ${toolName("math")}` : "Math";
+    // Not drawn (yet): shown as written.
+    if (toolRows === null) return;
+    const rows = toolRows;
+    const mathLabel = `math · ${toolName("math")}`;
     const frameStart = byteStart;
     const frameEnd = lineContentEndByte(lineContent, byteStart);
     const rowReplacement = buildDiagramRow(rows[0], blockMeasure, blockIndent);
@@ -2909,7 +2936,7 @@ function processLineConceals(
   }
 
   // --- Inline spans: code, emphasis, links, entities ---
-  const spans = findInlineSpans(lineContent);
+  const spans = findInlineSpans(lineContent, bufferId);
   for (const span of spans) {
     const byteCS = charToByte(lineContent, span.contentStart, byteStart);
     const byteCE = charToByte(lineContent, span.contentEnd, byteStart);
@@ -3819,8 +3846,10 @@ editor.on("lines_changed", (data) => {
   }
 
   interface SpecialBlock {
-    kind: "mermaid" | "math";
-    lang?: string;
+    // A fenced block in a language with a renderer, or display math
+    // (`$$` / `\[`), which the `math` renderer draws.
+    kind: "fence" | "math";
+    lang: string;
     openLine: LineInfoLike;
     closeLine: LineInfoLike;
     bodyLines: LineInfoLike[];
@@ -3829,6 +3858,8 @@ editor.on("lines_changed", (data) => {
     // (`$$ E = mc^2` opening a block, `x^2 $$` closing one).
     openFormula?: string;
     closeFormula?: string;
+    // The tool's drawing of the block.
+    rows?: string[];
   }
 
   const specialBlocks: SpecialBlock[] = [];
@@ -3836,8 +3867,8 @@ editor.on("lines_changed", (data) => {
   const specialBlockLineStarts = new Set<number>();
   {
     let currentSpecial: {
-      kind: "mermaid" | "math";
-      lang?: string;
+      kind: "fence";
+      lang: string;
       openLine: LineInfoLike;
       bodyLines: LineInfoLike[];
       blockIndent: number;
@@ -3848,19 +3879,10 @@ editor.on("lines_changed", (data) => {
       if (currentSpecial === null) {
         // A fence line inside another fence's body is that block's content.
         if (line.region === "open" || (line.region !== "body" && looksLikeFence(line.content))) {
-          const lang = getFenceLanguage(line.content);
-          if (lang === "mermaid") {
+          const lang = getFenceLanguage(line.content).toLowerCase();
+          if (lang && hasRenderer(lang)) {
             currentSpecial = {
-              kind: "mermaid",
-              lang,
-              openLine: line,
-              bodyLines: [],
-              blockIndent: leadingIndent(line.content),
-            };
-            continue;
-          } else if (lang === "math" || lang === "latex" || lang === "katex") {
-            currentSpecial = {
-              kind: "math",
+              kind: "fence",
               lang,
               openLine: line,
               bodyLines: [],
@@ -3910,6 +3932,24 @@ editor.on("lines_changed", (data) => {
         closeFormula: closeTrimmed.slice(0, closeTrimmed.length - closer.length).trim(),
       });
     }
+
+    // Only a block its tool has drawn is drawn here; any other is left to
+    // render as what it is in the source — a code block, or lines of text —
+    // and is picked up when the tool's output arrives and the lines redraw.
+    const drawnBlocks = specialBlocks.filter((sb) => {
+      const innerWidth = codeInnerWidth(Math.max(4, measure - sb.blockIndent));
+      if (sb.kind === "fence") {
+        const source = sb.bodyLines.map((l) => l.content.replace(/\r?\n$/, "")).join("\n");
+        sb.rows = externalRows(sb.lang, source, innerWidth, data.buffer_id) ?? undefined;
+      } else {
+        const formula = [sb.openFormula ?? "", ...sb.bodyLines.map((l) => l.content.trim()), sb.closeFormula ?? ""]
+          .filter((f) => f !== "").join("\n");
+        sb.rows = externalRows("math", formula, innerWidth, data.buffer_id) ?? undefined;
+      }
+      return sb.rows !== undefined;
+    });
+    specialBlocks.length = 0;
+    specialBlocks.push(...drawnBlocks);
 
     for (const sb of specialBlocks) {
       specialBlockLineStarts.add(sb.openLine.byte_start);
@@ -4059,12 +4099,8 @@ editor.on("lines_changed", (data) => {
     // next line is outside the block.
     const cursorInBlock = cursorPos >= scopeStart && cursorPos < scopeEnd;
 
-    if (sb.kind === "mermaid") {
-      const source = sb.bodyLines.map((l) => l.content.replace(/\r?\n$/, "")).join("\n");
-      const toolRows = externalRows("mermaid", source, codeInnerWidth(blockMeasure), data.buffer_id);
-      const rendered = toolRows
-        ? { title: `Mermaid · ${toolName("mermaid")}`, lines: toolRows }
-        : renderMermaidDiagram(source, blockMeasure, displayWidth);
+    if (sb.kind === "fence") {
+      const rendered = { title: `${sb.lang} · ${toolName(sb.lang)}`, lines: sb.rows! };
 
       // Open fence
       const openStart = charToByte(sb.openLine.content, blockIndent, sb.openLine.byte_start);
@@ -4119,26 +4155,22 @@ editor.on("lines_changed", (data) => {
         }
       }
     } else if (sb.kind === "math") {
-      const label = (sb.lang === "latex" || sb.lang === "katex") ? "LaTeX" : "Math";
+      const label = "math";
 
       const mathStyle = { fg: "syntax.constant", italic: true };
 
       // The rows to draw, and the lines that hold them ("slots"): the body
       // lines, and a delimiter line that carries a formula of its own
-      // (`$$ E = mc^2`). The built-in renderer draws each slot's formula on
-      // its own row; an external tool draws the whole formula, in as many
-      // rows as it needs — fewer than the slots leaves the rest blank, more
-      // spills into virtual lines above the frame's bottom.
+      // (`$$ E = mc^2`). The tool draws the whole formula in as many rows
+      // as it needs: fewer than the slots leaves the rest blank, more spill
+      // into virtual lines above the frame's bottom.
       const slots: Array<{ line: LineInfoLike; formula: string; delimiter: boolean }> = [];
       if (sb.openFormula) slots.push({ line: sb.openLine, formula: sb.openFormula, delimiter: true });
       for (const bodyLine of sb.bodyLines) slots.push({ line: bodyLine, formula: bodyLine.content.trim(), delimiter: false });
       if (sb.closeFormula) slots.push({ line: sb.closeLine, formula: sb.closeFormula, delimiter: true });
-      const toolRows = externalRows(
-        "math", slots.map((sl) => sl.formula).join("\n"), codeInnerWidth(blockMeasure), data.buffer_id,
-      );
-      const rows = toolRows ?? slots.map((sl) => renderLatexMath(sl.formula));
+      const rows = sb.rows!;
       const overflow = Math.max(0, rows.length - slots.length);
-      const titled = toolRows ? `${label} · ${toolName("math")}` : label;
+      const titled = `${label} · ${toolName(sb.lang)}`;
 
       // Open fence: the frame's top, concealing the delimiter — or, when the
       // delimiter line is a slot, a virtual line above it.
@@ -4400,35 +4432,7 @@ registerHandler("markdownSetComposeWidth", markdownSetComposeWidth);
 // Handle compose width prompt confirmation
 
 
-/** Switch the external renderers off (or back on) for this session, to
- * compare their drawing with the built-in renderers'. */
-function markdownToggleExternalRenderers(): void {
-  externalRenderersOn = !externalRenderersOn;
-  if (externalRenderersOn) missingCommands.clear();
-  const tools = (["mermaid", "math"] as const)
-    .map((k) => {
-      const t = externalTool(k);
-      return t ? t.command : null;
-    })
-    .filter((c): c is string => c !== null);
-  editor.setStatus(
-    externalRenderersOn
-      ? editor.t("status.external_on", { tools: tools.join(", ") || "-" })
-      : editor.t("status.external_off"),
-  );
-  const bufferId = editor.getActiveBufferId();
-  if (bufferId !== null && bufferId !== undefined) editor.refreshLines(bufferId);
-}
-registerHandler("markdownToggleExternalRenderers", markdownToggleExternalRenderers);
-
 // Register commands
-editor.registerCommand(
-  "%cmd.toggle_external_renderers",
-  "%cmd.toggle_external_renderers_desc",
-  "markdownToggleExternalRenderers",
-  null
-);
-
 editor.registerCommand(
   "%cmd.toggle_compose",
   "%cmd.toggle_compose_desc",

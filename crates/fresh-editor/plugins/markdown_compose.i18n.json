@@ -32,10 +32,7 @@
     "status.mode_rendered": "Markdown: Режим Рендериране",
     "status.mode_dual": "Markdown: Двоен режим Изходен код/Композиция",
     "dual.tab_name": "%{name} (Изходен код/Композиция)",
-    "cmd.toggle_external_renderers": "Markdown: Превключване на външните рендерери",
-    "cmd.toggle_external_renderers_desc": "Рисуване на формули и Mermaid с вградените рендерери или с инсталираните инструменти (utftex, termaid)",
-    "status.external_on": "Външни рендерери: ВКЛ. (%{tools})",
-    "status.external_off": "Външни рендерери: ИЗКЛ. (вградено рендериране)"
+    "status.no_renderer": "%{command} не е намерен: %{lang} се показва както е написан. Инсталирайте го или променете настройката renderers на markdown_compose."
   },
   "cs": {
     "cmd.toggle_compose": "Markdown: Prepnout Compose/Preview",
@@ -70,10 +67,7 @@
     "status.mode_rendered": "Markdown: Rezim Nahled",
     "status.mode_dual": "Markdown: Dvojity rezim Zdroj/Compose",
     "dual.tab_name": "%{name} (Zdroj/Compose)",
-    "cmd.toggle_external_renderers": "Markdown: Přepnout externí renderery",
-    "cmd.toggle_external_renderers_desc": "Kreslit vzorce a Mermaid vestavěnými renderery, nebo nainstalovanými nástroji (utftex, termaid)",
-    "status.external_on": "Externí renderery: ZAP (%{tools})",
-    "status.external_off": "Externí renderery: VYP (vestavěné vykreslování)"
+    "status.no_renderer": "%{command} nenalezen: %{lang} se zobrazuje tak, jak je napsán. Nainstalujte ho, nebo změňte nastavení renderers v markdown_compose."
   },
   "de": {
     "cmd.toggle_compose": "Markdown: Compose/Preview umschalten",
@@ -108,10 +102,7 @@
     "status.mode_rendered": "Markdown: Vorschau-Modus",
     "status.mode_dual": "Markdown: Quellcode/Compose-Doppelmodus",
     "dual.tab_name": "%{name} (Quellcode/Compose)",
-    "cmd.toggle_external_renderers": "Markdown: Externe Renderer umschalten",
-    "cmd.toggle_external_renderers_desc": "Formeln und Mermaid mit den eingebauten Renderern oder mit installierten Werkzeugen (utftex, termaid) zeichnen",
-    "status.external_on": "Externe Renderer: AN (%{tools})",
-    "status.external_off": "Externe Renderer: AUS (eingebaute Darstellung)"
+    "status.no_renderer": "%{command} nicht gefunden: %{lang} wird wie geschrieben angezeigt. Installieren oder die Einstellung renderers von markdown_compose ändern."
   },
   "en": {
     "cmd.toggle_compose": "Markdown: Toggle Compose/Preview",
@@ -146,10 +137,7 @@
     "status.mode_rendered": "Markdown: Rendered Mode",
     "status.mode_dual": "Markdown: Source/Compose Dual Mode",
     "dual.tab_name": "%{name} (Source/Compose)",
-    "cmd.toggle_external_renderers": "Markdown: Toggle External Renderers",
-    "cmd.toggle_external_renderers_desc": "Draw math and Mermaid with the built-in renderers, or with the installed tools (utftex, termaid)",
-    "status.external_on": "External renderers: ON (%{tools})",
-    "status.external_off": "External renderers: OFF (built-in rendering)"
+    "status.no_renderer": "%{command} not found: %{lang} is shown as written. Install it, or change the renderers setting of markdown_compose."
   },
   "es": {
     "cmd.toggle_compose": "Markdown: Alternar Compose/Preview",
@@ -184,10 +172,7 @@
     "status.mode_rendered": "Markdown: Modo Renderizado",
     "status.mode_dual": "Markdown: Modo doble Fuente/Compose",
     "dual.tab_name": "%{name} (Fuente/Compose)",
-    "cmd.toggle_external_renderers": "Markdown: Alternar renderizadores externos",
-    "cmd.toggle_external_renderers_desc": "Dibujar fórmulas y Mermaid con los renderizadores integrados o con las herramientas instaladas (utftex, termaid)",
-    "status.external_on": "Renderizadores externos: ACTIVADOS (%{tools})",
-    "status.external_off": "Renderizadores externos: DESACTIVADOS (renderizado integrado)"
+    "status.no_renderer": "%{command} no encontrado: %{lang} se muestra tal como está escrito. Instálelo o cambie el ajuste renderers de markdown_compose."
   },
   "fr": {
     "cmd.toggle_compose": "Markdown: Basculer Compose/Preview",
@@ -222,10 +207,7 @@
     "status.mode_rendered": "Markdown : Mode Rendu",
     "status.mode_dual": "Markdown : Mode double Source/Compose",
     "dual.tab_name": "%{name} (Source/Compose)",
-    "cmd.toggle_external_renderers": "Markdown : Basculer les moteurs de rendu externes",
-    "cmd.toggle_external_renderers_desc": "Dessiner les formules et Mermaid avec les moteurs intégrés ou avec les outils installés (utftex, termaid)",
-    "status.external_on": "Moteurs de rendu externes : ACTIVÉS (%{tools})",
-    "status.external_off": "Moteurs de rendu externes : DÉSACTIVÉS (rendu intégré)"
+    "status.no_renderer": "%{command} introuvable : %{lang} est affiché tel qu'écrit. Installez-le ou modifiez le réglage renderers de markdown_compose."
   },
   "it": {
     "cmd.toggle_compose": "Markdown: Alterna Compose/Preview",
@@ -260,10 +242,7 @@
     "status.mode_rendered": "Markdown: Modalita Rendering",
     "status.mode_dual": "Markdown: Modalità doppia Sorgente/Compose",
     "dual.tab_name": "%{name} (Sorgente/Compose)",
-    "cmd.toggle_external_renderers": "Markdown: Attiva/disattiva renderer esterni",
-    "cmd.toggle_external_renderers_desc": "Disegna formule e Mermaid con i renderer integrati o con gli strumenti installati (utftex, termaid)",
-    "status.external_on": "Renderer esterni: ATTIVI (%{tools})",
-    "status.external_off": "Renderer esterni: DISATTIVI (rendering integrato)"
+    "status.no_renderer": "%{command} non trovato: %{lang} è mostrato come scritto. Installalo o modifica l'impostazione renderers di markdown_compose."
   },
   "ja": {
     "cmd.toggle_compose": "Markdown: Compose/Preview 切り替え",
@@ -298,10 +277,7 @@
     "status.mode_rendered": "Markdown: レンダリングモード",
     "status.mode_dual": "Markdown: ソース/Compose デュアルモード",
     "dual.tab_name": "%{name} (ソース/Compose)",
-    "cmd.toggle_external_renderers": "Markdown: 外部レンダラーの切り替え",
-    "cmd.toggle_external_renderers_desc": "数式と Mermaid を内蔵レンダラーまたはインストール済みツール (utftex, termaid) で描画",
-    "status.external_on": "外部レンダラー: オン (%{tools})",
-    "status.external_off": "外部レンダラー: オフ (内蔵レンダリング)"
+    "status.no_renderer": "%{command} が見つかりません: %{lang} は書かれたまま表示されます。インストールするか、markdown_compose の renderers 設定を変更してください。"
   },
   "ko": {
     "cmd.toggle_compose": "Markdown: Compose/Preview 전환",
@@ -336,10 +312,7 @@
     "status.mode_rendered": "Markdown: 렌더링 모드",
     "status.mode_dual": "Markdown: 소스/Compose 듀얼 모드",
     "dual.tab_name": "%{name} (소스/Compose)",
-    "cmd.toggle_external_renderers": "Markdown: 외부 렌더러 전환",
-    "cmd.toggle_external_renderers_desc": "수식과 Mermaid를 내장 렌더러 또는 설치된 도구(utftex, termaid)로 그리기",
-    "status.external_on": "외부 렌더러: 켜짐 (%{tools})",
-    "status.external_off": "외부 렌더러: 꺼짐 (내장 렌더링)"
+    "status.no_renderer": "%{command}을(를) 찾을 수 없음: %{lang}이(가) 작성된 그대로 표시됩니다. 설치하거나 markdown_compose의 renderers 설정을 변경하세요."
   },
   "pt-BR": {
     "cmd.toggle_compose": "Markdown: Alternar Compose/Preview",
@@ -374,10 +347,7 @@
     "status.mode_rendered": "Markdown: Modo Renderizado",
     "status.mode_dual": "Markdown: Modo duplo Fonte/Compose",
     "dual.tab_name": "%{name} (Fonte/Compose)",
-    "cmd.toggle_external_renderers": "Markdown: Alternar renderizadores externos",
-    "cmd.toggle_external_renderers_desc": "Desenhar fórmulas e Mermaid com os renderizadores integrados ou com as ferramentas instaladas (utftex, termaid)",
-    "status.external_on": "Renderizadores externos: LIGADOS (%{tools})",
-    "status.external_off": "Renderizadores externos: DESLIGADOS (renderização integrada)"
+    "status.no_renderer": "%{command} não encontrado: %{lang} é mostrado como escrito. Instale-o ou altere a configuração renderers de markdown_compose."
   },
   "ru": {
     "cmd.toggle_compose": "Markdown: Переключить Compose/Preview",
@@ -412,10 +382,7 @@
     "status.mode_rendered": "Markdown: Режим рендеринга",
     "status.mode_dual": "Markdown: Двойной режим исходный код/Compose",
     "dual.tab_name": "%{name} (исходный код/Compose)",
-    "cmd.toggle_external_renderers": "Markdown: Переключить внешние рендереры",
-    "cmd.toggle_external_renderers_desc": "Рисовать формулы и Mermaid встроенными рендерерами или установленными инструментами (utftex, termaid)",
-    "status.external_on": "Внешние рендереры: ВКЛ (%{tools})",
-    "status.external_off": "Внешние рендереры: ВЫКЛ (встроенная отрисовка)"
+    "status.no_renderer": "%{command} не найден: %{lang} показан как написано. Установите его или измените настройку renderers в markdown_compose."
   },
   "th": {
     "cmd.toggle_compose": "Markdown: สลับ Compose/Preview",
@@ -450,10 +417,7 @@
     "status.mode_rendered": "Markdown: โหมดเรนเดอร์",
     "status.mode_dual": "Markdown: โหมดคู่ ซอร์ส/Compose",
     "dual.tab_name": "%{name} (ซอร์ส/Compose)",
-    "cmd.toggle_external_renderers": "Markdown: สลับตัวเรนเดอร์ภายนอก",
-    "cmd.toggle_external_renderers_desc": "วาดสูตรและ Mermaid ด้วยตัวเรนเดอร์ในตัว หรือด้วยเครื่องมือที่ติดตั้งไว้ (utftex, termaid)",
-    "status.external_on": "ตัวเรนเดอร์ภายนอก: เปิด (%{tools})",
-    "status.external_off": "ตัวเรนเดอร์ภายนอก: ปิด (ใช้การเรนเดอร์ในตัว)"
+    "status.no_renderer": "ไม่พบ %{command}: %{lang} แสดงตามที่เขียน ติดตั้ง หรือเปลี่ยนการตั้งค่า renderers ของ markdown_compose"
   },
   "uk": {
     "cmd.toggle_compose": "Markdown: Перемкнути Compose/Preview",
@@ -488,10 +452,7 @@
     "status.mode_rendered": "Markdown: Режим рендерингу",
     "status.mode_dual": "Markdown: Подвійний режим вихідний код/Compose",
     "dual.tab_name": "%{name} (вихідний код/Compose)",
-    "cmd.toggle_external_renderers": "Markdown: Перемкнути зовнішні рендерери",
-    "cmd.toggle_external_renderers_desc": "Малювати формули та Mermaid вбудованими рендерерами або встановленими інструментами (utftex, termaid)",
-    "status.external_on": "Зовнішні рендерери: УВІМК. (%{tools})",
-    "status.external_off": "Зовнішні рендерери: ВИМК. (вбудоване відображення)"
+    "status.no_renderer": "%{command} не знайдено: %{lang} показано як написано. Встановіть його або змініть налаштування renderers у markdown_compose."
   },
   "vi": {
     "cmd.toggle_compose": "Markdown: Bật/tắt Compose/Preview",
@@ -526,10 +487,7 @@
     "status.mode_rendered": "Markdown: Chế độ Hiển thị",
     "status.mode_dual": "Markdown: Chế độ kép Nguồn/Compose",
     "dual.tab_name": "%{name} (Nguồn/Compose)",
-    "cmd.toggle_external_renderers": "Markdown: Bật/tắt trình kết xuất ngoài",
-    "cmd.toggle_external_renderers_desc": "Vẽ công thức và Mermaid bằng trình kết xuất tích hợp hoặc bằng công cụ đã cài (utftex, termaid)",
-    "status.external_on": "Trình kết xuất ngoài: BẬT (%{tools})",
-    "status.external_off": "Trình kết xuất ngoài: TẮT (kết xuất tích hợp)"
+    "status.no_renderer": "Không tìm thấy %{command}: %{lang} được hiển thị như đã viết. Hãy cài đặt hoặc đổi cài đặt renderers của markdown_compose."
   },
   "zh-CN": {
     "cmd.toggle_compose": "Markdown: 切换 Compose/Preview",
@@ -564,9 +522,6 @@
     "status.mode_rendered": "Markdown: 渲染模式",
     "status.mode_dual": "Markdown: 源码/Compose 双栏模式",
     "dual.tab_name": "%{name} (源码/Compose)",
-    "cmd.toggle_external_renderers": "Markdown: 切换外部渲染器",
-    "cmd.toggle_external_renderers_desc": "使用内置渲染器或已安装的工具 (utftex, termaid) 绘制公式和 Mermaid",
-    "status.external_on": "外部渲染器：开 (%{tools})",
-    "status.external_off": "外部渲染器：关 (内置渲染)"
+    "status.no_renderer": "未找到 %{command}：%{lang} 按原文显示。请安装，或修改 markdown_compose 的 renderers 设置。"
   }
 }

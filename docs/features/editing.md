@@ -274,38 +274,49 @@ Three commands switch the pane in focus between views of a Markdown file:
 
 "Markdown: Cycle View Mode" steps through Source, Rendered and dual mode, and "Markdown: Toggle Source/Compose Dual Mode" switches dual mode on and off. The dual-mode tab sits next to the file's own tab, and you can edit the file in its source side. Leaving dual mode, or closing its tab, closes only that tab: the file stays open as it was, and other panes you have open on it are left alone.
 
-Compose mode also draws math and diagrams:
-
-- LaTeX math is drawn with Unicode symbols: Greek letters, operators, superscripts and subscripts, fractions and roots, `\mathbb` letters (ℝ, ℤ) and accents (x̂, v⃗). It is found in the delimiters MathJax, KaTeX, GitHub and GitLab use:
-  - inline: `$x^2$`, `\(x^2\)`, or GitLab's ``$`x^2`$``;
-  - display: `$$ … $$`, `\[ … \]` (on one line, or with `\[` and `\]` on lines of their own), or a ` ```math `, ` ```latex ` or ` ```katex ` fence.
-
-  An environment such as `aligned` is drawn a line at a time. A superscript or subscript Unicode has no raised or lowered form for is written `^(…)` / `_(…)`.
-- A ` ```mermaid ` fence is drawn as a diagram: flowcharts (with labelled links, `A & B` groups and the usual node shapes), sequence diagrams (with `loop`/`alt`/`opt`/`par` blocks and `autonumber`), pie charts, and state and class diagrams. A left-to-right flowchart that branches is drawn top-down. Other diagram types are shown as written, with the type named in the frame.
-
-Put the cursor in a math block or a diagram to edit its source; it is drawn again when the cursor leaves.
-
-The built-in renderers need nothing installed. When one of these tools is installed, it draws instead, and the frame's title names it:
-
-| Tool | Draws | Gives you |
-|---|---|---|
-| [`termaid`](https://github.com/fasouto/termaid) (`pip install termaid`) | ` ```mermaid ` blocks | a full graph layout for 18 diagram types: loops drawn as edges back up, class relations as arrows |
-| [`utftex`](https://github.com/bartp5/libtexprintf) | display math | two-dimensional layout: fractions stacked, limits under ∑ |
-
-Inline math always uses the built-in renderer, since a tool's multi-row drawing cannot sit inside a line of text. A block a tool cannot draw (a diagram type it does not know, say) is drawn by the built-in renderer. The tools are settings under *Plugins → markdown_compose* (`plugins.markdown_compose.settings`):
-
-| Setting | Default | |
-|---|---|---|
-| `mermaidCommand` | `"termaid"` | The Mermaid tool; `""` to always use the built-in renderer |
-| `mermaidArgs` | `["{file}", "--width", "{width}"]` | Its arguments: `{file}` is a temporary file holding the source, `{source}` the source itself, `{width}` the columns available |
-| `mathCommand` | `"utftex"` | The display-math tool; `""` to always use the built-in renderer |
-| `mathArgs` | `["--line-width", "{width}", "{source}"]` | Its arguments, as above |
-
-"Markdown: Toggle External Renderers" switches between the tools and the built-in renderers for the session, to compare them.
-
-Other Mermaid tools that print text work too, given their command and arguments. [`mmaid`](https://github.com/aaronsb/mmaid-go) is a single Go binary covering 31 diagram types (`"mermaidCommand": "mmaid", "mermaidArgs": ["{file}"]`); it has no width option, so a pie chart can run wider than the page.
-
 Compose mode reads the document the way markdown defines it, so a paragraph, list item or quote written across several source lines is re-flowed into one block at the page width — a hard-wrapped file reads as prose rather than as its source layout. The things markdown treats as their own block still are: a blank line, a heading, a thematic break, a table row, a fenced code block, a new list marker, and a hard break (two trailing spaces or a trailing backslash).
+
+### Previews of diagrams, math and other code blocks
+
+Compose mode can show a code block as a drawing instead of its source. It doesn't draw anything itself: the `renderers` setting maps a code block's language to a command, and compose shows what that command prints, framed, in place of the block. The frame's title names the language and the program, such as `mermaid · termaid`.
+
+The defaults cover Mermaid diagrams and LaTeX math:
+
+| Language | Command | Install |
+|---|---|---|
+| `mermaid` | `termaid {file} --width {width}` | [`termaid`](https://github.com/fasouto/termaid): `pip install termaid` |
+| `math`, `latex`, `katex` | `utftex --line-width {width} {source}` | [`utftex`](https://github.com/bartp5/libtexprintf) |
+
+The `math` entry also draws math written in the delimiters MathJax, KaTeX, GitHub and GitLab use:
+- inline: `$x^2$`, `\(x^2\)`, or GitLab's ``$`x^2`$``;
+- display: `$$ … $$`, or `\[ … \]` (on one line, or with `\[` and `\]` on lines of their own).
+
+Inline math is replaced only when the command draws it on one row, since a stacked fraction can't sit inside a sentence. Prices such as "$10 and $20" are not taken for math.
+
+When a language has no command, the command isn't installed, or it fails on a block, the source is shown as written: a fenced block as a code block, display math as its lines. The first time a missing command is needed, the status bar says what to install.
+
+Put the cursor in a drawn block to edit its source; it is drawn again when the cursor leaves.
+
+The table is the `renderers` setting under *Plugins → markdown_compose* (`plugins.markdown_compose.settings.renderers`), a list of `language = command arguments` entries:
+
+```json
+"renderers": [
+  "mermaid = termaid {file} --width {width}",
+  "math = utftex --line-width {width} {source}",
+  "latex = utftex --line-width {width} {source}",
+  "katex = utftex --line-width {width} {source}",
+  "dot = graph-easy --as=boxart {file}"
+]
+```
+
+- **Placeholders:** in the arguments, `{file}` is a temporary file holding the block's text (named with the language as its extension), `{source}` is the text itself, `{width}` is the columns available, and `{lang}` is the language.
+- **Quoting:** wrap an argument in "double quotes" to keep the spaces in it.
+- **Overriding:** a later entry for a language replaces an earlier one.
+- **Turning one off:** an entry with no command (`mermaid =`) shows that language as code.
+
+Setting the list replaces the defaults, so keep the entries you still want.
+
+Any program that prints its drawing as text works. For Mermaid, [`mmaid`](https://github.com/aaronsb/mmaid-go) is an alternative covering 31 diagram types (`mermaid = mmaid {file}`); it has no width option, so a pie chart can run wider than the page.
 
 ### Contents Panel
 
