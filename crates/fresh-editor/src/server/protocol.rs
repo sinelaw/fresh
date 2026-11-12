@@ -21,7 +21,9 @@ use std::collections::HashMap;
 /// order they arrive in — `ClientHello::pair_token` on the control stream,
 /// and the same token at the start of the data stream (see
 /// `ipc::ServerListener::accept`).
-pub const PROTOCOL_VERSION: u32 = 5;
+/// v6: clients explicitly report returning from SIGTSTP before the daemon
+/// restores terminal modes; Resize alone is not a resume acknowledgement.
+pub const PROTOCOL_VERSION: u32 = 6;
 
 /// Terminal size in columns and rows
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,6 +63,13 @@ pub struct ClientHello {
     /// client older than protocol v5.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pair_token: Option<String>,
+    /// Whether this client acts on `SuspendClient`: it tears its terminal
+    /// down, stops, and sends `Resumed` once it is back. The Unix relay does;
+    /// the Windows relay cannot (there is no SIGTSTP) and keeps running. The
+    /// daemon withholds output only from a client that will say `Resumed`,
+    /// so one that cannot is not frozen waiting for it.
+    #[serde(default)]
+    pub can_suspend: bool,
 }
 
 impl ClientHello {
@@ -91,6 +100,9 @@ impl ClientHello {
                 .ok()
                 .filter(|t| !t.is_empty()),
             pair_token: None,
+            // The relay that handles `SuspendClient` by stopping is
+            // `client/relay_unix.rs`.
+            can_suspend: cfg!(unix),
         }
     }
 
@@ -165,6 +177,8 @@ impl VersionMismatch {
 pub enum ClientControl {
     /// Initial handshake
     Hello(ClientHello),
+    /// This client has returned from SIGTSTP and re-enabled raw mode.
+    Resumed,
     /// Terminal was resized
     Resize { cols: u16, rows: u16 },
     /// This terminal is a Linux console whose mouse the client forwards from
