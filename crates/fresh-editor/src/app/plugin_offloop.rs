@@ -727,7 +727,7 @@ pub(crate) struct BaselineLoadRequest {
 /// the window's authority), install it in the shared store, and settle the
 /// plugin's promise. Runs on the tokio runtime.
 pub(crate) fn load_diff_baseline(runtime: &LiveRuntime, cap: OffLoop, req: BaselineLoadRequest) {
-    use crate::app::diff_baselines::{BaselineContent, BaselineSpec};
+    use crate::app::diff_baselines::{git_normalizes_eol, BaselineContent, BaselineSpec};
 
     runtime.spawn(async move {
         let decode = |bytes: Vec<u8>| {
@@ -737,10 +737,12 @@ pub(crate) fn load_diff_baseline(runtime: &LiveRuntime, cap: OffLoop, req: Basel
             ))
             .into_owned()
         };
-        let text: Result<String, String> = match &req.spec {
+        // (text, ignore_cr): only git baselines whose path git itself
+        // line-ending-normalizes are diffed ignoring CRLF vs LF.
+        let loaded: Result<(String, bool), String> = match &req.spec {
             // Saved baselines never load content; the editor thread
             // resolves them synchronously and never sends them here.
-            BaselineSpec::Saved => Ok(String::new()),
+            BaselineSpec::Saved => Ok((String::new(), false)),
             BaselineSpec::Disk { path } => {
                 let path = path.clone();
                 let fs = Arc::clone(&cap.filesystem);
@@ -748,7 +750,7 @@ pub(crate) fn load_diff_baseline(runtime: &LiveRuntime, cap: OffLoop, req: Basel
                     .await
                     .map_err(|e| format!("baseline read task failed: {e}"))
                     .and_then(|r| {
-                        r.map(decode)
+                        r.map(|bytes| (decode(bytes), false))
                             .map_err(|e| format!("failed to read baseline file: {e}"))
                     })
             }
@@ -758,12 +760,21 @@ pub(crate) fn load_diff_baseline(runtime: &LiveRuntime, cap: OffLoop, req: Basel
                 git_ref,
             } => load_git_baseline(req.spawner.as_ref(), cwd, file_path, git_ref.as_deref())
                 .await
-                .map(decode),
+                .map(|git| {
+                    let text = decode(git.bytes);
+                    let ignore_cr = git_normalizes_eol(
+                        &git.eol_attr,
+                        git.autocrlf.as_deref(),
+                        text.contains("\r\n"),
+                    );
+                    (text, ignore_cr)
+                }),
         };
 
-        match text {
-            Ok(text) => {
-                let content = BaselineContent::new(text);
+        match loaded {
+            Ok((text, ignore_cr)) => {
+                let mut content = BaselineContent::new(text);
+                content.ignore_cr = ignore_cr;
                 let installed = match req.store.inner.lock() {
                     Ok(mut inner) => match inner.entries.get_mut(&req.baseline_id) {
                         Some(entry) => {
@@ -802,16 +813,33 @@ pub(crate) fn load_diff_baseline(runtime: &LiveRuntime, cap: OffLoop, req: Basel
     });
 }
 
+/// A git baseline as loaded: the blob's raw bytes plus what git's
+/// line-ending normalization of the path depends on (see
+/// `diff_baselines::git_normalizes_eol`).
+struct GitBaseline {
+    bytes: Vec<u8>,
+    /// The `attr/` field of `git ls-files --eol` (e.g. `"text eol=crlf"`).
+    eol_attr: String,
+    /// `core.autocrlf`, `None` when unset.
+    autocrlf: Option<String>,
+}
+
 /// Fetch a file's content at a git revision: resolve the repo-relative
 /// path, then `git show`. `git_ref` of `None` means the index (stage 0).
 /// Returns the raw bytes; the caller decodes them with the buffer's
 /// encoding.
+///
+/// The blob is read as stored (`git show`), not in checkout form (`git
+/// cat-file --filters`): `--filters` runs the repository's smudge filters,
+/// i.e. commands configured by the workspace, which opening a file must
+/// not execute. Line endings are reconciled at diff time instead, the way
+/// `git diff` does, from the path's eol attributes and `core.autocrlf`.
 async fn load_git_baseline(
     spawner: &dyn crate::services::remote::ProcessSpawner,
     cwd: &std::path::Path,
     file_path: &std::path::Path,
     git_ref: Option<&str>,
-) -> Result<Vec<u8>, String> {
+) -> Result<GitBaseline, String> {
     let cwd_str = cwd.to_string_lossy().to_string();
     let file_str = file_path.to_string_lossy().to_string();
 
@@ -820,6 +848,7 @@ async fn load_git_baseline(
             "git".to_string(),
             vec![
                 "ls-files".to_string(),
+                "--eol".to_string(),
                 "--full-name".to_string(),
                 "--".to_string(),
                 file_str,
@@ -831,14 +860,37 @@ async fn load_git_baseline(
     if ls.exit_code != 0 {
         return Err(format!("git ls-files failed: {}", ls.stderr.trim()));
     }
-    let rel_path = ls
+    // `i/<eol> w/<eol> attr/<attrs>\t<path>`
+    let (eol_info, rel_path) = ls
         .stdout
         .lines()
         .next()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| "file is not tracked in git".to_string())?
-        .to_string();
+        .and_then(|line| line.split_once('\t'))
+        .map(|(info, path)| (info, path.trim()))
+        .filter(|(_, path)| !path.is_empty())
+        .ok_or_else(|| "file is not tracked in git".to_string())?;
+    let eol_attr = eol_info
+        .split_once("attr/")
+        .map(|(_, attr)| attr.trim().to_string())
+        .unwrap_or_default();
+    let rel_path = rel_path.to_string();
+
+    // Exit code 1 means unset; any failure reads as unset, which keeps
+    // the comparison exact.
+    let autocrlf = spawner
+        .spawn(
+            "git".to_string(),
+            vec![
+                "config".to_string(),
+                "--get".to_string(),
+                "core.autocrlf".to_string(),
+            ],
+            Some(cwd_str.clone()),
+        )
+        .await
+        .ok()
+        .filter(|out| out.exit_code == 0)
+        .map(|out| out.stdout.trim().to_string());
 
     let show_spec = match git_ref {
         Some(r) => format!("{r}:{rel_path}"),
@@ -855,7 +907,11 @@ async fn load_git_baseline(
     if show.exit_code != 0 {
         return Err(format!("git show failed: {}", show.stderr.trim()));
     }
-    Ok(show.stdout)
+    Ok(GitBaseline {
+        bytes: show.stdout,
+        eol_attr,
+        autocrlf,
+    })
 }
 
 #[cfg(test)]
@@ -1128,6 +1184,127 @@ mod tests {
             inner.entries[&3].content.as_ref().map(|c| c.text.as_str()),
             Some(text)
         );
+    }
+
+    /// Load a `git show HEAD:f.txt` baseline from a fresh repo whose blob
+    /// is `blob`, with `attrs` as `.gitattributes` (if any) and
+    /// `core.autocrlf` pinned locally — local config beats the host's
+    /// global/system one, so the outcome doesn't depend on the machine.
+    /// Returns the installed (text, ignore_cr).
+    fn load_head_baseline(attrs: Option<&str>, autocrlf: &str, blob: &str) -> (String, bool) {
+        use crate::app::diff_baselines::{BaselineEntry, BaselineSpec, BaselineStore};
+        use crate::services::env_provider::EnvProvider;
+        use crate::services::remote::LocalProcessSpawner;
+        use crate::services::workspace_trust::WorkspaceTrust;
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .current_dir(&root)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_GLOBAL", root.join("nonexistent-gitconfig"))
+                .args(["-c", "user.name=Test", "-c", "user.email=test@example.com"])
+                .args(["-c", "commit.gpgsign=false"])
+                .args(args)
+                .output()
+                .expect("git must be runnable");
+            assert!(
+                out.status.success(),
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        git(&["init", "-q"]);
+        // Commit with conversion off so the blob is stored byte-for-byte,
+        // then switch to the configuration under test.
+        git(&["config", "--local", "core.autocrlf", "false"]);
+        let path = root.join("f.txt");
+        std::fs::write(&path, blob).unwrap();
+        git(&["add", "f.txt"]);
+        git(&["commit", "-q", "-m", "init"]);
+        if let Some(attrs) = attrs {
+            std::fs::write(root.join(".gitattributes"), attrs).unwrap();
+        }
+        git(&["config", "--local", "core.autocrlf", autocrlf]);
+
+        let runtime = LiveRuntime::multi_thread("offloop-test", 2).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let store = BaselineStore::default();
+        let spec = BaselineSpec::Git {
+            cwd: root.clone(),
+            file_path: path.clone(),
+            git_ref: Some("HEAD".to_string()),
+        };
+        store.inner.lock().unwrap().entries.insert(
+            1,
+            BaselineEntry {
+                buffer_id: BufferId(1),
+                window_id: fresh_core::WindowId(1),
+                spec: spec.clone(),
+                generation: 0,
+                content: None,
+            },
+        );
+        load_diff_baseline(
+            &runtime,
+            OffLoop {
+                filesystem: Arc::new(StdFileSystem),
+                sender: tx,
+                cancel: Arc::default(),
+            },
+            BaselineLoadRequest {
+                baseline_id: 1,
+                spec,
+                spawner: Arc::new(LocalProcessSpawner::new(
+                    Arc::new(EnvProvider::inactive()),
+                    Arc::new(WorkspaceTrust::permissive()),
+                )),
+                store: store.clone(),
+                callback_id: JsCallbackId::new(1),
+                encoding: Default::default(),
+                is_registration: true,
+            },
+        );
+        match rx.recv().expect("the load must settle exactly once") {
+            AsyncMessage::Plugin(PluginAsyncMessage::OffLoopSettled { result, .. }) => {
+                result.expect("a tracked file's git baseline should resolve");
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
+        let inner = store.inner.lock().unwrap();
+        let content = inner.entries[&1]
+            .content
+            .as_ref()
+            .expect("content installed");
+        (content.text.clone(), content.ignore_cr)
+    }
+
+    /// A git baseline is the blob as stored (`git show`, no checkout
+    /// filters), and is diffed ignoring CRLF vs LF exactly when git itself
+    /// normalizes the path. Ignoring CR everywhere hid genuine line-ending
+    /// changes in repos without conversion; never ignoring it made every
+    /// line of a CRLF checkout differ from its LF blob.
+    #[test]
+    fn git_baseline_ignores_cr_only_where_git_normalizes() {
+        // `eol=crlf`: git normalizes; the baseline stays the raw LF blob.
+        let (text, ignore_cr) =
+            load_head_baseline(Some("*.txt text eol=crlf\n"), "false", "a\nb\n");
+        assert_eq!(text, "a\nb\n", "baseline must be the blob as stored");
+        assert!(ignore_cr, "eol=crlf: git diff ignores CRLF vs LF");
+
+        // core.autocrlf=true (the Git for Windows default), LF blob.
+        let (_, ignore_cr) = load_head_baseline(None, "true", "a\nb\n");
+        assert!(ignore_cr, "autocrlf=true over an LF blob is normalized");
+
+        // No conversion configured: a CRLF -> LF flip is a real change.
+        let (text, ignore_cr) = load_head_baseline(None, "false", "a\r\nb\r\n");
+        assert_eq!(text, "a\r\nb\r\n");
+        assert!(!ignore_cr, "autocrlf=false: line endings must stay exact");
+
+        // `-text` opts the path out even under autocrlf=true.
+        let (_, ignore_cr) = load_head_baseline(Some("*.txt -text\n"), "true", "a\nb\n");
+        assert!(!ignore_cr, "-text: line endings must stay exact");
     }
 
     /// A superseded grep stopped partway, so the matches it happened to collect

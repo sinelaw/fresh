@@ -55,6 +55,11 @@ pub struct BaselineContent {
     /// Byte offset of each line start (split_inclusive('\n') boundaries),
     /// plus one past-the-end entry.
     pub line_starts: Vec<usize>,
+    /// Diffs against this content treat `\r\n` and `\n` as the same line
+    /// terminator. Set only for git baselines whose path git itself
+    /// line-ending-normalizes (see [`git_normalizes_eol`]); disk and saved
+    /// baselines stay exact.
+    pub ignore_cr: bool,
 }
 
 impl BaselineContent {
@@ -65,7 +70,11 @@ impl BaselineContent {
             pos += seg.len();
             line_starts.push(pos);
         }
-        Self { text, line_starts }
+        Self {
+            text,
+            line_starts,
+            ignore_cr: false,
+        }
     }
 
     /// Line `idx` without its trailing newline (`\n` or `\r\n`).
@@ -122,12 +131,71 @@ impl BaselineStore {
     }
 }
 
-/// Diff two loaded baseline contents (e.g. disk vs HEAD).
-pub fn diff_contents(old: &BaselineContent, new: &BaselineContent) -> DiffBaselineResult {
+/// Whether git line-ending-normalizes this path when it diffs the working
+/// tree, i.e. whether `git diff` would ignore a CRLF-vs-LF difference.
+/// Mirrors the crlf_action logic of git's `convert.c`:
+///
+/// - `attr` is the `attr/` field of `git ls-files --eol` (e.g. `""`,
+///   `"text"`, `"-text"`, `"text=auto"`, `"text eol=crlf"`, `"eol=lf"`).
+/// - `autocrlf` is `core.autocrlf`, `None` when unset.
+/// - `blob_has_crlf`: the "auto" modes leave a path alone when the
+///   repository copy already contains CRLF (git's "safe autocrlf").
+///
+/// When this is false, a line-ending change is a real change to the file
+/// as far as git is concerned, and must stay visible in the diff.
+pub fn git_normalizes_eol(attr: &str, autocrlf: Option<&str>, blob_has_crlf: bool) -> bool {
+    let mut text: Option<&str> = None;
+    let mut has_eol = false;
+    for token in attr.split_whitespace() {
+        match token {
+            "text" | "-text" | "text=auto" => text = Some(token),
+            t if t.starts_with("eol=") => has_eol = true,
+            _ => {}
+        }
+    }
+    match text {
+        Some("-text") => false,
+        Some("text") => true,
+        Some(_) => !blob_has_crlf, // text=auto
+        None if has_eol => true,   // `eol` implies `text`
+        None => {
+            let auto = autocrlf.map(|v| v.trim().to_ascii_lowercase());
+            match auto.as_deref() {
+                Some("true" | "yes" | "on" | "1" | "input") => !blob_has_crlf,
+                _ => false,
+            }
+        }
+    }
+}
+
+/// Line diff for a baseline comparison. With `ignore_cr`, `\r\n` and `\n`
+/// terminators match — the way `git diff` compares a path git normalizes
+/// (see [`git_normalizes_eol`]): there the working tree's line endings
+/// legitimately differ from the repository's, and even from a fresh
+/// checkout's when a tool wrote the file with LF or mixed endings, so an
+/// exact comparison flagged every line of such files as changed.
+/// Everywhere else (disk and saved baselines, git paths git does not
+/// normalize) the comparison stays exact: a line-ending change is a real
+/// change to the file.
+pub fn diff_texts(old: &str, new: &str, ignore_cr: bool) -> Vec<fresh_core::api::LineDiffHunk> {
+    if ignore_cr {
+        fresh_core::diff::compute_line_diff_ignoring_cr(old, new)
+    } else {
+        fresh_core::diff::compute_line_diff(old, new)
+    }
+}
+
+/// Diff two loaded baseline contents (e.g. disk vs HEAD). `ignore_cr`
+/// as for [`diff_texts`]: set when either side's content asks for it.
+pub fn diff_contents(
+    old: &BaselineContent,
+    new: &BaselineContent,
+    ignore_cr: bool,
+) -> DiffBaselineResult {
     DiffBaselineResult {
         revision: 0,
         fidelity: FIDELITY_EXACT.to_string(),
-        hunks: fresh_core::diff::compute_line_diff(&old.text, &new.text),
+        hunks: diff_texts(&old.text, &new.text, ignore_cr),
     }
 }
 
@@ -271,6 +339,71 @@ mod tests {
         assert_eq!(c.line(3), None);
         let sliced = slice_lines(&c, &[(0, 2), (2, 5)]);
         assert_eq!(sliced, vec![vec!["alpha", "beta"], vec!["gamma"]]);
+    }
+
+    /// The cases checked against `git diff` (git 2.56): `true` exactly
+    /// where `git diff` reports no change for a CRLF-vs-LF-only edit.
+    #[test]
+    fn git_normalizes_eol_matches_git_diff() {
+        // (case, attr, core.autocrlf, blob has CRLF, git ignores CR)
+        let cases: &[(&str, &str, Option<&str>, bool, bool)] = &[
+            (
+                "A: autocrlf=false, CRLF blob",
+                "",
+                Some("false"),
+                true,
+                false,
+            ),
+            (
+                "B: autocrlf=false, LF blob",
+                "",
+                Some("false"),
+                false,
+                false,
+            ),
+            ("B': autocrlf unset, LF blob", "", None, false, false),
+            ("C: autocrlf=true, LF blob", "", Some("true"), false, true),
+            ("D: autocrlf=input, LF blob", "", Some("input"), false, true),
+            (
+                "E: autocrlf=true, CRLF blob (safe)",
+                "",
+                Some("true"),
+                true,
+                false,
+            ),
+            (
+                "F: text eol=crlf",
+                "text eol=crlf",
+                Some("false"),
+                false,
+                true,
+            ),
+            (
+                "G: -text beats autocrlf",
+                "-text",
+                Some("true"),
+                false,
+                false,
+            ),
+            (
+                "H: text=auto, LF blob",
+                "text=auto",
+                Some("false"),
+                false,
+                true,
+            ),
+            ("H': text=auto, CRLF blob", "text=auto", None, true, false),
+            ("explicit text, CRLF blob", "text", None, true, true),
+            ("eol alone implies text", "eol=lf", None, false, true),
+            ("autocrlf spelled as git bool", "", Some("Yes"), false, true),
+        ];
+        for &(name, attr, autocrlf, blob_has_crlf, expected) in cases {
+            assert_eq!(
+                git_normalizes_eol(attr, autocrlf, blob_has_crlf),
+                expected,
+                "{name}"
+            );
+        }
     }
 
     #[test]
