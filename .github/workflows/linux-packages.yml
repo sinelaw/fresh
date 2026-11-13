@@ -47,14 +47,15 @@ jobs:
             fakeroot \
             lintian
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
           submodules: recursive
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+        uses: dtolnay/rust-toolchain@v1
         with:
+          toolchain: stable
           targets: ${{ matrix.target }}
 
       # rust-toolchain.toml overrides the targets parameter above, so we need to explicitly add it
@@ -163,7 +164,7 @@ jobs:
           ls -la packages/
 
       - name: Upload Linux packages
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: artifacts-linux-packages-${{ matrix.arch }}
           path: packages/*
@@ -189,7 +190,7 @@ jobs:
       DEBIAN_FRONTEND: noninteractive
     steps:
       - name: Download .deb package
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v7.0.0
         with:
           name: artifacts-linux-packages-amd64
           path: packages/
@@ -284,7 +285,7 @@ jobs:
       image: ${{ matrix.distro }}
     steps:
       - name: Download .rpm package
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v7.0.0
         with:
           name: artifacts-linux-packages-amd64
           path: packages/
@@ -369,7 +370,9 @@ jobs:
       DEBIAN_FRONTEND: noninteractive
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Get version info
         id: version
@@ -422,7 +425,7 @@ jobs:
 
       - name: Download new .deb package
         if: steps.prev.outputs.skip != 'true'
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v7.0.0
         with:
           name: artifacts-linux-packages-amd64
           path: packages/
@@ -460,7 +463,9 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Get version info
         id: version
@@ -512,7 +517,7 @@ jobs:
 
       - name: Download new .rpm package
         if: steps.prev.outputs.skip != 'true'
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v7.0.0
         with:
           name: artifacts-linux-packages-amd64
           path: packages/
@@ -570,13 +575,15 @@ jobs:
             rsync \
             xz-utils
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           persist-credentials: false
           submodules: recursive
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
 
       - name: Sync debian/changelog with Cargo.toml version
         run: ./scripts/update-debian-changelog.sh
@@ -661,7 +668,7 @@ jobs:
           ls -la source-package/
 
       - name: Upload source package
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: artifacts-deb-source
           path: source-package/*

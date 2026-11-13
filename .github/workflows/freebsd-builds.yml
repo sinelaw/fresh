@@ -11,13 +11,14 @@ jobs:
   build-freebsd:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
+          persist-credentials: false
           submodules: recursive
 
       - name: Build in FreeBSD
         id: build
-        uses: vmactions/freebsd-vm@8b0f1a8fc0ea0def307835c258940ca358fe6480 # v1
+        uses: vmactions/freebsd-vm@v1.5.6
         with:
           usesh: true
           # rsync is the default, ensuring target/ and archives come back to the host
@@ -65,7 +66,7 @@ jobs:
             tar -tJf "${ARCHIVE_NAME}.tar.xz" | grep -E '(fresh|README)' | head -5
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: artifacts-x86_64-unknown-freebsd
           path: |

@@ -41,13 +41,15 @@ jobs:
     env:
       VERSION: ${{ inputs.version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
+          persist-credentials: false
           submodules: recursive
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+        uses: dtolnay/rust-toolchain@v1
         with:
+          toolchain: stable
           targets: ${{ matrix.target }}
 
       - name: Add target
@@ -245,7 +247,7 @@ jobs:
       # ── Upload artifacts ─────────────────────────────────────────────
       - name: Upload GUI artifacts (Windows)
         if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: artifacts-gui-${{ matrix.target }}
           path: |
@@ -256,7 +258,7 @@ jobs:
 
       - name: Upload GUI artifacts (macOS)
         if: runner.os == 'macOS'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: artifacts-gui-${{ matrix.target }}
           path: |
@@ -267,7 +269,7 @@ jobs:
       # can lipo the two arches into a single fat binary.
       - name: Upload raw macOS binary (for universal lipo)
         if: runner.os == 'macOS'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: macos-binary-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/fresh
@@ -275,7 +277,7 @@ jobs:
 
       - name: Upload GUI artifacts (Linux)
         if: contains(matrix.target, 'linux')
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: artifacts-gui-${{ matrix.target }}
           path: |
@@ -295,17 +297,18 @@ jobs:
       VERSION: ${{ inputs.version }}
       FRESH_VERSION: ${{ inputs.version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
+          persist-credentials: false
           submodules: recursive
 
       - name: Download x86_64 binary
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v6.0.0
         with:
           name: macos-binary-x86_64-apple-darwin
           path: artifacts/x86_64
       - name: Download aarch64 binary
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v6.0.0
         with:
           name: macos-binary-aarch64-apple-darwin
           path: artifacts/aarch64
@@ -343,7 +346,7 @@ jobs:
           shasum -a 256 "${PKG_NAME}" > "${PKG_NAME}.sha256"
 
       - name: Upload universal .pkg
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: artifacts-gui-macos-universal
           path: |
