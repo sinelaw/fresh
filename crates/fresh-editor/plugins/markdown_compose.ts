@@ -436,9 +436,9 @@ type Renderer = { command: string; args: string[] };
 
 const DEFAULT_RENDERERS: Record<string, Renderer> = {
   mermaid: { command: "termaid", args: ["{file}", "--width", "{width}"] },
-  math: { command: "utftex", args: ["--line-width", "{width}", "{source}"] },
-  latex: { command: "utftex", args: ["--line-width", "{width}", "{source}"] },
-  katex: { command: "utftex", args: ["--line-width", "{width}", "{source}"] },
+  math: { command: "utftex", args: ["--line-width", "{width}", "--", "{source}"] },
+  latex: { command: "utftex", args: ["--line-width", "{width}", "--", "{source}"] },
+  katex: { command: "utftex", args: ["--line-width", "{width}", "--", "{source}"] },
 };
 
 // The help the Settings UI shows under the arguments: the placeholders.
@@ -484,11 +484,24 @@ const externalCache = new Map<string, string[] | null | "pending">();
 const EXTERNAL_CACHE_LIMIT = 500;
 /** Commands that could not be started (not installed): not retried. */
 const missingCommands = new Set<string>();
+/** Commands Workspace Trust refused, by when to try them again. */
+const refusedUntil = new Map<string, number>();
+const REFUSED_RETRY_MS = 30_000;
 
-/** The command that draws `lang`, unless none is set or it is not installed. */
+/** At most this many tools run at once; more wait for a later redraw. */
+const MAX_RUNNING = 4;
+let running = 0;
+/** A request was turned away for want of a free slot: redraw once one frees. */
+let deferred = false;
+/** A tool still running after this long is stopped, and its block left as source. */
+const TOOL_TIMEOUT_MS = 15_000;
+
+/** The command that draws `lang`, unless none is set, it is not installed,
+ * or Workspace Trust refused it a moment ago. */
 function rendererFor(lang: string): Renderer | null {
   const r = renderers().get(lang.toLowerCase());
   if (!r || missingCommands.has(r.command)) return null;
+  if ((refusedUntil.get(r.command) ?? 0) > Date.now()) return null;
   return r;
 }
 
@@ -502,17 +515,12 @@ function toolName(lang: string): string {
   return (rendererFor(lang)?.command ?? "").split(/[\\/]/).pop() ?? "";
 }
 
-/** A short stable name for a temporary file, from the request it serves. */
-function hashKey(key: string): string {
-  let h = 5381;
-  for (let i = 0; i < key.length; i++) h = ((h * 33) ^ key.charCodeAt(i)) >>> 0;
-  return h.toString(36);
-}
-
 /**
  * The rows an external tool draws for `source`, or null when there is no
- * tool, it failed, or its output has not arrived yet (it is then started,
- * and `bufferId`'s lines are redrawn when it is in).
+ * tool, it failed, or its output has not arrived yet. A request not yet
+ * made is started, and `bufferId`'s lines are redrawn when it is in; with
+ * no `bufferId` (measuring text, or a block whose source the cursor is
+ * showing) only output already in hand is used and nothing is started.
  */
 function externalRows(lang: string, source: string, width: number, bufferId: number | null): string[] | null {
   const tool = rendererFor(lang);
@@ -520,13 +528,22 @@ function externalRows(lang: string, source: string, width: number, bufferId: num
   const key = [lang, tool.command, tool.args.join("\u0001"), String(width), source].join("\u0000");
   const hit = externalCache.get(key);
   if (hit !== undefined) return hit === "pending" ? null : hit;
-  // A caller with no buffer to redraw (measuring text) only reads the cache.
   if (bufferId === null) return null;
+  if (running >= MAX_RUNNING) {
+    deferred = true;
+    return null;
+  }
   if (externalCache.size >= EXTERNAL_CACHE_LIMIT) externalCache.clear();
   externalCache.set(key, "pending");
-  void runExternal(lang, tool, source, width, key).then(async (rows) => {
-    externalCache.set(key, rows);
-    if (!rows) return;
+  running++;
+  void runExternal(lang, tool, source, width).then(async (rows) => {
+    running--;
+    // `undefined`: not run at all (refused); asked again on a later redraw.
+    if (rows === undefined) externalCache.delete(key);
+    else externalCache.set(key, rows);
+    const retryDeferred = deferred;
+    deferred = false;
+    if (!rows && !retryDeferred) return;
     editor.refreshLines(bufferId);
     // Several tools finishing together ask for several refreshes, and one
     // asked for while another is being drawn can be folded into it before
@@ -537,31 +554,71 @@ function externalRows(lang: string, source: string, width: number, bufferId: num
   return null;
 }
 
+/** The files tools read their input from (`{file}`): a few reused in turn,
+ * in the editor's own data directory — private to the user, unlike the
+ * shared temporary directory — and always on this machine, where the tool
+ * runs, even when the window is on a remote host. */
+const INPUT_FILE_SLOTS = 16;
+let nextInputSlot = 0;
+let inputDirReady = false;
+
+function writeInputFile(lang: string, source: string): string | null {
+  const dir = editor.pathJoin(editor.getDataDir(), "markdown_compose", "renderer-input");
+  if (!inputDirReady) {
+    editor.createDir(editor.localPath(dir));
+    inputDirReady = true;
+  }
+  // Named with the language as its extension, for a tool that reads the
+  // kind of input from the name.
+  const ext = lang.replace(/[^a-z0-9_+-]/gi, "") || "txt";
+  const file = editor.pathJoin(dir, `input-${nextInputSlot}.${ext}`);
+  nextInputSlot = (nextInputSlot + 1) % INPUT_FILE_SLOTS;
+  return editor.replaceFile(editor.localPath(file), source) ? file : null;
+}
+
+/** `{file}`, `{width}`, `{lang}` and `{source}` in an argument, each
+ * replaced by its value as it is — a `$` in the source is not a pattern. */
+function fillPlaceholders(arg: string, values: Record<string, string>): string {
+  return arg.replace(/\{(file|width|lang|source)\}/g, (_m, name: string) => values[name]);
+}
+
+/** What the tool printed, as rows; null when it failed or drew nothing;
+ * `undefined` when it was not allowed to run (not a result to keep). */
 async function runExternal(
-  lang: string,
-  tool: Renderer,
-  source: string,
-  width: number,
-  key: string,
-): Promise<string[] | null> {
+  lang: string, tool: Renderer, source: string, width: number,
+): Promise<string[] | null | undefined> {
   let file = "";
   if (tool.args.some((a) => a.includes("{file}"))) {
-    // Named for the language, for a tool that reads the kind from the name.
-    const ext = lang.replace(/[^a-z0-9_+-]/gi, "") || "txt";
-    file = editor.pathJoin(editor.getTempDir(), `fresh-md-${hashKey(key)}.${ext}`);
-    if (!editor.writeFile(file, source)) return null;
+    const written = writeInputFile(lang, source);
+    if (written === null) return null;
+    file = written;
   }
-  const args = tool.args.map((a) =>
-    a.replace(/\{file\}/g, file).replace(/\{width\}/g, String(width)).replace(/\{lang\}/g, lang)
-      .replace(/\{source\}/g, source)
-  );
+  const values = { file, width: String(width), lang, source };
+  const args = tool.args.map((a) => fillPlaceholders(a, values));
   try {
-    const result = await editor.spawnHostProcess(tool.command, args);
+    const handle = editor.spawnHostProcess(tool.command, args);
+    const timedOut = editor.delay(TOOL_TIMEOUT_MS).then(() => null);
+    const result = await Promise.race([handle.result, timedOut]);
+    if (result === null) {
+      void handle.kill();
+      editor.debug(`markdown_compose: ${tool.command} took over ${TOOL_TIMEOUT_MS} ms; stopped`);
+      return null;
+    }
     if (result.exit_code === -1) {
-      // Could not be started: not installed, or not on PATH.
-      missingCommands.add(tool.command);
-      editor.debug(`markdown_compose: ${tool.command} unavailable (${result.stderr.trim()})`);
-      editor.setStatus(editor.t("status.no_renderer", { command: tool.command, lang }));
+      const reason = result.stderr.trim();
+      if (/os error 2\b|not found|cannot find/i.test(reason)) {
+        // Not installed, or not on PATH.
+        missingCommands.add(tool.command);
+        editor.setStatus(editor.t("status.no_renderer", { command: tool.command, lang }));
+      } else {
+        // Refused — Workspace Trust, say. Tried again later: trusting the
+        // workspace should bring the drawings back without a restart.
+        refusedUntil.set(tool.command, Date.now() + REFUSED_RETRY_MS);
+        editor.setStatus(`${tool.command}: ${reason}`);
+        editor.debug(`markdown_compose: ${tool.command} not run (${reason})`);
+        return undefined;
+      }
+      editor.debug(`markdown_compose: ${tool.command} not run (${reason})`);
       return null;
     }
     if (result.exit_code !== 0) return null;
@@ -574,6 +631,38 @@ async function runExternal(
     editor.debug(`markdown_compose: ${tool.command} failed to run: ${e}`);
     return null;
   }
+}
+
+/**
+ * Where a block's cursor scope ends: the end of its closing line, so a cursor
+ * at the start of the line after the block is outside it — moving down past a
+ * diagram does not flash its source. `byte_end` is the start of the next line
+ * when the closing line ends in a newline; the buffer's last line has none,
+ * and its end is a cursor position of its own.
+ */
+/**
+ * Draws one row of a tool's drawing in place of a block's line: a conceal
+ * over the line's text, active while the cursor is outside the block. An empty
+ * line has no text to conceal, so its row is inline virtual text at its line
+ * break instead (named like a code rail, so the rail clear removes it), and is
+ * left out while the cursor is in the block — the source shows then.
+ */
+function drawBlockRow(
+  bufferId: number, line: LineInfoLike, start: number, end: number, row: string,
+  scopeStart: number, scopeEnd: number, style: Record<string, unknown>, cursorInBlock: boolean,
+): void {
+  if (end <= start) {
+    if (!cursorInBlock) {
+      editor.addVirtualTextStyled(bufferId, `${CODE_RAIL_ID_PREFIX}${line.byte_start}:e`, line.byte_start, row, style, true);
+    }
+    return;
+  }
+  addComposeConceal(bufferId, "md-syntax", start, end, row, "unless-cursor-in", scopeStart, scopeEnd);
+  addComposeOverlay(bufferId, "md-emphasis", start, end, style);
+}
+
+function blockScopeEnd(closeLine: LineInfoLike): number {
+  return closeLine.byte_end + (/\n$/.test(closeLine.content) ? 0 : 1);
 }
 
 const specialBlockRangesByBuffer = new Map<number, Array<{ start: number; end: number }>>();
@@ -3862,6 +3951,9 @@ editor.on("lines_changed", (data) => {
   const specialBlocks: SpecialBlock[] = [];
   const specialBodyLineStarts = new Set<number>();
   const specialBlockLineStarts = new Set<number>();
+  // Blocks shown as source because the cursor is in them, not yet drawn: their
+  // ranges are kept like a drawn block's, so leaving one redraws it.
+  const waitingRanges: Array<{ start: number; end: number }> = [];
   {
     let currentSpecial: {
       kind: "fence";
@@ -3933,16 +4025,25 @@ editor.on("lines_changed", (data) => {
     // Only a block its tool has drawn is drawn here; any other is left to
     // render as what it is in the source — a code block, or lines of text —
     // and is picked up when the tool's output arrives and the lines redraw.
+    // A block the cursor is in shows its source whatever the tool draws, so
+    // no tool is started for it: editing a diagram does not run one per
+    // keystroke. It is drawn when the cursor leaves.
+    const cursorAt = editor.getCursorPosition();
     const drawnBlocks = specialBlocks.filter((sb) => {
       const innerWidth = codeInnerWidth(Math.max(4, measure - sb.blockIndent));
+      const start = sb.openLine.byte_start;
+      const end = blockScopeEnd(sb.closeLine);
+      const cursorIn = cursorAt >= start && cursorAt < end;
+      const redraw = cursorIn ? null : data.buffer_id;
       if (sb.kind === "fence") {
         const source = sb.bodyLines.map((l) => l.content.replace(/\r?\n$/, "")).join("\n");
-        sb.rows = externalRows(sb.lang, source, innerWidth, data.buffer_id) ?? undefined;
+        sb.rows = externalRows(sb.lang, source, innerWidth, redraw) ?? undefined;
       } else {
         const formula = [sb.openFormula ?? "", ...sb.bodyLines.map((l) => l.content.trim()), sb.closeFormula ?? ""]
           .filter((f) => f !== "").join("\n");
-        sb.rows = externalRows("math", formula, innerWidth, data.buffer_id) ?? undefined;
+        sb.rows = externalRows("math", formula, innerWidth, redraw) ?? undefined;
       }
+      if (sb.rows === undefined && cursorIn) waitingRanges.push({ start, end });
       return sb.rows !== undefined;
     });
     specialBlocks.length = 0;
@@ -4076,7 +4177,7 @@ editor.on("lines_changed", (data) => {
 
   // Special blocks: Mermaid diagrams and LaTeX Math blocks
   const cursorPos = editor.getCursorPosition();
-  const rangesForBuf: Array<{ start: number; end: number }> = [];
+  const rangesForBuf: Array<{ start: number; end: number }> = [...waitingRanges];
 
   for (const line of data.lines) {
     const trimmed = line.content.trim();
@@ -4087,7 +4188,7 @@ editor.on("lines_changed", (data) => {
 
   for (const sb of specialBlocks) {
     const scopeStart = sb.openLine.byte_start;
-    const scopeEnd = sb.closeLine.byte_end + 1;
+    const scopeEnd = blockScopeEnd(sb.closeLine);
     rangesForBuf.push({ start: scopeStart, end: scopeEnd });
 
     const blockIndent = sb.blockIndent;
@@ -4126,19 +4227,13 @@ editor.on("lines_changed", (data) => {
         const bodyLine = sb.bodyLines[i];
         const lineStart = bodyLine.byte_start;
         const lineEnd = lineContentEndByte(bodyLine.content, bodyLine.byte_start);
-        if (i < M) {
-          const row = buildDiagramRow(rendered.lines[i], blockMeasure, blockIndent);
-          addComposeConceal(
-            data.buffer_id, "md-syntax", lineStart, lineEnd, row,
-            "unless-cursor-in", scopeStart, scopeEnd,
-          );
-          addComposeOverlay(data.buffer_id, "md-emphasis", lineStart, lineEnd, codeFrameStyle);
-        } else {
-          addComposeConceal(
-            data.buffer_id, "md-syntax", lineStart, lineEnd, "",
-            "unless-cursor-in", scopeStart, scopeEnd,
-          );
-        }
+        // A source line past the drawing's last row is an empty row of the
+        // frame, rails and all.
+        const row = buildDiagramRow(rendered.lines[i] ?? "", blockMeasure, blockIndent);
+        drawBlockRow(
+          data.buffer_id, bodyLine, lineStart, lineEnd, row,
+          scopeStart, scopeEnd, codeFrameStyle, cursorInBlock,
+        );
       }
 
       // Overflow visual rows as virtual lines (suppressed when cursor is in block)
@@ -4224,11 +4319,10 @@ editor.on("lines_changed", (data) => {
         const start = slot.delimiter ? charToByte(line.content, blockIndent, line.byte_start) : line.byte_start;
         const end = lineContentEndByte(line.content, line.byte_start);
         const row = buildDiagramRow(rows[i] ?? "", blockMeasure, slot.delimiter ? 0 : blockIndent);
-        addComposeConceal(
-          data.buffer_id, "md-syntax", start, end, slot.delimiter ? row.trimStart() : row,
-          "unless-cursor-in", scopeStart, scopeEnd,
+        drawBlockRow(
+          data.buffer_id, line, start, end, slot.delimiter ? row.trimStart() : row,
+          scopeStart, scopeEnd, mathStyle, cursorInBlock,
         );
-        addComposeOverlay(data.buffer_id, "md-emphasis", start, end, mathStyle);
       });
     }
   }
@@ -4308,7 +4402,36 @@ function resetEditedTableWidths(bufferId: number, affStart: number, affEnd: numb
     if (m.id.startsWith(TABLE_WIDTH_NS_PREFIX)) editor.deleteMarker(bufferId, m.id);
   }
 }
+// The drawn blocks' ranges (see `specialBlockRangesByBuffer`) are byte
+// offsets, so every edit moves the ones after it. A batch only replaces the
+// ranges inside its own span, so without this a block below an edit would be
+// looked for at its old place, and the cursor crossing into it missed.
+/** `inserted` bytes put in at `at`. */
+function shiftRangesForInsert(bufferId: number, at: number, inserted: number): void {
+  const ranges = specialBlockRangesByBuffer.get(bufferId);
+  if (!ranges) return;
+  for (const r of ranges) {
+    if (r.start >= at) r.start += inserted;
+    if (r.end > at) r.end += inserted;
+  }
+}
+/** The bytes `[start, end)` removed. A range losing all its bytes goes. */
+function shiftRangesForDelete(bufferId: number, start: number, end: number): void {
+  const ranges = specialBlockRangesByBuffer.get(bufferId);
+  if (!ranges) return;
+  const removed = end - start;
+  const map = (x: number) => (x <= start ? x : x >= end ? x - removed : start);
+  specialBlockRangesByBuffer.set(
+    bufferId,
+    ranges.map((r) => ({ start: map(r.start), end: map(r.end) })).filter((r) => r.end > r.start),
+  );
+}
+/** Buffers whose last edit came with positions (`after_insert`/`after_delete`). */
+const shiftedByEdit = new Set<number>();
+
 editor.on("after_insert", (data) => {
+  shiftRangesForInsert(data.buffer_id, data.position, utf8Length(data.text));
+  shiftedByEdit.add(data.buffer_id);
   if (!isComposingInAnySplit(data.buffer_id)) return;
   resetEditedTableWidths(data.buffer_id, data.affected_start, data.affected_end);
   // Typed backticks can open or close a block; anything else can only stop an
@@ -4321,6 +4444,8 @@ editor.on("after_insert", (data) => {
   } else fenceEditArmed.add(data.buffer_id);
 });
 editor.on("after_delete", (data) => {
+  shiftRangesForDelete(data.buffer_id, data.start, data.end);
+  shiftedByEdit.add(data.buffer_id);
   if (!isComposingInAnySplit(data.buffer_id)) return;
   resetEditedTableWidths(data.buffer_id, data.affected_start, data.affected_start);
   // Deleted backticks are checked here, not in the batch: the text that is gone
@@ -4329,6 +4454,16 @@ editor.on("after_delete", (data) => {
     editor.refreshLines(data.buffer_id);
     void prescanHeadingMarkers(data.buffer_id);
   } else fenceEditArmed.add(data.buffer_id);
+});
+
+// A bulk edit (multi-cursor typing, a replace-all, their undo) fires
+// `buffer_modified` with no `after_insert`/`after_delete` before it, so the
+// ranges cannot be moved: they are dropped, and a redraw finds them again.
+editor.on("buffer_modified", (data) => {
+  if (shiftedByEdit.delete(data.buffer_id)) return;
+  if (!specialBlockRangesByBuffer.has(data.buffer_id)) return;
+  specialBlockRangesByBuffer.delete(data.buffer_id);
+  if (isComposingInAnySplit(data.buffer_id)) editor.refreshLines(data.buffer_id);
 });
 
 // Cursor movement: refresh lines only when crossing into or out of a special block

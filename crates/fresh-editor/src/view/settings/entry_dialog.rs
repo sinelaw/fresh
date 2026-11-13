@@ -169,6 +169,20 @@ impl SettingsSurface for EntryDialogState {
     }
 }
 
+/// The help wraps under the fields, inside a dialog of fixed height, so a very
+/// long description is cut (at a word, with `…`) before it can squeeze the
+/// fields out: about four rows of a typical dialog.
+const HELP_MAX_CHARS: usize = 320;
+
+fn shorten_help(d: &str) -> String {
+    if d.chars().count() <= HELP_MAX_CHARS {
+        return d.to_string();
+    }
+    let cut: String = d.chars().take(HELP_MAX_CHARS).collect();
+    let at_word = cut.rfind(' ').map_or(cut.as_str(), |i| &cut[..i]);
+    format!("{at_word}…")
+}
+
 impl EntryDialogState {
     /// Create a dialog from a schema definition
     ///
@@ -480,6 +494,7 @@ impl EntryDialogState {
             .and_then(|it| it.description.as_deref())
             .map(|d| d.split_whitespace().collect::<Vec<_>>().join(" "))
             .filter(|d| !d.is_empty())
+            .map(|d| shorten_help(&d))
     }
 
     /// What the keys do on the focused field, when that needs saying: a text

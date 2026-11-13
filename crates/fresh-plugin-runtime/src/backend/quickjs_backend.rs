@@ -978,7 +978,8 @@ fn map_field_matches(ty: &str, v: &serde_json::Value) -> bool {
             .as_array()
             .is_some_and(|a| a.iter().all(|x| x.is_string())),
         "boolean" => v.is_boolean(),
-        "integer" => v.is_i64() || v.is_u64(),
+        // A whole number may arrive as a float (a JS value computed by division).
+        "integer" => v.is_i64() || v.is_u64() || v.as_f64().is_some_and(|f| f.fract() == 0.0),
         "number" => v.is_number(),
         _ => false,
     }

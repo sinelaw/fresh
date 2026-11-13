@@ -287,7 +287,7 @@ The defaults cover Mermaid diagrams and LaTeX math:
 | Language | Command | Install |
 |---|---|---|
 | `mermaid` | `termaid {file} --width {width}` | [`termaid`](https://github.com/fasouto/termaid): `pip install termaid` |
-| `math`, `latex`, `katex` | `utftex --line-width {width} {source}` | [`utftex`](https://github.com/bartp5/libtexprintf) |
+| `math`, `latex`, `katex` | `utftex --line-width {width} -- {source}` | [`utftex`](https://github.com/bartp5/libtexprintf) |
 
 The `math` entry also draws math written in the delimiters MathJax, KaTeX, GitHub and GitLab use:
 - inline: `$x^2$`, `\(x^2\)`, or GitLab's ``$`x^2`$``;
@@ -327,9 +327,9 @@ In `config.json` the setting is `plugins.markdown_compose.settings.renderers`, a
       "settings": {
         "renderers": {
           "mermaid": { "command": "termaid", "args": ["{file}", "--width", "{width}"] },
-          "math":    { "command": "utftex",  "args": ["--line-width", "{width}", "{source}"] },
-          "latex":   { "command": "utftex",  "args": ["--line-width", "{width}", "{source}"] },
-          "katex":   { "command": "utftex",  "args": ["--line-width", "{width}", "{source}"] }
+          "math":    { "command": "utftex",  "args": ["--line-width", "{width}", "--", "{source}"] },
+          "latex":   { "command": "utftex",  "args": ["--line-width", "{width}", "--", "{source}"] },
+          "katex":   { "command": "utftex",  "args": ["--line-width", "{width}", "--", "{source}"] }
         }
       }
     }
@@ -344,7 +344,7 @@ Draw Graphviz ` ```dot ` blocks too, with [`graph-easy`](https://metacpan.org/po
 ```json
 "renderers": {
   "mermaid": { "command": "termaid", "args": ["{file}", "--width", "{width}"] },
-  "math":    { "command": "utftex",  "args": ["--line-width", "{width}", "{source}"] },
+  "math":    { "command": "utftex",  "args": ["--line-width", "{width}", "--", "{source}"] },
   "dot":     { "command": "graph-easy", "args": ["--as=boxart", "{file}"] }
 }
 ```
@@ -358,7 +358,7 @@ Use [`mmaid`](https://github.com/aaronsb/mmaid-go) for Mermaid instead, and stop
 }
 ```
 
-A command not on your `PATH` can be given by its full path, e.g. `"command": "/opt/tools/bin/utftex"`.
+A command not on your `PATH` can be given by its full path, e.g. `"command": "/opt/tools/bin/utftex"`. Put `--` before `{source}` when the tool takes options, as the defaults do, so a formula starting with `-` is not read as one.
 
 Any program that prints its drawing as text works. `mmaid` covers 31 Mermaid diagram types, but has no width option, so a pie chart can run wider than the page.
 

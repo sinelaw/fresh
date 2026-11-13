@@ -118,7 +118,7 @@ mod with_stub_tools {
     }
 
     /// The default table with both stubs in it, at the arguments the
-    /// defaults pass: math `--line-width {width} {source}` (also for
+    /// defaults pass: math `--line-width {width} -- {source}` (also for
     /// `latex`), Mermaid `{file} --width {width}`.
     /// Math prints `M<formula>` (a formula over several lines on one row),
     /// with a row above and below when it holds a `\frac`, as a 2-D layout
@@ -128,7 +128,8 @@ mod with_stub_tools {
         let math = stub(
             dir,
             "stub-math",
-            r#"f=$(printf '%s' "$3" | tr '\n' ' ')
+            r#"for a; do last=$a; done
+f=$(printf '%s' "$last" | tr '\n' ' ')
 case "$f" in *'\frac'*) printf 'FRAC TOP\nM<%s>\nFRAC BOTTOM\n' "$f" ;; *) printf 'M<%s>\n' "$f" ;; esac"#,
         );
         let mermaid = stub(
@@ -138,8 +139,8 @@ case "$f" in *'\frac'*) printf 'FRAC TOP\nM<%s>\nFRAC BOTTOM\n' "$f" ;; *) print
 printf 'DIAGRAM<%s>\nDIAGRAM %s lines\n' "$(head -n 1 "$1")" "$(wc -l < "$1" | tr -d ' ')""#,
         );
         serde_json::json!({
-            "math": { "command": math, "args": ["--line-width", "{width}", "{source}"] },
-            "latex": { "command": math, "args": ["--line-width", "{width}", "{source}"] },
+            "math": { "command": math, "args": ["--line-width", "{width}", "--", "{source}"] },
+            "latex": { "command": math, "args": ["--line-width", "{width}", "--", "{source}"] },
             "mermaid": { "command": mermaid, "args": ["{file}", "--width", "{width}"] },
         })
     }
@@ -381,5 +382,76 @@ printf 'DIAGRAM<%s>\nDIAGRAM %s lines\n' "$(head -n 1 "$1")" "$(wc -l < "$1" | t
             screen_has(h, "M<x^2>") && screen_has(h, "A --> B") && !screen_has(h, "DIAGRAM")
         })
         .unwrap();
+    }
+
+    /// `{source}` is passed as written: `$` sequences in it are not patterns,
+    /// and a formula starting with `-` comes after `--`, so it is not read as
+    /// an option.
+    #[test]
+    fn source_text_is_passed_as_written() {
+        let md = "# Title\n\n$$x $& y$$\n\n$$-x$$\n\nTail.\n";
+        let (mut h, _tmp, _tools) = compose_with_stubs(md);
+        h.wait_until(|h| screen_has(h, "M<x $& y>") && screen_has(h, "M<-x>"))
+            .unwrap();
+    }
+
+    /// A blank line inside a block has no text to put a row of the drawing
+    /// over: the row is drawn at its line break instead, and a source line
+    /// past the drawing's last row is an empty, framed row.
+    #[test]
+    fn a_blank_line_in_a_block_gets_its_row_of_the_drawing() {
+        let md = "# Title\n\n```mermaid\ngraph TD\n\n    A --> B\n    B --> C\n```\n\nTail.\n";
+        let (mut h, _tmp, _tools) = compose_with_stubs(md);
+        h.wait_until(|h| {
+            let s = h.screen_to_string();
+            let rows: Vec<&str> = s.lines().collect();
+            let second = rows.iter().position(|r| r.contains("DIAGRAM 3 lines"));
+            // The two rows are on consecutive screen rows, and the extra
+            // source line under them is a framed row, not bare text.
+            matches!(second, Some(i) if rows[i - 1].contains("DIAGRAM<graph TD>")
+                && rows[i + 1].trim_end().ends_with('│')
+                && !rows[i + 1].contains("B --> C"))
+        })
+        .unwrap();
+    }
+
+    /// The cursor on the line after a drawn block, at its start, is outside
+    /// the block: the drawing stays.
+    #[test]
+    fn the_cursor_just_after_a_block_leaves_it_drawn() {
+        let md = "# Title\n\n```mermaid\ngraph TD\n    A --> B\n```\nTail.\n";
+        let (mut h, _tmp, _tools) = compose_with_stubs(md);
+        h.wait_until(|h| screen_has(h, "DIAGRAM<graph TD>"))
+            .unwrap();
+        // Down to the start of "Tail.", right under the closing fence.
+        for _ in 0..6 {
+            h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        }
+        h.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+        h.wait_until(|h| screen_has(h, "DIAGRAM<graph TD>") && !screen_has(h, "A --> B"))
+            .unwrap();
+    }
+
+    /// Text typed above a drawn block moves it; moving the cursor into the
+    /// block afterwards still shows its source.
+    #[test]
+    fn a_block_moved_by_an_edit_above_still_shows_its_source_at_the_cursor() {
+        let md = "# Title\n\nIntro.\n\n```mermaid\ngraph TD\n    A --> B\n```\n\nTail.\n";
+        let (mut h, _tmp, _tools) = compose_with_stubs(md);
+        h.wait_until(|h| screen_has(h, "DIAGRAM<graph TD>"))
+            .unwrap();
+        for _ in 0..2 {
+            h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        }
+        h.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+        // Longer than the whole block, so its old range is behind the cursor.
+        h.type_text(&" more".repeat(12)).unwrap();
+        h.wait_until(|h| screen_has(h, "more more")).unwrap();
+        h.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+        for _ in 0..3 {
+            h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        }
+        h.wait_until(|h| screen_has(h, "A --> B") && screen_has(h, "```mermaid"))
+            .unwrap();
     }
 }

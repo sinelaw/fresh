@@ -104,7 +104,7 @@ record of typed fields: a command per language, a colour per tag, and so on.
 editor.defineConfigMap("renderers", {
   default: {
     mermaid: { command: "termaid", args: ["{file}", "--width", "{width}"] },
-    math: { command: "utftex", args: ["--line-width", "{width}", "{source}"] },
+    math: { command: "utftex", args: ["--line-width", "{width}", "--", "{source}"] },
   },
   value: {
     command: { type: "string", description: "The program to run." },
