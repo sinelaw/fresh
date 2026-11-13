@@ -53,6 +53,34 @@ pub fn compute_line_diff(old_text: &str, new_text: &str) -> Vec<LineDiffHunk> {
     diff_interned_lines(&old_ids, &new_ids)
 }
 
+/// [`compute_line_diff`], but a `\r\n` terminator matches a bare `\n`.
+/// Whether a line is terminated at all still counts, so a lost final
+/// newline is still a hunk.
+///
+/// Symmetric, where git's own eol handling is one-sided (it strips CR
+/// from the working tree and compares the blob verbatim), so against an
+/// `old_text` that holds CRLF this reports less than `git diff` would.
+pub fn compute_line_diff_ignoring_cr(old_text: &str, new_text: &str) -> Vec<LineDiffHunk> {
+    fn intern<'a>(map: &mut HashMap<(&'a str, bool), u32>, line: &'a str) -> u32 {
+        let key = match line.strip_suffix('\n') {
+            Some(body) => (body.strip_suffix('\r').unwrap_or(body), true),
+            None => (line, false),
+        };
+        let next = map.len() as u32;
+        *map.entry(key).or_insert(next)
+    }
+    let mut map = HashMap::new();
+    let old_ids: Vec<u32> = old_text
+        .split_inclusive('\n')
+        .map(|l| intern(&mut map, l))
+        .collect();
+    let new_ids: Vec<u32> = new_text
+        .split_inclusive('\n')
+        .map(|l| intern(&mut map, l))
+        .collect();
+    diff_interned_lines(&old_ids, &new_ids)
+}
+
 /// Map a byte offset in `old_text` to the corresponding byte offset in
 /// `new_text`, so a cursor keeps pointing at the same logical text after
 /// the buffer is rewritten (e.g. by format-on-save — issue #2777).
@@ -659,6 +687,43 @@ mod tests {
         }
         rebuilt.extend(&old_lines[old_pos..]);
         assert_eq!(rebuilt, new_lines, "hunks must reconstruct the new text");
+    }
+
+    #[test]
+    fn ignoring_cr_matches_crlf_and_lf_lines_either_way() {
+        let lf = "a\nb\nc\n";
+        let crlf = "a\r\nb\r\nc\r\n";
+        let mixed = "a\r\nb\nc\r\n";
+        for (old, new) in [(lf, crlf), (crlf, lf), (lf, mixed), (mixed, crlf)] {
+            assert!(
+                compute_line_diff_ignoring_cr(old, new).is_empty(),
+                "{old:?} vs {new:?} differ only in line endings"
+            );
+        }
+        // The exact diff still sees them as different.
+        assert!(!compute_line_diff(lf, crlf).is_empty());
+    }
+
+    #[test]
+    fn ignoring_cr_reports_only_the_real_edit() {
+        let old = "a\nb\nc\nd\n";
+        let new = "a\r\nb\r\nX\r\nd\r\n";
+        let hunks = compute_line_diff_ignoring_cr(old, new);
+        assert_eq!(
+            hunks,
+            vec![LineDiffHunk {
+                old_start: 2,
+                old_count: 1,
+                new_start: 2,
+                new_count: 1,
+            }]
+        );
+    }
+
+    #[test]
+    fn ignoring_cr_still_reports_a_missing_final_newline() {
+        assert!(!compute_line_diff_ignoring_cr("a\nb\n", "a\r\nb").is_empty());
+        assert!(!compute_line_diff_ignoring_cr("a\nb", "a\r\nb\r\n").is_empty());
     }
 
     #[test]

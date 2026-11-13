@@ -2991,7 +2991,7 @@ impl Editor {
                     Ok(fresh_core::api::DiffBaselineResult {
                         revision: state.buffer.version(),
                         fidelity: FIDELITY_EXACT.to_string(),
-                        hunks: fresh_core::diff::compute_line_diff(&content.text, &new_text),
+                        hunks: super::diff_baselines::diff_texts(&content.text, &new_text),
                     })
                 }
             }

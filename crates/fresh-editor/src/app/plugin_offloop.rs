@@ -806,6 +806,10 @@ pub(crate) fn load_diff_baseline(runtime: &LiveRuntime, cap: OffLoop, req: Basel
 /// path, then `git show`. `git_ref` of `None` means the index (stage 0).
 /// Returns the raw bytes; the caller decodes them with the buffer's
 /// encoding.
+///
+/// Not `git cat-file --filters`: that runs the repository's smudge
+/// filters, i.e. commands the workspace configures, which opening a file
+/// must not execute.
 async fn load_git_baseline(
     spawner: &dyn crate::services::remote::ProcessSpawner,
     cwd: &std::path::Path,

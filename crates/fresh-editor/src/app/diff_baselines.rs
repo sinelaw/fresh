@@ -122,12 +122,26 @@ impl BaselineStore {
     }
 }
 
-/// Diff two loaded baseline contents (e.g. disk vs HEAD).
+/// The one line diff every baseline comparison goes through.
+///
+/// Ignoring line-ending style is unconditional on purpose: live diff and
+/// the gutter diff different pairs (buffer vs HEAD, a branch or disk;
+/// disk vs HEAD), so a rule that held for some baselines and not others
+/// made them contradict each other on the same file — one marking every
+/// line, the other nothing. Cost accepted: a change that is only
+/// line-ending style is invisible here, though `git status` still calls
+/// the file modified.
+pub fn diff_texts(old: &str, new: &str) -> Vec<fresh_core::api::LineDiffHunk> {
+    fresh_core::diff::compute_line_diff_ignoring_cr(old, new)
+}
+
+/// Diff two loaded baseline contents (e.g. disk vs HEAD, the git-gutter
+/// comparison).
 pub fn diff_contents(old: &BaselineContent, new: &BaselineContent) -> DiffBaselineResult {
     DiffBaselineResult {
         revision: 0,
         fidelity: FIDELITY_EXACT.to_string(),
-        hunks: fresh_core::diff::compute_line_diff(&old.text, &new.text),
+        hunks: diff_texts(&old.text, &new.text),
     }
 }
 
