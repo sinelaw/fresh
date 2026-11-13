@@ -29,45 +29,159 @@ pub fn expand_tilde(path: &str) -> PathBuf {
 ///
 /// Returns the input unchanged on non-Windows platforms or for paths that
 /// have no verbatim prefix.
+///
+/// The prefix is also kept when the plain spelling would name another file or
+/// would not open at all, because Win32 rewrites a non-verbatim path while
+/// parsing it: a path at or past `MAX_PATH`, or one with a component ending in
+/// a dot or space, a DOS device name (`NUL.txt`), `.`/`..`, or a character a
+/// plain path cannot hold. See [`component_keeps_meaning_unprefixed`].
+///
+/// Since the prefix may stay on one path and go from another, don't strip two
+/// paths and then relativize one against the other; use
+/// [`relative_to_or_absolute`].
 pub fn strip_verbatim_prefix(path: &Path) -> Cow<'_, Path> {
     #[cfg(windows)]
     {
-        use std::path::{Component, Prefix};
+        use std::os::windows::ffi::OsStrExt;
 
-        let mut components = path.components();
-        let prefix = match components.next() {
-            Some(Component::Prefix(p)) => p,
-            _ => return Cow::Borrowed(path),
+        /// Win32's `MAX_PATH`, which counts the terminating NUL: a plain path
+        /// most programs can open is at most 259 UTF-16 units long.
+        const MAX_PATH: usize = 260;
+
+        let Some(plain) = verbatim_prefix_removed(path) else {
+            return Cow::Borrowed(path);
         };
-
-        let mut rebuilt = PathBuf::new();
-        match prefix.kind() {
-            Prefix::VerbatimDisk(drive) => {
-                rebuilt.push(format!("{}:\\", drive as char));
-            }
-            Prefix::VerbatimUNC(server, share) => {
-                rebuilt.push(format!(
-                    r"\\{}\{}\",
-                    server.to_string_lossy(),
-                    share.to_string_lossy()
-                ));
-            }
-            _ => return Cow::Borrowed(path),
+        if !components_keep_meaning_unprefixed(path)
+            || plain.as_os_str().encode_wide().count() >= MAX_PATH
+        {
+            return Cow::Borrowed(path);
         }
-        // Skip the original RootDir (which the rebuilt prefix already includes)
-        // and append the rest of the components.
-        for component in components {
-            if matches!(component, Component::RootDir) {
-                continue;
-            }
-            rebuilt.push(component.as_os_str());
-        }
-        Cow::Owned(rebuilt)
+        Cow::Owned(plain)
     }
     #[cfg(not(windows))]
     {
         Cow::Borrowed(path)
     }
+}
+
+/// `path` relative to `base` when it lies under `base`, and otherwise `path`
+/// as [`strip_verbatim_prefix`] shows it.
+///
+/// For Copy Relative Path and the like. Relativize first and decide about the
+/// prefix only for what is left: a relative path never carries one, so it
+/// needs no check, while stripping both sides first can leave the prefix on
+/// one of them only (`notes.`, a long path) and make `strip_prefix` fail.
+/// The two sides are compared as given and then both without the prefix, so
+/// a verbatim file under a plain base, or the other way round, still matches.
+/// The second comparison is only made when every component of `base` reads
+/// the same with and without the prefix: `C:\work\project.` is the directory
+/// `project`, so `\\?\C:\work\project.\f` (inside `project.`) is not under it.
+pub fn relative_to_or_absolute<'a>(path: &'a Path, base: &Path) -> Cow<'a, Path> {
+    if let Ok(relative) = path.strip_prefix(base) {
+        return Cow::Borrowed(relative);
+    }
+    let plain_path = verbatim_prefix_removed(path);
+    let plain_base = verbatim_prefix_removed(base);
+    if (plain_path.is_some() || plain_base.is_some()) && components_keep_meaning_unprefixed(base) {
+        let plain_path = plain_path.as_deref().unwrap_or(path);
+        let plain_base = plain_base.as_deref().unwrap_or(base);
+        if let Ok(relative) = plain_path.strip_prefix(plain_base) {
+            return Cow::Owned(relative.to_path_buf());
+        }
+    }
+    strip_verbatim_prefix(path)
+}
+
+/// `path` with its `\\?\` or `\\?\UNC\` prefix spelled the plain way,
+/// whether or not that keeps its meaning; `None` when it has neither (and
+/// always off Windows). For comparing paths, not for showing them.
+#[cfg_attr(not(windows), allow(unused_variables))]
+fn verbatim_prefix_removed(path: &Path) -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        use std::path::{Component, Prefix};
+
+        let mut components = path.components();
+        let Some(Component::Prefix(prefix)) = components.next() else {
+            return None;
+        };
+        let mut rebuilt = PathBuf::new();
+        match prefix.kind() {
+            Prefix::VerbatimDisk(drive) => rebuilt.push(format!("{}:\\", drive as char)),
+            Prefix::VerbatimUNC(server, share) => rebuilt.push(format!(
+                r"\\{}\{}\",
+                server.to_string_lossy(),
+                share.to_string_lossy()
+            )),
+            _ => return None,
+        }
+        // The rebuilt prefix already includes the root.
+        for component in components.filter(|c| !matches!(c, Component::RootDir)) {
+            rebuilt.push(component.as_os_str());
+        }
+        Some(rebuilt)
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
+/// Whether every component of `path` reads the same with and without the
+/// verbatim prefix ([`component_keeps_meaning_unprefixed`]); `.` and `..`
+/// never do, since only a verbatim path keeps them literal.
+///
+/// `components` yields `.` (`CurDir`) in the middle of a path only because
+/// the path is verbatim; std drops it from a plain one. That is what lets
+/// `\\?\C:\dir\.\f.txt` reach the `CurDir` arm here.
+fn components_keep_meaning_unprefixed(path: &Path) -> bool {
+    use std::path::Component;
+    path.components().all(|component| match component {
+        Component::Prefix(_) | Component::RootDir => true,
+        Component::Normal(name) => component_keeps_meaning_unprefixed(&name.to_string_lossy()),
+        Component::CurDir | Component::ParentDir => false,
+    })
+}
+
+/// Whether Win32 reads one path component the same without the verbatim
+/// prefix as with it.
+///
+/// A verbatim path skips Win32's normalization, so a component that the
+/// normalization would change names another file once the prefix is gone.
+/// Kept platform-independent so the rule is tested on every platform.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn component_keeps_meaning_unprefixed(component: &str) -> bool {
+    // Trailing dots and spaces are dropped: `notes.` opens `notes`.
+    if component.ends_with('.') || component.ends_with(' ') {
+        return false;
+    }
+    // Characters a plain path cannot hold.
+    if component.chars().any(|c| {
+        matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*' | '/' | '\\') || (c as u32) < 0x20
+    }) {
+        return false;
+    }
+    // Device names are reserved with or without an extension (`NUL.txt`).
+    let stem = component.split('.').next().unwrap_or(component);
+    let stem = stem.to_ascii_uppercase();
+    if matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) {
+        return false;
+    }
+    if let Some(unit) = stem
+        .strip_prefix("COM")
+        .or_else(|| stem.strip_prefix("LPT"))
+    {
+        // The ISO-8859-1 superscript digits count as device numbers too.
+        if matches!(unit, "¹" | "²" | "³")
+            || (!unit.is_empty() && unit.chars().all(|c| c.is_ascii_digit()))
+        {
+            return false;
+        }
+    }
+    true
 }
 
 #[cfg(test)]
@@ -147,5 +261,146 @@ mod tests {
         let plain = PathBuf::from(r"C:\Users\HP\project");
         let result = strip_verbatim_prefix(&plain);
         assert_eq!(result.as_ref(), Path::new(r"C:\Users\HP\project"));
+    }
+
+    #[test]
+    fn components_win32_would_rewrite_need_the_prefix() {
+        for component in [
+            "notes.",  // Win32 drops the trailing dot
+            "notes ",  // ...and the trailing space
+            "NUL.txt", // DOS device name, extension or not
+            "con",
+            "com1.log",
+            "COM¹.txt",
+            "com².log",
+            "LPT³",
+            "a?b.txt", // plain paths cannot hold these
+            "a*b.txt",
+            "a\u{1}b",
+        ] {
+            assert!(
+                !component_keeps_meaning_unprefixed(component),
+                "{component:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_components_do_not_need_the_prefix() {
+        // A dot inside a name, and a name that merely starts like a device
+        // name, are ordinary to Win32.
+        for component in [
+            "notes.txt",
+            "a.b",
+            ".gitignore",
+            "CONSOLE",
+            "nulify",
+            "COM",
+            "LPTx",
+        ] {
+            assert!(
+                component_keeps_meaning_unprefixed(component),
+                "{component:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn relative_to_or_absolute_relativizes_under_the_base_only() {
+        let base = std::env::temp_dir().join("project");
+        assert_eq!(
+            relative_to_or_absolute(&base.join("src").join("main.rs"), &base).as_ref(),
+            Path::new("src").join("main.rs")
+        );
+        let outside = std::env::temp_dir().join("elsewhere").join("f.txt");
+        assert_eq!(
+            relative_to_or_absolute(&outside, &base).as_ref(),
+            strip_verbatim_prefix(&outside).as_ref()
+        );
+    }
+
+    /// Relativizing must not depend on whether the file and the base agree
+    /// about keeping the prefix: the relative part never needs it.
+    #[cfg(windows)]
+    #[test]
+    fn relative_to_or_absolute_ignores_which_side_keeps_the_prefix() {
+        let verbatim_base = Path::new(r"\\?\C:\work\project");
+        let plain_base = Path::new(r"C:\work\project");
+        // The file keeps its prefix, the base would lose it.
+        let notes = Path::new(r"\\?\C:\work\project\notes.");
+        assert_eq!(
+            relative_to_or_absolute(notes, verbatim_base).as_ref(),
+            Path::new("notes.")
+        );
+        assert_eq!(
+            relative_to_or_absolute(notes, plain_base).as_ref(),
+            Path::new("notes.")
+        );
+        // A plain file under a verbatim base.
+        assert_eq!(
+            relative_to_or_absolute(Path::new(r"C:\work\project\a.txt"), verbatim_base).as_ref(),
+            Path::new("a.txt")
+        );
+        // Long enough that only the file keeps the prefix.
+        let long_base = format!(r"\\?\C:\{}", "b".repeat(240));
+        let long_file = format!(r"{long_base}\{}", "c".repeat(30));
+        assert_eq!(
+            relative_to_or_absolute(Path::new(&long_file), Path::new(&long_base)).as_ref(),
+            Path::new(&"c".repeat(30))
+        );
+        assert_eq!(
+            relative_to_or_absolute(
+                Path::new(&long_file),
+                strip_verbatim_prefix(Path::new(&long_base)).as_ref()
+            )
+            .as_ref(),
+            Path::new(&"c".repeat(30))
+        );
+        // A plain base that Win32 reads as another directory: `project.` is
+        // `project`, so a file inside the real `project.` is not under it.
+        let dotted = Path::new(r"\\?\C:\work\project.\notes.txt");
+        assert_eq!(
+            relative_to_or_absolute(dotted, Path::new(r"C:\work\project.")).as_ref(),
+            dotted
+        );
+        // Under the verbatim spelling of the same base it is relative.
+        assert_eq!(
+            relative_to_or_absolute(dotted, Path::new(r"\\?\C:\work\project.")).as_ref(),
+            Path::new("notes.txt")
+        );
+        // Outside the base, the absolute path as `strip_verbatim_prefix` shows it.
+        let outside = Path::new(r"\\?\C:\other\notes.");
+        assert_eq!(
+            relative_to_or_absolute(outside, verbatim_base).as_ref(),
+            outside
+        );
+        assert_eq!(
+            relative_to_or_absolute(Path::new(r"\\?\C:\other\f.txt"), verbatim_base).as_ref(),
+            Path::new(r"C:\other\f.txt")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn strip_verbatim_prefix_keeps_paths_the_plain_form_would_change() {
+        let long = format!(r"\\?\C:\{}", "a".repeat(300));
+        for path in [
+            r"\\?\C:\dir\notes.",
+            r"\\?\C:\dir.\f.txt",
+            r"\\?\C:\dir\NUL.txt",
+            r"\\?\C:\dir\..\f.txt",
+            r"\\?\C:\dir\.\f.txt",
+            r"\\?\UNC\server\share\notes ",
+            // No drive or UNC spelling.
+            r"\\?\Volume{01234567-89ab-cdef-0123-456789abcdef}\f.txt",
+            // Only usable in its verbatim form.
+            long.as_str(),
+        ] {
+            assert_eq!(
+                strip_verbatim_prefix(Path::new(path)).as_ref(),
+                Path::new(path),
+                "{path}"
+            );
+        }
     }
 }

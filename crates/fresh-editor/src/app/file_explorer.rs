@@ -2227,22 +2227,19 @@ impl Editor {
             return;
         }
 
-        let working_dir =
-            crate::primitives::path_utils::strip_verbatim_prefix(self.working_dir()).into_owned();
+        use crate::primitives::path_utils::{relative_to_or_absolute, strip_verbatim_prefix};
+        let working_dir = self.working_dir();
         let rendered: Vec<String> = paths
             .iter()
             .map(|p| {
                 // Tree nodes hold canonicalized paths, verbatim (`\\?\...`) on
                 // Windows; strip the prefix for user-facing strings (#3296).
-                let p = crate::primitives::path_utils::strip_verbatim_prefix(p);
-                if relative {
-                    p.strip_prefix(&working_dir)
-                        .unwrap_or(p.as_ref())
-                        .to_string_lossy()
-                        .into_owned()
+                let shown = if relative {
+                    relative_to_or_absolute(p, working_dir)
                 } else {
-                    p.to_string_lossy().into_owned()
-                }
+                    strip_verbatim_prefix(p)
+                };
+                shown.to_string_lossy().into_owned()
             })
             .collect();
 

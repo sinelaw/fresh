@@ -1530,16 +1530,13 @@ impl Editor {
 
         // Buffers carry canonicalized paths, verbatim (`\\?\...`) on Windows;
         // user-facing strings must not leak the prefix (issue #3296).
-        let path = crate::primitives::path_utils::strip_verbatim_prefix(&path);
-        let working_dir = crate::primitives::path_utils::strip_verbatim_prefix(self.working_dir());
-        let path_str = if relative {
-            path.strip_prefix(working_dir.as_ref())
-                .unwrap_or(path.as_ref())
-                .to_string_lossy()
-                .into_owned()
+        use crate::primitives::path_utils::{relative_to_or_absolute, strip_verbatim_prefix};
+        let shown = if relative {
+            relative_to_or_absolute(&path, self.working_dir())
         } else {
-            path.to_string_lossy().into_owned()
+            strip_verbatim_prefix(&path)
         };
+        let path_str = shown.to_string_lossy().into_owned();
 
         self.clipboard.copy(path_str.clone());
         self.active_window_mut().status_message =

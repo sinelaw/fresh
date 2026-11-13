@@ -653,6 +653,11 @@ fn build_shell_command(
         if let Some(dir) = cwd {
             // Hand the shell a non-verbatim path so PowerShell can infer the
             // drive; a verbatim `\\?\C:\…` path yields provider-prefixed prompts.
+            // A directory whose plain spelling names another one (`dir.`, a
+            // path past MAX_PATH) keeps the prefix: the provider-prefixed
+            // prompt is the lesser problem than starting the shell somewhere
+            // else. Unlike the copied paths, this is a working directory, so
+            // what matters is the directory the process ends up in.
             cmd.cwd(crate::primitives::path_utils::strip_verbatim_prefix(dir).as_ref());
         }
     }
