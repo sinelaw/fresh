@@ -276,6 +276,92 @@ Three commands switch the pane in focus between views of a Markdown file:
 
 Compose mode reads the document the way markdown defines it, so a paragraph, list item or quote written across several source lines is re-flowed into one block at the page width — a hard-wrapped file reads as prose rather than as its source layout. The things markdown treats as their own block still are: a blank line, a heading, a thematic break, a table row, a fenced code block, a new list marker, and a hard break (two trailing spaces or a trailing backslash).
 
+### Previews of diagrams, math and other code blocks
+
+Compose mode can show a code block as a drawing instead of its source. It doesn't draw anything itself: the `renderers` setting maps a code block's language to a command and its arguments, and compose shows what that command prints, framed, in place of the block. The frame's title names the language and the program, such as `mermaid · termaid`.
+
+![A Markdown file in compose mode: inline math, a formula drawn by utftex, and a Mermaid flowchart drawn by termaid](/images/markdown-preview-rendered.png)
+
+The defaults cover Mermaid diagrams and LaTeX math:
+
+| Language | Command | Install |
+|---|---|---|
+| `mermaid` | `termaid {file} --width {width}` | [`termaid`](https://github.com/fasouto/termaid): `pip install termaid` |
+| `math`, `latex`, `katex` | `utftex --line-width {width} -- {source}` | [`utftex`](https://github.com/bartp5/libtexprintf) |
+
+The `math` entry also draws math written in the delimiters MathJax, KaTeX, GitHub and GitLab use:
+- inline: `$x^2$`, `\(x^2\)`, or GitLab's ``$`x^2`$``;
+- display: `$$ … $$`, or `\[ … \]` (on one line, or with `\[` and `\]` on lines of their own).
+
+Inline math is replaced only when the command draws it on one row, since a stacked fraction can't sit inside a sentence. Prices such as "$10 and $20" are not taken for math.
+
+When a language has no command, the command isn't installed, or it fails on a block, the source is shown as written: a fenced block as a code block, display math as its lines. The first time a missing command is needed, the status bar says what to install.
+
+Put the cursor in a drawn block to edit its source; it is drawn again when the cursor leaves. In Source/Compose dual mode, the source side shows the Markdown and the compose side the drawings.
+
+![Source/Compose dual mode: the Markdown source on the left, the drawn formula and diagram on the right](/images/markdown-preview-dual.png)
+
+#### Configuring the commands
+
+Change the commands in Settings, under *Plugins → markdown_compose → Renderers*. There is a row per language, showing its command:
+
+![The Renderers setting in the Settings UI: a row per language with its command](/images/markdown-preview-settings.png)
+
+A row opens to edit the command and its arguments. The help under the fields lists the placeholders the arguments can use:
+
+![Editing the mermaid entry: its command, its arguments as a list, and the placeholders help](/images/markdown-preview-settings-entry.png)
+
+| Placeholder | Replaced with |
+|---|---|
+| `{file}` | a temporary file holding the block's text, named with the language as its extension (`fresh-md-….mermaid`) |
+| `{source}` | the block's text itself |
+| `{width}` | the number of columns available inside the frame |
+| `{lang}` | the block's language, as written after the fence |
+
+In `config.json` the setting is `plugins.markdown_compose.settings.renderers`, a map from language to `command` and `args`. These are the defaults:
+
+```json
+{
+  "plugins": {
+    "markdown_compose": {
+      "settings": {
+        "renderers": {
+          "mermaid": { "command": "termaid", "args": ["{file}", "--width", "{width}"] },
+          "math":    { "command": "utftex",  "args": ["--line-width", "{width}", "--", "{source}"] },
+          "latex":   { "command": "utftex",  "args": ["--line-width", "{width}", "--", "{source}"] },
+          "katex":   { "command": "utftex",  "args": ["--line-width", "{width}", "--", "{source}"] }
+        }
+      }
+    }
+  }
+}
+```
+
+A map set in `config.json` replaces the defaults as a whole, so list every language you want drawn. Some changes, each shown as the `renderers` value:
+
+Draw Graphviz ` ```dot ` blocks too, with [`graph-easy`](https://metacpan.org/pod/Graph::Easy):
+
+```json
+"renderers": {
+  "mermaid": { "command": "termaid", "args": ["{file}", "--width", "{width}"] },
+  "math":    { "command": "utftex",  "args": ["--line-width", "{width}", "--", "{source}"] },
+  "dot":     { "command": "graph-easy", "args": ["--as=boxart", "{file}"] }
+}
+```
+
+Use [`mmaid`](https://github.com/aaronsb/mmaid-go) for Mermaid instead, and stop drawing math (an empty command shows that language as code):
+
+```json
+"renderers": {
+  "mermaid": { "command": "mmaid", "args": ["{file}"] },
+  "math":    { "command": "", "args": [] }
+}
+```
+
+A command not on your `PATH` can be given by its full path, e.g. `"command": "/opt/tools/bin/utftex"`. Put `--` before `{source}` when the tool takes options, as the defaults do, so a formula starting with `-` is not read as one.
+
+Any program that prints its drawing as text works. `mmaid` covers 31 Mermaid diagram types, but has no width option, so a pie chart can run wider than the page.
+
 ### Contents Panel
 
 The `markdown_toc` plugin adds a **Contents** section to the sidebar, under the file explorer, listing the headings of the active Markdown file as a tree — one row per heading, indented by level, with the `#` markers stripped. Headings inside fenced code blocks are not listed. The section belongs to the file it lists: it shows while that file is the active one in its window, waits out of sight while another file or workspace is active, and goes away when the file closes — another workspace's outline never appears in yours. "Markdown: Toggle Table of Contents" opens or closes it by hand, showing the sidebar if it was hidden; "Markdown: Focus Contents" shows it and moves the keyboard into it, and `Alt+Shift+N` / `Alt+Shift+P` cycle the keyboard through the sidebar's sections from anywhere.

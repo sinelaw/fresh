@@ -278,7 +278,7 @@ const fenceEditArmed = new Set<number>();
 
 /** Whether an edit's text could create or destroy a fence delimiter. */
 function touchesFenceChars(text: string): boolean {
-  return /[`~]/.test(text);
+  return /[`~$]/.test(text);
 }
 
 /** Total rendered width of a code block's frame, borders and side rails alike.
@@ -311,8 +311,380 @@ function buildCodeFrameLine(measure: number, left: string, right: string): strin
   return left + "─".repeat(inner) + right;
 }
 
+/** A horizontal frame line with a centered or left-aligned text label */
+function buildCodeFrameLineWithLabel(measure: number, left: string, right: string, label: string): string {
+  const lbl = ` ${label.trim()} `;
+  const lblW = displayWidth(lbl);
+  const totalW = codeFrameWidth(measure) - displayWidth(left) - displayWidth(right);
+  if (totalW < lblW + 2) {
+    return buildCodeFrameLine(measure, left, right);
+  }
+  const prefix = "──";
+  const suffix = "─".repeat(Math.max(1, totalW - displayWidth(prefix) - lblW));
+  return left + prefix + lbl + suffix + right;
+}
+
+function getFenceLanguage(lineContent: string): string {
+  const match = lineContent.trim().match(/^(`{3,}|~{3,})\s*([a-zA-Z0-9_\-]+)?/);
+  return match && match[2] ? match[2].toLowerCase() : "";
+}
+
 // fg matches the table frame's so the two kinds of block read as one system.
 const codeFrameStyle = { fg: "editor.fg", composeOnly: true };
+
+const MATH_VIRTUAL_LINE_NS = "md-math";
+const MERMAID_VIRTUAL_LINE_NS = "md-mermaid";
+/**
+ * Display math written on one line, `$$ … $$` or MathJax/KaTeX's `\[ … \]`:
+ * the formula between the delimiters, or null for any other line.
+ */
+function singleLineDisplayMath(trimmed: string): string | null {
+  const m = trimmed.match(/^\$\$(.+)\$\$$/) ?? trimmed.match(/^\\\[(.+)\\\]$/);
+  return m ? m[1].trim() : null;
+}
+
+/**
+ * A line that opens display math running over several lines, and the
+ * delimiter that closes it: `$$` (with or without a formula after it), or a
+ * `\[` alone on its line. A `\[` followed by text is not taken as an opener,
+ * since markdown also uses `\[` to write a literal bracket (`\[citation]`).
+ */
+function displayMathOpener(trimmed: string): "$$" | "\\]" | null {
+  if (trimmed.startsWith("$$") && !trimmed.slice(2).includes("$$")) return "$$";
+  if (trimmed === "\\[") return "\\]";
+  return null;
+}
+
+/**
+ * The display-math blocks among a batch's lines, as [opener, closer] indices
+ * (a one-line `$$ … $$` is a block whose opener is its closer).
+ *
+ * Nothing classifies `$$` lines the way the editor classifies fences (see
+ * "Fenced code blocks" below), so a batch that starts inside a block sees its
+ * closer first and would pair it with the next block's opener, drawing the
+ * prose between them as math. A blank line settles it: no markdown engine
+ * lets display math run across one, so a "block" that reaches a blank line
+ * was never one, and its lines are left as written. The same rule stops a
+ * `$$` that is never closed from swallowing the rest of the document.
+ * Lines in a code fence, and a gap in the batch, end any block in progress.
+ */
+function displayMathBlocks(lines: LineInfoLike[]): Array<[number, number]> {
+  const blocks: Array<[number, number]> = [];
+  let open = -1;
+  let closer: string | null = null;
+  let prevLineNumber: number | null = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const text = line.content;
+    const gap = prevLineNumber !== null && line.line_number !== prevLineNumber + 1;
+    prevLineNumber = line.line_number;
+    if (gap || isCodeRegion(line.region) || looksLikeFence(text)) {
+      closer = null;
+      continue;
+    }
+    const trimmed = text.trim();
+    if (closer !== null) {
+      if (trimmed === "") closer = null;
+      else if (trimmed.endsWith(closer)) {
+        blocks.push([open, i]);
+        closer = null;
+      }
+      continue;
+    }
+    if (singleLineDisplayMath(trimmed) !== null) {
+      blocks.push([i, i]);
+      continue;
+    }
+    closer = displayMathOpener(trimmed);
+    if (closer !== null) open = i;
+  }
+  return blocks;
+}
+
+// =============================================================================
+// Previews of code blocks and math: drawn by external tools
+// =============================================================================
+//
+// Compose draws no diagram or formula itself. A map, the `renderers`
+// setting, names a command and its arguments for each code-block language; a
+// fenced block in a language that has one is handed to it, and what it prints
+// is drawn in a frame in place of the source. Math written with `$…$`, `$$…$$`, `\(…\)`
+// or `\[…\]` uses the `math` entry.
+//
+// The defaults:
+//
+//   * `mermaid` → `termaid` (github.com/fasouto/termaid), a graph layout for
+//     18 diagram types; of the terminal Mermaid renderers compared for this,
+//     it drew every diagram tried correctly;
+//   * `math`, `latex`, `katex` → `utftex` (github.com/bartp5/libtexprintf),
+//     which lays a formula out in two dimensions.
+//
+// Any program that prints a drawing as text can be added for any language
+// (`dot` → `graph-easy --as=boxart {file}`), and an entry with an empty
+// command turns one off. Without a command — none set, not installed, or failing on a
+// block — the source is shown as written: a fenced block as a code block,
+// display math as its lines. Inline math is replaced only when the command
+// draws it on one row; a stacked fraction cannot sit in a sentence.
+//
+// Drawing is synchronous and a command is not, so a block shows its source
+// the first time it is seen while the command runs; the output is cached by
+// command, width and source, and the lines are redrawn when it arrives. A
+// command that cannot be started is noted once (with a status message saying
+// what to install) and not retried this session.
+
+type Renderer = { command: string; args: string[] };
+
+const DEFAULT_RENDERERS: Record<string, Renderer> = {
+  mermaid: { command: "termaid", args: ["{file}", "--width", "{width}"] },
+  math: { command: "utftex", args: ["--line-width", "{width}", "--", "{source}"] },
+  latex: { command: "utftex", args: ["--line-width", "{width}", "--", "{source}"] },
+  katex: { command: "utftex", args: ["--line-width", "{width}", "--", "{source}"] },
+};
+
+// The help the Settings UI shows under the arguments: the placeholders.
+const PLACEHOLDER_HELP =
+  "Arguments for the command. Placeholders: {file} is a temporary file holding the block's text, " +
+  "{source} the text itself, {width} the number of columns available, {lang} the block's language.";
+
+editor.defineConfigMap("renderers", {
+  default: DEFAULT_RENDERERS,
+  value: {
+    command: {
+      type: "string",
+      description: "The program that draws the block, found on PATH. Leave empty to show this language as code.",
+    },
+    args: { type: "string[]", description: PLACEHOLDER_HELP },
+  },
+  displayField: "command",
+  description:
+    "Programs that draw a preview of a code block, by its language: each prints the drawing as text. " +
+    "In the arguments, {file} is a temporary file holding the block's text, {source} the text itself, " +
+    "{width} the columns available and {lang} the language. The `math` entry also draws " +
+    "$…$, $$…$$, \\(…\\) and \\[…\\].",
+});
+
+/** The `renderers` table: language → command. An entry with no command is off. */
+function renderers(): Map<string, Renderer> {
+  const cfg = (editor.getPluginConfig() ?? {}) as { renderers?: unknown };
+  const map = cfg.renderers && typeof cfg.renderers === "object" && !Array.isArray(cfg.renderers)
+    ? (cfg.renderers as Record<string, Partial<Renderer>>)
+    : DEFAULT_RENDERERS;
+  const table = new Map<string, Renderer>();
+  for (const [lang, entry] of Object.entries(map)) {
+    const command = typeof entry?.command === "string" ? entry.command.trim() : "";
+    if (!command) continue;
+    const args = Array.isArray(entry.args) ? entry.args.filter((a): a is string => typeof a === "string") : [];
+    table.set(lang.toLowerCase(), { command, args });
+  }
+  return table;
+}
+
+/** Rendered rows by request key; "pending" while the tool runs, null when it failed. */
+const externalCache = new Map<string, string[] | null | "pending">();
+const EXTERNAL_CACHE_LIMIT = 500;
+/** Commands that could not be started (not installed): not retried. */
+const missingCommands = new Set<string>();
+/** Commands Workspace Trust refused, by when to try them again. */
+const refusedUntil = new Map<string, number>();
+const REFUSED_RETRY_MS = 30_000;
+
+/** At most this many tools run at once; more wait for a later redraw. */
+const MAX_RUNNING = 4;
+let running = 0;
+/** A request was turned away for want of a free slot: redraw once one frees. */
+let deferred = false;
+/** A tool still running after this long is stopped, and its block left as source. */
+const TOOL_TIMEOUT_MS = 15_000;
+
+/** The command that draws `lang`, unless none is set, it is not installed,
+ * or Workspace Trust refused it a moment ago. */
+function rendererFor(lang: string): Renderer | null {
+  const r = renderers().get(lang.toLowerCase());
+  if (!r || missingCommands.has(r.command)) return null;
+  if ((refusedUntil.get(r.command) ?? 0) > Date.now()) return null;
+  return r;
+}
+
+/** Whether `lang` has a command (installed or not yet known not to be). */
+function hasRenderer(lang: string): boolean {
+  return rendererFor(lang) !== null;
+}
+
+/** The program's own name, for a frame's title: `utftex`, not its path. */
+function toolName(lang: string): string {
+  return (rendererFor(lang)?.command ?? "").split(/[\\/]/).pop() ?? "";
+}
+
+/**
+ * The rows an external tool draws for `source`, or null when there is no
+ * tool, it failed, or its output has not arrived yet. A request not yet
+ * made is started, and `bufferId`'s lines are redrawn when it is in; with
+ * no `bufferId` (measuring text, or a block whose source the cursor is
+ * showing) only output already in hand is used and nothing is started.
+ */
+function externalRows(lang: string, source: string, width: number, bufferId: number | null): string[] | null {
+  const tool = rendererFor(lang);
+  if (!tool) return null;
+  const key = [lang, tool.command, tool.args.join("\u0001"), String(width), source].join("\u0000");
+  const hit = externalCache.get(key);
+  if (hit !== undefined) return hit === "pending" ? null : hit;
+  if (bufferId === null) return null;
+  if (running >= MAX_RUNNING) {
+    deferred = true;
+    return null;
+  }
+  if (externalCache.size >= EXTERNAL_CACHE_LIMIT) externalCache.clear();
+  externalCache.set(key, "pending");
+  running++;
+  void runExternal(lang, tool, source, width).then(async (rows) => {
+    running--;
+    // `undefined`: not run at all (refused); asked again on a later redraw.
+    if (rows === undefined) externalCache.delete(key);
+    else externalCache.set(key, rows);
+    const retryDeferred = deferred;
+    deferred = false;
+    if (!rows && !retryDeferred) return;
+    editor.refreshLines(bufferId);
+    // Several tools finishing together ask for several refreshes, and one
+    // asked for while another is being drawn can be folded into it before
+    // this result is read. Asking once more a moment later draws it.
+    await editor.delay(100);
+    editor.refreshLines(bufferId);
+  });
+  return null;
+}
+
+/** The files tools read their input from (`{file}`): a few reused in turn,
+ * in the editor's own data directory — private to the user, unlike the
+ * shared temporary directory — and always on this machine, where the tool
+ * runs, even when the window is on a remote host. */
+const INPUT_FILE_SLOTS = 16;
+let nextInputSlot = 0;
+let inputDirReady = false;
+
+function writeInputFile(lang: string, source: string): string | null {
+  const dir = editor.pathJoin(editor.getDataDir(), "markdown_compose", "renderer-input");
+  if (!inputDirReady) {
+    editor.createDir(editor.localPath(dir));
+    inputDirReady = true;
+  }
+  // Named with the language as its extension, for a tool that reads the
+  // kind of input from the name.
+  const ext = lang.replace(/[^a-z0-9_+-]/gi, "") || "txt";
+  const file = editor.pathJoin(dir, `input-${nextInputSlot}.${ext}`);
+  nextInputSlot = (nextInputSlot + 1) % INPUT_FILE_SLOTS;
+  return editor.replaceFile(editor.localPath(file), source) ? file : null;
+}
+
+/** `{file}`, `{width}`, `{lang}` and `{source}` in an argument, each
+ * replaced by its value as it is — a `$` in the source is not a pattern. */
+function fillPlaceholders(arg: string, values: Record<string, string>): string {
+  return arg.replace(/\{(file|width|lang|source)\}/g, (_m, name: string) => values[name]);
+}
+
+/** What the tool printed, as rows; null when it failed or drew nothing;
+ * `undefined` when it was not allowed to run (not a result to keep). */
+async function runExternal(
+  lang: string, tool: Renderer, source: string, width: number,
+): Promise<string[] | null | undefined> {
+  let file = "";
+  if (tool.args.some((a) => a.includes("{file}"))) {
+    const written = writeInputFile(lang, source);
+    if (written === null) return null;
+    file = written;
+  }
+  const values = { file, width: String(width), lang, source };
+  const args = tool.args.map((a) => fillPlaceholders(a, values));
+  try {
+    const handle = editor.spawnHostProcess(tool.command, args);
+    const timedOut = editor.delay(TOOL_TIMEOUT_MS).then(() => null);
+    const result = await Promise.race([handle.result, timedOut]);
+    if (result === null) {
+      void handle.kill();
+      editor.debug(`markdown_compose: ${tool.command} took over ${TOOL_TIMEOUT_MS} ms; stopped`);
+      return null;
+    }
+    if (result.exit_code === -1) {
+      const reason = result.stderr.trim();
+      if (/os error 2\b|not found|cannot find/i.test(reason)) {
+        // Not installed, or not on PATH.
+        missingCommands.add(tool.command);
+        editor.setStatus(editor.t("status.no_renderer", { command: tool.command, lang }));
+      } else {
+        // Refused — Workspace Trust, say. Tried again later: trusting the
+        // workspace should bring the drawings back without a restart.
+        refusedUntil.set(tool.command, Date.now() + REFUSED_RETRY_MS);
+        editor.setStatus(`${tool.command}: ${reason}`);
+        editor.debug(`markdown_compose: ${tool.command} not run (${reason})`);
+        return undefined;
+      }
+      editor.debug(`markdown_compose: ${tool.command} not run (${reason})`);
+      return null;
+    }
+    if (result.exit_code !== 0) return null;
+    const rows = result.stdout.replace(/\s+$/, "").split(/\r?\n/).map((r) => r.replace(/\s+$/, ""));
+    // A tool that prints nothing, or only blank rows, has not drawn anything.
+    while (rows.length > 0 && rows[0] === "") rows.shift();
+    return rows.length > 0 ? rows : null;
+  } catch (e) {
+    missingCommands.add(tool.command);
+    editor.debug(`markdown_compose: ${tool.command} failed to run: ${e}`);
+    return null;
+  }
+}
+
+/**
+ * Where a block's cursor scope ends: the end of its closing line, so a cursor
+ * at the start of the line after the block is outside it — moving down past a
+ * diagram does not flash its source. `byte_end` is the start of the next line
+ * when the closing line ends in a newline; the buffer's last line has none,
+ * and its end is a cursor position of its own.
+ */
+/**
+ * Draws one row of a tool's drawing in place of a block's line: a conceal
+ * over the line's text, active while the cursor is outside the block. An empty
+ * line has no text to conceal, so its row is inline virtual text at its line
+ * break instead (named like a code rail, so the rail clear removes it), and is
+ * left out while the cursor is in the block — the source shows then.
+ */
+function drawBlockRow(
+  bufferId: number, line: LineInfoLike, start: number, end: number, row: string,
+  scopeStart: number, scopeEnd: number, style: Record<string, unknown>, cursorInBlock: boolean,
+): void {
+  if (end <= start) {
+    if (!cursorInBlock) {
+      editor.addVirtualTextStyled(bufferId, `${CODE_RAIL_ID_PREFIX}${line.byte_start}:e`, line.byte_start, row, style, true);
+    }
+    return;
+  }
+  addComposeConceal(bufferId, "md-syntax", start, end, row, "unless-cursor-in", scopeStart, scopeEnd);
+  addComposeOverlay(bufferId, "md-emphasis", start, end, style);
+}
+
+function blockScopeEnd(closeLine: LineInfoLike): number {
+  return closeLine.byte_end + (/\n$/.test(closeLine.content) ? 0 : 1);
+}
+
+const specialBlockRangesByBuffer = new Map<number, Array<{ start: number; end: number }>>();
+
+/** Formats a single rendered diagram row with side rails matching code frame width */
+function buildDiagramRow(content: string, blockMeasure: number, blockIndent: number): string {
+  const innerW = codeInnerWidth(blockMeasure);
+  // Cut to the row's width in columns, a whole character at a time (a wide
+  // CJK character is two columns; an astral symbol is two UTF-16 units).
+  let clamped = content;
+  if (displayWidth(content) > innerW) {
+    clamped = "";
+    for (const ch of content) {
+      if (displayWidth(clamped + ch) > innerW) break;
+      clamped += ch;
+    }
+  }
+  const contentW = displayWidth(clamped);
+  const padRight = Math.max(0, innerW - contentW);
+  return " ".repeat(blockIndent) + RAIL_GLYPH + " " + clamped + " ".repeat(padRight) + " " + RAIL_GLYPH;
+}
+
 
 // =============================================================================
 // Code block side rails
@@ -978,6 +1350,8 @@ function parseMarkdownBlocks(text: string): ParsedBlock[] {
   const lines = text.split('\n');
   let byteOffset = 0;
   let inCodeBlock = false;
+  // The delimiter that closes the display-math block we are in, or null.
+  let mathCloser: string | null = null;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -1010,6 +1384,32 @@ function parseMarkdownBlocks(text: string): ParsedBlock[] {
         startByte: lineStart,
         endByte: lineEnd,
         leadingIndent: 0,
+        marker: '',
+        markerStartByte: lineStart,
+        contentStartByte: lineStart,
+        content: line,
+        hangingIndent: 0,
+        forceHardBreak: true,
+      });
+      byteOffset = lineEnd + 1;
+      continue;
+    }
+
+    // Display math (`$$ … $$`, `\[ … \]`): each line kept as written, never
+    // re-flowed into the paragraph around it.
+    const inDisplayMath = mathCloser !== null;
+    if (inDisplayMath) {
+      // A blank line ends it either way, as in `displayMathBlocks`.
+      if (trimmed === "" || trimmed.endsWith(mathCloser!)) mathCloser = null;
+    } else if (singleLineDisplayMath(trimmed) === null) {
+      mathCloser = displayMathOpener(trimmed);
+    }
+    if ((inDisplayMath && trimmed !== "") || mathCloser !== null || singleLineDisplayMath(trimmed) !== null) {
+      blocks.push({
+        type: 'code-content',
+        startByte: lineStart,
+        endByte: lineEnd,
+        leadingIndent: line.length - line.trimStart().length,
         marker: '',
         markerStartByte: lineStart,
         contentStartByte: lineStart,
@@ -1333,6 +1733,9 @@ function clearComposeDecorations(bufferId: number): void {
   // Same for the inter-list-item spacer rows, so they can't linger as
   // orphaned virtual lines after compose is toggled off.
   editor.clearVirtualTextNamespace(bufferId, LIST_SPACING_NS);
+  editor.clearVirtualTextNamespace(bufferId, MERMAID_VIRTUAL_LINE_NS);
+  editor.clearVirtualTextNamespace(bufferId, MATH_VIRTUAL_LINE_NS);
+  specialBlockRangesByBuffer.delete(bufferId);
   // And the code blocks' side rails, which are inline virtual text rather
   // than virtual lines and so are not covered by the namespace clears.
   editor.removeVirtualTextsByPrefix(bufferId, CODE_RAIL_ID_PREFIX);
@@ -1604,7 +2007,7 @@ function charToByte(lineContent: string, charOffset: number, lineByteStart: numb
 // ---------------------------------------------------------------------------
 
 interface InlineSpan {
-  type: 'code' | 'bold-italic' | 'bold' | 'italic' | 'strikethrough' | 'link' | 'entity';
+  type: 'code' | 'bold-italic' | 'bold' | 'italic' | 'strikethrough' | 'link' | 'entity' | 'math';
   matchStart: number;    // char offset of full match start
   matchEnd: number;      // char offset of full match end
   contentStart: number;  // char offset of visible content start
@@ -1614,9 +2017,47 @@ interface InlineSpan {
 }
 
 /** Find all inline spans that would produce conceals in the given text. */
-function findInlineSpans(text: string): InlineSpan[] {
+/** Columns given to the math tool for an inline formula: enough that it
+ * never wraps one, so its output is one row when the formula fits on one. */
+const INLINE_MATH_WIDTH = 1000;
+
+/**
+ * `bufferId` is the buffer to redraw when the math tool's drawing of an
+ * inline formula arrives; without one (measuring text) only drawings already
+ * in hand are used.
+ */
+function findInlineSpans(text: string, bufferId: number | null = null): InlineSpan[] {
   const spans: InlineSpan[] = [];
   let m: RegExpExecArray | null;
+
+  // Inline math, as `[start, end)` character ranges. Filled by step 0 and 1.5.
+  const mathSpanCharRanges: [number, number][] = [];
+  function overlapsMath(start: number, end: number): boolean {
+    for (const [s, e] of mathSpanCharRanges) {
+      if (start < e && end > s) return true;
+    }
+    return false;
+  }
+  function pushMath(ms: number, me: number, delimLen: number, formula: string): void {
+    mathSpanCharRanges.push([ms, me]);
+    // The tool's drawing replaces the formula when it is one row; otherwise
+    // the source stays, still styled (and still kept from emphasis) as math.
+    const rows = externalRows("math", formula, INLINE_MATH_WIDTH, bufferId);
+    const drawn = rows !== null && rows.length === 1 ? rows[0].trim() : null;
+    spans.push({
+      type: 'math',
+      matchStart: ms, matchEnd: me,
+      contentStart: ms + delimLen, contentEnd: me - delimLen,
+      concealRanges: drawn !== null ? [{ start: ms, end: me, replacement: drawn }] : [],
+    });
+  }
+
+  // 0. GitLab's inline math, $`...`$. Taken before code spans, which would
+  //    otherwise claim the backticked part and leave the dollars around it.
+  const gitlabMathRe = /\$`([^`\n]+)`\$/g;
+  while ((m = gitlabMathRe.exec(text)) !== null) {
+    pushMath(m.index, m.index + m[0].length, 2, m[1]);
+  }
 
   // 1. Code spans (also builds exclusion set)
   const codeSpanCharRanges: [number, number][] = [];
@@ -1624,6 +2065,7 @@ function findInlineSpans(text: string): InlineSpan[] {
   while ((m = codeRe.exec(text)) !== null) {
     const ms = m.index;
     const me = ms + m[0].length;
+    if (overlapsMath(ms, me)) continue;
     codeSpanCharRanges.push([ms, me]);
     spans.push({
       type: 'code',
@@ -1642,6 +2084,42 @@ function findInlineSpans(text: string): InlineSpan[] {
     }
     return false;
   }
+  function overlapsCode(start: number, end: number): boolean {
+    for (const [s, e] of codeSpanCharRanges) {
+      if (start < e && end > s) return true;
+    }
+    return false;
+  }
+
+  // 1.5 Inline math: $...$, and MathJax/KaTeX's \(...\)
+  // Pandoc's rule, which keeps prices from pairing up: the formula neither
+  // starts nor ends with a space, and the closing `$` is not followed by a
+  // digit. "$10 and $20", "$5-$10" and "$20/month or $200/year" are text.
+  const mathRe = /(?<![\\$])\$(?![$\s])([^$\n]*?[^$\s\\])\$(?![$\d])/g;
+  while ((m = mathRe.exec(text)) !== null) {
+    const ms = m.index;
+    const me = ms + m[0].length;
+    if (overlapsCode(ms, me) || overlapsMath(ms, me)) {
+      // Not this pair; the closing `$` may still open the next one.
+      mathRe.lastIndex = me - 1;
+      continue;
+    }
+    pushMath(ms, me, 1, m[1]);
+  }
+  const parenMathRe = /(?<!\\)\\\(([^\n]+?)\\\)/g;
+  while ((m = parenMathRe.exec(text)) !== null) {
+    const ms = m.index;
+    const me = ms + m[0].length;
+    if (overlapsCode(ms, me) || overlapsMath(ms, me)) continue;
+    pushMath(ms, me, 2, m[1]);
+  }
+
+  function inMathSpan(charPos: number): boolean {
+    for (const [s, e] of mathSpanCharRanges) {
+      if (charPos >= s && charPos < e) return true;
+    }
+    return false;
+  }
 
   // 2. Emphasis
   const emphasisPatterns: [RegExp, InlineSpan['type'], number][] = [
@@ -1653,7 +2131,7 @@ function findInlineSpans(text: string): InlineSpan[] {
   for (const [pattern, type, markerLen] of emphasisPatterns) {
     const re = new RegExp(pattern.source, pattern.flags);
     while ((m = re.exec(text)) !== null) {
-      if (inCodeSpan(m.index)) continue;
+      if (inCodeSpan(m.index) || inMathSpan(m.index)) continue;
       const ms = m.index;
       const me = ms + m[0].length;
       spans.push({
@@ -1672,7 +2150,7 @@ function findInlineSpans(text: string): InlineSpan[] {
   // 3. Links
   const linkRe = /(?<!!)\[([^\]]+)\]\(([^)]+)\)/g;
   while ((m = linkRe.exec(text)) !== null) {
-    if (inCodeSpan(m.index)) continue;
+    if (inCodeSpan(m.index) || inMathSpan(m.index)) continue;
     const ms = m.index;
     const me = ms + m[0].length;
     const textEnd = ms + 1 + m[1].length;
@@ -2005,6 +2483,7 @@ function processLineConceals(
    * stand down. Overlapping conceals over the same bytes would otherwise both
    * fire and the run would render twice. */
   joined = false,
+  specialBlockLineStarts?: Set<number>,
 ): void {
   // Clear existing conceals and overlays for this line first.
   // This ensures clear+add commands are sent together from the plugin thread
@@ -2014,6 +2493,12 @@ function processLineConceals(
   // Only clear our own emphasis overlays — clearing ALL overlays in the range
   // would also wipe editor-owned overlays like LSP diagnostics (issue #2146).
   editor.clearOverlaysInRangeForNamespace(bufferId, "md-emphasis", byteStart, byteEnd);
+
+  // If this line is part of a special block (Mermaid, Math fence, or multiline $$),
+  // return early so the dedicated block pass can apply unified block-scoped conceals.
+  if (specialBlockLineStarts && specialBlockLineStarts.has(byteStart)) {
+    return;
+  }
 
   // Activation scopes:
   //   - lineScopeInclEnd: "cursor anywhere on the line", including the
@@ -2036,16 +2521,15 @@ function processLineConceals(
   if (region === "body") return;
   if (region === "open" || region === "close") {
     const frameEnd = lineContentEndByte(lineContent, byteStart);
-    // A block indented into a list item keeps its indent as real text and puts
-    // the corner after it, so the box sits inside the item the way every other
-    // renderer draws it. Concealing from the line's start instead pulled the
-    // border back to the page's left edge, under text it belongs beside.
     const blockIndent = leadingIndent(lineContent);
     const frameStart = charToByte(lineContent, blockIndent, byteStart);
     const blockMeasure = Math.max(4, measure - blockIndent);
-    const frame = region === "open"
-      ? buildCodeFrameLine(blockMeasure, "┌", "┐")
-      : buildCodeFrameLine(blockMeasure, "└", "┘");
+    let frame: string;
+    if (region === "open") {
+      frame = buildCodeFrameLine(blockMeasure, "┌", "┐");
+    } else {
+      frame = buildCodeFrameLine(blockMeasure, "└", "┘");
+    }
     addComposeConceal(
       bufferId, "md-syntax", frameStart, frameEnd, frame,
       "unless-cursor-in", byteStart, lineScopeInclEnd,
@@ -2057,6 +2541,56 @@ function processLineConceals(
   // rather than guess a corner. Same conservative choice the table frame
   // makes for a row whose neighbour is off-screen.
   if (looksLikeFence(lineContent)) return;
+
+  // --- Display math on a single line: `$$formula$$` or `\[formula\]` ---
+  const singleLineMath = singleLineDisplayMath(trimmed);
+  if (singleLineMath !== null) {
+    const content = singleLineMath;
+    const blockIndent = leadingIndent(lineContent);
+    const blockMeasure = Math.max(4, measure - blockIndent);
+    // A tool's drawing can take several rows: the first replaces the line,
+    // the rest are virtual lines under it, above the frame's bottom.
+    const toolRows = externalRows("math", content, codeInnerWidth(blockMeasure), bufferId);
+    // Not drawn (yet): shown as written.
+    if (toolRows === null) return;
+    const rows = toolRows;
+    const mathLabel = `math · ${toolName("math")}`;
+    const frameStart = byteStart;
+    const frameEnd = lineContentEndByte(lineContent, byteStart);
+    const rowReplacement = buildDiagramRow(rows[0], blockMeasure, blockIndent);
+
+    const cursorPos = editor.getCursorPosition();
+    // Half-open, like the conceal's scope below.
+    const cursorOnLine = cursorPos >= byteStart && cursorPos < lineScopeInclEnd;
+
+    if (!cursorOnLine) {
+      editor.addVirtualLine(
+        bufferId, byteStart,
+        " ".repeat(blockIndent) + buildCodeFrameLineWithLabel(blockMeasure, "┌", "┐", mathLabel),
+        codeFrameStyle, true, MATH_VIRTUAL_LINE_NS, 0,
+      );
+    }
+    const mathStyle = { fg: "syntax.constant", italic: true, composeOnly: true };
+    addComposeConceal(
+      bufferId, "md-syntax", frameStart, frameEnd, rowReplacement,
+      "unless-cursor-in", byteStart, lineScopeInclEnd,
+    );
+    addComposeOverlay(bufferId, "md-emphasis", frameStart, frameEnd, mathStyle);
+    if (!cursorOnLine) {
+      for (let i = 1; i < rows.length; i++) {
+        editor.addVirtualLine(
+          bufferId, byteStart, buildDiagramRow(rows[i], blockMeasure, blockIndent),
+          mathStyle, false, MATH_VIRTUAL_LINE_NS, i - 1,
+        );
+      }
+      editor.addVirtualLine(
+        bufferId, byteStart,
+        " ".repeat(blockIndent) + buildCodeFrameLine(blockMeasure, "└", "┘"),
+        codeFrameStyle, false, MATH_VIRTUAL_LINE_NS, rows.length,
+      );
+    }
+    return;
+  }
 
   // --- Thematic breaks: `---` / `***` / `___` → one full-measure rule ---
   // Rendered as a single conceal replacement rather than per-character
@@ -2488,7 +3022,7 @@ function processLineConceals(
   }
 
   // --- Inline spans: code, emphasis, links, entities ---
-  const spans = findInlineSpans(lineContent);
+  const spans = findInlineSpans(lineContent, bufferId);
   for (const span of spans) {
     const byteCS = charToByte(lineContent, span.contentStart, byteStart);
     const byteCE = charToByte(lineContent, span.contentEnd, byteStart);
@@ -2504,6 +3038,9 @@ function processLineConceals(
     switch (span.type) {
       case 'code':
         addComposeOverlay(bufferId, "md-emphasis", byteCS, byteCE, { fg: "syntax.constant" });
+        break;
+      case 'math':
+        addComposeOverlay(bufferId, "md-emphasis", byteMS, byteME, { fg: "syntax.constant", italic: true });
         break;
       case 'bold':
         addComposeOverlay(bufferId, "md-emphasis", byteCS, byteCE, { bold: true });
@@ -2689,6 +3226,10 @@ function verbatimStates(lines: LineInfoLike[]): Array<boolean | null> {
   let inHtml = false;
   let inIndentedCode = false;
   let inFrontMatter = false;
+  const mathLines = new Set<number>();
+  for (const [open, close] of displayMathBlocks(lines)) {
+    for (let k = open; k <= close; k++) mathLines.add(k);
+  }
   // The next non-blank line opens a block, so it is the one that may open an
   // indented code block. True for the batch's own first line: the walk that
   // built it backed up to the run's start.
@@ -2747,6 +3288,13 @@ function verbatimStates(lines: LineInfoLike[]): Array<boolean | null> {
       } else {
         out.push(null);
       }
+      continue;
+    }
+
+    // Display math is kept as written (`out` has one entry per line so far,
+    // so its length is this line's index).
+    if (mathLines.has(out.length)) {
+      out.push(true);
       continue;
     }
 
@@ -2941,12 +3489,17 @@ function processFlowBlock(
   block: FlowBlock,
   width: number,
   blockIndents: Map<number, number>,
+  specialBodyLineStarts?: Set<number>,
 ): void {
   const head = block.lines[0];
   // Clear existing soft breaks for every line in the block, so a block that
   // has shrunk (an edit split it) leaves none behind.
   for (const line of block.lines) {
     editor.clearSoftBreaksInRange(bufferId, line.byte_start, line.byte_end);
+  }
+
+  if (specialBodyLineStarts && specialBodyLineStarts.has(head.byte_start)) {
+    return;
   }
 
   const lineContent = head.content;
@@ -3378,6 +3931,134 @@ editor.on("lines_changed", (data) => {
     }
   }
 
+  interface SpecialBlock {
+    // A fenced block in a language with a renderer, or display math
+    // (`$$` / `\[`), which the `math` renderer draws.
+    kind: "fence" | "math";
+    lang: string;
+    openLine: LineInfoLike;
+    closeLine: LineInfoLike;
+    bodyLines: LineInfoLike[];
+    blockIndent: number;
+    // Display math only: a formula written on the delimiter lines themselves
+    // (`$$ E = mc^2` opening a block, `x^2 $$` closing one).
+    openFormula?: string;
+    closeFormula?: string;
+    // The tool's drawing of the block.
+    rows?: string[];
+  }
+
+  const specialBlocks: SpecialBlock[] = [];
+  const specialBodyLineStarts = new Set<number>();
+  const specialBlockLineStarts = new Set<number>();
+  // Blocks shown as source because the cursor is in them, not yet drawn: their
+  // ranges are kept like a drawn block's, so leaving one redraws it.
+  const waitingRanges: Array<{ start: number; end: number }> = [];
+  {
+    let currentSpecial: {
+      kind: "fence";
+      lang: string;
+      openLine: LineInfoLike;
+      bodyLines: LineInfoLike[];
+      blockIndent: number;
+    } | null = null;
+
+    for (let i = 0; i < data.lines.length; i++) {
+      const line = data.lines[i];
+      if (currentSpecial === null) {
+        // A fence line inside another fence's body is that block's content.
+        if (line.region === "open" || (line.region !== "body" && looksLikeFence(line.content))) {
+          const lang = getFenceLanguage(line.content).toLowerCase();
+          if (lang && hasRenderer(lang)) {
+            currentSpecial = {
+              kind: "fence",
+              lang,
+              openLine: line,
+              bodyLines: [],
+              blockIndent: leadingIndent(line.content),
+            };
+            continue;
+          }
+        }
+      } else if (line.region === "close" || (line.region !== "body" && looksLikeFence(line.content))) {
+        specialBlocks.push({
+          kind: currentSpecial.kind,
+          lang: currentSpecial.lang,
+          openLine: currentSpecial.openLine,
+          closeLine: line,
+          bodyLines: currentSpecial.bodyLines,
+          blockIndent: currentSpecial.blockIndent,
+        });
+        currentSpecial = null;
+      } else {
+        currentSpecial.bodyLines.push(line);
+      }
+    }
+
+    // Display math over several lines (`$$` / `\[` blocks). One on a single
+    // line is drawn by the per-line pass.
+    const fencedLines = new Set<number>();
+    for (const sb of specialBlocks) {
+      fencedLines.add(sb.openLine.byte_start).add(sb.closeLine.byte_start);
+      for (const bl of sb.bodyLines) fencedLines.add(bl.byte_start);
+    }
+    for (const [open, close] of displayMathBlocks(data.lines)) {
+      if (open === close) continue;
+      const openLine = data.lines[open];
+      const closeLine = data.lines[close];
+      if (fencedLines.has(openLine.byte_start) || fencedLines.has(closeLine.byte_start)) continue;
+      const openTrimmed = openLine.content.trim();
+      const closeTrimmed = closeLine.content.trim();
+      const closer = displayMathOpener(openTrimmed)!;
+      specialBlocks.push({
+        kind: "math",
+        lang: "math",
+        openLine,
+        closeLine,
+        bodyLines: data.lines.slice(open + 1, close),
+        blockIndent: leadingIndent(openLine.content),
+        openFormula: openTrimmed.slice(2).trim(),
+        closeFormula: closeTrimmed.slice(0, closeTrimmed.length - closer.length).trim(),
+      });
+    }
+
+    // Only a block its tool has drawn is drawn here; any other is left to
+    // render as what it is in the source — a code block, or lines of text —
+    // and is picked up when the tool's output arrives and the lines redraw.
+    // A block the cursor is in shows its source whatever the tool draws, so
+    // no tool is started for it: editing a diagram does not run one per
+    // keystroke. It is drawn when the cursor leaves.
+    const cursorAt = editor.getCursorPosition();
+    const drawnBlocks = specialBlocks.filter((sb) => {
+      const innerWidth = codeInnerWidth(Math.max(4, measure - sb.blockIndent));
+      const start = sb.openLine.byte_start;
+      const end = blockScopeEnd(sb.closeLine);
+      const cursorIn = cursorAt >= start && cursorAt < end;
+      const redraw = cursorIn ? null : data.buffer_id;
+      if (sb.kind === "fence") {
+        const source = sb.bodyLines.map((l) => l.content.replace(/\r?\n$/, "")).join("\n");
+        sb.rows = externalRows(sb.lang, source, innerWidth, redraw) ?? undefined;
+      } else {
+        const formula = [sb.openFormula ?? "", ...sb.bodyLines.map((l) => l.content.trim()), sb.closeFormula ?? ""]
+          .filter((f) => f !== "").join("\n");
+        sb.rows = externalRows("math", formula, innerWidth, redraw) ?? undefined;
+      }
+      if (sb.rows === undefined && cursorIn) waitingRanges.push({ start, end });
+      return sb.rows !== undefined;
+    });
+    specialBlocks.length = 0;
+    specialBlocks.push(...drawnBlocks);
+
+    for (const sb of specialBlocks) {
+      specialBlockLineStarts.add(sb.openLine.byte_start);
+      specialBlockLineStarts.add(sb.closeLine.byte_start);
+      for (const bl of sb.bodyLines) {
+        specialBodyLineStarts.add(bl.byte_start);
+        specialBlockLineStarts.add(bl.byte_start);
+      }
+    }
+  }
+
   for (const line of data.lines) {
     // Clear this row's border range first (covers a row that stopped being a
     // table row, e.g. its pipes were deleted, and stale frames left a few bytes
@@ -3387,7 +4068,7 @@ editor.on("lines_changed", (data) => {
     // stops being code loses them. Re-added below only for `body` lines — the
     // delimiter rows draw their own corners as part of the border conceal.
     clearCodeRails(data.buffer_id, line.byte_start, line.byte_end);
-    if (line.region === "body") {
+    if (line.region === "body" && !specialBodyLineStarts.has(line.byte_start)) {
       emitCodeRails(
         data.buffer_id, line.content, line.byte_start, measure,
         blockIndents.get(line.byte_start) ?? 0,
@@ -3399,8 +4080,20 @@ editor.on("lines_changed", (data) => {
       data.buffer_id, LIST_SPACING_NS,
       line.byte_start, Math.max(line.byte_end, line.byte_start + 1),
     );
+    editor.clearVirtualLinesInRange(
+      data.buffer_id, MATH_VIRTUAL_LINE_NS,
+      line.byte_start, Math.max(line.byte_end, line.byte_start + 1),
+    );
+    editor.clearVirtualLinesInRange(
+      data.buffer_id, MERMAID_VIRTUAL_LINE_NS,
+      line.byte_start, Math.max(line.byte_end, line.byte_start + 1),
+    );
 
-    processLineConceals(data.buffer_id, line.content, line.byte_start, line.byte_end, measure, line.region, line.line_number, joined.has(line.byte_start));
+    processLineConceals(
+      data.buffer_id, line.content, line.byte_start, line.byte_end, measure,
+      line.region, line.line_number, joined.has(line.byte_start),
+      specialBlockLineStarts,
+    );
 
     // Blank row after each list item, so items read as discrete entries.
     //
@@ -3421,8 +4114,12 @@ editor.on("lines_changed", (data) => {
     // Inside a fence none of this applies: `- foo` in a shell block is not a
     // list item and `| a | b |` in a code sample is not a table row, so both
     // the spacer and the frame are skipped (the clears above already ran, so a
-    // line that becomes code loses whichever it had).
-    if (!isCodeRegion(line.region) && isListItemContent(line.content)) {
+    // line that becomes code loses whichever it had). The same goes for a
+    // line of a math block or a diagram: `+ x` there is a formula.
+    if (
+      !isCodeRegion(line.region) && !specialBlockLineStarts.has(line.byte_start)
+      && isListItemContent(line.content)
+    ) {
       editor.addVirtualLine(
         data.buffer_id, line.byte_start, "",
         listSpacingOptions, false, LIST_SPACING_NS, 0,
@@ -3475,7 +4172,169 @@ editor.on("lines_changed", (data) => {
   // conceals by range — so emitting joins inside that loop would have the next
   // line's clear delete the join just added.
   for (const block of blocks) {
-    processFlowBlock(data.buffer_id, block, measure, blockIndents);
+    processFlowBlock(data.buffer_id, block, measure, blockIndents, specialBodyLineStarts);
+  }
+
+  // Special blocks: Mermaid diagrams and LaTeX Math blocks
+  const cursorPos = editor.getCursorPosition();
+  const rangesForBuf: Array<{ start: number; end: number }> = [...waitingRanges];
+
+  for (const line of data.lines) {
+    const trimmed = line.content.trim();
+    if (singleLineDisplayMath(trimmed) !== null) {
+      rangesForBuf.push({ start: line.byte_start, end: line.byte_end + 1 });
+    }
+  }
+
+  for (const sb of specialBlocks) {
+    const scopeStart = sb.openLine.byte_start;
+    const scopeEnd = blockScopeEnd(sb.closeLine);
+    rangesForBuf.push({ start: scopeStart, end: scopeEnd });
+
+    const blockIndent = sb.blockIndent;
+    const blockMeasure = Math.max(4, measure - blockIndent);
+    // Half-open, like the conceals' own scope: a cursor at the start of the
+    // next line is outside the block.
+    const cursorInBlock = cursorPos >= scopeStart && cursorPos < scopeEnd;
+
+    if (sb.kind === "fence") {
+      const rendered = { title: `${sb.lang} · ${toolName(sb.lang)}`, lines: sb.rows! };
+
+      // Open fence
+      const openStart = charToByte(sb.openLine.content, blockIndent, sb.openLine.byte_start);
+      const openEnd = lineContentEndByte(sb.openLine.content, sb.openLine.byte_start);
+      const openFrame = buildCodeFrameLineWithLabel(blockMeasure, "┌", "┐", rendered.title);
+      addComposeConceal(
+        data.buffer_id, "md-syntax", openStart, openEnd, openFrame,
+        "unless-cursor-in", scopeStart, scopeEnd,
+      );
+      addComposeOverlay(data.buffer_id, "md-emphasis", openStart, openEnd, codeFrameStyle);
+
+      // Close fence
+      const closeStart = charToByte(sb.closeLine.content, blockIndent, sb.closeLine.byte_start);
+      const closeEnd = lineContentEndByte(sb.closeLine.content, sb.closeLine.byte_start);
+      const closeFrame = buildCodeFrameLine(blockMeasure, "└", "┘");
+      addComposeConceal(
+        data.buffer_id, "md-syntax", closeStart, closeEnd, closeFrame,
+        "unless-cursor-in", scopeStart, scopeEnd,
+      );
+      addComposeOverlay(data.buffer_id, "md-emphasis", closeStart, closeEnd, codeFrameStyle);
+
+      // Body lines
+      const B = sb.bodyLines.length;
+      const M = rendered.lines.length;
+      for (let i = 0; i < B; i++) {
+        const bodyLine = sb.bodyLines[i];
+        const lineStart = bodyLine.byte_start;
+        const lineEnd = lineContentEndByte(bodyLine.content, bodyLine.byte_start);
+        // A source line past the drawing's last row is an empty row of the
+        // frame, rails and all.
+        const row = buildDiagramRow(rendered.lines[i] ?? "", blockMeasure, blockIndent);
+        drawBlockRow(
+          data.buffer_id, bodyLine, lineStart, lineEnd, row,
+          scopeStart, scopeEnd, codeFrameStyle, cursorInBlock,
+        );
+      }
+
+      // Overflow visual rows as virtual lines (suppressed when cursor is in block)
+      if (!cursorInBlock && M > B) {
+        for (let i = B; i < M; i++) {
+          const row = buildDiagramRow(rendered.lines[i], blockMeasure, blockIndent);
+          editor.addVirtualLine(
+            data.buffer_id, sb.closeLine.byte_start, row,
+            codeFrameStyle, true, MERMAID_VIRTUAL_LINE_NS, i - B,
+          );
+        }
+      }
+    } else if (sb.kind === "math") {
+      const label = "math";
+
+      const mathStyle = { fg: "syntax.constant", italic: true, composeOnly: true };
+
+      // The rows to draw, and the lines that hold them ("slots"): the body
+      // lines, and a delimiter line that carries a formula of its own
+      // (`$$ E = mc^2`). The tool draws the whole formula in as many rows
+      // as it needs: fewer than the slots leaves the rest blank, more spill
+      // into virtual lines above the frame's bottom.
+      const slots: Array<{ line: LineInfoLike; formula: string; delimiter: boolean }> = [];
+      if (sb.openFormula) slots.push({ line: sb.openLine, formula: sb.openFormula, delimiter: true });
+      for (const bodyLine of sb.bodyLines) slots.push({ line: bodyLine, formula: bodyLine.content.trim(), delimiter: false });
+      if (sb.closeFormula) slots.push({ line: sb.closeLine, formula: sb.closeFormula, delimiter: true });
+      const rows = sb.rows!;
+      const overflow = Math.max(0, rows.length - slots.length);
+      const titled = `${label} · ${toolName(sb.lang)}`;
+
+      // Open fence: the frame's top, concealing the delimiter — or, when the
+      // delimiter line is a slot, a virtual line above it.
+      const openStart = charToByte(sb.openLine.content, blockIndent, sb.openLine.byte_start);
+      const openEnd = lineContentEndByte(sb.openLine.content, sb.openLine.byte_start);
+      const openFrame = buildCodeFrameLineWithLabel(blockMeasure, "┌", "┐", titled);
+      if (sb.openFormula) {
+        if (!cursorInBlock) {
+          editor.addVirtualLine(
+            data.buffer_id, sb.openLine.byte_start, " ".repeat(blockIndent) + openFrame,
+            codeFrameStyle, true, MATH_VIRTUAL_LINE_NS, 0,
+          );
+        }
+      } else {
+        addComposeConceal(
+          data.buffer_id, "md-syntax", openStart, openEnd, openFrame,
+          "unless-cursor-in", scopeStart, scopeEnd,
+        );
+        addComposeOverlay(data.buffer_id, "md-emphasis", openStart, openEnd, codeFrameStyle);
+      }
+
+      // Close fence, likewise; rows that did not fit the slots go above it.
+      const closeStart = charToByte(sb.closeLine.content, blockIndent, sb.closeLine.byte_start);
+      const closeEnd = lineContentEndByte(sb.closeLine.content, sb.closeLine.byte_start);
+      const closeFrame = buildCodeFrameLine(blockMeasure, "└", "┘");
+      if (!cursorInBlock) {
+        for (let i = 0; i < overflow; i++) {
+          editor.addVirtualLine(
+            data.buffer_id, sb.closeLine.byte_start,
+            buildDiagramRow(rows[slots.length + i], blockMeasure, blockIndent),
+            mathStyle, !sb.closeFormula, MATH_VIRTUAL_LINE_NS, i,
+          );
+        }
+      }
+      if (sb.closeFormula) {
+        if (!cursorInBlock) {
+          editor.addVirtualLine(
+            data.buffer_id, sb.closeLine.byte_start, " ".repeat(blockIndent) + closeFrame,
+            codeFrameStyle, false, MATH_VIRTUAL_LINE_NS, overflow,
+          );
+        }
+      } else {
+        addComposeConceal(
+          data.buffer_id, "md-syntax", closeStart, closeEnd, closeFrame,
+          "unless-cursor-in", scopeStart, scopeEnd,
+        );
+        addComposeOverlay(data.buffer_id, "md-emphasis", closeStart, closeEnd, codeFrameStyle);
+      }
+
+      // The slots. A delimiter line is concealed from the block's indent
+      // (its own rows carry none); a body line from its start.
+      slots.forEach((slot, i) => {
+        const line = slot.line;
+        const start = slot.delimiter ? charToByte(line.content, blockIndent, line.byte_start) : line.byte_start;
+        const end = lineContentEndByte(line.content, line.byte_start);
+        const row = buildDiagramRow(rows[i] ?? "", blockMeasure, slot.delimiter ? 0 : blockIndent);
+        drawBlockRow(
+          data.buffer_id, line, start, end, slot.delimiter ? row.trimStart() : row,
+          scopeStart, scopeEnd, mathStyle, cursorInBlock,
+        );
+      });
+    }
+  }
+
+  // A batch covers only some of the document: keep the blocks found by
+  // earlier batches outside its span, and replace those inside it.
+  if (data.lines.length > 0) {
+    const batchStart = data.lines[0].byte_start;
+    const batchEnd = data.lines[data.lines.length - 1].byte_end;
+    const kept = (specialBlockRangesByBuffer.get(data.buffer_id) ?? [])
+      .filter((r) => r.end <= batchStart || r.start > batchEnd);
+    specialBlockRangesByBuffer.set(data.buffer_id, [...kept, ...rangesForBuf]);
   }
 
   // Publish this batch's heading marks. Range-scoped to the batch's byte span
@@ -3543,7 +4402,36 @@ function resetEditedTableWidths(bufferId: number, affStart: number, affEnd: numb
     if (m.id.startsWith(TABLE_WIDTH_NS_PREFIX)) editor.deleteMarker(bufferId, m.id);
   }
 }
+// The drawn blocks' ranges (see `specialBlockRangesByBuffer`) are byte
+// offsets, so every edit moves the ones after it. A batch only replaces the
+// ranges inside its own span, so without this a block below an edit would be
+// looked for at its old place, and the cursor crossing into it missed.
+/** `inserted` bytes put in at `at`. */
+function shiftRangesForInsert(bufferId: number, at: number, inserted: number): void {
+  const ranges = specialBlockRangesByBuffer.get(bufferId);
+  if (!ranges) return;
+  for (const r of ranges) {
+    if (r.start >= at) r.start += inserted;
+    if (r.end > at) r.end += inserted;
+  }
+}
+/** The bytes `[start, end)` removed. A range losing all its bytes goes. */
+function shiftRangesForDelete(bufferId: number, start: number, end: number): void {
+  const ranges = specialBlockRangesByBuffer.get(bufferId);
+  if (!ranges) return;
+  const removed = end - start;
+  const map = (x: number) => (x <= start ? x : x >= end ? x - removed : start);
+  specialBlockRangesByBuffer.set(
+    bufferId,
+    ranges.map((r) => ({ start: map(r.start), end: map(r.end) })).filter((r) => r.end > r.start),
+  );
+}
+/** Buffers whose last edit came with positions (`after_insert`/`after_delete`). */
+const shiftedByEdit = new Set<number>();
+
 editor.on("after_insert", (data) => {
+  shiftRangesForInsert(data.buffer_id, data.position, utf8Length(data.text));
+  shiftedByEdit.add(data.buffer_id);
   if (!isComposingInAnySplit(data.buffer_id)) return;
   resetEditedTableWidths(data.buffer_id, data.affected_start, data.affected_end);
   // Typed backticks can open or close a block; anything else can only stop an
@@ -3556,6 +4444,8 @@ editor.on("after_insert", (data) => {
   } else fenceEditArmed.add(data.buffer_id);
 });
 editor.on("after_delete", (data) => {
+  shiftRangesForDelete(data.buffer_id, data.start, data.end);
+  shiftedByEdit.add(data.buffer_id);
   if (!isComposingInAnySplit(data.buffer_id)) return;
   resetEditedTableWidths(data.buffer_id, data.affected_start, data.affected_start);
   // Deleted backticks are checked here, not in the batch: the text that is gone
@@ -3565,13 +4455,32 @@ editor.on("after_delete", (data) => {
     void prescanHeadingMarkers(data.buffer_id);
   } else fenceEditArmed.add(data.buffer_id);
 });
-// cursor_moved: no handler. Cursor-dependent reveal/conceal and table-row
-// un/re-wrap are baked into the markers as activation scopes (emitted in the
-// lines_changed pass above) and evaluated by the renderer per frame — cursor
-// movement changes what's *active* without touching any marker, so it never
-// re-fires lines_changed, never bumps the conceal/soft-break versions, and
-// never invalidates the line-wrap cache or visual-row index.
+
+// A bulk edit (multi-cursor typing, a replace-all, their undo) fires
+// `buffer_modified` with no `after_insert`/`after_delete` before it, so the
+// ranges cannot be moved: they are dropped, and a redraw finds them again.
+editor.on("buffer_modified", (data) => {
+  if (shiftedByEdit.delete(data.buffer_id)) return;
+  if (!specialBlockRangesByBuffer.has(data.buffer_id)) return;
+  specialBlockRangesByBuffer.delete(data.buffer_id);
+  if (isComposingInAnySplit(data.buffer_id)) editor.refreshLines(data.buffer_id);
+});
+
+// Cursor movement: refresh lines only when crossing into or out of a special block
+// (Mermaid diagram with virtual lines or display math with virtual border lines).
+editor.on("cursor_moved", (data) => {
+  if (!isComposingInAnySplit(data.buffer_id)) return;
+  const ranges = specialBlockRangesByBuffer.get(data.buffer_id);
+  if (!ranges || ranges.length === 0) return;
+  const oldIdx = ranges.findIndex((r) => data.old_position >= r.start && data.old_position < r.end);
+  const newIdx = ranges.findIndex((r) => data.new_position >= r.start && data.new_position < r.end);
+  if (oldIdx !== newIdx) {
+    editor.refreshLines(data.buffer_id);
+  }
+});
+
 editor.on("buffer_closed", (data) => {
+  specialBlockRangesByBuffer.delete(data.buffer_id);
   // View state is cleaned up automatically when the buffer is removed from keyed_states
 });
 editor.on("viewport_changed", (data) => {
