@@ -449,12 +449,15 @@ impl Editor {
             // persisting half of the stop-server prompt path (see
             // `handle_stop_lsp_server` which sets auto_start=false).
             if let Some((language, server_name)) = target.split_once('/') {
+                let mut updated_configs = None;
                 if let Some(lsp_configs) = self.config_mut().lsp.get_mut(language) {
                     for c in lsp_configs.as_mut_slice() {
                         if c.display_name() == server_name {
+                            c.enabled = true;
                             c.auto_start = true;
                         }
                     }
+                    updated_configs = Some(lsp_configs.as_slice().to_vec());
                     if let Err(e) = self.save_config() {
                         tracing::warn!(
                             "Failed to save config after enabling LSP auto-start: {}",
@@ -480,7 +483,11 @@ impl Editor {
                     .and_then(|meta| meta.file_path().cloned());
                 let __active_id = self.active_window;
                 if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
-                    let (_, message) = lsp.manual_restart(language, file_path.as_deref());
+                    if let Some(configs) = updated_configs {
+                        lsp.set_language_configs(language.to_string(), configs);
+                    }
+                    let (_, message) =
+                        lsp.manual_restart_server(language, server_name, file_path.as_deref());
                     self.active_window_mut().status_message = Some(message);
                 }
                 self.reopen_buffers_for_language(language);
@@ -512,19 +519,13 @@ impl Editor {
                     .get(&self.active_buffer())
                     .and_then(|meta| meta.file_path().cloned());
 
-                let __active_id = self.active_window;
-
-                if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
-                    // Shutdown the specific server first, then re-spawn
-                    lsp.shutdown_server_by_name(language, server_name);
-                }
                 // Remove the status entry so it gets re-created on spawn
                 self.active_window_mut()
                     .lsp_server_statuses
                     .remove(&(language.to_string(), server_name.to_string()));
                 let __active_id = self.active_window;
                 if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
-                    let _ = lsp.manual_restart(language, file_path.as_deref());
+                    let _ = lsp.manual_restart_server(language, server_name, file_path.as_deref());
                 }
                 self.reopen_buffers_for_language(language);
                 self.active_window_mut().status_message = Some(format!(

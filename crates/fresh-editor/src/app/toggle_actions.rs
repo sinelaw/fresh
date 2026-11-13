@@ -321,6 +321,68 @@ impl Editor {
         );
     }
 
+    /// Toggle inline diagnostics globally.
+    ///
+    /// Flips `editor.diagnostics_inline_text`, clears any per-buffer override
+    /// on the active buffer, synchronizes windows, and persists the setting
+    /// to config.
+    pub fn toggle_inline_diagnostics(&mut self) {
+        let new_value = !self.config.editor.diagnostics_inline_text;
+        self.config_mut().editor.diagnostics_inline_text = new_value;
+        let active_buffer = self.active_buffer();
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&active_buffer)
+        {
+            state.buffer_settings.diagnostics_inline_text_override = None;
+        }
+        self.sync_windows_config();
+        self.persist_config_change(config_keys::EDITOR_DIAGNOSTICS_INLINE_TEXT, new_value);
+
+        let state = if new_value {
+            t!("view.state_enabled").to_string()
+        } else {
+            t!("view.state_disabled").to_string()
+        };
+        self.set_status_message(t!("view.inline_diagnostics_state", state = state).to_string());
+    }
+
+    /// Toggle inline diagnostics for the current buffer only.
+    ///
+    /// Per-buffer counterpart of the global `editor.diagnostics_inline_text`
+    /// setting, persisted in per-file workspace state.
+    pub fn toggle_inline_diagnostics_current_buffer(&mut self) {
+        let buffer_id = self.active_buffer();
+        let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        else {
+            return;
+        };
+
+        let current = state
+            .buffer_settings
+            .diagnostics_inline_text_override
+            .unwrap_or(self.config.editor.diagnostics_inline_text);
+        let new_value = !current;
+        state.buffer_settings.diagnostics_inline_text_override = Some(new_value);
+
+        let state_str = if new_value {
+            t!("view.state_enabled").to_string()
+        } else {
+            t!("view.state_disabled").to_string()
+        };
+        self.set_status_message(
+            t!("view.inline_diagnostics_buffer_state", state = state_str).to_string(),
+        );
+    }
+
     /// Toggle the gutter folding indicators for the current buffer only.
     ///
     /// Hides (or restores) the ▾/▸ arrows in the left margin without touching

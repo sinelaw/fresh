@@ -783,6 +783,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.toggle_inline_diagnostics_current_buffer",
+        desc_key: "cmd.toggle_inline_diagnostics_current_buffer_desc",
+        action: || Action::ToggleInlineDiagnosticsCurrentBuffer,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.wave_animation",
         desc_key: "cmd.wave_animation_desc",
         action: || Action::TriggerWaveAnimation,
@@ -1087,6 +1094,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         name_key: "cmd.toggle_occurrence_highlight",
         desc_key: "cmd.toggle_occurrence_highlight_desc",
         action: || Action::ToggleOccurrenceHighlight,
+        contexts: &[Normal, FileExplorer, Terminal],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.toggle_inline_diagnostics",
+        desc_key: "cmd.toggle_inline_diagnostics_desc",
+        action: || Action::ToggleInlineDiagnostics,
         contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
