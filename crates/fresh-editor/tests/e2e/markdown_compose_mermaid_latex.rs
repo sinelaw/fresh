@@ -1,7 +1,7 @@
 //! E2E tests for Mermaid diagrams and LaTeX math in compose mode.
 //!
 //! Compose does not draw either itself: it finds them and draws what the
-//! command its `renderers` table names for the block's language prints. These
+//! command its `renderers` map names for the block's language prints. These
 //! tests stand stub scripts in for the tools, so what the screen shows is
 //! known exactly — `M<formula>` for math, `DIAGRAM<first line>` for a
 //! diagram — and check that compose finds every delimiter, frames the tool's
@@ -20,9 +20,9 @@ use fresh::config::{Config, PluginConfig};
 
 const WIDTH: u16 = 140;
 
-/// The plugin's settings: the `renderers` table given, empty by default, so a
+/// The plugin's settings: the `renderers` map given, empty by default, so a
 /// machine with `termaid` or `utftex` installed behaves like one without.
-fn compose_config(renderers: &[String]) -> Config {
+fn compose_config(renderers: serde_json::Value) -> Config {
     let mut config = Config::default();
     config.plugins.insert(
         "markdown_compose".to_string(),
@@ -37,7 +37,7 @@ fn compose_config(renderers: &[String]) -> Config {
 
 fn harness_with_renderers(
     md: &str,
-    renderers: &[String],
+    renderers: serde_json::Value,
 ) -> (EditorTestHarness, tempfile::TempDir) {
     init_tracing_from_env();
 
@@ -88,10 +88,10 @@ fn without_a_tool_math_and_diagrams_show_their_source() {
     let md = "# Title\n\nSee $x^2$ here.\n\n$$E = mc^2$$\n\n```mermaid\ngraph TD\n    A --> B\n```\n\nTail.\n";
     let (mut h, _tmp) = harness_with_renderers(
         md,
-        &[
-            "math = fresh-test-no-such-renderer {source}".to_string(),
-            "mermaid = fresh-test-no-such-renderer {file}".to_string(),
-        ],
+        serde_json::json!({
+            "math": { "command": "fresh-test-no-such-renderer", "args": ["{source}"] },
+            "mermaid": { "command": "fresh-test-no-such-renderer", "args": ["{file}"] },
+        }),
     );
     run(&mut h, "Markdown: Toggle Compose");
     h.wait_until(|h| {
@@ -124,7 +124,7 @@ mod with_stub_tools {
     /// with a row above and below when it holds a `\frac`, as a 2-D layout
     /// would. Mermaid prints its first line and a row count, and fails on a
     /// `gantt`, as a tool does on a diagram type it does not know.
-    fn stubs(dir: &std::path::Path) -> Vec<String> {
+    fn stubs(dir: &std::path::Path) -> serde_json::Value {
         let math = stub(
             dir,
             "stub-math",
@@ -137,16 +137,16 @@ case "$f" in *'\frac'*) printf 'FRAC TOP\nM<%s>\nFRAC BOTTOM\n' "$f" ;; *) print
             r#"grep -q gantt "$1" && exit 3
 printf 'DIAGRAM<%s>\nDIAGRAM %s lines\n' "$(head -n 1 "$1")" "$(wc -l < "$1" | tr -d ' ')""#,
         );
-        vec![
-            format!("math = \"{math}\" --line-width {{width}} {{source}}"),
-            format!("latex = \"{math}\" --line-width {{width}} {{source}}"),
-            format!("mermaid = \"{mermaid}\" {{file}} --width {{width}}"),
-        ]
+        serde_json::json!({
+            "math": { "command": math, "args": ["--line-width", "{width}", "{source}"] },
+            "latex": { "command": math, "args": ["--line-width", "{width}", "{source}"] },
+            "mermaid": { "command": mermaid, "args": ["{file}", "--width", "{width}"] },
+        })
     }
 
     fn compose_with_stubs(md: &str) -> (EditorTestHarness, tempfile::TempDir, tempfile::TempDir) {
         let tools = tempfile::TempDir::new().unwrap();
-        let (mut h, tmp) = harness_with_renderers(md, &stubs(tools.path()));
+        let (mut h, tmp) = harness_with_renderers(md, stubs(tools.path()));
         run(&mut h, "Markdown: Toggle Compose");
         (h, tmp, tools)
     }
@@ -217,7 +217,7 @@ printf 'DIAGRAM<%s>\nDIAGRAM %s lines\n' "$(head -n 1 "$1")" "$(wc -l < "$1" | t
         .unwrap();
     }
 
-    /// A ```latex fence is drawn by its entry in the table.
+    /// A ```latex fence is drawn by its entry in the map.
     #[test]
     fn a_fenced_latex_block_is_drawn_in_a_latex_frame() {
         let md = "# Title\n\nIntro.\n\n```latex\n\\alpha + \\beta\n```\n\nTail.\n";
@@ -318,7 +318,7 @@ printf 'DIAGRAM<%s>\nDIAGRAM %s lines\n' "$(head -n 1 "$1")" "$(wc -l < "$1" | t
     fn dual_mode_draws_in_the_composed_panel_only() {
         let md = "# Doc\n\nSee $x^2$ here.\n\n$$\\frac{a}{b}$$\n\n```mermaid\ngraph TD\n    A --> B\n```\n\nTail.\n";
         let tools = tempfile::TempDir::new().unwrap();
-        let (mut h, _tmp) = harness_with_renderers(md, &stubs(tools.path()));
+        let (mut h, _tmp) = harness_with_renderers(md, stubs(tools.path()));
         run(&mut h, "Markdown: Source/Compose Dual Mode");
 
         let mid = WIDTH as usize / 2;
@@ -355,8 +355,10 @@ printf 'DIAGRAM<%s>\nDIAGRAM %s lines\n' "$(head -n 1 "$1")" "$(wc -l < "$1" | t
             r#"case "$2" in *.dot) printf 'GRAPH<%s> from %s\n' "$(head -n 1 "$2")" "$1" ;; *) exit 1 ;; esac"#,
         );
         let md = "# Title\n\n```dot\ndigraph { a -> b }\n```\n\nTail.\n";
-        let (mut h, _tmp) =
-            harness_with_renderers(md, &[format!("dot = \"{dot}\" {{lang}} {{file}}")]);
+        let (mut h, _tmp) = harness_with_renderers(
+            md,
+            serde_json::json!({ "dot": { "command": dot, "args": ["{lang}", "{file}"] } }),
+        );
         run(&mut h, "Markdown: Toggle Compose");
         h.wait_until(|h| {
             screen_has(h, "dot · stub-dot")
@@ -366,14 +368,14 @@ printf 'DIAGRAM<%s>\nDIAGRAM %s lines\n' "$(head -n 1 "$1")" "$(wc -l < "$1" | t
         .unwrap();
     }
 
-    /// `language =` with no command turns a default off: the block is code.
+    /// An entry with an empty command turns a language off: the block is code.
     #[test]
     fn an_entry_with_no_command_turns_a_language_off() {
         let tools = tempfile::TempDir::new().unwrap();
         let mut table = stubs(tools.path());
-        table.push("mermaid =".to_string());
+        table["mermaid"] = serde_json::json!({ "command": "", "args": [] });
         let md = "# Title\n\n```mermaid\ngraph TD\n    A --> B\n```\n\nSee $x^2$.\n";
-        let (mut h, _tmp) = harness_with_renderers(md, &table);
+        let (mut h, _tmp) = harness_with_renderers(md, table);
         run(&mut h, "Markdown: Toggle Compose");
         h.wait_until(|h| {
             screen_has(h, "M<x^2>") && screen_has(h, "A --> B") && !screen_has(h, "DIAGRAM")

@@ -405,10 +405,10 @@ function displayMathBlocks(lines: LineInfoLike[]): Array<[number, number]> {
 // Previews of code blocks and math: drawn by external tools
 // =============================================================================
 //
-// Compose draws no diagram or formula itself. A table, the `renderers`
-// setting, names a command for each code-block language; a fenced block in a
-// language that has one is handed to it, and what it prints is drawn in a
-// frame in place of the source. Math written with `$…$`, `$$…$$`, `\(…\)`
+// Compose draws no diagram or formula itself. A map, the `renderers`
+// setting, names a command and its arguments for each code-block language; a
+// fenced block in a language that has one is handed to it, and what it prints
+// is drawn in a frame in place of the source. Math written with `$…$`, `$$…$$`, `\(…\)`
 // or `\[…\]` uses the `math` entry.
 //
 // The defaults:
@@ -420,8 +420,8 @@ function displayMathBlocks(lines: LineInfoLike[]): Array<[number, number]> {
 //     which lays a formula out in two dimensions.
 //
 // Any program that prints a drawing as text can be added for any language
-// (`dot = graph-easy --as=boxart {file}`), and `lang =` with no command turns
-// one off. Without a command — none set, not installed, or failing on a
+// (`dot` → `graph-easy --as=boxart {file}`), and an entry with an empty
+// command turns one off. Without a command — none set, not installed, or failing on a
 // block — the source is shown as written: a fenced block as a code block,
 // display math as its lines. Inline math is replaced only when the command
 // draws it on one row; a stacked fraction cannot sit in a sentence.
@@ -432,52 +432,44 @@ function displayMathBlocks(lines: LineInfoLike[]): Array<[number, number]> {
 // command that cannot be started is noted once (with a status message saying
 // what to install) and not retried this session.
 
-const DEFAULT_RENDERERS = [
-  "mermaid = termaid {file} --width {width}",
-  "math = utftex --line-width {width} {source}",
-  "latex = utftex --line-width {width} {source}",
-  "katex = utftex --line-width {width} {source}",
-];
+type Renderer = { command: string; args: string[] };
 
-editor.defineConfigStringArray("renderers", {
+const DEFAULT_RENDERERS: Record<string, Renderer> = {
+  mermaid: { command: "termaid", args: ["{file}", "--width", "{width}"] },
+  math: { command: "utftex", args: ["--line-width", "{width}", "{source}"] },
+  latex: { command: "utftex", args: ["--line-width", "{width}", "{source}"] },
+  katex: { command: "utftex", args: ["--line-width", "{width}", "{source}"] },
+};
+
+editor.defineConfigMap("renderers", {
   default: DEFAULT_RENDERERS,
+  value: {
+    command: { type: "string", description: "The program to run. Empty: show this language as code." },
+    args: {
+      type: "string[]",
+      description:
+        "Its arguments. {file}: a temporary file holding the block's text; {source}: the text itself; " +
+        "{width}: the columns available; {lang}: the language.",
+    },
+  },
+  displayField: "command",
   description:
-    "Commands that draw a preview of a code block, by its language: `language = command arguments`. " +
-    "In the arguments, {file} is a temporary file holding the block's text, {source} the text itself, " +
-    "{width} the columns available, {lang} the language. The `math` entry also draws $…$, $$…$$, \\(…\\) and \\[…\\]. " +
-    "A language with no command (`mermaid =`) is shown as code. Example: `dot = graph-easy --as=boxart {file}`.",
+    "Commands that draw a preview of a code block, by its language. The `math` entry also draws " +
+    "$…$, $$…$$, \\(…\\) and \\[…\\].",
 });
 
-interface Renderer {
-  command: string;
-  args: string[];
-}
-
-/** A command line split into words; "double quotes" keep spaces in a word. */
-function splitCommandLine(line: string): string[] {
-  const words: string[] = [];
-  const re = /"([^"]*)"|(\S+)/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(line)) !== null) words.push(m[1] ?? m[2]);
-  return words;
-}
-
-/**
- * The `renderers` table: language → command. A later entry for a language
- * replaces an earlier one, and one with no command removes it.
- */
+/** The `renderers` table: language → command. An entry with no command is off. */
 function renderers(): Map<string, Renderer> {
   const cfg = (editor.getPluginConfig() ?? {}) as { renderers?: unknown };
-  const entries = Array.isArray(cfg.renderers) ? cfg.renderers : DEFAULT_RENDERERS;
+  const map = cfg.renderers && typeof cfg.renderers === "object" && !Array.isArray(cfg.renderers)
+    ? (cfg.renderers as Record<string, Partial<Renderer>>)
+    : DEFAULT_RENDERERS;
   const table = new Map<string, Renderer>();
-  for (const entry of entries) {
-    if (typeof entry !== "string") continue;
-    const eq = entry.indexOf("=");
-    if (eq <= 0) continue;
-    const lang = entry.slice(0, eq).trim().toLowerCase();
-    const [command, ...args] = splitCommandLine(entry.slice(eq + 1));
-    if (command) table.set(lang, { command, args });
-    else table.delete(lang);
+  for (const [lang, entry] of Object.entries(map)) {
+    const command = typeof entry?.command === "string" ? entry.command.trim() : "";
+    if (!command) continue;
+    const args = Array.isArray(entry.args) ? entry.args.filter((a): a is string => typeof a === "string") : [];
+    table.set(lang.toLowerCase(), { command, args });
   }
   return table;
 }

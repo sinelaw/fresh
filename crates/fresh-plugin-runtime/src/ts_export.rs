@@ -1821,6 +1821,7 @@ mod tests {
             // (generic <E> propagates `values` into the return), so it's
             // NOT in the macro-generated EditorAPI interface.
             "defineConfigStringArray",
+            "defineConfigMap",
             "reloadConfig",
             "reloadThemes",
             "reloadAndApplyTheme",

@@ -6288,6 +6288,29 @@ interface EditorAPI {
 		description?: string;
 	}): string[];
 	/**
+	* Declare a map config field: named entries, each a small record of
+	* typed fields (e.g. a command and its arguments per language).
+	* 
+	* `value` names each entry's fields and their types — `"string"`,
+	* `"string[]"`, `"boolean"`, `"integer"` or `"number"`, or
+	* `{ type, description }` to describe one. `displayField` picks the
+	* field a row shows next to its key. The Settings UI renders the map
+	* with a row per entry and an add/edit dialog holding the fields.
+	* 
+	* Throws if an option is unknown, a field type is not one of those, or
+	* `default` is not a map of entries whose fields match `value`.
+	* Returns the current value (user-set if present, otherwise `default`).
+	*/
+	defineConfigMap(name: string, options: {
+		default: Record<string, Record<string, unknown>>;
+		value: Record<string, "string" | "string[]" | "boolean" | "integer" | "number" | {
+			type: "string" | "string[]" | "boolean" | "integer" | "number";
+			description?: string;
+		}>;
+		displayField?: string;
+		description?: string;
+	}): Record<string, Record<string, unknown>>;
+	/**
 	* Get the calling plugin's settings as a JS object.
 	* 
 	* Returns the merged value at `config.plugins.<plugin_name>.settings`.

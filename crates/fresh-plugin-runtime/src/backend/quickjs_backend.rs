@@ -970,6 +970,20 @@ fn validate_allowed_keys<'js>(
     Ok(())
 }
 
+/// Whether `v` is a value of a `defineConfigMap` field type.
+fn map_field_matches(ty: &str, v: &serde_json::Value) -> bool {
+    match ty {
+        "string" => v.is_string(),
+        "string[]" => v
+            .as_array()
+            .is_some_and(|a| a.iter().all(|x| x.is_string())),
+        "boolean" => v.is_boolean(),
+        "integer" => v.is_i64() || v.is_u64(),
+        "number" => v.is_number(),
+        _ => false,
+    }
+}
+
 fn string_opt(opts: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<String> {
     opts.get(key)
         .and_then(|v| v.as_str())
@@ -3872,6 +3886,176 @@ impl JsEditorApi {
                 })
             })
             .unwrap_or(default))
+    }
+
+    /// Declare a map config field: named entries, each a small record of
+    /// typed fields (e.g. a command and its arguments per language).
+    ///
+    /// `value` names each entry's fields and their types — `"string"`,
+    /// `"string[]"`, `"boolean"`, `"integer"` or `"number"`, or
+    /// `{ type, description }` to describe one. `displayField` picks the
+    /// field a row shows next to its key. The Settings UI renders the map
+    /// with a row per entry and an add/edit dialog holding the fields.
+    ///
+    /// Throws if an option is unknown, a field type is not one of those, or
+    /// `default` is not a map of entries whose fields match `value`.
+    /// Returns the current value (user-set if present, otherwise `default`).
+    #[plugin_api(ts_return = "Record<string, Record<string, unknown>>")]
+    pub fn define_config_map<'js>(
+        &self,
+        ctx: fresh_js::Ctx<'js>,
+        name: String,
+        #[plugin_api(
+            ts_type = "{ default: Record<string, Record<string, unknown>>; value: Record<string, 'string' | 'string[]' | 'boolean' | 'integer' | 'number' | { type: 'string' | 'string[]' | 'boolean' | 'integer' | 'number'; description?: string }>; displayField?: string; description?: string }"
+        )]
+        options: fresh_js::Object<'js>,
+    ) -> fresh_js::Result<Value<'js>> {
+        const METHOD: &str = "defineConfigMap";
+        let opts = parse_options(&ctx, METHOD, &name, options)?;
+        validate_allowed_keys(
+            &ctx,
+            METHOD,
+            &name,
+            &opts,
+            &["default", "value", "displayField", "description"],
+        )?;
+
+        // The entry's fields: name → (JSON Schema for it, its type name).
+        let value_spec = match opts.get("value") {
+            Some(serde_json::Value::Object(m)) if !m.is_empty() => m,
+            _ => {
+                return Err(throw_js(
+                    &ctx,
+                    &format!(
+                        "{}(\"{}\"): `value` (an object naming each entry's fields) is required",
+                        METHOD, name
+                    ),
+                ))
+            }
+        };
+        let mut properties = serde_json::Map::new();
+        let mut field_types: Vec<(String, String)> = Vec::new();
+        for (field, spec) in value_spec {
+            let (ty, description) = match spec {
+                serde_json::Value::String(t) => (t.clone(), None),
+                serde_json::Value::Object(o) => (
+                    o.get("type")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    o.get("description")
+                        .and_then(|d| d.as_str())
+                        .map(|d| d.to_string()),
+                ),
+                _ => (String::new(), None),
+            };
+            let mut schema = match ty.as_str() {
+                "string" => serde_json::json!({ "type": "string" }),
+                "string[]" => serde_json::json!({ "type": "array", "items": { "type": "string" } }),
+                "boolean" => serde_json::json!({ "type": "boolean" }),
+                "integer" => serde_json::json!({ "type": "integer" }),
+                "number" => serde_json::json!({ "type": "number" }),
+                _ => {
+                    return Err(throw_js(
+                        &ctx,
+                        &format!(
+                            "{}(\"{}\"): field `{}` has type {:?}; use \"string\", \"string[]\", \"boolean\", \"integer\" or \"number\"",
+                            METHOD, name, field, ty
+                        ),
+                    ))
+                }
+            };
+            if let Some(d) = description {
+                schema["description"] = serde_json::json!(d);
+            }
+            properties.insert(field.clone(), schema);
+            field_types.push((field.clone(), ty));
+        }
+
+        let display_field = string_opt(&opts, "displayField");
+        if let Some(df) = &display_field {
+            if !properties.contains_key(df) {
+                return Err(throw_js(
+                    &ctx,
+                    &format!(
+                        "{}(\"{}\"): `displayField` {:?} is not one of the fields in `value`",
+                        METHOD, name, df
+                    ),
+                ));
+            }
+        }
+
+        let default = match opts.get("default") {
+            Some(serde_json::Value::Object(m)) => m.clone(),
+            _ => {
+                return Err(throw_js(
+                    &ctx,
+                    &format!(
+                        "{}(\"{}\"): `default` (an object of entries) is required",
+                        METHOD, name
+                    ),
+                ))
+            }
+        };
+        for (key, entry) in &default {
+            let entry = entry.as_object().ok_or_else(|| {
+                throw_js(
+                    &ctx,
+                    &format!(
+                        "{}(\"{}\"): default entry `{}` must be an object",
+                        METHOD, name, key
+                    ),
+                )
+            })?;
+            for (field, v) in entry {
+                let Some((_, ty)) = field_types.iter().find(|(f, _)| f == field) else {
+                    return Err(throw_js(
+                        &ctx,
+                        &format!(
+                            "{}(\"{}\"): default entry `{}` has field `{}`, which `value` does not name",
+                            METHOD, name, key, field
+                        ),
+                    ));
+                };
+                if !map_field_matches(ty, v) {
+                    return Err(throw_js(
+                        &ctx,
+                        &format!(
+                            "{}(\"{}\"): default entry `{}`: field `{}` must be {}",
+                            METHOD, name, key, field, ty
+                        ),
+                    ));
+                }
+            }
+        }
+
+        let mut value_schema = serde_json::Map::new();
+        value_schema.insert("type".into(), serde_json::json!("object"));
+        value_schema.insert("properties".into(), serde_json::Value::Object(properties));
+        if let Some(df) = &display_field {
+            value_schema.insert(
+                "x-display-field".into(),
+                serde_json::json!(format!("/{}", df)),
+            );
+        }
+        let mut field = serde_json::Map::new();
+        field.insert("type".into(), serde_json::json!("object"));
+        field.insert(
+            "additionalProperties".into(),
+            serde_json::Value::Object(value_schema),
+        );
+        field.insert("default".into(), serde_json::Value::Object(default.clone()));
+        if let Some(d) = string_opt(&opts, "description") {
+            field.insert("description".into(), serde_json::json!(d));
+        }
+        self.send_field_registration(&name, serde_json::Value::Object(field));
+
+        let current = self
+            .current_field_value(&name)
+            .filter(|v| v.is_object())
+            .unwrap_or(serde_json::Value::Object(default));
+        fresh_js::serde::to_value(ctx, &current)
+            .map_err(|e| fresh_js::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     /// Get the calling plugin's settings as a JS object.

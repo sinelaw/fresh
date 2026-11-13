@@ -278,7 +278,7 @@ Compose mode reads the document the way markdown defines it, so a paragraph, lis
 
 ### Previews of diagrams, math and other code blocks
 
-Compose mode can show a code block as a drawing instead of its source. It doesn't draw anything itself: the `renderers` setting maps a code block's language to a command, and compose shows what that command prints, framed, in place of the block. The frame's title names the language and the program, such as `mermaid · termaid`.
+Compose mode can show a code block as a drawing instead of its source. It doesn't draw anything itself: the `renderers` setting maps a code block's language to a command and its arguments, and compose shows what that command prints, framed, in place of the block. The frame's title names the language and the program, such as `mermaid · termaid`.
 
 ![A Markdown file in compose mode: inline math, a formula drawn by utftex, and a Mermaid flowchart drawn by termaid](/images/markdown-preview-rendered.png)
 
@@ -301,26 +301,32 @@ Put the cursor in a drawn block to edit its source; it is drawn again when the c
 
 ![Source/Compose dual mode: the Markdown source on the left, the drawn formula and diagram on the right](/images/markdown-preview-dual.png)
 
-The table is the `renderers` setting under *Plugins → markdown_compose* (`plugins.markdown_compose.settings.renderers`), a list of `language = command arguments` entries:
+Change the commands in Settings, under *Plugins → markdown_compose → Renderers*. A row per language shows its command:
+
+![The Renderers setting in the Settings UI: a row per language with its command](/images/markdown-preview-settings.png)
+
+and each opens to edit the command and its arguments:
+
+![Editing the mermaid entry: its arguments as a list, and its command](/images/markdown-preview-settings-entry.png)
+
+In `config.json` it is `plugins.markdown_compose.settings.renderers`:
 
 ```json
-"renderers": [
-  "mermaid = termaid {file} --width {width}",
-  "math = utftex --line-width {width} {source}",
-  "latex = utftex --line-width {width} {source}",
-  "katex = utftex --line-width {width} {source}",
-  "dot = graph-easy --as=boxart {file}"
-]
+"renderers": {
+  "mermaid": { "command": "termaid", "args": ["{file}", "--width", "{width}"] },
+  "math":    { "command": "utftex",  "args": ["--line-width", "{width}", "{source}"] },
+  "latex":   { "command": "utftex",  "args": ["--line-width", "{width}", "{source}"] },
+  "katex":   { "command": "utftex",  "args": ["--line-width", "{width}", "{source}"] },
+  "dot":     { "command": "graph-easy", "args": ["--as=boxart", "{file}"] }
+}
 ```
 
 - **Placeholders:** in the arguments, `{file}` is a temporary file holding the block's text (named with the language as its extension), `{source}` is the text itself, `{width}` is the columns available, and `{lang}` is the language.
-- **Quoting:** wrap an argument in "double quotes" to keep the spaces in it.
-- **Overriding:** a later entry for a language replaces an earlier one.
-- **Turning one off:** an entry with no command (`mermaid =`) shows that language as code.
+- **Turning one off:** an entry with an empty command shows that language as code.
 
-Setting the list replaces the defaults, so keep the entries you still want.
+Setting the map in `config.json` replaces the defaults, so keep the entries you still want.
 
-Any program that prints its drawing as text works. For Mermaid, [`mmaid`](https://github.com/aaronsb/mmaid-go) is an alternative covering 31 diagram types (`mermaid = mmaid {file}`); it has no width option, so a pie chart can run wider than the page.
+Any program that prints its drawing as text works. For Mermaid, [`mmaid`](https://github.com/aaronsb/mmaid-go) is an alternative covering 31 diagram types (command `mmaid`, arguments `["{file}"]`); it has no width option, so a pie chart can run wider than the page.
 
 ### Contents Panel
 
