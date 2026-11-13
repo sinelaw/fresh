@@ -316,7 +316,7 @@ printf 'DIAGRAM<%s>\nDIAGRAM %s lines\n' "$(head -n 1 "$1")" "$(wc -l < "$1" | t
     /// panel only: the source panel shows the Markdown as written.
     #[test]
     fn dual_mode_draws_in_the_composed_panel_only() {
-        let md = "# Doc\n\nSee $x^2$ here.\n\n```mermaid\ngraph TD\n    A --> B\n```\n\nTail.\n";
+        let md = "# Doc\n\nSee $x^2$ here.\n\n$$\\frac{a}{b}$$\n\n```mermaid\ngraph TD\n    A --> B\n```\n\nTail.\n";
         let tools = tempfile::TempDir::new().unwrap();
         let (mut h, _tmp) = harness_with_renderers(md, &stubs(tools.path()));
         run(&mut h, "Markdown: Source/Compose Dual Mode");
@@ -334,6 +334,9 @@ printf 'DIAGRAM<%s>\nDIAGRAM %s lines\n' "$(head -n 1 "$1")" "$(wc -l < "$1" | t
             left.contains("$x^2$")
                 && left.contains("```mermaid")
                 && !left.contains("DIAGRAM")
+                // A drawing's extra rows are virtual lines: compose panes only.
+                && !left.contains("FRAC")
+                && right.contains("FRAC BOTTOM")
                 && right.contains("M<x^2>")
                 && right.contains("DIAGRAM<graph TD>")
                 && !right.contains("```mermaid")

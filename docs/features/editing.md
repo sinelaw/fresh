@@ -280,6 +280,8 @@ Compose mode reads the document the way markdown defines it, so a paragraph, lis
 
 Compose mode can show a code block as a drawing instead of its source. It doesn't draw anything itself: the `renderers` setting maps a code block's language to a command, and compose shows what that command prints, framed, in place of the block. The frame's title names the language and the program, such as `mermaid · termaid`.
 
+![A Markdown file in compose mode: inline math, a formula drawn by utftex, and a Mermaid flowchart drawn by termaid](/images/markdown-preview-rendered.png)
+
 The defaults cover Mermaid diagrams and LaTeX math:
 
 | Language | Command | Install |
@@ -295,7 +297,9 @@ Inline math is replaced only when the command draws it on one row, since a stack
 
 When a language has no command, the command isn't installed, or it fails on a block, the source is shown as written: a fenced block as a code block, display math as its lines. The first time a missing command is needed, the status bar says what to install.
 
-Put the cursor in a drawn block to edit its source; it is drawn again when the cursor leaves.
+Put the cursor in a drawn block to edit its source; it is drawn again when the cursor leaves. In Source/Compose dual mode, the source side shows the Markdown and the compose side the drawings.
+
+![Source/Compose dual mode: the Markdown source on the left, the drawn formula and diagram on the right](/images/markdown-preview-dual.png)
 
 The table is the `renderers` setting under *Plugins → markdown_compose* (`plugins.markdown_compose.settings.renderers`), a list of `language = command arguments` entries:
 

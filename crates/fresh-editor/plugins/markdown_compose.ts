@@ -2484,7 +2484,7 @@ function processLineConceals(
         codeFrameStyle, true, MATH_VIRTUAL_LINE_NS, 0,
       );
     }
-    const mathStyle = { fg: "syntax.constant", italic: true };
+    const mathStyle = { fg: "syntax.constant", italic: true, composeOnly: true };
     addComposeConceal(
       bufferId, "md-syntax", frameStart, frameEnd, rowReplacement,
       "unless-cursor-in", byteStart, lineScopeInclEnd,
@@ -4157,7 +4157,7 @@ editor.on("lines_changed", (data) => {
     } else if (sb.kind === "math") {
       const label = "math";
 
-      const mathStyle = { fg: "syntax.constant", italic: true };
+      const mathStyle = { fg: "syntax.constant", italic: true, composeOnly: true };
 
       // The rows to draw, and the lines that hold them ("slots"): the body
       // lines, and a delimiter line that carries a formula of its own
