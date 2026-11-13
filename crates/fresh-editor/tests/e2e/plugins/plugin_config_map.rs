@@ -24,7 +24,7 @@ editor.defineConfigMap("tools", {
     },
     value: {
         command: { type: "string", description: "The program to run" },
-        args: "string[]",
+        args: { type: "string[]", description: "Arguments, where {file} names the input" },
     },
     displayField: "command",
     description: "Programs by name",
@@ -144,6 +144,44 @@ fn a_map_setting_shows_as_a_map_in_the_settings_ui() {
                 .any(|l| l.contains("alpha") && l.contains("alpha-cmd"))
             && s.lines()
                 .any(|l| l.contains("beta") && l.contains("beta-cmd"))
+    })
+    .unwrap();
+}
+
+/// An entry's dialog lists its fields in the order the plugin declared them
+/// (`command` before `args`, though `args` sorts first), and shows the
+/// focused field's description as its help — for a list field too, above
+/// the list's own key hint.
+#[test]
+fn a_map_entry_dialog_follows_declared_order_and_shows_field_help() {
+    crate::common::tracing::init_tracing_from_env();
+    let (mut h, _tmp) = harness_with(Config::default());
+    h.render().unwrap();
+    run_command(&mut h, "Open Settings");
+    h.send_key(KeyCode::Char('/'), KeyModifiers::NONE).unwrap();
+    h.type_text("tools").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("cfg_map_test"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("alpha-cmd"))
+        .unwrap();
+    // Open the first entry.
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        let command = s.lines().position(|l| l.contains("Command"));
+        let args = s.lines().position(|l| l.contains("Args"));
+        matches!((command, args), (Some(c), Some(a)) if c < a) && s.contains("The program to run")
+    })
+    .unwrap();
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        let help = s
+            .lines()
+            .position(|l| l.contains("Arguments, where {file} names the input"));
+        let hint = s.lines().position(|l| l.contains("Esc"));
+        matches!((help, hint), (Some(a), Some(b)) if a < b)
     })
     .unwrap();
 }

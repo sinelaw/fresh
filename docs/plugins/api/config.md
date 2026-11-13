@@ -112,7 +112,9 @@ typed fields (e.g. a command and its arguments per language).
 `"string[]"`, `"boolean"`, `"integer"` or `"number"`, or
 `{ type, description }` to describe one. `displayField` picks the
 field a row shows next to its key. The Settings UI renders the map
-with a row per entry and an add/edit dialog holding the fields.
+with a row per entry and an add/edit dialog holding the fields, in
+the order `value` declares them, each field's `description` shown
+as its help.
 
 Throws if an option is unknown, a field type is not one of those, or
 `default` is not a map of entries whose fields match `value`.

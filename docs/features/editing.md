@@ -301,32 +301,66 @@ Put the cursor in a drawn block to edit its source; it is drawn again when the c
 
 ![Source/Compose dual mode: the Markdown source on the left, the drawn formula and diagram on the right](/images/markdown-preview-dual.png)
 
-Change the commands in Settings, under *Plugins → markdown_compose → Renderers*. A row per language shows its command:
+#### Configuring the commands
+
+Change the commands in Settings, under *Plugins → markdown_compose → Renderers*. There is a row per language, showing its command:
 
 ![The Renderers setting in the Settings UI: a row per language with its command](/images/markdown-preview-settings.png)
 
-and each opens to edit the command and its arguments:
+A row opens to edit the command and its arguments. The help under the fields lists the placeholders the arguments can use:
 
-![Editing the mermaid entry: its arguments as a list, and its command](/images/markdown-preview-settings-entry.png)
+![Editing the mermaid entry: its command, its arguments as a list, and the placeholders help](/images/markdown-preview-settings-entry.png)
 
-In `config.json` it is `plugins.markdown_compose.settings.renderers`:
+| Placeholder | Replaced with |
+|---|---|
+| `{file}` | a temporary file holding the block's text, named with the language as its extension (`fresh-md-….mermaid`) |
+| `{source}` | the block's text itself |
+| `{width}` | the number of columns available inside the frame |
+| `{lang}` | the block's language, as written after the fence |
+
+In `config.json` the setting is `plugins.markdown_compose.settings.renderers`, a map from language to `command` and `args`. These are the defaults:
+
+```json
+{
+  "plugins": {
+    "markdown_compose": {
+      "settings": {
+        "renderers": {
+          "mermaid": { "command": "termaid", "args": ["{file}", "--width", "{width}"] },
+          "math":    { "command": "utftex",  "args": ["--line-width", "{width}", "{source}"] },
+          "latex":   { "command": "utftex",  "args": ["--line-width", "{width}", "{source}"] },
+          "katex":   { "command": "utftex",  "args": ["--line-width", "{width}", "{source}"] }
+        }
+      }
+    }
+  }
+}
+```
+
+A map set in `config.json` replaces the defaults as a whole, so list every language you want drawn. Some changes, each shown as the `renderers` value:
+
+Draw Graphviz ` ```dot ` blocks too, with [`graph-easy`](https://metacpan.org/pod/Graph::Easy):
 
 ```json
 "renderers": {
   "mermaid": { "command": "termaid", "args": ["{file}", "--width", "{width}"] },
   "math":    { "command": "utftex",  "args": ["--line-width", "{width}", "{source}"] },
-  "latex":   { "command": "utftex",  "args": ["--line-width", "{width}", "{source}"] },
-  "katex":   { "command": "utftex",  "args": ["--line-width", "{width}", "{source}"] },
   "dot":     { "command": "graph-easy", "args": ["--as=boxart", "{file}"] }
 }
 ```
 
-- **Placeholders:** in the arguments, `{file}` is a temporary file holding the block's text (named with the language as its extension), `{source}` is the text itself, `{width}` is the columns available, and `{lang}` is the language.
-- **Turning one off:** an entry with an empty command shows that language as code.
+Use [`mmaid`](https://github.com/aaronsb/mmaid-go) for Mermaid instead, and stop drawing math (an empty command shows that language as code):
 
-Setting the map in `config.json` replaces the defaults, so keep the entries you still want.
+```json
+"renderers": {
+  "mermaid": { "command": "mmaid", "args": ["{file}"] },
+  "math":    { "command": "", "args": [] }
+}
+```
 
-Any program that prints its drawing as text works. For Mermaid, [`mmaid`](https://github.com/aaronsb/mmaid-go) is an alternative covering 31 diagram types (command `mmaid`, arguments `["{file}"]`); it has no width option, so a pie chart can run wider than the page.
+A command not on your `PATH` can be given by its full path, e.g. `"command": "/opt/tools/bin/utftex"`.
+
+Any program that prints its drawing as text works. `mmaid` covers 31 Mermaid diagram types, but has no width option, so a pie chart can run wider than the page.
 
 ### Contents Panel
 

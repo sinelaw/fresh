@@ -3895,7 +3895,9 @@ impl JsEditorApi {
     /// `"string[]"`, `"boolean"`, `"integer"` or `"number"`, or
     /// `{ type, description }` to describe one. `displayField` picks the
     /// field a row shows next to its key. The Settings UI renders the map
-    /// with a row per entry and an add/edit dialog holding the fields.
+    /// with a row per entry and an add/edit dialog holding the fields, in
+    /// the order `value` declares them, each field's `description` shown
+    /// as its help.
     ///
     /// Throws if an option is unknown, a field type is not one of those, or
     /// `default` is not a map of entries whose fields match `value`.
@@ -3911,6 +3913,13 @@ impl JsEditorApi {
         options: fresh_js::Object<'js>,
     ) -> fresh_js::Result<Value<'js>> {
         const METHOD: &str = "defineConfigMap";
+        // The order `value` declares its fields in, which the entry dialog
+        // follows. Read from the JS object itself: the JSON form below sorts
+        // its keys.
+        let field_order: Vec<String> = options
+            .get::<_, fresh_js::Object>("value")
+            .map(|v| v.keys::<String>().flatten().collect())
+            .unwrap_or_default();
         let opts = parse_options(&ctx, METHOD, &name, options)?;
         validate_allowed_keys(
             &ctx,
@@ -3967,6 +3976,9 @@ impl JsEditorApi {
             };
             if let Some(d) = description {
                 schema["description"] = serde_json::json!(d);
+            }
+            if let Some(i) = field_order.iter().position(|f| f == field) {
+                schema["x-order"] = serde_json::json!(i);
             }
             properties.insert(field.clone(), schema);
             field_types.push((field.clone(), ty));

@@ -441,20 +441,25 @@ const DEFAULT_RENDERERS: Record<string, Renderer> = {
   katex: { command: "utftex", args: ["--line-width", "{width}", "{source}"] },
 };
 
+// The help the Settings UI shows under the arguments: the placeholders.
+const PLACEHOLDER_HELP =
+  "Arguments for the command. Placeholders: {file} is a temporary file holding the block's text, " +
+  "{source} the text itself, {width} the number of columns available, {lang} the block's language.";
+
 editor.defineConfigMap("renderers", {
   default: DEFAULT_RENDERERS,
   value: {
-    command: { type: "string", description: "The program to run. Empty: show this language as code." },
-    args: {
-      type: "string[]",
-      description:
-        "Its arguments. {file}: a temporary file holding the block's text; {source}: the text itself; " +
-        "{width}: the columns available; {lang}: the language.",
+    command: {
+      type: "string",
+      description: "The program that draws the block, found on PATH. Leave empty to show this language as code.",
     },
+    args: { type: "string[]", description: PLACEHOLDER_HELP },
   },
   displayField: "command",
   description:
-    "Commands that draw a preview of a code block, by its language. The `math` entry also draws " +
+    "Programs that draw a preview of a code block, by its language: each prints the drawing as text. " +
+    "In the arguments, {file} is a temporary file holding the block's text, {source} the text itself, " +
+    "{width} the columns available and {lang} the language. The `math` entry also draws " +
     "$…$, $$…$$, \\(…\\) and \\[…\\].",
 });
 

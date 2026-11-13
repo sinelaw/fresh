@@ -2120,6 +2120,7 @@ impl Editor {
                     items,
                     buttons,
                     helper: d.helper_line(),
+                    hint: d.helper_hint(),
                     legend: match warn {
                         true => e::Legend::Warn(legend),
                         false => e::Legend::Keys(legend),
