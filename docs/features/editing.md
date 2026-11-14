@@ -154,7 +154,10 @@ Drop a selection anchor and extend the selection as you move, without holding `S
 | `Tab` | Indent |
 | `Shift+Tab` | Dedent |
 | `Ctrl+/` | Toggle comment |
+| `Ctrl+Shift+D` / `Alt+Shift+D` | Duplicate line/selection |
 | `Ctrl+T` | Transpose characters |
+
+`Ctrl+Shift+D` needs a terminal that reports Shift together with Ctrl (one with the kitty keyboard protocol). Other terminals, such as GNOME Terminal, Terminal.app and the default xterm, send it as plain `Ctrl+D`, which adds a cursor at the next match instead. `Alt+Shift+D` does not depend on the protocol (where Alt is sent as Escape, which on Terminal.app means enabling "Use Option as Meta key").
 
 ### Deletion
 
