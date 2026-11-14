@@ -2366,12 +2366,19 @@ fn type_in_quick_open_file_mode(harness: &mut EditorTestHarness, input: &str, ex
         .send_key(KeyCode::Backspace, KeyModifiers::NONE)
         .unwrap();
     harness.type_text(input).unwrap();
+    // Both halves matter. The files have to be listed, and the scan has to
+    // have finished: while it is running the provider reports its list as
+    // incomplete and Tab deliberately leaves the input alone, so a wait on
+    // the files alone would race the scan and sometimes see no completion.
+    // The scan says so on screen, which is what keeps this observable.
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
             expected.iter().all(|path| screen.contains(path))
+                && !screen.contains("Loading files…")
+                && !screen.contains("Scanning for more files…")
         })
-        .expect("Quick Open should list the matching files");
+        .expect("Quick Open should list the matching files and finish scanning");
 }
 
 const QUICK_OPEN_CRATES: &[&str] = &["crates/fresh-editor/src/main.rs", "crates/fresh-gui/lib.rs"];

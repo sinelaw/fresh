@@ -205,12 +205,12 @@ pub trait QuickOpenProvider: Send + Sync {
     /// The query has already had the prefix stripped.
     fn suggestions(&self, query: &str, context: &QuickOpenContext) -> Vec<Suggestion>;
 
-    /// Whether the list this provider just returned was cut off at a row cap,
-    /// rather than being every match for the query.
+    /// Whether the list this provider just returned is short of every match
+    /// for the query — cut off at a row cap, or still being filled in.
     ///
     /// Callers that reason about the match *set* — Tab extending the query to
-    /// the longest prefix every matching path shares — must decline on a
-    /// capped list: the rows that survived the cap are the top-scoring ones,
+    /// the longest prefix every matching path shares — must decline on an
+    /// incomplete list: the rows present are the top-scoring ones,
     /// which is a ranking over the matches and not a slice of the path tree,
     /// so they can agree on a directory that the dropped rows do not. Row
     /// consumers (rendering, moving the selection, accepting one) are
@@ -218,7 +218,7 @@ pub trait QuickOpenProvider: Send + Sync {
     ///
     /// Providers whose lists are always complete — commands, buffers,
     /// goto-line — keep the default.
-    fn suggestions_capped(&self, _suggestions: &[Suggestion]) -> bool {
+    fn suggestions_incomplete(&self, _suggestions: &[Suggestion]) -> bool {
         false
     }
 

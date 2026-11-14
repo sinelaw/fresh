@@ -189,9 +189,11 @@ mod tests {
         assert_eq!(rel_to_slash_string(Path::new("")), "");
     }
 
+    /// A leading `.` is the only `CurDir` component `Path::components` keeps
+    /// — it drops interior ones itself — so this is what exercises the arm.
     #[test]
-    fn rel_to_slash_string_collapses_dot_segments() {
-        assert_eq!(rel_to_slash_string(Path::new("a/./b.txt")), "a/b.txt");
+    fn rel_to_slash_string_drops_a_leading_dot_segment() {
+        assert_eq!(rel_to_slash_string(Path::new("./a/b.txt")), "a/b.txt");
     }
 
     /// Off Windows a backslash is an ordinary character in a file name, so it

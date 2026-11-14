@@ -68,7 +68,10 @@ pub(crate) fn walk_files_options<'a>(skip_dirs: &'a [&'a str]) -> WalkOptions<'a
 pub struct WalkEntry<'a> {
     /// Absolute path.
     pub path: &'a Path,
-    /// Path relative to the walk root, `/`-separated on every platform.
+    /// Path relative to the walk root, with `/` between components on every
+    /// platform. Only *between* components: a `\` inside a single file name
+    /// is part of that name and is reported as-is, so consumers must split
+    /// on `/` alone and never treat a `\` as a separator.
     pub rel: &'a str,
     pub entry_type: EntryType,
     /// Always carried: a walk has already stat'd every entry, and fetching it
