@@ -34,8 +34,16 @@ fn discover_dialog_scans_through_the_plugin_hub() {
     // directory of whoever runs the suite and asserts on what is in it
     // (CONTRIBUTING.md Testing §4). An empty one of its own is the fixture
     // the assertions below actually want.
+    //
+    // `$HOME` only, deliberately. The scan reads `getEnv("HOME") ??
+    // getEnv("USERPROFILE")`, so pinning `HOME` alone redirects it on every
+    // platform — and `USERPROFILE` must be left as it is, because Windows
+    // resolves the cache directory from it. Pinning that too pointed the
+    // cache at a temp directory with no `AppData\Local`, embedded plugin
+    // extraction failed with "Could not determine cache directory", and the
+    // palette then had no "Import sessions" command to open at all.
     let home = tempfile::tempdir().unwrap();
-    let _env = pin_env(&[("HOME", home.path()), ("USERPROFILE", home.path())]);
+    let _env = pin_env(&[("HOME", home.path())]);
 
     let mut harness = EditorTestHarness::with_temp_project(WIDTH, HEIGHT).unwrap();
 
