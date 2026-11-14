@@ -4562,6 +4562,34 @@ impl Window {
         }
     }
 
+    /// Whether the status bar's `{search_nav}` arrows are shown this frame:
+    /// while a search is active for the active buffer. O(1), read per frame.
+    ///
+    /// Hidden:
+    /// - in a buffer other than the one searched. `search_state` belongs to
+    ///   the window and survives a tab switch, so the buffer it was
+    ///   collected from (`collected_from.0`) is what says whether it is this
+    ///   one. Only the buffer, not the version it carries alongside: an edit
+    ///   does not end the search, it makes Find Next search again
+    ///   (`find_match_in_direction`), which is exactly what an arrow click
+    ///   should still offer.
+    /// - during an interactive query replace. The y/n/a/c prompt is modal
+    ///   over the keyboard (`QueryReplaceConfirmInputHandler`), so a click
+    ///   on the bar is the one way to run Find Next there — and it would
+    ///   move the cursor and the match mark off the match
+    ///   `InteractiveReplaceState::current_match_pos` still names, which is
+    ///   the one the next `y` replaces. The prompt would then be asking
+    ///   about a match that is no longer the one on screen.
+    /// - while a large-file search is still scanning: there is nothing to
+    ///   step through until it finishes.
+    pub fn search_nav_shown(&self) -> bool {
+        self.search_state
+            .as_ref()
+            .is_some_and(|s| s.collected_from.0 == self.active_buffer())
+            && self.interactive_replace_state.is_none()
+            && self.search_scan.is_none()
+    }
+
     /// Update search highlights in the visible viewport for the active
     /// buffer. Caller passes theme colors as parameters because `theme`
     /// is editor-global (not yet on `Window.resources`).
