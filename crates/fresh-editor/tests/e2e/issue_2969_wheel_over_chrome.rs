@@ -20,6 +20,7 @@
 //! also wheels over a surface that should respond, so a fix that simply
 //! swallowed every wheel event could not pass.
 
+use crate::common::global_state::pin_posix_shell;
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 
@@ -140,6 +141,9 @@ fn wheel_over_chrome_does_not_scroll_the_focused_editor() {
 #[test]
 #[cfg(not(windows))] // Uses a Unix shell to produce scrollback
 fn wheel_over_chrome_does_not_scroll_the_focused_terminal() {
+    // `$(seq ...)` below is POSIX; pin a shell rather than take the
+    // runner's login shell (see `pin_posix_shell`).
+    let _sh = pin_posix_shell();
     // Imported here rather than at module scope so the Windows build, which
     // cfg's this test out, doesn't carry an unused import.
     use portable_pty::{native_pty_system, PtySize};

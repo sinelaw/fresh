@@ -332,6 +332,25 @@ pub fn pin_env(vars: &[(&'static str, &std::path::Path)]) -> PathPin {
     pin
 }
 
+/// Pin `$SHELL` to a POSIX shell until the returned guard drops.
+///
+/// A terminal the editor opens runs `services::terminal::detect_shell()`,
+/// which reads `$SHELL` before anything else — so a test that types shell
+/// syntax into a terminal is otherwise handed whatever login shell the
+/// person running the suite happens to use. `for i in $(seq 1 100)` and
+/// `R=$(stty size)` are both syntax errors in fish, and in any non-POSIX
+/// shell the output the test is waiting for simply never arrives: it then
+/// waits for a screen that cannot come and fails on that machine, every
+/// time, while every CI runner (bash) stays green. That shape gets reported
+/// as a flake on master, which is what it looks like from the outside.
+///
+/// Only for tests that are already `#[cfg(not(windows))]` — on Windows
+/// `detect_shell` would take `/bin/sh` from here in preference to the shell
+/// it picks for the platform.
+pub fn pin_posix_shell() -> PathPin {
+    pin_env(&[("SHELL", std::path::Path::new("/bin/sh"))])
+}
+
 /// Put `dir` at the front of `$PATH` until the returned guard drops.
 ///
 /// `$PATH` is process-global, and the shim directories under

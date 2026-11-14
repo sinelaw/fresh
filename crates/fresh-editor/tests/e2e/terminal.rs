@@ -11,6 +11,7 @@
 //! - Terminal mode switching
 //! - ANSI escape sequence handling (cursor, colors, attributes)
 
+use crate::common::global_state::pin_posix_shell;
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::{Config, TerminalShellConfig};
@@ -1843,6 +1844,9 @@ fn test_prompt_typing_works_in_terminal_mode() {
 #[test]
 #[cfg(not(windows))] // Uses Unix shell
 fn test_split_terminal_scrollback_does_not_freeze_other_split() {
+    // `$(seq ...)` below is POSIX; pin a shell rather than take the
+    // runner's login shell (see `pin_posix_shell`).
+    let _sh = pin_posix_shell();
     let mut harness = harness_or_return!(120, 30);
 
     // Open a terminal in the sole split; it starts in terminal mode.
@@ -1935,6 +1939,9 @@ fn test_split_terminal_scrollback_does_not_freeze_other_split() {
 #[test]
 #[cfg(not(windows))] // Uses Unix shell
 fn test_unfocused_split_retains_scrollback_independently() {
+    // `$(seq ...)` below is POSIX; pin a shell rather than take the
+    // runner's login shell (see `pin_posix_shell`).
+    let _sh = pin_posix_shell();
     let mut harness = harness_or_return!(120, 30);
 
     harness.editor_mut().open_terminal();
@@ -2972,6 +2979,9 @@ fn test_session_restore_terminal_scrollback() {
 #[test]
 #[cfg(not(windows))] // Uses Unix shell
 fn test_scrollback_captured_after_session_restore() {
+    // `$(seq ...)` below is POSIX; pin a shell rather than take the
+    // runner's login shell (see `pin_posix_shell`).
+    let _sh = pin_posix_shell();
     use fresh::config::Config;
     use fresh::config_io::DirectoryContext;
     use portable_pty::{native_pty_system, PtySize};
@@ -3169,6 +3179,9 @@ fn test_scrollback_captured_after_session_restore() {
 #[test]
 #[cfg(not(windows))] // Uses Unix shell
 fn test_scrollback_stable_after_multiple_mode_toggles() {
+    // `$(seq ...)` below is POSIX; pin a shell rather than take the
+    // runner's login shell (see `pin_posix_shell`).
+    let _sh = pin_posix_shell();
     let mut harness = harness_or_return!(80, 24);
 
     // Open a terminal
@@ -3391,6 +3404,9 @@ fn test_open_file_from_terminal_uses_correct_directory() {
 #[test]
 #[cfg(not(windows))] // Uses Unix shell
 fn test_scrollback_viewport_resets_on_reentry() {
+    // `$(seq ...)` below is POSIX; pin a shell rather than take the
+    // runner's login shell (see `pin_posix_shell`).
+    let _sh = pin_posix_shell();
     let mut harness = harness_or_return!(80, 24);
 
     // Open a terminal
@@ -3493,6 +3509,9 @@ fn test_scrollback_viewport_resets_on_reentry() {
 #[test]
 #[cfg(not(windows))] // Uses Unix shell
 fn test_scrollback_viewport_resets_on_reentry_mouse_scroll() {
+    // `$(seq ...)` below is POSIX; pin a shell rather than take the
+    // runner's login shell (see `pin_posix_shell`).
+    let _sh = pin_posix_shell();
     let mut harness = harness_or_return!(80, 24);
 
     // Open a terminal
@@ -5665,6 +5684,9 @@ fn test_tab_drag_split_resizes_terminal() {
 #[test]
 #[cfg(not(windows))] // Uses a Unix shell
 fn test_scrollback_survives_output_during_a_scrollback_visit() {
+    // `$(seq ...)` below is POSIX; pin a shell rather than take the
+    // runner's login shell (see `pin_posix_shell`).
+    let _sh = pin_posix_shell();
     const FIRST: usize = 60;
     const SECOND: usize = 60;
 
@@ -5826,6 +5848,9 @@ fn contains_marker(text: &str, marker: &str) -> bool {
 #[test]
 #[cfg(not(windows))] // Uses a Unix shell
 fn test_focusing_an_already_live_terminal_keeps_its_scrollback() {
+    // `$(seq ...)` below is POSIX; pin a shell rather than take the
+    // runner's login shell (see `pin_posix_shell`).
+    let _sh = pin_posix_shell();
     const LINES: usize = 60;
 
     let mut harness = harness_or_return!(100, 30);
