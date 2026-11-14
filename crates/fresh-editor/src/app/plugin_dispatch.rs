@@ -1983,9 +1983,10 @@ impl Editor {
                 name,
                 mode,
                 layout_json,
+                in_tab_of,
                 request_id,
             } => {
-                self.handle_create_buffer_group(name, mode, layout_json, request_id);
+                self.handle_create_buffer_group(name, mode, layout_json, in_tab_of, request_id);
             }
             PluginCommand::SetPanelContent {
                 group_id,
@@ -7014,9 +7015,10 @@ impl Editor {
         name: String,
         mode: String,
         layout_json: String,
+        in_tab_of: Option<BufferId>,
         request_id: Option<u64>,
     ) {
-        match self.create_buffer_group(name, mode, layout_json) {
+        match self.create_buffer_group(name, mode, layout_json, in_tab_of) {
             Ok(result) => {
                 if let Some(req_id) = request_id {
                     let json = serde_json::to_string(&result).unwrap_or_default();

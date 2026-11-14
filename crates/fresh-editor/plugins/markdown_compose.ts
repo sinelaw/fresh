@@ -1832,10 +1832,10 @@ registerHandler("markdownToggleComposeAll", markdownToggleComposeAll);
 // =============================================================================
 //
 // Source and Rendered act on the pane in focus, as Toggle Compose does. Dual mode
-// opens a tab in that pane holding the file twice, side by side: a source
-// panel and a rendered one, scrolling together. The tab is a buffer group
-// whose panels show the file itself, so both edit it. Leaving dual mode closes the
-// tab; the file stays open in the pane, as it was.
+// shows the file twice in that pane, side by side: a source panel and a
+// rendered one, scrolling together. It is a buffer group whose panels show the
+// file itself, so both edit it, shown in the file's own tab. Leaving dual mode
+// closes the group, and the tab shows the file again, as it was.
 
 /** A dual-mode tab: its buffer group, the file it shows, and the pane it opened
  * in. Group ids are per window, so the window is part of its name. */
@@ -1929,17 +1929,19 @@ async function markdownModeDual(): Promise<void> {
   const bufferId = activeMarkdownBuffer();
   if (bufferId === null) return;
   if (!dualHere(bufferId)) {
-    // The dual-mode tab opens in the pane in focus, which leaves compose first if
-    // it was composing.
+    // Dual mode opens in the pane in focus, which leaves compose first if it
+    // was composing.
     disableMarkdownCompose(bufferId);
     const name = editor.getBufferInfo(bufferId)?.name ?? "";
-    // The tab opens in this pane.
+    // The group opens in this pane.
     const hostSplit = editor.getActiveSplitId();
     const panel = (id: string) => ({ type: "scrollable", id, bufferId });
+    // Shown in the file's own tab, not a tab of its own.
     const group = await editor.createBufferGroup(
       editor.t("dual.tab_name", { name }),
       "",
       JSON.stringify({ type: "split", direction: "h", ratio: 0.5, first: panel("source"), second: panel("preview") }),
+      { inTabOf: bufferId },
     );
     duals.push({
       groupId: group.groupId,

@@ -73,6 +73,7 @@ impl super::Editor {
         name: String,
         mode: String,
         layout_json: String,
+        in_tab_of: Option<BufferId>,
     ) -> Result<BufferGroupResult, String> {
         use crate::view::split::{SplitNode, TabTarget};
 
@@ -184,17 +185,23 @@ impl super::Editor {
             vs.retain_buffer_states(|bid| !hidden_panel_ids.contains(&bid));
         }
 
-        // Add the group as a tab in the CURRENT split's tab bar and make it
-        // the active tab. (The main split tree is untouched — the group's
-        // layout lives in `grouped_subtrees` and is dispatched at render time.)
+        // Show the group in the CURRENT split: in `in_tab_of`'s tab when the
+        // split has one, else in a tab of its own, which becomes the active
+        // tab. (The main split tree is untouched — the group's layout lives
+        // in `grouped_subtrees` and is dispatched at render time.)
         let current_split_id = self.active_window().split_manager().active_split();
         if let Some(current_vs) = self
             .active_window_mut()
             .split_view_states_mut()
             .get_mut(&current_split_id)
         {
-            current_vs.add_group(group_leaf_id);
-            current_vs.show_group(group_leaf_id, active_inner_leaf);
+            match in_tab_of.filter(|b| current_vs.has_buffer(*b)) {
+                Some(buffer) => current_vs.show_in_tab(buffer, group_leaf_id, active_inner_leaf),
+                None => {
+                    current_vs.add_group(group_leaf_id);
+                    current_vs.show_group(group_leaf_id, active_inner_leaf);
+                }
+            }
         }
 
         // Register the group metadata
@@ -592,11 +599,7 @@ impl super::Editor {
                 self.active_window()
                     .split_view_states()
                     .iter()
-                    .find(|(_, vs)| {
-                        vs.open_buffers.iter().any(
-                            |t| matches!(t, crate::view::split::TabTarget::Group(g) if *g == group_leaf),
-                        )
-                    })
+                    .find(|(_, vs)| vs.has_group(group_leaf))
                     .map(|(leaf, _)| *leaf)
             });
             // Remove reverse mappings — only the group's own buffers have one
@@ -1324,6 +1327,19 @@ impl super::Editor {
     ) -> bool {
         self.active_window_mut()
             .set_grouped_split_ratio(container, new_ratio)
+    }
+
+    /// Close the group shown in `buffer`'s tab of `pane` (`show_in_tab`), if
+    /// one is: the tab is leaving the pane, and the group lives in it.
+    pub(crate) fn close_group_in_tab(&mut self, pane: LeafId, buffer: BufferId) {
+        let group = self
+            .active_window()
+            .split_view_states()
+            .get(&pane)
+            .and_then(|vs| vs.group_in_tab(buffer));
+        if let Some(group) = group {
+            self.close_buffer_group_by_leaf(group);
+        }
     }
 
     /// Close a buffer group by its Grouped-node LeafId (used by tab close button).

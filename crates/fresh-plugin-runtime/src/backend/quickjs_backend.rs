@@ -8211,13 +8211,21 @@ impl JsEditorApi {
 
     /// Create a buffer group: multiple panels appearing as one tab
     #[qjs(rename = "_createBufferGroupStart")]
-    pub fn create_buffer_group_start(
+    pub fn create_buffer_group_start<'js>(
         &self,
-        _ctx: fresh_js::Ctx<'_>,
+        _ctx: fresh_js::Ctx<'js>,
         name: String,
         mode: String,
         layout_json: String,
+        options: fresh_js::function::Opt<fresh_js::Value<'js>>,
     ) -> fresh_js::Result<u64> {
+        // `{ inTabOf: bufferId }`: shown in that buffer's tab rather than a
+        // tab of its own (see `PluginCommand::CreateBufferGroup`).
+        let in_tab_of = options
+            .0
+            .and_then(|v| v.into_object())
+            .and_then(|o| o.get::<_, Option<u64>>("inTabOf").ok().flatten())
+            .map(|b| BufferId(b as usize));
         let id = self.alloc_request_id();
         if let Ok(mut owners) = self.async_resource_owners.lock() {
             owners.insert(id, self.plugin_name.clone());
@@ -8226,6 +8234,7 @@ impl JsEditorApi {
             name,
             mode,
             layout_json,
+            in_tab_of,
             request_id: Some(id),
         });
         Ok(id)

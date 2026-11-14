@@ -670,11 +670,11 @@ impl Editor {
         // command (or keybinding) can express "close the group I'm viewing",
         // so this prelude stays here rather than in `close_tab_in_split`.
         let active_split = self.active_window().split_manager().active_split();
-        if let Some(group_leaf_id) = self
+        if let Some(crate::view::split::TabTarget::Group(group_leaf_id)) = self
             .active_window()
             .split_view_states()
             .get(&active_split)
-            .and_then(|vs| vs.shown_group_tab())
+            .map(|vs| vs.active_target())
         {
             self.close_buffer_group_by_leaf(group_leaf_id);
             self.set_status_message(t!("buffer.tab_closed").to_string());
@@ -818,6 +818,9 @@ impl Editor {
             }
         } else {
             use crate::view::split::TabTarget;
+
+            // A group shown in the tab goes with it.
+            self.close_group_in_tab(split_id, buffer_id);
 
             // There are other viewports of this buffer — just remove it from
             // this split's tabs. Use the full tab list (open_buffers), which

@@ -147,18 +147,15 @@ fn cycle_goes_through_rendered_and_dual_back_to_source() {
     h.wait_until(|h| source_panes(h, 1)).unwrap();
 }
 
-/// Toggle Dual Mode opens the preview beside the source, in a tab of its own
-/// next to the file's, and closes it again.
+/// Toggle Dual Mode opens the preview beside the source, in the file's own
+/// tab (one tab for the file, not two), and closes it again.
 #[test]
 fn toggle_dual_opens_and_closes_the_preview() {
     let (mut h, _tmp) = setup();
 
     run(&mut h, TOGGLE_DUAL);
-    h.wait_until(|h| {
-        let tabs = h.screen_row_text(1);
-        dual(h) && tabs.contains("doc.md (Source/Compose)") && tabs.matches("doc.md").count() == 2
-    })
-    .unwrap();
+    h.wait_until(|h| dual(h) && tab_names(h) == ["doc.md"])
+        .unwrap();
 
     run(&mut h, TOGGLE_DUAL);
     h.wait_until(|h| source_panes(h, 1)).unwrap();
@@ -244,19 +241,80 @@ fn dual_preview_scrolls_with_the_source() {
     .unwrap();
 }
 
-/// Closing the dual view's tab by hand ends dual mode: the file is back in its pane, and the
-/// next Toggle Dual Mode opens dual mode again rather than trying to leave it.
+/// Closing the dual view's tab closes the file, as closing its tab does: the
+/// dual view is the file's tab. Opened again, the file is in source view, and
+/// the next Toggle Dual Mode opens dual mode rather than trying to leave it.
 #[test]
-fn closing_the_dual_tab_ends_dual_mode() {
-    let (mut h, _tmp) = setup();
+fn closing_the_dual_tab_closes_the_file() {
+    let (mut h, tmp) = setup();
+    open_other(&mut h, &tmp);
+    tab(&mut h, KeyCode::PageUp);
     run(&mut h, DUAL);
     h.wait_until(dual).unwrap();
 
     run(&mut h, "Close Tab");
-    h.wait_until(|h| source_panes(h, 1)).unwrap();
+    h.wait_until(|h| count(h, "PARA") == 0 && tab_names(h) == ["other.txt"])
+        .unwrap();
 
+    h.open_file(&tmp.path().join("project/doc.md")).unwrap();
+    h.wait_until(|h| source_panes(h, 1) && tab_names(h) == ["other.txt", "doc.md"])
+        .unwrap();
     run(&mut h, TOGGLE_DUAL);
     h.wait_until(dual).unwrap();
+}
+
+/// The names on the tab bar's row, in order.
+fn tab_names(h: &EditorTestHarness) -> Vec<String> {
+    h.screen_row_text(1)
+        .split_whitespace()
+        .filter(|w| w.contains('.'))
+        .map(|w| w.trim_end_matches('*').to_string())
+        .collect()
+}
+
+/// Open `other.txt` beside `doc.md`, in a tab after its own.
+fn open_other(h: &mut EditorTestHarness, tmp: &tempfile::TempDir) {
+    let other = tmp.path().join("project/other.txt");
+    std::fs::write(&other, "OTHERFILE\n").unwrap();
+    h.open_file(&other).unwrap();
+    h.wait_until(|h| count(h, "OTHERFILE") == 1 && tab_names(h) == ["doc.md", "other.txt"])
+        .unwrap();
+}
+
+/// Ctrl+PageUp / Ctrl+PageDown: the previous / next tab.
+fn tab(h: &mut EditorTestHarness, key: KeyCode) {
+    h.send_key(key, KeyModifiers::CONTROL).unwrap();
+}
+
+/// Dual mode is shown in the file's own tab: the tab bar keeps one tab for
+/// the file, where it was; tab cycling and going to the file both reach the
+/// dual view; and back in source view the tab shows the file again.
+#[test]
+fn dual_mode_is_shown_in_the_files_tab() {
+    let (mut h, tmp) = setup();
+    open_other(&mut h, &tmp);
+    tab(&mut h, KeyCode::PageUp);
+    run(&mut h, DUAL);
+    h.wait_until(|h| dual(h) && tab_names(h) == ["doc.md", "other.txt"])
+        .unwrap();
+
+    // Cycling goes to the other file and back to the dual view: there is no
+    // other tab for the file in between.
+    tab(&mut h, KeyCode::PageDown);
+    h.wait_until(|h| count(h, "OTHERFILE") == 1).unwrap();
+    tab(&mut h, KeyCode::PageDown);
+    h.wait_until(dual).unwrap();
+
+    // Going to the file from elsewhere goes to its tab, so to the dual view.
+    tab(&mut h, KeyCode::PageDown);
+    h.wait_until(|h| count(h, "OTHERFILE") == 1).unwrap();
+    h.open_file(&tmp.path().join("project/doc.md")).unwrap();
+    h.wait_until(|h| dual(h) && tab_names(h) == ["doc.md", "other.txt"])
+        .unwrap();
+
+    run(&mut h, SOURCE);
+    h.wait_until(|h| source_panes(h, 1) && tab_names(h) == ["doc.md", "other.txt"])
+        .unwrap();
 }
 
 /// the dual view's source panel edits the file, and the preview shows the edit.
@@ -284,18 +342,17 @@ fn mode_commands_leave_another_panes_dual_mode_alone() {
 
     // Dual mode in the new (right) pane, then back to the left one.
     run(&mut h, DUAL);
-    h.wait_until(|h| {
-        count(h, "PARA") == 3 && h.screen_row_text(1).contains("doc.md (Source/Compose)")
-    })
-    .unwrap();
+    h.wait_until(|h| count(h, "PARA") == 3 && h.screen_to_string().contains('┌'))
+        .unwrap();
     run(&mut h, "Previous Split");
 
     run(&mut h, RENDERED);
     h.wait_until(|h| {
-        let (left, _) = halves(h);
+        let (left, right) = halves(h);
         count(h, "PARA") == 3
             && !left.contains("**boldword**")
-            && h.screen_row_text(1).contains("doc.md (Source/Compose)")
+            && right.contains("**boldword**")
+            && tab_names(h) == ["doc.md", "doc.md"]
     })
     .unwrap();
 }

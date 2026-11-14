@@ -533,6 +533,11 @@ pub struct SplitViewState {
     /// When true, hide tilde markers (~) for empty rows in this split.
     /// Used for panels where empty space should be blank, not marked.
     pub hide_tilde: bool,
+
+    /// Groups shown in a buffer's tab instead of the buffer (`show_in_tab`):
+    /// `(buffer, group, panel)`, `panel` being the group's panel to give the
+    /// keyboard to when the tab is shown again.
+    tab_groups: Vec<(BufferId, LeafId, LeafId)>,
 }
 
 impl SplitViewState {
@@ -550,6 +555,7 @@ impl SplitViewState {
             composite_view: None,
             suppress_chrome: false,
             hide_tilde: false,
+            tab_groups: Vec::new(),
         }
     }
 
@@ -624,38 +630,57 @@ impl SplitViewState {
         }
         self.ensure_buffer_state(new_buffer_id);
         self.shown = match self.shown {
-            Shown::Buffer(_) => Shown::Buffer(new_buffer_id),
-            Shown::Group { group, panel, .. } => Shown::Group {
-                group,
-                panel,
-                behind: new_buffer_id,
-            },
+            // A group with a tab of its own stays on screen.
+            Shown::Group { group, panel, .. } if self.tab_of_group(group).is_none() => {
+                Shown::Group {
+                    group,
+                    panel,
+                    behind: new_buffer_id,
+                }
+            }
+            // Otherwise the pane is on the new buffer's tab.
+            _ => self.on_tab(new_buffer_id),
         };
     }
 
-    /// Show `buffer_id` in this pane: it becomes the buffer tab, and a group
-    /// the pane was showing is left.
+    /// Show `buffer_id`'s tab in this pane: it becomes the buffer tab, and a
+    /// group the pane was showing in a tab of its own is left. The tab shows
+    /// the buffer, or the group shown in it (`show_in_tab`).
     pub fn show_buffer(&mut self, buffer_id: BufferId) {
         self.set_buffer_tab(buffer_id);
-        self.shown = Shown::Buffer(buffer_id);
+        self.shown = self.on_tab(buffer_id);
     }
 
     /// Show group `group` in this pane, with `panel` — one of the group's
-    /// leaves — taking the keyboard. The buffer tab goes behind it.
+    /// leaves — taking the keyboard: in its own tab, the buffer tab going
+    /// behind it, or in the buffer's tab it is shown in.
     pub fn show_group(&mut self, group: LeafId, panel: LeafId) {
+        if let Some(buffer) = self.tab_of_group(group) {
+            self.set_buffer_tab(buffer);
+        }
         self.shown = Shown::Group {
             group,
             panel,
             behind: self.buffer_tab(),
         };
+        self.focus_group_panel(panel);
     }
 
     /// Give the keyboard to `panel` of the group this pane shows. Nothing
     /// happens when the pane shows no group: a panel is only focused inside
     /// one.
     pub fn focus_group_panel(&mut self, panel: LeafId) {
-        if let Shown::Group { panel: p, .. } = &mut self.shown {
+        if let Shown::Group {
+            group, panel: p, ..
+        } = &mut self.shown
+        {
             *p = panel;
+            let group = *group;
+            for (_, g, p) in &mut self.tab_groups {
+                if *g == group {
+                    *p = panel;
+                }
+            }
         }
     }
 
@@ -750,6 +775,9 @@ impl SplitViewState {
     pub fn remove_buffer(&mut self, buffer_id: BufferId) {
         self.open_buffers
             .retain(|t| *t != TabTarget::Buffer(buffer_id));
+        // A group shown in the tab has nowhere to be shown (the editor
+        // closes it: `close_group_in_tab`).
+        self.tab_groups.retain(|(b, _, _)| *b != buffer_id);
         self.remove_from_history(buffer_id);
         // Clean up keyed state (but never the buffer tab's)
         self.take_buffer_state(buffer_id);
@@ -767,17 +795,60 @@ impl SplitViewState {
         }
     }
 
-    /// Remove a group tab from this split's tabs — and stop showing it, if
-    /// this pane does.
+    /// Remove a group from this split — its tab, or the buffer tab it is
+    /// shown in, which shows the buffer again — and stop showing it, if this
+    /// pane does.
     pub fn remove_group(&mut self, leaf_id: LeafId) {
         self.open_buffers
             .retain(|t| *t != TabTarget::Group(leaf_id));
+        self.tab_groups.retain(|(_, g, _)| *g != leaf_id);
         self.leave_group(leaf_id);
     }
 
-    /// Check if a group tab is open in this split
+    /// Show `group` in `buffer`'s tab, instead of the buffer, with `panel`
+    /// taking the keyboard; and show that tab. The tab stays the buffer's in
+    /// every way (its name, its place, closing it): only what it shows
+    /// changes. `remove_group` gives the tab back to the buffer.
+    pub fn show_in_tab(&mut self, buffer: BufferId, group: LeafId, panel: LeafId) {
+        self.tab_groups
+            .retain(|(b, g, _)| *b != buffer && *g != group);
+        self.tab_groups.push((buffer, group, panel));
+        self.show_buffer(buffer);
+    }
+
+    /// The buffer whose tab `group` is shown in here, if it is.
+    pub fn tab_of_group(&self, group: LeafId) -> Option<BufferId> {
+        self.tab_groups
+            .iter()
+            .find(|(_, g, _)| *g == group)
+            .map(|(b, _, _)| *b)
+    }
+
+    /// The group shown in `buffer`'s tab here, if one is.
+    pub fn group_in_tab(&self, buffer: BufferId) -> Option<LeafId> {
+        self.tab_groups
+            .iter()
+            .find(|(b, _, _)| *b == buffer)
+            .map(|(_, g, _)| *g)
+    }
+
+    /// What `buffer`'s tab shows: the group shown in it, or the buffer.
+    fn on_tab(&self, buffer: BufferId) -> Shown {
+        match self.tab_groups.iter().find(|(b, _, _)| *b == buffer) {
+            Some(&(_, group, panel)) => Shown::Group {
+                group,
+                panel,
+                behind: buffer,
+            },
+            None => Shown::Buffer(buffer),
+        }
+    }
+
+    /// Whether this split holds `leaf_id`: in a tab of its own, or in a
+    /// buffer's tab (`show_in_tab`).
     pub fn has_group(&self, leaf_id: LeafId) -> bool {
         self.open_buffers.contains(&TabTarget::Group(leaf_id))
+            || self.tab_of_group(leaf_id).is_some()
     }
 
     /// Iterate over only the buffer-tab ids in open_buffers (skipping groups).
@@ -793,7 +864,13 @@ impl SplitViewState {
 
     /// The tab this pane shows, as the tab bar names it.
     pub fn active_target(&self) -> TabTarget {
-        self.shown.target()
+        match self.shown {
+            // A group shown in a buffer's tab is on that tab.
+            Shown::Group { group, behind, .. } if self.tab_of_group(group).is_some() => {
+                TabTarget::Buffer(behind)
+            }
+            shown => shown.target(),
+        }
     }
 
     /// Push a tab target to the focus history (LRU-style).
@@ -1945,6 +2022,75 @@ mod tests {
         vs.remove_group(group);
         assert_eq!(vs.shown(), Shown::Buffer(file));
         assert_eq!(vs.shown_group(), None);
+    }
+
+    /// **A group shown in a buffer's tab leaves the tab the buffer's.** The
+    /// pane's tabs are the buffers' only, and the active one is the file's
+    /// while its tab shows the group; going to another tab and back shows the
+    /// group again, with the panel last focused; removing the group gives the
+    /// tab back to the file.
+    #[test]
+    fn a_group_shown_in_a_buffers_tab_leaves_the_tab_the_buffers() {
+        let file = BufferId(1);
+        let other = BufferId(2);
+        let group = LeafId(SplitId(50));
+        let (source, preview) = (LeafId(SplitId(51)), LeafId(SplitId(52)));
+        let mut vs = SplitViewState::with_buffer(80, 24, other);
+        vs.add_buffer(file);
+        vs.show_in_tab(file, group, source);
+
+        assert_eq!(
+            vs.open_buffers,
+            [TabTarget::Buffer(other), TabTarget::Buffer(file)]
+        );
+        assert_eq!(vs.active_target(), TabTarget::Buffer(file));
+        assert_eq!(vs.shown_group(), Some((group, source)));
+        assert!(vs.has_group(group));
+
+        vs.focus_group_panel(preview);
+        vs.show_buffer(other);
+        assert_eq!(vs.shown(), Shown::Buffer(other));
+        vs.show_buffer(file);
+        assert_eq!(vs.shown_group(), Some((group, preview)));
+        assert_eq!(vs.active_target(), TabTarget::Buffer(file));
+
+        // Switching tabs underneath (`set_buffer_tab`) leaves the tab's group.
+        vs.set_buffer_tab(other);
+        assert_eq!(vs.shown(), Shown::Buffer(other));
+
+        vs.show_buffer(file);
+        vs.remove_group(group);
+        assert_eq!(vs.shown(), Shown::Buffer(file));
+        assert!(!vs.has_group(group));
+        vs.show_buffer(other);
+        vs.show_buffer(file);
+        assert_eq!(
+            vs.shown(),
+            Shown::Buffer(file),
+            "the tab is the file's again"
+        );
+    }
+
+    /// A group with a tab of its own is not on a buffer's tab, and a group
+    /// in a buffer's tab is gone from the pane with that tab.
+    #[test]
+    fn a_group_in_a_tab_goes_with_the_tab() {
+        let file = BufferId(1);
+        let other = BufferId(2);
+        let (own, in_tab) = (LeafId(SplitId(50)), LeafId(SplitId(60)));
+        let mut vs = SplitViewState::with_buffer(80, 24, file);
+        vs.add_buffer(other);
+        vs.add_group(own);
+        vs.show_group(own, LeafId(SplitId(51)));
+        assert_eq!(vs.active_target(), TabTarget::Group(own));
+
+        vs.show_in_tab(file, in_tab, LeafId(SplitId(61)));
+        assert_eq!(vs.group_in_tab(file), Some(in_tab));
+        vs.show_buffer(other);
+        vs.remove_buffer(file);
+        assert_eq!(vs.group_in_tab(file), None);
+        assert!(!vs.has_group(in_tab));
+        assert!(vs.has_group(own), "the group with its own tab stays");
     }
 
     /// The buffer tab's view state cannot be dropped from outside, whether
