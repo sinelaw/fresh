@@ -16,6 +16,7 @@ use std::sync::Arc;
 use crate::model::event::{BufferId, Event, LeafId};
 use crate::state::EditorState;
 
+use super::buffer_close::CloseCause;
 use super::buffer_config_resolve;
 use super::Editor;
 
@@ -313,7 +314,7 @@ impl Editor {
                 // promote, but defend in depth), the buffer stays open as a
                 // permanent tab, which *is* a commitment → fire its deferred
                 // hook.
-                if let Err(e) = self.close_discarded_preview(old_id) {
+                if let Err(e) = self.close_buffer_by(old_id, CloseCause::Editor) {
                     tracing::warn!(
                         "preview: could not replace stale preview buffer {:?}, demoting to permanent: {}",
                         old_id,
@@ -407,7 +408,7 @@ impl Editor {
         let Some((_split, buffer_id)) = self.active_window_mut().preview.take() else {
             return;
         };
-        if let Err(e) = self.close_discarded_preview(buffer_id) {
+        if let Err(e) = self.close_buffer_by(buffer_id, CloseCause::Editor) {
             tracing::warn!(
                 "preview: could not dismiss preview buffer {:?}, promoting it: {}",
                 buffer_id,

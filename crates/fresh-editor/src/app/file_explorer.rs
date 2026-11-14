@@ -1,6 +1,7 @@
 use anyhow::Result as AnyhowResult;
 use fresh_i18n::t;
 
+use super::buffer_close::CloseCause;
 use super::*;
 use crate::app::path_utils::explorer_path_under_root;
 use crate::services::async_bridge::AsyncMessage;
@@ -852,9 +853,10 @@ impl Editor {
                 // action, which implies discarding unsaved edits to the
                 // doomed file too — `force_close_buffer` skips the
                 // modified-check so the buffer really goes away.
+                // Not offered by Reopen Closed File: the file is gone.
                 let to_close = self.buffer_ids_under_path(&path);
                 for id in to_close {
-                    if let Err(e) = self.force_close_buffer(id) {
+                    if let Err(e) = self.force_close_buffer_by(id, CloseCause::Editor) {
                         tracing::warn!(
                             "Failed to close buffer {:?} after delete of {:?}: {}",
                             id,
@@ -863,6 +865,8 @@ impl Editor {
                         );
                     }
                 }
+
+                self.active_window_mut().closed_files.remove_under(&path);
 
                 // Refresh the parent directory in the file explorer
                 let active_id = self.active_window;

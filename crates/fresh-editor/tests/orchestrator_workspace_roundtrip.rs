@@ -549,3 +549,44 @@ mod stable_id {
         Workspace::delete(&project).unwrap();
     }
 }
+
+/// Reopen Closed File's list is saved with the workspace: files under the
+/// root relative to it, others absolute, most recently closed first — and
+/// it comes back unchanged on restore. Files open at save time are tabs,
+/// not closed files.
+#[test]
+fn closed_files_roundtrip_relative_inside_absolute_outside() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let project = sandbox.path().join("project");
+    let external = sandbox.path().join("external");
+    let data_home = sandbox.path().join("data-home");
+    for dir in [&project, &external, &data_home] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    let project = project.canonicalize().unwrap();
+    let external = external.canonicalize().unwrap();
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    let inside = project.join("src/main.rs");
+    let outside = external.join("notes.txt");
+    let still_open = project.join("open.txt");
+    for p in [&inside, &outside, &still_open] {
+        std::fs::write(p, "x").unwrap();
+    }
+    let dir_context = DirectoryContext::for_testing(&data_home);
+
+    let saved = {
+        let mut e1 = editor_in(&project, &dir_context);
+        for p in [&inside, &outside] {
+            let id = e1.open_file(p).unwrap();
+            e1.close_buffer(id).unwrap();
+        }
+        e1.open_file(&still_open).unwrap();
+        e1.save_workspace().unwrap();
+        e1.capture_workspace().closed_files
+    };
+    assert_eq!(saved, vec![outside.clone(), PathBuf::from("src/main.rs")]);
+
+    let mut e2 = editor_in(&project, &dir_context);
+    assert!(e2.try_restore_workspace().unwrap());
+    assert_eq!(e2.capture_workspace().closed_files, saved);
+}

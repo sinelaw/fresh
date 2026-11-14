@@ -1,12 +1,23 @@
 //! Reopen Closed File, per window.
 //!
-//! Each window (workspace) remembers the files closed in it, most recent
-//! first, so "Reopen Closed File" offers this workspace's files rather than
-//! an editor-wide history. A file is recorded when its buffer is closed
-//! (`Editor::close_buffer_internal`, which every close passes through) and
-//! is listed only while it is not open again in the window. The list is
-//! persisted with the rest of the workspace.
+//! Each window (workspace) remembers the files the user closed in it, most
+//! recent first, so "Reopen Closed File" offers this workspace's files rather
+//! than an editor-wide history. A file is recorded when the user closes its
+//! tab (`Editor::close_buffer_internal` with `CloseCause::User`; closes the
+//! editor makes on its own are not recorded) and is listed only while it is
+//! not open again in the window. The list is persisted with the rest of the
+//! workspace.
+//!
+//! Not covered yet: a launch that keeps no workspace (`fresh FILE`,
+//! `--simple`, `--diff`) records into its window like any other, but nothing
+//! persists it, so those files are gone after quitting. A possible follow-up:
+//! hand each such file, on close and at quit, to the workspace whose root is
+//! the nearest ancestor of the file, through a small side file that workspace
+//! merges in (never by rewriting its workspace file, which a running
+//! orchestrator owns); files under no workspace would be dropped.
 
+use std::collections::HashSet;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use fresh_i18n::t;
@@ -52,6 +63,11 @@ impl ClosedFiles {
         self.paths.retain(|p| p != path);
     }
 
+    /// Forget `path` and everything under it (it was deleted).
+    pub(crate) fn remove_under(&mut self, path: &Path) {
+        self.paths.retain(|p| !p.starts_with(path));
+    }
+
     /// The paths, most recently closed first.
     pub(crate) fn paths(&self) -> &[PathBuf] {
         &self.paths
@@ -59,53 +75,35 @@ impl ClosedFiles {
 }
 
 impl Editor {
-    /// Record a buffer of the active window that is about to be closed, if
-    /// it is a file the user can reopen. Preview tabs, terminals, virtual
-    /// and unnamed buffers are not recorded.
+    /// Record a buffer of the active window that the user is closing, if it
+    /// is a file with a tab. Hidden, virtual (help, terminals, results) and
+    /// unnamed buffers have nothing to reopen; a preview tab was only looked
+    /// at.
     pub(crate) fn record_closed_file(&mut self, id: BufferId) {
         let window = self.active_window_mut();
-        if window.is_buffer_preview(id) || window.is_terminal_buffer(id) {
+        if window.is_buffer_preview(id) {
             return;
         }
         let Some(path) = window
-            .buffer_metadata
-            .get(&id)
-            .filter(|meta| !meta.hidden_from_tabs)
-            .and_then(|meta| meta.file_path())
-            .filter(|path| !path.as_os_str().is_empty())
-            .cloned()
+            .tab_file_buffers()
+            .find(|(buffer_id, _)| *buffer_id == id)
+            .map(|(_, path)| path.to_path_buf())
         else {
             return;
         };
         window.closed_files.push(path);
     }
 
-    /// Close a preview buffer that is being discarded (replaced by another
-    /// preview, or dismissed). It was never really opened, so it does not go
-    /// on the closed list — callers have already cleared the preview marker
-    /// `record_closed_file` would otherwise recognise it by.
-    pub(crate) fn close_discarded_preview(&mut self, id: BufferId) -> anyhow::Result<()> {
-        let before = self.active_window().closed_files.clone();
-        let result = self.close_buffer(id);
-        self.active_window_mut().closed_files = before;
-        result
-    }
-
     /// Open the prompt listing the active window's closed files that are not
     /// open again.
     pub(crate) fn start_reopen_closed_file_prompt(&mut self) {
         let window = self.active_window();
-        let is_open = |path: &PathBuf| {
-            window
-                .buffer_metadata
-                .values()
-                .any(|meta| meta.file_path() == Some(path))
-        };
+        let open: HashSet<&Path> = window.tab_file_buffers().map(|(_, path)| path).collect();
         let suggestions: Vec<Suggestion> = window
             .closed_files
             .paths()
             .iter()
-            .filter(|path| !is_open(path))
+            .filter(|path| !open.contains(path.as_path()))
             .map(|path| {
                 let full = path.to_string_lossy().into_owned();
                 let shown = path
@@ -135,28 +133,55 @@ impl Editor {
     }
 
     /// Reopen the file picked in the Reopen Closed File prompt. A file that
-    /// no longer exists is dropped from the list rather than opened as a new
-    /// empty buffer.
+    /// is gone is dropped from the list rather than opened as a new empty
+    /// buffer; one that can't be reached right now keeps its place.
     pub(crate) fn reopen_closed_file(&mut self, input: &str) {
-        let path = PathBuf::from(input.trim());
+        let path = PathBuf::from(input);
         // Only what the list offered: typed text that matched nothing is not
         // a path to open.
         if !self.active_window().closed_files.paths().contains(&path) {
             return;
         }
-        if !self.authority().filesystem.exists(&path) {
-            self.active_window_mut().closed_files.remove(&path);
-            self.set_status_message(
-                t!(
-                    "status.closed_file_missing",
-                    path = path.display().to_string()
-                )
-                .to_string(),
-            );
-            return;
-        }
-        if let Err(e) = self.open_file(&path) {
-            self.set_status_message(t!("file.error_opening", error = e.to_string()).to_string());
+        let window = self.active_window();
+        // A remote workspace not connected yet runs on a local placeholder,
+        // which can't say anything about the remote file.
+        let unconnected = window.authority_spec.is_remote()
+            && window
+                .authority()
+                .filesystem
+                .remote_connection_info()
+                .is_none();
+        let found = if unconnected {
+            Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "the workspace is not connected",
+            ))
+        } else {
+            window.authority().filesystem.metadata(&path).map(|_| ())
+        };
+        match found {
+            Ok(()) => {
+                if let Err(e) = self.open_file(&path) {
+                    self.set_status_message(
+                        t!("file.error_opening", error = e.to_string()).to_string(),
+                    );
+                }
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                self.active_window_mut().closed_files.remove(&path);
+                self.set_status_message(
+                    t!(
+                        "status.closed_file_missing",
+                        path = path.display().to_string()
+                    )
+                    .to_string(),
+                );
+            }
+            Err(e) => {
+                self.set_status_message(
+                    t!("file.error_opening", error = e.to_string()).to_string(),
+                );
+            }
         }
     }
 }
@@ -199,6 +224,13 @@ mod tests {
             ClosedFiles::from_paths(many).paths().len(),
             MAX_CLOSED_FILES
         );
+    }
+
+    #[test]
+    fn remove_under_forgets_a_deleted_directory() {
+        let mut closed = ClosedFiles::from_paths([p("/d/a"), p("/d/sub/b"), p("/dx"), p("/e")]);
+        closed.remove_under(&p("/d"));
+        assert_eq!(closed.paths(), &[p("/dx"), p("/e")]);
     }
 
     #[test]
