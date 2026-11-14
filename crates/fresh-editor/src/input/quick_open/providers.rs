@@ -592,10 +592,7 @@ impl FileProvider {
         };
 
         let rel_parent = match parent.strip_prefix(cwd) {
-            Ok(p) => {
-                let s = p.to_string_lossy().replace('\\', "/");
-                s
-            }
+            Ok(p) => crate::primitives::path_utils::rel_to_slash_string(p),
             Err(_) => return results,
         };
 

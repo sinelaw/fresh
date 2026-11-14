@@ -3818,7 +3818,7 @@ impl Editor {
         // The name a file is shown and glob-matched under: relative and
         // `/`-separated when it is in the root, as the project walk gives it.
         let shown_path = |path: &std::path::Path| match path.strip_prefix(&root) {
-            Ok(rel) => rel.to_string_lossy().replace('\\', "/"),
+            Ok(rel) => crate::primitives::path_utils::rel_to_slash_string(rel),
             Err(_) => path.to_string_lossy().into_owned(),
         };
 
