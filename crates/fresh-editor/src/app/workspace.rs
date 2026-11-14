@@ -2666,6 +2666,9 @@ impl crate::app::window::Window {
         }
 
         self.restore_bookmarks_from_workspace(&workspace.bookmarks, &path_to_buffer);
+        self.closed_files = crate::app::closed_files::ClosedFiles::from_paths(
+            workspace.closed_files.iter().map(|p| self.root.join(p)),
+        );
         self.clean_orphaned_buffers();
         self.log_restore_summary(session_name);
         // The opened files' unsaved changes are replayed by the caller
@@ -2978,6 +2981,16 @@ impl crate::app::window::Window {
         let search_overrides = (!overrides.is_empty()).then_some(overrides);
 
         let bookmarks = serialize_bookmarks(&self.bookmarks, &self.buffer_metadata, &self.root);
+        let closed_files: Vec<PathBuf> = self
+            .closed_files
+            .paths()
+            .iter()
+            .map(|p| {
+                p.strip_prefix(&self.root)
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|_| p.clone())
+            })
+            .collect();
 
         let mut external_files: Vec<PathBuf> = self
             .buffer_metadata
@@ -3055,6 +3068,7 @@ impl crate::app::window::Window {
             search_overrides,
             legacy_search_options: None,
             bookmarks,
+            closed_files,
             terminals,
             external_files,
             read_only_files,

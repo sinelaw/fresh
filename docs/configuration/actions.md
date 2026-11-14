@@ -270,6 +270,7 @@ In `config.json`, a keybinding takes the same `args` object next to its `"action
 | `reload_with_encoding` | Reload file with specific encoding |
 | `remove_ruler` | Remove ruler |
 | `remove_secondary_cursors` | Remove secondary cursors |
+| `reopen_closed_file` | Reopen closed file |
 | `replace` | Replace text in buffer |
 | `reset_buffer_settings` | Reset buffer settings to config |
 | `restart_terminal` | Restart terminal process |

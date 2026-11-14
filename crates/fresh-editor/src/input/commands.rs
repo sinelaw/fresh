@@ -250,6 +250,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.reopen_closed_file",
+        desc_key: "cmd.reopen_closed_file_desc",
+        action: || Action::ReopenClosedFile,
+        contexts: &[],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.switch_project",
         desc_key: "cmd.switch_project_desc",
         action: || Action::SwitchProject,

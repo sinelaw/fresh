@@ -3066,6 +3066,13 @@ impl MenuConfig {
                         when: None,
                         checkbox: None,
                     },
+                    MenuItem::Action {
+                        label: t!("menu.file.reopen_closed_file").to_string(),
+                        action: "reopen_closed_file".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
                     MenuItem::Separator { separator: true },
                     MenuItem::Action {
                         label: t!("menu.file.save").to_string(),

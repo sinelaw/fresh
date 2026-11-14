@@ -1032,6 +1032,7 @@ impl Editor {
                     | PromptType::SelectTheme { .. }
                     | PromptType::SelectLocale
                     | PromptType::SwitchToTab
+                    | PromptType::ReopenClosedFile
                     | PromptType::SetLanguage
                     | PromptType::SetEncoding
                     | PromptType::SetLineEnding
@@ -1333,6 +1334,7 @@ impl Editor {
                 }
             }
             PromptType::SwitchToTab
+            | PromptType::ReopenClosedFile
             | PromptType::SelectTheme { .. }
             | PromptType::StopLspServer
             | PromptType::RestartLspServer

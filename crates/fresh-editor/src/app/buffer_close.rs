@@ -171,6 +171,10 @@ impl Editor {
         // no panel is left on a buffer that is gone.
         self.close_groups_borrowing(id);
 
+        // Remember the file for Reopen Closed File — before preview tracking
+        // is cleared below, since a replaced preview tab is not recorded.
+        self.record_closed_file(id);
+
         // Clear preview tracking if we're closing the current preview buffer.
         // This keeps `preview` from pointing at a freed buffer id.
         if let Some((_, preview_id)) = self.active_window().preview {
