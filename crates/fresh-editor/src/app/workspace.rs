@@ -2981,16 +2981,7 @@ impl crate::app::window::Window {
         let search_overrides = (!overrides.is_empty()).then_some(overrides);
 
         let bookmarks = serialize_bookmarks(&self.bookmarks, &self.buffer_metadata, &self.root);
-        let closed_files: Vec<PathBuf> = self
-            .closed_files
-            .paths()
-            .iter()
-            .map(|p| {
-                p.strip_prefix(&self.root)
-                    .map(Path::to_path_buf)
-                    .unwrap_or_else(|_| p.clone())
-            })
-            .collect();
+        let closed_files = self.closed_files.relative_to(&self.root);
 
         let mut external_files: Vec<PathBuf> = self
             .buffer_metadata

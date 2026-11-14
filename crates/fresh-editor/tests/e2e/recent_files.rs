@@ -138,7 +138,11 @@ fn lists_only_closed_files_most_recent_first() {
     harness.open_file(&project.join("c.txt")).unwrap();
 
     reopen(&mut harness);
-    assert_eq!(offered(&harness), names(&["b.txt", "src/main.rs", "a.txt"]));
+    let nested = Path::new("src").join("main.rs").display().to_string();
+    assert_eq!(
+        offered(&harness),
+        names(&["b.txt", nested.as_str(), "a.txt"])
+    );
 }
 
 #[test]
@@ -337,7 +341,7 @@ fn file_outside_the_workspace_is_listed_by_absolute_path() {
     let shown = offered(&harness).expect("prompt is open");
     assert_eq!(shown.len(), 1);
     assert!(
-        shown[0].starts_with('/') && shown[0].ends_with("notes.txt"),
+        Path::new(&shown[0]).is_absolute() && shown[0].ends_with("notes.txt"),
         "listed by absolute path: {shown:?}"
     );
 }
@@ -347,18 +351,30 @@ fn each_window_has_its_own_list() {
     let (mut harness, project) = project_with(&["first.txt"]);
     open_and_close(&mut harness, &project.join("first.txt"));
 
-    let second_root = TempDir::new().unwrap();
-    fs::write(second_root.path().join("second.txt"), "second\n").unwrap();
+    // The second window's root is spelled differently from where its files
+    // resolve to — as with a symlinked folder, macOS's `/var` (really
+    // `/private/var`) or Windows' `\\?\` prefix — and its files still list
+    // relative to it.
+    let second_dir = TempDir::new().unwrap();
+    fs::write(second_dir.path().join("second.txt"), "second\n").unwrap();
+    #[cfg(unix)]
+    let second_root = {
+        let link = second_dir.path().with_extension("link");
+        std::os::unix::fs::symlink(second_dir.path(), &link).unwrap();
+        link
+    };
+    #[cfg(not(unix))]
+    let second_root = second_dir.path().to_path_buf();
     let second_window = harness
         .editor_mut()
-        .create_window_at(second_root.path().to_path_buf(), "second".to_string());
+        .create_window_at(second_root.clone(), "second".to_string());
     harness.editor_mut().set_active_window(second_window);
     harness.render().unwrap();
 
     reopen(&mut harness);
     assert_eq!(offered(&harness), None, "a new window starts with no list");
 
-    open_and_close(&mut harness, &second_root.path().join("second.txt"));
+    open_and_close(&mut harness, &second_root.join("second.txt"));
     reopen(&mut harness);
     assert_eq!(offered(&harness), names(&["second.txt"]));
     key(&mut harness, KeyCode::Esc);

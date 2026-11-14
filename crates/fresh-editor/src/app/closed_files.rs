@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 
 use fresh_i18n::t;
 
+use super::path_utils::ExplorerRoot;
 use super::Editor;
 use crate::input::commands::Suggestion;
 use crate::model::event::BufferId;
@@ -72,6 +73,27 @@ impl ClosedFiles {
     pub(crate) fn paths(&self) -> &[PathBuf] {
         &self.paths
     }
+
+    /// The paths, most recently closed first, relative to `root` where they
+    /// lie under it and absolute otherwise — how they are shown and saved.
+    ///
+    /// A recorded path is spelled the way its buffer resolved it, which need
+    /// not be how the root is spelled: a root reached through a symlink,
+    /// macOS's `/var` (really `/private/var`), Windows' `\\?\` prefix.
+    /// `ExplorerRoot` matches the two either way.
+    pub(crate) fn relative_to(&self, root: &Path) -> Vec<PathBuf> {
+        let root_match = ExplorerRoot::new(root);
+        self.paths
+            .iter()
+            .map(|path| {
+                root_match
+                    .admit(path)
+                    .and_then(|under| under.strip_prefix(root).ok().map(Path::to_path_buf))
+                    .filter(|relative| !relative.as_os_str().is_empty())
+                    .unwrap_or_else(|| path.clone())
+            })
+            .collect()
+    }
 }
 
 impl Editor {
@@ -99,18 +121,15 @@ impl Editor {
     pub(crate) fn start_recent_files_prompt(&mut self) {
         let window = self.active_window();
         let open: HashSet<&Path> = window.tab_file_buffers().map(|(_, path)| path).collect();
-        let suggestions: Vec<Suggestion> = window
-            .closed_files
+        let closed = &window.closed_files;
+        let suggestions: Vec<Suggestion> = closed
             .paths()
             .iter()
-            .filter(|path| !open.contains(path.as_path()))
-            .map(|path| {
+            .zip(closed.relative_to(&window.root))
+            .filter(|(path, _)| !open.contains(path.as_path()))
+            .map(|(path, shown)| {
                 let full = path.to_string_lossy().into_owned();
-                let shown = path
-                    .strip_prefix(&window.root)
-                    .unwrap_or(path)
-                    .to_string_lossy()
-                    .into_owned();
+                let shown = shown.to_string_lossy().into_owned();
                 let mut suggestion = Suggestion::new(full.clone(), shown);
                 suggestion.value = Some(full);
                 suggestion
