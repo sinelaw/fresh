@@ -308,6 +308,30 @@ impl Drop for PathPin {
     }
 }
 
+/// Set process-global environment variables until the returned guard drops.
+///
+/// The same lock and the same exact-restore discipline as
+/// [`pin_path_with_dir_first`]; `$PATH` is just the variable that needed it
+/// first. This is for a test whose subject reads the *process* environment
+/// rather than the editor's [`fresh::config_io::DirectoryContext`]: the
+/// plugin API's `editor.getEnv` is `std::env::var`, so anything a plugin
+/// resolves out of `$HOME` reads the home directory of whoever happens to be
+/// running the suite until a test pins one of its own.
+pub fn pin_env(vars: &[(&'static str, &std::path::Path)]) -> PathPin {
+    let lock = path_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+    // `$PATH` itself is left alone: captured so the drop restores it
+    // unchanged, which keeps one guard type for both kinds of pin.
+    let mut pin = PathPin {
+        previous_path: std::env::var_os("PATH"),
+        extra: Vec::new(),
+        _lock: lock,
+    };
+    for (key, value) in vars {
+        pin.set_env(key, value);
+    }
+    pin
+}
+
 /// Put `dir` at the front of `$PATH` until the returned guard drops.
 ///
 /// `$PATH` is process-global, and the shim directories under
