@@ -671,13 +671,76 @@ impl Drop for EditorTestHarness {
             // field's own drop reaches it.
             unsafe { std::mem::ManuallyDrop::drop(&mut self.editor) };
         }
+        // The temp dir is this test's scratch space, not its subject, and
+        // on Windows CI its removal is where the teardown hangs: observed
+        // still waiting at 157s and 167s, past nextest's 180s kill. Every
+        // harness has one, which is why the casualties have nothing in
+        // common — a test whose assertions have all passed is reported as a
+        // timeout, with no failure of its own to point at, and the rest of
+        // the shard's output goes down with it.
+        //
+        // So the removal gets a thread and a bounded wait. The directory is
+        // still removed, and waited for, in the normal case (milliseconds
+        // everywhere this has been measured). When it stalls we say what was
+        // left behind and carry on, rather than let a finished test's
+        // verdict depend on how long the OS takes to unlink scratch files.
+        //
+        // This bounds the symptom. It is not the cause: on Windows a
+        // directory cannot be removed while a handle inside it is open, so a
+        // stall here means something outlived the editor that was dropped
+        // just above — a child process that was not stopped, most likely
+        // (CONTRIBUTING.md Code Guidelines §14). The message names the path
+        // so that can be chased rather than forgotten.
+        if let Some(dir) = self._temp_dir.take() {
+            let _stall = StallReport::start("EditorTestHarness teardown: removing the temp dir");
+            let path = dir.path().to_path_buf();
+            let (done, finished) = std::sync::mpsc::channel();
+            // Detached deliberately: if the removal is wedged in the kernel
+            // there is nothing to join, and process exit reclaims it.
+            let spawned = std::thread::Builder::new()
+                .name("harness-temp-dir-removal".into())
+                .spawn(move || {
+                    drop(dir);
+                    let _ = done.send(());
+                });
+            match spawned {
+                Ok(_) => {
+                    if finished
+                        .recv_timeout(Self::TEMP_DIR_REMOVAL_BUDGET)
+                        .is_err()
+                    {
+                        eprintln!(
+                            "EditorTestHarness teardown: gave up removing {} after {:.0}s and \
+                             left it behind. On Windows that means a handle inside it is still \
+                             open, so something outlived the editor.",
+                            path.display(),
+                            Self::TEMP_DIR_REMOVAL_BUDGET.as_secs_f64()
+                        );
+                    }
+                }
+                // No thread to be had: fall back to removing it here.
+                Err(e) => eprintln!(
+                    "EditorTestHarness teardown: could not spawn the removal thread ({e}); \
+                     leaving {} behind.",
+                    path.display()
+                ),
+            }
+        }
         self._teardown_stall = Some(StallReport::start(
-            "EditorTestHarness teardown: removing the temp dir",
+            "EditorTestHarness teardown: releasing the config-globals lease",
         ));
     }
 }
 
 impl EditorTestHarness {
+    /// How long [`Drop`] waits for the temp dir to be removed before
+    /// leaving it behind and saying so.
+    ///
+    /// Generous next to the milliseconds the removal actually takes, and
+    /// well short of the 60s at which nextest calls a test slow — a stall
+    /// here should be reported as one, not grow into a killed run.
+    const TEMP_DIR_REMOVAL_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
+
     // =========================================================================
     // Unified constructor
     // =========================================================================
