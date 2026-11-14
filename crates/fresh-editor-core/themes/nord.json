@@ -27,6 +27,7 @@
     "whitespace_indicator_selected_fg": [135, 147, 171]
   },
   "ui": {
+    "file_status_added_fg": [163, 190, 140],
     "blame_header_fg": [236, 239, 244],
     "blame_header_bg": [90, 100, 120],
     "semantic_highlight_bg": [27, 27, 33],

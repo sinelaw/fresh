@@ -12,9 +12,20 @@ use fresh_core::text_property::{InlineOverlay, OffsetUnit, TextPropertyEntry};
 use crate::widgets::render::{
     cell, dual_available_values, dual_cursor_marker, dual_label, dual_sanitize_included,
     ensure_trailing_newline, DUAL_COLUMN_ACTIVE, DUAL_CURSOR_IDLE, DUAL_GUTTER_BLANK,
-    KEY_COMPLETION_DIM_FG, KEY_FOCUSED_BG, KEY_FOCUSED_FG, KEY_PLACEHOLDER_FG,
+    KEY_COMPLETION_DIM_FG,
     KEY_SECTION_LABEL_FG,
 };
+
+/// The cursor row's ink and ground. The settings selection pair rather than
+/// the popup selection: a popup's selection is built to shout over a list it
+/// floats above (Dracula's is saturated purple), and a cursor that moves inside
+/// a form wants the quieter band the form's own selected row already uses.
+/// Themes that name no `settings_selected_*` fall back to the popup pair.
+const KEY_DUAL_CURSOR_FG: &str = "ui.settings_selected_fg";
+const KEY_DUAL_CURSOR_BG: &str = "ui.settings_selected_bg";
+/// The Included title's ink: the "added" colour, since that column is the
+/// set in effect. Falls back to `diagnostic.info_fg` where a theme names none.
+const KEY_DUAL_INCLUDED_FG: &str = "ui.file_status_added_fg";
 
 pub struct DualList;
 
@@ -418,9 +429,9 @@ pub fn resolve(
 }
 
 /// The header row. Each title carries the same two-column gutter its cells
-/// do, and the column the keyboard is driving is marked with `▾ ` plus the
-/// accent fg — so "which side am I on?" survives both a monochrome terminal
-/// and a color-only reading.
+/// do, and the column the keyboard is driving is marked with `▾ ` plus bold
+/// — so "which side am I on?" survives both a monochrome terminal and a
+/// color-only reading. Included is always in the positive ink.
 pub fn header_row(st: &Resolved, col_w: usize) -> TextPropertyEntry {
     let avail_active = st.focused && !st.active_included;
     let incl_active = st.focused && st.active_included;
@@ -446,17 +457,26 @@ pub fn header_row(st: &Resolved, col_w: usize) -> TextPropertyEntry {
     let head_left = 0..avail_head.len();
     let head_right = (avail_head.len() + 2)..header.len();
     let mut header_entry = TextPropertyEntry::text(&header);
-    for (range, active) in [(head_left, avail_active), (head_right, incl_active)] {
+    // **Included always wears the positive ink**, active or not: it is the
+    // column that is actually in effect, and a reader glancing at a parked
+    // control should not have to work out which side is which. The active
+    // column is additionally bold (and carries `▾ `). Available keeps the
+    // surface's own text colour when idle — it is a column heading, not a
+    // disabled item — and takes the accent while the keyboard drives it.
+    let styles = [
+        (head_left, avail_active.then_some(KEY_SECTION_LABEL_FG), avail_active),
+        (head_right, Some(KEY_DUAL_INCLUDED_FG), incl_active),
+    ];
+    for (range, fg, bold) in styles {
+        if fg.is_none() && !bold {
+            continue;
+        }
         header_entry.inline_overlays.push(InlineOverlay {
             start: range.start,
             end: range.end,
             style: OverlayOptions {
-                fg: Some(OverlayColorSpec::theme_key(if active {
-                    KEY_SECTION_LABEL_FG
-                } else {
-                    KEY_COMPLETION_DIM_FG
-                })),
-                bold: active,
+                fg: fg.map(OverlayColorSpec::theme_key),
+                bold,
                 ..Default::default()
             },
             properties: Default::default(),
@@ -535,8 +555,8 @@ pub fn body_row(options: &[DualListOption], st: &Resolved, i: usize, col_w: usiz
                 start: hs,
                 end: he,
                 style: OverlayOptions {
-                    fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
-                    bg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_BG)),
+                    fg: Some(OverlayColorSpec::theme_key(KEY_DUAL_CURSOR_FG)),
+                    bg: Some(OverlayColorSpec::theme_key(KEY_DUAL_CURSOR_BG)),
                     bold: true,
                     ..Default::default()
                 },
@@ -602,7 +622,10 @@ pub fn hint_row(hint: &str) -> Option<TextPropertyEntry> {
         start: 0,
         end: text.len(),
         style: OverlayOptions {
-            fg: Some(OverlayColorSpec::theme_key(KEY_PLACEHOLDER_FG)),
+            // The dim-hint ink, not the placeholder's: a placeholder may be
+            // as faint as whitespace markers, and this line is the only
+            // place the control's key bindings are written down.
+            fg: Some(OverlayColorSpec::theme_key(KEY_COMPLETION_DIM_FG)),
             ..Default::default()
         },
         properties: Default::default(),

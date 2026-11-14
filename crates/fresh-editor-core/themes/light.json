@@ -31,6 +31,7 @@
     "whitespace_indicator_selected_fg": [170, 177, 187]
   },
   "ui": {
+    "file_status_added_fg": [56, 118, 29],
     "tab_active_fg": [40, 40, 40],
     "tab_active_bg": [255, 255, 255],
     "tab_inactive_fg": [100, 100, 100],

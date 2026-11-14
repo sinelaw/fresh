@@ -163,6 +163,7 @@
     ]
   },
   "ui": {
+    "file_status_added_fg": [163, 206, 140],
     "tab_active_fg": [
       235,
       238,

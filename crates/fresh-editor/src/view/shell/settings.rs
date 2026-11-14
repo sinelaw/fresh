@@ -1012,11 +1012,26 @@ fn control(c: &Card, band: &str) -> Node<UiMsg> {
                     })
                     .collect::<Vec<_>>(),
             ),
+            // **A `DualList` is split the same way.** Its label is the row
+            // the band belongs on; its columns, header and key hint are many
+            // rows that stay on the dialog's ground. Banding the whole of it
+            // painted one block of the selection colour that stopped at the
+            // columns' width rather than the card's, hid the cursor row's
+            // highlight inside it (same colour) and sank the dim header and
+            // hint below legibility. The label is lifted out into a full-width
+            // strip and the rest is the same spec with no label.
+            W::DualList { label, .. } if !label.is_empty() => {
+                let mut columns = spec.clone();
+                if let W::DualList { label, .. } = &mut columns {
+                    label.clear();
+                }
+                col().children([
+                    strip(text(label.clone()).theme(banded.to_string())),
+                    super::widgets::node(&columns, w, &cx(&ground)),
+                ])
+            }
             // A scalar control *is* its label row, so the band is the whole
-            // of it. The rest — a `DualList`'s two columns — is many rows the
-            // painter left on the dialog's ground, and there is no first
-            // child to split off, so it keeps the band it has always had
-            // rather than being pinned to one row.
+            // of it.
             W::Toggle { .. } | W::Number { .. } | W::Dropdown { .. } => {
                 strip(super::widgets::node(&spec, w, &cx(&banded)))
             }

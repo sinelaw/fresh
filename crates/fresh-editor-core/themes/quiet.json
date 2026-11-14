@@ -32,9 +32,9 @@
       41
     ],
     "line_number_fg": [
-      92,
-      94,
-      106
+      112,
+      115,
+      130
     ],
     "line_number_bg": [
       12,
@@ -264,9 +264,9 @@
       230
     ],
     "menu_disabled_fg": [
-      76,
-      78,
-      90
+      104,
+      107,
+      120
     ],
     "menu_disabled_bg": [
       27,
@@ -357,6 +357,11 @@
       239,
       243,
       254
+    ],
+    "file_status_added_fg": [
+      163,
+      190,
+      140
     ],
     "suggestion_bg": [
       30,
