@@ -1019,16 +1019,21 @@ fn control(c: &Card, band: &str) -> Node<UiMsg> {
             // columns' width rather than the card's, hid the cursor row's
             // highlight inside it (same colour) and sank the dim header and
             // hint below legibility. The label is lifted out into a full-width
-            // strip and the rest is the same spec with no label.
-            W::DualList { label, .. } if !label.is_empty() => {
+            // strip and the rest is the same spec with no label. An unlabelled
+            // one has no row to band, and still keeps its columns on the
+            // ground: its cursor row is painted in the band's own colour.
+            W::DualList { label, .. } => {
                 let mut columns = spec.clone();
                 if let W::DualList { label, .. } = &mut columns {
                     label.clear();
                 }
-                col().children([
-                    strip(text(label.clone()).theme(banded.to_string())),
-                    super::widgets::node(&columns, w, &cx(&ground)),
-                ])
+                let body = super::widgets::node(&columns, w, &cx(&ground));
+                match label.is_empty() {
+                    true => body,
+                    false => {
+                        col().children([strip(text(label.clone()).theme(banded.to_string())), body])
+                    }
+                }
             }
             // A scalar control *is* its label row, so the band is the whole
             // of it.

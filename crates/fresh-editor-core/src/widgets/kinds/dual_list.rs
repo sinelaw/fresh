@@ -12,8 +12,7 @@ use fresh_core::text_property::{InlineOverlay, OffsetUnit, TextPropertyEntry};
 use crate::widgets::render::{
     cell, dual_available_values, dual_cursor_marker, dual_label, dual_sanitize_included,
     ensure_trailing_newline, DUAL_COLUMN_ACTIVE, DUAL_CURSOR_IDLE, DUAL_GUTTER_BLANK,
-    KEY_COMPLETION_DIM_FG,
-    KEY_SECTION_LABEL_FG,
+    KEY_COMPLETION_DIM_FG, KEY_SECTION_LABEL_FG,
 };
 
 /// The cursor row's ink and ground. The settings selection pair rather than
@@ -464,7 +463,11 @@ pub fn header_row(st: &Resolved, col_w: usize) -> TextPropertyEntry {
     // surface's own text colour when idle — it is a column heading, not a
     // disabled item — and takes the accent while the keyboard drives it.
     let styles = [
-        (head_left, avail_active.then_some(KEY_SECTION_LABEL_FG), avail_active),
+        (
+            head_left,
+            avail_active.then_some(KEY_SECTION_LABEL_FG),
+            avail_active,
+        ),
         (head_right, Some(KEY_DUAL_INCLUDED_FG), incl_active),
     ];
     for (range, fg, bold) in styles {
