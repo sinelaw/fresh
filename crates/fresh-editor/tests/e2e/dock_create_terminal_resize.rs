@@ -16,6 +16,7 @@
 //! correct size it is the bottom row of the pane, at the stale size it is
 //! well past it and invisible.
 
+use crate::common::global_state::pin_env;
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crossterm::event::{KeyCode, KeyModifiers};
 use portable_pty::{native_pty_system, PtySize};
@@ -138,6 +139,17 @@ fn tour_creating_the_dock_resizes_an_open_terminal() {
         eprintln!("Skipping: PTY not available in this environment");
         return;
     }
+
+    // The terminal runs `detect_shell()`, which is `$SHELL` — so without a
+    // shell of this test's own the probe below is handed whatever login
+    // shell the person running the suite happens to use, and the probe is
+    // POSIX: `R=$(stty size | cut -d' ' -f1)` is a syntax error in fish, and
+    // in any non-POSIX shell the markers simply never arrive. The test then
+    // waits for a screen that cannot come and fails 120s later blaming the
+    // dock resize, repeatably, on that machine only (CONTRIBUTING.md Testing
+    // §4). CI runners all use bash, which is why this never showed there.
+    let shell = Path::new("/bin/sh");
+    let _env = pin_env(&[("SHELL", shell)]);
 
     let (_temp, project_root) = setup_tour_project();
     let mut harness = EditorTestHarness::with_config_and_working_dir(
