@@ -17,6 +17,7 @@ pub(crate) mod chrome;
 pub(crate) mod click_geometry;
 mod click_handlers;
 mod clipboard;
+mod closed_files;
 mod composite_buffer_actions;
 pub mod confirm_dialog;
 mod dabbrev_actions;

@@ -264,6 +264,7 @@ In `config.json`, a keybinding takes the same `args` object next to its `"action
 | `quick_open_buffers` | Quick Open Buffers |
 | `quick_open_files` | Quick Open Files |
 | `quit` | Quit editor |
+| `recent_files` | Recent files |
 | `recenter` | Recenter view on cursor |
 | `redo` | Redo |
 | `redraw_screen` | Redraw screen |

@@ -6,6 +6,10 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 > Most config options below can be changed in the **Settings UI** - run **Open Settings** from the command palette (`Ctrl+P`).
 
+### Features
+
+* **Recent Files** - File > **Recent Files...** (or the command palette) lists the files you closed in this workspace, most recent first, and reopens the one you pick. Each window keeps its own list, and it survives a restart. Bindable as `recent_files`
+
 ### Bug Fixes
 
 * **macOS honors `XDG_CONFIG_HOME` and `XDG_DATA_HOME`** - an absolute `XDG_CONFIG_HOME` now selects `$XDG_CONFIG_HOME/fresh` instead of `~/.config/fresh`, and an absolute `XDG_DATA_HOME` does the same for sessions, workspace trust and crash recovery. An existing install keeps reading the files it already has until you move them into the new directory, so an upgrade does not look like a fresh start (#3496, #3497 by @LuisAlejandro)

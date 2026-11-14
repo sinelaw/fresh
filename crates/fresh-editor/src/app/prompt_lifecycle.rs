@@ -17,6 +17,7 @@ use crate::services::async_bridge::AsyncMessage;
 use crate::services::plugins::PluginManager;
 use crate::view::prompt::{Prompt, PromptType};
 
+use super::buffer_close::CloseCause;
 use super::file_open;
 use super::window::Window;
 use super::Editor;
@@ -850,7 +851,7 @@ impl Editor {
             // / unmodified by definition, so this should always
             // succeed. Tolerate failure silently — leaving an extra
             // hidden buffer around is preferable to crashing.
-            if let Err(e) = self.close_buffer(buffer_id) {
+            if let Err(e) = self.close_buffer_by(buffer_id, CloseCause::Editor) {
                 tracing::warn!("Failed to close overlay preview buffer: {}", e);
             }
         }
@@ -1032,6 +1033,7 @@ impl Editor {
                     | PromptType::SelectTheme { .. }
                     | PromptType::SelectLocale
                     | PromptType::SwitchToTab
+                    | PromptType::RecentFiles
                     | PromptType::SetLanguage
                     | PromptType::SetEncoding
                     | PromptType::SetLineEnding
@@ -1333,6 +1335,7 @@ impl Editor {
                 }
             }
             PromptType::SwitchToTab
+            | PromptType::RecentFiles
             | PromptType::SelectTheme { .. }
             | PromptType::StopLspServer
             | PromptType::RestartLspServer

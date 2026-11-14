@@ -250,6 +250,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.recent_files",
+        desc_key: "cmd.recent_files_desc",
+        action: || Action::RecentFiles,
+        contexts: &[],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.switch_project",
         desc_key: "cmd.switch_project_desc",
         action: || Action::SwitchProject,

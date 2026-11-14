@@ -29,9 +29,28 @@ struct CloseReplacement {
     return_to_group: Option<LeafId>,
 }
 
+/// Who closed a buffer, which decides whether Recent Files offers it
+/// again: a tab the user closed is; a buffer the editor closed on its own —
+/// a replaced or dismissed preview, a duplicate dropped because another
+/// workspace has the file, the buffer of a file the user deleted — is not.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CloseCause {
+    User,
+    Editor,
+}
+
 impl Editor {
     /// Close the given buffer
     pub fn close_buffer(&mut self, id: BufferId) -> anyhow::Result<()> {
+        self.close_buffer_by(id, CloseCause::User)
+    }
+
+    /// [`Self::close_buffer`], naming who closed it.
+    pub(crate) fn close_buffer_by(
+        &mut self,
+        id: BufferId,
+        cause: CloseCause,
+    ) -> anyhow::Result<()> {
         // Check for unsaved changes
         if let Some(state) = self
             .windows
@@ -44,13 +63,22 @@ impl Editor {
                 return Err(anyhow::anyhow!("Buffer has unsaved changes"));
             }
         }
-        self.close_buffer_internal(id, false)
+        self.close_buffer_internal(id, false, cause)
     }
 
     /// Force close the given buffer without checking for unsaved changes
     /// Use this when the user has already confirmed they want to discard changes
     pub fn force_close_buffer(&mut self, id: BufferId) -> anyhow::Result<()> {
-        self.close_buffer_internal(id, false)
+        self.force_close_buffer_by(id, CloseCause::User)
+    }
+
+    /// [`Self::force_close_buffer`], naming who closed it.
+    pub(crate) fn force_close_buffer_by(
+        &mut self,
+        id: BufferId,
+        cause: CloseCause,
+    ) -> anyhow::Result<()> {
+        self.close_buffer_internal(id, false, cause)
     }
 
     /// Close the last editor tab while a Utility Dock is present, keeping the
@@ -66,7 +94,7 @@ impl Editor {
         self.active_window_mut()
             .split_manager_mut()
             .set_active_split(split_id);
-        self.close_buffer_internal(id, true)
+        self.close_buffer_internal(id, true, CloseCause::User)
     }
 
     /// Close `buffer_id` once the user has confirmed closing its last tab
@@ -159,6 +187,7 @@ impl Editor {
         &mut self,
         id: BufferId,
         force_empty_placeholder: bool,
+        cause: CloseCause,
     ) -> anyhow::Result<()> {
         // Discard any async pastes whose anchors live in this buffer:
         // when the result arrives the buffer state will be gone, and
@@ -170,6 +199,12 @@ impl Editor {
         // A group showing this buffer in a panel it borrowed closes first, so
         // no panel is left on a buffer that is gone.
         self.close_groups_borrowing(id);
+
+        // Remember the file for Recent Files. Before preview tracking is
+        // cleared below: a preview tab the user closes is not recorded.
+        if cause == CloseCause::User {
+            self.record_closed_file(id);
+        }
 
         // Clear preview tracking if we're closing the current preview buffer.
         // This keeps `preview` from pointing at a freed buffer id.

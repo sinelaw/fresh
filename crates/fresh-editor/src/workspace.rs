@@ -136,6 +136,12 @@ pub struct Workspace {
     #[serde(default)]
     pub bookmarks: HashMap<char, SerializedBookmark>,
 
+    /// Files recently closed in this workspace, most recent first (for
+    /// "Recent Files"). Relative to `working_dir` when inside it,
+    /// otherwise absolute.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub closed_files: Vec<PathBuf>,
+
     /// Open terminal workspaces (for restoration)
     #[serde(default)]
     pub terminals: Vec<SerializedTerminalWorkspace>,
@@ -1689,6 +1695,7 @@ impl Workspace {
             search_overrides: None,
             legacy_search_options: None,
             bookmarks: HashMap::new(),
+            closed_files: Vec::new(),
             terminals: Vec::new(),
             external_files: Vec::new(),
             read_only_files: Vec::new(),

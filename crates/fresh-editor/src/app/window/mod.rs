@@ -607,6 +607,11 @@ pub struct Window {
     /// window has its own register set.
     pub(crate) bookmarks: crate::app::bookmarks::BookmarkState,
 
+    /// Files recently closed in this window, most recent first, for
+    /// "Recent Files". Per window so it offers this workspace's
+    /// files only; persisted with the workspace.
+    pub(crate) closed_files: crate::app::closed_files::ClosedFiles,
+
     /// Composite buffers in this window (separate from regular
     /// buffers). These display multiple source buffers in a single
     /// tab — Live Grep results, References, Diagnostics list,
@@ -2601,6 +2606,7 @@ impl Window {
             in_navigation: false,
             suppress_position_history_once: false,
             bookmarks: crate::app::bookmarks::BookmarkState::default(),
+            closed_files: Default::default(),
             grouped_subtrees: HashMap::new(),
             composite_buffers: HashMap::new(),
             composite_view_states: HashMap::new(),

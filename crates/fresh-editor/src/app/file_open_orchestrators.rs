@@ -19,6 +19,7 @@ use fresh_i18n::t;
 use crate::model::event::BufferId;
 use crate::state::EditorState;
 
+use super::buffer_close::CloseCause;
 use super::Editor;
 
 /// How a file open treats the resulting buffer.
@@ -175,8 +176,9 @@ impl Editor {
             })
             .collect();
         for (window, buffer_id) in copies {
-            let closed =
-                self.with_window_retargeted(window, |editor| editor.force_close_buffer(buffer_id));
+            let closed = self.with_window_retargeted(window, |editor| {
+                editor.force_close_buffer_by(buffer_id, CloseCause::Editor)
+            });
             if let Err(e) = closed {
                 tracing::debug!("Failed to close a hidden copy of {}: {e}", path.display());
             }
@@ -203,8 +205,9 @@ impl Editor {
             .map(|(buffer_id, _)| buffer_id)
             .collect();
         for buffer_id in duplicates {
-            let closed =
-                self.with_window_retargeted(id, |editor| editor.force_close_buffer(buffer_id));
+            let closed = self.with_window_retargeted(id, |editor| {
+                editor.force_close_buffer_by(buffer_id, CloseCause::Editor)
+            });
             if let Err(e) = closed {
                 tracing::warn!("Failed to close a file open in another workspace: {e}");
             }

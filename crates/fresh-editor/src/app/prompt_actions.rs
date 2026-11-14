@@ -708,6 +708,9 @@ impl Editor {
                     self.switch_to_tab(BufferId(id));
                 }
             }
+            PromptType::RecentFiles => {
+                self.open_recent_file(&input);
+            }
             PromptType::QueryReplaceConfirm => {
                 // This is handled by InsertChar, not PromptConfirm
                 // But if somehow Enter is pressed, treat it as skip (n)
