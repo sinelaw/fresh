@@ -1,4 +1,4 @@
-//! Reopen Closed File: a per-window list of the files the user closed in it.
+//! Recent Files: a per-window list of the files the user closed in it.
 //!
 //! Driven through keys (Alt+W closes a tab, the palette runs commands) and
 //! observed on screen only:
@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tempfile::TempDir;
 
-const PROMPT_LABEL: &str = "Reopen closed file:";
+const PROMPT_LABEL: &str = "Recent files:";
 
 /// A harness on a temp project holding `names`, each file containing its
 /// own name.
@@ -64,10 +64,10 @@ fn open_and_close(harness: &mut EditorTestHarness, path: &Path) {
 }
 
 fn reopen(harness: &mut EditorTestHarness) {
-    palette(harness, "Reopen Closed File");
+    palette(harness, "Recent Files");
 }
 
-/// The rows of the suggestion list drawn above the Reopen Closed File
+/// The rows of the suggestion list drawn above the Recent Files
 /// prompt, top to bottom, or `None` when that prompt is not on screen.
 fn offered(harness: &EditorTestHarness) -> Option<Vec<String>> {
     let screen = harness.screen_to_string();
@@ -116,8 +116,8 @@ fn file_menu_has_the_item() {
         .send_key(KeyCode::Char('f'), KeyModifiers::ALT)
         .unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains("Reopen Closed File...");
-    // New File, Open File..., Reopen Closed File...
+    harness.assert_screen_contains("Recent Files...");
+    // New File, Open File..., Recent Files...
     key(&mut harness, KeyCode::Down);
     key(&mut harness, KeyCode::Down);
     key(&mut harness, KeyCode::Enter);

@@ -3730,7 +3730,7 @@ pub fn action_to_events(
         | Action::SaveAs
         | Action::SaveAll
         | Action::Open
-        | Action::ReopenClosedFile
+        | Action::RecentFiles
         | Action::SwitchProject
         | Action::New
         | Action::Close

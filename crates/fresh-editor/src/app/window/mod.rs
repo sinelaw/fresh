@@ -608,7 +608,7 @@ pub struct Window {
     pub(crate) bookmarks: crate::app::bookmarks::BookmarkState,
 
     /// Files recently closed in this window, most recent first, for
-    /// "Reopen Closed File". Per window so it offers this workspace's
+    /// "Recent Files". Per window so it offers this workspace's
     /// files only; persisted with the workspace.
     pub(crate) closed_files: crate::app::closed_files::ClosedFiles,
 

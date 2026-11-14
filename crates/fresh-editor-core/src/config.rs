@@ -3067,8 +3067,8 @@ impl MenuConfig {
                         checkbox: None,
                     },
                     MenuItem::Action {
-                        label: t!("menu.file.reopen_closed_file").to_string(),
-                        action: "reopen_closed_file".to_string(),
+                        label: t!("menu.file.recent_files").to_string(),
+                        action: "recent_files".to_string(),
                         args: HashMap::new(),
                         when: None,
                         checkbox: None,

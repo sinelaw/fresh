@@ -221,7 +221,7 @@ impl Editor {
                 self.prefill_open_file_prompt();
                 self.init_file_open_state();
             }
-            Action::ReopenClosedFile => self.start_reopen_closed_file_prompt(),
+            Action::RecentFiles => self.start_recent_files_prompt(),
             Action::SwitchProject => {
                 self.start_prompt(
                     t!("file.switch_project_prompt").to_string(),

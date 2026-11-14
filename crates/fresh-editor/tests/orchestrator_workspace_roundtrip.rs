@@ -550,7 +550,7 @@ mod stable_id {
     }
 }
 
-/// Reopen Closed File's list is saved with the workspace: files under the
+/// Recent Files's list is saved with the workspace: files under the
 /// root relative to it, others absolute, most recently closed first — and
 /// it comes back unchanged on restore. Files open at save time are tabs,
 /// not closed files.

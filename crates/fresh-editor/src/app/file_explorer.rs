@@ -853,7 +853,7 @@ impl Editor {
                 // action, which implies discarding unsaved edits to the
                 // doomed file too — `force_close_buffer` skips the
                 // modified-check so the buffer really goes away.
-                // Not offered by Reopen Closed File: the file is gone.
+                // Not offered by Recent Files: the file is gone.
                 let to_close = self.buffer_ids_under_path(&path);
                 for id in to_close {
                     if let Err(e) = self.force_close_buffer_by(id, CloseCause::Editor) {

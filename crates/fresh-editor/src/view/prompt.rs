@@ -207,7 +207,7 @@ pub enum PromptType {
     /// Switch to a tab by name (from the current split's open buffers)
     SwitchToTab,
     /// Reopen a file closed in this window (suggestion values are paths)
-    ReopenClosedFile,
+    RecentFiles,
     /// Run shell command on buffer/selection
     /// If replace is true, replace the input with the output
     /// If replace is false, output goes to a new buffer

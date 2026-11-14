@@ -1,7 +1,7 @@
-//! Reopen Closed File, per window.
+//! Recent Files, per window.
 //!
 //! Each window (workspace) remembers the files the user closed in it, most
-//! recent first, so "Reopen Closed File" offers this workspace's files rather
+//! recent first, so "Recent Files" offers this workspace's files rather
 //! than an editor-wide history. A file is recorded when the user closes its
 //! tab (`Editor::close_buffer_internal` with `CloseCause::User`; closes the
 //! editor makes on its own are not recorded) and is listed only while it is
@@ -96,7 +96,7 @@ impl Editor {
 
     /// Open the prompt listing the active window's closed files that are not
     /// open again.
-    pub(crate) fn start_reopen_closed_file_prompt(&mut self) {
+    pub(crate) fn start_recent_files_prompt(&mut self) {
         let window = self.active_window();
         let open: HashSet<&Path> = window.tab_file_buffers().map(|(_, path)| path).collect();
         let suggestions: Vec<Suggestion> = window
@@ -123,8 +123,8 @@ impl Editor {
         }
 
         self.set_prompt(Prompt::with_suggestions(
-            t!("file.reopen_closed_prompt").to_string(),
-            PromptType::ReopenClosedFile,
+            t!("file.recent_files_prompt").to_string(),
+            PromptType::RecentFiles,
             suggestions,
         ));
         if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
@@ -132,10 +132,10 @@ impl Editor {
         }
     }
 
-    /// Reopen the file picked in the Reopen Closed File prompt. A file that
+    /// Reopen the file picked in the Recent Files prompt. A file that
     /// is gone is dropped from the list rather than opened as a new empty
     /// buffer; one that can't be reached right now keeps its place.
-    pub(crate) fn reopen_closed_file(&mut self, input: &str) {
+    pub(crate) fn open_recent_file(&mut self, input: &str) {
         let path = PathBuf::from(input);
         // Only what the list offered: typed text that matched nothing is not
         // a path to open.

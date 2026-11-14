@@ -137,7 +137,7 @@ pub struct Workspace {
     pub bookmarks: HashMap<char, SerializedBookmark>,
 
     /// Files recently closed in this workspace, most recent first (for
-    /// "Reopen Closed File"). Relative to `working_dir` when inside it,
+    /// "Recent Files"). Relative to `working_dir` when inside it,
     /// otherwise absolute.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub closed_files: Vec<PathBuf>,

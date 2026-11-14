@@ -29,7 +29,7 @@ struct CloseReplacement {
     return_to_group: Option<LeafId>,
 }
 
-/// Who closed a buffer, which decides whether Reopen Closed File offers it
+/// Who closed a buffer, which decides whether Recent Files offers it
 /// again: a tab the user closed is; a buffer the editor closed on its own —
 /// a replaced or dismissed preview, a duplicate dropped because another
 /// workspace has the file, the buffer of a file the user deleted — is not.
@@ -200,7 +200,7 @@ impl Editor {
         // no panel is left on a buffer that is gone.
         self.close_groups_borrowing(id);
 
-        // Remember the file for Reopen Closed File. Before preview tracking is
+        // Remember the file for Recent Files. Before preview tracking is
         // cleared below: a preview tab the user closes is not recorded.
         if cause == CloseCause::User {
             self.record_closed_file(id);

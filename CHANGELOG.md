@@ -8,7 +8,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Features
 
-* **Reopen Closed File** - File > **Reopen Closed File...** (or the command palette) lists the files you closed in this workspace, most recent first, and reopens the one you pick. Each window keeps its own list, and it survives a restart. Bindable as `reopen_closed_file`
+* **Recent Files** - File > **Recent Files...** (or the command palette) lists the files you closed in this workspace, most recent first, and reopens the one you pick. Each window keeps its own list, and it survives a restart. Bindable as `recent_files`
 
 ### Bug Fixes
 
