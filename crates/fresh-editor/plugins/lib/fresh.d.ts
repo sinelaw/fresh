@@ -9463,11 +9463,12 @@ interface EditorAPI {
 	* (`panelSplits`, for `createScrollSyncGroup`, `setLineWrap` and
 	* `setLayoutHints`). Group ids are per window.
 	*
-	* `options.inTabOf` names a buffer the pane has a tab of: the group
-	* is shown in that tab, instead of in a tab of its own. The tab stays the
-	* file's tab in every way (its name, its unsaved mark, closing it, its
-	* place in the tab bar); only what it shows changes. The group lives as
-	* long as the tab does, and when it closes the tab shows the file again.
+	* `options.inTabOf` names the buffer whose tab the pane is on: the
+	* group is shown in that tab, instead of in a tab of its own. The tab
+	* stays the file's tab in every way (its name, its unsaved mark, closing
+	* it, its place in the tab bar); only what it shows changes. The group
+	* lives as long as the tab does, and when it closes the tab shows the
+	* file again. For any other buffer, the group gets a tab of its own.
 	*/
 	createBufferGroup(name: string, mode: string, layout: unknown, options?: {
 		inTabOf?: number;

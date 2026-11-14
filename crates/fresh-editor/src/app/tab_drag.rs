@@ -164,11 +164,6 @@ impl Editor {
         // preview first so a drag never leaves behind stale preview state
         // anchored to a split that has changed underneath it.
         self.active_window_mut().promote_current_preview();
-        // A tab leaving its pane takes the group shown in it along: it closes.
-        if !matches!(drop_zone, TabDropZone::TabBar(to, _) if to == source_split_id) {
-            self.close_group_in_tab(source_split_id, buffer_id);
-        }
-
         match drop_zone {
             TabDropZone::TabBar(target_split_id, insert_idx) => {
                 if target_split_id == source_split_id {

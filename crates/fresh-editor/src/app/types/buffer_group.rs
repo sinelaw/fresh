@@ -86,4 +86,8 @@ pub struct BufferGroup {
     /// one: the tab marks each piece naming a panel whose file has unsaved
     /// changes. `None` shows `name`, marked as a whole.
     pub title: Option<Vec<fresh_core::api::BufferGroupTitleSegment>>,
+    /// Shown in a buffer's tab rather than a tab of its own
+    /// (`SplitViewState::show_in_tab`): it lives as long as some pane's tab
+    /// shows it (`Editor::close_groups_out_of_tabs`).
+    pub in_tab: bool,
 }

@@ -683,8 +683,18 @@ impl Editor {
 
         // Delegate to `close_tab_in_split` so the Close-Buffer command,
         // Alt+W, and the mouse × button all run the same code path —
-        // there should be no difference in behavior between them.
-        let buffer_id = self.active_buffer();
+        // there should be no difference in behavior between them. The tab
+        // is the pane's: a group shown in a buffer's tab has a panel with
+        // the keyboard, on a buffer that need not be the tab's.
+        let buffer_id = match self
+            .active_window()
+            .split_view_states()
+            .get(&active_split)
+            .map(|vs| vs.active_target())
+        {
+            Some(crate::view::split::TabTarget::Buffer(b)) => b,
+            _ => self.active_buffer(),
+        };
         self.close_tab_in_split(buffer_id, active_split);
     }
 
@@ -818,9 +828,6 @@ impl Editor {
             }
         } else {
             use crate::view::split::TabTarget;
-
-            // A group shown in the tab goes with it.
-            self.close_group_in_tab(split_id, buffer_id);
 
             // There are other viewports of this buffer — just remove it from
             // this split's tabs. Use the full tab list (open_buffers), which

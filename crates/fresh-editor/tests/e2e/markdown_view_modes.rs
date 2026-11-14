@@ -32,11 +32,19 @@ fn fixture() -> String {
 }
 
 fn setup() -> (EditorTestHarness, tempfile::TempDir) {
+    setup_with(&[])
+}
+
+/// `setup`, with these plugins loaded besides markdown_compose.
+fn setup_with(plugins: &[&str]) -> (EditorTestHarness, tempfile::TempDir) {
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path().join("project");
     let plugins_dir = root.join("plugins");
     std::fs::create_dir_all(&plugins_dir).unwrap();
     copy_plugin(&plugins_dir, "markdown_compose");
+    for plugin in plugins {
+        copy_plugin(&plugins_dir, plugin);
+    }
     copy_plugin_lib(&plugins_dir);
     let md = root.join("doc.md");
     std::fs::write(&md, fixture()).unwrap();
@@ -314,6 +322,64 @@ fn dual_mode_is_shown_in_the_files_tab() {
 
     run(&mut h, SOURCE);
     h.wait_until(|h| source_panes(h, 1) && tab_names(h) == ["doc.md", "other.txt"])
+        .unwrap();
+}
+
+/// Closing the pane dual mode is in closes dual mode with it: its tabs join
+/// the next pane, the file's as a plain tab, and Toggle Dual Mode there opens
+/// dual mode rather than closing one that is gone.
+#[test]
+fn closing_the_dual_pane_ends_dual_mode() {
+    let (mut h, _tmp) = setup();
+    run(&mut h, "Split Vertical");
+    h.wait_until(|h| source_panes(h, 2)).unwrap();
+    run(&mut h, DUAL);
+    h.wait_until(|h| count(h, "PARA") == 3 && h.screen_to_string().contains('┌'))
+        .unwrap();
+
+    h.run_palette_command("Close Split").unwrap();
+    h.wait_until(|h| source_panes(h, 1)).unwrap();
+
+    run(&mut h, TOGGLE_DUAL);
+    h.wait_until(dual).unwrap();
+}
+
+/// Closing the dual-mode tab with other tabs (Close Other Tabs), while the
+/// file stays open in another pane, closes dual mode with the tab: the pane
+/// shows the tab kept, and nothing of the file.
+#[test]
+fn closing_the_dual_tab_among_others_ends_dual_mode() {
+    let (mut h, tmp) = setup_with(&["tab_actions"]);
+    run(&mut h, "Split Vertical");
+    h.wait_until(|h| source_panes(h, 2)).unwrap();
+    let other = tmp.path().join("project/other.txt");
+    std::fs::write(&other, "OTHERFILE\n").unwrap();
+    h.open_file(&other).unwrap();
+    h.wait_until(|h| count(h, "OTHERFILE") == 1).unwrap();
+    tab(&mut h, KeyCode::PageUp);
+    run(&mut h, DUAL);
+    h.wait_until(|h| count(h, "PARA") == 3 && h.screen_to_string().contains('┌'))
+        .unwrap();
+    tab(&mut h, KeyCode::PageDown);
+    h.wait_until(|h| count(h, "OTHERFILE") == 1 && count(h, "PARA") == 1)
+        .unwrap();
+
+    h.run_palette_command("Close Other Tabs").unwrap();
+    h.wait_until(|h| {
+        count(h, "OTHERFILE") == 1
+            && count(h, "PARA") == 1
+            && tab_names(h) == ["doc.md", "other.txt"]
+            && !h.screen_to_string().contains('┌')
+    })
+    .unwrap();
+
+    // The file's own tab in that pane, opened again, is plain source, and
+    // Toggle Dual Mode there opens dual mode rather than closing one that is
+    // gone.
+    h.open_file(&tmp.path().join("project/doc.md")).unwrap();
+    h.wait_until(|h| source_panes(h, 2)).unwrap();
+    run(&mut h, TOGGLE_DUAL);
+    h.wait_until(|h| count(h, "PARA") == 3 && h.screen_to_string().contains('┌'))
         .unwrap();
 }
 

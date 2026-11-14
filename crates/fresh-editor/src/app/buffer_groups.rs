@@ -185,17 +185,19 @@ impl super::Editor {
             vs.retain_buffer_states(|bid| !hidden_panel_ids.contains(&bid));
         }
 
-        // Show the group in the CURRENT split: in `in_tab_of`'s tab when the
-        // split has one, else in a tab of its own, which becomes the active
-        // tab. (The main split tree is untouched — the group's layout lives
-        // in `grouped_subtrees` and is dispatched at render time.)
+        // Show the group in the CURRENT split: in `in_tab_of`'s tab when that
+        // is the split's buffer tab, else in a tab of its own, which becomes
+        // the active tab. (The main split tree is untouched — the group's
+        // layout lives in `grouped_subtrees` and is dispatched at render time.)
         let current_split_id = self.active_window().split_manager().active_split();
+        let mut in_tab = false;
         if let Some(current_vs) = self
             .active_window_mut()
             .split_view_states_mut()
             .get_mut(&current_split_id)
         {
-            match in_tab_of.filter(|b| current_vs.has_buffer(*b)) {
+            in_tab = in_tab_of == Some(current_vs.buffer_tab());
+            match in_tab_of.filter(|_| in_tab) {
                 Some(buffer) => current_vs.show_in_tab(buffer, group_leaf_id, active_inner_leaf),
                 None => {
                     current_vs.add_group(group_leaf_id);
@@ -217,6 +219,7 @@ impl super::Editor {
             opened_buffers: opened,
             representative_split: Some(group_leaf_id),
             title: None,
+            in_tab,
         };
 
         // Register reverse mapping, which routes `showBuffer` to the group
@@ -1051,6 +1054,16 @@ impl super::Editor {
             self.active_window_mut()
                 .split_manager_mut()
                 .set_active_split(host_split);
+            // A group shown in a buffer's tab is reached by going to that
+            // tab, the split tree and the pane together.
+            let tab = self
+                .active_window()
+                .split_view_states()
+                .get(&host_split)
+                .and_then(|vs| vs.tab_of_group(group_leaf_id));
+            if let Some(buffer) = tab {
+                self.active_window_mut().set_pane_buffer(host_split, buffer);
+            }
             if let Some(vs) = self
                 .active_window_mut()
                 .split_view_states_mut()
@@ -1329,16 +1342,32 @@ impl super::Editor {
             .set_grouped_split_ratio(container, new_ratio)
     }
 
-    /// Close the group shown in `buffer`'s tab of `pane` (`show_in_tab`), if
-    /// one is: the tab is leaving the pane, and the group lives in it.
-    pub(crate) fn close_group_in_tab(&mut self, pane: LeafId, buffer: BufferId) {
-        let group = self
-            .active_window()
-            .split_view_states()
-            .get(&pane)
-            .and_then(|vs| vs.group_in_tab(buffer));
-        if let Some(group) = group {
-            self.close_buffer_group_by_leaf(group);
+    /// Close the groups shown in a buffer's tab (`show_in_tab`) that no
+    /// pane's tab shows any more. Such a group lives as long as its tab, and
+    /// a tab leaves a pane by many paths — closed there (one at a time or in
+    /// a batch), dragged or moved away, its pane closed, its buffer closed,
+    /// another group put in its place — so rather than each path closing
+    /// the group, this runs once per frame, before anything is drawn, and
+    /// covers them all.
+    pub(crate) fn close_groups_out_of_tabs(&mut self) {
+        let window = self.active_window();
+        let gone: Vec<usize> = window
+            .buffer_groups
+            .values()
+            .filter(|g| g.in_tab)
+            .filter(|g| {
+                let shown = |leaf| {
+                    window
+                        .split_view_states()
+                        .values()
+                        .any(|vs| vs.tab_of_group(leaf).is_some())
+                };
+                !g.representative_split.is_some_and(shown)
+            })
+            .map(|g| g.id.0)
+            .collect();
+        for group_id in gone {
+            self.close_buffer_group(group_id);
         }
     }
 
