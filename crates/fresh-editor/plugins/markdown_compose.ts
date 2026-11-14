@@ -117,6 +117,19 @@ function isComposing(bufferId: number): boolean {
   return info != null && info.view_mode === "compose";
 }
 
+/**
+ * The cursor that decides whether a drawn block (a diagram, display math)
+ * shows its source instead: the active pane's, when that pane is a composed
+ * view of this buffer; otherwise none. In Source/Compose dual mode the cursor
+ * in the source pane is in no composed view, so moving it through a block
+ * leaves the compose pane's drawing whole — as its conceals, which follow the
+ * compose pane's own cursor, already do.
+ */
+function composeCursor(bufferId: number): number | null {
+  if (editor.getActiveBufferId() !== bufferId || !isComposing(bufferId)) return null;
+  return editor.getCursorPosition();
+}
+
 // Helper: check whether ANY split showing this buffer has compose mode.
 // Use this for decoration maintenance (conceals, soft breaks, overlays) since
 // decorations live on the buffer and are filtered per-split at render time.
@@ -482,11 +495,17 @@ function renderers(): Map<string, Renderer> {
 /** Rendered rows by request key; "pending" while the tool runs, null when it failed. */
 const externalCache = new Map<string, string[] | null | "pending">();
 const EXTERNAL_CACHE_LIMIT = 500;
-/** Commands that could not be started (not installed): not retried. */
-const missingCommands = new Set<string>();
-/** Commands Workspace Trust refused, by when to try them again. */
-const refusedUntil = new Map<string, number>();
-const REFUSED_RETRY_MS = 30_000;
+/** Commands that could not be run — not installed, not on PATH, or refused by
+ * Workspace Trust. Not run again until a buffer enters preview (compose is
+ * turned on, or a composed buffer is opened or shown again) or the settings
+ * change: installing a tool, then closing and reopening the document, picks it
+ * up without restarting the editor. */
+const unavailableCommands = new Set<string>();
+
+/** Forget which commands could not be run, so the next drawing tries them. */
+function retryUnavailableCommands(): void {
+  unavailableCommands.clear();
+}
 
 /** At most this many tools run at once; more wait for a later redraw. */
 const MAX_RUNNING = 4;
@@ -496,14 +515,16 @@ let deferred = false;
 /** A tool still running after this long is stopped, and its block left as source. */
 const TOOL_TIMEOUT_MS = 15_000;
 
-/** The command that draws `lang`, unless none is set, it is not installed,
- * or Workspace Trust refused it a moment ago. */
+/** The command that draws `lang`, unless none is set or it could not be run
+ * a moment ago. */
 function rendererFor(lang: string): Renderer | null {
   const r = renderers().get(lang.toLowerCase());
-  if (!r || missingCommands.has(r.command)) return null;
-  if ((refusedUntil.get(r.command) ?? 0) > Date.now()) return null;
+  if (!r || unavailableCommands.has(r.command)) return null;
   return r;
 }
+
+// A new path for a command, or a new command: try it now.
+editor.on("config_changed", () => retryUnavailableCommands());
 
 /** Whether `lang` has a command (installed or not yet known not to be). */
 function hasRenderer(lang: string): boolean {
@@ -605,21 +626,19 @@ async function runExternal(
       return null;
     }
     if (result.exit_code === -1) {
+      // Not run at all: not installed, not on PATH, or refused (Workspace
+      // Trust). Nothing is cached for the block, the command is left alone
+      // until the next time a buffer enters preview, and the status bar says
+      // why — once, as the command is not tried again before then.
       const reason = result.stderr.trim();
-      if (/os error 2\b|not found|cannot find/i.test(reason)) {
-        // Not installed, or not on PATH.
-        missingCommands.add(tool.command);
-        editor.setStatus(editor.t("status.no_renderer", { command: tool.command, lang }));
-      } else {
-        // Refused — Workspace Trust, say. Tried again later: trusting the
-        // workspace should bring the drawings back without a restart.
-        refusedUntil.set(tool.command, Date.now() + REFUSED_RETRY_MS);
-        editor.setStatus(`${tool.command}: ${reason}`);
-        editor.debug(`markdown_compose: ${tool.command} not run (${reason})`);
-        return undefined;
-      }
+      unavailableCommands.add(tool.command);
+      editor.setStatus(
+        /os error 2\b|not found|cannot find/i.test(reason)
+          ? editor.t("status.no_renderer", { command: tool.command, lang })
+          : `${tool.command}: ${reason}`,
+      );
       editor.debug(`markdown_compose: ${tool.command} not run (${reason})`);
-      return null;
+      return undefined;
     }
     if (result.exit_code !== 0) return null;
     const rows = result.stdout.replace(/\s+$/, "").split(/\r?\n/).map((r) => r.replace(/\s+$/, ""));
@@ -627,9 +646,9 @@ async function runExternal(
     while (rows.length > 0 && rows[0] === "") rows.shift();
     return rows.length > 0 ? rows : null;
   } catch (e) {
-    missingCommands.add(tool.command);
+    unavailableCommands.add(tool.command);
     editor.debug(`markdown_compose: ${tool.command} failed to run: ${e}`);
-    return null;
+    return undefined;
   }
 }
 
@@ -1648,6 +1667,10 @@ function enableMarkdownCompose(bufferId: number, splitId: number | null = null):
   const info = editor.getBufferInfo(bufferId);
   if (!info || !isMarkdownFile(info.path)) return;
 
+  // Entering preview: a renderer that could not be run before (not yet
+  // installed, say) is tried again.
+  retryUnavailableCommands();
+
   // Tell Rust side this buffer is in compose mode (idempotent)
   editor.setViewMode(bufferId, "compose");
 
@@ -2559,9 +2582,9 @@ function processLineConceals(
     const frameEnd = lineContentEndByte(lineContent, byteStart);
     const rowReplacement = buildDiagramRow(rows[0], blockMeasure, blockIndent);
 
-    const cursorPos = editor.getCursorPosition();
+    const cursorPos = composeCursor(bufferId);
     // Half-open, like the conceal's scope below.
-    const cursorOnLine = cursorPos >= byteStart && cursorPos < lineScopeInclEnd;
+    const cursorOnLine = cursorPos !== null && cursorPos >= byteStart && cursorPos < lineScopeInclEnd;
 
     if (!cursorOnLine) {
       editor.addVirtualLine(
@@ -4028,12 +4051,12 @@ editor.on("lines_changed", (data) => {
     // A block the cursor is in shows its source whatever the tool draws, so
     // no tool is started for it: editing a diagram does not run one per
     // keystroke. It is drawn when the cursor leaves.
-    const cursorAt = editor.getCursorPosition();
+    const cursorAt = composeCursor(data.buffer_id);
     const drawnBlocks = specialBlocks.filter((sb) => {
       const innerWidth = codeInnerWidth(Math.max(4, measure - sb.blockIndent));
       const start = sb.openLine.byte_start;
       const end = blockScopeEnd(sb.closeLine);
-      const cursorIn = cursorAt >= start && cursorAt < end;
+      const cursorIn = cursorAt !== null && cursorAt >= start && cursorAt < end;
       const redraw = cursorIn ? null : data.buffer_id;
       if (sb.kind === "fence") {
         const source = sb.bodyLines.map((l) => l.content.replace(/\r?\n$/, "")).join("\n");
@@ -4176,7 +4199,7 @@ editor.on("lines_changed", (data) => {
   }
 
   // Special blocks: Mermaid diagrams and LaTeX Math blocks
-  const cursorPos = editor.getCursorPosition();
+  const cursorPos = composeCursor(data.buffer_id);
   const rangesForBuf: Array<{ start: number; end: number }> = [...waitingRanges];
 
   for (const line of data.lines) {
@@ -4195,7 +4218,7 @@ editor.on("lines_changed", (data) => {
     const blockMeasure = Math.max(4, measure - blockIndent);
     // Half-open, like the conceals' own scope: a cursor at the start of the
     // next line is outside the block.
-    const cursorInBlock = cursorPos >= scopeStart && cursorPos < scopeEnd;
+    const cursorInBlock = cursorPos !== null && cursorPos >= scopeStart && cursorPos < scopeEnd;
 
     if (sb.kind === "fence") {
       const rendered = { title: `${sb.lang} · ${toolName(sb.lang)}`, lines: sb.rows! };
@@ -4470,6 +4493,9 @@ editor.on("buffer_modified", (data) => {
 // (Mermaid diagram with virtual lines or display math with virtual border lines).
 editor.on("cursor_moved", (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;
+  // A cursor in a pane showing the source (dual mode's other side) does not
+  // change what the compose pane draws (see `composeCursor`).
+  if (composeCursor(data.buffer_id) === null) return;
   const ranges = specialBlockRangesByBuffer.get(data.buffer_id);
   if (!ranges || ranges.length === 0) return;
   const oldIdx = ranges.findIndex((r) => data.old_position >= r.start && data.old_position < r.end);

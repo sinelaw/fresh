@@ -454,4 +454,54 @@ printf 'DIAGRAM<%s>\nDIAGRAM %s lines\n' "$(head -n 1 "$1")" "$(wc -l < "$1" | t
         h.wait_until(|h| screen_has(h, "A --> B") && screen_has(h, "```mermaid"))
             .unwrap();
     }
+
+    /// In dual mode, moving the cursor through a block in the source pane
+    /// leaves the compose pane's drawing whole: only a composed pane's own
+    /// cursor shows a block's source.
+    #[test]
+    fn the_source_panes_cursor_does_not_change_the_compose_pane() {
+        let tools = tempfile::TempDir::new().unwrap();
+        let tall = stub(
+            tools.path(),
+            "stub-tall",
+            r#"printf 'ROW 1\nROW 2\nROW 3\nROW 4\nROW 5\nROW 6\n'"#,
+        );
+        let md = "# Doc\n\n```mermaid\ngraph TD\n    A --> B\n```\n\nTail.\n";
+        let (mut h, _tmp) = harness_with_renderers(
+            md,
+            serde_json::json!({ "mermaid": { "command": tall, "args": ["{file}"] } }),
+        );
+        run(&mut h, "Markdown: Source/Compose Dual Mode");
+        h.wait_until(|h| screen_has(h, "ROW 6")).unwrap();
+        // Into the block, in the source pane (the one in focus).
+        for _ in 0..3 {
+            h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        }
+        h.wait_until(|h| {
+            screen_has(h, "ROW 1") && screen_has(h, "ROW 6") && screen_has(h, "A --> B")
+        })
+        .unwrap();
+    }
+
+    /// A renderer that could not be run is tried again when the buffer next
+    /// enters preview: installing it, then turning compose off and on again,
+    /// draws the block without restarting the editor.
+    #[test]
+    fn a_renderer_installed_later_is_used_when_preview_is_entered_again() {
+        let tools = tempfile::TempDir::new().unwrap();
+        let later = tools.path().join("installed-later");
+        let md = "# Doc\n\n```mermaid\ngraph TD\n    A --> B\n```\n\nTail.\n";
+        let (mut h, _tmp) = harness_with_renderers(
+            md,
+            serde_json::json!({ "mermaid": { "command": later.to_string_lossy(), "args": ["{file}"] } }),
+        );
+        run(&mut h, "Markdown: Toggle Compose");
+        h.wait_until(|h| screen_has(h, "A --> B") && screen_has(h, "not found"))
+            .unwrap();
+        // "Install" it.
+        stub(tools.path(), "installed-later", r#"printf 'NOW DRAWN\n'"#);
+        run(&mut h, "Markdown: Toggle Compose");
+        run(&mut h, "Markdown: Toggle Compose");
+        h.wait_until(|h| screen_has(h, "NOW DRAWN")).unwrap();
+    }
 }
