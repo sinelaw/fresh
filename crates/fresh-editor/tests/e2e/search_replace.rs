@@ -4485,22 +4485,24 @@ fn test_search_replace_tracked_symlinks_are_searched_once() {
 
     open_search_replace_via_palette(&mut harness);
     harness.type_text("zqxneedle").unwrap();
+    // The count reaches "5 / 4" while the list is still arriving group by
+    // group, so wait for the rows to stop changing as well: the negative
+    // assertion below is about the whole result set, and asserting it
+    // against a half-drawn list is a race (CONTRIBUTING.md Testing §3).
+    //
+    // Stability rather than naming each expected row, because one of the
+    // four files lies outside the project and is listed by absolute path.
+    // That path is as long as the temp dir holding it, so on a 120-column
+    // screen it truncates — and matching its text would quietly make this
+    // wait depend on `$TMPDIR`, which is short on Linux and
+    // `/var/folders/...` on macOS.
     harness
-        .wait_until(|h| h.screen_to_string().contains("(5 matches / 4 files)"))
+        .wait_until_stable(|h| h.screen_to_string().contains("(5 matches / 4 files)"))
         .unwrap();
-    // Wait for every match to be rendered, not just the first file's. The
-    // count reaches "5 / 4" while the list is still arriving group by group,
-    // so a negative assertion made here sees however much happened to be
-    // drawn (CONTRIBUTING.md Testing §3).
+    // Not vacuous: the results really did render, so the absence asserted
+    // below is an absence from a drawn list.
     harness
-        .wait_until(|h| {
-            let screen = h.screen_to_string();
-            screen.contains("real.txt:1 - zqxneedle here")
-                && screen.contains("real.txt:2 - more zqxneedle")
-                && screen.contains("o.txt:1 - zqxneedle outside")
-                && screen.contains("secret.log:1 - zqxneedle ignored")
-                && screen.contains("was_link.txt:1 - zqxneedle now a file")
-        })
+        .wait_until(|h| h.screen_to_string().contains("real.txt:1 - zqxneedle here"))
         .unwrap();
     // `link.txt` points at `real.txt`, which is listed, so the link is never
     // a result of its own. Anchored on the space that precedes every file
