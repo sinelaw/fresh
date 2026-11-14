@@ -164,34 +164,103 @@ pub fn spawn_on_pty(
     })
 }
 
+/// How long a wait on a pty child may run before it reports failure.
+///
+/// Twice `.config/nextest.toml`'s 60s slow-timeout period and well inside
+/// the 180s at which it terminates the test, for the same reason
+/// [`EditorTestHarness::wait_until`](super::harness::EditorTestHarness::wait_until)
+/// carries the same bound: a wait for something that never arrives should
+/// fail as *this test*, naming the screen it was waiting on, rather than
+/// hang until nextest kills the whole run three slow-timeout periods later
+/// — which reads as a broken build rather than as one unmet condition, and
+/// takes the rest of the shard's output down with it.
+const PTY_WAIT_DEADLINE: Duration = Duration::from_secs(120);
+
+/// What one bounded read off the pty did, so a caller's loop can re-check
+/// its own predicate and report in its own terms.
+enum Pumped {
+    /// Bytes were fed to the parser, or the poll woke with nothing to do.
+    Progress,
+    /// The child exited or closed the pty.
+    Closed,
+    /// The deadline passed.
+    TimedOut,
+}
+
 impl PtyChild {
+    /// Wait for the pty to become readable, then read once, giving up at
+    /// `deadline`.
+    ///
+    /// Polls rather than blocking in `read`, so the deadline is honoured
+    /// even when the child says nothing at all — a child that goes quiet is
+    /// precisely the case a blocking read cannot bound.
+    fn pump_once(&mut self, deadline: Instant, buf: &mut [u8]) -> Result<Pumped, String> {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Ok(Pumped::TimedOut);
+        }
+        let mut fds = libc::pollfd {
+            fd: self.master.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: one initialized `pollfd` over our own live master fd.
+        let ready = unsafe {
+            libc::poll(
+                &mut fds,
+                1,
+                left.as_millis().min(i32::MAX as u128) as libc::c_int,
+            )
+        };
+        if ready <= 0 {
+            return Ok(Pumped::Progress);
+        }
+        match self.master.read(buf) {
+            Ok(0) => Ok(Pumped::Closed),
+            Ok(n) => {
+                self.parser.process(&buf[..n]);
+                Ok(Pumped::Progress)
+            }
+            // The pty reports the last slave closing as EIO, not EOF.
+            Err(e) if e.raw_os_error() == Some(libc::EIO) => Ok(Pumped::Closed),
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => Ok(Pumped::Progress),
+            Err(e) => Err(format!("reading from pty: {e}")),
+        }
+    }
+
     /// Read from the pty until `predicate` holds for the rendered screen.
     ///
-    /// Blocks for as long as the child keeps the terminal open. Returns an
-    /// error if the child exits (or closes the pty) without the screen ever
-    /// satisfying `predicate`, with the last screen in the message so a
+    /// Waits as long as the child keeps the terminal open, up to
+    /// [`PTY_WAIT_DEADLINE`]. Returns an error if the child exits (or closes
+    /// the pty), or if the deadline passes, without the screen ever
+    /// satisfying `predicate` — with the last screen in the message so a
     /// failure says what was actually rendered.
     pub fn wait_for_screen<F>(&mut self, predicate: F) -> Result<(), String>
     where
         F: Fn(&str) -> bool,
     {
+        let deadline = Instant::now() + PTY_WAIT_DEADLINE;
         let mut buf = [0u8; 8192];
-        loop {
+        let timed_out = loop {
             if predicate(&self.screen()) {
                 return Ok(());
             }
-            match self.master.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => self.parser.process(&buf[..n]),
-                // The pty reports the last slave closing as EIO, not EOF.
-                Err(e) if e.raw_os_error() == Some(libc::EIO) => break,
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(e) => return Err(format!("reading from pty: {e}")),
+            match self.pump_once(deadline, &mut buf)? {
+                Pumped::Progress => {}
+                Pumped::Closed => break false,
+                Pumped::TimedOut => break true,
             }
-        }
+        };
 
         if predicate(&self.screen()) {
             return Ok(());
+        }
+        if timed_out {
+            return Err(format!(
+                "the expected screen never arrived within {:.0}s; last screen was:\n{}",
+                PTY_WAIT_DEADLINE.as_secs_f64(),
+                self.screen()
+            ));
         }
         Err(format!(
             "child ended without the expected screen; last screen was:\n{}",
@@ -224,35 +293,9 @@ impl PtyChild {
             if predicate(self.parser.screen()) {
                 return Ok(());
             }
-            let left = deadline.saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                break;
-            }
-            // Wait for readability rather than blocking in `read`, so the
-            // budget is honoured even when the child says nothing at all.
-            let mut fds = libc::pollfd {
-                fd: self.master.as_raw_fd(),
-                events: libc::POLLIN,
-                revents: 0,
-            };
-            // SAFETY: one initialized `pollfd` over our own live master fd.
-            let ready = unsafe {
-                libc::poll(
-                    &mut fds,
-                    1,
-                    left.as_millis().min(i32::MAX as u128) as libc::c_int,
-                )
-            };
-            if ready <= 0 {
-                continue;
-            }
-            match self.master.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => self.parser.process(&buf[..n]),
-                // The pty reports the last slave closing as EIO, not EOF.
-                Err(e) if e.raw_os_error() == Some(libc::EIO) => break,
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(e) => return Err(format!("reading from pty: {e}")),
+            match self.pump_once(deadline, &mut buf)? {
+                Pumped::Progress => {}
+                Pumped::Closed | Pumped::TimedOut => break,
             }
         }
 
