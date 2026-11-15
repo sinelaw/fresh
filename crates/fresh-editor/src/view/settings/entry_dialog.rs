@@ -169,6 +169,20 @@ impl SettingsSurface for EntryDialogState {
     }
 }
 
+/// The help wraps under the fields, inside a dialog of fixed height, so a very
+/// long description is cut (at a word, with `…`) before it can squeeze the
+/// fields out: about four rows of a typical dialog.
+const HELP_MAX_CHARS: usize = 320;
+
+fn shorten_help(d: &str) -> String {
+    if d.chars().count() <= HELP_MAX_CHARS {
+        return d.to_string();
+    }
+    let cut: String = d.chars().take(HELP_MAX_CHARS).collect();
+    let at_word = cut.rfind(' ').map_or(cut.as_str(), |i| &cut[..i]);
+    format!("{at_word}…")
+}
+
 impl EntryDialogState {
     /// Create a dialog from a schema definition
     ///
@@ -469,36 +483,45 @@ impl EntryDialogState {
             .max()
     }
 
-    /// The one line of contextual help above the buttons: what the focused
-    /// field is for, or what Enter does on a list's pending row.
+    /// What the focused field is for: its description, as one paragraph (a
+    /// description written across several source lines is joined up), for
+    /// the dialog to wrap to its width.
     pub fn helper_line(&self) -> Option<String> {
         if self.focus_on_buttons {
             return None;
         }
-        // A text list says what Enter and Esc do on it rather than absorbing
-        // them silently: how to open its add row, and what the field that is
-        // open takes.
-        let pending = self.current_item().and_then(|it| match &it.control {
-            SettingControl::TextList { .. } => {
-                Some(match live::text_list::live_row(&self.controls, &it.path) {
-                    None => t!("settings.text_list_add_hint"),
-                    Some(None) => match live::text_list::draft(&self.controls, &it.path)
-                        .is_some_and(|d| !d.is_empty())
-                    {
-                        true => t!("settings.text_list_editing_new"),
-                        false => t!("settings.text_list_type_new"),
-                    },
-                    Some(Some(_)) => t!("settings.text_list_editing"),
-                })
-            }
-            _ => None,
-        });
-        pending.map(|p| p.to_string()).or_else(|| {
-            self.current_item()
-                .and_then(|it| it.description.as_deref())
-                .filter(|d| !d.is_empty())
-                .map(String::from)
-        })
+        self.current_item()
+            .and_then(|it| it.description.as_deref())
+            .map(|d| d.split_whitespace().collect::<Vec<_>>().join(" "))
+            .filter(|d| !d.is_empty())
+            .map(|d| shorten_help(&d))
+    }
+
+    /// What the keys do on the focused field, when that needs saying: a text
+    /// list says what Enter and Esc do on it rather than absorbing them
+    /// silently — how to open its add row, and what the field that is open
+    /// takes.
+    pub fn helper_hint(&self) -> Option<String> {
+        if self.focus_on_buttons {
+            return None;
+        }
+        self.current_item()
+            .and_then(|it| match &it.control {
+                SettingControl::TextList { .. } => {
+                    Some(match live::text_list::live_row(&self.controls, &it.path) {
+                        None => t!("settings.text_list_add_hint"),
+                        Some(None) => match live::text_list::draft(&self.controls, &it.path)
+                            .is_some_and(|d| !d.is_empty())
+                        {
+                            true => t!("settings.text_list_editing_new"),
+                            false => t!("settings.text_list_type_new"),
+                        },
+                        Some(Some(_)) => t!("settings.text_list_editing"),
+                    })
+                }
+                _ => None,
+            })
+            .map(|p| p.to_string())
     }
 
     /// The key legend under the buttons, or the warning that replaces it when

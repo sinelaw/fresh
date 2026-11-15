@@ -331,6 +331,9 @@ impl Editor {
         // Once per frame, so every path that moved the keyboard between the
         // pane and the chrome is announced (`app::focus_announcer`).
         self.announce_chrome_focus();
+        // Likewise every path that took a tab out of a pane takes the group
+        // shown in it along.
+        self.close_groups_out_of_tabs();
 
         // Carve a full-height left column for a docked floating panel
         // (e.g. the orchestrator dock) out of the screen *before* the
@@ -2120,6 +2123,7 @@ impl Editor {
                     items,
                     buttons,
                     helper: d.helper_line(),
+                    hint: d.helper_hint(),
                     legend: match warn {
                         true => e::Legend::Warn(legend),
                         false => e::Legend::Keys(legend),

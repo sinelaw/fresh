@@ -42,9 +42,12 @@ pub struct Dialog {
     pub dirty: bool,
     pub items: Vec<Item>,
     pub buttons: Vec<Button>,
-    /// One line of contextual help above the buttons: the focused field's
-    /// description, or what Enter does on a list's pending row.
+    /// Contextual help above the buttons: the focused field's description,
+    /// word-wrapped over as many rows as it takes.
     pub helper: Option<String>,
+    /// One line under it saying what the keys do on the focused field, for a
+    /// field whose keys need saying (a text list: how to add, how to leave).
+    pub hint: Option<String>,
     pub legend: Legend,
     /// The window's handle, so the keyboard can move it to a field.
     pub anchor: Option<Rc<fresh_ui::behavior::Anchor>>,
@@ -210,12 +213,30 @@ fn body(d: &Dialog) -> Node<UiMsg> {
         Some(a) => items.anchor_to(a.clone()),
         None => items,
     };
-    let helper = match &d.helper {
-        Some(t) => text(t.clone())
-            .theme(attrs("editor.line_number_fg", "ui.popup_bg", &["italic"]))
-            .elide(fresh_ui::Elide::Tail)
-            .h(Sizing::Cells(1)),
-        None => row().h(Sizing::Cells(1)),
+    // The description wraps rather than being cut: a field's help (the
+    // placeholders an argument list takes, say) is often longer than a row.
+    // The key hint, when there is one, is a single row under it.
+    let help_theme = attrs("editor.line_number_fg", "ui.popup_bg", &["italic"]);
+    let mut help_rows: Vec<Node<UiMsg>> = Vec::new();
+    if let Some(t) = &d.helper {
+        help_rows.push(
+            text(t.clone())
+                .theme(help_theme.clone())
+                .wrap()
+                .h(Sizing::Auto),
+        );
+    }
+    if let Some(t) = &d.hint {
+        help_rows.push(
+            text(t.clone())
+                .theme(help_theme)
+                .elide(fresh_ui::Elide::Tail)
+                .h(Sizing::Cells(1)),
+        );
+    }
+    let helper = match help_rows.is_empty() {
+        true => row().h(Sizing::Cells(1)),
+        false => col().children(help_rows).h(Sizing::Auto),
     };
     let legend = match &d.legend {
         Legend::Keys(t) => text(t.clone()).theme(pair("editor.line_number_fg", "ui.popup_bg")),
@@ -550,6 +571,7 @@ mod tests {
                 },
             ],
             helper: Some("What this field is for".into()),
+            hint: None,
             legend: Legend::Keys("↑↓:Navigate  Esc:Cancel".into()),
             anchor: None,
         }

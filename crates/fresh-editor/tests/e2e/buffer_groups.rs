@@ -274,3 +274,62 @@ fn test_group_panel_separator_drag_resizes_inner_split() {
          was {grown}, now {shrunk}"
     );
 }
+
+/// A harness with the test plugin and two files open, `file.txt` then
+/// `other.txt`, on `file.txt`'s tab.
+fn harness_with_two_files() -> (EditorTestHarness, tempfile::TempDir) {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+    setup_test_buffer_groups_plugin(&project_root);
+    let file = project_root.join("file.txt");
+    let other = project_root.join("other.txt");
+    fs::write(&file, "FILE-MARKER\n").unwrap();
+    fs::write(&other, "OTHER-MARKER\n").unwrap();
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Default::default(), project_root)
+            .unwrap();
+    harness.open_file(&file).unwrap();
+    harness.open_file(&other).unwrap();
+    harness
+        .send_key(KeyCode::PageUp, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("FILE-MARKER"))
+        .unwrap();
+    (harness, temp_dir)
+}
+
+/// The tab bar's row.
+fn tab_row(harness: &EditorTestHarness) -> String {
+    harness.screen_row_text(1)
+}
+
+/// A group opened in a file's tab (`inTabOf`) is that tab: there is no tab
+/// of its own, and Close Tab closes the file's tab — the group with it —
+/// even though the focused panel shows a buffer of the group's, not the
+/// file.
+#[test]
+fn closing_a_tab_showing_a_group_closes_the_tab_and_the_group() {
+    let (mut harness, _tmp) = harness_with_two_files();
+    harness.run_palette_command("TestBG: In Tab").unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("LEFT-PANEL-MARKER")
+                && !s.contains("FILE-MARKER")
+                && tab_row(h).contains("file.txt")
+                && !tab_row(h).contains("TestBG")
+        })
+        .unwrap();
+
+    harness.run_palette_command("Close Tab").unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("OTHER-MARKER")
+                && !s.contains("LEFT-PANEL-MARKER")
+                && !tab_row(h).contains("file.txt")
+        })
+        .unwrap();
+}

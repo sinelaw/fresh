@@ -6288,6 +6288,31 @@ interface EditorAPI {
 		description?: string;
 	}): string[];
 	/**
+	* Declare a map config field: named entries, each a small record of
+	* typed fields (e.g. a command and its arguments per language).
+	* 
+	* `value` names each entry's fields and their types — `"string"`,
+	* `"string[]"`, `"boolean"`, `"integer"` or `"number"`, or
+	* `{ type, description }` to describe one. `displayField` picks the
+	* field a row shows next to its key. The Settings UI renders the map
+	* with a row per entry and an add/edit dialog holding the fields, in
+	* the order `value` declares them, each field's `description` shown
+	* as its help.
+	* 
+	* Throws if an option is unknown, a field type is not one of those, or
+	* `default` is not a map of entries whose fields match `value`.
+	* Returns the current value (user-set if present, otherwise `default`).
+	*/
+	defineConfigMap(name: string, options: {
+		default: Record<string, Record<string, unknown>>;
+		value: Record<string, "string" | "string[]" | "boolean" | "integer" | "number" | {
+			type: "string" | "string[]" | "boolean" | "integer" | "number";
+			description?: string;
+		}>;
+		displayField?: string;
+		description?: string;
+	}): Record<string, Record<string, unknown>>;
+	/**
 	* Get the calling plugin's settings as a JS object.
 	* 
 	* Returns the merged value at `config.plugins.<plugin_name>.settings`.
@@ -9437,6 +9462,15 @@ interface EditorAPI {
 	* The result names each panel's buffer (`panels`) and split
 	* (`panelSplits`, for `createScrollSyncGroup`, `setLineWrap` and
 	* `setLayoutHints`). Group ids are per window.
+	*
+	* `options.inTabOf` names the buffer whose tab the pane is on: the
+	* group is shown in that tab, instead of in a tab of its own. The tab
+	* stays the file's tab in every way (its name, its unsaved mark, closing
+	* it, its place in the tab bar); only what it shows changes. The group
+	* lives as long as the tab does, and when it closes the tab shows the
+	* file again. For any other buffer, the group gets a tab of its own.
 	*/
-	createBufferGroup(name: string, mode: string, layout: unknown): Promise<BufferGroupResult>;
+	createBufferGroup(name: string, mode: string, layout: unknown, options?: {
+		inTabOf?: number;
+	}): Promise<BufferGroupResult>;
 }

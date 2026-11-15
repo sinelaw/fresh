@@ -705,11 +705,11 @@ impl Editor {
         // command (or keybinding) can express "close the group I'm viewing",
         // so this prelude stays here rather than in `close_tab_in_split`.
         let active_split = self.active_window().split_manager().active_split();
-        if let Some(group_leaf_id) = self
+        if let Some(crate::view::split::TabTarget::Group(group_leaf_id)) = self
             .active_window()
             .split_view_states()
             .get(&active_split)
-            .and_then(|vs| vs.shown_group_tab())
+            .map(|vs| vs.active_target())
         {
             self.close_buffer_group_by_leaf(group_leaf_id);
             self.set_status_message(t!("buffer.tab_closed").to_string());
@@ -718,8 +718,18 @@ impl Editor {
 
         // Delegate to `close_tab_in_split` so the Close-Buffer command,
         // Alt+W, and the mouse × button all run the same code path —
-        // there should be no difference in behavior between them.
-        let buffer_id = self.active_buffer();
+        // there should be no difference in behavior between them. The tab
+        // is the pane's: a group shown in a buffer's tab has a panel with
+        // the keyboard, on a buffer that need not be the tab's.
+        let buffer_id = match self
+            .active_window()
+            .split_view_states()
+            .get(&active_split)
+            .map(|vs| vs.active_target())
+        {
+            Some(crate::view::split::TabTarget::Buffer(b)) => b,
+            _ => self.active_buffer(),
+        };
         self.close_tab_in_split(buffer_id, active_split);
     }
 

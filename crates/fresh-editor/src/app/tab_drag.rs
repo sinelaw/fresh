@@ -164,7 +164,6 @@ impl Editor {
         // preview first so a drag never leaves behind stale preview state
         // anchored to a split that has changed underneath it.
         self.active_window_mut().promote_current_preview();
-
         match drop_zone {
             TabDropZone::TabBar(target_split_id, insert_idx) => {
                 if target_split_id == source_split_id {

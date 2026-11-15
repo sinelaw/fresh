@@ -26,6 +26,17 @@ interface State {
 const state: State = { groupId: null, panels: {} };
 
 function tbg_create(): void {
+  create(undefined);
+}
+registerHandler("tbg_create", tbg_create);
+
+/** Open the group in the active buffer's tab (`inTabOf`). */
+function tbg_create_in_tab(): void {
+  create(editor.getActiveBufferId());
+}
+registerHandler("tbg_create_in_tab", tbg_create_in_tab);
+
+function create(inTabOf: number | undefined): void {
   if (state.groupId !== null) {
     editor.setStatus("TestBG: already open");
     return;
@@ -37,7 +48,8 @@ function tbg_create(): void {
     first: { type: "scrollable", id: "left" },
     second: { type: "scrollable", id: "right" },
   });
-  editor.createBufferGroup("*TestBG*", "test-bg", layout).then((result) => {
+  const options = inTabOf === undefined ? undefined : { inTabOf };
+  editor.createBufferGroup("*TestBG*", "test-bg", layout, options).then((result) => {
     state.groupId = result.groupId;
     state.panels = result.panels;
     // Populate each panel with a distinctive marker.
@@ -54,7 +66,6 @@ function tbg_create(): void {
     editor.setStatus("TestBG: opened");
   });
 }
-registerHandler("tbg_create", tbg_create);
 
 /**
  * Report which panel's buffer is the currently active buffer via the status
@@ -98,3 +109,4 @@ registerHandler("tbg_close", tbg_close);
 editor.registerCommand("TestBG: Create", "Open a 2-panel test buffer group", "tbg_create", null);
 editor.registerCommand("TestBG: Which", "Report which panel's buffer is active", "tbg_which", null);
 editor.registerCommand("TestBG: Close", "Close the test buffer group", "tbg_close", null);
+editor.registerCommand("TestBG: In Tab", "Open the group in this tab", "tbg_create_in_tab", null);

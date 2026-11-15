@@ -5229,6 +5229,10 @@ pub enum PluginCommand {
         mode: String,
         /// Layout tree as JSON string (parsed by the handler)
         layout_json: String,
+        /// Show the group in this buffer's tab of the pane it opens in,
+        /// instead of in a tab of its own (`SplitViewState::show_in_tab`).
+        #[serde(default)]
+        in_tab_of: Option<BufferId>,
         /// Optional request ID for async response
         request_id: Option<u64>,
     },
