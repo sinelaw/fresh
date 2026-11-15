@@ -974,11 +974,16 @@ mod tests {
     fn normalizing_a_relative_path_keeps_its_own_separators() {
         assert_eq!(h("../../x").normalize().as_host_path(), h("../../x"));
         assert_eq!(h("a/../b").normalize().as_host_path(), h("b"));
-        assert_eq!(
-            h(r"a\..\b").normalize().as_host_path(),
-            h(r"a\..\b"),
-            "off Windows a backslash is a name, so there is nothing to resolve"
-        );
+        // A relative path carries no root to read a style from, so it falls
+        // back to the host the editor runs on — the one case where the
+        // spelling cannot decide. Off Windows a backslash is an ordinary
+        // character in a name, so there is nothing here to resolve; on
+        // Windows it separates components, so the `..` does resolve. Both
+        // are right for their host, which is the whole point.
+        #[cfg(not(windows))]
+        assert_eq!(h(r"a\..\b").normalize().as_host_path(), h(r"a\..\b"));
+        #[cfg(windows)]
+        assert_eq!(h(r"a\..\b").normalize().as_host_path(), h("b"));
     }
 
     #[test]
