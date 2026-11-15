@@ -55,6 +55,11 @@ pub struct Item {
     /// `"<plugin>:<token>"` for a plugin-registered token, which is how the
     /// click rail finds it to fire `status_bar_token_clicked`.
     pub token_key: Option<String>,
+    /// Drawn right after the previous item, with no separator between: a
+    /// later part of one element whose parts answer different clicks (the
+    /// search match indicator's count and arrows). Never set on a side's
+    /// first item.
+    pub joined: bool,
 }
 
 impl Item {
@@ -307,13 +312,33 @@ fn between(bar: &StatusBar, a: &Item, b: &Item, side: Side) -> Node<UiMsg> {
 /// recolored, so an item with colors of its own — a warning count, the LSP
 /// indicator — keeps them. Run after the right side has dropped what does not
 /// fit, so "outermost" is what is actually shown.
+///
+/// Depth counts *elements*, not items: a joined group ([`Item::joined`]) is
+/// one element, so its parts share a depth. Without that the `↓` and `↑` of
+/// `{search_nav}` would land on different grounds, a seam with no section
+/// glyph to make it read as one.
 pub fn assign_sections(left: &mut [Item], right: &mut [Item]) {
-    let n = right.len();
-    for (i, it) in left.iter_mut().enumerate() {
-        recolor(it, i);
+    // Which element each item belongs to, counting from the left.
+    let element_of = |items: &[Item]| -> Vec<usize> {
+        let mut out: Vec<usize> = Vec::with_capacity(items.len());
+        let mut n = 0usize;
+        for it in items {
+            if !it.joined && !out.is_empty() {
+                n += 1;
+            }
+            out.push(n);
+        }
+        out
+    };
+    let left_depths = element_of(&*left);
+    for (it, depth) in left.iter_mut().zip(left_depths) {
+        recolor(it, depth);
     }
-    for (i, it) in right.iter_mut().enumerate() {
-        recolor(it, n - 1 - i);
+    let right_depths = element_of(&*right);
+    // The right side's outermost element is its last one.
+    let outermost = right_depths.last().copied().unwrap_or(0);
+    for (it, depth) in right.iter_mut().zip(right_depths) {
+        recolor(it, outermost - depth);
     }
 }
 
@@ -389,7 +414,7 @@ fn build(bar: &StatusBar) -> Node<UiMsg> {
         kids.push(cap);
     }
     for (i, it) in bar.left.iter().enumerate() {
-        if i > 0 {
+        if i > 0 && !it.joined {
             kids.push(between(bar, &bar.left[i - 1], it, Side::Left));
         }
         kids.push(element(it, key_of(Side::Left, i, it), Side::Left));
@@ -411,7 +436,7 @@ fn build(bar: &StatusBar) -> Node<UiMsg> {
         kids.push(start);
     }
     for (i, it) in bar.right.iter().enumerate() {
-        if i > 0 {
+        if i > 0 && !it.joined {
             kids.push(between(bar, &bar.right[i - 1], it, Side::Right));
         }
         kids.push(element(it, key_of(Side::Right, i, it), Side::Right));
@@ -613,6 +638,7 @@ mod tests {
             name,
             clickable: None,
             token_key: None,
+            joined: false,
         }
     }
 
@@ -772,6 +798,75 @@ mod tests {
             3,
         );
         assert_eq!(got, "main.rs | 1:1                 UTF-8 | LF");
+    }
+
+    /// The parts of one element are joined: no separator between them, and
+    /// the next element is separated from the group as usual.
+    #[test]
+    fn joined_items_have_no_separator_between_them() {
+        let joined = |text: &str| Item {
+            joined: true,
+            ..plain(text, "text")
+        };
+        let got = row_text(
+            bar_of(
+                vec![
+                    plain("1/3", "text"),
+                    joined("v"),
+                    joined("^"),
+                    plain("msg", "text"),
+                ],
+                vec![plain("UTF-8", "encoding"), joined("!")],
+            ),
+            40,
+            3,
+        );
+        assert_eq!(got, "1/3v^ | msg                       UTF-8!");
+    }
+
+    /// Sectioning counts elements, not items: both halves of a joined group
+    /// wear one ground, so the pair reads as the single element it is.
+    /// Per-item depth would give the `↓` the inner ground and the `↑` the
+    /// bar's own — a seam with no section glyph to explain it.
+    #[test]
+    fn a_joined_group_shares_one_section_depth() {
+        // `joined` is set on the *later* parts of a group, as
+        // `search_nav_items` sets it: the `↓` heads the group, the `↑` joins.
+        let joined = |text: &str| Item {
+            joined: true,
+            ..plain(text, "text")
+        };
+        let mut left = vec![
+            plain("1:1", "text"),
+            plain("\u{2193}", "searchNext"),
+            joined("\u{2191}"),
+            plain("msg", "text"),
+        ];
+        let mut right = vec![
+            plain("UTF-8", "encoding"),
+            plain("\u{2193}", "searchNext"),
+            joined("\u{2191}"),
+        ];
+        assign_sections(&mut left, &mut right);
+        let ground = |it: &Item| it.runs[0].1.clone();
+
+        // Left depths run from the left: the cursor is outer, the arrow pair
+        // inner, the message deeper still (and so left alone).
+        assert_ne!(ground(&left[0]), ground(&left[1]), "outer, then inner");
+        assert_eq!(
+            ground(&left[1]),
+            ground(&left[2]),
+            "both arrows on one ground"
+        );
+        assert_ne!(ground(&left[2]), ground(&left[3]), "the message is deeper");
+
+        // Right depths run from the right, and the group still shares one.
+        assert_eq!(
+            ground(&right[1]),
+            ground(&right[2]),
+            "both arrows on one ground on the right too"
+        );
+        assert_ne!(ground(&right[0]), ground(&right[1]));
     }
 
     /// A separator sits *between* elements, so one element on a side has none

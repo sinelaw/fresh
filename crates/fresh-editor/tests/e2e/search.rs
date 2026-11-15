@@ -2835,7 +2835,9 @@ fn test_regex_caret_anchor_matches_every_line() {
     )
     .unwrap();
 
-    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    // Wide enough that the "Found N matches" message is not elided behind
+    // the status bar's `{search_nav}` arrows.
+    let mut harness = EditorTestHarness::new(120, 24).unwrap();
     harness.open_file(&file_path).unwrap();
     harness.render().unwrap();
 
