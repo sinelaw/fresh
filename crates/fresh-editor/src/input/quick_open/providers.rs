@@ -6,6 +6,7 @@
 //! - BufferProvider: Switch between open buffers (prefix: "#")
 //! - GotoLineProvider: Go to a specific line (prefix: ":")
 
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use super::{
     parse_goto_line_input, GotoLineTarget, QuickOpenContext, QuickOpenProvider, QuickOpenResult,
 };
@@ -577,7 +578,7 @@ impl FileProvider {
         let mut results = Vec::new();
 
         // If the query points to a directory, list its file contents.
-        if let Ok(entries) = self.filesystem.read_dir(&abs_path) {
+        if let Ok(entries) = self.filesystem.read_dir(abs_path.as_host()) {
             let query_trimmed = query.trim_end_matches('/');
             for entry in entries {
                 if entry.is_file() && (show_hidden || !entry.name.starts_with('.')) {
@@ -613,7 +614,7 @@ impl FileProvider {
         };
 
         let include_hidden = show_hidden || basename.starts_with('.');
-        if let Ok(entries) = self.filesystem.read_dir(parent) {
+        if let Ok(entries) = self.filesystem.read_dir(parent.as_host()) {
             for entry in entries {
                 if !include_hidden && entry.name.starts_with('.') {
                     continue;

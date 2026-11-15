@@ -22,6 +22,7 @@
 //!
 //! Performance: O(1) ≈ 10ms (lazy load) vs O(n) ≈ 1000ms (log replay)
 
+use fresh_editor_core::model::host_path::AsHostPath;
 use fresh_i18n::t;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -1018,7 +1019,8 @@ impl crate::app::window::Window {
             log_path
                 .parent()
                 .or_else(|| backing_path.parent())
-                .unwrap_or(&terminals_root),
+                .unwrap_or(&terminals_root)
+                .as_host(),
         );
 
         // Record paths using the predicted ID so buffer creation can reuse them
@@ -3552,7 +3554,7 @@ fn get_expanded_dirs(
     for node in tree.all_nodes() {
         if node.is_expanded() && node.is_dir() {
             // Get the path and make it relative to working_dir
-            if let Ok(rel_path) = node.entry.path.strip_prefix(working_dir) {
+            if let Ok(rel_path) = node.entry.path.as_path().strip_prefix(working_dir) {
                 expanded.push(rel_path.to_path_buf());
             }
         }

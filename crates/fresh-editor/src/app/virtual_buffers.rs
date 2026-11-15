@@ -8,6 +8,7 @@
 //!   creating buffers backed by virtual content (LSP help text, plugin
 //!   panels, search results, etc.).
 
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -79,7 +80,7 @@ impl Editor {
         };
 
         // Get file size for status message before loading
-        let file_size = filesystem.metadata(temp_path)?.size as usize;
+        let file_size = filesystem.metadata(temp_path.as_host())?.size as usize;
 
         // Load from temp file using EditorState::from_file_with_languages
         // This enables lazy chunk loading for large inputs (>100MB by default)
@@ -190,7 +191,7 @@ impl Editor {
         let current_size = self
             .stdin_stream
             .filesystem()
-            .and_then(|fs| fs.metadata(&temp_path).ok())
+            .and_then(|fs| fs.metadata(temp_path.as_host()).ok())
             .map(|m| m.size as usize)
             .unwrap_or(last_known);
 
@@ -252,7 +253,7 @@ impl Editor {
         let final_size = self
             .stdin_stream
             .filesystem()
-            .and_then(|fs| fs.metadata(&temp_path).ok())
+            .and_then(|fs| fs.metadata(temp_path.as_host()).ok())
             .map(|m| m.size as usize)
             .unwrap_or(self.stdin_stream.last_known_size());
 

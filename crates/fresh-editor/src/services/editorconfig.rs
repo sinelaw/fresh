@@ -23,6 +23,7 @@
 //! Numeric `{m..n}` ranges are supported for reasonably sized ranges and fall
 //! back to "any integer" for very large ones.
 
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use std::path::{Path, PathBuf};
 
 use regex::Regex;
@@ -76,7 +77,7 @@ pub fn resolve_for_file(fs: &dyn FileSystem, file_path: &Path) -> EditorConfigSe
     let mut dir_opt = file_path.parent();
     while let Some(dir) = dir_opt {
         let ec_path = dir.join(".editorconfig");
-        if let Ok(bytes) = fs.read_file(&ec_path) {
+        if let Ok(bytes) = fs.read_file(ec_path.as_host()) {
             if let Ok(text) = String::from_utf8(bytes) {
                 let parsed = parse(&text);
                 let stop = parsed.root;

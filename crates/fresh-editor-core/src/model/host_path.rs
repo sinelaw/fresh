@@ -289,6 +289,16 @@ impl HostPath {
         Some(HostPath::from_bytes(&name[dot + 1..]).as_os_str())
     }
 
+    /// The last component without its extension, as `Path::file_stem` defines
+    /// it but splitting components under this path's own rules.
+    pub fn file_stem(&self) -> Option<&OsStr> {
+        let name = self.file_name()?.as_encoded_bytes();
+        match name.iter().skip(1).rposition(|&b| b == b'.') {
+            Some(dot) => Some(HostPath::from_bytes(&name[..dot + 1]).as_os_str()),
+            None => self.file_name(),
+        }
+    }
+
     /// The components under this path's rules, roots and separators dropped.
     pub fn components(&self) -> impl Iterator<Item = &OsStr> {
         let style = self.style();
@@ -385,6 +395,17 @@ impl HostPath {
         self.0.to_string_lossy()
     }
 
+    /// The path as UTF-8, or `None` when it is not UTF-8.
+    pub fn to_str(&self) -> Option<&str> {
+        self.0.to_str()
+    }
+
+    /// For display and for logs. [`HostPath::to_wire_string`] is the same
+    /// bytes; prefer that name where the string is going to the host.
+    pub fn to_string_lossy(&self) -> std::borrow::Cow<'_, str> {
+        self.0.to_string_lossy()
+    }
+
     /// An owned copy.
     pub fn to_host_path_buf(&self) -> HostPathBuf {
         HostPathBuf::from_os_string(self.0.to_os_string())
@@ -459,6 +480,12 @@ impl HostPathBuf {
         } else {
             self.0 = name.to_os_string();
         }
+    }
+}
+
+impl From<HostPathBuf> for PathBuf {
+    fn from(p: HostPathBuf) -> PathBuf {
+        p.into_path_buf()
     }
 }
 

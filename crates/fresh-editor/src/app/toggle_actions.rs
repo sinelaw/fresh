@@ -6,6 +6,7 @@
 //! - Reset buffer settings
 //! - Config dump, save, and reload
 
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use crate::types::LspServerConfig;
 use fresh_i18n::t;
 
@@ -815,7 +816,7 @@ impl Editor {
         if let Err(e) = self
             .authority()
             .filesystem
-            .create_dir_all(&self.dir_context.config_dir)
+            .create_dir_all(self.dir_context.config_dir.as_host())
         {
             self.set_status_message(
                 t!("error.config_dir_failed", error = e.to_string()).to_string(),
@@ -867,7 +868,7 @@ impl Editor {
         // Create the config directory if it doesn't exist
         self.authority()
             .filesystem
-            .create_dir_all(&self.dir_context.config_dir)
+            .create_dir_all(self.dir_context.config_dir.as_host())
             .map_err(|e| format!("Failed to create config directory: {}", e))?;
 
         let resolver =

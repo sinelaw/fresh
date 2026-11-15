@@ -6,6 +6,7 @@
 //! `Editor::{dock_reserved, dock_width, dock_width_rule}`; and remembered
 //! across launches in `<data>/chrome.json`.
 
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -48,7 +49,7 @@ fn chrome_state_path(data_dir: &Path) -> PathBuf {
 /// Read the remembered chrome. A missing or unreadable file is a first launch.
 pub(crate) fn read_dock_chrome_state(fs: &dyn FileSystem, data_dir: &Path) -> DockChromeState {
     let path = chrome_state_path(data_dir);
-    match fs.read_file(&path) {
+    match fs.read_file(path.as_host()) {
         Ok(bytes) => match serde_json::from_slice::<ChromeState>(&bytes) {
             Ok(state) => state.dock,
             Err(e) => {
@@ -304,17 +305,17 @@ impl Editor {
             }
         };
         if let Some(dir) = path.parent() {
-            if let Err(e) = fs.create_dir_all(dir) {
+            if let Err(e) = fs.create_dir_all(dir.as_host()) {
                 tracing::warn!("chrome state: failed to create {dir:?}: {e}");
                 return;
             }
         }
         let tmp = path.with_extension("json.tmp");
-        if let Err(e) = fs.write_file(&tmp, &bytes) {
+        if let Err(e) = fs.write_file(tmp.as_host(), &bytes) {
             tracing::warn!("chrome state: failed to write {tmp:?}: {e}");
             return;
         }
-        if let Err(e) = fs.rename(&tmp, &path) {
+        if let Err(e) = fs.rename(tmp.as_host(), path.as_host()) {
             tracing::warn!("chrome state: failed to rename {tmp:?} → {path:?}: {e}");
         }
     }

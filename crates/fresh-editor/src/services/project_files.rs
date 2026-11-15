@@ -16,6 +16,7 @@
 //! different file — opening it shows an empty buffer, and a project replace
 //! would write a new file under the mangled name.
 
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -336,7 +337,7 @@ fn walk_files_under(
         .split('/')
         .filter(|c| !c.is_empty())
         .fold(root.to_path_buf(), |p, c| p.join(c));
-    fs.walk(&start, &opts, cancel, &mut |entry| {
+    fs.walk(start.as_host(), &opts, cancel, &mut |entry| {
         // A name that is not UTF-8 has only a lossy `rel` (see the module docs).
         if entry.entry_type != EntryType::File || entry.path.to_str().is_none() {
             return true;
@@ -349,7 +350,7 @@ fn walk_files_under(
         if is_custom_ignored(custom_ignore, &rel) {
             return true;
         }
-        on_file(entry.path, &rel)
+        on_file(entry.path.as_path(), &rel)
     })
 }
 

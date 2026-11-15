@@ -15,6 +15,7 @@
 //!
 //! [`FileSystem`]: crate::model::filesystem::FileSystem
 
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use crate::app::Editor;
 use crate::primitives::path_utils::expand_tilde;
 use anyhow::Result as AnyhowResult;
@@ -128,6 +129,6 @@ impl Editor {
         let fs = &self.authority().filesystem;
         candidates
             .into_iter()
-            .find(|p| fs.is_file(p).unwrap_or(false))
+            .find(|p| fs.is_file(p.as_host()).unwrap_or(false))
     }
 }

@@ -23,6 +23,7 @@
 //!   - Resumes live terminal rendering
 //!   - Performance: O(1) ≈ 1ms
 
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use super::window::{ExitedTerminal, TerminalBuffer, Window};
 use super::{BufferId, BufferMetadata, Editor};
 use crate::model::event::LeafId;
@@ -434,7 +435,7 @@ impl Window {
 
         let working_dir = cwd.unwrap_or_else(|| self.root.clone());
         let terminal_root = self.resources.dir_context.terminal_dir_for(&working_dir);
-        if let Err(e) = terminal_backing_fs().create_dir_all(&terminal_root) {
+        if let Err(e) = terminal_backing_fs().create_dir_all(terminal_root.as_host()) {
             tracing::warn!("Failed to create terminal directory: {}", e);
         }
 
@@ -540,7 +541,7 @@ impl Window {
             .cloned()
             .unwrap_or_else(|| {
                 let root = self.resources.dir_context.terminal_dir_for(&self.root);
-                if let Err(e) = terminal_backing_fs().create_dir_all(&root) {
+                if let Err(e) = terminal_backing_fs().create_dir_all(root.as_host()) {
                     tracing::warn!("Failed to create terminal directory: {}", e);
                 }
                 let stem = self.free_terminal_file_stem(&root, terminal_id);
@@ -550,8 +551,8 @@ impl Window {
         // Ensure the file exists — but DON'T truncate if it already has
         // content. The PTY read loop may have already started writing
         // scrollback.
-        if !terminal_backing_fs().exists(&backing_file) {
-            if let Err(e) = terminal_backing_fs().write_file(&backing_file, &[]) {
+        if !terminal_backing_fs().exists(backing_file.as_host()) {
+            if let Err(e) = terminal_backing_fs().write_file(backing_file.as_host(), &[]) {
                 tracing::warn!("Failed to create terminal backing file: {}", e);
             }
         }
@@ -1051,15 +1052,15 @@ impl Window {
             .cloned()
             .unwrap_or_else(|| {
                 let root = self.resources.dir_context.terminal_dir_for(&self.root);
-                if let Err(e) = terminal_backing_fs().create_dir_all(&root) {
+                if let Err(e) = terminal_backing_fs().create_dir_all(root.as_host()) {
                     tracing::warn!("Failed to create terminal directory: {}", e);
                 }
                 let stem = self.free_terminal_file_stem(&root, terminal_id);
                 root.join(format!("{stem}.txt"))
             });
 
-        if !terminal_backing_fs().exists(&backing_file) {
-            if let Err(e) = terminal_backing_fs().write_file(&backing_file, &[]) {
+        if !terminal_backing_fs().exists(backing_file.as_host()) {
+            if let Err(e) = terminal_backing_fs().write_file(backing_file.as_host(), &[]) {
                 tracing::warn!("Failed to create terminal backing file: {}", e);
             }
         }
@@ -1727,7 +1728,7 @@ impl Editor {
             if let Some(ref path) = backing_file {
                 // Best-effort cleanup of temporary terminal files.
                 #[allow(clippy::let_underscore_must_use)]
-                let _ = terminal_backing_fs().remove_file(path);
+                let _ = terminal_backing_fs().remove_file(path.as_host());
             }
             // Clean up raw log file
             if let Some(log_file) = self
@@ -1738,7 +1739,7 @@ impl Editor {
                 if backing_file.as_ref() != Some(&log_file) {
                     // Best-effort cleanup of temporary terminal files.
                     #[allow(clippy::let_underscore_must_use)]
-                    let _ = terminal_backing_fs().remove_file(&log_file);
+                    let _ = terminal_backing_fs().remove_file(log_file.as_host());
                 }
             }
 

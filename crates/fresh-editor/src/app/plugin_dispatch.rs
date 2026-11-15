@@ -11,6 +11,7 @@
 //!   lifecycle management, and view-control commands callable from
 //!   plugin code.
 
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use std::sync::Arc;
 
 use anyhow::Result as AnyhowResult;
@@ -3546,7 +3547,7 @@ impl Editor {
     fn handle_open_file_streaming(&mut self, path: std::path::PathBuf, request_id: u64) {
         // Ensure the file exists at 0 bytes if missing, so the open
         // path has something to load.
-        if !self.authority().filesystem.exists(&path) {
+        if !self.authority().filesystem.exists(path.as_host()) {
             if let Some(parent) = path.parent() {
                 if !parent.as_os_str().is_empty() {
                     if let Err(e) = std::fs::create_dir_all(parent) {
@@ -3650,7 +3651,7 @@ impl Editor {
             return;
         };
 
-        let new_size = match self.authority().filesystem.metadata(&path) {
+        let new_size = match self.authority().filesystem.metadata(path.as_host()) {
             Ok(m) => m.size as usize,
             Err(_) => {
                 self.resolve_json_callback::<Option<usize>>(request_id, None);
@@ -4945,7 +4946,7 @@ impl Editor {
         // folder, so the caller can say so. Each way it can fail says what it
         // is: gone, a file, or the error reading it (e.g. no permission).
         let spawn_dir = cwd_buf.clone().unwrap_or_else(|| root.clone());
-        let refusal = match new_connection.authority.filesystem.is_dir(&spawn_dir) {
+        let refusal = match new_connection.authority.filesystem.is_dir(spawn_dir.as_host()) {
             Ok(true) => None,
             Ok(false) => Some(format!("{} is not a folder", spawn_dir.display())),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {

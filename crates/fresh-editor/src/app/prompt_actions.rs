@@ -2,6 +2,7 @@
 //!
 //! This module contains handlers for different prompt types when the user confirms input.
 
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use fresh_i18n::t;
 
 use super::file_operations::SaveProgress;
@@ -354,7 +355,7 @@ impl Editor {
                     let mtime = |this: &Self| {
                         this.authority()
                             .filesystem
-                            .metadata(&info.dest_path)
+                            .metadata(info.dest_path.as_host())
                             .ok()
                             .and_then(|m| m.modified)
                     };
@@ -373,7 +374,7 @@ impl Editor {
                                 .begin_external_save(&info.dest_path, data.len() as u64)
                         });
                         self.authority().filesystem.sudo_write(
-                            &info.dest_path,
+                            info.dest_path.as_host(),
                             &data,
                             info.mode,
                             info.owner,
@@ -440,7 +441,7 @@ impl Editor {
                 let input_lower = input.trim().to_lowercase();
                 if input_lower == "c" || input_lower == "create" {
                     if let Some(parent) = path.parent() {
-                        if let Err(e) = self.authority().filesystem.create_dir_all(parent) {
+                        if let Err(e) = self.authority().filesystem.create_dir_all(parent.as_host()) {
                             self.set_status_message(
                                 t!("file.error_saving", error = e.to_string()).to_string(),
                             );
@@ -553,7 +554,7 @@ impl Editor {
                     return PromptResult::Done;
                 }
                 let new_dst = dst_dir.join(input.trim());
-                if self.authority().filesystem.exists(&new_dst) {
+                if self.authority().filesystem.exists(new_dst.as_host()) {
                     self.confirm_paste_conflict(src, new_dst, is_cut, from_clipboard);
                 } else {
                     self.finish_resolved_paste(
@@ -568,7 +569,7 @@ impl Editor {
                 let input_lower = input.trim().to_lowercase();
                 if input_lower == "y" || input_lower == "yes" {
                     for path in paths {
-                        let is_dir = self.authority().filesystem.is_dir(&path).unwrap_or(false);
+                        let is_dir = self.authority().filesystem.is_dir(path.as_host()).unwrap_or(false);
                         self.perform_file_explorer_delete(path, is_dir);
                     }
                 } else {
@@ -829,7 +830,7 @@ impl Editor {
 
         // Check if parent directory exists
         if let Some(parent) = full_path.parent() {
-            if !parent.as_os_str().is_empty() && !self.authority().filesystem.exists(parent) {
+            if !parent.as_os_str().is_empty() && !self.authority().filesystem.exists(parent.as_host()) {
                 let dir_name = parent
                     .strip_prefix(self.working_dir())
                     .unwrap_or(parent)
@@ -1103,7 +1104,7 @@ impl Editor {
         if let Err(e) = self
             .authority()
             .filesystem
-            .create_dir_all(&self.dir_context.config_dir)
+            .create_dir_all(self.dir_context.config_dir.as_host())
         {
             tracing::warn!("Failed to create config directory: {}", e);
             return;
@@ -1234,7 +1235,7 @@ impl Editor {
                 let file_size = self
                     .authority()
                     .filesystem
-                    .metadata(path)
+                    .metadata(path.as_host())
                     .map(|m| m.size as usize)
                     .unwrap_or(0);
 

@@ -38,6 +38,7 @@
 //! always fails. That sub-mode needs an async UI round-trip from the spawn
 //! site and lands later; this module is the enforcement core it builds on.
 
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -467,11 +468,11 @@ fn linked_worktree_main_root(
     // `.git` as a regular file (rather than a directory) is the marker of a
     // worktree or submodule checkout. `read_file` on a directory errors, so
     // this doubles as the file/dir test without a second round-trip.
-    let text = String::from_utf8(fs.read_file(&root.join(".git")).ok()?).ok()?;
+    let text = String::from_utf8(fs.read_file(root.join(".git").as_host()).ok()?).ok()?;
     let git_dir = resolve_git_pointer(root, text.trim().strip_prefix("gitdir:")?.trim());
     // Only a *linked worktree* git dir carries `commondir`; a submodule's does
     // not, and the main worktree never reaches here (its `.git` is a dir).
-    let common = String::from_utf8(fs.read_file(&git_dir.join("commondir")).ok()?).ok()?;
+    let common = String::from_utf8(fs.read_file(git_dir.join("commondir").as_host()).ok()?).ok()?;
     let common_dir = resolve_git_pointer(&git_dir, common.trim());
     // The shared git dir is `<main worktree>/.git`; its parent is the root.
     let main_root = lexical_normalize(common_dir.parent()?);
@@ -615,10 +616,10 @@ pub fn probe_env(
 ) -> (Option<DetectedEnv>, bool) {
     let mut incomplete = false;
     for d in detectors {
-        if !d.markers.iter().any(|m| fs.exists(&root.join(m))) {
+        if !d.markers.iter().any(|m| fs.exists(root.join(m).as_host())) {
             continue;
         }
-        if !d.require.is_empty() && !d.require.iter().any(|r| fs.exists(&root.join(r))) {
+        if !d.require.is_empty() && !d.require.iter().any(|r| fs.exists(root.join(r).as_host())) {
             incomplete = true;
             continue;
         }

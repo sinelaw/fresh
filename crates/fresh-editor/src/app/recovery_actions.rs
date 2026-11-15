@@ -7,6 +7,7 @@
 //! - Auto-saving modified buffers
 //! - Cleaning up recovery files
 
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use anyhow::Result as AnyhowResult;
 
 use crate::model::event::BufferId;
@@ -1009,7 +1010,7 @@ impl Editor {
         let limit = self.config.editor.large_file_threshold_bytes;
         [dest_path, copy_path].iter().all(|path| {
             self.local_filesystem
-                .metadata(path)
+                .metadata((*path).as_host())
                 .is_ok_and(|meta| meta.size <= limit)
         })
     }
@@ -1104,7 +1105,7 @@ impl Editor {
         // /var -> /private/var), so match on the resolved path.
         let local_fs = std::sync::Arc::clone(&self.local_filesystem);
         let resolve =
-            |p: &std::path::Path| local_fs.canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+            |p: &std::path::Path| local_fs.canonicalize(p.as_host()).unwrap_or_else(|_| HostPathBuf::from_path_buf(p.to_path_buf()));
         let target = resolve(path);
         let active_window = self.active_window;
         for window_id in self.window_ids_sorted() {
@@ -1154,7 +1155,7 @@ impl Editor {
 
         let read = |path: &std::path::Path| {
             self.local_filesystem
-                .read_file(path)
+                .read_file(path.as_host())
                 .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
         };
         let (on_disk, kept) = match (read(dest_path), read(copy_path)) {

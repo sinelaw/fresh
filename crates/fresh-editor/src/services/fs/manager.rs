@@ -1,3 +1,4 @@
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use crate::model::filesystem::{DirEntry, FileMetadata, FileSystem};
 use std::collections::HashMap;
 use std::fmt;
@@ -72,7 +73,7 @@ impl FsManager {
             // We're responsible for executing the request
             let fs = Arc::clone(&self.fs);
             let path_clone = path.clone();
-            let result = tokio::task::spawn_blocking(move || fs.read_dir(&path_clone))
+            let result = tokio::task::spawn_blocking(move || fs.read_dir(path_clone.as_host()))
                 .await
                 .map_err(|e| io::Error::other(e.to_string()))?;
 
@@ -111,7 +112,7 @@ impl FsManager {
             .into_iter()
             .map(|path| {
                 let fs = Arc::clone(&self.fs);
-                tokio::task::spawn_blocking(move || fs.metadata(&path))
+                tokio::task::spawn_blocking(move || fs.metadata(path.as_host()))
             })
             .collect();
 
@@ -131,7 +132,7 @@ impl FsManager {
     pub async fn get_single_metadata(&self, path: &Path) -> io::Result<FileMetadata> {
         let fs = Arc::clone(&self.fs);
         let path = path.to_path_buf();
-        tokio::task::spawn_blocking(move || fs.metadata(&path))
+        tokio::task::spawn_blocking(move || fs.metadata(path.as_host()))
             .await
             .map_err(|e| io::Error::other(e.to_string()))?
     }
@@ -140,7 +141,7 @@ impl FsManager {
     pub async fn exists(&self, path: &Path) -> bool {
         let fs = Arc::clone(&self.fs);
         let path = path.to_path_buf();
-        tokio::task::spawn_blocking(move || fs.exists(&path))
+        tokio::task::spawn_blocking(move || fs.exists(path.as_host()))
             .await
             .unwrap_or(false)
     }
@@ -149,7 +150,7 @@ impl FsManager {
     pub async fn is_dir(&self, path: &Path) -> io::Result<bool> {
         let fs = Arc::clone(&self.fs);
         let path = path.to_path_buf();
-        tokio::task::spawn_blocking(move || fs.is_dir(&path))
+        tokio::task::spawn_blocking(move || fs.is_dir(path.as_host()))
             .await
             .map_err(|e| io::Error::other(e.to_string()))?
     }
@@ -166,7 +167,7 @@ impl FsManager {
                 .unwrap_or_else(|| path_buf.to_string_lossy().into_owned());
 
             // Get symlink metadata first to check if it's a symlink
-            let symlink_meta = fs.symlink_metadata(&path_buf)?;
+            let symlink_meta = fs.symlink_metadata(path_buf.as_host())?;
 
             // Determine entry type
             let is_symlink = {
@@ -188,19 +189,19 @@ impl FsManager {
 
             if is_symlink {
                 // For symlinks, check what they point to
-                let target_is_dir = fs.is_dir(&path_buf).unwrap_or(false);
+                let target_is_dir = fs.is_dir(path_buf.as_host()).unwrap_or(false);
                 Ok(
-                    DirEntry::new_symlink(path_buf, name, target_is_dir)
+                    DirEntry::new_symlink(HostPathBuf::from_path_buf(path_buf), name, target_is_dir)
                         .with_metadata(symlink_meta),
                 )
             } else {
                 // Regular file or directory
-                let entry_type = if fs.is_dir(&path_buf).unwrap_or(false) {
+                let entry_type = if fs.is_dir(path_buf.as_host()).unwrap_or(false) {
                     crate::model::filesystem::EntryType::Directory
                 } else {
                     crate::model::filesystem::EntryType::File
                 };
-                Ok(DirEntry::new(path_buf, name, entry_type).with_metadata(symlink_meta))
+                Ok(DirEntry::new(HostPathBuf::from_path_buf(path_buf), name, entry_type).with_metadata(symlink_meta))
             }
         })
         .await
@@ -211,9 +212,12 @@ impl FsManager {
     pub async fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
         let fs = Arc::clone(&self.fs);
         let path = path.to_path_buf();
-        tokio::task::spawn_blocking(move || fs.canonicalize(&path))
-            .await
-            .map_err(|e| io::Error::other(e.to_string()))?
+        tokio::task::spawn_blocking(move || {
+            fs.canonicalize(path.as_host())
+                .map(fresh_editor_core::model::host_path::HostPathBuf::into_path_buf)
+        })
+        .await
+        .map_err(|e| io::Error::other(e.to_string()))?
     }
 
     /// List directory and fetch metadata for all entries in parallel
@@ -224,7 +228,10 @@ impl FsManager {
         let mut entries = self.list_dir(path).await?;
 
         // Collect paths for metadata batch fetch
-        let paths: Vec<_> = entries.iter().map(|e| e.path.clone()).collect();
+        let paths: Vec<_> = entries
+            .iter()
+            .map(|e| e.path.clone().into_path_buf())
+            .collect();
 
         // Fetch metadata in parallel
         let metadata_results = self.get_metadata(paths).await;

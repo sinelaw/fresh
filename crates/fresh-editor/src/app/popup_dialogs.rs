@@ -8,6 +8,7 @@
 //! and `present_lsp_status_popup` (pin width + show), orchestrated by
 //! `build_and_show_lsp_status_popup`.
 
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use crate::view::theme::ThemeStyle;
 use fresh_i18n::t;
 
@@ -1716,11 +1717,11 @@ impl Editor {
         let cwd = self.working_dir();
         let fs = self.authority().filesystem.as_ref();
         let primary = cwd.join(".devcontainer").join("devcontainer.json");
-        if fs.exists(&primary) {
+        if fs.exists(primary.as_host()) {
             return Some(primary);
         }
         let secondary = cwd.join(".devcontainer.json");
-        if fs.exists(&secondary) {
+        if fs.exists(secondary.as_host()) {
             return Some(secondary);
         }
         None

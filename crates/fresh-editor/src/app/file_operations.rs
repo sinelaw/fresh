@@ -8,6 +8,7 @@
 //! - File modification time tracking
 //! - Save conflict detection
 
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use crate::model::buffer::SudoSaveRequired;
 use crate::model::filesystem::FileSystem;
 use crate::view::file_tree::FileTreeView;
@@ -56,7 +57,7 @@ impl crate::app::window::Window {
     /// ([`Self::torn_by_own_write`]), which changed the file but is no
     /// one else's change.
     pub(crate) fn changed_on_disk(&self, path: &Path) -> Option<std::time::SystemTime> {
-        let metadata = self.authority().filesystem.metadata(path).ok()?;
+        let metadata = self.authority().filesystem.metadata(path.as_host()).ok()?;
         let current_mtime = metadata.modified?;
         let recorded_mtime = self.file_mod_times.get(path)?;
         (current_mtime != *recorded_mtime
@@ -117,7 +118,7 @@ impl crate::app::window::Window {
         }
         self.authority()
             .filesystem
-            .content_digest(path)
+            .content_digest(path.as_host())
             .is_ok_and(|digest| digest == saved)
     }
 
@@ -147,7 +148,7 @@ impl crate::app::window::Window {
         if let Some(mtime) = self
             .authority()
             .filesystem
-            .metadata(path)
+            .metadata(path.as_host())
             .ok()
             .and_then(|m| m.modified)
         {
@@ -263,7 +264,7 @@ impl Editor {
                             .is_some_and(|io_err| io_err.kind() == std::io::ErrorKind::NotFound);
                         if is_not_found {
                             if let Some(parent) = path.parent() {
-                                if !self.authority().filesystem.exists(parent) {
+                                if !self.authority().filesystem.exists(parent.as_host()) {
                                     let dir_name = parent
                                         .strip_prefix(self.working_dir())
                                         .unwrap_or(parent)
@@ -848,7 +849,7 @@ impl Editor {
         self.active_window_mut().seen_byte_ranges.remove(&buffer_id);
 
         // Update the file modification time
-        if let Ok(metadata) = self.authority().filesystem.metadata(&path) {
+        if let Ok(metadata) = self.authority().filesystem.metadata(path.as_host()) {
             if let Some(mtime) = metadata.modified {
                 self.file_mod_times_mut().insert(path.clone(), mtime);
             }
@@ -971,7 +972,7 @@ impl Editor {
                 let results: Vec<(PathBuf, Option<std::time::SystemTime>)> = files_to_check
                     .into_iter()
                     .map(|path| {
-                        let mtime = fs.metadata(&path).ok().and_then(|m| m.modified);
+                        let mtime = fs.metadata(path.as_host()).ok().and_then(|m| m.modified);
                         (path, mtime)
                     })
                     .collect();
@@ -1080,7 +1081,7 @@ impl Editor {
             .tree()
             .all_nodes()
             .filter(|node| node.is_dir() && node.is_expanded())
-            .map(|node| (node.id, node.entry.path.clone()))
+            .map(|node| (node.id, node.entry.path.clone().into_path_buf()))
             .collect();
 
         // The watch set is stored explicitly (populated once above), not
@@ -1101,7 +1102,7 @@ impl Editor {
                 let results: Vec<(NodeId, PathBuf, Option<std::time::SystemTime>)> = expanded_dirs
                     .into_iter()
                     .map(|(node_id, path)| {
-                        let mtime = fs.metadata(&path).ok().and_then(|m| m.modified);
+                        let mtime = fs.metadata(path.as_host()).ok().and_then(|m| m.modified);
                         (node_id, path, mtime)
                     })
                     .collect();
@@ -1109,7 +1110,7 @@ impl Editor {
                 let git_index_mtimes: Vec<(PathBuf, std::time::SystemTime)> = git_index_paths
                     .into_iter()
                     .filter_map(|path| {
-                        let mtime = fs.metadata(&path).ok().and_then(|m| m.modified)?;
+                        let mtime = fs.metadata(path.as_host()).ok().and_then(|m| m.modified)?;
                         Some((path, mtime))
                     })
                     .collect();
@@ -1239,7 +1240,9 @@ impl Editor {
             return None;
         };
         let mut failure: Option<String> = None;
-        let cursor_path: Option<PathBuf> = explorer.get_selected_entry().map(|e| e.path.clone());
+        let cursor_path: Option<PathBuf> = explorer
+            .get_selected_entry()
+            .map(|e| e.path.clone().into_path_buf());
         // Re-resolve node ids by path at each step: an earlier
         // reload_expanded_node in this loop may have recycled ids under
         // its subtree, so any ids captured before this call can be
@@ -1279,7 +1282,7 @@ impl Editor {
         let mut changed = false;
         for dir in dirs {
             let gitignore_path = dir.join(".gitignore");
-            match fs.metadata(&gitignore_path) {
+            match fs.metadata(gitignore_path.as_host()) {
                 Err(_) => {
                     explorer.ignore_patterns_mut().remove_gitignore(&dir);
                     changed = true;
@@ -1536,7 +1539,7 @@ impl Editor {
         self.active_window_mut().seen_byte_ranges.remove(&buffer_id);
 
         // Update the file modification time
-        if let Ok(metadata) = self.authority().filesystem.metadata(path) {
+        if let Ok(metadata) = self.authority().filesystem.metadata(path.as_host()) {
             if let Some(mtime) = metadata.modified {
                 self.file_mod_times_mut().insert(path.to_path_buf(), mtime);
             }
@@ -1604,7 +1607,7 @@ impl Editor {
             let current_mtime = match self
                 .authority()
                 .filesystem
-                .metadata(&path)
+                .metadata(path.as_host())
                 .ok()
                 .and_then(|m| m.modified)
             {
@@ -1629,7 +1632,7 @@ impl Editor {
             let size = self
                 .authority()
                 .filesystem
-                .metadata(&path)
+                .metadata(path.as_host())
                 .map_or(u64::MAX, |m| m.size);
             if self.active_window().holds_what_was_saved(&path, size) {
                 // Take the new mtime, so later checks are cheap again.
@@ -1796,11 +1799,11 @@ fn file_names(paths: &[PathBuf]) -> String {
 /// and poll paths so everything routes through the same authority.
 pub(crate) fn load_gitignore_via_fs(fs: &dyn FileSystem, explorer: &mut FileTreeView, dir: &Path) {
     let gitignore_path = dir.join(".gitignore");
-    let meta = match fs.metadata(&gitignore_path) {
+    let meta = match fs.metadata(gitignore_path.as_host()) {
         Ok(m) => m,
         Err(_) => return,
     };
-    let bytes = match fs.read_file(&gitignore_path) {
+    let bytes = match fs.read_file(gitignore_path.as_host()) {
         Ok(b) => b,
         Err(e) => {
             tracing::warn!("Failed to read {:?}: {}", gitignore_path, e);
@@ -1841,7 +1844,7 @@ impl crate::app::window::Window {
         let file_size = self
             .authority()
             .filesystem
-            .metadata(path)
+            .metadata(path.as_host())
             .ok()
             .map(|m| m.size)
             .unwrap_or(0);
@@ -2015,7 +2018,7 @@ impl crate::app::window::Window {
     /// Record a file's modification time (called when opening files).
     /// Window-local: records into this window's own `file_mod_times`.
     pub(crate) fn watch_file(&mut self, path: &Path) {
-        if let Ok(metadata) = self.authority().filesystem.metadata(path) {
+        if let Ok(metadata) = self.authority().filesystem.metadata(path.as_host()) {
             if let Some(mtime) = metadata.modified {
                 self.file_mod_times.insert(path.to_path_buf(), mtime);
             }

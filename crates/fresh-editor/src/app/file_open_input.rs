@@ -109,7 +109,7 @@ impl Editor {
                 if let Some((name, is_dir, path)) = selected_info {
                     if is_dir {
                         // Navigate into the directory
-                        self.file_open_navigate_to(path);
+                        self.file_open_navigate_to((path).into_path_buf());
                     } else {
                         // Just autocomplete the filename
                         if let Some(prompt) = &mut self.active_window_mut().prompt {
@@ -726,7 +726,7 @@ impl Editor {
                 .filter(|e| e.fs_entry.is_dir())
                 .map(|e| e.fs_entry.path.clone());
             if let Some(path) = dir {
-                self.file_open_navigate_to(path);
+                self.file_open_navigate_to((path).into_path_buf());
                 return;
             }
         }

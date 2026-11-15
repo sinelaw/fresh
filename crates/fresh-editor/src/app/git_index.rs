@@ -10,6 +10,7 @@
 //! NOTE: a parallel BFS lives on the TypeScript side in
 //! `lib/git_history.ts` (`discoverSubRepos`). Keep the two in sync.
 
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use super::Editor;
 use crate::model::filesystem::FileSystem;
 use crate::services::runtime::LiveRuntime;
@@ -74,7 +75,7 @@ impl Editor {
                 let seeded: Vec<(PathBuf, Option<std::time::SystemTime>)> = indexes
                     .into_iter()
                     .map(|path| {
-                        let mtime = fs.metadata(&path).ok().and_then(|m| m.modified);
+                        let mtime = fs.metadata(path.as_host()).ok().and_then(|m| m.modified);
                         (path, mtime)
                     })
                     .collect();
@@ -125,7 +126,7 @@ fn resolve_git_indexes_blocking(
     queue.push_back((working_dir, 1));
 
     while let Some((dir, level)) = queue.pop_front() {
-        let entries = match fs.read_dir(&dir) {
+        let entries = match fs.read_dir(dir.as_host()) {
             Ok(e) => e,
             Err(_) => continue,
         };
@@ -138,15 +139,15 @@ fn resolve_git_indexes_blocking(
                 continue;
             }
 
-            let dot_git = entry.path.join(".git");
+            let dot_git = entry.path.join_name(std::ffi::OsStr::new(".git"));
             if fs.exists(&dot_git) {
-                if let Some(index) = git_dir_index(&spawner, &entry.path, &rt) {
+                if let Some(index) = git_dir_index(&spawner, entry.path.as_path(), &rt) {
                     if !indexes.contains(&index) {
                         indexes.push(index);
                     }
                 }
             } else if level < MAX_DEPTH {
-                queue.push_back((entry.path.clone(), level + 1));
+                queue.push_back(((entry.path.clone()).into_path_buf(), level + 1));
             }
         }
     }

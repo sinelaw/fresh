@@ -16,6 +16,7 @@
 //! merges in (never by rewriting its workspace file, which a running
 //! orchestrator owns); files under no workspace would be dropped.
 
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -176,7 +177,7 @@ impl Editor {
                 "the workspace is not connected",
             ))
         } else {
-            window.authority().filesystem.metadata(&path).map(|_| ())
+            window.authority().filesystem.metadata(path.as_host()).map(|_| ())
         };
         match found {
             Ok(()) => {

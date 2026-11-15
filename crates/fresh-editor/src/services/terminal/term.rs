@@ -37,6 +37,7 @@
 //! `backing_file_history_end` tracks the byte offset where scrollback ends in the
 //! backing file, used for truncation when re-entering terminal mode.
 
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use crate::model::filesystem::FileSystem;
 use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::Scroll;
@@ -546,7 +547,7 @@ pub struct BackingFileAt<'a> {
 
 impl BackingFile for BackingFileAt<'_> {
     fn size(&mut self) -> io::Result<u64> {
-        Ok(self.fs.metadata(self.path)?.size)
+        Ok(self.fs.metadata(self.path.as_host())?.size)
     }
 
     fn read_from(&mut self, offset: u64) -> io::Result<Vec<u8>> {
@@ -555,15 +556,15 @@ impl BackingFile for BackingFileAt<'_> {
             return Ok(Vec::new());
         }
         self.fs
-            .read_range(self.path, offset, (len - offset) as usize)
+            .read_range(self.path.as_host(), offset, (len - offset) as usize)
     }
 
     fn truncate(&mut self, len: u64) -> io::Result<()> {
-        self.fs.set_file_length(self.path, len)
+        self.fs.set_file_length(self.path.as_host(), len)
     }
 
     fn append(&mut self, bytes: &[u8]) -> io::Result<()> {
-        let mut file = self.fs.open_file_for_append(self.path)?;
+        let mut file = self.fs.open_file_for_append(self.path.as_host())?;
         file.write_all(bytes)?;
         file.flush()
     }

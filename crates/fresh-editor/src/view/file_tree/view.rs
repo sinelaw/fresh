@@ -211,7 +211,7 @@ impl FileTreeView {
                     state: node.state.clone(),
                     ignored: matches!(
                         self.ignore_patterns
-                            .get_status(&node.entry.path, node.entry.is_dir()),
+                            .get_status(node.entry.path.as_path(), node.entry.is_dir()),
                         super::ignore::IgnoreStatus::GitIgnored
                             | super::ignore::IgnoreStatus::CustomIgnored
                     ),
@@ -221,7 +221,7 @@ impl FileTreeView {
                         .filter_map(|a| self.tree.get_node(a))
                         .map(|n| ChainSegment {
                             name: n.entry.name.clone(),
-                            path: n.entry.path.clone(),
+                            path: (n.entry.path.clone()).into_path_buf(),
                         })
                         .collect(),
                 })
@@ -844,7 +844,7 @@ impl FileTreeView {
         if let Some(node) = self.tree.get_node(node_id) {
             !self
                 .ignore_patterns
-                .is_ignored(&node.entry.path, node.is_dir())
+                .is_ignored(node.entry.path.as_path(), node.is_dir())
         } else {
             false
         }
@@ -907,9 +907,10 @@ impl FileTreeView {
                 // bubbled git/decorations can light the row before first expansion.
                 if node.entry.is_symlink() && node.is_dir() {
                     // Canonicalize the symlink to get the target
-                    if let Ok(canonical) = node.entry.path.canonicalize() {
-                        if canonical != node.entry.path {
-                            mappings.insert(node.entry.path.clone(), canonical);
+                    if let Ok(canonical) = node.entry.path.as_path().canonicalize() {
+                        if canonical != node.entry.path.as_path() {
+                            mappings
+                                .insert(node.entry.path.clone().into_path_buf(), canonical);
                         }
                     }
                 }
