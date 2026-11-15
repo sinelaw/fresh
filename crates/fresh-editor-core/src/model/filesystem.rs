@@ -68,7 +68,10 @@ pub(crate) fn walk_files_options<'a>(skip_dirs: &'a [&'a str]) -> WalkOptions<'a
 pub struct WalkEntry<'a> {
     /// Absolute path.
     pub path: &'a Path,
-    /// Path relative to the walk root, `/`-separated on every platform.
+    /// Path relative to the walk root, with `/` between components on every
+    /// platform. Only *between* components: a `\` inside a single file name
+    /// is part of that name and is reported as-is, so consumers must split
+    /// on `/` alone and never treat a `\` as a separator.
     pub rel: &'a str,
     pub entry_type: EntryType,
     /// Always carried: a walk has already stat'd every entry, and fetching it
@@ -2083,7 +2086,7 @@ impl FileSystem for StdFileSystem {
                     let Ok(rel) = path.strip_prefix(root) else {
                         continue;
                     };
-                    let rel_str = rel.to_string_lossy().replace('\\', "/");
+                    let rel_str = crate::primitives::path_utils::rel_to_slash_string(rel);
                     // `DirEntry::metadata` is a real `stat`; hence the syscall-free builder.
                     let metadata = entry.metadata().ok().map_or_else(
                         || FileMetadata::new(0),
@@ -3437,6 +3440,73 @@ mod tests {
 
         found.sort();
         assert_eq!(found, vec!["a.txt", "b.txt", "sub/c.txt", "sub/deep/d.txt"]);
+    }
+
+    /// A `\` is an ordinary character in a Unix file name, so the walk has to
+    /// report it verbatim. It used to rewrite every `\` in the relative path
+    /// to `/`, which renamed the file to one that does not exist and made the
+    /// walk disagree with `read_dir` about it.
+    #[cfg(not(windows))]
+    #[test]
+    fn test_walk_files_std_keeps_a_backslash_in_a_name() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("a\\b.txt"), "x").unwrap();
+        std::fs::create_dir(tmp.path().join("sub")).unwrap();
+        std::fs::write(tmp.path().join("sub").join("c\\d.txt"), "x").unwrap();
+
+        let fs = StdFileSystem;
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let mut found: Vec<String> = Vec::new();
+        fs.walk_files(tmp.path(), &[], &cancel, &mut |_path, rel| {
+            found.push(rel.to_string());
+            true
+        })
+        .unwrap();
+
+        found.sort();
+        assert_eq!(found, vec!["a\\b.txt", "sub/c\\d.txt"]);
+    }
+
+    /// The walk and `read_dir` are two answers to "what is in this directory",
+    /// and the file finder reads both — the prefix probe through `read_dir`,
+    /// the cached project list through the walk. They have to name a file the
+    /// same way or a consumer comparing their output sees one file as two.
+    #[cfg(not(windows))]
+    #[test]
+    fn test_walk_and_read_dir_agree_on_awkward_names() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let names = [
+            "a\\b.txt",
+            "plain.txt",
+            "two words.txt",
+            "sem:icolon.txt",
+            "caf\u{e9}.txt",
+            "e\u{301}combining.txt",
+        ];
+        for name in names {
+            std::fs::write(tmp.path().join(name), "x").unwrap();
+        }
+
+        let fs = StdFileSystem;
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let mut walked: Vec<String> = Vec::new();
+        fs.walk_files(tmp.path(), &[], &cancel, &mut |_path, rel| {
+            walked.push(rel.to_string());
+            true
+        })
+        .unwrap();
+
+        let mut listed: Vec<String> = fs
+            .read_dir(tmp.path())
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.is_file())
+            .map(|e| e.name)
+            .collect();
+
+        walked.sort();
+        listed.sort();
+        assert_eq!(walked, listed);
     }
 
     #[test]

@@ -2458,7 +2458,8 @@ impl Editor {
             // Set original_suggestions for Rust-side filtering (used by prompts that
             // don't handle their own filtering like theme editor dropdowns)
             prompt.original_suggestions = Some(internal_suggestions.clone());
-            prompt.set_suggestions(internal_suggestions);
+            // A plugin's list is its whole answer for this input.
+            prompt.set_suggestions(internal_suggestions, false);
             // Select first suggestion by default (or the specified index)
             prompt.select_suggestion(if prompt.suggestions.is_empty() {
                 None
@@ -3818,7 +3819,7 @@ impl Editor {
         // The name a file is shown and glob-matched under: relative and
         // `/`-separated when it is in the root, as the project walk gives it.
         let shown_path = |path: &std::path::Path| match path.strip_prefix(&root) {
-            Ok(rel) => rel.to_string_lossy().replace('\\', "/"),
+            Ok(rel) => crate::primitives::path_utils::rel_to_slash_string(rel),
             Err(_) => path.to_string_lossy().into_owned(),
         };
 

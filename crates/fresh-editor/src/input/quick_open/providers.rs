@@ -370,6 +370,21 @@ pub struct FileProvider {
 }
 
 impl FileProvider {
+    /// Rows the file finder hands to the palette for one keystroke. The
+    /// palette shows ten at a time and the list is re-ranked on every
+    /// keystroke, so scoring more than this buys nothing a user can see.
+    ///
+    /// The cap is a *ranking* cut (fuzzy score + frecency), not a slice of
+    /// the path tree, which is why [`QuickOpenProvider::suggestions_capped`]
+    /// has to report when it bit.
+    const MAX_RESULTS: usize = 100;
+
+    /// Files [`Self::probe_prefix`] reports for one directory. A directory
+    /// with more than this is reported as cut short, because the rows that
+    /// survive are in `read_dir` order — not a slice of anything a caller
+    /// reasoning about the match set could rely on.
+    const PROBE_MAX_ENTRIES: usize = 50;
+
     pub fn new(
         filesystem: std::sync::Arc<dyn crate::model::filesystem::FileSystem + Send + Sync>,
         process_spawner: std::sync::Arc<dyn crate::services::remote::ProcessSpawner>,
@@ -545,11 +560,11 @@ impl FileProvider {
     /// Likewise, what `custom_ignore_patterns` leave out stays out unless the
     /// typed path goes into an ignored directory (`build/`), which is an
     /// explicit request for it. `.gitignore` is not consulted here.
-    fn probe_prefix(&self, cwd: &str, query: &str) -> Vec<FileEntry> {
+    fn probe_prefix(&self, cwd: &str, query: &str) -> (Vec<FileEntry>, bool) {
         use std::path::Path;
 
         if query.is_empty() {
-            return vec![];
+            return (vec![], false);
         }
 
         let show_hidden = self.show_hidden.load(std::sync::atomic::Ordering::Relaxed);
@@ -576,27 +591,25 @@ impl FileProvider {
                     });
                 }
             }
-            results.truncate(50);
-            return results;
+            let truncated = results.len() > Self::PROBE_MAX_ENTRIES;
+            results.truncate(Self::PROBE_MAX_ENTRIES);
+            return (results, truncated);
         }
 
         // Otherwise, list the parent directory and filter by the basename
         // prefix (e.g. query "etc/hosts" → parent "/etc", prefix "hosts").
         let parent = match abs_path.parent() {
             Some(p) => p,
-            None => return results,
+            None => return (results, false),
         };
         let basename = match abs_path.file_name().and_then(|n| n.to_str()) {
             Some(b) => b,
-            None => return results,
+            None => return (results, false),
         };
 
         let rel_parent = match parent.strip_prefix(cwd) {
-            Ok(p) => {
-                let s = p.to_string_lossy().replace('\\', "/");
-                s
-            }
-            Err(_) => return results,
+            Ok(p) => crate::primitives::path_utils::rel_to_slash_string(p),
+            Err(_) => return (results, false),
         };
 
         let include_hidden = show_hidden || basename.starts_with('.');
@@ -625,7 +638,7 @@ impl FileProvider {
             }
         }
 
-        results
+        (results, false)
     }
 
     /// Get the cached file list, or `None` if not yet loaded.
@@ -993,10 +1006,10 @@ impl QuickOpenProvider for FileProvider {
         // before the recursive scan reaches the relevant directory, and is
         // also valuable after the scan completes since the walk may have
         // stopped at MAX_FILES before reaching the target file.
-        let prefix_entries = if !search_query.is_empty() {
+        let (prefix_entries, probe_truncated) = if !search_query.is_empty() {
             self.probe_prefix(&context.cwd, search_query)
         } else {
-            vec![]
+            (vec![], false)
         };
 
         let has_files = files.as_ref().is_some_and(|f| !f.is_empty());
@@ -1015,7 +1028,7 @@ impl QuickOpenProvider for FileProvider {
             }
         }
 
-        let max_results = 100;
+        let max_results = Self::MAX_RESULTS;
 
         // Collect prefix-probe paths for deduplication.
         let prefix_set: std::collections::HashSet<&str> = prefix_entries
@@ -1096,9 +1109,37 @@ impl QuickOpenProvider for FileProvider {
                 "Scanning for more files…"
             };
             suggestions.push(Suggestion::disabled("status:scanning", msg.to_string()));
+        } else if probe_truncated || files.as_ref().is_some_and(|f| f.len() >= MAX_FILES) {
+            // The walk stops at `MAX_FILES` and reports itself complete, so
+            // a full cache is the only sign it gave up early.
+            suggestions.push(Suggestion::disabled(
+                "status:truncated",
+                "More files than shown…".to_string(),
+            ));
         }
 
         suggestions
+    }
+
+    /// Four things cut this list short, and a caller reasoning about the
+    /// match set has to decline on all of them:
+    ///
+    /// - `scored.truncate(MAX_RESULTS)` in [`Self::suggestions`], so a full
+    ///   house means matches may have been dropped. A query with exactly
+    ///   `MAX_RESULTS` matches reports incomplete although nothing was lost:
+    ///   the count cannot tell the two apart, and erring this way only costs
+    ///   the caller its prefix completion.
+    /// - a scan still running, which ships partial snapshots every 300ms.
+    /// - [`Self::probe_prefix`] cutting a directory at `PROBE_MAX_ENTRIES`.
+    /// - the walk stopping at `MAX_FILES`.
+    ///
+    /// The last three all leave a disabled `status:` row behind, which is
+    /// also what puts them on screen, so one check covers them.
+    fn suggestions_incomplete(&self, suggestions: &[Suggestion]) -> bool {
+        suggestions.iter().filter(|s| !s.disabled).count() >= Self::MAX_RESULTS
+            || suggestions
+                .iter()
+                .any(|s| s.disabled && s.id.starts_with("status:"))
     }
 
     fn on_select(
@@ -1699,7 +1740,7 @@ mod tests {
         let cwd = base.display().to_string();
 
         // 1. Basename prefix inside a subdirectory (rel_parent = "etc")
-        let r = provider.probe_prefix(&cwd, "etc/hosts");
+        let (r, _) = provider.probe_prefix(&cwd, "etc/hosts");
         let paths: Vec<&str> = r.iter().map(|e| e.relative_path.as_str()).collect();
         assert!(
             paths.contains(&"etc/hosts"),
@@ -1719,7 +1760,7 @@ mod tests {
         );
 
         // 2. Directory query — the query is itself a directory, so we list it.
-        let r = provider.probe_prefix(&cwd, "src");
+        let (r, _) = provider.probe_prefix(&cwd, "src");
         let paths: Vec<&str> = r.iter().map(|e| e.relative_path.as_str()).collect();
         assert!(
             paths.contains(&"src/main.rs"),
@@ -1731,7 +1772,7 @@ mod tests {
         );
 
         // 3. Nonexistent path — neither parent-dir probe nor dir listing finds anything.
-        let r = provider.probe_prefix(&cwd, "nonexistent/path/to/file");
+        let (r, _) = provider.probe_prefix(&cwd, "nonexistent/path/to/file");
         assert!(
             r.is_empty(),
             "nonexistent query should return empty, got {:?}",
@@ -1739,7 +1780,7 @@ mod tests {
         );
 
         // 4. Basename prefix at the cwd root (rel_parent is empty).
-        let r = provider.probe_prefix(&cwd, "Makefile");
+        let (r, _) = provider.probe_prefix(&cwd, "Makefile");
         let paths: Vec<&str> = r.iter().map(|e| e.relative_path.as_str()).collect();
         assert!(paths.contains(&"Makefile"), "missing Makefile in {paths:?}");
         assert!(
@@ -1770,6 +1811,7 @@ mod tests {
         let probe = |query: &str| -> Vec<String> {
             let mut paths: Vec<String> = provider
                 .probe_prefix(&cwd, query)
+                .0
                 .into_iter()
                 .map(|e| e.relative_path)
                 .collect();
@@ -1815,6 +1857,7 @@ mod tests {
         let probe = |query: &str| -> Vec<String> {
             let mut paths: Vec<String> = provider
                 .probe_prefix(&cwd, query)
+                .0
                 .into_iter()
                 .map(|e| e.relative_path)
                 .collect();

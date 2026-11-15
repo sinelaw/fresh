@@ -188,7 +188,13 @@ impl InputHandler for Prompt {
                 if self.overlay {
                     return InputResult::Consumed;
                 }
-                if let Some(selected) = self.selected_suggestion() {
+                // Quick Open's file finder completes to the longest common
+                // prefix of the matching paths, like shell completion.
+                if let Some(completed) = self.quick_open_file_completion() {
+                    if completed != self.input_str() {
+                        self.set_input(completed);
+                    }
+                } else if let Some(selected) = self.selected_suggestion() {
                     if let Some(suggestion) = self.suggestions.get(selected) {
                         if !suggestion.disabled {
                             let value = suggestion.get_value().to_string();
@@ -234,6 +240,93 @@ impl InputHandler for Prompt {
 }
 
 impl Prompt {
+    /// Tab completion for Quick Open's file finder (no `>`/`#`/`:` prefix).
+    ///
+    /// Extends the typed path to the longest common prefix of the suggested
+    /// paths that start with it, stopping just past the next path separator
+    /// (one directory level per Tab, like a shell), and keeps any
+    /// `:line:col` suffix. When those paths share nothing beyond the typed
+    /// path, the input comes back unchanged. Returns `None` when this does
+    /// not apply (other prompts, other providers, a selection moved off the
+    /// first row, an empty path, or only fuzzy matches), so the caller falls
+    /// back to accepting the selection. An incomplete list leaves the input
+    /// as typed instead.
+    fn quick_open_file_completion(&self) -> Option<String> {
+        if !matches!(self.prompt_type, crate::view::prompt::PromptType::QuickOpen) {
+            return None;
+        }
+        let input = self.input_str();
+        if input.starts_with(['>', '#', ':']) {
+            return None;
+        }
+        // The selection resets to the first row on every keystroke, so a
+        // selection anywhere else means the user arrowed to a row: let Tab
+        // accept that row, as it always has.
+        if self.selected_suggestion().is_some_and(|i| i != 0) {
+            return None;
+        }
+        let (query, line, column) = crate::input::quick_open::parse_path_line_col(input);
+        if query.is_empty() {
+            return None;
+        }
+
+        let mut candidates = self
+            .suggestions
+            .iter()
+            .filter(|s| !s.disabled)
+            .map(|s| s.get_value())
+            .filter(|path| path.starts_with(query.as_str()));
+        let first = candidates.next()?;
+
+        // The typed path is a prefix of something on the list, but the list
+        // is short of the real match set (a row cap, a scan still running, a
+        // directory listing cut off), so the prefix these rows share is not
+        // one the file set agrees on. Leave the input exactly as typed: not
+        // completed, because the prefix is a guess, and not replaced by the
+        // highlighted row either, which would throw away a query the user is
+        // still in the middle of.
+        if self.suggestions_incomplete() {
+            return Some(input.to_string());
+        }
+
+        // Count the shared chars rather than comparing bytes, then snap to a
+        // grapheme boundary so a combining mark is never split from its base.
+        let shared_chars = candidates.fold(first.chars().count(), |shared, path| {
+            first
+                .chars()
+                .zip(path.chars())
+                .take(shared)
+                .take_while(|(a, b)| a == b)
+                .count()
+        });
+        let shared_bytes = first
+            .char_indices()
+            .nth(shared_chars)
+            .map_or(first.len(), |(i, _)| i);
+        let mut end = crate::primitives::grapheme::snap_to_grapheme_boundary(first, shared_bytes);
+        // Complete one directory level per Tab: stop just past the first
+        // path separator after the typed path.
+        // `std::path::is_separator`, not a literal pair: `\` separates on
+        // Windows and is an ordinary filename character everywhere else, and
+        // reading one as a boundary would stop the completion inside a name.
+        if let Some(sep) = first
+            .get(query.len()..end)
+            .and_then(|rest| rest.find(std::path::is_separator))
+        {
+            end = query.len() + sep + 1;
+        }
+        let completed = first.get(..end)?;
+
+        if completed.chars().count() <= query.chars().count() {
+            return Some(input.to_string());
+        }
+        Some(match (line, column) {
+            (Some(line), Some(column)) => format!("{completed}:{line}:{column}"),
+            (Some(line), None) => format!("{completed}:{line}"),
+            _ => completed.to_string(),
+        })
+    }
+
     /// Move the selection `pages` pages, by the window the suggestion list
     /// was last laid out with. A list that has not been laid out has no
     /// page, and nothing moves.
@@ -317,6 +410,7 @@ impl Prompt {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::input::commands::Suggestion;
     use crate::view::prompt::PromptType;
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -455,5 +549,239 @@ mod tests {
             InputResult::Ignored,
             "dispatch_input should return Ignored for Ctrl+P"
         );
+    }
+
+    /// A prompt of `prompt_type` holding `input`, with one suggestion per
+    /// path and the first row highlighted, as after a keystroke.
+    fn prompt_with_paths(prompt_type: PromptType, input: &str, paths: &[&str]) -> Prompt {
+        let mut prompt = Prompt::new("Test: ".to_string(), prompt_type);
+        prompt.set_input_plain(input.to_string());
+        prompt.set_suggestions(
+            paths
+                .iter()
+                .map(|p| {
+                    Suggestion::new(format!("file:{p}"), p.to_string()).with_value(p.to_string())
+                })
+                .collect(),
+            false,
+        );
+        prompt.select_suggestion(Some(0));
+        prompt
+    }
+
+    /// Press Tab and return the resulting input.
+    fn press_tab(prompt: &mut Prompt) -> String {
+        let mut ctx = InputContext::new();
+        prompt.handle_key_event(&key(KeyCode::Tab), &mut ctx);
+        prompt.input_str().to_string()
+    }
+
+    /// Press Tab in Quick Open's file finder and return the resulting input.
+    fn quick_open_tab(input: &str, paths: &[&str]) -> String {
+        press_tab(&mut prompt_with_paths(PromptType::QuickOpen, input, paths))
+    }
+
+    const CRATES: &[&str] = &["crates/fresh-editor/src/main.rs", "crates/fresh-gui/lib.rs"];
+
+    #[test]
+    fn test_quick_open_tab_stops_after_directory() {
+        assert_eq!(quick_open_tab("crat", CRATES), "crates/");
+    }
+
+    #[test]
+    fn test_quick_open_tab_stops_mid_name_on_shared_prefix() {
+        assert_eq!(quick_open_tab("crates/fre", CRATES), "crates/fresh-");
+    }
+
+    #[test]
+    fn test_quick_open_tab_stops_where_names_diverge() {
+        let paths = &[
+            "crates/fresh-editor/src/main.rs",
+            "crates/fresh-editor-core/lib.rs",
+        ];
+        assert_eq!(
+            quick_open_tab("crates/fresh-ed", paths),
+            "crates/fresh-editor"
+        );
+    }
+
+    #[test]
+    fn test_quick_open_tab_single_match_completes_directory() {
+        let paths = &["crates/fresh-gui/lib.rs"];
+        assert_eq!(quick_open_tab("crates/fresh-g", paths), "crates/fresh-gui/");
+    }
+
+    #[test]
+    fn test_quick_open_tab_completes_file_name_in_full() {
+        assert_eq!(quick_open_tab("not", &["notes.txt"]), "notes.txt");
+    }
+
+    #[test]
+    fn test_quick_open_tab_without_shared_progress_leaves_input() {
+        assert_eq!(quick_open_tab("crates/fresh-", CRATES), "crates/fresh-");
+    }
+
+    #[test]
+    fn test_quick_open_tab_keeps_line_and_column() {
+        assert_eq!(quick_open_tab("crat:42", CRATES), "crates/:42");
+        assert_eq!(quick_open_tab("crat:42:5", CRATES), "crates/:42:5");
+    }
+
+    /// Only Windows reads `\` as a directory boundary — see
+    /// `test_quick_open_tab_treats_backslash_as_a_name_character` for the
+    /// same two paths elsewhere.
+    #[test]
+    #[cfg(windows)]
+    fn test_quick_open_tab_follows_backslash_separators() {
+        let paths = &["src\\app\\main.rs", "src\\app\\lib.rs"];
+        assert_eq!(quick_open_tab("src\\a", paths), "src\\app\\");
+    }
+
+    #[test]
+    fn test_quick_open_tab_non_ascii_paths() {
+        let paths = &["src/über_a.rs", "src/über_b.rs"];
+        assert_eq!(quick_open_tab("src/ü", paths), "src/über_");
+    }
+
+    #[test]
+    fn test_quick_open_tab_never_splits_a_grapheme() {
+        // The paths share the chars "x/cafe" but diverge on the combining
+        // accent, so the shared "e" belongs to two different graphemes.
+        let paths = &["x/cafe\u{301}.rs", "x/cafe\u{300}.rs"];
+        assert_eq!(quick_open_tab("x/caf", paths), "x/caf");
+    }
+
+    /// A disabled row is not a path, so it never joins the prefix fold —
+    /// here it would otherwise drag the shared prefix back to `crates/`.
+    #[test]
+    fn test_quick_open_tab_ignores_disabled_rows() {
+        let mut prompt = prompt_with_paths(PromptType::QuickOpen, "crates/", &[]);
+        prompt.set_suggestions(
+            vec![
+                Suggestion::new("file:a", "crates/fresh-editor/main.rs".to_string())
+                    .with_value("crates/fresh-editor/main.rs".to_string()),
+                Suggestion::disabled("note:hint", "crates/other".to_string()),
+            ],
+            false,
+        );
+        prompt.select_suggestion(Some(0));
+        assert_eq!(press_tab(&mut prompt), "crates/fresh-editor/");
+    }
+
+    /// While the project scan is still running the list is a partial
+    /// snapshot, so the prefix its rows share is not one the file set agrees
+    /// on. Tab leaves the input as typed rather than completing to a guess —
+    /// and rather than accepting the row, which would discard the query.
+    #[test]
+    fn test_quick_open_tab_leaves_input_while_the_list_is_incomplete() {
+        let mut prompt = prompt_with_paths(PromptType::QuickOpen, "crates/fre", &[]);
+        prompt.set_suggestions(
+            vec![
+                Suggestion::new("file:a", "crates/fresh-editor/main.rs".to_string())
+                    .with_value("crates/fresh-editor/main.rs".to_string()),
+            ],
+            true,
+        );
+        prompt.select_suggestion(Some(0));
+        assert_eq!(press_tab(&mut prompt), "crates/fre");
+    }
+
+    #[test]
+    fn test_quick_open_tab_fuzzy_only_accepts_selection() {
+        assert_eq!(
+            quick_open_tab("main", CRATES),
+            "crates/fresh-editor/src/main.rs"
+        );
+    }
+
+    #[test]
+    fn test_quick_open_tab_empty_input_accepts_selection() {
+        assert_eq!(
+            quick_open_tab("", CRATES),
+            "crates/fresh-editor/src/main.rs"
+        );
+    }
+
+    #[test]
+    fn test_quick_open_tab_after_arrowing_accepts_that_row() {
+        let mut prompt = prompt_with_paths(PromptType::QuickOpen, "crates/fre", CRATES);
+        let mut ctx = InputContext::new();
+        prompt.handle_key_event(&key(KeyCode::Down), &mut ctx);
+        assert_eq!(press_tab(&mut prompt), "crates/fresh-gui/lib.rs");
+    }
+
+    #[test]
+    fn test_quick_open_tab_after_arrowing_back_to_first_row_completes_prefix() {
+        let mut prompt = prompt_with_paths(PromptType::QuickOpen, "crates/fre", CRATES);
+        let mut ctx = InputContext::new();
+        prompt.handle_key_event(&key(KeyCode::Down), &mut ctx);
+        prompt.handle_key_event(&key(KeyCode::Up), &mut ctx);
+        assert_eq!(press_tab(&mut prompt), "crates/fresh-");
+    }
+
+    #[test]
+    fn test_quick_open_tab_other_modes_accept_selection_with_prefix() {
+        let mut commands = prompt_with_paths(PromptType::QuickOpen, ">sav", &["Save File"]);
+        assert_eq!(press_tab(&mut commands), ">Save File");
+
+        let mut buffers = prompt_with_paths(PromptType::QuickOpen, "#ma", &["main.rs"]);
+        assert_eq!(press_tab(&mut buffers), "#main.rs");
+    }
+
+    #[test]
+    fn test_tab_in_other_prompts_accepts_selection() {
+        let mut prompt = prompt_with_paths(PromptType::Search, "crat", CRATES);
+        assert_eq!(press_tab(&mut prompt), "crates/fresh-editor/src/main.rs");
+    }
+
+    /// Off Windows, `\` is an ordinary filename character: two files really
+    /// named `a\b1.txt` and `a\b2.txt` share the prefix `a\b`, and Tab must
+    /// not read the backslash as a directory boundary and stop at `a\`.
+    #[test]
+    #[cfg(not(windows))]
+    fn test_quick_open_tab_treats_backslash_as_a_name_character() {
+        let paths = &["a\\b1.txt", "a\\b2.txt"];
+        assert_eq!(quick_open_tab("a", paths), "a\\b");
+    }
+
+    /// The file provider caps its matches at a row limit ranked by fuzzy
+    /// score and frecency, so the paths on the list can share a directory
+    /// the dropped matches do not. Tab must not commit to that prefix, and
+    /// must not replace the query with a row either. The on-screen list
+    /// cannot show this (a capped list looks like any other), which is why
+    /// it is covered here and not e2e.
+    #[test]
+    fn test_quick_open_tab_declines_on_a_capped_list() {
+        let mut prompt = prompt_with_paths(PromptType::QuickOpen, "crates/fre", CRATES);
+        prompt.set_suggestions(
+            CRATES
+                .iter()
+                .map(|p| {
+                    Suggestion::new(format!("file:{p}"), p.to_string()).with_value(p.to_string())
+                })
+                .collect(),
+            true,
+        );
+        prompt.select_suggestion(Some(0));
+        assert_eq!(press_tab(&mut prompt), "crates/fre");
+    }
+
+    /// The flag describes one list, so the next list must not inherit it: a
+    /// narrower query whose matches all fit completes again.
+    #[test]
+    fn test_quick_open_tab_completes_again_once_the_list_fits() {
+        let mut prompt = prompt_with_paths(PromptType::QuickOpen, "crates/fre", CRATES);
+        // What the next keystroke does: a fresh list, reported complete.
+        prompt.set_suggestions(
+            CRATES
+                .iter()
+                .map(|p| {
+                    Suggestion::new(format!("file:{p}"), p.to_string()).with_value(p.to_string())
+                })
+                .collect(),
+            false,
+        );
+        prompt.select_suggestion(Some(0));
+        assert_eq!(press_tab(&mut prompt), "crates/fresh-");
     }
 }
