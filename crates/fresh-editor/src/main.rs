@@ -3,8 +3,9 @@
 // The TUI build (no `gui` feature) keeps the default "console" subsystem.
 #![cfg_attr(all(windows, feature = "gui"), windows_subsystem = "windows")]
 #[cfg(all(windows, feature = "gui"))]
-use fresh_editor_core::model::host_path::{AsHostPath, HostPathBuf};
 use windows_sys::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+
+use fresh_editor_core::model::host_path::AsHostPath;
 
 use anyhow::{Context, Result as AnyhowResult};
 use clap::{CommandFactory, FromArgMatches, Parser};

@@ -221,7 +221,10 @@ impl FileSystem for RemoteTreeFs {
         let entries = self.inner.read_dir(self.map(path).as_host())?;
         Ok(entries
             .into_iter()
-            .map(|e| DirEntry::new(path.join(&e.name), e.name, e.entry_type))
+            .map(|e| {
+                let p = path.as_host().join_name(std::ffi::OsStr::new(&e.name));
+                DirEntry::new(p, e.name, e.entry_type)
+            })
             .collect())
     }
 

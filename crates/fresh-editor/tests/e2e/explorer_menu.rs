@@ -798,7 +798,7 @@ fn select_entry(harness: &mut EditorTestHarness, rel: &str) {
         .and_then(|e| e.get_selected_entry().map(|entry| entry.path.clone()));
     assert_eq!(
         selected.as_deref(),
-        Some(wanted.as_path()),
+        Some(wanted.as_path().as_host()),
         "the cursor should be on {rel}: `navigate_to_path` cannot reach a node \
          the tree has not loaded, and matches by path"
     );

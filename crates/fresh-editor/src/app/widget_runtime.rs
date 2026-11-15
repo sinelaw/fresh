@@ -5306,7 +5306,8 @@ mod tests {
             (0..1000)
                 .map(|i| {
                     DirEntry::new(
-                        dir.as_host()
+                        dir.as_path()
+                            .as_host()
                             .join_name(std::ffi::OsStr::new(&format!("f{i:04}.txt"))),
                         format!("f{i:04}.txt"),
                         EntryType::File,

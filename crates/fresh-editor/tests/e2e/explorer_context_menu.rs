@@ -890,9 +890,10 @@ fn selected_relative_path(h: &EditorTestHarness) -> String {
     let explorer = h.editor().file_explorer().expect("an explorer");
     let entry = explorer.get_selected_entry().expect("a selection");
     let root = explorer.tree().root_path();
-    let path = entry.path.strip_prefix(root).unwrap_or(&entry.path);
-    path.components()
-        .map(|c| c.as_os_str().to_string_lossy())
+    let rel = entry.path.rel_to(root.as_host());
+    let path = rel.as_deref().unwrap_or(entry.path.to_str().unwrap_or_default());
+    path.split('/')
+        .map(std::borrow::Cow::Borrowed)
         .collect::<Vec<_>>()
         .join("/")
 }
