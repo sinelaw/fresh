@@ -798,7 +798,7 @@ fn sudo_save_temp_file_is_private() {
         let info = err
             .downcast::<SudoSaveRequired>()
             .unwrap_or_else(|err| panic!("not a sudo save: {err}"));
-        let temp_path = info.temp_path().to_path_buf();
+        let temp_path = info.temp_path().as_path().to_path_buf();
         let mode = std::fs::metadata(&temp_path).unwrap().permissions().mode();
         drop(info);
         assert!(
