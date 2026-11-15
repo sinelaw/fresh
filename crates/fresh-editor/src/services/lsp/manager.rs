@@ -2306,7 +2306,7 @@ mod tests {
         let file = src.join("main.rs");
         std::fs::write(&file, "").unwrap();
 
-        let root = detect_workspace_root(&file, &["Cargo.toml".to_string(), ".git".to_string()]);
+        let root = detect_workspace_root(&StdFileSystem, &file, &["Cargo.toml".to_string(), ".git".to_string()]);
         assert_eq!(root, project);
     }
 
@@ -2320,7 +2320,7 @@ mod tests {
         let file = deep.join("lib.rs");
         std::fs::write(&file, "").unwrap();
 
-        let root = detect_workspace_root(&file, &["Cargo.toml".to_string()]);
+        let root = detect_workspace_root(&StdFileSystem, &file, &["Cargo.toml".to_string()]);
         assert_eq!(root, project);
     }
 
@@ -2332,7 +2332,7 @@ mod tests {
         let file = dir.join("file.txt");
         std::fs::write(&file, "").unwrap();
 
-        let root = detect_workspace_root(&file, &["nonexistent_marker".to_string()]);
+        let root = detect_workspace_root(&StdFileSystem, &file, &["nonexistent_marker".to_string()]);
         assert_eq!(root, dir);
     }
 
@@ -2344,7 +2344,7 @@ mod tests {
         let file = dir.join("file.txt");
         std::fs::write(&file, "").unwrap();
 
-        let root = detect_workspace_root(&file, &[]);
+        let root = detect_workspace_root(&StdFileSystem, &file, &[]);
         assert_eq!(root, dir);
     }
 
@@ -2358,7 +2358,7 @@ mod tests {
         let file = src.join("main.rs");
         std::fs::write(&file, "").unwrap();
 
-        let root = detect_workspace_root(&file, &[".git".to_string()]);
+        let root = detect_workspace_root(&StdFileSystem, &file, &[".git".to_string()]);
         assert_eq!(root, project);
     }
 

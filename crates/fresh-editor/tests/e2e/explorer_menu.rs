@@ -1,3 +1,4 @@
+use fresh_editor_core::model::host_path::AsHostPath;
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use std::fs;

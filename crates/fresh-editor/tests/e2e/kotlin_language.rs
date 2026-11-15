@@ -74,5 +74,9 @@ fn a_kotlin_file_in_a_gradle_subproject_is_rooted_at_the_build() {
 
     let config = Config::default();
     let server = kotlin_server(&config);
-    assert_eq!(detect_workspace_root(&file, &server.root_markers), root);
+    assert_eq!(detect_workspace_root(
+            &fresh_editor_core::model::filesystem::StdFileSystem,
+            &file,
+            &server.root_markers,
+        ), root);
 }
