@@ -632,10 +632,13 @@ async function runExternal(
       // why — once, as the command is not tried again before then.
       const reason = result.stderr.trim();
       unavailableCommands.add(tool.command);
+      // Named as the frame names it: a long path would push what went wrong
+      // off the end of the status bar (the debug log has the whole path).
+      const name = toolName(lang);
       editor.setStatus(
         /os error 2\b|not found|cannot find/i.test(reason)
-          ? editor.t("status.no_renderer", { command: tool.command, lang })
-          : `${tool.command}: ${reason}`,
+          ? editor.t("status.no_renderer", { command: name, lang })
+          : `${name}: ${reason}`,
       );
       editor.debug(`markdown_compose: ${tool.command} not run (${reason})`);
       return undefined;

@@ -69,11 +69,9 @@ fn harness_with_renderers(
 }
 
 fn run(h: &mut EditorTestHarness, command: &str) {
-    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    h.wait_for_prompt().unwrap();
-    h.type_text(command).unwrap();
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // Enter only once the palette lists the command: its list follows the
+    // typing a step behind, and Enter before then runs whatever was first.
+    h.run_palette_command(command).unwrap();
     h.wait_for_prompt_closed().unwrap();
 }
 

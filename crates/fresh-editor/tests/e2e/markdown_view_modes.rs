@@ -63,11 +63,9 @@ fn setup_with(plugins: &[&str]) -> (EditorTestHarness, tempfile::TempDir) {
 /// frames, so no fixed number of frames or a quiet screen says it is done.
 /// A screen that never comes fails the wait.
 fn run(h: &mut EditorTestHarness, command: &str) {
-    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    h.wait_for_prompt().unwrap();
-    h.type_text(command).unwrap();
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // Enter only once the palette lists the command: its list follows the
+    // typing a step behind, and Enter before then runs whatever was first.
+    h.run_palette_command(command).unwrap();
     h.wait_for_prompt_closed().unwrap();
 }
 
@@ -257,6 +255,7 @@ fn closing_the_dual_tab_closes_the_file() {
     let (mut h, tmp) = setup();
     open_other(&mut h, &tmp);
     tab(&mut h, KeyCode::PageUp);
+    h.wait_until(|h| source_panes(h, 1)).unwrap();
     run(&mut h, DUAL);
     h.wait_until(dual).unwrap();
 
@@ -302,6 +301,7 @@ fn dual_mode_is_shown_in_the_files_tab() {
     let (mut h, tmp) = setup();
     open_other(&mut h, &tmp);
     tab(&mut h, KeyCode::PageUp);
+    h.wait_until(|h| source_panes(h, 1)).unwrap();
     run(&mut h, DUAL);
     h.wait_until(|h| dual(h) && tab_names(h) == ["doc.md", "other.txt"])
         .unwrap();
@@ -357,6 +357,7 @@ fn closing_the_dual_tab_among_others_ends_dual_mode() {
     h.open_file(&other).unwrap();
     h.wait_until(|h| count(h, "OTHERFILE") == 1).unwrap();
     tab(&mut h, KeyCode::PageUp);
+    h.wait_until(|h| source_panes(h, 2)).unwrap();
     run(&mut h, DUAL);
     h.wait_until(|h| count(h, "PARA") == 3 && h.screen_to_string().contains('┌'))
         .unwrap();
