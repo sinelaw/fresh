@@ -121,28 +121,21 @@ pub fn path_to_file_uri(path: &Path) -> Option<String> {
 /// Encode a `/`-rooted path. Used for every path on a POSIX client, and on a
 /// Windows client for a path that belongs to a POSIX host.
 fn posix_path_to_file_uri(path: &Path) -> Option<String> {
-    use std::path::Component;
-    let mut uri = String::from("file://");
-    for component in path.components() {
-        match component {
-            Component::RootDir => uri.push('/'),
-            Component::Normal(seg) => {
-                let s = seg.to_str()?;
-                percent_encode_segment(&mut uri, s);
-                uri.push('/');
-            }
-            Component::CurDir => {
-                uri.push_str("./");
-            }
-            Component::ParentDir => {
-                uri.push_str("../");
-            }
-            _ => {}
+    // Split on `/` and on nothing else. `Path::components()` does exactly
+    // that on unix, but on Windows it splits on `\` too, so a POSIX host's
+    // file named `a\b.txt` became two URI segments and named a file that
+    // host does not have. Empty segments and `.` are dropped and `..` is
+    // kept, as `Path::components()` does on unix.
+    let rest = path.to_str()?.strip_prefix('/')?;
+    let mut uri = String::from("file:///");
+    for segment in rest.split('/') {
+        if segment.is_empty() || segment == "." {
+            continue;
         }
-    }
-    // Remove trailing slash (unless path is just "/")
-    if uri.len() > "file:///".len() && uri.ends_with('/') {
-        uri.pop();
+        if !uri.ends_with('/') {
+            uri.push('/');
+        }
+        percent_encode_segment(&mut uri, segment);
     }
     Some(uri)
 }
@@ -766,8 +759,15 @@ mod tests {
         }
 
         /// Strategy for Unicode path components.
+        ///
+        /// `.` is excluded because a path drops it, so no round trip can
+        /// give it back. Everything else — a backslash, a colon, a name
+        /// spelled like a drive — is an ordinary character in a POSIX name
+        /// and must survive exactly.
         fn unicode_component() -> impl Strategy<Value = String> {
-            "[^\x00/]{1,20}"
+            proptest::string::string_regex("[^\x00/]{1,20}")
+                .unwrap()
+                .prop_filter("`.` is not a name", |s| s != ".")
         }
 
         proptest! {
@@ -790,10 +790,12 @@ mod tests {
                 let path = PathBuf::from(format!("/tmp/{comp}/file.txt"));
                 if let Some(uri) = path_to_file_uri(&path) {
                     let back = file_uri_to_path(&uri).unwrap();
-                    // `..` and `.` are preserved in the URI, matching the `url` crate.
-                    // Path::components().collect() also preserves them.
-                    let normalised: PathBuf = path.components().collect();
-                    prop_assert_eq!(back, normalised, "roundtrip failed");
+                    // Exactly the path, not `components().collect()`: on
+                    // Windows `PathBuf::push` discards the whole buffer when
+                    // it is given a component that looks like a drive, so
+                    // collecting `/tmp/A:/file.txt` yields `A:file.txt`. The
+                    // round trip itself is exact; that yardstick was not.
+                    prop_assert_eq!(back, path, "roundtrip failed");
                 }
             }
 
@@ -832,8 +834,7 @@ mod tests {
                 let path = PathBuf::from(format!("/tmp/{comp}/file.txt"));
                 if let Some(uri) = path_to_lsp_uri(&path) {
                     let back = lsp_uri_to_path(&uri).unwrap();
-                    let normalised: PathBuf = path.components().collect();
-                    prop_assert_eq!(back, normalised);
+                    prop_assert_eq!(back, path);
                 }
             }
 

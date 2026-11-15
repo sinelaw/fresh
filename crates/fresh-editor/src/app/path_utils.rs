@@ -228,11 +228,26 @@ fn canonicalize_deepest_existing(path: &Path) -> Option<PathBuf> {
 /// the path to exist. Similar to `canonicalize` but works on paths that
 /// don't exist yet.
 pub(crate) fn normalize_path(path: &Path) -> PathBuf {
-    // Through `HostPath`, so the separators that come back out are the ones
-    // `path` arrived with. Rebuilding from `Path::components()` re-spelled
-    // them all as the *client's* `MAIN_SEPARATOR`, which on a Windows client
-    // turned a remote host's `/home/user/x` into `\home\user\x` — one
-    // relative file name as far as that host is concerned.
+    // A path std reads as having a Windows prefix — a drive, a UNC share, or
+    // a verbatim `\\?\` form — is a local Windows path whichever separators
+    // it is spelled with, and std's rules are the right ones for it. Plugins
+    // hand us `//?/C:/...` because `editor.pathJoin` emits forward slashes,
+    // and that is still a verbatim Windows path: `HostPath` would read the
+    // single leading `/` as POSIX and keep the slashes.
+    #[cfg(windows)]
+    if matches!(
+        path.components().next(),
+        Some(std::path::Component::Prefix(_))
+    ) {
+        return path.components().collect();
+    }
+
+    // Everything else goes through `HostPath`, so the separators that come
+    // back out are the ones `path` arrived with. Rebuilding from
+    // `Path::components()` re-spelled them all as the *client's*
+    // `MAIN_SEPARATOR`, which on a Windows client turned a remote host's
+    // `/home/user/x` into `\home\user\x` — one relative file name as far as
+    // that host is concerned.
     path.as_host().normalize().into_path_buf()
 }
 
