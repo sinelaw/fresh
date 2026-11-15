@@ -8,11 +8,37 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Features
 
-* **Recent Files** - File > **Recent Files...** (or the command palette) lists the files you closed in this workspace, most recent first, and reopens the one you pick. Each window keeps its own list, and it survives a restart. Bindable as `recent_files`
+* **Theme chrome and file icons** - themes can go borderless, style the gutter and explorer, and pick tab and status bar separator glyphs (including Powerline-style sections and caps). With Nerd Font icons on, the explorer and tabs show file-type icons, which themes can override. Two new built-in themes, `flat` and `quiet`, show it off (#3735)
+* **Theme editor previews live** - edits show in the real editor as you make them, and every theme option, glyph and icon can be edited (#3735)
+* **Markdown previews of diagrams and math** - in compose mode, Mermaid and LaTeX/math blocks are drawn by external tools (e.g. `termaid`, `utftex`) when installed; any code block language can be mapped to a command (#3751)
+* **Recent Files** - File > **Recent Files...** (or the command palette) reopens a file you closed in this window; the list survives a restart (#3755)
+* **Explorer dims gitignored entries** when they are shown (#3283, #3290 by @CnsMaple)
+* **Workboard** - a new Orchestrator board with every workspace and agent, grouped by what needs you, by project, by folder or as a kanban; a status bar beacon jumps to the next waiting agent (#3736)
+* **New Welcome screen** - one short page with the latest release's changes, the essential keys and a Nerd Font switch (#3738)
+* **LSP completions use the server's replace range** (`textEdit`) (#3734 by @andsuli)
+* **Plugins can declare map settings**, edited in the Settings UI as a list of entries (#3751)
 
 ### Bug Fixes
 
-* **macOS honors `XDG_CONFIG_HOME` and `XDG_DATA_HOME`** - an absolute `XDG_CONFIG_HOME` now selects `$XDG_CONFIG_HOME/fresh` instead of `~/.config/fresh`, and an absolute `XDG_DATA_HOME` does the same for sessions, workspace trust and crash recovery. An existing install keeps reading the files it already has until you move them into the new directory, so an upgrade does not look like a fresh start (#3496, #3497 by @LuisAlejandro)
+* **Windows keeps key modifiers** - Ctrl+Tab, Ctrl+I and Ctrl+Shift+letter are no longer read as plain keys in Windows Terminal and WezTerm (#3521, reported by @BrettKinny; #3602 by @neatsorg)
+* **Ctrl/Alt+Shift+Tab are recognized**, and passed through to terminal panes (#3601 by @neatsorg)
+* **`fresh FILE` remembers the cursor position** after quitting with the file open (#3748, reported by @shemgp)
+* **LSP diagnostics refresh** - servers like rust-analyzer and Roslyn now push updated diagnostics without an edit (#3681, #3682 by @StonesFromTheSky)
+* **Live diff and git gutter ignore line-ending style** - CRLF vs LF no longer marks whole files as changed on Windows (#3747)
+* **macOS honors `XDG_CONFIG_HOME` and `XDG_DATA_HOME`**; existing installs keep their current directories until the new ones exist (#3496, #3497 by @LuisAlejandro)
+* **Terminals restore in the directory the shell `cd`'d to**, and an exited terminal keeps its tab name across a restart (#3740, #3074)
+* **Inlay hints keep their own colour** next to a highlighted bracket or search match (#3622 by @mommysgoodpuppy)
+* **Word navigation in prompts handles non-ASCII letters** - Ctrl+Left/Right/Backspace no longer split words like "café" (#3721 by @56steve)
+* **Glob `?` matches one whole character**, including accented and emoji file names (#3620 by @56steve)
+* **Smart Home on a wrapped line** no longer lands inside a multi-byte indent character (#3619 by @neatsorg)
+* **Orchestrator: a project whose folder was moved says so** and offers to repoint it, instead of opening in the home folder (#3746)
+* **Holding Down on the Welcome page** no longer scrolls into blank space (#3739)
+* **Settings: Status Bar Left/Right editor is easier to read** (#3756)
+* **Flatpak uses a supported runtime**, silencing the end-of-life warning (#3752 by @Daniel-at-github)
+
+### Internals
+
+* Debian packaging updates following mentors review, and flaky test fixes (#3728, #3729, #3730, #3737, #3744, #3745, #3750, #3678 by @neatsorg)
 
 ## 0.5.8
 
