@@ -80,101 +80,101 @@ impl FileSystem for DroppableFileSystem {
     fn read_file(&self, path: &HostPath) -> io::Result<Vec<u8>> {
         let path = path.as_path();
         self.check_disconnected()?;
-        self.inner.read_file(path)
+        self.inner.read_file(path.as_host())
     }
     fn read_range(&self, path: &HostPath, offset: u64, len: usize) -> io::Result<Vec<u8>> {
         let path = path.as_path();
         self.check_disconnected()?;
-        self.inner.read_range(path, offset, len)
+        self.inner.read_range(path.as_host(), offset, len)
     }
     fn write_file(&self, path: &HostPath, data: &[u8]) -> io::Result<()> {
         let path = path.as_path();
         self.check_disconnected()?;
-        self.inner.write_file(path, data)
+        self.inner.write_file(path.as_host(), data)
     }
     fn create_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
         let path = path.as_path();
-        self.inner.create_file(path)
+        self.inner.create_file(path.as_host())
     }
     fn create_new_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
         let path = path.as_path();
-        self.inner.create_new_file(path)
+        self.inner.create_new_file(path.as_host())
     }
     fn create_new_private_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
         let path = path.as_path();
-        self.inner.create_new_private_file(path)
+        self.inner.create_new_private_file(path.as_host())
     }
     fn open_file(&self, path: &HostPath) -> io::Result<Box<dyn FileReader>> {
         let path = path.as_path();
-        self.inner.open_file(path)
+        self.inner.open_file(path.as_host())
     }
     fn open_file_for_write(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
         let path = path.as_path();
-        self.inner.open_file_for_write(path)
+        self.inner.open_file_for_write(path.as_host())
     }
     fn open_file_for_append(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
         let path = path.as_path();
-        self.inner.open_file_for_append(path)
+        self.inner.open_file_for_append(path.as_host())
     }
     fn set_file_length(&self, path: &HostPath, len: u64) -> io::Result<()> {
         let path = path.as_path();
-        self.inner.set_file_length(path, len)
+        self.inner.set_file_length(path.as_host(), len)
     }
     fn rename(&self, from: &HostPath, to: &HostPath) -> io::Result<()> {
         let from = from.as_path();
         let to = to.as_path();
-        self.inner.rename(from, to)
+        self.inner.rename(from.as_host(), to.as_host())
     }
     fn copy(&self, from: &HostPath, to: &HostPath) -> io::Result<u64> {
         let from = from.as_path();
         let to = to.as_path();
-        self.inner.copy(from, to)
+        self.inner.copy(from.as_host(), to.as_host())
     }
     fn remove_file(&self, path: &HostPath) -> io::Result<()> {
         let path = path.as_path();
-        self.inner.remove_file(path)
+        self.inner.remove_file(path.as_host())
     }
     fn remove_dir(&self, path: &HostPath) -> io::Result<()> {
         let path = path.as_path();
-        self.inner.remove_dir(path)
+        self.inner.remove_dir(path.as_host())
     }
     fn metadata(&self, path: &HostPath) -> io::Result<FileMetadata> {
         let path = path.as_path();
         self.block_if_hanging();
-        self.inner.metadata(path)
+        self.inner.metadata(path.as_host())
     }
     fn symlink_metadata(&self, path: &HostPath) -> io::Result<FileMetadata> {
         let path = path.as_path();
         self.block_if_hanging();
-        self.inner.symlink_metadata(path)
+        self.inner.symlink_metadata(path.as_host())
     }
     fn is_dir(&self, path: &HostPath) -> io::Result<bool> {
         let path = path.as_path();
-        self.inner.is_dir(path)
+        self.inner.is_dir(path.as_host())
     }
     fn is_file(&self, path: &HostPath) -> io::Result<bool> {
         let path = path.as_path();
-        self.inner.is_file(path)
+        self.inner.is_file(path.as_host())
     }
     fn set_permissions(&self, path: &HostPath, permissions: &FilePermissions) -> io::Result<()> {
         let path = path.as_path();
-        self.inner.set_permissions(path, permissions)
+        self.inner.set_permissions(path.as_host(), permissions)
     }
     fn read_dir(&self, path: &HostPath) -> io::Result<Vec<DirEntry>> {
         let path = path.as_path();
-        self.inner.read_dir(path)
+        self.inner.read_dir(path.as_host())
     }
     fn create_dir(&self, path: &HostPath) -> io::Result<()> {
         let path = path.as_path();
-        self.inner.create_dir(path)
+        self.inner.create_dir(path.as_host())
     }
     fn create_dir_all(&self, path: &HostPath) -> io::Result<()> {
         let path = path.as_path();
-        self.inner.create_dir_all(path)
+        self.inner.create_dir_all(path.as_host())
     }
     fn canonicalize(&self, path: &HostPath) -> io::Result<HostPathBuf> {
         let path = path.as_path();
-        self.inner.canonicalize(path)
+        self.inner.canonicalize(path.as_host())
     }
     fn current_uid(&self) -> u32 {
         self.inner.current_uid()
@@ -186,7 +186,7 @@ impl FileSystem for DroppableFileSystem {
         opts: &FileSearchOptions,
     ) -> io::Result<Vec<SearchMatch>> {
         let path = path.as_path();
-        self.inner.search_file(path, pattern, opts)
+        self.inner.search_file(path.as_host(), pattern, opts)
     }
     fn sudo_write(
         &self,
@@ -197,7 +197,7 @@ impl FileSystem for DroppableFileSystem {
     ) -> io::Result<()> {
         let path = path.as_path();
         self.check_disconnected()?;
-        self.inner.sudo_write(path, data, mode, owner)
+        self.inner.sudo_write(path.as_host(), data, mode, owner)
     }
     fn walk(
         &self,
@@ -207,7 +207,7 @@ impl FileSystem for DroppableFileSystem {
             on_entry: &mut dyn FnMut(fresh_editor_core::model::filesystem::WalkEntry<'_>) -> bool,
     ) -> std::io::Result<()> {
         let root = root.as_path();
-        self.inner.walk(root, opts, cancel, on_entry)
+        self.inner.walk(root.as_host(), opts, cancel, on_entry)
     }
     fn remote_connection_info(&self) -> Option<&str> {
         // Pretend to be remote so disconnected checks work

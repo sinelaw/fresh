@@ -84,16 +84,16 @@ fn kube_connection_round_trips_a_file_through_fake_kubectl() {
     // AgentChannel → filesystem protocol.
     let fs = RemoteFileSystem::new(connection.channel(), "k8s:test/fake-pod".to_string());
     let file = ws.join("hello.txt");
-    fs.write_file(&file, b"cloud workspace")
+    fs.write_file(file.as_host(), b"cloud workspace")
         .expect("write_file over the agent channel");
     assert_eq!(
-        fs.read_file(&file)
+        fs.read_file(file.as_host())
             .expect("read_file over the agent channel"),
         b"cloud workspace"
     );
     // The bytes really landed on the local "pod" filesystem.
     assert_eq!(std::fs::read(&file).unwrap(), b"cloud workspace");
-    assert!(fs.exists(&file));
+    assert!(fs.exists(file.as_host()));
 
     drop(connection);
 }
@@ -135,7 +135,7 @@ fn agent_channel_survives_dropping_the_attach_runtime() {
     // Channel is live right after connect.
     authority
         .filesystem
-        .write_file(&f, b"alive")
+        .write_file(f.as_host(), b"alive")
         .expect("write before the simulated restart");
 
     // Simulate the editor restart: drop the editor's runtime while KEEPING the
@@ -147,7 +147,7 @@ fn agent_channel_survives_dropping_the_attach_runtime() {
     // either return Err (channel closed) or panic (`block_on` on a dropped
     // runtime). Catch both so the failure is a clean, descriptive RED.
     let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        authority.filesystem.read_file(&f)
+        authority.filesystem.read_file(f.as_host())
     }));
     match read {
         Ok(Ok(bytes)) => assert_eq!(bytes, b"alive"),
@@ -206,8 +206,8 @@ fn attach_spec_payload_parses_and_connects_through_fake_kubectl() {
 
     // The connected authority's filesystem works end to end.
     let f = ws.join("spec.txt");
-    authority.filesystem.write_file(&f, b"via-spec").unwrap();
-    assert_eq!(authority.filesystem.read_file(&f).unwrap(), b"via-spec");
+    authority.filesystem.write_file(f.as_host(), b"via-spec").unwrap();
+    assert_eq!(authority.filesystem.read_file(f.as_host()).unwrap(), b"via-spec");
 }
 
 #[test]
@@ -243,8 +243,8 @@ fn kube_authority_spawns_one_shot_and_lsp_through_fake_kubectl() {
 
     // Filesystem (agent channel).
     let f = ws.join("a.txt");
-    authority.filesystem.write_file(&f, b"hi").unwrap();
-    assert_eq!(authority.filesystem.read_file(&f).unwrap(), b"hi");
+    authority.filesystem.write_file(f.as_host(), b"hi").unwrap();
+    assert_eq!(authority.filesystem.read_file(f.as_host()).unwrap(), b"hi");
 
     // One-shot process spawn routes through the agent's `exec` (i.e. runs in
     // the "pod"). Use `sh -c` so it's robust across systems.
@@ -357,7 +357,7 @@ fn a_blocked_authority_reads_the_machine_but_runs_nothing_on_it() {
     assert_eq!(
         authority
             .filesystem
-            .read_file(&ws.join("transcript.jsonl"))
+            .read_file(ws.join("transcript.jsonl").as_host())
             .expect("a blocked authority still reads files"),
         b"{\"cwd\":\"/srv\"}\n"
     );
