@@ -256,7 +256,7 @@ impl FileOpenState {
         {
             for letter in b'A'..=b'Z' {
                 let path = PathBuf::from(format!("{}:\\", letter as char));
-                if filesystem.exists(&path) {
+                if filesystem.exists(path.as_host()) {
                     shortcuts.push(NavigationShortcut {
                         label: format!("{}:", letter as char),
                         path,

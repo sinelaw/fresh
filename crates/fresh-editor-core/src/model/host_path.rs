@@ -916,6 +916,11 @@ mod tests {
     /// Dropping it would hide the file from a walk — and for a directory,
     /// everything under it, since the walk skips the whole subtree.
     #[test]
+    // `OsStrExt::from_bytes` is unix-only, and a lone 0xFF byte is not
+    // valid WTF-8, so there is no Windows spelling of this case: a path
+    // that is not UTF-8 is a unix phenomenon. The Windows analogue would
+    // need an unpaired surrogate via `OsStringExt::from_wide`.
+    #[cfg(unix)]
     fn a_name_that_is_not_utf8_is_related_lossily_not_refused() {
         use std::os::unix::ffi::OsStrExt;
         let root = HostPath::from_os_str(OsStr::from_bytes(b"/srv/proj"));
@@ -928,6 +933,11 @@ mod tests {
     }
 
     #[test]
+    // `OsStrExt::from_bytes` is unix-only, and a lone 0xFF byte is not
+    // valid WTF-8, so there is no Windows spelling of this case: a path
+    // that is not UTF-8 is a unix phenomenon. The Windows analogue would
+    // need an unpaired surrogate via `OsStringExt::from_wide`.
+    #[cfg(unix)]
     fn a_directory_whose_name_is_not_utf8_still_relates_to_its_root() {
         use std::os::unix::ffi::OsStrExt;
         let root = HostPath::from_os_str(OsStr::from_bytes(b"/srv"));
