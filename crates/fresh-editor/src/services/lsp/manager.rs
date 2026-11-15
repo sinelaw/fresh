@@ -2306,7 +2306,11 @@ mod tests {
         let file = src.join("main.rs");
         std::fs::write(&file, "").unwrap();
 
-        let root = detect_workspace_root(&StdFileSystem, &file, &["Cargo.toml".to_string(), ".git".to_string()]);
+        let root = detect_workspace_root(
+            &StdFileSystem,
+            &file,
+            &["Cargo.toml".to_string(), ".git".to_string()],
+        );
         assert_eq!(root, project);
     }
 
@@ -2332,7 +2336,8 @@ mod tests {
         let file = dir.join("file.txt");
         std::fs::write(&file, "").unwrap();
 
-        let root = detect_workspace_root(&StdFileSystem, &file, &["nonexistent_marker".to_string()]);
+        let root =
+            detect_workspace_root(&StdFileSystem, &file, &["nonexistent_marker".to_string()]);
         assert_eq!(root, dir);
     }
 

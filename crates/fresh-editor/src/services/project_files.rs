@@ -488,10 +488,10 @@ mod tests {
                 &cancel,
                 &mut |path, rel, _| {
                     assert_eq!(
-                    path,
-                    root.as_host().join_rel(rel).as_host_path(),
-                    "path must be root joined with rel"
-                );
+                        path,
+                        root.as_host().join_rel(rel).as_host_path(),
+                        "path must be root joined with rel"
+                    );
                     files.push(rel.to_string());
                     true
                 },

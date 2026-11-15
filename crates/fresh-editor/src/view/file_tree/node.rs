@@ -111,9 +111,9 @@ pub enum NodeState {
 
 #[cfg(test)]
 mod tests {
-    use fresh_editor_core::model::host_path::HostPathBuf;
     use super::*;
     use crate::model::filesystem::{DirEntry, EntryType};
+    use fresh_editor_core::model::host_path::HostPathBuf;
     use std::path::PathBuf;
 
     #[test]

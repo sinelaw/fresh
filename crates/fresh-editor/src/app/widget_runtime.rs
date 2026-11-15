@@ -3395,11 +3395,11 @@ impl crate::app::window::Window {
 
 #[cfg(test)]
 mod tests {
-    use fresh_editor_core::model::host_path::AsHostPath;
     use super::Editor;
     use crate::config::Config;
     use crate::config_io::DirectoryContext;
     use fresh_core::api::WidgetSpec;
+    use fresh_editor_core::model::host_path::AsHostPath;
     use std::sync::Arc;
     use tempfile::TempDir;
 

@@ -1,6 +1,6 @@
-use fresh_editor_core::model::host_path::AsHostPath;
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
+use fresh_editor_core::model::host_path::AsHostPath;
 use std::fs;
 
 /// Test that Alt+X opens the Explorer menu

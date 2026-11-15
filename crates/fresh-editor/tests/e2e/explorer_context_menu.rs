@@ -1,6 +1,6 @@
-use fresh_editor_core::model::host_path::AsHostPath;
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
+use fresh_editor_core::model::host_path::AsHostPath;
 use std::fs;
 
 // ── coordinate helpers ───────────────────────────────────────────────────────
@@ -892,7 +892,9 @@ fn selected_relative_path(h: &EditorTestHarness) -> String {
     let entry = explorer.get_selected_entry().expect("a selection");
     let root = explorer.tree().root_path();
     let rel = entry.path.rel_to(root.as_host());
-    let path = rel.as_deref().unwrap_or(entry.path.to_str().unwrap_or_default());
+    let path = rel
+        .as_deref()
+        .unwrap_or(entry.path.to_str().unwrap_or_default());
     path.split('/')
         .map(std::borrow::Cow::Borrowed)
         .collect::<Vec<_>>()
