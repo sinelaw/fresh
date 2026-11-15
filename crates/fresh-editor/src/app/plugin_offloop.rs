@@ -113,24 +113,26 @@ pub(crate) fn walk_tree(runtime: &LiveRuntime, cap: OffLoop, req: WalkTreeReques
 
         let cancel = Arc::clone(&cap.cancel);
         let mut entries: Vec<serde_json::Value> = Vec::new();
-        let walked = cap.filesystem.walk(root.as_host(), &opts, &cancel, &mut |entry| {
-            entries.push(serde_json::json!({
-                "path": entry.path.to_wire_string(),
-                "rel": entry.rel,
-                "kind": match entry.entry_type {
-                    crate::model::filesystem::EntryType::Directory => "dir",
-                    crate::model::filesystem::EntryType::Symlink => "symlink",
-                    crate::model::filesystem::EntryType::File => "file",
-                },
-                "mtime": entry
-                    .metadata
-                    .modified
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map_or(0, |d| d.as_secs()),
-                "size": entry.metadata.size,
-            }));
-            true
-        });
+        let walked = cap
+            .filesystem
+            .walk(root.as_host(), &opts, &cancel, &mut |entry| {
+                entries.push(serde_json::json!({
+                    "path": entry.path.to_wire_string(),
+                    "rel": entry.rel,
+                    "kind": match entry.entry_type {
+                        crate::model::filesystem::EntryType::Directory => "dir",
+                        crate::model::filesystem::EntryType::Symlink => "symlink",
+                        crate::model::filesystem::EntryType::File => "file",
+                    },
+                    "mtime": entry
+                        .metadata
+                        .modified
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map_or(0, |d| d.as_secs()),
+                    "size": entry.metadata.size,
+                }));
+                true
+            });
 
         let result = match walked {
             Ok(()) => {
@@ -571,7 +573,7 @@ pub(crate) fn project_search(
                 &custom_ignore,
                 &walk_handle.cancel,
                 &mut |path, rel, is_link| {
-                    if skip(path) || !search_file_glob_matches(&file_glob, rel) {
+                    if skip(path.as_path()) || !search_file_glob_matches(&file_glob, rel) {
                         // Queued ahead of the walk, searched as open, or
                         // filtered out.
                         return true;
@@ -579,17 +581,17 @@ pub(crate) fn project_search(
                     if is_link {
                         // Git lists the index's mode: a link replaced by a
                         // file, not yet staged, resolves to itself.
-                        let Ok(resolved) = walk_fs.canonicalize(path.as_host()) else {
+                        let Ok(resolved) = walk_fs.canonicalize(path) else {
                             return true; // dangling: nothing to search
                         };
                         let target = rerooted(resolved.into_path_buf(), &walk_reroot);
-                        if target != path {
+                        if target != path.as_path() {
                             link_targets.push(target);
                             return true;
                         }
                     }
-                    sent.insert(path.to_path_buf());
-                    walk_tx.blocking_send(path.to_path_buf()).is_ok()
+                    sent.insert(path.as_path().to_path_buf());
+                    walk_tx.blocking_send(path.as_path().to_path_buf()).is_ok()
                 },
             ) {
                 tracing::warn!("Project search: listing project files failed: {}", e);

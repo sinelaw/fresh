@@ -137,7 +137,10 @@ impl FileTree {
 
         // Read directory contents with metadata (for file sizes)
         let path = self.get_node(id).unwrap().entry.path.clone();
-        let result = self.fs_manager.list_dir_with_metadata((path.clone()).into_path_buf()).await;
+        let result = self
+            .fs_manager
+            .list_dir_with_metadata((path.clone()).into_path_buf())
+            .await;
 
         match result {
             Ok(entries) => {
@@ -336,7 +339,8 @@ impl FileTree {
         self.next_id += 1;
 
         let node = TreeNode::new(id, entry.clone(), parent);
-        self.path_to_node.insert((entry.path.clone()).into_path_buf(), id);
+        self.path_to_node
+            .insert((entry.path.clone()).into_path_buf(), id);
         self.nodes.insert(id, node);
 
         id

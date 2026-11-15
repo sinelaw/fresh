@@ -29,11 +29,11 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use fresh_editor_core::model::filesystem::{
     ContentDigest, DirEntry, FileMetadata, FilePermissions, FileReader, FileSearchOptions,
     FileSystem, FileWriter, ReplaceError, SearchMatch,
 };
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 
 #[cfg(unix)]
 mod imp;
@@ -228,7 +228,8 @@ impl FileSystem for SpoolFileSystem {
         data: &[u8],
     ) -> Result<(), ReplaceError> {
         let path = path.as_path();
-        self.inner.replace_file_preserving_identity(path.as_host(), data)
+        self.inner
+            .replace_file_preserving_identity(path.as_host(), data)
     }
     fn create_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
         let path = path.as_path();

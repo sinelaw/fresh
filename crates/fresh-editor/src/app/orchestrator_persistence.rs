@@ -483,7 +483,10 @@ fn migrate_windows_json_into_workspaces(
     }
     // Retire windows.json (keep a .bak so a downgrade isn't one-way).
     let bak = global_p.with_extension("json.retired.bak");
-    if filesystem.rename(global_p.as_host(), bak.as_host()).is_err() {
+    if filesystem
+        .rename(global_p.as_host(), bak.as_host())
+        .is_err()
+    {
         // Best-effort: if delete also fails the file stays and migration reruns (idempotent).
         let _ = filesystem.remove_file(global_p.as_host()).ok();
     }
@@ -1179,7 +1182,11 @@ impl Editor {
         // directory (no per-cwd split), so two editor processes writing
         // the same plugin's state still need atomic-rename safety.
         let state_dir = global_state_dir(&data_dir);
-        if let Err(e) = self.authority().filesystem.create_dir_all(state_dir.as_host()) {
+        if let Err(e) = self
+            .authority()
+            .filesystem
+            .create_dir_all(state_dir.as_host())
+        {
             tracing::warn!("orchestrator persistence: failed to create {state_dir:?}: {e}");
             return;
         }
@@ -1213,11 +1220,19 @@ impl Editor {
         match serde_json::to_vec_pretty(&merged) {
             Ok(bytes) => {
                 let tmp = path.with_extension("json.tmp");
-                if let Err(e) = self.authority().filesystem.write_file(tmp.as_host(), &bytes) {
+                if let Err(e) = self
+                    .authority()
+                    .filesystem
+                    .write_file(tmp.as_host(), &bytes)
+                {
                     tracing::warn!("orchestrator persistence: failed to write {tmp:?}: {e}");
                     return;
                 }
-                if let Err(e) = self.authority().filesystem.rename(tmp.as_host(), path.as_host()) {
+                if let Err(e) = self
+                    .authority()
+                    .filesystem
+                    .rename(tmp.as_host(), path.as_host())
+                {
                     tracing::warn!(
                         "orchestrator persistence: failed to rename {tmp:?} → {path:?}: {e}"
                     );

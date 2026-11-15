@@ -4,6 +4,7 @@
 //! no dependencies on `Editor`. See `docs/internal/editor-modules-refactor-plan.md`
 //! (phase 1) for why these live here instead of on `Editor`.
 
+use fresh_editor_core::model::host_path::AsHostPath;
 use std::cell::OnceCell;
 use std::path::{Component, Path, PathBuf};
 
@@ -227,33 +228,12 @@ fn canonicalize_deepest_existing(path: &Path) -> Option<PathBuf> {
 /// the path to exist. Similar to `canonicalize` but works on paths that
 /// don't exist yet.
 pub(crate) fn normalize_path(path: &Path) -> PathBuf {
-    let mut components = Vec::new();
-
-    for component in path.components() {
-        match component {
-            Component::CurDir => {
-                // Skip "." components
-            }
-            Component::ParentDir => {
-                // Pop the last component if it's a normal component
-                if let Some(Component::Normal(_)) = components.last() {
-                    components.pop();
-                } else {
-                    // Keep ".." if we can't go up further (for relative paths)
-                    components.push(component);
-                }
-            }
-            _ => {
-                components.push(component);
-            }
-        }
-    }
-
-    if components.is_empty() {
-        PathBuf::from(".")
-    } else {
-        components.iter().collect()
-    }
+    // Through `HostPath`, so the separators that come back out are the ones
+    // `path` arrived with. Rebuilding from `Path::components()` re-spelled
+    // them all as the *client's* `MAIN_SEPARATOR`, which on a Windows client
+    // turned a remote host's `/home/user/x` into `\home\user\x` — one
+    // relative file name as far as that host is concerned.
+    path.as_host().normalize().into_path_buf()
 }
 
 #[cfg(test)]

@@ -12,11 +12,11 @@ use crate::services::remote::protocol::{
     read_params, stat_params, sudo_write_params, truncate_params, write_params, PatchOp,
     RemoteDirEntry, RemoteMetadata,
 };
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use std::io::{self, Cursor, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, UNIX_EPOCH};
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 
 /// Static per-connection system info fetched once from the agent's `info`
 /// response. `$HOME` and the temp dir don't change over a session, so they are
@@ -328,7 +328,12 @@ impl FileSystem for RemoteFileSystem {
         Ok(content)
     }
 
-    fn count_line_feeds_in_range(&self, path: &HostPath, offset: u64, len: usize) -> io::Result<usize> {
+    fn count_line_feeds_in_range(
+        &self,
+        path: &HostPath,
+        offset: u64,
+        len: usize,
+    ) -> io::Result<usize> {
         let path_str = path.to_wire_string();
         let result = self
             .channel
@@ -437,7 +442,12 @@ impl FileSystem for RemoteFileSystem {
         Ok(())
     }
 
-    fn write_patched(&self, src_path: &HostPath, dst_path: &HostPath, ops: &[WriteOp]) -> io::Result<()> {
+    fn write_patched(
+        &self,
+        src_path: &HostPath,
+        dst_path: &HostPath,
+        ops: &[WriteOp],
+    ) -> io::Result<()> {
         // Convert WriteOps to protocol PatchOps
         let patch_ops: Vec<PatchOp> = ops
             .iter()
@@ -653,7 +663,9 @@ impl FileSystem for RemoteFileSystem {
             io::Error::new(io::ErrorKind::InvalidData, "missing path in response")
         })?;
 
-        Ok(HostPathBuf::from_os_string(std::ffi::OsString::from(canonical)))
+        Ok(HostPathBuf::from_os_string(std::ffi::OsString::from(
+            canonical,
+        )))
     }
 
     fn current_uid(&self) -> u32 {
@@ -696,8 +708,7 @@ impl FileSystem for RemoteFileSystem {
         // cache when primed (see `sys_info`); falls back to /tmp if the info
         // request fails (e.g. older agent without temp_dir support).
         let temp_dir = HostPathBuf::from_path_buf(
-            self
-                .sys_info()
+            self.sys_info()
                 .map(|i| i.temp_dir)
                 .unwrap_or_else(|| PathBuf::from("/tmp")),
         );

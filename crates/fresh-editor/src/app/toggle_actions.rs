@@ -6,8 +6,8 @@
 //! - Reset buffer settings
 //! - Config dump, save, and reload
 
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use crate::types::LspServerConfig;
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use fresh_i18n::t;
 
 use crate::config::{Config, FileExplorerSide};

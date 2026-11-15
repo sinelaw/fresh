@@ -7,8 +7,8 @@
 //! - Auto-saving modified buffers
 //! - Cleaning up recovery files
 
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use anyhow::Result as AnyhowResult;
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 
 use crate::model::event::BufferId;
 use fresh_core::WindowId;
@@ -1104,8 +1104,11 @@ impl Editor {
         // than the buffer does (a symlinked directory, e.g. macOS's
         // /var -> /private/var), so match on the resolved path.
         let local_fs = std::sync::Arc::clone(&self.local_filesystem);
-        let resolve =
-            |p: &std::path::Path| local_fs.canonicalize(p.as_host()).unwrap_or_else(|_| HostPathBuf::from_path_buf(p.to_path_buf()));
+        let resolve = |p: &std::path::Path| {
+            local_fs
+                .canonicalize(p.as_host())
+                .unwrap_or_else(|_| HostPathBuf::from_path_buf(p.to_path_buf()))
+        };
         let target = resolve(path);
         let active_window = self.active_window;
         for window_id in self.window_ids_sorted() {

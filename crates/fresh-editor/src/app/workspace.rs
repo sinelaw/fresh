@@ -2073,7 +2073,11 @@ impl crate::app::window::Window {
         {
             let mut path_to_buffer: HashMap<PathBuf, BufferId> = HashMap::new();
             for rel_path in collect_file_paths_from_states(split_states) {
-                let abs_path = self.root.join(&rel_path);
+                let abs_path = self
+                    .root
+                    .as_host()
+                    .join_rel(&rel_path.to_string_lossy().replace('\\', "/"))
+                    .into_path_buf();
                 let buffer_id = self.install_remote_placeholder(&abs_path);
                 path_to_buffer.insert(rel_path, buffer_id);
             }

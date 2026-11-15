@@ -9,6 +9,7 @@
 use crate::services::async_bridge::AsyncBridge;
 use crate::services::lsp::async_handler::LspHandle;
 use crate::types::{FeatureFilter, LspFeature, LspServerConfig};
+use fresh_editor_core::model::host_path::AsHostPath;
 use lsp_types::{SemanticTokensLegend, Uri};
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -121,14 +122,16 @@ enum SpawnDecision {
 /// `file:///C:/Users/...`) and broke root-dependent LSP operations with
 /// "os error 3" (issue #3067).
 pub fn path_to_uri(path: &Path) -> Option<Uri> {
-    // The shared converter returns `None` for relative paths, so keep the
-    // long-standing behavior of resolving them against the working directory
-    // before encoding.
-    let abs = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir().ok()?.join(path)
-    };
+    // The shared converter returns `None` for a path with no root, so keep the
+    // long-standing behavior of resolving those against the working directory
+    // before encoding. Rooted-ness is asked of the path itself, not of
+    // `Path::is_absolute`: on Windows that wants a drive letter, so a remote
+    // host's `/home/user/proj` took the `current_dir` branch and came back as
+    // `C:/home/user/proj` — a root the host does not have.
+    if path.as_host().is_absolute() {
+        return fresh_core::file_uri::path_to_lsp_uri(path);
+    }
+    let abs = std::env::current_dir().ok()?.join(path);
     fresh_core::file_uri::path_to_lsp_uri(&abs)
 }
 
@@ -136,18 +139,27 @@ pub fn path_to_uri(path: &Path) -> Option<Uri> {
 ///
 /// Returns the first directory containing any of the markers, or the file's parent
 /// directory if no marker is found.
-pub fn detect_workspace_root(file_path: &Path, root_markers: &[String]) -> std::path::PathBuf {
+///
+/// The markers are looked for through `fs`, the filesystem the file is on.
+/// `Path::exists` would ask the *client's* filesystem, which for a remote
+/// workspace answers no to everything, so the root silently collapsed to the
+/// file's own directory and the language server was handed the wrong project.
+pub fn detect_workspace_root(
+    fs: &dyn crate::model::filesystem::FileSystem,
+    file_path: &Path,
+    root_markers: &[String],
+) -> std::path::PathBuf {
     let file_dir = file_path.parent().unwrap_or(file_path).to_path_buf();
 
     if root_markers.is_empty() {
         return file_dir;
     }
 
-    let mut dir = Some(file_dir.as_path());
+    let mut dir = Some(file_dir.as_host());
     while let Some(d) = dir {
         for marker in root_markers {
-            if d.join(marker).exists() {
-                return d.to_path_buf();
+            if fs.exists(d.join_name(std::ffi::OsStr::new(marker)).as_host_path()) {
+                return d.as_path().to_path_buf();
             }
         }
         dir = d.parent();
@@ -431,6 +443,8 @@ pub struct LspManager {
     /// by `set_long_running_spawner` from `Editor::set_boot_authority`
     /// before any LSP spawn can happen.
     long_running_spawner: Option<std::sync::Arc<dyn crate::services::remote::LongRunningSpawner>>,
+    /// The active authority's filesystem; see [`Self::set_filesystem`].
+    filesystem: Option<std::sync::Arc<dyn crate::model::filesystem::FileSystem>>,
 
     /// Active authority's Workspace Trust handle. LSP servers load and execute
     /// project-controlled code at startup (analyzers/source-generators for C#,
@@ -488,6 +502,7 @@ impl LspManager {
             runtime: None,
             async_bridge: None,
             long_running_spawner: None,
+            filesystem: None,
             workspace_trust: None,
             path_translation: None,
             restart_attempts: HashMap::new(),
@@ -550,6 +565,20 @@ impl LspManager {
         translation: Option<crate::services::authority::PathTranslation>,
     ) {
         self.path_translation = translation;
+    }
+
+    /// Install the active authority's filesystem, so root detection looks for
+    /// marker files where the workspace actually is. Set from
+    /// `Editor::set_boot_authority` alongside the spawner and the translation.
+    pub fn set_filesystem(&mut self, fs: std::sync::Arc<dyn crate::model::filesystem::FileSystem>) {
+        self.filesystem = Some(fs);
+    }
+
+    /// The authority's filesystem, or the local one before any is wired.
+    fn filesystem(&self) -> std::sync::Arc<dyn crate::model::filesystem::FileSystem> {
+        self.filesystem
+            .clone()
+            .unwrap_or_else(|| std::sync::Arc::new(crate::model::filesystem::StdFileSystem))
     }
 
     /// Blocking variant of the authority-routed command probe used by
@@ -887,7 +916,7 @@ impl LspManager {
                 .and_then(|configs| configs.first())
                 .map(|c| c.root_markers.as_slice())
                 .unwrap_or(&[]);
-            let root = detect_workspace_root(path, markers);
+            let root = detect_workspace_root(&*self.filesystem(), path, markers);
             let mapped = self
                 .path_translation
                 .as_ref()
@@ -1388,7 +1417,8 @@ impl LspManager {
                 Ok(handle) => {
                     let effective_root = file_path
                         .and_then(|p| {
-                            let root = detect_workspace_root(p, &config.root_markers);
+                            let root =
+                                detect_workspace_root(&*self.filesystem(), p, &config.root_markers);
                             path_to_uri(&root)
                         })
                         .or_else(|| self.root_uri.clone());
@@ -1711,7 +1741,8 @@ impl LspManager {
                 let effective_root = if is_universal {
                     file_path
                         .and_then(|p| {
-                            let root = detect_workspace_root(p, &config.root_markers);
+                            let root =
+                                detect_workspace_root(&*self.filesystem(), p, &config.root_markers);
                             path_to_uri(&root)
                         })
                         .or_else(|| self.root_uri.clone())

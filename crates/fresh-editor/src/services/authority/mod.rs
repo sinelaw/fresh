@@ -28,6 +28,7 @@
 //!   small and additive so we can grow new kinds without breaking the
 //!   plugin contract.
 
+use fresh_editor_core::model::host_path::AsHostPath;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -79,16 +80,19 @@ impl PathTranslation {
     /// through unchanged so the caller can decide whether to forward
     /// them as-is or drop them.
     pub fn host_to_remote(&self, host: &Path) -> Option<PathBuf> {
-        let rel = host.strip_prefix(&self.host_root).ok()?;
-        Some(self.remote_root.join(rel))
+        // Spelled with the *remote* root's separator: the two roots can be on
+        // different platforms (a Windows host, a Linux container), and
+        // `Path::join` would use the client's for both.
+        let rel = host.as_host().rel_to(self.host_root.as_host())?;
+        Some(self.remote_root.as_host().join_rel(&rel).into_path_buf())
     }
 
     /// Map a remote-side path under `remote_root` back to its
     /// host-side counterpart. Same outside-the-workspace caveat as
     /// [`Self::host_to_remote`].
     pub fn remote_to_host(&self, remote: &Path) -> Option<PathBuf> {
-        let rel = remote.strip_prefix(&self.remote_root).ok()?;
-        Some(self.host_root.join(rel))
+        let rel = remote.as_host().rel_to(self.remote_root.as_host())?;
+        Some(self.host_root.as_host().join_rel(&rel).into_path_buf())
     }
 }
 

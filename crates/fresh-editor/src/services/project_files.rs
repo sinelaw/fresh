@@ -140,7 +140,7 @@ fn for_each_git_file(
     root: &Path,
     listing: Listing<'_>,
     cancel: &AtomicBool,
-    on_file: &mut dyn FnMut(&Path, &str, bool) -> bool,
+    on_file: &mut dyn FnMut(&HostPath, &str, bool) -> bool,
 ) -> Option<std::io::Result<()>> {
     #[allow(clippy::disallowed_methods)] // liveness established by the caller, above
     let result = handle
@@ -161,7 +161,9 @@ fn for_each_git_file(
     } = parse_ls_files(&result.stdout, listing.custom_ignore);
     for rel in files {
         let is_link = links.contains(&rel);
-        if cancel.load(Ordering::Relaxed) || !on_file(&join_rel(root, &rel), &rel, is_link) {
+        if cancel.load(Ordering::Relaxed)
+            || !on_file(join_rel(root, &rel).as_host_path(), &rel, is_link)
+        {
             return Some(Ok(()));
         }
     }
@@ -195,10 +197,11 @@ fn for_each_git_file(
     Some(Ok(()))
 }
 
-/// `root` joined with the `/`-separated `rel`, a component at a time so the
-/// path uses the platform's separator, as a walk's would.
-fn join_rel(root: &Path, rel: &str) -> PathBuf {
-    rel.split('/').fold(root.to_path_buf(), |p, c| p.join(c))
+/// `root` joined with the `/`-separated `rel`, spelled with the separator
+/// `root` itself uses — the host's, which is not the client's when the two are
+/// different platforms.
+fn join_rel(root: &Path, rel: &str) -> HostPathBuf {
+    root.as_host().join_rel(rel)
 }
 
 /// Arguments for the `git ls-files` that lists a repo's files: tracked plus
@@ -310,7 +313,7 @@ pub fn walk_files(
     include_hidden: bool,
     custom_ignore: &CustomIgnore,
     cancel: &AtomicBool,
-    on_file: &mut dyn FnMut(&Path, &str) -> bool,
+    on_file: &mut dyn FnMut(&HostPath, &str) -> bool,
 ) -> std::io::Result<()> {
     walk_files_under(fs, root, "", include_hidden, custom_ignore, cancel, on_file)
 }
@@ -324,7 +327,7 @@ fn walk_files_under(
     include_hidden: bool,
     custom_ignore: &CustomIgnore,
     cancel: &AtomicBool,
-    on_file: &mut dyn FnMut(&Path, &str) -> bool,
+    on_file: &mut dyn FnMut(&HostPath, &str) -> bool,
 ) -> std::io::Result<()> {
     let skip_dirs = skip_dirs(custom_ignore);
     let opts = WalkOptions {
@@ -333,11 +336,8 @@ fn walk_files_under(
         max_entries: usize::MAX,
         ..WalkOptions::default()
     };
-    let start = sub
-        .split('/')
-        .filter(|c| !c.is_empty())
-        .fold(root.to_path_buf(), |p, c| p.join(c));
-    fs.walk(start.as_host(), &opts, cancel, &mut |entry| {
+    let start = root.as_host().join_rel(sub);
+    fs.walk(start.as_host_path(), &opts, cancel, &mut |entry| {
         // A name that is not UTF-8 has only a lossy `rel` (see the module docs).
         if entry.entry_type != EntryType::File || entry.path.to_str().is_none() {
             return true;
@@ -350,7 +350,7 @@ fn walk_files_under(
         if is_custom_ignored(custom_ignore, &rel) {
             return true;
         }
-        on_file(entry.path.as_path(), &rel)
+        on_file(entry.path.as_path().as_host(), &rel)
     })
 }
 
@@ -368,7 +368,7 @@ pub fn for_each_file_blocking(
     root: &Path,
     custom_ignore: &CustomIgnore,
     cancel: &AtomicBool,
-    on_file: &mut dyn FnMut(&Path, &str, bool) -> bool,
+    on_file: &mut dyn FnMut(&HostPath, &str, bool) -> bool,
 ) -> std::io::Result<()> {
     if cancel.load(Ordering::Relaxed) {
         return Ok(());

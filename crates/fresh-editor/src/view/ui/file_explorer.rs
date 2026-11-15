@@ -146,7 +146,10 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
             .unwrap_or(d.theme.editor_fg),
     });
 
-    let is_cut = d.cut.iter().any(|p| p.as_path() == node.entry.path.as_path());
+    let is_cut = d
+        .cut
+        .iter()
+        .any(|p| p.as_path() == node.entry.path.as_path());
     let name_fg = if is_cut || is_ignored {
         "editor.line_number_fg".to_string()
     } else if let Some(c) = slots.name_color_hint {

@@ -23,16 +23,30 @@ fn is_path_char(b: u8) -> bool {
 ///
 /// Returns `None` for relative paths.
 pub fn path_to_file_uri(path: &Path) -> Option<String> {
-    if !path.is_absolute() {
+    // Not `Path::is_absolute`: on Windows that asks for a drive letter and so
+    // calls a remote host's `/home/user/proj` relative. A path with a root is
+    // rooted, and which platform's root it is decides how it encodes.
+    if !path.has_root() {
         return None;
     }
 
-    let mut uri = String::from("file://");
+    #[cfg(windows)]
+    if path.components().next() == Some(std::path::Component::RootDir) {
+        // Rooted but with no prefix: a POSIX path we are merely holding on a
+        // Windows client, e.g. the workspace of an SSH session. It encodes the
+        // same way it would on the host.
+        return posix_path_to_file_uri(path);
+    }
+
+    #[cfg(not(windows))]
+    return posix_path_to_file_uri(path);
 
     #[cfg(windows)]
     {
         use std::path::Component;
         use std::path::Prefix;
+
+        let mut uri = String::from("file://");
 
         // Peek at the prefix to decide the URI structure.
         let prefix_kind = path.components().next().and_then(|c| match c {
@@ -93,34 +107,37 @@ pub fn path_to_file_uri(path: &Path) -> Option<String> {
             }
             first = false;
         }
-    }
 
-    #[cfg(not(windows))]
-    {
-        use std::path::Component;
-        for component in path.components() {
-            match component {
-                Component::RootDir => uri.push('/'),
-                Component::Normal(seg) => {
-                    let s = seg.to_str()?;
-                    percent_encode_segment(&mut uri, s);
-                    uri.push('/');
-                }
-                Component::CurDir => {
-                    uri.push_str("./");
-                }
-                Component::ParentDir => {
-                    uri.push_str("../");
-                }
-                _ => {}
+        Some(uri)
+    }
+}
+
+/// Encode a `/`-rooted path. Used for every path on a POSIX client, and on a
+/// Windows client for a path that belongs to a POSIX host.
+fn posix_path_to_file_uri(path: &Path) -> Option<String> {
+    use std::path::Component;
+    let mut uri = String::from("file://");
+    for component in path.components() {
+        match component {
+            Component::RootDir => uri.push('/'),
+            Component::Normal(seg) => {
+                let s = seg.to_str()?;
+                percent_encode_segment(&mut uri, s);
+                uri.push('/');
             }
-        }
-        // Remove trailing slash (unless path is just "/")
-        if uri.len() > "file:///".len() && uri.ends_with('/') {
-            uri.pop();
+            Component::CurDir => {
+                uri.push_str("./");
+            }
+            Component::ParentDir => {
+                uri.push_str("../");
+            }
+            _ => {}
         }
     }
-
+    // Remove trailing slash (unless path is just "/")
+    if uri.len() > "file:///".len() && uri.ends_with('/') {
+        uri.pop();
+    }
     Some(uri)
 }
 
@@ -139,14 +156,16 @@ pub fn file_uri_to_path(uri: &str) -> Option<PathBuf> {
 
     #[cfg(windows)]
     {
-        // On Windows, require a drive letter (e.g. "C:/..."). URIs without one
-        // (like file:///home/user/...) are not valid Windows file paths.
+        // A drive letter means a local Windows path, and those are spelled
+        // with backslashes.
         let bytes = decoded.as_bytes();
-        if bytes.len() < 2 || !bytes[0].is_ascii_alphabetic() || bytes[1] != b':' {
-            return None;
+        if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+            return Some(PathBuf::from(decoded.replace('/', "\\")));
         }
-        // Normalize forward slashes to backslashes for canonical Windows paths.
-        Some(PathBuf::from(decoded.replace('/', "\\")))
+        // Otherwise it is a POSIX path — a remote (SSH) workspace's, or a
+        // container's interior. Keep it exactly as the host spells it: it is
+        // going back to that host, not to the local filesystem.
+        Some(PathBuf::from(format!("/{decoded}")))
     }
 
     #[cfg(not(windows))]

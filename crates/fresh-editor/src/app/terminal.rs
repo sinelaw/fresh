@@ -23,7 +23,6 @@
 //!   - Resumes live terminal rendering
 //!   - Performance: O(1) ≈ 1ms
 
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use super::window::{ExitedTerminal, TerminalBuffer, Window};
 use super::{BufferId, BufferMetadata, Editor};
 use crate::model::event::LeafId;
@@ -31,6 +30,7 @@ use crate::services::authority::TerminalWrapper;
 use crate::services::terminal::TerminalId;
 use crate::state::EditorState;
 use crate::view::split::SplitViewState;
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use fresh_i18n::t;
 use std::collections::HashMap;
 use std::path::PathBuf;

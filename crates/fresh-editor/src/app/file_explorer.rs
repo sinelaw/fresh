@@ -1,5 +1,5 @@
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use anyhow::Result as AnyhowResult;
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use fresh_i18n::t;
 
 use super::buffer_close::CloseCause;
@@ -994,9 +994,7 @@ impl Editor {
             .map(|d| d.as_secs())
             .unwrap_or(0);
         let trash_name = format!("{}.{}", file_name.to_string_lossy(), timestamp);
-        let trash_path = trash_dir
-            
-            .join_name(std::ffi::OsStr::new(&trash_name));
+        let trash_path = trash_dir.join_name(std::ffi::OsStr::new(&trash_name));
 
         match self
             .authority()
@@ -1022,17 +1020,17 @@ impl Editor {
                 };
                 let local_trash = parent.join(".fresh-trash");
                 if !self.authority().filesystem.exists(local_trash.as_host()) {
-                    self.authority().filesystem.create_dir_all(local_trash.as_host())?;
+                    self.authority()
+                        .filesystem
+                        .create_dir_all(local_trash.as_host())?;
                 }
-                self.authority()
-                    .filesystem
-                    .rename(
-                        path.as_host(),
-                        local_trash
-                            .as_host()
-                            .join_name(std::ffi::OsStr::new(&trash_name))
-                            .as_host_path(),
-                    )
+                self.authority().filesystem.rename(
+                    path.as_host(),
+                    local_trash
+                        .as_host()
+                        .join_name(std::ffi::OsStr::new(&trash_name))
+                        .as_host_path(),
+                )
             }
         }
     }
@@ -1101,7 +1099,11 @@ impl Editor {
             return None;
         }
 
-        let path = crate::app::normalize_path(&base.join(name));
+        let path = base
+            .as_host()
+            .join_rel(&name.replace('\\', "/"))
+            .normalize()
+            .into_path_buf();
         let fs = std::sync::Arc::clone(&self.authority().filesystem);
         // **Only a name that traverses is checked against the project.** A
         // plain one stays in the directory the reader was already looking at,
@@ -1131,7 +1133,9 @@ impl Editor {
         // lands on something else is refused. The entry being renamed is not
         // something else — which is the only way to change a name's case on a
         // filesystem that does not distinguish them.
-        if fs.exists(path.as_host()) && !moving.is_some_and(|src| same_entry(fs.as_ref(), src, &path)) {
+        if fs.exists(path.as_host())
+            && !moving.is_some_and(|src| same_entry(fs.as_ref(), src, &path))
+        {
             let shown = truncate_name_for_prompt(name, 40);
             self.set_status_message(t!("explorer.new_item_path_exists", name = &shown).to_string());
             return None;
@@ -1618,7 +1622,11 @@ impl Editor {
     /// state is touched — callers are responsible for refreshing the
     /// explorer afterwards.
     fn paste_one_fs_op(&self, src: &Path, dst: &Path, is_cut: bool) -> PasteOpOutcome {
-        let src_is_dir = self.authority().filesystem.is_dir(src.as_host()).unwrap_or(false);
+        let src_is_dir = self
+            .authority()
+            .filesystem
+            .is_dir(src.as_host())
+            .unwrap_or(false);
 
         // Guard against pasting a directory into itself or into one of its
         // own descendants. Without this, `copy_dir_all(/d, /d/d)` would
@@ -1639,13 +1647,22 @@ impl Editor {
             // copy+delete for cross-device errors — any other rename failure
             // (permission denied, etc.) must surface as-is so we don't
             // silently succeed via a different codepath.
-            match self.authority().filesystem.rename(src.as_host(), dst.as_host()) {
+            match self
+                .authority()
+                .filesystem
+                .rename(src.as_host(), dst.as_host())
+            {
                 Ok(()) => PasteOpOutcome::Ok,
                 Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {
                     let copy_result = if src_is_dir {
-                        self.authority().filesystem.copy_dir_all(src.as_host(), dst.as_host())
+                        self.authority()
+                            .filesystem
+                            .copy_dir_all(src.as_host(), dst.as_host())
                     } else {
-                        self.authority().filesystem.copy(src.as_host(), dst.as_host()).map(|_| ())
+                        self.authority()
+                            .filesystem
+                            .copy(src.as_host(), dst.as_host())
+                            .map(|_| ())
                     };
                     match copy_result {
                         Ok(()) => {
@@ -1683,12 +1700,20 @@ impl Editor {
                 Err(e) => PasteOpOutcome::Failed(e),
             }
         } else if src_is_dir {
-            match self.authority().filesystem.copy_dir_all(src.as_host(), dst.as_host()) {
+            match self
+                .authority()
+                .filesystem
+                .copy_dir_all(src.as_host(), dst.as_host())
+            {
                 Ok(()) => PasteOpOutcome::Ok,
                 Err(e) => PasteOpOutcome::Failed(e),
             }
         } else {
-            match self.authority().filesystem.copy(src.as_host(), dst.as_host()) {
+            match self
+                .authority()
+                .filesystem
+                .copy(src.as_host(), dst.as_host())
+            {
                 Ok(_) => PasteOpOutcome::Ok,
                 Err(e) => PasteOpOutcome::Failed(e),
             }
@@ -2126,8 +2151,9 @@ impl Editor {
         // one-entry question for one entry, so a drag is offered the same
         // "keep both" a paste is. The clipboard is not where any of this came
         // from and must come out of none of it.
-        let (clashing, safe): (Vec<_>, Vec<_>) =
-            pairs.into_iter().partition(|(_, dst)| fs.exists(dst.as_host()));
+        let (clashing, safe): (Vec<_>, Vec<_>) = pairs
+            .into_iter()
+            .partition(|(_, dst)| fs.exists(dst.as_host()));
         if clashing.is_empty() {
             self.relocate_entries(safe, Vec::new(), true);
             return;

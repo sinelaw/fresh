@@ -177,7 +177,11 @@ impl Editor {
                 "the workspace is not connected",
             ))
         } else {
-            window.authority().filesystem.metadata(path.as_host()).map(|_| ())
+            window
+                .authority()
+                .filesystem
+                .metadata(path.as_host())
+                .map(|_| ())
         };
         match found {
             Ok(()) => {

@@ -1455,7 +1455,12 @@ impl crate::app::window::Window {
         // Check if the path is a directory (after following symlinks via canonicalize)
         // Directories cannot be opened as files in the editor
         // Use filesystem trait method to support remote files
-        if self.authority().filesystem.is_dir(path.as_host()).unwrap_or(false) {
+        if self
+            .authority()
+            .filesystem
+            .is_dir(path.as_host())
+            .unwrap_or(false)
+        {
             anyhow::bail!(t!("buffer.cannot_open_directory"));
         }
 

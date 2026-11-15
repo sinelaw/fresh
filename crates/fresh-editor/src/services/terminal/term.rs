@@ -37,7 +37,6 @@
 //! `backing_file_history_end` tracks the byte offset where scrollback ends in the
 //! backing file, used for truncation when re-entering terminal mode.
 
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use crate::model::filesystem::FileSystem;
 use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::Scroll;
@@ -45,6 +44,7 @@ use alacritty_terminal::index::{Column, Line};
 use alacritty_terminal::term::test::TermSize;
 use alacritty_terminal::term::{Config as TermConfig, Term, TermMode};
 use alacritty_terminal::vte::ansi::Processor;
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};

@@ -8,8 +8,8 @@
 //! and `present_lsp_status_popup` (pin width + show), orchestrated by
 //! `build_and_show_lsp_status_popup`.
 
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use crate::view::theme::ThemeStyle;
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use fresh_i18n::t;
 
 use crate::app::warning_domains::WarningDomain;

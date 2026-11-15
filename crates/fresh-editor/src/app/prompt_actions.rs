@@ -441,7 +441,8 @@ impl Editor {
                 let input_lower = input.trim().to_lowercase();
                 if input_lower == "c" || input_lower == "create" {
                     if let Some(parent) = path.parent() {
-                        if let Err(e) = self.authority().filesystem.create_dir_all(parent.as_host()) {
+                        if let Err(e) = self.authority().filesystem.create_dir_all(parent.as_host())
+                        {
                             self.set_status_message(
                                 t!("file.error_saving", error = e.to_string()).to_string(),
                             );
@@ -569,7 +570,11 @@ impl Editor {
                 let input_lower = input.trim().to_lowercase();
                 if input_lower == "y" || input_lower == "yes" {
                     for path in paths {
-                        let is_dir = self.authority().filesystem.is_dir(path.as_host()).unwrap_or(false);
+                        let is_dir = self
+                            .authority()
+                            .filesystem
+                            .is_dir(path.as_host())
+                            .unwrap_or(false);
                         self.perform_file_explorer_delete(path, is_dir);
                     }
                 } else {
@@ -830,7 +835,9 @@ impl Editor {
 
         // Check if parent directory exists
         if let Some(parent) = full_path.parent() {
-            if !parent.as_os_str().is_empty() && !self.authority().filesystem.exists(parent.as_host()) {
+            if !parent.as_os_str().is_empty()
+                && !self.authority().filesystem.exists(parent.as_host())
+            {
                 let dir_name = parent
                     .strip_prefix(self.working_dir())
                     .unwrap_or(parent)
@@ -1877,10 +1884,16 @@ impl Editor {
             QuickOpenResult::ExecuteAction(action) => PromptResult::ExecuteAction(action),
             QuickOpenResult::OpenFile { path, line, column } => {
                 let expanded_path = expand_tilde(&path);
-                let full_path = if expanded_path.is_absolute() {
+                let full_path = if expanded_path.as_host().is_absolute() {
                     expanded_path
                 } else {
-                    self.working_dir().join(&expanded_path)
+                    // Joined with the working directory's separator: on a
+                    // Windows client against a POSIX host, `Path::join` put a
+                    // backslash in here and the host had no such file.
+                    self.working_dir()
+                        .as_host()
+                        .join_rel(&expanded_path.to_string_lossy().replace('\\', "/"))
+                        .into_path_buf()
                 };
                 self.open_file_with_jump(full_path, line, column);
                 PromptResult::Done

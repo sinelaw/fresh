@@ -6,7 +6,6 @@
 //! - BufferProvider: Switch between open buffers (prefix: "#")
 //! - GotoLineProvider: Go to a specific line (prefix: ":")
 
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use super::{
     parse_goto_line_input, GotoLineTarget, QuickOpenContext, QuickOpenProvider, QuickOpenResult,
 };
@@ -14,6 +13,7 @@ use crate::input::commands::Suggestion;
 use crate::input::fuzzy::FuzzyMatcher;
 use crate::services::project_files;
 use crate::view::file_tree::ignore::CustomIgnore;
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use fresh_i18n::t;
 
 // ============================================================================
@@ -574,7 +574,10 @@ impl FileProvider {
             let typed_into_ignored = !dir.is_empty() && custom_ignore.matches(Path::new(dir), true);
             !typed_into_ignored && custom_ignore.matches(Path::new(rel), false)
         };
-        let abs_path = Path::new(cwd).join(query);
+        let abs_path = Path::new(cwd)
+            .as_host()
+            .join_rel(&query.replace('\\', "/"))
+            .into_path_buf();
         let mut results = Vec::new();
 
         // If the query points to a directory, list its file contents.
@@ -608,9 +611,8 @@ impl FileProvider {
             None => return (results, false),
         };
 
-        let rel_parent = match parent.strip_prefix(cwd) {
-            Ok(p) => crate::primitives::path_utils::rel_to_slash_string(p),
-            Err(_) => return (results, false),
+        let Some(rel_parent) = parent.as_host().rel_to(Path::new(cwd).as_host()) else {
+            return (results, false);
         };
 
         let include_hidden = show_hidden || basename.starts_with('.');

@@ -15,11 +15,11 @@
 //!
 //! [`FileSystem`]: crate::model::filesystem::FileSystem
 
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use crate::app::Editor;
 use crate::primitives::path_utils::expand_tilde;
 use anyhow::Result as AnyhowResult;
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use std::path::{Path, PathBuf};
 
 impl Editor {

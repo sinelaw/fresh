@@ -4,9 +4,9 @@
 //! It renders a structured popup above the prompt with sortable columns,
 //! navigation shortcuts, and filtering.
 
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use crate::input::fuzzy::fuzzy_match;
 use crate::model::filesystem::{DirEntry, EntryType, FileSystem};
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use fresh_i18n::t;
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
@@ -307,8 +307,11 @@ impl FileOpenState {
 
         // Add ".." entry for parent directory navigation (unless at root)
         if let Some(parent) = self.current_dir.parent() {
-            let parent_entry =
-                DirEntry::new(HostPathBuf::from_path_buf(parent.to_path_buf()), "..".to_string(), EntryType::Directory);
+            let parent_entry = DirEntry::new(
+                HostPathBuf::from_path_buf(parent.to_path_buf()),
+                "..".to_string(),
+                EntryType::Directory,
+            );
             result.push(FileOpenEntry {
                 fs_entry: parent_entry,
                 matches_filter: true,

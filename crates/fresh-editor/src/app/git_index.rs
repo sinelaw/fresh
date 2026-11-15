@@ -10,10 +10,10 @@
 //! NOTE: a parallel BFS lives on the TypeScript side in
 //! `lib/git_history.ts` (`discoverSubRepos`). Keep the two in sync.
 
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use super::Editor;
 use crate::model::filesystem::FileSystem;
 use crate::services::runtime::LiveRuntime;
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use std::path::PathBuf;
 use std::sync::Arc;
 

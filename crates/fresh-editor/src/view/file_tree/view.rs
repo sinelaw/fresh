@@ -909,8 +909,7 @@ impl FileTreeView {
                     // Canonicalize the symlink to get the target
                     if let Ok(canonical) = node.entry.path.as_path().canonicalize() {
                         if canonical != node.entry.path.as_path() {
-                            mappings
-                                .insert(node.entry.path.clone().into_path_buf(), canonical);
+                            mappings.insert(node.entry.path.clone().into_path_buf(), canonical);
                         }
                     }
                 }

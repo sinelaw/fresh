@@ -423,7 +423,8 @@ impl Editor {
                     if backing.as_ref() != Some(&log_file) {
                         // Best-effort cleanup of temporary terminal files.
                         #[allow(clippy::let_underscore_must_use)]
-                        let _ = crate::app::terminal::terminal_backing_fs().remove_file(log_file.as_host());
+                        let _ = crate::app::terminal::terminal_backing_fs()
+                            .remove_file(log_file.as_host());
                     }
                 }
             });
@@ -1454,7 +1455,8 @@ impl Editor {
             .unwrap_or(0);
         let retained = parent.join(format!("{stem}-closed-{epoch_ms}.txt"));
         #[allow(clippy::let_underscore_must_use)]
-        let _ = crate::app::terminal::terminal_backing_fs().rename(path.as_host(), retained.as_host());
+        let _ =
+            crate::app::terminal::terminal_backing_fs().rename(path.as_host(), retained.as_host());
         Self::gc_retained_terminal_backings(parent);
     }
 
@@ -1464,7 +1466,8 @@ impl Editor {
     /// backing files (no `-closed-` marker) are never touched.
     fn gc_retained_terminal_backings(dir: &std::path::Path) {
         const MAX_RETAINED: usize = 200;
-        let Ok(entries) = crate::app::terminal::terminal_backing_fs().read_dir(dir.as_host()) else {
+        let Ok(entries) = crate::app::terminal::terminal_backing_fs().read_dir(dir.as_host())
+        else {
             return;
         };
         let mut retained: Vec<(u128, std::path::PathBuf)> = entries

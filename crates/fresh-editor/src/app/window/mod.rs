@@ -1406,6 +1406,7 @@ pub(crate) fn build_window_lsp(
     // backend that doesn't match the authority the window was built with.
     lsp.set_long_running_spawner(authority.long_running_spawner.clone());
     lsp.set_path_translation(authority.path_translation.clone());
+    lsp.set_filesystem(authority.filesystem.clone());
     lsp.set_workspace_trust(authority.workspace_trust.clone());
 
     configure_lsp_servers(&mut lsp, &resources.config);

@@ -4946,7 +4946,11 @@ impl Editor {
         // folder, so the caller can say so. Each way it can fail says what it
         // is: gone, a file, or the error reading it (e.g. no permission).
         let spawn_dir = cwd_buf.clone().unwrap_or_else(|| root.clone());
-        let refusal = match new_connection.authority.filesystem.is_dir(spawn_dir.as_host()) {
+        let refusal = match new_connection
+            .authority
+            .filesystem
+            .is_dir(spawn_dir.as_host())
+        {
             Ok(true) => None,
             Ok(false) => Some(format!("{} is not a folder", spawn_dir.display())),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {

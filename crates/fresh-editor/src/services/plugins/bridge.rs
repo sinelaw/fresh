@@ -1,4 +1,3 @@
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use crate::config_io::DirectoryContext;
 use crate::i18n;
 use crate::input::command_registry::CommandRegistry;
@@ -8,6 +7,7 @@ use crate::services::signal_handler;
 use crate::view::theme;
 use fresh_core::api::DirEntry as PluginDirEntry;
 use fresh_core::services::{PluginFileStat, PluginFilesystem, PluginServiceBridge};
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use std::any::Any;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -134,7 +134,9 @@ impl PluginFilesystem for RoutedFilesystem {
     }
 
     fn exists(&self, path: &Path) -> bool {
-        (self.resolve)().map(|fs| fs.exists(path.as_host())).unwrap_or(false)
+        (self.resolve)()
+            .map(|fs| fs.exists(path.as_host()))
+            .unwrap_or(false)
     }
 
     fn read_dir(&self, path: &Path) -> Vec<PluginDirEntry> {

@@ -2138,10 +2138,9 @@ impl FileSystem for StdFileSystem {
 
                 let report = !is_dir || opts.include_dirs;
                 if report {
-                    let Ok(rel) = path.strip_prefix(root) else {
+                    let Some(rel_str) = path.as_host().rel_to(root.as_host()) else {
                         continue;
                     };
-                    let rel_str = crate::primitives::path_utils::rel_to_slash_string(rel);
                     // `DirEntry::metadata` is a real `stat`; hence the syscall-free builder.
                     let metadata = entry.metadata().ok().map_or_else(
                         || FileMetadata::new(0),

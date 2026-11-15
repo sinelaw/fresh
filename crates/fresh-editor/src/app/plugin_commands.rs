@@ -10,6 +10,7 @@ use anyhow::Result as AnyhowResult;
 use fresh_core::api::{
     JsCallbackId, LayoutHints, MenuPosition, OverlayOptions, PluginResponse, ReplaceResult,
 };
+use fresh_editor_core::model::host_path::AsHostPath;
 use std::sync::Arc;
 
 use super::Editor;
@@ -3818,9 +3819,17 @@ impl Editor {
         let root = self.working_dir().to_path_buf();
         // The name a file is shown and glob-matched under: relative and
         // `/`-separated when it is in the root, as the project walk gives it.
-        let shown_path = |path: &std::path::Path| match path.strip_prefix(&root) {
-            Ok(rel) => crate::primitives::path_utils::rel_to_slash_string(rel),
-            Err(_) => path.to_string_lossy().into_owned(),
+        let shown_path = |path: &std::path::Path| {
+            // Split under the *filesystem's* rules rather than the client's.
+            // `rel_to_slash_string` upstream keeps a backslash in a name on a
+            // POSIX *client*, which is right as far as it goes; asking the
+            // path itself extends that to a POSIX host seen from a Windows
+            // client, where `Path::components` would split `a\b.txt` in two
+            // and name a file that does not exist.
+            match path.as_host().rel_to(root.as_host()) {
+                Some(rel) => rel,
+                None => path.to_string_lossy().into_owned(),
+            }
         };
 
         let window = self.active_window;

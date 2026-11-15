@@ -1,5 +1,5 @@
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use crate::model::filesystem::{DirEntry, FileMetadata, FileSystem};
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use std::collections::HashMap;
 use std::fmt;
 use std::io;
@@ -191,8 +191,12 @@ impl FsManager {
                 // For symlinks, check what they point to
                 let target_is_dir = fs.is_dir(path_buf.as_host()).unwrap_or(false);
                 Ok(
-                    DirEntry::new_symlink(HostPathBuf::from_path_buf(path_buf), name, target_is_dir)
-                        .with_metadata(symlink_meta),
+                    DirEntry::new_symlink(
+                        HostPathBuf::from_path_buf(path_buf),
+                        name,
+                        target_is_dir,
+                    )
+                    .with_metadata(symlink_meta),
                 )
             } else {
                 // Regular file or directory
@@ -201,7 +205,10 @@ impl FsManager {
                 } else {
                     crate::model::filesystem::EntryType::File
                 };
-                Ok(DirEntry::new(HostPathBuf::from_path_buf(path_buf), name, entry_type).with_metadata(symlink_meta))
+                Ok(
+                    DirEntry::new(HostPathBuf::from_path_buf(path_buf), name, entry_type)
+                        .with_metadata(symlink_meta),
+                )
             }
         })
         .await

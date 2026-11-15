@@ -9,12 +9,12 @@ use crate::model::filesystem::{
     ContentDigest, DirEntry, FileMetadata, FilePermissions, FileReader, FileSystem, FileWriter,
     ReplaceError,
 };
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 
 /// Configuration for slow filesystem simulation
 #[derive(Debug, Clone)]
@@ -199,7 +199,8 @@ impl FileSystem for SlowFileSystem {
         let path = path.as_path();
         self.add_delay(self.config.write_file_delay);
         self.metrics.write_file_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner.replace_file_preserving_identity(path.as_host(), data)
+        self.inner
+            .replace_file_preserving_identity(path.as_host(), data)
     }
 
     fn create_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {

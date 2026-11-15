@@ -563,6 +563,7 @@ impl Editor {
                 w.lsp
                     .set_long_running_spawner(a.long_running_spawner.clone());
                 w.lsp.set_path_translation(a.path_translation.clone());
+                w.lsp.set_filesystem(a.filesystem.clone());
                 w.lsp.set_workspace_trust(a.workspace_trust.clone());
                 w.connection = std::sync::Arc::clone(&connection);
             }
@@ -658,6 +659,7 @@ impl Editor {
             let lsp = &mut w.lsp;
             lsp.set_long_running_spawner(authority.long_running_spawner.clone());
             lsp.set_path_translation(authority.path_translation.clone());
+            lsp.set_filesystem(authority.filesystem.clone());
             lsp.set_workspace_trust(authority.workspace_trust.clone());
             w.connection = connection;
         }
