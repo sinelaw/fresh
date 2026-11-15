@@ -10,7 +10,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 * **Theme chrome and file icons** - themes can go borderless, style the gutter and explorer, and pick tab and status bar separator glyphs (including Powerline-style sections and caps). With Nerd Font icons on, the explorer and tabs show file-type icons, which themes can override. Two new built-in themes, `flat` and `quiet`, show it off (#3735)
 * **Theme editor previews live** - edits show in the real editor as you make them, and every theme option, glyph and icon can be edited (#3735)
-* **Markdown previews of diagrams and math** - in compose mode, Mermaid and LaTeX/math blocks are drawn by external tools (e.g. `termaid`, `utftex`) when installed; any code block language can be mapped to a command (#3751, with @PilotLeoYan)
+* **Markdown previews of diagrams and math** - in compose mode, Mermaid and LaTeX/math blocks are drawn by external tools (e.g. `termaid`, `utftex`) when installed; any code block language can be mapped to a command (#3751 by @PilotLeoYan)
 * **Recent Files** - File > **Recent Files...** (or the command palette) reopens a file you closed in this window; the list survives a restart (#3755)
 * **Explorer dims gitignored entries** when they are shown (#3283, #3290 by @CnsMaple)
 * **Workboard** - a new Orchestrator board with every workspace and agent, grouped by what needs you, by project, by folder or as a kanban; a status bar beacon jumps to the next waiting agent (#3736)
@@ -24,7 +24,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Ctrl/Alt+Shift+Tab are recognized**, and passed through to terminal panes (#3601 by @neatsorg)
 * **`fresh FILE` remembers the cursor position** after quitting with the file open (#3748, reported by @shemgp)
 * **LSP diagnostics refresh** - servers like rust-analyzer and Roslyn now push updated diagnostics without an edit (#3681, #3682 by @StonesFromTheSky)
-* **Live diff and git gutter ignore line-ending style** - CRLF vs LF no longer marks whole files as changed on Windows (#3747, with @ezleyton)
+* **Live diff and git gutter ignore line-ending style** - CRLF vs LF no longer marks whole files as changed on Windows (#3747 by @ezleyton)
 * **macOS honors `XDG_CONFIG_HOME` and `XDG_DATA_HOME`**; existing installs keep their current directories until the new ones exist (#3496, #3497 by @LuisAlejandro)
 * **Terminals restore in the directory the shell `cd`'d to**, and an exited terminal keeps its tab name across a restart (#3740, #3074)
 * **Inlay hints keep their own colour** next to a highlighted bracket or search match (#3622 by @mommysgoodpuppy)
