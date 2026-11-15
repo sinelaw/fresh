@@ -20,7 +20,7 @@ use fresh::model::filesystem::{
 };
 use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

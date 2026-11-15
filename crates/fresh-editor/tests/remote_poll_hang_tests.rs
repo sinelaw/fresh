@@ -17,7 +17,6 @@ use fresh::model::filesystem::{
     FileSystem, FileWriter, SearchMatch, StdFileSystem,
 };
 use std::io;
-use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;

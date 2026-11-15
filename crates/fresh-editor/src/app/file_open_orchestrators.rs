@@ -11,7 +11,7 @@
 //! deciding which split to focus. Each variant differs only in how it
 //! handles encoding errors, focus, and "no file at this path yet" cases.
 
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::{AsHostPath, HostPathBuf};
 use std::path::Path;
 use std::sync::Arc;
 

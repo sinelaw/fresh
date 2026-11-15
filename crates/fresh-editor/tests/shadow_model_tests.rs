@@ -38,7 +38,7 @@ use fresh::model::filesystem::{
 };
 use proptest::prelude::*;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tempfile::TempDir;

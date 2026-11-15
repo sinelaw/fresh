@@ -7,7 +7,7 @@
 //! - Config dump, save, and reload
 
 use crate::types::LspServerConfig;
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::AsHostPath;
 use fresh_i18n::t;
 
 use crate::config::{Config, FileExplorerSide};

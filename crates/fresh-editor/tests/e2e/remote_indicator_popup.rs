@@ -26,7 +26,6 @@ use fresh::view::ui::status_bar::RemoteIndicatorOverride;
 use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// A filesystem that reports as a *remote* backend whose link is down — it

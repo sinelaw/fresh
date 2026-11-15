@@ -16,7 +16,7 @@
 //! merges in (never by rewriting its workspace file, which a running
 //! orchestrator owns); files under no workspace would be dropped.
 
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::AsHostPath;
 use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};

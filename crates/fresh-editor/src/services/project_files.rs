@@ -17,7 +17,7 @@
 //! would write a new file under the mangled name.
 
 use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 

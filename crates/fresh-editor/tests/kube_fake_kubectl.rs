@@ -11,7 +11,7 @@
 //! The "pod workspace" is a real local temp dir, so the agent's absolute paths
 //! resolve without any chroot.
 
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::AsHostPath;
 use std::path::PathBuf;
 use std::sync::Arc;
 

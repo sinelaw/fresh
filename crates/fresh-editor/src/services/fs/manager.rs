@@ -1,5 +1,5 @@
 use crate::model::filesystem::{DirEntry, FileMetadata, FileSystem};
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::{AsHostPath, HostPathBuf};
 use std::collections::HashMap;
 use std::fmt;
 use std::io;

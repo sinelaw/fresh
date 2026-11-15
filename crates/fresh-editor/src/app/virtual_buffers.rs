@@ -8,7 +8,7 @@
 //!   creating buffers backed by virtual content (LSP help text, plugin
 //!   panels, search results, etc.).
 
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::AsHostPath;
 use std::path::Path;
 use std::sync::Arc;
 

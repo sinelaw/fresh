@@ -34,7 +34,6 @@ use fresh::model::filesystem::{
 use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use portable_pty::{native_pty_system, PtySize};
 use std::io;
-use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 

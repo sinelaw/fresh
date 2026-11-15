@@ -48,7 +48,7 @@
 //! The "warm" layout is intentionally not persisted across restarts —
 //! re-warming on first dive is fast enough.
 
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::AsHostPath;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

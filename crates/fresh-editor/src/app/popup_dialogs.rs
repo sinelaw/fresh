@@ -9,7 +9,7 @@
 //! `build_and_show_lsp_status_popup`.
 
 use crate::view::theme::ThemeStyle;
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::AsHostPath;
 use fresh_i18n::t;
 
 use crate::app::warning_domains::WarningDomain;

@@ -7,7 +7,7 @@ use crate::services::signal_handler;
 use crate::view::theme;
 use fresh_core::api::DirEntry as PluginDirEntry;
 use fresh_core::services::{PluginFileStat, PluginFilesystem, PluginServiceBridge};
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::AsHostPath;
 use std::any::Any;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

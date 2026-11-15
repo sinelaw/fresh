@@ -23,7 +23,7 @@
 //! Numeric `{m..n}` ranges are supported for reasonably sized ranges and fall
 //! back to "any integer" for very large ones.
 
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::AsHostPath;
 use std::path::{Path, PathBuf};
 
 use regex::Regex;

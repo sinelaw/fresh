@@ -6,7 +6,7 @@
 
 use crate::input::fuzzy::fuzzy_match;
 use crate::model::filesystem::{DirEntry, EntryType, FileSystem};
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::{AsHostPath, HostPathBuf};
 use fresh_i18n::t;
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};

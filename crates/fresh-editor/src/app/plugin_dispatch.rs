@@ -11,7 +11,7 @@
 //!   lifecycle management, and view-control commands callable from
 //!   plugin code.
 
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::AsHostPath;
 use std::sync::Arc;
 
 use anyhow::Result as AnyhowResult;

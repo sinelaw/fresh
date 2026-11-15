@@ -8,7 +8,7 @@
 //! - AgentChannel for communication
 //! - RemoteFileSystem for file operations
 
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::AsHostPath;
 use fresh::model::buffer::TextBuffer;
 use fresh::model::filesystem::{ContentDigest, FileSystem, WriteOp};
 use fresh::services::remote::{

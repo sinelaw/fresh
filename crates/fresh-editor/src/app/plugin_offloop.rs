@@ -14,7 +14,7 @@
 //! snapshotting (see `prepare_project_search`): collect what only the editor
 //! thread can see, hand it to a handler here, return immediately.
 
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::{AsHostPath, HostPathBuf};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

@@ -13,7 +13,7 @@
 use super::Editor;
 use crate::model::filesystem::FileSystem;
 use crate::services::runtime::LiveRuntime;
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::AsHostPath;
 use std::path::PathBuf;
 use std::sync::Arc;
 

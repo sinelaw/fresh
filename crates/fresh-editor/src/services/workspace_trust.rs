@@ -38,7 +38,7 @@
 //! always fails. That sub-mode needs an async UI round-trip from the spawn
 //! site and lands later; this module is the enforcement core it builds on.
 
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::AsHostPath;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU8, Ordering};

@@ -11,7 +11,7 @@
 //! sibling impl Editor block. A future phase will collapse the
 //! boilerplate into a single SettingsPromptBuilder<T>.
 
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::AsHostPath;
 use fresh_i18n::t;
 
 use crate::config_io::{ConfigLayer, ConfigResolver};

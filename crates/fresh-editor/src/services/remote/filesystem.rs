@@ -12,9 +12,9 @@ use crate::services::remote::protocol::{
     read_params, stat_params, sudo_write_params, truncate_params, write_params, PatchOp,
     RemoteDirEntry, RemoteMetadata,
 };
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::{HostPath, HostPathBuf};
 use std::io::{self, Cursor, Read, Seek, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, UNIX_EPOCH};
 

@@ -10,7 +10,6 @@
 //! `plugins`-gated `plugin_dispatch` / `plugin_commands` modules.
 
 use crate::model::event::{BufferId, LeafId, SplitId};
-use fresh_editor_core::model::host_path::{AsHostPath, HostPathBuf};
 
 use super::Editor;
 

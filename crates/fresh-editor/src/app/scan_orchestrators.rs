@@ -5,7 +5,7 @@
 //! leaves and apply scan results), the tokio runtime (for concurrent
 //! filesystem I/O), and the status message (for progress reporting).
 
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::AsHostPath;
 use fresh_i18n::t;
 
 use crate::model::event::BufferId;

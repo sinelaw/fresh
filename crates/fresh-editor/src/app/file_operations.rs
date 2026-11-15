@@ -12,7 +12,7 @@ use crate::model::buffer::SudoSaveRequired;
 use crate::model::filesystem::FileSystem;
 use crate::view::file_tree::FileTreeView;
 use crate::view::prompt::PromptType;
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::AsHostPath;
 use std::path::{Path, PathBuf};
 
 use fresh_i18n::{t, tn};

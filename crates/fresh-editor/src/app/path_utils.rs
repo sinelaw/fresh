@@ -6,7 +6,7 @@
 
 use fresh_editor_core::model::host_path::AsHostPath;
 use std::cell::OnceCell;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 /// Exact counts for the editor-thread cost of explorer path admission.
 ///

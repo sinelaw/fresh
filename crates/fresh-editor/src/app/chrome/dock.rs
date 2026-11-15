@@ -6,7 +6,7 @@
 //! `Editor::{dock_reserved, dock_width, dock_width_rule}`; and remembered
 //! across launches in `<data>/chrome.json`.
 
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::AsHostPath;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 

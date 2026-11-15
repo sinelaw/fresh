@@ -8,7 +8,7 @@
 //! - Cleaning up recovery files
 
 use anyhow::Result as AnyhowResult;
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::{AsHostPath, HostPathBuf};
 
 use crate::model::event::BufferId;
 use fresh_core::WindowId;

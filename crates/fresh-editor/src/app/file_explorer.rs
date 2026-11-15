@@ -1,5 +1,5 @@
 use anyhow::Result as AnyhowResult;
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::{AsHostPath, HostPathBuf};
 use fresh_i18n::t;
 
 use super::buffer_close::CloseCause;

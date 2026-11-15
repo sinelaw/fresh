@@ -9,7 +9,7 @@
 //! Also includes tab navigation (next/prev/cycle, navigate_back/forward,
 //! switch_buffer) which depends on the same focus-history machinery.
 
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::AsHostPath;
 use fresh_i18n::t;
 
 use crate::model::event::{BufferId, Event, LeafId};

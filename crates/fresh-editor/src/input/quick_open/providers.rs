@@ -13,7 +13,7 @@ use crate::input::commands::Suggestion;
 use crate::input::fuzzy::FuzzyMatcher;
 use crate::services::project_files;
 use crate::view::file_tree::ignore::CustomIgnore;
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::AsHostPath;
 use fresh_i18n::t;
 
 // ============================================================================

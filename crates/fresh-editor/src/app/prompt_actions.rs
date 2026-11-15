@@ -2,7 +2,7 @@
 //!
 //! This module contains handlers for different prompt types when the user confirms input.
 
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::AsHostPath;
 use fresh_i18n::t;
 
 use super::file_operations::SaveProgress;
