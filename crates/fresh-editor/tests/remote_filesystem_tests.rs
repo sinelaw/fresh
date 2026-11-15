@@ -8,6 +8,7 @@
 //! - AgentChannel for communication
 //! - RemoteFileSystem for file operations
 
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use fresh::model::buffer::TextBuffer;
 use fresh::model::filesystem::{ContentDigest, FileSystem, WriteOp};
 use fresh::services::remote::{
@@ -111,7 +112,10 @@ fn test_find_up_reports_matching_ancestors_nearest_first() {
 
     assert_eq!(
         found,
-        vec![root.join("proj/include"), root.join("proj")],
+        vec![
+            root.as_host().join_rel("proj/include"),
+            root.as_host().join_rel("proj")
+        ],
         "both ancestors carrying the marker, nearest first"
     );
 }
@@ -135,7 +139,11 @@ fn test_find_up_without_a_match_is_empty() {
     // Positive control, same tree and budget: an empty answer has to mean
     // "searched and found nothing", not "the search never happened".
     let found = fs.find_up(nested.as_host(), &["present.json"], Some(4)).unwrap();
-    assert_eq!(found, vec![nested], "the marker that does exist is reported");
+    assert_eq!(
+        found,
+        vec![nested.as_host().to_host_path_buf()],
+        "the marker that does exist is reported"
+    );
 }
 
 /// `max_dirs` counts the starting directory itself, so a budget of 1 can
@@ -163,7 +171,7 @@ fn test_find_up_respects_max_dirs() {
     let found = fs.find_up(nested.as_host(), &["marker.txt"], Some(2)).unwrap();
     assert_eq!(
         found,
-        vec![root.join("proj")],
+        vec![root.as_host().join_rel("proj")],
         "a budget of two reaches the parent"
     );
 }
@@ -1910,7 +1918,7 @@ for line in sys.stdin:
 
     // Any operation that goes through the channel will time out, since
     // the agent never replies. `metadata` is a single round-trip call.
-    let result = fs.metadata(std::path::Path::new("/anything"));
+    let result = fs.metadata(std::path::Path::new("/anything").as_host());
     let err = result.expect_err("expected timeout error, got Ok");
     let msg = err.to_string().to_lowercase();
     assert!(
