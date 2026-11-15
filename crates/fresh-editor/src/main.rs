@@ -3,6 +3,7 @@
 // The TUI build (no `gui` feature) keeps the default "console" subsystem.
 #![cfg_attr(all(windows, feature = "gui"), windows_subsystem = "windows")]
 #[cfg(all(windows, feature = "gui"))]
+use fresh_editor_core::model::host_path::{AsHostPath, HostPathBuf};
 use windows_sys::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
 
 use anyhow::{Context, Result as AnyhowResult};
@@ -1985,7 +1986,7 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
             // This works for both local and remote paths
             let is_directory = authority
                 .filesystem
-                .is_dir(&first_loc.path)
+                .is_dir(first_loc.path.as_host())
                 .unwrap_or(false);
             if is_directory {
                 working_dir = Some(first_loc.path.clone());

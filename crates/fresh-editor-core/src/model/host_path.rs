@@ -320,7 +320,11 @@ impl HostPath {
     /// `None` rather than a lossy string when either side is not UTF-8, since
     /// every consumer of a relative path handles it as a `str`.
     pub fn rel_to(&self, root: &HostPath) -> Option<String> {
-        let style = self.style();
+        // A rooted path is not under a relative one, and vice versa, however
+        // their components line up.
+        if self.bytes()[..self.root_len()] != root.bytes()[..root.root_len()] {
+            return None;
+        }
         let mut mine = self.components();
         for theirs in root.components() {
             // Compare under this path's rules; a case-insensitive filesystem is
@@ -337,7 +341,6 @@ impl HostPath {
             out.push_str(component.to_str()?);
         }
         // Equal paths are "under" each other, as `strip_prefix` has it.
-        let _ = style;
         Some(out)
     }
 
@@ -696,6 +699,12 @@ mod tests {
     #[test]
     fn the_root_itself_is_the_empty_relative_path() {
         assert_eq!(h("/srv/proj").rel_to(h("/srv/proj")).as_deref(), Some(""));
+    }
+
+    #[test]
+    fn a_rooted_path_is_not_under_a_relative_one() {
+        assert_eq!(h("/srv/proj").rel_to(h("srv")), None);
+        assert_eq!(h("srv/proj").rel_to(h("/srv")), None);
     }
 
     #[test]

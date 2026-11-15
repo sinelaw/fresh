@@ -10,6 +10,7 @@
 //! `plugins`-gated `plugin_dispatch` / `plugin_commands` modules.
 
 use crate::model::event::{BufferId, LeafId, SplitId};
+use fresh_editor_core::model::host_path::{AsHostPath, HostPathBuf};
 
 use super::Editor;
 
@@ -5305,7 +5306,8 @@ mod tests {
             (0..1000)
                 .map(|i| {
                     DirEntry::new(
-                        dir.join(format!("f{i:04}.txt")),
+                        dir.as_host()
+                            .join_name(std::ffi::OsStr::new(&format!("f{i:04}.txt"))),
                         format!("f{i:04}.txt"),
                         EntryType::File,
                     )

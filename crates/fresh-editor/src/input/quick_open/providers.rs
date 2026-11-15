@@ -574,10 +574,7 @@ impl FileProvider {
             let typed_into_ignored = !dir.is_empty() && custom_ignore.matches(Path::new(dir), true);
             !typed_into_ignored && custom_ignore.matches(Path::new(rel), false)
         };
-        let abs_path = Path::new(cwd)
-            .as_host()
-            .join_rel(&query.replace('\\', "/"))
-            .into_path_buf();
+        let abs_path = Path::new(cwd).as_host().join_rel(query).into_path_buf();
         let mut results = Vec::new();
 
         // If the query points to a directory, list its file contents.

@@ -1099,11 +1099,7 @@ impl Editor {
             return None;
         }
 
-        let path = base
-            .as_host()
-            .join_rel(&name.replace('\\', "/"))
-            .normalize()
-            .into_path_buf();
+        let path = base.as_host().join_rel(name).normalize().into_path_buf();
         let fs = std::sync::Arc::clone(&self.authority().filesystem);
         // **Only a name that traverses is checked against the project.** A
         // plain one stays in the directory the reader was already looking at,

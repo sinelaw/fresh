@@ -374,7 +374,7 @@ mod tests {
         );
 
         assert_eq!(
-            fs.content_digest(spool.path()).unwrap(),
+            fs.content_digest(spool.path().as_host()).unwrap(),
             ContentDigest::of(&contents)
         );
     }
@@ -418,11 +418,11 @@ mod tests {
         );
 
         // The spool resolves without existing on disk...
-        assert_eq!(fs.read_range(&spool_path, 8, 5).unwrap(), b"stdin");
-        assert_eq!(fs.metadata(&spool_path).unwrap().size, 13);
+        assert_eq!(fs.read_range(spool_path.as_host(), 8, 5).unwrap(), b"stdin");
+        assert_eq!(fs.metadata(spool_path.as_host()).unwrap().size, 13);
         // ...and the wrapped filesystem still does its own job.
-        assert_eq!(fs.read_range(&real, 2, 4).unwrap(), b"real");
-        assert_eq!(fs.read_file(&real).unwrap(), b"a real file");
+        assert_eq!(fs.read_range(real.as_host(), 2, 4).unwrap(), b"real");
+        assert_eq!(fs.read_file(real.as_host()).unwrap(), b"a real file");
     }
 
     #[test]
@@ -434,7 +434,7 @@ mod tests {
         );
 
         let err = fs
-            .read_range(spool.path(), 0, 4096)
+            .read_range(spool.path().as_host(), 0, 4096)
             .expect_err("reading past the end should fail like read_exact does");
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
     }

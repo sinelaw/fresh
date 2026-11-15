@@ -4041,7 +4041,7 @@ fn test_file_explorer_copy_full_path() {
     // Tree nodes hold canonicalized paths, which on Windows carry the
     // verbatim `\\?\` prefix; the clipboard gets the plain form (#3296).
     // Elsewhere stripping is a no-op, so this is an exact comparison.
-    let expected = fresh::primitives::path_utils::strip_verbatim_prefix(&selected_path);
+    let expected = fresh::primitives::path_utils::strip_verbatim_prefix(selected_path.as_path());
     assert_eq!(
         copied,
         expected.to_string_lossy(),
@@ -4101,7 +4101,7 @@ fn test_file_explorer_copy_relative_path() {
     // Windows verbatim prefix first, as the copy does (#3296).
     use fresh::primitives::path_utils::strip_verbatim_prefix;
     let working_dir = strip_verbatim_prefix(harness.editor().working_dir()).into_owned();
-    let selected_path = strip_verbatim_prefix(&selected_path).into_owned();
+    let selected_path = strip_verbatim_prefix(selected_path.as_path()).into_owned();
     let expected = selected_path
         .strip_prefix(&working_dir)
         .expect("selected path must live under working_dir");

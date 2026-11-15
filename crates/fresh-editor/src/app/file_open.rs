@@ -737,7 +737,7 @@ mod tests {
 
     fn make_entry(name: &str, is_dir: bool) -> DirEntry {
         DirEntry::new(
-            PathBuf::from(format!("/test/{}", name)),
+            HostPathBuf::from_path_buf(PathBuf::from(format!("/test/{}", name))),
             name.to_string(),
             if is_dir {
                 EntryType::Directory

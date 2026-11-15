@@ -32,6 +32,7 @@ use portable_pty::{native_pty_system, PtySize};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 
 /// A filesystem that delegates to the local `StdFileSystem` but pretends to be
 /// a remote SSH connection and records every path it is asked about. We use
@@ -71,97 +72,122 @@ impl RecordingRemoteFs {
 }
 
 impl FileSystem for RecordingRemoteFs {
-    fn read_file(&self, path: &Path) -> io::Result<Vec<u8>> {
+    fn read_file(&self, path: &HostPath) -> io::Result<Vec<u8>> {
+        let path = path.as_path();
         self.record(path);
         self.inner.read_file(path)
     }
-    fn read_range(&self, path: &Path, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+    fn read_range(&self, path: &HostPath, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+        let path = path.as_path();
         self.record(path);
         self.inner.read_range(path, offset, len)
     }
-    fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()> {
+    fn write_file(&self, path: &HostPath, data: &[u8]) -> io::Result<()> {
+        let path = path.as_path();
         self.record(path);
         self.inner.write_file(path, data)
     }
-    fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+    fn create_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+        let path = path.as_path();
         self.record(path);
         self.inner.create_file(path)
     }
-    fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+    fn create_new_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+        let path = path.as_path();
         self.record(path);
         self.inner.create_new_file(path)
     }
-    fn create_new_private_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+    fn create_new_private_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+        let path = path.as_path();
         self.record(path);
         self.inner.create_new_private_file(path)
     }
-    fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
+    fn open_file(&self, path: &HostPath) -> io::Result<Box<dyn FileReader>> {
+        let path = path.as_path();
         self.record(path);
         self.inner.open_file(path)
     }
-    fn open_file_for_write(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+    fn open_file_for_write(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+        let path = path.as_path();
         self.record(path);
         self.inner.open_file_for_write(path)
     }
-    fn open_file_for_append(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+    fn open_file_for_append(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+        let path = path.as_path();
         self.record(path);
         self.inner.open_file_for_append(path)
     }
-    fn set_file_length(&self, path: &Path, len: u64) -> io::Result<()> {
+    fn set_file_length(&self, path: &HostPath, len: u64) -> io::Result<()> {
+        let path = path.as_path();
         self.record(path);
         self.inner.set_file_length(path, len)
     }
-    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+    fn rename(&self, from: &HostPath, to: &HostPath) -> io::Result<()> {
+        let from = from.as_path();
+        let to = to.as_path();
         self.record(from);
         self.record(to);
         self.inner.rename(from, to)
     }
-    fn copy(&self, from: &Path, to: &Path) -> io::Result<u64> {
+    fn copy(&self, from: &HostPath, to: &HostPath) -> io::Result<u64> {
+        let from = from.as_path();
+        let to = to.as_path();
         self.record(from);
         self.record(to);
         self.inner.copy(from, to)
     }
-    fn remove_file(&self, path: &Path) -> io::Result<()> {
+    fn remove_file(&self, path: &HostPath) -> io::Result<()> {
+        let path = path.as_path();
         self.record(path);
         self.inner.remove_file(path)
     }
-    fn remove_dir(&self, path: &Path) -> io::Result<()> {
+    fn remove_dir(&self, path: &HostPath) -> io::Result<()> {
+        let path = path.as_path();
         self.record(path);
         self.inner.remove_dir(path)
     }
-    fn metadata(&self, path: &Path) -> io::Result<FileMetadata> {
+    fn metadata(&self, path: &HostPath) -> io::Result<FileMetadata> {
+        let path = path.as_path();
         self.record(path);
         self.inner.metadata(path)
     }
-    fn symlink_metadata(&self, path: &Path) -> io::Result<FileMetadata> {
+    fn symlink_metadata(&self, path: &HostPath) -> io::Result<FileMetadata> {
+        let path = path.as_path();
         self.record(path);
         self.inner.symlink_metadata(path)
     }
-    fn is_dir(&self, path: &Path) -> io::Result<bool> {
+    fn is_dir(&self, path: &HostPath) -> io::Result<bool> {
+        let path = path.as_path();
         self.record(path);
         self.inner.is_dir(path)
     }
-    fn is_file(&self, path: &Path) -> io::Result<bool> {
+    fn is_file(&self, path: &HostPath) -> io::Result<bool> {
+        let path = path.as_path();
         self.record(path);
         self.inner.is_file(path)
     }
-    fn set_permissions(&self, path: &Path, permissions: &FilePermissions) -> io::Result<()> {
+    fn set_permissions(&self, path: &HostPath, permissions: &FilePermissions) -> io::Result<()> {
+        let path = path.as_path();
         self.record(path);
         self.inner.set_permissions(path, permissions)
     }
-    fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
+    fn read_dir(&self, path: &HostPath) -> io::Result<Vec<DirEntry>> {
+        let path = path.as_path();
         self.record(path);
         self.inner.read_dir(path)
     }
-    fn create_dir(&self, path: &Path) -> io::Result<()> {
+    fn create_dir(&self, path: &HostPath) -> io::Result<()> {
+        let path = path.as_path();
         self.record(path);
         self.inner.create_dir(path)
     }
-    fn create_dir_all(&self, path: &Path) -> io::Result<()> {
+    fn create_dir_all(&self, path: &HostPath) -> io::Result<()> {
+        let path = path.as_path();
         self.record(path);
         self.inner.create_dir_all(path)
     }
-    fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
+    fn canonicalize(&self, path: &HostPath) -> io::Result<HostPathBuf> {
+        let path = path.as_path();
         self.record(path);
         self.inner.canonicalize(path)
     }
@@ -170,30 +196,33 @@ impl FileSystem for RecordingRemoteFs {
     }
     fn search_file(
         &self,
-        path: &Path,
+        path: &HostPath,
         pattern: &str,
         opts: &FileSearchOptions,
     ) -> io::Result<Vec<SearchMatch>> {
+        let path = path.as_path();
         self.record(path);
         self.inner.search_file(path, pattern, opts)
     }
     fn sudo_write(
         &self,
-        path: &Path,
+        path: &HostPath,
         data: &[u8],
         mode: Option<u32>,
         owner: Option<(u32, u32)>,
     ) -> io::Result<()> {
+        let path = path.as_path();
         self.record(path);
         self.inner.sudo_write(path, data, mode, owner)
     }
     fn walk(
         &self,
-        root: &Path,
+        root: &HostPath,
             opts: &fresh_editor_core::model::filesystem::WalkOptions<'_>,
             cancel: &std::sync::atomic::AtomicBool,
             on_entry: &mut dyn FnMut(fresh_editor_core::model::filesystem::WalkEntry<'_>) -> bool,
     ) -> std::io::Result<()> {
+        let root = root.as_path();
         self.inner.walk(root, opts, cancel, on_entry)
     }
     // Present as a live remote connection so the editor treats this authority

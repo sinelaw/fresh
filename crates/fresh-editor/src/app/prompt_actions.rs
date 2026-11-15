@@ -1892,7 +1892,7 @@ impl Editor {
                     // backslash in here and the host had no such file.
                     self.working_dir()
                         .as_host()
-                        .join_rel(&expanded_path.to_string_lossy().replace('\\', "/"))
+                        .join_rel(&expanded_path.to_string_lossy())
                         .into_path_buf()
                 };
                 self.open_file_with_jump(full_path, line, column);

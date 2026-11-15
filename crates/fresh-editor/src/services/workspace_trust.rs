@@ -164,7 +164,12 @@ impl WorkspaceTrust {
         // freshly-opened session for an ordinary folder would silently block
         // its own LSP / tooling. Folders *with* executable content stay
         // Restricted until the user trusts them (via the status-bar pill).
-        if !decided && executable_content_markers(root).is_empty() {
+        // Local on purpose: this runs at session boot, before any remote
+        // authority exists. A remote workspace's markers are scanned later,
+        // through its own filesystem, by the trust prompt.
+        if !decided
+            && executable_content_markers(&crate::model::filesystem::StdFileSystem, root).is_empty()
+        {
             trust.set_level_transient(TrustLevel::Trusted);
         }
         Arc::new(trust)
@@ -468,11 +473,28 @@ fn linked_worktree_main_root(
     // `.git` as a regular file (rather than a directory) is the marker of a
     // worktree or submodule checkout. `read_file` on a directory errors, so
     // this doubles as the file/dir test without a second round-trip.
-    let text = String::from_utf8(fs.read_file(root.join(".git").as_host()).ok()?).ok()?;
+    let text = String::from_utf8(
+        fs.read_file(
+            root.as_host()
+                .join_name(std::ffi::OsStr::new(".git"))
+                .as_host_path(),
+        )
+        .ok()?,
+    )
+    .ok()?;
     let git_dir = resolve_git_pointer(root, text.trim().strip_prefix("gitdir:")?.trim());
     // Only a *linked worktree* git dir carries `commondir`; a submodule's does
     // not, and the main worktree never reaches here (its `.git` is a dir).
-    let common = String::from_utf8(fs.read_file(git_dir.join("commondir").as_host()).ok()?).ok()?;
+    let common = String::from_utf8(
+        fs.read_file(
+            git_dir
+                .as_host()
+                .join_name(std::ffi::OsStr::new("commondir"))
+                .as_host_path(),
+        )
+        .ok()?,
+    )
+    .ok()?;
     let common_dir = resolve_git_pointer(&git_dir, common.trim());
     // The shared git dir is `<main worktree>/.git`; its parent is the root.
     let main_root = lexical_normalize(common_dir.parent()?);
@@ -503,8 +525,11 @@ fn resolve_git_pointer(base: &Path, target: &str) -> PathBuf {
 /// which is gated on trust (see `LspManager`). So prompting for a recognized
 /// project is what lets the user enable its tooling. A folder with none of
 /// these is plain text/docs — nothing to gate, no prompt.
-pub fn workspace_has_executable_content(root: &Path) -> bool {
-    !executable_content_markers(root).is_empty()
+pub fn workspace_has_executable_content(
+    fs: &dyn crate::model::filesystem::FileSystem,
+    root: &Path,
+) -> bool {
+    !executable_content_markers(fs, root).is_empty()
 }
 
 /// The specific marker files/dirs in `root` that make it "executable content"
@@ -512,7 +537,10 @@ pub fn workspace_has_executable_content(root: &Path) -> bool {
 /// tell the user *why* it appeared (e.g. ".envrc, .venv, App.sln"). Shallow,
 /// passive scan — never runs anything. Order is roughly env-managers, then
 /// repo-local toolchains, then devcontainer, then .NET project files.
-pub fn executable_content_markers(root: &Path) -> Vec<String> {
+pub fn executable_content_markers(
+    fs: &dyn crate::model::filesystem::FileSystem,
+    root: &Path,
+) -> Vec<String> {
     let mut found = Vec::new();
 
     // Env-manager markers come from the single built-in detector list
@@ -524,7 +552,7 @@ pub fn executable_content_markers(root: &Path) -> Vec<String> {
     // activation path's concern (`detect_env`), not trust's.
     for d in crate::config::default_env_detectors() {
         for m in &d.markers {
-            if root.join(m).exists() {
+            if fs.exists(root.as_host().join_rel(m).as_host_path()) {
                 found.push(m.clone());
             }
         }
@@ -545,17 +573,19 @@ pub fn executable_content_markers(root: &Path) -> Vec<String> {
         "composer.json",         // php
     ];
     for m in FILE_MARKERS {
-        if root.join(m).is_file() {
+        if fs
+            .is_file(root.as_host().join_rel(m).as_host_path())
+            .unwrap_or(false)
+        {
             found.push((*m).to_string());
         }
     }
     // Dev container: reopening / building it runs code.
-    if root
-        .join(".devcontainer")
-        .join("devcontainer.json")
-        .is_file()
-        || root.join(".devcontainer.json").is_file()
-    {
+    let is_file = |rel: &str| {
+        fs.is_file(root.as_host().join_rel(rel).as_host_path())
+            .unwrap_or(false)
+    };
+    if is_file(".devcontainer/devcontainer.json") || is_file(".devcontainer.json") {
         found.push("devcontainer.json".to_string());
     }
     // C# / .NET: loading a project runs restore/build and design-time
@@ -616,10 +646,19 @@ pub fn probe_env(
 ) -> (Option<DetectedEnv>, bool) {
     let mut incomplete = false;
     for d in detectors {
-        if !d.markers.iter().any(|m| fs.exists(root.join(m).as_host())) {
+        if !d
+            .markers
+            .iter()
+            .any(|m| fs.exists(root.as_host().join_rel(m).as_host_path()))
+        {
             continue;
         }
-        if !d.require.is_empty() && !d.require.iter().any(|r| fs.exists(root.join(r).as_host())) {
+        if !d.require.is_empty()
+            && !d
+                .require
+                .iter()
+                .any(|r| fs.exists(root.as_host().join_rel(r).as_host_path()))
+        {
             incomplete = true;
             continue;
         }
@@ -882,21 +921,21 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let empty = tmp.path().join("empty");
         std::fs::create_dir_all(&empty).unwrap();
-        assert!(!workspace_has_executable_content(&empty));
+        assert!(!workspace_has_executable_content(&StdFileSystem, &empty));
 
         let envrc = tmp.path().join("envrc");
         std::fs::create_dir_all(&envrc).unwrap();
         std::fs::write(envrc.join(".envrc"), "use flake\n").unwrap();
-        assert!(workspace_has_executable_content(&envrc));
+        assert!(workspace_has_executable_content(&StdFileSystem, &envrc));
 
         let venv = tmp.path().join("venv");
         std::fs::create_dir_all(venv.join(".venv")).unwrap();
-        assert!(workspace_has_executable_content(&venv));
+        assert!(workspace_has_executable_content(&StdFileSystem, &venv));
 
         let dotnet = tmp.path().join("dotnet");
         std::fs::create_dir_all(&dotnet).unwrap();
         std::fs::write(dotnet.join("App.csproj"), "<Project/>\n").unwrap();
-        assert!(workspace_has_executable_content(&dotnet));
+        assert!(workspace_has_executable_content(&StdFileSystem, &dotnet));
     }
 
     #[test]
@@ -910,7 +949,7 @@ mod tests {
         std::fs::write(root.join(".devcontainer").join("devcontainer.json"), "{}\n").unwrap();
         std::fs::write(root.join("App.csproj"), "<Project/>\n").unwrap();
 
-        let markers = executable_content_markers(root);
+        let markers = executable_content_markers(&StdFileSystem, root);
         for expected in [
             ".envrc",
             "mise.toml",
@@ -927,7 +966,7 @@ mod tests {
         // A plain folder reports nothing.
         let empty = tmp.path().join("empty");
         std::fs::create_dir_all(&empty).unwrap();
-        assert!(executable_content_markers(&empty).is_empty());
+        assert!(executable_content_markers(&StdFileSystem, &empty).is_empty());
     }
 
     // === detect_env (the single activation-detection entry point) ===
@@ -953,7 +992,7 @@ mod tests {
         // (the trust marker scan still flags it, but activation needs evidence).
         std::fs::create_dir_all(root.join(".venv")).unwrap();
         assert_eq!(detect_default(root), None);
-        assert!(executable_content_markers(root)
+        assert!(executable_content_markers(&StdFileSystem, root)
             .iter()
             .any(|m| m == ".venv"));
 

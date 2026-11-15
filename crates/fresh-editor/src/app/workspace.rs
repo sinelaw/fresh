@@ -2076,7 +2076,7 @@ impl crate::app::window::Window {
                 let abs_path = self
                     .root
                     .as_host()
-                    .join_rel(&rel_path.to_string_lossy().replace('\\', "/"))
+                    .join_rel(&rel_path.to_string_lossy())
                     .into_path_buf();
                 let buffer_id = self.install_remote_placeholder(&abs_path);
                 path_to_buffer.insert(rel_path, buffer_id);

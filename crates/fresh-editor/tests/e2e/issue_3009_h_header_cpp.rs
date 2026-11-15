@@ -14,6 +14,7 @@ use fresh::model::filesystem::{
     DirEntry, FileMetadata, FilePermissions, FileReader, FileSearchOptions, FileSystem, FileWriter,
     SearchMatch, StdFileSystem, WalkEntry, WalkOptions,
 };
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use ratatui::style::Color;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -213,10 +214,11 @@ impl RemoteTreeFs {
 }
 
 impl FileSystem for RemoteTreeFs {
-    fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
+    fn read_dir(&self, path: &HostPath) -> io::Result<Vec<DirEntry>> {
+        let path = path.as_path();
         // Entries are reported back under the remote path, the way a real
         // agent reports the host's own paths.
-        let entries = self.inner.read_dir(&self.map(path))?;
+        let entries = self.inner.read_dir(self.map(path).as_host())?;
         Ok(entries
             .into_iter()
             .map(|e| DirEntry::new(path.join(&e.name), e.name, e.entry_type))
@@ -225,9 +227,10 @@ impl FileSystem for RemoteTreeFs {
 
     // `canonicalize` must stay in remote space — resolving to the local
     // backing directory would hand the editor a path the "host" never had.
-    fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
-        self.inner.canonicalize(&self.map(path))?;
-        Ok(path.to_path_buf())
+    fn canonicalize(&self, path: &HostPath) -> io::Result<HostPathBuf> {
+        let path = path.as_path();
+        self.inner.canonicalize(self.map(path).as_host())?;
+        Ok(HostPathBuf::from_path_buf(path.to_path_buf()))
     }
 
     fn remote_connection_info(&self) -> Option<&str> {
@@ -235,99 +238,131 @@ impl FileSystem for RemoteTreeFs {
     }
 
     // ---- delegation, with path translation ----
-    fn read_file(&self, path: &Path) -> io::Result<Vec<u8>> {
-        self.inner.read_file(&self.map(path))
+    fn read_file(&self, path: &HostPath) -> io::Result<Vec<u8>> {
+        let path = path.as_path();
+        self.inner.read_file(self.map(path).as_host())
     }
-    fn read_range(&self, path: &Path, offset: u64, len: usize) -> io::Result<Vec<u8>> {
-        self.inner.read_range(&self.map(path), offset, len)
+    fn read_range(&self, path: &HostPath, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+        let path = path.as_path();
+        self.inner.read_range(self.map(path).as_host(), offset, len)
     }
-    fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()> {
-        self.inner.write_file(&self.map(path), data)
+    fn write_file(&self, path: &HostPath, data: &[u8]) -> io::Result<()> {
+        let path = path.as_path();
+        self.inner.write_file(self.map(path).as_host(), data)
     }
-    fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
-        self.inner.create_file(&self.map(path))
+    fn create_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+        let path = path.as_path();
+        self.inner.create_file(self.map(path).as_host())
     }
-    fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
-        self.inner.create_new_file(&self.map(path))
+    fn create_new_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+        let path = path.as_path();
+        self.inner.create_new_file(self.map(path).as_host())
     }
-    fn create_new_private_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
-        self.inner.create_new_private_file(&self.map(path))
+    fn create_new_private_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+        let path = path.as_path();
+        self.inner.create_new_private_file(self.map(path).as_host())
     }
-    fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
-        self.inner.open_file(&self.map(path))
+    fn open_file(&self, path: &HostPath) -> io::Result<Box<dyn FileReader>> {
+        let path = path.as_path();
+        self.inner.open_file(self.map(path).as_host())
     }
-    fn open_file_for_write(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
-        self.inner.open_file_for_write(&self.map(path))
+    fn open_file_for_write(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+        let path = path.as_path();
+        self.inner.open_file_for_write(self.map(path).as_host())
     }
-    fn open_file_for_append(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
-        self.inner.open_file_for_append(&self.map(path))
+    fn open_file_for_append(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+        let path = path.as_path();
+        self.inner.open_file_for_append(self.map(path).as_host())
     }
-    fn set_file_length(&self, path: &Path, len: u64) -> io::Result<()> {
-        self.inner.set_file_length(&self.map(path), len)
+    fn set_file_length(&self, path: &HostPath, len: u64) -> io::Result<()> {
+        let path = path.as_path();
+        self.inner.set_file_length(self.map(path).as_host(), len)
     }
-    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
-        self.inner.rename(&self.map(from), &self.map(to))
+    fn rename(&self, from: &HostPath, to: &HostPath) -> io::Result<()> {
+        let from = from.as_path();
+        let to = to.as_path();
+        self.inner
+            .rename(self.map(from).as_host(), self.map(to).as_host())
     }
-    fn copy(&self, from: &Path, to: &Path) -> io::Result<u64> {
-        self.inner.copy(&self.map(from), &self.map(to))
+    fn copy(&self, from: &HostPath, to: &HostPath) -> io::Result<u64> {
+        let from = from.as_path();
+        let to = to.as_path();
+        self.inner
+            .copy(self.map(from).as_host(), self.map(to).as_host())
     }
-    fn remove_file(&self, path: &Path) -> io::Result<()> {
-        self.inner.remove_file(&self.map(path))
+    fn remove_file(&self, path: &HostPath) -> io::Result<()> {
+        let path = path.as_path();
+        self.inner.remove_file(self.map(path).as_host())
     }
-    fn remove_dir(&self, path: &Path) -> io::Result<()> {
-        self.inner.remove_dir(&self.map(path))
+    fn remove_dir(&self, path: &HostPath) -> io::Result<()> {
+        let path = path.as_path();
+        self.inner.remove_dir(self.map(path).as_host())
     }
-    fn metadata(&self, path: &Path) -> io::Result<FileMetadata> {
-        self.inner.metadata(&self.map(path))
+    fn metadata(&self, path: &HostPath) -> io::Result<FileMetadata> {
+        let path = path.as_path();
+        self.inner.metadata(self.map(path).as_host())
     }
-    fn symlink_metadata(&self, path: &Path) -> io::Result<FileMetadata> {
-        self.inner.symlink_metadata(&self.map(path))
+    fn symlink_metadata(&self, path: &HostPath) -> io::Result<FileMetadata> {
+        let path = path.as_path();
+        self.inner.symlink_metadata(self.map(path).as_host())
     }
-    fn is_dir(&self, path: &Path) -> io::Result<bool> {
-        self.inner.is_dir(&self.map(path))
+    fn is_dir(&self, path: &HostPath) -> io::Result<bool> {
+        let path = path.as_path();
+        self.inner.is_dir(self.map(path).as_host())
     }
-    fn is_file(&self, path: &Path) -> io::Result<bool> {
-        self.inner.is_file(&self.map(path))
+    fn is_file(&self, path: &HostPath) -> io::Result<bool> {
+        let path = path.as_path();
+        self.inner.is_file(self.map(path).as_host())
     }
-    fn set_permissions(&self, path: &Path, permissions: &FilePermissions) -> io::Result<()> {
-        self.inner.set_permissions(&self.map(path), permissions)
+    fn set_permissions(&self, path: &HostPath, permissions: &FilePermissions) -> io::Result<()> {
+        let path = path.as_path();
+        self.inner
+            .set_permissions(self.map(path).as_host(), permissions)
     }
-    fn create_dir(&self, path: &Path) -> io::Result<()> {
-        self.inner.create_dir(&self.map(path))
+    fn create_dir(&self, path: &HostPath) -> io::Result<()> {
+        let path = path.as_path();
+        self.inner.create_dir(self.map(path).as_host())
     }
-    fn create_dir_all(&self, path: &Path) -> io::Result<()> {
-        self.inner.create_dir_all(&self.map(path))
+    fn create_dir_all(&self, path: &HostPath) -> io::Result<()> {
+        let path = path.as_path();
+        self.inner.create_dir_all(self.map(path).as_host())
     }
     fn current_uid(&self) -> u32 {
         self.inner.current_uid()
     }
     fn search_file(
         &self,
-        path: &Path,
+        path: &HostPath,
         pattern: &str,
         opts: &FileSearchOptions,
     ) -> io::Result<Vec<SearchMatch>> {
-        self.inner.search_file(&self.map(path), pattern, opts)
+        let path = path.as_path();
+        self.inner
+            .search_file(self.map(path).as_host(), pattern, opts)
     }
     fn sudo_write(
         &self,
-        path: &Path,
+        path: &HostPath,
         data: &[u8],
         mode: Option<u32>,
         owner: Option<(u32, u32)>,
     ) -> io::Result<()> {
-        self.inner.sudo_write(&self.map(path), data, mode, owner)
+        let path = path.as_path();
+        self.inner
+            .sudo_write(self.map(path).as_host(), data, mode, owner)
     }
     fn walk(
         &self,
-        root: &Path,
+        root: &HostPath,
         opts: &WalkOptions<'_>,
         cancel: &std::sync::atomic::AtomicBool,
         on_entry: &mut dyn FnMut(WalkEntry<'_>) -> bool,
     ) -> io::Result<()> {
+        let root = root.as_path();
         // Like every other method here, translate the remote path into the
         // local tree that actually backs this fake before delegating.
-        self.inner.walk(&self.map(root), opts, cancel, on_entry)
+        self.inner
+            .walk(self.map(root).as_host(), opts, cancel, on_entry)
     }
 }
 
