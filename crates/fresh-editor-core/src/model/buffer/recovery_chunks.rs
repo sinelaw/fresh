@@ -3,6 +3,7 @@
 
 use super::TextBuffer;
 use crate::model::filesystem::FileSystem;
+use crate::model::host_path::AsHostPath;
 use crate::model::piece_tree::{BufferData, BufferLocation};
 use crate::recovery_types::RecoveryChunk;
 use std::io;
@@ -163,7 +164,9 @@ impl<'a> Chunker<'a> {
         let read = spans
             .iter()
             .map(|(path, span)| {
-                let bytes = self.fs.read_range(path, span.start as u64, span.len())?;
+                let bytes = self
+                    .fs
+                    .read_range((*path).as_host(), span.start as u64, span.len())?;
                 if bytes.len() != span.len() {
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,

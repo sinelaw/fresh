@@ -11,6 +11,7 @@ use crate::recovery_types::HotExitEntry;
 use anyhow::{Context, Result};
 use std::io;
 
+use crate::model::host_path::AsHostPath;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -536,7 +537,7 @@ impl TextBuffer {
         let path = path.as_ref();
 
         // Get file size to determine loading strategy
-        let metadata = fs.metadata(path)?;
+        let metadata = fs.metadata(path.as_host())?;
         let file_size = metadata.size as usize;
 
         // Choose loading strategy based on file size. `large_file_threshold`
@@ -559,7 +560,7 @@ impl TextBuffer {
         config: BufferConfig,
     ) -> anyhow::Result<Self> {
         let path = path.as_ref();
-        let contents = fs.read_file(path)?;
+        let contents = fs.read_file(path.as_host())?;
 
         let mut buffer = Self::from_bytes_with_encoding(contents, encoding, fs);
         buffer.persistence.set_file_path(path.to_path_buf());
@@ -578,7 +579,7 @@ impl TextBuffer {
         force_text: bool,
         normalize_cr: bool,
     ) -> anyhow::Result<Self> {
-        let contents = fs.read_file(path)?;
+        let contents = fs.read_file(path.as_host())?;
 
         // Use unified encoding/binary detection
         let (encoding, detected_binary) = format::detect_encoding_or_binary(&contents, false);
@@ -615,7 +616,7 @@ impl TextBuffer {
         fs: Arc<dyn FileSystem + Send + Sync>,
     ) -> anyhow::Result<Self> {
         let path = path.as_ref();
-        let metadata = fs.metadata(path)?;
+        let metadata = fs.metadata(path.as_host())?;
         let file_size = metadata.size as usize;
         let mut buffer = Self::load_large_file_internal(path, file_size, fs, true, false, true)?;
         buffer.config.large_file_threshold = Some(large_file_threshold);
@@ -641,7 +642,7 @@ impl TextBuffer {
         // Read a sample of the file to detect encoding and whether it's binary
         // We read the first 8KB for detection
         let sample_size = file_size.min(8 * 1024);
-        let sample = fs.read_range(path, 0, sample_size)?;
+        let sample = fs.read_range(path.as_host(), 0, sample_size)?;
 
         // Use unified encoding/binary detection
         let (encoding, detected_binary) =
@@ -678,7 +679,7 @@ impl TextBuffer {
                 "Large file with non-UTF-8 encoding ({:?}), loading fully for conversion",
                 encoding
             );
-            let contents = fs.read_file(path)?;
+            let contents = fs.read_file(path.as_host())?;
             let mut buffer = Self::from_bytes_normalizing(contents, fs, normalize_cr);
             buffer.persistence.set_file_path(path.to_path_buf());
             buffer.persistence.clear_modified();
@@ -885,7 +886,10 @@ impl TextBuffer {
                 if e.is::<save::TornWrite>() {
                     // The file's mtime moved by our own write: remember it,
                     // so the change isn't taken for someone else's
-                    let mtime = fs.metadata(dest_path).ok().and_then(|m| m.modified);
+                    let mtime = fs
+                        .metadata(dest_path.as_host())
+                        .ok()
+                        .and_then(|m| m.modified);
                     self.persistence
                         .set_torn_write(mtime.map(|mtime| (dest_path.to_path_buf(), mtime)));
                     // Tore the very file the unloaded parts are read from
@@ -898,9 +902,13 @@ impl TextBuffer {
         } else if recipe.has_copy_ops() {
             // Remote with Copy ops: the agent rebuilds the file server-side
             let src_for_patch = recipe.src_path.as_deref().unwrap_or(dest_path);
-            fs.write_patched(src_for_patch, dest_path, &recipe.to_write_ops())?;
+            fs.write_patched(
+                src_for_patch.as_host(),
+                dest_path.as_host(),
+                &recipe.to_write_ops(),
+            )?;
         } else {
-            fs.write_file(dest_path, &recipe.flatten_inserts())?;
+            fs.write_file(dest_path.as_host(), &recipe.flatten_inserts())?;
         }
         Ok(())
     }
@@ -991,7 +999,7 @@ impl TextBuffer {
 
     /// Finalize save state after successful write.
     fn finalize_save(&mut self, dest_path: &Path) -> anyhow::Result<()> {
-        let new_size = self.persistence.fs().metadata(dest_path)?.size as usize;
+        let new_size = self.persistence.fs().metadata(dest_path.as_host())?.size as usize;
         tracing::debug!(
             "Buffer::save: updating saved_file_size from {:?} to {}",
             self.persistence.saved_file_size(),
@@ -1049,7 +1057,7 @@ impl TextBuffer {
         if journaled {
             self.persistence.set_hot_exit_entry(None);
         }
-        let new_size = self.persistence.fs().metadata(&dest_path)?.size as usize;
+        let new_size = self.persistence.fs().metadata(dest_path.as_host())?.size as usize;
         self.persistence.set_saved_content(None);
         self.persistence.set_saved_file_size(Some(new_size));
         self.persistence.set_file_path(dest_path.clone());
@@ -1894,7 +1902,7 @@ impl TextBuffer {
         let line_feed_cnt = self
             .persistence
             .fs()
-            .count_line_feeds_in_range(source_path, old_size as u64, additional_bytes)
+            .count_line_feeds_in_range(source_path.as_host(), old_size as u64, additional_bytes)
             .ok();
 
         // Append piece at end of document (insert at offset == total_bytes)
@@ -2054,7 +2062,7 @@ impl TextBuffer {
             } => {
                 let read_offset = *file_offset as u64 + leaf.offset as u64;
                 self.persistence.fs().count_line_feeds_in_range(
-                    file_path,
+                    file_path.as_host(),
                     read_offset,
                     leaf.bytes,
                 )?
@@ -2292,7 +2300,7 @@ impl TextBuffer {
                 let read_offset = *file_offset as u64 + piece_offset as u64;
                 self.persistence
                     .fs()
-                    .read_range(file_path, read_offset, piece_bytes)
+                    .read_range(file_path.as_host(), read_offset, piece_bytes)
                     .ok()?
             }
         };

@@ -280,6 +280,15 @@ impl HostPath {
         Some(Self::from_bytes(&body[start..end]).as_os_str())
     }
 
+    /// The extension of the last component, as `Path::extension` defines it
+    /// but splitting components under this path's own rules.
+    pub fn extension(&self) -> Option<&OsStr> {
+        let name = self.file_name()?.as_encoded_bytes();
+        // A leading dot is part of the name (`.gitignore` has no extension).
+        let dot = name.iter().skip(1).rposition(|&b| b == b'.')? + 1;
+        Some(HostPath::from_bytes(&name[dot + 1..]).as_os_str())
+    }
+
     /// The components under this path's rules, roots and separators dropped.
     pub fn components(&self) -> impl Iterator<Item = &OsStr> {
         let style = self.style();
@@ -356,9 +365,8 @@ impl HostPath {
             kept.push(component);
         }
 
-        let mut out = HostPathBuf::from_os_string(OsString::from(
-            HostPath::from_bytes(root).as_os_str(),
-        ));
+        let mut out =
+            HostPathBuf::from_os_string(OsString::from(HostPath::from_bytes(root).as_os_str()));
         for component in kept {
             out.push_name(component);
         }
@@ -560,10 +568,7 @@ mod tests {
 
     #[test]
     fn joining_skips_empty_and_dot_components() {
-        assert_eq!(
-            h("/srv").join_rel("a//./b").as_host_path(),
-            h("/srv/a/b")
-        );
+        assert_eq!(h("/srv").join_rel("a//./b").as_host_path(), h("/srv/a/b"));
     }
 
     #[test]
@@ -686,10 +691,7 @@ mod tests {
 
     #[test]
     fn normalizing_a_windows_path_keeps_backslashes() {
-        assert_eq!(
-            h(r"C:\a\.\b\..\c").normalize().as_host_path(),
-            h(r"C:\a\c")
-        );
+        assert_eq!(h(r"C:\a\.\b\..\c").normalize().as_host_path(), h(r"C:\a\c"));
     }
 
     #[test]

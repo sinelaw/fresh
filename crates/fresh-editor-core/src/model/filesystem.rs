@@ -10,8 +10,10 @@
 //! callers should use `spawn_blocking` or similar patterns.
 
 use std::io::{self, Read, Seek, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::SystemTime;
+
+use crate::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 
 // ============================================================================
 // Directory Entry Types
@@ -66,8 +68,8 @@ pub(crate) fn walk_files_options<'a>(skip_dirs: &'a [&'a str]) -> WalkOptions<'a
 /// One entry from a [`FileSystem::walk`].
 #[derive(Debug, Clone)]
 pub struct WalkEntry<'a> {
-    /// Absolute path.
-    pub path: &'a Path,
+    /// Absolute path, in the walked filesystem's own spelling.
+    pub path: &'a HostPath,
     /// Path relative to the walk root, with `/` between components on every
     /// platform. Only *between* components: a `\` inside a single file name
     /// is part of that name and is reported as-is, so consumers must split
@@ -82,8 +84,8 @@ pub struct WalkEntry<'a> {
 /// A directory entry returned by `read_dir`
 #[derive(Debug, Clone)]
 pub struct DirEntry {
-    /// Full path to the entry
-    pub path: PathBuf,
+    /// Full path to the entry, in the listing filesystem's own spelling.
+    pub path: HostPathBuf,
     /// File/directory name (last component of path)
     pub name: String,
     /// Type of entry
@@ -96,7 +98,7 @@ pub struct DirEntry {
 
 impl DirEntry {
     /// Create a new directory entry
-    pub fn new(path: PathBuf, name: String, entry_type: EntryType) -> Self {
+    pub fn new(path: HostPathBuf, name: String, entry_type: EntryType) -> Self {
         Self {
             path,
             name,
@@ -107,7 +109,7 @@ impl DirEntry {
     }
 
     /// Create a symlink entry with target info
-    pub fn new_symlink(path: PathBuf, name: String, target_is_dir: bool) -> Self {
+    pub fn new_symlink(path: HostPathBuf, name: String, target_is_dir: bool) -> Self {
         Self {
             path,
             name,
@@ -481,10 +483,10 @@ pub trait FileSystem: Send + Sync {
     // ========================================================================
 
     /// Read entire file into memory
-    fn read_file(&self, path: &Path) -> io::Result<Vec<u8>>;
+    fn read_file(&self, path: &HostPath) -> io::Result<Vec<u8>>;
 
     /// Read a range of bytes from a file (for lazy loading large files)
-    fn read_range(&self, path: &Path, offset: u64, len: usize) -> io::Result<Vec<u8>>;
+    fn read_range(&self, path: &HostPath, offset: u64, len: usize) -> io::Result<Vec<u8>>;
 
     /// Count `\n` bytes in a file range without returning the data.
     ///
@@ -493,7 +495,12 @@ pub trait FileSystem: Send + Sync {
     /// server side, avoiding the transfer of chunk bytes over the network.
     ///
     /// The default implementation reads the range and counts locally.
-    fn count_line_feeds_in_range(&self, path: &Path, offset: u64, len: usize) -> io::Result<usize> {
+    fn count_line_feeds_in_range(
+        &self,
+        path: &HostPath,
+        offset: u64,
+        len: usize,
+    ) -> io::Result<usize> {
         let data = self.read_range(path, offset, len)?;
         Ok(data.iter().filter(|&&b| b == b'\n').count())
     }
@@ -506,7 +513,7 @@ pub trait FileSystem: Send + Sync {
     ///
     /// The default implementation streams the file through
     /// [`FileSystem::open_file`] a chunk at a time, never holding all of it.
-    fn content_digest(&self, path: &Path) -> io::Result<ContentDigest> {
+    fn content_digest(&self, path: &HostPath) -> io::Result<ContentDigest> {
         ContentDigest::of_reader(self.open_file(path)?)
     }
 
@@ -518,7 +525,7 @@ pub trait FileSystem: Send + Sync {
     /// right for the editor's own files (config, workspace, recovery data).
     /// Saving a user's file goes through
     /// [`FileSystem::replace_file_preserving_identity`] instead.
-    fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()>;
+    fn write_file(&self, path: &HostPath, data: &[u8]) -> io::Result<()>;
 
     /// Replace `path` with `data` atomically (temp file + rename), but only
     /// if the new file can stand in for the old one: the same owner, group,
@@ -532,26 +539,26 @@ pub trait FileSystem: Send + Sync {
     /// filesystems); wrappers forward it to what they wrap.
     fn replace_file_preserving_identity(
         &self,
-        path: &Path,
+        path: &HostPath,
         data: &[u8],
     ) -> Result<(), ReplaceError> {
         self.write_file(path, data).map_err(ReplaceError::Io)
     }
 
     /// Create a file for writing, returns a writer handle
-    fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>>;
+    fn create_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>>;
 
     /// Open a file for reading, returns a reader handle
-    fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>>;
+    fn open_file(&self, path: &HostPath) -> io::Result<Box<dyn FileReader>>;
 
     /// Open a file for writing in-place (truncating, preserves ownership on Unix)
-    fn open_file_for_write(&self, path: &Path) -> io::Result<Box<dyn FileWriter>>;
+    fn open_file_for_write(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>>;
 
     /// Open a file for appending (creates if doesn't exist)
-    fn open_file_for_append(&self, path: &Path) -> io::Result<Box<dyn FileWriter>>;
+    fn open_file_for_append(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>>;
 
     /// Set file length (truncate or extend with zeros)
-    fn set_file_length(&self, path: &Path, len: u64) -> io::Result<()>;
+    fn set_file_length(&self, path: &HostPath, len: u64) -> io::Result<()>;
 
     /// Write a file using a patch recipe (optimized for remote filesystems).
     ///
@@ -567,7 +574,12 @@ pub trait FileSystem: Send + Sync {
     /// The default implementation flattens all operations into memory and
     /// calls `write_file`. Remote implementations can override this to send
     /// the recipe and let the remote host do the reconstruction.
-    fn write_patched(&self, src_path: &Path, dst_path: &Path, ops: &[WriteOp]) -> io::Result<()> {
+    fn write_patched(
+        &self,
+        src_path: &HostPath,
+        dst_path: &HostPath,
+        ops: &[WriteOp],
+    ) -> io::Result<()> {
         // Default implementation: flatten to buffer and write
         let mut buffer = Vec::new();
         for op in ops {
@@ -589,16 +601,16 @@ pub trait FileSystem: Send + Sync {
     // ========================================================================
 
     /// Rename/move a file or directory atomically
-    fn rename(&self, from: &Path, to: &Path) -> io::Result<()>;
+    fn rename(&self, from: &HostPath, to: &HostPath) -> io::Result<()>;
 
     /// Copy a file (fallback when rename fails across filesystems)
-    fn copy(&self, from: &Path, to: &Path) -> io::Result<u64>;
+    fn copy(&self, from: &HostPath, to: &HostPath) -> io::Result<u64>;
 
     /// Remove a file
-    fn remove_file(&self, path: &Path) -> io::Result<()>;
+    fn remove_file(&self, path: &HostPath) -> io::Result<()>;
 
     /// Remove an empty directory
-    fn remove_dir(&self, path: &Path) -> io::Result<()>;
+    fn remove_dir(&self, path: &HostPath) -> io::Result<()>;
 
     // There is deliberately no `remove_dir_all` here.
     //
@@ -621,10 +633,10 @@ pub trait FileSystem: Send + Sync {
     /// and there is no symlink-creating operation on this trait to do better
     /// with. A symlink that points at one of its own ancestors will recurse
     /// until the disk fills.
-    fn copy_dir_all(&self, src: &Path, dst: &Path) -> io::Result<()> {
+    fn copy_dir_all(&self, src: &HostPath, dst: &HostPath) -> io::Result<()> {
         self.create_dir_all(dst)?;
         for entry in self.read_dir(src)? {
-            let dst_child = dst.join(&entry.name);
+            let dst_child = dst.join_name(std::ffi::OsStr::new(&entry.name));
             if entry.is_dir() {
                 self.copy_dir_all(&entry.path, &dst_child)?;
             } else {
@@ -639,26 +651,26 @@ pub trait FileSystem: Send + Sync {
     // ========================================================================
 
     /// Get file/directory metadata
-    fn metadata(&self, path: &Path) -> io::Result<FileMetadata>;
+    fn metadata(&self, path: &HostPath) -> io::Result<FileMetadata>;
 
     /// Get symlink metadata (doesn't follow symlinks)
-    fn symlink_metadata(&self, path: &Path) -> io::Result<FileMetadata>;
+    fn symlink_metadata(&self, path: &HostPath) -> io::Result<FileMetadata>;
 
     /// Check if path exists
-    fn exists(&self, path: &Path) -> bool {
+    fn exists(&self, path: &HostPath) -> bool {
         self.metadata(path).is_ok()
     }
 
     /// Check if path exists, returns metadata if it does
-    fn metadata_if_exists(&self, path: &Path) -> Option<FileMetadata> {
+    fn metadata_if_exists(&self, path: &HostPath) -> Option<FileMetadata> {
         self.metadata(path).ok()
     }
 
     /// Check if path is a directory
-    fn is_dir(&self, path: &Path) -> io::Result<bool>;
+    fn is_dir(&self, path: &HostPath) -> io::Result<bool>;
 
     /// Check if path is a file
-    fn is_file(&self, path: &Path) -> io::Result<bool>;
+    fn is_file(&self, path: &HostPath) -> io::Result<bool>;
 
     /// Check if the current user has write permission to the given path.
     ///
@@ -667,32 +679,32 @@ pub trait FileSystem: Send + Sync {
     /// platforms it falls back to the standard readonly check.
     ///
     /// Returns `false` if the path doesn't exist or metadata can't be read.
-    fn is_writable(&self, path: &Path) -> bool {
+    fn is_writable(&self, path: &HostPath) -> bool {
         self.metadata(path).map(|m| !m.is_readonly).unwrap_or(false)
     }
 
     /// Set file permissions
-    fn set_permissions(&self, path: &Path, permissions: &FilePermissions) -> io::Result<()>;
+    fn set_permissions(&self, path: &HostPath, permissions: &FilePermissions) -> io::Result<()>;
 
     // ========================================================================
     // Directory Operations
     // ========================================================================
 
     /// List entries in a directory (non-recursive)
-    fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>>;
+    fn read_dir(&self, path: &HostPath) -> io::Result<Vec<DirEntry>>;
 
     /// Create a directory
-    fn create_dir(&self, path: &Path) -> io::Result<()>;
+    fn create_dir(&self, path: &HostPath) -> io::Result<()>;
 
     /// Create a directory and all parent directories
-    fn create_dir_all(&self, path: &Path) -> io::Result<()>;
+    fn create_dir_all(&self, path: &HostPath) -> io::Result<()>;
 
     // ========================================================================
     // Path Operations
     // ========================================================================
 
     /// Get canonical (absolute, normalized) path
-    fn canonicalize(&self, path: &Path) -> io::Result<PathBuf>;
+    fn canonicalize(&self, path: &HostPath) -> io::Result<HostPathBuf>;
 
     // ========================================================================
     // Utility Methods
@@ -702,7 +714,7 @@ pub trait FileSystem: Send + Sync {
     fn current_uid(&self) -> u32;
 
     /// Check if the current user is the owner of the file
-    fn is_owner(&self, path: &Path) -> bool {
+    fn is_owner(&self, path: &HostPath) -> bool {
         #[cfg(unix)]
         {
             if let Ok(meta) = self.metadata(path) {
@@ -723,7 +735,7 @@ pub trait FileSystem: Send + Sync {
     ///
     /// Each call returns a fresh name (see [`sibling_temp_path`]); open it with
     /// [`FileSystem::create_new_file`] so an existing file is never clobbered.
-    fn temp_path_for(&self, path: &Path) -> PathBuf {
+    fn temp_path_for(&self, path: &HostPath) -> HostPathBuf {
         sibling_temp_path(path)
     }
 
@@ -732,7 +744,7 @@ pub trait FileSystem: Send + Sync {
     /// created in between (`O_EXCL` locally). No default — a check followed
     /// by a create would race; a backend that can't do it atomically returns
     /// `Unsupported`.
-    fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>>;
+    fn create_new_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>>;
 
     /// Like [`FileSystem::create_new_file`], but readable and writable only
     /// by its owner (0600 on unix) from the moment it exists — for a copy of
@@ -740,21 +752,21 @@ pub trait FileSystem: Send + Sync {
     /// no longer guard it. No default — creating the file and narrowing its
     /// permissions afterwards leaves a window in which anyone may open it; a
     /// backend that can't create it that way returns `Unsupported`.
-    fn create_new_private_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>>;
+    fn create_new_private_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>>;
 
     /// Get a unique temporary file path (using timestamp and PID)
-    fn unique_temp_path(&self, dest_path: &Path) -> PathBuf {
+    fn unique_temp_path(&self, dest_path: &HostPath) -> HostPathBuf {
         let temp_dir = std::env::temp_dir();
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        temp_dir.join(format!(
+        temp_dir.as_host().join_name(std::ffi::OsStr::new(&format!(
             "{}-{}-{}.tmp",
             temp_name_stem(dest_path),
             std::process::id(),
             timestamp
-        ))
+        )))
     }
 
     // ========================================================================
@@ -797,8 +809,9 @@ pub trait FileSystem: Send + Sync {
     ///
     /// For local filesystems, returns the local home directory.
     /// For remote filesystems, returns the remote home directory.
-    fn home_dir(&self) -> io::Result<PathBuf> {
+    fn home_dir(&self) -> io::Result<HostPathBuf> {
         dirs::home_dir()
+            .map(HostPathBuf::from_path_buf)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "home directory not found"))
     }
 
@@ -817,7 +830,7 @@ pub trait FileSystem: Send + Sync {
     /// its unsaved edits.
     fn search_file(
         &self,
-        path: &Path,
+        path: &HostPath,
         pattern: &str,
         opts: &FileSearchOptions,
     ) -> io::Result<Vec<SearchMatch>>;
@@ -835,7 +848,7 @@ pub trait FileSystem: Send + Sync {
     /// - `owner`: `(uid, gid)` to set, or `None` to leave ownership alone
     fn sudo_write(
         &self,
-        path: &Path,
+        path: &HostPath,
         data: &[u8],
         mode: Option<u32>,
         owner: Option<(u32, u32)>,
@@ -871,7 +884,7 @@ pub trait FileSystem: Send + Sync {
     /// via the channel, avoiding per-directory round-trips.
     fn walk(
         &self,
-        root: &Path,
+        root: &HostPath,
         opts: &WalkOptions<'_>,
         cancel: &std::sync::atomic::AtomicBool,
         on_entry: &mut dyn FnMut(WalkEntry<'_>) -> bool,
@@ -904,10 +917,10 @@ pub trait FileSystem: Send + Sync {
     /// leaving callers to recurse with `read_dir`.
     fn find_up(
         &self,
-        start: &Path,
+        start: &HostPath,
         markers: &[&str],
         max_dirs: Option<usize>,
-    ) -> io::Result<Vec<PathBuf>> {
+    ) -> io::Result<Vec<HostPathBuf>> {
         let mut found = Vec::new();
         let mut current = Some(start);
         let mut visited = 0usize;
@@ -915,8 +928,11 @@ pub trait FileSystem: Send + Sync {
             if max_dirs.is_some_and(|max| visited >= max) {
                 break;
             }
-            if markers.iter().any(|m| self.exists(&dir.join(m))) {
-                found.push(dir.to_path_buf());
+            if markers
+                .iter()
+                .any(|m| self.exists(dir.join_name(std::ffi::OsStr::new(m)).as_host_path()))
+            {
+                found.push(dir.to_host_path_buf());
             }
             visited += 1;
             current = dir.parent();
@@ -928,10 +944,10 @@ pub trait FileSystem: Send + Sync {
     /// [`Self::walk`], so a filesystem implements one method, not two.
     fn walk_files(
         &self,
-        root: &Path,
+        root: &HostPath,
         skip_dirs: &[&str],
         cancel: &std::sync::atomic::AtomicBool,
-        on_file: &mut dyn FnMut(&Path, &str) -> bool,
+        on_file: &mut dyn FnMut(&HostPath, &str) -> bool,
     ) -> io::Result<()> {
         let opts = walk_files_options(skip_dirs);
         self.walk(root, &opts, cancel, &mut |entry| {
@@ -972,7 +988,7 @@ pub trait FileSystemExt: FileSystem {
     /// Async version of read_file
     fn read_file_async(
         &self,
-        path: &Path,
+        path: &HostPath,
     ) -> impl std::future::Future<Output = io::Result<Vec<u8>>> + Send {
         async { self.read_file(path) }
     }
@@ -980,7 +996,7 @@ pub trait FileSystemExt: FileSystem {
     /// Async version of read_range
     fn read_range_async(
         &self,
-        path: &Path,
+        path: &HostPath,
         offset: u64,
         len: usize,
     ) -> impl std::future::Future<Output = io::Result<Vec<u8>>> + Send {
@@ -990,7 +1006,7 @@ pub trait FileSystemExt: FileSystem {
     /// Async version of count_line_feeds_in_range
     fn count_line_feeds_in_range_async(
         &self,
-        path: &Path,
+        path: &HostPath,
         offset: u64,
         len: usize,
     ) -> impl std::future::Future<Output = io::Result<usize>> + Send {
@@ -1000,7 +1016,7 @@ pub trait FileSystemExt: FileSystem {
     /// Async version of write_file
     fn write_file_async(
         &self,
-        path: &Path,
+        path: &HostPath,
         data: &[u8],
     ) -> impl std::future::Future<Output = io::Result<()>> + Send {
         async { self.write_file(path, data) }
@@ -1009,20 +1025,20 @@ pub trait FileSystemExt: FileSystem {
     /// Async version of metadata
     fn metadata_async(
         &self,
-        path: &Path,
+        path: &HostPath,
     ) -> impl std::future::Future<Output = io::Result<FileMetadata>> + Send {
         async { self.metadata(path) }
     }
 
     /// Async version of exists
-    fn exists_async(&self, path: &Path) -> impl std::future::Future<Output = bool> + Send {
+    fn exists_async(&self, path: &HostPath) -> impl std::future::Future<Output = bool> + Send {
         async { self.exists(path) }
     }
 
     /// Async version of is_dir
     fn is_dir_async(
         &self,
-        path: &Path,
+        path: &HostPath,
     ) -> impl std::future::Future<Output = io::Result<bool>> + Send {
         async { self.is_dir(path) }
     }
@@ -1030,7 +1046,7 @@ pub trait FileSystemExt: FileSystem {
     /// Async version of is_file
     fn is_file_async(
         &self,
-        path: &Path,
+        path: &HostPath,
     ) -> impl std::future::Future<Output = io::Result<bool>> + Send {
         async { self.is_file(path) }
     }
@@ -1038,7 +1054,7 @@ pub trait FileSystemExt: FileSystem {
     /// Async version of read_dir
     fn read_dir_async(
         &self,
-        path: &Path,
+        path: &HostPath,
     ) -> impl std::future::Future<Output = io::Result<Vec<DirEntry>>> + Send {
         async { self.read_dir(path) }
     }
@@ -1046,8 +1062,8 @@ pub trait FileSystemExt: FileSystem {
     /// Async version of canonicalize
     fn canonicalize_async(
         &self,
-        path: &Path,
-    ) -> impl std::future::Future<Output = io::Result<PathBuf>> + Send {
+        path: &HostPath,
+    ) -> impl std::future::Future<Output = io::Result<HostPathBuf>> + Send {
         async { self.canonicalize(path) }
     }
 }
@@ -1109,8 +1125,8 @@ impl std::error::Error for ReplaceError {}
 /// already exists.
 pub fn create_private_temp_file_for(
     fs: &dyn FileSystem,
-    path: &Path,
-) -> io::Result<(PathBuf, Box<dyn FileWriter>)> {
+    path: &HostPath,
+) -> io::Result<(HostPathBuf, Box<dyn FileWriter>)> {
     retry_on_name_clash(|| {
         let temp_path = fs.temp_path_for(path);
         let file = fs.create_new_private_file(&temp_path)?;
@@ -1140,16 +1156,18 @@ fn retry_on_name_clash<T>(mut create: impl FnMut() -> io::Result<T>) -> io::Resu
 /// (issue #3377) and two saves never share a temp file. Callers still open it
 /// with `create_new` semantics, since a stale file from an earlier process
 /// with the same pid may exist.
-pub fn sibling_temp_path(path: &Path) -> PathBuf {
+pub fn sibling_temp_path(path: &HostPath) -> HostPathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
 
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    path.with_file_name(format!(
+    let mut out = path.to_host_path_buf();
+    out.set_file_name(std::ffi::OsStr::new(&format!(
         ".{}.{}.{n}.tmp",
         temp_name_stem(path),
         std::process::id()
-    ))
+    )));
+    out
 }
 
 /// The longest file name a temp name built from another file's name may
@@ -1167,7 +1185,7 @@ pub const TEMP_NAME_STEM_BYTES: usize = 64;
 /// boundary). It only helps a person tell whose temp file it is; the pid and
 /// counter around it are what make the name unique. Short enough that every
 /// temp name built on it stays within [`MAX_TEMP_NAME_BYTES`].
-pub fn temp_name_stem(path: &Path) -> String {
+pub fn temp_name_stem(path: &HostPath) -> String {
     let file_name = path
         .file_name()
         .map(|n| n.to_string_lossy())
@@ -1395,11 +1413,11 @@ pub fn default_search_file(
     if has_binary_extension(path) {
         return Ok(vec![]);
     }
-    let size = fs.metadata(path)?.size;
+    let size = fs.metadata(path.as_host())?.size;
     if size == 0 || size > MAX_PROJECT_SEARCH_FILE_SIZE {
         return Ok(vec![]);
     }
-    let contents = fs.read_file(path)?;
+    let contents = fs.read_file(path.as_host())?;
     let (encoding, is_binary) = crate::model::encoding::detect_encoding_or_binary(&contents, false);
     if is_binary || !is_byte_searchable_encoding(encoding) || contents.contains(&0) {
         return Ok(vec![]);
@@ -1483,12 +1501,12 @@ impl StdFileSystem {
     #[cfg_attr(not(unix), allow(unused_variables))]
     fn replace_atomically(
         &self,
-        path: &Path,
+        path: &HostPath,
         data: &[u8],
         identity: Identity,
         attrs: &dyn SetAttributes,
     ) -> Result<(), ReplaceError> {
-        let original = std::fs::metadata(path).ok();
+        let original = std::fs::metadata(path.as_path()).ok();
         #[cfg(unix)]
         if identity == Identity::Required
             && original
@@ -1513,7 +1531,9 @@ impl StdFileSystem {
             drop(file);
             if let Some(ref meta) = original {
                 #[cfg(unix)]
-                if let Err(e) = Self::copy_owner_and_xattrs(attrs, meta, path, &temp_path) {
+                if let Err(e) =
+                    Self::copy_owner_and_xattrs(attrs, meta, path.as_path(), temp_path.as_path())
+                {
                     if identity == Identity::Required {
                         return Err(ReplaceError::IdentityNotPreserved(
                             IdentityLoss::Attributes(e),
@@ -1523,7 +1543,7 @@ impl StdFileSystem {
                 }
                 // Best-effort permission restore; rename will proceed regardless
                 #[allow(clippy::let_underscore_must_use)]
-                let _ = std::fs::set_permissions(&temp_path, meta.permissions());
+                let _ = std::fs::set_permissions(temp_path.as_path(), meta.permissions());
             }
             Ok(self.rename(&temp_path, path)?)
         })();
@@ -1544,9 +1564,9 @@ impl StdFileSystem {
     #[cfg_attr(not(unix), allow(unused_variables))]
     fn create_temp_file_with_mode(
         &self,
-        path: &Path,
+        path: &HostPath,
         mode: Option<u32>,
-    ) -> io::Result<(PathBuf, Box<dyn FileWriter>)> {
+    ) -> io::Result<(HostPathBuf, Box<dyn FileWriter>)> {
         retry_on_name_clash(|| {
             let temp_path = self.temp_path_for(path);
             let mut options = std::fs::OpenOptions::new();
@@ -1555,7 +1575,7 @@ impl StdFileSystem {
             if let Some(mode) = mode {
                 std::os::unix::fs::OpenOptionsExt::mode(&mut options, mode & 0o777);
             }
-            let file = options.open(&temp_path)?;
+            let file = options.open(temp_path.as_path())?;
             Ok((
                 temp_path,
                 Box::new(StdFileWriter(file)) as Box<dyn FileWriter>,
@@ -1781,13 +1801,15 @@ impl StdFileSystem {
 
 impl FileSystem for StdFileSystem {
     // File Content Operations
-    fn read_file(&self, path: &Path) -> io::Result<Vec<u8>> {
+    fn read_file(&self, path: &HostPath) -> io::Result<Vec<u8>> {
+        let path = path.as_path();
         let data = std::fs::read(path)?;
         crate::counters::global().inc_disk_bytes_read(data.len() as u64);
         Ok(data)
     }
 
-    fn read_range(&self, path: &Path, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+    fn read_range(&self, path: &HostPath, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+        let path = path.as_path();
         let mut file = std::fs::File::open(path)?;
         file.seek(io::SeekFrom::Start(offset))?;
         let mut buffer = vec![0u8; len];
@@ -1796,8 +1818,14 @@ impl FileSystem for StdFileSystem {
         Ok(buffer)
     }
 
-    fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()> {
-        match self.replace_atomically(path, data, Identity::BestEffort, &SystemAttributes) {
+    fn write_file(&self, path: &HostPath, data: &[u8]) -> io::Result<()> {
+        let path = path.as_path();
+        match self.replace_atomically(
+            path.as_host(),
+            data,
+            Identity::BestEffort,
+            &SystemAttributes,
+        ) {
             Ok(()) => Ok(()),
             Err(ReplaceError::Io(e)) => Err(e),
             // Not produced with `BestEffort`.
@@ -1807,18 +1835,21 @@ impl FileSystem for StdFileSystem {
 
     fn replace_file_preserving_identity(
         &self,
-        path: &Path,
+        path: &HostPath,
         data: &[u8],
     ) -> Result<(), ReplaceError> {
-        self.replace_atomically(path, data, Identity::Required, &SystemAttributes)
+        let path = path.as_path();
+        self.replace_atomically(path.as_host(), data, Identity::Required, &SystemAttributes)
     }
 
-    fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+    fn create_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+        let path = path.as_path();
         let file = std::fs::File::create(path)?;
         Ok(Box::new(StdFileWriter(file)))
     }
 
-    fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+    fn create_new_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+        let path = path.as_path();
         let file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -1826,7 +1857,8 @@ impl FileSystem for StdFileSystem {
         Ok(Box::new(StdFileWriter(file)))
     }
 
-    fn create_new_private_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+    fn create_new_private_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+        let path = path.as_path();
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
@@ -1834,12 +1866,14 @@ impl FileSystem for StdFileSystem {
         Ok(Box::new(StdFileWriter(options.open(path)?)))
     }
 
-    fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
+    fn open_file(&self, path: &HostPath) -> io::Result<Box<dyn FileReader>> {
+        let path = path.as_path();
         let file = std::fs::File::open(path)?;
         Ok(Box::new(StdFileReader(file)))
     }
 
-    fn open_file_for_write(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+    fn open_file_for_write(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+        let path = path.as_path();
         let file = std::fs::OpenOptions::new()
             .write(true)
             .truncate(true)
@@ -1847,7 +1881,8 @@ impl FileSystem for StdFileSystem {
         Ok(Box::new(StdFileWriter(file)))
     }
 
-    fn open_file_for_append(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+    fn open_file_for_append(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+        let path = path.as_path();
         let file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -1855,53 +1890,66 @@ impl FileSystem for StdFileSystem {
         Ok(Box::new(StdFileWriter(file)))
     }
 
-    fn set_file_length(&self, path: &Path, len: u64) -> io::Result<()> {
+    fn set_file_length(&self, path: &HostPath, len: u64) -> io::Result<()> {
+        let path = path.as_path();
         let file = std::fs::OpenOptions::new().write(true).open(path)?;
         file.set_len(len)
     }
 
     // File Operations
-    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+    fn rename(&self, from: &HostPath, to: &HostPath) -> io::Result<()> {
+        let from = from.as_path();
+        let to = to.as_path();
         std::fs::rename(from, to)
     }
 
-    fn copy(&self, from: &Path, to: &Path) -> io::Result<u64> {
+    fn copy(&self, from: &HostPath, to: &HostPath) -> io::Result<u64> {
+        let from = from.as_path();
+        let to = to.as_path();
         std::fs::copy(from, to)
     }
 
-    fn remove_file(&self, path: &Path) -> io::Result<()> {
+    fn remove_file(&self, path: &HostPath) -> io::Result<()> {
+        let path = path.as_path();
         std::fs::remove_file(path)
     }
 
-    fn remove_dir(&self, path: &Path) -> io::Result<()> {
+    fn remove_dir(&self, path: &HostPath) -> io::Result<()> {
+        let path = path.as_path();
         std::fs::remove_dir(path)
     }
 
     // Metadata Operations
-    fn metadata(&self, path: &Path) -> io::Result<FileMetadata> {
+    fn metadata(&self, path: &HostPath) -> io::Result<FileMetadata> {
+        let path = path.as_path();
         let meta = std::fs::metadata(path)?;
         Ok(Self::build_metadata(path, &meta))
     }
 
-    fn symlink_metadata(&self, path: &Path) -> io::Result<FileMetadata> {
+    fn symlink_metadata(&self, path: &HostPath) -> io::Result<FileMetadata> {
+        let path = path.as_path();
         let meta = std::fs::symlink_metadata(path)?;
         Ok(Self::build_metadata(path, &meta))
     }
 
-    fn is_dir(&self, path: &Path) -> io::Result<bool> {
+    fn is_dir(&self, path: &HostPath) -> io::Result<bool> {
+        let path = path.as_path();
         Ok(std::fs::metadata(path)?.is_dir())
     }
 
-    fn is_file(&self, path: &Path) -> io::Result<bool> {
+    fn is_file(&self, path: &HostPath) -> io::Result<bool> {
+        let path = path.as_path();
         Ok(std::fs::metadata(path)?.is_file())
     }
 
-    fn set_permissions(&self, path: &Path, permissions: &FilePermissions) -> io::Result<()> {
+    fn set_permissions(&self, path: &HostPath, permissions: &FilePermissions) -> io::Result<()> {
+        let path = path.as_path();
         std::fs::set_permissions(path, permissions.to_std())
     }
 
     // Directory Operations
-    fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
+    fn read_dir(&self, path: &HostPath) -> io::Result<Vec<DirEntry>> {
+        let path = path.as_path();
         let mut entries = Vec::new();
         for entry in std::fs::read_dir(path)? {
             let entry = entry?;
@@ -1917,7 +1965,8 @@ impl FileSystem for StdFileSystem {
                 EntryType::File
             };
 
-            let mut dir_entry = DirEntry::new(path.clone(), name, entry_type);
+            let mut dir_entry =
+                DirEntry::new(HostPathBuf::from_path_buf(path.clone()), name, entry_type);
 
             // For symlinks, check if target is a directory
             if file_type.is_symlink() {
@@ -1931,17 +1980,20 @@ impl FileSystem for StdFileSystem {
         Ok(entries)
     }
 
-    fn create_dir(&self, path: &Path) -> io::Result<()> {
+    fn create_dir(&self, path: &HostPath) -> io::Result<()> {
+        let path = path.as_path();
         std::fs::create_dir(path)
     }
 
-    fn create_dir_all(&self, path: &Path) -> io::Result<()> {
+    fn create_dir_all(&self, path: &HostPath) -> io::Result<()> {
+        let path = path.as_path();
         std::fs::create_dir_all(path)
     }
 
     // Path Operations
-    fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
-        std::fs::canonicalize(path)
+    fn canonicalize(&self, path: &HostPath) -> io::Result<HostPathBuf> {
+        let path = path.as_path();
+        std::fs::canonicalize(path).map(HostPathBuf::from_path_buf)
     }
 
     // Utility
@@ -1959,11 +2011,12 @@ impl FileSystem for StdFileSystem {
 
     fn sudo_write(
         &self,
-        path: &Path,
+        path: &HostPath,
         data: &[u8],
         mode: Option<u32>,
         owner: Option<(u32, u32)>,
     ) -> io::Result<()> {
+        let path = path.as_path();
         use crate::process_hidden::HideWindow;
         use std::process::{Command, Stdio};
 
@@ -2022,20 +2075,22 @@ impl FileSystem for StdFileSystem {
 
     fn search_file(
         &self,
-        path: &Path,
+        path: &HostPath,
         pattern: &str,
         opts: &FileSearchOptions,
     ) -> io::Result<Vec<SearchMatch>> {
+        let path = path.as_path();
         default_search_file(self, path, pattern, opts)
     }
 
     fn walk(
         &self,
-        root: &Path,
+        root: &HostPath,
         opts: &WalkOptions<'_>,
         cancel: &std::sync::atomic::AtomicBool,
         on_entry: &mut dyn FnMut(WalkEntry<'_>) -> bool,
     ) -> io::Result<()> {
+        let root = root.as_path();
         // (dir, depth); depth 1 is a direct child of root.
         let mut stack = vec![(root.to_path_buf(), 1usize)];
         let mut yielded = 0usize;
@@ -2103,7 +2158,7 @@ impl FileSystem for StdFileSystem {
                         },
                     );
                     if !on_entry(WalkEntry {
-                        path: &path,
+                        path: path.as_host(),
                         rel: &rel_str,
                         entry_type,
                         metadata,
@@ -2146,95 +2201,120 @@ impl NoopFileSystem {
 }
 
 impl FileSystem for NoopFileSystem {
-    fn read_file(&self, _path: &Path) -> io::Result<Vec<u8>> {
+    fn read_file(&self, _path: &HostPath) -> io::Result<Vec<u8>> {
+        let _path = _path.as_path();
         Self::unsupported()
     }
 
-    fn read_range(&self, _path: &Path, _offset: u64, _len: usize) -> io::Result<Vec<u8>> {
+    fn read_range(&self, _path: &HostPath, _offset: u64, _len: usize) -> io::Result<Vec<u8>> {
+        let _path = _path.as_path();
         Self::unsupported()
     }
 
-    fn write_file(&self, _path: &Path, _data: &[u8]) -> io::Result<()> {
+    fn write_file(&self, _path: &HostPath, _data: &[u8]) -> io::Result<()> {
+        let _path = _path.as_path();
         Self::unsupported()
     }
 
-    fn create_file(&self, _path: &Path) -> io::Result<Box<dyn FileWriter>> {
+    fn create_file(&self, _path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+        let _path = _path.as_path();
         Self::unsupported()
     }
 
-    fn create_new_file(&self, _path: &Path) -> io::Result<Box<dyn FileWriter>> {
+    fn create_new_file(&self, _path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+        let _path = _path.as_path();
         Self::unsupported()
     }
 
-    fn create_new_private_file(&self, _path: &Path) -> io::Result<Box<dyn FileWriter>> {
+    fn create_new_private_file(&self, _path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+        let _path = _path.as_path();
         Self::unsupported()
     }
 
-    fn open_file(&self, _path: &Path) -> io::Result<Box<dyn FileReader>> {
+    fn open_file(&self, _path: &HostPath) -> io::Result<Box<dyn FileReader>> {
+        let _path = _path.as_path();
         Self::unsupported()
     }
 
-    fn open_file_for_write(&self, _path: &Path) -> io::Result<Box<dyn FileWriter>> {
+    fn open_file_for_write(&self, _path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+        let _path = _path.as_path();
         Self::unsupported()
     }
 
-    fn open_file_for_append(&self, _path: &Path) -> io::Result<Box<dyn FileWriter>> {
+    fn open_file_for_append(&self, _path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+        let _path = _path.as_path();
         Self::unsupported()
     }
 
-    fn set_file_length(&self, _path: &Path, _len: u64) -> io::Result<()> {
+    fn set_file_length(&self, _path: &HostPath, _len: u64) -> io::Result<()> {
+        let _path = _path.as_path();
         Self::unsupported()
     }
 
-    fn rename(&self, _from: &Path, _to: &Path) -> io::Result<()> {
+    fn rename(&self, _from: &HostPath, _to: &HostPath) -> io::Result<()> {
+        let _from = _from.as_path();
+        let _to = _to.as_path();
         Self::unsupported()
     }
 
-    fn copy(&self, _from: &Path, _to: &Path) -> io::Result<u64> {
+    fn copy(&self, _from: &HostPath, _to: &HostPath) -> io::Result<u64> {
+        let _from = _from.as_path();
+        let _to = _to.as_path();
         Self::unsupported()
     }
 
-    fn remove_file(&self, _path: &Path) -> io::Result<()> {
+    fn remove_file(&self, _path: &HostPath) -> io::Result<()> {
+        let _path = _path.as_path();
         Self::unsupported()
     }
 
-    fn remove_dir(&self, _path: &Path) -> io::Result<()> {
+    fn remove_dir(&self, _path: &HostPath) -> io::Result<()> {
+        let _path = _path.as_path();
         Self::unsupported()
     }
 
-    fn metadata(&self, _path: &Path) -> io::Result<FileMetadata> {
+    fn metadata(&self, _path: &HostPath) -> io::Result<FileMetadata> {
+        let _path = _path.as_path();
         Self::unsupported()
     }
 
-    fn symlink_metadata(&self, _path: &Path) -> io::Result<FileMetadata> {
+    fn symlink_metadata(&self, _path: &HostPath) -> io::Result<FileMetadata> {
+        let _path = _path.as_path();
         Self::unsupported()
     }
 
-    fn is_dir(&self, _path: &Path) -> io::Result<bool> {
+    fn is_dir(&self, _path: &HostPath) -> io::Result<bool> {
+        let _path = _path.as_path();
         Self::unsupported()
     }
 
-    fn is_file(&self, _path: &Path) -> io::Result<bool> {
+    fn is_file(&self, _path: &HostPath) -> io::Result<bool> {
+        let _path = _path.as_path();
         Self::unsupported()
     }
 
-    fn set_permissions(&self, _path: &Path, _permissions: &FilePermissions) -> io::Result<()> {
+    fn set_permissions(&self, _path: &HostPath, _permissions: &FilePermissions) -> io::Result<()> {
+        let _path = _path.as_path();
         Self::unsupported()
     }
 
-    fn read_dir(&self, _path: &Path) -> io::Result<Vec<DirEntry>> {
+    fn read_dir(&self, _path: &HostPath) -> io::Result<Vec<DirEntry>> {
+        let _path = _path.as_path();
         Self::unsupported()
     }
 
-    fn create_dir(&self, _path: &Path) -> io::Result<()> {
+    fn create_dir(&self, _path: &HostPath) -> io::Result<()> {
+        let _path = _path.as_path();
         Self::unsupported()
     }
 
-    fn create_dir_all(&self, _path: &Path) -> io::Result<()> {
+    fn create_dir_all(&self, _path: &HostPath) -> io::Result<()> {
+        let _path = _path.as_path();
         Self::unsupported()
     }
 
-    fn canonicalize(&self, _path: &Path) -> io::Result<PathBuf> {
+    fn canonicalize(&self, _path: &HostPath) -> io::Result<HostPathBuf> {
+        let _path = _path.as_path();
         Self::unsupported()
     }
 
@@ -2244,30 +2324,33 @@ impl FileSystem for NoopFileSystem {
 
     fn search_file(
         &self,
-        _path: &Path,
+        _path: &HostPath,
         _pattern: &str,
         _opts: &FileSearchOptions,
     ) -> io::Result<Vec<SearchMatch>> {
+        let _path = _path.as_path();
         Self::unsupported()
     }
 
     fn sudo_write(
         &self,
-        _path: &Path,
+        _path: &HostPath,
         _data: &[u8],
         _mode: Option<u32>,
         _owner: Option<(u32, u32)>,
     ) -> io::Result<()> {
+        let _path = _path.as_path();
         Self::unsupported()
     }
 
     fn walk(
         &self,
-        _root: &Path,
+        _root: &HostPath,
         _opts: &WalkOptions<'_>,
         _cancel: &std::sync::atomic::AtomicBool,
         _on_entry: &mut dyn FnMut(WalkEntry<'_>) -> bool,
     ) -> io::Result<()> {
+        let _root = _root.as_path();
         Self::unsupported()
     }
 }
@@ -2279,6 +2362,7 @@ impl FileSystem for NoopFileSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use tempfile::NamedTempFile;
 
     /// [`SetAttributes`] whose `chown` fails with EPERM, as it does for a
@@ -2323,13 +2407,13 @@ mod tests {
         std::io::Write::write_all(&mut temp, b"Hello, World!").unwrap();
         std::io::Write::flush(&mut temp).unwrap();
 
-        let content = fs.read_file(&path).unwrap();
+        let content = fs.read_file(path.as_host()).unwrap();
         assert_eq!(content, b"Hello, World!");
 
-        let range = fs.read_range(&path, 7, 5).unwrap();
+        let range = fs.read_range(path.as_host(), 7, 5).unwrap();
         assert_eq!(range, b"World");
 
-        let meta = fs.metadata(&path).unwrap();
+        let meta = fs.metadata(path.as_host()).unwrap();
         assert_eq!(meta.size, 13);
     }
 
@@ -2338,11 +2422,11 @@ mod tests {
         let fs = NoopFileSystem;
         let path = Path::new("/some/path");
 
-        assert!(fs.read_file(path).is_err());
-        assert!(fs.read_range(path, 0, 10).is_err());
-        assert!(fs.write_file(path, b"data").is_err());
-        assert!(fs.metadata(path).is_err());
-        assert!(fs.read_dir(path).is_err());
+        assert!(fs.read_file(path.as_host()).is_err());
+        assert!(fs.read_range(path.as_host(), 0, 10).is_err());
+        assert!(fs.write_file(path.as_host(), b"data").is_err());
+        assert!(fs.metadata(path.as_host()).is_err());
+        assert!(fs.read_dir(path.as_host()).is_err());
     }
 
     #[test]
@@ -2352,12 +2436,12 @@ mod tests {
         let path = temp_dir.path().join("test.txt");
 
         {
-            let mut writer = fs.create_file(&path).unwrap();
+            let mut writer = fs.create_file(path.as_host()).unwrap();
             writer.write_all(b"test content").unwrap();
             writer.sync_all().unwrap();
         }
 
-        let content = fs.read_file(&path).unwrap();
+        let content = fs.read_file(path.as_host()).unwrap();
         assert_eq!(content, b"test content");
     }
 
@@ -2367,13 +2451,14 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
 
         // Create some files and directories
-        fs.create_dir(&temp_dir.path().join("subdir")).unwrap();
-        fs.write_file(&temp_dir.path().join("file1.txt"), b"content1")
+        fs.create_dir(temp_dir.path().join("subdir").as_host())
             .unwrap();
-        fs.write_file(&temp_dir.path().join("file2.txt"), b"content2")
+        fs.write_file(temp_dir.path().join("file1.txt").as_host(), b"content1")
+            .unwrap();
+        fs.write_file(temp_dir.path().join("file2.txt").as_host(), b"content2")
             .unwrap();
 
-        let entries = fs.read_dir(temp_dir.path()).unwrap();
+        let entries = fs.read_dir(temp_dir.path().as_host()).unwrap();
         assert_eq!(entries.len(), 3);
 
         let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
@@ -2384,19 +2469,27 @@ mod tests {
 
     #[test]
     fn test_dir_entry_types() {
-        let file = DirEntry::new(PathBuf::from("/file"), "file".to_string(), EntryType::File);
+        let file = DirEntry::new(
+            HostPathBuf::from_path_buf(PathBuf::from("/file")),
+            "file".to_string(),
+            EntryType::File,
+        );
         assert!(file.is_file());
         assert!(!file.is_dir());
 
         let dir = DirEntry::new(
-            PathBuf::from("/dir"),
+            HostPathBuf::from_path_buf(PathBuf::from("/dir")),
             "dir".to_string(),
             EntryType::Directory,
         );
         assert!(dir.is_dir());
         assert!(!dir.is_file());
 
-        let link_to_dir = DirEntry::new_symlink(PathBuf::from("/link"), "link".to_string(), true);
+        let link_to_dir = DirEntry::new_symlink(
+            HostPathBuf::from_path_buf(PathBuf::from("/link")),
+            "link".to_string(),
+            true,
+        );
         assert!(link_to_dir.is_symlink());
         assert!(link_to_dir.is_dir());
     }
@@ -2416,11 +2509,11 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path().join("atomic_test.txt");
 
-        fs.write_file(&path, b"initial").unwrap();
-        assert_eq!(fs.read_file(&path).unwrap(), b"initial");
+        fs.write_file(path.as_host(), b"initial").unwrap();
+        assert_eq!(fs.read_file(path.as_host()).unwrap(), b"initial");
 
-        fs.write_file(&path, b"updated").unwrap();
-        assert_eq!(fs.read_file(&path).unwrap(), b"updated");
+        fs.write_file(path.as_host(), b"updated").unwrap();
+        assert_eq!(fs.read_file(path.as_host()).unwrap(), b"updated");
     }
 
     /// Issue #3377: the atomic-write temp file used to be `path.with_extension("tmp")`,
@@ -2434,7 +2527,7 @@ mod tests {
         let path = dir.path().join("foo.txt");
         std::fs::write(&path, b"hello\n").unwrap();
 
-        fs.write_file(&path, b"hello, edited\n").unwrap();
+        fs.write_file(path.as_host(), b"hello, edited\n").unwrap();
 
         assert_eq!(std::fs::read(&path).unwrap(), b"hello, edited\n");
         assert_eq!(std::fs::read(&unrelated).unwrap(), b"IMPORTANT DATA\n");
@@ -2482,10 +2575,11 @@ mod tests {
             return;
         };
         std::os::unix::fs::chown(&path, Some(uid), Some(gid)).unwrap();
-        fs.set_permissions(&path, &FilePermissions::from_mode(0o664))
+        fs.set_permissions(path.as_host(), &FilePermissions::from_mode(0o664))
             .unwrap();
 
-        fs.write_file(&path, b"line one\nline two\n").unwrap();
+        fs.write_file(path.as_host(), b"line one\nline two\n")
+            .unwrap();
 
         let meta = std::fs::metadata(&path).unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"line one\nline two\n");
@@ -2508,7 +2602,7 @@ mod tests {
         std::fs::hard_link(&path, &link).unwrap();
         let ino = std::fs::metadata(&path).unwrap().ino();
 
-        let result = fs.replace_file_preserving_identity(&path, b"new\n");
+        let result = fs.replace_file_preserving_identity(path.as_host(), b"new\n");
 
         assert!(
             matches!(
@@ -2536,7 +2630,7 @@ mod tests {
         std::fs::write(&path, b"old\n").unwrap();
         std::fs::hard_link(&path, &link).unwrap();
 
-        fs.write_file(&path, b"new\n").unwrap();
+        fs.write_file(path.as_host(), b"new\n").unwrap();
 
         assert_eq!(std::fs::read(&path).unwrap(), b"new\n");
         assert_eq!(std::fs::read(&link).unwrap(), b"old\n");
@@ -2588,7 +2682,7 @@ mod tests {
             return;
         }
 
-        fs.write_file(&path, b"new\n").unwrap();
+        fs.write_file(path.as_host(), b"new\n").unwrap();
 
         assert_eq!(std::fs::read(&path).unwrap(), b"new\n");
         assert_eq!(
@@ -2623,7 +2717,7 @@ mod tests {
             if unsafe { libc::geteuid() } == 0 && !drop_file_access_overrides_on_this_thread() {
                 return None;
             }
-            Some(StdFileSystem.write_file(&thread_path, b"new\n"))
+            Some(StdFileSystem.write_file(thread_path.as_host(), b"new\n"))
         })
         .join()
         .unwrap();
@@ -2752,7 +2846,8 @@ mod tests {
         std::os::unix::fs::chown(&path, Some(uid), Some(gid)).unwrap();
         let ino = std::fs::metadata(&path).unwrap().ino();
 
-        let result = fs.replace_atomically(&path, b"new\n", Identity::Required, &ChownDenied);
+        let result =
+            fs.replace_atomically(path.as_host(), b"new\n", Identity::Required, &ChownDenied);
 
         assert!(
             matches!(
@@ -2787,7 +2882,7 @@ mod tests {
         };
         std::os::unix::fs::chown(&path, Some(uid), Some(gid)).unwrap();
 
-        fs.replace_atomically(&path, b"new\n", Identity::BestEffort, &ChownDenied)
+        fs.replace_atomically(path.as_host(), b"new\n", Identity::BestEffort, &ChownDenied)
             .unwrap();
 
         assert_eq!(std::fs::read(&path).unwrap(), b"new\n");
@@ -2813,7 +2908,7 @@ mod tests {
         let ino = std::fs::metadata(&path).unwrap().ino();
 
         fs.replace_atomically(
-            &path,
+            path.as_host(),
             b"new\n",
             Identity::Required,
             &XattrDenied("user.fresh_a_system"),
@@ -2843,10 +2938,13 @@ mod tests {
         let path = dir.path().join("secret.txt");
 
         let (temp_path, _file) = fs
-            .create_temp_file_with_mode(&path, Some(0o100600))
+            .create_temp_file_with_mode(path.as_host(), Some(0o100600))
             .unwrap();
 
-        let mode = std::fs::metadata(&temp_path).unwrap().permissions().mode();
+        let mode = std::fs::metadata(temp_path.as_path())
+            .unwrap()
+            .permissions()
+            .mode();
         assert_eq!(mode & 0o777, 0o600);
     }
 
@@ -2902,7 +3000,7 @@ mod tests {
             return;
         }
 
-        fs.write_file(&path, b"new\n").unwrap();
+        fs.write_file(path.as_host(), b"new\n").unwrap();
 
         assert_eq!(std::fs::read(&path).unwrap(), b"new\n");
         assert_eq!(xattr::get(&path, "security.capability").unwrap(), None);
@@ -2917,7 +3015,7 @@ mod tests {
         let dst_path = temp_dir.path().join("dest.txt");
 
         // Create source file with known content
-        fs.write_file(&src_path, b"AAABBBCCC").unwrap();
+        fs.write_file(src_path.as_host(), b"AAABBBCCC").unwrap();
 
         // Apply patch: copy first 3 bytes, insert "XXX", copy last 3 bytes
         let ops = vec![
@@ -2926,9 +3024,10 @@ mod tests {
             WriteOp::Copy { offset: 6, len: 3 }, // "CCC"
         ];
 
-        fs.write_patched(&src_path, &dst_path, &ops).unwrap();
+        fs.write_patched(src_path.as_host(), dst_path.as_host(), &ops)
+            .unwrap();
 
-        let result = fs.read_file(&dst_path).unwrap();
+        let result = fs.read_file(dst_path.as_host()).unwrap();
         assert_eq!(result, b"AAAXXXCCC");
     }
 
@@ -2940,7 +3039,7 @@ mod tests {
         let path = temp_dir.path().join("file.txt");
 
         // Create file
-        fs.write_file(&path, b"Hello World").unwrap();
+        fs.write_file(path.as_host(), b"Hello World").unwrap();
 
         // Replace "World" with "Rust"
         let ops = vec![
@@ -2948,9 +3047,10 @@ mod tests {
             WriteOp::Insert { data: b"Rust" },   // "Rust"
         ];
 
-        fs.write_patched(&path, &path, &ops).unwrap();
+        fs.write_patched(path.as_host(), path.as_host(), &ops)
+            .unwrap();
 
-        let result = fs.read_file(&path).unwrap();
+        let result = fs.read_file(path.as_host()).unwrap();
         assert_eq!(result, b"Hello Rust");
     }
 
@@ -2963,15 +3063,16 @@ mod tests {
         let dst_path = temp_dir.path().join("new.txt");
 
         // Create empty source (won't be read from)
-        fs.write_file(&src_path, b"").unwrap();
+        fs.write_file(src_path.as_host(), b"").unwrap();
 
         let ops = vec![WriteOp::Insert {
             data: b"All new content",
         }];
 
-        fs.write_patched(&src_path, &dst_path, &ops).unwrap();
+        fs.write_patched(src_path.as_host(), dst_path.as_host(), &ops)
+            .unwrap();
 
-        let result = fs.read_file(&dst_path).unwrap();
+        let result = fs.read_file(dst_path.as_host()).unwrap();
         assert_eq!(result, b"All new content");
     }
 
@@ -2993,11 +3094,11 @@ mod tests {
         let fs = StdFileSystem;
         let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path().join("test.txt");
-        fs.write_file(&path, b"hello world\nfoo bar\nhello again\n")
+        fs.write_file(path.as_host(), b"hello world\nfoo bar\nhello again\n")
             .unwrap();
 
         let opts = make_search_opts(true);
-        let matches = fs.search_file(&path, "hello", &opts).unwrap();
+        let matches = fs.search_file(path.as_host(), "hello", &opts).unwrap();
 
         assert_eq!(matches.len(), 2);
 
@@ -3015,10 +3116,10 @@ mod tests {
         let fs = StdFileSystem;
         let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path().join("test.txt");
-        fs.write_file(&path, b"hello world\n").unwrap();
+        fs.write_file(path.as_host(), b"hello world\n").unwrap();
 
         let opts = make_search_opts(true);
-        let matches = fs.search_file(&path, "NOTFOUND", &opts).unwrap();
+        let matches = fs.search_file(path.as_host(), "NOTFOUND", &opts).unwrap();
 
         assert!(matches.is_empty());
     }
@@ -3028,7 +3129,8 @@ mod tests {
         let fs = StdFileSystem;
         let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path().join("test.txt");
-        fs.write_file(&path, b"Hello HELLO hello\n").unwrap();
+        fs.write_file(path.as_host(), b"Hello HELLO hello\n")
+            .unwrap();
 
         let opts = FileSearchOptions {
             fixed_string: true,
@@ -3036,7 +3138,7 @@ mod tests {
             whole_word: false,
             max_matches: 100,
         };
-        let matches = fs.search_file(&path, "hello", &opts).unwrap();
+        let matches = fs.search_file(path.as_host(), "hello", &opts).unwrap();
 
         assert_eq!(matches.len(), 3);
     }
@@ -3046,7 +3148,8 @@ mod tests {
         let fs = StdFileSystem;
         let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path().join("test.txt");
-        fs.write_file(&path, b"cat concatenate catalog\n").unwrap();
+        fs.write_file(path.as_host(), b"cat concatenate catalog\n")
+            .unwrap();
 
         let opts = FileSearchOptions {
             fixed_string: true,
@@ -3054,7 +3157,7 @@ mod tests {
             whole_word: true,
             max_matches: 100,
         };
-        let matches = fs.search_file(&path, "cat", &opts).unwrap();
+        let matches = fs.search_file(path.as_host(), "cat", &opts).unwrap();
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].column, 1);
@@ -3065,7 +3168,8 @@ mod tests {
         let fs = StdFileSystem;
         let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path().join("test.txt");
-        fs.write_file(&path, b"foo123 bar456 baz\n").unwrap();
+        fs.write_file(path.as_host(), b"foo123 bar456 baz\n")
+            .unwrap();
 
         let opts = FileSearchOptions {
             fixed_string: false,
@@ -3073,7 +3177,7 @@ mod tests {
             whole_word: false,
             max_matches: 100,
         };
-        let matches = fs.search_file(&path, r"[a-z]+\d+", &opts).unwrap();
+        let matches = fs.search_file(path.as_host(), r"[a-z]+\d+", &opts).unwrap();
 
         assert_eq!(matches.len(), 2);
         assert_eq!(matches[0].context, "foo123 bar456 baz");
@@ -3087,10 +3191,10 @@ mod tests {
         let mut data = b"hello world\n".to_vec();
         data.push(0); // null byte makes it binary
         data.extend_from_slice(b"hello again\n");
-        fs.write_file(&path, &data).unwrap();
+        fs.write_file(path.as_host(), &data).unwrap();
 
         let opts = make_search_opts(true);
-        let matches = fs.search_file(&path, "hello", &opts).unwrap();
+        let matches = fs.search_file(path.as_host(), "hello", &opts).unwrap();
 
         assert!(matches.is_empty());
     }
@@ -3104,10 +3208,11 @@ mod tests {
         let fs = StdFileSystem;
         let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path().join("not_actually_binary.png");
-        fs.write_file(&path, b"hello world\nhello again\n").unwrap();
+        fs.write_file(path.as_host(), b"hello world\nhello again\n")
+            .unwrap();
 
         let opts = make_search_opts(true);
-        let matches = fs.search_file(&path, "hello", &opts).unwrap();
+        let matches = fs.search_file(path.as_host(), "hello", &opts).unwrap();
 
         assert!(
             matches.is_empty(),
@@ -3124,11 +3229,11 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         for name in ["IMG.JPG", "archive.tar.gz", "weights.SafeTensors"] {
             let path = temp_dir.path().join(name);
-            fs.write_file(&path, b"definitely text content here\n")
+            fs.write_file(path.as_host(), b"definitely text content here\n")
                 .unwrap();
 
             let opts = make_search_opts(true);
-            let matches = fs.search_file(&path, "definitely", &opts).unwrap();
+            let matches = fs.search_file(path.as_host(), "definitely", &opts).unwrap();
 
             assert!(
                 matches.is_empty(),
@@ -3155,10 +3260,10 @@ mod tests {
             data.push((n & 0xFF) as u8);
             data.push(((n >> 8) & 0xFF) as u8);
         }
-        fs.write_file(&path, &data).unwrap();
+        fs.write_file(path.as_host(), &data).unwrap();
 
         let opts = make_search_opts(true);
-        let matches = fs.search_file(&path, "hello", &opts).unwrap();
+        let matches = fs.search_file(path.as_host(), "hello", &opts).unwrap();
 
         assert!(
             matches.is_empty(),
@@ -3182,10 +3287,12 @@ mod tests {
         let mut data = vec![b'a'; 9000];
         data.push(0);
         data.extend_from_slice(b"PATTERN_AFTER_NUL\n");
-        fs.write_file(&path, &data).unwrap();
+        fs.write_file(path.as_host(), &data).unwrap();
 
         let opts = make_search_opts(true);
-        let matches = fs.search_file(&path, "PATTERN_AFTER_NUL", &opts).unwrap();
+        let matches = fs
+            .search_file(path.as_host(), "PATTERN_AFTER_NUL", &opts)
+            .unwrap();
 
         assert!(
             matches.is_empty(),
@@ -3218,10 +3325,10 @@ mod tests {
         let fs = StdFileSystem;
         let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path().join("empty.txt");
-        fs.write_file(&path, b"").unwrap();
+        fs.write_file(path.as_host(), b"").unwrap();
 
         let opts = make_search_opts(true);
-        let matches = fs.search_file(&path, "hello", &opts).unwrap();
+        let matches = fs.search_file(path.as_host(), "hello", &opts).unwrap();
 
         assert!(matches.is_empty());
     }
@@ -3240,10 +3347,12 @@ mod tests {
         // would chew through the whole file and return a match.
         let mut data = vec![b'a'; (MAX_PROJECT_SEARCH_FILE_SIZE as usize) + 1024];
         data.extend_from_slice(b"\nUNIQUE_TAIL_MARKER\n");
-        fs.write_file(&path, &data).unwrap();
+        fs.write_file(path.as_host(), &data).unwrap();
 
         let opts = make_search_opts(true);
-        let matches = fs.search_file(&path, "UNIQUE_TAIL_MARKER", &opts).unwrap();
+        let matches = fs
+            .search_file(path.as_host(), "UNIQUE_TAIL_MARKER", &opts)
+            .unwrap();
 
         assert!(matches.is_empty(), "oversized file should yield no matches");
     }
@@ -3262,10 +3371,10 @@ mod tests {
         let mut data = b"hello world\n".to_vec();
         data.push(0x1A);
         data.extend_from_slice(b"hello again\n");
-        fs.write_file(&path, &data).unwrap();
+        fs.write_file(path.as_host(), &data).unwrap();
 
         let opts = make_search_opts(true);
-        let matches = fs.search_file(&path, "hello", &opts).unwrap();
+        let matches = fs.search_file(path.as_host(), "hello", &opts).unwrap();
 
         assert!(matches.is_empty());
     }
@@ -3275,7 +3384,8 @@ mod tests {
         let fs = StdFileSystem;
         let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path().join("test.txt");
-        fs.write_file(&path, b"aa bb aa cc aa dd aa\n").unwrap();
+        fs.write_file(path.as_host(), b"aa bb aa cc aa dd aa\n")
+            .unwrap();
 
         let opts = FileSearchOptions {
             fixed_string: true,
@@ -3283,7 +3393,7 @@ mod tests {
             whole_word: false,
             max_matches: 2,
         };
-        let matches = fs.search_file(&path, "aa", &opts).unwrap();
+        let matches = fs.search_file(path.as_host(), "aa", &opts).unwrap();
 
         assert_eq!(matches.len(), 2);
     }
@@ -3299,7 +3409,7 @@ mod tests {
         for i in 0..100_000 {
             content.extend_from_slice(format!("line {} content here\n", i).as_bytes());
         }
-        fs.write_file(&path, &content).unwrap();
+        fs.write_file(path.as_host(), &content).unwrap();
 
         let opts = FileSearchOptions {
             fixed_string: true,
@@ -3307,7 +3417,7 @@ mod tests {
             whole_word: false,
             max_matches: 1000,
         };
-        let all_matches = fs.search_file(&path, "line 5000", &opts).unwrap();
+        let all_matches = fs.search_file(path.as_host(), "line 5000", &opts).unwrap();
 
         // "line 5000" matches: "line 5000 ", "line 50000 "..  "line 50009 "
         // = 11 matches (5000, 50000-50009)
@@ -3331,7 +3441,7 @@ mod tests {
         for i in 0..100_000 {
             content.extend_from_slice(format!("MARKER_{:06}\n", i).as_bytes());
         }
-        fs.write_file(&path, &content).unwrap();
+        fs.write_file(path.as_host(), &content).unwrap();
 
         let opts = FileSearchOptions {
             fixed_string: true,
@@ -3340,7 +3450,7 @@ mod tests {
             max_matches: 200_000,
         };
         // The file is over 1MB, so the search crosses window boundaries.
-        let all_matches = fs.search_file(&path, "MARKER_", &opts).unwrap();
+        let all_matches = fs.search_file(path.as_host(), "MARKER_", &opts).unwrap();
 
         // Exactly one match per line, no duplicates
         assert_eq!(all_matches.len(), 100_000);
@@ -3367,10 +3477,10 @@ mod tests {
                 content.extend_from_slice(format!("padding line {}\n", i).as_bytes());
             }
         }
-        fs.write_file(&path, &content).unwrap();
+        fs.write_file(path.as_host(), &content).unwrap();
 
         let opts = make_search_opts(true);
-        let all_matches = fs.search_file(&path, "FINDME", &opts).unwrap();
+        let all_matches = fs.search_file(path.as_host(), "FINDME", &opts).unwrap();
 
         assert_eq!(all_matches.len(), 1);
         assert_eq!(all_matches[0].line, total_lines); // last line
@@ -3402,20 +3512,26 @@ mod tests {
         //     pkg.json
         //   target/
         //     debug.o
-        fs.write_file(&root.join("a.txt"), b"a").unwrap();
-        fs.write_file(&root.join("b.txt"), b"b").unwrap();
-        fs.create_dir_all(&root.join("sub/deep")).unwrap();
-        fs.write_file(&root.join("sub/c.txt"), b"c").unwrap();
-        fs.write_file(&root.join("sub/deep/d.txt"), b"d").unwrap();
-        fs.create_dir_all(&root.join(".hidden_dir")).unwrap();
-        fs.write_file(&root.join(".hidden_dir/secret.txt"), b"s")
+        fs.write_file(root.join("a.txt").as_host(), b"a").unwrap();
+        fs.write_file(root.join("b.txt").as_host(), b"b").unwrap();
+        fs.create_dir_all(root.join("sub/deep").as_host()).unwrap();
+        fs.write_file(root.join("sub/c.txt").as_host(), b"c")
             .unwrap();
-        fs.write_file(&root.join(".hidden_file"), b"h").unwrap();
-        fs.create_dir_all(&root.join("node_modules")).unwrap();
-        fs.write_file(&root.join("node_modules/pkg.json"), b"{}")
+        fs.write_file(root.join("sub/deep/d.txt").as_host(), b"d")
             .unwrap();
-        fs.create_dir_all(&root.join("target")).unwrap();
-        fs.write_file(&root.join("target/debug.o"), b"elf").unwrap();
+        fs.create_dir_all(root.join(".hidden_dir").as_host())
+            .unwrap();
+        fs.write_file(root.join(".hidden_dir/secret.txt").as_host(), b"s")
+            .unwrap();
+        fs.write_file(root.join(".hidden_file").as_host(), b"h")
+            .unwrap();
+        fs.create_dir_all(root.join("node_modules").as_host())
+            .unwrap();
+        fs.write_file(root.join("node_modules/pkg.json").as_host(), b"{}")
+            .unwrap();
+        fs.create_dir_all(root.join("target").as_host()).unwrap();
+        fs.write_file(root.join("target/debug.o").as_host(), b"elf")
+            .unwrap();
 
         tmp
     }
@@ -3428,7 +3544,7 @@ mod tests {
         let mut found: Vec<String> = Vec::new();
 
         fs.walk_files(
-            tmp.path(),
+            tmp.path().as_host(),
             &["node_modules", "target"],
             &cancel,
             &mut |_path, rel| {
@@ -3516,7 +3632,7 @@ mod tests {
         let cancel = std::sync::atomic::AtomicBool::new(false);
         let mut found: Vec<String> = Vec::new();
 
-        fs.walk_files(tmp.path(), &[], &cancel, &mut |_path, rel| {
+        fs.walk_files(tmp.path().as_host(), &[], &cancel, &mut |_path, rel| {
             found.push(rel.to_string());
             true
         })
@@ -3537,7 +3653,7 @@ mod tests {
         let mut found: Vec<String> = Vec::new();
 
         fs.walk_files(
-            tmp.path(),
+            tmp.path().as_host(),
             &["node_modules", "target", "deep"],
             &cancel,
             &mut |_path, rel| {
@@ -3560,7 +3676,7 @@ mod tests {
         let mut found: Vec<String> = Vec::new();
 
         fs.walk_files(
-            tmp.path(),
+            tmp.path().as_host(),
             &["node_modules", "target"],
             &cancel,
             &mut |_path, rel| {
@@ -3583,7 +3699,7 @@ mod tests {
         let mut count = 0usize;
 
         fs.walk_files(
-            tmp.path(),
+            tmp.path().as_host(),
             &["node_modules", "target"],
             &cancel,
             &mut |_path, _rel| {
@@ -3603,7 +3719,7 @@ mod tests {
         let cancel = std::sync::atomic::AtomicBool::new(false);
         let mut found: Vec<String> = Vec::new();
 
-        fs.walk_files(tmp.path(), &[], &cancel, &mut |_path, rel| {
+        fs.walk_files(tmp.path().as_host(), &[], &cancel, &mut |_path, rel| {
             found.push(rel.to_string());
             true
         })
@@ -3620,7 +3736,7 @@ mod tests {
 
         // Non-existent root should not panic, just return Ok with no files
         let result = fs.walk_files(
-            Path::new("/nonexistent/path/that/does/not/exist"),
+            Path::new("/nonexistent/path/that/does/not/exist").as_host(),
             &[],
             &cancel,
             &mut |_path, rel| {
@@ -3639,7 +3755,7 @@ mod tests {
         let fs = StdFileSystem;
         let cancel = std::sync::atomic::AtomicBool::new(false);
         let mut seen = Vec::new();
-        fs.walk(tmp.path(), opts, &cancel, &mut |entry| {
+        fs.walk(tmp.path().as_host(), opts, &cancel, &mut |entry| {
             seen.push((
                 entry.rel.to_string(),
                 entry.entry_type == EntryType::Directory,
@@ -3753,17 +3869,22 @@ mod tests {
     fn a_walked_entry_carries_the_metadata_the_caller_was_promised() {
         let tmp = tempfile::tempdir().unwrap();
         let fs = StdFileSystem;
-        fs.write_file(&tmp.path().join("sized.txt"), b"1234567890")
+        fs.write_file(tmp.path().join("sized.txt").as_host(), b"1234567890")
             .unwrap();
 
         let cancel = std::sync::atomic::AtomicBool::new(false);
         let mut size = None;
         let mut modified = None;
-        fs.walk(tmp.path(), &WalkOptions::default(), &cancel, &mut |entry| {
-            size = Some(entry.metadata.size);
-            modified = entry.metadata.modified;
-            true
-        })
+        fs.walk(
+            tmp.path().as_host(),
+            &WalkOptions::default(),
+            &cancel,
+            &mut |entry| {
+                size = Some(entry.metadata.size);
+                modified = entry.metadata.modified;
+                true
+            },
+        )
         .expect("walk");
 
         assert_eq!(
@@ -3782,7 +3903,7 @@ mod tests {
         let mut seen = 0usize;
 
         let result = fs.walk(
-            Path::new("/nonexistent/path/that/does/not/exist"),
+            Path::new("/nonexistent/path/that/does/not/exist").as_host(),
             &WalkOptions {
                 skip_dirs: &[],
                 include_hidden: true,
@@ -3812,7 +3933,7 @@ mod tests {
         let mut found: Vec<String> = Vec::new();
 
         fs.walk_files(
-            tmp.path(),
+            tmp.path().as_host(),
             &["node_modules", "target"],
             &cancel,
             &mut |_path, rel| {
@@ -3833,9 +3954,12 @@ mod tests {
         let fs = NoopFileSystem;
         let cancel = std::sync::atomic::AtomicBool::new(false);
 
-        let result = fs.walk_files(Path::new("/noop/path"), &[], &cancel, &mut |_path, _rel| {
-            true
-        });
+        let result = fs.walk_files(
+            Path::new("/noop/path").as_host(),
+            &[],
+            &cancel,
+            &mut |_path, _rel| true,
+        );
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::Unsupported);
@@ -3853,8 +3977,8 @@ mod tests {
         let fs = StdFileSystem;
         let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path().join("writable.txt");
-        fs.write_file(&path, b"x").unwrap();
-        fs.set_permissions(&path, &FilePermissions::from_mode(0o600))
+        fs.write_file(path.as_host(), b"x").unwrap();
+        fs.set_permissions(path.as_host(), &FilePermissions::from_mode(0o600))
             .unwrap();
 
         let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
@@ -3870,7 +3994,7 @@ mod tests {
             kernel_writable,
             "owner-writable file must be writable per kernel"
         );
-        assert_eq!(fs.is_writable(&path), kernel_writable);
+        assert_eq!(fs.is_writable(path.as_host()), kernel_writable);
     }
 
     /// Regression test for #1765: a POSIX ACL granting write access to the
@@ -3964,7 +4088,7 @@ mod tests {
             if unsafe { libc::setuid(test_uid) } != 0 {
                 unsafe { libc::_exit(3) };
             }
-            let writable = StdFileSystem.is_writable(&file);
+            let writable = StdFileSystem.is_writable(file.as_host());
             unsafe { libc::_exit(if writable { 0 } else { 1 }) };
         }
 
@@ -3995,22 +4119,25 @@ mod tests {
             assert_eq!(long.len(), 250);
             let path = Path::new("/some/dir").join(&long);
 
-            let sibling = sibling_temp_path(&path);
+            let sibling = sibling_temp_path(path.as_host());
             let name = sibling.file_name().unwrap().to_str().unwrap();
             assert!(
                 name.len() <= MAX_TEMP_NAME_BYTES,
                 "{} bytes: {name}",
                 name.len()
             );
-            assert_eq!(sibling.parent(), path.parent());
+            assert_eq!(sibling.parent(), path.as_host().parent());
             assert_eq!(sibling_temp_pid(name), Some(std::process::id()));
 
-            let unique = StdFileSystem.unique_temp_path(&path);
+            let unique = StdFileSystem.unique_temp_path(path.as_host());
             let name = unique.file_name().unwrap().to_str().unwrap();
             assert!(name.len() <= MAX_TEMP_NAME_BYTES, "{name}");
         }
         // A short name is kept whole.
-        assert_eq!(temp_name_stem(Path::new("/d/notes.txt")), "notes.txt");
+        assert_eq!(
+            temp_name_stem(Path::new("/d/notes.txt").as_host()),
+            "notes.txt"
+        );
     }
 
     /// A local filesystem that counts whole-file reads.
@@ -4019,105 +4146,137 @@ mod tests {
     }
 
     impl FileSystem for ReadCountingFs {
-        fn read_file(&self, path: &Path) -> io::Result<Vec<u8>> {
+        fn read_file(&self, path: &HostPath) -> io::Result<Vec<u8>> {
+            let path = path.as_path();
             self.read_file_calls
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            StdFileSystem.read_file(path)
+            StdFileSystem.read_file(path.as_host())
         }
-        fn read_range(&self, path: &Path, offset: u64, len: usize) -> io::Result<Vec<u8>> {
-            StdFileSystem.read_range(path, offset, len)
+        fn read_range(&self, path: &HostPath, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+            let path = path.as_path();
+            StdFileSystem.read_range(path.as_host(), offset, len)
         }
-        fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()> {
-            StdFileSystem.write_file(path, data)
+        fn write_file(&self, path: &HostPath, data: &[u8]) -> io::Result<()> {
+            let path = path.as_path();
+            StdFileSystem.write_file(path.as_host(), data)
         }
-        fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
-            StdFileSystem.create_file(path)
+        fn create_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+            let path = path.as_path();
+            StdFileSystem.create_file(path.as_host())
         }
-        fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
-            StdFileSystem.create_new_file(path)
+        fn create_new_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+            let path = path.as_path();
+            StdFileSystem.create_new_file(path.as_host())
         }
-        fn create_new_private_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
-            StdFileSystem.create_new_private_file(path)
+        fn create_new_private_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+            let path = path.as_path();
+            StdFileSystem.create_new_private_file(path.as_host())
         }
-        fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
-            StdFileSystem.open_file(path)
+        fn open_file(&self, path: &HostPath) -> io::Result<Box<dyn FileReader>> {
+            let path = path.as_path();
+            StdFileSystem.open_file(path.as_host())
         }
-        fn open_file_for_write(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
-            StdFileSystem.open_file_for_write(path)
+        fn open_file_for_write(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+            let path = path.as_path();
+            StdFileSystem.open_file_for_write(path.as_host())
         }
-        fn open_file_for_append(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
-            StdFileSystem.open_file_for_append(path)
+        fn open_file_for_append(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+            let path = path.as_path();
+            StdFileSystem.open_file_for_append(path.as_host())
         }
-        fn set_file_length(&self, path: &Path, len: u64) -> io::Result<()> {
-            StdFileSystem.set_file_length(path, len)
+        fn set_file_length(&self, path: &HostPath, len: u64) -> io::Result<()> {
+            let path = path.as_path();
+            StdFileSystem.set_file_length(path.as_host(), len)
         }
-        fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
-            StdFileSystem.rename(from, to)
+        fn rename(&self, from: &HostPath, to: &HostPath) -> io::Result<()> {
+            let from = from.as_path();
+            let to = to.as_path();
+            StdFileSystem.rename(from.as_host(), to.as_host())
         }
-        fn copy(&self, from: &Path, to: &Path) -> io::Result<u64> {
-            StdFileSystem.copy(from, to)
+        fn copy(&self, from: &HostPath, to: &HostPath) -> io::Result<u64> {
+            let from = from.as_path();
+            let to = to.as_path();
+            StdFileSystem.copy(from.as_host(), to.as_host())
         }
-        fn remove_file(&self, path: &Path) -> io::Result<()> {
-            StdFileSystem.remove_file(path)
+        fn remove_file(&self, path: &HostPath) -> io::Result<()> {
+            let path = path.as_path();
+            StdFileSystem.remove_file(path.as_host())
         }
-        fn remove_dir(&self, path: &Path) -> io::Result<()> {
-            StdFileSystem.remove_dir(path)
+        fn remove_dir(&self, path: &HostPath) -> io::Result<()> {
+            let path = path.as_path();
+            StdFileSystem.remove_dir(path.as_host())
         }
-        fn metadata(&self, path: &Path) -> io::Result<FileMetadata> {
-            StdFileSystem.metadata(path)
+        fn metadata(&self, path: &HostPath) -> io::Result<FileMetadata> {
+            let path = path.as_path();
+            StdFileSystem.metadata(path.as_host())
         }
-        fn symlink_metadata(&self, path: &Path) -> io::Result<FileMetadata> {
-            StdFileSystem.symlink_metadata(path)
+        fn symlink_metadata(&self, path: &HostPath) -> io::Result<FileMetadata> {
+            let path = path.as_path();
+            StdFileSystem.symlink_metadata(path.as_host())
         }
-        fn is_dir(&self, path: &Path) -> io::Result<bool> {
-            StdFileSystem.is_dir(path)
+        fn is_dir(&self, path: &HostPath) -> io::Result<bool> {
+            let path = path.as_path();
+            StdFileSystem.is_dir(path.as_host())
         }
-        fn is_file(&self, path: &Path) -> io::Result<bool> {
-            StdFileSystem.is_file(path)
+        fn is_file(&self, path: &HostPath) -> io::Result<bool> {
+            let path = path.as_path();
+            StdFileSystem.is_file(path.as_host())
         }
-        fn set_permissions(&self, path: &Path, permissions: &FilePermissions) -> io::Result<()> {
-            StdFileSystem.set_permissions(path, permissions)
+        fn set_permissions(
+            &self,
+            path: &HostPath,
+            permissions: &FilePermissions,
+        ) -> io::Result<()> {
+            let path = path.as_path();
+            StdFileSystem.set_permissions(path.as_host(), permissions)
         }
-        fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
-            StdFileSystem.read_dir(path)
+        fn read_dir(&self, path: &HostPath) -> io::Result<Vec<DirEntry>> {
+            let path = path.as_path();
+            StdFileSystem.read_dir(path.as_host())
         }
-        fn create_dir(&self, path: &Path) -> io::Result<()> {
-            StdFileSystem.create_dir(path)
+        fn create_dir(&self, path: &HostPath) -> io::Result<()> {
+            let path = path.as_path();
+            StdFileSystem.create_dir(path.as_host())
         }
-        fn create_dir_all(&self, path: &Path) -> io::Result<()> {
-            StdFileSystem.create_dir_all(path)
+        fn create_dir_all(&self, path: &HostPath) -> io::Result<()> {
+            let path = path.as_path();
+            StdFileSystem.create_dir_all(path.as_host())
         }
-        fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
-            StdFileSystem.canonicalize(path)
+        fn canonicalize(&self, path: &HostPath) -> io::Result<HostPathBuf> {
+            let path = path.as_path();
+            StdFileSystem.canonicalize(path.as_host())
         }
         fn current_uid(&self) -> u32 {
             StdFileSystem.current_uid()
         }
         fn sudo_write(
             &self,
-            path: &Path,
+            path: &HostPath,
             data: &[u8],
             mode: Option<u32>,
             owner: Option<(u32, u32)>,
         ) -> io::Result<()> {
-            StdFileSystem.sudo_write(path, data, mode, owner)
+            let path = path.as_path();
+            StdFileSystem.sudo_write(path.as_host(), data, mode, owner)
         }
         fn search_file(
             &self,
-            path: &Path,
+            path: &HostPath,
             pattern: &str,
             opts: &FileSearchOptions,
         ) -> io::Result<Vec<SearchMatch>> {
+            let path = path.as_path();
             default_search_file(&StdFileSystem, path, pattern, opts)
         }
         fn walk(
             &self,
-            root: &Path,
+            root: &HostPath,
             opts: &WalkOptions<'_>,
             cancel: &std::sync::atomic::AtomicBool,
             on_entry: &mut dyn FnMut(WalkEntry<'_>) -> bool,
         ) -> io::Result<()> {
-            StdFileSystem.walk(root, opts, cancel, on_entry)
+            let root = root.as_path();
+            StdFileSystem.walk(root.as_host(), opts, cancel, on_entry)
         }
     }
 
@@ -4137,7 +4296,7 @@ mod tests {
             read_file_calls: Default::default(),
         };
 
-        let digest = fs.content_digest(&path).unwrap();
+        let digest = fs.content_digest(path.as_host()).unwrap();
 
         let expected: [u8; 32] = Sha256::digest(&content).into();
         assert_eq!(digest.size, content.len() as u64);
@@ -4168,7 +4327,7 @@ mod tests {
     fn content_digest_of_a_missing_file_is_not_found() {
         let dir = tempfile::tempdir().unwrap();
         let err = StdFileSystem
-            .content_digest(&dir.path().join("missing"))
+            .content_digest(dir.path().join("missing").as_host())
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::NotFound);
     }

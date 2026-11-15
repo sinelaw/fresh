@@ -330,7 +330,7 @@ fn apply_recipe(buffer: &TextBuffer, recipe: &WriteRecipe) -> Vec<u8> {
                     let data = buffer
                         .persistence
                         .fs()
-                        .read_range(src_path, *offset, *len as usize)
+                        .read_range(src_path.as_host(), *offset, *len as usize)
                         .expect("read_range should succeed for Copy op");
                     output.extend_from_slice(&data);
                 } else {

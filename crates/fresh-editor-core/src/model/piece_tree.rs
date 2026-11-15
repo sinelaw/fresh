@@ -1,3 +1,4 @@
+use crate::model::host_path::AsHostPath;
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -166,7 +167,7 @@ impl StringBuffer {
                 bytes,
             } => {
                 // Load from file using the FileSystem trait
-                let buffer = fs.read_range(file_path, *file_offset as u64, *bytes)?;
+                let buffer = fs.read_range(file_path.as_host(), *file_offset as u64, *bytes)?;
 
                 // Defense-in-depth: panic if the FileSystem returned fewer bytes than requested.
                 // This violates the read_range contract (should return exactly `len` bytes or error).

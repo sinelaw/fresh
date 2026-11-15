@@ -5,6 +5,7 @@ fn test_fs() -> Arc<dyn crate::model::filesystem::FileSystem + Send + Sync> {
     Arc::new(StdFileSystem)
 }
 use super::*;
+use crate::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 
 /// A search for `regex` reaching back `overlap` bytes at window edges.
 fn q(regex: &regex::bytes::Regex, overlap: usize) -> SearchQuery {
@@ -1815,7 +1816,7 @@ mod line_ending_conversion {
             Err(e) => {
                 if let Some(sudo_err) = e.downcast_ref::<SudoSaveRequired>() {
                     assert_eq!(sudo_err.dest_path, file_path);
-                    let temp_path = sudo_err.temp_path().to_path_buf();
+                    let temp_path = sudo_err.temp_path().as_path().to_path_buf();
                     assert!(temp_path.exists());
                     // Dropping the error deletes its temp file
                     drop(e);
@@ -1859,12 +1860,15 @@ mod line_ending_conversion {
             Err(e) => {
                 if let Some(sudo_err) = e.downcast_ref::<SudoSaveRequired>() {
                     assert_eq!(sudo_err.dest_path, file_path);
-                    assert!(sudo_err.temp_path().exists());
+                    assert!(sudo_err.temp_path().as_path().exists());
                     // A new file has no mode or owner to restore (#3641)
                     assert_eq!(sudo_err.mode, None);
                     assert_eq!(sudo_err.owner, None);
                     // It should be in /tmp because the directory was not writable
-                    assert!(sudo_err.temp_path().starts_with(std::env::temp_dir()));
+                    assert!(sudo_err
+                        .temp_path()
+                        .as_path()
+                        .starts_with(std::env::temp_dir()));
                 } else {
                     panic!("Expected SudoSaveRequired error, got: {:?}", e);
                 }
@@ -2583,138 +2587,172 @@ mod rebuild_pristine_saved_root_tests {
         }
 
         impl crate::model::filesystem::FileSystem for TrackingFs {
-            fn read_file(&self, path: &Path) -> std::io::Result<Vec<u8>> {
-                self.inner.read_file(path)
+            fn read_file(&self, path: &HostPath) -> std::io::Result<Vec<u8>> {
+                let path = path.as_path();
+                self.inner.read_file(path.as_host())
             }
-            fn read_range(&self, path: &Path, offset: u64, len: usize) -> std::io::Result<Vec<u8>> {
+            fn read_range(
+                &self,
+                path: &HostPath,
+                offset: u64,
+                len: usize,
+            ) -> std::io::Result<Vec<u8>> {
+                let path = path.as_path();
                 self.max_read_range_len.fetch_max(len, Ordering::SeqCst);
-                self.inner.read_range(path, offset, len)
+                self.inner.read_range(path.as_host(), offset, len)
             }
-            fn write_file(&self, path: &Path, data: &[u8]) -> std::io::Result<()> {
-                self.inner.write_file(path, data)
+            fn write_file(&self, path: &HostPath, data: &[u8]) -> std::io::Result<()> {
+                let path = path.as_path();
+                self.inner.write_file(path.as_host(), data)
             }
             fn create_file(
                 &self,
-                path: &Path,
+                path: &HostPath,
             ) -> std::io::Result<Box<dyn crate::model::filesystem::FileWriter>> {
-                self.inner.create_file(path)
+                let path = path.as_path();
+                self.inner.create_file(path.as_host())
             }
             fn create_new_file(
                 &self,
-                path: &Path,
+                path: &HostPath,
             ) -> std::io::Result<Box<dyn crate::model::filesystem::FileWriter>> {
-                self.inner.create_new_file(path)
+                let path = path.as_path();
+                self.inner.create_new_file(path.as_host())
             }
             fn create_new_private_file(
                 &self,
-                path: &Path,
+                path: &HostPath,
             ) -> std::io::Result<Box<dyn crate::model::filesystem::FileWriter>> {
-                self.inner.create_new_private_file(path)
+                let path = path.as_path();
+                self.inner.create_new_private_file(path.as_host())
             }
             fn open_file(
                 &self,
-                path: &Path,
+                path: &HostPath,
             ) -> std::io::Result<Box<dyn crate::model::filesystem::FileReader>> {
-                self.inner.open_file(path)
+                let path = path.as_path();
+                self.inner.open_file(path.as_host())
             }
             fn open_file_for_write(
                 &self,
-                path: &Path,
+                path: &HostPath,
             ) -> std::io::Result<Box<dyn crate::model::filesystem::FileWriter>> {
-                self.inner.open_file_for_write(path)
+                let path = path.as_path();
+                self.inner.open_file_for_write(path.as_host())
             }
             fn open_file_for_append(
                 &self,
-                path: &Path,
+                path: &HostPath,
             ) -> std::io::Result<Box<dyn crate::model::filesystem::FileWriter>> {
-                self.inner.open_file_for_append(path)
+                let path = path.as_path();
+                self.inner.open_file_for_append(path.as_host())
             }
-            fn set_file_length(&self, path: &Path, len: u64) -> std::io::Result<()> {
-                self.inner.set_file_length(path, len)
+            fn set_file_length(&self, path: &HostPath, len: u64) -> std::io::Result<()> {
+                let path = path.as_path();
+                self.inner.set_file_length(path.as_host(), len)
             }
-            fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
-                self.inner.rename(from, to)
+            fn rename(&self, from: &HostPath, to: &HostPath) -> std::io::Result<()> {
+                let from = from.as_path();
+                let to = to.as_path();
+                self.inner.rename(from.as_host(), to.as_host())
             }
-            fn copy(&self, from: &Path, to: &Path) -> std::io::Result<u64> {
-                self.inner.copy(from, to)
+            fn copy(&self, from: &HostPath, to: &HostPath) -> std::io::Result<u64> {
+                let from = from.as_path();
+                let to = to.as_path();
+                self.inner.copy(from.as_host(), to.as_host())
             }
-            fn remove_file(&self, path: &Path) -> std::io::Result<()> {
-                self.inner.remove_file(path)
+            fn remove_file(&self, path: &HostPath) -> std::io::Result<()> {
+                let path = path.as_path();
+                self.inner.remove_file(path.as_host())
             }
-            fn remove_dir(&self, path: &Path) -> std::io::Result<()> {
-                self.inner.remove_dir(path)
+            fn remove_dir(&self, path: &HostPath) -> std::io::Result<()> {
+                let path = path.as_path();
+                self.inner.remove_dir(path.as_host())
             }
             fn metadata(
                 &self,
-                path: &Path,
+                path: &HostPath,
             ) -> std::io::Result<crate::model::filesystem::FileMetadata> {
-                self.inner.metadata(path)
+                let path = path.as_path();
+                self.inner.metadata(path.as_host())
             }
             fn symlink_metadata(
                 &self,
-                path: &Path,
+                path: &HostPath,
             ) -> std::io::Result<crate::model::filesystem::FileMetadata> {
-                self.inner.symlink_metadata(path)
+                let path = path.as_path();
+                self.inner.symlink_metadata(path.as_host())
             }
-            fn is_dir(&self, path: &Path) -> std::io::Result<bool> {
-                self.inner.is_dir(path)
+            fn is_dir(&self, path: &HostPath) -> std::io::Result<bool> {
+                let path = path.as_path();
+                self.inner.is_dir(path.as_host())
             }
-            fn is_file(&self, path: &Path) -> std::io::Result<bool> {
-                self.inner.is_file(path)
+            fn is_file(&self, path: &HostPath) -> std::io::Result<bool> {
+                let path = path.as_path();
+                self.inner.is_file(path.as_host())
             }
             fn set_permissions(
                 &self,
-                path: &Path,
+                path: &HostPath,
                 permissions: &crate::model::filesystem::FilePermissions,
             ) -> std::io::Result<()> {
-                self.inner.set_permissions(path, permissions)
+                let path = path.as_path();
+                self.inner.set_permissions(path.as_host(), permissions)
             }
-            fn is_owner(&self, path: &Path) -> bool {
-                self.inner.is_owner(path)
+            fn is_owner(&self, path: &HostPath) -> bool {
+                let path = path.as_path();
+                self.inner.is_owner(path.as_host())
             }
             fn read_dir(
                 &self,
-                path: &Path,
+                path: &HostPath,
             ) -> std::io::Result<Vec<crate::model::filesystem::DirEntry>> {
-                self.inner.read_dir(path)
+                let path = path.as_path();
+                self.inner.read_dir(path.as_host())
             }
-            fn create_dir(&self, path: &Path) -> std::io::Result<()> {
-                self.inner.create_dir(path)
+            fn create_dir(&self, path: &HostPath) -> std::io::Result<()> {
+                let path = path.as_path();
+                self.inner.create_dir(path.as_host())
             }
-            fn create_dir_all(&self, path: &Path) -> std::io::Result<()> {
-                self.inner.create_dir_all(path)
+            fn create_dir_all(&self, path: &HostPath) -> std::io::Result<()> {
+                let path = path.as_path();
+                self.inner.create_dir_all(path.as_host())
             }
-            fn canonicalize(&self, path: &Path) -> std::io::Result<PathBuf> {
-                self.inner.canonicalize(path)
+            fn canonicalize(&self, path: &HostPath) -> std::io::Result<HostPathBuf> {
+                let path = path.as_path();
+                self.inner.canonicalize(path.as_host())
             }
             fn current_uid(&self) -> u32 {
                 self.inner.current_uid()
             }
             fn sudo_write(
                 &self,
-                path: &Path,
+                path: &HostPath,
                 data: &[u8],
                 mode: Option<u32>,
                 owner: Option<(u32, u32)>,
             ) -> std::io::Result<()> {
-                self.inner.sudo_write(path, data, mode, owner)
+                let path = path.as_path();
+                self.inner.sudo_write(path.as_host(), data, mode, owner)
             }
             fn search_file(
                 &self,
-                path: &Path,
+                path: &HostPath,
                 pattern: &str,
                 opts: &crate::model::filesystem::FileSearchOptions,
             ) -> std::io::Result<Vec<SearchMatch>> {
+                let path = path.as_path();
                 crate::model::filesystem::default_search_file(&self.inner, path, pattern, opts)
             }
             fn walk(
                 &self,
-                root: &Path,
+                root: &HostPath,
                 opts: &crate::model::filesystem::WalkOptions<'_>,
                 cancel: &std::sync::atomic::AtomicBool,
                 on_entry: &mut dyn FnMut(crate::model::filesystem::WalkEntry<'_>) -> bool,
             ) -> std::io::Result<()> {
-                self.inner.walk(root, opts, cancel, on_entry)
+                let root = root.as_path();
+                self.inner.walk(root.as_host(), opts, cancel, on_entry)
             }
         }
 

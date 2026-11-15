@@ -4,6 +4,8 @@
 //! by `primitives::detected_language`, so the rules live down here where both
 //! can reach them.
 
+use crate::model::host_path::AsHostPath;
+
 /// Helper function to detect language from file path using the config's languages section.
 ///
 /// Priority order matches `GrammarRegistry::find_by_path`:
@@ -150,7 +152,7 @@ fn header_in_cpp_tree(
     };
     // 1. Sibling scan in the header's own directory: one shallow,
     //    non-recursive listing, and the decisive signal.
-    if let Ok(entries) = fs.read_dir(start_dir) {
+    if let Ok(entries) = fs.read_dir(start_dir.as_host()) {
         for entry in &entries {
             let Some(ext) = entry.path.extension().and_then(|e| e.to_str()) else {
                 continue;
@@ -170,12 +172,20 @@ fn header_in_cpp_tree(
     //    nearest one does not qualify. `find_up` answers the whole climb in
     //    one call, which a remote filesystem serves with a single request
     //    rather than a round trip per level.
-    let Ok(candidates) = fs.find_up(start_dir, &[COMPILE_COMMANDS], Some(MAX_ANCESTOR_DIRS)) else {
+    let Ok(candidates) = fs.find_up(
+        start_dir.as_host(),
+        &[COMPILE_COMMANDS],
+        Some(MAX_ANCESTOR_DIRS),
+    ) else {
         return false;
     };
-    candidates
-        .iter()
-        .any(|dir| compile_commands_has_cpp_marker(&dir.join(COMPILE_COMMANDS), fs))
+    candidates.iter().any(|dir| {
+        compile_commands_has_cpp_marker(
+            dir.join_name(std::ffi::OsStr::new(COMPILE_COMMANDS))
+                .as_host_path(),
+            fs,
+        )
+    })
 }
 
 /// Returns true when `compile_commands.json` exists at `path` and contains
@@ -193,7 +203,7 @@ fn header_in_cpp_tree(
 /// fails outright on a short file. A directory or unreadable path simply
 /// fails the read and answers `false`.
 fn compile_commands_has_cpp_marker(
-    path: &std::path::Path,
+    path: &crate::model::host_path::HostPath,
     fs: &dyn crate::model::filesystem::FileSystem,
 ) -> bool {
     const MAX_READ: u64 = 1_048_576;
