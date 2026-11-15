@@ -4238,7 +4238,6 @@ mod tests {
             pattern: &str,
             opts: &FileSearchOptions,
         ) -> io::Result<Vec<SearchMatch>> {
-            let path = path.as_path();
             default_search_file(&StdFileSystem, path, pattern, opts)
         }
         fn walk(

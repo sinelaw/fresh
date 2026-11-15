@@ -9,7 +9,7 @@ use crate::model::filesystem::{
     ContentDigest, DirEntry, FileMetadata, FilePermissions, FileReader, FileSystem, FileWriter,
     ReplaceError,
 };
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::{HostPath, HostPathBuf};
 use std::io;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -361,6 +361,7 @@ impl FileSystem for SlowFileSystem {
 mod tests {
     use super::*;
     use crate::model::filesystem::StdFileSystem;
+    use fresh_editor_core::model::host_path::AsHostPath;
     use std::time::Instant;
     use tempfile::TempDir;
 
