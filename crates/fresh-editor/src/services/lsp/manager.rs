@@ -149,13 +149,20 @@ pub fn detect_workspace_root(
     file_path: &Path,
     root_markers: &[String],
 ) -> std::path::PathBuf {
-    let file_dir = file_path.parent().unwrap_or(file_path).to_path_buf();
+    // The whole climb splits under the path's own rules; using
+    // `Path::parent` for the first step and `HostPath::parent` for the rest
+    // would mix the client's rules into a host path.
+    let file_dir = file_path
+        .as_host()
+        .parent()
+        .unwrap_or(file_path.as_host())
+        .to_host_path_buf();
 
     if root_markers.is_empty() {
-        return file_dir;
+        return file_dir.into_path_buf();
     }
 
-    let mut dir = Some(file_dir.as_host());
+    let mut dir = Some(file_dir.as_host_path());
     while let Some(d) = dir {
         for marker in root_markers {
             if fs.exists(d.join_name(std::ffi::OsStr::new(marker)).as_host_path()) {
@@ -165,7 +172,7 @@ pub fn detect_workspace_root(
         dir = d.parent();
     }
 
-    file_dir
+    file_dir.into_path_buf()
 }
 
 /// Summary of capabilities reported by an LSP server during initialization.
@@ -2293,6 +2300,166 @@ mod tests {
         assert_eq!(
             detect_language(Path::new("lfrc"), &languages, &StdFileSystem),
             Some("shell".to_string())
+        );
+    }
+
+    /// `detect_workspace_root` used to look for its markers with
+    /// `Path::exists`, i.e. on the *client*. For a remote workspace that
+    /// answers no to everything, so the root silently collapsed to the file's
+    /// own directory and the language server was handed the wrong project.
+    ///
+    /// This filesystem exists only on its own terms — no path it reports is on
+    /// the machine running the test — so it fails against the `std::fs`
+    /// version and passes only when the climb goes through the trait.
+    #[test]
+    fn detect_workspace_root_asks_the_workspaces_filesystem_not_the_clients() {
+        use crate::model::filesystem::{FileMetadata, FileSystem, NoopFileSystem};
+        use fresh_editor_core::model::host_path::HostPath;
+
+        struct OnlyTheMarker;
+        impl FileSystem for OnlyTheMarker {
+            fn metadata(&self, path: &HostPath) -> std::io::Result<FileMetadata> {
+                if path.to_str() == Some("/srv/proj/Cargo.toml") {
+                    Ok(FileMetadata::new(0))
+                } else {
+                    Err(std::io::Error::from(std::io::ErrorKind::NotFound))
+                }
+            }
+            fn read_file(&self, p: &HostPath) -> std::io::Result<Vec<u8>> {
+                NoopFileSystem.read_file(p)
+            }
+            fn read_range(&self, p: &HostPath, o: u64, l: usize) -> std::io::Result<Vec<u8>> {
+                NoopFileSystem.read_range(p, o, l)
+            }
+            fn write_file(&self, p: &HostPath, d: &[u8]) -> std::io::Result<()> {
+                NoopFileSystem.write_file(p, d)
+            }
+            fn create_file(
+                &self,
+                p: &HostPath,
+            ) -> std::io::Result<Box<dyn crate::model::filesystem::FileWriter>> {
+                NoopFileSystem.create_file(p)
+            }
+            fn create_new_file(
+                &self,
+                p: &HostPath,
+            ) -> std::io::Result<Box<dyn crate::model::filesystem::FileWriter>> {
+                NoopFileSystem.create_new_file(p)
+            }
+            fn create_new_private_file(
+                &self,
+                p: &HostPath,
+            ) -> std::io::Result<Box<dyn crate::model::filesystem::FileWriter>> {
+                NoopFileSystem.create_new_private_file(p)
+            }
+            fn open_file(
+                &self,
+                p: &HostPath,
+            ) -> std::io::Result<Box<dyn crate::model::filesystem::FileReader>> {
+                NoopFileSystem.open_file(p)
+            }
+            fn open_file_for_write(
+                &self,
+                p: &HostPath,
+            ) -> std::io::Result<Box<dyn crate::model::filesystem::FileWriter>> {
+                NoopFileSystem.open_file_for_write(p)
+            }
+            fn open_file_for_append(
+                &self,
+                p: &HostPath,
+            ) -> std::io::Result<Box<dyn crate::model::filesystem::FileWriter>> {
+                NoopFileSystem.open_file_for_append(p)
+            }
+            fn set_file_length(&self, p: &HostPath, l: u64) -> std::io::Result<()> {
+                NoopFileSystem.set_file_length(p, l)
+            }
+            fn rename(&self, f: &HostPath, t: &HostPath) -> std::io::Result<()> {
+                NoopFileSystem.rename(f, t)
+            }
+            fn copy(&self, f: &HostPath, t: &HostPath) -> std::io::Result<u64> {
+                NoopFileSystem.copy(f, t)
+            }
+            fn remove_file(&self, p: &HostPath) -> std::io::Result<()> {
+                NoopFileSystem.remove_file(p)
+            }
+            fn remove_dir(&self, p: &HostPath) -> std::io::Result<()> {
+                NoopFileSystem.remove_dir(p)
+            }
+            fn symlink_metadata(&self, p: &HostPath) -> std::io::Result<FileMetadata> {
+                self.metadata(p)
+            }
+            fn is_dir(&self, p: &HostPath) -> std::io::Result<bool> {
+                NoopFileSystem.is_dir(p)
+            }
+            fn is_file(&self, p: &HostPath) -> std::io::Result<bool> {
+                NoopFileSystem.is_file(p)
+            }
+            fn set_permissions(
+                &self,
+                p: &HostPath,
+                m: &crate::model::filesystem::FilePermissions,
+            ) -> std::io::Result<()> {
+                NoopFileSystem.set_permissions(p, m)
+            }
+            fn read_dir(
+                &self,
+                p: &HostPath,
+            ) -> std::io::Result<Vec<crate::model::filesystem::DirEntry>> {
+                NoopFileSystem.read_dir(p)
+            }
+            fn create_dir(&self, p: &HostPath) -> std::io::Result<()> {
+                NoopFileSystem.create_dir(p)
+            }
+            fn create_dir_all(&self, p: &HostPath) -> std::io::Result<()> {
+                NoopFileSystem.create_dir_all(p)
+            }
+            fn canonicalize(
+                &self,
+                p: &HostPath,
+            ) -> std::io::Result<fresh_editor_core::model::host_path::HostPathBuf> {
+                NoopFileSystem.canonicalize(p)
+            }
+            fn current_uid(&self) -> u32 {
+                0
+            }
+            fn search_file(
+                &self,
+                p: &HostPath,
+                pat: &str,
+                o: &crate::model::filesystem::FileSearchOptions,
+            ) -> std::io::Result<Vec<crate::model::filesystem::SearchMatch>> {
+                NoopFileSystem.search_file(p, pat, o)
+            }
+            fn sudo_write(
+                &self,
+                p: &HostPath,
+                d: &[u8],
+                m: Option<u32>,
+                o: Option<(u32, u32)>,
+            ) -> std::io::Result<()> {
+                NoopFileSystem.sudo_write(p, d, m, o)
+            }
+            fn walk(
+                &self,
+                r: &HostPath,
+                o: &crate::model::filesystem::WalkOptions<'_>,
+                c: &std::sync::atomic::AtomicBool,
+                e: &mut dyn FnMut(crate::model::filesystem::WalkEntry<'_>) -> bool,
+            ) -> std::io::Result<()> {
+                NoopFileSystem.walk(r, o, c, e)
+            }
+        }
+
+        let root = detect_workspace_root(
+            &OnlyTheMarker,
+            Path::new("/srv/proj/src/deep/main.rs"),
+            &["Cargo.toml".to_string()],
+        );
+        assert_eq!(
+            root,
+            std::path::PathBuf::from("/srv/proj"),
+            "the climb must ask the workspace's filesystem; against the client's \
+             it finds nothing and collapses to the file's own directory"
         );
     }
 

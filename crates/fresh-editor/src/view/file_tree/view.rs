@@ -898,7 +898,10 @@ impl FileTreeView {
     /// Returns a HashMap where keys are symlink paths and values are their canonical targets.
     /// This is used to create decoration aliases so files under symlinked directories
     /// can show their git status correctly.
-    pub fn collect_symlink_mappings(&self) -> HashMap<PathBuf, PathBuf> {
+    pub fn collect_symlink_mappings(
+        &self,
+        fs: &dyn crate::model::filesystem::FileSystem,
+    ) -> HashMap<PathBuf, PathBuf> {
         let mut mappings = HashMap::new();
 
         for node_id in self.filtered_visible_nodes() {
@@ -907,9 +910,16 @@ impl FileTreeView {
                 // bubbled git/decorations can light the row before first expansion.
                 if node.entry.is_symlink() && node.is_dir() {
                     // Canonicalize the symlink to get the target
-                    if let Ok(canonical) = node.entry.path.as_path().canonicalize() {
-                        if canonical != node.entry.path.as_path() {
-                            mappings.insert(node.entry.path.clone().into_path_buf(), canonical);
+                    // Through `fs`: `Path::canonicalize` is `std::fs`, so on a
+                    // remote workspace it resolved against the *client's*
+                    // filesystem — mapping nothing, or worse, mapping to a
+                    // same-named path that happens to exist locally.
+                    if let Ok(canonical) = fs.canonicalize(&node.entry.path) {
+                        if canonical.as_host_path() != node.entry.path.as_host_path() {
+                            mappings.insert(
+                                node.entry.path.clone().into_path_buf(),
+                                canonical.into_path_buf(),
+                            );
                         }
                     }
                 }
@@ -1833,7 +1843,7 @@ mod tests {
         tree.expand_node(root_id).await.unwrap();
         let view = FileTreeView::new(tree);
 
-        let mappings = view.collect_symlink_mappings();
+        let mappings = view.collect_symlink_mappings(&StdFileSystem);
         let canonical_real_dir = real_dir.canonicalize().unwrap();
         assert_eq!(mappings.get(&link_dir), Some(&canonical_real_dir));
     }

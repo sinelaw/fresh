@@ -196,7 +196,7 @@ impl FileSystem for NotOwnerFileSystem {
         opts: &fresh::model::filesystem::FileSearchOptions,
     ) -> io::Result<Vec<fresh::model::filesystem::SearchMatch>> {
         let path = path.as_path();
-        fresh::model::filesystem::default_search_file(&*self.inner, path, pattern, opts)
+        fresh::model::filesystem::default_search_file(&*self.inner, path.as_host(), pattern, opts)
     }
 
     fn walk(
@@ -604,7 +604,7 @@ impl FileSystem for CrashDuringStreamFileSystem {
         opts: &fresh::model::filesystem::FileSearchOptions,
     ) -> io::Result<Vec<fresh::model::filesystem::SearchMatch>> {
         let path = path.as_path();
-        fresh::model::filesystem::default_search_file(&*self.inner, path, pattern, opts)
+        fresh::model::filesystem::default_search_file(&*self.inner, path.as_host(), pattern, opts)
     }
 
     fn walk(
@@ -1531,7 +1531,7 @@ impl FileSystem for FaultyFileSystem {
         opts: &fresh::model::filesystem::FileSearchOptions,
     ) -> io::Result<Vec<fresh::model::filesystem::SearchMatch>> {
         let path = path.as_path();
-        fresh::model::filesystem::default_search_file(&self.inner, path, pattern, opts)
+        fresh::model::filesystem::default_search_file(&self.inner, path.as_host(), pattern, opts)
     }
     fn walk(
         &self,

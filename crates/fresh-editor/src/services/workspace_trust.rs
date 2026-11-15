@@ -591,9 +591,12 @@ pub fn executable_content_markers(
     // C# / .NET: loading a project runs restore/build and design-time
     // analyzers/source-generators, so a solution or project file at the root
     // is executable content. Report the actual file name(s).
-    if let Ok(entries) = std::fs::read_dir(root) {
-        for entry in entries.flatten() {
-            let path = entry.path();
+    // Through `fs`, like every other marker here: on the client this listing
+    // fails for a remote workspace, `found` comes back empty, and the caller
+    // reads that as "nothing executable" and persists Trusted without asking.
+    if let Ok(entries) = fs.read_dir(root.as_host()) {
+        for entry in entries {
+            let path = &entry.path;
             if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
                 if matches!(ext, "sln" | "csproj" | "fsproj") {
                     if let Some(name) = path.file_name().and_then(|s| s.to_str()) {

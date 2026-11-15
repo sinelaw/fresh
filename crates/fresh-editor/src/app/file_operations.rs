@@ -1281,8 +1281,8 @@ impl Editor {
         let dirs = explorer.ignore_patterns().loaded_gitignore_dirs();
         let mut changed = false;
         for dir in dirs {
-            let gitignore_path = dir.join(".gitignore");
-            match fs.metadata(gitignore_path.as_host()) {
+            let gitignore_path = dir.as_host().join_name(std::ffi::OsStr::new(".gitignore"));
+            match fs.metadata(gitignore_path.as_host_path()) {
                 Err(_) => {
                     explorer.ignore_patterns_mut().remove_gitignore(&dir);
                     changed = true;
@@ -1798,12 +1798,12 @@ fn file_names(paths: &[PathBuf]) -> String {
 /// errors) when the file doesn't exist. Shared by the init, expand, save,
 /// and poll paths so everything routes through the same authority.
 pub(crate) fn load_gitignore_via_fs(fs: &dyn FileSystem, explorer: &mut FileTreeView, dir: &Path) {
-    let gitignore_path = dir.join(".gitignore");
-    let meta = match fs.metadata(gitignore_path.as_host()) {
+    let gitignore_path = dir.as_host().join_name(std::ffi::OsStr::new(".gitignore"));
+    let meta = match fs.metadata(gitignore_path.as_host_path()) {
         Ok(m) => m,
         Err(_) => return,
     };
-    let bytes = match fs.read_file(gitignore_path.as_host()) {
+    let bytes = match fs.read_file(gitignore_path.as_host_path()) {
         Ok(b) => b,
         Err(e) => {
             tracing::warn!("Failed to read {:?}: {}", gitignore_path, e);

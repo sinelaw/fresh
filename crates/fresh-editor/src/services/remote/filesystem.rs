@@ -731,7 +731,7 @@ impl FileSystem for RemoteFileSystem {
         opts: &crate::model::filesystem::FileSearchOptions,
     ) -> io::Result<Vec<crate::model::filesystem::SearchMatch>> {
         // Skipped as the local search skips it, without asking the agent.
-        if crate::model::filesystem::has_binary_extension(path.as_path()) {
+        if crate::model::filesystem::has_binary_extension(path) {
             return Ok(vec![]);
         }
         let path_str = path.to_wire_string();

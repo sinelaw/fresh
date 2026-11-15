@@ -554,7 +554,7 @@ impl Editor {
                     self.set_status_message(t!("explorer.paste_cancelled").to_string());
                     return PromptResult::Done;
                 }
-                let new_dst = dst_dir.join(input.trim());
+                let new_dst = dst_dir.as_host().join_rel(input.trim()).into_path_buf();
                 if self.authority().filesystem.exists(new_dst.as_host()) {
                     self.confirm_paste_conflict(src, new_dst, is_cut, from_clipboard);
                 } else {

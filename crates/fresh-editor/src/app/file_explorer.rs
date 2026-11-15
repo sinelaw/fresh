@@ -1018,16 +1018,22 @@ impl Editor {
                 let Some(parent) = path.parent() else {
                     return Err(e);
                 };
-                let local_trash = parent.join(".fresh-trash");
-                if !self.authority().filesystem.exists(local_trash.as_host()) {
+                let local_trash = parent
+                    .as_host()
+                    .join_name(std::ffi::OsStr::new(".fresh-trash"));
+                if !self
+                    .authority()
+                    .filesystem
+                    .exists(local_trash.as_host_path())
+                {
                     self.authority()
                         .filesystem
-                        .create_dir_all(local_trash.as_host())?;
+                        .create_dir_all(local_trash.as_host_path())?;
                 }
                 self.authority().filesystem.rename(
                     path.as_host(),
                     local_trash
-                        .as_host()
+                        .as_host_path()
                         .join_name(std::ffi::OsStr::new(&trash_name))
                         .as_host_path(),
                 )
@@ -1358,7 +1364,7 @@ impl Editor {
                     Some(n) => n.to_os_string(),
                     None => continue,
                 };
-                let dst_path = dst_dir.join(&file_name);
+                let dst_path = dst_dir.as_host().join_name(&file_name).into_path_buf();
                 let is_same_location = src.parent().map(|p| p == dst_dir).unwrap_or(false);
 
                 if is_same_location {
@@ -1926,7 +1932,7 @@ impl Editor {
             .into_iter()
             .filter_map(|src| {
                 let name = src.file_name()?;
-                let dst = dest.join(name);
+                let dst = dest.as_host().join_name(name).into_path_buf();
                 // Nothing to do, and not an error either: the entry is already
                 // in `dest`, or `dest` is the entry itself or something inside
                 // it — which a directory dragged onto its own row or one of
@@ -2622,7 +2628,7 @@ impl crate::app::window::Window {
         let symlink_mappings = self
             .file_explorer
             .as_ref()
-            .map(|fe| fe.collect_symlink_mappings())
+            .map(|fe| fe.collect_symlink_mappings(&*self.authority().filesystem))
             .unwrap_or_default();
 
         self.file_explorer_decoration_cache = std::rc::Rc::new(
@@ -2652,7 +2658,7 @@ impl crate::app::window::Window {
         let symlink_mappings = self
             .file_explorer
             .as_ref()
-            .map(|fe| fe.collect_symlink_mappings())
+            .map(|fe| fe.collect_symlink_mappings(&*self.authority().filesystem))
             .unwrap_or_default();
 
         self.file_explorer_slot_override_cache = std::rc::Rc::new(
@@ -2937,7 +2943,10 @@ fn unique_paste_name(
         } else {
             format!("{} copy {}.{}", stem, n, ext)
         };
-        let path = dst_dir.join(&candidate);
+        let path = dst_dir
+            .as_host()
+            .join_name(std::ffi::OsStr::new(&candidate))
+            .into_path_buf();
         if !fs.exists(path.as_host()) {
             return path;
         }

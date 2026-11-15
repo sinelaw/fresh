@@ -31,10 +31,16 @@ pub fn path_to_file_uri(path: &Path) -> Option<String> {
     }
 
     #[cfg(windows)]
-    if path.components().next() == Some(std::path::Component::RootDir) {
-        // Rooted but with no prefix: a POSIX path we are merely holding on a
-        // Windows client, e.g. the workspace of an SSH session. It encodes the
+    if path.as_os_str().as_encoded_bytes().first() == Some(&b'/') {
+        // A leading forward slash and no drive: a POSIX path we are merely
+        // holding on a Windows client, e.g. an SSH workspace. It encodes the
         // same way it would on the host.
+        //
+        // The leading byte is what decides, not `Component::RootDir`: a local
+        // Windows path can also be rooted without a prefix (`\windows\system32`
+        // is relative to the current drive), and encoding *that* as
+        // `file:///windows/system32` would invent a drive-less URI for a path
+        // that has a drive. Those still return `None`, as before.
         return posix_path_to_file_uri(path);
     }
 
@@ -251,19 +257,24 @@ mod tests {
 
     #[test]
     fn root_path() {
-        // On Windows, "/" is not an absolute path (no drive letter), so both
-        // path_to_file_uri and file_uri_to_path return None — matching url::Url behavior.
-        #[cfg(not(windows))]
-        {
-            let uri = path_to_file_uri(Path::new("/")).unwrap();
-            assert_eq!(uri, "file:///");
-            assert_eq!(file_uri_to_path(&uri).unwrap(), PathBuf::from("/"));
-        }
-        #[cfg(windows)]
-        {
-            assert!(path_to_file_uri(Path::new("/")).is_none());
-            assert!(file_uri_to_path("file:///").is_none());
-        }
+        // A `/`-rooted path is a POSIX path whichever platform is holding it:
+        // on a Windows client it is a remote (SSH) workspace's, and the LSP
+        // server that will receive the URI lives on that host. It used to be
+        // refused here, which is why no document URI could be built for a
+        // remote file at all.
+        let uri = path_to_file_uri(Path::new("/")).unwrap();
+        assert_eq!(uri, "file:///");
+        assert_eq!(file_uri_to_path(&uri).unwrap(), PathBuf::from("/"));
+    }
+
+    /// A local Windows path can be rooted without a drive (`\windows\system32`
+    /// is relative to the current drive). That is *not* a POSIX path, and
+    /// encoding it drive-less would invent a URI for a path that has a drive.
+    #[cfg(windows)]
+    #[test]
+    fn a_local_windows_path_rooted_without_a_drive_is_still_refused() {
+        assert!(path_to_file_uri(Path::new(r"\windows\system32")).is_none());
+        assert!(path_to_file_uri(Path::new(r"\")).is_none());
     }
 
     #[test]
@@ -282,17 +293,11 @@ mod tests {
 
     #[test]
     fn single_file_at_root() {
-        #[cfg(not(windows))]
         {
             let path = PathBuf::from("/file.txt");
             let uri = path_to_file_uri(&path).unwrap();
             assert_eq!(uri, "file:///file.txt");
             assert_eq!(file_uri_to_path(&uri).unwrap(), path);
-        }
-        #[cfg(windows)]
-        {
-            // "/file.txt" has no drive letter, not absolute on Windows
-            assert!(path_to_file_uri(Path::new("/file.txt")).is_none());
         }
     }
 
@@ -466,25 +471,15 @@ mod tests {
     #[test]
     fn accepts_localhost() {
         // On Windows, URIs without drive letters are rejected (matches url::Url behavior)
-        #[cfg(not(windows))]
-        {
-            let path = file_uri_to_path("file://localhost/home/user/file.txt").unwrap();
-            assert_eq!(path, PathBuf::from("/home/user/file.txt"));
-        }
-        #[cfg(windows)]
-        assert!(file_uri_to_path("file://localhost/home/user/file.txt").is_none());
+        let path = file_uri_to_path("file://localhost/home/user/file.txt").unwrap();
+        assert_eq!(path, PathBuf::from("/home/user/file.txt"));
     }
 
     #[test]
     fn decodes_mixed_case_percent() {
         // %2f is lowercase hex for '/', but it appears within a segment (not a separator)
-        #[cfg(not(windows))]
-        {
-            let path = file_uri_to_path("file:///home/user/my%20file%2Ftxt").unwrap();
-            assert_eq!(path, PathBuf::from("/home/user/my file/txt"));
-        }
-        #[cfg(windows)]
-        assert!(file_uri_to_path("file:///home/user/my%20file%2Ftxt").is_none());
+        let path = file_uri_to_path("file:///home/user/my%20file%2Ftxt").unwrap();
+        assert_eq!(path, PathBuf::from("/home/user/my file/txt"));
     }
 
     #[test]
@@ -495,34 +490,25 @@ mod tests {
         // function would read past the end of the input and panic.
         // percent_decode runs on all platforms, so these cases are effective
         // regardless of target.
-        #[cfg(not(windows))]
-        {
-            let path = file_uri_to_path("file:///home/100%/file.txt").unwrap();
-            assert_eq!(path, PathBuf::from("/home/100%/file.txt"));
+        // A drive-less URI now decodes to the POSIX path it names on every
+        // platform (it is a remote host's), so these are unconditional and
+        // still exercise `percent_decode`'s `i + 2 < len` guard directly.
+        let path = file_uri_to_path("file:///home/100%/file.txt").unwrap();
+        assert_eq!(path, PathBuf::from("/home/100%/file.txt"));
 
-            // `%` is the final byte: no trailing nibbles at all.
-            let path = file_uri_to_path("file:///a%").unwrap();
-            assert_eq!(path, PathBuf::from("/a%"));
+        // `%` is the final byte: no trailing nibbles at all.
+        let path = file_uri_to_path("file:///a%").unwrap();
+        assert_eq!(path, PathBuf::from("/a%"));
 
-            // `%X` is the final two bytes: exactly one trailing nibble, which
-            // is the off-by-one that the `i + 2 < len` check guards against.
-            let path = file_uri_to_path("file:///a%X").unwrap();
-            assert_eq!(path, PathBuf::from("/a%X"));
+        // `%X` is the final two bytes: exactly one trailing nibble, which is
+        // the off-by-one that the `i + 2 < len` check guards against.
+        let path = file_uri_to_path("file:///a%X").unwrap();
+        assert_eq!(path, PathBuf::from("/a%X"));
 
-            // `%XY` where Y is a non-hex char: both trailing bytes present but
-            // not a valid escape, so the `%` is preserved literally.
-            let path = file_uri_to_path("file:///a%XY").unwrap();
-            assert_eq!(path, PathBuf::from("/a%XY"));
-        }
-        #[cfg(windows)]
-        {
-            // On Windows the drive-letter check rejects these URIs, but
-            // percent_decode still runs first — so the boundary cases above
-            // (`a%` and especially `a%X`) are what exercise its guard here.
-            assert!(file_uri_to_path("file:///home/100%/file.txt").is_none());
-            assert!(file_uri_to_path("file:///a%").is_none());
-            assert!(file_uri_to_path("file:///a%X").is_none());
-        }
+        // `%XY` where Y is a non-hex char: both trailing bytes present but
+        // not a valid escape, so the `%` is preserved literally.
+        let path = file_uri_to_path("file:///a%XY").unwrap();
+        assert_eq!(path, PathBuf::from("/a%XY"));
     }
 
     // ── Windows-style URI decoding (testable on all platforms) ─
@@ -854,7 +840,10 @@ mod tests {
             #[test]
             fn relative_paths_always_none(s in "([a-z./]{0,20})") {
                 let path = Path::new(&s);
-                if !path.is_absolute() {
+                // `has_root`, not `is_absolute`: a `/`-rooted path now
+                // encodes on every platform, so `is_absolute` would make this
+                // assert the opposite of the code on Windows.
+                if !path.has_root() {
                     prop_assert!(path_to_file_uri(path).is_none());
                 }
             }

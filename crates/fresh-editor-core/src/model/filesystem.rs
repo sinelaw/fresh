@@ -1374,7 +1374,9 @@ pub const BINARY_FILE_EXTENSIONS: &[&str] = &[
 ];
 
 /// True if `path`'s extension matches a known binary format.
-pub fn has_binary_extension(path: &Path) -> bool {
+pub fn has_binary_extension(path: &HostPath) -> bool {
+    // `HostPath::extension`, not `Path::extension`: for a remote path the
+    // client's component rules can find the wrong last component.
     let Some(ext) = path.extension().and_then(|s| s.to_str()) else {
         return false;
     };
@@ -1406,18 +1408,18 @@ fn is_byte_searchable_encoding(enc: crate::model::encoding::Encoding) -> bool {
 /// in an encoding a byte regex cannot match, or hold a NUL anywhere.
 pub fn default_search_file(
     fs: &dyn FileSystem,
-    path: &Path,
+    path: &HostPath,
     pattern: &str,
     opts: &FileSearchOptions,
 ) -> io::Result<Vec<SearchMatch>> {
     if has_binary_extension(path) {
         return Ok(vec![]);
     }
-    let size = fs.metadata(path.as_host())?.size;
+    let size = fs.metadata(path)?.size;
     if size == 0 || size > MAX_PROJECT_SEARCH_FILE_SIZE {
         return Ok(vec![]);
     }
-    let contents = fs.read_file(path.as_host())?;
+    let contents = fs.read_file(path)?;
     let (encoding, is_binary) = crate::model::encoding::detect_encoding_or_binary(&contents, false);
     if is_binary || !is_byte_searchable_encoding(encoding) || contents.contains(&0) {
         return Ok(vec![]);
@@ -2080,7 +2082,7 @@ impl FileSystem for StdFileSystem {
         opts: &FileSearchOptions,
     ) -> io::Result<Vec<SearchMatch>> {
         let path = path.as_path();
-        default_search_file(self, path, pattern, opts)
+        default_search_file(self, path.as_host(), pattern, opts)
     }
 
     fn walk(
@@ -2201,119 +2203,94 @@ impl NoopFileSystem {
 
 impl FileSystem for NoopFileSystem {
     fn read_file(&self, _path: &HostPath) -> io::Result<Vec<u8>> {
-        let _path = _path.as_path();
         Self::unsupported()
     }
 
     fn read_range(&self, _path: &HostPath, _offset: u64, _len: usize) -> io::Result<Vec<u8>> {
-        let _path = _path.as_path();
         Self::unsupported()
     }
 
     fn write_file(&self, _path: &HostPath, _data: &[u8]) -> io::Result<()> {
-        let _path = _path.as_path();
         Self::unsupported()
     }
 
     fn create_file(&self, _path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
-        let _path = _path.as_path();
         Self::unsupported()
     }
 
     fn create_new_file(&self, _path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
-        let _path = _path.as_path();
         Self::unsupported()
     }
 
     fn create_new_private_file(&self, _path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
-        let _path = _path.as_path();
         Self::unsupported()
     }
 
     fn open_file(&self, _path: &HostPath) -> io::Result<Box<dyn FileReader>> {
-        let _path = _path.as_path();
         Self::unsupported()
     }
 
     fn open_file_for_write(&self, _path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
-        let _path = _path.as_path();
         Self::unsupported()
     }
 
     fn open_file_for_append(&self, _path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
-        let _path = _path.as_path();
         Self::unsupported()
     }
 
     fn set_file_length(&self, _path: &HostPath, _len: u64) -> io::Result<()> {
-        let _path = _path.as_path();
         Self::unsupported()
     }
 
     fn rename(&self, _from: &HostPath, _to: &HostPath) -> io::Result<()> {
-        let _from = _from.as_path();
-        let _to = _to.as_path();
         Self::unsupported()
     }
 
     fn copy(&self, _from: &HostPath, _to: &HostPath) -> io::Result<u64> {
-        let _from = _from.as_path();
-        let _to = _to.as_path();
         Self::unsupported()
     }
 
     fn remove_file(&self, _path: &HostPath) -> io::Result<()> {
-        let _path = _path.as_path();
         Self::unsupported()
     }
 
     fn remove_dir(&self, _path: &HostPath) -> io::Result<()> {
-        let _path = _path.as_path();
         Self::unsupported()
     }
 
     fn metadata(&self, _path: &HostPath) -> io::Result<FileMetadata> {
-        let _path = _path.as_path();
         Self::unsupported()
     }
 
     fn symlink_metadata(&self, _path: &HostPath) -> io::Result<FileMetadata> {
-        let _path = _path.as_path();
         Self::unsupported()
     }
 
     fn is_dir(&self, _path: &HostPath) -> io::Result<bool> {
-        let _path = _path.as_path();
         Self::unsupported()
     }
 
     fn is_file(&self, _path: &HostPath) -> io::Result<bool> {
-        let _path = _path.as_path();
         Self::unsupported()
     }
 
     fn set_permissions(&self, _path: &HostPath, _permissions: &FilePermissions) -> io::Result<()> {
-        let _path = _path.as_path();
         Self::unsupported()
     }
 
     fn read_dir(&self, _path: &HostPath) -> io::Result<Vec<DirEntry>> {
-        let _path = _path.as_path();
         Self::unsupported()
     }
 
     fn create_dir(&self, _path: &HostPath) -> io::Result<()> {
-        let _path = _path.as_path();
         Self::unsupported()
     }
 
     fn create_dir_all(&self, _path: &HostPath) -> io::Result<()> {
-        let _path = _path.as_path();
         Self::unsupported()
     }
 
     fn canonicalize(&self, _path: &HostPath) -> io::Result<HostPathBuf> {
-        let _path = _path.as_path();
         Self::unsupported()
     }
 
@@ -2327,7 +2304,6 @@ impl FileSystem for NoopFileSystem {
         _pattern: &str,
         _opts: &FileSearchOptions,
     ) -> io::Result<Vec<SearchMatch>> {
-        let _path = _path.as_path();
         Self::unsupported()
     }
 
@@ -2338,7 +2314,6 @@ impl FileSystem for NoopFileSystem {
         _mode: Option<u32>,
         _owner: Option<(u32, u32)>,
     ) -> io::Result<()> {
-        let _path = _path.as_path();
         Self::unsupported()
     }
 
@@ -2349,7 +2324,6 @@ impl FileSystem for NoopFileSystem {
         _cancel: &std::sync::atomic::AtomicBool,
         _on_entry: &mut dyn FnMut(WalkEntry<'_>) -> bool,
     ) -> io::Result<()> {
-        let _root = _root.as_path();
         Self::unsupported()
     }
 }

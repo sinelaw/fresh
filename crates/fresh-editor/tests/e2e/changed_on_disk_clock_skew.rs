@@ -175,7 +175,7 @@ impl FileSystem for SkewedClockFileSystem {
         opts: &fresh::model::filesystem::FileSearchOptions,
     ) -> io::Result<Vec<fresh::model::filesystem::SearchMatch>> {
         let path = path.as_path();
-        fresh::model::filesystem::default_search_file(&*self.inner, path, pattern, opts)
+        fresh::model::filesystem::default_search_file(&*self.inner, path.as_host(), pattern, opts)
     }
     fn walk(
         &self,

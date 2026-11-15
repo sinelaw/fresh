@@ -94,8 +94,8 @@ impl StdinSpool {
     }
 
     /// Whether `path` is this spool's key.
-    fn owns(&self, path: &Path) -> bool {
-        path == self.path
+    fn owns(&self, path: &HostPath) -> bool {
+        path == self.path.as_host()
     }
 
     /// Bytes at `offset`, without touching any shared cursor.
@@ -166,7 +166,6 @@ impl FileSystem for SpoolFileSystem {
     // --- the ones the spool actually answers -----------------------------
 
     fn read_range(&self, path: &HostPath, offset: u64, len: usize) -> io::Result<Vec<u8>> {
-        let path = path.as_path();
         if self.spool.owns(path) {
             let data = self.spool.read_at(offset, len)?;
             if data.len() < len {
@@ -180,19 +179,17 @@ impl FileSystem for SpoolFileSystem {
             }
             return Ok(data);
         }
-        self.inner.read_range(path.as_host(), offset, len)
+        self.inner.read_range(path, offset, len)
     }
 
     fn metadata(&self, path: &HostPath) -> io::Result<FileMetadata> {
-        let path = path.as_path();
         if self.spool.owns(path) {
             return Ok(FileMetadata::new(self.spool.len()?));
         }
-        self.inner.metadata(path.as_host())
+        self.inner.metadata(path)
     }
 
     fn read_file(&self, path: &HostPath) -> io::Result<Vec<u8>> {
-        let path = path.as_path();
         if self.spool.owns(path) {
             // An input below the large-file threshold is loaded whole rather
             // than lazily, so this is the common path for `echo x | fresh -`
@@ -200,11 +197,10 @@ impl FileSystem for SpoolFileSystem {
             let len = self.spool.len()?;
             return self.spool.read_at(0, len as usize);
         }
-        self.inner.read_file(path.as_host())
+        self.inner.read_file(path)
     }
 
     fn content_digest(&self, path: &HostPath) -> io::Result<ContentDigest> {
-        let path = path.as_path();
         if self.spool.owns(path) {
             // The drained region, as `read_file` answers it, a chunk at a time.
             return ContentDigest::of_reader(SpoolReader {
@@ -213,108 +209,84 @@ impl FileSystem for SpoolFileSystem {
                 end: self.spool.len()?,
             });
         }
-        self.inner.content_digest(path.as_host())
+        self.inner.content_digest(path)
     }
 
     // --- everything else is the wrapped filesystem's business -------------
 
     fn write_file(&self, path: &HostPath, data: &[u8]) -> io::Result<()> {
-        let path = path.as_path();
-        self.inner.write_file(path.as_host(), data)
+        self.inner.write_file(path, data)
     }
     fn replace_file_preserving_identity(
         &self,
         path: &HostPath,
         data: &[u8],
     ) -> Result<(), ReplaceError> {
-        let path = path.as_path();
-        self.inner
-            .replace_file_preserving_identity(path.as_host(), data)
+        self.inner.replace_file_preserving_identity(path, data)
     }
     fn create_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
-        let path = path.as_path();
-        self.inner.create_file(path.as_host())
+        self.inner.create_file(path)
     }
     fn create_new_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
-        let path = path.as_path();
-        self.inner.create_new_file(path.as_host())
+        self.inner.create_new_file(path)
     }
     fn create_new_private_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
-        let path = path.as_path();
-        self.inner.create_new_private_file(path.as_host())
+        self.inner.create_new_private_file(path)
     }
     fn open_file(&self, path: &HostPath) -> io::Result<Box<dyn FileReader>> {
-        let path = path.as_path();
-        self.inner.open_file(path.as_host())
+        self.inner.open_file(path)
     }
     fn open_file_for_write(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
-        let path = path.as_path();
-        self.inner.open_file_for_write(path.as_host())
+        self.inner.open_file_for_write(path)
     }
     fn open_file_for_append(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
-        let path = path.as_path();
-        self.inner.open_file_for_append(path.as_host())
+        self.inner.open_file_for_append(path)
     }
     fn set_file_length(&self, path: &HostPath, len: u64) -> io::Result<()> {
-        let path = path.as_path();
-        self.inner.set_file_length(path.as_host(), len)
+        self.inner.set_file_length(path, len)
     }
     fn rename(&self, from: &HostPath, to: &HostPath) -> io::Result<()> {
-        let from = from.as_path();
-        let to = to.as_path();
-        self.inner.rename(from.as_host(), to.as_host())
+        self.inner.rename(from, to)
     }
     fn copy(&self, from: &HostPath, to: &HostPath) -> io::Result<u64> {
-        let from = from.as_path();
-        let to = to.as_path();
-        self.inner.copy(from.as_host(), to.as_host())
+        self.inner.copy(from, to)
     }
     fn remove_file(&self, path: &HostPath) -> io::Result<()> {
-        let path = path.as_path();
-        self.inner.remove_file(path.as_host())
+        self.inner.remove_file(path)
     }
     fn remove_dir(&self, path: &HostPath) -> io::Result<()> {
-        let path = path.as_path();
-        self.inner.remove_dir(path.as_host())
+        self.inner.remove_dir(path)
     }
     fn symlink_metadata(&self, path: &HostPath) -> io::Result<FileMetadata> {
-        let path = path.as_path();
-        self.inner.symlink_metadata(path.as_host())
+        self.inner.symlink_metadata(path)
     }
     fn is_dir(&self, path: &HostPath) -> io::Result<bool> {
-        let path = path.as_path();
-        self.inner.is_dir(path.as_host())
+        self.inner.is_dir(path)
     }
     fn is_file(&self, path: &HostPath) -> io::Result<bool> {
-        let path = path.as_path();
         if self.spool.owns(path) {
             return Ok(true);
         }
-        self.inner.is_file(path.as_host())
+        self.inner.is_file(path)
     }
     fn set_permissions(&self, path: &HostPath, permissions: &FilePermissions) -> io::Result<()> {
-        let path = path.as_path();
-        self.inner.set_permissions(path.as_host(), permissions)
+        self.inner.set_permissions(path, permissions)
     }
     fn read_dir(&self, path: &HostPath) -> io::Result<Vec<DirEntry>> {
-        let path = path.as_path();
-        self.inner.read_dir(path.as_host())
+        self.inner.read_dir(path)
     }
     fn create_dir(&self, path: &HostPath) -> io::Result<()> {
-        let path = path.as_path();
-        self.inner.create_dir(path.as_host())
+        self.inner.create_dir(path)
     }
     fn create_dir_all(&self, path: &HostPath) -> io::Result<()> {
-        let path = path.as_path();
-        self.inner.create_dir_all(path.as_host())
+        self.inner.create_dir_all(path)
     }
     fn canonicalize(&self, path: &HostPath) -> io::Result<HostPathBuf> {
-        let path = path.as_path();
         if self.spool.owns(path) {
             // The spool has no name to resolve; its key *is* its identity.
-            return Ok(HostPathBuf::from_path_buf(path.to_path_buf()));
+            return Ok(path.to_host_path_buf());
         }
-        self.inner.canonicalize(path.as_host())
+        self.inner.canonicalize(path)
     }
     fn current_uid(&self) -> u32 {
         self.inner.current_uid()
@@ -325,8 +297,7 @@ impl FileSystem for SpoolFileSystem {
         pattern: &str,
         opts: &FileSearchOptions,
     ) -> io::Result<Vec<SearchMatch>> {
-        let path = path.as_path();
-        self.inner.search_file(path.as_host(), pattern, opts)
+        self.inner.search_file(path, pattern, opts)
     }
     fn sudo_write(
         &self,
@@ -335,8 +306,7 @@ impl FileSystem for SpoolFileSystem {
         mode: Option<u32>,
         owner: Option<(u32, u32)>,
     ) -> io::Result<()> {
-        let path = path.as_path();
-        self.inner.sudo_write(path.as_host(), data, mode, owner)
+        self.inner.sudo_write(path, data, mode, owner)
     }
     fn walk(
         &self,
@@ -345,8 +315,7 @@ impl FileSystem for SpoolFileSystem {
         cancel: &std::sync::atomic::AtomicBool,
         on_entry: &mut dyn FnMut(fresh_editor_core::model::filesystem::WalkEntry<'_>) -> bool,
     ) -> io::Result<()> {
-        let root = root.as_path();
-        self.inner.walk(root.as_host(), opts, cancel, on_entry)
+        self.inner.walk(root, opts, cancel, on_entry)
     }
 }
 

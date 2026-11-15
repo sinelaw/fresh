@@ -163,31 +163,27 @@ impl SlowFileSystem {
 
 impl FileSystem for SlowFileSystem {
     fn read_file(&self, path: &HostPath) -> io::Result<Vec<u8>> {
-        let path = path.as_path();
         self.add_delay(self.config.read_file_delay);
         self.metrics.read_file_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner.read_file(path.as_host())
+        self.inner.read_file(path)
     }
 
     fn read_range(&self, path: &HostPath, offset: u64, len: usize) -> io::Result<Vec<u8>> {
-        let path = path.as_path();
         self.add_delay(self.config.read_file_delay);
         self.metrics.read_file_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner.read_range(path.as_host(), offset, len)
+        self.inner.read_range(path, offset, len)
     }
 
     fn content_digest(&self, path: &HostPath) -> io::Result<ContentDigest> {
-        let path = path.as_path();
         self.add_delay(self.config.read_file_delay);
         self.metrics.other_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner.content_digest(path.as_host())
+        self.inner.content_digest(path)
     }
 
     fn write_file(&self, path: &HostPath, data: &[u8]) -> io::Result<()> {
-        let path = path.as_path();
         self.add_delay(self.config.write_file_delay);
         self.metrics.write_file_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner.write_file(path.as_host(), data)
+        self.inner.write_file(path, data)
     }
 
     fn replace_file_preserving_identity(
@@ -195,153 +191,129 @@ impl FileSystem for SlowFileSystem {
         path: &HostPath,
         data: &[u8],
     ) -> Result<(), ReplaceError> {
-        let path = path.as_path();
         self.add_delay(self.config.write_file_delay);
         self.metrics.write_file_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner
-            .replace_file_preserving_identity(path.as_host(), data)
+        self.inner.replace_file_preserving_identity(path, data)
     }
 
     fn create_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
-        let path = path.as_path();
         self.add_delay(self.config.write_file_delay);
         self.metrics.write_file_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner.create_file(path.as_host())
+        self.inner.create_file(path)
     }
 
     fn create_new_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
-        let path = path.as_path();
         self.add_delay(self.config.write_file_delay);
         self.metrics.write_file_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner.create_new_file(path.as_host())
+        self.inner.create_new_file(path)
     }
 
     fn create_new_private_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
-        let path = path.as_path();
         self.add_delay(self.config.write_file_delay);
         self.metrics.write_file_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner.create_new_private_file(path.as_host())
+        self.inner.create_new_private_file(path)
     }
 
     fn open_file(&self, path: &HostPath) -> io::Result<Box<dyn FileReader>> {
-        let path = path.as_path();
         self.add_delay(self.config.read_file_delay);
         self.metrics.read_file_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner.open_file(path.as_host())
+        self.inner.open_file(path)
     }
 
     fn open_file_for_write(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
-        let path = path.as_path();
         self.add_delay(self.config.write_file_delay);
         self.metrics.write_file_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner.open_file_for_write(path.as_host())
+        self.inner.open_file_for_write(path)
     }
 
     fn open_file_for_append(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
-        let path = path.as_path();
         self.add_delay(self.config.write_file_delay);
         self.metrics.write_file_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner.open_file_for_append(path.as_host())
+        self.inner.open_file_for_append(path)
     }
 
     fn set_file_length(&self, path: &HostPath, len: u64) -> io::Result<()> {
-        let path = path.as_path();
         self.add_delay(self.config.write_file_delay);
         self.metrics.write_file_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner.set_file_length(path.as_host(), len)
+        self.inner.set_file_length(path, len)
     }
 
     fn rename(&self, from: &HostPath, to: &HostPath) -> io::Result<()> {
-        let from = from.as_path();
-        let to = to.as_path();
         self.add_delay(self.config.other_delay);
         self.metrics.other_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner.rename(from.as_host(), to.as_host())
+        self.inner.rename(from, to)
     }
 
     fn copy(&self, from: &HostPath, to: &HostPath) -> io::Result<u64> {
-        let from = from.as_path();
-        let to = to.as_path();
         self.add_delay(self.config.write_file_delay);
         self.metrics.write_file_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner.copy(from.as_host(), to.as_host())
+        self.inner.copy(from, to)
     }
 
     fn remove_file(&self, path: &HostPath) -> io::Result<()> {
-        let path = path.as_path();
         self.add_delay(self.config.other_delay);
         self.metrics.other_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner.remove_file(path.as_host())
+        self.inner.remove_file(path)
     }
 
     fn remove_dir(&self, path: &HostPath) -> io::Result<()> {
-        let path = path.as_path();
         self.add_delay(self.config.other_delay);
         self.metrics.other_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner.remove_dir(path.as_host())
+        self.inner.remove_dir(path)
     }
 
     fn metadata(&self, path: &HostPath) -> io::Result<FileMetadata> {
-        let path = path.as_path();
         self.add_delay(self.config.metadata_delay);
         self.metrics.metadata_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner.metadata(path.as_host())
+        self.inner.metadata(path)
     }
 
     fn symlink_metadata(&self, path: &HostPath) -> io::Result<FileMetadata> {
-        let path = path.as_path();
         self.add_delay(self.config.metadata_delay);
         self.metrics.metadata_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner.symlink_metadata(path.as_host())
+        self.inner.symlink_metadata(path)
     }
 
     fn is_dir(&self, path: &HostPath) -> io::Result<bool> {
-        let path = path.as_path();
         self.add_delay(self.config.other_delay);
         self.metrics.other_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner.is_dir(path.as_host())
+        self.inner.is_dir(path)
     }
 
     fn is_file(&self, path: &HostPath) -> io::Result<bool> {
-        let path = path.as_path();
         self.add_delay(self.config.other_delay);
         self.metrics.other_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner.is_file(path.as_host())
+        self.inner.is_file(path)
     }
 
     fn set_permissions(&self, path: &HostPath, permissions: &FilePermissions) -> io::Result<()> {
-        let path = path.as_path();
         self.add_delay(self.config.other_delay);
         self.metrics.other_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner.set_permissions(path.as_host(), permissions)
+        self.inner.set_permissions(path, permissions)
     }
 
     fn read_dir(&self, path: &HostPath) -> io::Result<Vec<DirEntry>> {
-        let path = path.as_path();
         self.add_delay(self.config.read_dir_delay);
         self.metrics.read_dir_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner.read_dir(path.as_host())
+        self.inner.read_dir(path)
     }
 
     fn create_dir(&self, path: &HostPath) -> io::Result<()> {
-        let path = path.as_path();
         self.add_delay(self.config.other_delay);
         self.metrics.other_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner.create_dir(path.as_host())
+        self.inner.create_dir(path)
     }
 
     fn create_dir_all(&self, path: &HostPath) -> io::Result<()> {
-        let path = path.as_path();
         self.add_delay(self.config.other_delay);
         self.metrics.other_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner.create_dir_all(path.as_host())
+        self.inner.create_dir_all(path)
     }
 
     fn canonicalize(&self, path: &HostPath) -> io::Result<HostPathBuf> {
-        let path = path.as_path();
         self.add_delay(self.config.other_delay);
         self.metrics.other_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner.canonicalize(path.as_host())
+        self.inner.canonicalize(path)
     }
 
     fn current_uid(&self) -> u32 {
@@ -355,10 +327,9 @@ impl FileSystem for SlowFileSystem {
         mode: Option<u32>,
         owner: Option<(u32, u32)>,
     ) -> io::Result<()> {
-        let path = path.as_path();
         self.add_delay(self.config.write_file_delay);
         self.metrics.write_file_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner.sudo_write(path.as_host(), data, mode, owner)
+        self.inner.sudo_write(path, data, mode, owner)
     }
 
     fn search_file(
@@ -367,7 +338,6 @@ impl FileSystem for SlowFileSystem {
         pattern: &str,
         opts: &crate::model::filesystem::FileSearchOptions,
     ) -> io::Result<Vec<crate::model::filesystem::SearchMatch>> {
-        let path = path.as_path();
         self.add_delay(self.config.search_file_delay);
         self.metrics
             .search_file_calls
@@ -382,9 +352,8 @@ impl FileSystem for SlowFileSystem {
         cancel: &std::sync::atomic::AtomicBool,
         on_entry: &mut dyn FnMut(fresh_editor_core::model::filesystem::WalkEntry<'_>) -> bool,
     ) -> io::Result<()> {
-        let root = root.as_path();
         self.add_delay(self.config.read_dir_delay);
-        self.inner.walk(root.as_host(), opts, cancel, on_entry)
+        self.inner.walk(root, opts, cancel, on_entry)
     }
 }
 
