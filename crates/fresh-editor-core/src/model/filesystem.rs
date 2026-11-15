@@ -3572,7 +3572,7 @@ mod tests {
         let fs = StdFileSystem;
         let cancel = std::sync::atomic::AtomicBool::new(false);
         let mut found: Vec<String> = Vec::new();
-        fs.walk_files(tmp.path(), &[], &cancel, &mut |_path, rel| {
+        fs.walk_files(tmp.path().as_host(), &[], &cancel, &mut |_path, rel| {
             found.push(rel.to_string());
             true
         })
@@ -3605,14 +3605,14 @@ mod tests {
         let fs = StdFileSystem;
         let cancel = std::sync::atomic::AtomicBool::new(false);
         let mut walked: Vec<String> = Vec::new();
-        fs.walk_files(tmp.path(), &[], &cancel, &mut |_path, rel| {
+        fs.walk_files(tmp.path().as_host(), &[], &cancel, &mut |_path, rel| {
             walked.push(rel.to_string());
             true
         })
         .unwrap();
 
         let mut listed: Vec<String> = fs
-            .read_dir(tmp.path())
+            .read_dir(tmp.path().as_host())
             .unwrap()
             .into_iter()
             .filter(|e| e.is_file())
