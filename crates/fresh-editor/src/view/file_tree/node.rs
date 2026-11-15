@@ -181,14 +181,18 @@ mod tests {
         // Create a simple tree structure
         let root = TreeNode::new(
             NodeId(0),
-            DirEntry::new(PathBuf::from("/"), "/".to_string(), EntryType::Directory),
+            DirEntry::new(
+                HostPathBuf::from_path_buf(PathBuf::from("/")),
+                "/".to_string(),
+                EntryType::Directory,
+            ),
             None,
         );
 
         let child1 = TreeNode::new(
             NodeId(1),
             DirEntry::new(
-                PathBuf::from("/dir1"),
+                HostPathBuf::from_path_buf(PathBuf::from("/dir1")),
                 "dir1".to_string(),
                 EntryType::Directory,
             ),
@@ -198,7 +202,7 @@ mod tests {
         let child2 = TreeNode::new(
             NodeId(2),
             DirEntry::new(
-                PathBuf::from("/dir1/dir2"),
+                HostPathBuf::from_path_buf(PathBuf::from("/dir1/dir2")),
                 "dir2".to_string(),
                 EntryType::Directory,
             ),
