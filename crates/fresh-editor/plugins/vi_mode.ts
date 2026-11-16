@@ -615,8 +615,10 @@ async function rangeFromMotion(
     const span = await lineSpanOfRange(bufferId, Math.min(origin, target), Math.max(origin, target));
     return linewiseRangeAt(bufferId, span.firstLineStart, span.lineCount);
   }
-  if (kind === "inclusive" && target >= origin) {
-    return charwiseRange(origin, await charEndOffset(bufferId, target));
+  if (kind === "inclusive") {
+    return target >= origin
+      ? charwiseRange(origin, await charEndOffset(bufferId, target))
+      : charwiseRange(target, await charEndOffset(bufferId, origin));
   }
   return charwiseRange(origin, target);
 }
@@ -672,7 +674,57 @@ async function paragraphTarget(origin: number, count: number, forward: boolean):
   return stringIndexToByteOffset(text, reachedEof ? nextStringIndex(text, index) : index);
 }
 
+const BRACKET_PARTNERS: Record<string, string> = {
+  "(": ")",
+  "[": "]",
+  "{": "}",
+  ")": "(",
+  "]": "[",
+  "}": "{",
+};
+
+async function matchingBracketTarget(origin: number): Promise<number | null> {
+  const bufferId = editor.getActiveBufferId();
+  const text = await editor.getBufferText(bufferId, 0, editor.getBufferLength(bufferId));
+  let index = byteOffsetToStringIndex(text, origin);
+  while (index < text.length && !isLineBreakAt(text, index) && BRACKET_PARTNERS[text[index]] === undefined) {
+    index++;
+  }
+  const bracket = text[index];
+  const partner = bracket === undefined ? undefined : BRACKET_PARTNERS[bracket];
+  if (bracket === undefined || partner === undefined) {
+    return null;
+  }
+  const step = bracket === "(" || bracket === "[" || bracket === "{" ? 1 : -1;
+  let depth = 0;
+  for (let i = index; i >= 0 && i < text.length; i += step) {
+    if (text[i] === bracket) {
+      depth++;
+    } else if (text[i] === partner) {
+      depth--;
+      if (depth === 0) {
+        return stringIndexToByteOffset(text, i);
+      }
+    }
+  }
+  return null;
+}
+
+async function firstNonBlankTarget(origin: number): Promise<number | null> {
+  const bufferId = editor.getActiveBufferId();
+  const lineStart = await findLineStartAtPosition(bufferId, origin);
+  const text = await safeGetBufferText(bufferId, lineStart, lineStart + 200);
+  if (!text) {
+    return lineStart;
+  }
+  const blanks = text.match(/^[ \t]*/)?.[0].length ?? 0;
+  const next = text[blanks];
+  return next === undefined || next === "\n" || next === "\r" ? lineStart : lineStart + blanks;
+}
+
 const OPERATOR_MOTIONS: Record<string, OperatorMotion> = {
+  goto_matching_bracket: { kind: "inclusive", resolve: (o) => matchingBracketTarget(o) },
+  vi_first_non_blank: { kind: "exclusive", resolve: (o) => firstNonBlankTarget(o) },
   move_left: { kind: "exclusive", resolve: (o, c) => horizontalTarget(o, c, false, false) },
   move_right: { kind: "exclusive", resolve: (o, c) => horizontalTarget(o, c, true, false) },
   move_line_start: { kind: "exclusive", resolve: (o) => lineStartTarget(o) },
@@ -1785,6 +1837,30 @@ async function moveToFirstNonBlank() : Promise<void> {
   }
 }
 
+async function vi_first_non_blank_line() : Promise<void> {
+  const count = consumeCount();
+  if (count > 1) {
+    executeWithCount("vi_move_down", count - 1);
+    await editor.flush();
+  }
+  await moveToFirstNonBlank();
+}
+registerHandler("vi_first_non_blank_line", vi_first_non_blank_line);
+
+async function vi_first_non_blank_next_line() : Promise<void> {
+  executeWithCount("vi_move_down");
+  await editor.flush();
+  await moveToFirstNonBlank();
+}
+registerHandler("vi_first_non_blank_next_line", vi_first_non_blank_next_line);
+
+async function vi_first_non_blank_prev_line() : Promise<void> {
+  executeWithCount("vi_move_up");
+  await editor.flush();
+  await moveToFirstNonBlank();
+}
+registerHandler("vi_first_non_blank_prev_line", vi_first_non_blank_prev_line);
+
 function vi_doc_start() : void {
   consumeCount(); // Count doesn't apply
   editor.executeAction("move_document_start");
@@ -2739,6 +2815,22 @@ function vi_center_cursor() : void {
   editor.executeAction("center_cursor");
 }
 registerHandler("vi_center_cursor", vi_center_cursor);
+
+async function vi_save_quit(): Promise<void> {
+  const result = await executeViCommand("x");
+  if (result.error) {
+    editor.setStatus(`E: ${result.error}`);
+  }
+}
+registerHandler("vi_save_quit", vi_save_quit);
+
+async function vi_quit_force(): Promise<void> {
+  const result = await executeViCommand("q!");
+  if (result.error) {
+    editor.setStatus(`E: ${result.error}`);
+  }
+}
+registerHandler("vi_quit_force", vi_quit_force);
 
 // Half page movements
 function vi_half_page_down() : void {
@@ -3880,7 +3972,7 @@ async function enterFindCharMode(findType: FindCharType): Promise<void> {
     state.pendingFindChar = null;
     // Escape (or any non-character key) cancels the motion.
     if (ev.key.length === 1) {
-      await executeFindChar(findType, ev.key);
+      await executeFindChar(findType, ev.key, false, consumeCount());
     }
   } finally {
     editor.endKeyCapture();
@@ -3963,7 +4055,27 @@ function computeFindCharTargetCol(
 // `isRepeat` marks the `;`/`,` path. A `t` that already landed just before its
 // target would otherwise never move again, so Vim's `;` after `t` skips the
 // adjacent match and goes to the next one (`:help cpo-;`).
-async function executeFindChar(findType: FindCharType, char: string, isRepeat: boolean = false): Promise<void> {
+function resolveFindCharTargetCol(
+  findType: FindCharType,
+  char: string,
+  lineText: string,
+  col: number,
+  count: number,
+  isRepeat: boolean,
+): number {
+  if (isRepeat && (findType === "t" || findType === "T")
+      && computeFindCharTargetCol(findType, char, lineText, col, 1) === col) {
+    return computeFindCharTargetCol(findType, char, lineText, col, count + 1);
+  }
+  return computeFindCharTargetCol(findType, char, lineText, col, count);
+}
+
+async function executeFindChar(
+  findType: FindCharType,
+  char: string,
+  isRepeat: boolean = false,
+  count: number = 1,
+): Promise<void> {
   if (!findType) return;
 
   const bufferId = editor.getActiveBufferId();
@@ -3977,10 +4089,7 @@ async function executeFindChar(findType: FindCharType, char: string, isRepeat: b
   if (!ctx) return;
   const { lineText, col } = ctx;
 
-  let targetCol = computeFindCharTargetCol(findType, char, lineText, col, 1);
-  if (isRepeat && targetCol === col && (findType === "t" || findType === "T")) {
-    targetCol = computeFindCharTargetCol(findType, char, lineText, col, 2);
-  }
+  const targetCol = resolveFindCharTargetCol(findType, char, lineText, col, count, isRepeat);
 
   if (targetCol >= 0 && targetCol !== col) {
     // Move to target column
@@ -3990,8 +4099,9 @@ async function executeFindChar(findType: FindCharType, char: string, isRepeat: b
     for (let i = 0; i < steps; i++) {
       editor.executeAction(moveAction);
     }
-    // Save for ; and , repeat
-    memory.lastFindChar = { type: findType, char };
+    if (!isRepeat) {
+      memory.lastFindChar = { type: findType, char };
+    }
   }
 }
 
@@ -4006,6 +4116,7 @@ async function executeFindCharOperator(
   char: string,
   count: number,
   record: boolean = true,
+  isRepeat: boolean = false,
 ): Promise<void> {
   if (!findType) {
     switchMode("normal");
@@ -4026,7 +4137,7 @@ async function executeFindCharOperator(
   }
   const { lineText, col } = ctx;
 
-  const targetCol = computeFindCharTargetCol(findType, char, lineText, col, count);
+  const targetCol = resolveFindCharTargetCol(findType, char, lineText, col, count, isRepeat);
   if (targetCol < 0 || targetCol === col) {
     // Target not found on the line: vim leaves the buffer unchanged and cancels
     // the operator. Do NOT consume the operator as a different motion.
@@ -4034,8 +4145,9 @@ async function executeFindCharOperator(
     return;
   }
 
-  // Save for ; and , repeat (vim records the find even in operator form).
-  memory.lastFindChar = { type: findType, char };
+  if (!isRepeat) {
+    memory.lastFindChar = { type: findType, char };
+  }
 
   // The landing column becomes a byte offset: column indices are measured in
   // the line string, byte offsets from the live caret plus the UTF-8 length of
@@ -4077,20 +4189,22 @@ registerHandler("vi_find_char_T", vi_find_char_T);
 
 // Repeat last find char (async)
 async function vi_find_char_repeat(): Promise<void> {
+  const count = consumeCount();
   if (memory.lastFindChar) {
-    await executeFindChar(memory.lastFindChar.type, memory.lastFindChar.char, true);
+    await executeFindChar(memory.lastFindChar.type, memory.lastFindChar.char, true, count);
   }
 }
 registerHandler("vi_find_char_repeat", vi_find_char_repeat);
 
 // Repeat last find char in opposite direction (async)
 async function vi_find_char_repeat_reverse(): Promise<void> {
+  const count = consumeCount();
   if (memory.lastFindChar) {
     const reversedType: FindCharType =
       memory.lastFindChar.type === "f" ? "F" :
       memory.lastFindChar.type === "F" ? "f" :
       memory.lastFindChar.type === "t" ? "T" : "t";
-    await executeFindChar(reversedType, memory.lastFindChar.char, true);
+    await executeFindChar(reversedType, memory.lastFindChar.char, true, count);
   }
 }
 registerHandler("vi_find_char_repeat_reverse", vi_find_char_repeat_reverse);
@@ -4135,6 +4249,34 @@ async function enterFindCharOperatorMode(findType: FindCharType): Promise<void> 
     editor.endKeyCapture();
   }
 }
+
+async function vi_op_find_char_repeat(): Promise<void> {
+  const last = memory.lastFindChar;
+  if (!state.pending || !last) {
+    switchMode("normal");
+    return;
+  }
+  const operator = state.pending.operator;
+  const count = consumeCountOrDefault(1);
+  await executeFindCharOperator(operator, last.type, last.char, count, true, true);
+}
+registerHandler("vi_op_find_char_repeat", vi_op_find_char_repeat);
+
+async function vi_op_find_char_repeat_reverse(): Promise<void> {
+  const last = memory.lastFindChar;
+  if (!state.pending || !last) {
+    switchMode("normal");
+    return;
+  }
+  const operator = state.pending.operator;
+  const count = consumeCountOrDefault(1);
+  const reversed: FindCharType =
+    last.type === "f" ? "F" :
+    last.type === "F" ? "f" :
+    last.type === "t" ? "T" : "t";
+  await executeFindCharOperator(operator, reversed, last.char, count, true, true);
+}
+registerHandler("vi_op_find_char_repeat_reverse", vi_op_find_char_repeat_reverse);
 
 async function vi_op_find_char_f(): Promise<void> { return enterFindCharOperatorMode("f"); }
 registerHandler("vi_op_find_char_f", vi_op_find_char_f);
@@ -4206,6 +4348,11 @@ async function vi_op_WORD_end(): Promise<void> {
 }
 registerHandler("vi_op_WORD_end", vi_op_WORD_end);
 
+async function vi_op_first_non_blank(): Promise<void> {
+  await handleMotionWithOperator("vi_first_non_blank");
+}
+registerHandler("vi_op_first_non_blank", vi_op_first_non_blank);
+
 async function vi_op_line_start(): Promise<void> {
   await handleMotionWithOperator("move_line_start");
 }
@@ -4226,10 +4373,6 @@ async function vi_op_doc_end(): Promise<void> {
 }
 registerHandler("vi_op_doc_end", vi_op_doc_end);
 
-// NOTE: operator + `%` (d%/c%/y%) is currently a no-op — `goto_matching_bracket`
-// has no entry in `OPERATOR_MOTIONS`, so the operator bails without deleting.
-// Making it work now needs only a resolver returning the matching bracket's
-// offset, with kind "inclusive". See test_vi_bug_d_percent_ignored.
 async function vi_op_matching_bracket(): Promise<void> {
   await handleMotionWithOperator("goto_matching_bracket");
 }
@@ -4293,6 +4436,9 @@ function defineViModes(): void {
     ["E", "vi_WORD_end"],
     ["$", "vi_line_end"],
     ["^", "vi_first_non_blank"],
+    ["_", "vi_first_non_blank_line"],
+    ["+", "vi_first_non_blank_next_line"],
+    ["-", "vi_first_non_blank_prev_line"],
     ["g g", "vi_doc_start"],
     ["G", "vi_doc_end"],
     ["C-f", "vi_page_down"],
@@ -4301,6 +4447,8 @@ function defineViModes(): void {
     ["C-u", "vi_half_page_up"],
     ["%", "vi_matching_bracket"],
     ["z z", "vi_center_cursor"],
+    ["Z Z", "vi_save_quit"],
+    ["Z Q", "vi_quit_force"],
     ["{", "vi_paragraph_up"],
     ["}", "vi_paragraph_down"],
 
@@ -4429,6 +4577,9 @@ function defineViModes(): void {
     ["B", "vi_op_WORD_back"],
     ["E", "vi_op_WORD_end"],
     ["$", "vi_op_line_end"],
+    ["^", "vi_op_first_non_blank"],
+    [";", "vi_op_find_char_repeat"],
+    [",", "vi_op_find_char_repeat_reverse"],
     ["g g", "vi_op_doc_start"],
     ["G", "vi_op_doc_end"],
     ["%", "vi_op_matching_bracket"],
