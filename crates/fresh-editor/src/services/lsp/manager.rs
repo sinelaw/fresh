@@ -9,7 +9,7 @@
 use crate::services::async_bridge::AsyncBridge;
 use crate::services::lsp::async_handler::LspHandle;
 use crate::types::{FeatureFilter, LspFeature, LspServerConfig};
-use fresh_editor_core::model::host_path::AsHostPath;
+use fresh_editor_core::model::host_path::{AsHostPath, PathStyle};
 use lsp_types::{SemanticTokensLegend, Uri};
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -121,14 +121,14 @@ enum SpawnDecision {
 /// drive letter (producing `file:///Users/...` instead of
 /// `file:///C:/Users/...`) and broke root-dependent LSP operations with
 /// "os error 3" (issue #3067).
-pub fn path_to_uri(path: &Path) -> Option<Uri> {
+pub fn path_to_uri(style: PathStyle, path: &Path) -> Option<Uri> {
     // The shared converter returns `None` for a path with no root, so keep the
     // long-standing behavior of resolving those against the working directory
     // before encoding. Rooted-ness is asked of the path itself, not of
     // `Path::is_absolute`: on Windows that wants a drive letter, so a remote
     // host's `/home/user/proj` took the `current_dir` branch and came back as
     // `C:/home/user/proj` — a root the host does not have.
-    if path.as_host().is_absolute() {
+    if path.as_host().under(style).is_absolute() {
         return fresh_core::file_uri::path_to_lsp_uri(path);
     }
     let abs = std::env::current_dir().ok()?.join(path);
@@ -152,8 +152,8 @@ pub fn detect_workspace_root(
     // The whole climb splits under the path's own rules; using
     // `Path::parent` for the first step and `HostPath::parent` for the rest
     // would mix the client's rules into a host path.
-    let file_dir = file_path
-        .as_host()
+    let file_dir = fs
+        .at(file_path.as_host())
         .parent()
         .unwrap_or(file_path.as_host())
         .to_host_path_buf();
@@ -165,11 +165,15 @@ pub fn detect_workspace_root(
     let mut dir = Some(file_dir.as_host_path());
     while let Some(d) = dir {
         for marker in root_markers {
-            if fs.exists(d.join_name(std::ffi::OsStr::new(marker)).as_host_path()) {
+            if fs.exists(
+                fs.at(d)
+                    .join_name(std::ffi::OsStr::new(marker))
+                    .as_host_path(),
+            ) {
                 return d.as_path().to_path_buf();
             }
         }
-        dir = d.parent();
+        dir = fs.at(d).parent();
     }
 
     file_dir.into_path_buf()
@@ -929,7 +933,7 @@ impl LspManager {
                 .as_ref()
                 .and_then(|t| t.host_to_remote(&root))
                 .unwrap_or(root);
-            if let Some(uri) = path_to_uri(&mapped) {
+            if let Some(uri) = path_to_uri(self.filesystem().style(), &mapped) {
                 return Some(uri);
             }
         }
@@ -1426,7 +1430,7 @@ impl LspManager {
                         .and_then(|p| {
                             let root =
                                 detect_workspace_root(&*self.filesystem(), p, &config.root_markers);
-                            path_to_uri(&root)
+                            path_to_uri(self.filesystem().style(), &root)
                         })
                         .or_else(|| self.root_uri.clone());
                     if let Err(e) =
@@ -1750,7 +1754,7 @@ impl LspManager {
                         .and_then(|p| {
                             let root =
                                 detect_workspace_root(&*self.filesystem(), p, &config.root_markers);
-                            path_to_uri(&root)
+                            path_to_uri(self.filesystem().style(), &root)
                         })
                         .or_else(|| self.root_uri.clone())
                 } else {
@@ -2318,6 +2322,12 @@ mod tests {
 
         struct OnlyTheMarker;
         impl FileSystem for OnlyTheMarker {
+            /// It answers for `/srv/proj/...`, i.e. it is standing in for a
+            /// POSIX host.
+            fn style(&self) -> fresh_editor_core::model::host_path::PathStyle {
+                fresh_editor_core::model::host_path::PathStyle::Posix
+            }
+
             fn metadata(&self, path: &HostPath) -> std::io::Result<FileMetadata> {
                 if path.to_str() == Some("/srv/proj/Cargo.toml") {
                     Ok(FileMetadata::new(0))
@@ -2787,14 +2797,14 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_path_to_uri_basic() {
-        let uri = path_to_uri(Path::new("/tmp/test")).unwrap();
+        let uri = path_to_uri(PathStyle::Posix, Path::new("/tmp/test")).unwrap();
         assert_eq!(uri.as_str(), "file:///tmp/test");
     }
 
     #[cfg(unix)]
     #[test]
     fn test_path_to_uri_with_spaces() {
-        let uri = path_to_uri(Path::new("/tmp/my project/src")).unwrap();
+        let uri = path_to_uri(PathStyle::Posix, Path::new("/tmp/my project/src")).unwrap();
         assert_eq!(uri.as_str(), "file:///tmp/my%20project/src");
     }
 
@@ -2808,7 +2818,11 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn test_path_to_uri_preserves_windows_drive_letter() {
-        let uri = path_to_uri(Path::new(r"C:\Users\Lance\.config\opencode")).unwrap();
+        let uri = path_to_uri(
+            PathStyle::Windows,
+            Path::new(r"C:\Users\Lance\.config\opencode"),
+        )
+        .unwrap();
         assert_eq!(
             uri.as_str(),
             "file:///C:/Users/Lance/.config/opencode",
@@ -2817,7 +2831,7 @@ mod tests {
 
         // Spaces are still percent-encoded on Windows (the encoding coverage the
         // Unix `test_path_to_uri_with_spaces` provides on that platform).
-        let spaced = path_to_uri(Path::new(r"C:\my project\src")).unwrap();
+        let spaced = path_to_uri(PathStyle::Windows, Path::new(r"C:\my project\src")).unwrap();
         assert_eq!(spaced.as_str(), "file:///C:/my%20project/src");
     }
 
@@ -2842,7 +2856,7 @@ mod tests {
     #[test]
     fn resolve_root_uri_from_file_matches_global_root_fallback() {
         let dir = std::env::current_dir().unwrap().join("some project");
-        let global = path_to_uri(&dir).unwrap();
+        let global = path_to_uri(PathStyle::host(), &dir).unwrap();
         let manager = LspManager::new(fresh_core::WindowId(1), Some(global.clone()));
         let from_file = manager
             .resolve_root_uri("python", Some(&dir.join("main.py")))

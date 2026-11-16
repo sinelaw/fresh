@@ -113,8 +113,8 @@ fn test_find_up_reports_matching_ancestors_nearest_first() {
     assert_eq!(
         found,
         vec![
-            root.as_host().join_rel("proj/include"),
-            root.as_host().join_rel("proj")
+            fs.at(root.as_host()).join_rel("proj/include"),
+            fs.at(root.as_host()).join_rel("proj")
         ],
         "both ancestors carrying the marker, nearest first"
     );
@@ -171,7 +171,7 @@ fn test_find_up_respects_max_dirs() {
     let found = fs.find_up(nested.as_host(), &["marker.txt"], Some(2)).unwrap();
     assert_eq!(
         found,
-        vec![root.as_host().join_rel("proj")],
+        vec![fs.at(root.as_host()).join_rel("proj")],
         "a budget of two reaches the parent"
     );
 }
@@ -1828,14 +1828,14 @@ fn test_unique_temp_path_uses_system_temp_dir() {
     // tempfile.gettempdir() returns), NOT a hardcoded /tmp.
     let expected_temp_dir = std::env::temp_dir();
     assert!(
-        temp_path.starts_with(expected_temp_dir.as_host()),
+        fs.at(&temp_path).starts_with(expected_temp_dir.as_host()),
         "unique_temp_path should use system temp dir ({:?}), got {:?}",
         expected_temp_dir,
         temp_path,
     );
 
     // The temp file name should contain the original file's name
-    let name = temp_path.file_name().unwrap().to_string_lossy();
+    let name = fs.at(&temp_path).file_name().unwrap().to_string_lossy();
     assert!(
         name.contains("myfile.txt"),
         "temp file name should contain the original file name, got {:?}",
@@ -1952,7 +1952,7 @@ fn prime_sys_info_gates_unresponsive_link_and_caches_when_live() {
             .home_dir()
             .expect("home_dir is served from the primed cache");
         assert!(
-            home.is_absolute(),
+            fs.at(&home).is_absolute(),
             "expected an absolute remote home, got {home:?}",
         );
     } else {

@@ -2071,11 +2071,15 @@ impl crate::app::window::Window {
             .remote_connection_info()
             .is_some()
         {
+            // The workspace filesystem's rules, bound before the loop so the
+            // `&mut self` call below does not fight the borrow.
+            let style = self.authority().filesystem.style();
             let mut path_to_buffer: HashMap<PathBuf, BufferId> = HashMap::new();
             for rel_path in collect_file_paths_from_states(split_states) {
                 let abs_path = self
                     .root
                     .as_host()
+                    .under(style)
                     .join_rel(&rel_path.to_string_lossy())
                     .into_path_buf();
                 let buffer_id = self.install_remote_placeholder(&abs_path);
@@ -2987,7 +2991,9 @@ impl crate::app::window::Window {
         let search_overrides = (!overrides.is_empty()).then_some(overrides);
 
         let bookmarks = serialize_bookmarks(&self.bookmarks, &self.buffer_metadata, &self.root);
-        let closed_files = self.closed_files.relative_to(&self.root);
+        let closed_files = self
+            .closed_files
+            .relative_to(&*self.authority().filesystem, &self.root);
 
         let mut external_files: Vec<PathBuf> = self
             .buffer_metadata

@@ -214,6 +214,11 @@ impl RemoteTreeFs {
 }
 
 impl FileSystem for RemoteTreeFs {
+    /// This fake injects faults, not path semantics: the filesystem it
+    /// wraps decides how paths read.
+    fn style(&self) -> fresh_editor_core::model::host_path::PathStyle {
+        self.inner.style()
+    }
     fn read_dir(&self, path: &HostPath) -> io::Result<Vec<DirEntry>> {
         let path = path.as_path();
         // Entries are reported back under the remote path, the way a real
@@ -222,7 +227,9 @@ impl FileSystem for RemoteTreeFs {
         Ok(entries
             .into_iter()
             .map(|e| {
-                let p = path.as_host().join_name(std::ffi::OsStr::new(&e.name));
+                let p = self
+                    .at(path.as_host())
+                    .join_name(std::ffi::OsStr::new(&e.name));
                 DirEntry::new(p, e.name, e.entry_type)
             })
             .collect())

@@ -246,7 +246,7 @@ pub fn editor_tick(
     Ok(needs_render)
 }
 
-pub(crate) use path_utils::{normalize_path, ExplorerRoot};
+pub(crate) use path_utils::{normalize_path, resolve_prompt_path, ExplorerRoot};
 
 use self::types::{LspMenuItem, LspMessageEntry, LspProgressInfo, DEFAULT_BACKGROUND_FILE};
 use crate::config::Config;

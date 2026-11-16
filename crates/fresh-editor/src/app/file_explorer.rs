@@ -1,5 +1,5 @@
 use anyhow::Result as AnyhowResult;
-use fresh_editor_core::model::host_path::{AsHostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::{AsHostPath, HostPathBuf, PathStyle};
 use fresh_i18n::t;
 
 use super::buffer_close::CloseCause;
@@ -46,12 +46,14 @@ enum PasteOpOutcome {
 
 /// Get the parent directory path from a file tree node.
 /// If the node is a directory, returns its path. If it's a file, returns the parent directory.
-fn get_parent_dir_path(node: &TreeNode) -> PathBuf {
+fn get_parent_dir_path(style: PathStyle, node: &TreeNode) -> PathBuf {
     if node.is_dir() {
         (node.entry.path.clone()).into_path_buf()
     } else {
         node.entry
             .path
+            .as_host_path()
+            .under(style)
             .parent()
             .map(|p| p.to_host_path_buf().into_path_buf())
             .unwrap_or_else(|| node.entry.path.clone().into_path_buf())
@@ -656,9 +658,10 @@ impl Editor {
     /// naming did not complete — on Escape, and on Enter with the name
     /// unchanged, both of which took the "rename cancelled" exit.
     fn file_explorer_new_entry(&mut self, is_dir: bool) {
+        let style = self.authority().filesystem.style();
         let Some(parent) = self.file_explorer().and_then(|explorer| {
             let node = explorer.tree().get_node(explorer.get_selected()?)?;
-            Some(get_parent_dir_path(node))
+            Some(get_parent_dir_path(style, node))
         }) else {
             return;
         };
@@ -977,8 +980,9 @@ impl Editor {
 
     fn move_to_remote_trash(&self, path: &std::path::Path) -> std::io::Result<()> {
         // Get remote home directory
-        let home = self.authority().filesystem.home_dir()?;
-        let trash_dir = home.join_rel(".local/share/fresh/trash");
+        let fs = &self.authority().filesystem;
+        let home = fs.home_dir()?;
+        let trash_dir = fs.at(&home).join_rel(".local/share/fresh/trash");
 
         // Create trash directory if it doesn't exist
         if !self.authority().filesystem.exists(&trash_dir) {
@@ -994,7 +998,9 @@ impl Editor {
             .map(|d| d.as_secs())
             .unwrap_or(0);
         let trash_name = format!("{}.{}", file_name.to_string_lossy(), timestamp);
-        let trash_path = trash_dir.join_name(std::ffi::OsStr::new(&trash_name));
+        let trash_path = fs
+            .at(&trash_dir)
+            .join_name(std::ffi::OsStr::new(&trash_name));
 
         match self
             .authority()
@@ -1018,8 +1024,10 @@ impl Editor {
                 let Some(parent) = path.parent() else {
                     return Err(e);
                 };
-                let local_trash = parent
-                    .as_host()
+                let local_trash = self
+                    .authority()
+                    .filesystem
+                    .at(parent.as_host())
                     .join_name(std::ffi::OsStr::new(".fresh-trash"));
                 if !self
                     .authority()
@@ -1030,13 +1038,14 @@ impl Editor {
                         .filesystem
                         .create_dir_all(local_trash.as_host_path())?;
                 }
-                self.authority().filesystem.rename(
-                    path.as_host(),
-                    local_trash
-                        .as_host_path()
-                        .join_name(std::ffi::OsStr::new(&trash_name))
-                        .as_host_path(),
-                )
+                let style = self.authority().filesystem.style();
+                let target = local_trash
+                    .as_host_path()
+                    .under(style)
+                    .join_name(std::ffi::OsStr::new(&trash_name));
+                self.authority()
+                    .filesystem
+                    .rename(path.as_host(), target.as_host_path())
             }
         }
     }
@@ -1105,8 +1114,9 @@ impl Editor {
             return None;
         }
 
-        let path = base.as_host().join_rel(name).normalize().into_path_buf();
         let fs = std::sync::Arc::clone(&self.authority().filesystem);
+        let joined = fs.at(base.as_host()).join_rel(name);
+        let path = fs.at(&joined).normalize().into_path_buf();
         // **Only a name that traverses is checked against the project.** A
         // plain one stays in the directory the reader was already looking at,
         // and that directory is theirs even when the explorer lists it through
@@ -1305,10 +1315,11 @@ impl Editor {
             }
         };
 
+        let style = self.authority().filesystem.style();
         let dst_dir = if let Some(explorer) = self.file_explorer() {
             if let Some(selected_id) = explorer.get_selected() {
                 if let Some(node) = explorer.tree().get_node(selected_id) {
-                    get_parent_dir_path(node)
+                    get_parent_dir_path(style, node)
                 } else {
                     return;
                 }
@@ -1355,6 +1366,8 @@ impl Editor {
                 self.perform_file_explorer_paste(src, dst_path, is_cut);
             }
         } else {
+            // One style for the whole paste: the destination filesystem's.
+            let paste_style = self.authority().filesystem.style();
             // Multi-path: categorize into safe and conflicting destinations
             let mut safe: Vec<(PathBuf, PathBuf)> = Vec::new();
             let mut conflicts: Vec<(PathBuf, PathBuf)> = Vec::new();
@@ -1364,7 +1377,11 @@ impl Editor {
                     Some(n) => n.to_os_string(),
                     None => continue,
                 };
-                let dst_path = dst_dir.as_host().join_name(&file_name).into_path_buf();
+                let dst_path = dst_dir
+                    .as_host()
+                    .under(paste_style)
+                    .join_name(&file_name)
+                    .into_path_buf();
                 let is_same_location = src.parent().map(|p| p == dst_dir).unwrap_or(false);
 
                 if is_same_location {
@@ -1898,7 +1915,10 @@ impl Editor {
     ) -> Option<PathBuf> {
         let explorer = self.file_explorer()?;
         let id = explorer.press_target(index, segment)?;
-        Some(get_parent_dir_path(explorer.tree().get_node(id)?))
+        Some(get_parent_dir_path(
+            self.authority().filesystem.style(),
+            explorer.tree().get_node(id)?,
+        ))
     }
 
     /// The moves dropping the held drag into `dest` would make: what it
@@ -1928,11 +1948,12 @@ impl Editor {
         if !sources.contains(&lifted) {
             sources = vec![lifted];
         }
+        let style = self.authority().filesystem.style();
         sources
             .into_iter()
             .filter_map(|src| {
                 let name = src.file_name()?;
-                let dst = dest.as_host().join_name(name).into_path_buf();
+                let dst = dest.as_host().under(style).join_name(name).into_path_buf();
                 // Nothing to do, and not an error either: the entry is already
                 // in `dest`, or `dest` is the entry itself or something inside
                 // it — which a directory dragged onto its own row or one of
@@ -2548,14 +2569,19 @@ impl crate::app::window::Window {
         // One root for the whole batch: its canonical spelling is the same
         // answer for every path, and resolving it per path was two
         // `canonicalize` syscalls per decoration.
-        let explorer_root = crate::app::ExplorerRoot::new(&root);
+        let fs = std::sync::Arc::clone(&self.authority().filesystem);
+        let explorer_root = crate::app::ExplorerRoot::new(&*fs, &root);
         let normalized: Vec<crate::view::file_tree::FileExplorerDecoration> = decorations
             .into_iter()
             .filter_map(|mut decoration| {
-                let path = if decoration.path.is_absolute() {
+                // A plugin's path is the *workspace's*, so the workspace's
+                // filesystem says whether it is rooted and how to join it.
+                let path = if fs.at(decoration.path.as_host()).is_absolute() {
                     std::mem::take(&mut decoration.path)
                 } else {
-                    root.join(&decoration.path)
+                    fs.at(root.as_host())
+                        .join_rel(&decoration.path.to_string_lossy())
+                        .into_path_buf()
                 };
                 decoration.path = explorer_root.admit(&path)?;
                 Some(decoration)
@@ -2582,15 +2608,19 @@ impl crate::app::window::Window {
         slots: Vec<fresh_core::file_explorer::FileExplorerSlotEntry>,
     ) {
         let root = self.root.clone();
-        // One root for the whole batch, as in the decoration handler above.
-        let explorer_root = crate::app::ExplorerRoot::new(&root);
+        // One root for the whole batch, as in the decoration handler above,
+        // and the same filesystem answering for the plugin's paths.
+        let fs = std::sync::Arc::clone(&self.authority().filesystem);
+        let explorer_root = crate::app::ExplorerRoot::new(&*fs, &root);
         let normalized: Vec<fresh_core::file_explorer::FileExplorerSlotEntry> = slots
             .into_iter()
             .filter_map(|mut slot| {
-                let path = if slot.path.is_absolute() {
+                let path = if fs.at(slot.path.as_host()).is_absolute() {
                     std::mem::take(&mut slot.path)
                 } else {
-                    root.join(&slot.path)
+                    fs.at(root.as_host())
+                        .join_rel(&slot.path.to_string_lossy())
+                        .into_path_buf()
                 };
                 slot.path = explorer_root.admit(&path)?;
                 Some(slot)
@@ -2769,10 +2799,11 @@ impl crate::app::window::Window {
     /// [`Window::sync_file_explorer_to_active_file`]. That one is deliberate
     /// and runs regardless of the setting.
     fn follow_path_in_explorer(&mut self, target_path: PathBuf) {
+        let fs = std::sync::Arc::clone(&self.authority().filesystem);
         if !self.config().file_explorer.follow_active_buffer
             || !self.file_explorer_visible
             || self.key_context == crate::input::keybindings::KeyContext::FileExplorer
-            || !explorer_path_under_root(&target_path, &self.root)
+            || !explorer_path_under_root(&*fs, &target_path, &self.root)
         {
             tracing::trace!(
                 "follow_path_in_explorer: gate closed, not following {:?}",
@@ -2943,8 +2974,8 @@ fn unique_paste_name(
         } else {
             format!("{} copy {}.{}", stem, n, ext)
         };
-        let path = dst_dir
-            .as_host()
+        let path = fs
+            .at(dst_dir.as_host())
             .join_name(std::ffi::OsStr::new(&candidate))
             .into_path_buf();
         if !fs.exists(path.as_host()) {
@@ -3042,52 +3073,23 @@ fn creation_path_is_within_project(
     project_root: &Path,
     target: &Path,
 ) -> std::io::Result<bool> {
-    let lexical_root = crate::app::normalize_path(project_root);
-    let lexical_target = crate::app::normalize_path(target);
-    if !lexical_target.starts_with(&lexical_root) {
+    let style = fs.style();
+    let lexical_root = crate::app::normalize_path(style, project_root);
+    let lexical_target = crate::app::normalize_path(style, target);
+    // Under the project's own rules: `Path::starts_with` splits both paths on
+    // the client's separator, so on a Windows client a remote
+    // `/srv/proj/../etc/passwd` and the root `/srv/proj` were each a single
+    // component and the lexical escape check could not see past them.
+    if !fs
+        .at(lexical_target.as_host())
+        .starts_with(lexical_root.as_host())
+    {
         return Ok(false);
     }
 
     let canonical_root = fs.canonicalize(project_root.as_host())?;
-    let canonical_target = canonicalize_deepest_existing(fs, target)?;
-    Ok(canonical_target.starts_with(&canonical_root))
-}
-
-/// Canonicalize the deepest existing ancestor and append its missing path
-/// components. Unlike `Path::canonicalize`, this also works for a target file
-/// and parent directories that have not been created yet.
-fn canonicalize_deepest_existing(
-    fs: &dyn crate::model::filesystem::FileSystem,
-    path: &Path,
-) -> std::io::Result<HostPathBuf> {
-    let mut ancestor = path;
-    let mut missing_tail: Vec<&std::ffi::OsStr> = Vec::new();
-
-    loop {
-        match fs.canonicalize(ancestor.as_host()) {
-            Ok(mut canonical) => {
-                for component in missing_tail.iter().rev() {
-                    canonical.push_name(component);
-                }
-                return Ok(canonical.normalize());
-            }
-            // Only a missing component means "not created yet". Treating
-            // every failure that way (EACCES, ELOOP, …) would silently
-            // downgrade the symlink escape check to a lexical one, so
-            // surface anything else to the caller.
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                let Some(parent) = ancestor.parent() else {
-                    return Err(error);
-                };
-                let Ok(component) = ancestor.strip_prefix(parent) else {
-                    return Err(error);
-                };
-                missing_tail.push(component.as_os_str());
-                ancestor = parent;
-            }
-            Err(error) => return Err(error),
-        }
-    }
+    let canonical_target = crate::app::path_utils::canonicalize_deepest_existing(fs, target)?;
+    Ok(fs.at(&canonical_target).starts_with(&canonical_root))
 }
 
 #[cfg(test)]

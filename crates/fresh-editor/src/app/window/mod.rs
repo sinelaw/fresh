@@ -4473,6 +4473,7 @@ impl Window {
 
         // Create metadata.
         let metadata = crate::app::types::BufferMetadata::with_file(
+            &*std::sync::Arc::clone(&self.authority().filesystem),
             path.to_path_buf(),
             &display_path,
             &self.root,
@@ -5222,7 +5223,10 @@ impl Window {
             .cloned()
             .collect();
         for (handle_id, path) in orphaned {
-            let Some(uri) = crate::services::lsp::manager::path_to_uri(&path) else {
+            let Some(uri) = crate::services::lsp::manager::path_to_uri(
+                self.authority().filesystem.style(),
+                &path,
+            ) else {
                 continue;
             };
             if let Some(sh) = self

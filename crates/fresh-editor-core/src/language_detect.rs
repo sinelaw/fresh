@@ -154,7 +154,7 @@ fn header_in_cpp_tree(
     //    non-recursive listing, and the decisive signal.
     if let Ok(entries) = fs.read_dir(start_dir.as_host()) {
         for entry in &entries {
-            let Some(ext) = entry.path.extension().and_then(|e| e.to_str()) else {
+            let Some(ext) = fs.at(&entry.path).extension().and_then(|e| e.to_str()) else {
                 continue;
             };
             if matches!(
@@ -181,7 +181,8 @@ fn header_in_cpp_tree(
     };
     candidates.iter().any(|dir| {
         compile_commands_has_cpp_marker(
-            dir.join_name(std::ffi::OsStr::new(COMPILE_COMMANDS))
+            fs.at(dir)
+                .join_name(std::ffi::OsStr::new(COMPILE_COMMANDS))
                 .as_host_path(),
             fs,
         )

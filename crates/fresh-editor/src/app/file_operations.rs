@@ -1275,13 +1275,19 @@ impl Editor {
     /// reload or drop as needed. Returns true if anything changed.
     fn sync_gitignores_from_disk(&mut self) -> bool {
         let fs = self.authority().filesystem.clone();
+        // The workspace filesystem's rules, taken before the mutable borrow
+        // of the explorer below.
+        let style = self.authority().filesystem.style();
         let Some(explorer) = self.file_explorer_mut() else {
             return false;
         };
         let dirs = explorer.ignore_patterns().loaded_gitignore_dirs();
         let mut changed = false;
         for dir in dirs {
-            let gitignore_path = dir.as_host().join_name(std::ffi::OsStr::new(".gitignore"));
+            let gitignore_path = dir
+                .as_host()
+                .under(style)
+                .join_name(std::ffi::OsStr::new(".gitignore"));
             match fs.metadata(gitignore_path.as_host_path()) {
                 Err(_) => {
                     explorer.ignore_patterns_mut().remove_gitignore(&dir);
@@ -1798,7 +1804,9 @@ fn file_names(paths: &[PathBuf]) -> String {
 /// errors) when the file doesn't exist. Shared by the init, expand, save,
 /// and poll paths so everything routes through the same authority.
 pub(crate) fn load_gitignore_via_fs(fs: &dyn FileSystem, explorer: &mut FileTreeView, dir: &Path) {
-    let gitignore_path = dir.as_host().join_name(std::ffi::OsStr::new(".gitignore"));
+    let gitignore_path = fs
+        .at(dir.as_host())
+        .join_name(std::ffi::OsStr::new(".gitignore"));
     let meta = match fs.metadata(gitignore_path.as_host_path()) {
         Ok(m) => m,
         Err(_) => return,

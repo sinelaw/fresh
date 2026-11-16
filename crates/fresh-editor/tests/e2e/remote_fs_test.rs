@@ -55,6 +55,14 @@ fn test_remote_file_explorer_anchored_at_working_dir() {
     // What the test needs from `home_dir()` is only that the working dir is
     // *not* it, which any path outside home satisfies.
     let home_dir = fs_arc.home_dir().unwrap();
+    // Read before the filesystem is handed to the harness, and under *its*
+    // rules: the name of a remote home is the remote host's to split.
+    let home_dir_name = fs_arc
+        .at(&home_dir)
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
     let project_dir = temp_dir.path().join("my_test_project");
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(project_dir.join("hello.txt"), "hello world").unwrap();
@@ -77,7 +85,6 @@ fn test_remote_file_explorer_anchored_at_working_dir() {
 
     // The file explorer root should show "my_test_project" (the working dir name)
     // as the first directory entry, NOT the home directory name.
-    let home_dir_name = home_dir.file_name().unwrap().to_string_lossy().to_string();
 
     // Wait for the async tree build to land — the panel chrome (remote
     // "[hostname]" title) appears immediately with a "Loading…" body, so

@@ -97,6 +97,11 @@ impl FaultInjectingFileSystem {
 }
 
 impl FileSystem for FaultInjectingFileSystem {
+    /// This fake injects faults, not path semantics: the filesystem it
+    /// wraps decides how paths read.
+    fn style(&self) -> fresh_editor_core::model::host_path::PathStyle {
+        self.inner.style()
+    }
     fn rename(&self, from: &HostPath, to: &HostPath) -> io::Result<()> {
         let from = from.as_path();
         let to = to.as_path();

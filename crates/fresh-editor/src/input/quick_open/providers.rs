@@ -574,7 +574,11 @@ impl FileProvider {
             let typed_into_ignored = !dir.is_empty() && custom_ignore.matches(Path::new(dir), true);
             !typed_into_ignored && custom_ignore.matches(Path::new(rel), false)
         };
-        let abs_path = Path::new(cwd).as_host().join_rel(query).into_path_buf();
+        let abs_path = self
+            .filesystem
+            .at(Path::new(cwd).as_host())
+            .join_rel(query)
+            .into_path_buf();
         let mut results = Vec::new();
 
         // If the query points to a directory, list its file contents.
@@ -599,21 +603,24 @@ impl FileProvider {
 
         // Otherwise, list the parent directory and filter by the basename
         // prefix (e.g. query "etc/hosts" → parent "/etc", prefix "hosts").
-        let parent = match abs_path.parent() {
+        // Split under the filesystem's rules, not the client's: the last `/`
+        // of a remote POSIX path is the split a Windows client would miss.
+        let typed = self.filesystem.at(abs_path.as_host());
+        let parent = match typed.parent() {
             Some(p) => p,
             None => return (results, false),
         };
-        let basename = match abs_path.file_name().and_then(|n| n.to_str()) {
+        let basename = match typed.file_name().and_then(|n| n.to_str()) {
             Some(b) => b,
             None => return (results, false),
         };
 
-        let Some(rel_parent) = parent.as_host().rel_to(Path::new(cwd).as_host()) else {
+        let Some(rel_parent) = self.filesystem.at(parent).rel_to(Path::new(cwd).as_host()) else {
             return (results, false);
         };
 
         let include_hidden = show_hidden || basename.starts_with('.');
-        if let Ok(entries) = self.filesystem.read_dir(parent.as_host()) {
+        if let Ok(entries) = self.filesystem.read_dir(parent) {
             for entry in entries {
                 if !include_hidden && entry.name.starts_with('.') {
                     continue;

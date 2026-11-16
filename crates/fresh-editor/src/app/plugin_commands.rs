@@ -3819,6 +3819,9 @@ impl Editor {
         let root = self.working_dir().to_path_buf();
         // The name a file is shown and glob-matched under: relative and
         // `/`-separated when it is in the root, as the project walk gives it.
+        // The workspace filesystem's rules, bound before the closure so it
+        // does not need to borrow `self`.
+        let style = self.authority().filesystem.style();
         let shown_path = |path: &std::path::Path| {
             // Split under the *filesystem's* rules rather than the client's.
             // `rel_to_slash_string` upstream keeps a backslash in a name on a
@@ -3826,7 +3829,7 @@ impl Editor {
             // path itself extends that to a POSIX host seen from a Windows
             // client, where `Path::components` would split `a\b.txt` in two
             // and name a file that does not exist.
-            match path.as_host().rel_to(root.as_host()) {
+            match path.as_host().under(style).rel_to(root.as_host()) {
                 Some(rel) => rel,
                 None => path.to_string_lossy().into_owned(),
             }

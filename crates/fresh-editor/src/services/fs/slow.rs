@@ -162,6 +162,42 @@ impl SlowFileSystem {
 }
 
 impl FileSystem for SlowFileSystem {
+    /// Delays are this wrapper's business; how paths read is the real
+    /// filesystem's, so it answers.
+    fn style(&self) -> fresh_editor_core::model::host_path::PathStyle {
+        self.inner.style()
+    }
+
+    /// Every other question about *which machine this is* goes to the real
+    /// filesystem too. The defaults answer for the local machine (`home_dir`
+    /// reads this process's `$HOME`, `unique_temp_path` its `TMPDIR`) or for
+    /// a local filesystem (`is_remote_connected` is always true, the rest
+    /// `None`), so a wrapper that let them stand would report the client's
+    /// home and temp directory, and claim a remote authority was not remote.
+    fn home_dir(&self) -> io::Result<HostPathBuf> {
+        self.inner.home_dir()
+    }
+
+    fn unique_temp_path(&self, dest_path: &HostPath) -> HostPathBuf {
+        self.inner.unique_temp_path(dest_path)
+    }
+
+    fn remote_connection_info(&self) -> Option<&str> {
+        self.inner.remote_connection_info()
+    }
+
+    fn is_remote_connected(&self) -> bool {
+        self.inner.is_remote_connected()
+    }
+
+    fn remote_channel_id(&self) -> Option<u64> {
+        self.inner.remote_channel_id()
+    }
+
+    fn remote_reconnect_notify(&self) -> Option<std::sync::Arc<tokio::sync::Notify>> {
+        self.inner.remote_reconnect_notify()
+    }
+
     fn read_file(&self, path: &HostPath) -> io::Result<Vec<u8>> {
         self.add_delay(self.config.read_file_delay);
         self.metrics.read_file_calls.fetch_add(1, Ordering::SeqCst);

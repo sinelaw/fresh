@@ -6,13 +6,12 @@ use fresh_editor_core::model::host_path::AsHostPath;
 use fresh_i18n::t;
 
 use super::file_operations::SaveProgress;
-use super::normalize_path;
+use super::resolve_prompt_path;
 use super::BufferId;
 use super::BufferMetadata;
 use super::Editor;
 use crate::config_io::{ConfigLayer, ConfigResolver};
 use crate::input::keybindings::Action;
-use crate::primitives::path_utils::expand_tilde;
 use crate::services::plugins::hooks::HookArgs;
 use crate::view::confirm::{Choice, Confirm, Tone};
 use crate::view::prompt::PromptType;
@@ -66,13 +65,11 @@ impl Editor {
         match prompt_type {
             PromptType::OpenFile => {
                 let (path_str, line, column) = parse_path_line_col(&input);
-                // Expand tilde to home directory first
-                let expanded_path = expand_tilde(&path_str);
-                let resolved_path = if expanded_path.is_absolute() {
-                    normalize_path(&expanded_path)
-                } else {
-                    normalize_path(&self.working_dir().join(&expanded_path))
-                };
+                let resolved_path = resolve_prompt_path(
+                    &*self.authority().filesystem,
+                    self.working_dir(),
+                    &path_str,
+                );
 
                 self.open_file_with_jump(resolved_path, line, column);
             }
@@ -83,15 +80,20 @@ impl Editor {
                 self.handle_reload_with_encoding(&input);
             }
             PromptType::SwitchProject => {
-                // Expand tilde to home directory first
-                let expanded_path = expand_tilde(&input);
-                let resolved_path = if expanded_path.is_absolute() {
-                    normalize_path(&expanded_path)
-                } else {
-                    normalize_path(&self.working_dir().join(&expanded_path))
-                };
+                let resolved_path =
+                    resolve_prompt_path(&*self.authority().filesystem, self.working_dir(), &input);
 
-                if resolved_path.is_dir() {
+                // Asked of the filesystem the project would be opened on.
+                // `Path::is_dir` stats the client, so a remote directory
+                // that the client happens not to have was rejected as "not a
+                // directory" — and one the client *does* have at the same
+                // path was accepted for the wrong reason.
+                let is_dir = self
+                    .authority()
+                    .filesystem
+                    .is_dir(resolved_path.as_host())
+                    .unwrap_or(false);
+                if is_dir {
                     self.change_working_dir(resolved_path);
                 } else {
                     self.set_status_message(
@@ -224,12 +226,11 @@ impl Editor {
                 use crate::input::quick_open::parse_path_line_col;
                 let (path_str, line, column) = parse_path_line_col(&input);
                 if !path_str.is_empty() {
-                    let expanded = expand_tilde(&path_str);
-                    let resolved = if expanded.is_absolute() {
-                        normalize_path(&expanded)
-                    } else {
-                        normalize_path(&self.working_dir().join(&expanded))
-                    };
+                    let resolved = resolve_prompt_path(
+                        &*self.authority().filesystem,
+                        self.working_dir(),
+                        &path_str,
+                    );
                     self.open_file_with_jump(resolved, line, column);
                 }
             }
@@ -554,7 +555,12 @@ impl Editor {
                     self.set_status_message(t!("explorer.paste_cancelled").to_string());
                     return PromptResult::Done;
                 }
-                let new_dst = dst_dir.as_host().join_rel(input.trim()).into_path_buf();
+                let style = self.authority().filesystem.style();
+                let new_dst = dst_dir
+                    .as_host()
+                    .under(style)
+                    .join_rel(input.trim())
+                    .into_path_buf();
                 if self.authority().filesystem.exists(new_dst.as_host()) {
                     self.confirm_paste_conflict(src, new_dst, is_cut, from_clipboard);
                 } else {
@@ -768,13 +774,8 @@ impl Editor {
 
     /// Handle SaveFileAs prompt confirmation.
     fn handle_save_file_as(&mut self, input: &str) {
-        // Expand tilde to home directory first
-        let expanded_path = expand_tilde(input);
-        let full_path = if expanded_path.is_absolute() {
-            normalize_path(&expanded_path)
-        } else {
-            normalize_path(&self.working_dir().join(&expanded_path))
-        };
+        let full_path =
+            resolve_prompt_path(&*self.authority().filesystem, self.working_dir(), input);
 
         self.save_file_as_with_checks(full_path);
     }
@@ -804,9 +805,17 @@ impl Editor {
             .map(|p| p.to_path_buf());
         let is_different_file = current_file_path.as_ref() != Some(&full_path);
 
-        if is_different_file && full_path.is_file() {
+        // Asked of the filesystem being saved to. `Path::is_file` stats the
+        // client: saving onto an existing *remote* file skipped this
+        // confirmation entirely, and a path the client happened to have
+        // raised it for a file the host does not hold.
+        let fs = std::sync::Arc::clone(&self.authority().filesystem);
+        let target_is_file = fs.is_file(full_path.as_host()).unwrap_or(false);
+
+        if is_different_file && target_is_file {
             // File exists and is different from current - ask for confirmation
-            let filename = full_path
+            let filename = fs
+                .at(full_path.as_host())
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| full_path.display().to_string());
@@ -833,16 +842,17 @@ impl Editor {
             return;
         }
 
-        // Check if parent directory exists
-        if let Some(parent) = full_path.parent() {
-            if !parent.as_os_str().is_empty()
-                && !self.authority().filesystem.exists(parent.as_host())
-            {
-                let dir_name = parent
-                    .strip_prefix(self.working_dir())
-                    .unwrap_or(parent)
-                    .display()
-                    .to_string();
+        // Check if parent directory exists — split under the saving
+        // filesystem's rules, so the directory asked about is the one the
+        // file would actually land in.
+        if let Some(parent) = fs.at(full_path.as_host()).parent() {
+            if !parent.as_os_str().is_empty() && !fs.exists(parent) {
+                let dir_name = fs
+                    .at(parent)
+                    .rel_to(self.working_dir().as_host())
+                    // Shown in a dialog, so spelled the host's way.
+                    .map(|rel| fs.style().respell_relative(&rel))
+                    .unwrap_or_else(|| parent.to_string_lossy().into_owned());
                 let confirm = crate::app::confirm_dialog::create_directory(&dir_name);
                 self.start_confirm_prompt(
                     confirm.body.clone(),
@@ -891,6 +901,7 @@ impl Editor {
                 );
 
                 let metadata = BufferMetadata::with_file(
+                    &*std::sync::Arc::clone(&self.authority().filesystem),
                     full_path.clone(),
                     &full_path,
                     self.working_dir(),
@@ -1883,18 +1894,11 @@ impl Editor {
         match result {
             QuickOpenResult::ExecuteAction(action) => PromptResult::ExecuteAction(action),
             QuickOpenResult::OpenFile { path, line, column } => {
-                let expanded_path = expand_tilde(&path);
-                let full_path = if expanded_path.as_host().is_absolute() {
-                    expanded_path
-                } else {
-                    // Joined with the working directory's separator: on a
-                    // Windows client against a POSIX host, `Path::join` put a
-                    // backslash in here and the host had no such file.
-                    self.working_dir()
-                        .as_host()
-                        .join_rel(&expanded_path.to_string_lossy())
-                        .into_path_buf()
-                };
+                let full_path = self
+                    .authority()
+                    .filesystem
+                    .resolve_typed_path(self.working_dir().as_host(), &path)
+                    .into_path_buf();
                 self.open_file_with_jump(full_path, line, column);
                 PromptResult::Done
             }

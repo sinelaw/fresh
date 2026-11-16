@@ -364,6 +364,15 @@ mod tests {
     }
 
     impl FileSystem for FakeTree {
+        fn style(&self) -> crate::model::host_path::PathStyle {
+            // Pretending to be an SSH host means pretending to its rules.
+            if self.connection.is_some() {
+                crate::model::host_path::PathStyle::Posix
+            } else {
+                crate::model::host_path::PathStyle::host()
+            }
+        }
+
         fn read_dir(&self, path: &HostPath) -> io::Result<Vec<DirEntry>> {
             let path = path.as_path();
             self.count_op();

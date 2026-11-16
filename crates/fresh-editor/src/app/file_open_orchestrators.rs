@@ -628,6 +628,7 @@ impl Editor {
             .insert(buffer_id, crate::model::event::EventLog::new());
 
         let metadata = super::types::BufferMetadata::with_file(
+            &*std::sync::Arc::clone(&self.authority().filesystem),
             path.to_path_buf(),
             &display_path,
             self.working_dir(),
@@ -813,6 +814,7 @@ impl Editor {
             .insert(buffer_id, crate::model::event::EventLog::new());
 
         let metadata = super::types::BufferMetadata::with_file(
+            &*std::sync::Arc::clone(&self.authority().filesystem),
             path.to_path_buf(),
             &display_path,
             self.working_dir(),
@@ -1270,6 +1272,7 @@ impl crate::app::window::Window {
 
         // Create metadata for this buffer
         let mut metadata = crate::app::types::BufferMetadata::with_file(
+            &*std::sync::Arc::clone(&self.authority().filesystem),
             path.to_path_buf(),
             display_path,
             &self.root,

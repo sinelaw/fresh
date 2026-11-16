@@ -1720,12 +1720,17 @@ impl Editor {
     fn find_devcontainer_config(&self) -> Option<std::path::PathBuf> {
         let cwd = self.working_dir();
         let fs = self.authority().filesystem.as_ref();
-        let primary = cwd.as_host().join_rel(".devcontainer/devcontainer.json");
+        let style = self.authority().filesystem.style();
+        let primary = cwd
+            .as_host()
+            .under(style)
+            .join_rel(".devcontainer/devcontainer.json");
         if fs.exists(primary.as_host_path()) {
             return Some(primary.into_path_buf());
         }
         let secondary = cwd
             .as_host()
+            .under(style)
             .join_name(std::ffi::OsStr::new(".devcontainer.json"));
         if fs.exists(secondary.as_host_path()) {
             return Some(secondary.into_path_buf());

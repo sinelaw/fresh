@@ -127,11 +127,14 @@ pub fn file_path_to_lsp_uri_with_translation(
 mod lsp_uri_tests {
     use super::*;
     use crate::services::authority::PathTranslation;
+    use fresh_editor_core::model::host_path::PathStyle;
 
     fn translation() -> PathTranslation {
         PathTranslation {
             host_root: PathBuf::from("/tmp/.tmpA1B2"),
+            host_style: PathStyle::Posix,
             remote_root: PathBuf::from("/workspaces/proj"),
+            remote_style: PathStyle::Posix,
         }
     }
 

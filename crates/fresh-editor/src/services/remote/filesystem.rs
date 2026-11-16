@@ -12,7 +12,7 @@ use crate::services::remote::protocol::{
     read_params, stat_params, sudo_write_params, truncate_params, write_params, PatchOp,
     RemoteDirEntry, RemoteMetadata,
 };
-use fresh_editor_core::model::host_path::{HostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::{HostPath, HostPathBuf, PathStyle};
 use std::io::{self, Cursor, Read, Seek, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
@@ -32,6 +32,10 @@ struct RemoteSysInfo {
     home: Option<PathBuf>,
     /// Remote temp dir (agent's `tempfile.gettempdir()`), `/tmp` fallback.
     temp_dir: PathBuf,
+    /// The rules this host's paths follow, from the `sep` the agent reported
+    /// (`os.sep`, evaluated *on the host*). `None` when an older agent did
+    /// not send it.
+    style: Option<PathStyle>,
 }
 
 /// Remote filesystem that communicates with the Python agent
@@ -61,6 +65,10 @@ impl RemoteFileSystem {
         RemoteSysInfo {
             home: info.get("home").and_then(|v| v.as_str()).map(PathBuf::from),
             temp_dir: Self::parse_temp_dir_from_info(Some(info)),
+            style: info
+                .get("sep")
+                .and_then(|v| v.as_str())
+                .and_then(PathStyle::from_separator),
         }
     }
 
@@ -265,6 +273,20 @@ fn parse_sha256_hex(hex: &str) -> Option<[u8; 32]> {
 }
 
 impl FileSystem for RemoteFileSystem {
+    /// What the host said, not what this client runs.
+    ///
+    /// The agent evaluates `os.sep` on the host and reports it in `info`, so
+    /// this is told rather than inferred. An agent too old to send it leaves
+    /// `None`, and then POSIX is the answer: every SSH host that has ever
+    /// worked with this editor is POSIX, and the alternative — the *client's*
+    /// platform — is the bug sinelaw/fresh#3758 was about. It is a documented
+    /// default for one missing field, not a guess at a path's spelling.
+    fn style(&self) -> PathStyle {
+        self.sys_info()
+            .and_then(|info| info.style)
+            .unwrap_or(PathStyle::Posix)
+    }
+
     fn read_file(&self, path: &HostPath) -> io::Result<Vec<u8>> {
         let path_str = path.to_wire_string();
         let (data_chunks, _result) = self
@@ -521,7 +543,8 @@ impl FileSystem for RemoteFileSystem {
         let rm: RemoteMetadata = serde_json::from_value(result)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-        let name = path
+        let name = self
+            .at(path)
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
@@ -538,7 +561,8 @@ impl FileSystem for RemoteFileSystem {
         let rm: RemoteMetadata = serde_json::from_value(result)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-        let name = path
+        let name = self
+            .at(path)
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
@@ -716,9 +740,9 @@ impl FileSystem for RemoteFileSystem {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        temp_dir.join_name(std::ffi::OsStr::new(&format!(
+        self.at(&temp_dir).join_name(std::ffi::OsStr::new(&format!(
             "{}-{}-{}.tmp",
-            crate::model::filesystem::temp_name_stem(dest_path),
+            crate::model::filesystem::temp_name_stem(self.at(dest_path)),
             std::process::id(),
             timestamp
         )))
@@ -731,7 +755,7 @@ impl FileSystem for RemoteFileSystem {
         opts: &crate::model::filesystem::FileSearchOptions,
     ) -> io::Result<Vec<crate::model::filesystem::SearchMatch>> {
         // Skipped as the local search skips it, without asking the agent.
-        if crate::model::filesystem::has_binary_extension(path) {
+        if crate::model::filesystem::has_binary_extension(self.at(path)) {
             return Ok(vec![]);
         }
         let path_str = path.to_wire_string();
@@ -862,7 +886,7 @@ impl FileSystem for RemoteFileSystem {
                 let Some(rel) = entry.get("rel").and_then(|v| v.as_str()) else {
                     continue;
                 };
-                let abs = root.join_rel(rel);
+                let abs = self.at(root).join_rel(rel);
                 let entry_type = match entry.get("kind").and_then(|v| v.as_str()) {
                     Some("dir") => EntryType::Directory,
                     Some("symlink") => EntryType::Symlink,

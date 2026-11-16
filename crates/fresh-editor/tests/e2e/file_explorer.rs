@@ -2,6 +2,7 @@ use crate::common::git_test_helper::GitTestRepo;
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
+use fresh_editor_core::model::host_path::PathStyle;
 use std::fs;
 
 /// Test file explorer toggle
@@ -4026,7 +4027,10 @@ fn test_file_explorer_copy_full_path() {
         .map(|e| e.path.clone())
         .expect("explorer must have a selected entry after Down");
     assert_eq!(
-        selected_path.file_name().and_then(|n| n.to_str()),
+        selected_path
+            .under(PathStyle::host())
+            .file_name()
+            .and_then(|n| n.to_str()),
         Some("alpha.txt"),
         "Down from the auto-expanded root should land on alpha.txt; got {:?}",
         selected_path
@@ -4083,7 +4087,10 @@ fn test_file_explorer_copy_relative_path() {
         .map(|e| e.path.clone())
         .expect("explorer must have a selected entry");
     assert_eq!(
-        selected_path.file_name().and_then(|n| n.to_str()),
+        selected_path
+            .under(PathStyle::host())
+            .file_name()
+            .and_then(|n| n.to_str()),
         Some("main.rs"),
         "selection should be on main.rs after Down, Right, Down; got {:?}",
         selected_path

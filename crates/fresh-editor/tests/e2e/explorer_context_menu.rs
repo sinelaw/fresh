@@ -891,7 +891,10 @@ fn selected_relative_path(h: &EditorTestHarness) -> String {
     let explorer = h.editor().file_explorer().expect("an explorer");
     let entry = explorer.get_selected_entry().expect("a selection");
     let root = explorer.tree().root_path();
-    let rel = entry.path.rel_to(root.as_host());
+    let rel = entry
+        .path
+        .under(h.editor().authority().filesystem.style())
+        .rel_to(root.as_host());
     let path = rel
         .as_deref()
         .unwrap_or(entry.path.to_str().unwrap_or_default());

@@ -537,7 +537,11 @@ impl HotExitEntry {
 pub fn write_atomically(target: &Path, content: &[u8]) -> io::Result<()> {
     use std::io::Write;
     // A unique sibling name, never an existing file
-    let temp_path = crate::model::filesystem::sibling_temp_path(target.as_host());
+    let temp_path = crate::model::filesystem::sibling_temp_path(
+        target
+            .as_host()
+            .under(crate::model::host_path::PathStyle::host()),
+    );
     let mut file = std::fs::File::options()
         .write(true)
         .create_new(true)
@@ -735,6 +739,7 @@ impl InplaceWriteRecovery {
     pub fn meta_path(recovery_dir: &Path, dest_path: &Path) -> HostPathBuf {
         recovery_dir
             .as_host()
+            .under(crate::model::host_path::PathStyle::host())
             .join_name(std::ffi::OsStr::new(&format!(
                 "{}{}",
                 path_hash(dest_path),

@@ -74,6 +74,11 @@ impl ConfigurableFileSystem {
 }
 
 impl FileSystem for ConfigurableFileSystem {
+    /// This fake injects faults, not path semantics: the filesystem it
+    /// wraps decides how paths read.
+    fn style(&self) -> fresh_editor_core::model::host_path::PathStyle {
+        self.inner.style()
+    }
     fn is_owner(&self, _path: &HostPath) -> bool {
         let _path = _path.as_path();
         self.simulate_owner.load(Ordering::SeqCst)

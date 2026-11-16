@@ -724,14 +724,16 @@ fn migrate_legacy_windows(
         // Only look at directories that look like slug-encoded
         // paths (i.e. not the `state/` plugin dir, which lives
         // alongside but isn't a per-cwd bucket).
-        let dir_name = match dir.file_name().and_then(|s| s.to_str()) {
+        let dir_name = match filesystem.at(&dir).file_name().and_then(|s| s.to_str()) {
             Some(n) => n.to_string(),
             None => continue,
         };
         if dir_name == "state" {
             continue;
         }
-        let legacy_p = dir.join_name(std::ffi::OsStr::new("windows.json"));
+        let legacy_p = filesystem
+            .at(&dir)
+            .join_name(std::ffi::OsStr::new("windows.json"));
         if !filesystem.exists(&legacy_p) {
             continue;
         }
@@ -861,13 +863,13 @@ pub(crate) fn read_persisted_plugin_state(
     };
     for entry in entries {
         let path = entry.path;
-        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+        let Some(stem) = filesystem.at(&path).file_stem().and_then(|s| s.to_str()) else {
             continue;
         };
         if !plugin_name_is_safe(stem) {
             continue;
         }
-        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+        if filesystem.at(&path).extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
         }
         match filesystem.read_file(&path) {
@@ -948,14 +950,14 @@ fn migrate_legacy_plugin_state(
         if !filesystem.is_dir(&dir).unwrap_or(false) {
             continue;
         }
-        let dir_name = match dir.file_name().and_then(|s| s.to_str()) {
+        let dir_name = match filesystem.at(&dir).file_name().and_then(|s| s.to_str()) {
             Some(n) => n.to_string(),
             None => continue,
         };
         if dir_name == "state" {
             continue;
         }
-        let state_dir = dir.join_name(std::ffi::OsStr::new("state"));
+        let state_dir = filesystem.at(&dir).join_name(std::ffi::OsStr::new("state"));
         if !filesystem.exists(&state_dir) {
             continue;
         }
@@ -965,13 +967,13 @@ fn migrate_legacy_plugin_state(
         };
         for pe in plugin_entries {
             let p = pe.path;
-            let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
+            let Some(stem) = filesystem.at(&p).file_stem().and_then(|s| s.to_str()) else {
                 continue;
             };
             if !plugin_name_is_safe(stem) {
                 continue;
             }
-            if p.extension().and_then(|e| e.to_str()) != Some("json") {
+            if filesystem.at(&p).extension().and_then(|e| e.to_str()) != Some("json") {
                 continue;
             }
             let bytes = match filesystem.read_file(&p) {

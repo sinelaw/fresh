@@ -67,6 +67,11 @@ impl RecordingRemoteFs {
 }
 
 impl FileSystem for RecordingRemoteFs {
+    /// This fake injects faults, not path semantics: the filesystem it
+    /// wraps decides how paths read.
+    fn style(&self) -> fresh_editor_core::model::host_path::PathStyle {
+        self.inner.style()
+    }
     fn read_file(&self, path: &HostPath) -> io::Result<Vec<u8>> {
         let path = path.as_path();
         self.record(path);

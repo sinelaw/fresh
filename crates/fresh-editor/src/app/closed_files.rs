@@ -16,6 +16,7 @@
 //! merges in (never by rewriting its workspace file, which a running
 //! orchestrator owns); files under no workspace would be dropped.
 
+use crate::model::filesystem::FileSystem;
 use fresh_editor_core::model::host_path::AsHostPath;
 use std::collections::HashSet;
 use std::io;
@@ -82,15 +83,24 @@ impl ClosedFiles {
     /// not be how the root is spelled: a root reached through a symlink,
     /// macOS's `/var` (really `/private/var`), Windows' `\\?\` prefix.
     /// `ExplorerRoot` matches the two either way.
-    pub(crate) fn relative_to(&self, root: &Path) -> Vec<PathBuf> {
-        let root_match = ExplorerRoot::new(root);
+    pub(crate) fn relative_to(&self, fs: &dyn FileSystem, root: &Path) -> Vec<PathBuf> {
+        let root_match = ExplorerRoot::new(fs, root);
         self.paths
             .iter()
             .map(|path| {
                 root_match
                     .admit(path)
-                    .and_then(|under| under.strip_prefix(root).ok().map(Path::to_path_buf))
-                    .filter(|relative| !relative.as_os_str().is_empty())
+                    // Taken off under the workspace's rules.
+                    // `Path::strip_prefix` compares components the *client*
+                    // splits, so on a Windows client a remote path and a
+                    // remote root were each one component and nothing was
+                    // ever relative.
+                    .and_then(|under| fs.at(under.as_host()).rel_to(root.as_host()))
+                    .filter(|relative| !relative.is_empty())
+                    // Re-spelled with the host's separator: this string is
+                    // shown to the user and saved to the workspace file, so
+                    // on a Windows host it has to read `src\main.rs`.
+                    .map(|relative| PathBuf::from(fs.style().respell_relative(&relative)))
                     .unwrap_or_else(|| path.clone())
             })
             .collect()
@@ -126,7 +136,7 @@ impl Editor {
         let suggestions: Vec<Suggestion> = closed
             .paths()
             .iter()
-            .zip(closed.relative_to(&window.root))
+            .zip(closed.relative_to(&*window.authority().filesystem, &window.root))
             .filter(|(path, _)| !open.contains(path.as_path()))
             .map(|(path, shown)| {
                 let full = path.to_string_lossy().into_owned();

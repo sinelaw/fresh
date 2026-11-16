@@ -76,6 +76,11 @@ impl DroppableFileSystem {
 // Delegate all FileSystem methods to StdFileSystem, but intercept metadata()
 // and fail on write/read when disconnected.
 impl FileSystem for DroppableFileSystem {
+    /// This fake injects faults, not path semantics: the filesystem it
+    /// wraps decides how paths read.
+    fn style(&self) -> fresh_editor_core::model::host_path::PathStyle {
+        self.inner.style()
+    }
     fn read_file(&self, path: &HostPath) -> io::Result<Vec<u8>> {
         let path = path.as_path();
         self.check_disconnected()?;

@@ -13,7 +13,7 @@ use std::io::{self, Read, Seek, Write};
 use std::path::Path;
 use std::time::SystemTime;
 
-use crate::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use crate::model::host_path::{AsHostPath, HostPath, HostPathBuf, PathStyle, Under};
 
 // ============================================================================
 // Directory Entry Types
@@ -478,6 +478,23 @@ const CONTENT_DIGEST_CHUNK: usize = 64 * 1024;
 ///
 /// All methods are synchronous. For async UI operations, use `spawn_blocking`.
 pub trait FileSystem: Send + Sync {
+    /// Which platform's rules this filesystem's paths follow.
+    ///
+    /// The filesystem is the authority on this: a local one knows it at
+    /// compile time, and the SSH agent runs on the host and reports `os.sep`.
+    /// Required rather than defaulted on purpose — a default would be a guess
+    /// wearing a trait method's clothes, and guessing is what
+    /// sinelaw/fresh#3762 is about removing.
+    fn style(&self) -> PathStyle;
+
+    /// Read `path` under this filesystem's rules.
+    ///
+    /// The usual way to operate on a path: `fs.at(p).parent()` rather than
+    /// guessing the style from how `p` is spelled.
+    fn at<'a>(&self, path: &'a HostPath) -> Under<'a> {
+        path.under(self.style())
+    }
+
     // ========================================================================
     // File Content Operations
     // ========================================================================
@@ -636,7 +653,7 @@ pub trait FileSystem: Send + Sync {
     fn copy_dir_all(&self, src: &HostPath, dst: &HostPath) -> io::Result<()> {
         self.create_dir_all(dst)?;
         for entry in self.read_dir(src)? {
-            let dst_child = dst.join_name(std::ffi::OsStr::new(&entry.name));
+            let dst_child = self.at(dst).join_name(std::ffi::OsStr::new(&entry.name));
             if entry.is_dir() {
                 self.copy_dir_all(&entry.path, &dst_child)?;
             } else {
@@ -736,7 +753,7 @@ pub trait FileSystem: Send + Sync {
     /// Each call returns a fresh name (see [`sibling_temp_path`]); open it with
     /// [`FileSystem::create_new_file`] so an existing file is never clobbered.
     fn temp_path_for(&self, path: &HostPath) -> HostPathBuf {
-        sibling_temp_path(path)
+        sibling_temp_path(self.at(path))
     }
 
     /// Create a file that must not exist yet, atomically: fails with
@@ -761,12 +778,15 @@ pub trait FileSystem: Send + Sync {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        temp_dir.as_host().join_name(std::ffi::OsStr::new(&format!(
-            "{}-{}-{}.tmp",
-            temp_name_stem(dest_path),
-            std::process::id(),
-            timestamp
-        )))
+        temp_dir
+            .as_host()
+            .under(PathStyle::host())
+            .join_name(std::ffi::OsStr::new(&format!(
+                "{}-{}-{}.tmp",
+                temp_name_stem(self.at(dest_path)),
+                std::process::id(),
+                timestamp
+            )))
     }
 
     // ========================================================================
@@ -813,6 +833,44 @@ pub trait FileSystem: Send + Sync {
         dirs::home_dir()
             .map(HostPathBuf::from_path_buf)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "home directory not found"))
+    }
+
+    /// `input` with a leading `~` replaced by *this* filesystem's home
+    /// directory.
+    ///
+    /// The home comes from [`FileSystem::home_dir`] and the join from this
+    /// filesystem's style, so `~/notes.txt` typed against a remote workspace
+    /// names a file on the *host*. Asking `dirs::home_dir()` instead — as the
+    /// editor used to — answered for whatever machine the editor runs on,
+    /// which is the wrong machine and the same bug as #3758.
+    ///
+    /// Only a bare `~`, or a `~` followed by a separator, is expanded.
+    /// `~bob` is another user's home: this filesystem has not been asked
+    /// where that is, so the text is left alone rather than turned into
+    /// `<home>/bob`, which is a different directory entirely.
+    ///
+    /// The input unchanged when there is no `~` to expand, or when the home
+    /// directory cannot be determined.
+    fn expand_tilde(&self, input: &str) -> HostPathBuf {
+        expand_tilde_under(self.style(), self.home_dir().ok().as_deref(), input)
+    }
+
+    /// `typed` — a path a person typed or a program printed — resolved
+    /// against `base` under this filesystem's rules: `~` expanded by
+    /// [`FileSystem::expand_tilde`], an already-rooted path kept as it is,
+    /// and anything else joined onto `base`.
+    ///
+    /// Both halves used to be the client's. `Path::is_absolute` wants a drive
+    /// letter on Windows, so a remote `/home/user/proj` was taken for
+    /// relative; and `Path::join` appends the client's separator, so joining
+    /// `src/x.rs` onto that base produced `/home/user/proj\src/x.rs` — one
+    /// file name the host does not have.
+    fn resolve_typed_path(&self, base: &HostPath, typed: &str) -> HostPathBuf {
+        let expanded = self.expand_tilde(typed);
+        if self.at(&expanded).is_absolute() {
+            return expanded;
+        }
+        self.at(base).join_rel(&expanded.to_wire_string())
     }
 
     // ========================================================================
@@ -928,14 +986,17 @@ pub trait FileSystem: Send + Sync {
             if max_dirs.is_some_and(|max| visited >= max) {
                 break;
             }
-            if markers
-                .iter()
-                .any(|m| self.exists(dir.join_name(std::ffi::OsStr::new(m)).as_host_path()))
-            {
+            if markers.iter().any(|m| {
+                self.exists(
+                    self.at(dir)
+                        .join_name(std::ffi::OsStr::new(m))
+                        .as_host_path(),
+                )
+            }) {
                 found.push(dir.to_host_path_buf());
             }
             visited += 1;
-            current = dir.parent();
+            current = self.at(dir).parent();
         }
         Ok(found)
     }
@@ -1149,6 +1210,40 @@ fn retry_on_name_clash<T>(mut create: impl FnMut() -> io::Result<T>) -> io::Resu
     }
 }
 
+/// The body of [`FileSystem::expand_tilde`], with the two things it needs
+/// passed in: `style`, the rules the path reads under, and `home`, the home
+/// directory of the filesystem doing the expanding (`None` when it has none
+/// to offer).
+///
+/// Free-standing so it can be tested for a *remote* home under *either*
+/// platform's rules. As a method it could only ever have been tested against
+/// whichever machine the suite happened to run on — which is the same
+/// confusion the function existed to remove.
+pub fn expand_tilde_under(style: PathStyle, home: Option<&HostPath>, input: &str) -> HostPathBuf {
+    let literal = || HostPathBuf::from_path_buf(std::path::PathBuf::from(input));
+    let Some(rest) = input.strip_prefix('~') else {
+        return literal();
+    };
+    let is_separator = |c: char| c.is_ascii() && style.is_separator(c as u8);
+    // `~bob` is some other user's home, which this filesystem has not been
+    // asked for. Only `~` and `~<separator>` name *this* home.
+    let names_this_home = match rest.chars().next() {
+        None => true,
+        Some(c) => is_separator(c),
+    };
+    if !names_this_home {
+        return literal();
+    }
+    let Some(home) = home else {
+        return literal();
+    };
+    let rest = rest.trim_start_matches(is_separator);
+    if rest.is_empty() {
+        return home.to_host_path_buf();
+    }
+    home.under(style).join_rel(rest)
+}
+
 /// A temp-file path in the same directory as `path`, for write-then-rename.
 ///
 /// The name is `.<file name>.<pid>.<n>.tmp`, where `n` is a per-process
@@ -1156,17 +1251,20 @@ fn retry_on_name_clash<T>(mut create: impl FnMut() -> io::Result<T>) -> io::Resu
 /// (issue #3377) and two saves never share a temp file. Callers still open it
 /// with `create_new` semantics, since a stale file from an earlier process
 /// with the same pid may exist.
-pub fn sibling_temp_path(path: &HostPath) -> HostPathBuf {
+pub fn sibling_temp_path(path: Under<'_>) -> HostPathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
 
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let mut out = path.to_host_path_buf();
-    out.set_file_name(std::ffi::OsStr::new(&format!(
-        ".{}.{}.{n}.tmp",
-        temp_name_stem(path),
-        std::process::id()
-    )));
+    let mut out = path.path().to_host_path_buf();
+    out.set_file_name_in(
+        path.style(),
+        std::ffi::OsStr::new(&format!(
+            ".{}.{}.{n}.tmp",
+            temp_name_stem(path),
+            std::process::id()
+        )),
+    );
     out
 }
 
@@ -1185,7 +1283,7 @@ pub const TEMP_NAME_STEM_BYTES: usize = 64;
 /// boundary). It only helps a person tell whose temp file it is; the pid and
 /// counter around it are what make the name unique. Short enough that every
 /// temp name built on it stays within [`MAX_TEMP_NAME_BYTES`].
-pub fn temp_name_stem(path: &HostPath) -> String {
+pub fn temp_name_stem(path: Under<'_>) -> String {
     let file_name = path
         .file_name()
         .map(|n| n.to_string_lossy())
@@ -1374,7 +1472,7 @@ pub const BINARY_FILE_EXTENSIONS: &[&str] = &[
 ];
 
 /// True if `path`'s extension matches a known binary format.
-pub fn has_binary_extension(path: &HostPath) -> bool {
+pub fn has_binary_extension(path: Under<'_>) -> bool {
     // `HostPath::extension`, not `Path::extension`: for a remote path the
     // client's component rules can find the wrong last component.
     let Some(ext) = path.extension().and_then(|s| s.to_str()) else {
@@ -1412,7 +1510,7 @@ pub fn default_search_file(
     pattern: &str,
     opts: &FileSearchOptions,
 ) -> io::Result<Vec<SearchMatch>> {
-    if has_binary_extension(path) {
+    if has_binary_extension(fs.at(path)) {
         return Ok(vec![]);
     }
     let size = fs.metadata(path)?.size;
@@ -1802,6 +1900,11 @@ impl StdFileSystem {
 }
 
 impl FileSystem for StdFileSystem {
+    /// Not a guess: this filesystem *is* the local one.
+    fn style(&self) -> PathStyle {
+        PathStyle::host()
+    }
+
     // File Content Operations
     fn read_file(&self, path: &HostPath) -> io::Result<Vec<u8>> {
         let path = path.as_path();
@@ -2140,7 +2243,7 @@ impl FileSystem for StdFileSystem {
 
                 let report = !is_dir || opts.include_dirs;
                 if report {
-                    let Some(rel_str) = path.as_host().rel_to(root.as_host()) else {
+                    let Some(rel_str) = self.at(path.as_host()).rel_to(root.as_host()) else {
                         continue;
                     };
                     // `DirEntry::metadata` is a real `stat`; hence the syscall-free builder.
@@ -2202,6 +2305,11 @@ impl NoopFileSystem {
 }
 
 impl FileSystem for NoopFileSystem {
+    /// Stands in for the local filesystem, so it reads paths the same way.
+    fn style(&self) -> PathStyle {
+        PathStyle::host()
+    }
+
     fn read_file(&self, _path: &HostPath) -> io::Result<Vec<u8>> {
         Self::unsupported()
     }
@@ -4082,6 +4190,82 @@ mod tests {
         );
     }
 
+    // ── `~` is expanded against the filesystem's own home ───────────────
+
+    /// The case the old `expand_tilde` could not get right: the home is the
+    /// *host's*, and the join follows the host's rules, not the client's.
+    #[test]
+    fn a_tilde_expands_against_a_posix_home_with_posix_rules() {
+        let home = HostPath::from_os_str(std::ffi::OsStr::new("/home/user"));
+        let under = |s| expand_tilde_under(PathStyle::Posix, Some(home), s);
+        assert_eq!(
+            under("~/notes.txt").as_host_path(),
+            home.under(PathStyle::Posix)
+                .join_rel("notes.txt")
+                .as_host_path()
+        );
+        assert_eq!(under("~").as_host_path(), home);
+        assert_eq!(under("~/").as_host_path(), home);
+        assert_eq!(
+            under("~/src/main.rs").to_wire_string(),
+            "/home/user/src/main.rs",
+            "joined with the host's separator, so the host has this file"
+        );
+    }
+
+    #[test]
+    fn a_tilde_expands_against_a_windows_home_with_windows_rules() {
+        let home = HostPath::from_os_str(std::ffi::OsStr::new(r"C:\Users\me"));
+        let under = |s| expand_tilde_under(PathStyle::Windows, Some(home), s);
+        assert_eq!(
+            under(r"~\notes.txt").to_wire_string(),
+            r"C:\Users\me\notes.txt"
+        );
+        assert_eq!(
+            under("~/notes.txt").to_wire_string(),
+            r"C:\Users\me\notes.txt",
+            "a Windows host accepts either separator from the user"
+        );
+        assert_eq!(under("~").as_host_path(), home);
+    }
+
+    #[test]
+    fn a_path_with_no_tilde_is_left_exactly_as_typed() {
+        let home = HostPath::from_os_str(std::ffi::OsStr::new("/home/user"));
+        for input in ["/absolute/path", "relative/path", ""] {
+            assert_eq!(
+                expand_tilde_under(PathStyle::Posix, Some(home), input).to_wire_string(),
+                input
+            );
+        }
+    }
+
+    /// `~bob` is another user's home. The filesystem has not been asked where
+    /// that is, and the old code answered `<my home>/bob` — a different
+    /// directory, silently.
+    #[test]
+    fn another_users_home_is_not_expanded() {
+        let home = HostPath::from_os_str(std::ffi::OsStr::new("/home/user"));
+        assert_eq!(
+            expand_tilde_under(PathStyle::Posix, Some(home), "~bob/notes.txt").to_wire_string(),
+            "~bob/notes.txt"
+        );
+        // On a POSIX host a `\` is part of the name, so `~\x` is not
+        // `<home>/x` either — it is a relative file literally called `~\x`.
+        assert_eq!(
+            expand_tilde_under(PathStyle::Posix, Some(home), r"~\x").to_wire_string(),
+            r"~\x"
+        );
+    }
+
+    #[test]
+    fn with_no_home_to_offer_the_tilde_is_left_in_place() {
+        assert_eq!(
+            expand_tilde_under(PathStyle::Posix, None, "~/notes.txt").to_wire_string(),
+            "~/notes.txt"
+        );
+    }
+
     /// Temp names made for a file carry only the start of its name, so they
     /// stay within the name limit of filesystems that allow short names
     /// (eCryptfs: ~143 bytes) even for a file whose name is near the usual
@@ -4092,23 +4276,27 @@ mod tests {
             assert_eq!(long.len(), 250);
             let path = Path::new("/some/dir").join(&long);
 
-            let sibling = sibling_temp_path(path.as_host());
-            let name = sibling.file_name().unwrap().to_str().unwrap();
+            let style = PathStyle::host();
+            let sibling = sibling_temp_path(path.as_host().under(style));
+            let name = sibling.under(style).file_name().unwrap().to_str().unwrap();
             assert!(
                 name.len() <= MAX_TEMP_NAME_BYTES,
                 "{} bytes: {name}",
                 name.len()
             );
-            assert_eq!(sibling.parent(), path.as_host().parent());
+            assert_eq!(
+                sibling.under(style).parent(),
+                path.as_host().under(style).parent()
+            );
             assert_eq!(sibling_temp_pid(name), Some(std::process::id()));
 
             let unique = StdFileSystem.unique_temp_path(path.as_host());
-            let name = unique.file_name().unwrap().to_str().unwrap();
+            let name = unique.under(style).file_name().unwrap().to_str().unwrap();
             assert!(name.len() <= MAX_TEMP_NAME_BYTES, "{name}");
         }
         // A short name is kept whole.
         assert_eq!(
-            temp_name_stem(Path::new("/d/notes.txt").as_host()),
+            temp_name_stem(Path::new("/d/notes.txt").as_host().under(PathStyle::Posix)),
             "notes.txt"
         );
     }
@@ -4119,6 +4307,10 @@ mod tests {
     }
 
     impl FileSystem for ReadCountingFs {
+        fn style(&self) -> PathStyle {
+            PathStyle::host()
+        }
+
         fn read_file(&self, path: &HostPath) -> io::Result<Vec<u8>> {
             let path = path.as_path();
             self.read_file_calls

@@ -139,7 +139,7 @@ fn resolve_git_indexes_blocking(
                 continue;
             }
 
-            let dot_git = entry.path.join_name(std::ffi::OsStr::new(".git"));
+            let dot_git = fs.at(&entry.path).join_name(std::ffi::OsStr::new(".git"));
             if fs.exists(&dot_git) {
                 if let Some(index) = git_dir_index(&spawner, entry.path.as_path(), &rt) {
                     if !indexes.contains(&index) {

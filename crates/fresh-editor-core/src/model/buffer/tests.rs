@@ -2587,6 +2587,10 @@ mod rebuild_pristine_saved_root_tests {
         }
 
         impl crate::model::filesystem::FileSystem for TrackingFs {
+            fn style(&self) -> crate::model::host_path::PathStyle {
+                self.inner.style()
+            }
+
             fn read_file(&self, path: &HostPath) -> std::io::Result<Vec<u8>> {
                 let path = path.as_path();
                 self.inner.read_file(path.as_host())

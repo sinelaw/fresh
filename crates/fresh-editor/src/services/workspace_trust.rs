@@ -475,43 +475,58 @@ fn linked_worktree_main_root(
     // this doubles as the file/dir test without a second round-trip.
     let text = String::from_utf8(
         fs.read_file(
-            root.as_host()
+            fs.at(root.as_host())
                 .join_name(std::ffi::OsStr::new(".git"))
                 .as_host_path(),
         )
         .ok()?,
     )
     .ok()?;
-    let git_dir = resolve_git_pointer(root, text.trim().strip_prefix("gitdir:")?.trim());
+    let git_dir = resolve_git_pointer(fs, root, text.trim().strip_prefix("gitdir:")?.trim());
     // Only a *linked worktree* git dir carries `commondir`; a submodule's does
     // not, and the main worktree never reaches here (its `.git` is a dir).
     let common = String::from_utf8(
         fs.read_file(
-            git_dir
-                .as_host()
+            fs.at(git_dir.as_host())
                 .join_name(std::ffi::OsStr::new("commondir"))
                 .as_host_path(),
         )
         .ok()?,
     )
     .ok()?;
-    let common_dir = resolve_git_pointer(&git_dir, common.trim());
-    // The shared git dir is `<main worktree>/.git`; its parent is the root.
-    let main_root = lexical_normalize(common_dir.parent()?);
+    let common_dir = resolve_git_pointer(fs, &git_dir, common.trim());
+    // The shared git dir is `<main worktree>/.git`; its parent is the root —
+    // split by the filesystem that holds it, since every read above went
+    // through it too.
+    let main_root = fs
+        .at(fs.at(common_dir.as_host()).parent()?)
+        .normalize()
+        .into_path_buf();
     // A degenerate pointer that resolves back to this checkout is identity —
     // report `None` so the caller keeps `root` untouched.
-    (main_root != lexical_normalize(root)).then_some(main_root)
+    let here = fs.at(root.as_host()).normalize().into_path_buf();
+    (main_root != here).then_some(main_root)
 }
 
 /// Resolve a git pointer path (the target of a `.git` file or of a
 /// `commondir`), which git writes either absolute or relative to `base`.
-fn resolve_git_pointer(base: &Path, target: &str) -> PathBuf {
-    let target = Path::new(target);
-    if target.is_absolute() {
-        lexical_normalize(target)
+///
+/// Under `fs`'s rules: the repository is on that filesystem, so whether the
+/// pointer is already rooted, and how it joins onto `base`, are its
+/// questions. `std::path` answered for the client, which on a Windows client
+/// read a POSIX `gitdir:` pointer as relative and joined it with a backslash.
+fn resolve_git_pointer(
+    fs: &dyn crate::model::filesystem::FileSystem,
+    base: &Path,
+    target: &str,
+) -> PathBuf {
+    let at = fs.at(Path::new(target).as_host());
+    let joined = if at.is_absolute() {
+        at.path().to_host_path_buf()
     } else {
-        lexical_normalize(&base.join(target))
-    }
+        fs.at(base.as_host()).join_rel(target)
+    };
+    fs.at(joined.as_host_path()).normalize().into_path_buf()
 }
 
 /// Whether a workspace contains content whose execution trust matters — i.e.
@@ -552,7 +567,7 @@ pub fn executable_content_markers(
     // activation path's concern (`detect_env`), not trust's.
     for d in crate::config::default_env_detectors() {
         for m in &d.markers {
-            if fs.exists(root.as_host().join_rel(m).as_host_path()) {
+            if fs.exists(fs.at(root.as_host()).join_rel(m).as_host_path()) {
                 found.push(m.clone());
             }
         }
@@ -574,7 +589,7 @@ pub fn executable_content_markers(
     ];
     for m in FILE_MARKERS {
         if fs
-            .is_file(root.as_host().join_rel(m).as_host_path())
+            .is_file(fs.at(root.as_host()).join_rel(m).as_host_path())
             .unwrap_or(false)
         {
             found.push((*m).to_string());
@@ -582,7 +597,7 @@ pub fn executable_content_markers(
     }
     // Dev container: reopening / building it runs code.
     let is_file = |rel: &str| {
-        fs.is_file(root.as_host().join_rel(rel).as_host_path())
+        fs.is_file(fs.at(root.as_host()).join_rel(rel).as_host_path())
             .unwrap_or(false)
     };
     if is_file(".devcontainer/devcontainer.json") || is_file(".devcontainer.json") {
@@ -597,9 +612,9 @@ pub fn executable_content_markers(
     if let Ok(entries) = fs.read_dir(root.as_host()) {
         for entry in entries {
             let path = &entry.path;
-            if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+            if let Some(ext) = fs.at(path).extension().and_then(|s| s.to_str()) {
                 if matches!(ext, "sln" | "csproj" | "fsproj") {
-                    if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+                    if let Some(name) = fs.at(path).file_name().and_then(|s| s.to_str()) {
                         found.push(name.to_string());
                     }
                 }
@@ -652,7 +667,7 @@ pub fn probe_env(
         if !d
             .markers
             .iter()
-            .any(|m| fs.exists(root.as_host().join_rel(m).as_host_path()))
+            .any(|m| fs.exists(fs.at(root.as_host()).join_rel(m).as_host_path()))
         {
             continue;
         }
@@ -660,7 +675,7 @@ pub fn probe_env(
             && !d
                 .require
                 .iter()
-                .any(|r| fs.exists(root.as_host().join_rel(r).as_host_path()))
+                .any(|r| fs.exists(fs.at(root.as_host()).join_rel(r).as_host_path()))
         {
             incomplete = true;
             continue;

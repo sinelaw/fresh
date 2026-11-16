@@ -52,6 +52,11 @@ impl NotOwnerFileSystem {
 }
 
 impl FileSystem for NotOwnerFileSystem {
+    /// This fake injects faults, not path semantics: the filesystem it
+    /// wraps decides how paths read.
+    fn style(&self) -> fresh_editor_core::model::host_path::PathStyle {
+        self.inner.style()
+    }
     // Override is_owner to always return false, simulating a file owned by another user
     fn is_owner(&self, _path: &HostPath) -> bool {
         let _path = _path.as_path();
@@ -447,6 +452,11 @@ impl FileWriter for CrashingFileWriter {
 }
 
 impl FileSystem for CrashDuringStreamFileSystem {
+    /// This fake injects faults, not path semantics: the filesystem it
+    /// wraps decides how paths read.
+    fn style(&self) -> fresh_editor_core::model::host_path::PathStyle {
+        self.inner.style()
+    }
     fn is_owner(&self, _path: &HostPath) -> bool {
         let _path = _path.as_path();
         false // Force in-place write
@@ -1401,6 +1411,11 @@ impl FileWriter for TearingFileWriter {
 }
 
 impl FileSystem for FaultyFileSystem {
+    /// This fake injects faults, not path semantics: the filesystem it
+    /// wraps decides how paths read.
+    fn style(&self) -> fresh_editor_core::model::host_path::PathStyle {
+        self.inner.style()
+    }
     fn is_owner(&self, _path: &HostPath) -> bool {
         let _path = _path.as_path();
         false

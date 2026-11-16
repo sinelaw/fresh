@@ -16,7 +16,7 @@
 //! different file — opening it shows an empty buffer, and a project replace
 //! would write a new file under the mangled name.
 
-use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf, PathStyle};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -162,7 +162,11 @@ fn for_each_git_file(
     for rel in files {
         let is_link = links.contains(&rel);
         if cancel.load(Ordering::Relaxed)
-            || !on_file(join_rel(root, &rel).as_host_path(), &rel, is_link)
+            || !on_file(
+                join_rel(fs.style(), root, &rel).as_host_path(),
+                &rel,
+                is_link,
+            )
         {
             return Some(Ok(()));
         }
@@ -200,8 +204,8 @@ fn for_each_git_file(
 /// `root` joined with the `/`-separated `rel`, spelled with the separator
 /// `root` itself uses — the host's, which is not the client's when the two are
 /// different platforms.
-fn join_rel(root: &Path, rel: &str) -> HostPathBuf {
-    root.as_host().join_rel(rel)
+fn join_rel(style: PathStyle, root: &Path, rel: &str) -> HostPathBuf {
+    root.as_host().under(style).join_rel(rel)
 }
 
 /// Arguments for the `git ls-files` that lists a repo's files: tracked plus
@@ -336,7 +340,7 @@ fn walk_files_under(
         max_entries: usize::MAX,
         ..WalkOptions::default()
     };
-    let start = root.as_host().join_rel(sub);
+    let start = fs.at(root.as_host()).join_rel(sub);
     fs.walk(start.as_host_path(), &opts, cancel, &mut |entry| {
         // A name that is not UTF-8 has only a lossy `rel` (see the module docs).
         if entry.entry_type != EntryType::File || entry.path.to_str().is_none() {
@@ -455,7 +459,10 @@ mod tests {
             &mut |path, rel| {
                 assert_eq!(
                     path,
-                    root.as_host().join_rel(rel).as_host_path(),
+                    root.as_host()
+                        .under(PathStyle::host())
+                        .join_rel(rel)
+                        .as_host_path(),
                     "path must be root joined with rel"
                 );
                 files.push(rel.to_string());
@@ -489,7 +496,10 @@ mod tests {
                 &mut |path, rel, _| {
                     assert_eq!(
                         path,
-                        root.as_host().join_rel(rel).as_host_path(),
+                        root.as_host()
+                            .under(PathStyle::host())
+                            .join_rel(rel)
+                            .as_host_path(),
                         "path must be root joined with rel"
                     );
                     files.push(rel.to_string());

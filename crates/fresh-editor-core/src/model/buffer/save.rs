@@ -9,7 +9,7 @@ use super::format::{self, BufferFormat};
 use super::persistence::Persistence;
 use crate::model::encoding::Encoding;
 use crate::model::filesystem::{FileMetadata, FileSystem, FileWriter, ReplaceError, WriteOp};
-use crate::model::host_path::{AsHostPath, HostPath, HostPathBuf};
+use crate::model::host_path::{AsHostPath, HostPath, HostPathBuf, PathStyle};
 use crate::model::piece_tree::{BufferData, BufferLocation, PieceTree, StringBuffer};
 use crate::recovery_types::InplaceWriteRecovery;
 use std::io::{self, Write};
@@ -550,7 +550,7 @@ fn create_staging_file(
         .unwrap_or(0);
     let temp_name = format!(
         "{STAGED_PREFIX}{}-{}-{timestamp}{STAGED_SUFFIX}",
-        crate::model::filesystem::temp_name_stem(dest_path.as_host()),
+        crate::model::filesystem::temp_name_stem(fs.at(dest_path.as_host())),
         std::process::id(),
     );
 
@@ -653,10 +653,10 @@ const STAGED_SUFFIX: &str = ".tmp";
 /// system temp dir follows `TMPDIR`), and a copy staged in one a later
 /// session no longer looks at must still count, or it would hold up saves
 /// of its file while never being offered or cleaned up.
-fn is_staged_copy(path: &Path, dest_path: &Path) -> bool {
+fn is_staged_copy(style: PathStyle, path: &Path, dest_path: &Path) -> bool {
     let prefix = format!(
         "{STAGED_PREFIX}{}-",
-        crate::model::filesystem::temp_name_stem(dest_path.as_host())
+        crate::model::filesystem::temp_name_stem(dest_path.as_host().under(style))
     );
     let is_number = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
     path.file_name()
@@ -676,7 +676,7 @@ fn is_staged_copy(path: &Path, dest_path: &Path) -> bool {
 /// file's saves is always one the user is offered, and the sweep keeps
 /// exactly those.
 fn is_kept_copy(fs: &dyn FileSystem, recovery: &InplaceWriteRecovery) -> bool {
-    is_staged_copy(&recovery.temp_path, &recovery.dest_path)
+    is_staged_copy(fs.style(), &recovery.temp_path, &recovery.dest_path)
         && fs.exists(recovery.temp_path.as_host())
         && !same_content(fs, &recovery.temp_path, &recovery.dest_path).unwrap_or(false)
 }
@@ -728,7 +728,7 @@ fn write_inplace_recovery_meta(
             .ok()
             .filter(|previous| {
                 previous.temp_path != temp_path
-                    && is_staged_copy(&previous.temp_path, dest_path)
+                    && is_staged_copy(fs.style(), &previous.temp_path, dest_path)
                     && previous.is_settled()
             })
             .map(|previous| previous.temp_path);
@@ -869,7 +869,7 @@ pub fn resolve_inplace_write_recovery(fs: &dyn FileSystem, recovery_dir: &Path, 
         return;
     }
     // Best-effort cleanup of files the completed save made obsolete
-    if is_staged_copy(&recovery.temp_path, dest_path) {
+    if is_staged_copy(fs.style(), &recovery.temp_path, dest_path) {
         #[allow(clippy::let_underscore_must_use)]
         let _ = fs.remove_file(recovery.temp_path.as_host());
     }
@@ -908,7 +908,9 @@ pub fn restore_inplace_write_recovery(
     let meta_path = InplaceWriteRecovery::meta_path(recovery_dir, dest_path);
     let recovery = serde_json::from_slice::<InplaceWriteRecovery>(&fs.read_file(&meta_path)?)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    if recovery.dest_path != dest_path || !is_staged_copy(&recovery.temp_path, dest_path) {
+    if recovery.dest_path != dest_path
+        || !is_staged_copy(fs.style(), &recovery.temp_path, dest_path)
+    {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "the recovery metadata doesn't point at a copy staged for this file",
@@ -962,7 +964,7 @@ pub fn clean_up_inplace_write_recoveries(fs: &dyn FileSystem, recovery_dir: &Pat
         }
         // The copy is gone, matches its file, or was never one staged for
         // it (then only the metadata goes)
-        if is_staged_copy(&recovery.temp_path, &recovery.dest_path)
+        if is_staged_copy(fs.style(), &recovery.temp_path, &recovery.dest_path)
             && fs.exists(recovery.temp_path.as_host())
         {
             remove(&recovery.temp_path);
