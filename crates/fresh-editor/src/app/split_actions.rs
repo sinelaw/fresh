@@ -7,6 +7,7 @@
 //! - Managing per-split view states (cursors, viewport)
 //! - Split size adjustment and maximize
 
+use fresh_editor_core::model::host_path::AsHostPath;
 use fresh_i18n::t;
 
 use crate::model::event::{BufferId, LeafId, SplitId};
@@ -651,14 +652,19 @@ impl Editor {
 
     /// Resolve a caller-supplied path against the window's root, so a script
     /// can say `"README.md"` and mean the obvious thing.
+    ///
+    /// Asked of the window's own filesystem: "absolute" and "join" both mean
+    /// something different on a remote host than on the client, so a script
+    /// saying `"README.md"` against an SSH workspace used to get the client's
+    /// separator pushed into the middle of a POSIX path.
     #[cfg(feature = "plugins")]
     fn resolve_workspace_path(&self, path: &str) -> std::path::PathBuf {
-        let p = std::path::Path::new(path);
-        if p.is_absolute() {
-            p.to_path_buf()
-        } else {
-            self.active_window().root.join(p)
-        }
+        let window = self.active_window();
+        window
+            .authority()
+            .filesystem
+            .resolve_typed_path(window.root.as_host(), path)
+            .into_path_buf()
     }
 }
 
@@ -871,13 +877,15 @@ impl Editor {
             .and_then(|label| self.split_by_label(label))
             .filter(|leaf| *leaf != source_split);
 
+        // The window's filesystem resolves it, as in
+        // `resolve_workspace_path` above.
         let path = {
-            let p = std::path::Path::new(&target.path);
-            if p.is_absolute() {
-                p.to_path_buf()
-            } else {
-                self.active_window().root.join(p)
-            }
+            let window = self.active_window();
+            window
+                .authority()
+                .filesystem
+                .resolve_typed_path(window.root.as_host(), &target.path)
+                .into_path_buf()
         };
         let line = target.target;
 

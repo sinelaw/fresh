@@ -127,7 +127,7 @@ impl Editor {
             // Single click opens in *preview* mode and keeps focus on the
             // panel, so a string of exploratory clicks doesn't accumulate
             // tabs; the double above promotes it to a permanent one.
-            match self.open_file_preview(&path) {
+            match self.open_file_preview(path.as_path()) {
                 Ok(_) => {
                     self.set_status_message(
                         fresh_i18n::t!("explorer.opened_file", name = &name).to_string(),

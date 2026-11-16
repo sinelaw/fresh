@@ -32,6 +32,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
 
+use fresh_editor_core::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 #[cfg(unix)]
 use std::fs::Permissions;
 #[cfg(unix)]
@@ -357,104 +358,134 @@ impl WriteDeniedFileSystem {
 }
 
 impl FileSystem for WriteDeniedFileSystem {
-    fn read_file(&self, path: &Path) -> io::Result<Vec<u8>> {
-        self.inner.read_file(path)
+    /// This fake injects faults, not path semantics: the filesystem it
+    /// wraps decides how paths read.
+    fn style(&self) -> fresh_editor_core::model::host_path::PathStyle {
+        self.inner.style()
+    }
+    fn read_file(&self, path: &HostPath) -> io::Result<Vec<u8>> {
+        let path = path.as_path();
+        self.inner.read_file(path.as_host())
     }
 
-    fn read_range(&self, path: &Path, offset: u64, len: usize) -> io::Result<Vec<u8>> {
-        self.inner.read_range(path, offset, len)
+    fn read_range(&self, path: &HostPath, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+        let path = path.as_path();
+        self.inner.read_range(path.as_host(), offset, len)
     }
 
-    fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()> {
+    fn write_file(&self, path: &HostPath, data: &[u8]) -> io::Result<()> {
+        let path = path.as_path();
         if self.is_denied(path) {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "simulated: permission denied",
             ));
         }
-        self.inner.write_file(path, data)
+        self.inner.write_file(path.as_host(), data)
     }
 
-    fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+    fn create_new_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+        let path = path.as_path();
         self.check_dir_writable(path)?;
-        self.inner.create_new_file(path)
+        self.inner.create_new_file(path.as_host())
     }
 
-    fn create_new_private_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
+    fn create_new_private_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+        let path = path.as_path();
         self.check_dir_writable(path)?;
-        self.inner.create_new_private_file(path)
+        self.inner.create_new_private_file(path.as_host())
     }
 
-    fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
-        self.inner.create_file(path)
+    fn create_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+        let path = path.as_path();
+        self.inner.create_file(path.as_host())
     }
 
-    fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
-        self.inner.open_file(path)
+    fn open_file(&self, path: &HostPath) -> io::Result<Box<dyn FileReader>> {
+        let path = path.as_path();
+        self.inner.open_file(path.as_host())
     }
 
-    fn open_file_for_write(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
-        self.inner.open_file_for_write(path)
+    fn open_file_for_write(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+        let path = path.as_path();
+        self.inner.open_file_for_write(path.as_host())
     }
 
-    fn open_file_for_append(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
-        self.inner.open_file_for_append(path)
+    fn open_file_for_append(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+        let path = path.as_path();
+        self.inner.open_file_for_append(path.as_host())
     }
 
-    fn set_file_length(&self, path: &Path, len: u64) -> io::Result<()> {
-        self.inner.set_file_length(path, len)
+    fn set_file_length(&self, path: &HostPath, len: u64) -> io::Result<()> {
+        let path = path.as_path();
+        self.inner.set_file_length(path.as_host(), len)
     }
 
-    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
-        self.inner.rename(from, to)
+    fn rename(&self, from: &HostPath, to: &HostPath) -> io::Result<()> {
+        let from = from.as_path();
+        let to = to.as_path();
+        self.inner.rename(from.as_host(), to.as_host())
     }
 
-    fn copy(&self, from: &Path, to: &Path) -> io::Result<u64> {
-        self.inner.copy(from, to)
+    fn copy(&self, from: &HostPath, to: &HostPath) -> io::Result<u64> {
+        let from = from.as_path();
+        let to = to.as_path();
+        self.inner.copy(from.as_host(), to.as_host())
     }
 
-    fn remove_file(&self, path: &Path) -> io::Result<()> {
-        self.inner.remove_file(path)
+    fn remove_file(&self, path: &HostPath) -> io::Result<()> {
+        let path = path.as_path();
+        self.inner.remove_file(path.as_host())
     }
 
-    fn remove_dir(&self, path: &Path) -> io::Result<()> {
-        self.inner.remove_dir(path)
+    fn remove_dir(&self, path: &HostPath) -> io::Result<()> {
+        let path = path.as_path();
+        self.inner.remove_dir(path.as_host())
     }
 
-    fn metadata(&self, path: &Path) -> io::Result<FileMetadata> {
-        self.inner.metadata(path)
+    fn metadata(&self, path: &HostPath) -> io::Result<FileMetadata> {
+        let path = path.as_path();
+        self.inner.metadata(path.as_host())
     }
 
-    fn symlink_metadata(&self, path: &Path) -> io::Result<FileMetadata> {
-        self.inner.symlink_metadata(path)
+    fn symlink_metadata(&self, path: &HostPath) -> io::Result<FileMetadata> {
+        let path = path.as_path();
+        self.inner.symlink_metadata(path.as_host())
     }
 
-    fn is_dir(&self, path: &Path) -> io::Result<bool> {
-        self.inner.is_dir(path)
+    fn is_dir(&self, path: &HostPath) -> io::Result<bool> {
+        let path = path.as_path();
+        self.inner.is_dir(path.as_host())
     }
 
-    fn is_file(&self, path: &Path) -> io::Result<bool> {
-        self.inner.is_file(path)
+    fn is_file(&self, path: &HostPath) -> io::Result<bool> {
+        let path = path.as_path();
+        self.inner.is_file(path.as_host())
     }
 
-    fn set_permissions(&self, path: &Path, permissions: &FilePermissions) -> io::Result<()> {
-        self.inner.set_permissions(path, permissions)
+    fn set_permissions(&self, path: &HostPath, permissions: &FilePermissions) -> io::Result<()> {
+        let path = path.as_path();
+        self.inner.set_permissions(path.as_host(), permissions)
     }
 
-    fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
-        self.inner.read_dir(path)
+    fn read_dir(&self, path: &HostPath) -> io::Result<Vec<DirEntry>> {
+        let path = path.as_path();
+        self.inner.read_dir(path.as_host())
     }
 
-    fn create_dir(&self, path: &Path) -> io::Result<()> {
-        self.inner.create_dir(path)
+    fn create_dir(&self, path: &HostPath) -> io::Result<()> {
+        let path = path.as_path();
+        self.inner.create_dir(path.as_host())
     }
 
-    fn create_dir_all(&self, path: &Path) -> io::Result<()> {
-        self.inner.create_dir_all(path)
+    fn create_dir_all(&self, path: &HostPath) -> io::Result<()> {
+        let path = path.as_path();
+        self.inner.create_dir_all(path.as_host())
     }
 
-    fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
-        self.inner.canonicalize(path)
+    fn canonicalize(&self, path: &HostPath) -> io::Result<HostPathBuf> {
+        let path = path.as_path();
+        self.inner.canonicalize(path.as_host())
     }
 
     fn current_uid(&self) -> u32 {
@@ -466,43 +497,47 @@ impl FileSystem for WriteDeniedFileSystem {
     /// `sudo`, which a test can't.)
     fn sudo_write(
         &self,
-        path: &Path,
+        path: &HostPath,
         data: &[u8],
         _mode: Option<u32>,
         _owner: Option<(u32, u32)>,
     ) -> io::Result<()> {
+        let path = path.as_path();
         if let Some(hook) = &self.on_sudo_write {
             hook();
         }
         match self.sudo_disk_full_after {
             Some(n) => {
-                self.inner.write_file(path, &data[..n.min(data.len())])?;
+                self.inner
+                    .write_file(path.as_host(), &data[..n.min(data.len())])?;
                 Err(io::Error::new(
                     io::ErrorKind::StorageFull,
                     "No space left on device",
                 ))
             }
-            None => self.inner.write_file(path, data),
+            None => self.inner.write_file(path.as_host(), data),
         }
     }
 
     fn search_file(
         &self,
-        path: &Path,
+        path: &HostPath,
         pattern: &str,
         opts: &fresh::model::filesystem::FileSearchOptions,
     ) -> io::Result<Vec<fresh::model::filesystem::SearchMatch>> {
-        fresh::model::filesystem::default_search_file(&*self.inner, path, pattern, opts)
+        let path = path.as_path();
+        fresh::model::filesystem::default_search_file(&*self.inner, path.as_host(), pattern, opts)
     }
 
     fn walk(
         &self,
-        root: &Path,
+        root: &HostPath,
         opts: &fresh::model::filesystem::WalkOptions<'_>,
         cancel: &std::sync::atomic::AtomicBool,
         on_entry: &mut dyn FnMut(fresh::model::filesystem::WalkEntry<'_>) -> bool,
     ) -> std::io::Result<()> {
-        self.inner.walk(root, opts, cancel, on_entry)
+        let root = root.as_path();
+        self.inner.walk(root.as_host(), opts, cancel, on_entry)
     }
 }
 
@@ -768,7 +803,7 @@ fn sudo_save_temp_file_is_private() {
         let info = err
             .downcast::<SudoSaveRequired>()
             .unwrap_or_else(|err| panic!("not a sudo save: {err}"));
-        let temp_path = info.temp_path().to_path_buf();
+        let temp_path = info.temp_path().as_path().to_path_buf();
         let mode = std::fs::metadata(&temp_path).unwrap().permissions().mode();
         drop(info);
         assert!(

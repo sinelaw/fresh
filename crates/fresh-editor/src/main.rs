@@ -5,6 +5,8 @@
 #[cfg(all(windows, feature = "gui"))]
 use windows_sys::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
 
+use fresh_editor_core::model::host_path::AsHostPath;
+
 use anyhow::{Context, Result as AnyhowResult};
 use clap::{CommandFactory, FromArgMatches, Parser};
 use crossterm::event::{poll as event_poll, read as event_read};
@@ -1985,7 +1987,7 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
             // This works for both local and remote paths
             let is_directory = authority
                 .filesystem
-                .is_dir(&first_loc.path)
+                .is_dir(first_loc.path.as_host())
                 .unwrap_or(false);
             if is_directory {
                 working_dir = Some(first_loc.path.clone());

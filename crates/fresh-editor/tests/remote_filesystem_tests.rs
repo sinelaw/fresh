@@ -8,6 +8,7 @@
 //! - AgentChannel for communication
 //! - RemoteFileSystem for file operations
 
+use fresh_editor_core::model::host_path::AsHostPath;
 use fresh::model::buffer::TextBuffer;
 use fresh::model::filesystem::{ContentDigest, FileSystem, WriteOp};
 use fresh::services::remote::{
@@ -76,7 +77,7 @@ fn test_read_file_content() {
     std::fs::write(&test_path, test_content).unwrap();
 
     // Read via RemoteFileSystem
-    let read_content = fs.read_file(&test_path).unwrap();
+    let read_content = fs.read_file(test_path.as_host()).unwrap();
 
     assert_eq!(
         read_content, test_content,
@@ -106,12 +107,15 @@ fn test_find_up_reports_matching_ancestors_nearest_first() {
     std::fs::write(root.join("proj/include/compile_commands.json"), b"[]").unwrap();
 
     let found = fs
-        .find_up(&nested, &["compile_commands.json"], Some(11))
+        .find_up(nested.as_host(), &["compile_commands.json"], Some(11))
         .unwrap();
 
     assert_eq!(
         found,
-        vec![root.join("proj/include"), root.join("proj")],
+        vec![
+            fs.at(root.as_host()).join_rel("proj/include"),
+            fs.at(root.as_host()).join_rel("proj")
+        ],
         "both ancestors carrying the marker, nearest first"
     );
 }
@@ -129,13 +133,17 @@ fn test_find_up_without_a_match_is_empty() {
     std::fs::create_dir_all(&nested).unwrap();
     std::fs::write(nested.join("present.json"), b"").unwrap();
 
-    let found = fs.find_up(&nested, &["nothing-here.json"], Some(4)).unwrap();
+    let found = fs.find_up(nested.as_host(), &["nothing-here.json"], Some(4)).unwrap();
     assert!(found.is_empty(), "no marker anywhere means no directories");
 
     // Positive control, same tree and budget: an empty answer has to mean
     // "searched and found nothing", not "the search never happened".
-    let found = fs.find_up(&nested, &["present.json"], Some(4)).unwrap();
-    assert_eq!(found, vec![nested], "the marker that does exist is reported");
+    let found = fs.find_up(nested.as_host(), &["present.json"], Some(4)).unwrap();
+    assert_eq!(
+        found,
+        vec![nested.as_host().to_host_path_buf()],
+        "the marker that does exist is reported"
+    );
 }
 
 /// `max_dirs` counts the starting directory itself, so a budget of 1 can
@@ -152,7 +160,7 @@ fn test_find_up_respects_max_dirs() {
     std::fs::create_dir_all(&nested).unwrap();
     std::fs::write(root.join("proj/marker.txt"), b"").unwrap();
 
-    let found = fs.find_up(&nested, &["marker.txt"], Some(1)).unwrap();
+    let found = fs.find_up(nested.as_host(), &["marker.txt"], Some(1)).unwrap();
     assert!(
         found.is_empty(),
         "a budget of one directory must not reach the parent that holds the marker"
@@ -160,10 +168,10 @@ fn test_find_up_respects_max_dirs() {
 
     // Positive control: one more directory of budget reaches it. Without
     // this the assertion above would also hold if the search did nothing.
-    let found = fs.find_up(&nested, &["marker.txt"], Some(2)).unwrap();
+    let found = fs.find_up(nested.as_host(), &["marker.txt"], Some(2)).unwrap();
     assert_eq!(
         found,
-        vec![root.join("proj")],
+        vec![fs.at(root.as_host()).join_rel("proj")],
         "a budget of two reaches the parent"
     );
 }
@@ -179,10 +187,10 @@ fn test_write_and_read_roundtrip() {
     let test_content = b"Content written via RemoteFileSystem";
 
     // Write via RemoteFileSystem
-    fs.write_file(&test_path, test_content).unwrap();
+    fs.write_file(test_path.as_host(), test_content).unwrap();
 
     // Read back via RemoteFileSystem
-    let read_content = fs.read_file(&test_path).unwrap();
+    let read_content = fs.read_file(test_path.as_host()).unwrap();
 
     assert_eq!(
         read_content, test_content,
@@ -212,7 +220,7 @@ fn test_read_large_file() {
     std::fs::write(&test_path, &test_content).unwrap();
 
     // Read via RemoteFileSystem (should handle multiple streaming chunks)
-    let read_content = fs.read_file(&test_path).unwrap();
+    let read_content = fs.read_file(test_path.as_host()).unwrap();
 
     assert_eq!(
         read_content.len(),
@@ -238,8 +246,8 @@ fn test_is_dir() {
     std::fs::create_dir(&dir_path).unwrap();
     std::fs::write(&file_path, b"content").unwrap();
 
-    assert!(fs.is_dir(&dir_path).unwrap(), "Should detect directory");
-    assert!(!fs.is_dir(&file_path).unwrap(), "File should not be a dir");
+    assert!(fs.is_dir(dir_path.as_host()).unwrap(), "Should detect directory");
+    assert!(!fs.is_dir(file_path.as_host()).unwrap(), "File should not be a dir");
 }
 
 #[test]
@@ -253,7 +261,7 @@ fn test_read_dir() {
     std::fs::write(temp_dir.path().join("file2.txt"), b"2").unwrap();
     std::fs::create_dir(temp_dir.path().join("subdir")).unwrap();
 
-    let entries = fs.read_dir(temp_dir.path()).unwrap();
+    let entries = fs.read_dir(temp_dir.path().as_host()).unwrap();
     let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
 
     assert!(names.contains(&"file1.txt"), "Should contain file1.txt");
@@ -341,11 +349,11 @@ fn test_content_digest_is_computed_by_the_agent() {
     std::fs::write(&test_path, &content).unwrap();
 
     assert_eq!(
-        fs.content_digest(&test_path).unwrap(),
+        fs.content_digest(test_path.as_host()).unwrap(),
         ContentDigest::of(&content)
     );
     let err = fs
-        .content_digest(&temp_dir.path().join("missing.txt"))
+        .content_digest(temp_dir.path().join("missing.txt").as_host())
         .unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
 
@@ -371,7 +379,7 @@ fn test_metadata() {
     let content = b"test content for metadata";
     std::fs::write(&test_path, content).unwrap();
 
-    let meta = fs.metadata(&test_path).unwrap();
+    let meta = fs.metadata(test_path.as_host()).unwrap();
     assert_eq!(
         meta.size,
         content.len() as u64,
@@ -394,7 +402,7 @@ fn test_metadata_readonly_comes_from_the_agent() {
     let writable = temp_dir.path().join("writable.txt");
     std::fs::write(&writable, b"x").unwrap();
     std::fs::set_permissions(&writable, std::fs::Permissions::from_mode(0o644)).unwrap();
-    assert!(!fs.metadata(&writable).unwrap().is_readonly);
+    assert!(!fs.metadata(writable.as_host()).unwrap().is_readonly);
 
     let locked = temp_dir.path().join("locked.txt");
     std::fs::write(&locked, b"x").unwrap();
@@ -402,7 +410,7 @@ fn test_metadata_readonly_comes_from_the_agent() {
     // `access(W_OK)` is true for root on any file, so the agent is right to
     // call this writable there.
     let root = std::fs::OpenOptions::new().write(true).open(&locked).is_ok();
-    assert_eq!(fs.metadata(&locked).unwrap().is_readonly, !root);
+    assert_eq!(fs.metadata(locked.as_host()).unwrap().is_readonly, !root);
 }
 
 #[test]
@@ -423,7 +431,7 @@ fn test_read_file_larger_than_threshold() {
     std::fs::write(&test_path, &test_content).unwrap();
 
     // Read via RemoteFileSystem
-    let read_content = fs.read_file(&test_path).unwrap();
+    let read_content = fs.read_file(test_path.as_host()).unwrap();
 
     assert_eq!(
         read_content.len(),
@@ -451,10 +459,10 @@ fn test_write_and_read_file_larger_than_threshold() {
     let test_content: Vec<u8> = (0..size).map(|i| ((i * 7) % 256) as u8).collect();
 
     // Write via RemoteFileSystem
-    fs.write_file(&test_path, &test_content).unwrap();
+    fs.write_file(test_path.as_host(), &test_content).unwrap();
 
     // Read back via RemoteFileSystem
-    let read_content = fs.read_file(&test_path).unwrap();
+    let read_content = fs.read_file(test_path.as_host()).unwrap();
 
     assert_eq!(
         read_content.len(),
@@ -485,7 +493,7 @@ fn test_read_range_on_large_file() {
     // Read a range from the middle of the file
     let offset = 1_000_000; // 1MB into the file
     let len = 100_000; // Read 100KB
-    let read_content = fs.read_range(&test_path, offset, len).unwrap();
+    let read_content = fs.read_range(test_path.as_host(), offset, len).unwrap();
 
     assert_eq!(read_content.len(), len, "Read range length should match");
     assert_eq!(
@@ -509,18 +517,18 @@ fn test_append_to_file() {
     let test_path = temp_dir.path().join("append_test.txt");
 
     // Create initial file
-    fs.write_file(&test_path, b"Hello").unwrap();
+    fs.write_file(test_path.as_host(), b"Hello").unwrap();
 
     // Append using open_file_for_append
     {
         use std::io::Write;
-        let mut writer = fs.open_file_for_append(&test_path).unwrap();
+        let mut writer = fs.open_file_for_append(test_path.as_host()).unwrap();
         writer.write_all(b" World").unwrap();
         writer.sync_all().unwrap();
     }
 
     // Verify content
-    let content = fs.read_file(&test_path).unwrap();
+    let content = fs.read_file(test_path.as_host()).unwrap();
     assert_eq!(
         content, b"Hello World",
         "Append should add to existing content"
@@ -542,13 +550,13 @@ fn test_append_creates_file_if_missing() {
     // Append to non-existent file (should create it)
     {
         use std::io::Write;
-        let mut writer = fs.open_file_for_append(&test_path).unwrap();
+        let mut writer = fs.open_file_for_append(test_path.as_host()).unwrap();
         writer.write_all(b"New content").unwrap();
         writer.sync_all().unwrap();
     }
 
     // Verify file was created with content
-    let content = fs.read_file(&test_path).unwrap();
+    let content = fs.read_file(test_path.as_host()).unwrap();
     assert_eq!(content, b"New content");
 }
 
@@ -562,13 +570,13 @@ fn test_truncate_file() {
     let test_path = temp_dir.path().join("truncate_test.txt");
 
     // Create file with content
-    fs.write_file(&test_path, b"Hello World!").unwrap();
+    fs.write_file(test_path.as_host(), b"Hello World!").unwrap();
 
     // Truncate to 5 bytes
-    fs.set_file_length(&test_path, 5).unwrap();
+    fs.set_file_length(test_path.as_host(), 5).unwrap();
 
     // Verify content was truncated
-    let content = fs.read_file(&test_path).unwrap();
+    let content = fs.read_file(test_path.as_host()).unwrap();
     assert_eq!(content, b"Hello", "File should be truncated to 5 bytes");
 }
 
@@ -582,13 +590,13 @@ fn test_truncate_extend_file() {
     let test_path = temp_dir.path().join("extend_test.txt");
 
     // Create file with content
-    fs.write_file(&test_path, b"Hi").unwrap();
+    fs.write_file(test_path.as_host(), b"Hi").unwrap();
 
     // Extend to 10 bytes (should pad with zeros)
-    fs.set_file_length(&test_path, 10).unwrap();
+    fs.set_file_length(test_path.as_host(), 10).unwrap();
 
     // Verify content was extended
-    let content = fs.read_file(&test_path).unwrap();
+    let content = fs.read_file(test_path.as_host()).unwrap();
     assert_eq!(content.len(), 10, "File should be extended to 10 bytes");
     assert_eq!(&content[0..2], b"Hi", "Original content preserved");
     assert!(
@@ -608,7 +616,7 @@ fn test_write_patched_copy_and_insert() {
     let dst_path = temp_dir.path().join("patch_dst.txt");
 
     // Create source file: "AAABBBCCC"
-    fs.write_file(&src_path, b"AAABBBCCC").unwrap();
+    fs.write_file(src_path.as_host(), b"AAABBBCCC").unwrap();
 
     // Apply patch: copy "AAA", insert "XXX", copy "CCC"
     let ops = vec![
@@ -617,10 +625,10 @@ fn test_write_patched_copy_and_insert() {
         WriteOp::Copy { offset: 6, len: 3 }, // "CCC"
     ];
 
-    fs.write_patched(&src_path, &dst_path, &ops).unwrap();
+    fs.write_patched(src_path.as_host(), dst_path.as_host(), &ops).unwrap();
 
     // Verify result
-    let content = fs.read_file(&dst_path).unwrap();
+    let content = fs.read_file(dst_path.as_host()).unwrap();
     assert_eq!(
         content, b"AAAXXXCCC",
         "Patched content should match expected"
@@ -637,7 +645,7 @@ fn test_write_patched_in_place() {
     let path = temp_dir.path().join("patch_inplace.txt");
 
     // Create source file
-    fs.write_file(&path, b"Hello World").unwrap();
+    fs.write_file(path.as_host(), b"Hello World").unwrap();
 
     // Patch in-place: keep "Hello ", replace "World" with "Rust!"
     let ops = vec![
@@ -645,10 +653,10 @@ fn test_write_patched_in_place() {
         WriteOp::Insert { data: b"Rust!" },  // "Rust!"
     ];
 
-    fs.write_patched(&path, &path, &ops).unwrap();
+    fs.write_patched(path.as_host(), path.as_host(), &ops).unwrap();
 
     // Verify result
-    let content = fs.read_file(&path).unwrap();
+    let content = fs.read_file(path.as_host()).unwrap();
     assert_eq!(content, b"Hello Rust!", "In-place patch should work");
 }
 
@@ -666,7 +674,7 @@ fn test_write_patched_large_file_small_edit() {
     // Create a 1MB file
     let size = 1_000_000;
     let original: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
-    fs.write_file(&path, &original).unwrap();
+    fs.write_file(path.as_host(), &original).unwrap();
 
     // Patch: keep first 500KB, insert 100 bytes, keep last 500KB
     let insert_data = b"THIS IS THE NEW CONTENT INSERTED IN THE MIDDLE OF A LARGE FILE!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!";
@@ -682,10 +690,10 @@ fn test_write_patched_large_file_small_edit() {
         },
     ];
 
-    fs.write_patched(&path, &path, &ops).unwrap();
+    fs.write_patched(path.as_host(), path.as_host(), &ops).unwrap();
 
     // Verify result
-    let content = fs.read_file(&path).unwrap();
+    let content = fs.read_file(path.as_host()).unwrap();
     assert_eq!(
         content.len(),
         size + insert_data.len(),
@@ -718,7 +726,7 @@ fn test_write_patched_preserves_permissions() {
     let path = temp_dir.path().join("perms_test.txt");
 
     // Create file and set specific permissions
-    fs.write_file(&path, b"original").unwrap();
+    fs.write_file(path.as_host(), b"original").unwrap();
 
     #[cfg(unix)]
     {
@@ -728,7 +736,7 @@ fn test_write_patched_preserves_permissions() {
 
     // Patch the file
     let ops = vec![WriteOp::Insert { data: b"patched" }];
-    fs.write_patched(&path, &path, &ops).unwrap();
+    fs.write_patched(path.as_host(), path.as_host(), &ops).unwrap();
 
     // Verify permissions preserved
     #[cfg(unix)]
@@ -1619,7 +1627,7 @@ fn test_concurrent_count_lf_requests() {
                 chunk_size
             };
             handles.push(tokio::task::spawn_blocking(move || {
-                let count = fs.count_line_feeds_in_range(&path, offset, len)?;
+                let count = fs.count_line_feeds_in_range(path.as_host(), offset, len)?;
                 Ok((i, count))
             }));
         }
@@ -1725,7 +1733,7 @@ fn test_concurrent_mixed_requests() {
                     expected: expected_lf,
                 });
                 handles.push(tokio::task::spawn_blocking(move || {
-                    let count = fs.count_line_feeds_in_range(&path, offset, len)?;
+                    let count = fs.count_line_feeds_in_range(path.as_host(), offset, len)?;
                     Ok((i, Vec::new(), count))
                 }));
             }
@@ -1740,7 +1748,7 @@ fn test_concurrent_mixed_requests() {
                     expected: expected_data,
                 });
                 handles.push(tokio::task::spawn_blocking(move || {
-                    let data = fs.read_range(&path, offset, len)?;
+                    let data = fs.read_range(path.as_host(), offset, len)?;
                     Ok((i, data, 0))
                 }));
             }
@@ -1814,20 +1822,20 @@ fn test_unique_temp_path_uses_system_temp_dir() {
     };
 
     let dest = std::path::Path::new("/some/dir/myfile.txt");
-    let temp_path = fs.unique_temp_path(dest);
+    let temp_path = fs.unique_temp_path(dest.as_host());
 
     // The temp path should be under the system's temp directory (what Python's
     // tempfile.gettempdir() returns), NOT a hardcoded /tmp.
     let expected_temp_dir = std::env::temp_dir();
     assert!(
-        temp_path.starts_with(&expected_temp_dir),
+        fs.at(&temp_path).starts_with(expected_temp_dir.as_host()),
         "unique_temp_path should use system temp dir ({:?}), got {:?}",
         expected_temp_dir,
         temp_path,
     );
 
     // The temp file name should contain the original file's name
-    let name = temp_path.file_name().unwrap().to_string_lossy();
+    let name = fs.at(&temp_path).file_name().unwrap().to_string_lossy();
     assert!(
         name.contains("myfile.txt"),
         "temp file name should contain the original file name, got {:?}",
@@ -1910,7 +1918,7 @@ for line in sys.stdin:
 
     // Any operation that goes through the channel will time out, since
     // the agent never replies. `metadata` is a single round-trip call.
-    let result = fs.metadata(std::path::Path::new("/anything"));
+    let result = fs.metadata(std::path::Path::new("/anything").as_host());
     let err = result.expect_err("expected timeout error, got Ok");
     let msg = err.to_string().to_lowercase();
     assert!(
@@ -1944,7 +1952,7 @@ fn prime_sys_info_gates_unresponsive_link_and_caches_when_live() {
             .home_dir()
             .expect("home_dir is served from the primed cache");
         assert!(
-            home.is_absolute(),
+            fs.at(&home).is_absolute(),
             "expected an absolute remote home, got {home:?}",
         );
     } else {

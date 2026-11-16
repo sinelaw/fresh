@@ -44,6 +44,7 @@ use alacritty_terminal::index::{Column, Line};
 use alacritty_terminal::term::test::TermSize;
 use alacritty_terminal::term::{Config as TermConfig, Term, TermMode};
 use alacritty_terminal::vte::ansi::Processor;
+use fresh_editor_core::model::host_path::AsHostPath;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -546,7 +547,7 @@ pub struct BackingFileAt<'a> {
 
 impl BackingFile for BackingFileAt<'_> {
     fn size(&mut self) -> io::Result<u64> {
-        Ok(self.fs.metadata(self.path)?.size)
+        Ok(self.fs.metadata(self.path.as_host())?.size)
     }
 
     fn read_from(&mut self, offset: u64) -> io::Result<Vec<u8>> {
@@ -555,15 +556,15 @@ impl BackingFile for BackingFileAt<'_> {
             return Ok(Vec::new());
         }
         self.fs
-            .read_range(self.path, offset, (len - offset) as usize)
+            .read_range(self.path.as_host(), offset, (len - offset) as usize)
     }
 
     fn truncate(&mut self, len: u64) -> io::Result<()> {
-        self.fs.set_file_length(self.path, len)
+        self.fs.set_file_length(self.path.as_host(), len)
     }
 
     fn append(&mut self, bytes: &[u8]) -> io::Result<()> {
-        let mut file = self.fs.open_file_for_append(self.path)?;
+        let mut file = self.fs.open_file_for_append(self.path.as_host())?;
         file.write_all(bytes)?;
         file.flush()
     }

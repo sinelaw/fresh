@@ -1,28 +1,13 @@
 //! Path utilities for path expansion and normalization.
 
 use std::borrow::Cow;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-/// Expand tilde (~) in a path to the user's home directory.
-///
-/// # Examples
-/// - `~/Documents` -> `/home/user/Documents`
-/// - `~` -> `/home/user`
-/// - `/absolute/path` -> `/absolute/path` (unchanged)
-/// - `relative/path` -> `relative/path` (unchanged)
-///
-/// If the home directory cannot be determined, the path is returned unchanged.
-pub fn expand_tilde(path: &str) -> PathBuf {
-    if let Some(suffix) = path.strip_prefix('~') {
-        if let Some(home) = dirs::home_dir() {
-            home.join(suffix.trim_start_matches('/'))
-        } else {
-            PathBuf::from(path)
-        }
-    } else {
-        PathBuf::from(path)
-    }
-}
+// `expand_tilde` lived here and asked `dirs::home_dir()` — the home of the
+// machine the editor runs on, whichever filesystem the path was headed for.
+// Every caller was resolving a path for a *workspace*, which may be a remote
+// host with a different home, so the question moved to where the answer is:
+// `FileSystem::expand_tilde`.
 
 /// Convert a Windows verbatim path (`\\?\C:\…` or `\\?\UNC\server\share\…`)
 /// into its non-verbatim equivalent (`C:\…` or `\\server\share\…`).
@@ -32,7 +17,7 @@ pub fn expand_tilde(path: &str) -> PathBuf {
 pub fn strip_verbatim_prefix(path: &Path) -> Cow<'_, Path> {
     #[cfg(windows)]
     {
-        use std::path::{Component, Prefix};
+        use std::path::{Component, PathBuf, Prefix};
 
         let mut components = path.components();
         let prefix = match components.next() {
@@ -103,42 +88,12 @@ pub fn rel_to_slash_string(rel: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    use std::path::PathBuf;
 
-    #[test]
-    fn test_expand_tilde_with_path() {
-        let result = expand_tilde("~/Documents/test.txt");
-        if let Some(home) = dirs::home_dir() {
-            assert_eq!(result, home.join("Documents/test.txt"));
-        }
-    }
-
-    #[test]
-    fn test_expand_tilde_just_tilde() {
-        let result = expand_tilde("~");
-        if let Some(home) = dirs::home_dir() {
-            assert_eq!(result, home);
-        }
-    }
-
-    #[test]
-    fn test_expand_tilde_absolute_path() {
-        let result = expand_tilde("/absolute/path");
-        assert_eq!(result, PathBuf::from("/absolute/path"));
-    }
-
-    #[test]
-    fn test_expand_tilde_relative_path() {
-        let result = expand_tilde("relative/path");
-        assert_eq!(result, PathBuf::from("relative/path"));
-    }
-
-    #[test]
-    fn test_expand_tilde_with_slash() {
-        let result = expand_tilde("~/");
-        if let Some(home) = dirs::home_dir() {
-            assert_eq!(result, home);
-        }
-    }
+    // The `expand_tilde` tests moved with the function, to
+    // `model::filesystem`, where they can state which filesystem's home is
+    // being expanded instead of only ever testing this machine's.
 
     #[cfg(not(windows))]
     #[test]

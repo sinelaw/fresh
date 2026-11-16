@@ -5,6 +5,7 @@
 //! leaves and apply scan results), the tokio runtime (for concurrent
 //! filesystem I/O), and the status message (for progress reporting).
 
+use fresh_editor_core::model::host_path::AsHostPath;
 use fresh_i18n::t;
 
 use crate::model::event::BufferId;
@@ -159,7 +160,7 @@ impl Editor {
                 for (leaf_idx, path, offset, len) in io_work {
                     let fs = fs.clone();
                     handles.push(tokio::task::spawn_blocking(move || {
-                        let count = fs.count_line_feeds_in_range(&path, offset, len)?;
+                        let count = fs.count_line_feeds_in_range(path.as_host(), offset, len)?;
                         Ok((leaf_idx, count))
                     }));
                 }

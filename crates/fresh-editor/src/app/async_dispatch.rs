@@ -6,6 +6,7 @@
 //! `match` is a thin dispatch table: every arm forwards to a `handle_*`
 //! method on `Editor` that owns the actual logic for that variant.
 
+use fresh_editor_core::model::host_path::AsHostPath;
 use fresh_i18n::t;
 
 use crate::services::async_bridge::AsyncMessage;
@@ -1366,7 +1367,7 @@ impl Editor {
             std::thread::Builder::new()
                 .name("remote-buffer-load".to_string())
                 .spawn(move || {
-                    let content = fs.read_file(&path).map_err(|e| e.to_string());
+                    let content = fs.read_file(path.as_host()).map_err(|e| e.to_string());
                     #[allow(clippy::let_underscore_must_use)]
                     let _ = sender.send(AsyncMessage::RemoteBufferContentLoaded {
                         window_id,
@@ -1816,7 +1817,7 @@ impl Editor {
         // filesystem call is safe here: `process_async_messages`
         // runs on the main loop, not inside a runtime.
         let root = working_dir
-            .or_else(|| authority.filesystem.home_dir().ok())
+            .or_else(|| authority.filesystem.home_dir().ok().map(Into::into))
             .unwrap_or_else(|| std::path::PathBuf::from("/"));
         match mode {
             crate::services::async_bridge::RemoteAttachMode::Restart => {

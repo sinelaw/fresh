@@ -7,6 +7,7 @@ use crate::services::signal_handler;
 use crate::view::theme;
 use fresh_core::api::DirEntry as PluginDirEntry;
 use fresh_core::services::{PluginFileStat, PluginFilesystem, PluginServiceBridge};
+use fresh_editor_core::model::host_path::AsHostPath;
 use std::any::Any;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -97,8 +98,8 @@ impl RoutedFilesystem {
     fn ensure_parent(fs: &dyn FileSystem, path: &Path) -> bool {
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty()
-                && !fs.exists(parent)
-                && fs.create_dir_all(parent).is_err()
+                && !fs.exists(parent.as_host())
+                && fs.create_dir_all(parent.as_host()).is_err()
             {
                 return false;
             }
@@ -109,7 +110,7 @@ impl RoutedFilesystem {
 
 impl PluginFilesystem for RoutedFilesystem {
     fn read_file(&self, path: &Path) -> Option<Vec<u8>> {
-        (self.resolve)()?.read_file(path).ok()
+        (self.resolve)()?.read_file(path.as_host()).ok()
     }
 
     fn write_file(&self, path: &Path, contents: &[u8]) -> bool {
@@ -119,28 +120,30 @@ impl PluginFilesystem for RoutedFilesystem {
         // Create-only, as this has always claimed to be. The underlying
         // `write_file` replaces its target, so without this check a plugin
         // aiming at an existing path destroyed it.
-        if fs.exists(path) {
+        if fs.exists(path.as_host()) {
             return false;
         }
-        Self::ensure_parent(fs.as_ref(), path) && fs.write_file(path, contents).is_ok()
+        Self::ensure_parent(fs.as_ref(), path) && fs.write_file(path.as_host(), contents).is_ok()
     }
 
     fn replace_file(&self, path: &Path, contents: &[u8]) -> bool {
         let Some(fs) = (self.resolve)() else {
             return false;
         };
-        Self::ensure_parent(fs.as_ref(), path) && fs.write_file(path, contents).is_ok()
+        Self::ensure_parent(fs.as_ref(), path) && fs.write_file(path.as_host(), contents).is_ok()
     }
 
     fn exists(&self, path: &Path) -> bool {
-        (self.resolve)().map(|fs| fs.exists(path)).unwrap_or(false)
+        (self.resolve)()
+            .map(|fs| fs.exists(path.as_host()))
+            .unwrap_or(false)
     }
 
     fn read_dir(&self, path: &Path) -> Vec<PluginDirEntry> {
         let Some(fs) = (self.resolve)() else {
             return Vec::new();
         };
-        match fs.read_dir(path) {
+        match fs.read_dir(path.as_host()) {
             Ok(entries) => entries
                 .into_iter()
                 .map(|e| PluginDirEntry {
@@ -157,22 +160,25 @@ impl PluginFilesystem for RoutedFilesystem {
         let Some(fs) = (self.resolve)() else {
             return false;
         };
-        fs.is_dir(path).unwrap_or(false) || fs.create_dir_all(path).is_ok()
+        fs.is_dir(path.as_host()).unwrap_or(false) || fs.create_dir_all(path.as_host()).is_ok()
     }
 
     fn stat(&self, path: &Path) -> Option<PluginFileStat> {
         let fs = (self.resolve)()?;
-        let md = fs.metadata(path).ok()?;
+        let md = fs.metadata(path.as_host()).ok()?;
         Some(PluginFileStat {
-            is_file: fs.is_file(path).unwrap_or(false),
-            is_dir: fs.is_dir(path).unwrap_or(false),
+            is_file: fs.is_file(path.as_host()).unwrap_or(false),
+            is_dir: fs.is_dir(path.as_host()).unwrap_or(false),
             size: md.size,
             readonly: md.is_readonly,
         })
     }
 
     fn canonicalize(&self, path: &Path) -> Option<PathBuf> {
-        (self.resolve)()?.canonicalize(path).ok()
+        (self.resolve)()?
+            .canonicalize(path.as_host())
+            .ok()
+            .map(Into::into)
     }
 }
 

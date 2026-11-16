@@ -124,12 +124,12 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
     };
 
     let has_unsaved = if node.is_dir() {
-        folder_has_modified_files(&node.entry.path, d.unsaved)
+        folder_has_modified_files(&node.entry.path.clone().into_path_buf(), d.unsaved)
     } else {
-        d.unsaved.contains(&node.entry.path)
+        d.unsaved.contains(node.entry.path.as_path())
     };
     let slots = d.slot_resolver.resolve(&ExplorerSlotContext {
-        path: &node.entry.path,
+        path: node.entry.path.as_path(),
         is_dir: node.is_dir(),
         is_expanded: node.state == crate::view::file_tree::NodeState::Expanded || d.opening,
         has_unsaved,
@@ -146,7 +146,10 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
             .unwrap_or(d.theme.editor_fg),
     });
 
-    let is_cut = d.cut.iter().any(|p| p == &node.entry.path);
+    let is_cut = d
+        .cut
+        .iter()
+        .any(|p| p.as_path() == node.entry.path.as_path());
     let name_fg = if is_cut || is_ignored {
         "editor.line_number_fg".to_string()
     } else if let Some(c) = slots.name_color_hint {
@@ -295,7 +298,7 @@ pub fn describe_row(d: RowDesc<'_>) -> crate::view::shell::file_explorer::Row {
         trailing: slots.trailing.as_ref().map(|slot| fe::Slot {
             text: slot.text.clone(),
             theme: pair(&slot_paint(slot.fg, &slot.fg_key), ground),
-            path: node.entry.path.clone(),
+            path: (node.entry.path.clone()).into_path_buf(),
         }),
         error: matches!(node.state, crate::view::file_tree::NodeState::Error(_))
             .then(|| (" [Error]".to_string(), pair("diagnostic.error_fg", ground))),

@@ -11,6 +11,7 @@
 //! sibling impl Editor block. A future phase will collapse the
 //! boilerplate into a single SettingsPromptBuilder<T>.
 
+use fresh_editor_core::model::host_path::AsHostPath;
 use fresh_i18n::t;
 
 use crate::config_io::{ConfigLayer, ConfigResolver};
@@ -566,7 +567,7 @@ impl Editor {
         if let Err(e) = self
             .authority()
             .filesystem
-            .create_dir_all(&self.dir_context.config_dir)
+            .create_dir_all(self.dir_context.config_dir.as_host())
         {
             tracing::warn!("Failed to create config directory: {}", e);
             return;
@@ -704,7 +705,7 @@ impl Editor {
         if let Err(e) = self
             .authority()
             .filesystem
-            .create_dir_all(&self.dir_context.config_dir)
+            .create_dir_all(self.dir_context.config_dir.as_host())
         {
             tracing::warn!("Failed to create config directory: {}", e);
             return;
@@ -846,7 +847,7 @@ impl Editor {
         if let Err(e) = self
             .authority()
             .filesystem
-            .create_dir_all(&self.dir_context.config_dir)
+            .create_dir_all(self.dir_context.config_dir.as_host())
         {
             tracing::warn!("Failed to create config directory: {}", e);
             return;
@@ -963,7 +964,7 @@ impl Editor {
         if let Err(e) = self
             .authority()
             .filesystem
-            .create_dir_all(&self.dir_context.config_dir)
+            .create_dir_all(self.dir_context.config_dir.as_host())
         {
             tracing::warn!("Failed to create config directory: {}", e);
             return;

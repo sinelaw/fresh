@@ -48,6 +48,7 @@
 //! The "warm" layout is intentionally not persisted across restarts —
 //! re-warming on first dive is fast enough.
 
+use fresh_editor_core::model::host_path::AsHostPath;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -175,7 +176,7 @@ pub(crate) fn read_persisted_windows(
     // is itself legacy now; the next step folds it into the per-dir
     // workspace files and retires it.
     let global_p = global_windows_path(data_dir);
-    if !filesystem.exists(&global_p) {
+    if !filesystem.exists(global_p.as_host()) {
         migrate_legacy_windows(filesystem, data_dir);
     }
     migrate_windows_json_into_workspaces(filesystem, data_dir);
@@ -249,7 +250,7 @@ fn discover_sessions(
     type SessionState = HashMap<String, HashMap<String, serde_json::Value>>;
     let dir = workspaces_dir(data_dir);
     tracing::debug!(dir = %dir.display(), "discover_sessions: read_dir");
-    let entries = match filesystem.read_dir(&dir) {
+    let entries = match filesystem.read_dir(dir.as_host()) {
         Ok(e) => e,
         Err(_) => return Vec::new(),
     };
@@ -323,7 +324,7 @@ fn discover_sessions(
         // after a restart. Whether the remote dir still exists is only knowable
         // after reconnecting, so we keep the entry and let restore decide.
         if !authority_spec.is_remote() {
-            match filesystem.is_dir(&root) {
+            match filesystem.is_dir(root.as_host()) {
                 Ok(true) => {}
                 Ok(false) => {
                     let _ = filesystem.remove_file(p).ok();
@@ -446,10 +447,10 @@ fn migrate_windows_json_into_workspaces(
     data_dir: &Path,
 ) {
     let global_p = global_windows_path(data_dir);
-    if !filesystem.exists(&global_p) {
+    if !filesystem.exists(global_p.as_host()) {
         return;
     }
-    let Ok(bytes) = filesystem.read_file(&global_p) else {
+    let Ok(bytes) = filesystem.read_file(global_p.as_host()) else {
         return;
     };
     let Ok(env) = serde_json::from_slice::<PersistedWindows>(&bytes) else {
@@ -457,10 +458,10 @@ fn migrate_windows_json_into_workspaces(
     };
     for w in &env.windows {
         let ws_path = workspace_file_for(data_dir, &w.root);
-        if !filesystem.exists(&ws_path) {
+        if !filesystem.exists(ws_path.as_host()) {
             continue;
         }
-        let Ok(wbytes) = filesystem.read_file(&ws_path) else {
+        let Ok(wbytes) = filesystem.read_file(ws_path.as_host()) else {
             continue;
         };
         let Ok(mut val) = serde_json::from_slice::<serde_json::Value>(&wbytes) else {
@@ -477,14 +478,17 @@ fn migrate_windows_json_into_workspaces(
         }
         if let Ok(out) = serde_json::to_vec_pretty(&val) {
             // Best-effort backfill: on failure the workspace keeps its pre-migration content.
-            let _ = filesystem.write_file(&ws_path, &out).ok();
+            let _ = filesystem.write_file(ws_path.as_host(), &out).ok();
         }
     }
     // Retire windows.json (keep a .bak so a downgrade isn't one-way).
     let bak = global_p.with_extension("json.retired.bak");
-    if filesystem.rename(&global_p, &bak).is_err() {
+    if filesystem
+        .rename(global_p.as_host(), bak.as_host())
+        .is_err()
+    {
         // Best-effort: if delete also fails the file stays and migration reruns (idempotent).
-        let _ = filesystem.remove_file(&global_p).ok();
+        let _ = filesystem.remove_file(global_p.as_host()).ok();
     }
 }
 
@@ -511,7 +515,7 @@ fn migrate_session_workspaces_into_store(
     data_dir: &Path,
 ) {
     let legacy_dir = data_dir.join("session-workspaces");
-    let Ok(entries) = filesystem.read_dir(&legacy_dir) else {
+    let Ok(entries) = filesystem.read_dir(legacy_dir.as_host()) else {
         return;
     };
     let mut all_converted = true;
@@ -555,14 +559,14 @@ fn migrate_session_workspaces_into_store(
         ));
         // Never clobber a live workspace: the per-window store is authoritative
         // wherever both describe the same identity.
-        if filesystem.exists(&dest) {
+        if filesystem.exists(dest.as_host()) {
             continue;
         }
         let Ok(out) = serde_json::to_vec_pretty(&val) else {
             all_converted = false;
             continue;
         };
-        if filesystem.write_file(&dest, &out).is_err() {
+        if filesystem.write_file(dest.as_host(), &out).is_err() {
             all_converted = false;
             continue;
         }
@@ -579,10 +583,10 @@ fn migrate_session_workspaces_into_store(
     // one-way). A failure just leaves it for the next boot — the conversion
     // above skips anything already present, so rerunning is harmless.
     let bak = legacy_dir.with_extension("retired.bak");
-    if filesystem.exists(&bak) {
+    if filesystem.exists(bak.as_host()) {
         return;
     }
-    let _ = filesystem.rename(&legacy_dir, &bak).ok();
+    let _ = filesystem.rename(legacy_dir.as_host(), bak.as_host()).ok();
 }
 
 /// Pick which persisted session to bring up at boot, scoped to the
@@ -699,10 +703,10 @@ fn migrate_legacy_windows(
     data_dir: &Path,
 ) {
     let orch_root = data_dir.join("orchestrator");
-    if !filesystem.exists(&orch_root) {
+    if !filesystem.exists(orch_root.as_host()) {
         return;
     }
-    let entries = match filesystem.read_dir(&orch_root) {
+    let entries = match filesystem.read_dir(orch_root.as_host()) {
         Ok(es) => es,
         Err(_) => return,
     };
@@ -720,14 +724,16 @@ fn migrate_legacy_windows(
         // Only look at directories that look like slug-encoded
         // paths (i.e. not the `state/` plugin dir, which lives
         // alongside but isn't a per-cwd bucket).
-        let dir_name = match dir.file_name().and_then(|s| s.to_str()) {
+        let dir_name = match filesystem.at(&dir).file_name().and_then(|s| s.to_str()) {
             Some(n) => n.to_string(),
             None => continue,
         };
         if dir_name == "state" {
             continue;
         }
-        let legacy_p = dir.join("windows.json");
+        let legacy_p = filesystem
+            .at(&dir)
+            .join_name(std::ffi::OsStr::new("windows.json"));
         if !filesystem.exists(&legacy_p) {
             continue;
         }
@@ -779,7 +785,7 @@ fn migrate_legacy_windows(
         // wins by virtue of being last.
         let active_id = local_renum.get(&env.active).copied().unwrap_or(env.active);
         merged_active = active_id;
-        legacy_to_rename.push(legacy_p);
+        legacy_to_rename.push((legacy_p).into_path_buf());
     }
 
     if merged_windows.is_empty() {
@@ -793,7 +799,7 @@ fn migrate_legacy_windows(
         windows: merged_windows,
     };
     let global_p = global_windows_path(data_dir);
-    if let Err(e) = filesystem.create_dir_all(&orch_root) {
+    if let Err(e) = filesystem.create_dir_all(orch_root.as_host()) {
         tracing::warn!("orchestrator migration: failed to create {orch_root:?}: {e}");
         return;
     }
@@ -804,13 +810,13 @@ fn migrate_legacy_windows(
             return;
         }
     };
-    if let Err(e) = filesystem.write_file(&global_p, &bytes) {
+    if let Err(e) = filesystem.write_file(global_p.as_host(), &bytes) {
         tracing::warn!("orchestrator migration: failed to write {global_p:?}: {e}");
         return;
     }
     for legacy_p in legacy_to_rename {
         let backup = legacy_p.with_extension("json.migrated.bak");
-        if let Err(e) = filesystem.rename(&legacy_p, &backup) {
+        if let Err(e) = filesystem.rename(legacy_p.as_host(), backup.as_host()) {
             tracing::warn!(
                 "orchestrator migration: failed to rename {legacy_p:?} → {backup:?}: {e}"
             );
@@ -842,13 +848,13 @@ pub(crate) fn read_persisted_plugin_state(
 ) -> HashMap<String, HashMap<String, serde_json::Value>> {
     let mut out: HashMap<String, HashMap<String, serde_json::Value>> = HashMap::new();
     let state_dir = global_state_dir(data_dir);
-    if !filesystem.exists(&state_dir) {
+    if !filesystem.exists(state_dir.as_host()) {
         migrate_legacy_plugin_state(filesystem, data_dir);
     }
-    if !filesystem.exists(&state_dir) {
+    if !filesystem.exists(state_dir.as_host()) {
         return out;
     }
-    let entries = match filesystem.read_dir(&state_dir) {
+    let entries = match filesystem.read_dir(state_dir.as_host()) {
         Ok(es) => es,
         Err(e) => {
             tracing::warn!("orchestrator persistence: failed to read {state_dir:?}: {e}");
@@ -857,13 +863,13 @@ pub(crate) fn read_persisted_plugin_state(
     };
     for entry in entries {
         let path = entry.path;
-        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+        let Some(stem) = filesystem.at(&path).file_stem().and_then(|s| s.to_str()) else {
             continue;
         };
         if !plugin_name_is_safe(stem) {
             continue;
         }
-        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+        if filesystem.at(&path).extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
         }
         match filesystem.read_file(&path) {
@@ -930,10 +936,10 @@ fn migrate_legacy_plugin_state(
     data_dir: &Path,
 ) {
     let orch_root = data_dir.join("orchestrator");
-    if !filesystem.exists(&orch_root) {
+    if !filesystem.exists(orch_root.as_host()) {
         return;
     }
-    let cwd_entries = match filesystem.read_dir(&orch_root) {
+    let cwd_entries = match filesystem.read_dir(orch_root.as_host()) {
         Ok(es) => es,
         Err(_) => return,
     };
@@ -944,14 +950,14 @@ fn migrate_legacy_plugin_state(
         if !filesystem.is_dir(&dir).unwrap_or(false) {
             continue;
         }
-        let dir_name = match dir.file_name().and_then(|s| s.to_str()) {
+        let dir_name = match filesystem.at(&dir).file_name().and_then(|s| s.to_str()) {
             Some(n) => n.to_string(),
             None => continue,
         };
         if dir_name == "state" {
             continue;
         }
-        let state_dir = dir.join("state");
+        let state_dir = filesystem.at(&dir).join_name(std::ffi::OsStr::new("state"));
         if !filesystem.exists(&state_dir) {
             continue;
         }
@@ -961,13 +967,13 @@ fn migrate_legacy_plugin_state(
         };
         for pe in plugin_entries {
             let p = pe.path;
-            let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
+            let Some(stem) = filesystem.at(&p).file_stem().and_then(|s| s.to_str()) else {
                 continue;
             };
             if !plugin_name_is_safe(stem) {
                 continue;
             }
-            if p.extension().and_then(|e| e.to_str()) != Some("json") {
+            if filesystem.at(&p).extension().and_then(|e| e.to_str()) != Some("json") {
                 continue;
             }
             let bytes = match filesystem.read_file(&p) {
@@ -982,14 +988,14 @@ fn migrate_legacy_plugin_state(
             for (k, v) in map {
                 slot.insert(k, v);
             }
-            legacy_to_rename.push(p);
+            legacy_to_rename.push((p).into_path_buf());
         }
     }
     if merged.is_empty() {
         return;
     }
     let target_state_dir = global_state_dir(data_dir);
-    if let Err(e) = filesystem.create_dir_all(&target_state_dir) {
+    if let Err(e) = filesystem.create_dir_all(target_state_dir.as_host()) {
         tracing::warn!("orchestrator migration: failed to create {target_state_dir:?}: {e}");
         return;
     }
@@ -1002,13 +1008,13 @@ fn migrate_legacy_plugin_state(
                 continue;
             }
         };
-        if let Err(e) = filesystem.write_file(&path, &bytes) {
+        if let Err(e) = filesystem.write_file(path.as_host(), &bytes) {
             tracing::warn!("orchestrator migration: failed to write {path:?}: {e}");
         }
     }
     for legacy_p in legacy_to_rename {
         let backup = legacy_p.with_extension("json.migrated.bak");
-        if let Err(e) = filesystem.rename(&legacy_p, &backup) {
+        if let Err(e) = filesystem.rename(legacy_p.as_host(), backup.as_host()) {
             tracing::warn!(
                 "orchestrator migration: failed to rename {legacy_p:?} → {backup:?}: {e}"
             );
@@ -1178,7 +1184,11 @@ impl Editor {
         // directory (no per-cwd split), so two editor processes writing
         // the same plugin's state still need atomic-rename safety.
         let state_dir = global_state_dir(&data_dir);
-        if let Err(e) = self.authority().filesystem.create_dir_all(&state_dir) {
+        if let Err(e) = self
+            .authority()
+            .filesystem
+            .create_dir_all(state_dir.as_host())
+        {
             tracing::warn!("orchestrator persistence: failed to create {state_dir:?}: {e}");
             return;
         }
@@ -1186,7 +1196,7 @@ impl Editor {
         // → warn and start empty (the boot loader skips such files too).
         let path = global_plugin_state_path(&data_dir, plugin);
         let mut merged: HashMap<String, serde_json::Value> =
-            match self.authority().filesystem.read_file(&path) {
+            match self.authority().filesystem.read_file(path.as_host()) {
                 Ok(bytes) => match serde_json::from_slice(&bytes) {
                     Ok(map) => map,
                     Err(e) => {
@@ -1212,11 +1222,19 @@ impl Editor {
         match serde_json::to_vec_pretty(&merged) {
             Ok(bytes) => {
                 let tmp = path.with_extension("json.tmp");
-                if let Err(e) = self.authority().filesystem.write_file(&tmp, &bytes) {
+                if let Err(e) = self
+                    .authority()
+                    .filesystem
+                    .write_file(tmp.as_host(), &bytes)
+                {
                     tracing::warn!("orchestrator persistence: failed to write {tmp:?}: {e}");
                     return;
                 }
-                if let Err(e) = self.authority().filesystem.rename(&tmp, &path) {
+                if let Err(e) = self
+                    .authority()
+                    .filesystem
+                    .rename(tmp.as_host(), path.as_host())
+                {
                     tracing::warn!(
                         "orchestrator persistence: failed to rename {tmp:?} → {path:?}: {e}"
                     );

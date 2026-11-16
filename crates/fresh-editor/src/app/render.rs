@@ -2,6 +2,7 @@ use super::lsp_status::compose_lsp_status;
 use super::*;
 use crate::config::FileExplorerSide;
 use crate::view::settings::surface::SettingsSurface as _;
+use fresh_editor_core::model::host_path::{AsHostPath, HostPathBuf};
 
 /// The bottom-row visibility facts (see [`Editor::bottom_row_flags`]):
 /// one computation consumed by the paint-time frame split and every
@@ -112,7 +113,7 @@ impl ExplorerRows {
             ghost: self
                 .preview
                 .as_ref()
-                .filter(|p| p.sources.contains(&node.entry.path))
+                .filter(|p| p.sources.contains(node.entry.path.as_path()))
                 .map(|p| p.typed),
             opening: self
                 .preview
@@ -3475,7 +3476,7 @@ impl Editor {
                 .as_ref()
                 .map_or(projection.len(), |s| s.len(projection.len())),
             key: std::rc::Rc::new(move |j| match key_spot(j) {
-                Spot::Row(i) => fe::row_key(&keys.rows[i].entry.path),
+                Spot::Row(i) => fe::row_key(keys.rows[i].entry.path.as_path()),
                 Spot::Inserted(k) => fresh_ui::Key::Pair("explorer_move_preview".into(), k as u64),
             }),
             row: std::rc::Rc::new(move |j, pin| rows.describe_at(j, pin)),
@@ -4958,8 +4959,8 @@ impl Editor {
         let abs_path = self
             .authority()
             .filesystem
-            .canonicalize(&abs_path)
-            .unwrap_or(abs_path);
+            .canonicalize(abs_path.as_host())
+            .unwrap_or(HostPathBuf::from_path_buf(abs_path));
 
         // If the standalone state already targets this path, just
         // re-seed the cursor and skip the file-load roundtrip.

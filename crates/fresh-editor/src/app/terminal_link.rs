@@ -16,9 +16,9 @@
 //! [`FileSystem`]: crate::model::filesystem::FileSystem
 
 use crate::app::Editor;
-use crate::primitives::path_utils::expand_tilde;
 use anyhow::Result as AnyhowResult;
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use fresh_editor_core::model::host_path::AsHostPath;
 use std::path::{Path, PathBuf};
 
 impl Editor {
@@ -112,22 +112,31 @@ impl Editor {
     /// file. Directories and non-existent paths yield `None` (so the link is
     /// inert).
     fn resolve_terminal_path(&self, raw: &str, term_cwd: Option<&Path>) -> Option<PathBuf> {
-        let expanded = expand_tilde(raw);
+        // The terminal runs on the host, so the path it printed is the host's
+        // and every question about it belongs to the host's filesystem: where
+        // `~` is, whether the path is already rooted, and how to join it onto
+        // a base. Asking `std::path` asked the client.
+        let fs = &self.authority().filesystem;
+        let expanded = fs.expand_tilde(raw);
 
-        let candidates: Vec<PathBuf> = if expanded.is_absolute() {
-            vec![expanded]
+        let candidates: Vec<PathBuf> = if fs.at(&expanded).is_absolute() {
+            vec![expanded.into_path_buf()]
         } else {
+            let relative = expanded.to_wire_string();
             let mut v = Vec::new();
             if let Some(cwd) = term_cwd {
-                v.push(cwd.join(&expanded));
+                v.push(fs.at(cwd.as_host()).join_rel(&relative).into_path_buf());
             }
-            v.push(self.working_dir().join(&expanded));
+            v.push(
+                fs.at(self.working_dir().as_host())
+                    .join_rel(&relative)
+                    .into_path_buf(),
+            );
             v
         };
 
-        let fs = &self.authority().filesystem;
         candidates
             .into_iter()
-            .find(|p| fs.is_file(p).unwrap_or(false))
+            .find(|p| fs.is_file(p.as_host()).unwrap_or(false))
     }
 }

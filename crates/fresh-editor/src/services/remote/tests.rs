@@ -6,6 +6,7 @@
 use super::connection::ConnectionParams;
 use super::protocol::*;
 use super::AGENT_SOURCE;
+use fresh_editor_core::model::host_path::AsHostPath;
 
 #[test]
 fn test_protocol_version() {
@@ -589,7 +590,8 @@ mod agent_integration {
                                 max_matches,
                             };
                             let local =
-                                default_search_file(&StdFileSystem, &path, pattern, &opts).unwrap();
+                                default_search_file(&StdFileSystem, path.as_host(), pattern, &opts)
+                                    .unwrap();
                             let resp = send_request(
                                 &mut stdin,
                                 &mut stdout,

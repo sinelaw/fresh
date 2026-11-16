@@ -428,6 +428,10 @@ def cmd_info(id, p):
         "home": os.path.expanduser("~"),
         "cwd": os.getcwd(),
         "temp_dir": tempfile.gettempdir(),
+        # The separator this host's paths use, so the editor is told rather
+        # than guessing from how a path happens to be spelled. "/" here,
+        # "\\" on a Windows host. An older agent omits it.
+        "sep": os.sep,
     })
 
 

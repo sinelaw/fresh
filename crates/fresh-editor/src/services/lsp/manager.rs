@@ -9,6 +9,7 @@
 use crate::services::async_bridge::AsyncBridge;
 use crate::services::lsp::async_handler::LspHandle;
 use crate::types::{FeatureFilter, LspFeature, LspServerConfig};
+use fresh_editor_core::model::host_path::{AsHostPath, PathStyle};
 use lsp_types::{SemanticTokensLegend, Uri};
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -120,15 +121,17 @@ enum SpawnDecision {
 /// drive letter (producing `file:///Users/...` instead of
 /// `file:///C:/Users/...`) and broke root-dependent LSP operations with
 /// "os error 3" (issue #3067).
-pub fn path_to_uri(path: &Path) -> Option<Uri> {
-    // The shared converter returns `None` for relative paths, so keep the
-    // long-standing behavior of resolving them against the working directory
-    // before encoding.
-    let abs = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir().ok()?.join(path)
-    };
+pub fn path_to_uri(style: PathStyle, path: &Path) -> Option<Uri> {
+    // The shared converter returns `None` for a path with no root, so keep the
+    // long-standing behavior of resolving those against the working directory
+    // before encoding. Rooted-ness is asked of the path itself, not of
+    // `Path::is_absolute`: on Windows that wants a drive letter, so a remote
+    // host's `/home/user/proj` took the `current_dir` branch and came back as
+    // `C:/home/user/proj` — a root the host does not have.
+    if path.as_host().under(style).is_absolute() {
+        return fresh_core::file_uri::path_to_lsp_uri(path);
+    }
+    let abs = std::env::current_dir().ok()?.join(path);
     fresh_core::file_uri::path_to_lsp_uri(&abs)
 }
 
@@ -136,24 +139,44 @@ pub fn path_to_uri(path: &Path) -> Option<Uri> {
 ///
 /// Returns the first directory containing any of the markers, or the file's parent
 /// directory if no marker is found.
-pub fn detect_workspace_root(file_path: &Path, root_markers: &[String]) -> std::path::PathBuf {
-    let file_dir = file_path.parent().unwrap_or(file_path).to_path_buf();
+///
+/// The markers are looked for through `fs`, the filesystem the file is on.
+/// `Path::exists` would ask the *client's* filesystem, which for a remote
+/// workspace answers no to everything, so the root silently collapsed to the
+/// file's own directory and the language server was handed the wrong project.
+pub fn detect_workspace_root(
+    fs: &dyn crate::model::filesystem::FileSystem,
+    file_path: &Path,
+    root_markers: &[String],
+) -> std::path::PathBuf {
+    // The whole climb splits under the path's own rules; using
+    // `Path::parent` for the first step and `HostPath::parent` for the rest
+    // would mix the client's rules into a host path.
+    let file_dir = fs
+        .at(file_path.as_host())
+        .parent()
+        .unwrap_or(file_path.as_host())
+        .to_host_path_buf();
 
     if root_markers.is_empty() {
-        return file_dir;
+        return file_dir.into_path_buf();
     }
 
-    let mut dir = Some(file_dir.as_path());
+    let mut dir = Some(file_dir.as_host_path());
     while let Some(d) = dir {
         for marker in root_markers {
-            if d.join(marker).exists() {
-                return d.to_path_buf();
+            if fs.exists(
+                fs.at(d)
+                    .join_name(std::ffi::OsStr::new(marker))
+                    .as_host_path(),
+            ) {
+                return d.as_path().to_path_buf();
             }
         }
-        dir = d.parent();
+        dir = fs.at(d).parent();
     }
 
-    file_dir
+    file_dir.into_path_buf()
 }
 
 /// Summary of capabilities reported by an LSP server during initialization.
@@ -431,6 +454,8 @@ pub struct LspManager {
     /// by `set_long_running_spawner` from `Editor::set_boot_authority`
     /// before any LSP spawn can happen.
     long_running_spawner: Option<std::sync::Arc<dyn crate::services::remote::LongRunningSpawner>>,
+    /// The active authority's filesystem; see [`Self::set_filesystem`].
+    filesystem: Option<std::sync::Arc<dyn crate::model::filesystem::FileSystem>>,
 
     /// Active authority's Workspace Trust handle. LSP servers load and execute
     /// project-controlled code at startup (analyzers/source-generators for C#,
@@ -488,6 +513,7 @@ impl LspManager {
             runtime: None,
             async_bridge: None,
             long_running_spawner: None,
+            filesystem: None,
             workspace_trust: None,
             path_translation: None,
             restart_attempts: HashMap::new(),
@@ -550,6 +576,20 @@ impl LspManager {
         translation: Option<crate::services::authority::PathTranslation>,
     ) {
         self.path_translation = translation;
+    }
+
+    /// Install the active authority's filesystem, so root detection looks for
+    /// marker files where the workspace actually is. Set from
+    /// `Editor::set_boot_authority` alongside the spawner and the translation.
+    pub fn set_filesystem(&mut self, fs: std::sync::Arc<dyn crate::model::filesystem::FileSystem>) {
+        self.filesystem = Some(fs);
+    }
+
+    /// The authority's filesystem, or the local one before any is wired.
+    fn filesystem(&self) -> std::sync::Arc<dyn crate::model::filesystem::FileSystem> {
+        self.filesystem
+            .clone()
+            .unwrap_or_else(|| std::sync::Arc::new(crate::model::filesystem::StdFileSystem))
     }
 
     /// Blocking variant of the authority-routed command probe used by
@@ -887,13 +927,13 @@ impl LspManager {
                 .and_then(|configs| configs.first())
                 .map(|c| c.root_markers.as_slice())
                 .unwrap_or(&[]);
-            let root = detect_workspace_root(path, markers);
+            let root = detect_workspace_root(&*self.filesystem(), path, markers);
             let mapped = self
                 .path_translation
                 .as_ref()
                 .and_then(|t| t.host_to_remote(&root))
                 .unwrap_or(root);
-            if let Some(uri) = path_to_uri(&mapped) {
+            if let Some(uri) = path_to_uri(self.filesystem().style(), &mapped) {
                 return Some(uri);
             }
         }
@@ -1388,8 +1428,9 @@ impl LspManager {
                 Ok(handle) => {
                     let effective_root = file_path
                         .and_then(|p| {
-                            let root = detect_workspace_root(p, &config.root_markers);
-                            path_to_uri(&root)
+                            let root =
+                                detect_workspace_root(&*self.filesystem(), p, &config.root_markers);
+                            path_to_uri(self.filesystem().style(), &root)
                         })
                         .or_else(|| self.root_uri.clone());
                     if let Err(e) =
@@ -1711,8 +1752,9 @@ impl LspManager {
                 let effective_root = if is_universal {
                     file_path
                         .and_then(|p| {
-                            let root = detect_workspace_root(p, &config.root_markers);
-                            path_to_uri(&root)
+                            let root =
+                                detect_workspace_root(&*self.filesystem(), p, &config.root_markers);
+                            path_to_uri(self.filesystem().style(), &root)
                         })
                         .or_else(|| self.root_uri.clone())
                 } else {
@@ -2265,6 +2307,172 @@ mod tests {
         );
     }
 
+    /// `detect_workspace_root` used to look for its markers with
+    /// `Path::exists`, i.e. on the *client*. For a remote workspace that
+    /// answers no to everything, so the root silently collapsed to the file's
+    /// own directory and the language server was handed the wrong project.
+    ///
+    /// This filesystem exists only on its own terms — no path it reports is on
+    /// the machine running the test — so it fails against the `std::fs`
+    /// version and passes only when the climb goes through the trait.
+    #[test]
+    fn detect_workspace_root_asks_the_workspaces_filesystem_not_the_clients() {
+        use crate::model::filesystem::{FileMetadata, FileSystem, NoopFileSystem};
+        use fresh_editor_core::model::host_path::HostPath;
+
+        struct OnlyTheMarker;
+        impl FileSystem for OnlyTheMarker {
+            /// It answers for `/srv/proj/...`, i.e. it is standing in for a
+            /// POSIX host.
+            fn style(&self) -> fresh_editor_core::model::host_path::PathStyle {
+                fresh_editor_core::model::host_path::PathStyle::Posix
+            }
+
+            fn metadata(&self, path: &HostPath) -> std::io::Result<FileMetadata> {
+                if path.to_str() == Some("/srv/proj/Cargo.toml") {
+                    Ok(FileMetadata::new(0))
+                } else {
+                    Err(std::io::Error::from(std::io::ErrorKind::NotFound))
+                }
+            }
+            fn read_file(&self, p: &HostPath) -> std::io::Result<Vec<u8>> {
+                NoopFileSystem.read_file(p)
+            }
+            fn read_range(&self, p: &HostPath, o: u64, l: usize) -> std::io::Result<Vec<u8>> {
+                NoopFileSystem.read_range(p, o, l)
+            }
+            fn write_file(&self, p: &HostPath, d: &[u8]) -> std::io::Result<()> {
+                NoopFileSystem.write_file(p, d)
+            }
+            fn create_file(
+                &self,
+                p: &HostPath,
+            ) -> std::io::Result<Box<dyn crate::model::filesystem::FileWriter>> {
+                NoopFileSystem.create_file(p)
+            }
+            fn create_new_file(
+                &self,
+                p: &HostPath,
+            ) -> std::io::Result<Box<dyn crate::model::filesystem::FileWriter>> {
+                NoopFileSystem.create_new_file(p)
+            }
+            fn create_new_private_file(
+                &self,
+                p: &HostPath,
+            ) -> std::io::Result<Box<dyn crate::model::filesystem::FileWriter>> {
+                NoopFileSystem.create_new_private_file(p)
+            }
+            fn open_file(
+                &self,
+                p: &HostPath,
+            ) -> std::io::Result<Box<dyn crate::model::filesystem::FileReader>> {
+                NoopFileSystem.open_file(p)
+            }
+            fn open_file_for_write(
+                &self,
+                p: &HostPath,
+            ) -> std::io::Result<Box<dyn crate::model::filesystem::FileWriter>> {
+                NoopFileSystem.open_file_for_write(p)
+            }
+            fn open_file_for_append(
+                &self,
+                p: &HostPath,
+            ) -> std::io::Result<Box<dyn crate::model::filesystem::FileWriter>> {
+                NoopFileSystem.open_file_for_append(p)
+            }
+            fn set_file_length(&self, p: &HostPath, l: u64) -> std::io::Result<()> {
+                NoopFileSystem.set_file_length(p, l)
+            }
+            fn rename(&self, f: &HostPath, t: &HostPath) -> std::io::Result<()> {
+                NoopFileSystem.rename(f, t)
+            }
+            fn copy(&self, f: &HostPath, t: &HostPath) -> std::io::Result<u64> {
+                NoopFileSystem.copy(f, t)
+            }
+            fn remove_file(&self, p: &HostPath) -> std::io::Result<()> {
+                NoopFileSystem.remove_file(p)
+            }
+            fn remove_dir(&self, p: &HostPath) -> std::io::Result<()> {
+                NoopFileSystem.remove_dir(p)
+            }
+            fn symlink_metadata(&self, p: &HostPath) -> std::io::Result<FileMetadata> {
+                self.metadata(p)
+            }
+            fn is_dir(&self, p: &HostPath) -> std::io::Result<bool> {
+                NoopFileSystem.is_dir(p)
+            }
+            fn is_file(&self, p: &HostPath) -> std::io::Result<bool> {
+                NoopFileSystem.is_file(p)
+            }
+            fn set_permissions(
+                &self,
+                p: &HostPath,
+                m: &crate::model::filesystem::FilePermissions,
+            ) -> std::io::Result<()> {
+                NoopFileSystem.set_permissions(p, m)
+            }
+            fn read_dir(
+                &self,
+                p: &HostPath,
+            ) -> std::io::Result<Vec<crate::model::filesystem::DirEntry>> {
+                NoopFileSystem.read_dir(p)
+            }
+            fn create_dir(&self, p: &HostPath) -> std::io::Result<()> {
+                NoopFileSystem.create_dir(p)
+            }
+            fn create_dir_all(&self, p: &HostPath) -> std::io::Result<()> {
+                NoopFileSystem.create_dir_all(p)
+            }
+            fn canonicalize(
+                &self,
+                p: &HostPath,
+            ) -> std::io::Result<fresh_editor_core::model::host_path::HostPathBuf> {
+                NoopFileSystem.canonicalize(p)
+            }
+            fn current_uid(&self) -> u32 {
+                0
+            }
+            fn search_file(
+                &self,
+                p: &HostPath,
+                pat: &str,
+                o: &crate::model::filesystem::FileSearchOptions,
+            ) -> std::io::Result<Vec<crate::model::filesystem::SearchMatch>> {
+                NoopFileSystem.search_file(p, pat, o)
+            }
+            fn sudo_write(
+                &self,
+                p: &HostPath,
+                d: &[u8],
+                m: Option<u32>,
+                o: Option<(u32, u32)>,
+            ) -> std::io::Result<()> {
+                NoopFileSystem.sudo_write(p, d, m, o)
+            }
+            fn walk(
+                &self,
+                r: &HostPath,
+                o: &crate::model::filesystem::WalkOptions<'_>,
+                c: &std::sync::atomic::AtomicBool,
+                e: &mut dyn FnMut(crate::model::filesystem::WalkEntry<'_>) -> bool,
+            ) -> std::io::Result<()> {
+                NoopFileSystem.walk(r, o, c, e)
+            }
+        }
+
+        let root = detect_workspace_root(
+            &OnlyTheMarker,
+            Path::new("/srv/proj/src/deep/main.rs"),
+            &["Cargo.toml".to_string()],
+        );
+        assert_eq!(
+            root,
+            std::path::PathBuf::from("/srv/proj"),
+            "the climb must ask the workspace's filesystem; against the client's \
+             it finds nothing and collapses to the file's own directory"
+        );
+    }
+
     #[test]
     fn test_detect_workspace_root_finds_marker_in_parent() {
         let tmp = tempfile::tempdir().unwrap();
@@ -2275,7 +2483,11 @@ mod tests {
         let file = src.join("main.rs");
         std::fs::write(&file, "").unwrap();
 
-        let root = detect_workspace_root(&file, &["Cargo.toml".to_string(), ".git".to_string()]);
+        let root = detect_workspace_root(
+            &StdFileSystem,
+            &file,
+            &["Cargo.toml".to_string(), ".git".to_string()],
+        );
         assert_eq!(root, project);
     }
 
@@ -2289,7 +2501,7 @@ mod tests {
         let file = deep.join("lib.rs");
         std::fs::write(&file, "").unwrap();
 
-        let root = detect_workspace_root(&file, &["Cargo.toml".to_string()]);
+        let root = detect_workspace_root(&StdFileSystem, &file, &["Cargo.toml".to_string()]);
         assert_eq!(root, project);
     }
 
@@ -2301,7 +2513,8 @@ mod tests {
         let file = dir.join("file.txt");
         std::fs::write(&file, "").unwrap();
 
-        let root = detect_workspace_root(&file, &["nonexistent_marker".to_string()]);
+        let root =
+            detect_workspace_root(&StdFileSystem, &file, &["nonexistent_marker".to_string()]);
         assert_eq!(root, dir);
     }
 
@@ -2313,7 +2526,7 @@ mod tests {
         let file = dir.join("file.txt");
         std::fs::write(&file, "").unwrap();
 
-        let root = detect_workspace_root(&file, &[]);
+        let root = detect_workspace_root(&StdFileSystem, &file, &[]);
         assert_eq!(root, dir);
     }
 
@@ -2327,7 +2540,7 @@ mod tests {
         let file = src.join("main.rs");
         std::fs::write(&file, "").unwrap();
 
-        let root = detect_workspace_root(&file, &[".git".to_string()]);
+        let root = detect_workspace_root(&StdFileSystem, &file, &[".git".to_string()]);
         assert_eq!(root, project);
     }
 
@@ -2584,14 +2797,14 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_path_to_uri_basic() {
-        let uri = path_to_uri(Path::new("/tmp/test")).unwrap();
+        let uri = path_to_uri(PathStyle::Posix, Path::new("/tmp/test")).unwrap();
         assert_eq!(uri.as_str(), "file:///tmp/test");
     }
 
     #[cfg(unix)]
     #[test]
     fn test_path_to_uri_with_spaces() {
-        let uri = path_to_uri(Path::new("/tmp/my project/src")).unwrap();
+        let uri = path_to_uri(PathStyle::Posix, Path::new("/tmp/my project/src")).unwrap();
         assert_eq!(uri.as_str(), "file:///tmp/my%20project/src");
     }
 
@@ -2605,7 +2818,11 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn test_path_to_uri_preserves_windows_drive_letter() {
-        let uri = path_to_uri(Path::new(r"C:\Users\Lance\.config\opencode")).unwrap();
+        let uri = path_to_uri(
+            PathStyle::Windows,
+            Path::new(r"C:\Users\Lance\.config\opencode"),
+        )
+        .unwrap();
         assert_eq!(
             uri.as_str(),
             "file:///C:/Users/Lance/.config/opencode",
@@ -2614,7 +2831,7 @@ mod tests {
 
         // Spaces are still percent-encoded on Windows (the encoding coverage the
         // Unix `test_path_to_uri_with_spaces` provides on that platform).
-        let spaced = path_to_uri(Path::new(r"C:\my project\src")).unwrap();
+        let spaced = path_to_uri(PathStyle::Windows, Path::new(r"C:\my project\src")).unwrap();
         assert_eq!(spaced.as_str(), "file:///C:/my%20project/src");
     }
 
@@ -2639,7 +2856,7 @@ mod tests {
     #[test]
     fn resolve_root_uri_from_file_matches_global_root_fallback() {
         let dir = std::env::current_dir().unwrap().join("some project");
-        let global = path_to_uri(&dir).unwrap();
+        let global = path_to_uri(PathStyle::host(), &dir).unwrap();
         let manager = LspManager::new(fresh_core::WindowId(1), Some(global.clone()));
         let from_file = manager
             .resolve_root_uri("python", Some(&dir.join("main.py")))

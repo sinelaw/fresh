@@ -1,4 +1,5 @@
 use super::lsp_uri::LspUri;
+use fresh_editor_core::model::host_path::AsHostPath;
 use fresh_i18n::t;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -191,6 +192,7 @@ impl BufferMetadata {
     ///   read-only (the `editor.auto_read_only` config option). When `false`,
     ///   library detection is skipped and the buffer opens editable.
     pub fn with_file(
+        fs: &dyn crate::model::filesystem::FileSystem,
         canonical_path: PathBuf,
         display_path: &Path,
         working_dir: &Path,
@@ -205,7 +207,7 @@ impl BufferMetadata {
 
         // Compute display name (project-relative when under working_dir, else absolute path).
         // Use canonicalized forms first to handle macOS /var -> /private/var differences.
-        let display_name = Self::display_name_for_path(&canonical_path, working_dir);
+        let display_name = Self::display_name_for_path(fs, &canonical_path, working_dir);
 
         // Check if this is a library file (in vendor directories or standard libraries).
         // Library files are read-only (to prevent accidental edits) but LSP stays
@@ -325,30 +327,51 @@ impl BufferMetadata {
             || PREFIX_PATTERNS.iter().any(|p| path_str.starts_with(*p))
     }
 
-    /// Compute display name relative to working_dir when possible, otherwise absolute
-    pub fn display_name_for_path(path: &Path, working_dir: &Path) -> String {
-        // Canonicalize working_dir to normalize platform-specific prefixes
-        let canonical_working_dir = working_dir
-            .canonicalize()
-            .unwrap_or_else(|_| working_dir.to_path_buf());
+    /// Compute display name relative to working_dir when possible, otherwise
+    /// absolute.
+    ///
+    /// Every question here belongs to `fs`, the filesystem the buffer's file
+    /// lives on. It used to ask `std::path` and `std::fs`, which answer for
+    /// the client: on a Windows client a remote `/srv/proj/src/main.rs` was
+    /// not "absolute", so it was anchored onto the working directory a second
+    /// time, and `strip_prefix` then split both paths on `\` and found
+    /// nothing in common — a tab labelled with the whole absolute path
+    /// instead of `src/main.rs`.
+    pub fn display_name_for_path(
+        fs: &dyn crate::model::filesystem::FileSystem,
+        path: &Path,
+        working_dir: &Path,
+    ) -> String {
+        // Canonicalized to normalize platform-specific prefixes, and
+        // macOS's `/var` → `/private/var`, on the machine that holds them.
+        let canonical_working_dir = fs
+            .canonicalize(working_dir.as_host())
+            .unwrap_or_else(|_| working_dir.as_host().to_host_path_buf());
 
-        // Try to canonicalize the file path; if it fails (e.g., new file), fall back to absolute
-        let absolute_path = if path.is_absolute() {
-            path.to_path_buf()
+        // A relative path is anchored to the working directory; an already
+        // rooted one is left alone.
+        let absolute_path = if fs.at(path.as_host()).is_absolute() {
+            path.as_host().to_host_path_buf()
         } else {
-            // If we were given a relative path, anchor it to working_dir
-            canonical_working_dir.join(path)
+            fs.at(canonical_working_dir.as_host_path())
+                .join_rel(&path.as_host().to_wire_string())
         };
-        let canonical_path = absolute_path
-            .canonicalize()
+        // May fail for a file that does not exist yet, which is not an error
+        // here: the absolute path is a fine thing to show.
+        let canonical_path = fs
+            .canonicalize(absolute_path.as_host_path())
             .unwrap_or_else(|_| absolute_path.clone());
 
-        // Prefer canonical comparison first, then raw prefix as a fallback
-        let relative = canonical_path
-            .strip_prefix(&canonical_working_dir)
-            .or_else(|_| path.strip_prefix(working_dir))
-            .ok()
-            .and_then(|rel| rel.to_str().map(|s| s.to_string()));
+        // Prefer canonical comparison first, then the raw spelling as a
+        // fallback — a path under a symlinked root relates to the root one
+        // way but not the other.
+        let relative = fs
+            .at(canonical_path.as_host_path())
+            .rel_to(canonical_working_dir.as_host_path())
+            .or_else(|| fs.at(path.as_host()).rel_to(working_dir.as_host()))
+            .filter(|rel| !rel.is_empty())
+            // A tab label is read, not parsed: spell it the host's way.
+            .map(|rel| fs.style().respell_relative(&rel));
 
         relative
             .or_else(|| canonical_path.to_str().map(|s| s.to_string()))

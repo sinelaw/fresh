@@ -14,6 +14,7 @@
 //! snapshotting (see `prepare_project_search`): collect what only the editor
 //! thread can see, hand it to a handler here, return immediately.
 
+use fresh_editor_core::model::host_path::{AsHostPath, HostPathBuf};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -112,24 +113,26 @@ pub(crate) fn walk_tree(runtime: &LiveRuntime, cap: OffLoop, req: WalkTreeReques
 
         let cancel = Arc::clone(&cap.cancel);
         let mut entries: Vec<serde_json::Value> = Vec::new();
-        let walked = cap.filesystem.walk(&root, &opts, &cancel, &mut |entry| {
-            entries.push(serde_json::json!({
-                "path": entry.path.to_string_lossy(),
-                "rel": entry.rel,
-                "kind": match entry.entry_type {
-                    crate::model::filesystem::EntryType::Directory => "dir",
-                    crate::model::filesystem::EntryType::Symlink => "symlink",
-                    crate::model::filesystem::EntryType::File => "file",
-                },
-                "mtime": entry
-                    .metadata
-                    .modified
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map_or(0, |d| d.as_secs()),
-                "size": entry.metadata.size,
-            }));
-            true
-        });
+        let walked = cap
+            .filesystem
+            .walk(root.as_host(), &opts, &cancel, &mut |entry| {
+                entries.push(serde_json::json!({
+                    "path": entry.path.to_wire_string(),
+                    "rel": entry.rel,
+                    "kind": match entry.entry_type {
+                        crate::model::filesystem::EntryType::Directory => "dir",
+                        crate::model::filesystem::EntryType::Symlink => "symlink",
+                        crate::model::filesystem::EntryType::File => "file",
+                    },
+                    "mtime": entry
+                        .metadata
+                        .modified
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map_or(0, |d| d.as_secs()),
+                    "size": entry.metadata.size,
+                }));
+                true
+            });
 
         let result = match walked {
             Ok(()) => {
@@ -172,13 +175,13 @@ pub(crate) fn read_file_prefixes(runtime: &LiveRuntime, cap: OffLoop, req: ReadP
                 // `read_exact`, which fails on a short file.
                 let wanted = cap
                     .filesystem
-                    .metadata(&path)
+                    .metadata(path.as_host())
                     .map(|meta| max_bytes.min(meta.size as usize))
                     .unwrap_or(max_bytes);
                 let read = if wanted == 0 {
                     Ok(Vec::new())
                 } else {
-                    cap.filesystem.read_range(&path, 0, wanted)
+                    cap.filesystem.read_range(path.as_host(), 0, wanted)
                 };
                 match read {
                     Ok(bytes) => serde_json::json!({
@@ -399,8 +402,9 @@ pub(crate) fn rooted_like_the_walk(path: &Path, root: &Path, fs: &dyn FileSystem
         return path.to_path_buf();
     }
     let reroot = fs
-        .canonicalize(root)
+        .canonicalize(root.as_host())
         .ok()
+        .map(HostPathBuf::into_path_buf)
         .filter(|canonical| canonical != root)
         .map(|canonical| (canonical, root.to_path_buf()));
     rerooted(path.to_path_buf(), &reroot)
@@ -498,7 +502,7 @@ pub(crate) fn project_search(
         // this asks the remote host.
         let canonical_root = {
             let (fs, root) = (Arc::clone(&filesystem), root.clone());
-            tokio::task::spawn_blocking(move || fs.canonicalize(&root).ok())
+            tokio::task::spawn_blocking(move || fs.canonicalize(root.as_host()).ok())
                 .await
                 .ok()
                 .flatten()
@@ -506,6 +510,7 @@ pub(crate) fn project_search(
         // `(canonical root, root)` when they differ: what re-rooting needs.
         let reroot = Arc::new(
             canonical_root
+                .map(HostPathBuf::into_path_buf)
                 .filter(|canonical| canonical != &root)
                 .map(|canonical| (canonical, root.clone())),
         );
@@ -568,7 +573,7 @@ pub(crate) fn project_search(
                 &custom_ignore,
                 &walk_handle.cancel,
                 &mut |path, rel, is_link| {
-                    if skip(path) || !search_file_glob_matches(&file_glob, rel) {
+                    if skip(path.as_path()) || !search_file_glob_matches(&file_glob, rel) {
                         // Queued ahead of the walk, searched as open, or
                         // filtered out.
                         return true;
@@ -579,14 +584,14 @@ pub(crate) fn project_search(
                         let Ok(resolved) = walk_fs.canonicalize(path) else {
                             return true; // dangling: nothing to search
                         };
-                        let target = rerooted(resolved, &walk_reroot);
-                        if target != path {
+                        let target = rerooted(resolved.into_path_buf(), &walk_reroot);
+                        if target != path.as_path() {
                             link_targets.push(target);
                             return true;
                         }
                     }
-                    sent.insert(path.to_path_buf());
-                    walk_tx.blocking_send(path.to_path_buf()).is_ok()
+                    sent.insert(path.as_path().to_path_buf());
+                    walk_tx.blocking_send(path.as_path().to_path_buf()).is_ok()
                 },
             ) {
                 tracing::warn!("Project search: listing project files failed: {}", e);
@@ -630,7 +635,7 @@ pub(crate) fn project_search(
                 if cancelled(&handle) || match_count.load(Ordering::Relaxed) >= max_results {
                     return;
                 }
-                match fs.search_file(&file_path, &pattern, &opts) {
+                match fs.search_file(file_path.as_host(), &pattern, &opts) {
                     Ok(found) => {
                         let found = found.into_iter().map(|m| grep_match(&file, buffer_id, m));
                         push_capped(&handle, &match_count, max_results, found.collect());
@@ -744,7 +749,7 @@ pub(crate) fn load_diff_baseline(runtime: &LiveRuntime, cap: OffLoop, req: Basel
             BaselineSpec::Disk { path } => {
                 let path = path.clone();
                 let fs = Arc::clone(&cap.filesystem);
-                tokio::task::spawn_blocking(move || fs.read_file(&path))
+                tokio::task::spawn_blocking(move || fs.read_file(path.as_host()))
                     .await
                     .map_err(|e| format!("baseline read task failed: {e}"))
                     .and_then(|r| {

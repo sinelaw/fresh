@@ -113,12 +113,13 @@ pub enum NodeState {
 mod tests {
     use super::*;
     use crate::model::filesystem::{DirEntry, EntryType};
+    use fresh_editor_core::model::host_path::HostPathBuf;
     use std::path::PathBuf;
 
     #[test]
     fn test_node_creation() {
         let entry = DirEntry::new(
-            PathBuf::from("/test/file.txt"),
+            HostPathBuf::from_path_buf(PathBuf::from("/test/file.txt")),
             "file.txt".to_string(),
             EntryType::File,
         );
@@ -135,7 +136,7 @@ mod tests {
     #[test]
     fn test_directory_node() {
         let entry = DirEntry::new(
-            PathBuf::from("/test/dir"),
+            HostPathBuf::from_path_buf(PathBuf::from("/test/dir")),
             "dir".to_string(),
             EntryType::Directory,
         );
@@ -151,7 +152,7 @@ mod tests {
     #[test]
     fn test_node_states() {
         let entry = DirEntry::new(
-            PathBuf::from("/test/dir"),
+            HostPathBuf::from_path_buf(PathBuf::from("/test/dir")),
             "dir".to_string(),
             EntryType::Directory,
         );
@@ -180,14 +181,18 @@ mod tests {
         // Create a simple tree structure
         let root = TreeNode::new(
             NodeId(0),
-            DirEntry::new(PathBuf::from("/"), "/".to_string(), EntryType::Directory),
+            DirEntry::new(
+                HostPathBuf::from_path_buf(PathBuf::from("/")),
+                "/".to_string(),
+                EntryType::Directory,
+            ),
             None,
         );
 
         let child1 = TreeNode::new(
             NodeId(1),
             DirEntry::new(
-                PathBuf::from("/dir1"),
+                HostPathBuf::from_path_buf(PathBuf::from("/dir1")),
                 "dir1".to_string(),
                 EntryType::Directory,
             ),
@@ -197,7 +202,7 @@ mod tests {
         let child2 = TreeNode::new(
             NodeId(2),
             DirEntry::new(
-                PathBuf::from("/dir1/dir2"),
+                HostPathBuf::from_path_buf(PathBuf::from("/dir1/dir2")),
                 "dir2".to_string(),
                 EntryType::Directory,
             ),

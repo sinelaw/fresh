@@ -22,6 +22,7 @@
 //!
 //! Performance: O(1) ≈ 10ms (lazy load) vs O(n) ≈ 1000ms (log replay)
 
+use fresh_editor_core::model::host_path::AsHostPath;
 use fresh_i18n::t;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -1018,7 +1019,8 @@ impl crate::app::window::Window {
             log_path
                 .parent()
                 .or_else(|| backing_path.parent())
-                .unwrap_or(&terminals_root),
+                .unwrap_or(&terminals_root)
+                .as_host(),
         );
 
         // Record paths using the predicted ID so buffer creation can reuse them
@@ -2069,9 +2071,17 @@ impl crate::app::window::Window {
             .remote_connection_info()
             .is_some()
         {
+            // The workspace filesystem's rules, bound before the loop so the
+            // `&mut self` call below does not fight the borrow.
+            let style = self.authority().filesystem.style();
             let mut path_to_buffer: HashMap<PathBuf, BufferId> = HashMap::new();
             for rel_path in collect_file_paths_from_states(split_states) {
-                let abs_path = self.root.join(&rel_path);
+                let abs_path = self
+                    .root
+                    .as_host()
+                    .under(style)
+                    .join_rel(&rel_path.to_string_lossy())
+                    .into_path_buf();
                 let buffer_id = self.install_remote_placeholder(&abs_path);
                 path_to_buffer.insert(rel_path, buffer_id);
             }
@@ -2981,7 +2991,9 @@ impl crate::app::window::Window {
         let search_overrides = (!overrides.is_empty()).then_some(overrides);
 
         let bookmarks = serialize_bookmarks(&self.bookmarks, &self.buffer_metadata, &self.root);
-        let closed_files = self.closed_files.relative_to(&self.root);
+        let closed_files = self
+            .closed_files
+            .relative_to(&*self.authority().filesystem, &self.root);
 
         let mut external_files: Vec<PathBuf> = self
             .buffer_metadata
@@ -3552,7 +3564,7 @@ fn get_expanded_dirs(
     for node in tree.all_nodes() {
         if node.is_expanded() && node.is_dir() {
             // Get the path and make it relative to working_dir
-            if let Ok(rel_path) = node.entry.path.strip_prefix(working_dir) {
+            if let Ok(rel_path) = node.entry.path.as_path().strip_prefix(working_dir) {
                 expanded.push(rel_path.to_path_buf());
             }
         }

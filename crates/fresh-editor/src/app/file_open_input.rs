@@ -7,8 +7,8 @@ use super::file_open::{FileOpenSection, SortMode};
 use super::prompt_actions::parse_path_line_col;
 use super::Editor;
 use crate::input::keybindings::Action;
-use crate::primitives::path_utils::expand_tilde;
 use crate::view::prompt::PromptType;
+use fresh_editor_core::model::host_path::AsHostPath;
 use fresh_i18n::t;
 
 impl Editor {
@@ -109,7 +109,7 @@ impl Editor {
                 if let Some((name, is_dir, path)) = selected_info {
                     if is_dir {
                         // Navigate into the directory
-                        self.file_open_navigate_to(path);
+                        self.file_open_navigate_to((path).into_path_buf());
                     } else {
                         // Just autocomplete the filename
                         if let Some(prompt) = &mut self.active_window_mut().prompt {
@@ -192,21 +192,34 @@ impl Editor {
 
         // If there's any prompt input, try to resolve it as a path
         if !path_input.is_empty() {
-            // Expand tilde and resolve path
-            let tilde_expanded = expand_tilde(&path_input);
-            let expanded_path = if tilde_expanded.is_absolute() {
-                tilde_expanded
-            } else {
-                // Relative path (including plain filename) - resolve against current directory
-                current_dir.join(&path_input)
-            };
+            // Resolved by the filesystem being browsed, which need not be the
+            // client's: it knows where `~` is, whether the typed path is
+            // already rooted, and which separator to join with.
+            let expanded_path = self
+                .authority()
+                .filesystem
+                .resolve_typed_path(current_dir.as_host(), &path_input)
+                .into_path_buf();
 
             // A prefix of the highlighted directory (typically a partial dotfile
             // name) is a filter, not a new filename
             let names_new_file = Self::should_create_new_file(&path_input)
                 && !self.file_open_highlighted_dir_extends(&path_input);
 
-            if expanded_path.is_dir() {
+            // Both asked of that filesystem too, and read before the `&mut
+            // self` calls below. `Path::is_dir` / `Path::is_file` stat the
+            // client, so a remote directory was taken for a new file name —
+            // and a path the client happens to have was browsed into while
+            // the host had nothing there.
+            let (is_dir, is_file) = {
+                let fs = &self.authority().filesystem;
+                (
+                    fs.is_dir(expanded_path.as_host()).unwrap_or(false),
+                    fs.is_file(expanded_path.as_host()).unwrap_or(false),
+                )
+            };
+
+            if is_dir {
                 if is_folder_mode {
                     // In folder mode, selecting a directory switches to it as the project root
                     self.file_open_select_folder(expanded_path);
@@ -218,7 +231,7 @@ impl Editor {
                 // In save mode, save to the specified path
                 self.file_open_save_file(expanded_path);
                 return;
-            } else if expanded_path.is_file() && !is_folder_mode {
+            } else if is_file && !is_folder_mode {
                 // File exists - open it directly (handles pasted paths before async load completes)
                 // Only allowed in file mode, not folder mode
                 self.file_open_open_file_at_location(expanded_path, line, column);
@@ -566,7 +579,13 @@ impl Editor {
 
         // Check if user typed/pasted a path containing directory separators
         // Navigate to the parent directory of the path (so the file appears in the list)
-        if filter.contains('/') {
+        //
+        // What separates is the browsed filesystem's business. On a POSIX
+        // host a `\` is an ordinary character in a name, so only `/` counts;
+        // on a Windows host both do.
+        let style = self.authority().filesystem.style();
+        let is_separator = |c: char| c.is_ascii() && style.is_separator(c as u8);
+        if filter.contains(is_separator) {
             let current_dir = self
                 .active_window_mut()
                 .file_open_state
@@ -574,34 +593,41 @@ impl Editor {
                 .map(|s| s.current_dir.clone())
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
-            // Build the full path
-            // Expand tilde and resolve path
-            let tilde_expanded = expand_tilde(&filter);
-            let full_path = if tilde_expanded.is_absolute() {
-                tilde_expanded
-            } else {
-                current_dir.join(&filter)
-            };
+            // Resolved by the filesystem being browsed: `~`, rooted-ness and
+            // the join all belong to it, not to the client.
+            let full_path = self
+                .authority()
+                .filesystem
+                .resolve_typed_path(current_dir.as_host(), &filter)
+                .into_path_buf();
 
-            // Get the parent directory and filename
-            let (target_dir, filename) = if filter.ends_with('/') {
-                // Path ends with /, treat the whole thing as a directory
+            // Get the parent directory and filename, split under the same
+            // rules — `Path::parent` splits a remote path on the client's
+            // separator, which is the wrong place or no place at all.
+            let (target_dir, filename) = if filter.ends_with(is_separator) {
+                // Path ends with a separator, treat the whole thing as a directory
                 (full_path.clone(), String::new())
             } else {
-                // Get parent directory so the file will be in the listing
-                let parent = full_path
+                let at = self.authority().filesystem.at(full_path.as_host());
+                let parent = at
                     .parent()
-                    .map(|p| p.to_path_buf())
-                    .unwrap_or(full_path.clone());
-                let name = full_path
+                    .map(|p| p.to_host_path_buf().into_path_buf())
+                    .unwrap_or_else(|| full_path.clone());
+                let name = at
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_default();
                 (parent, name)
             };
 
-            // Navigate to target directory if it exists and is different from current
-            if target_dir.is_dir() && target_dir != current_dir {
+            // Navigate to target directory if it exists and is different from
+            // current — existence asked of the filesystem being browsed.
+            let target_is_dir = self
+                .authority()
+                .filesystem
+                .is_dir(target_dir.as_host())
+                .unwrap_or(false);
+            if target_is_dir && target_dir != current_dir {
                 // Update prompt to only show the filename (directory is shown separately)
                 if let Some(prompt) = &mut self.active_window_mut().prompt {
                     prompt.set_input_plain(filename.clone());
@@ -726,7 +752,7 @@ impl Editor {
                 .filter(|e| e.fs_entry.is_dir())
                 .map(|e| e.fs_entry.path.clone());
             if let Some(path) = dir {
-                self.file_open_navigate_to(path);
+                self.file_open_navigate_to((path).into_path_buf());
                 return;
             }
         }

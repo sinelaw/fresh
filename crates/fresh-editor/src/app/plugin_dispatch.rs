@@ -11,6 +11,7 @@
 //!   lifecycle management, and view-control commands callable from
 //!   plugin code.
 
+use fresh_editor_core::model::host_path::AsHostPath;
 use std::sync::Arc;
 
 use anyhow::Result as AnyhowResult;
@@ -39,9 +40,18 @@ use super::{Editor, FloatingWidgetState};
 /// on case (`R` 0x52 < `r` 0x72). Walk up to the deepest existing ancestor,
 /// canonicalize that, then re-attach the missing tail so siblings share the
 /// same prefix encoding regardless of which exist.
-fn normalize_plugin_path(path: std::path::PathBuf) -> std::path::PathBuf {
+///
+/// Only for a session whose root is on *this* machine, which `local` states.
+/// 8.3 short names and the `\\?\` prefix are local-Windows phenomena, and
+/// `Path::canonicalize` resolves on the client: for a remote session root it
+/// answered about the wrong filesystem, and the walk up to a "deepest
+/// existing ancestor" could find one on the client and hand the plugin API a
+/// path on this machine in place of the host's — a Windows client would turn
+/// the remote `/srv/proj` into `C:\srv\proj`, since `/` canonicalizes to the
+/// current drive's root.
+fn normalize_plugin_path(local: bool, path: std::path::PathBuf) -> std::path::PathBuf {
     #[cfg(windows)]
-    {
+    if local {
         let canonical = canonicalize_deepest_existing(&path);
         let s = canonical.to_string_lossy();
         if let Some(stripped) = s.strip_prefix(r"\\?\") {
@@ -50,6 +60,7 @@ fn normalize_plugin_path(path: std::path::PathBuf) -> std::path::PathBuf {
         return canonical;
     }
     #[cfg(not(windows))]
+    let _ = local;
     path
 }
 
@@ -468,14 +479,17 @@ impl Editor {
                     .map(std::path::PathBuf::from)
                     .or_else(|| d.project_path.clone())
                     .unwrap_or_else(|| d.root.clone());
+                // A dormant session has no live filesystem to ask, but its
+                // authority spec already says whether it is a remote one.
+                let local = d.authority_spec.remote_backend_info(false).is_none();
                 fresh_core::api::WindowInfo {
                     id: fresh_core::WindowId(d.id),
                     // A dormant shell carries the persisted id when its
                     // workspace file had one; legacy files leave it empty.
                     stable_id: d.stable_id.clone().unwrap_or_default(),
                     label: d.label.clone(),
-                    root: normalize_plugin_path(d.root.clone()),
-                    project_path: normalize_plugin_path(project_path),
+                    root: normalize_plugin_path(local, d.root.clone()),
+                    project_path: normalize_plugin_path(local, project_path),
                     shared_worktree: d.shared_worktree,
                     // Never connected (or its window would exist) — the dock
                     // badges it as its real backend, disconnected.
@@ -503,12 +517,13 @@ impl Editor {
                     .and_then(|m| m.get("shared_worktree"))
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
+                let local = s.authority().filesystem.remote_connection_info().is_none();
                 fresh_core::api::WindowInfo {
                     id: s.id,
                     stable_id: s.stable_id.clone(),
                     label: s.label.clone(),
-                    root: normalize_plugin_path(s.root.clone()),
-                    project_path: normalize_plugin_path(project_path),
+                    root: normalize_plugin_path(local, s.root.clone()),
+                    project_path: normalize_plugin_path(local, project_path),
                     shared_worktree,
                     // A live connection is what distinguishes a live remote
                     // window from a dormant one's disconnected shell.
@@ -2655,7 +2670,11 @@ impl Editor {
     }
 
     fn handle_create_window(&mut self, root: std::path::PathBuf, label: String) {
-        if !root.is_absolute() {
+        // Rooted on *some* platform. The window's authority does not exist
+        // yet, so there is no filesystem to ask; what this check is for is
+        // rejecting a relative path, and asking the client instead made a
+        // Windows client reject a perfectly good `/srv/proj`.
+        if !root.as_host().is_rooted_anywhere() {
             tracing::warn!(
                 "CreateWindow rejected: root must be absolute, got {:?}",
                 root
@@ -3546,7 +3565,7 @@ impl Editor {
     fn handle_open_file_streaming(&mut self, path: std::path::PathBuf, request_id: u64) {
         // Ensure the file exists at 0 bytes if missing, so the open
         // path has something to load.
-        if !self.authority().filesystem.exists(&path) {
+        if !self.authority().filesystem.exists(path.as_host()) {
             if let Some(parent) = path.parent() {
                 if !parent.as_os_str().is_empty() {
                     if let Err(e) = std::fs::create_dir_all(parent) {
@@ -3650,7 +3669,7 @@ impl Editor {
             return;
         };
 
-        let new_size = match self.authority().filesystem.metadata(&path) {
+        let new_size = match self.authority().filesystem.metadata(path.as_host()) {
             Ok(m) => m.size as usize,
             Err(_) => {
                 self.resolve_json_callback::<Option<usize>>(request_id, None);
@@ -4837,7 +4856,8 @@ impl Editor {
         request_id: u64,
     ) {
         let callback_id = JsCallbackId::from(request_id);
-        if !root.is_absolute() {
+        // Rooted on some platform — see `handle_create_window`.
+        if !root.as_host().is_rooted_anywhere() {
             let msg = format!(
                 "createPreparingWindow: root must be absolute, got {:?}",
                 root
@@ -4915,7 +4935,8 @@ impl Editor {
         request_id: u64,
     ) {
         let callback_id = JsCallbackId::from(request_id);
-        if !root.is_absolute() {
+        // Rooted on some platform — see `handle_create_window`.
+        if !root.as_host().is_rooted_anywhere() {
             let msg = format!(
                 "createWindowWithTerminal: root must be absolute, got {:?}",
                 root
@@ -4945,7 +4966,11 @@ impl Editor {
         // folder, so the caller can say so. Each way it can fail says what it
         // is: gone, a file, or the error reading it (e.g. no permission).
         let spawn_dir = cwd_buf.clone().unwrap_or_else(|| root.clone());
-        let refusal = match new_connection.authority.filesystem.is_dir(&spawn_dir) {
+        let refusal = match new_connection
+            .authority
+            .filesystem
+            .is_dir(spawn_dir.as_host())
+        {
             Ok(true) => None,
             Ok(false) => Some(format!("{} is not a folder", spawn_dir.display())),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {

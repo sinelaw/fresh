@@ -14,6 +14,7 @@
 //! the full content. For large files, only modified regions are stored as chunks.
 
 use crate::model::filesystem::FileSystem;
+use crate::model::host_path::{AsHostPath, HostPathBuf};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -536,18 +537,22 @@ impl HotExitEntry {
 pub fn write_atomically(target: &Path, content: &[u8]) -> io::Result<()> {
     use std::io::Write;
     // A unique sibling name, never an existing file
-    let temp_path = crate::model::filesystem::sibling_temp_path(target);
+    let temp_path = crate::model::filesystem::sibling_temp_path(
+        target
+            .as_host()
+            .under(crate::model::host_path::PathStyle::host()),
+    );
     let mut file = std::fs::File::options()
         .write(true)
         .create_new(true)
-        .open(&temp_path)?;
+        .open(temp_path.as_path())?;
     let written = file.write_all(content);
     drop(file);
-    let result = written.and_then(|()| std::fs::rename(&temp_path, target));
+    let result = written.and_then(|()| std::fs::rename(temp_path.as_path(), target));
     if result.is_err() {
         // Best-effort cleanup; the write error is what matters
         #[allow(clippy::let_underscore_must_use)]
-        let _ = std::fs::remove_file(&temp_path);
+        let _ = std::fs::remove_file(temp_path.as_path());
     }
     result
 }
@@ -731,8 +736,15 @@ impl InplaceWriteRecovery {
     /// Where the recovery metadata of an in-place write to `dest_path` is
     /// kept in `recovery_dir`: `<path hash>.inplace.json`, so there is at
     /// most one per destination.
-    pub fn meta_path(recovery_dir: &Path, dest_path: &Path) -> PathBuf {
-        recovery_dir.join(format!("{}{}", path_hash(dest_path), Self::META_SUFFIX))
+    pub fn meta_path(recovery_dir: &Path, dest_path: &Path) -> HostPathBuf {
+        recovery_dir
+            .as_host()
+            .under(crate::model::host_path::PathStyle::host())
+            .join_name(std::ffi::OsStr::new(&format!(
+                "{}{}",
+                path_hash(dest_path),
+                Self::META_SUFFIX
+            )))
     }
 
     const META_SUFFIX: &'static str = ".inplace.json";
@@ -740,11 +752,11 @@ impl InplaceWriteRecovery {
     /// Every in-place write recovery whose metadata is in `recovery_dir`,
     /// with the path of that metadata, oldest first. Metadata that can't be
     /// read or parsed is skipped; a directory that can't be listed has none.
-    pub fn scan(fs: &dyn FileSystem, recovery_dir: &Path) -> Vec<(PathBuf, Self)> {
-        let Ok(entries) = fs.read_dir(recovery_dir) else {
+    pub fn scan(fs: &dyn FileSystem, recovery_dir: &Path) -> Vec<(HostPathBuf, Self)> {
+        let Ok(entries) = fs.read_dir(recovery_dir.as_host()) else {
             return Vec::new();
         };
-        let mut found: Vec<(PathBuf, Self)> = entries
+        let mut found: Vec<(HostPathBuf, Self)> = entries
             .into_iter()
             .filter(|entry| entry.is_file() && entry.name.ends_with(Self::META_SUFFIX))
             .filter_map(|entry| {
@@ -767,7 +779,7 @@ impl InplaceWriteRecovery {
 /// copies in-place saves stage, which are recovery data themselves — is
 /// left alone. Returns how many were removed.
 pub fn remove_orphaned_temp_files(fs: &dyn FileSystem, dir: &Path) -> io::Result<usize> {
-    let entries = match fs.read_dir(dir) {
+    let entries = match fs.read_dir(dir.as_host()) {
         Ok(entries) => entries,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(0),
         Err(e) => return Err(e),

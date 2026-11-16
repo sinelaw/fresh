@@ -13,6 +13,7 @@ use crate::input::commands::Suggestion;
 use crate::input::fuzzy::FuzzyMatcher;
 use crate::services::project_files;
 use crate::view::file_tree::ignore::CustomIgnore;
+use fresh_editor_core::model::host_path::AsHostPath;
 use fresh_i18n::t;
 
 // ============================================================================
@@ -573,11 +574,15 @@ impl FileProvider {
             let typed_into_ignored = !dir.is_empty() && custom_ignore.matches(Path::new(dir), true);
             !typed_into_ignored && custom_ignore.matches(Path::new(rel), false)
         };
-        let abs_path = Path::new(cwd).join(query);
+        let abs_path = self
+            .filesystem
+            .at(Path::new(cwd).as_host())
+            .join_rel(query)
+            .into_path_buf();
         let mut results = Vec::new();
 
         // If the query points to a directory, list its file contents.
-        if let Ok(entries) = self.filesystem.read_dir(&abs_path) {
+        if let Ok(entries) = self.filesystem.read_dir(abs_path.as_host()) {
             let query_trimmed = query.trim_end_matches('/');
             for entry in entries {
                 if entry.is_file() && (show_hidden || !entry.name.starts_with('.')) {
@@ -598,18 +603,20 @@ impl FileProvider {
 
         // Otherwise, list the parent directory and filter by the basename
         // prefix (e.g. query "etc/hosts" → parent "/etc", prefix "hosts").
-        let parent = match abs_path.parent() {
+        // Split under the filesystem's rules, not the client's: the last `/`
+        // of a remote POSIX path is the split a Windows client would miss.
+        let typed = self.filesystem.at(abs_path.as_host());
+        let parent = match typed.parent() {
             Some(p) => p,
             None => return (results, false),
         };
-        let basename = match abs_path.file_name().and_then(|n| n.to_str()) {
+        let basename = match typed.file_name().and_then(|n| n.to_str()) {
             Some(b) => b,
             None => return (results, false),
         };
 
-        let rel_parent = match parent.strip_prefix(cwd) {
-            Ok(p) => crate::primitives::path_utils::rel_to_slash_string(p),
-            Err(_) => return (results, false),
+        let Some(rel_parent) = self.filesystem.at(parent).rel_to(Path::new(cwd).as_host()) else {
+            return (results, false);
         };
 
         let include_hidden = show_hidden || basename.starts_with('.');

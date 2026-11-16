@@ -5,6 +5,8 @@
 //! All code paths that set or change a buffer's language should go through this module.
 
 use crate::config::LanguageConfig;
+#[cfg(test)]
+use crate::model::host_path::{AsHostPath, HostPath, HostPathBuf};
 use crate::primitives::grammar::GrammarEntry;
 use crate::primitives::highlight_engine::HighlightEngine;
 use crate::primitives::highlighter::Language;
@@ -362,18 +364,35 @@ mod tests {
     }
 
     impl FileSystem for FakeTree {
-        fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
+        fn style(&self) -> crate::model::host_path::PathStyle {
+            // Pretending to be an SSH host means pretending to its rules.
+            if self.connection.is_some() {
+                crate::model::host_path::PathStyle::Posix
+            } else {
+                crate::model::host_path::PathStyle::host()
+            }
+        }
+
+        fn read_dir(&self, path: &HostPath) -> io::Result<Vec<DirEntry>> {
+            let path = path.as_path();
             self.count_op();
             let Some(names) = self.dirs.get(path) else {
                 return Self::missing();
             };
             Ok(names
                 .iter()
-                .map(|name| DirEntry::new(path.join(name), name.clone(), EntryType::File))
+                .map(|name| {
+                    DirEntry::new(
+                        HostPathBuf::from_path_buf(path.join(name)),
+                        name.clone(),
+                        EntryType::File,
+                    )
+                })
                 .collect())
         }
 
-        fn metadata(&self, path: &Path) -> io::Result<FileMetadata> {
+        fn metadata(&self, path: &HostPath) -> io::Result<FileMetadata> {
+            let path = path.as_path();
             self.count_op();
             match self.files.get(path) {
                 Some(bytes) => Ok(FileMetadata::new(bytes.len() as u64)),
@@ -381,7 +400,8 @@ mod tests {
             }
         }
 
-        fn read_range(&self, path: &Path, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+        fn read_range(&self, path: &HostPath, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+            let path = path.as_path();
             self.count_op();
             let Some(bytes) = self.files.get(path) else {
                 return Self::missing();
@@ -402,94 +422,123 @@ mod tests {
         }
 
         // ---- boilerplate: everything the probe must never touch ----
-        fn read_file(&self, path: &Path) -> io::Result<Vec<u8>> {
-            NoopFileSystem.read_file(path)
+        fn read_file(&self, path: &HostPath) -> io::Result<Vec<u8>> {
+            let path = path.as_path();
+            NoopFileSystem.read_file(path.as_host())
         }
-        fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()> {
-            NoopFileSystem.write_file(path, data)
+        fn write_file(&self, path: &HostPath, data: &[u8]) -> io::Result<()> {
+            let path = path.as_path();
+            NoopFileSystem.write_file(path.as_host(), data)
         }
-        fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
-            NoopFileSystem.create_file(path)
+        fn create_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+            let path = path.as_path();
+            NoopFileSystem.create_file(path.as_host())
         }
-        fn create_new_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
-            NoopFileSystem.create_new_file(path)
+        fn create_new_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+            let path = path.as_path();
+            NoopFileSystem.create_new_file(path.as_host())
         }
-        fn create_new_private_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
-            NoopFileSystem.create_new_private_file(path)
+        fn create_new_private_file(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+            let path = path.as_path();
+            NoopFileSystem.create_new_private_file(path.as_host())
         }
-        fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
-            NoopFileSystem.open_file(path)
+        fn open_file(&self, path: &HostPath) -> io::Result<Box<dyn FileReader>> {
+            let path = path.as_path();
+            NoopFileSystem.open_file(path.as_host())
         }
-        fn open_file_for_write(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
-            NoopFileSystem.open_file_for_write(path)
+        fn open_file_for_write(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+            let path = path.as_path();
+            NoopFileSystem.open_file_for_write(path.as_host())
         }
-        fn open_file_for_append(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
-            NoopFileSystem.open_file_for_append(path)
+        fn open_file_for_append(&self, path: &HostPath) -> io::Result<Box<dyn FileWriter>> {
+            let path = path.as_path();
+            NoopFileSystem.open_file_for_append(path.as_host())
         }
-        fn set_file_length(&self, path: &Path, len: u64) -> io::Result<()> {
-            NoopFileSystem.set_file_length(path, len)
+        fn set_file_length(&self, path: &HostPath, len: u64) -> io::Result<()> {
+            let path = path.as_path();
+            NoopFileSystem.set_file_length(path.as_host(), len)
         }
-        fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
-            NoopFileSystem.rename(from, to)
+        fn rename(&self, from: &HostPath, to: &HostPath) -> io::Result<()> {
+            let from = from.as_path();
+            let to = to.as_path();
+            NoopFileSystem.rename(from.as_host(), to.as_host())
         }
-        fn copy(&self, from: &Path, to: &Path) -> io::Result<u64> {
-            NoopFileSystem.copy(from, to)
+        fn copy(&self, from: &HostPath, to: &HostPath) -> io::Result<u64> {
+            let from = from.as_path();
+            let to = to.as_path();
+            NoopFileSystem.copy(from.as_host(), to.as_host())
         }
-        fn remove_file(&self, path: &Path) -> io::Result<()> {
-            NoopFileSystem.remove_file(path)
+        fn remove_file(&self, path: &HostPath) -> io::Result<()> {
+            let path = path.as_path();
+            NoopFileSystem.remove_file(path.as_host())
         }
-        fn remove_dir(&self, path: &Path) -> io::Result<()> {
-            NoopFileSystem.remove_dir(path)
+        fn remove_dir(&self, path: &HostPath) -> io::Result<()> {
+            let path = path.as_path();
+            NoopFileSystem.remove_dir(path.as_host())
         }
-        fn symlink_metadata(&self, path: &Path) -> io::Result<FileMetadata> {
-            NoopFileSystem.symlink_metadata(path)
+        fn symlink_metadata(&self, path: &HostPath) -> io::Result<FileMetadata> {
+            let path = path.as_path();
+            NoopFileSystem.symlink_metadata(path.as_host())
         }
-        fn is_dir(&self, path: &Path) -> io::Result<bool> {
-            NoopFileSystem.is_dir(path)
+        fn is_dir(&self, path: &HostPath) -> io::Result<bool> {
+            let path = path.as_path();
+            NoopFileSystem.is_dir(path.as_host())
         }
-        fn is_file(&self, path: &Path) -> io::Result<bool> {
-            NoopFileSystem.is_file(path)
+        fn is_file(&self, path: &HostPath) -> io::Result<bool> {
+            let path = path.as_path();
+            NoopFileSystem.is_file(path.as_host())
         }
-        fn set_permissions(&self, path: &Path, permissions: &FilePermissions) -> io::Result<()> {
-            NoopFileSystem.set_permissions(path, permissions)
+        fn set_permissions(
+            &self,
+            path: &HostPath,
+            permissions: &FilePermissions,
+        ) -> io::Result<()> {
+            let path = path.as_path();
+            NoopFileSystem.set_permissions(path.as_host(), permissions)
         }
-        fn create_dir(&self, path: &Path) -> io::Result<()> {
-            NoopFileSystem.create_dir(path)
+        fn create_dir(&self, path: &HostPath) -> io::Result<()> {
+            let path = path.as_path();
+            NoopFileSystem.create_dir(path.as_host())
         }
-        fn create_dir_all(&self, path: &Path) -> io::Result<()> {
-            NoopFileSystem.create_dir_all(path)
+        fn create_dir_all(&self, path: &HostPath) -> io::Result<()> {
+            let path = path.as_path();
+            NoopFileSystem.create_dir_all(path.as_host())
         }
-        fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
-            NoopFileSystem.canonicalize(path)
+        fn canonicalize(&self, path: &HostPath) -> io::Result<HostPathBuf> {
+            let path = path.as_path();
+            NoopFileSystem.canonicalize(path.as_host())
         }
         fn current_uid(&self) -> u32 {
             0
         }
         fn search_file(
             &self,
-            path: &Path,
+            path: &HostPath,
             pattern: &str,
             opts: &FileSearchOptions,
         ) -> io::Result<Vec<SearchMatch>> {
-            NoopFileSystem.search_file(path, pattern, opts)
+            let path = path.as_path();
+            NoopFileSystem.search_file(path.as_host(), pattern, opts)
         }
         fn sudo_write(
             &self,
-            path: &Path,
+            path: &HostPath,
             data: &[u8],
             mode: Option<u32>,
             owner: Option<(u32, u32)>,
         ) -> io::Result<()> {
-            NoopFileSystem.sudo_write(path, data, mode, owner)
+            let path = path.as_path();
+            NoopFileSystem.sudo_write(path.as_host(), data, mode, owner)
         }
         fn walk(
             &self,
-            root: &Path,
+            root: &HostPath,
             opts: &WalkOptions<'_>,
             cancel: &std::sync::atomic::AtomicBool,
             on_entry: &mut dyn FnMut(WalkEntry<'_>) -> bool,
         ) -> io::Result<()> {
-            NoopFileSystem.walk(root, opts, cancel, on_entry)
+            let root = root.as_path();
+            NoopFileSystem.walk(root.as_host(), opts, cancel, on_entry)
         }
         /// A remote fake answers the whole climb in one call, like the SSH
         /// filesystem's single `find_up` request; a local fake falls through
@@ -499,10 +548,11 @@ mod tests {
         /// exactly one round trip.
         fn find_up(
             &self,
-            start: &Path,
+            start: &HostPath,
             markers: &[&str],
             max_dirs: Option<usize>,
-        ) -> io::Result<Vec<PathBuf>> {
+        ) -> io::Result<Vec<HostPathBuf>> {
+            let start = start.as_path();
             self.find_up_calls.fetch_add(1, Ordering::SeqCst);
             // Remote: the host does the climbing, so no per-directory op is
             // charged. Local: charge one op per directory, as the trait's
@@ -522,7 +572,7 @@ mod tests {
                     self.files.contains_key(&dir.join(m))
                 });
                 if hit {
-                    found.push(dir.to_path_buf());
+                    found.push(dir.as_host().to_host_path_buf());
                 }
                 visited += 1;
                 current = dir.parent();

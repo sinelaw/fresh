@@ -11,6 +11,7 @@
 //! deciding which split to focus. Each variant differs only in how it
 //! handles encoding errors, focus, and "no file at this path yet" cases.
 
+use fresh_editor_core::model::host_path::{AsHostPath, HostPathBuf};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -558,8 +559,8 @@ impl Editor {
         let canonical_path = self
             .authority()
             .filesystem
-            .canonicalize(&resolved_path)
-            .unwrap_or_else(|_| resolved_path.clone());
+            .canonicalize(resolved_path.as_host())
+            .unwrap_or_else(|_| HostPathBuf::from_path_buf(resolved_path.clone()));
         let path = canonical_path.as_path();
 
         // Check if already open
@@ -627,6 +628,7 @@ impl Editor {
             .insert(buffer_id, crate::model::event::EventLog::new());
 
         let metadata = super::types::BufferMetadata::with_file(
+            &*std::sync::Arc::clone(&self.authority().filesystem),
             path.to_path_buf(),
             &display_path,
             self.working_dir(),
@@ -757,8 +759,8 @@ impl Editor {
         let canonical_path = self
             .authority()
             .filesystem
-            .canonicalize(&resolved_path)
-            .unwrap_or_else(|_| resolved_path.clone());
+            .canonicalize(resolved_path.as_host())
+            .unwrap_or_else(|_| HostPathBuf::from_path_buf(resolved_path.clone()));
         let path = canonical_path.as_path();
 
         // Check if already open
@@ -812,6 +814,7 @@ impl Editor {
             .insert(buffer_id, crate::model::event::EventLog::new());
 
         let metadata = super::types::BufferMetadata::with_file(
+            &*std::sync::Arc::clone(&self.authority().filesystem),
             path.to_path_buf(),
             &display_path,
             self.working_dir(),
@@ -907,7 +910,7 @@ impl Editor {
         // `open_file` focuses, which is what callers (goto-def,
         // workspace edits) expect — they want the cursor to land in
         // the destination buffer afterward.
-        if self.authority().filesystem.exists(&host_path) {
+        if self.authority().filesystem.exists(host_path.as_host()) {
             return self.open_file(&host_path);
         }
 
@@ -1191,7 +1194,8 @@ impl crate::app::window::Window {
         let canonicalize = |p: &Path| {
             self.authority()
                 .filesystem
-                .canonicalize(p)
+                .canonicalize(p.as_host())
+                .map(HostPathBuf::into_path_buf)
                 .unwrap_or_else(|_| p.to_path_buf())
         };
         let canonical_data = canonicalize(&self.resources.dir_context.data_dir);
@@ -1268,6 +1272,7 @@ impl crate::app::window::Window {
 
         // Create metadata for this buffer
         let mut metadata = crate::app::types::BufferMetadata::with_file(
+            &*std::sync::Arc::clone(&self.authority().filesystem),
             path.to_path_buf(),
             display_path,
             &self.root,
@@ -1287,7 +1292,7 @@ impl crate::app::window::Window {
         if file_exists
             && !metadata.read_only
             && self.resources.config.editor.auto_read_only
-            && !self.authority().filesystem.is_writable(path)
+            && !self.authority().filesystem.is_writable(path.as_host())
         {
             metadata.read_only = true;
         }
@@ -1366,6 +1371,7 @@ impl crate::app::window::Window {
             self.authority()
                 .filesystem
                 .home_dir()
+                .map(HostPathBuf::into_path_buf)
                 .unwrap_or_else(|_| self.root.clone())
         } else {
             self.root.clone()
@@ -1379,7 +1385,7 @@ impl crate::app::window::Window {
 
         // Determine if we're opening a non-existent file (for creating new files)
         // Use filesystem trait method to support remote files
-        let file_exists = self.authority().filesystem.exists(&resolved_path);
+        let file_exists = self.authority().filesystem.exists(resolved_path.as_host());
 
         // Save the user-visible (non-canonicalized) path for language detection.
         // Glob patterns in language config should match the path as the user sees it,
@@ -1392,7 +1398,8 @@ impl crate::app::window::Window {
         let canonical_path = if file_exists {
             self.authority()
                 .filesystem
-                .canonicalize(&resolved_path)
+                .canonicalize(resolved_path.as_host())
+                .map(HostPathBuf::into_path_buf)
                 .unwrap_or_else(|_| resolved_path.clone())
         } else {
             // For non-existent files, canonicalize parent dir and append filename
@@ -1403,7 +1410,8 @@ impl crate::app::window::Window {
                 } else {
                     self.authority()
                         .filesystem
-                        .canonicalize(parent)
+                        .canonicalize(parent.as_host())
+                        .map(HostPathBuf::into_path_buf)
                         .unwrap_or_else(|_| parent.to_path_buf())
                 };
                 if let Some(filename) = resolved_path.file_name() {
@@ -1450,7 +1458,12 @@ impl crate::app::window::Window {
         // Check if the path is a directory (after following symlinks via canonicalize)
         // Directories cannot be opened as files in the editor
         // Use filesystem trait method to support remote files
-        if self.authority().filesystem.is_dir(path).unwrap_or(false) {
+        if self
+            .authority()
+            .filesystem
+            .is_dir(path.as_host())
+            .unwrap_or(false)
+        {
             anyhow::bail!(t!("buffer.cannot_open_directory"));
         }
 

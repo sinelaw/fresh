@@ -6,6 +6,7 @@
 
 use crate::input::fuzzy::fuzzy_match;
 use crate::model::filesystem::{DirEntry, EntryType, FileSystem};
+use fresh_editor_core::model::host_path::{AsHostPath, HostPathBuf};
 use fresh_i18n::t;
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
@@ -210,7 +211,7 @@ impl FileOpenState {
         if let Ok(home) = filesystem.home_dir() {
             shortcuts.push(NavigationShortcut {
                 label: "~".to_string(),
-                path: home,
+                path: (home).into_path_buf(),
                 description: t!("file_browser.home_dir").to_string(),
             });
         }
@@ -227,7 +228,7 @@ impl FileOpenState {
 
         // Documents directory - check existence via filesystem trait
         if let Some(docs) = dirs::document_dir() {
-            if filesystem.exists(&docs) {
+            if filesystem.exists(docs.as_host()) {
                 shortcuts.push(NavigationShortcut {
                     label: t!("file_browser.documents").to_string(),
                     path: docs,
@@ -238,7 +239,7 @@ impl FileOpenState {
 
         // Downloads directory - check existence via filesystem trait
         if let Some(downloads) = dirs::download_dir() {
-            if filesystem.exists(&downloads) {
+            if filesystem.exists(downloads.as_host()) {
                 shortcuts.push(NavigationShortcut {
                     label: t!("file_browser.downloads").to_string(),
                     path: downloads,
@@ -255,7 +256,7 @@ impl FileOpenState {
         {
             for letter in b'A'..=b'Z' {
                 let path = PathBuf::from(format!("{}:\\", letter as char));
-                if filesystem.exists(&path) {
+                if filesystem.exists(path.as_host()) {
                     shortcuts.push(NavigationShortcut {
                         label: format!("{}:", letter as char),
                         path,
@@ -306,8 +307,11 @@ impl FileOpenState {
 
         // Add ".." entry for parent directory navigation (unless at root)
         if let Some(parent) = self.current_dir.parent() {
-            let parent_entry =
-                DirEntry::new(parent.to_path_buf(), "..".to_string(), EntryType::Directory);
+            let parent_entry = DirEntry::new(
+                HostPathBuf::from_path_buf(parent.to_path_buf()),
+                "..".to_string(),
+                EntryType::Directory,
+            );
             result.push(FileOpenEntry {
                 fs_entry: parent_entry,
                 matches_filter: true,
@@ -654,7 +658,7 @@ impl FileOpenState {
             FileOpenSection::Files => self
                 .selected_index()
                 .and_then(|idx| self.entries.get(idx))
-                .map(|e| e.fs_entry.path.clone()),
+                .map(|e| e.fs_entry.path.clone().into_path_buf()),
         }
     }
 
@@ -733,7 +737,7 @@ mod tests {
 
     fn make_entry(name: &str, is_dir: bool) -> DirEntry {
         DirEntry::new(
-            PathBuf::from(format!("/test/{}", name)),
+            HostPathBuf::from_path_buf(PathBuf::from(format!("/test/{}", name))),
             name.to_string(),
             if is_dir {
                 EntryType::Directory

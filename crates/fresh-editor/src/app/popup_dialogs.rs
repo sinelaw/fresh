@@ -9,6 +9,7 @@
 //! `build_and_show_lsp_status_popup`.
 
 use crate::view::theme::ThemeStyle;
+use fresh_editor_core::model::host_path::AsHostPath;
 use fresh_i18n::t;
 
 use crate::app::warning_domains::WarningDomain;
@@ -1461,8 +1462,10 @@ impl Editor {
             return; // respect a decision the user already recorded
         }
 
-        let markers =
-            crate::services::workspace_trust::executable_content_markers(self.working_dir());
+        let markers = crate::services::workspace_trust::executable_content_markers(
+            &*self.authority().filesystem,
+            self.working_dir(),
+        );
 
         if markers.is_empty() {
             // Nothing executable to gate (plain text/docs). Trust silently so
@@ -1514,8 +1517,10 @@ impl Editor {
         use ratatui::style::Style;
 
         self.workspace_trust_prompt_cancellable = cancellable;
-        self.workspace_trust_markers =
-            crate::services::workspace_trust::executable_content_markers(self.working_dir());
+        self.workspace_trust_markers = crate::services::workspace_trust::executable_content_markers(
+            &*self.authority().filesystem,
+            self.working_dir(),
+        );
 
         // Don't stack a second copy if one is already up. The prompt lives on
         // the editor-level (global) stack so it renders regardless of which
@@ -1715,13 +1720,20 @@ impl Editor {
     fn find_devcontainer_config(&self) -> Option<std::path::PathBuf> {
         let cwd = self.working_dir();
         let fs = self.authority().filesystem.as_ref();
-        let primary = cwd.join(".devcontainer").join("devcontainer.json");
-        if fs.exists(&primary) {
-            return Some(primary);
+        let style = self.authority().filesystem.style();
+        let primary = cwd
+            .as_host()
+            .under(style)
+            .join_rel(".devcontainer/devcontainer.json");
+        if fs.exists(primary.as_host_path()) {
+            return Some(primary.into_path_buf());
         }
-        let secondary = cwd.join(".devcontainer.json");
-        if fs.exists(&secondary) {
-            return Some(secondary);
+        let secondary = cwd
+            .as_host()
+            .under(style)
+            .join_name(std::ffi::OsStr::new(".devcontainer.json"));
+        if fs.exists(secondary.as_host_path()) {
+            return Some(secondary.into_path_buf());
         }
         None
     }

@@ -28,6 +28,7 @@
 //!   small and additive so we can grow new kinds without breaking the
 //!   plugin contract.
 
+use fresh_editor_core::model::host_path::{AsHostPath, PathStyle};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -69,7 +70,14 @@ pub struct PathTranslationSpec {
 #[derive(Debug, Clone)]
 pub struct PathTranslation {
     pub host_root: PathBuf,
+    /// The rules `host_root` follows. The two roots can be on different
+    /// platforms — a Windows host with a Linux container — so each carries
+    /// its own, rather than one being guessed for both from how it is spelled
+    /// (sinelaw/fresh#3762).
+    pub host_style: PathStyle,
     pub remote_root: PathBuf,
+    /// The rules `remote_root` follows.
+    pub remote_style: PathStyle,
 }
 
 impl PathTranslation {
@@ -79,16 +87,37 @@ impl PathTranslation {
     /// through unchanged so the caller can decide whether to forward
     /// them as-is or drop them.
     pub fn host_to_remote(&self, host: &Path) -> Option<PathBuf> {
-        let rel = host.strip_prefix(&self.host_root).ok()?;
-        Some(self.remote_root.join(rel))
+        // Spelled with the *remote* root's separator: the two roots can be on
+        // different platforms (a Windows host, a Linux container), and
+        // `Path::join` would use the client's for both.
+        let rel = host
+            .as_host()
+            .under(self.host_style)
+            .rel_to(self.host_root.as_host())?;
+        Some(
+            self.remote_root
+                .as_host()
+                .under(self.remote_style)
+                .join_rel(&rel)
+                .into_path_buf(),
+        )
     }
 
     /// Map a remote-side path under `remote_root` back to its
     /// host-side counterpart. Same outside-the-workspace caveat as
     /// [`Self::host_to_remote`].
     pub fn remote_to_host(&self, remote: &Path) -> Option<PathBuf> {
-        let rel = remote.strip_prefix(&self.remote_root).ok()?;
-        Some(self.host_root.join(rel))
+        let rel = remote
+            .as_host()
+            .under(self.remote_style)
+            .rel_to(self.remote_root.as_host())?;
+        Some(
+            self.host_root
+                .as_host()
+                .under(self.host_style)
+                .join_rel(&rel)
+                .into_path_buf(),
+        )
     }
 }
 
@@ -789,7 +818,12 @@ impl Authority {
 
         let path_translation = payload.path_translation.map(|spec| PathTranslation {
             host_root: PathBuf::from(spec.host_root),
+            // The host root is on this machine, so the local rules are a fact
+            // about it; the remote root is inside the container, so its
+            // filesystem is asked.
+            host_style: PathStyle::host(),
             remote_root: PathBuf::from(spec.remote_root),
+            remote_style: filesystem.style(),
         });
 
         Ok(Self {
@@ -1800,7 +1834,9 @@ mod tests {
     fn path_translation_round_trips_under_workspace() {
         let pt = PathTranslation {
             host_root: PathBuf::from("/tmp/.tmpA1B2"),
+            host_style: PathStyle::Posix,
             remote_root: PathBuf::from("/workspaces/proj"),
+            remote_style: PathStyle::Posix,
         };
         let host = Path::new("/tmp/.tmpA1B2/src/util.py");
         let remote = pt.host_to_remote(host).expect("host under host_root");
@@ -1819,7 +1855,9 @@ mod tests {
         // says "not mine".
         let pt = PathTranslation {
             host_root: PathBuf::from("/host/proj"),
+            host_style: PathStyle::Posix,
             remote_root: PathBuf::from("/workspaces/proj"),
+            remote_style: PathStyle::Posix,
         };
         assert!(pt
             .host_to_remote(Path::new("/usr/include/stdio.h"))
