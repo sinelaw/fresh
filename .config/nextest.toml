@@ -3,10 +3,8 @@
 
 slow-timeout = { period = "60s", terminate-after = 3 }
 
-# TEMPORARY (fix/host-path-rules): "final" instead of "immediate" so the
-# failure output lands at the end of the run, where the log can be read
-# back. Revert to "immediate" before this PR is reviewed.
-failure-output = "final"
+# Show output immediately for failing tests (including timeouts)
+failure-output = "immediate"
 
 # Store failure output in JUnit reports
 [profile.default.junit]
