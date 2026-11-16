@@ -16,6 +16,8 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Workboard** - a new Orchestrator board with every workspace and agent, grouped by what needs you, by project, by folder or as a kanban; a status bar beacon jumps to the next waiting agent (#3736)
 * **New Welcome screen** - one short page with the latest release's changes, the essential keys and a Nerd Font switch (#3738)
 * **LSP completions use the server's replace range** (`textEdit`) (#3734 by @andsuli)
+* **Clickable search arrows in the status bar** step to the next/previous match (#3665 by @haigithub)
+* **Ctrl+P file mode: Tab completes the longest common prefix** of the matching paths (#3293, requested by @asukaminato0721; #3581 by @peyton-durand)
 * **Plugins can declare map settings**, edited in the Settings UI as a list of entries (#3751)
 
 ### Bug Fixes
@@ -25,6 +27,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **`fresh FILE` remembers the cursor position** after quitting with the file open (#3748, reported by @shemgp)
 * **LSP diagnostics refresh** - servers like rust-analyzer and Roslyn now push updated diagnostics without an edit (#3681, #3682 by @StonesFromTheSky)
 * **Live diff and git gutter ignore line-ending style** - CRLF vs LF no longer marks whole files as changed on Windows (#3747 by @ezleyton)
+* **Remote paths across platforms** - a Windows client on a Linux host (or the reverse) no longer mangles path separators; Unix file names containing `\` open correctly (#3758, #3762, #3581)
 * **macOS honors `XDG_CONFIG_HOME` and `XDG_DATA_HOME`**; existing installs keep their current directories until the new ones exist (#3496, #3497 by @LuisAlejandro)
 * **Terminals restore in the directory the shell `cd`'d to**, and an exited terminal keeps its tab name across a restart (#3740, #3074)
 * **Inlay hints keep their own colour** next to a highlighted bracket or search match (#3622 by @mommysgoodpuppy)
