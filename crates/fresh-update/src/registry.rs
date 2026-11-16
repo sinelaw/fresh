@@ -242,8 +242,27 @@ pub fn plan(prov: &Provenance) -> UpdatePlan {
             "--accept-source-agreements",
             "--disable-interactivity",
         ]),
-        // `flake.nix` builds with `pname = "fresh"`, which is the name a
-        // profile element gets, so this is what `nix profile upgrade` matches.
+        // `nix profile upgrade` matches a profile *element* name, and the two
+        // nix install routes produce different ones: `flake.nix` builds with
+        // `pname = "fresh"`, while nixpkgs' package — which
+        // `scripts/install.sh --method=nix` now installs by default — lands as
+        // `fresh-editor`.
+        //
+        // `fresh` is nevertheless right here, because only a flake install can
+        // reach this arm. Provenance is recorded, never inferred
+        // (`provenance.rs`), and all three layers that can say "nix" are
+        // written by this repository's flake or by the user: the receipt comes
+        // from the flake's `postInstall`, `FRESH_BUILD_CHANNEL = "nix"` is set
+        // by the flake's derivation, and the override is explicit. nixpkgs
+        // builds `fresh-editor` from its own derivation, so a copy from there
+        // records none of them and resolves to `Channel::Unknown`, which
+        // routes to the releases page rather than to this command.
+        //
+        // So the nixpkgs element name is not something this binary can learn:
+        // it is not in the receipt (which the flake writes with
+        // `package_name = "fresh-editor"` either way) and it is not in the
+        // binary. It is therefore not guessed here — the installer prints the
+        // right name at install time, where it knows which installable it ran.
         Channel::Nix => Some(vec!["nix", "profile", "upgrade", "fresh"]),
         Channel::FreebsdPkg => Some(vec!["pkg", "upgrade", "fresh"]),
         Channel::Cargo => Some(vec!["cargo", "install", "--locked", &pkg]),
@@ -632,7 +651,11 @@ mod tests {
             "mise upgrade --bump github:sinelaw/fresh"
         );
         // flake.nix sets `pname = "fresh"`, not the `fresh-editor` package name
-        // the receipt carries.
+        // the receipt carries. It stays `fresh` even though
+        // `scripts/install.sh --method=nix` installs nixpkgs' `fresh-editor`
+        // by default: only the flake writes a receipt or stamps
+        // `FRESH_BUILD_CHANNEL = "nix"`, so a nixpkgs copy resolves to
+        // `Unknown` and never reaches this arm (see `plan`).
         assert_eq!(plan(&prov(Channel::Nix)).human, "nix profile upgrade fresh");
         // release.yml installs the tap formula as `Formula/fresh.rb`
         // (`class Fresh`), so the formula is `fresh`. Naming the package
