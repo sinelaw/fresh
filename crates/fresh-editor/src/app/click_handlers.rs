@@ -136,12 +136,18 @@ impl Editor {
         use crate::model::event::{CursorId, Event};
         use crossterm::event::KeyModifiers;
 
-        // Build modifiers string for plugins
-        let modifiers_str = if modifiers.contains(KeyModifiers::SHIFT) {
-            "shift".to_string()
-        } else {
-            String::new()
-        };
+        // Build modifiers string for plugins: "shift", "alt", "ctrl+shift", ...
+        // (a lone Shift still reads "shift", as it always has).
+        let modifiers_str = [
+            (KeyModifiers::CONTROL, "ctrl"),
+            (KeyModifiers::ALT, "alt"),
+            (KeyModifiers::SHIFT, "shift"),
+        ]
+        .iter()
+        .filter(|(m, _)| modifiers.contains(*m))
+        .map(|(_, name)| *name)
+        .collect::<Vec<_>>()
+        .join("+");
 
         // Compute buffer-local row/col once. Both the widget hit-test
         // and the mouse_click hook need them, and the cost (a single
@@ -528,6 +534,14 @@ impl Editor {
             return Ok(());
         }
 
+        // Alt-click (Option-click on macOS) toggles a cursor at the click, as
+        // in VS Code: it adds one, or removes the cursor already there (never
+        // the last one). The other cursors stay as they are.
+        if modifiers.contains(KeyModifiers::ALT) && !extend_selection && virtual_lines_below == 0 {
+            self.toggle_cursor_at_click(target_position);
+            return Ok(());
+        }
+
         // Move cursor to clicked position (respect shift for selection)
         let new_anchor = if extend_selection {
             Some(old_anchor.unwrap_or(old_position))
@@ -640,5 +654,32 @@ impl Editor {
         );
 
         Ok(())
+    }
+
+    /// Alt-click: add a cursor at `position`, or remove the cursor already
+    /// there when there is more than one. Logged as an undoable event.
+    fn toggle_cursor_at_click(&mut self, position: usize) {
+        use crate::model::event::Event;
+
+        let cursors = self.active_cursors();
+        let existing = cursors
+            .iter()
+            .find(|(_, c)| c.position == position)
+            .map(|(id, c)| (id, c.anchor));
+        let event = match existing {
+            Some(_) if cursors.count() <= 1 => return,
+            Some((cursor_id, anchor)) => Event::RemoveCursor {
+                cursor_id,
+                position,
+                anchor,
+            },
+            None => Event::AddCursor {
+                cursor_id: cursors.next_free_id(),
+                position,
+                anchor: None,
+            },
+        };
+        self.active_event_log_mut().append(event.clone());
+        self.apply_event_to_active_buffer(&event);
     }
 }
