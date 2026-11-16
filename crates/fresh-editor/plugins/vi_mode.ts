@@ -1418,12 +1418,21 @@ async function applyIndentToLineRange(
 
   // Build a whole-line selection [firstLineStart .. end of last line] so the
   // editor's selection-aware indent/dedent acts on every line in the range.
+  //
+  // `expand_line_selection` takes in one logical line per step. `select_down`
+  // moved by screen row, so on a soft-wrapped line `3>>` stayed inside that
+  // line and indented only it (issue #3708). The expansion ends past the last
+  // line's break; stepping back over the break keeps the next line out.
+  const count = Math.max(1, lineCount);
+  const end = await findLinewiseEndFromStart(bufferId, firstLineStart, count);
+  const endsWithBreak = end > firstLineStart
+    && /[\r\n]$/.test(await editor.getBufferText(bufferId, end - 1, end));
   editor.setBufferCursor(bufferId, firstLineStart);
   editor.executeAction("move_line_start");
-  for (let i = 1; i < Math.max(1, lineCount); i++) {
-    editor.executeAction("select_down");
+  selectWithCount("expand_line_selection", count);
+  if (endsWithBreak) {
+    editor.executeAction("select_left");
   }
-  editor.executeAction("select_line_end");
 
   editor.executeAction(operator === ">" ? "insert_tab" : "dedent_selection");
 
@@ -1739,20 +1748,74 @@ async function vi_WORD_end() : Promise<void> {
 }
 registerHandler("vi_WORD_end", vi_WORD_end);
 
-function vi_line_start() : void {
+// The caret's logical line as byte offsets, `end` sitting after the last
+// character and before the line break.
+//
+// `0`, `$`, `A`, `o` and `J` act on the whole line, but with wrapping on the
+// editor's `move_line_start` / `move_line_end` stop at each soft-wrap boundary
+// first, the way Home and End do. `$` then landed at the end of the screen row
+// and `A` inserted mid-line (issue #3708), so these read the line instead.
+async function cursorLineBounds(): Promise<{ start: number; end: number } | null> {
+  const line = editor.getPrimaryCursor()?.line ?? null;
+  if (line === null) {
+    return null;
+  }
+  const start = await editor.getLineStartPosition(line);
+  const end = await editor.getLineEndPosition(line);
+  if (start === null || end === null) {
+    return null;
+  }
+  return { start, end: Math.max(start, end) };
+}
+
+async function moveToLineStart() : Promise<void> {
+  const bounds = await cursorLineBounds();
+  if (bounds === null) {
+    editor.executeAction("move_line_start");
+    return;
+  }
+  editor.setBufferCursor(editor.getActiveBufferId(), bounds.start);
+}
+
+// Past the last character, where `A` inserts and `o` breaks the line.
+async function moveToLineEnd() : Promise<void> {
+  const bounds = await cursorLineBounds();
+  if (bounds === null) {
+    editor.executeAction("move_line_end");
+    return;
+  }
+  editor.setBufferCursor(editor.getActiveBufferId(), bounds.end);
+}
+
+async function vi_line_start() : Promise<void> {
   consumeCount(); // Count doesn't apply to line start
-  editor.executeAction("move_line_start");
+  await moveToLineStart();
 }
 registerHandler("vi_line_start", vi_line_start);
 
-function vi_line_end() : void {
+async function vi_line_end() : Promise<void> {
   consumeCount(); // Count doesn't apply to line end
-  editor.executeAction("move_line_end");
-  // In vim normal mode, cursor should be ON the last char, not past it
-  // move_line_end goes past the last char; move_left corrects this
-  editor.executeAction("move_left");
+  await moveToLineEnd();
+  // In vim normal mode, cursor should be ON the last char, not past it.
+  // The in-line step keeps an empty line's caret where it is.
+  editor.executeAction("move_left_in_line");
 }
 registerHandler("vi_line_end", vi_line_end);
+
+// `g0` / `g$`: the screen row's ends. These are what the editor's Home/End
+// actions already do with wrapping on, and with it off a row is the line.
+function vi_screen_line_start() : void {
+  consumeCount();
+  editor.executeAction("move_line_start");
+}
+registerHandler("vi_screen_line_start", vi_screen_line_start);
+
+function vi_screen_line_end() : void {
+  consumeCount();
+  editor.executeAction("move_line_end");
+  editor.executeAction("move_left_in_line");
+}
+registerHandler("vi_screen_line_end", vi_screen_line_end);
 
 async function vi_first_non_blank() : Promise<void> {
   consumeCount(); // Count doesn't apply
@@ -2121,13 +2184,13 @@ async function vi_insert_line_start() : Promise<void> {
 registerHandler("vi_insert_line_start", vi_insert_line_start);
 
 async function vi_insert_line_end() : Promise<void> {
-  editor.executeAction("move_line_end");
+  await moveToLineEnd();
   await enterInsertRepositioned("A");
 }
 registerHandler("vi_insert_line_end", vi_insert_line_end);
 
 async function vi_open_below() : Promise<void> {
-  editor.executeAction("move_line_end");
+  await moveToLineEnd();
   editor.executeAction("insert_newline");
   await enterInsertRepositioned("o");
 }
@@ -2630,10 +2693,10 @@ async function replayChange(change: LastChange, count: number): Promise<void> {
           await editor.flush();
           break;
         case "A":
-          editor.executeAction("move_line_end");
+          await moveToLineEnd();
           break;
         case "o":
-          editor.executeAction("move_line_end");
+          await moveToLineEnd();
           editor.executeAction("insert_newline");
           break;
         case "O":
@@ -2667,7 +2730,9 @@ async function joinLines(joins: number): Promise<void> {
     return;
   }
   for (let i = 0; i < Math.min(joins, lastLine - line); i++) {
-    editor.executeAction("move_line_end");
+    // The previous join moved this line's end; read it after that edit lands.
+    await editor.flush();
+    await moveToLineEnd();
     // Delete the newline character
     editor.executeAction("delete_forward");
     // Insert a space between the joined content
@@ -2779,11 +2844,11 @@ function vi_digit_9() : void { accumulateCount(9); }
 registerHandler("vi_digit_9", vi_digit_9);
 
 // 0 is special: if count is already started, it appends; otherwise it's "go to line start"
-function vi_digit_0_or_line_start() : void {
+async function vi_digit_0_or_line_start() : Promise<void> {
   if (state.count !== null) {
     accumulateCount(0);
   } else {
-    editor.executeAction("move_line_start");
+    await moveToLineStart();
   }
 }
 registerHandler("vi_digit_0_or_line_start", vi_digit_0_or_line_start);
@@ -2900,15 +2965,29 @@ function vi_vblock_right() : void {
 }
 registerHandler("vi_vblock_right", vi_vblock_right);
 
-function vi_vblock_line_start() : void {
+// The logical line's ends, not the soft-wrapped row's (`cursorLineBounds`).
+// `0` takes the character the block started on with it, as visual `0` does
+// (`extendVisualBackward`).
+async function vi_vblock_line_start() : Promise<void> {
   consumeCount();
-  editor.executeAction("select_line_start");
+  const bounds = await cursorLineBounds();
+  if (bounds === null) {
+    editor.executeAction("select_line_start");
+    return;
+  }
+  await reseatVisualAnchorForBackwardMotion();
+  await selectToPosition(bounds.start);
 }
 registerHandler("vi_vblock_line_start", vi_vblock_line_start);
 
-function vi_vblock_line_end() : void {
+async function vi_vblock_line_end() : Promise<void> {
   consumeCount();
-  editor.executeAction("select_line_end");
+  const bounds = await cursorLineBounds();
+  if (bounds === null) {
+    editor.executeAction("select_line_end");
+    return;
+  }
+  await selectToPosition(bounds.end);
 }
 registerHandler("vi_vblock_line_end", vi_vblock_line_end);
 
@@ -3112,6 +3191,11 @@ async function verticalTarget(from: number, delta: number): Promise<number | nul
 // head is still forward of it (`v w w b`) would teleport the head instead of
 // shrinking the selection.
 async function extendVisualBackward(selectAction: string, count: number): Promise<void> {
+  await reseatVisualAnchorForBackwardMotion();
+  selectWithCount(selectAction, count);
+}
+
+async function reseatVisualAnchorForBackwardMotion(): Promise<void> {
   const visual = state.visual;
   if (visual !== null) {
     const bufferId = editor.getActiveBufferId();
@@ -3122,7 +3206,6 @@ async function extendVisualBackward(selectAction: string, count: number): Promis
       await editor.flush();
     }
   }
-  selectWithCount(selectAction, count);
 }
 
 // Not routed through `extendVisualBackward`: re-seating the caret before a
@@ -3159,21 +3242,35 @@ async function vi_vis_WORD_end() : Promise<void> {
 }
 registerHandler("vi_vis_WORD_end", vi_vis_WORD_end);
 
-function vi_vis_line_start() : Promise<void> {
+// Like their normal-mode counterparts, these go to the logical line's ends,
+// not the soft-wrapped row's (`cursorLineBounds`).
+async function vi_vis_line_start() : Promise<void> {
   clearComputedVisualRange();
   consumeCount();
-  return extendVisualBackward("select_line_start", 1);
+  const bounds = await cursorLineBounds();
+  if (bounds === null) {
+    return extendVisualBackward("select_line_start", 1);
+  }
+  // The highlight has to take the character `v` started on, as the computed
+  // range does (`extendVisualBackward`).
+  await reseatVisualAnchorForBackwardMotion();
+  await selectVisualRangeToTarget(bounds.start);
 }
 registerHandler("vi_vis_line_start", vi_vis_line_start);
 
-function vi_vis_line_end() : void {
+async function vi_vis_line_end() : Promise<void> {
   clearComputedVisualRange();
   consumeCount();
-  editor.executeAction("select_line_end");
   // Vim's `$` in visual mode lands *on* the end-of-line position, so the
   // inclusive selection takes the line break with it and `v$d` joins the next
   // line up. That differs from `d$`, which stops at the last character.
-  editor.executeAction("select_right");
+  const bounds = await cursorLineBounds();
+  if (bounds === null) {
+    editor.executeAction("select_line_end");
+    editor.executeAction("select_right");
+    return;
+  }
+  await selectVisualRangeToTarget(bounds.end);
 }
 registerHandler("vi_vis_line_end", vi_vis_line_end);
 
@@ -4293,6 +4390,8 @@ function defineViModes(): void {
     ["E", "vi_WORD_end"],
     ["$", "vi_line_end"],
     ["^", "vi_first_non_blank"],
+    ["g 0", "vi_screen_line_start"],
+    ["g $", "vi_screen_line_end"],
     ["g g", "vi_doc_start"],
     ["G", "vi_doc_end"],
     ["C-f", "vi_page_down"],
