@@ -2241,7 +2241,16 @@ fn handle_vertical_down(
         // position parks at the end while the virtual line count grows, so the
         // event has to go out even though the position does not change.
         let mut floated = false;
-        let new_pos = if let Some((next_line_start, next_line_content)) = next {
+        let new_pos = if clamp_to_last_char
+            && next
+                .as_ref()
+                .is_none_or(|(start, content)| *start >= state.buffer.len() && content.is_empty())
+        {
+            // Vi `j` on the last line fails and leaves the caret where it is.
+            // The empty line after a final newline is not a line in Vim's
+            // model, so `j` does not move onto it either.
+            from_pos
+        } else if let Some((next_line_start, next_line_content)) = next {
             let next_line_text = next_line_content.trim_end_matches('\n');
             let byte_offset = byte_offset_at_visual_column(next_line_text, goal_visual_column);
             let landed = next_line_start + byte_offset;

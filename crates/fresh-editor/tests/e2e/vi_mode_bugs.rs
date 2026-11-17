@@ -3543,3 +3543,254 @@ fn test_vi_shift_keeps_linewise_register() {
 
     harness.wait_for_buffer_content("    ab\nab\nz\n").unwrap();
 }
+
+// =============================================================================
+// Hands-on comparison with Vim: each test is a case where fresh differed.
+// =============================================================================
+
+/// Helper: `i`/`a` after an operator, then the object key.
+fn send_text_object(harness: &mut EditorTestHarness, op: char, modifier: char, object: char) {
+    send_operator_motion(harness, op, modifier);
+    harness
+        .wait_until(|h| h.editor().input_mode() == Some("vi-text-object".to_string()))
+        .unwrap();
+    send_key(harness, object);
+}
+
+/// `;` after non-ASCII text on the line lands on the match, not a byte or two
+/// short of it — which used to split `ü` and write invalid UTF-8.
+#[test]
+fn test_vi_find_repeat_after_multibyte_text() {
+    let (mut harness, _td, _fixture) = open_vi("ä,ö,ü,x,y\n");
+
+    send_find(&mut harness, 'f', ',');
+    harness.wait_until(|h| h.cursor_position() == 2).unwrap();
+    send_key(&mut harness, 'c');
+    harness
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
+        .unwrap();
+    send_key(&mut harness, ';');
+    change_then_type(&mut harness, "Z");
+
+    harness.wait_for_buffer_content("äZü,x,y\n").unwrap();
+}
+
+/// Non-ASCII text on an earlier line does not shift `f` on a later one.
+#[test]
+fn test_vi_find_after_multibyte_line() {
+    let (mut harness, _td, _fixture) = open_vi("ü ö ä\na,b,c\n");
+
+    send_key(&mut harness, 'j');
+    harness.wait_until(|h| h.cursor_position() == 9).unwrap();
+    send_find(&mut harness, 'f', ',');
+    harness.wait_until(|h| h.cursor_position() == 10).unwrap();
+    send_key(&mut harness, 'x');
+
+    harness.wait_for_buffer_content("ü ö ä\nab,c\n").unwrap();
+}
+
+/// `dw` on a line's last word stops at the end of the line (`:help word`).
+#[test]
+fn test_vi_dw_last_word_keeps_line_break() {
+    let (mut harness, _td, _fixture) = open_vi("foo bar\nbaz\n");
+
+    send_key(&mut harness, 'w');
+    harness.wait_until(|h| h.cursor_position() == 4).unwrap();
+    send_operator_motion(&mut harness, 'd', 'w');
+
+    harness.wait_for_buffer_content("foo \nbaz\n").unwrap();
+    harness.wait_until(|h| h.cursor_position() == 3).unwrap();
+}
+
+/// `dw` on an empty line deletes the line.
+#[test]
+fn test_vi_dw_on_empty_line_deletes_it() {
+    let (mut harness, _td, _fixture) = open_vi("\nabc\n");
+
+    send_operator_motion(&mut harness, 'd', 'w');
+
+    harness.wait_for_buffer_content("abc\n").unwrap();
+}
+
+/// `yw` on a line's last word yanks the word, not its line break.
+#[test]
+fn test_vi_yw_last_word_then_P() {
+    let (mut harness, _td, _fixture) = open_vi("abc\ndef\n");
+
+    send_operator_motion(&mut harness, 'y', 'w');
+    wait_normal(&mut harness);
+    send_key(&mut harness, 'P');
+
+    harness.wait_for_buffer_content("abcabc\ndef\n").unwrap();
+}
+
+/// Letters outside ASCII are word characters: `dw` on `über` takes the word.
+#[test]
+fn test_vi_dw_non_ascii_word() {
+    let (mut harness, _td, _fixture) = open_vi("über straße\n");
+
+    send_operator_motion(&mut harness, 'd', 'w');
+
+    harness.wait_for_buffer_content("straße\n").unwrap();
+}
+
+/// `j` on the last line does not move onto the empty line after the final
+/// newline.
+#[test]
+fn test_vi_j_stays_on_last_line() {
+    let (mut harness, _td, _fixture) = open_vi("a\nb\n");
+
+    send_key(&mut harness, 'G');
+    harness.wait_until(|h| h.cursor_position() == 2).unwrap();
+    send_key(&mut harness, 'j');
+    send_key(&mut harness, 'i');
+    change_then_type(&mut harness, "X");
+
+    harness.wait_for_buffer_content("a\nXb\n").unwrap();
+}
+
+/// `G` and `{count}gg` go to the first non-blank of their line.
+#[test]
+fn test_vi_G_and_count_gg_go_to_first_non_blank() {
+    let (mut harness, _td, _fixture) = open_vi("  a\n  b\n  c\n");
+
+    send_key(&mut harness, 'G');
+    harness.wait_until(|h| h.cursor_position() == 10).unwrap();
+    send_key(&mut harness, '2');
+    send_key(&mut harness, 'g');
+    send_key(&mut harness, 'g');
+    harness.wait_until(|h| h.cursor_position() == 6).unwrap();
+}
+
+/// `.` repeats `>j`.
+#[test]
+fn test_vi_dot_repeats_shift_motion() {
+    let (mut harness, _td, _fixture) = open_vi("a\nb\nc\nd\n");
+
+    send_operator_motion(&mut harness, '>', 'j');
+    harness
+        .wait_for_buffer_content("    a\n    b\nc\nd\n")
+        .unwrap();
+    wait_normal(&mut harness);
+    send_key(&mut harness, 'j');
+    send_key(&mut harness, 'j');
+    harness.wait_until(|h| h.cursor_position() == 12).unwrap();
+    send_key(&mut harness, '.');
+
+    harness
+        .wait_for_buffer_content("    a\n    b\n    c\n    d\n")
+        .unwrap();
+}
+
+/// A shift leaves empty lines alone, and `u` undoes it in one step.
+#[test]
+fn test_vi_shift_skips_empty_lines_and_undoes_at_once() {
+    let (mut harness, _td, _fixture) = open_vi("a\n\nb\n");
+
+    send_key(&mut harness, '>');
+    harness
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
+        .unwrap();
+    send_key(&mut harness, '2');
+    send_key(&mut harness, 'j');
+    harness.wait_for_buffer_content("    a\n\n    b\n").unwrap();
+    wait_normal(&mut harness);
+    send_key(&mut harness, 'u');
+
+    harness.wait_for_buffer_content("a\n\nb\n").unwrap();
+}
+
+/// `>>` on a tab-indented line measures the tab as columns and writes the new
+/// indent as spaces.
+#[test]
+fn test_vi_shift_tab_indent_with_spaces() {
+    let (mut harness, _td, _fixture) = open_vi("\ta\n");
+
+    send_operator_motion(&mut harness, '>', '>');
+
+    harness.wait_for_buffer_content("        a\n").unwrap();
+}
+
+/// A quote after a backslash does not close the string.
+#[test]
+fn test_vi_di_quote_skips_escaped_quote() {
+    let (mut harness, _td, _fixture) = open_vi("x = \"a\\\"b\" y\n");
+
+    send_find(&mut harness, 'f', 'a');
+    harness.wait_until(|h| h.cursor_position() == 5).unwrap();
+    send_text_object(&mut harness, 'd', 'i', '"');
+
+    harness.wait_for_buffer_content("x = \"\" y\n").unwrap();
+}
+
+/// Between two strings, `i"` is the text between them, as in Vim.
+#[test]
+fn test_vi_di_quote_between_strings() {
+    let (mut harness, _td, _fixture) = open_vi("x \"a\" y \"b\"\n");
+
+    send_find(&mut harness, 'f', 'y');
+    harness.wait_until(|h| h.cursor_position() == 6).unwrap();
+    send_text_object(&mut harness, 'd', 'i', '"');
+
+    harness.wait_for_buffer_content("x \"a\"\"b\"\n").unwrap();
+}
+
+/// `daw` on a line's only word keeps the indent.
+#[test]
+fn test_vi_daw_keeps_indent() {
+    let (mut harness, _td, _fixture) = open_vi("  foo\nx\n");
+
+    send_key(&mut harness, 'w');
+    harness.wait_until(|h| h.cursor_position() == 2).unwrap();
+    send_text_object(&mut harness, 'd', 'a', 'w');
+
+    harness.wait_for_buffer_content("  \nx\n").unwrap();
+}
+
+/// `daw` on trailing blanks of the last line fails; on an earlier line it
+/// takes the blanks.
+#[test]
+fn test_vi_daw_on_trailing_blanks() {
+    let (mut harness, _td, _fixture) = open_vi("one two   \nx\n");
+
+    send_key(&mut harness, '$');
+    harness.wait_until(|h| h.cursor_position() == 9).unwrap();
+    send_text_object(&mut harness, 'd', 'a', 'w');
+    harness.wait_for_buffer_content("one two\nx\n").unwrap();
+
+    let (mut harness, _td, _fixture) = open_vi("one two   \n");
+    send_key(&mut harness, '$');
+    harness.wait_until(|h| h.cursor_position() == 9).unwrap();
+    send_text_object(&mut harness, 'd', 'a', 'w');
+    wait_normal(&mut harness);
+    send_key(&mut harness, 'x');
+    harness.wait_for_buffer_content("one two  \n").unwrap();
+}
+
+/// A key that names no text object cancels the operator; the next key is an
+/// ordinary command again.
+#[test]
+fn test_vi_unknown_text_object_cancels_operator() {
+    let (mut harness, _td, _fixture) = open_vi("abc\n");
+
+    send_text_object(&mut harness, 'd', 'i', 'q');
+    wait_normal(&mut harness);
+    send_key(&mut harness, 'x');
+
+    harness.wait_for_buffer_content("bc\n").unwrap();
+}
+
+/// A different operator key after an operator (`dy`) cancels it: nothing is
+/// yanked, so `P` still puts what `yl` took.
+#[test]
+fn test_vi_mismatched_operator_cancels() {
+    let (mut harness, _td, _fixture) = open_vi("ab\ncd\n");
+
+    send_operator_motion(&mut harness, 'y', 'l');
+    wait_normal(&mut harness);
+    send_operator_motion(&mut harness, 'd', 'y');
+    wait_normal(&mut harness);
+    send_key(&mut harness, 'P');
+
+    harness.wait_for_buffer_content("aab\ncd\n").unwrap();
+}
