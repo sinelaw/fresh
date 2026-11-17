@@ -917,7 +917,6 @@ fn test_vi_2dd_delete_two_lines() {
 /// in the core editor and a `motionToSelection["goto_matching_bracket"]` entry in
 /// the vi_mode plugin, then remove the `#[ignore]`.
 #[test]
-#[ignore]
 fn test_vi_bug_d_percent_ignored() {
     let (mut harness, _td) = vi_mode_harness(80, 24);
     let fixture = TestFixture::new("test.txt", "foo(bar)baz\n").unwrap();
@@ -2540,4 +2539,161 @@ fn test_vi_visual_up_keeps_anchor_character() {
     send_key(&mut harness, 'd');
 
     harness.wait_for_buffer_content("bb\nccc\n").unwrap();
+}
+
+fn open_vi(content: &str) -> (EditorTestHarness, tempfile::TempDir, TestFixture) {
+    let (mut harness, td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", content).unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+    (harness, td, fixture)
+}
+
+fn edit_first_line_then_normal(harness: &mut EditorTestHarness, text: &str) {
+    send_key(harness, 'i');
+    harness
+        .wait_until(|h| h.editor().input_mode() == Some("vi-insert".to_string()))
+        .unwrap();
+    harness.type_text(text).unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    wait_normal(harness);
+}
+
+#[test]
+fn test_vi_ZZ_saves_and_quits() {
+    let (mut harness, _td, fixture) = open_vi("alpha\n");
+    edit_first_line_then_normal(&mut harness, "X");
+
+    send_key(&mut harness, 'Z');
+    send_key(&mut harness, 'Z');
+
+    harness.wait_until(|h| h.should_quit()).unwrap();
+    assert_eq!(fs::read_to_string(&fixture.path).unwrap(), "Xalpha\n");
+}
+
+#[test]
+fn test_vi_ZQ_quits_without_saving() {
+    let (mut harness, _td, fixture) = open_vi("alpha\n");
+    edit_first_line_then_normal(&mut harness, "X");
+
+    send_key(&mut harness, 'Z');
+    send_key(&mut harness, 'Q');
+
+    harness.wait_until(|h| h.should_quit()).unwrap();
+    assert_eq!(fs::read_to_string(&fixture.path).unwrap(), "alpha\n");
+}
+
+#[test]
+fn test_vi_counted_find_char_uses_count() {
+    let (mut harness, _td, _fixture) = open_vi("a.b.c.d.e\n");
+
+    send_key(&mut harness, '2');
+    send_key(&mut harness, 'f');
+    harness
+        .wait_until(|h| h.editor().input_mode() == Some("vi-find-char".to_string()))
+        .unwrap();
+    send_key(&mut harness, '.');
+
+    harness.wait_until(|h| h.cursor_position() == 3).unwrap();
+}
+
+#[test]
+fn test_vi_counted_find_char_repeat_uses_count() {
+    let (mut harness, _td, _fixture) = open_vi("a.b.c.d.e\n");
+
+    send_key(&mut harness, 'f');
+    harness
+        .wait_until(|h| h.editor().input_mode() == Some("vi-find-char".to_string()))
+        .unwrap();
+    send_key(&mut harness, '.');
+    harness.wait_until(|h| h.cursor_position() == 1).unwrap();
+
+    send_key(&mut harness, '2');
+    send_key(&mut harness, ';');
+
+    harness.wait_until(|h| h.cursor_position() == 5).unwrap();
+}
+
+#[test]
+fn test_vi_reverse_find_repeat_keeps_original_direction() {
+    let (mut harness, _td, _fixture) = open_vi("a.b.c.d.e\n");
+
+    send_key(&mut harness, 'f');
+    harness
+        .wait_until(|h| h.editor().input_mode() == Some("vi-find-char".to_string()))
+        .unwrap();
+    send_key(&mut harness, '.');
+    send_key(&mut harness, ';');
+    harness.wait_until(|h| h.cursor_position() == 3).unwrap();
+
+    send_key(&mut harness, ',');
+    harness.wait_until(|h| h.cursor_position() == 1).unwrap();
+
+    send_key(&mut harness, ';');
+    harness.wait_until(|h| h.cursor_position() == 3).unwrap();
+}
+
+#[test]
+fn test_vi_d_caret_deletes_to_first_non_blank() {
+    let (mut harness, _td, _fixture) = open_vi("    hello world\n");
+
+    send_key(&mut harness, '$');
+    harness.wait_until(|h| h.cursor_position() == 14).unwrap();
+    send_operator_motion(&mut harness, 'd', '^');
+
+    harness.wait_for_buffer_content("    d\n").unwrap();
+}
+
+#[test]
+fn test_vi_d_semicolon_repeats_find_with_operator() {
+    let (mut harness, _td, _fixture) = open_vi("a,b,c,d\n");
+
+    send_key(&mut harness, 'f');
+    harness
+        .wait_until(|h| h.editor().input_mode() == Some("vi-find-char".to_string()))
+        .unwrap();
+    send_key(&mut harness, ',');
+    harness.wait_until(|h| h.cursor_position() == 1).unwrap();
+
+    send_operator_motion(&mut harness, 'd', ';');
+
+    harness.wait_for_buffer_content("ac,d\n").unwrap();
+}
+
+#[test]
+fn test_vi_d_percent_backward_from_closing_bracket() {
+    let (mut harness, _td, _fixture) = open_vi("foo(bar)baz\n");
+
+    for _ in 0..7 {
+        send_key(&mut harness, 'l');
+    }
+    harness.wait_until(|h| h.cursor_position() == 7).unwrap();
+    send_operator_motion(&mut harness, 'd', '%');
+
+    harness.wait_for_buffer_content("foobaz\n").unwrap();
+}
+
+#[test]
+fn test_vi_plus_and_minus_move_to_first_non_blank() {
+    let (mut harness, _td, _fixture) = open_vi("  a\n  b\n  c\n");
+
+    send_key(&mut harness, '+');
+    harness.wait_until(|h| h.cursor_position() == 6).unwrap();
+
+    send_key(&mut harness, '+');
+    harness.wait_until(|h| h.cursor_position() == 10).unwrap();
+
+    send_key(&mut harness, '-');
+    harness.wait_until(|h| h.cursor_position() == 6).unwrap();
+}
+
+#[test]
+fn test_vi_underscore_with_count_moves_down_to_first_non_blank() {
+    let (mut harness, _td, _fixture) = open_vi("  a\n  b\n  c\n");
+
+    send_key(&mut harness, '3');
+    send_key(&mut harness, '_');
+
+    harness.wait_until(|h| h.cursor_position() == 10).unwrap();
 }
