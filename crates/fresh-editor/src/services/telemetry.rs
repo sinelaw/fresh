@@ -1,5 +1,5 @@
 use super::time_source::TimeSource;
-use jiff::civil::Date;
+use chrono::NaiveDate;
 use serde::Serialize;
 use std::collections::hash_map::RandomState;
 use std::env::consts::{ARCH, OS};
@@ -28,7 +28,7 @@ struct Event {
 /// Stamp file data containing unique ID and last check date
 struct StampData {
     unique_id: String,
-    last_date: Date,
+    last_date: NaiveDate,
 }
 
 /// Get the path to the telemetry stamp file
@@ -52,8 +52,8 @@ fn generate_unique_id() -> String {
 }
 
 /// Format stamp data into file content.
-fn format_stamp_content(unique_id: &str, date: Date) -> String {
-    format!("{}\n{}\n", unique_id, date.strftime("%Y-%m-%d"))
+fn format_stamp_content(unique_id: &str, date: NaiveDate) -> String {
+    format!("{}\n{}\n", unique_id, date.format("%Y-%m-%d"))
 }
 
 /// Parse stamp file content into StampData.
@@ -62,7 +62,7 @@ fn parse_stamp_content(content: &str) -> Option<StampData> {
     let mut lines = content.lines();
     let unique_id = lines.next().filter(|s| !s.is_empty())?.to_string();
     let date_str = lines.next().filter(|s| !s.is_empty())?;
-    let last_date = Date::strptime("%Y-%m-%d", date_str).ok()?;
+    let last_date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d").ok()?;
     Some(StampData {
         unique_id,
         last_date,
@@ -78,7 +78,7 @@ fn read_stamp_file(data_dir: &std::path::Path) -> Option<StampData> {
 }
 
 /// Write stamp file with unique_id and the given date
-fn write_stamp_file(data_dir: &std::path::Path, unique_id: &str, today: Date) -> bool {
+fn write_stamp_file(data_dir: &std::path::Path, unique_id: &str, today: NaiveDate) -> bool {
     let path = stamp_file_path(data_dir);
 
     // Create parent directory if needed
@@ -161,7 +161,10 @@ mod tests {
         for content in ["abc123\n2025-01-15\n", "abc123\n2025-01-15"] {
             let result = parse_stamp_content(content).unwrap();
             assert_eq!(result.unique_id, "abc123");
-            assert_eq!(result.last_date, jiff::civil::date(2025, 1, 15));
+            assert_eq!(
+                result.last_date,
+                NaiveDate::from_ymd_opt(2025, 1, 15).unwrap()
+            );
         }
     }
 
@@ -216,8 +219,9 @@ mod proptests {
         "[a-zA-Z0-9]{1,32}".prop_map(|s| s.to_string())
     }
 
-    fn valid_date() -> impl Strategy<Value = Date> {
-        (1970i16..2100, 1i8..=12, 1i8..=28).prop_map(|(y, m, d)| Date::new(y, m, d).unwrap())
+    fn valid_date() -> impl Strategy<Value = NaiveDate> {
+        (1970i32..2100, 1u32..=12, 1u32..=28)
+            .prop_map(|(y, m, d)| NaiveDate::from_ymd_opt(y, m, d).unwrap())
     }
 
     proptest! {

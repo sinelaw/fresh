@@ -142,7 +142,7 @@ where
         }
 
         // Build the log line
-        let timestamp = jiff::Zoned::now().strftime("%Y-%m-%d %H:%M:%S%.3f");
+        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
         let target = event.metadata().target();
 
         let line = if suppressed_count > 0 {

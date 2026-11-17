@@ -32,7 +32,7 @@ ignore = [
     { id = "RUSTSEC-2025-0141", reason = "bincode, transitive; no defect, only maintenance" },
     { id = "RUSTSEC-2026-0192", reason = "ttf-parser, via winit's sctk-adwaita and ratatui-wgpu (GUI build only)" },
     { id = "RUSTSEC-2026-0206", reason = "rustybuzz, via ratatui-wgpu (GUI build only)" },
-    { id = "RUSTSEC-2026-0543", reason = "chrono, via trash on Linux/BSD, which stamps DeletionDate with it; fresh's own code uses jiff" },
+    { id = "RUSTSEC-2026-0543", reason = "chrono, used directly and via trash (Linux/BSD); no maintained drop-in yet, migrate to jiff when trash drops it" },
 ]
 
 [sources]

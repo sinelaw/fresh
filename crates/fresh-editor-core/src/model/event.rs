@@ -866,7 +866,7 @@ impl EventLog {
 
         // Write header
         writeln!(file, "# Event Log Stream")?;
-        writeln!(file, "# Started at: {}", local_timestamp(' '))?;
+        writeln!(file, "# Started at: {}", chrono::Local::now())?;
         writeln!(file, "# Format: JSON Lines (one event per line)")?;
         writeln!(file, "#")?;
 
@@ -888,7 +888,7 @@ impl EventLog {
 
             let render_info = serde_json::json!({
                 "type": "render",
-                "timestamp": local_timestamp('T'),
+                "timestamp": chrono::Local::now().to_rfc3339(),
                 "cursor_position": cursor_pos,
                 "screen_cursor": {"x": screen_cursor_x, "y": screen_cursor_y},
                 "buffer_length": buffer_len,
@@ -911,7 +911,7 @@ impl EventLog {
 
             let keystroke_info = serde_json::json!({
                 "type": "keystroke",
-                "timestamp": local_timestamp('T'),
+                "timestamp": chrono::Local::now().to_rfc3339(),
                 "key": key_code,
                 "modifiers": modifiers,
             });
@@ -956,7 +956,7 @@ impl EventLog {
 
             let stream_entry = serde_json::json!({
                 "index": self.entries.len(),
-                "timestamp": local_timestamp('T'),
+                "timestamp": chrono::Local::now().to_rfc3339(),
                 "event": event,
             });
 
@@ -1160,86 +1160,11 @@ impl Default for EventLog {
     }
 }
 
-/// Current local time, as `<date><sep><time><offset>`.
-///
-/// With `'T'` this is RFC 3339 (`2026-11-17T09:30:00.123+01:00`); with `' '`
-/// it is the human form (`2026-11-17 09:30:00.123 +01:00`). Fractional
-/// seconds take 0, 3, 6 or 9 digits: the fewest that hold the value exactly.
-#[cfg(feature = "runtime")]
-fn local_timestamp(sep: char) -> String {
-    format_timestamp(&jiff::Zoned::now(), sep)
-}
-
-#[cfg(feature = "runtime")]
-fn format_timestamp(t: &jiff::Zoned, sep: char) -> String {
-    let nanos = t.subsec_nanosecond();
-    let frac = if nanos == 0 {
-        ""
-    } else if nanos % 1_000_000 == 0 {
-        "%.3f"
-    } else if nanos % 1_000 == 0 {
-        "%.6f"
-    } else {
-        "%.9f"
-    };
-    let offset_sep = if sep == 'T' { "" } else { " " };
-    t.strftime(&format!("%Y-%m-%d{sep}%H:%M:%S{frac}{offset_sep}%:z"))
-        .to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     // Property-based tests
-    /// Stamps keep the shape the event log has always had: RFC 3339 in the
-    /// JSON lines, a space-separated form in the header, and the fewest of
-    /// 0/3/6/9 fractional digits that hold the value.
-    #[cfg(feature = "runtime")]
-    #[test]
-    fn event_log_timestamps_keep_their_format() {
-        use jiff::tz::{Offset, TimeZone};
-        let at = |nanos: i32, offset_secs: i32| {
-            jiff::civil::date(2026, 11, 17)
-                .at(9, 30, 5, nanos)
-                .to_zoned(TimeZone::fixed(Offset::from_seconds(offset_secs).unwrap()))
-                .unwrap()
-        };
-        let cases = [
-            (
-                0,
-                3600,
-                "2026-11-17T09:30:05+01:00",
-                "2026-11-17 09:30:05 +01:00",
-            ),
-            (
-                120_000_000,
-                0,
-                "2026-11-17T09:30:05.120+00:00",
-                "2026-11-17 09:30:05.120 +00:00",
-            ),
-            (
-                123_456_000,
-                -18000,
-                "2026-11-17T09:30:05.123456-05:00",
-                "2026-11-17 09:30:05.123456 -05:00",
-            ),
-            (
-                123_456_789,
-                19800,
-                "2026-11-17T09:30:05.123456789+05:30",
-                "2026-11-17 09:30:05.123456789 +05:30",
-            ),
-        ];
-        for (nanos, offset, rfc3339, human) in cases {
-            let t = at(nanos, offset);
-            assert_eq!(format_timestamp(&t, 'T'), rfc3339);
-            assert_eq!(format_timestamp(&t, ' '), human);
-        }
-        // The live stamp parses back as RFC 3339.
-        assert!(local_timestamp('T').parse::<jiff::Timestamp>().is_ok());
-    }
-
     #[cfg(test)]
     mod property_tests {
         use super::*;

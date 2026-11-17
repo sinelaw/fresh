@@ -8,6 +8,7 @@ use crate::app::shell_host::shell_theme::{Attrs, Ink};
 use crate::config::{StatusBarElement, VirtualSpaceMode};
 use crate::state::EditorState;
 use crate::view::shell::status_bar::Item;
+use chrono::Timelike;
 use fresh_i18n::t;
 
 /// Text that both marks a buffer as "edited over a disconnected SSH session"
@@ -746,7 +747,7 @@ impl StatusBarRenderer {
                 )
             }
             StatusBarElement::Clock => {
-                let now = jiff::Zoned::now();
+                let now = chrono::Local::now();
                 let text = format!("{:02}:{:02}", now.hour(), now.minute());
                 item(text, "text", BAR, None, hovered)
             }

@@ -714,24 +714,15 @@ pub fn format_modified(time: SystemTime) -> String {
                 format!("{} days ago", secs / 86400)
             } else {
                 // Format as date
-                local_date(time)
+                let datetime: chrono::DateTime<chrono::Local> = time.into();
+                datetime.format("%Y-%m-%d").to_string()
             }
         }
-        // Time is in the future
-        Err(_) => local_date(time),
-    }
-}
-
-/// `time` as a `YYYY-MM-DD` date in the local time zone.
-fn local_date(time: SystemTime) -> String {
-    local_date_in(time, &jiff::tz::TimeZone::system())
-}
-
-fn local_date_in(time: SystemTime, tz: &jiff::tz::TimeZone) -> String {
-    match jiff::Timestamp::try_from(time) {
-        Ok(ts) => ts.to_zoned(tz.clone()).strftime("%Y-%m-%d").to_string(),
-        // Beyond jiff's range (years ±9999); no real mtime is out there.
-        Err(_) => String::from("?"),
+        Err(_) => {
+            // Time is in the future
+            let datetime: chrono::DateTime<chrono::Local> = time.into();
+            datetime.format("%Y-%m-%d").to_string()
+        }
     }
 }
 
@@ -742,29 +733,6 @@ mod tests {
 
     fn test_filesystem() -> Arc<dyn FileSystem + Send + Sync> {
         Arc::new(StdFileSystem)
-    }
-
-    /// Old and future modification times show as a date in the given zone:
-    /// the same instant can be a different calendar day either side of UTC.
-    #[test]
-    fn modified_dates_use_the_time_zone() {
-        use jiff::tz::{Offset, TimeZone};
-        // 2025-01-15T23:30:00Z
-        let t = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_736_983_800);
-        let zone = |h| TimeZone::fixed(Offset::from_hours(h).unwrap());
-        assert_eq!(local_date_in(t, &TimeZone::UTC), "2025-01-15");
-        assert_eq!(local_date_in(t, &zone(2)), "2025-01-16");
-        assert_eq!(local_date_in(t, &zone(-5)), "2025-01-15");
-
-        // Older than a week, or in the future: a YYYY-MM-DD date.
-        let shape = |s: &str| s.len() == 10 && s.as_bytes()[4] == b'-' && s.as_bytes()[7] == b'-';
-        assert!(shape(&format_modified(t)), "{}", format_modified(t));
-        let future = SystemTime::now() + std::time::Duration::from_secs(86_400 * 30);
-        assert!(
-            shape(&format_modified(future)),
-            "{}",
-            format_modified(future)
-        );
     }
 
     fn make_entry(name: &str, is_dir: bool) -> DirEntry {

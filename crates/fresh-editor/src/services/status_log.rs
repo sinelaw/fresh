@@ -59,7 +59,7 @@ where
         event.record(&mut visitor);
 
         // Build the log line with timestamp
-        let timestamp = jiff::Zoned::now().strftime("%Y-%m-%d %H:%M:%S");
+        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
         let line = format!("{} {}\n", timestamp, visitor.0);
 
         // Write to file -- best-effort logging, nothing useful to do on failure.
