@@ -3025,3 +3025,229 @@ fn test_vi_empty_change_keeps_linewise_register() {
     send_key(&mut harness, 'p');
     harness.wait_for_buffer_content("Xabc\nabc\nz\n").unwrap();
 }
+
+// =============================================================================
+// `.` resolves the recorded change afresh and replays it as the change it was
+// =============================================================================
+
+/// A line-wise change replays as a change: `.` after `c+` leaves its own
+/// line of text instead of joining it onto the next one.
+#[test]
+fn test_vi_dot_after_c_plus_leaves_a_line_to_type_into() {
+    let (mut harness, _td, _fixture) = open_vi("a\nb\nc\nd\ne\nf\n");
+
+    send_operator_motion(&mut harness, 'c', '+');
+    change_then_type(&mut harness, "X");
+    harness.wait_for_buffer_content("X\nc\nd\ne\nf\n").unwrap();
+
+    send_key(&mut harness, 'j');
+    harness.wait_until(|h| h.cursor_position() == 2).unwrap();
+    send_key(&mut harness, '.');
+
+    harness.wait_for_buffer_content("X\nX\ne\nf\n").unwrap();
+}
+
+/// When the recorded motion no longer resolves, `.` does nothing at all: the
+/// recorded text is not inserted either.
+#[test]
+fn test_vi_dot_after_change_with_failing_motion_inserts_nothing() {
+    let (mut harness, _td, _fixture) = open_vi("a.b.c\nzzz\n");
+
+    send_find(&mut harness, 'f', '.');
+    harness.wait_until(|h| h.cursor_position() == 1).unwrap();
+    send_operator_motion(&mut harness, 'c', ';');
+    change_then_type(&mut harness, "X");
+    harness.wait_for_buffer_content("aXc\nzzz\n").unwrap();
+
+    send_key(&mut harness, 'j');
+    send_key(&mut harness, '0');
+    harness.wait_until(|h| h.cursor_position() == 4).unwrap();
+    send_key(&mut harness, '.');
+    wait_normal(&mut harness);
+    // `.` itself is synchronous from here on; a second change proves it ran.
+    send_key(&mut harness, 'x');
+    harness.wait_for_buffer_content("aXc\nzz\n").unwrap();
+}
+
+/// After `.` replays a change the caret rests on the last inserted character,
+/// as Escape leaves it after the original insert.
+#[test]
+fn test_vi_dot_after_cw_leaves_caret_on_last_inserted_char() {
+    let (mut harness, _td, _fixture) = open_vi("foo bar baz\n");
+
+    send_operator_motion(&mut harness, 'c', 'w');
+    change_then_type(&mut harness, "X");
+    send_key(&mut harness, 'w');
+    harness.wait_until(|h| h.cursor_position() == 2).unwrap();
+    send_key(&mut harness, '.');
+
+    harness.wait_for_buffer_content("X X baz\n").unwrap();
+    harness.wait_until(|h| h.cursor_position() == 2).unwrap();
+}
+
+// =============================================================================
+// Counts on `;`/`,`, `+`/`-`/`j`, and failed finds
+// =============================================================================
+
+/// Only a bare `;` skips an adjacent `t` match; `2;` counts matches from the
+/// caret as usual.
+#[test]
+fn test_vi_counted_semicolon_after_adjacent_t_does_not_skip() {
+    let (mut harness, _td, _fixture) = open_vi("a.b.c.d.e.f\n");
+
+    send_find(&mut harness, 't', '.');
+    wait_normal(&mut harness);
+    send_key(&mut harness, '2');
+    send_key(&mut harness, ';');
+
+    harness.wait_until(|h| h.cursor_position() == 2).unwrap();
+}
+
+/// A count past the end of the buffer clamps to the last line, as Vim's
+/// `cursor_down` does; it only fails when there is no line to move to.
+#[test]
+fn test_vi_plus_count_past_end_clamps_to_last_line() {
+    let (mut harness, _td, _fixture) = open_vi("a\n  b\n  c\n");
+
+    send_key(&mut harness, '5');
+    send_key(&mut harness, '+');
+
+    harness.wait_until(|h| h.cursor_position() == 8).unwrap();
+}
+
+#[test]
+fn test_vi_d_count_j_past_end_clamps_to_last_line() {
+    let (mut harness, _td, _fixture) = open_vi("a\nb\nc\n");
+
+    send_key(&mut harness, 'j');
+    harness.wait_until(|h| h.cursor_position() == 2).unwrap();
+    send_key(&mut harness, 'd');
+    harness
+        .wait_until(|h| h.editor().input_mode() == Some("vi-operator-pending".to_string()))
+        .unwrap();
+    send_key(&mut harness, '9');
+    send_key(&mut harness, 'j');
+
+    harness.wait_for_buffer_content("a\n").unwrap();
+}
+
+/// Vim stores the find before searching, so a find with no match is still
+/// the one `;` repeats.
+#[test]
+fn test_vi_failed_find_is_the_one_semicolon_repeats() {
+    let (mut harness, _td, _fixture) = open_vi("a.b.cz\n");
+
+    send_find(&mut harness, 'f', '.');
+    harness.wait_until(|h| h.cursor_position() == 1).unwrap();
+    send_find(&mut harness, 'f', 'q');
+    wait_normal(&mut harness);
+    send_key(&mut harness, ';');
+    wait_normal(&mut harness);
+    // `;` repeats `fq`, which has no match: the caret stays put. A following
+    // `l` shows `;` was handled before it.
+    send_key(&mut harness, 'l');
+    harness.wait_until(|h| h.cursor_position() == 2).unwrap();
+}
+
+// =============================================================================
+// Empty ranges per operator, and where each operator leaves the caret
+// =============================================================================
+
+/// `I` on a line of nothing but blanks inserts after the blanks.
+#[test]
+fn test_vi_I_on_blank_line_inserts_after_the_blanks() {
+    let (mut harness, _td, _fixture) = open_vi("    \nz\n");
+
+    send_key(&mut harness, 'I');
+    change_then_type(&mut harness, "X");
+
+    harness.wait_for_buffer_content("    X\nz\n").unwrap();
+}
+
+/// `>` over a motion that covers nothing still shifts the line.
+#[test]
+fn test_vi_shift_over_empty_motion_shifts_the_line() {
+    let (mut harness, _td, _fixture) = open_vi("abc\n");
+
+    send_operator_motion(&mut harness, '>', '0');
+
+    harness.wait_for_buffer_content("    abc\n").unwrap();
+    harness.wait_until(|h| h.cursor_position() == 4).unwrap();
+}
+
+/// `y` over a motion that covers nothing yanks the empty text: `P` then puts
+/// nothing, rather than the previous yank.
+#[test]
+fn test_vi_yank_over_empty_motion_empties_the_register() {
+    let (mut harness, _td, _fixture) = open_vi("abc def\n");
+
+    send_operator_motion(&mut harness, 'y', 'w');
+    wait_normal(&mut harness);
+    send_key(&mut harness, 'w');
+    send_key(&mut harness, '0');
+    harness.wait_until(|h| h.cursor_position() == 0).unwrap();
+    send_operator_motion(&mut harness, 'y', '0');
+    wait_normal(&mut harness);
+    send_key(&mut harness, 'P');
+    wait_normal(&mut harness);
+    // Proves `P` ran before the check: `x` deletes the `a` it would have
+    // shifted right.
+    send_key(&mut harness, 'x');
+
+    harness.wait_for_buffer_content("bc def\n").unwrap();
+}
+
+/// A line-wise yank leaves the caret at the start of the yanked text, column
+/// included: `y_` and `y+` do not move it.
+#[test]
+fn test_vi_y_underscore_and_y_plus_keep_the_caret() {
+    let (mut harness, _td, _fixture) = open_vi("  abcdef\n  ghijkl\n");
+
+    for _ in 0..3 {
+        send_key(&mut harness, 'l');
+    }
+    harness.wait_until(|h| h.cursor_position() == 3).unwrap();
+    send_operator_motion(&mut harness, 'y', '_');
+    wait_normal(&mut harness);
+    send_key(&mut harness, 'l');
+    harness.wait_until(|h| h.cursor_position() == 4).unwrap();
+
+    send_operator_motion(&mut harness, 'y', '+');
+    wait_normal(&mut harness);
+    send_key(&mut harness, 'l');
+    harness.wait_until(|h| h.cursor_position() == 5).unwrap();
+}
+
+/// A line-wise delete leaves the caret on the first non-blank of the line
+/// that moved up into place.
+#[test]
+fn test_vi_d_plus_lands_on_first_non_blank() {
+    let (mut harness, _td, _fixture) = open_vi("abc\ndef\n    ghi\n");
+
+    send_operator_motion(&mut harness, 'd', '+');
+
+    harness.wait_for_buffer_content("    ghi\n").unwrap();
+    harness.wait_until(|h| h.cursor_position() == 4).unwrap();
+}
+
+/// `:x {file}` on an unchanged buffer writes nothing, like `:x` itself.
+#[test]
+fn test_vi_x_with_file_name_on_unmodified_buffer_writes_nothing() {
+    let (mut harness, td, _fixture) = open_vi("alpha\n");
+    let other = td.path().join("other.txt");
+
+    harness
+        .send_key(KeyCode::Char(':'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness
+        .type_text(&format!("x {}", other.display()))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    harness.wait_until(|h| h.should_quit()).unwrap();
+    assert!(!other.exists());
+}
