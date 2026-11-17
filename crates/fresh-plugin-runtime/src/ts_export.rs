@@ -129,6 +129,7 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "TokenColor" => Some(decl_with_docs::<TokenColor>(&cfg)),
         "ViewTokenStyle" => Some(decl_with_docs::<ViewTokenStyle>(&cfg)),
         "ViewTokenWire" => Some(decl_with_docs::<ViewTokenWire>(&cfg)),
+        "VirtualLineTextOverlay" => Some(decl_with_docs::<fresh_core::api::VirtualLineTextOverlay>(&cfg)),
 
         // UI types (ts-rs renames these with Ts prefix)
         "TsActionPopupAction" | "ActionPopupAction" => Some(decl_with_docs::<ActionPopupAction>(&cfg)),
@@ -1369,6 +1370,7 @@ mod tests {
             "TokenColor",
             "ViewTokenStyle",
             "ViewTokenWire",
+            "VirtualLineTextOverlay",
             "TsActionPopupAction",
             "ActionPopupOptions",
             "TsHighlightSpan",

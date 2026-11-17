@@ -3763,6 +3763,35 @@ type VirtualBufferResult = {
 	*/
 	splitId: number | null;
 };
+/**
+* Styling for a byte range within a piece of injected text: a virtual
+* line's text, or the replacement text a conceal shows. Live diff uses it
+* to bold and underline the removed words on a deletion line; Markdown
+* compose uses it to keep the colours a renderer printed. Anything left
+* out keeps the text's own style.
+*/
+type VirtualLineTextOverlay = {
+	/**
+	* Inclusive byte offset within the text.
+	*/
+	start: number;
+	/**
+	* Exclusive byte offset within the text.
+	*/
+	end: number;
+	bold: boolean;
+	underline: boolean;
+	italic: boolean;
+	/**
+	* Foreground colour for the range. Either `[r, g, b]` or a named
+	* colour (`"Red"`, `"LightBlue"`, `"Indexed:N"`) or theme key.
+	*/
+	fg?: TokenColor;
+	/**
+	* Background colour for the range, in the same forms as `fg`.
+	*/
+	bg?: TokenColor;
+};
 type WindowPath = {
 	kind: "authority";
 	window: number;
@@ -6835,8 +6864,14 @@ interface EditorAPI {
 	* the buffer in compose view; every other pane shows the text as is.
 	* Pass `null` for `activation` and the scope to leave the conceal
 	* always active.
+	* 
+	* `replacementOverlays` styles parts of `replacement`: an array of
+	* `{ start, end, fg?, bg?, bold?, italic?, underline? }`, where `start`
+	* and `end` are byte offsets into `replacement` and `fg`/`bg` take an
+	* `[r, g, b]` array or a color name (`"Red"`, `"LightBlue"`,
+	* `"Indexed:208"`). Text no range covers is drawn as before.
 	*/
-	addConceal(bufferId: number, namespace: string, start: number, end: number, replacement: string | null, activation?: string | null, scopeStart?: number | null, scopeEnd?: number | null, composeOnly?: boolean): boolean;
+	addConceal(bufferId: number, namespace: string, start: number, end: number, replacement: string | null, activation?: string | null, scopeStart?: number | null, scopeEnd?: number | null, composeOnly?: boolean, replacementOverlays?: VirtualLineTextOverlay[] | null): boolean;
 	/**
 	* Clear all conceal ranges in a namespace
 	*/
@@ -7049,6 +7084,10 @@ interface EditorAPI {
 	*     `fg`/`bg`. Falls back to the theme's line-number fg.
 	*   * `composeOnly` — `true` draws the line only in a pane showing the
 	*     buffer in compose view, and hides it in every other pane.
+	*   * `textOverlays` — styles parts of `text`: an array of
+	*     `{ start, end, fg?, bg?, bold?, italic?, underline? }` with byte
+	*     offsets into `text`; `fg`/`bg` take an `[r, g, b]` array or a
+	*     color name (`"Red"`, `"LightBlue"`, `"Indexed:208"`).
 	* 
 	* @param position - Byte position to anchor the virtual line to
 	* @param above - Whether to insert above (true) or below (false) the line

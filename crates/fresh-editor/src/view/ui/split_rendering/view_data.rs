@@ -372,7 +372,7 @@ pub(super) fn build_view_data(
             .next_back()
             .unwrap_or(viewport.top_byte())
             + 1;
-        let conceal_ranges = state.conceals.query_viewport_in(
+        let conceal_ranges = state.conceals.query_viewport_styled_in(
             viewport.top_byte(),
             viewport_end,
             &state.marker_list,

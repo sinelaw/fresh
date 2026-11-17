@@ -4845,6 +4845,39 @@ type VirtualBufferResult = {
 };
 ```
 
+### `VirtualLineTextOverlay`
+
+Styling for a byte range within a piece of injected text: a virtual
+line's text, or the replacement text a conceal shows. Live diff uses it
+to bold and underline the removed words on a deletion line; Markdown
+compose uses it to keep the colours a renderer printed. Anything left
+out keeps the text's own style.
+
+```typescript
+type VirtualLineTextOverlay = {
+  /**
+  * Inclusive byte offset within the text.
+  */
+  start: number;
+  /**
+  * Exclusive byte offset within the text.
+  */
+  end: number;
+  bold: boolean;
+  underline: boolean;
+  italic: boolean;
+  /**
+  * Foreground colour for the range. Either `[r, g, b]` or a named
+  * colour (`"Red"`, `"LightBlue"`, `"Indexed:N"`) or theme key.
+  */
+  fg?: TokenColor;
+  /**
+  * Background colour for the range, in the same forms as `fg`.
+  */
+  bg?: TokenColor;
+};
+```
+
 ### `WalkTreeEntry`
 
 ```typescript

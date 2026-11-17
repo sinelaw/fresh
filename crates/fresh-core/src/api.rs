@@ -1094,21 +1094,34 @@ pub struct SoftBreakPrefix {
     pub italic: bool,
 }
 
-/// Modifier-only overlay applied to a byte range within a virtual line's
-/// text. Used by plugins (live-diff) to bold + underline removed words on
-/// a deletion virtual line without varying the line's overall fg/bg.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+/// Styling for a byte range within a piece of injected text: a virtual
+/// line's text, or the replacement text a conceal shows. Live diff uses it
+/// to bold and underline the removed words on a deletion line; Markdown
+/// compose uses it to keep the colours a renderer printed. Anything left
+/// out keeps the text's own style.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, rename_all = "camelCase")]
 pub struct VirtualLineTextOverlay {
-    /// Inclusive byte offset within the virtual line's `text`.
+    /// Inclusive byte offset within the text.
     pub start: u32,
-    /// Exclusive byte offset within the virtual line's `text`.
+    /// Exclusive byte offset within the text.
     pub end: u32,
     #[serde(default)]
     pub bold: bool,
     #[serde(default)]
     pub underline: bool,
+    #[serde(default)]
+    pub italic: bool,
+    /// Foreground colour for the range. Either `[r, g, b]` or a named
+    /// colour (`"Red"`, `"LightBlue"`, `"Indexed:N"`) or theme key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub fg: Option<TokenColor>,
+    /// Background colour for the range, in the same forms as `fg`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub bg: Option<TokenColor>,
 }
 
 impl OverlayColorSpec {
@@ -4630,6 +4643,10 @@ pub enum PluginCommand {
         end: usize,
         /// Optional replacement text to show instead. None = hide completely.
         replacement: Option<String>,
+        /// Styled ranges within `replacement` (byte offsets into it). Text
+        /// they do not cover is drawn as before.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        replacement_overlays: Vec<VirtualLineTextOverlay>,
         /// Buffer version `start`/`end` were computed against — the epoch of the
         /// hook the emitting handler ran in, auto-stamped by the plugin runtime
         /// (see `current_hook_epoch`). The editor remaps the range forward to the

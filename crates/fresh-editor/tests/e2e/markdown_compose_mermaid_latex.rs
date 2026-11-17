@@ -502,4 +502,77 @@ printf 'DIAGRAM<%s>\nDIAGRAM %s lines\n' "$(head -n 1 "$1")" "$(wc -l < "$1" | t
         run(&mut h, "Markdown: Toggle Compose");
         h.wait_until(|h| screen_has(h, "NOW DRAWN")).unwrap();
     }
+
+    /// A tool that prints colour: its escape codes are not drawn and take no
+    /// columns — every row of the frame keeps its right rail in line with
+    /// the top corner — and the colours they name are drawn: on a row in
+    /// place of a source line, and on one past the block's last line (a
+    /// virtual line). Other escape codes (a window title here) are dropped.
+    #[test]
+    fn a_tools_colours_are_drawn_and_its_escape_codes_take_no_columns() {
+        use ratatui::style::{Color, Modifier};
+        let tools = tempfile::TempDir::new().unwrap();
+        let colour = stub(
+            tools.path(),
+            "stub-colour",
+            r#"printf '\033[31mRED\033[0m plain\n'
+printf '\033]0;a title\007\033[1;38;2;0;200;0mGREEN\033[22;39m after\n'
+printf '\033[44mBLUE\033[49m\n'"#,
+        );
+        let md = "# Doc\n\n```dot\na\nb\n```\n\nTail.\n";
+        let (mut h, _tmp) = harness_with_renderers(
+            md,
+            serde_json::json!({ "dot": { "command": colour, "args": ["{file}"] } }),
+        );
+        run(&mut h, "Markdown: Toggle Compose");
+        h.wait_until(|h| {
+            screen_has(h, "RED plain") && screen_has(h, "GREEN after") && screen_has(h, "BLUE")
+        })
+        .unwrap();
+
+        let screen = h.screen_to_string();
+        assert!(
+            !screen.contains("[31m") && !screen.contains('\u{1b}') && !screen.contains("a title"),
+            "escape codes drawn as text:\n{screen}"
+        );
+        // The right rail of every drawn row sits under the frame's corner.
+        let (_, top) = h.find_text_on_screen("dot · stub-colour").unwrap();
+        let corner = |row: &str| row.chars().position(|c| c == '┐');
+        let rail = |row: &str| {
+            row.chars()
+                .collect::<Vec<_>>()
+                .iter()
+                .rposition(|&c| c == '│')
+        };
+        let rows: Vec<&str> = screen.lines().collect();
+        let corner_col = corner(rows[top as usize]).expect("frame top");
+        for text in ["RED plain", "GREEN after", "BLUE"] {
+            let row = rows.iter().find(|r| r.contains(text)).unwrap();
+            assert_eq!(
+                rail(row),
+                Some(corner_col),
+                "rail out of line on {row:?}\n{screen}"
+            );
+        }
+
+        let (x, y) = h.find_text_on_screen("RED plain").unwrap();
+        assert_eq!(h.get_cell_style(x, y).unwrap().fg, Some(Color::Red));
+        assert_ne!(
+            h.get_cell_style(x + 4, y).unwrap().fg,
+            Some(Color::Red),
+            "colour reset"
+        );
+
+        let (x, y) = h.find_text_on_screen("GREEN after").unwrap();
+        let green = h.get_cell_style(x, y).unwrap();
+        assert_eq!(green.fg, Some(Color::Rgb(0, 200, 0)));
+        assert!(green.add_modifier.contains(Modifier::BOLD));
+        let after = h.get_cell_style(x + 6, y).unwrap();
+        assert_ne!(after.fg, Some(Color::Rgb(0, 200, 0)));
+        assert!(!after.add_modifier.contains(Modifier::BOLD));
+
+        // The third row is past the block's two lines: a virtual line.
+        let (x, y) = h.find_text_on_screen("BLUE").unwrap();
+        assert_eq!(h.get_cell_style(x, y).unwrap().bg, Some(Color::Blue));
+    }
 }

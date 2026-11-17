@@ -246,6 +246,10 @@ The `options` object accepts:
     `fg`/`bg`. Falls back to the theme's line-number fg.
   * `composeOnly` — `true` draws the line only in a pane showing the
     buffer in compose view, and hides it in every other pane.
+  * `textOverlays` — styles parts of `text`: an array of
+    `{ start, end, fg?, bg?, bold?, italic?, underline? }` with byte
+    offsets into `text`; `fg`/`bg` take an `[r, g, b]` array or a
+    color name (`"Red"`, `"LightBlue"`, `"Indexed:208"`).
 
 ```typescript
 addVirtualLine(bufferId: number, position: number, text: string, options: Record<string, unknown>, above: boolean, namespace: string, priority: number): boolean;
@@ -285,8 +289,14 @@ the buffer in compose view; every other pane shows the text as is.
 Pass `null` for `activation` and the scope to leave the conceal
 always active.
 
+`replacementOverlays` styles parts of `replacement`: an array of
+`{ start, end, fg?, bg?, bold?, italic?, underline? }`, where `start`
+and `end` are byte offsets into `replacement` and `fg`/`bg` take an
+`[r, g, b]` array or a color name (`"Red"`, `"LightBlue"`,
+`"Indexed:208"`). Text no range covers is drawn as before.
+
 ```typescript
-addConceal(bufferId: number, namespace: string, start: number, end: number, replacement: string | null, activation?: string | null, scopeStart?: number | null, scopeEnd?: number | null, composeOnly?: boolean): boolean;
+addConceal(bufferId: number, namespace: string, start: number, end: number, replacement: string | null, activation?: string | null, scopeStart?: number | null, scopeEnd?: number | null, composeOnly?: boolean, replacementOverlays?: VirtualLineTextOverlay[] | null): boolean;
 ```
 
 ### `clearConcealNamespace`

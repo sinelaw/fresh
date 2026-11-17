@@ -5260,8 +5260,14 @@ impl JsEditorApi {
     /// the buffer in compose view; every other pane shows the text as is.
     /// Pass `null` for `activation` and the scope to leave the conceal
     /// always active.
+    ///
+    /// `replacementOverlays` styles parts of `replacement`: an array of
+    /// `{ start, end, fg?, bg?, bold?, italic?, underline? }`, where `start`
+    /// and `end` are byte offsets into `replacement` and `fg`/`bg` take an
+    /// `[r, g, b]` array or a color name (`"Red"`, `"LightBlue"`,
+    /// `"Indexed:208"`). Text no range covers is drawn as before.
     #[allow(clippy::too_many_arguments)]
-    pub fn add_conceal(
+    pub fn add_conceal<'js>(
         &self,
         buffer_id: u32,
         namespace: String,
@@ -5272,7 +5278,18 @@ impl JsEditorApi {
         scope_start: fresh_js::function::Opt<Option<u32>>,
         scope_end: fresh_js::function::Opt<Option<u32>>,
         compose_only: fresh_js::function::Opt<bool>,
+        #[plugin_api(ts_type = "VirtualLineTextOverlay[] | null")]
+        replacement_overlays: fresh_js::function::Opt<fresh_js::Value<'js>>,
     ) -> bool {
+        let replacement_overlays = replacement_overlays
+            .0
+            .filter(|v| !v.is_undefined() && !v.is_null())
+            .and_then(|v| fresh_js::serde::from_value(v).ok())
+            .map(|v: Vec<fresh_core::api::VirtualLineTextOverlay>| {
+                v.into_iter().filter(|o| o.end > o.start).collect()
+            })
+            .unwrap_or_default();
+
         // Track namespace for cleanup on unload
         self.plugin_tracked_state
             .borrow_mut()
@@ -5288,6 +5305,7 @@ impl JsEditorApi {
                 start: start as usize,
                 end: end as usize,
                 replacement,
+                replacement_overlays,
                 epoch: self.hook_epoch_for(buffer_id),
                 activation: Self::parse_activation(
                     activation.0.flatten(),
@@ -5926,6 +5944,10 @@ impl JsEditorApi {
     ///     `fg`/`bg`. Falls back to the theme's line-number fg.
     ///   * `composeOnly` — `true` draws the line only in a pane showing the
     ///     buffer in compose view, and hides it in every other pane.
+    ///   * `textOverlays` — styles parts of `text`: an array of
+    ///     `{ start, end, fg?, bg?, bold?, italic?, underline? }` with byte
+    ///     offsets into `text`; `fg`/`bg` take an `[r, g, b]` array or a
+    ///     color name (`"Red"`, `"LightBlue"`, `"Indexed:208"`).
     ///
     /// @param position - Byte position to anchor the virtual line to
     /// @param above - Whether to insert above (true) or below (false) the line

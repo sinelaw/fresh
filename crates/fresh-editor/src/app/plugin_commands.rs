@@ -691,6 +691,7 @@ impl Editor {
         start: usize,
         end: usize,
         replacement: Option<String>,
+        replacement_overlays: Vec<fresh_core::api::VirtualLineTextOverlay>,
         epoch: Option<u64>,
         activation: Option<fresh_core::api::MarkerActivation>,
         compose_only: bool,
@@ -719,11 +720,12 @@ impl Editor {
                     scope_end,
                 })
             });
-            state.conceals.add_with_activation(
+            state.conceals.add_styled(
                 &mut state.marker_list,
                 namespace,
                 start..end,
                 replacement,
+                replacement_overlays,
                 activation,
                 compose_only,
             );
