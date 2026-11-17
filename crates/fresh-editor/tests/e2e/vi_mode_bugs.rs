@@ -2787,3 +2787,241 @@ fn test_vi_ZZ_unnamed_unmodified_quits() {
 
     harness.wait_until(|h| h.should_quit()).unwrap();
 }
+
+// =============================================================================
+// Adjacent `t`/`T` targets: found without moving (Vim), not "not found"
+// =============================================================================
+
+/// Helper: a find-char key (`f`/`t`/`F`/`T`), wait for its mode, then the target.
+fn send_find(harness: &mut EditorTestHarness, find: char, target: char) {
+    send_key(harness, find);
+    harness
+        .wait_until(|h| h.editor().input_mode() == Some("vi-find-char".to_string()))
+        .unwrap();
+    send_key(harness, target);
+}
+
+/// `t.` with the `.` right after the cursor does not move, but Vim records
+/// the find: `;` then skips the adjacent match and stops before the next one.
+#[test]
+fn test_vi_t_adjacent_records_find_for_semicolon() {
+    let (mut harness, _td, _fixture) = open_vi("a.b.c.d\n");
+
+    send_find(&mut harness, 't', '.');
+    wait_normal(&mut harness);
+    assert_eq!(harness.cursor_position(), 0);
+
+    send_key(&mut harness, ';');
+    harness.wait_until(|h| h.cursor_position() == 2).unwrap();
+}
+
+/// Same for the reverse repeat: after an adjacent `t.`, `,` searches backward
+/// as `T.` and skips the adjacent match.
+#[test]
+fn test_vi_t_adjacent_records_find_for_comma() {
+    let (mut harness, _td, _fixture) = open_vi("a.b.c.d\n");
+
+    send_key(&mut harness, '$');
+    send_key(&mut harness, 'h');
+    send_key(&mut harness, 'h');
+    harness.wait_until(|h| h.cursor_position() == 4).unwrap();
+
+    send_find(&mut harness, 't', '.');
+    wait_normal(&mut harness);
+    send_key(&mut harness, ',');
+    harness.wait_until(|h| h.cursor_position() == 2).unwrap();
+}
+
+/// `dt.` with the `.` adjacent deletes the character under the cursor (the
+/// motion is inclusive and lands on the cursor), and `.` repeats it.
+#[test]
+fn test_vi_dt_adjacent_deletes_char_under_cursor() {
+    let (mut harness, _td, _fixture) = open_vi("a.b.c.d\n");
+
+    send_operator_motion(&mut harness, 'd', 't');
+    harness
+        .wait_until(|h| h.editor().input_mode() == Some("vi-find-char".to_string()))
+        .unwrap();
+    send_key(&mut harness, '.');
+    harness.wait_for_buffer_content(".b.c.d\n").unwrap();
+
+    send_key(&mut harness, 'l');
+    harness.wait_until(|h| h.cursor_position() == 1).unwrap();
+    send_key(&mut harness, '.');
+    harness.wait_for_buffer_content("..c.d\n").unwrap();
+}
+
+/// `yt.` with the `.` adjacent yanks the character under the cursor.
+#[test]
+fn test_vi_yt_adjacent_yanks_char_under_cursor() {
+    let (mut harness, _td, _fixture) = open_vi("ab.c\n");
+
+    send_key(&mut harness, 'l');
+    harness.wait_until(|h| h.cursor_position() == 1).unwrap();
+    send_operator_motion(&mut harness, 'y', 't');
+    harness
+        .wait_until(|h| h.editor().input_mode() == Some("vi-find-char".to_string()))
+        .unwrap();
+    send_key(&mut harness, '.');
+    wait_normal(&mut harness);
+
+    send_key(&mut harness, '$');
+    send_key(&mut harness, 'p');
+    harness.wait_for_buffer_content("ab.cb\n").unwrap();
+}
+
+/// `cT.` with the `.` just before the cursor changes nothing but still opens
+/// an insert at the cursor, as in Vim.
+#[test]
+fn test_vi_cT_adjacent_enters_insert() {
+    let (mut harness, _td, _fixture) = open_vi("a.b.c.d\n");
+
+    send_key(&mut harness, '$');
+    harness.wait_until(|h| h.cursor_position() == 6).unwrap();
+    send_operator_motion(&mut harness, 'c', 'T');
+    harness
+        .wait_until(|h| h.editor().input_mode() == Some("vi-find-char".to_string()))
+        .unwrap();
+    send_key(&mut harness, '.');
+    wait_insert(&mut harness);
+
+    harness.type_text("X").unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    wait_normal(&mut harness);
+    harness.wait_for_buffer_content("a.b.c.Xd\n").unwrap();
+}
+
+// =============================================================================
+// `_`, `+`, `-` are line-wise motions, so operators take them too
+// =============================================================================
+
+#[test]
+fn test_vi_d_plus_deletes_current_and_next_line() {
+    let (mut harness, _td, _fixture) = open_vi("  a\n  b\n  c\n");
+
+    send_operator_motion(&mut harness, 'd', '+');
+
+    harness.wait_for_buffer_content("  c\n").unwrap();
+}
+
+/// From column 0 the upper end of `d-` sits on a line start; both lines go.
+#[test]
+fn test_vi_d_minus_from_column_zero_deletes_both_lines() {
+    let (mut harness, _td, _fixture) = open_vi("  a\n  b\n  c\n");
+
+    send_key(&mut harness, 'j');
+    send_key(&mut harness, '0');
+    harness.wait_until(|h| h.cursor_position() == 4).unwrap();
+    send_operator_motion(&mut harness, 'd', '-');
+
+    harness.wait_for_buffer_content("  c\n").unwrap();
+}
+
+#[test]
+fn test_vi_d_underscore_with_count_deletes_count_lines() {
+    let (mut harness, _td, _fixture) = open_vi("  a\n  b\n  c\n");
+
+    send_key(&mut harness, '2');
+    send_operator_motion(&mut harness, 'd', '_');
+
+    harness.wait_for_buffer_content("  c\n").unwrap();
+}
+
+/// `+` has no line to go to on the last line, so `d+` fails and changes nothing.
+#[test]
+fn test_vi_d_plus_on_last_line_fails() {
+    let (mut harness, _td, _fixture) = open_vi("  a\n  b\n");
+
+    send_key(&mut harness, 'j');
+    harness.wait_until(|h| h.cursor_position() == 4).unwrap();
+    send_operator_motion(&mut harness, 'd', '+');
+    wait_normal(&mut harness);
+
+    harness.wait_for_buffer_content("  a\n  b\n").unwrap();
+}
+
+/// `^` on a line of nothing but blanks lands on the last blank, never on the
+/// line terminator.
+#[test]
+fn test_vi_caret_on_blank_line_lands_on_last_blank() {
+    let (mut harness, _td, _fixture) = open_vi("   \nz\n");
+
+    send_key(&mut harness, '^');
+
+    harness.wait_until(|h| h.cursor_position() == 2).unwrap();
+}
+
+/// `.` after `d;` repeats `d;` against the find that is current when `.` runs.
+#[test]
+fn test_vi_dot_after_d_semicolon_uses_current_find() {
+    let (mut harness, _td, _fixture) = open_vi("a.b.c,d,e,f\n");
+
+    send_find(&mut harness, 'f', '.');
+    harness.wait_until(|h| h.cursor_position() == 1).unwrap();
+    send_operator_motion(&mut harness, 'd', ';');
+    harness.wait_for_buffer_content("ac,d,e,f\n").unwrap();
+
+    // The current find is now `f,`; `.` repeats `d;` with it, not with `f.`.
+    send_find(&mut harness, 'f', ',');
+    harness.wait_until(|h| h.cursor_position() == 2).unwrap();
+    send_key(&mut harness, '.');
+
+    harness.wait_for_buffer_content("ace,f\n").unwrap();
+}
+
+// =============================================================================
+// An empty range is a motion that succeeded: `c` still opens its insert
+// =============================================================================
+
+fn change_then_type(harness: &mut EditorTestHarness, text: &str) {
+    wait_insert(harness);
+    harness.type_text(text).unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    wait_normal(harness);
+}
+
+#[test]
+fn test_vi_s_on_empty_line_enters_insert() {
+    let (mut harness, _td, _fixture) = open_vi("\nz\n");
+
+    send_key(&mut harness, 's');
+    change_then_type(&mut harness, "X");
+
+    harness.wait_for_buffer_content("X\nz\n").unwrap();
+}
+
+#[test]
+fn test_vi_C_on_empty_line_enters_insert() {
+    let (mut harness, _td, _fixture) = open_vi("\nz\n");
+
+    send_key(&mut harness, 'C');
+    change_then_type(&mut harness, "X");
+
+    harness.wait_for_buffer_content("X\nz\n").unwrap();
+}
+
+#[test]
+fn test_vi_c0_in_column_zero_enters_insert() {
+    let (mut harness, _td, _fixture) = open_vi("abc\n");
+
+    send_operator_motion(&mut harness, 'c', '0');
+    change_then_type(&mut harness, "X");
+
+    harness.wait_for_buffer_content("Xabc\n").unwrap();
+}
+
+/// An empty change yanks nothing: the register keeps the previous yank, shape
+/// included, so `p` still puts a yanked line on a line of its own.
+#[test]
+fn test_vi_empty_change_keeps_linewise_register() {
+    let (mut harness, _td, _fixture) = open_vi("abc\nz\n");
+
+    send_operator_motion(&mut harness, 'y', 'y');
+    wait_normal(&mut harness);
+    send_operator_motion(&mut harness, 'c', '0');
+    change_then_type(&mut harness, "X");
+    harness.wait_for_buffer_content("Xabc\nz\n").unwrap();
+
+    send_key(&mut harness, 'p');
+    harness.wait_for_buffer_content("Xabc\nabc\nz\n").unwrap();
+}
