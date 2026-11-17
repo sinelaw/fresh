@@ -577,10 +577,14 @@ printf '\033[44mBLUE\033[49m\n'"#,
     }
 
     /// In dual mode the wheel over the preview scrolls it a row a notch,
-    /// through a drawing as through text. The drawing's rows, framed to the
-    /// narrow preview, used to count as two rows each in the preview's row
-    /// index (wrapped at the source pane's gutter-narrowed width) while the
-    /// preview drew one, so a notch through them moved nothing on screen.
+    /// through a drawing as through text, and the frames that follow leave it
+    /// there. The drawing's rows, framed to the narrow preview, used to count
+    /// as two rows each in the preview's row index (wrapped at the source
+    /// pane's gutter-narrowed width) while the preview drew one, so a notch
+    /// through them moved nothing on screen. And a preview scrolled between
+    /// two of the source's positions was pulled back to one of them by the
+    /// second frame after the notch, when the focused source pane drove the
+    /// sync again though neither pane had moved.
     #[test]
     fn the_wheel_scrolls_a_dual_preview_a_row_a_notch_through_a_drawing() {
         let tools = tempfile::TempDir::new().unwrap();
@@ -611,6 +615,11 @@ printf '\033[44mBLUE\033[49m\n'"#,
         let mut tops = Vec::new();
         for _ in 0..16 {
             h.mouse_scroll_down(WIDTH - 20, 15).unwrap();
+            // Frames with nothing new to draw, as a redraw or an idle tick
+            // brings: they must not move either pane.
+            for _ in 0..3 {
+                h.render().unwrap();
+            }
             tops.push(preview_top(&h));
         }
         let drawing: Vec<&str> = tops

@@ -258,10 +258,21 @@ impl crate::app::window::Window {
             }
         };
 
-        // The focus moved to the other pane and nothing has scrolled since: the
-        // pair is where the last sync put it, and stays there.
+        // Nothing has scrolled since the last sync: the pair is where it put
+        // it, and stays there — whichever pane drives now. The focus moving to
+        // the other pane is one way to get here; a frame with nothing new
+        // (a redraw, an idle tick) is the other. Re-deriving the partner then
+        // undid a scroll of the taller pane, which can stop between two of the
+        // curve's values (`inverse_synced_top`): the next frame driven from the
+        // focused pane put it back on the curve, a notch of the wheel lasted
+        // one frame, and the preview could not be scrolled through a drawing.
         if let Some(last) = last {
-            if last.active != SplitId::from(active) && a.top == last.other_top {
+            let unmoved = if last.active == SplitId::from(active) {
+                a.top == last.active_top && o.top == last.other_top
+            } else {
+                a.top == last.other_top
+            };
+            if unmoved {
                 record(&mut self.scroll_sync_manager, o.top);
                 return true;
             }
