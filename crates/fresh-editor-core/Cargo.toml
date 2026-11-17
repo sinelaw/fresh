@@ -27,7 +27,7 @@ default = ["runtime", "tree-sitter"]
 runtime = [
     "dep:crossterm",
     "ratatui/crossterm",
-    "dep:chrono",
+    "dep:jiff",
     "dep:fresh-languages",
     "dep:tokio",
     "dep:libc",
@@ -81,7 +81,8 @@ sha2 = "0.10"
 crossterm = { version = "0.29.0", features = ["osc52"], optional = true }
 # Not optional: `widgets` is always compiled and renders through ratatui.
 ratatui = { version = "0.30.0", default-features = false, features = ["std", "underline-color"] }
-chrono = { version = "0.4", default-features = false, features = ["std", "clock"], optional = true }
+# Local time for log timestamps, the status-bar clock and file dates.
+jiff = { version = "0.2.39", optional = true }
 tokio = { version = "1.49", features = ["fs", "io-util", "process", "rt", "rt-multi-thread", "sync", "time", "macros"], optional = true }
 libc = { version = "0.2", optional = true }
 nix = { version = ">=0.30, <0.32", features = ["signal", "pthread", "resource", "poll", "fs"], optional = true }

@@ -6,7 +6,7 @@
 //!
 //! See `docs/internal/TIMESOURCE_DESIGN.md` for the full design document.
 
-use chrono::{NaiveDate, Utc};
+use jiff::civil::Date;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -25,7 +25,7 @@ pub trait TimeSource: Send + Sync + std::fmt::Debug {
     fn sleep(&self, duration: Duration);
 
     /// Get today's date.
-    fn today_date(&self) -> NaiveDate;
+    fn today_date(&self) -> Date;
 
     /// Calculate elapsed time since an earlier instant.
     fn elapsed_since(&self, earlier: Instant) -> Duration {
@@ -61,9 +61,16 @@ impl TimeSource for RealTimeSource {
         std::thread::sleep(duration);
     }
 
-    fn today_date(&self) -> NaiveDate {
-        Utc::now().date_naive()
+    fn today_date(&self) -> Date {
+        utc_today()
     }
+}
+
+/// Today's date in UTC.
+fn utc_today() -> Date {
+    jiff::Timestamp::now()
+        .to_zoned(jiff::tz::TimeZone::UTC)
+        .date()
 }
 
 /// Test implementation with controllable time.
@@ -94,7 +101,7 @@ pub struct TestTimeSource {
     /// Base instant (real time at creation, used for Instant arithmetic).
     base_instant: Instant,
     /// Base date for calendar calculations.
-    base_date: NaiveDate,
+    base_date: Date,
 }
 
 impl Default for TestTimeSource {
@@ -109,7 +116,7 @@ impl TestTimeSource {
         Self {
             logical_nanos: AtomicU64::new(0),
             base_instant: Instant::now(),
-            base_date: Utc::now().date_naive(),
+            base_date: utc_today(),
         }
     }
 
@@ -155,11 +162,12 @@ impl TimeSource for TestTimeSource {
         self.advance(duration);
     }
 
-    fn today_date(&self) -> NaiveDate {
+    fn today_date(&self) -> Date {
         // Calculate days elapsed from logical time
         let elapsed_days = (self.elapsed().as_secs() / 86400) as i64;
-        self.base_date
-            .checked_add_signed(chrono::Duration::days(elapsed_days))
+        jiff::Span::new()
+            .try_days(elapsed_days)
+            .and_then(|span| self.base_date.checked_add(span))
             .unwrap_or(self.base_date)
     }
 }
@@ -236,6 +244,34 @@ mod tests {
         handle.join().unwrap();
 
         assert_eq!(ts.elapsed(), Duration::from_millis(200));
+    }
+
+    #[test]
+    fn test_time_source_date_follows_logical_days() {
+        let ts = TestTimeSource::new();
+        let start = ts.today_date();
+        ts.advance(Duration::from_secs(86_400 * 3 - 1));
+        assert_eq!(
+            ts.today_date(),
+            start.tomorrow().unwrap().tomorrow().unwrap()
+        );
+        ts.advance(Duration::from_secs(1));
+        assert_eq!(
+            ts.today_date(),
+            start.checked_add(jiff::Span::new().days(3)).unwrap()
+        );
+    }
+
+    #[test]
+    fn real_time_source_date_is_utc_today() {
+        let before = jiff::Timestamp::now()
+            .to_zoned(jiff::tz::TimeZone::UTC)
+            .date();
+        let today = RealTimeSource::new().today_date();
+        let after = jiff::Timestamp::now()
+            .to_zoned(jiff::tz::TimeZone::UTC)
+            .date();
+        assert!(today == before || today == after);
     }
 
     #[test]

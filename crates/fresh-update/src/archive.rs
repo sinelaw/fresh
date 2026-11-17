@@ -79,6 +79,13 @@ pub fn from_zip(bytes: &[u8], name: &str) -> Result<Vec<u8>, String> {
     if zip.len() > MAX_ENTRIES {
         return Err(format!("archive has more than {MAX_ENTRIES} entries"));
     }
+    // A zip names each entry twice: in its local header and in the central
+    // directory. We match on the central-directory name, so an archive whose
+    // two copies disagree (or whose entries overlap or repeat a name) is one
+    // that different readers would unpack differently — refuse it instead of
+    // picking a side. Our own release zips are always consistent.
+    zip.validate_header_consistency()
+        .map_err(|e| format!("inconsistent zip: {e}"))?;
     for i in 0..zip.len() {
         let mut file = zip
             .by_index(i)
@@ -223,6 +230,32 @@ mod tests {
             w.finish().unwrap();
         }
         assert_eq!(from_zip(&buf, "fresh.exe").unwrap(), b"MZ fake exe");
+    }
+
+    /// A zip whose local header names a different file than its central
+    /// directory entry is refused rather than read by either name.
+    #[test]
+    fn zip_with_mismatched_local_header_name_is_refused() {
+        let mut buf = Vec::new();
+        {
+            let mut w = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+            let opts: zip::write::FileOptions<'_, '_, ()> = zip::write::FileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            w.start_file("fresh.exe", opts).unwrap();
+            w.write_all(b"MZ fake exe").unwrap();
+            w.finish().unwrap();
+        }
+        // The first occurrence of the name is the local header's copy (it
+        // precedes the data); the central directory's copy comes later.
+        let at = buf.windows(9).position(|w| w == b"fresh.exe").unwrap();
+        assert!(
+            buf[at + 9..].windows(9).any(|w| w == b"fresh.exe"),
+            "central directory should still carry the original name"
+        );
+        buf[at..at + 9].copy_from_slice(b"fresh.evl");
+
+        let err = from_zip(&buf, "fresh.exe").unwrap_err();
+        assert!(err.contains("inconsistent zip"), "got: {err}");
     }
 
     /// A highly compressible entry must not be allowed to expand without
