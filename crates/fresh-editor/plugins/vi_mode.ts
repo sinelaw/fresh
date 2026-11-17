@@ -21,6 +21,8 @@ const editor = getEditor();
 // Vi mode state
 type ViMode = "normal" | "insert" | "operator-pending" | "find-char" | "visual" | "visual-line" | "visual-block" | "text-object";
 type FindCharType = "f" | "t" | "F" | "T" | null;
+// `;` repeats the last f/t/F/T in its own direction, `,` in the opposite one.
+type FindRepeat = ";" | ",";
 type TextObjectType = "inner" | "around" | null;
 type ModeBinding = [string, string];
 type WORDMotionKind = "forward" | "backward" | "end";
@@ -58,6 +60,9 @@ type LastChange =
       operator: string;
       findType: FindCharType;
       findCharTarget: string;
+      // Set when the motion was `;`/`,` (d;, c,): the replay resolves the
+      // find again rather than reusing findType/findCharTarget.
+      findRepeat?: FindRepeat;
     })
   // rx
   | (ChangeCommon & { type: "replace-char"; replacement: string })
@@ -1902,8 +1907,20 @@ function vi_page_up() : void {
 }
 registerHandler("vi_page_up", vi_page_up);
 
-function vi_matching_bracket() : void {
-  editor.executeAction("goto_matching_bracket");
+// `%`: the same bracket `d%` acts on — the bracket under the cursor or the
+// next one on the line, then its partner (`:help %`). Going through the core
+// `goto_matching_bracket` instead made `%` and `d%` disagree whenever the
+// cursor was not on a bracket.
+async function vi_matching_bracket() : Promise<void> {
+  consumeCount();
+  const origin = editor.getCursorPosition();
+  if (origin === null) {
+    return;
+  }
+  const target = await matchingBracketTarget(origin);
+  if (target !== null) {
+    editor.setBufferCursor(editor.getActiveBufferId(), target);
+  }
 }
 registerHandler("vi_matching_bracket", vi_matching_bracket);
 
@@ -2672,16 +2689,23 @@ async function replayChange(change: LastChange, count: number): Promise<void> {
     }
 
     case "operator-find-char": {
-      // Operator + find-char like dfx, dtx, cfx
-      if (change.findType) {
+      // Operator + find-char like dfx, dtx, cfx, or operator + `;`/`,`.
+      // A `;`/`,` motion is resolved against the find that is current now,
+      // and must go through the repeat path so it neither overwrites the
+      // stored find with its reversed direction nor loses the `t`/`T` skip.
+      const repeat = change.findRepeat ?? null;
+      const find = repeat
+        ? resolveFindRepeat(repeat)
+        : { type: change.findType, char: change.findCharTarget };
+      if (find && find.type) {
         if (change.operator === "c") {
           // Replay change as delete-then-insert so '.' doesn't block on input.
-          await executeFindCharOperator("d", change.findType, change.findCharTarget, count, false);
+          await executeFindCharOperator("d", find.type, find.char, count, false, repeat);
           if (change.insertedText) {
             editor.insertAtCursor(change.insertedText);
           }
         } else {
-          await executeFindCharOperator(change.operator, change.findType, change.findCharTarget, count, false);
+          await executeFindCharOperator(change.operator, find.type, find.char, count, false, repeat);
         }
       }
       break;
@@ -4116,12 +4140,13 @@ async function executeFindCharOperator(
   char: string,
   count: number,
   record: boolean = true,
-  isRepeat: boolean = false,
+  repeat: FindRepeat | null = null,
 ): Promise<void> {
   if (!findType) {
     switchMode("normal");
     return;
   }
+  const isRepeat = repeat !== null;
 
   const bufferId = editor.getActiveBufferId();
   const cursorPos = editor.getCursorPosition();
@@ -4163,6 +4188,10 @@ async function executeFindCharOperator(
       operator,
       findType,
       findCharTarget: char,
+      // `d;` / `d,` repeat whatever find is current when `.` runs, as Vim's
+      // `.` re-executes the keys; `findType`/`findCharTarget` are only the
+      // fallback for a plain `dfx`.
+      findRepeat: repeat ?? undefined,
       count,
     });
   }
@@ -4187,11 +4216,29 @@ registerHandler("vi_find_char_F", vi_find_char_F);
 async function vi_find_char_T(): Promise<void> { return enterFindCharMode("T"); }
 registerHandler("vi_find_char_T", vi_find_char_T);
 
+// The find that `;` (same direction) or `,` (opposite direction) repeats,
+// read from the last recorded find at the moment the key is pressed.
+function resolveFindRepeat(repeat: FindRepeat): { type: FindCharType; char: string } | null {
+  const last = memory.lastFindChar;
+  if (!last) {
+    return null;
+  }
+  if (repeat === ";") {
+    return { type: last.type, char: last.char };
+  }
+  const reversed: FindCharType =
+    last.type === "f" ? "F" :
+    last.type === "F" ? "f" :
+    last.type === "t" ? "T" : "t";
+  return { type: reversed, char: last.char };
+}
+
 // Repeat last find char (async)
 async function vi_find_char_repeat(): Promise<void> {
   const count = consumeCount();
-  if (memory.lastFindChar) {
-    await executeFindChar(memory.lastFindChar.type, memory.lastFindChar.char, true, count);
+  const find = resolveFindRepeat(";");
+  if (find) {
+    await executeFindChar(find.type, find.char, true, count);
   }
 }
 registerHandler("vi_find_char_repeat", vi_find_char_repeat);
@@ -4199,12 +4246,9 @@ registerHandler("vi_find_char_repeat", vi_find_char_repeat);
 // Repeat last find char in opposite direction (async)
 async function vi_find_char_repeat_reverse(): Promise<void> {
   const count = consumeCount();
-  if (memory.lastFindChar) {
-    const reversedType: FindCharType =
-      memory.lastFindChar.type === "f" ? "F" :
-      memory.lastFindChar.type === "F" ? "f" :
-      memory.lastFindChar.type === "t" ? "T" : "t";
-    await executeFindChar(reversedType, memory.lastFindChar.char, true, count);
+  const find = resolveFindRepeat(",");
+  if (find) {
+    await executeFindChar(find.type, find.char, true, count);
   }
 }
 registerHandler("vi_find_char_repeat_reverse", vi_find_char_repeat_reverse);
@@ -4250,31 +4294,26 @@ async function enterFindCharOperatorMode(findType: FindCharType): Promise<void> 
   }
 }
 
-async function vi_op_find_char_repeat(): Promise<void> {
-  const last = memory.lastFindChar;
-  if (!state.pending || !last) {
+// Operator + `;` / `,` (d;, c,, y;, …): the find that `;`/`,` would repeat,
+// applied as the operator's motion.
+async function applyOperatorFindRepeat(repeat: FindRepeat): Promise<void> {
+  const find = resolveFindRepeat(repeat);
+  if (!state.pending || !find) {
     switchMode("normal");
     return;
   }
   const operator = state.pending.operator;
   const count = consumeCountOrDefault(1);
-  await executeFindCharOperator(operator, last.type, last.char, count, true, true);
+  await executeFindCharOperator(operator, find.type, find.char, count, true, repeat);
+}
+
+async function vi_op_find_char_repeat(): Promise<void> {
+  await applyOperatorFindRepeat(";");
 }
 registerHandler("vi_op_find_char_repeat", vi_op_find_char_repeat);
 
 async function vi_op_find_char_repeat_reverse(): Promise<void> {
-  const last = memory.lastFindChar;
-  if (!state.pending || !last) {
-    switchMode("normal");
-    return;
-  }
-  const operator = state.pending.operator;
-  const count = consumeCountOrDefault(1);
-  const reversed: FindCharType =
-    last.type === "f" ? "F" :
-    last.type === "F" ? "f" :
-    last.type === "t" ? "T" : "t";
-  await executeFindCharOperator(operator, reversed, last.char, count, true, true);
+  await applyOperatorFindRepeat(",");
 }
 registerHandler("vi_op_find_char_repeat_reverse", vi_op_find_char_repeat_reverse);
 
@@ -5128,12 +5167,19 @@ async function executeCommand(
     case "exit": {
       // :wq or :x - save current buffer and quit
       // :wq filename - save to filename and quit
+      // :x / ZZ write only when the buffer has changes (`:help :x`), so an
+      // unchanged file is not rewritten and an unchanged unnamed buffer quits.
       const wqBufferId = editor.getActiveBufferId();
+      const writeOnlyIfModified = command !== "wq";
+      const currentModified = (editor.listBuffers() as Array<{ id: number; modified: boolean }>)
+        .some((b) => b.id === wqBufferId && b.modified);
 
       if (args) {
         // Save to specified filename
         const path = args.startsWith("/") ? args : `${editor.getCwd()}/${args}`;
         editor.saveBufferToPath(wqBufferId, path);
+      } else if (writeOnlyIfModified && !currentModified) {
+        // Nothing to write.
       } else {
         // Save to existing path
         const wqPath = editor.getBufferPath(wqBufferId);

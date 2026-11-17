@@ -907,15 +907,9 @@ fn test_vi_2dd_delete_two_lines() {
 /// `d%` should delete from the cursor through the matching bracket (inclusive),
 /// e.g. on the `(` of "foo(bar)baz" it should leave "foobaz".
 ///
-/// Root cause: `applyOperatorWithMotion` resolves a motion to either an atomic
-/// operator action (`atomicOperatorActions`) or a selection-extending action
-/// (`motionToSelection`). The `goto_matching_bracket` motion is in neither map,
-/// so the operator bails out of the "no selection equivalent" branch without
-/// deleting anything. (The normal-mode `%` motion itself works.)
-///
-/// To fix: add a selection-extending action (e.g. `select_to_matching_bracket`)
-/// in the core editor and a `motionToSelection["goto_matching_bracket"]` entry in
-/// the vi_mode plugin, then remove the `#[ignore]`.
+/// Was a no-op because `goto_matching_bracket` had no entry in
+/// `OPERATOR_MOTIONS`; it now resolves through `matchingBracketTarget`, the
+/// same resolver the normal-mode `%` uses.
 #[test]
 fn test_vi_bug_d_percent_ignored() {
     let (mut harness, _td) = vi_mode_harness(80, 24);
@@ -2696,4 +2690,100 @@ fn test_vi_underscore_with_count_moves_down_to_first_non_blank() {
     send_key(&mut harness, '_');
 
     harness.wait_until(|h| h.cursor_position() == 10).unwrap();
+}
+
+/// `.` after `d,` must repeat `d,` against the current find without storing
+/// the reversed direction: Vim's `;` afterwards still searches forward.
+#[test]
+fn test_vi_dot_after_d_comma_keeps_find_direction() {
+    let (mut harness, _td, _fixture) = open_vi("a.b.c.d.e\n");
+
+    send_key(&mut harness, 'f');
+    harness
+        .wait_until(|h| h.editor().input_mode() == Some("vi-find-char".to_string()))
+        .unwrap();
+    send_key(&mut harness, '.');
+    send_key(&mut harness, ';');
+    send_key(&mut harness, ';');
+    harness.wait_until(|h| h.cursor_position() == 5).unwrap();
+
+    send_operator_motion(&mut harness, 'd', ',');
+    harness.wait_for_buffer_content("a.b.d.e\n").unwrap();
+
+    send_key(&mut harness, '.');
+    harness.wait_for_buffer_content("a.d.e\n").unwrap();
+    harness.wait_until(|h| h.cursor_position() == 1).unwrap();
+
+    send_key(&mut harness, ';');
+    harness.wait_until(|h| h.cursor_position() == 3).unwrap();
+}
+
+/// `%` with the cursor between brackets uses the next bracket on the line,
+/// the same one `d%` acts on: from `b` in "foo(bar)baz" it finds `)` and
+/// jumps to its `(`.
+#[test]
+fn test_vi_percent_inside_brackets_matches_d_percent() {
+    let (mut harness, _td, _fixture) = open_vi("foo(bar)baz\n");
+
+    for _ in 0..4 {
+        send_key(&mut harness, 'l');
+    }
+    harness.wait_until(|h| h.cursor_position() == 4).unwrap();
+    send_key(&mut harness, '%');
+
+    harness.wait_until(|h| h.cursor_position() == 3).unwrap();
+}
+
+/// `%` before any bracket on the line jumps to the partner of the first one.
+#[test]
+fn test_vi_percent_before_bracket_jumps_to_partner() {
+    let (mut harness, _td, _fixture) = open_vi("foo(bar)baz\n");
+
+    send_key(&mut harness, '%');
+
+    harness.wait_until(|h| h.cursor_position() == 7).unwrap();
+}
+
+/// `ZZ` (`:x`) writes only when the buffer has changes: an unchanged file is
+/// not rewritten.
+#[test]
+fn test_vi_ZZ_unmodified_does_not_rewrite_file() {
+    // Backdate the file before the editor opens it, so the editor's own view
+    // of the file agrees with the disk and a save would go through.
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "alpha\n").unwrap();
+    let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+    fs::File::options()
+        .write(true)
+        .open(&fixture.path)
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    send_key(&mut harness, 'Z');
+    send_key(&mut harness, 'Z');
+
+    harness.wait_until(|h| h.should_quit()).unwrap();
+    assert_eq!(
+        fs::metadata(&fixture.path).unwrap().modified().unwrap(),
+        old
+    );
+    assert_eq!(fs::read_to_string(&fixture.path).unwrap(), "alpha\n");
+}
+
+/// `ZZ` on an unchanged buffer with no file name quits instead of failing
+/// with "no file name".
+#[test]
+fn test_vi_ZZ_unnamed_unmodified_quits() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    send_key(&mut harness, 'Z');
+    send_key(&mut harness, 'Z');
+
+    harness.wait_until(|h| h.should_quit()).unwrap();
 }
