@@ -26,6 +26,7 @@ type FindCharType = FindKind | null;
 type FindRepeat = ";" | ",";
 type TextObjectType = "inner" | "around" | null;
 type ModeBinding = [string, string];
+type RegisterShape = "charwise" | "linewise" | "empty";
 type WORDMotionKind = "forward" | "backward" | "end";
 type WordSearchDirection = "forward" | "backward";
 type WordSearchTarget = { start: number; end: number; text: string; wholeWord: boolean };
@@ -118,7 +119,9 @@ interface ViMemory {
   lastChange: LastChange | null; // For '.' repeat
   lastFindChar: CharFind | null; // For ; and , repeat
   lastWordSearch: { text: string; direction: WordSearchDirection; wholeWord: boolean } | null; // For n/N after * or #
-  lastYankWasLinewise: boolean; // Track if last yank was line-wise for proper paste
+  // The shape of what the register holds, which decides how `p` puts it: on
+  // lines of its own, inline, or (after yanking empty text) not at all.
+  register: RegisterShape;
 }
 
 // The state the current mode owns: established on entering a mode and cleared
@@ -153,7 +156,7 @@ const memory: ViMemory = {
   lastChange: null,
   lastFindChar: null,
   lastWordSearch: null,
-  lastYankWasLinewise: false,
+  register: "charwise",
 };
 
 function recordChange(change: LastChange): void {
@@ -1309,6 +1312,24 @@ async function lineStartAtOrBeforeEnd(bufferId: number, position: number): Promi
   return lineStart >= length && length > 0 ? findLineStartAtPosition(bufferId, length - 1) : lineStart;
 }
 
+// `position` moved back onto the last character of its line when it sits at
+// the line's end, where Vim's normal mode never leaves the caret (`x` on the
+// last character, `d$`, `di(` at a line end). An empty line keeps its start.
+async function onLineCharacter(bufferId: number, position: number): Promise<number> {
+  const length = editor.getBufferLength(bufferId);
+  const clamped = Math.min(position, length);
+  const lineStart = await findLineStartAtPosition(bufferId, clamped);
+  if (clamped === lineStart) {
+    return clamped;
+  }
+  const next = clamped < length ? await editor.getBufferText(bufferId, clamped, clamped + 1) : "";
+  if (next !== "" && next !== "\n" && next !== "\r") {
+    return clamped;
+  }
+  const line = await editor.getBufferText(bufferId, lineStart, clamped);
+  return lineStart + editor.utf8ByteLength(line.slice(0, previousStringIndex(line, line.length)));
+}
+
 // Index of the last line that has content. A file ending in a newline has no
 // line after it in Vim's model, but the editor still places a caret there.
 async function lastContentLine(bufferId: number): Promise<number | null> {
@@ -1396,7 +1417,7 @@ async function linewiseRangeAt(
 // A null range is a motion or object that failed (`fz` with no `z`, `dk` on
 // the first line): nothing happens. An *empty* range is a motion that
 // succeeded without covering anything (`cT` next to its target, `c0` or `>0`
-// in column 0, `s` or `C` on an empty line), and each operator does what Vim
+// in column 0, `s` or `C` on an empty line, `ci(` on `()`), and each operator does what Vim
 // does with it: `c` still opens its insert, `>`/`<` still shift the line, `y`
 // yanks the empty text, and `d` has nothing to delete. `d` and `c` over
 // nothing leave the register alone.
@@ -1431,7 +1452,7 @@ async function applyOperator(
   const terminator = linewise ? await getLinewiseTerminator(bufferId, range.start, text) : "";
   if (!empty || operator === "y") {
     editor.setClipboard(linewise ? ensureLinewiseRegisterText(text, terminator) : text);
-    memory.lastYankWasLinewise = linewise;
+    memory.register = text === "" ? "empty" : linewise ? "linewise" : "charwise";
   }
 
   // The caret is placed *after* the mode switch throughout: leaving a visual
@@ -1461,7 +1482,8 @@ async function applyOperator(
         await editor.flush();
         landing = await firstNonBlankOffset(bufferId, await lineStartAtOrBeforeEnd(bufferId, range.start));
       } else {
-        landing = Math.min(range.cursorAfter ?? range.start, editor.getBufferLength(bufferId));
+        await editor.flush();
+        landing = await onLineCharacter(bufferId, range.cursorAfter ?? range.start);
       }
       switchMode("normal");
       editor.setBufferCursor(bufferId, landing);
@@ -1593,7 +1615,6 @@ async function applyIndentToLineRange(
 
   editor.executeAction(operator === ">" ? "insert_tab" : "dedent_selection");
 
-  memory.lastYankWasLinewise = false;
   // Placed after the mode switch, which drops the indent's selection by
   // nudging the caret, and after a flush, so the first non-blank is read from
   // the shifted line rather than the one before it (Vim leaves the caret on
@@ -2599,34 +2620,81 @@ async function vi_change_to_end() : Promise<void> {
 registerHandler("vi_change_to_end", vi_change_to_end);
 
 // Clipboard
-function vi_paste_after() : void {
-  if (memory.lastYankWasLinewise) {
-    // Line-wise paste: go to next line start and paste there
-    // The yanked text includes trailing \n which pushes subsequent lines down
+// `p` and `P`. A line-wise register goes on lines of its own, below or above
+// the caret's line, and the caret lands on the first non-blank of the first
+// pasted line (Vim). An empty register (yanked from an empty range) puts
+// nothing and leaves the caret where it is.
+async function vi_paste_after() : Promise<void> {
+  if (memory.register === "empty") {
+    return;
+  }
+  if (memory.register === "linewise") {
+    // The yanked text includes its trailing line break, which pushes the
+    // following lines down.
     editor.executeAction("move_down");
     editor.executeAction("move_line_start");
-    editor.executeAction("paste");
-    editor.executeAction("move_up"); // Stay on the pasted line
-    editor.executeAction("move_line_start");
+    await pasteLinewiseAtCaret();
   } else {
-    // Character-wise paste: insert after cursor
-    editor.executeAction("move_right");
-    editor.executeAction("paste");
+    // Character-wise paste: after the character under the caret. On an empty
+    // line there is none, and the paste goes where the caret is (a plain
+    // `move_right` would wrap onto the next line first).
+    const bufferId = editor.getActiveBufferId();
+    const caret = editor.getCursorPosition();
+    if (caret !== null) {
+      const under = await editor.getBufferText(bufferId, caret, Math.min(caret + 1, editor.getBufferLength(bufferId)));
+      if (under !== "" && under !== "\n" && under !== "\r") {
+        editor.setBufferCursor(bufferId, await charEndOffset(bufferId, caret));
+      }
+    }
+    await pasteCharwiseAtCaret();
   }
 }
 registerHandler("vi_paste_after", vi_paste_after);
 
-function vi_paste_before() : void {
-  if (memory.lastYankWasLinewise) {
-    // Line-wise paste: paste at current line start
-    // The yanked text includes trailing \n which pushes current line down
+async function vi_paste_before() : Promise<void> {
+  if (memory.register === "empty") {
+    return;
+  }
+  if (memory.register === "linewise") {
     editor.executeAction("move_line_start");
-    editor.executeAction("paste");
-    editor.executeAction("move_up"); // Stay on the pasted line
-    editor.executeAction("move_line_start");
+    await pasteLinewiseAtCaret();
   } else {
     // Character-wise paste: insert at cursor
-    editor.executeAction("paste");
+    await pasteCharwiseAtCaret();
+  }
+}
+
+// Paste the character-wise register at the caret. Vim leaves the caret on
+// the last pasted character, or at the start of the pasted text when it
+// spans lines.
+async function pasteCharwiseAtCaret(): Promise<void> {
+  await editor.flush();
+  const bufferId = editor.getActiveBufferId();
+  const pasteStart = editor.getCursorPosition();
+  editor.executeAction("paste");
+  await editor.flush();
+  const pasteEnd = editor.getCursorPosition();
+  if (pasteStart === null || pasteEnd === null || pasteEnd <= pasteStart) {
+    return;
+  }
+  const pasted = await editor.getBufferText(bufferId, pasteStart, pasteEnd);
+  if (/[\r\n]/.test(pasted)) {
+    editor.setBufferCursor(bufferId, pasteStart);
+  } else {
+    editor.setBufferCursor(bufferId, pasteStart + editor.utf8ByteLength(pasted.slice(0, previousStringIndex(pasted, pasted.length))));
+  }
+}
+
+// Paste the line-wise register at the caret, a line start, and land on the
+// first non-blank of the first pasted line.
+async function pasteLinewiseAtCaret(): Promise<void> {
+  await editor.flush();
+  const bufferId = editor.getActiveBufferId();
+  const pasteStart = editor.getCursorPosition();
+  editor.executeAction("paste");
+  await editor.flush();
+  if (pasteStart !== null) {
+    editor.setBufferCursor(bufferId, await firstNonBlankOffset(bufferId, pasteStart));
   }
 }
 registerHandler("vi_paste_before", vi_paste_before);
@@ -3058,7 +3126,7 @@ registerHandler("vi_vblock_line_end", vi_vblock_line_end);
 // Visual block delete - delete the selected block
 function vi_vblock_delete() : void {
   editor.executeAction("cut");
-  memory.lastYankWasLinewise = false;
+  memory.register = "charwise";
   switchMode("normal");
 }
 registerHandler("vi_vblock_delete", vi_vblock_delete);
@@ -3073,7 +3141,7 @@ registerHandler("vi_vblock_change", vi_vblock_change);
 // Visual block yank
 function vi_vblock_yank() : void {
   editor.executeAction("copy");
-  memory.lastYankWasLinewise = false;
+  memory.register = "charwise";
   // Move cursor to start of selection
   editor.executeAction("move_left");
   switchMode("normal");
@@ -3516,7 +3584,6 @@ async function applyVisualIndent(operator: string): Promise<void> {
     : editor.getCursorPosition();
 
   editor.executeAction(operator === ">" ? "insert_tab" : "dedent_selection");
-  memory.lastYankWasLinewise = false;
 
   if (firstByte !== null && firstByte !== undefined) {
     const firstLineStart = await findLineStartAtPosition(bufferId, firstByte);
@@ -3620,8 +3687,10 @@ async function enterVisualTextObject(modifier: TextObjectType): Promise<void> {
     return;
   }
 
+  // An empty object (`vi(` on `()`) leaves the selection as it is, as Vim's
+  // does; an operator over one still acts (`ci(` types between the brackets).
   const range = await computeTextObjectRange(objectType, modifier === "inner");
-  if (range !== null) {
+  if (range !== null && range.end > range.start) {
     await setVisualRange(range.start, range.end);
   }
   editor.setStatus(getModeIndicator(state.mode));
@@ -3715,7 +3784,123 @@ async function applyTextObject(
 
 async function textObjectOperatorRange(objectType: string, modifier: TextObjectType): Promise<OperatorRange | null> {
   const range = await computeTextObjectRange(objectType, modifier === "inner");
-  return range === null ? null : charwiseRange(range.start, range.end);
+  if (range === null) {
+    return null;
+  }
+  return range.exclusive
+    ? exclusiveOperatorRange(editor.getActiveBufferId(), range.start, range.end)
+    : charwiseRange(range.start, range.end);
+}
+
+// `iw`/`aw` and `iW`/`aW` at string index `pos` of `text`, within the
+// caret's line (`:help iw`). A word is a run of one class: keyword
+// characters, other non-blank characters, or blanks (for `W`, every non-blank
+// is one class). `iw` is the run under the caret. `aw` adds the blanks after
+// the word, or the blanks before it when there are none after; on blanks,
+// `aw` is the blanks and the word that follows them.
+function wordObject(text: string, pos: number, bigWord: boolean, inner: boolean): { start: number; end: number } | null {
+  const atLineEnd = (i: number) => i >= text.length || isLineBreakAt(text, i);
+  if (atLineEnd(pos)) {
+    return null;
+  }
+  const BLANK = 0;
+  const classOf = (ch: string): number =>
+    ch === " " || ch === "\t" ? BLANK : bigWord || !/[\p{L}\p{N}_]/u.test(ch) ? 1 : 2;
+  const runEnd = (i: number): number => {
+    const cls = classOf(text[i]);
+    while (!atLineEnd(i) && classOf(text[i]) === cls) i++;
+    return i;
+  };
+  const runStart = (i: number): number => {
+    const cls = classOf(text[i]);
+    while (i > 0 && !isLineBreakAt(text, i - 1) && classOf(text[i - 1]) === cls) i--;
+    return i;
+  };
+
+  let start = runStart(pos);
+  let end = runEnd(pos);
+  if (inner) {
+    return { start, end };
+  }
+  if (classOf(text[pos]) === BLANK) {
+    return { start, end: atLineEnd(end) ? end : runEnd(end) };
+  }
+  if (!atLineEnd(end) && classOf(text[end]) === BLANK) {
+    return { start, end: runEnd(end) };
+  }
+  if (start > 0 && !isLineBreakAt(text, start - 1) && classOf(text[start - 1]) === BLANK) {
+    start = runStart(start - 1);
+  }
+  return { start, end };
+}
+
+// A text object's byte range. `exclusive` marks an inner block that ends at
+// the start of its closing bracket's line (see `bracketObject`); an operator
+// over it follows Vim's rule for exclusive ranges (`exclusiveOperatorRange`),
+// visual mode selects it as it is.
+interface TextObjectRange {
+  start: number;
+  end: number;
+  exclusive: boolean;
+}
+
+const BRACKET_OBJECT_PAIRS: Record<string, [string, string]> = {
+  "(": ["(", ")"], ")": ["(", ")"], b: ["(", ")"],
+  "{": ["{", "}"], "}": ["{", "}"], B: ["{", "}"],
+  "[": ["[", "]"], "]": ["[", "]"],
+  "<": ["<", ">"], ">": ["<", ">"],
+};
+
+// `a(` / `i(` and the other blocks around string index `pos` (`:help a(`),
+// as string indexes into `text`. `a(` is the brackets and all between them.
+// `i(` is what is between them, with Vim's two line rules: a `(` that ends
+// its line starts the block on the next line, and a `)` with only blanks
+// before it on its line ends the block at that line's start, which makes the
+// block exclusive of the line break before it. Either can leave it empty.
+function bracketObject(
+  text: string,
+  pos: number,
+  open: string,
+  close: string,
+  inner: boolean,
+): { start: number; end: number; exclusive: boolean } | null {
+  const pair = findMatchingPair(text, pos, open, close);
+  if (pair === null) {
+    return null;
+  }
+  if (!inner) {
+    return { start: pair.start, end: pair.end + 1, exclusive: false };
+  }
+  let start = pair.start + 1;
+  if (isLineBreakAt(text, start)) {
+    start += text[start] === "\r" && text[start + 1] === "\n" ? 2 : 1;
+  }
+  let closeLineStart = pair.end;
+  while (closeLineStart > 0 && text[closeLineStart - 1] !== "\n") {
+    closeLineStart--;
+  }
+  if (closeLineStart > pair.start && /^[ \t]*$/.test(text.slice(closeLineStart, pair.end))) {
+    return { start: Math.min(start, closeLineStart), end: closeLineStart, exclusive: true };
+  }
+  return { start, end: pair.end, exclusive: false };
+}
+
+// Vim's rule for an operator over an exclusive range that ends at the start
+// of a later line (`:help exclusive-linewise`): the end moves back to the end
+// of the line before, and when the range starts at or before its line's first
+// non-blank the operator takes whole lines — `di{` on a block of its own
+// lines deletes those lines, `ci{` leaves one empty line to type into.
+async function exclusiveOperatorRange(bufferId: number, start: number, end: number): Promise<OperatorRange | null> {
+  if (end <= start || (await findLineStartAtPosition(bufferId, end)) !== end) {
+    return charwiseRange(start, end);
+  }
+  const startLineStart = await findLineStartAtPosition(bufferId, start);
+  if (start <= await pastLeadingBlanks(bufferId, startLineStart)) {
+    const span = await lineSpanOfRange(bufferId, startLineStart, end);
+    return linewiseRangeAt(bufferId, startLineStart, span.lineCount);
+  }
+  const breakText = await editor.getBufferText(bufferId, Math.max(start, end - 2), end);
+  return charwiseRange(start, end - (breakText.endsWith("\r\n") ? 2 : 1));
 }
 
 // The byte range a text object covers at the caret, or null when there is no
@@ -3724,63 +3909,44 @@ async function textObjectOperatorRange(objectType: string, modifier: TextObjectT
 async function computeTextObjectRange(
   objectType: string,
   isInner: boolean,
-): Promise<{ start: number; end: number } | null> {
+): Promise<TextObjectRange | null> {
   const bufferId = editor.getActiveBufferId();
   const cursorPos = editor.getCursorPosition();
   if (cursorPos === null) {
     return null;
   }
 
-  // Get text around cursor to find the text object boundaries
+  // Get text around cursor to find the text object boundaries. The window
+  // starts on a line start, a character boundary, and is read in two pieces
+  // split at the caret, so the caret's string index is the length of the
+  // first; everything below works in string indexes, converted to byte
+  // offsets once at the end.
   const windowSize = 1000;
-  const startOffset = Math.max(0, cursorPos - windowSize);
+  const windowStart = await findLineStartAtPosition(bufferId, Math.max(0, cursorPos - windowSize));
   const bufLen = editor.getBufferLength(bufferId);
-  const endOffset = Math.min(bufLen, cursorPos + windowSize);
-  const text = await editor.getBufferText(bufferId, startOffset, endOffset);
+  const before = await editor.getBufferText(bufferId, windowStart, cursorPos);
+  const after = await editor.getBufferText(bufferId, cursorPos, Math.min(bufLen, cursorPos + windowSize));
+  const text = before + after;
   if (!text) {
     return null;
   }
 
-  const posInChunk = cursorPos - startOffset;
+  const posInChunk = before.length;
   let selectStart = -1;
   let selectEnd = -1;
+  // Brackets and quotes can be empty (`ci(` on `()` types between them); a
+  // word cannot.
+  let allowEmpty = false;
+  let exclusive = false;
 
   switch (objectType) {
-    case "word": {
-      // Find word boundaries
-      const wordChars = /[a-zA-Z0-9_]/;
-      let start = posInChunk;
-      let end = posInChunk;
-
-      // Expand to find word start
-      while (start > 0 && wordChars.test(text[start - 1])) start--;
-      // Expand to find word end
-      while (end < text.length && wordChars.test(text[end])) end++;
-
-      if (!isInner) {
-        // "a word" includes trailing whitespace
-        while (end < text.length && /\s/.test(text[end]) && text[end] !== '\n') end++;
-      }
-
-      selectStart = startOffset + start;
-      selectEnd = startOffset + end;
-      break;
-    }
-
+    case "word":
     case "WORD": {
-      // WORD is whitespace-delimited
-      let start = posInChunk;
-      let end = posInChunk;
-
-      while (start > 0 && !/\s/.test(text[start - 1])) start--;
-      while (end < text.length && !/\s/.test(text[end])) end++;
-
-      if (!isInner) {
-        while (end < text.length && /\s/.test(text[end]) && text[end] !== '\n') end++;
+      const word = wordObject(text, posInChunk, objectType === "WORD", isInner);
+      if (word !== null) {
+        selectStart = word.start;
+        selectEnd = word.end;
       }
-
-      selectStart = startOffset + start;
-      selectEnd = startOffset + end;
       break;
     }
 
@@ -3823,9 +3989,10 @@ async function computeTextObjectRange(
       }
 
       if (quoteStart !== -1 && quoteEnd !== -1) {
+        allowEmpty = true;
         if (isInner) {
-          selectStart = startOffset + lineStart + quoteStart + 1;
-          selectEnd = startOffset + lineStart + quoteEnd;
+          selectStart = lineStart + quoteStart + 1;
+          selectEnd = lineStart + quoteEnd;
         } else {
           // `a"` includes the quotes plus surrounding whitespace, matching Vim
           // (`:help aquote`): trailing whitespace after the closing quote is
@@ -3841,8 +4008,8 @@ async function computeTextObjectRange(
           } else {
             while (aStart > 0 && isBlank(line[aStart - 1])) aStart--;
           }
-          selectStart = startOffset + lineStart + aStart;
-          selectEnd = startOffset + lineStart + aEnd;
+          selectStart = lineStart + aStart;
+          selectEnd = lineStart + aEnd;
         }
       }
       break;
@@ -3850,72 +4017,34 @@ async function computeTextObjectRange(
 
     case "(":
     case ")":
-    case "b": {
-      // Find matching parentheses
-      const result = findMatchingPair(text, posInChunk, '(', ')');
-      if (result) {
-        if (isInner) {
-          selectStart = startOffset + result.start + 1;
-          selectEnd = startOffset + result.end;
-        } else {
-          selectStart = startOffset + result.start;
-          selectEnd = startOffset + result.end + 1;
-        }
-      }
-      break;
-    }
-
+    case "b":
     case "{":
     case "}":
-    case "B": {
-      const result = findMatchingPair(text, posInChunk, '{', '}');
-      if (result) {
-        if (isInner) {
-          selectStart = startOffset + result.start + 1;
-          selectEnd = startOffset + result.end;
-        } else {
-          selectStart = startOffset + result.start;
-          selectEnd = startOffset + result.end + 1;
-        }
-      }
-      break;
-    }
-
+    case "B":
     case "[":
-    case "]": {
-      const result = findMatchingPair(text, posInChunk, '[', ']');
-      if (result) {
-        if (isInner) {
-          selectStart = startOffset + result.start + 1;
-          selectEnd = startOffset + result.end;
-        } else {
-          selectStart = startOffset + result.start;
-          selectEnd = startOffset + result.end + 1;
-        }
-      }
-      break;
-    }
-
+    case "]":
     case "<":
     case ">": {
-      const result = findMatchingPair(text, posInChunk, '<', '>');
-      if (result) {
-        if (isInner) {
-          selectStart = startOffset + result.start + 1;
-          selectEnd = startOffset + result.end;
-        } else {
-          selectStart = startOffset + result.start;
-          selectEnd = startOffset + result.end + 1;
-        }
+      const pair = BRACKET_OBJECT_PAIRS[objectType];
+      const block = bracketObject(text, posInChunk, pair[0], pair[1], isInner);
+      if (block !== null) {
+        selectStart = block.start;
+        selectEnd = block.end;
+        exclusive = block.exclusive;
+        allowEmpty = true;
       }
       break;
     }
   }
 
-  if (selectStart === -1 || selectEnd === -1 || selectStart >= selectEnd) {
+  if (selectStart === -1 || selectEnd === -1 || selectEnd < selectStart || (selectEnd === selectStart && !allowEmpty)) {
     return null;
   }
-  return { start: selectStart, end: selectEnd };
+  return {
+    start: windowStart + stringIndexToByteOffset(text, selectStart),
+    end: windowStart + stringIndexToByteOffset(text, selectEnd),
+    exclusive,
+  };
 }
 
 // Helper to find matching bracket pair containing the cursor.
@@ -3928,8 +4057,9 @@ function findMatchingPair(text: string, pos: number, openChar: string, closeChar
   let depth = 0;
   let start = -1;
 
-  // Search backward for opening bracket
-  for (let i = pos; i >= 0; i--) {
+  // Search backward for opening bracket. A closing bracket under the caret is
+  // the end of the block the caret is on, not a nested one to skip.
+  for (let i = text[pos] === closeChar ? pos - 1 : pos; i >= 0; i--) {
     if (text[i] === closeChar) depth++;
     if (text[i] === openChar) {
       if (depth === 0) {

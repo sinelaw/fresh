@@ -3251,3 +3251,295 @@ fn test_vi_x_with_file_name_on_unmodified_buffer_writes_nothing() {
     harness.wait_until(|h| h.should_quit()).unwrap();
     assert!(!other.exists());
 }
+
+// =============================================================================
+// Text objects: empty blocks, Vim's line rules for blocks, multi-byte text
+// =============================================================================
+
+/// `ci(` on `()` has an empty block to change: it types between the brackets.
+#[test]
+fn test_vi_ci_paren_on_empty_parens_types_between_them() {
+    let (mut harness, _td, _fixture) = open_vi("f()\n");
+
+    send_key(&mut harness, 'l');
+    harness.wait_until(|h| h.cursor_position() == 1).unwrap();
+    send_operator_text_object(&mut harness, 'c', 'i', '(');
+    change_then_type(&mut harness, "X");
+
+    harness.wait_for_buffer_content("f(X)\n").unwrap();
+}
+
+/// `.` repeats `ci(` on the next empty pair.
+#[test]
+fn test_vi_dot_repeats_ci_paren_on_empty_parens() {
+    let (mut harness, _td, _fixture) = open_vi("f() g()\n");
+
+    send_key(&mut harness, 'l');
+    harness.wait_until(|h| h.cursor_position() == 1).unwrap();
+    send_operator_text_object(&mut harness, 'c', 'i', '(');
+    change_then_type(&mut harness, "X");
+    harness.wait_for_buffer_content("f(X) g()\n").unwrap();
+
+    // `w` stops on `)`, then on `g`; `ci(` from `g` finds the pair after it.
+    send_key(&mut harness, 'w');
+    send_key(&mut harness, 'w');
+    harness.wait_until(|h| h.cursor_position() == 5).unwrap();
+    send_key(&mut harness, '.');
+
+    harness.wait_for_buffer_content("f(X) g(X)\n").unwrap();
+}
+
+/// `di(` on `()` deletes nothing but moves the caret inside, onto the `)`.
+#[test]
+fn test_vi_di_paren_on_empty_parens_moves_inside() {
+    let (mut harness, _td, _fixture) = open_vi("f()\n");
+
+    send_key(&mut harness, 'l');
+    harness.wait_until(|h| h.cursor_position() == 1).unwrap();
+    send_operator_text_object(&mut harness, 'd', 'i', '(');
+
+    harness.wait_until(|h| h.cursor_position() == 2).unwrap();
+    harness.wait_for_buffer_content("f()\n").unwrap();
+}
+
+#[test]
+fn test_vi_ci_quote_on_empty_quotes_types_between_them() {
+    let (mut harness, _td, _fixture) = open_vi("a\"\"b\n");
+
+    send_key(&mut harness, 'l');
+    harness.wait_until(|h| h.cursor_position() == 1).unwrap();
+    send_operator_text_object(&mut harness, 'c', 'i', '"');
+    change_then_type(&mut harness, "X");
+
+    harness.wait_for_buffer_content("a\"X\"b\n").unwrap();
+}
+
+/// With the caret on a `)`, the block is the one that `)` closes.
+#[test]
+fn test_vi_ci_paren_on_closing_paren_changes_its_block() {
+    let (mut harness, _td, _fixture) = open_vi("((a)b)\n");
+
+    for _ in 0..3 {
+        send_key(&mut harness, 'l');
+    }
+    harness.wait_until(|h| h.cursor_position() == 3).unwrap();
+    send_operator_text_object(&mut harness, 'c', 'i', '(');
+    change_then_type(&mut harness, "X");
+
+    harness.wait_for_buffer_content("((X)b)\n").unwrap();
+}
+
+/// A block on lines of its own: `ci{` changes those lines, leaving one to
+/// type into, and keeps the braces on their lines.
+#[test]
+fn test_vi_ci_brace_on_block_lines_changes_the_lines() {
+    let (mut harness, _td, _fixture) = open_vi("{\n    foo\n}\n");
+
+    send_operator_text_object(&mut harness, 'c', 'i', '{');
+    change_then_type(&mut harness, "X");
+
+    harness.wait_for_buffer_content("{\nX\n}\n").unwrap();
+}
+
+#[test]
+fn test_vi_di_brace_on_block_lines_deletes_the_lines() {
+    let (mut harness, _td, _fixture) = open_vi("{\n    foo\n}\n");
+
+    send_operator_text_object(&mut harness, 'd', 'i', '{');
+
+    harness.wait_for_buffer_content("{\n}\n").unwrap();
+}
+
+/// A `(` that ends its line starts the block on the next line.
+#[test]
+fn test_vi_ci_paren_skips_the_line_break_after_the_open_paren() {
+    let (mut harness, _td, _fixture) = open_vi("f(\n)\n");
+
+    send_key(&mut harness, 'l');
+    harness.wait_until(|h| h.cursor_position() == 1).unwrap();
+    send_operator_text_object(&mut harness, 'c', 'i', '(');
+    change_then_type(&mut harness, "X");
+
+    harness.wait_for_buffer_content("f(\nX)\n").unwrap();
+}
+
+/// A `)` alone on its line ends the block before that line, so the text
+/// after the `(` is changed but the line break stays.
+#[test]
+fn test_vi_ci_paren_keeps_the_line_break_before_a_lone_close_paren() {
+    let (mut harness, _td, _fixture) = open_vi("f(a\n)\n");
+
+    send_key(&mut harness, 'l');
+    harness.wait_until(|h| h.cursor_position() == 1).unwrap();
+    send_operator_text_object(&mut harness, 'c', 'i', '(');
+    change_then_type(&mut harness, "X");
+
+    harness.wait_for_buffer_content("f(X\n)\n").unwrap();
+}
+
+/// Visual mode selects the block as it is, line break included.
+#[test]
+fn test_vi_visual_inner_paren_over_lines() {
+    let (mut harness, _td, _fixture) = open_vi("f(\n  a\n  )\n");
+
+    send_key(&mut harness, 'l');
+    harness.wait_until(|h| h.cursor_position() == 1).unwrap();
+    send_key(&mut harness, 'v');
+    harness
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual".to_string()))
+        .unwrap();
+    send_key(&mut harness, 'i');
+    send_key(&mut harness, '(');
+    send_key(&mut harness, 'd');
+
+    harness.wait_for_buffer_content("f(\n  )\n").unwrap();
+}
+
+/// Text objects measure in bytes: a multi-byte character before the caret
+/// does not shift the range.
+#[test]
+fn test_vi_ci_paren_after_multibyte_char() {
+    let (mut harness, _td, _fixture) = open_vi("é(ab)\n");
+
+    send_key(&mut harness, 'l');
+    send_key(&mut harness, 'l');
+    harness.wait_until(|h| h.cursor_position() == 3).unwrap();
+    send_operator_text_object(&mut harness, 'c', 'i', '(');
+    change_then_type(&mut harness, "X");
+
+    harness.wait_for_buffer_content("é(X)\n").unwrap();
+}
+
+#[test]
+fn test_vi_ciw_after_multibyte_char() {
+    let (mut harness, _td, _fixture) = open_vi("é foo\n");
+
+    send_key(&mut harness, 'w');
+    harness.wait_until(|h| h.cursor_position() == 3).unwrap();
+    send_operator_text_object(&mut harness, 'c', 'i', 'w');
+    change_then_type(&mut harness, "X");
+
+    harness.wait_for_buffer_content("é X\n").unwrap();
+}
+
+// =============================================================================
+// Word objects by class, the caret after a delete, and `p`
+// =============================================================================
+
+/// `iw` on punctuation takes the run of punctuation, a word of its own class.
+#[test]
+fn test_vi_diw_on_punctuation_deletes_the_run() {
+    let (mut harness, _td, _fixture) = open_vi("a..b\n");
+
+    send_key(&mut harness, 'l');
+    harness.wait_until(|h| h.cursor_position() == 1).unwrap();
+    send_operator_text_object(&mut harness, 'd', 'i', 'w');
+
+    harness.wait_for_buffer_content("ab\n").unwrap();
+}
+
+/// On blanks, `iw` is the blanks and `aw` is the blanks plus the next word.
+#[test]
+fn test_vi_iw_and_aw_on_blanks() {
+    let (mut harness, _td, _fixture) = open_vi("foo   bar\nfoo   bar\n");
+
+    for _ in 0..3 {
+        send_key(&mut harness, 'l');
+    }
+    harness.wait_until(|h| h.cursor_position() == 3).unwrap();
+    send_operator_text_object(&mut harness, 'd', 'i', 'w');
+    harness
+        .wait_for_buffer_content("foobar\nfoo   bar\n")
+        .unwrap();
+
+    send_key(&mut harness, 'j');
+    harness.wait_until(|h| h.cursor_position() == 10).unwrap();
+    send_operator_text_object(&mut harness, 'd', 'a', 'w');
+    harness.wait_for_buffer_content("foobar\nfoo\n").unwrap();
+}
+
+/// `aw` on the last word of a line takes the blanks before it instead.
+#[test]
+fn test_vi_aw_on_last_word_takes_leading_blanks() {
+    let (mut harness, _td, _fixture) = open_vi("foo bar\n");
+
+    send_key(&mut harness, 'w');
+    harness.wait_until(|h| h.cursor_position() == 4).unwrap();
+    send_operator_text_object(&mut harness, 'd', 'a', 'w');
+
+    harness.wait_for_buffer_content("foo\n").unwrap();
+}
+
+/// `x` on the last character leaves the caret on the new last character, not
+/// past the end of the line.
+#[test]
+fn test_vi_x_on_last_char_keeps_caret_on_the_line() {
+    let (mut harness, _td, _fixture) = open_vi("ab\n");
+
+    send_key(&mut harness, '$');
+    harness.wait_until(|h| h.cursor_position() == 1).unwrap();
+    send_key(&mut harness, 'x');
+
+    harness.wait_for_buffer_content("a\n").unwrap();
+    harness.wait_until(|h| h.cursor_position() == 0).unwrap();
+}
+
+/// `yyp` lands on the first non-blank of the pasted line.
+#[test]
+fn test_vi_linewise_paste_lands_on_first_non_blank() {
+    let (mut harness, _td, _fixture) = open_vi("  ab\nz\n");
+
+    send_operator_motion(&mut harness, 'y', 'y');
+    wait_normal(&mut harness);
+    send_key(&mut harness, 'j');
+    harness.wait_until(|h| h.cursor_position() == 5).unwrap();
+    send_key(&mut harness, 'p');
+
+    harness.wait_for_buffer_content("  ab\nz\n  ab\n").unwrap();
+    harness.wait_until(|h| h.cursor_position() == 9).unwrap();
+}
+
+/// A character-wise `p` leaves the caret on the last pasted character.
+#[test]
+fn test_vi_charwise_paste_lands_on_last_pasted_char() {
+    let (mut harness, _td, _fixture) = open_vi("foo bar\n");
+
+    send_operator_motion(&mut harness, 'y', 'w');
+    wait_normal(&mut harness);
+    send_key(&mut harness, '$');
+    harness.wait_until(|h| h.cursor_position() == 6).unwrap();
+    send_key(&mut harness, 'p');
+
+    harness.wait_for_buffer_content("foo barfoo \n").unwrap();
+    harness.wait_until(|h| h.cursor_position() == 10).unwrap();
+}
+
+/// `p` on an empty line puts the text on that line.
+#[test]
+fn test_vi_charwise_paste_on_empty_line() {
+    let (mut harness, _td, _fixture) = open_vi("\nab\n");
+
+    send_key(&mut harness, 'j');
+    harness.wait_until(|h| h.cursor_position() == 1).unwrap();
+    send_operator_motion(&mut harness, 'y', 'l');
+    wait_normal(&mut harness);
+    send_key(&mut harness, 'k');
+    harness.wait_until(|h| h.cursor_position() == 0).unwrap();
+    send_key(&mut harness, 'p');
+
+    harness.wait_for_buffer_content("a\nab\n").unwrap();
+}
+
+/// Shifting does not touch the register: `yy>>p` still puts a whole line.
+#[test]
+fn test_vi_shift_keeps_linewise_register() {
+    let (mut harness, _td, _fixture) = open_vi("ab\nz\n");
+
+    send_operator_motion(&mut harness, 'y', 'y');
+    wait_normal(&mut harness);
+    send_operator_motion(&mut harness, '>', '>');
+    harness.wait_for_buffer_content("    ab\nz\n").unwrap();
+    send_key(&mut harness, 'p');
+
+    harness.wait_for_buffer_content("    ab\nab\nz\n").unwrap();
+}
