@@ -21,10 +21,14 @@
 
 use crate::model::marker::{MarkerId, MarkerList};
 use crate::view::activation::ScopedActivation;
-use fresh_core::api::MarkerActivation;
+use fresh_core::api::{MarkerActivation, VirtualLineTextOverlay};
 use fresh_core::overlay::OverlayNamespace;
 use std::collections::HashMap;
 use std::ops::Range;
+
+/// A conceal as drawing reads it: its current byte range, its replacement
+/// text (`None` hides the range), and the replacement's styled ranges.
+pub type StyledConceal<'a> = (Range<usize>, Option<&'a str>, &'a [VirtualLineTextOverlay]);
 
 /// A conceal range hides or replaces a byte range during rendering
 #[derive(Debug, Clone)]
@@ -44,6 +48,10 @@ pub struct ConcealRange {
     /// Optional replacement text to show instead of the concealed content.
     /// If None, the range is simply hidden (zero-width).
     pub replacement: Option<String>,
+
+    /// Styled byte ranges within `replacement` — the colours a Markdown
+    /// renderer printed, say. Empty for a plain replacement.
+    pub replacement_overlays: Vec<VirtualLineTextOverlay>,
 
     /// Optional cursor-dependent activation rule, scope stored relative to
     /// the start marker. `None` = always active. Filtered at query time so
@@ -123,6 +131,30 @@ impl ConcealManager {
         activation: Option<MarkerActivation>,
         compose_only: bool,
     ) {
+        self.add_styled(
+            marker_list,
+            namespace,
+            range,
+            replacement,
+            Vec::new(),
+            activation,
+            compose_only,
+        );
+    }
+
+    /// [`add_with_activation`](Self::add_with_activation), with styled
+    /// ranges for the replacement text (byte offsets into it).
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_styled(
+        &mut self,
+        marker_list: &mut MarkerList,
+        namespace: OverlayNamespace,
+        range: Range<usize>,
+        replacement: Option<String>,
+        replacement_overlays: Vec<VirtualLineTextOverlay>,
+        activation: Option<MarkerActivation>,
+        compose_only: bool,
+    ) {
         let start_marker = marker_list.create(range.start);
         let end_marker = marker_list.create(range.end);
 
@@ -134,6 +166,7 @@ impl ConcealManager {
             start_marker,
             end_marker,
             replacement,
+            replacement_overlays,
             activation: activation
                 .map(|rule| ScopedActivation::from_absolute(&rule, range.start, marker_list)),
             compose_only,
@@ -346,7 +379,24 @@ impl ConcealManager {
         composing: bool,
         cursors: &[usize],
     ) -> Vec<(Range<usize>, Option<&str>)> {
-        let mut results: Vec<(Range<usize>, Option<&str>)> = self
+        self.query_viewport_styled_in(start, end, marker_list, composing, cursors)
+            .into_iter()
+            .map(|(range, replacement, _)| (range, replacement))
+            .collect()
+    }
+
+    /// Like [`query_viewport_in`](Self::query_viewport_in), with each
+    /// range's replacement overlays: what drawing needs, where measuring
+    /// only needs the text.
+    pub fn query_viewport_styled_in(
+        &self,
+        start: usize,
+        end: usize,
+        marker_list: &MarkerList,
+        composing: bool,
+        cursors: &[usize],
+    ) -> Vec<StyledConceal<'_>> {
+        let mut results: Vec<StyledConceal<'_>> = self
             .ranges
             .iter()
             .filter(|r| composing || !r.compose_only)
@@ -358,7 +408,11 @@ impl ConcealManager {
                     }
                 }
                 if range.start < end && start < range.end {
-                    Some((range, r.replacement.as_deref()))
+                    Some((
+                        range,
+                        r.replacement.as_deref(),
+                        r.replacement_overlays.as_slice(),
+                    ))
                 } else {
                     None
                 }
@@ -366,13 +420,13 @@ impl ConcealManager {
             .collect();
 
         // Sort by start position for sequential processing
-        results.sort_by_key(|(range, _)| range.start);
+        results.sort_by_key(|(range, _, _)| range.start);
 
         // Debug: log conceal ranges being applied during render
         if !results.is_empty() {
             let summary: Vec<String> = results
                 .iter()
-                .map(|(r, repl)| format!("{}..{}={}", r.start, r.end, repl.unwrap_or("hide")))
+                .map(|(r, repl, _)| format!("{}..{}={}", r.start, r.end, repl.unwrap_or("hide")))
                 .collect();
             tracing::trace!(
                 "[conceal] query_viewport({start}..{end}): {} ranges: {}",

@@ -20,10 +20,12 @@ function addComposeConceal(
   bufferId: number, namespace: string, start: number, end: number,
   replacement: string | null,
   activation?: string, scopeStart?: number, scopeEnd?: number,
+  replacementOverlays?: VirtualLineTextOverlay[],
 ): void {
   editor.addConceal(
     bufferId, namespace, start, end, replacement,
     activation ?? null, scopeStart ?? null, scopeEnd ?? null, true,
+    replacementOverlays && replacementOverlays.length > 0 ? replacementOverlays : null,
   );
 }
 
@@ -493,7 +495,7 @@ function renderers(): Map<string, Renderer> {
 }
 
 /** Rendered rows by request key; "pending" while the tool runs, null when it failed. */
-const externalCache = new Map<string, string[] | null | "pending">();
+const externalCache = new Map<string, ToolRow[] | null | "pending">();
 const EXTERNAL_CACHE_LIMIT = 500;
 /** Commands that could not be run — not installed, not on PATH, or refused by
  * Workspace Trust. Not run again until a buffer enters preview (compose is
@@ -543,7 +545,7 @@ function toolName(lang: string): string {
  * no `bufferId` (measuring text, or a block whose source the cursor is
  * showing) only output already in hand is used and nothing is started.
  */
-function externalRows(lang: string, source: string, width: number, bufferId: number | null): string[] | null {
+function externalRows(lang: string, source: string, width: number, bufferId: number | null): ToolRow[] | null {
   const tool = rendererFor(lang);
   if (!tool) return null;
   const key = [lang, tool.command, tool.args.join("\u0001"), String(width), source].join("\u0000");
@@ -603,11 +605,205 @@ function fillPlaceholders(arg: string, values: Record<string, string>): string {
   return arg.replace(/\{(file|width|lang|source)\}/g, (_m, name: string) => values[name]);
 }
 
+// =============================================================================
+// A tool's colours
+// =============================================================================
+//
+// Tools that draw with colour — delta, chafa, bat, a coloured plot — print
+// ANSI escape codes. Drawn as text, an escape code is invisible yet counted as
+// columns, so a coloured row came out short, its frame's right rail ragged,
+// and a drawing made of coloured cells (an image) garbled. Each row is read
+// here into its plain text and the styled runs within it: the SGR codes
+// (`ESC [ … m`) become colours, and every other escape code is dropped.
+
+/** A run of a tool row in one style; `start`/`end` index the row's text. */
+interface ToolSpan {
+  start: number;
+  end: number;
+  fg?: TokenColor;
+  bg?: TokenColor;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+}
+
+/** One row a tool printed: its text, and the styled runs within it. */
+interface ToolRow {
+  text: string;
+  spans: ToolSpan[];
+}
+
+const EMPTY_ROW: ToolRow = { text: "", spans: [] };
+
+/** The 16 ANSI colours, by SGR offset (30–37 normal, 90–97 bright). */
+const ANSI_COLORS = ["Black", "Red", "Green", "Yellow", "Blue", "Magenta", "Cyan", "Gray"];
+const ANSI_BRIGHT_COLORS = [
+  "DarkGray", "LightRed", "LightGreen", "LightYellow",
+  "LightBlue", "LightMagenta", "LightCyan", "White",
+];
+
+/** The colour an extended SGR code names (`38;5;N`, `38;2;R;G;B`), read from
+ * `params` at `i` (just past the 38/48); returns it and the index after it. */
+function extendedColor(params: number[], i: number): [TokenColor | undefined, number] {
+  if (params[i] === 5 && i + 1 < params.length) {
+    return [`Indexed:${Math.min(255, params[i + 1])}`, i + 2];
+  }
+  if (params[i] === 2 && i + 3 < params.length) {
+    const c = (v: number) => Math.max(0, Math.min(255, v));
+    return [[c(params[i + 1]), c(params[i + 2]), c(params[i + 3])], i + 4];
+  }
+  return [undefined, params.length];
+}
+
+/** `style` after the SGR parameters `params`. */
+function applySgr(style: Omit<ToolSpan, "start" | "end">, params: number[]): Omit<ToolSpan, "start" | "end"> {
+  const next = { ...style };
+  if (params.length === 0) params = [0];
+  for (let i = 0; i < params.length; i++) {
+    const p = params[i];
+    if (p === 0) {
+      for (const k of Object.keys(next)) delete (next as Record<string, unknown>)[k];
+    } else if (p === 1) next.bold = true;
+    else if (p === 3) next.italic = true;
+    else if (p === 4) next.underline = true;
+    else if (p === 22) delete next.bold;
+    else if (p === 23) delete next.italic;
+    else if (p === 24) delete next.underline;
+    else if (p >= 30 && p <= 37) next.fg = ANSI_COLORS[p - 30];
+    else if (p >= 90 && p <= 97) next.fg = ANSI_BRIGHT_COLORS[p - 90];
+    else if (p >= 40 && p <= 47) next.bg = ANSI_COLORS[p - 40];
+    else if (p >= 100 && p <= 107) next.bg = ANSI_BRIGHT_COLORS[p - 100];
+    else if (p === 39) delete next.fg;
+    else if (p === 49) delete next.bg;
+    else if (p === 38 || p === 48) {
+      const [color, after] = extendedColor(params, i + 1);
+      if (color !== undefined) {
+        if (p === 38) next.fg = color;
+        else next.bg = color;
+      }
+      i = after - 1;
+    }
+    // Anything else (blink, reverse, …) is left out.
+  }
+  return next;
+}
+
+function hasStyle(style: Omit<ToolSpan, "start" | "end">): boolean {
+  return Object.keys(style).length > 0;
+}
+
+/**
+ * A row as a tool printed it, read into text and styled runs. SGR codes set
+ * the style; any other escape code (cursor moves, titles, hyperlinks) and
+ * any other control character are dropped, as the row has nowhere to act on
+ * them. Trailing blanks are trimmed unless a background colours them.
+ */
+function parseToolRow(raw: string): ToolRow {
+  let text = "";
+  const spans: ToolSpan[] = [];
+  let style: Omit<ToolSpan, "start" | "end"> = {};
+  let runStart = 0;
+  const closeRun = () => {
+    if (text.length > runStart && hasStyle(style)) spans.push({ start: runStart, end: text.length, ...style });
+    runStart = text.length;
+  };
+  let i = 0;
+  while (i < raw.length) {
+    const ch = raw[i];
+    if (ch === "\x1b" || ch === "\x9b") {
+      const csi = ch === "\x9b" || raw[i + 1] === "[";
+      if (csi) {
+        // CSI: parameter bytes, intermediate bytes, one final byte.
+        let j = i + (ch === "\x9b" ? 1 : 2);
+        const paramStart = j;
+        while (j < raw.length && raw.charCodeAt(j) >= 0x30 && raw.charCodeAt(j) <= 0x3f) j++;
+        const paramText = raw.slice(paramStart, j);
+        while (j < raw.length && raw.charCodeAt(j) >= 0x20 && raw.charCodeAt(j) <= 0x2f) j++;
+        const final = raw[j];
+        if (final === "m" && /^[0-9;:]*$/.test(paramText)) {
+          closeRun();
+          // `38:2::r:g:b` colon forms are read as if they were semicolons
+          // (an empty colour-space field is skipped).
+          const params = paramText.replace(/::/g, ":").split(/[;:]/).map((p) => (p === "" ? 0 : parseInt(p, 10)));
+          style = applySgr(style, params);
+        }
+        i = j + 1;
+        continue;
+      }
+      const next = raw[i + 1];
+      if (next === "]" || next === "P" || next === "_" || next === "^" || next === "X") {
+        // OSC / DCS / APC / PM / SOS: a string ended by BEL or ESC \.
+        let j = i + 2;
+        while (j < raw.length && raw[j] !== "\x07" && !(raw[j] === "\x1b" && raw[j + 1] === "\\")) j++;
+        i = raw[j] === "\x07" ? j + 1 : j + 2;
+        continue;
+      }
+      // A two-byte escape (ESC 7, ESC =, …), with any intermediate bytes.
+      let j = i + 1;
+      while (j < raw.length && raw.charCodeAt(j) >= 0x20 && raw.charCodeAt(j) <= 0x2f) j++;
+      i = j + 1;
+      continue;
+    }
+    const code = raw.charCodeAt(i);
+    if (code === 0x09) {
+      // A tab, to the next stop of eight: a tab cell would be drawn at the
+      // editor's own tab width, not the tool's.
+      const width = displayWidth(text);
+      text += " ".repeat(8 - (width % 8));
+    } else if (code >= 0x20 && code !== 0x7f && !(code >= 0x80 && code < 0xa0)) {
+      text += ch;
+    }
+    i++;
+  }
+  closeRun();
+  // Trailing blanks no background colours are not part of the drawing.
+  let end = text.length;
+  const lastBg = spans.reduce((m, sp) => (sp.bg !== undefined ? Math.max(m, sp.end) : m), 0);
+  while (end > lastBg && /\s/.test(text[end - 1])) end--;
+  return clipRow({ text, spans }, end);
+}
+
+/** `row` cut to its first `end` UTF-16 units. */
+function clipRow(row: ToolRow, end: number): ToolRow {
+  if (end >= row.text.length) return row;
+  return {
+    text: row.text.slice(0, end),
+    spans: row.spans.filter((sp) => sp.start < end).map((sp) => ({ ...sp, end: Math.min(sp.end, end) })),
+  };
+}
+
+function isBlankRow(row: ToolRow): boolean {
+  return row.text.trim() === "" && !row.spans.some((sp) => sp.bg !== undefined);
+}
+
+/** A row ready to draw: its text, and its colours as byte-offset overlays. */
+interface DrawnRow {
+  text: string;
+  overlays: VirtualLineTextOverlay[];
+}
+
+/** `row`'s spans as overlays on a text that has `prefix` before it. */
+function rowOverlays(row: ToolRow, prefix: string): VirtualLineTextOverlay[] {
+  const base = utf8Length(prefix);
+  return row.spans.map((sp) => {
+    const o: VirtualLineTextOverlay = {
+      start: base + utf8Length(row.text.slice(0, sp.start)),
+      end: base + utf8Length(row.text.slice(0, sp.end)),
+      bold: sp.bold ?? false,
+      underline: sp.underline ?? false,
+      italic: sp.italic ?? false,
+    };
+    if (sp.fg !== undefined) o.fg = sp.fg;
+    if (sp.bg !== undefined) o.bg = sp.bg;
+    return o;
+  });
+}
+
 /** What the tool printed, as rows; null when it failed or drew nothing;
  * `undefined` when it was not allowed to run (not a result to keep). */
 async function runExternal(
   lang: string, tool: Renderer, source: string, width: number,
-): Promise<string[] | null | undefined> {
+): Promise<ToolRow[] | null | undefined> {
   let file = "";
   if (tool.args.some((a) => a.includes("{file}"))) {
     const written = writeInputFile(lang, source);
@@ -644,9 +840,12 @@ async function runExternal(
       return undefined;
     }
     if (result.exit_code !== 0) return null;
-    const rows = result.stdout.replace(/\s+$/, "").split(/\r?\n/).map((r) => r.replace(/\s+$/, ""));
+    // Colours the tool printed are kept, every other escape code is dropped:
+    // the rows are what is drawn, a column per character.
+    const rows = result.stdout.split(/\r?\n/).map(parseToolRow);
     // A tool that prints nothing, or only blank rows, has not drawn anything.
-    while (rows.length > 0 && rows[0] === "") rows.shift();
+    while (rows.length > 0 && isBlankRow(rows[0])) rows.shift();
+    while (rows.length > 0 && isBlankRow(rows[rows.length - 1])) rows.pop();
     return rows.length > 0 ? rows : null;
   } catch (e) {
     unavailableCommands.add(tool.command);
@@ -670,16 +869,19 @@ async function runExternal(
  * left out while the cursor is in the block — the source shows then.
  */
 function drawBlockRow(
-  bufferId: number, line: LineInfoLike, start: number, end: number, row: string,
+  bufferId: number, line: LineInfoLike, start: number, end: number, row: DrawnRow,
   scopeStart: number, scopeEnd: number, style: Record<string, unknown>, cursorInBlock: boolean,
 ): void {
   if (end <= start) {
+    // Inline virtual text takes one style: the row is drawn in the frame's.
     if (!cursorInBlock) {
-      editor.addVirtualTextStyled(bufferId, `${CODE_RAIL_ID_PREFIX}${line.byte_start}:e`, line.byte_start, row, style, true);
+      editor.addVirtualTextStyled(bufferId, `${CODE_RAIL_ID_PREFIX}${line.byte_start}:e`, line.byte_start, row.text, style, true);
     }
     return;
   }
-  addComposeConceal(bufferId, "md-syntax", start, end, row, "unless-cursor-in", scopeStart, scopeEnd);
+  addComposeConceal(
+    bufferId, "md-syntax", start, end, row.text, "unless-cursor-in", scopeStart, scopeEnd, row.overlays,
+  );
   addComposeOverlay(bufferId, "md-emphasis", start, end, style);
 }
 
@@ -690,21 +892,26 @@ function blockScopeEnd(closeLine: LineInfoLike): number {
 const specialBlockRangesByBuffer = new Map<number, Array<{ start: number; end: number }>>();
 
 /** Formats a single rendered diagram row with side rails matching code frame width */
-function buildDiagramRow(content: string, blockMeasure: number, blockIndent: number): string {
+function buildDiagramRow(content: ToolRow, blockMeasure: number, blockIndent: number): DrawnRow {
   const innerW = codeInnerWidth(blockMeasure);
   // Cut to the row's width in columns, a whole character at a time (a wide
   // CJK character is two columns; an astral symbol is two UTF-16 units).
-  let clamped = content;
-  if (displayWidth(content) > innerW) {
-    clamped = "";
-    for (const ch of content) {
+  let row = content;
+  if (displayWidth(content.text) > innerW) {
+    let clamped = "";
+    for (const ch of content.text) {
       if (displayWidth(clamped + ch) > innerW) break;
       clamped += ch;
     }
+    row = clipRow(content, clamped.length);
   }
-  const contentW = displayWidth(clamped);
+  const contentW = displayWidth(row.text);
   const padRight = Math.max(0, innerW - contentW);
-  return " ".repeat(blockIndent) + RAIL_GLYPH + " " + clamped + " ".repeat(padRight) + " " + RAIL_GLYPH;
+  const lead = " ".repeat(blockIndent) + RAIL_GLYPH + " ";
+  return {
+    text: lead + row.text + " ".repeat(padRight) + " " + RAIL_GLYPH,
+    overlays: rowOverlays(row, lead),
+  };
 }
 
 
@@ -2071,7 +2278,7 @@ function findInlineSpans(text: string, bufferId: number | null = null): InlineSp
     // The tool's drawing replaces the formula when it is one row; otherwise
     // the source stays, still styled (and still kept from emphasis) as math.
     const rows = externalRows("math", formula, INLINE_MATH_WIDTH, bufferId);
-    const drawn = rows !== null && rows.length === 1 ? rows[0].trim() : null;
+    const drawn = rows !== null && rows.length === 1 ? rows[0].text.trim() : null;
     spans.push({
       type: 'math',
       matchStart: ms, matchEnd: me,
@@ -2600,15 +2807,16 @@ function processLineConceals(
     }
     const mathStyle = { fg: "syntax.constant", italic: true, composeOnly: true };
     addComposeConceal(
-      bufferId, "md-syntax", frameStart, frameEnd, rowReplacement,
-      "unless-cursor-in", byteStart, lineScopeInclEnd,
+      bufferId, "md-syntax", frameStart, frameEnd, rowReplacement.text,
+      "unless-cursor-in", byteStart, lineScopeInclEnd, rowReplacement.overlays,
     );
     addComposeOverlay(bufferId, "md-emphasis", frameStart, frameEnd, mathStyle);
     if (!cursorOnLine) {
       for (let i = 1; i < rows.length; i++) {
+        const row = buildDiagramRow(rows[i], blockMeasure, blockIndent);
         editor.addVirtualLine(
-          bufferId, byteStart, buildDiagramRow(rows[i], blockMeasure, blockIndent),
-          mathStyle, false, MATH_VIRTUAL_LINE_NS, i - 1,
+          bufferId, byteStart, row.text, { ...mathStyle, textOverlays: row.overlays },
+          false, MATH_VIRTUAL_LINE_NS, i - 1,
         );
       }
       editor.addVirtualLine(
@@ -3973,7 +4181,7 @@ editor.on("lines_changed", (data) => {
     openFormula?: string;
     closeFormula?: string;
     // The tool's drawing of the block.
-    rows?: string[];
+    rows?: ToolRow[];
   }
 
   const specialBlocks: SpecialBlock[] = [];
@@ -4257,7 +4465,7 @@ editor.on("lines_changed", (data) => {
         const lineEnd = lineContentEndByte(bodyLine.content, bodyLine.byte_start);
         // A source line past the drawing's last row is an empty row of the
         // frame, rails and all.
-        const row = buildDiagramRow(rendered.lines[i] ?? "", blockMeasure, blockIndent);
+        const row = buildDiagramRow(rendered.lines[i] ?? EMPTY_ROW, blockMeasure, blockIndent);
         drawBlockRow(
           data.buffer_id, bodyLine, lineStart, lineEnd, row,
           scopeStart, scopeEnd, codeFrameStyle, cursorInBlock,
@@ -4269,8 +4477,8 @@ editor.on("lines_changed", (data) => {
         for (let i = B; i < M; i++) {
           const row = buildDiagramRow(rendered.lines[i], blockMeasure, blockIndent);
           editor.addVirtualLine(
-            data.buffer_id, sb.closeLine.byte_start, row,
-            codeFrameStyle, true, MERMAID_VIRTUAL_LINE_NS, i - B,
+            data.buffer_id, sb.closeLine.byte_start, row.text,
+            { ...codeFrameStyle, textOverlays: row.overlays }, true, MERMAID_VIRTUAL_LINE_NS, i - B,
           );
         }
       }
@@ -4318,10 +4526,10 @@ editor.on("lines_changed", (data) => {
       const closeFrame = buildCodeFrameLine(blockMeasure, "└", "┘");
       if (!cursorInBlock) {
         for (let i = 0; i < overflow; i++) {
+          const row = buildDiagramRow(rows[slots.length + i], blockMeasure, blockIndent);
           editor.addVirtualLine(
-            data.buffer_id, sb.closeLine.byte_start,
-            buildDiagramRow(rows[slots.length + i], blockMeasure, blockIndent),
-            mathStyle, !sb.closeFormula, MATH_VIRTUAL_LINE_NS, i,
+            data.buffer_id, sb.closeLine.byte_start, row.text,
+            { ...mathStyle, textOverlays: row.overlays }, !sb.closeFormula, MATH_VIRTUAL_LINE_NS, i,
           );
         }
       }
@@ -4346,9 +4554,10 @@ editor.on("lines_changed", (data) => {
         const line = slot.line;
         const start = slot.delimiter ? charToByte(line.content, blockIndent, line.byte_start) : line.byte_start;
         const end = lineContentEndByte(line.content, line.byte_start);
-        const row = buildDiagramRow(rows[i] ?? "", blockMeasure, slot.delimiter ? 0 : blockIndent);
+        // A delimiter line's row has no indent of its own: it starts at the rail.
+        const row = buildDiagramRow(rows[i] ?? EMPTY_ROW, blockMeasure, slot.delimiter ? 0 : blockIndent);
         drawBlockRow(
-          data.buffer_id, line, start, end, slot.delimiter ? row.trimStart() : row,
+          data.buffer_id, line, start, end, row,
           scopeStart, scopeEnd, mathStyle, cursorInBlock,
         );
       });

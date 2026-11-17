@@ -16,7 +16,7 @@ use crate::view::theme::Theme;
 use crate::view::ui::view_pipeline::{LineStart, ViewLine};
 use crate::view::virtual_text::VirtualTextPosition;
 use crate::view::wrap_machine::{WrapMachine, WrapRule};
-use fresh_core::api::{ViewTokenStyle, ViewTokenWire, ViewTokenWireKind};
+use fresh_core::api::{ViewTokenStyle, ViewTokenWire, ViewTokenWireKind, VirtualLineTextOverlay};
 use std::collections::{HashMap, HashSet};
 
 /// Wrap tokens to fit within `content_width` columns (accounting for a leading
@@ -278,6 +278,104 @@ pub(crate) fn join_adjusted_visible_count(
     total
 }
 
+/// A conceal as the token pass reads it: the source range it covers, the
+/// text shown instead (`None` hides the range), and styled ranges within
+/// that text. Measuring passes hand it bare `(range, replacement)` pairs;
+/// drawing hands it the styled triple.
+pub(crate) trait ConcealSpan {
+    fn range(&self) -> &std::ops::Range<usize>;
+    fn replacement(&self) -> Option<&str>;
+    fn overlays(&self) -> &[VirtualLineTextOverlay] {
+        &[]
+    }
+}
+
+impl ConcealSpan for (std::ops::Range<usize>, Option<&str>) {
+    fn range(&self) -> &std::ops::Range<usize> {
+        &self.0
+    }
+    fn replacement(&self) -> Option<&str> {
+        self.1
+    }
+}
+
+impl ConcealSpan for crate::view::conceal::StyledConceal<'_> {
+    fn range(&self) -> &std::ops::Range<usize> {
+        &self.0
+    }
+    fn replacement(&self) -> Option<&str> {
+        self.1
+    }
+    fn overlays(&self) -> &[VirtualLineTextOverlay] {
+        self.2
+    }
+}
+
+/// Which overlay styles the replacement byte at `at`: the last one covering
+/// it, as with overlays on source text. `None` when none covers it, so the
+/// cell is drawn as a plain replacement is.
+fn replacement_overlay_at(overlays: &[VirtualLineTextOverlay], at: usize) -> Option<usize> {
+    overlays
+        .iter()
+        .rposition(|o| (o.start as usize) <= at && at < o.end as usize)
+}
+
+fn overlay_token_style(
+    overlays: &[VirtualLineTextOverlay],
+    idx: Option<usize>,
+) -> Option<ViewTokenStyle> {
+    let o = &overlays[idx?];
+    Some(ViewTokenStyle {
+        fg: o.fg.clone(),
+        bg: o.bg.clone(),
+        bold: o.bold,
+        italic: o.italic,
+        underline: o.underline,
+    })
+}
+
+/// Emit a conceal's replacement text. The first character carries the
+/// conceal's start as its source offset (so the cursor and clicks land on
+/// the range); the rest is injected text, cut into one token per run of
+/// characters under the same overlay.
+fn emit_replacement(
+    output: &mut Vec<ViewTokenWire>,
+    source_start: usize,
+    repl: &str,
+    overlays: &[VirtualLineTextOverlay],
+) {
+    let mut chars = repl.char_indices();
+    let Some((_, first_ch)) = chars.next() else {
+        return;
+    };
+    output.push(ViewTokenWire {
+        source_offset: Some(source_start),
+        kind: ViewTokenWireKind::Text(first_ch.to_string()),
+        style: overlay_token_style(overlays, replacement_overlay_at(overlays, 0)),
+    });
+    let mut run = String::new();
+    let mut run_overlay: Option<usize> = None;
+    for (at, ch) in chars {
+        let overlay = replacement_overlay_at(overlays, at);
+        if overlay != run_overlay && !run.is_empty() {
+            output.push(ViewTokenWire {
+                source_offset: None,
+                kind: ViewTokenWireKind::Text(std::mem::take(&mut run)),
+                style: overlay_token_style(overlays, run_overlay),
+            });
+        }
+        run_overlay = overlay;
+        run.push(ch);
+    }
+    if !run.is_empty() {
+        output.push(ViewTokenWire {
+            source_offset: None,
+            kind: ViewTokenWireKind::Text(run),
+            style: overlay_token_style(overlays, run_overlay),
+        });
+    }
+}
+
 /// Apply conceal ranges to a token stream.
 ///
 /// Handles partial token overlap: if a Text token spans bytes that are
@@ -285,9 +383,9 @@ pub(crate) fn join_adjusted_visible_count(
 /// tokens (Space, Newline) are treated as single-byte.
 ///
 /// Tokens without source_offset (injected/virtual) always pass through.
-pub(crate) fn apply_conceal_ranges(
+pub(crate) fn apply_conceal_ranges<C: ConcealSpan>(
     tokens: Vec<ViewTokenWire>,
-    conceal_ranges: &[(std::ops::Range<usize>, Option<&str>)],
+    conceal_ranges: &[C],
 ) -> Vec<ViewTokenWire> {
     if conceal_ranges.is_empty() {
         return tokens;
@@ -301,7 +399,7 @@ pub(crate) fn apply_conceal_ranges(
     // rarely overlap (typically markdown syntax markers); the cursor walks
     // the sorted list as tokens advance through source bytes.
     let mut sorted: Vec<usize> = (0..conceal_ranges.len()).collect();
-    sorted.sort_by_key(|&i| conceal_ranges[i].0.start);
+    sorted.sort_by_key(|&i| conceal_ranges[i].range().start);
     let mut conceal_cursor: usize = 0;
 
     // Advance `conceal_cursor` past ranges ending before `byte_offset`,
@@ -310,17 +408,17 @@ pub(crate) fn apply_conceal_ranges(
     // stable). Monotonic: caller must invoke with non-decreasing
     // `byte_offset` within the token stream.
     #[inline]
-    fn is_concealed(
-        conceal_ranges: &[(std::ops::Range<usize>, Option<&str>)],
+    fn is_concealed<C: ConcealSpan>(
+        conceal_ranges: &[C],
         sorted: &[usize],
         cursor: &mut usize,
         byte_offset: usize,
     ) -> Option<usize> {
-        while *cursor < sorted.len() && conceal_ranges[sorted[*cursor]].0.end <= byte_offset {
+        while *cursor < sorted.len() && conceal_ranges[sorted[*cursor]].range().end <= byte_offset {
             *cursor += 1;
         }
         let orig_idx = sorted.get(*cursor).copied()?;
-        let range = &conceal_ranges[orig_idx].0;
+        let range = conceal_ranges[orig_idx].range();
         (range.start <= byte_offset && byte_offset < range.end).then_some(orig_idx)
     }
 
@@ -357,27 +455,14 @@ pub(crate) fn apply_conceal_ranges(
                         // Emit replacement text once per conceal range.
                         // Split into first-char (with source_offset for cursor/click
                         // positioning) and remaining chars (with None source_offset).
-                        if let Some(repl) = conceal_ranges[cidx].1 {
-                            if !emitted_replacements.contains(&cidx) {
-                                emitted_replacements.insert(cidx);
-                                if !repl.is_empty() {
-                                    let mut chars = repl.chars();
-                                    if let Some(first_ch) = chars.next() {
-                                        output.push(ViewTokenWire {
-                                            source_offset: Some(conceal_ranges[cidx].0.start),
-                                            kind: ViewTokenWireKind::Text(first_ch.to_string()),
-                                            style: None,
-                                        });
-                                        let rest: String = chars.collect();
-                                        if !rest.is_empty() {
-                                            output.push(ViewTokenWire {
-                                                source_offset: None,
-                                                kind: ViewTokenWireKind::Text(rest),
-                                                style: None,
-                                            });
-                                        }
-                                    }
-                                }
+                        if let Some(repl) = conceal_ranges[cidx].replacement() {
+                            if emitted_replacements.insert(cidx) {
+                                emit_replacement(
+                                    &mut output,
+                                    conceal_ranges[cidx].range().start,
+                                    repl,
+                                    conceal_ranges[cidx].overlays(),
+                                );
                             }
                         }
                     } else {
@@ -412,27 +497,14 @@ pub(crate) fn apply_conceal_ranges(
                     // next char is a space the renderer used to
                     // eat the cell entirely (label letter never
                     // shown, surrounding text shifted left).
-                    if let Some(repl) = conceal_ranges[cidx].1 {
-                        if !emitted_replacements.contains(&cidx) {
-                            emitted_replacements.insert(cidx);
-                            if !repl.is_empty() {
-                                let mut chars = repl.chars();
-                                if let Some(first_ch) = chars.next() {
-                                    output.push(ViewTokenWire {
-                                        source_offset: Some(conceal_ranges[cidx].0.start),
-                                        kind: ViewTokenWireKind::Text(first_ch.to_string()),
-                                        style: None,
-                                    });
-                                    let rest: String = chars.collect();
-                                    if !rest.is_empty() {
-                                        output.push(ViewTokenWire {
-                                            source_offset: None,
-                                            kind: ViewTokenWireKind::Text(rest),
-                                            style: None,
-                                        });
-                                    }
-                                }
-                            }
+                    if let Some(repl) = conceal_ranges[cidx].replacement() {
+                        if emitted_replacements.insert(cidx) {
+                            emit_replacement(
+                                &mut output,
+                                conceal_ranges[cidx].range().start,
+                                repl,
+                                conceal_ranges[cidx].overlays(),
+                            );
                         }
                     }
                     // null replacement = hide the byte range; nothing to emit.
@@ -974,6 +1046,99 @@ pub fn splice_inline_virtual_text(
 
     out.flush_row_end();
     out.tokens
+}
+
+#[cfg(test)]
+mod conceal_tests {
+    use super::*;
+    use fresh_core::api::TokenColor;
+
+    fn text_tokens(text: &str) -> Vec<ViewTokenWire> {
+        vec![ViewTokenWire {
+            source_offset: Some(0),
+            kind: ViewTokenWireKind::Text(text.to_string()),
+            style: None,
+        }]
+    }
+
+    fn red(start: u32, end: u32) -> VirtualLineTextOverlay {
+        VirtualLineTextOverlay {
+            start,
+            end,
+            fg: Some(TokenColor::Named("Red".into())),
+            ..Default::default()
+        }
+    }
+
+    /// (text, fg) per emitted token.
+    fn runs(tokens: &[ViewTokenWire]) -> Vec<(String, Option<String>)> {
+        tokens
+            .iter()
+            .map(|t| {
+                let text = match &t.kind {
+                    ViewTokenWireKind::Text(s) => s.clone(),
+                    _ => String::new(),
+                };
+                let fg = t.style.as_ref().and_then(|s| match &s.fg {
+                    Some(TokenColor::Named(n)) => Some(n.clone()),
+                    _ => None,
+                });
+                (text, fg)
+            })
+            .collect()
+    }
+
+    /// A plain replacement is emitted as before: its first character at the
+    /// conceal's start, the rest as one unstyled injected token.
+    #[test]
+    fn a_plain_replacement_is_unstyled() {
+        let conceals: Vec<(std::ops::Range<usize>, Option<&str>)> = vec![(0..3, Some("xyz"))];
+        let out = apply_conceal_ranges(text_tokens("abc"), &conceals);
+        assert_eq!(runs(&out), vec![("x".into(), None), ("yz".into(), None)]);
+        assert_eq!(out[0].source_offset, Some(0));
+        assert_eq!(out[1].source_offset, None);
+    }
+
+    /// The replacement's overlays style the characters they cover (byte
+    /// offsets, so a multi-byte character before them is counted in bytes),
+    /// one token per run, and leave the rest unstyled.
+    #[test]
+    fn overlays_style_their_runs_of_the_replacement() {
+        // "│ " is 4 bytes: the red run "RED" is bytes 4..7.
+        let overlays = [red(4, 7)];
+        let conceals: Vec<crate::view::conceal::StyledConceal<'_>> =
+            vec![(0..3, Some("│ RED x"), &overlays)];
+        let out = apply_conceal_ranges(text_tokens("abc"), &conceals);
+        assert_eq!(
+            runs(&out),
+            vec![
+                ("│".into(), None),
+                (" ".into(), None),
+                ("RED".into(), Some("Red".into())),
+                (" x".into(), None),
+            ]
+        );
+        assert_eq!(out[0].source_offset, Some(0));
+        assert!(out[1..].iter().all(|t| t.source_offset.is_none()));
+    }
+
+    /// An overlay on the first character styles the token that carries the
+    /// conceal's source offset too.
+    #[test]
+    fn an_overlay_reaches_the_first_character() {
+        let overlays = [red(0, 2)];
+        let conceals: Vec<crate::view::conceal::StyledConceal<'_>> =
+            vec![(0..3, Some("ab c"), &overlays)];
+        let out = apply_conceal_ranges(text_tokens("xyz"), &conceals);
+        assert_eq!(
+            runs(&out),
+            vec![
+                ("a".into(), Some("Red".into())),
+                ("b".into(), Some("Red".into())),
+                (" c".into(), None),
+            ]
+        );
+    }
 }
 
 #[cfg(test)]

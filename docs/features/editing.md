@@ -360,7 +360,7 @@ Use [`mmaid`](https://github.com/aaronsb/mmaid-go) for Mermaid instead, and stop
 
 A command not on your `PATH` can be given by its full path, e.g. `"command": "/opt/tools/bin/utftex"`. Put `--` before `{source}` when the tool takes options, as the defaults do, so a formula starting with `-` is not read as one.
 
-Any program that prints its drawing as text works. `mmaid` covers 31 Mermaid diagram types, but has no width option, so a pie chart can run wider than the page.
+Any program that prints its drawing as text works, in colour too: the colours a command prints with ANSI escape codes (`delta`, `bat --color=always`, `chafa`) are drawn, and its other escape codes are dropped. A row of a drawing that falls on a blank line inside the block is drawn in the frame's colour. `mmaid` covers 31 Mermaid diagram types, but has no width option, so a pie chart can run wider than the page.
 
 ### Contents Panel
 

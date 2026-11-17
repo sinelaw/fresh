@@ -228,9 +228,10 @@ fn build_virtual_view_line(
         vec![Some(token_style.clone()); len]
     } else {
         // Walk char-by-char, OR-ing in modifier flags from any overlay
-        // that covers this char's byte. Linear scan over `text_overlays`
-        // is fine — typical use case (live-diff word ranges) yields a
-        // handful of overlays per line.
+        // that covers this char's byte; a colour an overlay names replaces
+        // the line's own (the last overlay naming one wins). Linear scan
+        // over `text_overlays` is fine — typical use cases (live-diff word
+        // ranges, a renderer's coloured runs) yield a handful per line.
         text.char_indices()
             .map(|(b, ch)| {
                 let abs_start = chunk_byte_offset + b;
@@ -245,6 +246,15 @@ fn build_virtual_view_line(
                     }
                     if o.underline {
                         s.underline = true;
+                    }
+                    if o.italic {
+                        s.italic = true;
+                    }
+                    if o.fg.is_some() {
+                        s.fg = o.fg.clone();
+                    }
+                    if o.bg.is_some() {
+                        s.bg = o.bg.clone();
                     }
                 }
                 Some(s)
@@ -324,5 +334,38 @@ mod tests {
             first.ends_with(' '),
             "expected first row to end at a word boundary; got {first:?}",
         );
+    }
+
+    /// A text overlay's colours and italics reach the characters it covers;
+    /// the rest keep the line's own style.
+    #[test]
+    fn text_overlays_colour_their_range() {
+        use fresh_core::api::{TokenColor, VirtualLineTextOverlay};
+        let overlays = [VirtualLineTextOverlay {
+            start: 2,
+            end: 4,
+            italic: true,
+            fg: Some(TokenColor::Named("Red".into())),
+            bg: Some(TokenColor::Rgb(0, 0, 200)),
+            ..Default::default()
+        }];
+        let lines = create_wrapped_virtual_lines(
+            "abcdef",
+            Style::default().fg(Color::Green),
+            None,
+            None,
+            &overlays,
+        );
+        let styles = &lines[0].char_styles;
+        let fg = |i: usize| styles[i].as_ref().unwrap().fg.clone();
+        assert!(matches!(fg(2), Some(TokenColor::Named(ref n)) if n == "Red"));
+        assert!(matches!(
+            styles[3].as_ref().unwrap().bg,
+            Some(TokenColor::Rgb(0, 0, 200))
+        ));
+        assert!(styles[2].as_ref().unwrap().italic);
+        assert!(!matches!(fg(1), Some(TokenColor::Named(ref n)) if n == "Red"));
+        assert!(!matches!(fg(4), Some(TokenColor::Named(ref n)) if n == "Red"));
+        assert!(!styles[4].as_ref().unwrap().italic);
     }
 }
