@@ -270,9 +270,14 @@ pub(super) fn scrollbar_visual_row_counts(
     let (effective_width, gutter_width, hanging_indent) = if viewport.grid_wrap {
         (viewport.grid_cols(), 0usize, false)
     } else {
-        let gutter_width = viewport.gutter_width(&state.buffer);
+        // The renderer's width and gutter, so these rows are the index's.
+        let (width, gutter_width) = super::orchestration::render_buffer::wrap_area_for(
+            viewport,
+            state,
+            matches!(view_mode, CacheViewMode::Compose),
+        );
         let wrap_config = WrapConfig::new(
-            viewport.wrap_area_width(viewport.width as usize, gutter_width),
+            viewport.wrap_area_width(width, gutter_width),
             gutter_width,
             true,
             viewport.wrap_indent,

@@ -277,7 +277,7 @@ pub(crate) fn compute_buffer_layout(
         let fold_ranges = state.fold_ranges(folds);
         let geometry = wrap_index_geometry_for(
             viewport,
-            &state.buffer,
+            state,
             line_wrap,
             &view_mode,
             crate::view::wrap_index::fold_signature(&fold_ranges),
@@ -837,13 +837,49 @@ fn resolve_build_anchor(
     })
 }
 
+/// The width a pane lays its text out in and the gutter beside it, as the
+/// renderer resolves them for the frame: `(width, gutter_width)`, the pair
+/// `build_view_data` wraps with.
+///
+/// A source pane wraps at its own width, less the line-number gutter. A
+/// compose pane wraps in the compose layout's area, and keeps a gutter only
+/// where the desk margin has room for it ([`resolve_gutter_layout`]): a
+/// preview narrower than its compose width — one half of the Markdown dual
+/// view — has no margin, so it drops the gutter and lays text out at the full
+/// width. Counting it as a source pane wrapped every row within a gutter's
+/// width of the edge onto two rows in the row index while the pane drew one,
+/// and the wheel and the scroll sync then stepped through rows that are not
+/// on screen.
+pub(crate) fn wrap_area_for(
+    viewport: &Viewport,
+    state: &EditorState,
+    compose: bool,
+) -> (usize, usize) {
+    if !compose {
+        return (
+            viewport.width as usize,
+            viewport.gutter_width(&state.buffer),
+        );
+    }
+    let gutter = resolve_gutter_layout(
+        &state.margins,
+        viewport.show_line_numbers,
+        &ViewMode::PageView,
+        Rect::new(0, 0, viewport.width, viewport.height),
+        viewport.compose_width,
+        super::reconcile::gutter_estimated_lines(state),
+        state.diff_gutter.as_ref().map(|g| g.width()),
+    );
+    (gutter.compose.render_area.width as usize, gutter.width)
+}
+
 /// Geometry the wrap index is keyed by for this split.
 ///
 /// Must match what `scrollbar_line_counts` builds, or the render path would look
 /// up an entry that is never populated and silently fall back to the layout pass.
 pub(crate) fn wrap_index_geometry_for(
     viewport: &Viewport,
-    buffer: &crate::model::buffer::Buffer,
+    state: &EditorState,
     line_wrap: bool,
     view_mode: &ViewMode,
     fold_signature: u64,
@@ -857,9 +893,10 @@ pub(crate) fn wrap_index_geometry_for(
             cols: viewport.grid_cols().max(1),
         }
     } else if line_wrap {
-        let gutter_width = viewport.gutter_width(buffer);
+        let (width, gutter_width) =
+            wrap_area_for(viewport, state, matches!(view_mode, ViewMode::PageView));
         let wrap_config = WrapConfig::new(
-            viewport.wrap_area_width(viewport.width as usize, gutter_width),
+            viewport.wrap_area_width(width, gutter_width),
             gutter_width,
             true,
             viewport.wrap_indent,

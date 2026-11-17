@@ -464,7 +464,7 @@ impl crate::app::window::Window {
                 let fold_ranges = state.fold_ranges(&vs.folds);
                 let geometry = crate::view::ui::split_rendering::wrap_index_geometry_for(
                     &vs.viewport,
-                    &state.buffer,
+                    state,
                     vs.viewport.line_wrap_enabled,
                     &vs.view_mode,
                     crate::view::wrap_index::fold_signature(&fold_ranges),

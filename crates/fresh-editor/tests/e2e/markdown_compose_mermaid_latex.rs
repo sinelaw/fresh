@@ -575,4 +575,53 @@ printf '\033[44mBLUE\033[49m\n'"#,
         let (x, y) = h.find_text_on_screen("BLUE").unwrap();
         assert_eq!(h.get_cell_style(x, y).unwrap().bg, Some(Color::Blue));
     }
+
+    /// In dual mode the wheel over the preview scrolls it a row a notch,
+    /// through a drawing as through text. The drawing's rows, framed to the
+    /// narrow preview, used to count as two rows each in the preview's row
+    /// index (wrapped at the source pane's gutter-narrowed width) while the
+    /// preview drew one, so a notch through them moved nothing on screen.
+    #[test]
+    fn the_wheel_scrolls_a_dual_preview_a_row_a_notch_through_a_drawing() {
+        let tools = tempfile::TempDir::new().unwrap();
+        let tall = stub(
+            tools.path(),
+            "stub-tall",
+            r#"for i in 1 2 3 4 5 6 7 8; do printf 'ROW %s\n' $i; done"#,
+        );
+        let mut md = String::from("# Doc\n\nBefore.\n\n```mermaid\ngraph TD\n    A --> B\n```\n\n");
+        for i in 0..60 {
+            md.push_str(&format!("After {i}\n\n"));
+        }
+        let (mut h, _tmp) = harness_with_renderers(
+            &md,
+            serde_json::json!({ "mermaid": { "command": tall, "args": ["{file}"] } }),
+        );
+        h.editor_mut().config_mut().editor.mouse_wheel_scroll_lines = 1;
+        run(&mut h, "Markdown: Source/Compose Dual Mode");
+        h.wait_until(|h| screen_has(h, "ROW 8")).unwrap();
+
+        // The preview is the right half; its first text row is screen row 2.
+        let half = (WIDTH / 2) as usize;
+        let preview_top = |h: &EditorTestHarness| -> String {
+            let screen = h.screen_to_string();
+            let row: String = screen.lines().nth(2).unwrap().chars().skip(half).collect();
+            row.replace(['▌', '│'], " ").trim().to_string()
+        };
+        let mut tops = Vec::new();
+        for _ in 0..16 {
+            h.mouse_scroll_down(WIDTH - 20, 15).unwrap();
+            tops.push(preview_top(&h));
+        }
+        let drawing: Vec<&str> = tops
+            .iter()
+            .map(String::as_str)
+            .filter(|t| t.starts_with("ROW "))
+            .collect();
+        assert_eq!(
+            drawing,
+            (1..=8).map(|i| format!("ROW {i}")).collect::<Vec<_>>(),
+            "each notch should bring the next row of the drawing to the top: {tops:?}"
+        );
+    }
 }
