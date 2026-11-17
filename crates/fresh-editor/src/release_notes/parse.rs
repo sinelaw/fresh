@@ -112,7 +112,10 @@ fn looks_like_version(s: &str) -> bool {
 /// - rest is a separate detail (` - …`, `; …`): drop it, unless the lead is
 ///   too short to say anything (`**Markdown** - Tab honours …`).
 fn shorten(raw: &str) -> String {
-    let raw = raw.trim();
+    // Credits first: a credit can hold its own `;` (`(#1, requested by @a;
+    // #2 by @b)`), which the clause split below would otherwise cut through.
+    let raw = strip_credits(raw.trim());
+    let raw = raw.as_str();
     let split = raw
         .strip_prefix("**")
         .and_then(|r| r.find("**").map(|end| (&r[..end], &r[end + 2..])));
@@ -134,7 +137,7 @@ fn shorten(raw: &str) -> String {
         }
         None => raw.to_string(),
     };
-    tidy(&strip_credits(&text))
+    tidy(&text)
 }
 
 /// Remove parentheticals that hold issue numbers or credits.
@@ -241,6 +244,19 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
                 "Python match/case and more C++ keywords are highlighted",
                 "A plain bullet without a bold lead, continued on the next line",
             ]
+        );
+    }
+
+    #[test]
+    fn a_credit_with_its_own_semicolon_is_stripped_whole() {
+        let r = latest_release(
+            "## 0.5.9\n\n* **Tab completes the longest common prefix** of the matching paths \
+             (#3293, requested by @a; #3581 by @b)\n",
+        )
+        .unwrap();
+        assert_eq!(
+            r.items,
+            vec!["Tab completes the longest common prefix of the matching paths"]
         );
     }
 
