@@ -306,8 +306,8 @@ pub struct LspServerConfig {
     pub auto_start: bool,
 
     /// Files or folders that mark the project root: the nearest folder above the
-    /// file that contains one is used. Empty means `[".git"]`. With no match, the
-    /// file's own folder is used.
+    /// file that contains one is used. With no match, or no markers, the file's
+    /// own folder is used. Left empty, a built-in server keeps its own markers.
     #[serde(default)]
     #[schemars(extend("x-order" = 6))]
     pub root_markers: Vec<String>,

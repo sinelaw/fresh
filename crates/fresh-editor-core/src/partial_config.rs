@@ -1360,6 +1360,54 @@ impl From<&crate::config::Config> for PartialConfig {
 }
 
 impl PartialConfig {
+    /// Deserialize one config layer from its JSON.
+    ///
+    /// Same as `serde_json::from_value`, except that an `lsp` /
+    /// `universal_lsp` entry that leaves out `auto_start` inherits it from
+    /// the built-in server it is merged with (see
+    /// [`LspServerConfig::merge_with_defaults`](crate::types::LspServerConfig::merge_with_defaults)),
+    /// instead of taking serde's default of `true`. Without this, adding just
+    /// `initialization_options` to a built-in server would start it
+    /// automatically.
+    pub fn from_layer_value(value: serde_json::Value) -> Result<Self, serde_json::Error> {
+        let mut partial: PartialConfig = serde_json::from_value(value.clone())?;
+        let mut defaults: Option<crate::config::Config> = None;
+        for (field, servers_by_key) in [
+            ("lsp", &mut partial.lsp),
+            ("universal_lsp", &mut partial.universal_lsp),
+        ] {
+            let (Some(servers_by_key), Some(serde_json::Value::Object(raw_by_key))) =
+                (servers_by_key.as_mut(), value.get(field))
+            else {
+                continue;
+            };
+            for (key, servers) in servers_by_key.iter_mut() {
+                // Only a lone server is merged with the built-in one.
+                let raw = match raw_by_key.get(key) {
+                    Some(serde_json::Value::Array(items)) if items.len() == 1 => &items[0],
+                    Some(item @ serde_json::Value::Object(_)) => item,
+                    _ => continue,
+                };
+                let [server] = servers.as_mut_slice() else {
+                    continue;
+                };
+                if raw.get("auto_start").is_some() {
+                    continue;
+                }
+                let defaults = defaults.get_or_insert_with(crate::config::Config::default);
+                let builtin = if field == "lsp" {
+                    &defaults.lsp
+                } else {
+                    &defaults.universal_lsp
+                };
+                if let Some([builtin]) = builtin.get(key).map(LspLanguageConfig::as_slice) {
+                    server.auto_start = builtin.auto_start;
+                }
+            }
+        }
+        Ok(partial)
+    }
+
     /// Resolve this partial config to a concrete Config using system defaults.
     pub fn resolve(self) -> crate::config::Config {
         let defaults = crate::config::Config::default();

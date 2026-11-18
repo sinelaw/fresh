@@ -1692,6 +1692,21 @@ impl Editor {
         Ok(())
     }
 
+    /// Whether `buffer_id`'s language has a server running and initialized,
+    /// yet none that offers `feature` — the request found no server because
+    /// the servers don't support it, not because none is up yet.
+    fn lsp_server_lacks_feature(&self, buffer_id: BufferId, feature: LspFeature) -> bool {
+        let Some(language) = self.buffers().get(&buffer_id).map(|s| s.language.clone()) else {
+            return false;
+        };
+        let Some(lsp) = self.lsp() else {
+            return false;
+        };
+        lsp.has_handles(&language)
+            && !lsp.has_initializing_handle(&language, feature)
+            && lsp.handles_for_feature(&language, feature).is_empty()
+    }
+
     /// Request LSP go-to-implementation at current cursor position
     pub(crate) fn request_implementation(&mut self) -> AnyhowResult<()> {
         use crate::primitives::word_navigation::{find_word_end, find_word_start};
@@ -1740,6 +1755,10 @@ impl Editor {
             self.active_window_mut().next_lsp_request_id += 1;
             self.active_window_mut().pending_implementation_request = Some(request_id);
             self.active_window_mut().pending_implementation_symbol = symbol;
+        } else if self.lsp_server_lacks_feature(buffer_id, LspFeature::Implementation) {
+            // A ready server that doesn't do implementations (e.g. pyright):
+            // say so rather than doing nothing.
+            self.set_status_message(t!("lsp.implementation_not_supported").to_string());
         }
 
         Ok(())

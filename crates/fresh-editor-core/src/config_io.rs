@@ -669,14 +669,14 @@ impl ConfigResolver {
         let mut migrated = migrate_config(value)?;
 
         // Now deserialize to PartialConfig
-        let err = match serde_json::from_value::<PartialConfig>(migrated.clone()) {
+        let err = match PartialConfig::from_layer_value(migrated.clone()) {
             Ok(partial) => return Ok(Some(partial)),
             Err(e) => e,
         };
 
         // Drop just the fields that don't deserialize, keeping the rest.
         let removed = prune_invalid_fields(&mut migrated);
-        match serde_json::from_value::<PartialConfig>(migrated) {
+        match PartialConfig::from_layer_value(migrated) {
             Ok(partial) if !removed.is_empty() => {
                 for (pointer, reason) in &removed {
                     tracing::warn!(
@@ -2253,6 +2253,37 @@ mod tests {
             .save_setting_to_layer(&config, "/editor/rulers", ConfigLayer::User)
             .unwrap();
         assert_eq!(resolver.resolve().unwrap().editor.rulers, vec![80, 100]);
+    }
+
+    #[test]
+    fn issue_3801_partial_lsp_entry_inherits_auto_start() {
+        let (_temp, resolver) = create_test_resolver();
+        let builtin = Config::default().lsp["rust"].as_slice()[0].auto_start;
+        assert!(!builtin, "built-in servers don't auto-start");
+
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &user_config_path,
+            r#"{"lsp": {
+                "rust": {"initialization_options": {"checkOnSave": false}},
+                "python": [{"env": {"A": "1"}}],
+                "go": {"auto_start": true}
+            }}"#,
+        )
+        .unwrap();
+
+        let config = resolver.resolve().unwrap();
+        let rust = &config.lsp["rust"].as_slice()[0];
+        assert!(!rust.auto_start, "unspecified auto_start is inherited");
+        assert!(rust.initialization_options.is_some());
+        if config.lsp["python"].as_slice().len() == 1 {
+            assert!(!config.lsp["python"].as_slice()[0].auto_start);
+        }
+        assert!(
+            config.lsp["go"].as_slice()[0].auto_start,
+            "an explicit auto_start still wins"
+        );
     }
 
     #[test]
