@@ -1333,6 +1333,8 @@ impl EditorServer {
                                 .unwrap_or_else(|| path.to_string_lossy().into_owned());
                             let id = editor.create_window_at(path, label);
                             editor.set_active_window(id);
+                            // Same trust gate as a first launch in this folder.
+                            editor.maybe_prompt_workspace_trust_for_opened_directory();
                             resize_occurred = true; // Force re-render
                         } else {
                             tracing::warn!(

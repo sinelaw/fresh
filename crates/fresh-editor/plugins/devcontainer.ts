@@ -2363,13 +2363,6 @@ function writeAttachDecision(value: AttachDecision): void {
   editor.setGlobalState(attachDecisionKey(), value);
 }
 
-/// In-memory "Ignore (once)" — true after the user picks the
-/// session-only Ignore option in the attach popup. Cleared on
-/// plugin reload, which means the next editor restart asks again.
-/// This is deliberately separate from the persisted "Ignore (always)"
-/// decision (`writeAttachDecision("dismissed")`) so users have a
-/// real choice between "not now" and "stop asking forever".
-let attachDismissedThisSession = false;
 
 /// Breadcrumb written before `editor.setAuthority(payload)`. If it is still
 /// here with no container authority installed, core failed to construct the
@@ -2455,9 +2448,9 @@ function devcontainer_on_attach_popup(data: ActionPopupResultData): void {
     writeAttachDecision("dismissed");
   } else {
     // `dismiss_once` (or the legacy `dismiss` id from older
-    // popups whose state is replayed mid-session): in-memory flag
-    // only. The next editor restart in this workspace re-asks.
-    attachDismissedThisSession = true;
+    // popups whose state is replayed mid-session): nothing to record.
+    // The prompt is offered once per folder per session
+    // (`attachOfferedIn`), so the next editor restart re-asks.
   }
 }
 registerHandler("devcontainer_on_attach_popup", devcontainer_on_attach_popup);
@@ -2753,63 +2746,48 @@ editor.registerCommand(
   null,
 );
 
-if (findConfig()) {
-  registerCommands();
-
-  const name = config!.name ?? "unnamed";
-  const image = getImageSummary();
-  const featureCount = config!.features ? Object.keys(config!.features).length : 0;
-  const portCount = config!.forwardPorts?.length ?? 0;
-
-  editor.setStatus(
-    editor.t("status.detected", {
-      name,
-      image,
-      features: String(featureCount),
-      ports: String(portCount),
-    }),
-  );
-
-  editor.debug("Dev Container plugin initialized: " + name);
-
-  // Decide whether to surface the attach prompt AFTER main.rs installs
-  // the boot authority. When the plugin's top-level body runs, the
-  // editor is still being constructed and `authority.display_label` is
-  // whatever the default Authority carried during Editor construction —
-  // which is empty even on the post-attach restart, because the real
-  // container authority is only installed via `set_boot_authority`
-  // (called right before `plugins_loaded` fires). Deferring to this
-  // hook means `getAuthorityLabel()` reads the freshly-refreshed
-  // snapshot and we don't re-prompt a user who already attached.
-  function devcontainer_maybe_show_attach_prompt(): void {
-    const authorityLabel = editor.getAuthorityLabel();
-    const alreadyAttached = authorityLabel.length > 0;
-
-    // Surface a failed attach if `authority_changed` did not get to it first.
-    if (settleAttachAttempt()) {
-      // Not the attach prompt too; a second popup would bury the failure.
-      return;
-    }
-
-    if (alreadyAttached) {
-      editor.debug(
-        "Dev Container plugin: authority '" + authorityLabel + "' already installed, skipping attach prompt",
-      );
-      return;
-    }
-    // Persistent dismissal (`Ignore (always in this directory)`)
-    // OR a successful prior attach — both are recorded in plugin
-    // global state and survive editor restarts. Skip the popup.
-    const previousDecision = readAttachDecision();
-    if (previousDecision !== null) return;
-    // Session-only dismissal (`Ignore (once)`): in-memory flag,
-    // cleared on plugin reload so the *next* editor restart
-    // re-asks in this workspace.
-    if (attachDismissedThisSession) return;
-    showAttachPrompt();
+/// Every command that needs a detected (or broken) config. Dropped when
+/// the active folder changes, before the new folder's set is registered.
+function unregisterConfigCommands(): void {
+  for (const name of ATTACHED_ONLY_COMMANDS) editor.unregisterCommand(name);
+  for (const name of DETACHED_ONLY_COMMANDS) editor.unregisterCommand(name);
+  for (const name of [
+    "%cmd.show_info",
+    "%cmd.open_config",
+    "%cmd.show_features",
+    "%cmd.show_ports",
+    "%cmd.rebuild",
+    "%cmd.show_build_logs",
+    "%cmd.run_lifecycle",
+    "%cmd.show_forwarded_ports_panel",
+  ]) {
+    editor.unregisterCommand(name);
   }
-  editor.on("plugins_loaded", devcontainer_maybe_show_attach_prompt);
-} else {
+}
+
+/// Detect the config of the folder the editor is showing and register the
+/// matching commands. Returns whether a usable config was found.
+function setUpForCwd(): boolean {
+  if (findConfig()) {
+    registerCommands();
+
+    const name = config!.name ?? "unnamed";
+    const image = getImageSummary();
+    const featureCount = config!.features ? Object.keys(config!.features).length : 0;
+    const portCount = config!.forwardPorts?.length ?? 0;
+
+    editor.setStatus(
+      editor.t("status.detected", {
+        name,
+        image,
+        features: String(featureCount),
+        ports: String(portCount),
+      }),
+    );
+
+    editor.debug("Dev Container plugin initialized: " + name);
+    return true;
+  }
   // Bug #2 + #3: a `devcontainer.json` that exists but fails to
   // parse used to fail silently AND drop every `Dev Container:`
   // command from the palette, leaving no in-editor recovery path
@@ -2823,4 +2801,70 @@ if (findConfig()) {
   } else {
     editor.debug("Dev Container plugin: no devcontainer.json found");
   }
+  return false;
 }
+
+/// The folder `config` was detected for.
+let detectedCwd = editor.getCwd();
+
+/// Folders the attach prompt was already offered in during this editor
+/// session, so switching back and forth between workspaces doesn't re-ask.
+const attachOfferedIn = new Set<string>();
+
+// Decide whether to surface the attach prompt AFTER main.rs installs
+// the boot authority. When the plugin's top-level body runs, the
+// editor is still being constructed and `authority.display_label` is
+// whatever the default Authority carried during Editor construction —
+// which is empty even on the post-attach restart, because the real
+// container authority is only installed via `set_boot_authority`
+// (called right before `plugins_loaded` fires). Deferring to this
+// hook means `getAuthorityLabel()` reads the freshly-refreshed
+// snapshot and we don't re-prompt a user who already attached.
+function devcontainer_maybe_show_attach_prompt(): void {
+  if (!config) return;
+  const authorityLabel = editor.getAuthorityLabel();
+  const alreadyAttached = authorityLabel.length > 0;
+
+  // Surface a failed attach if `authority_changed` did not get to it first.
+  if (settleAttachAttempt()) {
+    // Not the attach prompt too; a second popup would bury the failure.
+    return;
+  }
+
+  if (alreadyAttached) {
+    editor.debug(
+      "Dev Container plugin: authority '" + authorityLabel + "' already installed, skipping attach prompt",
+    );
+    return;
+  }
+  // Persistent dismissal (`Ignore (always in this directory)`)
+  // OR a successful prior attach — both are recorded in plugin
+  // global state and survive editor restarts. Skip the popup.
+  const previousDecision = readAttachDecision();
+  if (previousDecision !== null) return;
+  // Offered once per folder per editor session: `Ignore (once)` and a
+  // popup closed unanswered are not asked again until the next restart
+  // (or plugin reload), and switching back to this folder doesn't re-ask.
+  const cwd = editor.getCwd();
+  if (attachOfferedIn.has(cwd)) return;
+  attachOfferedIn.add(cwd);
+  showAttachPrompt();
+}
+
+/// A running editor that switches to another folder (a bare `fresh`
+/// typed elsewhere while the background editor is up, an Orchestrator
+/// session) gets that folder's config, commands and attach offer, just
+/// as a first launch there would (#3779).
+function devcontainer_on_active_window_changed(): void {
+  const cwd = editor.getCwd();
+  if (cwd === detectedCwd) return;
+  detectedCwd = cwd;
+  config = null;
+  configPath = null;
+  unregisterConfigCommands();
+  if (setUpForCwd()) devcontainer_maybe_show_attach_prompt();
+}
+
+setUpForCwd();
+editor.on("plugins_loaded", devcontainer_maybe_show_attach_prompt);
+editor.on("active_window_changed", devcontainer_on_active_window_changed);
