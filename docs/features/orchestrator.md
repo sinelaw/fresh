@@ -6,6 +6,8 @@ The Orchestrator runs many pieces of work side by side in one editor. Each task 
 
 The **dock** is the column on the left that lists your workspaces. Pick one to switch to it; the editor around you changes to that workspace's files and terminals.
 
+![The Orchestrator dock beside the editor, listing workspaces that need you, are working, are idle, and two finished ones filed in a To review folder](/images/orchestrator-dock.png)
+
 ## The dock
 
 Open or close it from **View → Orchestrator Dock**, with **Orchestrator: Toggle Dock**, or with the dock's `×`. `Alt+O` moves the keyboard into the dock and back out again, opening it if it is hidden. In the dock, `↑` and `↓` switch workspaces as you move.
@@ -44,6 +46,8 @@ Click **+ New** at the top of the dock, or run **Orchestrator: New Workspace**, 
 2. **Prompt:** an optional first message for the agent, describing the task.
 3. **Where:** the machine and the project to work on.
 4. **Git** (under **Details**): a **New worktree** on a fresh branch (the default for a git project), or work directly in the project's folder.
+
+![The New Workspace dialog with Claude chosen as the agent, a task prompt filled in, and a project selected](/images/orchestrator-new-workspace.png)
 
 Then choose:
 

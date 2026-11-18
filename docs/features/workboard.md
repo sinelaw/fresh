@@ -6,21 +6,7 @@
 
 The Workboard puts every Orchestrator workspace and its coding agent on one full-screen board, together with the agent sessions running outside the editor and the ones found in your agents' history, so you can see at a glance which agents are waiting on you, which have finished, and which are still working. Press `Enter` on a card to open that workspace.
 
-```
-┌ Workboard ─────────────────────────────────────────────────────────────────[×]┐
-│[ 1 Inbox ][ 2 Projects ][ 3 Folders ][ 4 Board ]                ● 2   ✓ 1   * 2  │
-│────────────────────────────────────────────────────────────────────────────────│
-│       Workspace      Status                         Project  Branch        For │
-│▼ NEEDS YOU  2                                                                  │
-│    ●  rate-limit     Should I use Postgres or Redis? api      rate-limit    4m │
-│    ●  login-fix      Allow running cargo test? (y/n) web      login-fix     1m │
-│▼ READY TO REVIEW  1                                                            │
-│    ✓  tab-names      finished, not looked at         web      tab-names · 3 changed │
-│▼ WORKING  2                                                                    │
-│    *  billing-ui                                     api      billing-ui    2m │
-│Enter open  n next waiting  Tab/1-4 lens  Esc close                             │
-└────────────────────────────────────────────────────────────────────────────────┘
-```
+![The Workboard's Inbox lens: a workspace waiting on a question, two ready to review, one working and two parked, each with its project, branch and changes](/images/workboard-inbox.png)
 
 The state symbols are the Orchestrator dock's own: **●** waiting on you, **✓** finished work you haven't looked at, **\*** working, **·** idle. The time on each card is how long it has been in that state, counted from when the Workboard first saw it.
 
