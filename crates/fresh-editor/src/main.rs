@@ -2289,15 +2289,23 @@ fn init_package_command(package_type: Option<String>) -> AnyhowResult<()> {
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
 
-    // Helper to prompt for input
+    // Helper to prompt for input. End of input (stdin closed or redirected
+    // from an empty file) ends the command with an error: read as an empty
+    // answer, it re-prompted forever (#3793).
     let mut prompt = |msg: &str| -> String {
         print!("{}", msg);
         // Best-effort flush for interactive prompt
         #[allow(clippy::let_underscore_must_use)]
         let _ = stdout.flush();
         let mut input = String::new();
-        stdin.lock().read_line(&mut input).unwrap_or_default();
-        input.trim().to_string()
+        match stdin.lock().read_line(&mut input) {
+            Ok(0) | Err(_) => {
+                println!();
+                eprintln!("Error: no input (stdin is closed); nothing was created.");
+                std::process::exit(1);
+            }
+            Ok(_) => input.trim().to_string(),
+        }
     };
 
     println!("Fresh Package Initializer");
@@ -2408,8 +2416,10 @@ fn init_package_command(package_type: Option<String>) -> AnyhowResult<()> {
         "language" => {
             println!("  2. Edit grammars/syntax.sublime-syntax (YAML format)");
             println!("  3. Update package.json with file extensions and LSP command");
-            println!("  4. Test by copying to ~/.config/fresh/grammars/");
-            println!("  5. Validate manifest: ./validate.sh");
+            println!("  4. Validate manifest: ./validate.sh");
+            println!("  5. Test it: in Fresh, Ctrl+P, run \"Package: Install from URL\" and enter");
+            println!("     this directory's full path (or copy it to");
+            println!("     ~/.config/fresh/languages/packages/{name}/ and restart Fresh)");
         }
         _ => unreachable!(),
     }
@@ -2961,7 +2971,11 @@ Update `package.json` to match your language's requirements.
 
 1. Edit `grammars/syntax.sublime-syntax` for syntax highlighting
 2. Update `package.json` with correct file extensions and LSP command
-3. Test by copying to `~/.config/fresh/grammars/` and restarting Fresh
+3. Validate the manifest: `./validate.sh`
+4. Test it: in Fresh, run **Package: Install from URL** from the command palette
+   (Ctrl+P) and enter the full path of this directory. Reinstall from the same
+   path to reload after an edit. Or copy the directory to
+   `~/.config/fresh/languages/packages/{name}/` and restart Fresh.
 
 **Tip:** Search GitHub for existing `<language> sublime-syntax` files you can adapt.
 If using an existing grammar, check its license and include a copy in `grammars/LICENSE`.
