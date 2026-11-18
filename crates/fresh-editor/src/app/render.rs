@@ -4148,7 +4148,7 @@ impl Editor {
         let toolbar = self.prompt_toolbar_interior();
         let default_title;
         let title_segs: &[fresh_core::api::StyledText] = if prompt.title.is_empty() {
-            default_title = self.default_overlay_title();
+            default_title = self.default_overlay_title(&prompt.prompt_type);
             &default_title
         } else {
             &prompt.title
@@ -5427,10 +5427,19 @@ impl Editor {
     /// Mirrors `updateOverlayTitle` in live_grep.ts, so a Resume-replay
     /// overlay and a freshly-opened plugin overlay look identical;
     /// `resume_live_grep` is left out because it matters once the overlay is
-    /// closed.
-    fn default_overlay_title(&self) -> Vec<fresh_core::api::StyledText> {
+    /// closed. Any other untitled overlay stays untitled: the hints name
+    /// actions that only work inside Live Grep (#3792).
+    fn default_overlay_title(&self, prompt_type: &PromptType) -> Vec<fresh_core::api::StyledText> {
         use crate::input::keybindings::KeyContext;
         use fresh_core::api::{OverlayColorSpec, OverlayOptions, StyledText};
+        let is_live_grep = match prompt_type {
+            PromptType::LiveGrep => true,
+            PromptType::Plugin { custom_type } => custom_type == "live-grep",
+            _ => false,
+        };
+        if !is_live_grep {
+            return Vec::new();
+        }
         let keybindings = self.keybindings.read().unwrap();
         let mut hints: Vec<(String, &str)> = Vec::new();
         if let Some(k) =

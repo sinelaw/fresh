@@ -1032,3 +1032,33 @@ fn test_open_file_prompt_shows_completions_immediately() {
     let screen = harness.screen_to_string();
     println!("Screen after opening prompt:\n{}", screen);
 }
+
+/// #3792: a floating prompt opened without a title must not borrow Live
+/// Grep's "switch grep provider · save matches" hints — those actions only
+/// work inside Live Grep.
+#[test]
+fn test_untitled_floating_prompt_has_no_live_grep_hints() {
+    use fresh_core::api::PluginCommand;
+
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    harness.render().unwrap();
+    harness
+        .editor_mut()
+        .plugin_manager_mut()
+        .test_inject_command(PluginCommand::StartPrompt {
+            label: "Pick a fruit: ".to_string(),
+            prompt_type: "fruit-picker".to_string(),
+            floating_overlay: true,
+        });
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Pick a fruit"),
+        "The floating prompt should be open. Screen:\n{screen}"
+    );
+    assert!(
+        !screen.contains("switch grep provider") && !screen.contains("save matches"),
+        "An untitled non-Live-Grep prompt must not show Live Grep's hints. Screen:\n{screen}"
+    );
+}
