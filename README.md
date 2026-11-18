@@ -65,10 +65,10 @@ Quick install:
 
 `curl -fsSL https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh`
 
-On Linux this installs the **universal build**: one statically linked binary
-that runs on every distro, unpacked under `~/.local`, owned by you. It needs no
-root, and it updates itself — `fresh --update`, or the update prompt in the
-editor. On macOS it uses Homebrew.
+**On Linux, the universal build is the recommended install**, and it's what the
+script installs: one statically linked binary that runs on every distro,
+unpacked under `~/.local`, owned by you. It needs no root, and it updates itself
+(see [Upgrading](#upgrading)). On macOS the script uses Homebrew.
 
 `fresh --update` asks before installing (`--yes` skips the question). However
 you installed Fresh — Homebrew, a package, cargo, npm and so on — it updates
@@ -91,7 +91,7 @@ Or, pick your preferred method:
 
 | Platform | Method |
 |----------|--------|
-| Linux (any distro) | [universal build](#universal-build-linux) — self-updating, no root |
+| Linux (any distro) — **recommended** | [universal build](#universal-build-linux) — self-updating, no root |
 | macOS | [brew](#brew) |
 | Bazzite/Bluefin/Aurora Linux | [brew](#brew) |
 | Windows | [winget](#windows-winget) |
@@ -113,6 +113,8 @@ Or, pick your preferred method:
 
 ### Universal build (Linux)
 
+The recommended way to run Fresh on Linux:
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh
 ```
@@ -122,10 +124,21 @@ compiled in, including plugins. It unpacks to `~/.local/share/fresh-editor` and
 symlinks `~/.local/bin/fresh`; set `FRESH_INSTALL_DIR` / `FRESH_BIN_DIR` to put
 them elsewhere. Ensure `~/.local/bin` is in your `PATH`.
 
+#### Upgrading
+
 Because nothing else owns these files, this is the one Linux install that can
-replace itself: `fresh --update` downloads the next release, verifies it
-against both its published checksum and GitHub's release attestation, and swaps
-the binary in place.
+replace itself. Any of these upgrades to the latest release:
+
+- **From the shell:** `fresh --update`. It shows your version and the latest one,
+  and asks before installing; `--yes` skips the question and `--check` only reports whether an
+  update is available.
+- **From the editor:** when a new release is out, an update indicator appears in
+  the status bar. Click it, or run **Update fresh** from the command palette.
+- **Re-run the install script.** This also refreshes the desktop entry and
+  icons, which an in-place update leaves alone.
+
+Each update downloads the release, verifies it against both its published
+checksum and GitHub's release attestation, and swaps the binary in place.
 
 The archive also carries the same desktop entry and icon theme the `.deb` and
 `.rpm` install, and the installer copies them into `$XDG_DATA_HOME`

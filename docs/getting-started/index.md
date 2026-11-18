@@ -8,7 +8,9 @@ The quickest way to install Fresh is the install script:
 curl -fsSL https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh
 ```
 
-On Linux this installs the universal build, a single static binary that needs no root and updates itself (`fresh --update`). On macOS it uses Homebrew.
+On Linux this installs the **universal build**, the recommended way to run Fresh there: a single static binary that works on every distro and needs no root. On macOS the script uses Homebrew.
+
+To upgrade the universal build, run `fresh --update` (it asks before installing), or click the update indicator that appears in the status bar when a new release is out. Re-running the install script works too. Other install methods upgrade through their own package manager.
 
 See the [Installation section in the README](https://github.com/sinelaw/fresh#installation) for every other method, including Homebrew, winget, AUR, .deb/.rpm packages, npm, crates.io, Nix and building from source.
 
