@@ -3676,7 +3676,8 @@ fn side_buffer(harness: &EditorTestHarness, name: &str) -> Option<(usize, String
 
 /// An unmerged path has no index copy (`git show :path` fails): the
 /// unstaged side-by-side's left side falls back to HEAD instead of showing
-/// it empty, and the staged entry's right side to the working file.
+/// it empty, and the staged entry's right side to the working file. The
+/// pane labels name the side actually shown, not the missing index.
 #[test]
 fn test_conflicted_file_side_by_side_falls_back_to_head() {
     init_tracing_from_env();
@@ -3700,6 +3701,14 @@ fn test_conflicted_file_side_by_side_falls_back_to_head() {
         })
         .unwrap();
     let (staged_old_id, _) = side_buffer(&harness, "*OLD:src/main.rs*").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("NEW (Working)"))
+        .unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("NEW (Staged)"),
+        "the staged entry's right side is the working file here:\n{screen}"
+    );
 
     // `.` moves to the unstaged entry, whose left side is HEAD.
     harness
@@ -3714,5 +3723,16 @@ fn test_conflicted_file_side_by_side_falls_back_to_head() {
     assert!(
         old_text.contains("HEAD_LINE") && !old_text.contains("<<<<<<<"),
         "the unstaged left side of an unmerged path is HEAD: {old_text:?}"
+    );
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("OLD (HEAD)") && screen.contains("NEW (Working)")
+        })
+        .unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("OLD (Staged)"),
+        "the unstaged left side is HEAD, not the index:\n{screen}"
     );
 }
