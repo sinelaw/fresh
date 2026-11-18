@@ -1064,6 +1064,12 @@ pub struct Editor {
     pub(crate) plugin_schemas:
         std::sync::Arc<std::sync::RwLock<HashMap<String, serde_json::Value>>>,
 
+    /// `setSetting(path, value)` writes, in the order they were made. They
+    /// live only in memory, so a config re-resolved from disk (a Settings
+    /// save, `reloadConfig()`) gets them laid back on top — otherwise the
+    /// next save would silently undo them (#3791).
+    pub(crate) runtime_settings: Vec<(String, serde_json::Value)>,
+
     // `seen_byte_ranges` moved onto `Window` — keyed by `BufferId`
     // which lives on `Window`, so the tracker follows the buffers.
 

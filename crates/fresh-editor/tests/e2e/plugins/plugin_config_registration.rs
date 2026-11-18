@@ -289,3 +289,115 @@ fn plugin_config_category_hidden_when_plugin_disabled() {
         "A disabled plugin must not show a category. Screen:\n{screen}"
     );
 }
+
+const KEEP_PLUGIN_NAME: &str = "cfg_keep";
+const KEEP_PLUGIN_SOURCE: &str = r#"
+/// <reference path="./lib/fresh.d.ts" />
+const editor = getEditor();
+
+editor.defineConfigString("label", { default: "LBL", description: "Untouched field" });
+editor.defineConfigString("prefix", { default: "DEFAULT", description: "Set by setSetting" });
+editor.defineConfigBoolean("uppercase", { default: false, description: "Toggled in Settings" });
+
+// No `??` fallbacks: the point is what `getPluginConfig()` itself returns.
+function show(): void {
+    const cfg = (editor.getPluginConfig() ?? {}) as Record<string, unknown>;
+    editor.insertAtCursor(`[${cfg.label}|${cfg.prefix}|${cfg.uppercase}]`);
+}
+registerHandler("cfg_keep_show", show);
+editor.registerCommand("cfg_keep: Show", "Insert the config", "cfg_keep_show", null);
+
+function setPrefix(): void {
+    editor.setSetting("plugins.cfg_keep.settings.prefix", "RUNTIME");
+}
+registerHandler("cfg_keep_set_prefix", setPrefix);
+editor.registerCommand("cfg_keep: Set Prefix", "setSetting the prefix", "cfg_keep_set_prefix", null);
+"#;
+
+fn run_palette_command(h: &mut EditorTestHarness, name: &str) {
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text(name).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_for_prompt_closed().unwrap();
+    h.render().unwrap();
+}
+
+/// #3791: `getPluginConfig()` must keep returning the declared defaults
+/// after a `setSetting` and after a Settings save, and a `setSetting` value
+/// must survive the next Settings save (it lives in no config file).
+#[test]
+fn plugin_config_defaults_and_set_setting_survive_settings_save() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let working_dir = temp.path().join("work");
+    let plugins_dir = working_dir.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    fs::write(
+        plugins_dir.join(format!("{}.ts", KEEP_PLUGIN_NAME)),
+        KEEP_PLUGIN_SOURCE,
+    )
+    .unwrap();
+    copy_plugin_lib(&plugins_dir);
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), working_dir)
+            .expect("harness");
+    harness.render().unwrap();
+
+    run_palette_command(&mut harness, "cfg_keep: Show");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("[LBL|DEFAULT|false]"))
+        .unwrap();
+
+    run_palette_command(&mut harness, "cfg_keep: Set Prefix");
+    // Let the SetSetting command drain before reading the config back.
+    harness
+        .wait_until(|h| {
+            h.editor().config().plugins[KEEP_PLUGIN_NAME].settings["prefix"] == "RUNTIME"
+        })
+        .unwrap();
+    run_palette_command(&mut harness, "cfg_keep: Show");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("[LBL|RUNTIME|false]"))
+        .unwrap();
+
+    // Toggle `uppercase` (third field: label, prefix, uppercase) and save.
+    harness.open_settings().unwrap();
+    for _attempt in 0..200 {
+        if harness.screen_to_string().contains(KEEP_PLUGIN_NAME) {
+            break;
+        }
+        harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+        harness.open_settings().unwrap();
+    }
+    focus_category(&mut harness, KEEP_PLUGIN_NAME);
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(
+        harness.screen_to_string().contains(": [v]"),
+        "`uppercase` should be checked. Screen:\n{}",
+        harness.screen_to_string()
+    );
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Settings saved"))
+        .unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    run_palette_command(&mut harness, "cfg_keep: Show");
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("[LBL|RUNTIME|true]"),
+        "After a Settings save the plugin must still see its defaults and its \
+         setSetting value. Screen:\n{screen}"
+    );
+}
