@@ -22,11 +22,10 @@ and Visual modes, so the rest of Fresh is always one key away.
 | Insert | `i` `a` `I` `A` `o` `O` | Typing inserts text, as in Fresh's normal editing |
 | Visual | `v` | Select by character |
 | Visual Line | `V` | Select whole lines |
-| Visual Block | `Ctrl+V` | Select a rectangular block |
 | Command line | `:` | Type an ex command (see [below](#ex-commands)) |
 
-In a visual mode, `v`, `V` and `Ctrl+V` switch between the three kinds of
-selection; pressing the current one again, or `Esc`, returns to Normal.
+In a visual mode, `v` and `V` switch between the two kinds of selection;
+pressing the current one again, or `Esc`, returns to Normal.
 
 ## Motions
 
@@ -43,8 +42,7 @@ selection; pressing the current one again, or `Esc`, returns to Normal.
 | `;` / `,` | repeat the last `f`/`t`/`F`/`T` forward / backward |
 | `/` `?` then `n` `N` | search forward / backward, next / previous match |
 | `*` / `#` | search for the word under the cursor forward / backward |
-| `Ctrl+F` `Ctrl+B` / `Ctrl+D` `Ctrl+U` | page down / up, half page down / up |
-| `zz` | center the cursor line on screen |
+| `Ctrl+D` / `Ctrl+U` | down / up ten lines |
 
 ## Operators
 
@@ -101,8 +99,7 @@ selects the inside of an object and `a` selects it with its surroundings.
 
 With a selection, `d` (or `x`), `c` (or `s`), `y`, `>` and `<` act on it and
 return to Normal. Visual and Visual Line modes also support `J` to join the
-selected lines. Visual Block works on the rectangle, so `d` removes a column of
-text.
+selected lines.
 
 ## Ex Commands
 
@@ -112,8 +109,8 @@ changes.
 
 | Command | Action |
 |---------|--------|
-| `:w` / `:w file` | save / save to another file |
-| `:q` / `:q!` | quit Fresh (refuses if anything is unsaved) / quit discarding changes |
+| `:w` / `:w file` | save / save as another file |
+| `:q` / `:q!` | quit Fresh (refuses if anything is unsaved) / quit without saving |
 | `:wq` | save and quit (always writes) |
 | `:x`, `ZZ` | save if modified, then quit |
 | `ZQ` | quit without saving |
@@ -121,11 +118,10 @@ changes.
 | `:e file` / `:e!` | open a file / reload the current one, discarding changes |
 | `:42` | go to line 42 |
 | `:bn` `:bp` `:bd` `:b name` `:ls` | next / previous / close / switch buffer, list buffers |
-| `:sp` `:vs` `:new` `:vnew` `:only` `:close` | splits |
-| `:tabnew` `:tabclose` `:tabnext` `:tabprevious` | tabs |
-| `:copen` `:cnext` `:cprev` | diagnostics panel, next / previous diagnostic |
+| `:sp` `:vs` `:close` | split horizontally / vertically, close the split |
+| `:tabclose` `:tabnext` `:tabprevious` | close / next / previous tab |
 | `:noh` | clear search highlighting |
-| `:set number` / `:set nonumber` / `:set wrap` / `:set nowrap` | line numbers and line wrap |
+| `:set number` / `:set nonumber` | show / hide line numbers |
 
 ## Not Supported
 
