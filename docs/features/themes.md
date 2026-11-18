@@ -361,8 +361,11 @@ with `editor.selection_bg` / `ui.semantic_highlight_bg` when a theme gives
 both.
 
 A key Fresh does not know (a typo, or a key from another editor's theme
-format) is ignored, with a warning naming it. A theme with a value Fresh
-cannot read is not loaded, with a warning naming the file and the key.
+format) is ignored, with a warning naming it. So is a color Fresh can't read:
+that key falls back as if it were left out. Colors can be `[r, g, b]`, `"#rrggbb"`
+(or `"#rgb"`), or a terminal color name such as `"Red"` or `"default"`. A value
+of the wrong type (a number where a color goes, say) stops the theme from
+loading, with a warning naming the file and the key.
 
 Only `name` is required. A color you omit comes from another color, never
 from a value built into Fresh: from a **base theme** (see
@@ -385,8 +388,7 @@ override the base.
 ```
 
 This picks `light` as the base and changes only the selection colour. Theme
-files are plain JSON, so leave out `//` comments — a theme file with comments
-is not loaded.
+files accept `//` comments and trailing commas, like `config.json`.
 
 `extends` accepts a built-in name in either form: `"builtin://light"` or
 just `"light"` — any of the [built-in themes](#selecting-a-theme) works.

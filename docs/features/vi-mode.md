@@ -22,9 +22,10 @@ and Visual modes, so the rest of Fresh is always one key away.
 | Insert | `i` `a` `I` `A` `o` `O` | Typing inserts text, as in Fresh's normal editing |
 | Visual | `v` | Select by character |
 | Visual Line | `V` | Select whole lines |
+| Visual Block | `Ctrl+V` | Select a rectangle (a column across lines) |
 | Command line | `:` | Type an ex command (see [below](#ex-commands)) |
 
-In a visual mode, `v` and `V` switch between the two kinds of selection;
+In a visual mode, `v`, `V` and `Ctrl+V` switch between the kinds of selection;
 pressing the current one again, or `Esc`, returns to Normal.
 
 ## Motions
@@ -40,9 +41,11 @@ pressing the current one again, or `Esc`, returns to Normal.
 | `%` | matching bracket |
 | `f` `t` `F` `T` + char | next / till next / previous / till previous character on the line |
 | `;` / `,` | repeat the last `f`/`t`/`F`/`T` forward / backward |
-| `/` then `n` `N` | search, next / previous match |
+| `/` / `?` then `n` `N` | search forward / backward, next / previous match |
 | `*` / `#` | search for the word under the cursor forward / backward |
 | `Ctrl+D` / `Ctrl+U` | down / up ten lines |
+| `Ctrl+F` / `Ctrl+B` | down / up a page |
+| `zz` | scroll so the cursor line is centred |
 
 ## Operators
 
@@ -98,7 +101,8 @@ selects the inside of an object and `a` selects it with its surroundings.
 ## Visual Mode Operators
 
 With a selection, `d` (or `x`), `c` (or `s`), `y`, `>` and `<` act on it and
-return to Normal. Visual and Visual Line modes also support `J` to join the
+return to Normal. In Visual Block they act on the column, and `c` types on
+every line at once. Visual and Visual Line modes also support `J` to join the
 selected lines.
 
 ## Ex Commands
@@ -118,10 +122,13 @@ changes.
 | `:e file` / `:e!` | open a file / reload the current one, discarding changes |
 | `:42` | go to line 42 |
 | `:bn` `:bp` `:bd` `:b name` `:ls` | next / previous / close / switch buffer, list buffers |
-| `:sp` `:vs` `:close` | split horizontally / vertically, close the split |
+| `:sp` `:vs` `:close` `:only` | split horizontally / vertically, close this split / all others |
+| `:new` `:vnew` `:enew` `:tabnew` | open a new empty buffer (in a new split for `:new` / `:vnew`) |
 | `:tabclose` `:tabnext` `:tabprevious` | close / next / previous tab |
 | `:noh` | clear search highlighting |
 | `:set number` / `:set nonumber` | show / hide line numbers |
+| `:set wrap` / `:set nowrap` | turn line wrap on / off |
+| `:copen` / `:cnext` `:cprev` `:cfirst` `:clast` | open the diagnostics panel / jump between diagnostics |
 
 ## Not Supported
 
