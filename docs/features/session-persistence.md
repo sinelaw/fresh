@@ -18,7 +18,8 @@ you typed it in, with the workspace dock on screen if you opened it yourself
 (View ▸ Orchestrator Dock). It runs as a daemon, so the session outlives the
 terminal, and a second bare `fresh` anywhere reattaches to that same editor
 instead of starting a second one — switched to the workspace for *that*
-directory. Your other workspaces stay open in the daemon; the dock lists them.
+directory. Your other workspaces stay open in the daemon; the dock lists them (see
+[Orchestrator](./orchestrator.md)).
 
 ```bash
 fresh            # this directory's workspace, in the shared daemon
@@ -70,8 +71,8 @@ A file has one buffer across all of an editor's workspaces. Opening a file that 
 
 Each workspace's state (open files, split layout, plugin state) is restored on startup by default. Control this with:
 
-- **`editor.restore_previous_session`** (config, default `true`) — when set to `false`, Fresh skips restoring tabs and splits but still brings back unsaved "hot-exit" content (dirty files and unnamed buffers).
-- **`--no-restore`** (CLI) — one-shot skip equivalent to the config flag being off.
+- **Restore Previous Session** (Settings UI; `editor.restore_previous_session`, default on) — when off, Fresh starts without your last tabs and splits, but still saves the workspace when you quit, and still brings back unsaved "hot-exit" content (dirty files and unnamed buffers).
+- **`--no-restore`** (CLI) — for this one launch, neither restores nor saves the workspace. Unsaved hot-exit content still comes back.
 - **`--restore`** (CLI) — force a full workspace restore even when the config flag is off. Mutually exclusive with `--no-restore`.
 
 ### Ephemeral files
@@ -83,13 +84,14 @@ Entries use the same dialect as `languages.*.filenames`: a literal entry matches
 ## Quick Start
 
 ```bash
-# Start or attach to a daemon for the current directory
+# Start or attach to the background editor
+# (with Auto Attach on, this is the shared one, the same as a bare `fresh`)
 fresh -a
 
 # Detach: press Ctrl+Shift+D (or use Command Palette > "Detach")
 # Terminal closes, but the Fresh daemon keeps running in the background
 
-# Reattach later from the same directory
+# Reattach later
 fresh -a
 
 # List all running daemons
@@ -153,7 +155,7 @@ Detaching exits only the client; the daemon keeps running. It never shuts itself
 
 | Command | Description |
 |---------|-------------|
-| `fresh -a` | Attach to the daemon for the current directory (starts one if needed) |
+| `fresh -a` | Attach to the background editor, starting it if needed: the shared one with Auto Attach on (unless this directory has its own daemon running), else this directory's |
 | `fresh -a <name>` | Attach to a named daemon |
 | `fresh --cmd daemon list` | List running daemons |
 | `fresh --cmd daemon new <name>` | Start a new named daemon |
@@ -218,7 +220,7 @@ Routing git through a daemon (`fresh --cmd daemon open-file . --wait`) still wor
 
 #### Annotated Code Walkthroughs
 
-Combine `--wait` with [range selection and popup messages](../getting-started/#running-fresh) to walk a user through code one location at a time. Each command blocks until the user presses Escape, then the next location opens:
+Combine `--wait` with [range selection and popup messages](../getting-started/#selecting-a-range-and-showing-a-message) to walk a user through code one location at a time. Each command blocks until the user presses Escape, then the next location opens:
 
 ```bash
 fresh --cmd daemon open-file . 'src/parse.rs:10-25@"Step 1: The parser entry point"' --wait
@@ -251,9 +253,8 @@ done
 
 ### Detaching
 
-- `Ctrl+Shift+D` or Command Palette → "Detach" or File → Detach
-- **Detach**: Client exits, daemon keeps running
-- **Quit** (`Ctrl+Q`): Both client and daemon exit
+- `Ctrl+Shift+D` or Command Palette → "Detach" or File → Detach: the client exits and the daemon keeps running.
+- `Ctrl+Q` asks first: **Detach** (the default) leaves Fresh running in the background, and **Quit and Stop All** stops the daemon along with its terminals and agents.
 
 ## Limitations and Pitfalls
 

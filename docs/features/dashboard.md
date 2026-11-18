@@ -18,7 +18,7 @@ The dashboard is off by default. Turn it on from the Settings UI (**Open Setting
 }
 ```
 
-Once enabled, the dashboard auto-opens at startup and after the last buffer is closed. To keep the plugin loaded but skip those ambient open paths — leaving `Show Dashboard` as the only entry point — set `plugins.dashboard.auto-open` to `false`. The default is `true`.
+Once enabled, open it any time with `Show Dashboard`. To have it open by itself when Fresh starts with no files open and after the last buffer is closed, also turn on **autoOpen** in the same Settings page (`"autoOpen": true` under `plugins.dashboard` in `config.json`). It is off by default.
 
 ## Tips
 
@@ -38,6 +38,8 @@ editor.on("plugins_loaded", () => {
   dash.registerSection("github", dash.builtinHandlers.github);
 });
 ```
+
+The weather section uses your IP-based location in metric units by default; set **weatherLocation** and **weatherUnits** (Metric or Imperial) on the dashboard's Settings page to change either.
 
 The GitHub section shows open PRs for the *current repo* (detected from the `origin` remote). Outside a GitHub clone, it renders a short explanatory message instead. If either widget can't reach its endpoint, the section surfaces a one-line error rather than blocking the rest of the dashboard.
 

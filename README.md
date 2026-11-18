@@ -46,16 +46,18 @@ See more feature demos: [Editing](https://getfresh.dev/docs/blog/editing) (searc
 
 | Category | Features |
 |----------|----------|
-| **File Management** | open/save/new/close, file explorer, tabs, auto-revert, git file finder |
-| **Editing** | undo/redo, multi-cursor, block selection, smart indent, comments, clipboard |
+| **File Management** | open/save/new/close, file explorer, tabs, recent files, auto-revert, git file finder, compare files (`fresh --diff`) |
+| **Editing** | undo/redo, multi-cursor, block selection, smart indent, comments, clipboard, vi and Emacs keymaps |
 | **Search & Replace** | incremental search, find in selection, query replace, git grep |
 | **Navigation** | go to line/bracket, word movement, position history, bookmarks, error navigation |
-| **Views & Layout** | split panes, line numbers, line wrap, backgrounds, markdown preview |
+| **Views & Layout** | split panes, line numbers, line wrap, backgrounds, markdown preview and table of contents |
 | **Language Server (LSP)** | go to definition, references, hover, code actions, rename, diagnostics, autocompletion |
-| **Productivity** | command palette, menu bar, keyboard macros, git log, diagnostics panel |
-| **Multitasking (Orchestrator)** | one workspace per git worktree, terminals and long-running commands per workspace, coding agents (claude, codex, opencode, aider) with resumable sessions, dock switcher, remote/SSH workspaces |
+| **Git** | review diff with comments, git blame, git log |
+| **Productivity** | command palette, menu bar, keyboard macros, diagnostics panel |
+| **Multitasking (Orchestrator)** | one workspace per git worktree, terminals and long-running commands per workspace, coding agents (claude, codex, opencode, aider) with resumable sessions, import of agent sessions started outside Fresh, Workboard overview, dock switcher, remote/SSH workspaces |
+| **Background editor** | `fresh` runs in a background editor you can detach from and reattach to (Auto Attach) |
 | **Extensibility** | TypeScript plugins (sandboxed QuickJS), color highlighter, TODO highlighter, merge conflicts, path complete, keymaps |
-| **Internationalization** | Multiple language support (see [`locales/`](locales/)), plugin translation system |
+| **Internationalization** | Multiple language support (see [`locales/`](crates/fresh-editor-core/locales)), plugin translation system |
 
 ## Installation
 
@@ -67,6 +69,10 @@ On Linux this installs the **universal build**: one statically linked binary
 that runs on every distro, unpacked under `~/.local`, owned by you. It needs no
 root, and it updates itself — `fresh --update`, or the update prompt in the
 editor. On macOS it uses Homebrew.
+
+`fresh --update` asks before installing (`--yes` skips the question). However
+you installed Fresh — Homebrew, a package, cargo, npm, Flatpak and so on — it
+updates through that same channel.
 
 Prefer your distro's package manager? Ask for it explicitly:
 
@@ -113,7 +119,8 @@ curl -fsSL https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scr
 A single static (musl) binary for `x86_64` and `aarch64` with every feature
 compiled in, including plugins. It unpacks to `~/.local/share/fresh-editor` and
 symlinks `~/.local/bin/fresh`; set `FRESH_INSTALL_DIR` / `FRESH_BIN_DIR` to put
-them elsewhere. Ensure `~/.local/bin` is in your `PATH`.
+them elsewhere (the installer only replaces a `FRESH_INSTALL_DIR` that is empty
+or already holds Fresh). Ensure `~/.local/bin` is in your `PATH`.
 
 Because nothing else owns these files, this is the one Linux install that can
 replace itself: `fresh --update` downloads the next release, verifies it
@@ -152,7 +159,10 @@ brew install fresh-editor
 winget install fresh-editor
 ```
 
-Alternatively, Windows users can use [npm](#npm).
+Alternatively, Windows users can use [npm](#npm), or download
+`fresh-gui-<target>.zip` from the [releases page](https://github.com/sinelaw/fresh/releases):
+opened from Explorer it runs in its own window, and typing `fresh-gui` in cmd or
+PowerShell runs it in the console.
 
 ### Arch Linux ([AUR](https://aur.archlinux.org/packages/fresh-editor-bin))
 
@@ -184,20 +194,22 @@ yay -S fresh-editor
 
 ### Debian/Ubuntu (.deb)
 
-Download and install the latest release:
+Download, verify and install the latest release:
 
 ```bash
-curl -sL $(curl -s https://api.github.com/repos/sinelaw/fresh/releases/latest | grep "browser_download_url.*_$(dpkg --print-architecture)\.deb" | cut -d '"' -f 4) -o fresh-editor.deb && sudo dpkg -i fresh-editor.deb
+curl -fsSL https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh -s -- --method=deb
 ```
 
-Or download the `.deb` file manually from the [releases page](https://github.com/sinelaw/fresh/releases).
+Or download the `.deb` file manually from the [releases page](https://github.com/sinelaw/fresh/releases)
+(`fresh-editor_VERSION-1_ARCH.deb`; the `.debian-testing.deb` next to it is a build
+made the way the Debian archive builds it, with Debian's own toolchain and libraries).
 
 ### Fedora/RHEL (.rpm)
 
-Download and install the latest release:
+Download, verify and install the latest release:
 
 ```bash
-curl -sL $(curl -s https://api.github.com/repos/sinelaw/fresh/releases/latest | grep "browser_download_url.*\.$(uname -m)\.rpm" | cut -d '"' -f 4) -o fresh-editor.rpm && sudo rpm -U fresh-editor.rpm
+curl -fsSL https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh -s -- --method=rpm
 ```
 
 Or download the `.rpm` file manually from the [releases page](https://github.com/sinelaw/fresh/releases).
@@ -208,8 +220,10 @@ There is no openSUSE repository for `fresh` yet, so install the `.rpm` from the
 release directly:
 
 ```bash
-curl -sL $(curl -s https://api.github.com/repos/sinelaw/fresh/releases/latest | grep "browser_download_url.*\.$(uname -m)\.rpm" | cut -d '"' -f 4) -o fresh-editor.rpm && sudo zypper --no-gpg-checks install ./fresh-editor.rpm
+curl -fsSL https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh -s -- --method=rpm
 ```
+
+The installer uses `zypper` when it finds it.
 
 Or download the `.rpm` file manually from the [releases page](https://github.com/sinelaw/fresh/releases).
 
