@@ -925,6 +925,15 @@ impl IndentCalculator {
             found_reference_indent
         };
 
+        // Inside a parenthesis or square bracket opened earlier on this line,
+        // split before its closer (`foo(a,│)`): the line opened a group, as
+        // when it ends with the opener (#3798).
+        if !current_line_is_empty
+            && Self::splits_list_pair(&line_bytes, Self::byte_at(buffer, position))
+        {
+            return Some(reference_indent + tab_size);
+        }
+
         // If current line ends with indent trigger, add to reference
         if let Some(&last_char) = last_non_whitespace {
             tracing::debug!("Pattern match: last char = '{}'", last_char as char);
@@ -947,6 +956,19 @@ impl IndentCalculator {
 
         // Current line is empty and has no indent trigger - use reference indent
         Some(reference_indent)
+    }
+
+    /// Whether `closer` closes a `(` or `[` that `line_before` (the line up
+    /// to the cursor) leaves open: Enter splitting an argument or element
+    /// list (`foo(a,│)`, #3798). Braces are blocks, not lists, and keep
+    /// their own rules.
+    pub fn splits_list_pair(line_before: &[u8], closer: Option<u8>) -> bool {
+        use crate::primitives::indent_rules::{closing_bracket, unclosed_bracket};
+        let Some(closer @ (b')' | b']')) = closer else {
+            return false;
+        };
+        unclosed_bracket(&String::from_utf8_lossy(line_before)).map(closing_bracket)
+            == Some(closer as char)
     }
 
     /// Calculate indent using tree-sitter queries
@@ -1430,6 +1452,24 @@ mod tests {
             result,
             Some(4),
             "Should detect {{ and return 4 space indent"
+        );
+    }
+
+    /// Enter inside `foo(a,│)` indents one level past the call, with or
+    /// without a grammar (#3798).
+    #[test]
+    fn test_split_bracket_pair_after_argument_indents() {
+        let content = "fn t() {\n    foo(a,)\n}\n";
+        let buffer = Buffer::from_str_test(content);
+        let position = content.rfind(')').unwrap();
+        assert_eq!(
+            IndentCalculator::calculate_indent_no_grammar(&buffer, position, 4),
+            8
+        );
+        let mut calc = IndentCalculator::new();
+        assert_eq!(
+            calc.calculate_indent(&buffer, position, &Language::Rust, 4),
+            Some(8)
         );
     }
 
