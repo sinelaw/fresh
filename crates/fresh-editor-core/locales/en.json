@@ -779,7 +779,7 @@
   "cmd.select_cursor_style": "Select Cursor Style",
   "cmd.select_cursor_style_desc": "Choose a cursor style (block, bar, underline)",
   "cmd.select_keybinding_map": "Select Keybinding Map",
-  "cmd.select_keybinding_map_desc": "Choose a keybinding map (default, emacs, vscode)",
+  "cmd.select_keybinding_map_desc": "Choose a keybinding map (default, emacs, vscode, macos)",
   "cmd.select_line": "Select Line",
   "cmd.select_line_desc": "Select the current line",
   "cmd.select_locale": "Select Locale",
