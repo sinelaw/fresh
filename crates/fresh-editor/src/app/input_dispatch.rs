@@ -3,7 +3,9 @@
 //! This module provides the bridge between Editor and the InputHandler trait,
 //! dispatching input to modal components and processing deferred actions.
 
-use super::terminal_input::{should_enter_terminal_mode, TerminalModeInputHandler};
+use super::terminal_input::{
+    is_terminal_resume_key, should_enter_terminal_mode, TerminalModeInputHandler,
+};
 use super::Editor;
 use crate::input::handler::{DeferredAction, InputContext, InputHandler, InputResult};
 use crate::input::keybindings::{Action, KeyContext};
@@ -95,9 +97,13 @@ impl Editor {
             && should_enter_terminal_mode(event)
         {
             self.enter_terminal_mode();
-            // Forward the key to the terminal so the user's input isn't lost
-            self.active_window_mut()
-                .send_terminal_key(event.code, event.modifiers);
+            // Forward a typed key to the terminal so the user's input isn't
+            // lost. The resume chord itself is the editor's, not the
+            // program's: forwarding it sent a stray NUL or ^] (#3785).
+            if !is_terminal_resume_key(event) {
+                self.active_window_mut()
+                    .send_terminal_key(event.code, event.modifiers);
+            }
             return Some(InputResult::Consumed);
         }
 
