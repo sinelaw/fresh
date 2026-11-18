@@ -1636,6 +1636,16 @@ impl GrammarRegistry {
                 .get(&grammar_name.to_lowercase())
                 .copied()
                 .or_else(|| self.catalog_by_name.get(&lang_id.to_lowercase()).copied())
+                // A language pack keys its config by the package name, but its
+                // grammar registers under the grammar file's own `name:`; match
+                // them through the grammar's provenance (#3790).
+                .or_else(|| {
+                    self.catalog.iter().position(|e| match &e.source {
+                        GrammarSource::Plugin { plugin: name, .. }
+                        | GrammarSource::LanguagePack { name, .. } => name == lang_id,
+                        _ => false,
+                    })
+                })
                 .unwrap_or_else(|| {
                     let idx = self.catalog.len();
                     self.catalog.push(GrammarEntry {
