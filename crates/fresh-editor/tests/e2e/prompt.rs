@@ -1091,8 +1091,11 @@ fn test_cancelling_a_non_search_prompt_does_not_say_search_cancelled() {
             .start_prompt("Name: ".to_string(), prompt_type.clone());
         let status = cancel_and_read_status(&mut harness);
         assert!(
-            status.contains("Cancelled.") && !status.contains("Search"),
-            "cancelling {prompt_type:?} should say a neutral \"Cancelled.\": {status:?}"
+            status.contains("Cancelled")
+                && !status.contains("Cancelled.")
+                && !status.contains("Search"),
+            "cancelling {prompt_type:?} should say a neutral \"Cancelled\", without a \
+             period like its siblings (\"Open cancelled\"): {status:?}"
         );
     }
 

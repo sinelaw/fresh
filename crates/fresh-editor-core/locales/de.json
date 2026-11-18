@@ -2427,6 +2427,6 @@
   "dialog.title.name_conflict": "Namenskonflikt",
   "dialog.title.large_file": "Große Datei",
   "dialog.title.go_to_line": "Gehe zu Zeile",
-  "prompt.cancelled": "Abgebrochen.",
+  "prompt.cancelled": "Abgebrochen",
   "explorer.title": "Datei-Explorer"
 }

@@ -1908,6 +1908,6 @@
   "dialog.title.name_conflict": "Name Conflict",
   "dialog.title.large_file": "Large File",
   "dialog.title.go_to_line": "Go to Line",
-  "prompt.cancelled": "Cancelled.",
+  "prompt.cancelled": "Cancelled",
   "explorer.title": "File Explorer"
 }

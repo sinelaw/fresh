@@ -2427,6 +2427,6 @@
   "dialog.title.name_conflict": "Конфликт на имена",
   "dialog.title.large_file": "Голям файл",
   "dialog.title.go_to_line": "Отиди на ред",
-  "prompt.cancelled": "Отменено.",
+  "prompt.cancelled": "Отменено",
   "explorer.title": "Файлов браузър"
 }
