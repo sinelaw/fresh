@@ -42,6 +42,15 @@ impl Editor {
         // trust-level-modal reset bug).
         let trust = &self.authority().workspace_trust;
         trust.set_level(level);
+        // An activated project environment ran repo code to get its
+        // variables; below Trusted it must not reach anything spawned from
+        // here on, so lowering trust deactivates it (#3780). Already-running
+        // language servers are relaunched without it, as `clearEnv` does.
+        if level != TrustLevel::Trusted && self.authority().env_provider.is_active() {
+            self.authority().env_provider.clear();
+            #[cfg(feature = "plugins")]
+            self.refresh_active_window_lsp_for_env();
+        }
         let msg = match level {
             TrustLevel::Trusted => t!("trust.now_trusted"),
             TrustLevel::Restricted => t!("trust.now_restricted"),
