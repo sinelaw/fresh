@@ -32,18 +32,18 @@ Click **/ search** (or press `/`) to filter the dock by name.
 
 ### Folders
 
-Folders group workspaces however you like: by feature, by customer, by "done, to review". Create one from **Menu ▾ → New folder…**, then file workspaces into it by dragging them, or with **Move to Folder…** from a row's right-click menu (also `F2` on the highlighted row, or the **Orchestrator: Move to Folder…** command). Folders can be nested, renamed and deleted from their own right-click menu. The arrangement is saved and survives restarts.
+Folders group workspaces however you like: by feature, by customer, by "done, to review". Create one from **Menu ▾ → New folder…**, then file workspaces into it by dragging them, with **Move to Folder…** from a row's menu (right-click it, or press `F2` on the highlighted row), or with the **Orchestrator: Move to Folder…** command. Folders can be nested, renamed and deleted from their own right-click menu. The arrangement is saved and survives restarts.
 
-The same right-click menu has **Rename…** for a workspace. Until you rename it, a workspace names itself after its terminal's title.
+The same row menu has **Rename…** for a workspace. Until you rename it, a workspace names itself after its terminal's title.
 
 ## Starting a task
 
 Click **+ New** at the top of the dock, or run **Orchestrator: New Workspace**, to open the **New Workspace** dialog. Fill in, top to bottom:
 
-1. **Where:** the machine and the project to work on.
-2. **Git:** a **New worktree** on a fresh branch (the default for a git project), or work directly in the project's main clone or folder.
-3. **Agent:** the coding agent to start, a plain terminal, or a command of your own.
-4. **Prompt:** an optional first message for the agent, describing the task.
+1. **Agent:** the coding agent to start, a plain terminal, or a command of your own.
+2. **Prompt:** an optional first message for the agent, describing the task.
+3. **Where:** the machine and the project to work on.
+4. **Git** (under **Details**): a **New worktree** on a fresh branch (the default for a git project), or work directly in the project's folder.
 
 Then choose:
 
@@ -52,15 +52,15 @@ Then choose:
 
 A new workspace shows up in the dock straight away, with its progress while the worktree is created. If creating it fails, the row says why and offers **Retry**.
 
-**Run Agent…** opens the same dialog with a choice to start the agent in the current workspace instead of a new one. See [Scripting the Editor](./scripting.md#agents) for what an agent started this way can do.
+A switch at the top of the dialog starts the agent **Here**, in the current workspace, instead of a new one; **Run Agent…** opens the same dialog. See [Scripting the Editor](./scripting.md#agents) for what an agent started this way can do.
 
-When you are done with a workspace, its right-click menu can **Archive** it, which you can undo, or **Delete** it. Delete asks first, and lets you choose whether its worktree goes too; the branch is always kept.
+When you are done with a workspace, its row menu can **Archive** it or **Delete** it; both ask first. Archive stops it and sets its worktree aside, and a script can bring it back (see [Scripting the Editor](./scripting.md)). Delete lets you choose whether its worktree goes too; the branch is always kept.
 
 ## Projects and machines
 
 **Orchestrator: Projects** keeps the list of things you work on: git repositories (added from a URL or from a folder) and plain folders. For each machine, a project has one **main clone**, and new worktrees are made from it. The New Workspace dialog fills in paths from this list, so you rarely type one. Launching a project on a machine where it isn't yet asks whether it is already there or should be cloned.
 
-**Orchestrator: Machines** (also **Menu ▾ → Machines…**) lists the computers workspaces can run on: this one (**Local**) and the remote hosts you add, with a **Test connection** button. Use **Add machine…** to add one; the dialog points out hosts in your `~/.ssh/config` that you haven't added yet. A workspace on a remote machine edits files, runs terminals and language servers on that host, as described in [Remote Editing (SSH)](./ssh.md); local and remote workspaces sit side by side in the same dock. The first connection to an unknown host asks you to confirm its host key.
+**Orchestrator: Machines** (also **Menu ▾ → Machines…**) lists the remote machines you have added for workspaces to run on, besides this one (**Local**, always available). Use **Add machine…** to add one, and **Test connection** in its dialog to check it; the list points out hosts in your `~/.ssh/config` that you haven't added yet. A workspace on a remote machine edits files, runs terminals and language servers on that host, as described in [Remote Editing (SSH)](./ssh.md); local and remote workspaces sit side by side in the same dock. The first connection to an unknown host asks you to confirm its host key.
 
 If a remote host can't be reached when you switch to its workspace, you land in an empty workspace marked **Disconnected**, with the reason. Nothing is lost: the workspace comes back as soon as the host can be reached. Fresh keeps trying in the background, and you can also choose **Reconnect** from the remote indicator in the status bar, or switch to the workspace again to retry.
 
