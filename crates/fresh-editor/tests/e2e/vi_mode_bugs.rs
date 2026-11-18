@@ -3794,3 +3794,53 @@ fn test_vi_mismatched_operator_cancels() {
 
     harness.wait_for_buffer_content("aab\ncd\n").unwrap();
 }
+
+// =============================================================================
+// #3796: keys that arrive before the previous key's handler has run
+// =============================================================================
+
+/// Deliver `keys` back to back, as a fast typist or a paste does: no key
+/// waits for the plugin to handle the one before it.
+fn send_burst(harness: &mut EditorTestHarness, keys: &str) {
+    for c in keys.chars() {
+        let mods = if c.is_ascii_uppercase() {
+            KeyModifiers::SHIFT
+        } else {
+            KeyModifiers::NONE
+        };
+        harness
+            .send_key_without_drain(KeyCode::Char(c), mods)
+            .unwrap();
+    }
+}
+
+/// `dw` typed in one burst deletes the word: `w` is read in the
+/// operator-pending mode `d` switches to, not as a plain motion.
+#[test]
+fn test_vi_operator_motion_in_one_burst() {
+    let (mut harness, _td, _fixture) = open_vi("one two three\n");
+
+    send_burst(&mut harness, "dw");
+    harness.wait_for_buffer_content("two three\n").unwrap();
+    wait_normal(&mut harness);
+
+    // And the keys after it still run, in order.
+    send_burst(&mut harness, "dwx");
+    harness.wait_for_buffer_content("hree\n").unwrap();
+}
+
+/// `f` and its target in one burst find the character instead of running
+/// it as a command (`fp` must not paste).
+#[test]
+fn test_vi_find_char_in_one_burst() {
+    let (mut harness, _td, _fixture) = open_vi("a [b] p\n");
+    harness
+        .editor_mut()
+        .set_clipboard_for_test("CLIP".to_string());
+
+    send_burst(&mut harness, "f[x");
+    harness.wait_for_buffer_content("a b] p\n").unwrap();
+
+    send_burst(&mut harness, "fpx");
+    harness.wait_for_buffer_content("a b] \n").unwrap();
+}

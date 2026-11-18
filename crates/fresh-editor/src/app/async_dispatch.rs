@@ -654,6 +654,13 @@ impl Editor {
             self.process_pending_plugin_actions();
         }
 
+        // Keys held behind a plugin's modal handler run once it settles,
+        // now that the commands it sent have been applied.
+        #[cfg(feature = "plugins")]
+        let held_keys_ran = self.run_held_plugin_keys();
+        #[cfg(not(feature = "plugins"))]
+        let held_keys_ran = false;
+
         // A macro replay parked on a plugin step resumes once it settles.
         #[cfg(feature = "plugins")]
         let macro_replay_moved = self.resume_macro_replay();
@@ -714,6 +721,7 @@ impl Editor {
             || tree_changes
             || backlogged
             || macro_replay_moved
+            || held_keys_ran
     }
 
     /// Whether the plugin command frame budget left work for the next tick.
