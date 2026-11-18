@@ -99,7 +99,7 @@ interface VisualState {
   // `v` carries it too and `v` -> `V` can pick it up.
   lines: { anchor: number; head: number } | null;
   // Visual-block's rectangle, as the anchor's and the moving corner's line
-  // and byte column (both inclusive, like Vim's). Null outside `CTRL-V`.
+  // and character column (both inclusive, like Vim's). Null outside `CTRL-V`.
   block: BlockCorners | null;
 }
 
@@ -3217,14 +3217,42 @@ async function vi_visual_block() : Promise<void> {
     return;
   }
   const lineStart = await editor.getLineStartPosition(line);
-  if (lineStart === null) {
+  const text = await lineTextAt(line);
+  if (lineStart === null || text === null) {
     return;
   }
-  const col = visual.anchor - lineStart;
+  const col = charColumnOfByte(text, visual.anchor - lineStart);
   visual.block = { anchorLine: line, anchorCol: col, headLine: line, headCol: col };
   await drawVisualBlock();
 }
 registerHandler("vi_visual_block", vi_visual_block);
+
+// The block's corners (`state.visual.block`) are in characters, so `l` steps
+// over a multi-byte character rather than into it; the host's rectangle is
+// in bytes. These convert between the two on one line's text.
+
+// The text of `line` without its terminator; null past the buffer.
+async function lineTextAt(line: number): Promise<string | null> {
+  const start = await editor.getLineStartPosition(line);
+  const end = await editor.getLineEndPosition(line);
+  if (start === null || end === null) {
+    return null;
+  }
+  return await editor.getBufferText(editor.getActiveBufferId(), start, end);
+}
+
+// The character column of byte offset `byteCol` into `text`.
+function charColumnOfByte(text: string, byteCol: number): number {
+  return Array.from(text.slice(0, byteOffsetToStringIndex(text, byteCol))).length;
+}
+
+// The byte offset of character column `col` in `text`; a column past the
+// end counts one byte per column beyond it, as the host's virtual space does.
+function byteOfCharColumn(text: string, col: number): number {
+  const chars = Array.from(text);
+  const within = Math.max(0, Math.min(col, chars.length));
+  return editor.utf8ByteLength(chars.slice(0, within).join("")) + Math.max(0, col - chars.length);
+}
 
 // Redraw the host's block selection from `state.visual.block`.
 async function drawVisualBlock(): Promise<void> {
@@ -3234,7 +3262,8 @@ async function drawVisualBlock(): Promise<void> {
   }
   const bufferId = editor.getActiveBufferId();
   const anchorStart = await editor.getLineStartPosition(block.anchorLine);
-  if (anchorStart === null) {
+  const anchorText = await lineTextAt(block.anchorLine);
+  if (anchorStart === null || anchorText === null) {
     return;
   }
   // Inclusive corners to the host's half-open span: the edge column on the
@@ -3243,10 +3272,13 @@ async function drawVisualBlock(): Promise<void> {
   const anchorCol = rightward ? block.anchorCol : block.anchorCol + 1;
   const headCol = rightward ? block.headCol + 1 : block.headCol;
   const lines = block.headLine - block.anchorLine;
-  const cols = headCol - anchorCol;
+  // The host's rectangle spans the same byte columns on every line; they
+  // are taken from the anchor line, which the horizontal steps run on.
+  const anchorByte = byteOfCharColumn(anchorText, anchorCol);
+  const cols = byteOfCharColumn(anchorText, headCol) - anchorByte;
   // Any non-block action ends the previous rectangle.
   editor.executeAction("move_left");
-  editor.setBufferCursor(bufferId, anchorStart + anchorCol);
+  editor.setBufferCursor(bufferId, anchorStart + anchorByte);
   const steps: ActionSpec[] = [
     { action: cols > 0 ? "block_select_right" : "block_select_left", count: Math.abs(cols) },
   ];
@@ -3256,14 +3288,10 @@ async function drawVisualBlock(): Promise<void> {
   editor.executeActions(steps);
 }
 
-// Line length in bytes, without its terminator; null past the buffer.
+// Line length in characters, without its terminator; null past the buffer.
 async function lineLength(line: number): Promise<number | null> {
-  const start = await editor.getLineStartPosition(line);
-  const end = await editor.getLineEndPosition(line);
-  if (start === null || end === null) {
-    return null;
-  }
-  return end - start;
+  const text = await lineTextAt(line);
+  return text === null ? null : Array.from(text).length;
 }
 
 // Move the block's head and redraw it. `to` gets the head and returns its
@@ -3326,10 +3354,12 @@ async function vi_vblock_first_non_blank() : Promise<void> {
   await moveBlockHead(async (h) => {
     const bufferId = editor.getActiveBufferId();
     const start = await editor.getLineStartPosition(h.line);
-    if (start === null) {
+    const text = await lineTextAt(h.line);
+    if (start === null || text === null) {
       return h;
     }
-    return { line: h.line, col: (await firstNonBlankOffset(bufferId, start)) - start };
+    const byteCol = (await firstNonBlankOffset(bufferId, start)) - start;
+    return { line: h.line, col: charColumnOfByte(text, byteCol) };
   });
 }
 registerHandler("vi_vblock_first_non_blank", vi_vblock_first_non_blank);
@@ -3347,8 +3377,13 @@ async function blockTopLeft(): Promise<number | null> {
   if (block === null) {
     return null;
   }
-  const start = await editor.getLineStartPosition(Math.min(block.anchorLine, block.headLine));
-  return start === null ? null : start + Math.min(block.anchorCol, block.headCol);
+  const top = Math.min(block.anchorLine, block.headLine);
+  const start = await editor.getLineStartPosition(top);
+  const text = await lineTextAt(top);
+  if (start === null || text === null) {
+    return null;
+  }
+  return start + byteOfCharColumn(text, Math.min(block.anchorCol, block.headCol));
 }
 
 // Visual block delete - delete the selected column. `copy` takes the block's
@@ -3403,8 +3438,9 @@ async function vi_vblock_escape() : Promise<void> {
     return;
   }
   const start = await editor.getLineStartPosition(block.headLine);
-  if (start !== null) {
-    editor.setBufferCursor(editor.getActiveBufferId(), start + block.headCol);
+  const text = await lineTextAt(block.headLine);
+  if (start !== null && text !== null) {
+    editor.setBufferCursor(editor.getActiveBufferId(), start + byteOfCharColumn(text, block.headCol));
   }
 }
 registerHandler("vi_vblock_escape", vi_vblock_escape);

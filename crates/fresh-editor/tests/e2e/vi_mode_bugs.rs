@@ -3980,6 +3980,30 @@ fn test_vi_visual_block_left_of_anchor() {
     harness.wait_for_buffer_content("ad\neh\n").unwrap();
 }
 
+/// A block's columns are characters: `l` steps over a multi-byte character
+/// rather than into it, so `Ctrl+V l j d` takes two characters a line.
+#[test]
+fn test_vi_visual_block_multibyte_columns() {
+    let (mut harness, _td, _fixture) = open_vi("éab\néab\nxyz\n");
+
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual-block".to_string()))
+        .unwrap();
+    send_key(&mut harness, 'l');
+    send_key(&mut harness, 'j');
+    send_key(&mut harness, 'd');
+
+    harness.wait_for_buffer_content("b\nb\nxyz\n").unwrap();
+    assert_eq!(
+        harness.editor().clipboard_content_for_test(),
+        "éa\néa",
+        "the register holds what was deleted"
+    );
+}
+
 /// `p` after a whole-line `Ctrl+C` (nothing selected) puts it on a line of
 /// its own.
 #[test]
