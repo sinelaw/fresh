@@ -462,6 +462,77 @@ fn test_exit_does_not_scroll_the_last_frame_away() {
     harness.assert_screen_contains("(exited)");
 }
 
+/// A terminal that had exited when the editor quit comes back on its last
+/// screen (#3805), as it was left — not scrolled to the top of its transcript.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses a Unix shell script
+fn test_restored_exited_terminal_opens_on_its_last_screen() {
+    if !pty_available() {
+        eprintln!("Skipping terminal-restart test: PTY not available");
+        return;
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    // Far more output than a screen, between two markers.
+    let script = write_script(
+        temp_dir.path(),
+        "long.sh",
+        "#!/bin/sh
+         echo FIRST-LINE-OF-TRANSCRIPT
+         i=1
+         while [ $i -le 200 ]; do echo \"filler $i\"; i=$((i + 1)); done
+         echo LAST-LINE-OF-TRANSCRIPT
+",
+    );
+
+    let session = |dir_context: &DirectoryContext| {
+        EditorTestHarness::create(
+            120,
+            30,
+            HarnessOptions::new()
+                .with_config(terminal_config())
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap()
+    };
+
+    {
+        let mut harness = session(&dir_context);
+        harness.editor_mut().set_session_mode(true);
+        spawn_agent_terminal(&mut harness, &[&script], None);
+        harness.render().unwrap();
+        harness
+            .wait_until(|h| h.screen_to_string().contains("\u{27f3} Restart"))
+            .expect("the job should run and exit");
+        harness.assert_screen_contains("LAST-LINE-OF-TRANSCRIPT");
+        harness.shutdown(true).unwrap();
+    }
+
+    {
+        let mut harness = session(&dir_context);
+        assert!(harness.startup(true, &[]).unwrap(), "workspace restored");
+        harness.render().unwrap();
+        harness
+            .wait_until(|h| h.screen_to_string().contains("\u{27f3} Restart"))
+            .expect("the dead terminal is back");
+        let screen = harness.screen_to_string();
+        assert!(
+            screen.contains("LAST-LINE-OF-TRANSCRIPT") && screen.contains("filler 200"),
+            "the restored dead terminal should show its last screen:\n{screen}"
+        );
+        assert!(
+            !screen.contains("FIRST-LINE-OF-TRANSCRIPT"),
+            "the restored dead terminal opened at the top of its transcript:\n{screen}"
+        );
+    }
+}
+
 /// A restored terminal keeps the tab name it was launched with.
 ///
 /// Tab titles were not persisted, so a restored agent fell back to

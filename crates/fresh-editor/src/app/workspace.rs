@@ -99,6 +99,29 @@ fn load_window_workspace(
     }
 }
 
+/// Where a dead terminal's last screen begins in its restored transcript: the
+/// first of its last `rows` lines. The backing file ends with the screen the
+/// exit captured, a line per row (rows a long line wrapped across share one),
+/// so this is where the exit path pinned its viewport, or just above it.
+fn last_screen_start(buffer: &mut crate::model::buffer::Buffer, rows: usize) -> usize {
+    let len = buffer.len();
+    if len == 0 || rows == 0 {
+        return 0;
+    }
+    // A final newline leaves an empty line after the last row; step over it.
+    let ends_with_newline = buffer
+        .get_text_range_mut(len - 1, 1)
+        .is_ok_and(|bytes| bytes.first() == Some(&b'\n'));
+    let steps = if ends_with_newline { rows } else { rows - 1 };
+    let mut iter = buffer.line_iterator(len, 80);
+    for _ in 0..steps {
+        if iter.prev().is_none() {
+            break;
+        }
+    }
+    iter.current_position()
+}
+
 /// Resolve a saved fold's header_line against the current buffer, using
 /// `header_text` to detect drift from external edits (issue #1568).
 ///
@@ -1559,6 +1582,20 @@ impl crate::app::window::Window {
         };
         let ephemeral_patterns = self.config().editor.ephemeral_file_patterns.clone();
 
+        // A terminal that comes back dead opens on its last screen, as it was
+        // left when the process quit — not at the top of its transcript.
+        // Resolved here, ahead of the view-state borrow below, which rules out
+        // reading the buffers through `&mut self`.
+        let exited_terminal_tops: HashMap<BufferId, (usize, usize)> = terminal_buffers
+            .values()
+            .filter_map(|&buffer_id| {
+                let rows = self.exited_terminals.get(&buffer_id)?.rows as usize;
+                let state = self.buffers.get_mut(&buffer_id)?;
+                let top = last_screen_start(&mut state.buffer, rows);
+                Some((buffer_id, (top, state.buffer.len())))
+            })
+            .collect();
+
         // …then the defaults for every buffer the restore could seed a view
         // state for here, resolved up front because the wrap resolvers need
         // `&self`, which the view-state borrow below rules out. Keyed by
@@ -1633,6 +1670,17 @@ impl crate::app::window::Window {
                                     // tab gets entered after workspace restore.
                                     buf_state.show_line_numbers = false;
                                     buf_state.highlight_current_line = false;
+                                    // A dead one: the viewport at the top of its last
+                                    // screen, and the cursor at its end, so a pane
+                                    // shorter than that screen still shows how the
+                                    // output ended.
+                                    if let Some(&(top, end)) = exited_terminal_tops.get(&buffer_id)
+                                    {
+                                        buf_state.cursors.primary_mut().position = end;
+                                        buf_state.viewport.set_top_byte(top);
+                                        buf_state.viewport.set_top_view_line_offset(0);
+                                        buf_state.viewport.left_column = 0;
+                                    }
                                 }
                             }
                             SerializedTabRef::Unnamed(recovery_id) => {
