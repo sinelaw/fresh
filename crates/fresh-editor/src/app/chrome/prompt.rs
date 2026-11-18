@@ -38,6 +38,23 @@ impl Editor {
         // browser's Alt toggles (encoding, hidden files) win over e.g.
         // the Alt+E menu mnemonic without any special-casing here.
         if self.is_file_open_active() {
+            // A keymap that gives a prompt operation a key of its own (Emacs
+            // `C-g` to cancel, `C-a` for the start of the line) is honoured
+            // here too: the browser would otherwise take the key first and
+            // read it as its own Ctrl shortcut, or swallow it. The action
+            // runs the browser's handling of the operation's usual key.
+            // A key that is that usual key already (Up, Enter, Ctrl+A in the
+            // default keymap) goes to the browser directly, as before (#3799).
+            if let Some(action) = self.prompt_action_binding(event) {
+                let usual = super::super::action_dispatch::prompt_action_key(&action);
+                if usual.is_some_and(|key| key != (event.code, event.modifiers)) {
+                    return Some(
+                        self.handle_action(action)
+                            .map(|_| InputResult::Consumed)
+                            .unwrap_or(InputResult::Consumed),
+                    );
+                }
+            }
             let active_window_id = self.active_window;
             let __win = self
                 .windows

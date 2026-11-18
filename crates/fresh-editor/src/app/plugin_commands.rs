@@ -1978,8 +1978,11 @@ impl Editor {
         plugin_name: String,
         key: String,
         value: Option<serde_json::Value>,
+        window_id: Option<fresh_core::WindowId>,
     ) {
-        let id = self.active_window;
+        // A window created in the background is not the active one; the
+        // caller names it so its tag does not land on the active window.
+        let id = window_id.unwrap_or(self.active_window);
         let Some(session) = self.windows.get_mut(&id) else {
             return;
         };
@@ -2509,8 +2512,11 @@ impl Editor {
     }
 
     /// Handle UnregisterCommand command
-    pub(super) fn handle_unregister_command(&self, name: String) {
-        self.command_registry.read().unwrap().unregister(&name);
+    pub(super) fn handle_unregister_command(&self, name: String, plugin_name: String) {
+        self.command_registry
+            .read()
+            .unwrap()
+            .unregister_from_plugin(&name, &plugin_name);
     }
 
     /// Handle DefineMode command

@@ -7814,7 +7814,8 @@ interface EditorAPI {
 	*/
 	getGlobalState(key: string): unknown;
 	/**
-	* Set per-session state on the **active** session. Same
+	* Set per-session state on the **active** session, or on the window
+	* `windowId` names. Same
 	* shape as `setGlobalState` (`getWindowState` returns the new value
 	* straight away; null/undefined deletes), but the state belongs to
 	* the active session and swaps with the rest of session state on
@@ -7825,8 +7826,12 @@ interface EditorAPI {
 	* 
 	* The state is per plugin. It follows the session across saves and
 	* restores instead of applying globally.
+	* 
+	* @param windowId - Write to this window (from `listWindows()` or
+	* `createWindowWithTerminal`) instead of the active one. A window just
+	* created in the background is not the active one, so tag it by id.
 	*/
-	setWindowState(key: string, value: unknown): boolean;
+	setWindowState(key: string, value: unknown, windowId?: number | null): boolean;
 	/**
 	* Get per-session state from the **active** session.
 	* `undefined` if missing.

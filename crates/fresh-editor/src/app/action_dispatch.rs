@@ -42,6 +42,15 @@ impl Editor {
         // trust-level-modal reset bug).
         let trust = &self.authority().workspace_trust;
         trust.set_level(level);
+        // An activated project environment ran repo code to get its
+        // variables; below Trusted it must not reach anything spawned from
+        // here on, so lowering trust deactivates it (#3780). Already-running
+        // language servers are relaunched without it, as `clearEnv` does.
+        if level != TrustLevel::Trusted && self.authority().env_provider.is_active() {
+            self.authority().env_provider.clear();
+            #[cfg(feature = "plugins")]
+            self.refresh_active_window_lsp_for_env();
+        }
         let msg = match level {
             TrustLevel::Trusted => t!("trust.now_trusted"),
             TrustLevel::Restricted => t!("trust.now_restricted"),
@@ -125,9 +134,9 @@ impl Editor {
 
         match action {
             Action::Quit => self.quit(),
-            Action::ForceQuit => {
-                self.should_quit = true;
-            }
+            // "Quit editor (discard unsaved changes)": hot exit must not
+            // bring back what the user chose to throw away (#3797).
+            Action::ForceQuit => self.discard_unsaved_changes_and_quit(),
             Action::Detach => {
                 self.should_detach = true;
             }
@@ -1286,6 +1295,19 @@ impl Editor {
                 }
                 self.smart_home(true);
             }
+            Action::MoveToIndentation => {
+                // Composite (diff) views have no indentation-aware movement;
+                // they move to the line start, as smart_home does there.
+                let buffer_id = self.active_buffer();
+                if self.active_window().is_composite_buffer(buffer_id) {
+                    if let Some(_handled) =
+                        self.handle_composite_action(buffer_id, &Action::MoveToIndentation)
+                    {
+                        return Ok(());
+                    }
+                }
+                self.move_to_indentation();
+            }
             Action::ToggleComment => {
                 self.toggle_comment();
             }
@@ -1471,16 +1493,25 @@ impl Editor {
                     // A macro replay step runs as an answerable call, so the
                     // replay learns when the handler has settled.
                     let request_id = self.macro_replay.as_ref().and_then(|r| r.dispatch_request);
+                    // A keystroke in a plugin's input mode is also answerable:
+                    // the keys after it wait until it settles (#3796).
+                    let key_hold_request = request_id
+                        .is_none()
+                        .then(|| self.plugin_key_hold_request())
+                        .flatten();
                     let result = self.plugin_manager.read().unwrap().execute_action_async(
                         &action_name,
                         None,
-                        request_id,
+                        request_id.or(key_hold_request),
                     );
                     if let Some(result) = result {
                         match result {
                             Ok(receiver) => {
                                 if let Some(replay) = self.macro_replay.as_mut() {
                                     replay.dispatch_request = None;
+                                }
+                                if let Some(id) = key_hold_request {
+                                    self.begin_plugin_key_hold(id);
                                 }
                                 // Store pending action for processing in main loop
                                 self.pending_plugin_actions
@@ -1918,63 +1949,10 @@ impl Editor {
             // re-enters the prompt's handler with that key, so there is one
             // implementation of each operation rather than a second copy here
             // that would drift.
-            Action::PromptCancel => self.dispatch_prompt_key_for_action(KeyCode::Esc, KM::NONE),
-            Action::PromptBackspace => {
-                self.dispatch_prompt_key_for_action(KeyCode::Backspace, KM::NONE)
-            }
-            Action::PromptDelete => self.dispatch_prompt_key_for_action(KeyCode::Delete, KM::NONE),
-            Action::PromptMoveLeft => self.dispatch_prompt_key_for_action(KeyCode::Left, KM::NONE),
-            Action::PromptMoveRight => {
-                self.dispatch_prompt_key_for_action(KeyCode::Right, KM::NONE)
-            }
-            Action::PromptMoveStart => self.dispatch_prompt_key_for_action(KeyCode::Home, KM::NONE),
-            Action::PromptMoveEnd => self.dispatch_prompt_key_for_action(KeyCode::End, KM::NONE),
-            Action::PromptSelectPrev => self.dispatch_prompt_key_for_action(KeyCode::Up, KM::NONE),
-            Action::PromptSelectNext => {
-                self.dispatch_prompt_key_for_action(KeyCode::Down, KM::NONE)
-            }
-            Action::PromptPageUp => self.dispatch_prompt_key_for_action(KeyCode::PageUp, KM::NONE),
-            Action::PromptPageDown => {
-                self.dispatch_prompt_key_for_action(KeyCode::PageDown, KM::NONE)
-            }
-            Action::PromptAcceptSuggestion => {
-                self.dispatch_prompt_key_for_action(KeyCode::Tab, KM::NONE)
-            }
-            Action::PromptMoveWordLeft => {
-                self.dispatch_prompt_key_for_action(KeyCode::Left, KM::CONTROL)
-            }
-            Action::PromptMoveWordRight => {
-                self.dispatch_prompt_key_for_action(KeyCode::Right, KM::CONTROL)
-            }
-            Action::PromptDeleteWordBackward => {
-                self.dispatch_prompt_key_for_action(KeyCode::Backspace, KM::CONTROL)
-            }
-            Action::PromptDeleteWordForward => {
-                self.dispatch_prompt_key_for_action(KeyCode::Delete, KM::CONTROL)
-            }
-            Action::PromptDeleteToLineEnd => {
-                self.dispatch_prompt_key_for_action(KeyCode::Char('k'), KM::CONTROL)
-            }
-            Action::PromptSelectAll => {
-                self.dispatch_prompt_key_for_action(KeyCode::Char('a'), KM::CONTROL)
-            }
-            Action::PromptMoveLeftSelecting => {
-                self.dispatch_prompt_key_for_action(KeyCode::Left, KM::SHIFT)
-            }
-            Action::PromptMoveRightSelecting => {
-                self.dispatch_prompt_key_for_action(KeyCode::Right, KM::SHIFT)
-            }
-            Action::PromptMoveHomeSelecting => {
-                self.dispatch_prompt_key_for_action(KeyCode::Home, KM::SHIFT)
-            }
-            Action::PromptMoveEndSelecting => {
-                self.dispatch_prompt_key_for_action(KeyCode::End, KM::SHIFT)
-            }
-            Action::PromptSelectWordLeft => {
-                self.dispatch_prompt_key_for_action(KeyCode::Left, KM::CONTROL | KM::SHIFT)
-            }
-            Action::PromptSelectWordRight => {
-                self.dispatch_prompt_key_for_action(KeyCode::Right, KM::CONTROL | KM::SHIFT)
+            action if prompt_action_key(&action).is_some() => {
+                if let Some((code, modifiers)) = prompt_action_key(&action) {
+                    self.dispatch_prompt_key_for_action(code, modifiers);
+                }
             }
             _ => {
                 // TODO: Why do we have this catch-all? It seems like actions should either:
@@ -2144,15 +2122,57 @@ impl Editor {
         use crate::input::handler::{InputContext, InputHandler};
         let mut ctx = InputContext::new();
         let event = crossterm::event::KeyEvent::new(code, modifiers);
-        let handled = match self.active_window_mut().prompt.as_mut() {
-            Some(prompt) => {
+        let file_open = self.is_file_open_active();
+        let window = self.active_window_mut();
+        let handled = match (window.prompt.as_mut(), window.file_open_state.as_mut()) {
+            // The file browser (Open File, Save As, …) handles the prompt's
+            // keys itself — Escape closes it, editing refilters the list — so
+            // the action goes where its key would (#3799).
+            (Some(prompt), Some(file_state)) if file_open => {
+                crate::view::file_browser_input::FileBrowserInputHandler::new(file_state, prompt)
+                    .handle_key_event(&event, &mut ctx);
+                true
+            }
+            (Some(prompt), _) => {
                 prompt.handle_key_event(&event, &mut ctx);
                 true
             }
-            None => false,
+            (None, _) => false,
         };
         if handled {
             self.process_deferred_actions(ctx);
         }
     }
+}
+
+/// The key whose prompt handling a `prompt_*` navigation or editing action
+/// stands for (see the arm in `handle_action` that dispatches it).
+pub(crate) fn prompt_action_key(action: &Action) -> Option<(KeyCode, KM)> {
+    Some(match action {
+        Action::PromptCancel => (KeyCode::Esc, KM::NONE),
+        Action::PromptBackspace => (KeyCode::Backspace, KM::NONE),
+        Action::PromptDelete => (KeyCode::Delete, KM::NONE),
+        Action::PromptMoveLeft => (KeyCode::Left, KM::NONE),
+        Action::PromptMoveRight => (KeyCode::Right, KM::NONE),
+        Action::PromptMoveStart => (KeyCode::Home, KM::NONE),
+        Action::PromptMoveEnd => (KeyCode::End, KM::NONE),
+        Action::PromptSelectPrev => (KeyCode::Up, KM::NONE),
+        Action::PromptSelectNext => (KeyCode::Down, KM::NONE),
+        Action::PromptPageUp => (KeyCode::PageUp, KM::NONE),
+        Action::PromptPageDown => (KeyCode::PageDown, KM::NONE),
+        Action::PromptAcceptSuggestion => (KeyCode::Tab, KM::NONE),
+        Action::PromptMoveWordLeft => (KeyCode::Left, KM::CONTROL),
+        Action::PromptMoveWordRight => (KeyCode::Right, KM::CONTROL),
+        Action::PromptDeleteWordBackward => (KeyCode::Backspace, KM::CONTROL),
+        Action::PromptDeleteWordForward => (KeyCode::Delete, KM::CONTROL),
+        Action::PromptDeleteToLineEnd => (KeyCode::Char('k'), KM::CONTROL),
+        Action::PromptSelectAll => (KeyCode::Char('a'), KM::CONTROL),
+        Action::PromptMoveLeftSelecting => (KeyCode::Left, KM::SHIFT),
+        Action::PromptMoveRightSelecting => (KeyCode::Right, KM::SHIFT),
+        Action::PromptMoveHomeSelecting => (KeyCode::Home, KM::SHIFT),
+        Action::PromptMoveEndSelecting => (KeyCode::End, KM::SHIFT),
+        Action::PromptSelectWordLeft => (KeyCode::Left, KM::CONTROL | KM::SHIFT),
+        Action::PromptSelectWordRight => (KeyCode::Right, KM::CONTROL | KM::SHIFT),
+        _ => return None,
+    })
 }

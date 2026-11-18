@@ -226,7 +226,10 @@ impl IndentRules {
         let ref_code = code_view(buffer, reference.start, reference.end, &is_code);
 
         let mut indent = base;
-        let opened = self.increases(&ref_code) || matches(&self.indent_next_line, &ref_code);
+        let opened = self.increases(&ref_code)
+            || matches(&self.indent_next_line, &ref_code)
+            || (cur_has_content
+                && self.splits_bracket_pair(&ref_code, buffer, position, cur.end, &is_code));
         if opened {
             indent += unit;
         } else if matches(&self.dedent_next_line, &ref_code) {
@@ -281,6 +284,29 @@ impl IndentRules {
     /// `increase` matches and the line does not also self-close.
     fn increases(&self, code: &str) -> bool {
         matches(&self.increase, code) && !matches(&self.self_close, code)
+    }
+
+    /// Whether the split at `position` falls inside a parenthesis or square
+    /// bracket opened earlier on the same line — `foo(a,│)`, `(1, 2│)` — in a
+    /// language whose rules indent after that bracket. The line opened a
+    /// group just as `foo(│)` does; the text typed since does not close it,
+    /// so the new line goes one level deeper and the closer after the cursor
+    /// does not cancel it (#3798). Braces are left out: `{return 0;│}` is a
+    /// one-line block, whose `}` dedents.
+    fn splits_bracket_pair<F: Fn(usize) -> bool>(
+        &self,
+        before: &str,
+        buffer: &Buffer,
+        position: usize,
+        line_end: usize,
+        is_code: &F,
+    ) -> bool {
+        let Some(opener @ ('(' | '[')) = unclosed_bracket(before) else {
+            return false;
+        };
+        let tail = code_view(buffer, position, line_end, is_code);
+        tail.trim_start().starts_with(closing_bracket(opener))
+            && self.increases(&opener.to_string())
     }
 
     /// Body indent dictated by a braceless control head being split at
@@ -754,6 +780,32 @@ fn visual_indent(buffer: &Buffer, start: usize, end: usize, tab_size: usize) -> 
 
 /// The line `[start, end)` as a string with comment/string bytes (per
 /// `is_code`) blanked to spaces, and `\r` dropped. See module docs.
+/// The innermost bracket `code` leaves open, if any.
+///
+/// A list argument split by Enter (`foo(a,│)`, `[1, 2│]`) is one of these
+/// opened earlier on the line; see `IndentRules::splits_bracket_pair`.
+pub fn unclosed_bracket(code: &str) -> Option<char> {
+    let mut open: Vec<char> = Vec::new();
+    for c in code.chars() {
+        match c {
+            '(' | '[' | '{' => open.push(c),
+            ')' | ']' | '}' if open.last().map(|&o| closing_bracket(o)) == Some(c) => {
+                open.pop();
+            }
+            _ => {}
+        }
+    }
+    open.pop()
+}
+
+pub fn closing_bracket(opener: char) -> char {
+    match opener {
+        '(' => ')',
+        '[' => ']',
+        _ => '}',
+    }
+}
+
 fn code_view<F: Fn(usize) -> bool>(
     buffer: &Buffer,
     start: usize,
@@ -831,6 +883,24 @@ mod tests {
             .unwrap()
             .calculate_indent(&b, pos, 4, |_| true);
         assert_eq!(got, 0);
+    }
+
+    /// Enter inside a call that already has an argument (`foo(a,│)`) is
+    /// inside the group the line opened, like `foo(│)` (#3798).
+    #[test]
+    fn curly_indents_inside_pair_split_after_content() {
+        let at_closer = |content: &str| {
+            let pos = content.rfind(')').unwrap();
+            rules_for_id("rust")
+                .unwrap()
+                .calculate_indent(&buf(content), pos, 4, |_| true)
+        };
+        assert_eq!(at_closer("fn t() {\n    foo(a,)\n}\n"), 8);
+        assert_eq!(at_closer("fn t() {\n    let s = (1, 2)\n}\n"), 8);
+        assert_eq!(at_closer("fn t() {\n    foo()\n}\n"), 8);
+        // A pair already closed before the cursor opens nothing; the stray
+        // closer after it dedents as before.
+        assert_eq!(at_closer("fn t() {\n    foo(a))\n}\n"), 0);
     }
 
     #[test]

@@ -77,7 +77,10 @@ impl Editor {
     /// from the buffer immediately. This closes the race between
     /// fast typing/paste and the plugin re-arming `getNextKey`
     /// between iterations.
-    fn try_resolve_next_key_callback(&mut self, key_event: &crossterm::event::KeyEvent) -> bool {
+    pub(super) fn try_resolve_next_key_callback(
+        &mut self,
+        key_event: &crossterm::event::KeyEvent,
+    ) -> bool {
         let payload = router::key_event_to_payload(key_event);
         let chord = router::next_key_chord(&payload);
         let claimed = self.deliver_next_key(payload);
@@ -132,6 +135,14 @@ impl Editor {
     /// physical chord is unreachable from that key. A user who wants the other
     /// way round rebinds it.
     pub fn handle_key_press(&mut self, press: fresh_input_parser::KeyPress) -> AnyhowResult<()> {
+        // A key behind a plugin's still-running modal handler waits for it,
+        // whole: which reading wins depends on the mode the handler sets.
+        #[cfg(feature = "plugins")]
+        if !self.macro_replay_parked()
+            && self.hold_key_for_plugin(crate::app::plugin_key_hold::HeldKey::Press(press))
+        {
+            return Ok(());
+        }
         // The decision is the router's ([`router::layout_reading`]); this
         // shell only supplies the keymap and the current context.
         let context = self.get_key_context();
@@ -177,6 +188,14 @@ impl Editor {
             return Ok(());
         }
 
+        // A key that arrives while a plugin's modal handler is still running
+        // waits for it, so it is read in the mode the handler switches to
+        // (sinelaw/fresh#3796; see `plugin_key_hold`).
+        #[cfg(feature = "plugins")]
+        if self.hold_key_for_plugin(crate::app::plugin_key_hold::HeldKey::Key(code, modifiers)) {
+            return Ok(());
+        }
+
         // **Input is never routed over a tree older than the facts it routes
         // over.** Every read below that asks the tree where the keyboard is
         // — the PTY gate, the key context, the unfocused-popup guard — reads
@@ -185,7 +204,13 @@ impl Editor {
         // and the next reader lays it out again.
         self.mark_plugin_snapshot_dirty();
         self.lay_out_shell_if_stale();
+        #[cfg(feature = "plugins")]
+        let outer_dispatch = std::mem::replace(&mut self.dispatching_key, true);
         let r = self.handle_key_routed(code, modifiers);
+        #[cfg(feature = "plugins")]
+        {
+            self.dispatching_key = outer_dispatch;
+        }
         self.shell_description_stale = true;
         r
     }

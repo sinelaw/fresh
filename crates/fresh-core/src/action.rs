@@ -173,6 +173,9 @@ pub enum Action {
     SmartHome,
     /// `SmartHome` extending the selection instead of moving the cursor.
     SelectSmartHome,
+    /// Move to the first non-whitespace character of the line, without
+    /// toggling (Emacs `back-to-indentation`).
+    MoveToIndentation,
     DedentSelection,
     ToggleComment,
     /// Cycle through dabbrev completions (Emacs Alt+/ style).

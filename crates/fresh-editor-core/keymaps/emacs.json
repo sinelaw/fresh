@@ -82,16 +82,16 @@
       "comment": "M-m - back-to-indentation",
       "key": "m",
       "modifiers": ["alt"],
-      "action": "smart_home",
+      "action": "move_to_indentation",
       "args": {},
       "when": "normal"
     },
 
     {
-      "comment": "Word movement - M-f/M-b and Ctrl+arrows",
+      "comment": "Word movement - M-f/M-b and Ctrl+arrows. M-f is forward-word, which stops at the end of the word.",
       "key": "f",
       "modifiers": ["alt"],
-      "action": "move_word_right",
+      "action": "move_word_end",
       "args": {},
       "when": "normal"
     },

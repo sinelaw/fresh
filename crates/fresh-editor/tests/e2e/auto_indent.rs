@@ -1029,6 +1029,38 @@ fn test_bracket_expansion_rust_function() {
     assert_eq!(lines[2].trim(), "}", "Third line should be closing brace");
 }
 
+/// Enter inside a call that already has an argument keeps the indent and
+/// expands the pair like `foo(│)` does (#3798).
+#[test]
+fn test_bracket_expansion_after_argument_rust() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "fn t() {\n    foo(a,)\n}\n").unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    // Put the cursor between `a,` and `)`.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(
+        harness.get_buffer_content().unwrap(),
+        "fn t() {\n    foo(a,\n        \n    )\n}\n"
+    );
+    // "fn t() {\n    foo(a,\n" is 20 bytes; the cursor ends the 8-space line.
+    assert_eq!(
+        harness.cursor_position(),
+        28,
+        "cursor goes one level deeper than the call"
+    );
+}
+
 /// Test bracket expansion in JavaScript - issue #629
 #[test]
 fn test_bracket_expansion_javascript_function() {

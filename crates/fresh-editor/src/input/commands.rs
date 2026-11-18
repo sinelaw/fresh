@@ -93,7 +93,9 @@ impl Command {
     pub fn id(&self) -> String {
         match &self.source {
             CommandSource::Builtin => format!("builtin:{}", self.name),
-            CommandSource::Plugin(_) => format!("plugin:{}", self.name),
+            // Keyed by plugin too: two plugins can register the same
+            // `%`-key name (#3781), and each row must run its own command.
+            CommandSource::Plugin(plugin) => format!("plugin:{plugin}:{}", self.name),
         }
     }
 

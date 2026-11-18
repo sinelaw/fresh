@@ -424,7 +424,7 @@ impl Editor {
     /// Cycle through all splits and tabs in the current window in reverse order.
     pub fn prev_pane(&mut self) {
         self.cycle_pane(false);
-        self.set_status_message(t!("cmd.prev_pane").to_string());
+        self.set_status_message(t!("cmd.previous_pane").to_string());
     }
 
     fn cycle_pane(&mut self, forward: bool) {

@@ -1830,7 +1830,8 @@ impl Editor {
     #[cfg(feature = "plugins")]
     #[doc(hidden)]
     pub fn pending_plugin_actions_is_empty(&self) -> bool {
-        self.pending_plugin_actions.is_empty()
+        // Keys held behind a plugin handler are work this key started too.
+        self.pending_plugin_actions.is_empty() && self.held_plugin_keys.is_empty()
     }
 
     /// Stub for builds without plugin support — there are no

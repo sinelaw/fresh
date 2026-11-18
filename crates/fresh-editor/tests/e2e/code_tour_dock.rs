@@ -2412,3 +2412,96 @@ fn test_prose_caret_survives_the_end_of_a_line() {
         harness.screen_to_string()
     );
 }
+
+// ---------------------------------------------------------------------------
+// Script hand-off and commit drift (#3789)
+// ---------------------------------------------------------------------------
+
+/// A plugin standing in for `fresh --cmd script run`: it opens a tour through
+/// the published code-tour API with a path relative to the workspace.
+const RELATIVE_OPEN_PROBE: &str = r#"
+const editor = getEditor();
+registerHandler("probe_open_relative_tour", async function () {
+    const ok = await editor.getPluginApi("code-tour").openTour(".fresh-tour.json");
+    editor.setStatus(ok ? "PROBE_TOUR_OPENED" : "PROBE_TOUR_FAILED");
+});
+editor.registerCommand("Probe Open Relative Tour", "", "probe_open_relative_tour", null);
+"#;
+
+/// `openTour(".fresh-tour.json")` reads the manifest from the workspace, as
+/// `splitWindow({ file })` does, not from the directory the editor process was
+/// started in.
+#[test]
+fn test_open_tour_resolves_a_relative_path_against_the_workspace() {
+    let (_temp, project_root) = setup_tour_project();
+    fs::write(
+        project_root.join("plugins/probe_relative_tour.ts"),
+        RELATIVE_OPEN_PROBE,
+    )
+    .unwrap();
+    let mut harness = harness_in(&project_root, 160, 40);
+
+    run_command(&mut harness, "Probe Open Relative Tour");
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("PROBE_TOUR_FAILED") || screen.contains("*Tour: Pipeline Tour*")
+        })
+        .unwrap();
+    harness.assert_screen_not_contains("PROBE_TOUR_FAILED");
+}
+
+/// The commit-drift notice is worked out in the manifest's own repository,
+/// whatever pane is focused, and however long it is the header keeps its
+/// Exit button.
+#[test]
+fn test_commit_drift_uses_the_manifest_repo_and_keeps_exit_visible() {
+    let (temp, project_root) = setup_tour_project();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&project_root)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@example.com")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@example.com")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?} failed: {out:?}");
+    };
+    git(&["init", "-q"]);
+    git(&["add", "src"]);
+    git(&["commit", "-q", "-m", "init"]);
+
+    let manifest = tour_json(&project_root).replacen(
+        "\"schema_version\": \"1.0\",",
+        "\"schema_version\": \"1.0\",\n  \"commit_hash\": \"deadbeef\",",
+        1,
+    );
+    let manifest_path = project_root.join("drift-tour.json");
+    fs::write(&manifest_path, manifest).unwrap();
+
+    // Focus a file that lives in no repository at all.
+    let outside = temp.path().join("outside");
+    fs::create_dir(&outside).unwrap();
+    let outside_file = outside.join("notes.txt");
+    fs::write(&outside_file, "notes\n").unwrap();
+
+    let mut harness = harness_in(&project_root, 120, 40);
+    harness.open_file(&outside_file).unwrap();
+    harness.render().unwrap();
+
+    load_tour(
+        &mut harness,
+        &manifest_path.display().to_string(),
+        "*Tour: Pipeline Tour*",
+    );
+    harness
+        .wait_until(|h| h.screen_to_string().contains("recorded at"))
+        .unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("[ ✕ Exit ]"),
+        "the drift notice pushed Exit off the header\nScreen:\n{screen}"
+    );
+}

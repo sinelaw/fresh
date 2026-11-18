@@ -3794,3 +3794,249 @@ fn test_vi_mismatched_operator_cancels() {
 
     harness.wait_for_buffer_content("aab\ncd\n").unwrap();
 }
+
+// =============================================================================
+// #3796: keys that arrive before the previous key's handler has run
+// =============================================================================
+
+/// Deliver `keys` back to back, as a fast typist or a paste does: no key
+/// waits for the plugin to handle the one before it.
+fn send_burst(harness: &mut EditorTestHarness, keys: &str) {
+    for c in keys.chars() {
+        let mods = if c.is_ascii_uppercase() {
+            KeyModifiers::SHIFT
+        } else {
+            KeyModifiers::NONE
+        };
+        harness
+            .send_key_without_drain(KeyCode::Char(c), mods)
+            .unwrap();
+    }
+}
+
+/// `dw` typed in one burst deletes the word: `w` is read in the
+/// operator-pending mode `d` switches to, not as a plain motion.
+#[test]
+fn test_vi_operator_motion_in_one_burst() {
+    let (mut harness, _td, _fixture) = open_vi("one two three\n");
+
+    send_burst(&mut harness, "dw");
+    harness.wait_for_buffer_content("two three\n").unwrap();
+    wait_normal(&mut harness);
+
+    // And the keys after it still run, in order.
+    send_burst(&mut harness, "dwx");
+    harness.wait_for_buffer_content("hree\n").unwrap();
+}
+
+/// `f` and its target in one burst find the character instead of running
+/// it as a command (`fp` must not paste).
+#[test]
+fn test_vi_find_char_in_one_burst() {
+    let (mut harness, _td, _fixture) = open_vi("a [b] p\n");
+    harness
+        .editor_mut()
+        .set_clipboard_for_test("CLIP".to_string());
+
+    send_burst(&mut harness, "f[x");
+    harness.wait_for_buffer_content("a b] p\n").unwrap();
+
+    send_burst(&mut harness, "fpx");
+    harness.wait_for_buffer_content("a b] \n").unwrap();
+}
+
+// =============================================================================
+// #3797: commands that did nothing or the wrong thing
+// =============================================================================
+
+fn run_ex(harness: &mut EditorTestHarness, command: &str) {
+    send_key(harness, ':');
+    harness.wait_for_prompt().unwrap();
+    harness.type_text(command).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+}
+
+/// `Ctrl+F` pages down (it called an action that does not exist).
+#[test]
+fn test_vi_ctrl_f_pages_down() {
+    let content: String = (0..200).map(|i| format!("line {i}\n")).collect();
+    let (mut harness, _td, _fixture) = open_vi(&content);
+
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| h.editor().active_cursors().primary().position > 100)
+        .unwrap();
+}
+
+/// `?` searches backward, and `n` goes on backward.
+#[test]
+fn test_vi_question_mark_searches_backward() {
+    let (mut harness, _td, _fixture) = open_vi("foo bar foo baz\n");
+
+    send_key(&mut harness, '$');
+    harness.wait_until(|h| h.cursor_position() == 14).unwrap();
+    send_key(&mut harness, '?');
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("foo").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_until(|h| h.cursor_position() == 8).unwrap();
+
+    send_key(&mut harness, 'n');
+    harness.wait_until(|h| h.cursor_position() == 0).unwrap();
+}
+
+/// `J` drops the next line's indent, and one `u` undoes it.
+#[test]
+fn test_vi_join_strips_indent_in_one_undo() {
+    let (mut harness, _td, _fixture) = open_vi("alpha\n    beta\n");
+
+    send_key(&mut harness, 'J');
+    harness.wait_for_buffer_content("alpha beta\n").unwrap();
+    harness.wait_until(|h| h.cursor_position() == 5).unwrap();
+
+    send_key(&mut harness, 'u');
+    harness
+        .wait_for_buffer_content("alpha\n    beta\n")
+        .unwrap();
+}
+
+/// `r` is one undo step.
+#[test]
+fn test_vi_replace_char_in_one_undo() {
+    let (mut harness, _td, _fixture) = open_vi("abc\n");
+
+    send_key(&mut harness, 'r');
+    send_key(&mut harness, 'X');
+    harness.wait_for_buffer_content("Xbc\n").unwrap();
+    wait_normal(&mut harness);
+
+    send_key(&mut harness, 'u');
+    harness.wait_for_buffer_content("abc\n").unwrap();
+}
+
+/// `v Esc` leaves the caret where it was, however often it is repeated.
+#[test]
+fn test_vi_visual_escape_keeps_caret() {
+    let (mut harness, _td, _fixture) = open_vi("abcdef\n");
+
+    send_key(&mut harness, 'l');
+    harness.wait_until(|h| h.cursor_position() == 1).unwrap();
+    for _ in 0..2 {
+        send_key(&mut harness, 'v');
+        harness
+            .wait_until(|h| h.editor().input_mode() == Some("vi-visual".to_string()))
+            .unwrap();
+        escape(&mut harness);
+        harness.wait_until(|h| h.cursor_position() == 1).unwrap();
+    }
+}
+
+/// Visual block `d` deletes a column, not one stretch of text.
+#[test]
+fn test_vi_visual_block_deletes_column() {
+    let (mut harness, _td, _fixture) = open_vi("abcd\nefgh\nijkl\n");
+
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual-block".to_string()))
+        .unwrap();
+    send_key(&mut harness, 'l');
+    send_key(&mut harness, 'j');
+    send_key(&mut harness, 'd');
+
+    harness.wait_for_buffer_content("cd\ngh\nijkl\n").unwrap();
+    wait_normal(&mut harness);
+    harness.wait_until(|h| h.cursor_position() == 0).unwrap();
+}
+
+/// A block whose head moves left of where it started still holds the
+/// starting column.
+#[test]
+fn test_vi_visual_block_left_of_anchor() {
+    let (mut harness, _td, _fixture) = open_vi("abcd\nefgh\n");
+
+    send_key(&mut harness, 'l');
+    send_key(&mut harness, 'l');
+    harness.wait_until(|h| h.cursor_position() == 2).unwrap();
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| h.editor().input_mode() == Some("vi-visual-block".to_string()))
+        .unwrap();
+    send_key(&mut harness, 'h');
+    send_key(&mut harness, 'j');
+    send_key(&mut harness, 'd');
+
+    harness.wait_for_buffer_content("ad\neh\n").unwrap();
+}
+
+/// `p` after a whole-line `Ctrl+C` (nothing selected) puts it on a line of
+/// its own.
+#[test]
+fn test_vi_paste_whole_line_ctrl_c_linewise() {
+    let (mut harness, _td, _fixture) = open_vi("one\ntwo\n");
+
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    send_key(&mut harness, 'j');
+    harness.wait_until(|h| h.cursor_position() == 4).unwrap();
+    send_key(&mut harness, 'p');
+
+    harness.wait_for_buffer_content("one\ntwo\none\n").unwrap();
+}
+
+/// `:q!` throws the changes away, so hot exit has nothing to bring back.
+#[test]
+fn test_vi_force_quit_discards_changes() {
+    let (mut harness, _td, _fixture) = open_vi("abc\n");
+
+    send_key(&mut harness, 'x');
+    harness.wait_for_buffer_content("bc\n").unwrap();
+    assert!(harness.editor().active_state().buffer.is_modified());
+
+    run_ex(&mut harness, "q!");
+    harness.wait_until(|h| h.should_quit()).unwrap();
+    assert!(
+        !harness.editor().active_state().buffer.is_modified(),
+        ":q! must discard the edit rather than leave it for hot exit"
+    );
+}
+
+/// `:q` with unsaved changes refuses and keeps them.
+#[test]
+fn test_vi_quit_refuses_with_changes() {
+    let (mut harness, _td, _fixture) = open_vi("abc\n");
+
+    send_key(&mut harness, 'x');
+    harness.wait_for_buffer_content("bc\n").unwrap();
+    run_ex(&mut harness, "q");
+    harness.wait_for_screen_contains("E: No write").unwrap();
+    assert!(!harness.should_quit());
+    assert!(harness.editor().active_state().buffer.is_modified());
+}
+
+/// `:e!` on a modified buffer asks before reverting, and does not report a
+/// revert that has not happened.
+#[test]
+fn test_vi_edit_bang_does_not_claim_revert() {
+    let (mut harness, _td, _fixture) = open_vi("abc\n");
+
+    send_key(&mut harness, 'x');
+    harness.wait_for_buffer_content("bc\n").unwrap();
+    run_ex(&mut harness, "e!");
+    harness.wait_for_async_quiescence(5).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_not_contains("reverted");
+    harness.assert_buffer_content("bc\n");
+}

@@ -1047,8 +1047,9 @@ impl Editor {
                 plugin_name,
                 key,
                 value,
+                window_id,
             } => {
-                self.handle_set_session_state(plugin_name, key, value);
+                self.handle_set_session_state(plugin_name, key, value, window_id);
             }
             PluginCommand::RefreshLines { buffer_id } => {
                 self.handle_refresh_lines(buffer_id);
@@ -1444,8 +1445,8 @@ impl Editor {
             } => {
                 self.handle_set_status_bar_value(buffer_id, key, value);
             }
-            PluginCommand::UnregisterCommand { name } => {
-                self.handle_unregister_command(name);
+            PluginCommand::UnregisterCommand { name, plugin_name } => {
+                self.handle_unregister_command(name, plugin_name);
             }
             PluginCommand::DefineMode {
                 name,
@@ -2553,7 +2554,7 @@ impl Editor {
     /// the "Trust restarted everything" bug. Already-open terminals keep
     /// running and only adopt the new env when reopened (matching the env
     /// subsystem's lazy, capture-at-spawn model).
-    fn refresh_active_window_lsp_for_env(&mut self) {
+    pub(super) fn refresh_active_window_lsp_for_env(&mut self) {
         let active_id = self.active_window;
         let running: Vec<String> = self
             .windows

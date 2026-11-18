@@ -93,8 +93,11 @@ impl CommandRegistry {
 
     /// Register a new command (typically from a plugin)
     ///
-    /// If a command with the same name already exists, it will be replaced.
-    /// This allows plugins to override built-in commands.
+    /// If the same source already registered a command with this name, it
+    /// is replaced. A command another plugin registered under the same name
+    /// stays: plugin names like `%cmd.refresh` are i18n keys scoped to their
+    /// plugin, so two plugins can each have one (#3781).
+    /// Plugin commands can still override built-in commands.
     /// Note: For plugin commands, prefer `try_register` which enforces
     /// first-writer-wins semantics. This method is kept for internal use
     /// and hot-reload scenarios.
@@ -106,8 +109,8 @@ impl CommandRegistry {
         );
         let mut commands = self.plugin_commands.write().unwrap();
 
-        // Remove existing command with same name
-        commands.retain(|c| c.name != command.name);
+        // Remove this source's existing command with the same name
+        commands.retain(|c| c.name != command.name || c.source != command.source);
 
         // Add new command
         commands.push(command);
@@ -143,6 +146,15 @@ impl CommandRegistry {
     pub fn unregister(&self, name: &str) {
         let mut commands = self.plugin_commands.write().unwrap();
         commands.retain(|c| c.name != name);
+    }
+
+    /// Unregister one plugin's command by name, leaving any other plugin's
+    /// command of the same name in place.
+    pub fn unregister_from_plugin(&self, name: &str, plugin_name: &str) {
+        let mut commands = self.plugin_commands.write().unwrap();
+        commands.retain(|c| {
+            c.name != name || !matches!(&c.source, CommandSource::Plugin(p) if p == plugin_name)
+        });
     }
 
     /// Unregister all commands whose name starts with a prefix
@@ -1416,5 +1428,62 @@ mod tests {
         assert!(registry.try_register(cmd_b).is_ok());
         let found = registry.find_by_name("My Command").unwrap();
         assert_eq!(found.description, "From plugin B");
+    }
+
+    fn plugin_cmd(plugin: &str, name: &str, action: &str) -> Command {
+        Command {
+            name: name.to_string(),
+            description: String::new(),
+            action: Action::PluginAction(action.to_string()),
+            contexts: vec![],
+            custom_contexts: vec![],
+            source: CommandSource::Plugin(plugin.to_string()),
+            terminal_bypass: false,
+        }
+    }
+
+    /// Two plugins registering the same `%`-key name each keep their command
+    /// (#3781): the key is scoped to its plugin, so neither replaces the other.
+    #[test]
+    fn test_register_same_key_from_two_plugins_keeps_both() {
+        let registry = CommandRegistry::new();
+        registry.register(plugin_cmd(
+            "git_gutter",
+            "%cmd.refresh",
+            "git_gutter_refresh",
+        ));
+        registry.register(plugin_cmd("live_diff", "%cmd.refresh", "live_diff_refresh"));
+        assert_eq!(registry.plugin_command_count(), 2);
+
+        // Each row has its own id, so the palette runs the one chosen.
+        let all = registry.get_all();
+        let ids: Vec<String> = all
+            .iter()
+            .filter(|c| c.name == "%cmd.refresh")
+            .map(|c| c.id())
+            .collect();
+        assert_eq!(ids.len(), 2);
+        assert_ne!(ids[0], ids[1]);
+
+        // Re-registering from the same plugin still replaces its own command.
+        registry.register(plugin_cmd(
+            "live_diff",
+            "%cmd.refresh",
+            "live_diff_refresh2",
+        ));
+        assert_eq!(registry.plugin_command_count(), 2);
+
+        // Unregistering one plugin's command leaves the other's.
+        registry.unregister_from_plugin("%cmd.refresh", "live_diff");
+        let left: Vec<Command> = registry
+            .get_all()
+            .into_iter()
+            .filter(|c| c.name == "%cmd.refresh")
+            .collect();
+        assert_eq!(left.len(), 1);
+        assert_eq!(
+            left[0].action,
+            Action::PluginAction("git_gutter_refresh".to_string())
+        );
     }
 }

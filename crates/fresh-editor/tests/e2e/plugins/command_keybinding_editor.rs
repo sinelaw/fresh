@@ -220,3 +220,53 @@ editor.setStatus("let-plugin loaded");
         screen
     );
 }
+
+/// The welcome plugin's "Plugin Demo" commands run built-in actions through
+/// handlers of their own, so the keybinding editor still describes Ctrl+S as
+/// the built-in save, not as "Plugin Demo: Save File" (#3803).
+#[test]
+fn test_welcome_demo_does_not_rename_builtin_save() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let project = temp.path().canonicalize().unwrap();
+    let plugins_dir = project.join("plugins");
+    std::fs::create_dir_all(&plugins_dir).unwrap();
+    crate::common::harness::copy_plugin_lib(&plugins_dir);
+    crate::common::harness::copy_plugin(&plugins_dir, "welcome");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        140,
+        40,
+        Default::default(),
+        project.clone(),
+    )
+    .unwrap();
+    harness
+        .wait_until(|h| {
+            h.editor()
+                .command_registry()
+                .read()
+                .unwrap()
+                .get_all()
+                .iter()
+                .any(|c| c.get_localized_name() == "Plugin Demo: Save File")
+        })
+        .unwrap();
+
+    harness.editor_mut().open_keybinding_editor();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("Ctrl+S").unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let save_row = screen
+        .lines()
+        .find(|l| l.contains("Ctrl+S") && l.contains(" save "))
+        .unwrap_or_else(|| panic!("no Ctrl+S save row. Screen:\n{screen}"));
+    assert!(
+        !save_row.contains("Plugin Demo"),
+        "the demo plugin renamed the built-in save: {save_row}"
+    );
+}

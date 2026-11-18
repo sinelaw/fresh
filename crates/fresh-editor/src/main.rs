@@ -7457,9 +7457,14 @@ where
             }
             // Work the editor finishes on its own ticks rather than in a frame
             // — draining an async paste, a macro replay parked on a plugin
-            // step — wants the loop back promptly, not at the next frame.
+            // step, keys held behind a plugin handler — wants the loop back
+            // promptly, not at the next frame.
             // Nothing wakes the wait when its answer arrives, so a short one.
-            if editor.is_paste_pending() || editor.macro_replay_parked() {
+            #[cfg(feature = "plugins")]
+            let holds_keys = editor.holds_keys_for_plugin();
+            #[cfg(not(feature = "plugins"))]
+            let holds_keys = false;
+            if editor.is_paste_pending() || editor.macro_replay_parked() || holds_keys {
                 timeout = timeout.min(LAUNCH_HOLD_POLL);
             }
             // A `--diff` launch draws nothing until its plugin has the view up,

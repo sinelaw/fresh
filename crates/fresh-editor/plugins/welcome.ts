@@ -9,18 +9,30 @@ const editor = getEditor();
 
 // Show welcome message in status bar
 
-// Register commands that use built-in actions
+// Register commands that run built-in actions. Each has a handler of its
+// own: a command registered under the built-in action's name ("save") would
+// stand in for that action's description in the keybinding editor.
+function plugin_open_help(): void {
+  editor.executeAction("show_help");
+}
+registerHandler("plugin_open_help", plugin_open_help);
+
 editor.registerCommand(
   "%cmd.open_help",
   "%cmd.open_help_desc",
-  "show_help",
+  "plugin_open_help",
   null
 );
+
+function plugin_save_file(): void {
+  editor.executeAction("save");
+}
+registerHandler("plugin_save_file", plugin_save_file);
 
 editor.registerCommand(
   "%cmd.save_file",
   "%cmd.save_file_desc",
-  "save",
+  "plugin_save_file",
   null
 );
 

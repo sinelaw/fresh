@@ -207,6 +207,30 @@ registerHandler("probe_ssh_ipv6", async function () {
     report("PROBE_V6 " + (row ? row.name : "none"));
 });
 
+// A local create that fails (no such branch to cut the worktree from) leaves
+// a row waiting for a retry or a dismiss.
+registerHandler("probe_failed_create", async function () {
+    try {
+        await orch().newWorkspace({ path: editor.getCwd(), branch: "no-such-branch" });
+        editor.setStatus("PROBE_CREATE_OK");
+    } catch (e: any) {
+        editor.setStatus("PROBE_CREATE_FAILED");
+    }
+});
+
+// A script's create with its own agent, in a folder that is not a repository.
+registerHandler("probe_script_agent", async function () {
+    const dir = editor.pathJoin(editor.getCwd(), "plain");
+    try {
+        await orch().newWorkspace({ path: dir, worktree: false, agent: "bash" });
+        editor.setStatus("PROBE_AGENT_OK");
+    } catch (e: any) {
+        editor.setStatus("PROBE_AGENT_FAILED " + e.message);
+    }
+});
+
+editor.registerCommand("Probe Failed Create", "", "probe_failed_create", null);
+editor.registerCommand("Probe Script Agent", "", "probe_script_agent", null);
 editor.registerCommand("Probe Ssh No Host", "", "probe_ssh_no_host", null);
 editor.registerCommand("Probe Ssh IPv6", "", "probe_ssh_ipv6", null);
 "#;
@@ -660,4 +684,62 @@ fn a_bare_ipv6_host_is_not_split_into_a_host_and_a_port() {
     h.wait_until(|h| h.screen_to_string().contains("PROBE_V6 "))
         .unwrap();
     h.assert_screen_contains("PROBE_V6 ssh:2001:db8::1");
+}
+
+/// A create that failed waits on the user, and the Workboard's beacon counts
+/// it as waiting, so Jump to Attention goes there instead of saying nothing
+/// needs you (#3804).
+#[test]
+fn jump_to_attention_goes_to_a_failed_create() {
+    let (_tmp, mut h) = harness();
+    let home = h.editor().active_window_id();
+
+    run_command(&mut h, "Probe Failed Create");
+    h.wait_until(|h| h.screen_to_string().contains("PROBE_CREATE_"))
+        .unwrap();
+    h.assert_screen_contains("PROBE_CREATE_FAILED");
+    // The failed row's window is not the one the user is in.
+    if h.editor().active_window_id() != home {
+        h.editor_mut().set_active_window(home);
+        h.render().unwrap();
+    }
+
+    run_command(&mut h, "Orchestrator: Jump to Attention");
+    h.wait_until(|h| h.editor().active_window_id() != home)
+        .unwrap();
+}
+
+/// A script's `newWorkspace({ agent })` is not the user's choice: the New
+/// Workspace dialog still opens on the agent the user last picked (here,
+/// none yet), not on the script's `bash` (#3804).
+#[test]
+fn a_scripts_agent_is_not_the_dialogs_next_default() {
+    if portable_pty::native_pty_system()
+        .openpty(portable_pty::PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .is_err()
+    {
+        eprintln!("Skipping: PTY not available");
+        return;
+    }
+    let (_tmp, mut h) = harness();
+    let plain = h.editor().working_dir().join("plain");
+    fs::create_dir(&plain).unwrap();
+
+    run_command(&mut h, "Probe Script Agent");
+    h.wait_until(|h| h.screen_to_string().contains("PROBE_AGENT_"))
+        .unwrap();
+    h.assert_screen_contains("PROBE_AGENT_OK");
+
+    run_command(&mut h, "Orchestrator: New Workspace");
+    h.wait_until(|h| {
+        h.screen_to_string()
+            .contains(crate::common::launch_form::FORM_TITLE)
+    })
+    .unwrap();
+    h.assert_screen_contains("Choose an agent");
 }

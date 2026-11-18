@@ -79,6 +79,7 @@ pub mod context_keys {
     pub const KEYMAP_DEFAULT: &str = "keymap_default";
     pub const KEYMAP_EMACS: &str = "keymap_emacs";
     pub const KEYMAP_VSCODE: &str = "keymap_vscode";
+    pub const KEYMAP_MACOS: &str = "keymap_macos";
     pub const KEYMAP_MACOS_GUI: &str = "keymap_macos_gui";
 }
 
