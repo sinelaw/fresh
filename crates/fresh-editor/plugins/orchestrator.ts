@@ -1041,7 +1041,7 @@ editor.defineConfigBoolean("showAllWorktrees", {
   description:
     "Start the dock (and the Open picker) with 'all worktrees' checked, listing on-disk worktrees that have no open workspace.",
 });
-editor.defineConfigInteger("worktreeRefreshSeconds", {
+editor.defineConfigInteger("worktree_refresh_seconds", {
   default: 30,
   minimum: 0,
   maximum: 3600,
@@ -1077,7 +1077,7 @@ interface DockSettings {
   detectionRulesUrl?: string;
   defaultView?: "card" | "compact";
   showAllWorktrees?: boolean;
-  worktreeRefreshSeconds?: number;
+  worktree_refresh_seconds?: number;
   showEmptyWorkspaces?: boolean;
 }
 
@@ -1110,7 +1110,7 @@ function configuredHideTrivial(): boolean {
 
 // Period of the background worktree re-scan, in ms; 0 = off.
 function configuredWorktreeRefreshMs(): number {
-  const v = dockSettings().worktreeRefreshSeconds;
+  const v = dockSettings().worktree_refresh_seconds;
   const secs = typeof v === "number" && Number.isFinite(v) ? v : 30;
   return secs > 0 ? Math.round(secs * 1000) : 0;
 }
@@ -2991,7 +2991,7 @@ async function refreshDiscoveredWorktrees(): Promise<void> {
 // Periodic re-scan. Discovery otherwise runs only when the dock or picker
 // opens, so a dock left open kept listing worktrees that had been removed
 // and never showed new ones until it was toggled. One host timer at the
-// configured period (`worktreeRefreshSeconds`, 0 = off); each tick is a
+// configured period (`worktree_refresh_seconds`, 0 = off); each tick is a
 // no-op unless a panel is up with its discovered rows shown, so a closed
 // dock spawns no git.
 let worktreeRefreshTimer: number | null = null;
