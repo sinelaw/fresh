@@ -847,6 +847,21 @@ pub fn get_auto_close_char(ch: char, auto_close: bool, language: &str) -> Option
 /// Sourced from the syntax highlighter's render cache — no extra parse — so the
 /// indentation rules can ignore braces/keywords inside comments and strings.
 /// Returns `true` (treat as code) when no scope info is cached for `pos`.
+/// Whether Enter at `position` splits a `(` or `[` list opened earlier on
+/// the line (`foo(a,│)`, #3798); `closer` is the byte at `position`.
+fn splits_list_pair(state: &EditorState, position: usize, closer: Option<u8>) -> bool {
+    // A line longer than this is not one anyone splits with Enter expecting
+    // its brackets matched; bounding the scan keeps Enter cheap on it.
+    const MAX_SCAN: usize = 4096;
+    let from = position.saturating_sub(MAX_SCAN);
+    let bytes = state.buffer.slice_bytes(from..position);
+    let line = match bytes.iter().rposition(|&b| b == b'\n') {
+        Some(nl) => &bytes[nl + 1..],
+        None => &bytes[..],
+    };
+    crate::primitives::indent::IndentCalculator::splits_list_pair(line, closer)
+}
+
 fn byte_is_code(state: &EditorState, pos: usize) -> bool {
     !matches!(
         state.highlighter.category_at_position(pos),
@@ -1719,6 +1734,20 @@ fn handle_insert_newline(
         } else {
             false
         };
+        // Further inside a list opened earlier on this line (`foo(a,│)`,
+        // #3798): expanded the same way, when the indenter agrees the line
+        // opened a group (it indents the new line past the opener's line).
+        let split_pair = auto_close
+            && !bracket_expansion
+            && splits_list_pair(
+                state,
+                indent_position,
+                state
+                    .buffer
+                    .slice_bytes(indent_position..(indent_position + 1).min(state.buffer.len()))
+                    .first()
+                    .copied(),
+            );
 
         // Track cursor line position for bracket expansion
         // After bracket expansion, cursor should be at end of cursor line, not at end of closing bracket line
@@ -1768,15 +1797,15 @@ fn handle_insert_newline(
                 let indent_str = indent_to_string(indent_width, use_tabs, tab_size);
                 text.push_str(&indent_str);
 
-                if bracket_expansion {
+                let opening_bracket_indent =
+                    crate::primitives::indent::IndentCalculator::get_line_indent_at_position(
+                        &state.buffer,
+                        indent_position.saturating_sub(1),
+                        tab_size,
+                    );
+                if bracket_expansion || (split_pair && indent_width > opening_bracket_indent) {
                     cursor_line_end_position =
                         Some(indent_position + line_ending.len() + indent_str.len());
-                    let opening_bracket_indent =
-                        crate::primitives::indent::IndentCalculator::get_line_indent_at_position(
-                            &state.buffer,
-                            indent_position.saturating_sub(1),
-                            tab_size,
-                        );
                     text.push_str(line_ending);
                     text.push_str(&indent_to_string(
                         opening_bracket_indent,
