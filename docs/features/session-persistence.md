@@ -109,12 +109,12 @@ The `daemon` subcommand is an alias for the older `session` subcommand; both for
 | `fresh --diff A B` | Direct | The two files side by side, both editable. See [Compare Files](./compare-files.md). |
 | `fresh` | Daemon | Auto Attach: the shared `orchestrator` daemon, in this directory's workspace, and the dock once you have opened it. Direct when `auto_attach` is off. |
 | `fresh -a` | Daemon | With Auto Attach on, a bare `fresh` *is* `fresh -a`: the one shared background editor (files given with `-a` open there too) — unless a per-directory daemon is already running in this directory, or the files name a remote host, which keep their own daemon. With it off, `fresh -a` is a background daemon for this directory. Supports detach/reattach. |
-| `fresh --web [ADDR]` | Daemon | Foreground daemon that also serves the browser UI. |
+| `fresh --web [ADDR]` | Daemon | Foreground daemon that also serves the browser UI (experimental). |
 
 Use daemon mode for long-running tasks or remote work where the connection may drop.
 
-`--web` (included in the release downloads and packages; when building from source,
-enable the `web` cargo feature) starts the same daemon and additionally serves the editor to a browser. It is one editor with two
+`--web` (available in builds with the experimental `web` feature) starts the same
+daemon and additionally serves the editor to a browser. It is one editor with two
 front ends: `fresh -a` in that directory attaches a terminal to the session the
 browser is looking at, edits made in either show up in the other, and closing one
 leaves the session running for the other. The rendered grid fits the smallest
