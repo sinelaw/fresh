@@ -656,7 +656,7 @@ impl Editor {
         }
 
         // Hot-reload init.ts so the macro is live now — mirrors Action::InitReload.
-        self.load_init_script(true);
+        self.reload_init_script();
         self.fire_plugins_loaded_hook();
 
         let msg = if promote {

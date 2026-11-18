@@ -407,6 +407,7 @@ impl Editor {
     /// Action keys have the format:
     /// - `restart:<language>/<server_name>` — restart a specific server
     /// - `start:<language>` — start LSP server(s) for a language
+    /// - `start:<language>/<server_name>` — start just the named server
     /// - `stop:<language>/<server_name>` — stop a specific server
     /// - `log:<language>` — open the LSP log file for the language
     /// - `dismiss:<language>` — hide the pill for this language (dim style)
@@ -485,8 +486,13 @@ impl Editor {
                 }
                 self.reopen_buffers_for_language(language);
             }
-        } else if let Some(language) = action_key.strip_prefix("start:") {
-            // Start/restart LSP for this language (same as the "Start/Restart LSP" command)
+        } else if let Some(target) = action_key.strip_prefix("start:") {
+            // Start/restart LSP for this language (same as the "Start/Restart LSP" command),
+            // or just the named server for `start:<language>/<server_name>`.
+            let (language, server_name) = match target.split_once('/') {
+                Some((language, name)) => (language, Some(name)),
+                None => (target, None),
+            };
             let file_path = self
                 .active_window()
                 .buffer_metadata
@@ -496,7 +502,10 @@ impl Editor {
             let __active_id = self.active_window;
 
             if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
-                let (_, message) = lsp.manual_restart(language, file_path.as_deref());
+                let (_, message) = match server_name {
+                    Some(name) => lsp.manual_restart_server(language, name, file_path.as_deref()),
+                    None => lsp.manual_restart(language, file_path.as_deref()),
+                };
                 self.active_window_mut().status_message = Some(message);
             } else {
                 self.active_window_mut().status_message =

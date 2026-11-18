@@ -534,3 +534,93 @@ fn test_terminal_tab_title_survives_an_editor_restart() {
         harness.assert_screen_not_contains("*Terminal");
     }
 }
+
+/// #3778: reopening a workspace whose trust is Blocked must not start its
+/// terminals. A terminal that was running at save time comes back with its
+/// transcript but no process, and taking the restart offer is refused while
+/// the folder stays Blocked.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses a Unix shell script
+fn test_blocked_workspace_restores_terminals_without_running_them() {
+    if !pty_available() {
+        eprintln!("Skipping terminal-restart test: PTY not available");
+        return;
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+    let launches = temp_dir.path().join("launches");
+
+    let agent = write_script(
+        temp_dir.path(),
+        "claude",
+        &format!(
+            "#!/bin/sh\necho launched >> '{}'\necho AGENT-RUNNING\nexec sleep 30\n",
+            launches.display()
+        ),
+    );
+    let launch_count = || {
+        std::fs::read_to_string(&launches)
+            .map(|s| s.lines().count())
+            .unwrap_or(0)
+    };
+
+    let session = |dir_context: &DirectoryContext| {
+        EditorTestHarness::create(
+            120,
+            30,
+            HarnessOptions::new()
+                .with_config(terminal_config())
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap()
+    };
+
+    // ---- Session 1: the agent is running when the workspace is saved. ----
+    {
+        let mut harness = session(&dir_context);
+        harness.editor_mut().set_session_mode(true);
+        spawn_agent_terminal(&mut harness, &[agent.as_str()], None);
+        harness.render().unwrap();
+        harness
+            .wait_until(|h| h.screen_to_string().contains("AGENT-RUNNING"))
+            .expect("the agent should start");
+        harness.shutdown(true).unwrap();
+    }
+    assert_eq!(launch_count(), 1);
+
+    // ---- Session 2: reopen with the folder Blocked. ----
+    {
+        let mut harness = session(&dir_context);
+        harness
+            .editor()
+            .authority()
+            .workspace_trust
+            .set_level_transient(fresh::services::workspace_trust::TrustLevel::Blocked);
+        let restored = harness.startup(true, &[]).unwrap();
+        assert!(restored, "the workspace should have been restored");
+        harness.render().unwrap();
+
+        // The transcript is back, with the restart on offer…
+        harness
+            .wait_until(|h| h.screen_to_string().contains("⟳ Restart claude"))
+            .expect("a terminal restored in a Blocked folder should offer a restart");
+        harness.assert_screen_contains("AGENT-RUNNING");
+        // …but nothing was run.
+        assert_eq!(
+            launch_count(),
+            1,
+            "a Blocked folder must not run its terminals"
+        );
+
+        // Taking the offer is refused while the folder stays Blocked.
+        click_restart_indicator(&mut harness, "⟳ Restart claude");
+        harness.render().unwrap();
+        harness.assert_screen_contains("Workspace trust is Blocked");
+        assert_eq!(launch_count(), 1);
+    }
+}

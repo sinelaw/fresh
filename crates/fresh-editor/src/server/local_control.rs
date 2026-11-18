@@ -243,6 +243,8 @@ fn pump_shared(shared: &Shared, editor: &mut Editor) -> bool {
                         crate::app::workspace::ExplorerOnEntry::Directory,
                         false,
                     );
+                    // Same trust gate as a first launch in this folder.
+                    editor.maybe_prompt_workspace_trust_for_opened_directory();
                     editor.relayout();
                     changed = true;
                 } else {
@@ -502,6 +504,23 @@ fn read_msg(
     }
 }
 
+/// Whether `name` is a session id made by [`generate_session_id`] — a
+/// directly launched editor's control socket rather than a daemon. Matched on
+/// the whole `local-<pid>-<hex>` shape, so a daemon the user named `local-…`
+/// is still a daemon.
+pub fn is_local_session_id(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix("local-") else {
+        return false;
+    };
+    let Some((pid, nanos)) = rest.split_once('-') else {
+        return false;
+    };
+    !pid.is_empty()
+        && pid.bytes().all(|b| b.is_ascii_digit())
+        && !nanos.is_empty()
+        && nanos.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 /// A unique-per-process session id: `local-<pid>-<nanos>`. The nanosecond
 /// component guards against pid reuse across quick successive runs.
 ///
@@ -527,6 +546,16 @@ fn generate_session_id() -> String {
 mod tests {
     use super::*;
     use crate::server::ipc::ClientConnection;
+
+    #[test]
+    fn local_session_ids_are_told_apart_from_daemon_names() {
+        assert!(is_local_session_id(&generate_session_id()));
+        assert!(is_local_session_id("local-1234-ab12cd34ef"));
+        assert!(!is_local_session_id("local"));
+        assert!(!is_local_session_id("local-dev"));
+        assert!(!is_local_session_id("local-12-notes"));
+        assert!(!is_local_session_id("work"));
+    }
     use crate::server::protocol::{ClientHello, TermSize};
     use tempfile::TempDir;
 
@@ -978,5 +1007,41 @@ mod tests {
         }
 
         bound.shutdown.store(true, Ordering::SeqCst);
+    }
+
+    /// Opening another folder on a running editor (a nested `fresh <dir>`)
+    /// raises the same trust prompt a first launch in that folder does, with
+    /// Cancel as the secondary so the other workspaces survive (#3779).
+    #[test]
+    fn opening_a_folder_with_markers_raises_the_trust_prompt() {
+        let (mut editor, _temp) = pump_test_editor();
+        let project = TempDir::new().unwrap();
+        std::fs::write(project.path().join("Cargo.toml"), "[package]\n").unwrap();
+
+        let (req_tx, req_rx) = mpsc::channel::<LocalControlRequest>();
+        let shared = Shared {
+            req_rx: Mutex::new(req_rx),
+            waiters: Arc::new(Mutex::new(HashMap::new())),
+            command_replies: Arc::new(Mutex::new(HashMap::new())),
+        };
+        req_tx
+            .send(LocalControlRequest::OpenWindow {
+                path: project.path().to_path_buf(),
+            })
+            .unwrap();
+        pump_shared(&shared, &mut editor);
+
+        assert_eq!(editor.working_dir(), project.path());
+        assert!(
+            editor.global_popups().top().is_some_and(|p| matches!(
+                p.resolver,
+                crate::view::popup::PopupResolver::WorkspaceTrust
+            )),
+            "switching to an undecided folder with a manifest must ask for trust"
+        );
+        assert_eq!(
+            editor.authority().workspace_trust.level(),
+            crate::services::workspace_trust::TrustLevel::Restricted
+        );
     }
 }

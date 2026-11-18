@@ -808,3 +808,60 @@ fn attach_succeeds_when_which_cannot_locate_cli() {
     drop(harness);
     drop_workspace_temp(&workspace);
 }
+
+/// #3779: a running editor that switches to another folder (a bare `fresh`
+/// typed there while the background editor is up) offers that folder's dev
+/// container exactly as a first launch there would. The plugin used to detect
+/// the config once, for the folder the editor started in.
+#[test]
+fn switching_to_a_folder_with_a_devcontainer_offers_attach() {
+    // Start in a folder without a dev container config.
+    fresh::i18n::set_locale("en");
+    let start_temp = tempfile::tempdir().unwrap();
+    let start = start_temp.path().canonicalize().unwrap();
+    let plugins_dir = start.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "devcontainer");
+
+    // The folder switched to has one.
+    let (_workspace_temp, workspace) = set_up_workspace();
+
+    let mut harness = EditorTestHarness::create(
+        160,
+        40,
+        HarnessOptions::new()
+            .with_working_dir(start.clone())
+            .with_fake_devcontainer(),
+    )
+    .unwrap();
+    bounded_wait(&mut harness, "devcontainer plugin loaded", |h| {
+        let reg = h.editor().command_registry().read().unwrap();
+        reg.get_all()
+            .iter()
+            .any(|c| c.name == "%cmd.scaffold_config")
+    });
+    harness.editor().fire_plugins_loaded_hook();
+    harness.tick_and_render().unwrap();
+    assert!(
+        !harness
+            .screen_to_string()
+            .contains("Dev Container Detected"),
+        "no config in the start folder, so no attach offer"
+    );
+
+    // What the daemon does for a bare `fresh` in `workspace`.
+    let editor = harness.editor_mut();
+    let id = editor.create_window_at(workspace.clone(), "workspace".to_string());
+    editor.set_active_window(id);
+
+    bounded_wait(&mut harness, "attach offer after the switch", |h| {
+        let screen = h.screen_to_string();
+        screen.contains("Dev Container Detected") && screen.contains("Reopen in Container")
+    });
+    let reg = harness.editor().command_registry().read().unwrap();
+    assert!(
+        reg.get_all().iter().any(|c| c.name == "%cmd.attach"),
+        "the switched-to folder's commands must be registered"
+    );
+}

@@ -311,3 +311,113 @@ fn test_popup_offers_enable_when_config_already_disabled() -> anyhow::Result<()>
 
     Ok(())
 }
+
+/// Two dormant servers named `one` and `two` for Rust, both with a binary
+/// that exists (`sh`), so the popup offers to start them.
+fn make_config_with_two_dormant_rust_servers() -> fresh::config::Config {
+    let mut config = fresh::config::Config::default();
+    let server = |name: &str| fresh::services::lsp::LspServerConfig {
+        command: "sh".to_string(),
+        args: Some(vec![]),
+        enabled: true,
+        auto_start: false,
+        process_limits: fresh::services::process_limits::ProcessLimits::default(),
+        initialization_options: None,
+        env: Default::default(),
+        language_id_overrides: Default::default(),
+        root_markers: Default::default(),
+        name: Some(name.to_string()),
+        only_features: None,
+        except_features: None,
+    };
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![server("one"), server("two")]),
+    );
+    config
+}
+
+/// Each dormant server gets its own Start row, not one shared row (#3801).
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_popup_has_start_row_per_dormant_server() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let file = temp.path().join("hello.rs");
+    std::fs::write(&file, "fn main() {}\n")?;
+
+    let mut harness = EditorTestHarness::create(
+        120,
+        30,
+        HarnessOptions::new()
+            .with_config(make_config_with_two_dormant_rust_servers())
+            .with_working_dir(temp.path().to_path_buf()),
+    )?;
+    harness.open_file(&file)?;
+    harness.wait_until(|h| h.get_status_bar().contains("LSP (off)"))?;
+
+    harness.editor_mut().show_lsp_status_popup();
+    harness.render()?;
+
+    let items = popup_items(&harness);
+    for name in ["one", "two"] {
+        let key = format!("start:rust/{name}");
+        let row = items
+            .iter()
+            .find(|(_, data, _)| data.as_deref() == Some(key.as_str()));
+        assert!(
+            row.is_some_and(|(text, _, disabled)| text.contains(name) && !disabled),
+            "expected a Start row for {name}. Items: {:#?}",
+            items
+        );
+    }
+    Ok(())
+}
+
+/// When the current file is skipped by LSP while its language's server runs
+/// (the `LSP (n/a)` pill), the popup says why (#3801).
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_popup_explains_skipped_file() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let file = temp.path().join("hello.rs");
+    std::fs::write(&file, "fn main() {}\n")?;
+
+    let mut harness = EditorTestHarness::create(
+        120,
+        30,
+        HarnessOptions::new()
+            .with_config(make_config_with_two_dormant_rust_servers())
+            .with_working_dir(temp.path().to_path_buf()),
+    )?;
+    harness.open_file(&file)?;
+    harness.wait_until(|h| h.get_status_bar().contains("LSP (off)"))?;
+
+    // Simulate a running server and this file being skipped.
+    let buffer_id = harness.editor().active_buffer();
+    let window = harness.editor_mut().active_window_mut();
+    window.lsp_server_statuses.insert(
+        ("rust".to_string(), "one".to_string()),
+        fresh::services::async_bridge::LspServerStatus::Running,
+    );
+    window
+        .buffer_metadata
+        .get_mut(&buffer_id)
+        .unwrap()
+        .disable_lsp("File too large".to_string());
+    harness.render()?;
+    assert!(harness.get_status_bar().contains("LSP (n/a)"));
+
+    harness.editor_mut().show_lsp_status_popup();
+    harness.render()?;
+
+    let items = popup_items(&harness);
+    let note = items
+        .iter()
+        .find(|(text, _, _)| text.contains("Not used for this file: File too large"));
+    assert!(
+        note.is_some_and(|(_, _, disabled)| *disabled),
+        "expected a disabled note row explaining the skip. Items: {:#?}",
+        items
+    );
+    Ok(())
+}

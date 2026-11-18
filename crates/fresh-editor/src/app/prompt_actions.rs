@@ -1129,7 +1129,12 @@ impl Editor {
         }
         let resolver =
             ConfigResolver::new(self.dir_context.clone(), self.working_dir().to_path_buf());
-        if let Err(e) = resolver.save_to_layer(&self.config, ConfigLayer::User) {
+        // Save just this key, so removing the last ruler (the default, an
+        // empty list) removes `rulers` from the file rather than leaving the
+        // old value in it (#3800).
+        if let Err(e) =
+            resolver.save_setting_to_layer(&self.config, "/editor/rulers", ConfigLayer::User)
+        {
             tracing::warn!("Failed to save rulers to config: {}", e);
         }
     }

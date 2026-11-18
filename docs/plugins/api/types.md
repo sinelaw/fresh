@@ -2579,8 +2579,8 @@ interface LspServerConfig {
     auto_start?: boolean;
     /**
     * Files or folders that mark the project root: the nearest folder above the
-    * file that contains one is used. Empty means `[".git"]`. With no match, the
-    * file's own folder is used.
+    * file that contains one is used. With no match, or no markers, the file's
+    * own folder is used. Left empty, a built-in server keeps its own markers.
     */
     root_markers?: string[];
     /**

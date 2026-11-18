@@ -462,7 +462,7 @@ impl From<Cli> for Args {
                 | ["session", "k", "--all"]
                 | ["s", "k", "--all"] => (
                     false,
-                    Some(Some("--all".to_string())),
+                    Some(Some(KILL_ALL_DAEMONS.to_string())),
                     false,
                     None,
                     false,
@@ -2289,15 +2289,23 @@ fn init_package_command(package_type: Option<String>) -> AnyhowResult<()> {
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
 
-    // Helper to prompt for input
+    // Helper to prompt for input. End of input (stdin closed or redirected
+    // from an empty file) ends the command with an error: read as an empty
+    // answer, it re-prompted forever (#3793).
     let mut prompt = |msg: &str| -> String {
         print!("{}", msg);
         // Best-effort flush for interactive prompt
         #[allow(clippy::let_underscore_must_use)]
         let _ = stdout.flush();
         let mut input = String::new();
-        stdin.lock().read_line(&mut input).unwrap_or_default();
-        input.trim().to_string()
+        match stdin.lock().read_line(&mut input) {
+            Ok(0) | Err(_) => {
+                println!();
+                eprintln!("Error: no input (stdin is closed); nothing was created.");
+                std::process::exit(1);
+            }
+            Ok(_) => input.trim().to_string(),
+        }
     };
 
     println!("Fresh Package Initializer");
@@ -2408,8 +2416,10 @@ fn init_package_command(package_type: Option<String>) -> AnyhowResult<()> {
         "language" => {
             println!("  2. Edit grammars/syntax.sublime-syntax (YAML format)");
             println!("  3. Update package.json with file extensions and LSP command");
-            println!("  4. Test by copying to ~/.config/fresh/grammars/");
-            println!("  5. Validate manifest: ./validate.sh");
+            println!("  4. Validate manifest: ./validate.sh");
+            println!("  5. Test it: in Fresh, Ctrl+P, run \"Package: Install from URL\" and enter");
+            println!("     this directory's full path (or copy it to");
+            println!("     ~/.config/fresh/languages/packages/{name}/ and restart Fresh)");
         }
         _ => unreachable!(),
     }
@@ -2961,7 +2971,11 @@ Update `package.json` to match your language's requirements.
 
 1. Edit `grammars/syntax.sublime-syntax` for syntax highlighting
 2. Update `package.json` with correct file extensions and LSP command
-3. Test by copying to `~/.config/fresh/grammars/` and restarting Fresh
+3. Validate the manifest: `./validate.sh`
+4. Test it: in Fresh, run **Package: Install from URL** from the command palette
+   (Ctrl+P) and enter the full path of this directory. Reinstall from the same
+   path to reload after an edit. Or copy the directory to
+   `~/.config/fresh/languages/packages/{name}/` and restart Fresh.
 
 **Tip:** Search GitHub for existing `<language> sublime-syntax` files you can adapt.
 If using an existing grammar, check its license and include a copy in `grammars/LICENSE`.
@@ -3084,6 +3098,14 @@ fn list_sessions_command() -> AnyhowResult<()> {
             // Get socket paths for this session to check if server is alive
             let socket_paths = SocketPaths::for_session_name(name)?;
 
+            // A directly launched editor's own control socket, not a daemon:
+            // `fresh -a` can't attach to it, so it isn't listed. Its files
+            // are still removed once that editor is gone.
+            if fresh::server::local_control::is_local_session_id(name) {
+                socket_paths.cleanup_if_stale();
+                continue;
+            }
+
             // Check if server is actually running, clean up if stale
             if socket_paths.cleanup_if_stale() {
                 stale_cleaned += 1;
@@ -3149,10 +3171,14 @@ fn list_sessions_command() -> AnyhowResult<()> {
     Ok(())
 }
 
+/// The `daemon kill --all` argument, passed on as the daemon "name".
+const KILL_ALL_DAEMONS: &str = "--all";
+
 /// Kill a daemon (terminate the daemon process)
 fn kill_session_command(session: Option<&str>, args: &Args) -> AnyhowResult<()> {
-    use fresh::server::ipc::ClientConnection;
-    use fresh::server::protocol::ClientControl;
+    if session == Some(KILL_ALL_DAEMONS) {
+        return kill_all_daemons_command();
+    }
 
     let working_dir = std::env::current_dir()?;
 
@@ -3167,8 +3193,69 @@ fn kill_session_command(session: Option<&str>, args: &Args) -> AnyhowResult<()> 
         return Ok(());
     }
 
+    // A crashed daemon leaves its sockets behind with nothing listening:
+    // remove them, as `daemon list` does, instead of failing to connect.
+    if socket_paths.cleanup_if_stale() {
+        println!("Daemon was not running; removed its stale sockets.");
+        return Ok(());
+    }
+
+    quit_daemon(&socket_paths)?;
+    println!("Daemon terminated.");
+    Ok(())
+}
+
+/// `daemon kill --all`: terminate every running daemon (not the control
+/// sockets of directly launched editors) and remove stale ones.
+fn kill_all_daemons_command() -> AnyhowResult<()> {
+    let socket_dir = SocketPaths::socket_directory()?;
+    let mut killed = 0;
+    let mut stale_cleaned = 0;
+    if socket_dir.exists() {
+        for entry in std::fs::read_dir(&socket_dir)? {
+            let path = entry?.path();
+            let filename = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            let Some(name) = filename.strip_suffix(".ctrl.sock") else {
+                continue;
+            };
+            let socket_paths = SocketPaths::for_session_name(name)?;
+            if fresh::server::local_control::is_local_session_id(name) {
+                socket_paths.cleanup_if_stale();
+                continue;
+            }
+            if socket_paths.cleanup_if_stale() {
+                stale_cleaned += 1;
+                continue;
+            }
+            if !socket_paths.is_server_alive() {
+                continue;
+            }
+            match quit_daemon(&socket_paths) {
+                Ok(()) => killed += 1,
+                Err(e) => eprintln!("Failed to terminate daemon {}: {}", name, e),
+            }
+        }
+    }
+
+    if stale_cleaned > 0 {
+        eprintln!("Cleaned up {} stale daemon(s).", stale_cleaned);
+    }
+    if killed == 0 {
+        println!("No running daemons.");
+    } else {
+        println!("Terminated {} daemon(s).", killed);
+    }
+    Ok(())
+}
+
+/// Ask the daemon at `socket_paths` to quit, wait for it to close the
+/// connection, and remove any socket files it left behind.
+fn quit_daemon(socket_paths: &SocketPaths) -> AnyhowResult<()> {
+    use fresh::server::ipc::ClientConnection;
+    use fresh::server::protocol::ClientControl;
+
     // Connect and send quit command
-    let conn = ClientConnection::connect(&socket_paths)?;
+    let conn = ClientConnection::connect(socket_paths)?;
 
     // We need to do a minimal handshake first
     use fresh::server::protocol::{ClientHello, TermSize};
@@ -3212,7 +3299,6 @@ fn kill_session_command(session: Option<&str>, args: &Args) -> AnyhowResult<()> 
         let _ = std::fs::remove_file(&socket_paths.control);
     }
 
-    println!("Daemon terminated.");
     Ok(())
 }
 
@@ -4094,9 +4180,13 @@ fn resolve_cmd_socket(session_override: Option<&str>) -> AnyhowResult<SocketPath
         Some(s) if !s.trim().is_empty() => s.to_string(),
         _ => match std::env::var("FRESH_SESSION") {
             Ok(s) if !s.trim().is_empty() => s,
+            // `--session` is one of the `--cmd` tokens, not a flag of its own
+            // (`fresh --session <id> --cmd …` is rejected), so show where it
+            // goes (#3804).
             _ => anyhow::bail!(
-                "not inside a Fresh session; set --session <id> (or run inside a \
-                 Fresh workspace so $FRESH_SESSION is set)"
+                "not inside a Fresh session; name one after the command, as in \
+                 `fresh --cmd agent list --session <id>` (or run inside a Fresh \
+                 workspace so $FRESH_SESSION is set)"
             ),
         },
     };
@@ -5297,15 +5387,28 @@ fn parse_dts_entries(text: &str, source: &str) -> Vec<ApiEntry> {
             if let Some(rest) = t.strip_prefix("/**").and_then(|r| r.strip_suffix("*/")) {
                 doc.push(rest.trim().to_string());
                 in_doc = false;
+            } else if let Some(rest) = t.strip_prefix("/**").map(str::trim) {
+                // `/** First words` — the block's text starts on its opening line.
+                if !rest.is_empty() {
+                    doc.push(rest.to_string());
+                }
             }
             continue;
         }
         if in_doc {
-            if t.starts_with("*/") {
-                in_doc = false;
-            } else {
-                doc.push(t.trim_start_matches('*').trim().to_string());
+            // A block may close on its last line of text (`*  last words. */`,
+            // the shape the plugin declarations are emitted in) as well as on
+            // a line of its own; missing that swallowed every declaration
+            // after it (#3804).
+            let (text, closes) = match t.strip_suffix("*/") {
+                Some(text) => (text, true),
+                None => (t, false),
+            };
+            let text = text.trim_start_matches('*').trim();
+            if !text.is_empty() || !closes {
+                doc.push(text.to_string());
             }
+            in_doc = !closes;
             continue;
         }
         if t.is_empty() || t.starts_with("//") || t == "}" || t == "};" {
@@ -6392,6 +6495,14 @@ fn build_localized_after_help() -> String {
     out.push_str(&format!(
         "  script <verb>             {}\n",
         t("cli.cmd.script")
+    ));
+    out.push_str(&format!(
+        "  workspace list            {}\n",
+        t("cli.cmd.workspace")
+    ));
+    out.push_str(&format!(
+        "  agent <verb>              {}\n",
+        t("cli.cmd.agent")
     ));
     out.push_str(&format!(
         "  help [TOPIC]              {}\n",
@@ -7797,6 +7908,38 @@ mod tests {
         let schema: serde_json::Value = serde_json::from_str(TOUR_SCHEMA_JSON).unwrap();
         assert_eq!(schema["title"], "Fresh Code Tour Manifest");
         assert!(schema["definitions"]["TourStep"].is_object());
+    }
+
+    /// #3804: `fresh --help` lists every `--cmd` verb family the dispatcher
+    /// accepts, `workspace` and `agent` included.
+    #[test]
+    fn test_help_lists_workspace_and_agent_verbs() {
+        let help = build_localized_after_help();
+        for verb in ["  workspace list ", "  agent <verb> ", "  script <verb> "] {
+            assert!(help.contains(verb), "{verb:?} missing from --help:\n{help}");
+        }
+    }
+
+    /// #3804: plugin declarations close a doc block on its last line of text
+    /// (`*  … */`); the scanner must not stay inside the comment and swallow
+    /// the members that follow, which hid `newWorkspace` from `script api`.
+    #[test]
+    fn test_parse_dts_entries_doc_closed_on_text_line() {
+        let dts = "export type OrchestratorApi = {
+                   	/** Launch an agent.
+                   	*  More words. */
+                   	runAgent(options?: RunAgentOptions): Promise<void>;
+                   	/** Create a workspace
+                   	*
+                   	*  and launch. */
+                   	newWorkspace(options?: NewWorkspaceOptions): Promise<WorkspaceIds>;
+                   };
+";
+        let entries = parse_dts_entries(dts, "plugins.d.ts");
+        let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["runAgent", "newWorkspace"]);
+        assert_eq!(entries[0].doc, ["Launch an agent.", "More words."]);
+        assert_eq!(entries[1].doc, ["Create a workspace", "", "and launch."]);
     }
 
     /// `help script`'s API-surface section is counted from the embedded

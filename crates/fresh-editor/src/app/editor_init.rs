@@ -87,6 +87,23 @@ fn set_dot_path(root: &mut serde_json::Value, path: &str, value: serde_json::Val
     cur.as_object_mut().unwrap().insert(last.to_string(), value);
 }
 
+/// Set `plugins.<plugin>.settings.<field>` to `default` unless the config
+/// already has a value there.
+fn insert_plugin_setting_default(
+    config: &mut crate::config::Config,
+    plugin_name: &str,
+    field_name: &str,
+    default: serde_json::Value,
+) {
+    let entry = config.plugins.entry(plugin_name.to_string()).or_default();
+    if !entry.settings.is_object() {
+        entry.settings = serde_json::Value::Object(Default::default());
+    }
+    if let serde_json::Value::Object(map) = &mut entry.settings {
+        map.entry(field_name.to_string()).or_insert(default);
+    }
+}
+
 /// Translate a `setSetting`-style dot path into an RFC 6901 JSON pointer.
 ///
 /// `~` and `/` are escaped because a pointer says so; no config key contains
@@ -728,6 +745,7 @@ impl Editor {
             host_process_handles: HashMap::new(),
             status_bar_token_registry: Mutex::new(HashMap::new()),
             plugin_schemas: std::sync::Arc::new(std::sync::RwLock::new(parts.plugin_schemas)),
+            runtime_settings: Vec::new(),
             event_broadcaster: parts.event_broadcaster,
             orchestrator_mode: parts.orchestrator_mode,
             file_launch: parts.file_launch,
@@ -1955,6 +1973,15 @@ impl Editor {
         outcome
     }
 
+    /// Re-run init.ts because the user asked to (`init: Reload init.ts`,
+    /// `editor.reloadInit()`, saving a macro into it). An explicit request
+    /// clears the crash fuse first: the fuse only guards launches, and kept
+    /// the reload of a fixed file skipped too (#3788).
+    pub fn reload_init_script(&mut self) -> crate::init_script::InitOutcome {
+        crate::init_script::reset_fuse(&self.dir_context.config_dir);
+        self.load_init_script(true)
+    }
+
     /// Non-blocking variant of [`Self::load_init_script`] for the TUI
     /// startup path. Does the synchronous pre-work (types scaffolding
     /// refresh, syntax check, fuse check), then either submits the
@@ -2073,14 +2100,27 @@ impl Editor {
     /// no revert on unload — same model as Neovim/VS Code/Emacs/Sublime.
     pub fn handle_set_setting(&mut self, path: String, value: serde_json::Value) {
         let mut json = serde_json::to_value(&*self.config).unwrap_or_default();
-        set_dot_path(&mut json, &path, value);
+        set_dot_path(&mut json, &path, value.clone());
         match serde_json::from_value::<crate::config::Config>(json) {
             Ok(new_config) => {
+                // Remember the write so a config re-resolved from disk (a
+                // Settings save, `reloadConfig()`) keeps it (#3791).
+                self.runtime_settings.retain(|(p, _)| *p != path);
+                self.runtime_settings.push((path.clone(), value));
                 let old_theme = self.config.theme.clone();
                 // Through `set_config`, not a bare assignment: windows read a
                 // copy of the config of their own (terminal shell, LSP, …),
                 // and only `set_config` hands them the new one (#3712).
                 self.set_config(new_config);
+                // Buffers already open — files from the command line, a
+                // restored session — resolved their wrap, gutter and tab
+                // settings when they opened; re-resolve them as a Settings
+                // save does, keeping per-buffer pins (#3788).
+                self.refresh_open_buffer_settings_from_config();
+                for window in self.windows.values_mut() {
+                    window.resync_global_display_defaults();
+                }
+                self.invalidate_live_editor_layout_after_settings_save();
                 if old_theme != self.config.theme {
                     if let Some(theme) = self.theme_registry.get_cloned(&self.config.theme) {
                         *self.theme.write().unwrap() = theme;
@@ -2139,8 +2179,61 @@ impl Editor {
         // owns every consequence of a live config change (theme swap,
         // keybinding reload, chrome flags, plugin snapshot); duplicating any
         // of that here is how the two drift.
-        self.handle_set_setting(path, value.clone());
+        self.handle_set_setting(path.clone(), value.clone());
+        // The file holds it now; it no longer needs re-laying after a reload.
+        self.runtime_settings.retain(|(p, _)| *p != path);
         self.persist_config_pointer(&pointer, value);
+    }
+
+    /// Lay the session's in-memory config state back onto a config freshly
+    /// resolved from disk: the `setSetting` writes, then every plugin's
+    /// declared `defineConfigX` defaults for fields the config leaves unset.
+    /// Neither lives in any config file, so without this a Settings save or
+    /// `reloadConfig()` drops them and `getPluginConfig()` returns only the
+    /// user's overrides (#3791).
+    ///
+    /// `changed_pointers` are the JSON pointers the caller just wrote to
+    /// disk: a `setSetting` value on (or under, or above) one of them is
+    /// superseded by that newer, explicit change and is forgotten.
+    pub(crate) fn reapply_session_config(
+        &mut self,
+        config: &mut crate::config::Config,
+        changed_pointers: &[String],
+    ) {
+        let overlaps = |a: &str, b: &str| {
+            a == b || a.starts_with(&format!("{b}/")) || b.starts_with(&format!("{a}/"))
+        };
+        self.runtime_settings.retain(|(path, _)| {
+            let pointer = json_pointer_for_dot_path(path);
+            !changed_pointers.iter().any(|c| overlaps(&pointer, c))
+        });
+        if !self.runtime_settings.is_empty() {
+            let mut json = serde_json::to_value(&*config).unwrap_or_default();
+            for (path, value) in &self.runtime_settings {
+                set_dot_path(&mut json, path, value.clone());
+            }
+            match serde_json::from_value::<crate::config::Config>(json) {
+                Ok(merged) => *config = merged,
+                Err(e) => tracing::warn!("Could not re-apply setSetting values: {e}"),
+            }
+        }
+        if let Ok(schemas) = self.plugin_schemas.read() {
+            for (plugin_name, schema) in schemas.iter() {
+                let Some(props) = schema.get("properties").and_then(|p| p.as_object()) else {
+                    continue;
+                };
+                for (field_name, field_schema) in props {
+                    if let Some(default) = field_schema.get("default") {
+                        insert_plugin_setting_default(
+                            config,
+                            plugin_name,
+                            field_name,
+                            default.clone(),
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// Append a single config field to a plugin's accumulated schema and
@@ -2197,17 +2290,7 @@ impl Editor {
         // Pre-populate the default for THIS field only.
         if let Some(default) = field_schema.get("default").cloned() {
             let cfg = std::sync::Arc::make_mut(&mut self.config);
-            let entry = cfg.plugins.entry(plugin_name.clone()).or_default();
-            let settings_obj = match &mut entry.settings {
-                serde_json::Value::Object(_) => &mut entry.settings,
-                slot => {
-                    *slot = serde_json::Value::Object(Default::default());
-                    slot
-                }
-            };
-            if let serde_json::Value::Object(map) = settings_obj {
-                map.entry(field_name.clone()).or_insert(default);
-            }
+            insert_plugin_setting_default(cfg, &plugin_name, &field_name, default);
         }
 
         if let Ok(mut schemas) = self.plugin_schemas.write() {

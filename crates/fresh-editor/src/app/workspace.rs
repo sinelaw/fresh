@@ -1045,6 +1045,24 @@ impl crate::app::window::Window {
                 backing_path,
             );
         }
+        // A Blocked workspace runs nothing (#3778): bring the terminal back
+        // with its transcript but no process, like one that had exited. Its
+        // restart offer stays, and works once the folder is trusted again.
+        if self.authority().workspace_trust.level()
+            == crate::services::workspace_trust::TrustLevel::Blocked
+        {
+            tracing::info!(
+                "Restoring terminal {} without a process: workspace trust is Blocked",
+                terminal.terminal_index
+            );
+            return self.restore_exited_terminal(
+                terminal,
+                &crate::workspace::ExitedTerminalState { exit_code: None },
+                predicted_id,
+                log_path,
+                backing_path,
+            );
+        }
 
         // Decide what to run in the restored terminal:
         //  1. an agent-resume argv (rejoin the conversation), when present

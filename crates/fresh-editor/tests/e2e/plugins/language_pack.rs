@@ -231,3 +231,70 @@ const editor = getEditor();
         "Second extension should detect customscript"
     );
 }
+
+/// #3790: a live-installed language pack whose grammar `name:` differs from
+/// the package name (the `fresh --cmd init language` default: package
+/// `my-language`, grammar `My Language`) must highlight right away, as it
+/// does after a restart.
+#[test]
+fn test_register_grammar_named_differently_from_package_highlights() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    let plugins_dir = project_root.join("plugins");
+    let grammars_dir = plugins_dir.join("grammars");
+    fs::create_dir_all(&grammars_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+
+    let test_grammar = r#"%YAML 1.2
+---
+name: My Language
+scope: source.my-language
+file_extensions: [mylang]
+
+contexts:
+  main:
+    - match: \b(fn|let)\b
+      scope: keyword.control.my-language
+"#;
+    let grammar_path = grammars_dir.join("my-language.sublime-syntax");
+    fs::write(&grammar_path, test_grammar).unwrap();
+
+    // What pkg.ts's loadLanguagePack does: everything keyed by the package
+    // name.
+    let test_plugin = format!(
+        r###"
+const editor = getEditor();
+(async function() {{
+  editor.registerGrammar("my-language", "{}", ["mylang"]);
+  editor.registerLanguageConfig("my-language", {{
+    commentPrefix: "#", blockCommentStart: null, blockCommentEnd: null,
+    useTabs: null, tabSize: null, autoIndent: null, showWhitespaceTabs: null,
+    formatter: null,
+  }});
+  await editor.reloadGrammars();
+}})();
+"###,
+        grammar_path.to_string_lossy().replace('\\', "\\\\")
+    );
+    fs::write(plugins_dir.join("test_my_language.ts"), test_plugin).unwrap();
+
+    let test_file = project_root.join("test.mylang");
+    fs::write(&test_file, "fn main\nlet x\n").unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        80,
+        24,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&test_file).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .wait_until(|h| {
+            h.editor().active_state().language == "my-language"
+                && h.editor().active_state().highlighter.has_highlighting()
+        })
+        .unwrap();
+}

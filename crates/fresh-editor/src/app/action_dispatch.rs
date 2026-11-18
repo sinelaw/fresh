@@ -1599,7 +1599,7 @@ impl Editor {
                 // through the existing plugin pipeline. The runtime's
                 // hot-reload semantics drop prior commands / handlers /
                 // event subs / settings before the new source runs.
-                self.load_init_script(true);
+                self.reload_init_script();
                 // Re-fire plugins_loaded so handlers expecting a "fresh"
                 // post-load environment (M2) see it.
                 self.fire_plugins_loaded_hook();

@@ -1108,6 +1108,55 @@ pub fn decode_filename_to_path(encoded: &str) -> Option<PathBuf> {
     Some(PathBuf::from(result))
 }
 
+/// The filesystem's limit on one file name (`NAME_MAX`).
+const MAX_FILE_NAME_LEN: usize = 255;
+
+/// Longest id [`generate_stable_id`] can mint: `ws-`, 128-bit nanoseconds and
+/// a 64-bit sequence number in hex.
+const MAX_STABLE_ID_LEN: usize = 3 + 32 + 1 + 16;
+
+/// What [`Workspace::save`] adds to the name for its temp file
+/// (`….json` → `….json.tmp`), which has to fit as well.
+const SAVE_TEMP_EXTRA_LEN: usize = ".tmp".len();
+
+/// What a workspace file name keeps of its root when the whole encoding
+/// doesn't fit: room for `.<longest id>.json` and the temp suffix after it,
+/// so every workspace of one long root shares a single prefix whatever its id.
+const FOLDED_ROOT_KEY_LEN: usize =
+    MAX_FILE_NAME_LEN - SAVE_TEMP_EXTRA_LEN - 1 - MAX_STABLE_ID_LEN - ".json".len();
+
+/// The root part of a workspace file name, for a name ending in `suffix`.
+///
+/// The encoded root is used whole whenever the name (and its save temp
+/// file) fits — which is every name an earlier release could have saved, so
+/// existing workspace files keep loading. Only a name that would exceed
+/// `NAME_MAX` (deep worktree paths, whose own name already embeds the repo
+/// path) gets the folded `<head>~<hash>` key instead; before, saving it failed
+/// with "File name too long" and the workspace was lost on restart (#3787).
+fn workspace_root_key(encoded: &str, suffix: &str) -> String {
+    if encoded.len() + suffix.len() + SAVE_TEMP_EXTRA_LEN <= MAX_FILE_NAME_LEN {
+        encoded.to_string()
+    } else {
+        folded_root_key(encoded)
+    }
+}
+
+/// The folded form of [`workspace_root_key`].
+fn folded_root_key(encoded: &str) -> String {
+    fresh_editor_core::path_encode::fold_to_len(encoded, FOLDED_ROOT_KEY_LEN)
+}
+
+/// Every root key a workspace file for `encoded` can carry: the whole
+/// encoding, and the folded one when it differs.
+fn workspace_root_keys(encoded: &str) -> Vec<String> {
+    let folded = folded_root_key(encoded);
+    if folded == encoded {
+        vec![encoded.to_string()]
+    } else {
+        vec![encoded.to_string(), folded]
+    }
+}
+
 /// Legacy (pre-stable-id) workspace file path for a working directory:
 /// the filename is the encoded canonical root. Still used as the write
 /// fallback for snapshots without a `stable_id`, and by the one-time
@@ -1117,7 +1166,8 @@ pub fn get_workspace_path(working_dir: &Path) -> io::Result<PathBuf> {
     let canonical = working_dir
         .canonicalize()
         .unwrap_or_else(|_| working_dir.to_path_buf());
-    let filename = format!("{}.json", encode_path_for_filename(&canonical));
+    let encoded = encode_path_for_filename(&canonical);
+    let filename = format!("{}.json", workspace_root_key(&encoded, ".json"));
     Ok(get_workspaces_dir()?.join(filename))
 }
 
@@ -1150,11 +1200,9 @@ pub fn workspace_path_for(working_dir: &Path, stable_id: &str) -> io::Result<Pat
     let canonical = working_dir
         .canonicalize()
         .unwrap_or_else(|_| working_dir.to_path_buf());
-    let filename = format!(
-        "{}.{}.json",
-        encode_path_for_filename(&canonical),
-        sanitize_stable_id(stable_id)
-    );
+    let encoded = encode_path_for_filename(&canonical);
+    let suffix = format!(".{}.json", sanitize_stable_id(stable_id));
+    let filename = format!("{}{suffix}", workspace_root_key(&encoded, &suffix));
     Ok(get_workspaces_dir()?.join(filename))
 }
 
@@ -1170,7 +1218,7 @@ pub fn workspace_ids_for_root(root: &Path) -> std::collections::HashSet<String> 
     };
     let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let encoded = encode_path_for_filename(&canonical);
-    let id_prefix = format!("{encoded}.");
+    let keys = workspace_root_keys(&encoded);
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return ids;
     };
@@ -1179,17 +1227,20 @@ pub fn workspace_ids_for_root(root: &Path) -> std::collections::HashSet<String> 
         let Some(name) = name.to_str() else {
             continue;
         };
-        let Some(rest) = name
-            .strip_prefix(&id_prefix)
-            .and_then(|rest| rest.strip_suffix(".json"))
-        else {
-            continue;
-        };
-        if !rest.is_empty() && !rest.contains('.') {
-            ids.insert(rest.to_string());
+        for key in &keys {
+            let Some(rest) = name
+                .strip_prefix(key.as_str())
+                .and_then(|rest| rest.strip_prefix('.'))
+                .and_then(|rest| rest.strip_suffix(".json"))
+            else {
+                continue;
+            };
+            if !rest.is_empty() && !rest.contains('.') {
+                ids.insert(rest.to_string());
+            }
         }
     }
-    let legacy = dir.join(format!("{encoded}.json"));
+    let legacy = dir.join(format!("{}.json", workspace_root_key(&encoded, ".json")));
     if let Some(id) = std::fs::read_to_string(legacy)
         .ok()
         .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
@@ -1262,8 +1313,11 @@ fn candidate_files_for_root(working_dir: &Path) -> io::Result<Vec<WorkspaceFileI
         .canonicalize()
         .unwrap_or_else(|_| working_dir.to_path_buf());
     let encoded = encode_path_for_filename(&target);
-    let legacy_name = format!("{encoded}.json");
-    let id_prefix = format!("{encoded}.");
+    let legacy_name = format!("{}.json", workspace_root_key(&encoded, ".json"));
+    let id_prefixes: Vec<String> = workspace_root_keys(&encoded)
+        .into_iter()
+        .map(|key| format!("{key}."))
+        .collect();
 
     let dir = get_workspaces_dir()?;
     let entries = match std::fs::read_dir(&dir) {
@@ -1277,7 +1331,10 @@ fn candidate_files_for_root(working_dir: &Path) -> io::Result<Vec<WorkspaceFileI
         let Some(name) = name.to_str() else {
             continue;
         };
-        if name != legacy_name && !(name.starts_with(&id_prefix) && name.ends_with(".json")) {
+        if name != legacy_name
+            && !(id_prefixes.iter().any(|p| name.starts_with(p.as_str()))
+                && name.ends_with(".json"))
+        {
             continue;
         }
         let path = entry.path();
@@ -2202,6 +2259,86 @@ mod tests {
         let split_state = restored.split_states.get(&1).unwrap();
         assert_eq!(split_state.open_files.len(), 2);
         assert_eq!(split_state.open_files[0], PathBuf::from("README.md"));
+    }
+
+    /// Point the workspace store at a temp dir for this thread.
+    struct DataDirGuard(Option<PathBuf>);
+    impl DataDirGuard {
+        fn new(dir: &Path) -> Self {
+            Self(fresh_editor_core::data_dir::set_data_dir_override(Some(
+                dir.to_path_buf(),
+            )))
+        }
+    }
+    impl Drop for DataDirGuard {
+        fn drop(&mut self) {
+            fresh_editor_core::data_dir::set_data_dir_override(self.0.take());
+        }
+    }
+
+    /// A root whose encoding is `len`-ish bytes: `_` encodes to `%5F`, which
+    /// is how worktree paths (which embed a slugified repo path) get long.
+    fn root_of_encoded_len(len: usize) -> PathBuf {
+        let mut path = String::from("/w");
+        while encode_path_for_filename(Path::new(&path)).len() + 3 <= len {
+            path.push('_');
+        }
+        PathBuf::from(path)
+    }
+
+    /// #3787: a worktree workspace under a deep path saves and loads again,
+    /// instead of failing with "File name too long".
+    #[test]
+    fn a_workspace_under_a_deep_path_saves_and_loads() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let _guard = DataDirGuard::new(temp.path());
+        let root = root_of_encoded_len(240);
+        let id = generate_stable_id();
+
+        let mut workspace = Workspace::new(root.clone());
+        workspace.stable_id = Some(id.clone());
+        workspace.save().expect("a deep root must save");
+
+        let path = workspace_path_for(&root, &id).unwrap();
+        let name = path.file_name().unwrap().to_str().unwrap().to_string();
+        assert!(name.len() + 4 <= 255, "{} bytes: {name}", name.len());
+        assert!(path.exists());
+
+        let loaded = Workspace::load_by_id(&root, &id)
+            .unwrap()
+            .expect("found by id");
+        assert_eq!(loaded.working_dir, root);
+        let loaded = Workspace::load(&root).unwrap().expect("found by root");
+        assert_eq!(loaded.stable_id.as_deref(), Some(id.as_str()));
+        assert!(workspace_ids_for_root(&root).contains(&id));
+    }
+
+    /// The fold only touches names that could not be saved: a name an earlier
+    /// release wrote (one that fits) keeps its exact spelling, so existing
+    /// workspace files still load.
+    #[test]
+    fn workspace_names_that_fit_are_unchanged() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let _guard = DataDirGuard::new(temp.path());
+        let id = "ws-18a2b3c4d5e6f708-3";
+        for len in [20, 150, 200, 220] {
+            let root = root_of_encoded_len(len);
+            let encoded = encode_path_for_filename(&root);
+            let name = format!("{encoded}.{id}.json");
+            if name.len() + 4 > 255 {
+                continue;
+            }
+            assert_eq!(
+                workspace_path_for(&root, id).unwrap(),
+                get_workspaces_dir().unwrap().join(&name),
+            );
+            assert_eq!(
+                get_workspace_path(&root).unwrap(),
+                get_workspaces_dir()
+                    .unwrap()
+                    .join(format!("{encoded}.json")),
+            );
+        }
     }
 
     #[test]

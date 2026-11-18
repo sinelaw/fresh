@@ -298,3 +298,77 @@ fn report_all_keys_sends_text_and_enter_as_csi_u() {
          CSI 97u, CSI 13u and CSI 122u.\nScreen:\n{screen}"
     );
 }
+
+/// Issue #3785: leave the live terminal for scrollback with `leave`, resume it
+/// with `resume` (both raw host bytes), then press a second sentinel (`y`,
+/// ` 79`). Returns the screen once that reached the child.
+#[cfg(unix)]
+fn scrollback_round_trip(leave: &[u8], resume: &[u8]) -> Option<String> {
+    if !pty_available() {
+        eprintln!("Skipping: PTY not available in this environment");
+        return None;
+    }
+    let mut config = dumper_config();
+    // Late PTY output must not snap the scrollback view back to live while
+    // the test is looking at it.
+    config.terminal.jump_to_end_on_output = false;
+    let mut harness = open_dumper(config);
+    // Settle input routing on the live terminal before the chords under test.
+    send_sentinel(&mut harness);
+    send_bytes(&mut harness, leave);
+    assert!(
+        !harness.editor().is_terminal_mode(),
+        "the leave chord must switch to scrollback"
+    );
+    send_bytes(&mut harness, resume);
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "the resume chord must switch back to the live terminal"
+    );
+    harness
+        .send_key(KeyCode::Char('y'), KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_screen_contains(" 79").unwrap();
+    Some(harness.screen_to_string())
+}
+
+/// Legacy Ctrl+Space arrives as NUL (Ctrl+@). It used to leave the terminal
+/// but not come back from scrollback.
+#[test]
+#[cfg(unix)]
+fn legacy_ctrl_space_resumes_from_scrollback_without_reaching_the_child() {
+    let Some(screen) = scrollback_round_trip(&[0x00], &[0x00]) else {
+        return;
+    };
+    assert!(
+        !screen.contains(" 00"),
+        "the resume chord must not reach the child.\nScreen:\n{screen}"
+    );
+}
+
+/// Ctrl+Space as CSI-u resumed, but its NUL was also sent to the program.
+#[test]
+#[cfg(unix)]
+fn kitty_ctrl_space_resume_is_not_sent_to_the_child() {
+    let Some(screen) = scrollback_round_trip(b"\x1b[32;5u", b"\x1b[32;5u") else {
+        return;
+    };
+    assert!(
+        !screen.contains(" 00"),
+        "the resume chord must not reach the child.\nScreen:\n{screen}"
+    );
+}
+
+/// Resuming with Ctrl+] sent a stray `^]`, which bash reads as
+/// character-search and which then swallows the next key typed.
+#[test]
+#[cfg(unix)]
+fn ctrl_bracket_resume_is_not_sent_to_the_child() {
+    let Some(screen) = scrollback_round_trip(&[0x00], &[0x1d]) else {
+        return;
+    };
+    assert!(
+        !screen.contains(" 1d"),
+        "the resume chord must not reach the child.\nScreen:\n{screen}"
+    );
+}

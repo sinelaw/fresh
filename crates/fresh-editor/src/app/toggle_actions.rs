@@ -885,10 +885,10 @@ impl Editor {
     /// Uses the layered config system to properly merge with defaults.
     pub fn reload_config(&mut self) {
         let old_theme = self.config.theme.clone();
-        self.set_config(Config::load_with_layers(
-            &self.dir_context,
-            self.working_dir(),
-        ));
+        let mut reloaded = Config::load_with_layers(&self.dir_context, self.working_dir());
+        // `setSetting` values and plugin defaults live in no file (#3791).
+        self.reapply_session_config(&mut reloaded, &[]);
+        self.set_config(reloaded);
 
         // Refresh cached raw user config for plugins
         self.set_user_config_raw(Config::read_user_config_raw(self.working_dir()));

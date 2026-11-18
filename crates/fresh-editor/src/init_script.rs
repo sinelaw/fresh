@@ -9,7 +9,8 @@
 //! `~/.config/fresh/logs/init.crashes` counts consecutive init.ts failures
 //! within a rolling window. After N failures the next launch auto-skips
 //! init.ts until the user fixes or removes it. A successful evaluation
-//! clears the counter.
+//! clears the counter, and so does a change to init.ts (the counter records
+//! which source failed) or an explicit reload.
 
 use std::path::{Path, PathBuf};
 
@@ -418,6 +419,21 @@ fn crashes_path(config_dir: &Path) -> PathBuf {
 struct CrashState {
     count: u32,
     last_increment_epoch: u64,
+    /// Hash of the init.ts source the counted failures came from. `None` in
+    /// a counter written before it was recorded.
+    source_hash: Option<u64>,
+}
+
+/// FNV-1a over init.ts, to tell whether the file changed since it failed.
+/// Spelled out rather than `DefaultHasher`, whose output is not promised to
+/// stay the same across Rust versions, and this one is written to disk.
+fn source_hash(source: &str) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in source.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
 }
 
 impl CrashState {
@@ -428,6 +444,7 @@ impl CrashState {
         };
         let mut count = 0u32;
         let mut last = 0u64;
+        let mut hash = None;
         for (i, line) in text.lines().enumerate() {
             let trimmed = line.trim();
             if trimmed.is_empty() {
@@ -436,12 +453,14 @@ impl CrashState {
             match i {
                 0 => count = trimmed.parse().unwrap_or(0),
                 1 => last = trimmed.parse().unwrap_or(0),
+                2 => hash = u64::from_str_radix(trimmed, 16).ok(),
                 _ => break,
             }
         }
         Self {
             count,
             last_increment_epoch: last,
+            source_hash: hash,
         }
     }
 
@@ -450,10 +469,11 @@ impl CrashState {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(
-            &path,
-            format!("{}\n{}\n", self.count, self.last_increment_epoch),
-        )
+        let mut text = format!("{}\n{}\n", self.count, self.last_increment_epoch);
+        if let Some(hash) = self.source_hash {
+            text.push_str(&format!("{hash:016x}\n"));
+        }
+        std::fs::write(&path, text)
     }
 
     fn clear(config_dir: &Path) {
@@ -481,8 +501,13 @@ fn now_epoch_secs() -> u64 {
 ///
 /// Also increments the counter — if init.ts evaluation succeeds, the caller
 /// must invoke [`record_success`] to reset it.
-fn check_and_increment_fuse(config_dir: &Path) -> Option<u32> {
+///
+/// `source` is the init.ts about to run. Failures counted against a
+/// different source don't count against this one: the user fixing the file
+/// is exactly what should let it run again (#3788).
+fn check_and_increment_fuse(config_dir: &Path, source: &str) -> Option<u32> {
     let now = now_epoch_secs();
+    let hash = source_hash(source);
     let mut state = CrashState::load(config_dir);
 
     // Stale entries outside the rolling window: treat as a clean slate.
@@ -491,6 +516,11 @@ fn check_and_increment_fuse(config_dir: &Path) -> Option<u32> {
     {
         state.count = 0;
     }
+    // init.ts changed since those failures: a new attempt.
+    if state.source_hash.is_some_and(|h| h != hash) {
+        state.count = 0;
+    }
+    state.source_hash = Some(hash);
 
     if state.count >= CRASH_FUSE_THRESHOLD {
         return Some(state.count);
@@ -508,6 +538,13 @@ fn check_and_increment_fuse(config_dir: &Path) -> Option<u32> {
 /// Called after init.ts finishes cleanly. Resets the crash-fuse counter so
 /// the next launch starts from zero.
 pub fn record_success(config_dir: &Path) {
+    CrashState::clear(config_dir);
+}
+
+/// Clear the crash fuse because the user asked for init.ts to run (an
+/// explicit reload): a tripped fuse only guards launches, which nobody asked
+/// for, so it must not refuse an explicit request.
+pub fn reset_fuse(config_dir: &Path) {
     CrashState::clear(config_dir);
 }
 
@@ -558,7 +595,7 @@ pub fn decide_load(config_dir: &Path, enabled: bool) -> LoadDecision {
             message: format!("read failed: {e}"),
         }),
         Ok(Some(source)) => {
-            if let Some(failures) = check_and_increment_fuse(config_dir) {
+            if let Some(failures) = check_and_increment_fuse(config_dir, &source) {
                 LoadDecision::Skip(InitOutcome::CrashFused { failures })
             } else {
                 LoadDecision::Load { source }
@@ -683,6 +720,53 @@ mod tests {
         );
     }
 
+    const SRC: &str = "editor.setStatus('hi');";
+
+    /// #3788: fixing init.ts must let it run again on the next launch,
+    /// without waiting out the window.
+    #[test]
+    fn a_changed_init_ts_resets_a_tripped_fuse() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        for _ in 0..CRASH_FUSE_THRESHOLD {
+            check_and_increment_fuse(dir, "broken(");
+        }
+        assert!(check_and_increment_fuse(dir, "broken(").is_some());
+
+        assert!(
+            check_and_increment_fuse(dir, SRC).is_none(),
+            "an edited init.ts gets a fresh attempt"
+        );
+    }
+
+    /// #3788: an explicit reload runs init.ts even with the fuse tripped.
+    #[test]
+    fn reset_fuse_clears_a_tripped_fuse() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        for _ in 0..CRASH_FUSE_THRESHOLD {
+            check_and_increment_fuse(dir, SRC);
+        }
+        assert!(check_and_increment_fuse(dir, SRC).is_some());
+        reset_fuse(dir);
+        assert!(check_and_increment_fuse(dir, SRC).is_none());
+    }
+
+    /// A counter written before the source hash was recorded still trips.
+    #[test]
+    fn a_counter_without_a_hash_still_counts() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        CrashState {
+            count: CRASH_FUSE_THRESHOLD,
+            last_increment_epoch: now_epoch_secs(),
+            source_hash: None,
+        }
+        .save(dir)
+        .unwrap();
+        assert!(check_and_increment_fuse(dir, SRC).is_some());
+    }
+
     #[test]
     fn crash_fuse_trips_after_threshold_consecutive_failures() {
         let tmp = TempDir::new().unwrap();
@@ -691,11 +775,11 @@ mod tests {
         // Three attempts that never record success — each returns None
         // (proceed) and bumps the counter.
         for _ in 0..CRASH_FUSE_THRESHOLD {
-            assert!(check_and_increment_fuse(dir).is_none());
+            assert!(check_and_increment_fuse(dir, SRC).is_none());
         }
 
         // Fourth attempt should be short-circuited.
-        let tripped = check_and_increment_fuse(dir);
+        let tripped = check_and_increment_fuse(dir, SRC);
         assert!(tripped.is_some());
         assert_eq!(tripped.unwrap(), CRASH_FUSE_THRESHOLD);
     }
@@ -706,12 +790,12 @@ mod tests {
         let dir = tmp.path();
 
         for _ in 0..CRASH_FUSE_THRESHOLD {
-            check_and_increment_fuse(dir);
+            check_and_increment_fuse(dir, SRC);
         }
         record_success(dir);
 
         // After success, we should have room for another full cycle.
-        assert!(check_and_increment_fuse(dir).is_none());
+        assert!(check_and_increment_fuse(dir, SRC).is_none());
     }
 
     #[test]
@@ -723,11 +807,12 @@ mod tests {
         let state = CrashState {
             count: CRASH_FUSE_THRESHOLD + 5,
             last_increment_epoch: now_epoch_secs().saturating_sub(CRASH_FUSE_WINDOW_SECS + 1),
+            source_hash: None,
         };
         state.save(dir).unwrap();
 
         // Next attempt should treat it as fresh: proceed, counter back to 1.
-        assert!(check_and_increment_fuse(dir).is_none());
+        assert!(check_and_increment_fuse(dir, SRC).is_none());
     }
 
     #[test]

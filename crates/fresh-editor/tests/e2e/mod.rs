@@ -168,6 +168,8 @@ pub mod issue_3633_shared_file_variants;
 pub mod issue_3642_motion_after_unrendered_typing;
 pub mod issue_3645_replace_in_selection;
 pub mod issue_3748_file_launch_cursor_restore;
+pub mod issue_3777_editorconfig_survives_reapply;
+pub mod issue_3784_line_range_open;
 pub mod issue_623_prompt_dropdown_scrollbar;
 pub mod issue_722_inlay_hint_split_drift;
 pub mod issue_779_after_eof_shade;
