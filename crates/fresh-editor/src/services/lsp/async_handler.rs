@@ -5140,7 +5140,15 @@ impl LspHandle {
                 }
                 Ok(())
             }
-            Err(_) => {
+            // No task is reading the queue — the server failed to start or
+            // has exited. There is no server copy to repair, and a restart
+            // spawns a new handle that opens the document afresh; flagging it
+            // would only make the repair pass resend into the void on every
+            // tick (#3794).
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                Err("LSP server is not running".to_string())
+            }
+            Err(mpsc::error::TrySendError::Full(_)) => {
                 // Flagged unconditionally. Gating this on `document_versions`
                 // — the task's record of what the server has open — loses the
                 // change whose loss matters most: `document_versions` is only
@@ -5180,7 +5188,9 @@ impl LspHandle {
     /// Lets a caller skip assembling an expensive payload (a whole-buffer
     /// resync) that `try_send` would only reject.
     pub fn has_command_capacity(&self) -> bool {
-        self.command_tx.capacity() > 0
+        // A closed channel still reports its free slots, but nothing will
+        // ever read what is sent into it (#3794).
+        !self.command_tx.is_closed() && self.command_tx.capacity() > 0
     }
 
     /// Send didClose notification
@@ -5193,7 +5203,12 @@ impl LspHandle {
                 // to repair.
                 self.desynced.lock().unwrap().remove(&path);
             })
-            .map_err(|_| {
+            .map_err(|e| {
+                if matches!(e, mpsc::error::TrySendError::Closed(_)) {
+                    // No server holds the document any more (#3794).
+                    self.desynced.lock().unwrap().remove(&path);
+                    return "LSP server is not running".to_string();
+                }
                 // A dropped didClose leaves the server holding the document,
                 // and the task never forgets its version — so a later didOpen
                 // for it would be discarded as a duplicate and the server would
@@ -5224,7 +5239,12 @@ impl LspHandle {
                 self.pending_saves.lock().unwrap().remove(&path);
                 Ok(())
             }
-            Err(_) => {
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                // Nothing to retry into: the server is gone (#3794).
+                self.pending_saves.lock().unwrap().remove(&path);
+                Err("LSP server is not running".to_string())
+            }
+            Err(mpsc::error::TrySendError::Full(_)) => {
                 self.pending_saves.lock().unwrap().insert(path, (uri, text));
                 Err("Failed to send did_save command".to_string())
             }
@@ -7054,6 +7074,26 @@ mod tests {
              ahead of what the server has seen, which `apply_text_document_edit` \
              compares for equality when rejecting stale workspace edits"
         );
+    }
+
+    /// With no task reading the queue (the server failed to start or exited)
+    /// a failed send has no server copy to repair. Flagging it would make the
+    /// repair pass resend the full text on every tick, forever (#3794).
+    #[tokio::test]
+    async fn test_send_to_dead_server_schedules_no_repair() {
+        let (handle, command_rx, path) = handle_with_undrained_queue(4);
+        drop(command_rx);
+        let uri: Uri = "file:///test.rs".parse().unwrap();
+
+        assert!(!handle.has_command_capacity());
+        assert!(handle
+            .did_change(uri.clone(), insert_at_origin("a"))
+            .is_err());
+        assert!(!handle.needs_full_resync(&path));
+        assert!(handle.did_save(uri.clone(), None).is_err());
+        assert!(!handle.retry_pending_saves());
+        assert!(handle.did_close(uri).is_err());
+        assert!(handle.desynced_documents().is_empty());
     }
 
     /// A dropped `didClose` leaves the server holding the document, so the

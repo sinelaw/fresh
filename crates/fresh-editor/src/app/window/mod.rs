@@ -942,6 +942,11 @@ pub struct Window {
     /// active window's LSP. Per-window because the LSP they target is
     /// per-window (Step 0k).
     pub scheduled_diagnostic_pull: Option<(BufferId, std::time::Instant)>,
+    /// Backoff for [`Window::resync_desynced_lsp_documents`]: the earliest
+    /// time of the next repair attempt and the delay that set it. Grows while
+    /// resends keep failing, so a server that never takes them is not retried
+    /// on every frame (#3794).
+    lsp_resync_backoff: Option<(std::time::Instant, std::time::Duration)>,
     pub scheduled_inlay_hints_request: Option<(BufferId, std::time::Instant)>,
 
     /// LSP languages the user dismissed the "do you want to enable
@@ -2665,6 +2670,7 @@ impl Window {
             search_use_regex: search_defaults.regex,
             search_confirm_each: search_defaults.confirm_each,
             scheduled_diagnostic_pull: None,
+            lsp_resync_backoff: None,
             scheduled_inlay_hints_request: None,
             user_dismissed_lsp_languages: std::collections::HashSet::new(),
             editor_mode: None,
@@ -5200,6 +5206,11 @@ impl Window {
             })
             .collect();
         if stale.is_empty() {
+            self.lsp_resync_backoff = None;
+            return acted;
+        }
+        let now = std::time::Instant::now();
+        if matches!(self.lsp_resync_backoff, Some((not_before, _)) if now < not_before) {
             return acted;
         }
 
@@ -5274,6 +5285,23 @@ impl Window {
                 true,
             );
         }
+
+        // Whatever is still flagged was attempted and refused; wait longer
+        // before each further attempt instead of retrying every frame.
+        let still_stale = self
+            .lsp
+            .all_handles()
+            .iter()
+            .filter(|sh| stale.iter().any(|(id, _)| *id == sh.handle.id()))
+            .any(|sh| !sh.handle.desynced_documents().is_empty());
+        self.lsp_resync_backoff = still_stale.then(|| {
+            const FIRST: std::time::Duration = std::time::Duration::from_millis(100);
+            const MAX: std::time::Duration = std::time::Duration::from_secs(5);
+            let delay = self
+                .lsp_resync_backoff
+                .map_or(FIRST, |(_, d)| (d * 2).min(MAX));
+            (now + delay, delay)
+        });
         acted
     }
 
