@@ -16,7 +16,7 @@ A folder with no executable markers (empty or document-only) is trusted automati
 
 ## Granting Trust
 
-When you open a folder containing executable markers (e.g. `.envrc`, `Cargo.toml`, `package.json`), Fresh shows a one-time prompt listing the detected markers, with three choices: **Trust folder & Allow Tooling** (`T`), **Keep Restricted (Default)** (`K`), **Block All Execution** (`B`).
+When you open a folder containing executable markers (e.g. `.envrc`, `Cargo.toml`, `package.json`), Fresh shows a one-time prompt listing the detected markers, with three choices: **Trust folder & Allow Tooling** (`T`), **Keep Restricted (Default)** (`K`), **Block All Execution** (`B`). Select one with the arrow keys or its letter, then press `Enter` to confirm.
 
 You can change the level any time:
 
@@ -43,7 +43,7 @@ When a workspace is trusted, Fresh detects and activates a project environment s
 
 The first matching detector wins. **Path-only** environments (a virtualenv) activate silently once the workspace is trusted — no extra prompt. **Shell** environments (direnv/mise/pipenv/poetry) run a snippet and are gated on trust. A bare `.venv` directory with no interpreter does not auto-activate.
 
-The active environment is shown as a clickable pill in the status bar and applies uniformly across every backend — the integrated terminal, Docker / devcontainers, Kubernetes, and SSH.
+The active environment applies uniformly across every backend — the integrated terminal, Docker / devcontainers, Kubernetes, and SSH. To see it in the status bar, add the **Environment** element (see [Status Bar](../configuration/index.md#status-bar)); clicking it activates the detected environment, asking for trust first if needed.
 
 ### Customizing detectors
 

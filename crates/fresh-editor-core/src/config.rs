@@ -1915,8 +1915,8 @@ pub struct SidebarConfig {
 /// File explorer settings.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct FileExplorerConfig {
-    /// Apply `.gitignore` rules. When off, ignored files are neither hidden nor
-    /// grayed out. Default: true
+    /// Apply `.gitignore` rules. When off, ignored files are always shown,
+    /// still grayed out, without turning on Show Gitignored. Default: true
     #[serde(default = "default_true")]
     pub respect_gitignore: bool,
 

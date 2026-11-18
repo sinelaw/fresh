@@ -1830,7 +1830,7 @@
   "settings.field.file_explorer.preview_tabs": "Vorschau-Tabs",
   "settings.field.file_explorer.preview_tabs_desc": "Ein einfacher Klick öffnet einen temporären Vorschau-Tab, den der nächste Klick ersetzt. Bearbeiten, Doppelklick, Enter oder Ziehen des Tabs macht ihn dauerhaft. Standard: true",
   "settings.field.file_explorer.respect_gitignore": ".gitignore beachten",
-  "settings.field.file_explorer.respect_gitignore_desc": "`.gitignore`-Regeln anwenden. Ist dies aus, werden ignorierte Dateien weder ausgeblendet noch ausgegraut. Standard: true",
+  "settings.field.file_explorer.respect_gitignore_desc": "`.gitignore`-Regeln anwenden. Ist dies aus, werden ignorierte Dateien immer angezeigt, bleiben aber ausgegraut. Standard: true",
   "settings.field.file_explorer.show_gitignored": "Gitignored-Dateien anzeigen",
   "settings.field.file_explorer.show_gitignored_desc": "Von Git ignorierte Dateien standardmäßig anzeigen.",
   "settings.field.file_explorer.show_hidden": "Versteckte Dateien anzeigen",

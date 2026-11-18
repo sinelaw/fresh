@@ -1823,7 +1823,7 @@
   "settings.field.file_explorer.preview_tabs": "プレビュータブ",
   "settings.field.file_explorer.preview_tabs_desc": "シングルクリックで一時的なプレビュータブを開き、次のクリックでそのタブを置き換えます。編集、ダブルクリック、Enter、タブのドラッグで通常のタブとして固定されます。既定: true",
   "settings.field.file_explorer.respect_gitignore": ".gitignore を適用",
-  "settings.field.file_explorer.respect_gitignore_desc": "`.gitignore` のルールを適用します。オフの場合、無視対象のファイルも非表示やグレー表示になりません。既定: true",
+  "settings.field.file_explorer.respect_gitignore_desc": "`.gitignore` のルールを適用します。オフの場合、無視対象のファイルは常に表示されますが、グレー表示のままです。既定: true",
   "settings.field.file_explorer.show_gitignored": "gitignore 対象を表示",
   "settings.field.file_explorer.show_gitignored_desc": "既定で gitignore 対象のファイルを表示します。",
   "settings.field.file_explorer.show_hidden": "隠しファイルを表示",

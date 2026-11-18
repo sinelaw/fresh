@@ -7,7 +7,7 @@
 > alias, and this page keeps its `/features/session-persistence` URL so
 > existing links and bookmarks continue to work.
 
-> **Palette:** `Detach`. **CLI:** `fresh`, `fresh -a`, `fresh --cmd daemon list|new|kill`, `fresh --restore`, `fresh --no-restore`. **Config:** `auto_attach`, `open_last_workspace`, `hot_exit`, `editor.restore_previous_session`, `editor.ephemeral_file_patterns`.
+> **Palette:** `Detach`. **CLI:** `fresh`, `fresh -a`, `fresh --cmd daemon list|new|kill`, `fresh --restore`, `fresh --no-restore`. **Config:** `auto_attach`, `open_last_workspace`, `editor.hot_exit`, `editor.restore_previous_session`, `editor.ephemeral_file_patterns`.
 
 Detach from Fresh and reattach later, similar to tmux. The Fresh daemon keeps running in the background, so your editor state survives even after you close the terminal.
 
@@ -18,7 +18,8 @@ you typed it in, with the workspace dock on screen if you opened it yourself
 (View ▸ Orchestrator Dock). It runs as a daemon, so the session outlives the
 terminal, and a second bare `fresh` anywhere reattaches to that same editor
 instead of starting a second one — switched to the workspace for *that*
-directory. Your other workspaces stay open in the daemon; the dock lists them.
+directory. Your other workspaces stay open in the daemon; the dock lists them (see
+[Orchestrator](./orchestrator.md)).
 
 ```bash
 fresh            # this directory's workspace, in the shared daemon
@@ -45,7 +46,7 @@ workspaces — sets up a workspace for the current directory and opens the
 welcome screen beside an empty buffer, as any launch does.
 
 Turn it off with **Auto Attach** in the Settings UI, the checkbox at the
-top of the welcome screen, or `"auto_attach": false` in `config.json` (the
+bottom of the welcome screen, or `"auto_attach": false` in `config.json` (the
 setting was called `orchestrator_mode` before; that name is still read).
 With it off, a bare `fresh` is a plain editor in this terminal, in this
 directory, with no daemon.
@@ -58,9 +59,9 @@ See also: [Remote Editing (SSH)](./ssh.md) for pairing daemon mode with remote b
 
 ## Hot Exit
 
-All buffers — including unnamed scratch buffers — persist automatically. When you quit Fresh, unsaved changes are preserved and restored on next startup. Configurable via the `hot_exit` setting (default: on).
+All buffers — including unnamed scratch buffers — can keep their unsaved changes across restarts. When you quit with unsaved changes, choose **Quit (recoverable)** and they come back the next time you open Fresh; detaching from a daemon keeps them too. Configurable via the `editor.hot_exit` setting (default: on).
 
-With `hot_exit` off, quitting asks you to save or discard every unsaved buffer, unnamed ones included, and offers no way to keep them for later. Fresh only drops unsaved work you chose to discard: work left by a crash, by an exit that asked nothing (Force Quit, a daemon shutting down, the GUI window closing) or by a workspace window closed from the Orchestrator is kept and comes back the next time that project is opened.
+With `editor.hot_exit` off, quitting asks you to save or discard every unsaved buffer, unnamed ones included, and offers no way to keep them for later. Fresh only drops unsaved work you chose to discard: work left by a crash, by an exit that asked nothing (Force Quit, a daemon shutting down, the GUI window closing) or by a workspace window closed from the Orchestrator is kept and comes back the next time that project is opened.
 
 Unsaved changes are kept per buffer, not per workspace, and come back however Fresh is launched. A file's unsaved changes come back wherever the file is opened, from any project. An unnamed buffer's come back in the workspace whose layout places it, or else in the project it was last edited in. While the editor that holds them is still running — a detached daemon, say — they stay with it.
 
@@ -70,8 +71,8 @@ A file has one buffer across all of an editor's workspaces. Opening a file that 
 
 Each workspace's state (open files, split layout, plugin state) is restored on startup by default. Control this with:
 
-- **`editor.restore_previous_session`** (config, default `true`) — when set to `false`, Fresh skips restoring tabs and splits but still brings back unsaved "hot-exit" content (dirty files and unnamed buffers).
-- **`--no-restore`** (CLI) — one-shot skip equivalent to the config flag being off.
+- **Restore Previous Session** (Settings UI; `editor.restore_previous_session`, default on) — when off, Fresh starts without your last tabs and splits, but still saves the workspace when you quit, and still brings back unsaved "hot-exit" content (dirty files and unnamed buffers).
+- **`--no-restore`** (CLI) — for this one launch, neither restores nor saves the workspace. Unsaved hot-exit content still comes back.
 - **`--restore`** (CLI) — force a full workspace restore even when the config flag is off. Mutually exclusive with `--no-restore`.
 
 ### Ephemeral files
@@ -83,13 +84,14 @@ Entries use the same dialect as `languages.*.filenames`: a literal entry matches
 ## Quick Start
 
 ```bash
-# Start or attach to a daemon for the current directory
+# Start or attach to the background editor
+# (with Auto Attach on, this is the shared one, the same as a bare `fresh`)
 fresh -a
 
-# Detach: press Ctrl+Shift+D (or use Command Palette > "Detach")
+# Detach: File > Detach (or Command Palette > "Detach")
 # Terminal closes, but the Fresh daemon keeps running in the background
 
-# Reattach later from the same directory
+# Reattach later
 fresh -a
 
 # List all running daemons
@@ -107,7 +109,7 @@ The `daemon` subcommand is an alias for the older `session` subcommand; both for
 | `fresh --diff A B` | Direct | The two files side by side, both editable. See [Compare Files](./compare-files.md). |
 | `fresh` | Daemon | Auto Attach: the shared `orchestrator` daemon, in this directory's workspace, and the dock once you have opened it. Direct when `auto_attach` is off. |
 | `fresh -a` | Daemon | With Auto Attach on, a bare `fresh` *is* `fresh -a`: the one shared background editor (files given with `-a` open there too) — unless a per-directory daemon is already running in this directory, or the files name a remote host, which keep their own daemon. With it off, `fresh -a` is a background daemon for this directory. Supports detach/reattach. |
-| `fresh --web [ADDR]` | Daemon | Foreground daemon that also serves the browser UI. |
+| `fresh --web [ADDR]` | Daemon | Foreground daemon that also serves the browser UI (experimental). |
 
 Use daemon mode for long-running tasks or remote work where the connection may drop.
 
@@ -153,10 +155,10 @@ Detaching exits only the client; the daemon keeps running. It never shuts itself
 
 | Command | Description |
 |---------|-------------|
-| `fresh -a` | Attach to the daemon for the current directory (starts one if needed) |
+| `fresh -a` | Attach to the background editor, starting it if needed: the shared one with Auto Attach on (unless this directory has its own daemon running), else this directory's |
 | `fresh -a <name>` | Attach to a named daemon |
 | `fresh --cmd daemon list` | List running daemons |
-| `fresh --cmd daemon new <name>` | Start a new named daemon |
+| `fresh --cmd daemon new <name>` | Start a new named daemon and attach to it |
 | `fresh --cmd daemon open-file <name> <files> [--wait]` | Open files in a daemon (starts and attaches if needed) |
 | `fresh --cmd daemon kill` | Kill the daemon for the current directory |
 | `fresh --cmd daemon kill <name>` | Kill a named daemon |
@@ -174,7 +176,7 @@ fresh -a feature-work
 
 ### Opening Files in a Daemon
 
-Open files in a running daemon without attaching to it. If no daemon is running, one is started and the client attaches interactively:
+Open files in a running daemon without attaching to it. If no daemon is running, one is started and the client attaches interactively. `.` names the current directory's own daemon; to open files in the shared Auto Attach editor, use `orchestrator` as the name:
 
 ```bash
 # Open file in the current directory's daemon (use "." for the name)
@@ -218,7 +220,7 @@ Routing git through a daemon (`fresh --cmd daemon open-file . --wait`) still wor
 
 #### Annotated Code Walkthroughs
 
-Combine `--wait` with [range selection and popup messages](../getting-started/#running-fresh) to walk a user through code one location at a time. Each command blocks until the user presses Escape, then the next location opens:
+Combine `--wait` with [range selection and popup messages](../getting-started/#selecting-a-range-and-showing-a-message) to walk a user through code one location at a time. Each command blocks until the user presses Escape, then the next location opens:
 
 ```bash
 fresh --cmd daemon open-file . 'src/parse.rs:10-25@"Step 1: The parser entry point"' --wait
@@ -251,9 +253,8 @@ done
 
 ### Detaching
 
-- `Ctrl+Shift+D` or Command Palette → "Detach" or File → Detach
-- **Detach**: Client exits, daemon keeps running
-- **Quit** (`Ctrl+Q`): Both client and daemon exit
+- **Detach** (File → Detach, or "Detach" in the command palette): the client exits and the daemon keeps running.
+- `Ctrl+Q` asks first: **Detach** (the default) leaves Fresh running in the background, and **Quit and Stop All** stops the daemon along with its terminals and agents.
 
 ## Limitations and Pitfalls
 
@@ -281,11 +282,11 @@ When reattaching, terminal size may differ and some applications may not render 
 
 ### "Connection refused"
 
-The daemon may have crashed. Run `fresh --cmd daemon kill` to clean up, then `fresh -a` again.
+The daemon may have crashed. Run `fresh --cmd daemon list` to clean up its leftover sockets, then `fresh -a` again.
 
-### Daemon not in list
+### Daemon not found
 
-Daemons are keyed by working directory. `~/project` and `/home/user/project` create different daemons—use consistent paths.
+Unnamed daemons are keyed by working directory, so `fresh -a` and `fresh --cmd daemon kill` only find one when run from the directory it was started in. From anywhere else, pass the daemon's name as shown by `fresh --cmd daemon list`.
 
 ### High memory usage
 

@@ -18,8 +18,8 @@ function show(filter: string) {
   const f = filter.toLowerCase();
   editor.setPromptSuggestions(
     RECENT.filter((i) => (i.n + " " + i.title).toLowerCase().includes(f))
-      // Newer Fresh versions also need an `id` on each item.
-      .map((i) => ({ text: `#${i.n}`, value: i.n, description: i.title })),
+      // Each item needs an `id` that is unique within the list.
+      .map((i) => ({ id: i.n, text: `#${i.n}`, value: i.n, description: i.title })),
   );
 }
 

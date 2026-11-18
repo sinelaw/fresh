@@ -1,6 +1,6 @@
 # Asking the user for input
 
-There are seven ways a plugin can ask the user for input. Each example adds an `Ask: …` command to the command palette. Paste one into `~/.config/fresh/init.ts` to try it.
+There are seven ways a plugin can ask the user for input. Each example adds an `Ask: …` command to the command palette. Paste one at a time into `~/.config/fresh/init.ts` to try it.
 
 ## 1. Prompt line
 

@@ -12,7 +12,7 @@ The editor displays all active keybindings in a searchable, filterable table. Se
 | **Action** | The machine-readable action name (e.g., `save`) |
 | **Description** | Human-readable description (e.g., "Save file") |
 | **Context** | When the binding is active (`normal`, `global`, `prompt`, etc.) |
-| **Source** | Whether the binding comes from the active keymap or custom user config |
+| **Source** | Whether the binding comes from the active keymap, your custom config, or a plugin |
 
 ## Navigation
 
@@ -28,18 +28,18 @@ Two search modes are available:
 
 ### Text Search
 
-Press `/` to start a text search. Type to filter bindings by action name, description, key display, or context. Plugin-registered command names are included in search results. Press `Esc` to cancel.
+Press `/` to start a text search. Type to filter bindings by action name, description, key display, or context. Plugin-registered command names are included in search results. Press `Enter` to keep the results and move into the list, or `Esc` to cancel.
 
 ### Key Recording Search
 
-Press `r` to start a key recording search. Press any key combination to find all bindings that match that exact key. Press `Tab` to switch between text and key recording modes.
+Press `r` to start a key recording search. Press any key combination to find all bindings that match that exact key, then `Enter` to keep the results and move into the list (until then, arrow keys are recorded too). Press `Tab` to switch between text and key recording modes.
 
 ## Filtering
 
 | Shortcut | Action |
 |----------|--------|
 | `c` | Cycle context filter (All → global → normal → prompt → ...) |
-| `s` | Cycle source filter (All → Custom → Keymap) |
+| `s` | Cycle source filter (All → Custom → Keymap → Plugin) |
 
 The current filter state is shown in the header bar.
 
@@ -50,15 +50,15 @@ The current filter state is shown in the header bar.
 | `Enter` | Edit the selected binding |
 | `a` | Add a new binding |
 | `d` or `Delete` | Delete the selected binding. A custom binding is dropped from `config.json`; a keymap or plugin binding is removed for good with an `unbind` entry, and the key falls through to whatever else binds it |
-| `x` | Disable the selected binding: a `noop` override, so the key does nothing in that context |
+| `x` | Disable the selected binding: a `noop` override, so the key does nothing in that context (in the `terminal` context, the key goes to the program instead) |
 
 ### The Edit Dialog
 
 When adding or editing a binding, a dialog appears with three fields:
 
-1. **Key** — Press the desired key combination. The dialog starts in key recording mode. To bind a special key like **Esc**, **Tab**, or **Enter**, press **Enter** on the key field first to enter recording, then press the key you want to bind; press **Escape** to cancel recording.
+1. **Key** — Press **Enter** on the key field, then press the key combination to bind. Any key is captured this way, including **Esc**, **Tab**, and **Enter**.
 2. **Action** — Type an action name. An autocomplete popup shows matching actions as you type. Use `↑`/`↓` to navigate suggestions and `Tab` or `Enter` to accept. Only valid action names are accepted.
-3. **Context** — Use `←`/`→` to cycle through available contexts (global, normal, prompt, searchPrompt, popup, completion, file\_explorer, dock, menu, terminal, settings, compositeBuffer).
+3. **Context** — Use `←`/`→` to cycle through available contexts (global, normal, prompt, searchPrompt, popup, completion, fileExplorer, dock, menu, terminal, settings, compositeBuffer).
 
 Use `Tab` to move between fields. The dialog shows a read-only description of the selected action and warns about conflicting bindings.
 
@@ -66,7 +66,7 @@ Press **Save** to apply or **Cancel** to discard.
 
 ## Saving Changes
 
-Press `Ctrl+S` to save all pending changes to your user config file. Changes are written to the `keybindings` array in your `config.json`.
+Press `Ctrl+S` to save all pending changes to your user config file and close the editor. Changes are written to the `keybindings` array in your `config.json`.
 
 If you try to close the editor with unsaved changes, a confirmation dialog offers three options: **Save**, **Discard**, or **Cancel**.
 
@@ -124,7 +124,7 @@ Each binding in `config.json` has this structure:
 | `searchPrompt` | When the find/replace prompt is active — a narrowing of `prompt`, adding the match-mode toggles |
 | `popup` | When a popup (completion, hover) is open |
 | `completion` | When the completion popup is open — takes precedence over `popup` |
-| `file_explorer` | When the file explorer has focus |
+| `fileExplorer` | When the file explorer has focus (`file_explorer` is accepted too) |
 | `dock` | When the utility dock has focus |
 | `menu` | When a menu is open |
 | `terminal` | When the integrated terminal has focus |
@@ -158,6 +158,10 @@ things behind:
   when you want a key dead rather than free — `Ctrl+Q → quit`, everywhere,
   say. It shows in the editor as a custom `noop` row, and `d` on that row
   removes the override again.
+
+  The `terminal` context is the exception: there, a `noop` binding hands the
+  key to the program running in the terminal instead of to the editor. Use it
+  to give a shell or TUI a key the editor would otherwise take.
 
 ### Chord (multi-key) bindings
 

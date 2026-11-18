@@ -1823,7 +1823,7 @@
   "settings.field.file_explorer.preview_tabs": "แท็บแสดงตัวอย่าง",
   "settings.field.file_explorer.preview_tabs_desc": "คลิกครั้งเดียวจะเปิดแท็บแสดงตัวอย่างชั่วคราวที่จะถูกแทนที่เมื่อคลิกครั้งถัดไป การแก้ไข ดับเบิลคลิก กด Enter หรือลากแท็บจะทำให้แท็บนั้นเป็นแบบถาวร ค่าเริ่มต้น: true",
   "settings.field.file_explorer.respect_gitignore": "ใช้กฎ .gitignore",
-  "settings.field.file_explorer.respect_gitignore_desc": "ใช้กฎของ `.gitignore` เมื่อปิด ไฟล์ที่ถูกละเว้นจะไม่ถูกซ่อนและไม่แสดงเป็นสีเทา ค่าเริ่มต้น: true",
+  "settings.field.file_explorer.respect_gitignore_desc": "ใช้กฎของ `.gitignore` เมื่อปิด ไฟล์ที่ถูกละเว้นจะแสดงเสมอ แต่ยังคงเป็นสีเทา ค่าเริ่มต้น: true",
   "settings.field.file_explorer.show_gitignored": "แสดงไฟล์ที่ Git ละเว้น",
   "settings.field.file_explorer.show_gitignored_desc": "แสดงไฟล์ที่ถูก Git ละเว้นเป็นค่าเริ่มต้น",
   "settings.field.file_explorer.show_hidden": "แสดงไฟล์ที่ซ่อน",
