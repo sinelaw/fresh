@@ -414,3 +414,40 @@ fn test_quit_cancels_trust_modal_without_recording_decision() {
         })
         .unwrap();
 }
+
+/// Lowering trust deactivates the project environment for everything spawned
+/// afterwards, without a restart (#3780). It used to stay active until the
+/// editor was restarted, so a new terminal still got `VIRTUAL_ENV`.
+#[test]
+fn test_lowering_trust_deactivates_the_env() {
+    let tmp = TempDir::new().unwrap();
+    let project = tmp.path().to_path_buf();
+    make_venv(&project);
+    setup_env_manager(&project);
+
+    let mut harness = boot_harness_like_main(120, 40, project);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("SECURITY WARNING"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('t'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    // The env pill is not in the default status bar, so this one reads the
+    // environment the next spawn would get rather than the screen.
+    harness
+        .wait_until(|h| h.editor().authority().env_provider.is_active())
+        .unwrap();
+
+    harness
+        .editor_mut()
+        .dispatch_action_for_tests(fresh::input::keybindings::Action::WorkspaceTrustRestrict);
+    harness.render().unwrap();
+    harness.assert_screen_contains("Restricted");
+    assert!(
+        !harness.editor().authority().env_provider.is_active(),
+        "the environment stayed active after trust was lowered"
+    );
+}

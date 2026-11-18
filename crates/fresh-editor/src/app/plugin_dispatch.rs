@@ -2553,7 +2553,7 @@ impl Editor {
     /// the "Trust restarted everything" bug. Already-open terminals keep
     /// running and only adopt the new env when reopened (matching the env
     /// subsystem's lazy, capture-at-spawn model).
-    fn refresh_active_window_lsp_for_env(&mut self) {
+    pub(super) fn refresh_active_window_lsp_for_env(&mut self) {
         let active_id = self.active_window;
         let running: Vec<String> = self
             .windows

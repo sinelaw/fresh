@@ -304,10 +304,13 @@ editor.on("action_popup_result", (data) => {
 // `set_workspace_trust_level` and fire `trust_changed`. That is our cue to
 // activate a now-trusted env, so the user's single "Trust" decision both
 // elevates trust and turns the env on, with no second prompt from us.
+// Lowering trust is handled by core, which deactivates the environment along
+// with the change; the pill only has to show it.
 editor.on("trust_changed", (data) => {
   if (data.level === "trusted" && !editor.envActive()) {
     maybeAutoActivate();
   }
+  refreshStatus();
 });
 
 // === Plugin-load orchestration ===
